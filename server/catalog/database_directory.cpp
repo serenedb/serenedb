@@ -44,20 +44,22 @@
 namespace sdb::catalog {
 namespace {
 
-duckdb::FileSystem& Files() {
-  return duckdb::FileSystem::GetFileSystem(
-    irs::DuckDBEngine::Instance().instance());
-}
-
-bool IsRemote(std::string_view path) {
-  return duckdb::Path::FromString(std::string{path}).IsRemote();
-}
-
 bool CreateDirectory(const std::filesystem::path& path) {
-  if (!Files().CreateDirectoryExtended(path.string(), {})) {
+  if (!StorageFileSystem().CreateDirectoryExtended(path.string(), {})) {
     return false;
   }
   SyncDirectory(path.parent_path());
+  return true;
+}
+
+bool CreateMarker(const std::string& marker) {
+  auto& fs = StorageFileSystem();
+  if (fs.FileExists(marker)) {
+    return false;
+  }
+  fs.OpenFile(marker, duckdb::FileFlags::FILE_FLAGS_WRITE |
+                        duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW)
+    ->Close();
   return true;
 }
 
@@ -72,7 +74,7 @@ void CreateNewDirectory(const std::filesystem::path& path) {
 void RemoveTree(const std::string& path) {
   duckdb::TaskScheduler::BlockingScope blocking;
   try {
-    Files().RemoveDirectory(path);
+    StorageFileSystem().RemoveDirectory(path);
   } catch (const std::exception& e) {
     SDB_WARN(GENERAL, "could not remove '", path,
              "': ", duckdb::ErrorData{e}.RawMessage());
@@ -81,7 +83,7 @@ void RemoveTree(const std::string& path) {
 
 void RemoveObject(const std::string& path) {
   try {
-    Files().TryRemoveFile(path);
+    StorageFileSystem().TryRemoveFile(path);
   } catch (const std::exception& e) {
     SDB_WARN(GENERAL, "could not remove '", path,
              "': ", duckdb::ErrorData{e}.RawMessage());
@@ -104,35 +106,49 @@ void SyncDirectory(const std::filesystem::path& directory) {
     .SyncDirectory(directory.string());
 }
 
+duckdb::FileSystem& StorageFileSystem() {
+  return duckdb::FileSystem::GetFileSystem(
+    irs::DuckDBEngine::Instance().instance());
+}
+
+bool IsRemote(std::string_view path) {
+  return duckdb::Path::FromString(std::string{path}).IsRemote();
+}
+
+std::string EngineDirOf(std::string_view location) {
+  return absl::StrCat(location, "/", kEngineDir);
+}
+
 std::vector<StorageEntry> ListStorages(const std::string& root) {
   std::vector<StorageEntry> found;
   absl::flat_hash_set<std::string> seen;
-  Files().ListFiles(root, [&](const std::string& name, bool is_directory) {
-    std::string_view entry = name;
-    bool directory = is_directory;
-    if (const auto slash = entry.find('/'); slash != std::string_view::npos) {
-      entry = entry.substr(0, slash);
-      directory = true;
-    }
-    std::string_view digits = entry;
-    if (!directory && !absl::ConsumeSuffix(&digits, kStorageMarker)) {
-      return;
-    }
-    duckdb::idx_t oid = 0;
-    if (digits.empty() || !absl::c_all_of(digits, absl::ascii_isdigit) ||
-        !absl::SimpleAtoi(digits, &oid) || !seen.emplace(entry).second) {
-      return;
-    }
-    found.push_back({.oid = oid,
-                     .path = absl::StrCat(root, "/", entry),
-                     .is_directory = directory});
-  });
+  StorageFileSystem().ListFiles(
+    root, [&](const std::string& name, bool is_directory) {
+      std::string_view entry = name;
+      bool directory = is_directory;
+      if (const auto slash = entry.find('/'); slash != std::string_view::npos) {
+        entry = entry.substr(0, slash);
+        directory = true;
+      }
+      std::string_view digits = entry;
+      if (!directory && !absl::ConsumeSuffix(&digits, kStorageMarker)) {
+        return;
+      }
+      duckdb::idx_t oid = 0;
+      if (digits.empty() || !absl::c_all_of(digits, absl::ascii_isdigit) ||
+          !absl::SimpleAtoi(digits, &oid) || !seen.emplace(entry).second) {
+        return;
+      }
+      found.push_back({.oid = oid,
+                       .path = absl::StrCat(root, "/", entry),
+                       .is_directory = directory});
+    });
   return found;
 }
 
-void RemoveUnowned(const std::string& root,
+void RemoveUnowned(std::span<const StorageEntry> entries,
                    const absl::flat_hash_set<duckdb::idx_t>& owned) {
-  for (const auto& entry : ListStorages(root)) {
+  for (const auto& entry : entries) {
     if (owned.contains(entry.oid)) {
       continue;
     }
@@ -160,23 +176,20 @@ void TablespaceRoot::Claim() {
       ERR_CODE(ERRCODE_OBJECT_IN_USE),
       ERR_MSG("directory \"", _path, "\" already in use as a tablespace"));
   };
-  auto& fs = Files();
   if (!_remote) {
     const std::filesystem::path path{_path};
-    fs.CreateDirectoriesRecursive(path.parent_path().string());
+    StorageFileSystem().CreateDirectoriesRecursive(path.parent_path().string());
     if (!CreateDirectory(path)) {
       in_use();
     }
-  } else {
-    const auto marker = absl::StrCat(_path, "/", kTablespaceMarker);
-    if (fs.FileExists(marker)) {
-      in_use();
-    }
-    fs.OpenFile(marker, duckdb::FileFlags::FILE_FLAGS_WRITE |
-                          duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW)
-      ->Close();
+  } else if (!CreateMarker(absl::StrCat(_path, "/", kTablespaceMarker))) {
+    in_use();
   }
   _claimed.store(true, std::memory_order_release);
+}
+
+std::string TablespaceRoot::DatabaseDir(duckdb::idx_t oid) const {
+  return absl::StrCat(_path, "/", oid);
 }
 
 std::shared_ptr<void> TablespaceRoot::Pin() {
@@ -230,22 +243,17 @@ std::string StorageArea::CreateStorage(duckdb::idx_t oid) const {
     CreateNewDirectory(path);
     return path;
   }
-  auto& fs = Files();
-  const auto marker = MarkerPath(oid);
-  if (fs.FileExists(marker)) {
+  if (!CreateMarker(MarkerPath(oid))) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_IO_ERROR),
       ERR_MSG("could not create storage \"", path, "\": it already exists"));
   }
-  fs.OpenFile(marker, duckdb::FileFlags::FILE_FLAGS_WRITE |
-                        duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW)
-    ->Close();
   return path;
 }
 
 std::optional<std::string> StorageArea::OpenStorage(duckdb::idx_t oid) const {
   auto path = StoragePath(oid);
-  auto& fs = Files();
+  auto& fs = StorageFileSystem();
   if (_remote ? fs.FileExists(MarkerPath(oid)) : fs.DirectoryExists(path)) {
     return path;
   }
@@ -279,7 +287,7 @@ DatabaseDirectory::~DatabaseDirectory() {
     if (!root) {
       return;
     }
-    auto area = absl::StrCat(root->Path(), "/", _oid);
+    auto area = root->DatabaseDir(_oid);
     if (area != _path.string() && !absl::c_contains(areas, area)) {
       areas.push_back(std::move(area));
     }
@@ -327,7 +335,7 @@ std::shared_ptr<StorageArea> DatabaseDirectory::Area(duckdb::idx_t tablespace) {
       _roots.emplace_back(root);
     }
   }
-  auto path = absl::StrCat(root->Path(), "/", _oid);
+  auto path = root->DatabaseDir(_oid);
   return std::make_shared<StorageArea>(shared_from_this(), std::move(root),
                                        std::move(path));
 }

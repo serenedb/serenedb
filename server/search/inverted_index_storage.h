@@ -75,7 +75,7 @@ struct InvertedIndexSnapshot {
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
 struct StorageDirectory {
-  std::unique_ptr<irs::IndexFiles> directory;
+  std::optional<irs::IndexFiles> directory;
   bool on_disk = false;
   bool absent = false;
 };
@@ -280,7 +280,7 @@ class InvertedIndexStorage final
   // std::atomic<std::shared_ptr>).
   InvertedIndexSnapshotPtr _snapshot;
   std::shared_ptr<const FileManifest> _file_manifest;
-  std::unique_ptr<irs::IndexFiles> _dir;
+  std::optional<irs::IndexFiles> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
   absl::Mutex _reindex_mutex;

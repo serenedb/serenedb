@@ -195,14 +195,15 @@ def _index_files(fake: FakeS3, prefix: str) -> list[str]:
             if not key.endswith((".storage", "/engine_v1/tablespace"))]
 
 
-def _create_secret(server: _Server, store: _Store, location: str) -> None:
+def _create_secret(server: _Server, store: _Store, location: str,
+                   tablespace: str | None = None) -> None:
     with server.connect() as conn:
         conn.execute(
             "CREATE PERSISTENT SECRET index_store (TYPE s3, "
             f"KEY_ID '{store.key_id}', SECRET '{store.secret}', "
             f"ENDPOINT '{store.endpoint}', URL_STYLE 'path', USE_SSL false, "
             f"SCOPE '{location}')")
-    _create_tablespace(server, location)
+    _create_tablespace(server, tablespace or location)
 
 
 def test_index_files_on_s3(tmp_path: Path, s3_store: _Store) -> None:
@@ -483,6 +484,30 @@ def test_throttled_requests_are_retried(tmp_path: Path) -> None:
         finally:
             server.stop()
     assert fake.requests["THROTTLED"] == 4, fake.requests
+
+
+def test_a_location_is_kept_normalized(tmp_path: Path) -> None:
+    location = f"s3://bucket/nested-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location, f"s3://bucket//nested-{tmp_path.name}/")
+            with server.connect() as conn:
+                assert conn.execute(
+                    "SELECT pg_tablespace_location(oid) FROM pg_tablespace "
+                    "WHERE spcname = 'idx'").fetchall() == [(location,)]
+            _create_index(server)
+            with server.connect() as conn:
+                conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
+                conn.execute("VACUUM (REFRESH_TABLE) docs")
+            assert _matches(server) == [1, 3]
+        finally:
+            server.stop()
+    assert fake.objects and all(
+        key.startswith(f"nested-{tmp_path.name}/") for _, key in fake.objects), \
+        sorted(fake.objects)
 
 
 def test_a_lost_upload_completion_fails_its_statement_and_leaves_no_object(

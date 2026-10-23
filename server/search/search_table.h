@@ -313,7 +313,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   std::shared_ptr<const catalog::InvertedIndexConfig> _config;
   std::shared_ptr<const catalog::InvertedIndexConfig> _scan_config;
   std::optional<duckdb::idx_t> _building_index;
-  std::unique_ptr<irs::IndexFiles> _dir;
+  std::optional<irs::IndexFiles> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   irs::DirectoryReader _reader;
   std::optional<irs::ScorerOptions> _topk_options;

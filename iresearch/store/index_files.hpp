@@ -50,8 +50,6 @@ enum class IOAdvice : uint32_t {
   SEQUENTIAL = 1,
   RANDOM = 2,
   READONCE = 4,
-  ReadonceSequential = 5,
-  ReadonceRandom = 6,
 };
 
 ENABLE_BITMASK_ENUM(IOAdvice);
@@ -66,11 +64,6 @@ enum class StorageKind : uint8_t {
 struct LinkedFile {
   std::string_view name;
   bytes_view bytes;
-};
-
-enum class InputKind : uint8_t {
-  Mapped,
-  Block,
 };
 
 class IndexFileRefs final {
@@ -112,8 +105,6 @@ class FileInfos {
 class FileTracker {
  public:
   void Add(std::string_view name) { _files.emplace(name); }
-  void Erase(std::string_view name) noexcept { _files.erase(name); }
-  void Rename(std::string_view src, std::string_view dst);
   void AddBytes(uint64_t size) noexcept { _files_size += size; }
 
   std::vector<std::string> Flush(uint64_t& files_size);
@@ -126,12 +117,7 @@ class FileTracker {
 
 class RefTracker {
  public:
-  explicit RefTracker(IndexFileRefs& refs, bool track_open = false) noexcept
-    : _refs{&refs}, _track_open{track_open} {}
-  RefTracker(RefTracker&& other) noexcept;
-  RefTracker& operator=(RefTracker&&) = delete;
-
-  bool TrackOpen() const noexcept { return _track_open; }
+  explicit RefTracker(IndexFileRefs& refs) noexcept : _refs{&refs} {}
 
   IndexFileRefs::ref_t Add(std::string_view name) { return _refs->add(name); }
   void Forget(std::string_view name) { _refs->remove(name); }
@@ -150,7 +136,6 @@ class RefTracker {
   IndexFileRefs* _refs;
   mutable absl::Mutex _mutex;
   mutable Refs _tracked ABSL_GUARDED_BY(_mutex);
-  bool _track_open;
 };
 
 class IndexFiles {
@@ -176,7 +161,7 @@ class IndexFiles {
   bool Exists(bool& result, std::string_view name) const noexcept;
   bool Has(std::string_view name) const;
   bool Remove(std::string_view name) const noexcept;
-  bool Rename(std::string_view src, std::string_view dst) const noexcept;
+  void Rename(std::string_view src, std::string_view dst) const;
   void Sync(std::span<const std::string_view> names) const;
   void SyncDirectory() const;
   void Compact(std::string_view name) const;
@@ -203,7 +188,6 @@ class IndexFiles {
   IndexFiles Tracking(FileTracker& tracker) const noexcept;
   IndexFiles Tracking(RefTracker& tracker) const noexcept;
   IndexFiles Untracked() const noexcept;
-  RefTracker* GetRefTracker() const noexcept { return _ref_tracker; }
 
  private:
   struct State {
@@ -213,7 +197,6 @@ class IndexFiles {
     duckdb::FileSystem& fs;
     std::string root;
     StorageKind kind;
-    InputKind input;
     ResourceManagementOptions rm;
     std::vector<LinkedFile> linked;
     std::unique_ptr<duckdb::MemoryFileSystem> heap;
@@ -224,6 +207,10 @@ class IndexFiles {
   explicit IndexFiles(std::shared_ptr<State> state) noexcept
     : _state{std::move(state)} {}
 
+  bool InBlocks() const noexcept {
+    return Kind() == StorageKind::Remote ||
+           (Kind() == StorageKind::Memory && !_state->heap);
+  }
   const LinkedFile* FindLinked(std::string_view name) const noexcept;
   bool RemoveFile(std::string_view name) const noexcept;
   size_t RemoveFiles(std::span<const std::string> names) const noexcept;

@@ -65,11 +65,11 @@ def free_port():
 
 
 class Server:
-    def __init__(self, binary, datadir, node, log_path, flags=()):
+    def __init__(self, binary, datadir, node, log_path):
         self.port = free_port()
         self.log = open(log_path, "a")
         cmd = ["numactl", f"--cpunodebind={node}", f"--membind={node}", binary, datadir,
-               f"--listen=postgres://127.0.0.1:{self.port}", *flags]
+               f"--listen=postgres://127.0.0.1:{self.port}"]
         self.proc = subprocess.Popen(cmd, stdout=self.log, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + 900
         while True:
@@ -108,26 +108,26 @@ def load_queries(path, limit):
     return out
 
 
-def location_flags(args):
-    return [f"--index_location={args.index_location}"] if args.index_location else []
-
-
 def cmd_prepare(args):
     if os.path.exists(args.data) and os.listdir(args.data):
         sys.exit(f"{args.data} is not empty")
     os.makedirs(args.data, exist_ok=True)
-    server = Server(args.serened, args.data, args.node, args.data + ".log", location_flags(args))
+    server = Server(args.serened, args.data, args.node, args.data + ".log")
     try:
         with psycopg.connect(server.dsn(), autocommit=True) as con:
-            if args.s3_endpoint:
-                con.execute(f"CREATE PERSISTENT SECRET index_store (TYPE s3, KEY_ID 'key', SECRET 'secret', "
-                            f"ENDPOINT '{args.s3_endpoint}', URL_STYLE 'path', USE_SSL false, "
-                            f"SCOPE '{args.index_location}')")
+            placement = ""
+            if args.index_location:
+                if args.s3_endpoint:
+                    con.execute(f"CREATE PERSISTENT SECRET index_store (TYPE s3, KEY_ID 'key', SECRET 'secret', "
+                                f"ENDPOINT '{args.s3_endpoint}', URL_STYLE 'path', USE_SSL false, "
+                                f"SCOPE '{args.index_location}')")
+                con.execute(f"CREATE TABLESPACE index_store LOCATION '{args.index_location}'")
+                placement = " TABLESPACE index_store"
             con.execute(f"CREATE TABLE {TABLE} (id VARCHAR, text VARCHAR)")
             con.execute("CREATE TEXT SEARCH DICTIONARY wiki_dict AS split_text(case := 'lower') "
                         "WITH (frequency, position, norm)")
             con.execute(f"CREATE INDEX {INDEX} ON {TABLE} USING inverted (id, text wiki_dict) "
-                        "WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)')")
+                        f"WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)'){placement}")
             if args.segments == 1:
                 con.execute(f"INSERT INTO {TABLE} SELECT id, text FROM read_json(%s, "
                             "columns = {'id': 'VARCHAR', 'text': 'VARCHAR'})", (args.corpus,))
@@ -280,7 +280,7 @@ def cmd_remote(args):
         store_admin(store, "POST", "reset")
         store_admin(store, "PUT", f"latency?seconds={args.latency}")
     began = time.monotonic()
-    server = Server(args.serened, args.data, args.node, args.out + ".log", location_flags(args))
+    server = Server(args.serened, args.data, args.node, args.out + ".log")
     with open(args.out, "a") as out:
         try:
             result = {"phase": "open", "ms": (time.monotonic() - began) * 1000}
@@ -406,7 +406,7 @@ def main():
     p.add_argument("--data", required=True)
     p.add_argument("--segments", type=int, required=True)
     p.add_argument("--node", type=int, default=0)
-    p.add_argument("--index-location", default="", help="--index_location of the server, e.g. s3://bucket/wiki")
+    p.add_argument("--index-location", default="", help="a tablespace location for the index, e.g. s3://bucket/wiki")
     p.add_argument("--s3-endpoint", default="", help="host:port of the S3 endpoint for an s3:// location")
     p.set_defaults(func=cmd_prepare)
     m = sub.add_parser("remote", help="open, cold and warm statement latency of one build, with store requests")
@@ -414,7 +414,6 @@ def main():
     m.add_argument("--data", required=True)
     m.add_argument("--queries", required=True)
     m.add_argument("--out", required=True)
-    m.add_argument("--index-location", default="")
     m.add_argument("--s3-admin", default="", help="http://host:port of the fake S3 endpoint, for its counters")
     m.add_argument("--latency", type=float, default=0.03, help="seconds the store adds to every request")
     m.add_argument("--commands", default="top_10")

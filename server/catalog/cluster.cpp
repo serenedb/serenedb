@@ -69,24 +69,19 @@ namespace {
 constexpr std::string_view kRootRole = "postgres";
 constexpr duckdb::idx_t kCompactionFloor = duckdb::idx_t{1} << 20;
 
-bool IsRemote(const std::string& path) {
-  return duckdb::Path::FromString(path).IsRemote();
-}
-
 std::string NormalizeLocation(const std::string& location) {
-  if (IsRemote(location)) {
-    auto result = location;
-    while (!result.empty() && result.back() == '/') {
-      result.pop_back();
+  const auto parsed = duckdb::Path::FromString(location);
+  std::string result;
+  if (parsed.IsRemote()) {
+    result = parsed.ToString();
+  } else {
+    const std::filesystem::path path{location};
+    if (!path.is_absolute()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+                      ERR_MSG("tablespace location must be an absolute path"));
     }
-    return result;
+    result = path.lexically_normal().string();
   }
-  const std::filesystem::path path{location};
-  if (!path.is_absolute()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
-                    ERR_MSG("tablespace location must be an absolute path"));
-  }
-  auto result = path.lexically_normal().string();
   while (result.size() > 1 && result.back() == '/') {
     result.pop_back();
   }
@@ -189,8 +184,7 @@ duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeTablespaceEntry(
     }
   }
   if (!root) {
-    root = std::make_shared<TablespaceRoot>(
-      absl::StrCat(info.location, "/", kEngineDir));
+    root = std::make_shared<TablespaceRoot>(EngineDirOf(info.location));
   }
   auto entry = duckdb::make_uniq<TablespaceCatalogEntry>(*this, info, root);
   absl::MutexLock lock{&_tablespaces_mutex};
@@ -217,9 +211,8 @@ std::shared_ptr<DatabaseDirectory> ClusterCatalog::MakeDatabaseDirectory(
   duckdb::idx_t oid, duckdb::idx_t tablespace) {
   auto root =
     TablespaceRootOf(tablespace == 0 ? pg::kPgDefaultTablespace : tablespace);
-  auto path = root->Remote()
-                ? ClusterLayout(GetAttached()).DatabaseDir(oid)
-                : std::filesystem::path{root->Path()} / absl::StrCat(oid);
+  auto path = root->Remote() ? ClusterLayout(GetAttached()).DatabaseDir(oid)
+                             : std::filesystem::path{root->DatabaseDir(oid)};
   return std::make_shared<DatabaseDirectory>(oid, std::move(root),
                                              std::move(path));
 }
@@ -228,19 +221,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateTablespace(
   duckdb::CatalogTransaction transaction, duckdb::CreateTablespaceInfo& info) {
   DeclareModified(transaction, *this);
   const auto& name = info.GetQualifiedName().Name().GetIdentifierName();
-  if (name.starts_with("pg_")) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_RESERVED_NAME),
-      ERR_MSG("unacceptable tablespace name \"", name, "\""),
-      ERR_DETAIL("The prefix \"pg_\" is reserved for system tablespaces."));
-  }
+  RequireUnreservedTablespaceName(name);
   auto& tablespaces = GetCatalogSet(duckdb::CatalogType::TABLESPACE_ENTRY);
   if (tablespaces.GetEntry(transaction, info.GetQualifiedName().Name())) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("tablespace \"", name, "\" already exists"));
   }
   info.location = NormalizeLocation(info.location);
-  const auto root = absl::StrCat(info.location, "/", kEngineDir);
+  const auto root = EngineDirOf(info.location);
   absl::MutexLock creating{&_tablespace_creation_mutex};
   duckdb::idx_t overlapping = 0;
   {

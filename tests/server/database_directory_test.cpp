@@ -251,7 +251,7 @@ TEST_F(DatabaseDirectoryTest, UnownedStoragesGoFromADirectory) {
   std::ofstream{_root / "5" / "8" / "segment"} << "rows";
   std::ofstream{_root / "5" / "notes"} << "kept";
 
-  RemoveUnowned(Path("5"), {7});
+  RemoveUnowned(ListStorages(Path("5")), {7});
   EXPECT_TRUE(std::filesystem::is_directory(_root / "5" / "7"));
   EXPECT_FALSE(std::filesystem::exists(_root / "5" / "8"));
   EXPECT_TRUE(std::filesystem::exists(_root / "5" / "notes"));
@@ -274,7 +274,7 @@ TEST_F(DatabaseDirectoryTest, UnownedStoragesGoFromAnObjectStore) {
 
   const auto storages = ListStorages(root);
   EXPECT_EQ(5, storages.size());
-  RemoveUnowned(root, {7});
+  RemoveUnowned(storages, {7});
   EXPECT_TRUE(ObjectStore().Find(absl::StrCat(root, "/7/segment")));
   EXPECT_TRUE(ObjectStore().Find(absl::StrCat(root, "/7.storage")));
   EXPECT_FALSE(ObjectStore().Find(absl::StrCat(root, "/8/segment")));

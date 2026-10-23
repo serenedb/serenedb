@@ -25,11 +25,13 @@
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/storage/storage_extension.hpp>
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,6 +46,10 @@ inline constexpr std::string_view kTablespaceMarker = "tablespace";
 
 void SyncDirectory(const std::filesystem::path& directory);
 
+duckdb::FileSystem& StorageFileSystem();
+bool IsRemote(std::string_view path);
+std::string EngineDirOf(std::string_view location);
+
 struct StorageEntry {
   duckdb::idx_t oid = 0;
   std::string path;
@@ -52,7 +58,7 @@ struct StorageEntry {
 
 std::vector<StorageEntry> ListStorages(const std::string& root);
 
-void RemoveUnowned(const std::string& root,
+void RemoveUnowned(std::span<const StorageEntry> entries,
                    const absl::flat_hash_set<duckdb::idx_t>& owned);
 
 class TablespaceRoot final
@@ -63,6 +69,7 @@ class TablespaceRoot final
 
   const std::string& Path() const noexcept { return _path; }
   bool Remote() const noexcept { return _remote; }
+  std::string DatabaseDir(duckdb::idx_t oid) const;
 
   void Claim();
   [[nodiscard]] std::shared_ptr<void> Pin();
@@ -95,7 +102,6 @@ class StorageArea final {
   StorageArea(std::shared_ptr<DatabaseDirectory> database,
               std::shared_ptr<TablespaceRoot> root, std::string path);
 
-  const std::string& Path() const noexcept { return _path; }
   std::string StoragePath(duckdb::idx_t oid) const;
 
   std::string CreateStorage(duckdb::idx_t oid) const;

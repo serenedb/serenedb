@@ -71,11 +71,6 @@ ABSL_FLAG(std::string, missing_database, "refuse",
 namespace sdb::catalog {
 namespace {
 
-duckdb::FileSystem& StorageFileSystem() {
-  return duckdb::FileSystem::GetFileSystem(
-    irs::DuckDBEngine::Instance().instance());
-}
-
 struct MissingDatabases {
   bool fresh_cluster = false;
   std::string policy;
@@ -89,16 +84,6 @@ MissingDatabases gMissingDatabases;
 std::vector<StorageEntry> ListStoragesOrDie(const std::string& directory) {
   try {
     return ListStorages(directory);
-  } catch (const std::exception& e) {
-    SDB_FATAL(STARTUP, "cannot list '", directory,
-              "': ", duckdb::ErrorData{e}.RawMessage());
-  }
-}
-
-void RemoveUnownedOrDie(const std::string& directory,
-                        const absl::flat_hash_set<duckdb::idx_t>& owned) {
-  try {
-    RemoveUnowned(directory, owned);
   } catch (const std::exception& e) {
     SDB_FATAL(STARTUP, "cannot list '", directory,
               "': ", duckdb::ErrorData{e}.RawMessage());
@@ -157,7 +142,7 @@ void RemoveUnownedDatabases(ClusterCatalog& cluster) {
     .Scan(cluster.LoginTransaction(),
           [&](duckdb::CatalogEntry& entry) { databases.insert(entry.oid); });
   for (const auto& root : TablespaceRoots(cluster)) {
-    RemoveUnownedOrDie(root->Path(), databases);
+    RemoveUnowned(ListStoragesOrDie(root->Path()), databases);
   }
 }
 
@@ -175,7 +160,7 @@ void RemoveUnownedStorages(ClusterCatalog& cluster,
     }
     const auto owned = StorageOids(catalog.Cast<SereneDBCatalog>());
     for (const auto& root : roots) {
-      RemoveUnownedOrDie(absl::StrCat(root->Path(), "/", db->oid), owned);
+      RemoveUnowned(ListStoragesOrDie(root->DatabaseDir(db->oid)), owned);
     }
   }
 }

@@ -44,6 +44,7 @@
 #include <utility>
 #include <vector>
 
+#include "memory_file_bytes.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;
@@ -116,7 +117,8 @@ uint64_t EncodeCluster(QuantizerWriter& writer, IndexOutput& out,
 
 bstring ReadPayload(MemoryFile& file, uint64_t start, uint64_t end) {
   bstring payload(end - start, 0);
-  MemoryIndexInput in{file};
+  const auto file_bytes = tests::Bytes(file);
+  BytesViewInput in{file_bytes};
   in.ReadData(start, payload.data(), payload.size());
   return payload;
 }
@@ -160,7 +162,8 @@ class ClusterScorer {
                 const float* centroid, uint32_t lane0 = 0)
     : _qr{MakeQuantizerReader(codebook)},
       _setting{_qr->BlockSetting()},
-      _in{std::make_unique<MemoryIndexInput>(file)},
+      _bytes{tests::Bytes(file)},
+      _in{std::make_unique<BytesViewInput>(_bytes)},
       _base{pay_start},
       _lane0{lane0},
       _total{total},
@@ -217,6 +220,7 @@ class ClusterScorer {
 
   std::unique_ptr<QuantizerReader> _qr;
   PayloadBlockSetting _setting;
+  bstring _bytes;
   IndexInput::ptr _in;
   std::vector<byte_type> _buf;
   uint64_t _base;
@@ -335,7 +339,8 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
 
   bstring stored(n * d * sizeof(float), 0);
   {
-    MemoryIndexInput in{file};
+    const auto file_bytes = tests::Bytes(file);
+    BytesViewInput in{file_bytes};
     in.ReadData(pay_start, stored.data(), stored.size());
   }
   EXPECT_EQ(std::memcmp(stored.data(), points.data(), stored.size()), 0);

@@ -24,10 +24,13 @@
 #include <duckdb/parser/parsed_data/create_tablespace_info.hpp>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "catalog/database_directory.h"
 
 namespace sdb::catalog {
+
+void RequireUnreservedTablespaceName(std::string_view name);
 
 class TablespaceCatalogEntry final : public duckdb::InCatalogEntry {
  public:

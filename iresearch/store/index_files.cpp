@@ -55,18 +55,6 @@ StorageKind KindOf(std::string_view root) {
   return StorageKind::Local;
 }
 
-InputKind InputOf(StorageKind kind) noexcept {
-  switch (kind) {
-    case StorageKind::Local:
-    case StorageKind::Linked:
-      return InputKind::Mapped;
-    case StorageKind::Remote:
-    case StorageKind::Memory:
-      return InputKind::Block;
-  }
-  return InputKind::Mapped;
-}
-
 duckdb::FileSystem& FileSystemOf(duckdb::DatabaseInstance& db,
                                  std::string_view root) {
   if (KindOf(root) == StorageKind::Memory) {
@@ -103,14 +91,15 @@ std::string RootPath(std::string_view root) {
   return absl::StrCat(root, "/");
 }
 
-class BufferMapping final : public duckdb::MemoryMappedFile {
+class BytesMapping final : public duckdb::MemoryMappedFile {
  public:
-  BufferMapping(std::string path, std::unique_ptr<byte_type[]> bytes,
-                duckdb::idx_t size)
+  BytesMapping(std::string path, bytes_view bytes,
+               std::unique_ptr<byte_type[]> owner = nullptr)
     : duckdb::MemoryMappedFile{std::move(path),
-                               duckdb::FileFlags::FILE_FLAGS_READ, bytes.get(),
-                               size},
-      _bytes{std::move(bytes)} {}
+                               duckdb::FileFlags::FILE_FLAGS_READ,
+                               const_cast<byte_type*>(bytes.data()),
+                               bytes.size()},
+      _owner{std::move(owner)} {}
 
   void Sync() final {}
   bool Trim(duckdb::idx_t, duckdb::idx_t) final { return false; }
@@ -118,51 +107,22 @@ class BufferMapping final : public duckdb::MemoryMappedFile {
   void Close() final {}
 
  private:
-  std::unique_ptr<byte_type[]> _bytes;
+  std::unique_ptr<byte_type[]> _owner;
 };
 
 class ForEachTask final : public duckdb::BaseExecutorTask {
  public:
   ForEachTask(duckdb::TaskExecutor& executor,
-              absl::FunctionRef<void(size_t)> visit, size_t index,
-              absl::Mutex& mutex, std::exception_ptr& error)
-    : BaseExecutorTask{executor},
-      _visit{visit},
-      _index{index},
-      _mutex{mutex},
-      _error{error} {}
+              absl::FunctionRef<void(size_t)> visit, size_t index)
+    : BaseExecutorTask{executor}, _visit{visit}, _index{index} {}
 
-  void ExecuteTask() final {
-    try {
-      _visit(_index);
-    } catch (...) {
-      absl::MutexLock lock{&_mutex};
-      if (!_error) {
-        _error = std::current_exception();
-      }
-    }
-  }
+  void ExecuteTask() final { _visit(_index); }
 
   std::string TaskType() const final { return "IndexFilesForEach"; }
 
  private:
   absl::FunctionRef<void(size_t)> _visit;
   size_t _index;
-  absl::Mutex& _mutex;
-  std::exception_ptr& _error;
-};
-
-class SpanMapping final : public duckdb::MemoryMappedFile {
- public:
-  SpanMapping(std::string_view path, bytes_view bytes)
-    : duckdb::MemoryMappedFile{
-        std::string{path}, duckdb::FileFlags::FILE_FLAGS_READ,
-        const_cast<byte_type*>(bytes.data()), bytes.size()} {}
-
-  void Sync() final {}
-  bool Trim(duckdb::idx_t, duckdb::idx_t) final { return false; }
-  bool OnDiskFile() const final { return false; }
-  void Close() final {}
 };
 
 }  // namespace
@@ -209,11 +169,6 @@ void FileInfos::Rename(std::string_view src, std::string_view dst) {
   _infos.insert_or_assign(dst, std::move(info));
 }
 
-void FileTracker::Rename(std::string_view src, std::string_view dst) {
-  _files.emplace(dst);
-  _files.erase(src);
-}
-
 std::vector<std::string> FileTracker::Flush(uint64_t& files_size) {
   std::vector<std::string> files;
   files.reserve(_files.size());
@@ -227,12 +182,6 @@ std::vector<std::string> FileTracker::Flush(uint64_t& files_size) {
 void FileTracker::Clear() noexcept {
   _files_size = 0;
   _files.clear();
-}
-
-RefTracker::RefTracker(RefTracker&& other) noexcept
-  : _refs{other._refs}, _track_open{other._track_open} {
-  absl::MutexLock lock{&other._mutex};
-  _tracked = std::move(other._tracked);
 }
 
 void RefTracker::Keep(IndexFileRefs::ref_t ref) {
@@ -285,8 +234,7 @@ IndexFiles::IndexFiles(duckdb::DatabaseInstance& db, std::string_view root,
 IndexFiles::IndexFiles(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
                        std::string_view root,
                        const ResourceManagementOptions& rm)
-  : _state{std::make_shared<State>(db, fs, RootPath(root), KindOf(root),
-                                   InputOf(KindOf(root)), rm)} {
+  : _state{std::make_shared<State>(db, fs, RootPath(root), KindOf(root), rm)} {
   if (_state->kind == StorageKind::Remote) {
     _state->infos = std::make_shared<FileInfos>();
   }
@@ -296,16 +244,16 @@ IndexFiles::IndexFiles(duckdb::DatabaseInstance& db,
                        std::vector<LinkedFile> files,
                        const ResourceManagementOptions& rm)
   : _state{std::make_shared<State>(db, duckdb::FileSystem::GetFileSystem(db),
-                                   std::string{}, StorageKind::Linked,
-                                   InputKind::Mapped, rm, std::move(files))} {}
+                                   std::string{}, StorageKind::Linked, rm,
+                                   std::move(files))} {}
 
 IndexFiles IndexFiles::PrivateMemory(duckdb::DatabaseInstance& db,
                                      const ResourceManagementOptions& rm) {
   auto heap = std::make_unique<duckdb::MemoryFileSystem>();
   auto& fs = *heap;
   return IndexFiles{std::make_shared<State>(
-    db, fs, RootPath(MemoryIndexRoot()), StorageKind::Memory, InputKind::Mapped,
-    rm, std::vector<LinkedFile>{}, std::move(heap))};
+    db, fs, RootPath(MemoryIndexRoot()), StorageKind::Memory, rm,
+    std::vector<LinkedFile>{}, std::move(heap))};
 }
 
 const LinkedFile* IndexFiles::FindLinked(std::string_view name) const noexcept {
@@ -407,31 +355,16 @@ IndexInput::ptr IndexFiles::Open(std::string_view name, IOAdvice advice) const
                               "\" of the index: no such file"));
     }
     return std::make_unique<MappedInput>(std::make_shared<MappedFile>(
-      std::make_unique<SpanMapping>(name, file->bytes), nullptr));
+      std::make_unique<BytesMapping>(std::string{name}, file->bytes), nullptr));
   }
   const auto path = Path(name);
-  IndexFileRefs::ref_t ref;
-  if (_ref_tracker && _ref_tracker->TrackOpen()) {
-    ref = _ref_tracker->Add(name);
-  }
-  absl::Cleanup forget = [&] {
-    if (ref) {
-      _ref_tracker->Forget(name);
-    }
-  };
-  IndexInput::ptr input;
   if ((advice & IOAdvice::READONCE) == IOAdvice::READONCE) {
-    input = ReadWhole(path, name);
-  } else if (_state->input == InputKind::Mapped) {
-    input = OpenMapped(path, advice);
-  } else {
-    input = OpenBlocks(path, name, advice);
+    return ReadWhole(path, name);
   }
-  if (ref) {
-    _ref_tracker->Keep(std::move(ref));
+  if (InBlocks()) {
+    return OpenBlocks(path, name, advice);
   }
-  std::move(forget).Cancel();
-  return input;
+  return OpenMapped(path, advice);
 } catch (const duckdb::IOException& e) {
   ThrowFileError(e);
 }
@@ -459,8 +392,9 @@ IndexInput::ptr IndexFiles::ReadWhole(const std::string& path,
     handle->Read(duckdb::QueryContext{}, bytes.get(), size, 0);
   }
   handle.reset();
+  const bytes_view view{bytes.get(), size};
   return std::make_unique<MappedInput>(std::make_shared<MappedFile>(
-    std::make_unique<BufferMapping>(path, std::move(bytes), size), nullptr));
+    std::make_unique<BytesMapping>(path, view, std::move(bytes)), nullptr));
 }
 
 IndexInput::ptr IndexFiles::OpenMapped(const std::string& path,
@@ -567,9 +501,6 @@ bool IndexFiles::Remove(std::string_view name) const noexcept try {
   if (!RemoveFile(name)) {
     return false;
   }
-  if (_tracker) {
-    _tracker->Erase(name);
-  }
   if (_ref_tracker) {
     _ref_tracker->Remove(name);
   }
@@ -578,10 +509,11 @@ bool IndexFiles::Remove(std::string_view name) const noexcept try {
   return false;
 }
 
-bool IndexFiles::Rename(std::string_view src,
-                        std::string_view dst) const noexcept try {
+void IndexFiles::Rename(std::string_view src, std::string_view dst) const try {
   if (Kind() == StorageKind::Linked) {
-    return false;
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("could not rename file \"", src, "\": the index is read-only"));
   }
   const auto target = Path(dst);
   _state->fs.MoveFile(Path(src), target);
@@ -589,25 +521,18 @@ bool IndexFiles::Rename(std::string_view src,
     Cache().ForgetFile(target);
     _state->infos->Rename(src, dst);
   }
-  if (_tracker) {
-    _tracker->Rename(src, dst);
-  }
   if (_ref_tracker) {
     _ref_tracker->Rename(src, dst);
   }
-  return true;
-} catch (const std::exception& e) {
-  SDB_WARN(IRESEARCH, absl::StrCat("could not rename '", src, "' to '", dst,
-                                   "': ", duckdb::ErrorData{e}.RawMessage()));
-  return false;
-} catch (...) {
-  return false;
+} catch (const duckdb::IOException& e) {
+  ThrowFileError(e);
 }
 
 void IndexFiles::Sync(std::span<const std::string_view> names) const try {
   if (Kind() != StorageKind::Local) {
     return;
   }
+  duckdb::TaskScheduler::BlockingScope blocking;
   for (const auto name : names) {
     auto handle =
       _state->fs.OpenFile(Path(name), duckdb::FileFlags::FILE_FLAGS_READ);
@@ -621,13 +546,14 @@ void IndexFiles::SyncDirectory() const try {
   if (Kind() != StorageKind::Local) {
     return;
   }
+  duckdb::TaskScheduler::BlockingScope blocking;
   _state->fs.SyncDirectory(_state->root);
 } catch (const duckdb::IOException& e) {
   ThrowFileError(e);
 }
 
 void IndexFiles::Compact(std::string_view name) const try {
-  if (Kind() != StorageKind::Memory || _state->heap) {
+  if (Kind() != StorageKind::Memory || !InBlocks()) {
     return;
   }
   MemoryFiles().Compact(Path(name));
@@ -718,21 +644,15 @@ void IndexFiles::ForEach(size_t count,
     }
     return;
   }
-  absl::Mutex mutex;
-  std::exception_ptr error;
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(_state->db);
   duckdb::TaskExecutor executor{scheduler,
                                 scheduler.NumberOfAsyncThreads() == 0
                                   ? duckdb::TaskSchedulerType::REGULAR
                                   : duckdb::TaskSchedulerType::ASYNC};
   for (size_t i = 0; i != count; ++i) {
-    executor.ScheduleTask(
-      duckdb::make_uniq<ForEachTask>(executor, visit, i, mutex, error));
+    executor.ScheduleTask(duckdb::make_uniq<ForEachTask>(executor, visit, i));
   }
   executor.WorkOnTasks();
-  if (error) {
-    std::rethrow_exception(error);
-  }
 }
 
 bool IndexFiles::Visit(const Visitor& visitor) const {

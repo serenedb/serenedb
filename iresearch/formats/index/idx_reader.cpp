@@ -20,8 +20,6 @@
 
 #include "iresearch/formats/index/idx_reader.hpp"
 
-#include <absl/strings/str_cat.h>
-
 #include <cstring>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/types.hpp>
@@ -30,6 +28,7 @@
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/index_files.hpp"
@@ -53,8 +52,7 @@ struct IdxReader::Impl {
 
 IdxReader::IdxReader(const IndexFiles& dir, std::string_view segment_name,
                      HnswBases* hnsw_bases)
-  : IdxReader{dir, segment_name,
-              dir.Has(absl::StrCat(segment_name, ".", kIdxFormatExt)),
+  : IdxReader{dir, segment_name, dir.Has(FileName(segment_name, kIdxFormatExt)),
               hnsw_bases} {}
 
 IdxReader::IdxReader(const IndexFiles& dir, std::string_view segment_name,
@@ -63,7 +61,7 @@ IdxReader::IdxReader(const IndexFiles& dir, std::string_view segment_name,
   if (!present) {
     return;
   }
-  const auto filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
+  const auto filename = FileName(segment_name, kIdxFormatExt);
   _impl->in = dir.Open(filename, IOAdvice::SEQUENTIAL);
 
   format_utils::ReadFooter(

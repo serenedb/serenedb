@@ -43,7 +43,7 @@ Only a superuser can create a tablespace. `CREATE TABLESPACE` cannot run inside 
 
 ## Locations
 
-A tablespace keeps its files under `engine_v1` at its location. A local directory is created when it does not exist. A location that another tablespace uses, or that lies inside another tablespace's `engine_v1` or the data directory's `engine_v1`, is refused, and so is a location whose `engine_v1` exists already:
+A location is kept in normal form, with repeated and trailing slashes dropped and `.` and `..` resolved: `LOCATION 's3://bucket//prefix/'` is `s3://bucket/prefix`. A tablespace keeps its files under `engine_v1` at its location. A local directory is created when it does not exist. A location that another tablespace uses, or that lies inside another tablespace's `engine_v1` or the data directory's `engine_v1`, is refused, and so is a location whose `engine_v1` exists already:
 
 ```text
 ERROR:  directory "/mnt/nvme/serenedb/engine_v1" already in use as a tablespace
@@ -51,7 +51,7 @@ ERROR:  directory "/mnt/nvme/serenedb/engine_v1" already in use as a tablespace
 
 If the server stops while `CREATE TABLESPACE` runs, `engine_v1` can be left at the location without a tablespace that uses it; remove it before creating the tablespace again.
 
-The server reaches an object store location with the credentials of a persistent secret whose scope covers it:
+The server reaches an object store location with the credentials of a persistent secret whose scope covers its normal form:
 
 <SqlLogicTest id="sql/statements/create_tablespace/index/example_011" />
 

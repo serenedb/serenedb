@@ -23,7 +23,6 @@
 
 #pragma once
 
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/container_utils.hpp"
@@ -76,105 +75,6 @@ class MemoryFile : public container_utils::RawBlockVector<16, 8> {
 
  private:
   size_t _len = 0;
-};
-
-class MemoryIndexInput final : public IndexInput {
- public:
-  explicit MemoryIndexInput(const MemoryFile& file) noexcept : _file{&file} {}
-
-  const byte_type* ReadStable(uint64_t count) noexcept final;
-  const byte_type* ReadStable(uint64_t offset, uint64_t count) noexcept final;
-
-  const byte_type* ReadVolatile(uint64_t count) noexcept final {
-    return ReadStable(count);
-  }
-  const byte_type* ReadVolatile(uint64_t offset,
-                                uint64_t count) noexcept final {
-    return ReadStable(offset, count);
-  }
-
-  byte_type ReadByte() final {
-    if (_begin >= _end) {
-      SwitchBuffer(Position());
-    }
-    return *_begin++;
-  }
-  using DataInput::ReadData;
-  void ReadData(byte_type* b, uint64_t count) final;
-  void ReadData(duckdb::QueryContext, byte_type* b, uint64_t count) final {
-    MemoryIndexInput::ReadData(b, count);
-  }
-  void ReadData(uint64_t offset, byte_type* b, size_t count) final {
-    Seek(offset);
-    ReadData(b, count);
-  }
-
-  int16_t ReadI16() final {
-    return Remain() < sizeof(uint16_t) ? irs::read<uint16_t>(*this)
-                                       : irs::read<uint16_t>(_begin);
-  }
-  int32_t ReadI32() final {
-    return Remain() < sizeof(uint32_t) ? irs::read<uint32_t>(*this)
-                                       : irs::read<uint32_t>(_begin);
-  }
-  int64_t ReadI64() final {
-    return Remain() < sizeof(uint64_t) ? irs::read<uint64_t>(*this)
-                                       : irs::read<uint64_t>(_begin);
-  }
-  uint32_t ReadV32() final {
-    return Remain() < bytes_io<uint32_t>::kMaxVSize
-             ? irs::vread<uint32_t>(*this)
-             : irs::vread<uint32_t>(_begin);
-  }
-  uint64_t ReadV64() final {
-    return Remain() < bytes_io<uint64_t>::kMaxVSize
-             ? irs::vread<uint64_t>(*this)
-             : irs::vread<uint64_t>(_begin);
-  }
-
-  void SkipV32() final {
-    Remain() < bytes_io<uint32_t>::kMaxVSize ? irs::vskip<uint32_t>(*this)
-                                             : irs::vskip<uint32_t>(_begin);
-  }
-  void SkipV64() final {
-    Remain() < bytes_io<uint64_t>::kMaxVSize ? irs::vskip<uint64_t>(*this)
-                                             : irs::vskip<uint64_t>(_begin);
-  }
-
-  uint64_t Position() const noexcept final {
-    return _start + std::distance(_buf, _begin);
-  }
-  uint64_t Length() const noexcept final { return _file->Length(); }
-  bool IsEOF() const noexcept final { return Position() >= Length(); }
-
-  void Skip(uint64_t count) final { Seek(Position() + count); }
-  void Seek(uint64_t pos) final;
-
-  IndexInput::ptr Dup() const final {
-    return std::make_unique<MemoryIndexInput>(*this);
-  }
-  IndexInput::ptr Reopen() const final { return Dup(); }
-
-  uint32_t Checksum(uint64_t offset) const final;
-
-  // TODO(mbkkt) remove this
-  byte_type operator*() { return ReadByte(); }
-  MemoryIndexInput& operator++() noexcept { return *this; }
-  MemoryIndexInput& operator++(int) noexcept { return *this; }
-
- private:
-  void SwitchBuffer(size_t pos);
-
-  // returns number of reamining bytes in the buffer
-  IRS_FORCE_INLINE uint64_t Remain() const {
-    return std::distance(_begin, _end);
-  }
-
-  const MemoryFile* _file;        // underline file
-  const byte_type* _buf{};        // current buffer
-  const byte_type* _begin{_buf};  // current position
-  const byte_type* _end{_buf};    // end of the valid bytes
-  size_t _start{};                // buffer offset in file
 };
 
 class MemoryIndexOutput : public IndexOutput {

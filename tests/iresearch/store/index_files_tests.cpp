@@ -95,8 +95,8 @@ TEST_P(IndexFilesTestCase, rename) {
     ASSERT_TRUE(res);
   }
 
-  ASSERT_TRUE(_dir->Rename("foo", "foo1"));
-  ASSERT_TRUE(_dir->Rename("bar", "bar1"));
+  _dir->Rename("foo", "foo1");
+  _dir->Rename("bar", "bar1");
 
   {
     bool res = true;
@@ -133,8 +133,8 @@ TEST_P(IndexFilesTestCase, rename) {
     ASSERT_EQ(2, stream1->ReadI32());
   }
 
-  ASSERT_FALSE(_dir->Rename("invalid", "foo1"));
-  ASSERT_TRUE(_dir->Rename("bar1", "foo1"));
+  ASSERT_THROW(_dir->Rename("invalid", "foo1"), irs::SqlException);
+  _dir->Rename("bar1", "foo1");
 
   {
     bool res = false;
@@ -150,7 +150,7 @@ TEST_P(IndexFilesTestCase, rename) {
 
   {
     bool res = false;
-    ASSERT_TRUE(_dir->Rename("foo1", "foo1"));
+    _dir->Rename("foo1", "foo1");
     ASSERT_TRUE(_dir->Exists(res, "foo1"));
     ASSERT_TRUE(res);
   }
@@ -4534,9 +4534,9 @@ TEST_P(IndexFilesTestCase, readonce_open) {
     out->WriteData(data.data(), data.size());
   }
 
-  for (const auto advice :
-       {irs::IOAdvice::READONCE, irs::IOAdvice::ReadonceSequential,
-        irs::IOAdvice::ReadonceRandom}) {
+  for (const auto advice : {irs::IOAdvice::READONCE,
+                            irs::IOAdvice::READONCE | irs::IOAdvice::SEQUENTIAL,
+                            irs::IOAdvice::READONCE | irs::IOAdvice::RANDOM}) {
     auto in = _dir->Open("file", advice);
     ASSERT_FALSE(!in);
     EXPECT_EQ(irs::DataInput::Type::BytesViewInput, in->GetType());
@@ -4961,27 +4961,12 @@ TEST_P(IndexFilesTestCase, reference) {
 TEST_P(IndexFilesTestCase, ref_tracker) {
   auto& dir = this->dir();
 
-  // test move constructor
-  {
-    irs::RefTracker tracker1{dir.Refs(), true};
-    {
-      auto file = dir.Tracking(tracker1).Create("abc");
-      ASSERT_FALSE(!file);
-    }
-    irs::RefTracker tracker2{std::move(tracker1)};
-
-    ASSERT_TRUE(tracker2.TrackOpen());
-    ASSERT_EQ(1, tracker2.GetRefs().size());
-  }
-
   // test dereference and attributes
   {
     irs::RefTracker tracker{dir.Refs()};
     auto track_dir = dir.Tracking(tracker);
 
     ASSERT_EQ(&dir.Refs(), &track_dir.Refs());
-    ASSERT_EQ(&tracker, track_dir.GetRefTracker());
-    ASSERT_EQ(nullptr, track_dir.Untracked().GetRefTracker());
   }
 
   // test open
@@ -5000,7 +4985,7 @@ TEST_P(IndexFilesTestCase, ref_tracker) {
     ASSERT_FALSE(!file2);
     track_dir.Sync({&file, 1});
     ASSERT_EQ(1, file2->Length());
-    ASSERT_TRUE(track_dir.Rename(file, "def"));
+    track_dir.Rename(file, "def");
     file2.reset();  // release before remove
     ASSERT_FALSE(track_dir.Remove(file));
     bool exists;
@@ -5032,18 +5017,6 @@ TEST_P(IndexFilesTestCase, ref_tracker) {
     ASSERT_FALSE(!file2);
 
     ASSERT_EQ(0, tracker.GetRefs().size());
-  }
-
-  // test visit refs visitor (track-open)
-  {
-    irs::RefTracker tracker{dir.Refs(), true};
-    auto track_dir = dir.Tracking(tracker);
-    auto file1 = dir.Create("abc");
-    ASSERT_FALSE(!file1);
-    auto file2 = track_dir.Open("abc", irs::IOAdvice::NORMAL);
-    ASSERT_FALSE(!file2);
-
-    ASSERT_EQ(1, tracker.GetRefs().size());
   }
 
   {
@@ -5085,14 +5058,11 @@ TEST_P(IndexFilesTestCase, file_tracker) {
     ASSERT_EQ(1, track_dir.Open(file, irs::IOAdvice::NORMAL)->Length());
     bool exists{false};
     ASSERT_TRUE(dir.Exists(exists, file) && exists);
-    ASSERT_TRUE(track_dir.Rename(file, "def"));
-    ASSERT_TRUE(dir.Exists(exists, file) && !exists);
-    ASSERT_TRUE(dir.Exists(exists, "def") && exists);
 
     uint64_t byte_size{0};
     auto files = tracker.Flush(byte_size);
     ASSERT_EQ(1, files.size());
-    ASSERT_EQ("def", files.front());
+    ASSERT_EQ(file, files.front());
     ASSERT_EQ(1, byte_size);
 
     // Tracked files are cleared
@@ -5100,30 +5070,6 @@ TEST_P(IndexFilesTestCase, file_tracker) {
     ASSERT_EQ(0, files.size());
     ASSERT_EQ(0, byte_size);
   }
-}
-
-TEST_P(IndexFilesTestCase, file_tracker_remove) {
-  auto& dir = this->dir();
-  irs::FileTracker tracker;
-  auto track_dir = dir.Tracking(tracker);
-  const std::string_view file{"abc"};
-  {
-    auto file1 = track_dir.Create(file);
-    ASSERT_FALSE(!file1);
-    file1->WriteByte(42);
-    file1->Flush();
-  }
-  bool exists{false};
-  ASSERT_TRUE(dir.Exists(exists, file) && exists);
-
-  ASSERT_TRUE(track_dir.Remove(file));
-  ASSERT_TRUE(dir.Exists(exists, file) && !exists);
-
-  uint64_t byte_size{0};
-  auto files = tracker.Flush(byte_size);
-  ASSERT_TRUE(files.empty());
-
-  ASSERT_FALSE(track_dir.Remove("def"));
 }
 
 static constexpr auto kTestDirs =
@@ -5306,7 +5252,7 @@ TEST(IndexFilesTest, private_memory) {
   EXPECT_EQ(data, irs::bytes_view(other_stable, data.size()));
   EXPECT_EQ(data, irs::bytes_view(stable, data.size()));
 
-  ASSERT_TRUE(files.Rename("file", "renamed"));
+  files.Rename("file", "renamed");
   ASSERT_TRUE(files.Exists(exists, "file") && !exists);
   ASSERT_TRUE(files.Exists(exists, "renamed") && exists);
   EXPECT_EQ(data.size(),
@@ -5374,48 +5320,11 @@ TEST(IndexFilesTest, private_memory_reader_outlives_files) {
 
 class IndexFilesHookTest : public TestBase {};
 
-TEST_F(IndexFilesHookTest, ref_tracker_open_survives_cleanup) {
-  struct CleanupOnOpen final : ::tests::HookFileSystem {
-    using ::tests::HookFileSystem::HookFileSystem;
-
-    void OnOpen(std::string_view) final {
-      if (files) {
-        files->RemoveAllUnreferenced();
-      }
-    }
-
-    const irs::IndexFiles* files = nullptr;
-  } fs{::tests::DatabaseFileSystem()};
-
-  auto local = ::tests::LocalDirectory(this);
-  ASSERT_NE(nullptr, local);
-  auto hooked = ::tests::OverFileSystem(*local, fs);
-  fs.files = &hooked;
-
-  irs::RefTracker tracker{hooked.Refs(), true};
-  auto track_dir = hooked.Tracking(tracker);
-  ASSERT_NE(nullptr, local->Create("unreferenced"));
-  auto file1 = local->Create("abc");
-  ASSERT_NE(nullptr, file1);
-  auto file2 = track_dir.Open("abc", irs::IOAdvice::NORMAL);
-  ASSERT_NE(nullptr, file2);
-
-  ASSERT_EQ(1, tracker.GetRefs().size());
-  bool exists;
-  ASSERT_TRUE(local->Exists(exists, "unreferenced") && !exists);
-
-  auto file3 = local->Open("abc", irs::IOAdvice::NORMAL);
-  ASSERT_NE(nullptr, file3);
-}
-
 TEST_F(IndexFilesHookTest, ref_tracker_failures) {
   struct FailingFileSystem final : ::tests::HookFileSystem {
     using ::tests::HookFileSystem::HookFileSystem;
 
     void OnCreate(std::string_view) final {
-      throw duckdb::IOException("injected");
-    }
-    void OnOpen(std::string_view) final {
       throw duckdb::IOException("injected");
     }
   } fs{::tests::DatabaseFileSystem()};
@@ -5429,17 +5338,6 @@ TEST_F(IndexFilesHookTest, ref_tracker_failures) {
     irs::RefTracker tracker{hooked.Refs()};
 
     ASSERT_SQL_ERROR(hooked.Tracking(tracker).Create("abc"), ERRCODE_IO_ERROR);
-
-    ASSERT_TRUE(tracker.GetRefs().empty());
-  }
-
-  // test open failure
-  {
-    irs::RefTracker tracker{hooked.Refs(), true};
-
-    ASSERT_SQL_ERROR(
-      hooked.Tracking(tracker).Open("abc", irs::IOAdvice::NORMAL),
-      ERRCODE_IO_ERROR);
 
     ASSERT_TRUE(tracker.GetRefs().empty());
   }

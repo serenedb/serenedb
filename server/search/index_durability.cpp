@@ -171,11 +171,7 @@ void IndexDurability::ResolvePendingSave(const irs::IndexFiles& dir) const {
         store->GetStorageManager().GetBlockManager().GetCheckpointIteration()) {
       const auto committed = irs::index_meta::FileName(
         irs::index_meta::ParsePendingGeneration(pending));
-      if (!dir.Rename(pending, committed)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_IO_ERROR),
-          ERR_MSG("failed to rename '", pending, "' to '", committed, "'"));
-      }
+      dir.Rename(pending, committed);
       return;
     }
   }

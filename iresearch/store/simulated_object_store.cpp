@@ -42,7 +42,7 @@ namespace irs {
 namespace {
 
 duckdb::unordered_map<std::string, std::string> MissingInfo() {
-  return {{"errno", std::to_string(ENOENT)}};
+  return {{"errno", absl::StrCat(ENOENT)}};
 }
 
 std::string DirectoryPrefix(std::string_view directory) {
@@ -393,7 +393,7 @@ bool SimulatedObjectStore::ListFilesExtended(
       duckdb::make_shared_ptr<duckdb::ExtendedOpenFileInfo>();
     auto& options = file.extended_info->options;
     options.emplace("file_size", duckdb::Value::UBIGINT(object->bytes.size()));
-    options.emplace("etag", duckdb::Value{std::to_string(object->version)});
+    options.emplace("etag", duckdb::Value{absl::StrCat(object->version)});
     options.emplace("last_modified", duckdb::Value::TIMESTAMP(object->written));
     callback(file);
   }

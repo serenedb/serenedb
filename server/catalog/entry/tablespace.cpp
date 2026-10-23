@@ -20,9 +20,20 @@
 
 #include "catalog/entry/tablespace.h"
 
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
 namespace sdb::catalog {
+
+void RequireUnreservedTablespaceName(std::string_view name) {
+  if (name.starts_with("pg_")) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_RESERVED_NAME),
+      ERR_MSG("unacceptable tablespace name \"", name, "\""),
+      ERR_DETAIL("The prefix \"pg_\" is reserved for system tablespaces."));
+  }
+}
 
 TablespaceCatalogEntry::TablespaceCatalogEntry(
   duckdb::Catalog& catalog, duckdb::CreateTablespaceInfo& info,

@@ -225,7 +225,7 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
   EXPECT_EQ(400000, whole->Length());
   EXPECT_EQ(1, store.Requests().get);
 
-  ASSERT_TRUE(files.Rename("segment", "renamed"));
+  files.Rename("segment", "renamed");
   std::vector<std::string> names;
   ASSERT_TRUE(files.Visit([&](std::string_view name) {
     names.emplace_back(name);
@@ -235,6 +235,21 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
   ASSERT_TRUE(files.Remove("renamed"));
   ASSERT_SQL_ERROR(files.Open("renamed", irs::IOAdvice::NORMAL),
                    ERRCODE_UNDEFINED_FILE);
+}
+
+TEST(SimulatedObjectStoreTest, for_each_rethrows_what_a_visit_threw) {
+  tests::ObjectStore();
+  irs::IndexFiles files{irs::DuckDBEngine::Instance().instance(), Root()};
+  ASSERT_EQ(irs::StorageKind::Remote, files.Kind());
+  ASSERT_SQL_ERROR(files.ForEach(4,
+                                 [](size_t i) {
+                                   if (i == 2) {
+                                     THROW_SQL_ERROR(
+                                       ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                                       ERR_MSG("segment ", i, " is corrupt"));
+                                   }
+                                 }),
+                   ERRCODE_DATA_CORRUPTED);
 }
 
 TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
@@ -301,7 +316,7 @@ TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
   EXPECT_EQ(0, store.Requests().head);
   EXPECT_EQ(1, store.Requests().get);
 
-  ASSERT_TRUE(files.Rename("data", "renamed"));
+  files.Rename("data", "renamed");
   store.ResetRequests();
   ASSERT_TRUE(files.Exists(exists, "renamed") && exists);
   EXPECT_EQ(0, store.Requests().head);

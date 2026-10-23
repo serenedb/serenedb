@@ -32,6 +32,7 @@
 #include <iresearch/utils/fst/vector_fst.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
+#include "memory_file_bytes.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -137,7 +138,8 @@ void AssertFstReadWrite(const std::string& resource) {
   out.stream.Flush();
   ASSERT_GT(writer_memory.Counter(), 0);
   SimpleMemoryAccounter immutable_fst_memory;
-  irs::MemoryIndexInput in(out.file);
+  const auto bytes = tests::Bytes(out.file);
+  irs::BytesViewInput in{bytes};
   std::unique_ptr<irs::immutable_byte_fst> read_fst(
     irs::immutable_byte_fst::Read(in, immutable_fst_memory));
   ASSERT_EQ(out.file.Length(), in.Position());

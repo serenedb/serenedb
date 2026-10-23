@@ -25,6 +25,7 @@
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "memory_file_bytes.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;
@@ -93,7 +94,8 @@ TEST(memory_index_output_tests, reset) {
 
     out.Flush();
     ASSERT_GT(memory.Counter(), 0);
-    MemoryIndexInput in{file};
+    const auto file_bytes = tests::Bytes(file);
+    BytesViewInput in{file_bytes};
     std::for_each(data1.begin(), data1.end(), [&in](const std::string& s) {
       const std::string cs = ReadString<std::string>(in);
       EXPECT_EQ(s, cs);

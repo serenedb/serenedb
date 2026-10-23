@@ -151,12 +151,10 @@ StorageDirectory OpenStorageDirectory(
   }
   auto& db = irs::DuckDBEngine::Instance().instance();
   if (!path) {
-    return {.directory = std::make_unique<irs::IndexFiles>(
-              db, irs::MemoryIndexRoot(), resources),
+    return {.directory = irs::IndexFiles{db, irs::MemoryIndexRoot(), resources},
             .absent = !in_memory};
   }
-  return {.directory = std::make_unique<irs::IndexFiles>(db, *path, resources),
-          .on_disk = true};
+  return {.directory = irs::IndexFiles{db, *path, resources}, .on_disk = true};
 }
 
 InvertedIndexStorage::~InvertedIndexStorage() {

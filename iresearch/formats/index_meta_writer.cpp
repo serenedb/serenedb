@@ -103,11 +103,7 @@ bool IndexMetaWriter::commit() {
   const auto src = PendingFileName(_pending_gen);
   const auto dst = index_meta::FileName(_pending_gen);
 
-  if (!_dir->Rename(src, dst)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("Failed to rename file, src path: '", src,
-                            "' dst path: '", dst, "'"));
-  }
+  _dir->Rename(src, dst);
 
   // only noexcept operations below
   // clear pending state

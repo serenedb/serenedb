@@ -41,6 +41,8 @@
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/store/index_files.hpp"
 #include "iresearch/store/memory_file.hpp"
+#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/duckdb_engine.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -252,7 +254,8 @@ struct MainColumn {
 
 struct PackedColumn {
   irs::MemoryFile file{irs::IResourceManager::gNoop};
-  std::unique_ptr<irs::MemoryIndexInput> in;
+  irs::bstring data;
+  std::unique_ptr<irs::BytesViewInput> in;
   std::unique_ptr<irs::NormColumnReader> column;
   irs::NormReader::ptr reader;
   size_t bytes = 0;
@@ -269,7 +272,9 @@ struct PackedColumn {
       bytes += irs::NormSlotsSize(region) +
                (region.exceptions == 0 ? 0 : irs::NormTableSize(region));
     }
-    in = std::make_unique<irs::MemoryIndexInput>(file);
+    irs::BytesOutput sink{data};
+    file >> sink;
+    in = std::make_unique<irs::BytesViewInput>(data);
     column = std::make_unique<irs::NormColumnReader>(1, writer.Meta(), *in);
     reader = irs::MakePersistedNormReader(*column);
   }

@@ -81,8 +81,7 @@ FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
   }
   if (cache && cache->IsEnabled()) {
     _cache = cache;
-    _cached = cache->CreateWrittenFile(_handle->GetPath(),
-                                       duckdb::BlockCacheFileInfo{});
+    _cached = cache->CreateWrittenFile(_handle->GetPath());
   }
 }
 

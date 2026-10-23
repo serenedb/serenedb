@@ -1177,30 +1177,30 @@ class Enforcer {
     }
   }
 
-  duckdb::CatalogEntry& AlterableTablespace(std::string_view name) {
+  duckdb::CatalogEntry& RequireTablespace(std::string_view name) {
     auto tablespace = ClusterEntry(CatalogType::TABLESPACE_ENTRY, name);
     if (!tablespace) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("tablespace \"", name, "\" does not exist"));
     }
-    if (tablespace->internal) {
+    return *tablespace;
+  }
+
+  duckdb::CatalogEntry& AlterableTablespace(std::string_view name) {
+    auto& tablespace = RequireTablespace(name);
+    if (tablespace.internal) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("tablespace \"", name, "\" is a system tablespace"),
         ERR_DETAIL("A system tablespace cannot be renamed, given to another "
                    "owner or granted on."));
     }
-    return *tablespace;
+    return tablespace;
   }
 
   void CheckRenameTablespace(const duckdb::AlterInfo& info) {
-    const auto& new_name = info.GetNewName()->GetIdentifierName();
-    if (new_name.starts_with("pg_")) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_RESERVED_NAME),
-        ERR_MSG("unacceptable tablespace name \"", new_name, "\""),
-        ERR_DETAIL("The prefix \"pg_\" is reserved for system tablespaces."));
-    }
+    catalog::RequireUnreservedTablespaceName(
+      info.GetNewName()->GetIdentifierName());
     auto& tablespace =
       AlterableTablespace(info.GetQualifiedName().Name().GetIdentifierName());
     if (_enforce) {
@@ -1297,23 +1297,19 @@ class Enforcer {
     }
     const auto name = option->second.ToString();
     info.options.erase(option);
-    const auto tablespace = ClusterEntry(CatalogType::TABLESPACE_ENTRY, name);
-    if (!tablespace) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("tablespace \"", name, "\" does not exist"));
-    }
-    if (tablespace->oid == pg::kPgGlobalTablespace) {
+    auto& tablespace = RequireTablespace(name);
+    if (tablespace.oid == pg::kPgGlobalTablespace) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("pg_global cannot be used as default tablespace"));
     }
-    if (tablespace->oid == pg::kPgDefaultTablespace) {
+    if (tablespace.oid == pg::kPgDefaultTablespace) {
       return;
     }
-    RequireTablespaceCreate(*tablespace);
-    Pin(*tablespace);
+    RequireTablespaceCreate(tablespace);
+    Pin(tablespace);
     info.options.emplace(catalog::kTablespaceOption,
-                         duckdb::Value::UBIGINT(tablespace->oid));
+                         duckdb::Value::UBIGINT(tablespace.oid));
   }
 
   // CREATE OR REPLACE keeps an existing object under its own name, which is the

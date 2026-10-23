@@ -40,6 +40,7 @@
 #include <iresearch/store/memory_file.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "memory_file_bytes.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -516,11 +517,7 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   ASSERT_NE(region.exceptions, 0u);
   ASSERT_EQ(region.overflow, 0u);
 
-  std::vector<irs::byte_type> bytes(written.Length());
-  {
-    irs::MemoryIndexInput in{written};
-    in.ReadData(0, bytes.data(), bytes.size());
-  }
+  auto bytes = tests::Bytes(written);
   for (uint64_t b = 0; b != irs::NormBuckets(region); ++b) {
     absl::little_endian::Store32(bytes.data() + region.table_offset + b * 4,
                                  region.exceptions);
@@ -531,7 +528,8 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
     out.WriteData(bytes.data(), bytes.size());
     out.Flush();
   }
-  irs::MemoryIndexInput in{corrupt};
+  const auto corrupt_bytes = tests::Bytes(corrupt);
+  irs::BytesViewInput in{corrupt_bytes};
   const irs::NormColumnReader column{1, meta, in};
   const auto reader = irs::MakePersistedNormReader(column);
   EXPECT_EQ(reader->Get(irs::doc_limits::min() + 1), 2u);

@@ -51,7 +51,6 @@ struct MatchResult {
 };
 
 struct MatchScratch {
-  std::vector<int64_t> offsets;
   std::vector<int64_t> shift;
   std::vector<size_t> cursor;
   std::vector<PosAttr::value_t> snap;
@@ -418,54 +417,6 @@ struct MatchRecord {
   uint32_t start_offset;
   uint32_t end_offset;
 };
-
-inline std::span<const int64_t> BuildOffsets(
-  const std::vector<PosAttr::value_t>& expected_steps, MatchScratch& scratch) {
-  auto& offsets = scratch.offsets;
-  offsets.resize(expected_steps.size() + 1);
-  offsets[0] = 0;
-  for (size_t i = 0; i != expected_steps.size(); ++i) {
-    offsets[i + 1] = offsets[i] + expected_steps[i];
-  }
-  return offsets;
-}
-
-template<size_t N = 0>
-MatchResult Run(const std::vector<std::vector<PosAttr::value_t>>& slot_pos,
-                PosAttr::value_t slop,
-                const std::vector<PosAttr::value_t>& expected_steps,
-                MatchScratch& scratch, bool early_exit,
-                const std::vector<uint32_t>& groups = {},
-                std::vector<MatchSpan>* out = nullptr) {
-  if (out) {
-    out->clear();
-  }
-  const size_t n = slot_pos.size();
-  if (n < 2) {
-    return {};
-  }
-  SDB_ASSERT(expected_steps.size() == n - 1);
-  SDB_ASSERT(groups.empty() || groups.size() == n);
-
-  const auto offsets = BuildOffsets(expected_steps, scratch);
-  SpanCursors cur{slot_pos, scratch};
-  std::vector<GroupPair> pairs;
-  BuildGroupPairs(
-    n, [&](size_t i) { return groups.empty() ? 0 : groups[i]; }, pairs);
-  auto res = Sweep<N>(cur, offsets, slop, pairs, scratch, early_exit, [&] {
-    if (out) {
-      out->push_back(SpanOf(cur.Snapshot()));
-    }
-  });
-
-  if (early_exit) {
-    res.freq = res.any ? 1 : 0;
-  }
-  if (out) {
-    absl::c_sort(*out);
-  }
-  return res;
-}
 
 }  // namespace detail::slop
 

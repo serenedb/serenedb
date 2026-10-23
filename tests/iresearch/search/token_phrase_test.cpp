@@ -59,6 +59,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
 #include "phrase_families.hpp"
+#include "phrase_slop_run.hpp"
 #include "tests_shared.hpp"
 
 namespace {

@@ -2,6 +2,7 @@ import argparse
 import fnmatch
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -49,6 +50,9 @@ def parse_args(argv):
     ap.add_argument("--shard", default="1/1", help="run shard I of N (1-based), like 2/5")
     ap.add_argument("--out", type=Path, default=None, help="output directory (default: out/test)")
     ap.add_argument("--timing", default="", help="timing snapshot (JSON) for ordering and timeouts")
+    ap.add_argument("--budget", type=float, default=0,
+                    help="seconds the run may take: no unit starts later, the units still running "
+                         "then are stopped with their stacks, and the ones not started fail")
     ap.add_argument("--relabel", type=float, default=600.0,
                     help="seconds to spend rerunning failed units to label them flaky")
     ap.add_argument("--changed", default="",
@@ -183,6 +187,7 @@ def shard(units, index, count):
 
 def main(argv):
     args = parse_args(argv)
+    budget_end = time.monotonic() + args.budget if args.budget else math.inf
     build_dir = args.build_dir if args.build_dir.is_absolute() else ROOT / args.build_dir
     build = Build.load(ROOT, build_dir.resolve())
     config = CONFIGS[args.config or build.config_name()]
@@ -207,7 +212,7 @@ def main(argv):
     ctx = Context(root=ROOT, build=build, config=config, out_dir=out,
                   timing=Timing.load(args.timing), jobs=jobs,
                   mem_gb=args.mem or memory_gb() * 0.75, verbose=args.verbose or args.keep,
-                  base_env=base_env, attribute=args.attribute)
+                  base_env=base_env, attribute=args.attribute, budget_end=budget_end)
     suites = args.suite or list(SUITES)
     skips = load_skips(ROOT, config.name)
     units = build_units(ctx, args, suites, skips)

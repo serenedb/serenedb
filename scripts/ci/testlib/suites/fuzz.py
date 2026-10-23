@@ -26,7 +26,6 @@ def sqlsmith_units(ctx, args, skips):
     if skipped(skips, uid):
         return []
     seconds = args.fuzz_seconds
-    _, _ = plan(ctx, uid, seconds)
     timeout = seconds + max(ctx.timeout_floor, 300 * ctx.config.slowdown)
     return [Unit(uid, "fuzz", _sqlsmith_run(ctx, seconds), cpus=4, mem_gb=6.0, cost=seconds,
                  timeout=timeout, label=False)]

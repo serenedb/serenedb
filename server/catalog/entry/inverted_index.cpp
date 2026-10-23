@@ -61,6 +61,7 @@
 #include "connector/duckdb_reindex_function.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
+#include "connector/term_dict.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -286,6 +287,17 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
   return it->second.features.HasFeatures(irs::IndexFeatures::Norm)
            ? it->second.synthetic_column
            : irs::field_limits::invalid();
+}
+
+bool InvertedIndexConfig::KeepsField(irs::field_id id) const noexcept {
+  if (id == connector::term_dict::kPKFieldId || retained_fields.contains(id)) {
+    return true;
+  }
+  if (const auto* entry = LookupField(id).entry) {
+    // IVF field should be rebuilt
+    return !entry->column_options.ann_info;
+  }
+  return FindKey(id) != nullptr;
 }
 
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
@@ -694,7 +706,7 @@ void InvertedIndexEntry::OnDrop() {
     _storage->MarkDropped();
   }
   if (_search_table) {
-    _search_table->RemoveIndexConfig(oid);
+    _retired = _search_table->RemoveIndexConfig(oid);
   }
 }
 

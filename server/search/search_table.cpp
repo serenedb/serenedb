@@ -123,6 +123,7 @@ SearchTable::~SearchTable() {
 }
 
 void SearchTable::OpenWriter(bool in_memory) {
+  SDB_ASSERT(!_writer);
   irs::ResourceManagementOptions resource_manager;
   auto opened = OpenStorageDirectory(*_directory, GetTableId(), _is_new,
                                      in_memory, resource_manager);
@@ -272,6 +273,20 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::ScanConfig()
   return _scan_config;
 }
 
+std::shared_ptr<const catalog::InvertedIndexConfig>
+SearchTable::CompactionConfig() {
+  {
+    std::shared_lock lock(_table_lock);
+    if (absl::c_none_of(
+          _retired, [](const auto& retired) { return retired.expired(); })) {
+      return _config;
+    }
+  }
+  std::unique_lock lock(_table_lock);
+  RebuildConfig(_configs, _building_index);
+  return _config;
+}
+
 std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   std::span<const IndexConfig> configs,
   std::optional<duckdb::idx_t> skip) const {
@@ -293,12 +308,35 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
   merged->declared_compression = _compression;
+  for (const auto& weak : _retired) {
+    const auto retired = weak.lock();
+    if (!retired) {
+      continue;
+    }
+    const auto& config = *retired->config;
+    const auto retain = [&](irs::field_id id) {
+      if (irs::field_limits::valid(id) && config.KeepsField(id)) {
+        merged->retained_fields.insert(id);
+      }
+    };
+    for (const auto& key : config.keys) {
+      retain(key.field_id);
+    }
+    for (const auto& [id, field] : config.fields) {
+      retain(id);
+      retain(field.numeric_field_id);
+      retain(field.bool_field_id);
+      retain(field.null_field_id);
+    }
+  }
   return merged;
 }
 
 template<typename Configs>
 void SearchTable::RebuildConfig(Configs&& configs,
                                 std::optional<duckdb::idx_t> building_index) {
+  std::erase_if(_retired,
+                [](const auto& retired) { return retired.expired(); });
   auto config = MergeConfigs(configs, std::nullopt);
   auto scan_config =
     building_index ? MergeConfigs(configs, building_index) : config;
@@ -307,8 +345,14 @@ void SearchTable::RebuildConfig(Configs&& configs,
   }
   _configs = std::forward<Configs>(configs);
   _building_index = building_index;
-  _config = std::move(config);
+  PublishConfig(std::move(config));
   _scan_config = std::move(scan_config);
+}
+
+void SearchTable::PublishConfig(
+  std::shared_ptr<const catalog::InvertedIndexConfig> config) noexcept {
+  _config = std::move(config);
+  _live_config.store(_config.get(), std::memory_order_release);
 }
 
 void SearchTable::MergeIndexConfig(
@@ -352,7 +396,7 @@ void SearchTable::AbortIndexBuild(duckdb::idx_t index_oid) noexcept {
   _building_index.reset();
   std::erase_if(
     _configs, [&](const IndexConfig& index) { return index.oid == index_oid; });
-  _config = _scan_config;
+  PublishConfig(_scan_config);
 }
 
 void SearchTable::BuildClaim::Finish() noexcept { Release(/*finished=*/true); }
@@ -370,13 +414,17 @@ void SearchTable::BuildClaim::Release(bool finished) noexcept {
   _table = nullptr;
 }
 
-void SearchTable::RemoveIndexConfig(duckdb::idx_t index_oid) {
+std::shared_ptr<const RetiredIndex> SearchTable::RemoveIndexConfig(
+  duckdb::idx_t index_oid) {
   std::unique_lock lock(_table_lock);
-  if (std::erase_if(_configs, [&](const IndexConfig& index) {
-        return index.oid == index_oid;
-      }) == 0) {
-    return;
+  const auto it = absl::c_find_if(
+    _configs, [&](const IndexConfig& index) { return index.oid == index_oid; });
+  if (it == _configs.end()) {
+    return nullptr;
   }
+  auto retired = std::make_shared<const RetiredIndex>(it->config);
+  _retired.emplace_back(retired);
+  _configs.erase(it);
   if (_building_index == index_oid) {
     _building_index.reset();
   }
@@ -387,6 +435,7 @@ void SearchTable::RemoveIndexConfig(duckdb::idx_t index_oid) {
   // be not emitted anymore. If we leave _configs without deletion this will be
   // not fixed until restart.
   RebuildConfig(_configs, _building_index);
+  return retired;
 }
 
 auto SearchTable::CompactUnsafeAsync(
@@ -397,11 +446,19 @@ auto SearchTable::CompactUnsafeAsync(
   const auto begin = std::chrono::steady_clock::now();
   empty_compaction = false;
   auto result = absl::OkStatus();
+  SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");
+  const irs::CompactionPolicy current_config_policy =
+    [&](irs::Compaction& candidates, const irs::IndexReader& index,
+        const irs::CompactingSegments& compacting_segments) {
+      if (_live_config.load(std::memory_order_acquire) == field_options) {
+        policy(candidates, index, compacting_segments);
+      }
+    };
   try {
     // iresearch serializes Compact against refresh/DML internally, so a long
     // merge never blocks the refresh chain.
-    const auto res =
-      co_await _writer->CompactAsync(policy, field_options, progress, env);
+    const auto res = co_await _writer->CompactAsync(
+      current_config_policy, field_options, progress, env);
     if (!res) {
       SDB_DEBUG(SEARCH, "compaction of search table ", GetTableId(),
                 " merged nothing: cancelled, or every document was removed");
@@ -444,7 +501,6 @@ absl::Status SearchTable::VacuumRefresh() {
 absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
   static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
   const auto target = std::max<uint32_t>(1, target_segments);
-  const auto field_options = Config();
   RefreshResult code = RefreshResult::Undefined;
   if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
     return res;
@@ -478,6 +534,7 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
           }
         };
       bool empty = false;
+      const auto field_options = CompactionConfig();
       status.Update(
         irs::GetBlocking(CompactUnsafeAsync(bucket, kProgress, empty,
                                             field_options.get(), env))

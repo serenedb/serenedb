@@ -68,6 +68,10 @@ class DataChunk;
 }  // namespace duckdb
 namespace sdb::search {
 
+struct RetiredIndex {
+  std::shared_ptr<const catalog::InvertedIndexConfig> config;
+};
+
 class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                           public MaintainedStore {
  public:
@@ -99,10 +103,12 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   std::shared_ptr<const catalog::InvertedIndexConfig> Config() const;
   std::shared_ptr<const catalog::InvertedIndexConfig> ScanConfig() const;
+  std::shared_ptr<const catalog::InvertedIndexConfig> CompactionConfig();
   void MergeIndexConfig(
     duckdb::idx_t index_oid,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);
-  void RemoveIndexConfig(duckdb::idx_t index_oid);
+  [[nodiscard]] std::shared_ptr<const RetiredIndex> RemoveIndexConfig(
+    duckdb::idx_t index_oid);
 
   duckdb::idx_t GetTableId() const noexcept { return _table_id; }
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
@@ -299,6 +305,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   template<typename Configs>
   void RebuildConfig(Configs&& configs,
                      std::optional<duckdb::idx_t> building_index);
+  void PublishConfig(
+    std::shared_ptr<const catalog::InvertedIndexConfig> config) noexcept;
   void FinishIndexBuild(duckdb::idx_t index_oid) noexcept;
   void AbortIndexBuild(duckdb::idx_t index_oid) noexcept;
   ReplaySession* BeginReplay(duckdb::AttachedDatabase& db);
@@ -314,7 +322,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   std::atomic<bool> _dropped{false};
   mutable std::shared_mutex _table_lock;
   std::vector<IndexConfig> _configs;
+  std::vector<std::weak_ptr<const RetiredIndex>> _retired;
   std::shared_ptr<const catalog::InvertedIndexConfig> _config;
+  std::atomic<const irs::IndexFieldOptions*> _live_config{nullptr};
   std::shared_ptr<const catalog::InvertedIndexConfig> _scan_config;
   std::optional<duckdb::idx_t> _building_index;
   std::unique_ptr<irs::Directory> _dir;

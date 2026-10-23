@@ -100,6 +100,7 @@ bool InvertedIndexStorage::OpenDirectory(bool in_memory) {
 
 void InvertedIndexStorage::OpenWriter(
   bool in_memory, const catalog::InvertedIndexSettings& options) {
+  SDB_ASSERT(!_writer);
   const bool on_disk = OpenDirectory(in_memory);
 
   irs::IndexWriterOptions writer_options;

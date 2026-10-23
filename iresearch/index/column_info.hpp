@@ -191,6 +191,8 @@ class IndexFieldOptions {
   virtual ColumnOptions GetColumnOptions(field_id id) const = 0;
   virtual field_id GetNormColumnId(field_id id) const = 0;
 
+  virtual bool KeepsField(field_id) const noexcept { return true; }
+
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --
   // COW means an unchanged config is the same object.

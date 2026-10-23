@@ -197,19 +197,21 @@ bool OfKind(const Object& object, std::string_view kind) {
   return kind.empty() || absl::EqualsIgnoreCase(object.kind, kind);
 }
 
-std::vector<irs::LinkedFile> LinkedFiles(std::span<const IndexFile> files) {
-  std::vector<irs::LinkedFile> linked;
-  linked.reserve(files.size());
+irs::Directory LoadIndex(duckdb::DatabaseInstance& db,
+                         std::span<const IndexFile> files) {
+  auto dir = irs::Directory::PrivateMemory(db);
   for (const auto& file : files) {
-    linked.push_back({file.name, {file.bytes.data(), file.bytes.size()}});
+    auto out = dir.Create(file.name);
+    out->WriteData(file.bytes.data(), file.bytes.size());
+    out->Close();
   }
-  return linked;
+  return dir;
 }
 
 class EmbeddedIndex {
  public:
   EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
-    : _dir{db, LinkedFiles(files)},
+    : _dir{LoadIndex(db, files)},
       _reader{_dir, Options(db), [](duckdb::BinaryDeserializer& payload) {
                 search::IndexStamp::Read(payload);
               }} {}

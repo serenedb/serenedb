@@ -20,7 +20,6 @@
 
 #include "iresearch/store/directory.hpp"
 
-#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
@@ -238,26 +237,13 @@ Directory::Directory(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
   }
 }
 
-Directory::Directory(duckdb::DatabaseInstance& db,
-                     std::vector<LinkedFile> files,
-                     const ResourceManagementOptions& rm)
-  : _state{std::make_shared<State>(db, duckdb::FileSystem::GetFileSystem(db),
-                                   std::string{}, StorageKind::Linked, rm,
-                                   std::move(files))} {}
-
 Directory Directory::PrivateMemory(duckdb::DatabaseInstance& db,
                                    const ResourceManagementOptions& rm) {
   auto heap = std::make_unique<duckdb::MemoryFileSystem>();
   auto& fs = *heap;
-  return Directory{std::make_shared<State>(
-    db, fs, RootPath(MemoryIndexRoot()), StorageKind::Memory, rm,
-    std::vector<LinkedFile>{}, std::move(heap))};
-}
-
-const LinkedFile* Directory::FindLinked(std::string_view name) const noexcept {
-  const auto it = absl::c_find_if(
-    _state->linked, [&](const LinkedFile& file) { return file.name == name; });
-  return it == _state->linked.end() ? nullptr : &*it;
+  return Directory{std::make_shared<State>(db, fs, RootPath(MemoryIndexRoot()),
+                                           StorageKind::Memory, rm,
+                                           std::move(heap))};
 }
 
 std::string Directory::Path(std::string_view name) const {
@@ -305,11 +291,6 @@ duckdb::MemoryFileSystem& Directory::MemoryFiles() const {
 }
 
 IndexOutput::ptr Directory::Create(std::string_view name) const {
-  if (Kind() == StorageKind::Linked) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("could not create file \"", name, "\": the index is read-only"));
-  }
   const auto path = Path(name);
   IndexFileRefs::ref_t ref;
   if (_ref_tracker) {
@@ -342,16 +323,6 @@ IndexOutput::ptr Directory::Create(std::string_view name) const {
 }
 
 IndexInput::ptr Directory::Open(std::string_view name, IOAdvice advice) const {
-  if (Kind() == StorageKind::Linked) {
-    const auto* file = FindLinked(name);
-    if (!file) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                      ERR_MSG("could not open file \"", name,
-                              "\" of the index: no such file"));
-    }
-    return std::make_unique<MappedInput>(std::make_shared<MappedFile>(
-      std::make_unique<BytesMapping>(std::string{name}, file->bytes), nullptr));
-  }
   const auto path = Path(name);
   if ((advice & IOAdvice::READONCE) == IOAdvice::READONCE) {
     return ReadWhole(path, name);
@@ -446,9 +417,6 @@ IndexInput::ptr Directory::OpenBlocks(const std::string& path,
 }
 
 bool Directory::Has(std::string_view name) const {
-  if (Kind() == StorageKind::Linked) {
-    return FindLinked(name) != nullptr;
-  }
   if (_state->infos && _state->infos->Contains(name)) {
     return true;
   }
@@ -456,9 +424,6 @@ bool Directory::Has(std::string_view name) const {
 }
 
 bool Directory::RemoveFile(std::string_view name) const noexcept try {
-  if (Kind() == StorageKind::Linked) {
-    return false;
-  }
   const auto path = Path(name);
   if (_state->infos) {
     _state->infos->Forget(name);
@@ -487,11 +452,6 @@ bool Directory::Remove(std::string_view name) const noexcept try {
 }
 
 void Directory::Rename(std::string_view src, std::string_view dst) const {
-  if (Kind() == StorageKind::Linked) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("could not rename file \"", src, "\": the index is read-only"));
-  }
   const auto target = Path(dst);
   _state->fs.MoveFile(Path(src), target);
   if (Kind() == StorageKind::Remote) {
@@ -617,12 +577,6 @@ void Directory::ForEach(size_t count,
 }
 
 void Directory::Visit(absl::FunctionRef<void(std::string_view)> visitor) const {
-  if (Kind() == StorageKind::Linked) {
-    for (const auto& file : _state->linked) {
-      visitor(file.name);
-    }
-    return;
-  }
   if (!_state->infos) {
     _state->fs.ListFiles(_state->root,
                          [&](const std::string& name, bool is_directory) {

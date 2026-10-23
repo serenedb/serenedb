@@ -57,12 +57,6 @@ enum class StorageKind : uint8_t {
   Local,
   Memory,
   Remote,
-  Linked,
-};
-
-struct LinkedFile {
-  std::string_view name;
-  bytes_view bytes;
 };
 
 using IndexFileRefs = RefCounter<std::string>;
@@ -132,9 +126,6 @@ class Directory {
   Directory(
     duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
     const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
-  Directory(
-    duckdb::DatabaseInstance& db, std::vector<LinkedFile> files,
-    const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
 
   static Directory PrivateMemory(
     duckdb::DatabaseInstance& db,
@@ -179,7 +170,6 @@ class Directory {
     std::string root;
     StorageKind kind;
     ResourceManagementOptions rm;
-    std::vector<LinkedFile> linked;
     std::unique_ptr<duckdb::MemoryFileSystem> heap;
     IndexFileRefs refs;
     std::optional<FileInfos> infos;
@@ -192,7 +182,6 @@ class Directory {
     return Kind() == StorageKind::Remote ||
            (Kind() == StorageKind::Memory && !_state->heap);
   }
-  const LinkedFile* FindLinked(std::string_view name) const noexcept;
   bool RemoveFile(std::string_view name) const noexcept;
   size_t RemoveFiles(std::span<const std::string> names) const noexcept;
   IndexInput::ptr OpenMapped(const std::string& path, IOAdvice advice) const;

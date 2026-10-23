@@ -136,7 +136,7 @@ def changed_units(units, base):
             keys.add(name.split("/", 2)[2])
     picked = []
     for u in units:
-        tail = u.id.split(":", 2)[-1]
+        tail = u.id.split(":", 2)[-1].split("#", 1)[0]
         if tail in keys or u.id in keys or any(m.split(":", 2)[-1] in keys for m in u.members):
             picked.append(u)
     return picked
@@ -221,6 +221,7 @@ def main(argv):
         "config": config.name, "arch": platform.machine(), "shard": args.shard,
         "started": started, "duration": time.time() - started,
         "sha": os.environ.get("SDB_SHA", ""), "pr": os.environ.get("SDB_PR", ""),
+        "run": os.environ.get("SDB_RUN_ID", ""),
     }
     report.write(out, meta, results, ctx.skips)
     print(report.summary(meta, results, ctx.skips))

@@ -41,7 +41,8 @@ def write(out_dir, meta, results, skips):
     with open(out_dir / "results.jsonl", "w") as fh:
         for r in results:
             row = asdict(r)
-            row.update(config=meta["config"], arch=meta["arch"], sha=meta["sha"], pr=meta["pr"])
+            row.update(config=meta["config"], arch=meta["arch"], sha=meta["sha"], pr=meta["pr"],
+                       run=meta["run"])
             fh.write(json.dumps(row) + "\n")
         for uid, skip in skips:
             fh.write(json.dumps({"unit": uid, "suite": uid.split(":")[0], "status": SKIPPED,
@@ -49,6 +50,6 @@ def write(out_dir, meta, results, skips):
                                  "detail": f"{skip.kind}: {skip.reason}", "signature": "",
                                  "member_of": "", "dir": "", "wrapper": False,
                                  "config": meta["config"], "arch": meta["arch"],
-                                 "sha": meta["sha"], "pr": meta["pr"]}) + "\n")
+                                 "sha": meta["sha"], "pr": meta["pr"], "run": meta["run"]}) + "\n")
     (out_dir / "summary.txt").write_text(summary(meta, results, skips) + "\n")
     (out_dir / "meta.json").write_text(json.dumps(meta))

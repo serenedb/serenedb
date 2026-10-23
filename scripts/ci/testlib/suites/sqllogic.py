@@ -14,6 +14,9 @@ from . import plan, skipped
 ENGINES = ("pg-wire-simple", "pg-wire-extended")
 PLANNED_EXITS = (0, 75)
 STATEFUL_SERVICES = ("minio", "azurite", "iceberg", "postgres", "clickhouse")
+CORPUS = "sdb/pg/any/sqlite/"
+PART_SECONDS = 10.0
+MAX_PARTS = 64
 _runner_lock = threading.Lock()
 _runner_path = None
 
@@ -108,14 +111,25 @@ def _runner_failure(log):
     return tail[-1][:300] if tail else ""
 
 
-def _runner_args(ctx, rel, engine, port, ssl_port, env):
+def _runner_args(ctx, rel, engine, port, ssl_port, env, part=None):
     argv = [runner_binary(ctx), rel, "--host", "127.0.0.1", "--port", str(port),
             "--engine", engine, "--jobs", "1", "--label", "serenedb", "--shutdown-timeout", "60"]
     if ssl_port:
         argv += ["--ssl-port", str(ssl_port)]
     if env.get("PGSOCKETDIR"):
         argv += ["--label", "pgsocket"]
+    if CORPUS in rel:
+        argv += ["--show-column-names", "false", "--flat-values", "true"]
+    if part:
+        argv += ["--part", f"{part[0]}/{part[1]}"]
     return argv
+
+
+def corpus_parts(ctx, uid):
+    cost = ctx.timing.expect(uid)
+    if cost is None:
+        return 1
+    return max(1, min(MAX_PARTS, round(cost / (PART_SECONDS * ctx.config.slowdown))))
 
 
 def sqllogic_units(ctx, args, skips):
@@ -139,20 +153,29 @@ def sqllogic_units(ctx, args, skips):
                 ctx.skips.append((uid, skip))
                 continue
             cost, timeout = plan(ctx, uid, 2.0)
-            units.append(Unit(uid, "sqllogic", _sqllogic_run(ctx, rel, engine), cpus=1,
-                              mem_gb=0.3, fixtures=("servers",) + fixtures, cost=cost,
-                              timeout=timeout, group=f"sqllogic:{rel}"))
+            if CORPUS not in rel:
+                units.append(Unit(uid, "sqllogic", _sqllogic_run(ctx, rel, engine), cpus=1,
+                                  mem_gb=0.3, fixtures=("servers",) + fixtures, cost=cost,
+                                  timeout=timeout, group=f"sqllogic:{rel}"))
+                continue
+            parts = corpus_parts(ctx, uid)
+            for k in range(1, parts + 1):
+                part = (k, parts) if parts > 1 else None
+                units.append(Unit(f"{uid}#{k}/{parts}" if part else uid, "sqllogic",
+                                  _sqllogic_run(ctx, rel, engine, part), cpus=1, mem_gb=0.3,
+                                  fixtures=("servers",) + fixtures, cost=cost / parts,
+                                  timeout=max(ctx.timeout_floor, timeout / parts)))
     return units
 
 
-def _sqllogic_run(ctx, rel, engine):
+def _sqllogic_run(ctx, rel, engine, part=None):
     def run(r):
         pool = r.fixture("servers")
         i, generation = pool.acquire()
         try:
             server = pool.server(i)
             r.stack_pids = lambda: (server.pid(),)
-            res = r.exec(_runner_args(ctx, rel, engine, server.port, server.ssl_port, r.env),
+            res = r.exec(_runner_args(ctx, rel, engine, server.port, server.ssl_port, r.env, part),
                          cwd=sqllogic_dir(ctx))
         finally:
             pool.release(i)

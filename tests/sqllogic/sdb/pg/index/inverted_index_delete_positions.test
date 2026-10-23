@@ -369,3 +369,66 @@ id
 5
 6
 8
+
+
+statement ok
+CREATE TABLE ds (id BIGINT PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+CREATE INDEX ds_idx ON ds USING inverted(id, body dp_words)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO ds SELECT i, 'seed' FROM range(100) r(i)
+
+
+connection first
+statement ok
+BEGIN
+
+
+connection first
+statement ok
+INSERT INTO ds SELECT i, 'reverted' FROM range(1000, 2000) r(i)
+
+
+connection second
+statement ok
+INSERT INTO ds VALUES (1500, 'winner')
+
+
+connection first
+statement error PRIMARY KEY or UNIQUE constraint violation
+COMMIT
+
+
+connection second
+statement ok
+INSERT INTO ds SELECT i, 'again' FROM range(5000, 6000) r(i)
+
+
+connection second
+statement ok
+VACUUM (REFRESH_TABLE) ds
+
+
+connection second
+statement ok
+DELETE FROM ds WHERE body = 'again' AND id % 2 = 0
+
+
+connection second
+statement ok
+VACUUM (REFRESH_TABLE) ds
+
+
+connection second
+query
+SELECT (SELECT count(*) FROM ds_idx WHERE body @@ ts_phrase('again')) AS again,
+       (SELECT count(*) FROM ds_idx WHERE body @@ ts_phrase('reverted')) AS reverted,
+       (SELECT count(*) FROM ds_idx) AS total
+----
+again	reverted	total
+500	0	601

@@ -327,6 +327,16 @@ TEST(DocRemovalBuilderTest, FinishLeavesItEmpty) {
   EXPECT_EQ((std::vector<irs::doc_id_t>{2}), DocsOf(&second.Docs(0)));
 }
 
+TEST(DocRemovalBuilderTest, SegmentsLeftWithoutDocsAreDropped) {
+  irs::DocRemovalBuilder builder;
+  builder.AddRange(4, 5, 5);
+  builder.Add(2, *MaskOf({}));
+  builder.Add(6, 3);
+  const auto removal = std::move(builder).Finish();
+  EXPECT_EQ((std::vector<uint32_t>{6}), removal.segments);
+  EXPECT_EQ((std::vector<irs::doc_id_t>{3}), DocsOf(&removal.Docs(0)));
+}
+
 TEST(DocRemovalBuilderTest, ARunOfRowsTakesAFewBytes) {
   irs::DocRemovalBuilder builder;
   for (irs::doc_id_t doc = 1; doc <= 1000000; ++doc) {
@@ -731,6 +741,17 @@ TEST(DocMapsTest, MapsLastWhileAReaderOlderThanTheirCommitLives) {
   EXPECT_EQ(1, maps.Of(3).size());
   maps.Retire(5, unused);
   EXPECT_TRUE(maps.Of(3).empty());
+}
+
+TEST(DocMapsTest, CommittingASourceWithoutMapsChangesNothing) {
+  auto maps = MapsOf({Direct(3, 9, Window(0, 10, 1))});
+  const irs::DocRemovalResolver unused;
+  maps.Committed(4, 1);
+  for (int i = 0; i < 3; ++i) {
+    maps.Retire(2, unused);
+  }
+  EXPECT_TRUE(maps.Of(4).empty());
+  EXPECT_EQ(1, maps.Of(3).size());
 }
 
 TEST(DocMapsTest, UncommittedMapsAreNeverRetired) {

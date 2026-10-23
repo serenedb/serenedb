@@ -2260,6 +2260,67 @@ TEST(index_death_test_formats_15,
   }
 }
 
+TEST(index_death_test_formats_15,
+     failed_implicit_flush_keeps_the_transaction_up_to_its_last_flush) {
+  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
+                              &tests::PayloadedJsonFieldFactory);
+  const auto* doc1 = gen.next();
+  const auto* doc2 = gen.next();
+  const auto* doc3 = gen.next();
+  const auto* doc4 = gen.next();
+  const auto* doc5 = gen.next();
+
+  irs::MemoryDirectory impl;
+  FailingDirectory dir(impl);
+  auto opts = irs::tests::DefaultWriterOptions();
+  opts.segment_docs_max = 1;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+  ASSERT_NE(nullptr, writer);
+
+  ASSERT_TRUE(InsertWithName(*writer, *doc1));
+  ASSERT_TRUE(writer->RefreshCommit());
+  ASSERT_TRUE(InsertWithName(*writer, *doc2));
+  ASSERT_TRUE(writer->RefreshCommit());
+  const auto seeded = writer->GetSnapshot();
+  ASSERT_EQ(2, seeded.size());
+  const auto first = irs::SegmentNumber(seeded[0].Meta().name);
+  const auto second = irs::SegmentNumber(seeded[1].Meta().name);
+
+  auto trx = writer->GetBatch();
+  const auto insert = [&](const tests::Document& doc) {
+    auto inserted = trx.Insert();
+    return tests::InsertFields(inserted, doc.indexed.begin(),
+                               doc.indexed.end());
+  };
+  const auto remove = [&](uint32_t segment) {
+    irs::DocRemovalBuilder builder;
+    builder.Add(segment, irs::doc_limits::min());
+    trx.Remove(std::move(builder).Finish());
+  };
+  remove(first);
+  ASSERT_TRUE(insert(*doc3));
+  ASSERT_TRUE(insert(*doc4));
+  remove(second);
+  dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_4.idx");
+  ASSERT_SQL_ERROR(insert(*doc5), ERRCODE_IO_ERROR);
+  ASSERT_TRUE(dir.NoFailures());
+  ASSERT_TRUE(trx.Commit());
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  const auto reader = writer->GetSnapshot();
+  EXPECT_EQ(2, reader.live_docs_count())
+    << "the first removal and doc3 were flushed before the failure; the "
+       "second removal and doc4 were not";
+  for (const auto& segment : reader) {
+    const auto number = irs::SegmentNumber(segment.Meta().name);
+    if (number == first) {
+      EXPECT_EQ(0, segment.live_docs_count());
+    } else if (number == second) {
+      EXPECT_EQ(1, segment.live_docs_count());
+    }
+  }
+}
+
 TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
   // Mixed failures around CREATE/SYNC/REMOVE on `.col` files driven by
   // a sequence of inserts, commits, and a compact. Each failing

@@ -49,6 +49,11 @@ def body(rng: random.Random) -> str:
     return " ".join(rng.sample(WORDS, 3))
 
 
+def pause(rng: random.Random) -> None:
+    if rng.random() < 0.3:
+        time.sleep(rng.random() * 0.03)
+
+
 def create_index(conn: psycopg.Connection, index: Index, options: str) -> None:
     where = "" if index.where == "true" else f" WHERE {index.where}"
     conn.execute(
@@ -140,12 +145,39 @@ class Workload:
 
     def step(self, conn: psycopg.Connection, rng: random.Random, next_id: int) -> int:
         op = rng.random()
-        if op < 0.25:
+        if op < 0.2:
             n = rng.randint(1, 200)
             conn.execute(
                 "INSERT INTO t SELECT %s + i, %s FROM range(%s) r(i)",
                 (next_id, body(rng), n),
             )
+            return next_id + n
+        if op < 0.25:
+            n = rng.randint(1, 300)
+            with conn.cursor().copy("COPY t (id, body) FROM STDIN") as copy:
+                for i in range(n):
+                    copy.write_row((next_id + i, body(rng)))
+            return next_id + n
+        if op < 0.29 and self.big_inserts:
+            n = rng.choice([20_000, 40_000])
+            with conn.transaction(force_rollback=rng.random() < 0.2):
+                conn.execute(
+                    "INSERT INTO t SELECT %s + i, 'w' || (i %% 40) || ' w' || "
+                    "((i * 3) %% 40) FROM range(%s) r(i)",
+                    (next_id, n),
+                )
+                conn.execute(
+                    "DELETE FROM t WHERE id %% 101 = %s AND id < %s",
+                    (rng.randrange(101), next_id),
+                )
+                conn.execute(
+                    "UPDATE t SET body = %s WHERE id %% 89 = %s AND id < %s",
+                    (body(rng), rng.randrange(89), next_id),
+                )
+                conn.execute(
+                    "DELETE FROM t WHERE id >= %s AND id < %s",
+                    (next_id + n // 3, next_id + n // 2),
+                )
             return next_id + n
         if op < 0.31 and self.big_inserts:
             n = rng.choice([20_000, 40_000])
@@ -214,13 +246,16 @@ class Workload:
                 "INSERT INTO t SELECT %s + i, %s FROM range(%s) r(i)",
                 (next_id, body(rng), n),
             )
+            pause(rng)
             conn.execute(
                 "DELETE FROM t WHERE id >= %s AND id < %s", (next_id, next_id + n // 2)
             )
+            pause(rng)
             conn.execute(
                 "UPDATE t SET body = %s WHERE id %% 89 = %s",
                 (body(rng), rng.randrange(89)),
             )
+            pause(rng)
             conn.execute(
                 "DELETE FROM t WHERE id %% 83 = %s AND random() < 0.5",
                 (rng.randrange(83),),
@@ -259,6 +294,17 @@ class Workload:
                         checkpoint(conn)
                     elif op < 0.7:
                         conn.execute(f"VACUUM (COMPACT_TABLE) {rng.choice(tables)}")
+                    elif op < 0.72:
+                        try:
+                            conn.execute(
+                                f"DELETE FROM {rng.choice(tables)} WHERE id %% 7 = %s",
+                                (rng.randrange(7),),
+                            )
+                        except psycopg.errors.TransactionRollback:
+                            pass
+                        except psycopg.Error as error:
+                            if "onflict" not in str(error):
+                                raise
                     else:
                         conn.execute(
                             "SELECT count(*) FROM t_idx WHERE body @@ ts_phrase(%s)",
@@ -566,3 +612,204 @@ def test_online_index_builds_next_to_writers_and_a_live_index(tmp_path: Path) ->
             if workload.errors:
                 raise workload.errors[0]
             assert_index_matches_table(conn, [T_IDX, T_PART])
+
+
+def test_a_partial_index_rebuilt_while_writers_run(tmp_path: Path) -> None:
+    rng = random.Random(21)
+    with make_server(tmp_path) as server:
+        server.start()
+        with psycopg.connect(server.dsn(), autocommit=True) as conn:
+            indexes = create_schema(conn, "refresh_interval = 10, compaction_interval = 10")
+            seed_rows(conn, indexes, 200_000)
+            workload = Workload(server, seed=21, writers=6, big_inserts=True,
+                                big_updates=True)
+            threads = workload.threads()
+            for thread in threads:
+                thread.start()
+            with psycopg.connect(server.dsn(), autocommit=True) as builder:
+                for rebuild in range(6):
+                    if rebuild:
+                        builder.execute(f"DROP INDEX {T_PART.name}")
+                    create_index(builder, T_PART, rng.choice([
+                        "refresh_interval = 0, compaction_interval = 0",
+                        "refresh_interval = 5, compaction_interval = 5, "
+                        "segment_docs_max = 5000",
+                    ]))
+                    time.sleep(rng.random())
+            time.sleep(2)
+            workload.stop.set()
+            for thread in threads:
+                thread.join(timeout=120)
+                assert not thread.is_alive()
+            if workload.errors:
+                raise workload.errors[0]
+            assert_index_matches_table(conn, [T_IDX, T_PART])
+        server.graceful_stop()
+        server.start()
+        with psycopg.connect(server.dsn(), autocommit=True) as conn:
+            assert_index_matches_table(conn, [T_IDX, T_PART])
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3, 4])
+def test_a_crash_during_an_online_index_build_replays_to_equal_indexes(
+    tmp_path: Path, seed: int
+) -> None:
+    rng = random.Random(seed)
+    with make_server(tmp_path) as server:
+        server.start()
+        with psycopg.connect(server.dsn(), autocommit=True) as conn:
+            indexes = create_schema(conn, "refresh_interval = 20, compaction_interval = 20")
+            seed_rows(conn, indexes, 300_000)
+        workload = Workload(server, seed=seed, writers=4, big_updates=seed % 2 == 0)
+        threads = workload.threads()
+        for thread in threads:
+            thread.start()
+
+        def build() -> None:
+            try:
+                with psycopg.connect(server.dsn(), autocommit=True) as builder:
+                    create_index(builder, T_PART,
+                                 "refresh_interval = 0, compaction_interval = 0")
+            except psycopg.Error:
+                pass
+
+        builder = threading.Thread(target=build, daemon=True)
+        builder.start()
+        time.sleep(0.2 + rng.random() * 3)
+        workload.stop.set()
+        server.kill()
+        builder.join(timeout=60)
+        assert not builder.is_alive()
+        for thread in threads:
+            thread.join(timeout=60)
+            assert not thread.is_alive()
+        server.start()
+        with psycopg.connect(server.dsn(), autocommit=True) as conn:
+            built = conn.execute(
+                "SELECT count(*) FROM pg_class WHERE relname = %s", (T_PART.name,)
+            ).fetchone()[0]
+            assert_index_matches_table(conn, [T_IDX, T_PART] if built else [T_IDX])
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        "refresh_interval = 0, compaction_interval = 0",
+        "refresh_interval = 5, compaction_interval = 5, segment_docs_max = 64",
+    ],
+)
+def test_concurrent_upserts_keep_the_index_equal_to_the_table(
+    tmp_path: Path, options: str
+) -> None:
+    keys = 5000
+    index = Index("v_idx", "v")
+    with make_server(tmp_path) as server:
+        server.start()
+        with psycopg.connect(server.dsn(), autocommit=True) as conn:
+            conn.execute("CREATE TEXT SEARCH DICTIONARY t_words AS split_text()")
+            conn.execute("CREATE TABLE v (id BIGINT PRIMARY KEY, body VARCHAR)")
+            create_index(conn, index, options)
+            conn.execute(
+                "INSERT INTO v SELECT i, 'w' || (i %% 40) FROM range(%s) r(i)", (keys,)
+            )
+        stop = threading.Event()
+        errors: list[BaseException] = []
+        done = [0] * 6
+
+        def writer(slot: int) -> None:
+            rng = random.Random(slot)
+            try:
+                with psycopg.connect(server.dsn(), autocommit=True) as c:
+                    while not stop.is_set():
+                        op = rng.random()
+                        try:
+                            if op < 0.4:
+                                rows = [(key, body(rng)) for key in
+                                        rng.sample(range(keys * 2), rng.randint(1, 50))]
+                                c.execute(
+                                    "INSERT INTO v SELECT * FROM (VALUES "
+                                    + ", ".join(["(%s::BIGINT, %s)"] * len(rows))
+                                    + ") ON CONFLICT (id) DO UPDATE SET body = excluded.body",
+                                    [value for row in rows for value in row],
+                                )
+                            elif op < 0.55:
+                                c.execute(
+                                    "INSERT OR REPLACE INTO v VALUES (%s, %s)",
+                                    (rng.randrange(keys * 2), body(rng)),
+                                )
+                            elif op < 0.65:
+                                first = rng.randrange(keys * 2)
+                                c.execute(
+                                    "INSERT INTO v SELECT i, %s FROM range(%s, %s) r(i) "
+                                    "ON CONFLICT DO NOTHING",
+                                    (body(rng), first, first + 100),
+                                )
+                            elif op < 0.8:
+                                c.execute(
+                                    "DELETE FROM v WHERE id %% 211 = %s",
+                                    (rng.randrange(211),),
+                                )
+                            elif op < 0.9:
+                                c.execute(
+                                    "UPDATE v SET body = %s WHERE id %% 97 = %s",
+                                    (body(rng), rng.randrange(97)),
+                                )
+                            else:
+                                with c.transaction(force_rollback=rng.random() < 0.3):
+                                    key = rng.randrange(keys * 2)
+                                    c.execute("DELETE FROM v WHERE id = %s", (key,))
+                                    c.execute("INSERT INTO v VALUES (%s, %s)",
+                                              (key, body(rng)))
+                                    c.execute(
+                                        "INSERT INTO v VALUES (%s, %s) "
+                                        "ON CONFLICT (id) DO UPDATE SET body = excluded.body",
+                                        (key, body(rng)),
+                                    )
+                            done[slot] += 1
+                        except (psycopg.errors.TransactionRollback,
+                                psycopg.errors.SerializationFailure,
+                                psycopg.errors.IntegrityError):
+                            pass
+                        except psycopg.Error as error:
+                            if "onflict" not in str(error):
+                                raise
+            except BaseException as error:  # noqa: BLE001
+                if not stop.is_set():
+                    errors.append(error)
+
+        def maintainer() -> None:
+            rng = random.Random(99)
+            try:
+                with psycopg.connect(server.dsn(), autocommit=True) as c:
+                    while not stop.is_set():
+                        op = rng.random()
+                        if op < 0.5:
+                            c.execute("VACUUM (REFRESH_TABLE) v")
+                        elif op < 0.7:
+                            checkpoint(c)
+                        elif op < 0.8:
+                            c.execute("VACUUM (COMPACT_TABLE) v")
+                        time.sleep(rng.random() * 0.05)
+            except BaseException as error:  # noqa: BLE001
+                if not stop.is_set():
+                    errors.append(error)
+
+        threads = [threading.Thread(target=writer, args=(slot,), daemon=True)
+                   for slot in range(6)]
+        threads.append(threading.Thread(target=maintainer, daemon=True))
+        for thread in threads:
+            thread.start()
+        time.sleep(20)
+        stop.set()
+        for thread in threads:
+            thread.join(timeout=120)
+            assert not thread.is_alive(), "a worker hung"
+        if errors:
+            raise errors[0]
+        assert sum(done) > 100
+        with psycopg.connect(server.dsn(), autocommit=True) as conn:
+            assert_index_matches_table(conn, [index])
+        server.kill()
+        server.start()
+        with psycopg.connect(server.dsn(), autocommit=True) as conn:
+            assert_index_matches_table(conn, [index])

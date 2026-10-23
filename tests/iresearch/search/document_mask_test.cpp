@@ -723,6 +723,13 @@ TEST(document_mask_test, builder_merges_a_live_range) {
   ASSERT_FALSE(builder.MergeLiveRange(1, 100000, &masked));
   ASSERT_TRUE(builder.MergeLiveRange(1, 100001, nullptr));
   ASSERT_EQ(100000, builder.Count());
+  const auto empty = Build({});
+  irs::DocumentMaskBuilder unmasked;
+  ASSERT_TRUE(unmasked.MergeLiveRange(10, 20, &empty));
+  ASSERT_EQ(10, unmasked.Count());
+  ASSERT_TRUE(unmasked.Contains(10));
+  ASSERT_TRUE(unmasked.Contains(19));
+  ASSERT_FALSE(unmasked.Contains(20));
 }
 
 TEST(document_mask_test, builder_counts_the_docs_ranges_add) {

@@ -198,7 +198,7 @@ jobs:
         run: |
           set -f
           ./scripts/ci/run_shard.sh "${{ inputs.CONFIG }}" "${{ needs.build.outputs.digest }}" \
-            "${{ matrix.shard.spec }}" out/timing.json ${{ inputs.TEST_ARGS }}
+            "${{ matrix.shard.spec }}" out/timing.json --budget 19800 ${{ inputs.TEST_ARGS }}
 
       - name: Summary
         if: always()

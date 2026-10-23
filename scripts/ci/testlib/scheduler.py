@@ -1,4 +1,5 @@
 import itertools
+import math
 import os
 import re
 import shutil
@@ -80,7 +81,7 @@ class Fixture:
 
 class Context:
     def __init__(self, *, root, build, config, out_dir, timing, jobs, mem_gb, verbose,
-                 base_env, attribute=False):
+                 base_env, attribute=False, budget_end=math.inf):
         self.root = root
         self.build = build
         self.config = config
@@ -91,6 +92,7 @@ class Context:
         self.verbose = verbose
         self.base_env = base_env
         self.attribute = attribute
+        self.budget_end = budget_end
         self.fixtures = {}
         self.findings = []
         self.skips = []
@@ -126,7 +128,7 @@ class Run:
         self.san_dir.mkdir()
         self.log = self.dir / "log.txt"
         self.started = time.monotonic()
-        self.deadline = self.started + unit.timeout
+        self.deadline = min(self.started + unit.timeout, ctx.budget_end)
         self.cancelled = cancelled
         self.stack_pids = lambda: ()
         self.profile_dir = self.dir / "profiles" if ctx.attribute else ctx.out_dir / "profiles"
@@ -311,7 +313,14 @@ class Scheduler:
 
         with self._cv:
             while pending or self._running:
-                if deadline is not None and time.monotonic() > deadline:
+                now = time.monotonic()
+                if pending and now > self.ctx.budget_end:
+                    if attempt == 0:
+                        self.results.extend(Result(u.id, u.suite, FAILED, 0.0, attempt, time.time(),
+                                                   "not run: the run's time budget ran out")
+                                            for u in pending)
+                    pending.clear()
+                if deadline is not None and now > deadline:
                     pending.clear()
                 launched = True
                 while launched and pending and not self._stopping:
@@ -340,6 +349,7 @@ class Scheduler:
             self._progress(total, force=True)
 
     def relabel(self, budget_s, attempts=2, max_units=20):
+        budget_s = min(budget_s, self.ctx.budget_end - time.monotonic())
         failed = [r for r in self.results if r.status in RERUN and r.attempt == 0]
         by_id = {u.id: u for u in self.units}
         wanted = []
@@ -366,9 +376,10 @@ class Scheduler:
                 r.detail += f" (failed again on {len(later)} rerun(s): deterministic)"
 
     def repeat(self, units, rounds, budget_s):
+        budget_s = min(budget_s, self.ctx.budget_end - time.monotonic())
         first = {r.unit: r for r in self.results if r.attempt == 0 and r.status == PASSED}
         candidates = [u for u in units if u.id in first]
-        if not candidates:
+        if not candidates or budget_s <= 0:
             return
         self._log(f"repeating {len(candidates)} changed unit(s) up to {rounds} time(s)")
         deadline = time.monotonic() + budget_s

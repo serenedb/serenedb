@@ -34,7 +34,6 @@
 #include <duckdb/common/type_visitor.hpp>
 #include <duckdb/execution/column_binding_resolver.hpp>
 #include <duckdb/execution/expression_executor.hpp>
-#include <duckdb/function/lambda_functions.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/optimizer/expression_rewriter.hpp>
 #include <duckdb/optimizer/rule/concat_flattening.hpp>
@@ -135,15 +134,7 @@ void ClearSource(duckdb::Expression& expr) {
     lambda.SetLambdaExpr(WithoutSource(*lambda.LambdaExpr()));
   } else if (expr.GetExpressionClass() ==
              duckdb::ExpressionClass::BOUND_FUNCTION) {
-    auto& function = expr.Cast<duckdb::BoundFunctionExpression>();
-    function.IsOperatorMutable() = false;
-    if (function.Function().HasBindLambdaCallback() && function.BindInfo()) {
-      auto& data =
-        function.BindInfoMutable()->Cast<duckdb::LambdaFunctionData>();
-      if (const auto body = data.GetLambdaExpression()) {
-        data.SetLambdaExpression(WithoutSource(*body));
-      }
-    }
+    expr.Cast<duckdb::BoundFunctionExpression>().IsOperatorMutable() = false;
   }
 }
 

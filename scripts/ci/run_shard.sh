@@ -3,7 +3,7 @@
 # of the build image with its own network namespace: services that need fixed
 # ports join it, the others publish on the docker bridge.
 #
-#   scripts/ci/run_shard.sh <config> <digest> <shard I/N> <timing.json> [test.py args...]
+#   scripts/ci/run_shard.sh <config> <digest or build dir> <shard I/N> <timing.json> [test.py args...]
 
 set -uo pipefail
 
@@ -22,7 +22,11 @@ shift 4
 : "${SDB_DOCKER_OWNER:=test-$(id -un)-$$}"
 export SDB_DOCKER_OWNER
 
-bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "$DIGEST") || exit 1
+if [[ -d "$DIGEST" ]]; then
+	bundle=$(realpath "$DIGEST")
+else
+	bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "$DIGEST") || exit 1
+fi
 out="out/test-${CONFIG}-${SHARD/\//of}"
 rm -rf "$out"
 mkdir -p "$out" out/home out/sockets

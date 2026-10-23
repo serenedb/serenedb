@@ -47,15 +47,7 @@ query
 EXPLAIN SELECT title, n FROM ljpg_keyed_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(ljpg_keyed_idx.tableoid) ASC LIMIT 5;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────────────────────╮
-│ Projections: #0, #1                                     │
-│ ~5 rows                                                 │
-╰────────────────────────────┬────────────────────────────╯
-╭─ PROJECTION ───────────────┴────────────────────────────╮
-│ Projections: title, n, sdb_inverted_index_score         │
-│ ~5 rows                                                 │
-╰────────────────────────────┬────────────────────────────╯
-╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
 │ Key: ctid                                               │
 │ ~5 rows                                                 │
 ╰────────────────────────────┬────────────────────────────╯
@@ -88,10 +80,6 @@ query
 EXPLAIN SELECT title, n FROM ljpg_unkeyed_idx LIMIT 2500 OFFSET 7;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────╮
-│ Projections: title, n     │
-│ ~2,500 rows               │
-╰─────────────┬─────────────╯
 ╭─ LOOKUP_JOIN ─────────────╮
 │ Key: ctid                 │
 │ ~2,500 rows               │

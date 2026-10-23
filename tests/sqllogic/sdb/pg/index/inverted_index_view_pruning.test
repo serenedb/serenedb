@@ -175,15 +175,6 @@ EXPLAIN CREATE INDEX prune_idx5 ON prune_v5 USING inverted(body prune_en);
 QUERY PLAN
 ╭─ EXTENSION ────────────────────────────╮
 ╰────────────────────┬───────────────────╯
-╭─ PROJECTION ───────┴───────────────────╮
-│ Projections: #0, #2                    │
-│ ~4 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ PROJECTION ───────┴───────────────────╮
-│ Projections: body, unused1,            │
-│              file_row_number           │
-│ ~4 rows                                │
-╰────────────────────┬───────────────────╯
 ╭─ LOOKUP_JOIN ──────┴───────────────────╮
 │ Key: file_index, file_row_number       │
 │ ~4 rows                                │

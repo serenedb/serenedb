@@ -28,11 +28,7 @@ query
 EXPLAIN SELECT id, title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: id, title, body      │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ LOOKUP_JOIN ───┴─────────────────╮
+╭─ LOOKUP_JOIN ─────────────────────╮
 │ Key: rowid                        │
 │ ~3 rows                           │
 ╰─────────────────┬─────────────────╯
@@ -119,15 +115,7 @@ query
 EXPLAIN SELECT id, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) ASC LIMIT 5;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────────────────────╮
-│ Projections: #0, #1                                     │
-│ ~5 rows                                                 │
-╰────────────────────────────┬────────────────────────────╯
-╭─ PROJECTION ───────────────┴────────────────────────────╮
-│ Projections: id, body, sdb_inverted_index_score         │
-│ ~5 rows                                                 │
-╰────────────────────────────┬────────────────────────────╯
-╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
 │ Key: iresearch_pk                                       │
 │ ~5 rows                                                 │
 ╰────────────────────────────┬────────────────────────────╯
@@ -168,15 +156,7 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ PROJECTION ────────────────────────────────────────────╮
-│ Projections: #0, #1, #2                                 │
-│ 5 rows                                              0µs │
-╰────────────────────────────┬────────────────────────────╯
-╭─ PROJECTION ───────────────┴────────────────────────────╮
-│ Projections: id, title, body, sdb_inverted_index_score  │
-│ 5 rows                                              0µs │
-╰────────────────────────────┬────────────────────────────╯
-╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
 │ Key: iresearch_pk                                       │
 │ 5 rows                                              0µs │
 ╰────────────────────────────┬────────────────────────────╯
@@ -207,15 +187,7 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ PROJECTION ─────────────────────────────────────────────╮
-│ Projections: #0, #1                                      │
-│ 3 rows                                               0µs │
-╰─────────────────────────────┬────────────────────────────╯
-╭─ PROJECTION ────────────────┴────────────────────────────╮
-│ Projections: title, body, sdb_inverted_index_score, id   │
-│ 3 rows                                               0µs │
-╰─────────────────────────────┬────────────────────────────╯
-╭─ LOOKUP_JOIN ───────────────┴────────────────────────────╮
+╭─ LOOKUP_JOIN ────────────────────────────────────────────╮
 │ Key: rowid                                               │
 │ 3 rows                                               0µs │
 ╰─────────────────────────────┬────────────────────────────╯
@@ -225,11 +197,7 @@ QUERY PLAN
 │ Order By: #0 DESC, #1 ASC                                │  │ Projections: body,  │
 │ 3 rows                                               0µs │  │              title  │
 ╰─────────────────────────────┒┎───────────────────────────╯  │ 3 rows          0µs │
-╭─ PROJECTION ────────────────┚┖───────────────────────────╮  ╰─────────────────────╯
-│ Projections: sdb_inverted_index_score, id, pk            │
-│ 1,000 rows                                           0µs │
-╰─────────────────────────────┒┎───────────────────────────╯
-╭─ TABLE_SCAN ────────────────┚┖───────────────────────────╮
+╭─ TABLE_SCAN ────────────────┚┖───────────────────────────╮  ╰─────────────────────╯
 │ Index: lj_idx                                            │
 │ Lookup: table                                            │
 │ Index Filter:                                            │
@@ -240,7 +208,7 @@ QUERY PLAN
 │ Column Filter:                                           │
 │ optional: Dynamic Filter (sdb_inverted_index_score >= ?) │
 │ Score: bm25(k1=1.2, b=0.75)                              │
-│ Projections: id, sdb_inverted_index_score, pk            │
+│ Projections: sdb_inverted_index_score, id, pk            │
 │ 1,000 rows                                           0µs │
 ╰──────────────────────────────────────────────────────────╯
 
@@ -251,15 +219,7 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ PROJECTION ────────────────────────────────────────────╮
-│ Projections: #0, #1, #2                                 │
-│ 5 rows                                              0µs │
-╰────────────────────────────┬────────────────────────────╯
-╭─ PROJECTION ───────────────┴────────────────────────────╮
-│ Projections: id, title, n, sdb_inverted_index_score     │
-│ 5 rows                                              0µs │
-╰────────────────────────────┬────────────────────────────╯
-╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
 │ Key: rowid                                              │
 │ 5 rows                                              0µs │
 ╰────────────────────────────┬────────────────────────────╯
@@ -303,10 +263,6 @@ QUERY PLAN
 │ Order By: #3 ASC                                        │
 │ 5 rows                                              0µs │
 ╰────────────────────────────┒┎───────────────────────────╯
-╭─ PROJECTION ───────────────┚┖───────────────────────────╮
-│ Projections: id, title, body, sdb_inverted_index_score  │
-│ 1,000 rows                                          0µs │
-╰────────────────────────────┒┎───────────────────────────╯
 ╭─ TABLE_SCAN ───────────────┚┖───────────────────────────╮
 │ Index: lj_idx                                           │
 │ Lookup: table                                           │
@@ -318,7 +274,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: body, id, title, sdb_inverted_index_score  │
+│ Projections: id, title, body, sdb_inverted_index_score  │
 │ 1,000 rows                                          0µs │
 ╰─────────────────────────────────────────────────────────╯
 
@@ -334,10 +290,6 @@ QUERY PLAN
 │ Order By: #2 DESC, #3 ASC                                │
 │ 3 rows                                               0µs │
 ╰─────────────────────────────┒┎───────────────────────────╯
-╭─ PROJECTION ────────────────┚┖───────────────────────────╮
-│ Projections: title, body, sdb_inverted_index_score, id   │
-│ 1,000 rows                                           0µs │
-╰─────────────────────────────┒┎───────────────────────────╯
 ╭─ TABLE_SCAN ────────────────┚┖───────────────────────────╮
 │ Index: lj_idx                                            │
 │ Lookup: table                                            │
@@ -349,7 +301,7 @@ QUERY PLAN
 │ Column Filter:                                           │
 │ optional: Dynamic Filter (sdb_inverted_index_score >= ?) │
 │ Score: bm25(k1=1.2, b=0.75)                              │
-│ Projections: body, title, id, sdb_inverted_index_score   │
+│ Projections: title, body, sdb_inverted_index_score, id   │
 │ 1,000 rows                                           0µs │
 ╰──────────────────────────────────────────────────────────╯
 
@@ -394,15 +346,7 @@ query
 EXPLAIN SELECT n FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: #0                   │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: n, id                │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ LOOKUP_JOIN ───┴─────────────────╮
+╭─ LOOKUP_JOIN ─────────────────────╮
 │ Key: iresearch_pk                 │
 │ ~3 rows                           │
 ╰─────────────────┬─────────────────╯
@@ -430,15 +374,7 @@ query
 EXPLAIN SELECT n, title FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: #0, #1               │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: n, title, id         │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ LOOKUP_JOIN ───┴─────────────────╮
+╭─ LOOKUP_JOIN ─────────────────────╮
 │ Key: rowid                        │
 │ ~3 rows                           │
 ╰─────────────────┬─────────────────╯
@@ -506,11 +442,6 @@ QUERY PLAN
 │ round(sdb_inverted_index_score, 3)     │
 │ ~600 rows                              │
 ╰────────────────────┬───────────────────╯
-╭─ PROJECTION ───────┴───────────────────╮
-│ Projections: id, title, n,             │
-│              sdb_inverted_index_score  │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
 ╭─ LOOKUP_JOIN ──────┴───────────────────╮
 │ Key: iresearch_pk                      │
 │ ~3 rows                                │
@@ -557,11 +488,6 @@ QUERY PLAN
 │ id, title,                             │
 │ round(sdb_inverted_index_score, 3)     │
 │ ~600 rows                              │
-╰────────────────────┬───────────────────╯
-╭─ PROJECTION ───────┴───────────────────╮
-│ Projections: id, title, n,             │
-│              sdb_inverted_index_score  │
-│ ~3 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ LOOKUP_JOIN ──────┴───────────────────╮
 │ Key: rowid                             │
@@ -615,15 +541,7 @@ query
 EXPLAIN SELECT title FROM lj_inc_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────╮
-│ Projections: #0                  │
-│ ~3 rows                          │
-╰─────────────────┬────────────────╯
-╭─ PROJECTION ────┴────────────────╮
-│ Projections: title, n            │
-│ ~3 rows                          │
-╰─────────────────┬────────────────╯
-╭─ LOOKUP_JOIN ───┴────────────────╮
+╭─ LOOKUP_JOIN ────────────────────╮
 │ Key: iresearch_pk                │
 │ ~3 rows                          │
 ╰─────────────────┬────────────────╯
@@ -665,12 +583,6 @@ QUERY PLAN
 │ Projections: n,                      │
 │              ts_highlight(body, #2)  │
 │ ~600 rows                            │
-╰───────────────────┬──────────────────╯
-╭─ PROJECTION ──────┴──────────────────╮
-│ Projections:                         │
-│ body, n,                             │
-│ sdb_inverted_index_offsets$body      │
-│ ~2 rows                              │
 ╰───────────────────┬──────────────────╯
 ╭─ LOOKUP_JOIN ─────┴──────────────────╮
 │ Key: iresearch_pk                    │
@@ -722,10 +634,6 @@ query
 EXPLAIN SELECT title FROM lj_idx WHERE body @@ ts_phrase('cat') LIMIT 5;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────╮
-│ Projections: title        │
-│ ~5 rows                   │
-╰─────────────┬─────────────╯
 ╭─ LOOKUP_JOIN ─────────────╮
 │ Key: iresearch_pk         │
 │ ~5 rows                   │
@@ -844,12 +752,7 @@ query
 EXPLAIN SELECT * FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMIT 3;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────╮
-│ Projections: id, url, event_time, c1, c2,  │
-│              c3                            │
-│ ~3 rows                                    │
-╰──────────────────────┬─────────────────────╯
-╭─ LOOKUP_JOIN ────────┴─────────────────────╮
+╭─ LOOKUP_JOIN ──────────────────────────────╮
 │ Key: iresearch_pk                          │
 │ ~3 rows                                    │
 ╰──────────────────────┬─────────────────────╯
@@ -876,12 +779,7 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ PROJECTION ───────────────────────────────╮
-│ Projections: id, url, event_time, c1, c2,  │
-│              c3                            │
-│ 3 rows                                 0µs │
-╰──────────────────────┬─────────────────────╯
-╭─ LOOKUP_JOIN ────────┴─────────────────────╮
+╭─ LOOKUP_JOIN ──────────────────────────────╮
 │ Key: iresearch_pk                          │
 │ 3 rows                                 0µs │
 ╰──────────────────────┬─────────────────────╯
@@ -924,15 +822,10 @@ QUERY PLAN
 │ Order By: event_time ASC                   │
 │ 3 rows                                 0µs │
 ╰──────────────────────┒┎────────────────────╯
-╭─ PROJECTION ─────────┚┖────────────────────╮
-│ Projections: id, url, event_time, c1, c2,  │
-│              c3                            │
-│ <slt:ignore> rows                               0µs │
-╰──────────────────────┒┎────────────────────╯
 ╭─ TABLE_SCAN ─────────┚┖────────────────────╮
 │ Index: lj_hits                             │
 │ Lookup: search                             │
-│ Projections: url, id, event_time, c1, c2,  │
+│ Projections: id, url, event_time, c1, c2,  │
 │              c3                            │
 │ Column Filter:                             │
 │ contains(url, 'google'),                   │
@@ -1058,15 +951,7 @@ query
 EXPLAIN SELECT title, n FROM lj_v_parquet_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_v_parquet_idx.tableoid) ASC LIMIT 5;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────────────────────╮
-│ Projections: #0, #1                                     │
-│ ~5 rows                                                 │
-╰────────────────────────────┬────────────────────────────╯
-╭─ PROJECTION ───────────────┴────────────────────────────╮
-│ Projections: title, n, sdb_inverted_index_score         │
-│ ~5 rows                                                 │
-╰────────────────────────────┬────────────────────────────╯
-╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
 │ Key: file_row_number                                    │
 │ ~5 rows                                                 │
 ╰────────────────────────────┬────────────────────────────╯
@@ -1099,11 +984,7 @@ query
 EXPLAIN SELECT title, n FROM lj_v_glob_idx LIMIT 2500 OFFSET 7;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────╮
-│ Projections: title, n            │
-│ ~2,500 rows                      │
-╰─────────────────┬────────────────╯
-╭─ LOOKUP_JOIN ───┴────────────────╮
+╭─ LOOKUP_JOIN ────────────────────╮
 │ Key: file_index, file_row_number │
 │ ~2,500 rows                      │
 ╰─────────────────┬────────────────╯
@@ -1128,15 +1009,7 @@ query
 EXPLAIN SELECT title, n FROM lj_v_att_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_v_att_idx.tableoid) ASC LIMIT 5;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────────────────────╮
-│ Projections: #0, #1                                     │
-│ ~5 rows                                                 │
-╰────────────────────────────┬────────────────────────────╯
-╭─ PROJECTION ───────────────┴────────────────────────────╮
-│ Projections: title, n, sdb_inverted_index_score         │
-│ ~5 rows                                                 │
-╰────────────────────────────┬────────────────────────────╯
-╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
 │ Key: rowid                                              │
 │ ~5 rows                                                 │
 ╰────────────────────────────┬────────────────────────────╯
@@ -1302,11 +1175,6 @@ EXPLAIN SELECT parse_filename(filename), content FROM lj_v_text_idx WHERE conten
 QUERY PLAN
 ╭─ PROJECTION ────────────────────────────────────────────╮
 │ Projections: parse_filename(filename), content          │
-│ ~1 row                                                  │
-╰────────────────────────────┬────────────────────────────╯
-╭─ PROJECTION ───────────────┴────────────────────────────╮
-│ Projections: content, filename,                         │
-│              sdb_inverted_index_score                   │
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮

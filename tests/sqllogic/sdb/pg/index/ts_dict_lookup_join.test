@@ -43,11 +43,7 @@ query
 EXPLAIN SELECT id, title FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: id, title            │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ LOOKUP_JOIN ───┴─────────────────╮
+╭─ LOOKUP_JOIN ─────────────────────╮
 │ Key: rowid                        │
 │ ~3 rows                           │
 ╰─────────────────┬─────────────────╯
@@ -282,33 +278,30 @@ QUERY PLAN
 ╭─ CROSS_PRODUCT ─┴─────────────────╮
 ╰─────────────────┬─────────────────╯
                   ├────────────────────────────────────────────────────────────────────────╮
-╭─ PROJECTION ────┴─────────────────╮                          ╭─ TOP_N ───────────────────┴──────────────────────────╮
-│ Projections: id, title            │                          │ Top: 2                                               │
+╭─ LOOKUP_JOIN ───┴─────────────────╮                          ╭─ TOP_N ───────────────────┴──────────────────────────╮
+│ Key: rowid                        │                          │ Top: 2                                               │
 │ ~2 rows                           │                          │ Order By: docs DESC, term ASC                        │
 ╰─────────────────┬─────────────────╯                          │ ~2 rows                                              │
-╭─ LOOKUP_JOIN ───┴─────────────────╮                          ╰───────────────────────────┬──────────────────────────╯
-│ Key: rowid                        │                          ╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ ~2 rows                           │                          │ Projections:                                         │
-╰─────────────────┬─────────────────╯                          │ sdb_inverted_index_term$body,                        │
-                  ├───────────────────────────────╮            │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-╭─ TOP_N ─────────┴─────────────────╮  ╭─ INDEX_SOURCE ─────╮  │ ~6 rows                                              │
-│ Top: 2                            │  │ Lookup: table      │  ╰───────────────────────────┬──────────────────────────╯
-│ Order By: id DESC                 │  │ Projections: title │  ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
-│ ~2 rows                           │  │ ~2 rows            │  │ Groups: #0                                           │
-╰─────────────────┬─────────────────╯  ╰────────────────────╯  │ Aggregates: sum(#1)                                  │
-╭─ IRESEARCH_SCAN ┴─────────────────╮                          │ ~6 rows                                              │
-│ Index: tl_idx                     │                          ╰───────────────────────────┬──────────────────────────╯
-│ Lookup: table                     │                          ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
-│ Index Filter:                     │                          │ Index: tl_idx                                        │
-│ ╭─ Term ──────────────╮           │                          │ TsDict: body                                         │
-│ │ Field: body(string) │           │                          │ Projections:                                         │
-│ │ Value: fox          │           │                          │ sdb_inverted_index_term$body,                        │
-│ ╰─────────────────────╯           │                          │ sdb_inverted_index_term_count$body                   │
-│ Column Filter:                    │                          │ ~12 rows                                             │
-│ optional: Dynamic Filter (id > ?) │                          ╰──────────────────────────────────────────────────────╯
-│ Projections: id, pk               │
-│ ~6 rows                           │
-╰───────────────────────────────────╯
+                  ├───────────────────────────────╮            ╰───────────────────────────┬──────────────────────────╯
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ INDEX_SOURCE ─────╮  ╭─ PROJECTION ──────────────┴──────────────────────────╮
+│ Top: 2                            │  │ Lookup: table      │  │ Projections:                                         │
+│ Order By: id DESC                 │  │ Projections: title │  │ sdb_inverted_index_term$body,                        │
+│ ~2 rows                           │  │ ~2 rows            │  │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
+╰─────────────────┬─────────────────╯  ╰────────────────────╯  │ ~6 rows                                              │
+╭─ IRESEARCH_SCAN ┴─────────────────╮                          ╰───────────────────────────┬──────────────────────────╯
+│ Index: tl_idx                     │                          ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
+│ Lookup: table                     │                          │ Groups: #0                                           │
+│ Index Filter:                     │                          │ Aggregates: sum(#1)                                  │
+│ ╭─ Term ──────────────╮           │                          │ ~6 rows                                              │
+│ │ Field: body(string) │           │                          ╰───────────────────────────┬──────────────────────────╯
+│ │ Value: fox          │           │                          ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
+│ ╰─────────────────────╯           │                          │ Index: tl_idx                                        │
+│ Column Filter:                    │                          │ TsDict: body                                         │
+│ optional: Dynamic Filter (id > ?) │                          │ Projections:                                         │
+│ Projections: id, pk               │                          │ sdb_inverted_index_term$body,                        │
+│ ~6 rows                           │                          │ sdb_inverted_index_term_count$body                   │
+╰───────────────────────────────────╯                          │ ~12 rows                                             │
+                                                               ╰──────────────────────────────────────────────────────╯
 
 query
 SELECT d.id, d.title, t.term

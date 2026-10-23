@@ -31,11 +31,7 @@ query
 EXPLAIN SELECT id, k, body FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_pages.parquet') ORDER BY k, id LIMIT 3;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: id, k, body          │
-│ ~3 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ LOOKUP_JOIN ───┴─────────────────╮
+╭─ LOOKUP_JOIN ─────────────────────╮
 │ Key: file_index, file_row_number  │
 │ ~3 rows                           │
 ╰─────────────────┬─────────────────╯

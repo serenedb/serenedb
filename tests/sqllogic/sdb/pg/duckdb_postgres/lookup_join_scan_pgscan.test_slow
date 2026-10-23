@@ -39,15 +39,7 @@ query
 EXPLAIN SELECT id, title, body FROM ljs_${__DATABASE__}.ljs.t ORDER BY k, id DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: #0, #1, #2           │
-│ ~0 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: id, title, body, k   │
-│ ~0 rows                           │
-╰─────────────────┬─────────────────╯
-╭─ LOOKUP_JOIN ───┴─────────────────╮
+╭─ LOOKUP_JOIN ─────────────────────╮
 │ Key: ctid                         │
 │ ~0 rows                           │
 ╰─────────────────┬─────────────────╯
@@ -80,16 +72,6 @@ query
 EXPLAIN SELECT id, title FROM ljs_${__DATABASE__}.ljs.t WHERE k = 3 LIMIT 5;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────╮
-│ Projections: id,     │
-│              title   │
-│ ~0 rows              │
-╰───────────┬──────────╯
-╭─ PROJECTION ─────────╮
-│ Projections: k, id,  │
-│              title   │
-│ ~0 rows              │
-╰───────────┬──────────╯
 ╭─ LOOKUP_JOIN ────────╮
 │ Key: ctid            │
 │ ~0 rows              │

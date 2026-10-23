@@ -180,15 +180,7 @@ query
 EXPLAIN SELECT category, body FROM vqs_idx WHERE body @@ ts_phrase('pudge') ORDER BY id DESC LIMIT 2;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────╮
-│ Projections: #0, #1               │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ PROJECTION ────┴─────────────────╮
-│ Projections: category, body, id   │
-│ ~1 row                            │
-╰─────────────────┬─────────────────╯
-╭─ LOOKUP_JOIN ───┴─────────────────╮
+╭─ LOOKUP_JOIN ─────────────────────╮
 │ Key: file_index, file_row_number  │
 │ ~1 row                            │
 ╰─────────────────┬─────────────────╯

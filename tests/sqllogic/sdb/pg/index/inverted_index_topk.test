@@ -42,15 +42,7 @@ query
 EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) ASC LIMIT 5;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────────────────────╮
-│ Projections: #0                                         │
-│ ~1 row                                                  │
-╰────────────────────────────┬────────────────────────────╯
-╭─ PROJECTION ───────────────┴────────────────────────────╮
-│ Projections: id, sdb_inverted_index_score               │
-│ ~1 row                                                  │
-╰────────────────────────────┬────────────────────────────╯
-╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
 │ Key: iresearch_pk                                       │
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯

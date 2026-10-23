@@ -43,15 +43,7 @@ query
 EXPLAIN SELECT title, n FROM ljch_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(ljch_idx.tableoid) ASC LIMIT 5;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────────────────────╮
-│ Projections: #0, #1                                     │
-│ ~5 rows                                                 │
-╰────────────────────────────┬────────────────────────────╯
-╭─ PROJECTION ───────────────┴────────────────────────────╮
-│ Projections: title, n, sdb_inverted_index_score         │
-│ ~5 rows                                                 │
-╰────────────────────────────┬────────────────────────────╯
-╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
 │ Key: id                                                 │
 │ ~5 rows                                                 │
 ╰────────────────────────────┬────────────────────────────╯

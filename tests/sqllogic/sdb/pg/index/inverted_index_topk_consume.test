@@ -157,15 +157,7 @@ query
 EXPLAIN SELECT id FROM tk_idx ORDER BY n DESC LIMIT 2;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────╮
-│ Projections: #0                  │
-│ ~2 rows                          │
-╰─────────────────┬────────────────╯
-╭─ PROJECTION ────┴────────────────╮
-│ Projections: id, n               │
-│ ~2 rows                          │
-╰─────────────────┬────────────────╯
-╭─ LOOKUP_JOIN ───┴────────────────╮
+╭─ LOOKUP_JOIN ────────────────────╮
 │ Key: iresearch_pk                │
 │ ~2 rows                          │
 ╰─────────────────┬────────────────╯

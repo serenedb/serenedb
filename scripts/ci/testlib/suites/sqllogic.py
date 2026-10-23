@@ -119,7 +119,7 @@ def _runner_args(ctx, rel, engine, port, ssl_port, env, part=None):
     if env.get("PGSOCKETDIR"):
         argv += ["--label", "pgsocket"]
     if CORPUS in rel:
-        argv += ["--show-column-names", "false", "--flat-values", "true"]
+        argv += ["--show-column-names", "false", "--flat-values", "true", "--hash-threshold", "8"]
     if part:
         argv += ["--part", f"{part[0]}/{part[1]}"]
     return argv

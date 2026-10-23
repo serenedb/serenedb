@@ -29,18 +29,21 @@ digest=$(python3 scripts/ci/ci.py digest --config "$CONFIG" --flags "$BUILD_FLAG
 bundle="bundles/${CONFIG}-${ARCH}-${digest}.tar.zst"
 output digest "$digest"
 
-if python3 scripts/ci/ci.py exists "$bundle"; then
+found=0
+python3 scripts/ci/ci.py exists "$bundle" || found=$?
+if [[ $found == 0 ]]; then
 	echo "bundle $bundle is in the store: nothing to build"
 	output reused true
 	exit 0
 fi
+[[ $found == 1 ]] || exit 1
 output reused false
 
 remote=()
 if [[ "$ARCH" == x86_64 ]]; then
 	remote=(-e "CCACHE_REMOTE_STORAGE=$SDB_STORE_CCACHE")
 fi
-mkdir -p "$WORKSPACE/out/logs" "$CARGO_HOME_CACHE" "$CARGO_TARGET_CACHE"
+mkdir -p "$WORKSPACE/out/logs" "$WORKSPACE/out/home" "$CARGO_HOME_CACHE" "$CARGO_TARGET_CACHE"
 
 docker run --rm \
 	${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} \

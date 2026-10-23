@@ -15,6 +15,11 @@ def url(path):
     return f"{base}/{path.lstrip('/')}"
 
 
+def _failed(method, path, e):
+    body = e.read().decode(errors="replace").strip()
+    return RuntimeError(f"{method} {url(path)}: HTTP {e.code} {body}".rstrip())
+
+
 def get(path, dest, timeout=600):
     try:
         with urllib.request.urlopen(url(path), timeout=timeout) as r, open(dest, "wb") as fh:
@@ -23,7 +28,7 @@ def get(path, dest, timeout=600):
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return False
-        raise
+        raise _failed("GET", path, e) from e
 
 
 def exists(path, timeout=30):
@@ -34,7 +39,7 @@ def exists(path, timeout=30):
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return False
-        raise
+        raise _failed("HEAD", path, e) from e
 
 
 def put(path, src, timeout=1800):
@@ -42,9 +47,11 @@ def put(path, src, timeout=1800):
     with open(src, "rb") as fh:
         req = urllib.request.Request(url(path), data=fh, method="PUT",
                                      headers={"Content-Length": str(size)})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            if r.status not in (200, 201, 204):
-                raise RuntimeError(f"PUT {path}: HTTP {r.status}")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout):
+                pass
+        except urllib.error.HTTPError as e:
+            raise _failed("PUT", path, e) from e
 
 
 def reachable(timeout=5):
@@ -52,8 +59,6 @@ def reachable(timeout=5):
         req = urllib.request.Request(url(""), method="HEAD")
         with urllib.request.urlopen(req, timeout=timeout):
             return True
-    except urllib.error.HTTPError as e:
-        return e.code < 500
     except OSError:
         return False
 

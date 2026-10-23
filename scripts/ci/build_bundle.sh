@@ -1,10 +1,4 @@
 #!/bin/bash
-# Builds one CI config into its persistent build_<config> and stores the test
-# bundle under its input digest; a digest already in the store builds nothing.
-#
-#   scripts/ci/build_bundle.sh <config>
-#
-# Outputs (also to $GITHUB_OUTPUT): digest, reused.
 
 set -euo pipefail
 

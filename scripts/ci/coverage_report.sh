@@ -1,8 +1,4 @@
 #!/bin/bash
-# Merges the coverage profiles every shard of a run stored and reports the
-# coverage of the lines the change touches (scripts/coverage/diff.py).
-#
-#   scripts/ci/coverage_report.sh <config> <digest> <run id> <base ref>
 
 set -euo pipefail
 

@@ -79,14 +79,6 @@ class ServicesFixture(Fixture):
         self.services.stop()
 
 
-class BiglakeFixture(Fixture):
-    def start(self, ctx):
-        self._env = services.biglake_env()
-
-    def env(self):
-        return dict(self._env)
-
-
 def service_fixture_names(path, biglake):
     names = services.services_for_test(str(path))
     if biglake:
@@ -97,10 +89,8 @@ def service_fixture_names(path, biglake):
 def service_factories(biglake):
     factories = {}
     for name in ("minio", "azurite", "iceberg", "ollama", "kev", "postgres", "clickhouse",
-                 "iceberg-data"):
+                 "iceberg-data", "biglake"):
         factories[f"svc:{name}"] = (lambda n: lambda ctx: ServicesFixture(ctx, [n]))(name)
-    if biglake:
-        factories["svc:biglake"] = lambda ctx: BiglakeFixture()
     return factories
 
 

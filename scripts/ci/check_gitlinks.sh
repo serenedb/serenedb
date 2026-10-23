@@ -1,6 +1,4 @@
 #!/bin/bash
-# Fails when a gitlink points at a commit its repository can't serve, before
-# any build job checks it out.
 
 set -uo pipefail
 

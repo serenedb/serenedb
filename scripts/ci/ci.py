@@ -96,7 +96,7 @@ def cmd_pack(args):
     print(f"{out} {out.stat().st_size >> 20} MB")
 
 
-def fetch_bundle(config, arch, dig, dest):
+def fetch_bundle(config, arch, dig, dest, archive=None):
     dest = Path(dest)
     marker = dest / ".complete"
     if marker.is_file():
@@ -104,14 +104,18 @@ def fetch_bundle(config, arch, dig, dest):
     BUNDLE_CACHE.mkdir(parents=True, exist_ok=True)
     tmp_dir = Path(tempfile.mkdtemp(dir=BUNDLE_CACHE, prefix=".fetch-"))
     try:
-        archive = tmp_dir / "bundle.tar.zst"
-        if not store.get(bundle_name(config, arch, dig), archive):
-            raise SystemExit(f"no bundle {bundle_name(config, arch, dig)} in the store")
+        if archive:
+            archive = Path(archive).resolve()
+        else:
+            archive = tmp_dir / "bundle.tar.zst"
+            if not store.get(bundle_name(config, arch, dig), archive):
+                raise SystemExit(f"no bundle {bundle_name(config, arch, dig)} in the store")
         unpacked = tmp_dir / "unpacked"
         unpacked.mkdir()
         owner = os.environ.get("SDB_DOCKER_OWNER")
         subprocess.run(["docker", "run", "--rm", *(["--label", f"serenedb.owner={owner}"] if owner else []),
                         "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{BUNDLE_CACHE}:{BUNDLE_CACHE}",
+                        "-v", f"{archive.parent}:{archive.parent}",
                         os.environ["BUILD_IMAGE"], "tar", "-C", str(unpacked), "-I", "zstd -T0",
                         "-xf", str(archive)], check=True)
         (unpacked / ".complete").write_text(dig)
@@ -138,7 +142,7 @@ def prune_bundles(keep_days=2):
 def cmd_fetch(args):
     prune_bundles()
     dest = BUNDLE_CACHE / f"{args.config}-{args.arch}-{args.digest}"
-    path = fetch_bundle(args.config, args.arch, args.digest, dest)
+    path = fetch_bundle(args.config, args.arch, args.digest, dest, args.archive)
     try:
         os.utime(path)
     except PermissionError:
@@ -384,6 +388,7 @@ def main(argv):
     p.add_argument("--config", required=True)
     p.add_argument("--arch", required=True)
     p.add_argument("--digest", required=True)
+    p.add_argument("--archive", help="unpack this local bundle instead of downloading it")
     p.set_defaults(fn=cmd_fetch)
     p = sub.add_parser("upload", help="put a file into the store")
     p.add_argument("src")

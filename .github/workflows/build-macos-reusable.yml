@@ -3,7 +3,7 @@ name: task | serenedb macos build & test
 # Native macOS (Apple Silicon) build + test. Unlike the Linux pipeline this does
 # NOT use Docker: it builds with Homebrew LLVM and runs sqllogic against a
 # locally-started serened. Reusable + manually dispatchable; wired into the
-# daily run (daily.yml).
+# daily run (jobs-schedule.yml).
 on:
   workflow_call:
     inputs:

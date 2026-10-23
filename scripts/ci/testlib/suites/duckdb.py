@@ -296,11 +296,10 @@ def _batch_run(ctx, suite, members, cpp, jobs, may_fail=frozenset()):
         if res.stuck:
             launched = sorted(members, key=lambda m: not m.endswith(".test_slow"))
             unfinished = [m for m in launched if f"{label}:{m}" not in member_results]
-            running = set(unfinished[:max(2, jobs)])
-            for m in unfinished:
+            for i, m in enumerate(unfinished):
                 member_results[f"{label}:{m}"] = (
                     (STUCK, res.duration, f"no result after {res.duration:.0f}s; stacks saved")
-                    if m in running else (SKIPPED, 0.0, "not run: the batch timed out"))
+                    if i == 0 else (SKIPPED, 0.0, "no result: the batch timed out"))
             return Outcome(STUCK, "batch did not finish; stacks saved", signature="stuck",
                            members=member_results)
         out = r.outcome(res)

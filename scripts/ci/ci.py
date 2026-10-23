@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,8 +43,8 @@ def _is_build_input(path):
     return not any(fnmatch.fnmatchcase(path, p) for p in NOT_BUILD_INPUTS)
 
 
-def digest(config, flags, image):
-    out = subprocess.run(["git", "-C", str(ROOT), "ls-tree", "-r", "HEAD"], capture_output=True,
+def digest(config, flags, image, rev="HEAD"):
+    out = subprocess.run(["git", "-C", str(ROOT), "ls-tree", "-r", rev], capture_output=True,
                          text=True, check=True).stdout
     h = hashlib.sha256()
     h.update(f"{DIGEST_VERSION}\n{config}\n{flags}\n{image}\n".encode())
@@ -63,7 +65,7 @@ def cmd_digest(args):
         res = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", image],
                              capture_output=True, text=True)
         image = res.stdout.strip() or image
-    print(digest(args.config, args.flags, image))
+    print(digest(args.config, args.flags, image, args.rev))
 
 
 def cmd_pack(args):
@@ -169,6 +171,51 @@ def cmd_timing(args):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _listing(path):
+    try:
+        with urllib.request.urlopen(store.url(path), timeout=60) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return []
+        raise
+
+
+def cmd_update_timing(args):
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        files = []
+        now = time.time()
+        for i in range(args.days):
+            day = time.strftime("%Y-%m-%d", time.gmtime(now - i * 86400))
+            for e in _listing(f"results/{day}/"):
+                name = e["name"]
+                if e["type"] == "file" and f"-{args.config}-{args.arch}-" in name:
+                    dest = tmp / f"{day}-{name}"
+                    if store.get(f"results/{day}/{name}", dest):
+                        files.append(dest)
+        if not files:
+            print("no results to learn timings from")
+            return
+        old = tmp / "old.parquet"
+        key = f"timing/{args.config}-{args.arch}.parquet"
+        have_old = store.get(key, old)
+        listed = ", ".join(f"'{f}'" for f in files)
+        fresh = (f"SELECT unit, quantile_cont(duration, 0.95) AS p95, count(*) AS n "
+                 f"FROM read_parquet([{listed}], union_by_name = true) "
+                 f"WHERE coalesce(pr, '') = '' AND attempt = 0 AND NOT wrapper "
+                 f"AND status IN ('passed', 'failed', 'flaky') GROUP BY unit")
+        keep = (f" UNION ALL SELECT unit, p95, n FROM read_parquet('{old}') "
+                f"WHERE unit NOT IN (SELECT unit FROM fresh)") if have_old else ""
+        new = tmp / "new.parquet"
+        store.shell(f"COPY (WITH fresh AS ({fresh}) SELECT unit, p95, n FROM fresh{keep}) "
+                    f"TO '{new}' (FORMAT parquet, COMPRESSION zstd)", tmp)
+        store.put(key, new)
+        print(f"{key}: learned from {len(files)} result file(s)")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def cmd_results(args):
     src = Path(args.results).resolve()
     meta = json.loads((src.parent / "meta.json").read_text())
@@ -187,6 +234,7 @@ def main(argv):
     p.add_argument("--config", required=True)
     p.add_argument("--flags", default="")
     p.add_argument("--image", default="")
+    p.add_argument("--rev", default="HEAD")
     p.set_defaults(fn=cmd_digest)
     p = sub.add_parser("pack", help="pack what tests need from a build dir")
     p.add_argument("--build-dir", required=True)
@@ -220,6 +268,11 @@ def main(argv):
     p.add_argument("--arch", required=True)
     p.add_argument("--out", required=True)
     p.set_defaults(fn=cmd_timing)
+    p = sub.add_parser("update-timing", help="learn a config's timings from main's recent results")
+    p.add_argument("--config", required=True)
+    p.add_argument("--arch", required=True)
+    p.add_argument("--days", type=int, default=14)
+    p.set_defaults(fn=cmd_update_timing)
     p = sub.add_parser("results", help="store a shard's results as Parquet")
     p.add_argument("--results", required=True)
     p.add_argument("--run", required=True)

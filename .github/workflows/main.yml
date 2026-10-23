@@ -1,0 +1,135 @@
+name: auto | main
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  statuses: write
+  contents: read
+
+concurrency:
+  group: main-postmerge
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: prepare
+    runs-on: ubuntu-latest
+    outputs:
+      test_args: ${{ steps.select.outputs.test_args }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - id: classify
+        run: ./scripts/ci/classify-changes.sh HEAD^
+      - id: select
+        env:
+          IRESEARCH: ${{ steps.classify.outputs.iresearch }}
+          RE2: ${{ steps.classify.outputs.re2 }}
+          DUCKDB_SUITES: ${{ steps.classify.outputs.duckdb_suites }}
+        run: echo "test_args=$(./scripts/ci/select_suites.sh)" >> "$GITHUB_OUTPUT"
+
+  perf:
+    needs: prepare
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: perf
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+    secrets: inherit
+
+  dev:
+    needs: prepare
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: dev
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+    secrets: inherit
+
+  asan:
+    needs: prepare
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: asan
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+    secrets: inherit
+
+  tsan:
+    needs: prepare
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: tsan
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+    secrets: inherit
+
+  msan:
+    needs: prepare
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: msan
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+    secrets: inherit
+
+  timing:
+    name: learn the timings
+    needs: [perf, dev, asan, tsan, msan]
+    if: ${{ !cancelled() }}
+    runs-on:
+      - linux-amd64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          clean: false
+      - name: Update the timing store
+        run: |
+          for config in perf dev asan tsan msan; do
+            python3 scripts/ci/ci.py update-timing --config "$config" --arch x86_64
+          done
+
+  report:
+    name: Report Status
+    needs: [perf, dev, asan, tsan, msan, timing]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
+      - name: Fetch the results
+        uses: actions/download-artifact@v7
+        with:
+          pattern: results-*
+          path: results
+      - name: Write the report
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/ci/report.py --results results --out report.md
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: report
+          path: |
+            report.md
+            report.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Send notification
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID_MAIN: "51"
+          TG_THREAD_ID_BUILD: "53"
+          TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+          BRANCH: main
+          JOB_STATUS: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+          ACTOR: ${{ github.actor }}
+          RUN_NAME: "auto | main"
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ./scripts/send_notification.bash

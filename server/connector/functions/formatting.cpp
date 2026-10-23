@@ -49,6 +49,7 @@
 #include <icu-zone-lut.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 #include <limits>
 #include <optional>
 #include <span>
@@ -241,26 +242,15 @@ int64_t FloorDivide(int64_t value, int64_t divisor) {
   return (value % divisor != 0 && value < 0) ? quotient - 1 : quotient;
 }
 
-size_t Utf8SequenceLength(char lead) {
-  const auto c = static_cast<unsigned char>(lead);
-  if ((c & 0xe0) == 0xc0) {
-    return 2;
-  }
-  if ((c & 0xf0) == 0xe0) {
-    return 3;
-  }
-  if ((c & 0xf8) == 0xf0) {
-    return 4;
-  }
-  return 1;
-}
-
 size_t CharLength(std::string_view str) {
-  return std::min(Utf8SequenceLength(str.front()), str.size());
+  return std::min<size_t>(irs::utf8_utils::LengthFromChar8<1>(
+                            static_cast<irs::byte_type>(str.front())),
+                          str.size());
 }
 
 size_t CharLength(const char* str) {
-  const auto length = Utf8SequenceLength(*str);
+  const auto length =
+    irs::utf8_utils::LengthFromChar8<1>(static_cast<irs::byte_type>(*str));
   size_t i = 1;
   while (i < length && str[i] != '\0') {
     ++i;

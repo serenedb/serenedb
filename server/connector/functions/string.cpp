@@ -230,21 +230,12 @@ void SetBitFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-int32_t SourceEncoding(std::string_view name) {
-  const auto encoding = pg::EncodingByName(name);
-  if (encoding < 0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("invalid source encoding name \"", name, "\""));
-  }
-  return encoding;
-}
-
-int32_t DestinationEncoding(std::string_view name) {
+int32_t Encoding(std::string_view name, std::string_view direction) {
   const auto encoding = pg::EncodingByName(name);
   if (encoding < 0) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("invalid destination encoding name \"", name, "\""));
+      ERR_MSG("invalid ", direction, " encoding name \"", name, "\""));
   }
   return encoding;
 }
@@ -256,9 +247,9 @@ void ConvertFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                                    duckdb::string_t, duckdb::string_t>(
     args.data[0], args.data[1], args.data[2], result, args.size(),
     [&](duckdb::string_t data, duckdb::string_t from, duckdb::string_t to) {
-      const auto source = SourceEncoding(AsView(from));
+      const auto source = Encoding(AsView(from), "source");
       const auto converted = pg::ConvertEncoding(
-        AsView(data), source, DestinationEncoding(AsView(to)), buffer);
+        AsView(data), source, Encoding(AsView(to), "destination"), buffer);
       return duckdb::StringVector::AddStringOrBlob(result, converted.data(),
                                                    converted.size());
     });
@@ -272,7 +263,7 @@ void ConvertFromFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t data, duckdb::string_t encoding) {
       const auto converted =
-        pg::ConvertEncoding(AsView(data), SourceEncoding(AsView(encoding)),
+        pg::ConvertEncoding(AsView(data), Encoding(AsView(encoding), "source"),
                             pg::kUtf8Encoding, buffer);
       return duckdb::StringVector::AddString(result, converted.data(),
                                              converted.size());
@@ -288,7 +279,7 @@ void ConvertToFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [&](duckdb::string_t data, duckdb::string_t encoding) {
       const auto converted =
         pg::ConvertEncoding(AsView(data), pg::kUtf8Encoding,
-                            DestinationEncoding(AsView(encoding)), buffer);
+                            Encoding(AsView(encoding), "destination"), buffer);
       return duckdb::StringVector::AddStringOrBlob(result, converted.data(),
                                                    converted.size());
     });

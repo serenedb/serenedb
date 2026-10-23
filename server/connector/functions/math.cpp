@@ -604,11 +604,7 @@ duckdb::unique_ptr<duckdb::Expression> TrimScaleExpression(
 using Int256 = boost::multiprecision::int256_t;
 
 Int256 Pow10(uint8_t exponent) {
-  Int256 power = 1;
-  for (uint8_t i = 0; i < exponent; ++i) {
-    power *= 10;
-  }
-  return power;
+  return boost::multiprecision::pow(Int256{10}, exponent);
 }
 
 Int256 ToInt256(duckdb::hugeint_t value) {

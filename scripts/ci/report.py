@@ -109,9 +109,12 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
     if selection:
         lines += ["", f"**Test selection** (report only, every unit ran): {selection_line(selection)}"]
     if signatures:
-        lines += ["", "**Sanitizer reports**", ""]
-        for sig, where in sorted(signatures.items()):
+        lines += ["", f"**Sanitizer reports** ({len(signatures)})", ""]
+        ranked = sorted(signatures.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        for sig, where in ranked[:40]:
             lines.append(f"- `{sig[:200]}` ({', '.join(sorted(where))})")
+        if len(ranked) > 40:
+            lines.append(f"\n... and {len(ranked) - 40} more in the `report` artifact")
     if failures:
         lines += ["", f"**Failures** ({len(failures)})", "",
                   "| config | status | unit | detail |", "| --- | --- | --- | --- |"]
@@ -143,10 +146,10 @@ def post_comment(pr, body):
     ids = [x for x in out.stdout.split() if x.strip()]
     if ids:
         subprocess.run(["gh", "api", "-X", "PATCH", f"repos/{repo}/issues/comments/{ids[0]}",
-                        "-f", f"body={body}"], check=True, capture_output=True)
+                        "-F", "body=@-"], input=body, text=True, check=True, capture_output=True)
     else:
-        subprocess.run(["gh", "api", f"repos/{repo}/issues/{pr}/comments", "-f", f"body={body}"],
-                       check=True, capture_output=True)
+        subprocess.run(["gh", "api", f"repos/{repo}/issues/{pr}/comments", "-F", "body=@-"],
+                       input=body, text=True, check=True, capture_output=True)
 
 
 def main():

@@ -84,6 +84,21 @@ def stress_units(ctx, args, skips):
                  cost=cost, timeout=max(timeout, 3 * seconds + 600), label=False)]
 
 
+def stress_harness_units(ctx, args, skips):
+    uid = "stress:harness"
+    if skipped(skips, uid):
+        return []
+    cost, timeout = plan(ctx, uid, 5.0)
+
+    def run(r):
+        res = r.exec(["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider",
+                      f"--junitxml={r.dir / 'junit' / 'harness.xml'}"],
+                     cwd=ctx.root / "tests" / "drivers" / "stress")
+        return r.outcome(res)
+
+    return [Unit(uid, "stress", run, cpus=1, mem_gb=1.0, cost=cost, timeout=timeout)]
+
+
 def _stress_run(ctx, profile):
     def run(r):
         res = r.exec([ctx.root / "tests" / "drivers" / "stress" / "run.sh", "--profile", profile,

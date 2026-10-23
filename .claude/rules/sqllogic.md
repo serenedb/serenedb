@@ -28,6 +28,6 @@ A concurrency bug still gets a test:
 ## Fault points
 
 - In C++: `SDB_IF_FAILURE("<name>") { ... }` runs its block when armed; `SDB_WAIT_ON_FAILURE("<name>")` holds threads until disarmed; `SDB_PARK_ONCE_ON_FAILURE("<name>")` parks the first thread until released. Add one where none sits at the spot a test needs.
-- Armed with `SET sdb_faults = '<name>'`, disarmed with `'-<name>'`, cleared with `RESET sdb_faults`; superuser only, only in builds with fault injection (not `bench`/`perf`); `check-fault-points` requires every armed point to exist and every point to be used.
+- Armed with `SET sdb_faults = '<name>'`, disarmed with `'-<name>'`, cleared with `RESET sdb_faults`, which also releases every parked thread; superuser only, only in builds with fault injection (not `bench`/`perf`); `check-fault-points` requires every armed point to exist and every point to be used.
 - A test crashes serened only through a fault point whose block calls `SDB_IMMEDIATE_ABORT()`, or stops it cleanly (`shutdown_on_packet`). Any other exit, such as a signal, an assertion or a sanitizer abort, fails the recovery test, even when the test passes after the restart.
 - A race step by step: arm a park point, start the statement with `statement async ok` on its own connection, wait for the park with `statement ok retry 40 backoff 250ms` on `SET sdb_faults = '-<name>:parked'`, run the competing statements on other connections, release with `SET sdb_faults = '<name>:release'` from another connection, then `wait` (`recovery/inverted_index_checkpoint_during_refresh.test`).

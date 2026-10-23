@@ -549,7 +549,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Fault injection control. SET sdb_faults = 'name' to add a failure "
         "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
-        "clear all. Superuser only: the failure-point registry is "
+        "clear all and release parked threads. Superuser only: the "
+        "failure-point registry is "
         "process-global, so an armed point fires for every session.",
         [] { return duckdb::Value{""}; },
         [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {

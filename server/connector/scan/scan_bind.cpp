@@ -74,7 +74,8 @@ uint64_t EstimateFilterMatchCount(const irs::Filter& filter,
     return 0;
   }
   constexpr double kDefaultFilterSelectivity = 0.2;
-  return std::max<uint64_t>(live_docs * kDefaultFilterSelectivity, 1U);
+  return std::max<uint64_t>(
+    static_cast<uint64_t>(live_docs * kDefaultFilterSelectivity), 1U);
 }
 
 duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(

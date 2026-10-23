@@ -71,15 +71,10 @@ target_link_libraries(sereneserver PRIVATE simdjson)
 # headers include yyjson unprefixed.
 target_include_directories(
     sereneserver
+    SYSTEM
     PRIVATE
         "${CMAKE_SOURCE_DIR}/third_party/duckdb_iceberg/src/include"
         "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/yyjson/include"
-)
-
-target_include_directories(
-    sereneserver
-    PRIVATE
-        "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include"
 )
 
 add_subdirectory(functions)

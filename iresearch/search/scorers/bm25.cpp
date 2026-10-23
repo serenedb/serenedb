@@ -62,11 +62,10 @@ template<ScoreMergeType MergeType, bool HasScale>
 IRS_FORCE_INLINE void Bm15(score_t* IRS_RESTRICT res, scores_size_t n,
                            const uint32_t* IRS_RESTRICT freq,
                            [[maybe_unused]] const score_t* IRS_RESTRICT scale,
-                           score_t num, score_t c1) noexcept {
-  SDB_ASSERT(c1 != 0.f);
+                           score_t num, score_t c1_inv) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
     const auto tf = ScaledFreq<HasScale>(freq, scale, i);
-    Merge<MergeType>(res[i], num - num / (1.f + tf / c1));
+    Merge<MergeType>(res[i], num - num / (1.f + tf * c1_inv));
   }
 }
 
@@ -90,8 +89,9 @@ struct Bm15Score : public ScoreOperator {
             const score_t* scale) noexcept
     : scale{scale},
       num{boost * stats.idf},
-      norm_const{stats.norm_const},
+      norm_const_inv{1.f / stats.norm_const},
       freq{freq} {
+    SDB_ASSERT(stats.norm_const != 0.f);
     SDB_ASSERT(this->freq);
   }
 
@@ -99,7 +99,7 @@ struct Bm15Score : public ScoreOperator {
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
     Bm15<MergeType, HasScale>(res, n, freq->value, TryGetValue(scale), num,
-                              norm_const);
+                              norm_const_inv);
   }
 
   score_t Score() const noexcept final {
@@ -134,7 +134,7 @@ struct Bm15Score : public ScoreOperator {
 
   [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t num;
-  score_t norm_const;
+  score_t norm_const_inv;
   const FreqBlockAttr* freq;
 };
 

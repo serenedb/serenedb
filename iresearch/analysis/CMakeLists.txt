@@ -1,0 +1,42 @@
+target_sources(iresearch PRIVATE text_tokenizer.cpp)
+
+if(IRESEARCH_BENCH)
+    return()
+endif()
+
+target_sources(
+    iresearch
+    PRIVATE
+        classification_tokenizer.cpp
+        collation_tokenizer.cpp
+        delimited_tokenizer.cpp
+        fast_text_model.cpp
+        filter_tokens_tokenizer.cpp
+        geo_tokenizer.cpp
+        html_strip_tokenizer.cpp
+        icu_text_tokenizer.cpp
+        keyword_tokenizer.cpp
+        multi_delimited_tokenizer.cpp
+        nearest_neighbors_tokenizer.cpp
+        ngram_tokenizer.cpp
+        normalizing_tokenizer.cpp
+        path_hierarchy_tokenizer.cpp
+        pattern_tokenizer.cpp
+        pipeline_tokenizer.cpp
+        shingle_tokenizer.cpp
+        solr_synonyms_tokenizer.cpp
+        sparse_ngram_tokenizer.cpp
+        split_by_non_alpha_tokenizer.cpp
+        sql_tokenizer.cpp
+        stemming_tokenizer.cpp
+        stopwords_tokenizer.cpp
+        text/case/case.cpp
+        text/classify/block_masks.cpp
+        text/dict/stem_cache.cpp
+        text/dict/stopwords_loader.cpp
+        token_attributes.cpp
+        tokenizer_pool.cpp
+        union_tokenizer.cpp
+        wildcard_tokenizer.cpp
+        wordnet_synonyms_tokenizer.cpp
+)

@@ -54,12 +54,12 @@ IRS_FORCE_INLINE void LmDirImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
   const uint32_t* IRS_RESTRICT norm,
   [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t mu_p_inv,
-  score_t mu, score_t const_boost) noexcept {
+  score_t mu_inv, score_t const_boost) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
     const score_t tf = ScaledFreq<HasScale>(freq, scale, i);
     const score_t dl = TermCountToScore(norm[i]);
     const score_t weight = std::log1p(tf * mu_p_inv);
-    const score_t doc_norm = std::log1p(dl / mu);
+    const score_t doc_norm = std::log1p(dl * mu_inv);
     score_t r = weight - doc_norm;
     if (r < 0.f) {
       r = 0.f;
@@ -78,14 +78,14 @@ struct LmDirScore : public ScoreOperator {
       norm{norm},
       scale{scale},
       boost{boost},
-      mu{mu},
+      mu_inv{1.f / mu},
       mu_p_inv{1.f / (mu * stats.collection_prob)} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
     LmDirImpl<MergeType, HasScale>(res, n, freq->value, norm,
-                                   TryGetValue(scale), mu_p_inv, mu, boost);
+                                   TryGetValue(scale), mu_p_inv, mu_inv, boost);
   }
 
   score_t Score() const noexcept final {
@@ -122,7 +122,7 @@ struct LmDirScore : public ScoreOperator {
   const uint32_t* norm;
   [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t boost;
-  score_t mu;
+  score_t mu_inv;
   score_t mu_p_inv;
 };
 

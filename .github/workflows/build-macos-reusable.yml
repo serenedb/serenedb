@@ -33,7 +33,7 @@ jobs:
       SDB_SSL_PORT: "7778"
       # ccache tuned for cross-run reuse (see below):
       #  - BASEDIR + NOHASHDIR: rewrite abs paths -> relative so hits survive
-      #    checkout-path changes and the -g3 absolute paths don't bust the hash.
+      #    checkout-path changes; the build's prefix maps keep outputs relative.
       #  - COMPILERCHECK=content: brew re-lays-down llvm each run with a fresh
       #    mtime; hashing the compiler by content avoids a full cache miss.
       #  - SLOPPINESS: don't invalidate on header timestamps / __DATE__/__TIME__.
@@ -90,15 +90,15 @@ jobs:
             cargo-sqllogictest-macos15-
 
       # Mirrors the Linux CI build flags (scripts/ci/build.bash, `dev` config):
-      # RelWithDebInfo + COLUMNS debug + no IPO + ccache. macOS deltas: Homebrew
-      # LLVM compiler, STATIC_EXECUTABLES=Off (no static libc), SDB_ALLOC=SYS
+      # RelWithDebInfo + STACK debug + no LTO + ccache. macOS deltas: Homebrew
+      # LLVM compiler, SDB_STATIC=Off (no static libc), SDB_ALLOC=SYS
       # (jemalloc unused on macOS; Linux CI uses JE).
       - name: Configure
         run: |
           cmake -G Ninja -B build \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DUSE_DEBUG_INFO=COLUMNS \
-            -DUSE_IPO=Off \
+            -DSDB_DEBUG_INFO=STACK \
+            -DSDB_LTO=Off \
             -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
             -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
@@ -106,12 +106,12 @@ jobs:
             -DCMAKE_ASM_COMPILER_LAUNCHER=ccache \
             -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld \
             -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld \
-            -DAUTO_UPDATE_MODULES=Off \
+            -DSDB_UPDATE_SUBMODULES=Off \
             -DSDB_DEV=On \
             -DSDB_GTEST=On \
             -DSDB_FAULT_INJECTION=On \
             -DSDB_ALLOC=SYS \
-            -DSTATIC_EXECUTABLES=Off \
+            -DSDB_STATIC=Off \
             -DSDB_SANITIZE=
 
       - name: Build

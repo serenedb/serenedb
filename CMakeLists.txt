@@ -358,9 +358,35 @@ string(
     " ${SDB_CODEGEN_FLAGS} -fsized-deallocation -fstrict-vtable-pointers"
 )
 
+file(
+    RELATIVE_PATH
+    SDB_SOURCE_FROM_BUILD
+    ${CMAKE_BINARY_DIR}
+    ${CMAKE_SOURCE_DIR}
+)
+file(
+    RELATIVE_PATH
+    SDB_BUILD_FROM_SOURCE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_BINARY_DIR}
+)
+if(SDB_BUILD_FROM_SOURCE STREQUAL "")
+    message(
+        FATAL_ERROR
+        "build in a directory of its own, such as the presets' build_<preset>"
+    )
+endif()
+string(REGEX REPLACE "/+$" "" SDB_SOURCE_FROM_BUILD "${SDB_SOURCE_FROM_BUILD}")
+string(APPEND SDB_SOURCE_FROM_BUILD "/")
+
 add_compile_options(
     $<$<BOOL:${SDB_WERROR}>:-Werror>
-    -ffile-prefix-map=${CMAKE_SOURCE_DIR}=.
+    -ffile-prefix-map=${CMAKE_SOURCE_DIR}/=
+    -ffile-prefix-map=${SDB_SOURCE_FROM_BUILD}=
+    -fdebug-prefix-map=${CMAKE_SOURCE_DIR}/=${SDB_SOURCE_FROM_BUILD}
+    -fdebug-prefix-map=${SDB_SOURCE_FROM_BUILD}=${SDB_SOURCE_FROM_BUILD}
+    -fdebug-compilation-dir=${SDB_BUILD_FROM_SOURCE}
+    -fcoverage-compilation-dir=.
     $<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>
     $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++>
 )
@@ -426,9 +452,7 @@ set(SDB_DEBUG_FLAGS "${SDB_DEBUG_INFO_${SDB_DEBUG_INFO}}")
 if(SDB_SPLIT_DWARF AND NOT SDB_DEBUG_INFO STREQUAL "NONE")
     string(APPEND SDB_DEBUG_FLAGS " -gsplit-dwarf")
     if(SDB_LTO)
-        add_link_options(
-            "-Wl,--plugin-opt=dwo_dir=${CMAKE_BINARY_DIR}/dwo/$<TARGET_PROPERTY:NAME>"
-        )
+        add_link_options("-Wl,--plugin-opt=dwo_dir=dwo/$<TARGET_PROPERTY:NAME>")
     endif()
 endif()
 

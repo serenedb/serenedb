@@ -75,12 +75,40 @@ statement error out of range
 SELECT fnr.too_big();
 
 
+skipif serenedb
 statement error return type mismatch in function declared to return integer
 CREATE FUNCTION fnr.from_text() RETURNS integer LANGUAGE sql RETURN '12'::text;
 
 
+onlyif serenedb
+statement ok
+CREATE FUNCTION fnr.from_text() RETURNS integer LANGUAGE sql RETURN '12'::text;
+
+
+onlyif serenedb
+query
+SELECT fnr.from_text() AS v;
+----
+v
+12
+
+
+skipif serenedb
 statement error return type mismatch in function declared to return boolean
 CREATE FUNCTION fnr.to_bool() RETURNS boolean LANGUAGE sql RETURN 1;
+
+
+onlyif serenedb
+statement ok
+CREATE FUNCTION fnr.to_bool() RETURNS boolean LANGUAGE sql RETURN 1;
+
+
+onlyif serenedb
+query
+SELECT fnr.to_bool() AS v;
+----
+v
+t
 
 
 statement ok

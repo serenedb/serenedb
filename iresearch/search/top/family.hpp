@@ -25,8 +25,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/lead/two_phase_docs.hpp"
-#include "iresearch/search/lead/two_phase_scored.hpp"
+#include "iresearch/search/lead/two_phase.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/walk.hpp"

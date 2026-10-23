@@ -28,8 +28,7 @@
 #include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/node.hpp"
-#include "iresearch/search/probe/two_phase_docs.hpp"
-#include "iresearch/search/probe/two_phase_scored.hpp"
+#include "iresearch/search/probe/two_phase.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/utils/memory.hpp"
 

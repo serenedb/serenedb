@@ -25,7 +25,7 @@
 
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/docs/walk.hpp"
-#include "iresearch/search/lead/two_phase_docs.hpp"
+#include "iresearch/search/lead/two_phase.hpp"
 
 namespace irs::docs {
 

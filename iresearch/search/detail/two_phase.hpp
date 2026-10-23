@@ -32,58 +32,39 @@
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/type_limits.hpp"
 
-namespace irs::probe {
+namespace irs::detail {
 
 template<typename Slots>
-class TwoPhaseScored {
+class SlotsScore {
  public:
-  static constexpr uint32_t kBatch = kScoreBlock;
-
   static constexpr bool kHasFreq =
     requires(const Slots& slots) { slots.Freq(); };
   static constexpr bool kHasScale =
     requires(const Slots& slots) { slots.Scale(); };
 
-  template<typename... Args>
-  TwoPhaseScored(const SubReader& segment, const TermReader& field,
-                 const detail::ScoreArgs& args, Args&&... slots)
-    : _slots{std::forward<Args>(slots)...}, _recipe{&segment, &field, args} {}
+  SlotsScore(const SubReader& segment, const TermReader& field,
+             const ScoreArgs& args)
+    : _recipe{&segment, &field, args} {}
 
-  TwoPhaseScored(TwoPhaseScored&&) = delete;
-  TwoPhaseScored& operator=(TwoPhaseScored&&) = delete;
+  SlotsScore(SlotsScore&&) = delete;
+  SlotsScore& operator=(SlotsScore&&) = delete;
 
-  doc_id_t Probe(doc_id_t target) {
-    if (target <= _matched) {
-      return _matched;
-    }
-    if (target < _least) {
-      return _least;
-    }
-    if (const auto probe = _slots.Probe(target); probe != target) {
-      return _least = probe;
-    }
-    if (!_slots.Match(target)) {
-      return _least = target + 1;
-    }
-    return _matched = target;
-  }
-
-  IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) noexcept {
-    SDB_ASSERT(slot < kBatch);
+  IRS_FORCE_INLINE void Fetch(const Slots& slots, uint32_t slot) noexcept {
+    SDB_ASSERT(slot < kScoreBlock);
     if constexpr (kHasFreq) {
-      _freqs[slot] = _slots.Freq();
+      _freqs[slot] = slots.Freq();
     }
     if constexpr (kHasScale) {
-      _scales[slot] = _slots.Scale();
+      _scales[slot] = slots.Scale();
     }
   }
 
-  ScoreFunction PrepareScore() {
+  ScoreFunction Prepare() {
     if constexpr (kHasFreq) {
       std::get<FreqBlockAttr>(_provider.attrs).value = _freqs;
     }
@@ -102,14 +83,13 @@ class TwoPhaseScored {
     });
   }
 
-  void CollectScorers(std::vector<ScoreFunction>& out) {
-    detail::AppendScorer(out, PrepareScore());
-  }
-
  private:
-  using Attrs = std::conditional_t<
-    kHasScale, std::tuple<FreqBlockAttr, ScaleBlockAttr>,
-    std::conditional_t<kHasFreq, std::tuple<FreqBlockAttr>, std::tuple<>>>;
+  template<bool Want, typename T>
+  using Maybe = std::conditional_t<Want, std::tuple<T>, std::tuple<>>;
+
+  using Attrs =
+    decltype(std::tuple_cat(std::declval<Maybe<kHasFreq, FreqBlockAttr>>(),
+                            std::declval<Maybe<kHasScale, ScaleBlockAttr>>()));
 
   struct Provider final : AttributeProvider {
     Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -123,13 +103,50 @@ class TwoPhaseScored {
     [[no_unique_address]] Attrs attrs;
   };
 
-  [[no_unique_address]] utils::Need<kHasFreq, uint32_t[kBatch]> _freqs{};
-  [[no_unique_address]] utils::Need<kHasScale, score_t[kBatch]> _scales{};
-  Slots _slots;
+  [[no_unique_address]] utils::Need<kHasFreq, uint32_t[kScoreBlock]> _freqs{};
+  [[no_unique_address]] utils::Need<kHasScale, score_t[kScoreBlock]> _scales{};
   Provider _provider;
-  detail::LeafRecipe _recipe;
-  doc_id_t _matched = doc_limits::invalid();
-  doc_id_t _least = doc_limits::invalid();
+  LeafRecipe _recipe;
 };
 
-}  // namespace irs::probe
+template<typename Slots, bool Scored>
+class TwoPhaseBase {
+ public:
+  template<typename... Args>
+  explicit TwoPhaseBase(Args&&... args)
+    requires(!Scored)
+    : _slots{std::forward<Args>(args)...} {}
+
+  template<typename... Args>
+  TwoPhaseBase(const SubReader& segment, const TermReader& field,
+               const ScoreArgs& args, Args&&... slots)
+    requires Scored
+    : _score{segment, field, args}, _slots{std::forward<Args>(slots)...} {}
+
+  TwoPhaseBase(TwoPhaseBase&&) = delete;
+  TwoPhaseBase& operator=(TwoPhaseBase&&) = delete;
+
+  IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) noexcept
+    requires Scored
+  {
+    _score.Fetch(_slots, slot);
+  }
+
+  ScoreFunction PrepareScore()
+    requires Scored
+  {
+    return _score.Prepare();
+  }
+
+  void CollectScorers(std::vector<ScoreFunction>& out)
+    requires Scored
+  {
+    AppendScorer(out, PrepareScore());
+  }
+
+ protected:
+  [[no_unique_address]] utils::Need<Scored, SlotsScore<Slots>> _score;
+  Slots _slots;
+};
+
+}  // namespace irs::detail

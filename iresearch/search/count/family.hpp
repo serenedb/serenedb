@@ -25,7 +25,7 @@
 
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
-#include "iresearch/search/lead/two_phase_docs.hpp"
+#include "iresearch/search/lead/two_phase.hpp"
 
 namespace irs::count {
 

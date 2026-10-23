@@ -22,38 +22,44 @@
 
 #include <utility>
 
+#include "iresearch/search/detail/two_phase.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::lead {
+namespace irs::probe {
 
-template<typename Slots>
-class TwoPhaseDocs {
+template<typename Slots, bool Scored>
+class TwoPhase : public detail::TwoPhaseBase<Slots, Scored> {
+  using Base = detail::TwoPhaseBase<Slots, Scored>;
+  using Base::_slots;
+
  public:
-  template<typename... Args>
-  explicit TwoPhaseDocs(Args&&... args) : _slots{std::forward<Args>(args)...} {}
+  using Base::Base;
 
-  doc_id_t Next() { return Converge(_slots.Next(_doc)); }
-
-  doc_id_t Seek(doc_id_t target) {
-    if (target <= _doc) {
-      return _doc;
+  doc_id_t Probe(doc_id_t target) {
+    if (target <= _matched) {
+      return _matched;
     }
-    return Converge(_slots.Seek(target));
+    if (target < _least) {
+      return _least;
+    }
+    if (const auto probe = _slots.Probe(target); probe != target) {
+      return _least = probe;
+    }
+    if (!_slots.Match(target)) {
+      return _least = target + 1;
+    }
+    return _matched = target;
   }
 
  private:
-  doc_id_t Converge(doc_id_t target) {
-    while (!doc_limits::eof(target)) {
-      if (_slots.Match(target)) {
-        return _doc = target;
-      }
-      target = _slots.Next(target);
-    }
-    return _doc = target;
-  }
-
-  Slots _slots;
-  doc_id_t _doc = doc_limits::invalid();
+  doc_id_t _matched = doc_limits::invalid();
+  doc_id_t _least = doc_limits::invalid();
 };
 
-}  // namespace irs::lead
+template<typename Slots>
+using TwoPhaseDocs = TwoPhase<Slots, false>;
+
+template<typename Slots>
+using TwoPhaseScored = TwoPhase<Slots, true>;
+
+}  // namespace irs::probe

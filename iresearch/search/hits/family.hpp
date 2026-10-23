@@ -27,8 +27,7 @@
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/hits/make.hpp"
 #include "iresearch/search/hits/walk.hpp"
-#include "iresearch/search/lead/two_phase_docs.hpp"
-#include "iresearch/search/lead/two_phase_scored.hpp"
+#include "iresearch/search/lead/two_phase.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 
 namespace irs::hits {

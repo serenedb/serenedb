@@ -27,7 +27,7 @@
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/token_phrase_of.hpp"
 #include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/lead/two_phase_scored.hpp"
+#include "iresearch/search/lead/two_phase.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"

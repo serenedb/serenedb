@@ -96,7 +96,8 @@ SereneDBSearchDelete::SereneDBSearchDelete(
     duckdb::Value constant{output_types[_return_columns.size()]};
     if (column_id == kColumnIdentifierRowPosition) {
       from = _rowid.input_col_idx;
-    } else if (column_id == kColumnIdentifierTableOid) {
+    } else {
+      SDB_ASSERT(column_id == kColumnIdentifierTableOid);
       constant = duckdb::Value::BIGINT(static_cast<int64_t>(table.oid));
     }
     _return_columns.emplace_back(from);

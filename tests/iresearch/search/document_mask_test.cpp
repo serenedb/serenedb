@@ -18,7 +18,11 @@
 /// Copyright holder is SereneDB GmbH
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
+#include <roaring/memory.h>
+
 #include <algorithm>
+#include <cstdlib>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/search/count/live_count.hpp>
@@ -730,6 +734,38 @@ TEST(document_mask_test, builder_merges_a_live_range) {
   ASSERT_TRUE(unmasked.Contains(10));
   ASSERT_TRUE(unmasked.Contains(19));
   ASSERT_FALSE(unmasked.Contains(20));
+}
+
+TEST(document_mask_test, builder_reports_a_failed_allocation) {
+  const auto docs = Build({3, 7});
+  roaring_init_memory_hook({
+    .malloc = [](size_t) -> void* { return nullptr; },
+    .realloc = [](void*, size_t) -> void* { return nullptr; },
+    .calloc = [](size_t, size_t) -> void* { return nullptr; },
+    .free = [](void* p) { std::free(p); },
+    .aligned_malloc = [](size_t, size_t) -> void* { return nullptr; },
+    .aligned_free = [](void* p) { std::free(p); },
+  });
+  absl::Cleanup restore = [] {
+    roaring_init_memory_hook({
+      .malloc = [](size_t size) { return std::malloc(size); },
+      .realloc = [](void* p, size_t size) { return std::realloc(p, size); },
+      .calloc = [](size_t n, size_t size) { return std::calloc(n, size); },
+      .free = [](void* p) { std::free(p); },
+      .aligned_malloc = [](size_t alignment, size_t size) -> void* {
+        void* p = nullptr;
+        return posix_memalign(&p, alignment, size) == 0 ? p : nullptr;
+      },
+      .aligned_free = [](void* p) { std::free(p); },
+    });
+  };
+  irs::DocumentMaskBuilder builder;
+  ASSERT_SQL_ERROR(builder.MergeLive(docs, nullptr, 100),
+                   ERRCODE_OUT_OF_MEMORY);
+  std::move(restore).Invoke();
+  ASSERT_TRUE(builder.Empty());
+  ASSERT_TRUE(builder.MergeLive(docs, nullptr, 100));
+  ASSERT_EQ(2, builder.Count());
 }
 
 TEST(document_mask_test, builder_counts_the_docs_ranges_add) {

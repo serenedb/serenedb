@@ -2075,8 +2075,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       }
       removals.Prepare(queued, targets, _doc_maps);
     }
-    _doc_maps.Retire(_published.empty() ? seq : _published.front().seq,
-                     removals);
+    SDB_ASSERT(!_published.empty());
+    _doc_maps.Retire(_published.front().seq, removals);
   }
   auto existing = UpdateExisting(committed_reader, ctx->segment_mask, queued,
                                  removals, dir, progress);

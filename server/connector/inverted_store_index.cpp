@@ -809,7 +809,8 @@ duckdb::ErrorData InvertedStoreIndex::FinishAppend() {
   }
   if (auto* conn = CurrentCommittingContext()) {
     const auto slots = conn->IndexSlots(_index_id);
-    for (size_t k = 0; k < live->queues.size() && k < slots.size(); ++k) {
+    SDB_ASSERT(live->queues.size() <= slots.size());
+    for (size_t k = 0; k < live->queues.size(); ++k) {
       auto& written = live->queues[k].written;
       slots[k].rows.insert(slots[k].rows.end(),
                            std::make_move_iterator(written.begin()),

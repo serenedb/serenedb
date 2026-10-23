@@ -238,9 +238,7 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
     },
     [&](LocalTableChangesEntry::Op& op) {
       SDB_ASSERT(!op.IsTruncate());
-      if (const auto& removal = op.Removal(); !removal.segments.empty()) {
-        trx.Remove(removal);
-      }
+      trx.Remove(op.Removal());
     });
   entry.applied_ops = entry.ops.size();
 }
@@ -394,7 +392,7 @@ void SearchTableTransaction::Publish(duckdb::idx_t database) noexcept {
     }
     w.checkpoint_lock.reset();
     SDB_PARK_ONCE_ON_FAILURE("pause_search_commit_before_build_truncate");
-    if (changes != _changes.end() && shard.WatchesTruncates()) {
+    if (changes != _changes.end()) {
       RecordTruncateForBuild(shard, changes->second, w.position);
     }
     auto tick = w.first_tick;

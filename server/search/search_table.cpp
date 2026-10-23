@@ -231,12 +231,12 @@ void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
 void SearchTable::WatchTruncates() {
   absl::MutexLock lock{&_truncate_mutex};
   _build_truncate = {};
-  _truncate_watch.store(true, std::memory_order_release);
+  _truncate_watch = true;
 }
 
 void SearchTable::RecordTruncateForBuild(const irs::SourcePosition& position) {
   absl::MutexLock lock{&_truncate_mutex};
-  if (!_truncate_watch.load(std::memory_order_relaxed)) {
+  if (!_truncate_watch) {
     return;
   }
   _build_truncate = std::max(_build_truncate, position);
@@ -244,7 +244,7 @@ void SearchTable::RecordTruncateForBuild(const irs::SourcePosition& position) {
 
 void SearchTable::StopWatchingTruncates() {
   absl::MutexLock lock{&_truncate_mutex};
-  _truncate_watch.store(false, std::memory_order_release);
+  _truncate_watch = false;
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::Config()

@@ -173,19 +173,17 @@ Transaction::SearchSlot& Transaction::EnsureIndexSlot(
   duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
   std::shared_ptr<const catalog::InvertedIndexConfig> config, size_t slot) {
   auto& entry = _search_transactions.try_emplace(index_id).first->second;
-  if (entry.slots.size() <= slot) {
-    entry.slots.resize(slot + 1);
-  }
-  auto& result = entry.slots[slot];
-  if (!result.transaction) {
-    result.transaction = std::make_unique<irs::IndexWriter::Transaction>(
+  SDB_ASSERT(slot <= entry.slots.size());
+  if (slot == entry.slots.size()) {
+    auto& created = entry.slots.emplace_back();
+    created.transaction = std::make_unique<irs::IndexWriter::Transaction>(
       storage->GetTransaction(/*exclusive_segment=*/slot != 0));
-    result.transaction->SetFieldOptions(std::move(config));
+    created.transaction->SetFieldOptions(std::move(config));
   }
   if (!entry.storage) {
     entry.storage = std::move(storage);
   }
-  return result;
+  return entry.slots[slot];
 }
 
 void Transaction::RemoveIndexRows(
@@ -211,18 +209,13 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
     absl::InlinedVector<irs::IndexWriter::Transaction*, 16> transactions;
     for (auto& slot : entry.slots) {
       slot.writer.reset();
-      if (slot.transaction) {
-        transactions.push_back(&*slot.transaction);
-      }
+      transactions.push_back(&*slot.transaction);
     }
     SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_written");
     irs::IndexWriter::Transaction::RegisterFlush(transactions);
     SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_registered");
     uint64_t queries = 0;
     for (auto& slot : entry.slots) {
-      if (!slot.transaction) {
-        continue;
-      }
       queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
       try {
         SDB_IF_FAILURE("inverted_rows_record_fails") {
@@ -283,8 +276,7 @@ void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
       }
     }
     for (auto& slot : entry.slots) {
-      if (!slot.transaction ||
-          slot.transaction->Commit(entry.tick, entry.position)) {
+      if (slot.transaction->Commit(entry.tick, entry.position)) {
         continue;
       }
       SDB_ERROR(SEARCH, "search index commit failed for index '", index_id,

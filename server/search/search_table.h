@@ -247,9 +247,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     return _build_in_flight.load(std::memory_order_acquire);
   }
 
-  bool WatchesTruncates() const noexcept {
-    return _truncate_watch.load(std::memory_order_acquire);
-  }
   void WatchTruncates();
   void RecordTruncateForBuild(const irs::SourcePosition& position);
   bool TruncatedAfter(const irs::SourcePosition& position) {
@@ -316,10 +313,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   WriterGenerations _writers;
   std::atomic<bool> _build_in_flight{false};
 
-  // The watch flag is atomic so the commit path can skip the mutex entirely
-  // when no build is running, which is the normal case.
-  std::atomic<bool> _truncate_watch{false};
   absl::Mutex _truncate_mutex;
+  bool _truncate_watch ABSL_GUARDED_BY(_truncate_mutex) = false;
   irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_truncate_mutex);
   // How often a waiting rebuild surfaces to check for cancellation. The
   // CondVar does the blocking; this only bounds how long a cancelled statement

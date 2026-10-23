@@ -118,42 +118,48 @@ void Densify(roaring_bitmap_t& set, uint32_t bitset_from) noexcept {
   }
 }
 
+uint32_t CountInArray(const roaring::internal::array_container_t& array,
+                      uint32_t from, uint32_t to) noexcept {
+  const uint16_t* begin = array.array;
+  const auto* end = begin + array.cardinality;
+  const auto* lower = std::lower_bound(begin, end, from);
+  return static_cast<uint32_t>(std::lower_bound(lower, end, to) - lower);
+}
+
+uint32_t CountInRuns(const roaring::internal::run_container_t& run,
+                     uint32_t from, uint32_t to) noexcept {
+  const roaring::internal::rle16_t* begin = run.runs;
+  const auto* end = begin + run.n_runs;
+  const auto* it = std::lower_bound(
+    begin, end, from, [](const roaring::internal::rle16_t& r, uint32_t doc) {
+      return uint32_t{r.value} + r.length < doc;
+    });
+  uint32_t count = 0;
+  for (; it != end && it->value < to; ++it) {
+    count += std::min(uint32_t{it->value} + it->length + 1, to) -
+             std::max(uint32_t{it->value}, from);
+  }
+  return count;
+}
+
 uint32_t CountInContainer(const void* container, uint8_t type, uint32_t from,
                           uint32_t to) noexcept {
   switch (type) {
-    case ARRAY_CONTAINER_TYPE: {
-      const auto* array =
-        static_cast<const roaring::internal::array_container_t*>(container);
-      const uint16_t* begin = array->array;
-      const auto* end = begin + array->cardinality;
-      const auto* lower = std::lower_bound(begin, end, from);
-      return static_cast<uint32_t>(std::lower_bound(lower, end, to) - lower);
-    }
-    case RUN_CONTAINER_TYPE: {
-      const auto* run =
-        static_cast<const roaring::internal::run_container_t*>(container);
-      const roaring::internal::rle16_t* begin = run->runs;
-      const auto* end = begin + run->n_runs;
-      const auto* it =
-        std::lower_bound(begin, end, from,
-                         [](const roaring::internal::rle16_t& r, uint32_t doc) {
-                           return uint32_t{r.value} + r.length < doc;
-                         });
-      uint32_t count = 0;
-      for (; it != end && it->value < to; ++it) {
-        count += std::min(uint32_t{it->value} + it->length + 1, to) -
-                 std::max(uint32_t{it->value}, from);
-      }
-      return count;
-    }
-    case BITSET_CONTAINER_TYPE:
+    case ARRAY_CONTAINER_TYPE:
+      return CountInArray(
+        *static_cast<const roaring::internal::array_container_t*>(container),
+        from, to);
+    case RUN_CONTAINER_TYPE:
+      return CountInRuns(
+        *static_cast<const roaring::internal::run_container_t*>(container),
+        from, to);
+    default:
+      SDB_ASSERT(type == BITSET_CONTAINER_TYPE);
       return static_cast<uint32_t>(
         roaring::internal::bitset_lenrange_cardinality(
           static_cast<const roaring::internal::bitset_container_t*>(container)
             ->words,
           from, to - from - 1));
-    default:
-      SDB_UNREACHABLE();
   }
 }
 
@@ -426,7 +432,7 @@ bool DocumentMaskBuilder::MergeLiveRange(doc_id_t first, doc_id_t last,
     return false;
   }
   auto* live = roaring::api::roaring_bitmap_from_range(first, last, 1);
-  if (live != nullptr && masked != nullptr && !masked->Empty()) {
+  if (masked != nullptr && !masked->Empty()) {
     roaring::api::roaring_bitmap_andnot_inplace(live, &masked->_set.roaring);
   }
   return MergeOwned(live, last);

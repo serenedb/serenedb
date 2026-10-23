@@ -418,6 +418,15 @@ SELECT t.id, t.rowid = s.rowid AS same FROM (SELECT id, rowid FROM pf WHERE body
 id	same
 2	t
 
+query
+SELECT t.id, t.tableoid = (SELECT oid FROM pg_class WHERE relname = 'pf') AS own, t.rowid = s.rowid AS same
+FROM (SELECT id, tableoid, rowid FROM pf WHERE body @@ ts_phrase('fox') ORDER BY BM25(pf.tableoid) DESC LIMIT 2) t
+JOIN pf s ON s.id = t.id ORDER BY t.id;
+----
+id	own	same
+1	t	t
+2	t	t
+
 statement ok
 SET VARIABLE pf_top = (SELECT rowid FROM pf WHERE body @@ ts_phrase('quick') ORDER BY BM25(pf.tableoid) DESC LIMIT 1);
 

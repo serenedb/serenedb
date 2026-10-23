@@ -18,17 +18,9 @@ mkdir -p "$out/profiles"
 python3 scripts/ci/ci.py download "profdata/$RUN/" "$CONFIG-$ARCH-" "$out/profiles"
 
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
-	-v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" -v "$bundle:$bundle" "$BUILD_IMAGE" bash -c '
-		set -euo pipefail
-		out=$0 bundle=$1 base=$2
-		llvm-profdata-23 merge -sparse -failure-mode=any -o "$out/merged.profdata" "$out"/profiles/*.profdata
-		objects=()
-		for b in "$bundle"/bin/* "$bundle"/third_party/duckdb/test/unittest; do
-			[[ -f "$b" ]] && llvm-readelf-23 -S "$b" 2>/dev/null | grep -q __llvm_covmap && objects+=("$b")
-		done
-		python3 scripts/coverage/diff.py --profdata "$out/merged.profdata" --objects "${objects[@]}" \
-			--base "$base" --label "coverage $(basename "$out" | cut -d- -f2)/$(uname -m)" --out "$out"
-	' "$out" "$bundle" "$BASE"
-rm -rf "$out/profiles"
+	-v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" -v "$bundle:$bundle" "$BUILD_IMAGE" \
+	python3 scripts/coverage/diff.py --build-dir "$bundle" --profiles "$out/profiles" --base "$BASE" \
+	--label "coverage $CONFIG/$ARCH" --out "$out"
+rm -rf "$out/profiles" "$out/merged.profdata"
 python3 scripts/ci/ci.py nearest --coverage "$out/coverage.json" --arch "$ARCH" ||
 	echo "warning: no nearest tests for the uncovered lines" >&2

@@ -202,3 +202,43 @@ jobs:
       - name: Reap containers of this job
         if: always()
         run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"
+
+  coverage:
+    name: coverage ${{ inputs.CONFIG }} (${{ inputs.LOCATION }})
+    needs: [build, test]
+    if: ${{ !cancelled() && inputs.TESTS && inputs.CONFIG == 'dev' && needs.build.result == 'success' }}
+    runs-on:
+      - ${{ inputs.LOCATION }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.PR_SHA || github.sha }}
+          fetch-depth: 1
+          submodules: true
+          clean: false
+
+      - name: Clean the checkout, keeping the build directories
+        run: |
+          git config --global --add safe.directory '*'
+          git clean -ffdxq -e '/build_*/'
+          git submodule foreach --quiet --recursive 'git clean -ffdxq'
+          git fetch -q --no-tags --depth=1000 origin main "${{ inputs.PR_SHA || github.sha }}"
+
+      - name: Coverage of the change
+        run: |
+          ./scripts/ci/coverage_report.sh "${{ inputs.CONFIG }}" "${{ needs.build.outputs.digest }}" \
+            "$SDB_RUN_ID" origin/main
+          cat out/coverage-*/summary.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
+          path: |
+            out/coverage-*/summary.txt
+            out/coverage-*/coverage.json
+          if-no-files-found: ignore
+          retention-days: 30

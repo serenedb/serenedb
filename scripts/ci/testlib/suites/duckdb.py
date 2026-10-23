@@ -11,7 +11,7 @@ from pathlib import Path
 import services
 
 from ..scheduler import CRASHED, FAILED, PASSED, SKIPPED, STUCK, Fixture, Outcome, Unit
-from . import plan, skipped
+from . import Skip, plan, skipped
 
 SUITES = ("core", "cpp", "avro", "azure", "httpfs", "iceberg", "inet", "markdown",
           "postgres_scanner", "spatial", "interop")
@@ -40,11 +40,12 @@ ENV_FIXTURES = (
 BATCH_SECONDS = 30.0
 BATCH_MAX = 200
 JOBS = 2
+THREADS = {"SLURM_CPUS_ON_NODE": str(min(os.cpu_count() or 16, 16))}
 _REQUIRE_ENV = re.compile(r"^require-env\s+([A-Z0-9_]+)", re.M)
 _EVENT = re.compile(r"^\[TEST_EVENT\] (\{.*\})\s*$")
-_SIGNAL = re.compile(r"^(\S+) was terminated by signal (\d+)$")
-_EXITED = re.compile(r"^(\S+) exited with status (\d+) before reporting its result$")
-_TOOK = re.compile(r"^\[\d+/\d+\] \(\d+%\): (\S+) took ([0-9.]+)s")
+_SIGNAL = re.compile(r"^(.+) was terminated by signal (\d+)$")
+_EXITED = re.compile(r"^(.+) exited with status (\d+) before reporting its result$")
+_TOOK = re.compile(r"^\[\d+/\d+\] \(\d+%\): (.+) took ([0-9.]+)s\s*$")
 
 
 def unittest_binary(ctx):
@@ -99,6 +100,29 @@ def _escape(name):
     return '"' + re.sub(r'([,\\"])', r"\\\1", name) + '"'
 
 
+def config_skips(ctx, suite):
+    skips = {}
+    names = ["slow_build"] if ctx.build.sanitize or ctx.build.build_type == "Debug" else []
+    for name in names + [suite]:
+        path = ctx.root / "tests" / "duckdb" / "config" / f"{name}.json"
+        if not path.is_file():
+            continue
+        for group in json.loads(path.read_text()).get("skip_tests", []):
+            reason = group.get("reason", "")
+            first = reason.split(". ")[0][:200]
+            for p in group.get("paths", []):
+                skips[p] = first
+    return skips
+
+
+def _relative(ctx, suite, name):
+    if suite in SUITE_DIRS and os.path.isabs(name):
+        base = str(ctx.root / SUITE_DIRS[suite]) + "/"
+        if name.startswith(base):
+            return name[len(base):]
+    return name
+
+
 def duckdb_units(ctx, args, skips):
     if not ctx.build.duckdb_unittests or not unittest_binary(ctx).is_file():
         return []
@@ -116,9 +140,14 @@ def duckdb_units(ctx, args, skips):
         if suite == "cpp":
             units += _batches(ctx, skips, suite, [(n, ()) for n in names], cpp=True)
             continue
+        excluded = config_skips(ctx, suite)
         groups = {}
         special = []
         for name in names:
+            reason = excluded.get(_relative(ctx, suite, name))
+            if reason is not None:
+                ctx.skips.append((f"duckdb:{suite}:{name}", Skip(name, "divergence", reason)))
+                continue
             rel = name
             if suite == "iceberg" and "/test/sql/local/catalog_" in name:
                 special.append(name)
@@ -220,16 +249,15 @@ def _batch_run(ctx, suite, members, cpp, jobs):
     def run(r):
         argv = [unittest_binary(ctx), "--test-dir", core_dir(ctx), *config_args(ctx, suite)]
         if cpp:
-            argv += ["-r", "junit", "-o", str(r.dir / "junit.xml"), ",".join(_escape(m) for m in members)]
+            argv += ["--jobs", str(max(2, jobs)), ",".join(_escape(m) for m in members)]
         else:
             listing = r.dir / "tests.txt"
             listing.write_text("\n".join(members) + "\n")
-            argv += ["--emit-test-events", "--jobs", str(jobs), "-f", str(listing)]
-        env = {"SLURM_CPUS_ON_NODE": str(max(2, jobs * 2))}
-        res = r.exec(argv, env=env, cwd=core_dir(ctx))
+            argv += ["--emit-test-events", "--jobs", str(max(2, jobs)), "-f", str(listing)]
+        res = r.exec(argv, env=THREADS, cwd=core_dir(ctx))
         text = r.log.read_text(errors="replace") if r.log.exists() else ""
         if cpp:
-            member_results = _parse_junit(r.dir / "junit.xml", members, label)
+            member_results = _parse_catch(text, members, label)
         else:
             member_results, _ = _parse_events(text, members, label)
         if res.stuck:
@@ -256,29 +284,39 @@ def _batch_run(ctx, suite, members, cpp, jobs):
     return run
 
 
-def _parse_junit(path, members, label):
-    import xml.etree.ElementTree as ET
-    out = {}
-    try:
-        tree = ET.parse(path)
-    except (ET.ParseError, OSError):
-        return out
-    for case in tree.iter("testcase"):
-        name = case.get("name", "")
-        if name not in members:
+def _parse_catch(text, members, label):
+    wanted = set(members)
+    rule = "-" * 79
+    lines = text.splitlines()
+    took = {}
+    failed = {}
+    crashed = {}
+    current = None
+    for i, line in enumerate(lines):
+        m = _TOOK.match(line)
+        if m and m.group(1) in wanted:
+            took[m.group(1)] = float(m.group(2))
             continue
-        failure = case.find("failure")
-        error = case.find("error")
-        skipped_el = case.find("skipped")
-        seconds = float(case.get("time") or 0.0)
-        if failure is not None or error is not None:
-            el = failure if failure is not None else error
-            detail = (el.get("message") or el.text or "").strip().splitlines()
-            out[f"{label}:{name}"] = (FAILED, seconds, detail[0][:300] if detail else "")
-        elif skipped_el is not None:
-            out[f"{label}:{name}"] = (SKIPPED, seconds, "")
-        else:
-            out[f"{label}:{name}"] = (PASSED, seconds, "")
+        m = _SIGNAL.match(line) or _EXITED.match(line)
+        if m and m.group(1) in wanted:
+            what = "signal" if "signal" in line else "exit"
+            crashed[m.group(1)] = f"{what} {m.group(2)} before reporting its result"
+            continue
+        if line == rule and i + 1 < len(lines) and lines[i + 1].strip() in wanted:
+            current = lines[i + 1].strip()
+            continue
+        if current and ": FAILED:" in line and current not in failed:
+            detail = next((ln.strip() for ln in lines[i + 1:i + 6] if ln.strip()), "")
+            failed[current] = f"{line.strip()} {detail}"[:300]
+    out = {}
+    for name in members:
+        key = f"{label}:{name}"
+        if name in crashed:
+            out[key] = (CRASHED, took.get(name, 0.0), crashed[name])
+        elif name in failed:
+            out[key] = (FAILED, took.get(name, 0.0), failed[name])
+        elif name in took:
+            out[key] = (PASSED, took[name], "")
     return out
 
 
@@ -314,7 +352,7 @@ def _ordered_run(ctx, members, extra, env):
     def run(r):
         listing = r.dir / "tests.txt"
         listing.write_text("\n".join(members) + "\n")
-        local_env = dict(env)
+        local_env = dict(THREADS, **env)
         if env.get("CATALOG_TEST_CONFIG_SETUP") and r.env.get("ICEBERG_HTTP_PROXY"):
             local_env["HTTP_PROXY_PUBLIC"] = r.env["ICEBERG_HTTP_PROXY"]
         argv = [unittest_binary(ctx), "--test-dir", core_dir(ctx), *config_args(ctx, "iceberg"),
@@ -367,6 +405,7 @@ class _DockerFixture(Fixture):
 
     def unittest_stdin(self, script, env=None):
         merged = dict(self.ctx.base_env)
+        merged.update(THREADS)
         merged.update(self._env)
         merged.update(env or {})
         log = self.ctx.out_dir / "services" / f"{self.name.replace(':', '-')}-provision.log"
@@ -385,11 +424,15 @@ class PostgresFixture(_DockerFixture):
     def start(self, ctx):
         image = f"serenedb/serenedb-test-postgres:{services.fixture_image_tag('postgres')}"
         root = str(ctx.root)
-        name = self.services.run("pgscan", image, ports=(5432,), extra=[
-            "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "-e", "POSTGRES_DB=postgres",
-            "-e", "POSTGRES_INITDB_ARGS=--locale=C.UTF-8", "-e", "LANG=C.UTF-8",
-            "-v", f"{root}:{root}:ro"])
-        host, port = self.services.address(name, 5432)
+        extra = ["-e", "POSTGRES_HOST_AUTH_METHOD=trust", "-e", "POSTGRES_DB=postgres",
+                 "-e", "POSTGRES_INITDB_ARGS=--locale=C.UTF-8", "-e", "LANG=C.UTF-8",
+                 "-v", f"{root}:{root}:ro"]
+        if self.services.netns:
+            name = self.services.run("pgscan", image, fixed_ports=(("127.0.0.1", 5432),), extra=extra)
+            host, port = "127.0.0.1", "5432"
+        else:
+            name = self.services.run("pgscan", image, ports=(5432,), extra=extra)
+            host, port = self.services.address(name, 5432)
         services.wait_for("postgres", lambda: subprocess.run(
             ["docker", "exec", name, "pg_isready", "-U", "postgres"], capture_output=True).returncode == 0, 60)
         self._env = {"PGHOST": host, "PGPORT": port, "PGUSER": "postgres", "PGDATABASE": "postgres"}

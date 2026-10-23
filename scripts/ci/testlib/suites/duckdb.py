@@ -59,7 +59,7 @@ def core_dir(ctx):
 
 def config_args(ctx, suite):
     args = []
-    if ctx.build.sanitize or ctx.build.build_type == "Debug":
+    if ctx.build.sanitize or ctx.build.coverage or ctx.build.build_type == "Debug":
         args += ["--test-config", str(ctx.root / "tests" / "duckdb" / "config" / "slow_build.json")]
     cfg = ctx.root / "tests" / "duckdb" / "config" / f"{suite}.json"
     if cfg.is_file():

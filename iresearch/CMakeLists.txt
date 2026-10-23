@@ -44,16 +44,9 @@ target_include_directories(
 )
 
 if(ARCH_AMD64)
-    set(SDB_SZ_ICELAKE 1)
-    if(SDB_SANITIZE MATCHES "^Memory")
-        set(SDB_SZ_ICELAKE 0)
-    endif()
     target_compile_definitions(
         iresearch
-        PUBLIC
-            SZ_USE_HASWELL=1
-            SZ_USE_SKYLAKE=1
-            SZ_USE_ICELAKE=${SDB_SZ_ICELAKE}
+        PUBLIC SZ_USE_HASWELL=1 SZ_USE_SKYLAKE=1 SZ_USE_ICELAKE=1
     )
 elseif(ARCH_AARCH64)
     target_compile_definitions(

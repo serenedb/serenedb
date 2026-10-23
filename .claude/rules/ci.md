@@ -11,7 +11,7 @@ paths:
 # CI
 
 - Workflows, `scripts/ci/`, CI images and fixtures change, and failed or flaky jobs rerun, only when the user asks. Runs: [pull-requests.md](pull-requests.md).
-- A red job is reproduced natively. The dev machines are set up like CI, so run the step's own runner (`scripts/ci/steps/` shows it) against a local build of the job's config; never `run_in_docker.sh` or containers to mimic CI.
+- A red unit is reproduced natively: `scripts/ci/test.py --build-dir <a local build of the job's config> --config <config> --test '<unit>'` runs it with CI's scheduler, servers and services ([testing.md](testing.md)). Only a failure that needs CI's image or network goes through `scripts/ci/run_shard.sh <config> <bundle digest or build dir> 1/1 <timing.json> --test '<unit>'`, which runs the same in the CI image.
 - `act` checks a workflow change locally: `./scripts/ci/act-local.sh validate <workflow>.yml`.
 
 ## Containers
@@ -20,13 +20,21 @@ paths:
 
 ## What a run covers
 
-- **Trigger Jobs** runs `serenedb | build & test` with `dev`, `asan`, `tsan` and `perf`, plus `validate pg` when `pg/` or `any/pg/` tests changed; `scripts/ci/classify-changes.sh origin/main` prints which gated suites a diff opens. `scripts/ci/steps/run-suites.sh` picks the suites per config.
-- The nightly (`jobs-schedule.yml`) runs everything on `dev`, stress and the package tests, and one sanitizer per weekday; it is main's baseline.
+- **Trigger Jobs** runs `serenedb | build & test` (`build-manual.yml`): `perf`, `dev` (with coverage), `asan` (address, leak, undefined), `tsan` and `msan` built and tested on amd64, `perf` and `dev` built on arm64. Each config's tests run in shards sized from the timing store; changed tests repeat in `dev` and `tsan` (the flaky check); a `fix:` PR's changed tests must fail on its merge base (the bugfix check); `validate pg` runs when `pg/` or `any/pg/` tests change. `scripts/ci/classify-changes.sh origin/main` prints which gated suites a diff opens, `scripts/ci/select_suites.sh` turns them into `test.py` arguments.
+- A config whose build inputs did not change since a finished build reuses that bundle from the store (`scripts/ci/ci.py digest`), so a tests-only PR builds nothing.
+- `main.yml` runs every merge's suites in every config and teaches the timing store.
+- The daily run (`daily.yml`, by hand until it is scheduled) runs every suite in every config with long fuzz and stress budgets, macOS and `validate pg` over everything, attributes coverage to every `dev` unit for test selection, then the release pipeline; with `PUBLISH` it replaces the draft release and pushes the images.
 
 ## A red run
 
-- `gh pr checks <N>` finds a PR's run; `gh run view <id> --log-failed` prints the failed jobs' logs, where each step ends with a `*_TESTS=PASSED|FAILED` line and a sqllogic failure shows the record, the expected and the actual output.
-- `gh run view <id>` lists the artifacts (service logs, sanitizer reports); `gh run download <id> -n <name> -D <dir>` fetches one.
+- The PR comment (it starts with `<!-- serenedb-ci-report -->`) has one line per config, the failures with their first lines, sanitizer report signatures, the coverage of the change and the selection report; `gh run download <id> -n report` fetches `report.json` with every failure.
+- A failed unit reran alone: FLAKY when a rerun passed, deterministic otherwise; the run stays red either way. A crash or a hang (STUCK, with every thread's stack) is critical.
+- `gh run download <id> -n failure-<config>-<location>-<shard>` fetches the failed units' logs, server logs, sanitizer reports and stacks; `gh run view <id> --log-failed` shows each shard's summary.
+- A failure whose fix isn't simple is skipped in that config with an issue: a line in `scripts/ci/skips/<config>.txt` (unit glob, kind, reason with the issue), never a retry or a weaker test.
+
+## The store
+
+- bulavka (`store-host:8640`) holds the build bundles, results, timings, coverage profiles, attribution and the selection map under `/store/`, and the shared ccache under `/ccache/`; only the CI and dev machines reach it. Results and timings are Parquet, read and written with the release image's `serened shell` (`scripts/ci/ci.py`).
 
 ## CI images
 
@@ -34,4 +42,4 @@ CI installs nothing at build or test time: toolchains, driver packages and fixtu
 
 1. Add the dependency where the image picks it up: a system package in `scripts/ci/build-ubuntu.Dockerfile`, a driver package in that driver's manifest under `tests/drivers/`, a Python test-data package in `scripts/ci/test-data-requirements.txt`, a service with baked-in content as its own Dockerfile under `tests/sqllogic/fixtures/<name>/` (listed in `scripts/ci/build_images.sh`). Pin versions.
 2. Build it locally (`docker buildx build --load -t serenedb-build-ubuntu:local --build-context drivers=../../tests/drivers -f build-ubuntu.Dockerfile .` in `scripts/ci`) and run the affected runner with `BUILD_IMAGE=serenedb-build-ubuntu:local`.
-3. Publish from the branch with `serenedb | create infra` (`PUSH_IMAGES_2_REGISTRY=true`, `TAG_LATEST=false`, `TAG=<branch>`), test with `gh workflow run build-manual.yml --ref <branch> -f PR_NUMBER=<pr> -f PR_SHA=<sha> -f BUILD_CONFIG='{"BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:<branch, / as ->"}'`, and after the merge run `create infra` on main with `TAG_LATEST=true`.
+3. Publish it from the branch with `serenedb | create infra` (`PUSH_IMAGES_2_REGISTRY=true`); its log names the pushed tag. Pin that tag in `scripts/ci/build-image.txt` in the same PR: every workflow and CI script builds and tests with the pinned image. `TAG_LATEST=true` only moves `latest`, which developers use.

@@ -8,4 +8,5 @@ description: Run SereneDB tests locally - pick the suites that cover a change an
 Read `.claude/rules/testing.md` first, and `.claude/rules/ci.md` for a CI failure.
 
 - Build the targets you run first. Never pipe `ninja` into `tail` or `grep`: the pipe hides its exit code.
+- `scripts/ci/test.py` runs any suite as CI does; read the run from `out/test/summary.txt` and `out/test/results.jsonl`.
 - Report what ran: the files or test names, the `[OK]`/`[FAILED]` counts, and the log of every failure.

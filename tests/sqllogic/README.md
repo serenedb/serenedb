@@ -1,32 +1,22 @@
-# SQL Logic Test Runner
+# sqllogic tests
 
-This repository contains a modern Rust-based SQL logic test runner for SereneDB, replacing the previous Python implementation.
+The files run through our fork of [sqllogictest-rs](../../third_party/sqllogictest-rs) against serened, over both PostgreSQL wire protocols.
 
-## Prerequisites
+## Running
 
-- For Docker execution:
-  - Docker
-  - Docker Compose
-
-- For native execution:
-  - Rust toolchain
-  - Running SereneDB instance
-
-## Quick Start with Docker
+`scripts/ci/test.py` runs them the way CI does: every file once per wire protocol, on a pool of serened servers it starts from the build, with the services a file needs (MinIO, the Iceberg REST fixture, PostgreSQL, ...) in Docker:
 
 ```bash
-./tests/sqllogic/run_in_docker.sh
+scripts/ci/test.py --build-dir build_clangd --suite sqllogic --test 'sqllogic:*:sdb/pg/simple/*'
+scripts/ci/test.py --build-dir build_clangd --suite sqllogic --list
 ```
 
-This will:
-1. Start SereneDB single-node container
-2. Execute all tests in an isolated environment
-3. Collect logs and clean up containers
+The summary lands in `out/test/summary.txt`, every file's result in `out/test/results.jsonl`, and a failed file's runner log under `out/test/units/`.
 
-## Native Execution (for debugging/development)
+`run.sh` runs files against a server you started, for an edit-run loop and for `--override`:
 
 ```bash
-./tests/sqllogic/run.sh [OPTIONS]
+./tests/sqllogic/run.sh --single-port 7777 --test 'sdb/pg/simple_any/setop.test' --debug true
 ```
 
 Common options:
@@ -35,13 +25,17 @@ Common options:
 - `--debug`: Enable debug mode (disables timeout)
 - `--jobs N`: Set parallelism level (default: CPU cores)
 - `--override`: Rewrite test file (Note: doesn't create empty database)
-- `--runner ../../third_party/sqllogictest-rs`: Required for native execution
-  (the built-in default is relative to the repo root and only works inside Docker).
+- `--runner <dir>`: the runner's source (default `third_party/sqllogictest-rs`), built on first use
 
-Example:
+## The sqlite corpus
+
+`any/pg/sqlite` is a submodule of [serenedb/sqllogictest](https://github.com/serenedb/sqllogictest): DuckDB's copy of SQLite's sqllogictest corpus as upstream ships it, with our changes on top as commits (the tests SereneDB doesn't run removed, the skips for PostgreSQL and SereneDB, PostgreSQL's results where they differ from SQLite's). Only CI's test jobs check it out:
+
 ```bash
-./tests/sqllogic/run.sh --single-port 7777 --test 'tests/sqllogic/sdb/pg/simple_any/setop.test' --debug true
+git submodule update --init --checkout tests/sqllogic/any/pg/sqlite
 ```
+
+Its files are in sqllogictest's original format (no column names, one value per line, results over 8 values hashed), which `test.py` and `run.sh` tell the runner. A big file runs as several units of the runner's `--part`, sized from the timing store; `--fast` skips the corpus.
 
 ## Generated Tests
 
@@ -92,40 +86,18 @@ test next to the generated one, like `sdb/pg/index/phrase_deferred_plans.test`.
 
 Recovery tests intentionally crash serened (via `SET sdb_faults = '...'`) and
 verify the server recovers correctly on restart. **Each test runs against its
-own fresh serened + fresh datadir** in both parallel and sequential mode, so
-a broken test cannot cascade-fail the rest. `run_serened_loop.sh` auto-restarts
-the process when a test crashes it mid-run.
-
-Requires a local build at `build/bin/serened`.
-
-### Run all recovery tests in parallel
+own fresh serened + fresh datadir**, restarted after every crash, so a broken
+test cannot cascade-fail the rest. A planned crash exits with 0 or 75; any other
+exit fails the test.
 
 ```bash
-./tests/sqllogic/run_recovery_tests.sh --runner ../../third_party/sqllogictest-rs
+scripts/ci/test.py --build-dir build_clangd --suite recovery
+scripts/ci/test.py --build-dir build_clangd --suite recovery --test 'recovery:recovery/alter_rename.test'
 ```
 
-### Run sequentially (recommended for debugging)
+A failed test keeps its serened logs, one per restart, under `out/test/units/<test>/server/`.
 
-```bash
-./tests/sqllogic/run_recovery_tests.sh --jobs 1 --runner ../../third_party/sqllogictest-rs
-```
-
-Same isolation (fresh serened per test), just one at a time -- easier to watch
-output go by and correlate failures with serened behavior.
-
-### Output format
-
-Each test prints:
-- A banner (`========  [worker N] RUN test/path  ========`).
-- Test runner output prefixed `[test]`.
-- On failure: the exact slice of serened's stdout/stderr produced during that
-  test, prefixed `[srvd]`.
-
-A summary at the end lists all failed tests and the directory containing the
-full per-worker serened logs (retained after the run for post-mortem, but
-serened datadirs are cleaned up).
-
-### Run a single recovery test
+### Run a single recovery test with serened's output live
 
 Start serened in one terminal:
 
@@ -144,16 +116,6 @@ cd tests/sqllogic
 ```
 
 Terminal 1 shows serened's output live -- easier than tailing a log file.
-
-## Customizing Docker Execution
-
-To modify test parameters in Docker:
-
-1. Edit `tests/sqllogic/docker-compose.yml`
-2. Change the command in the `tests` service:
-```yaml
-command: /sqllogic/_execute_tests_in_docker.sh --your-parameters-here
-```
 
 ## Tests that need a server of their own
 
@@ -188,33 +150,13 @@ make sense on the fixture (explicit `sigv4`, literal `iceberg_scan('s3://...')` 
 ```bash
 ICEBERG_BACKEND=biglake BIGLAKE_PROJECT=<project> BIGLAKE_CATALOG=<catalog> \
   ./run.sh --single-port 7777 --jobs 2 --test 'sdb/**/*_iceberg.test_slow'
-ICEBERG_BACKEND=biglake BIGLAKE_PROJECT=<project> BIGLAKE_CATALOG=<catalog> JOBS=2 \
-  ./run_recovery_tests.sh recovery/view_index_*_iceberg.test_slow
+BIGLAKE_PROJECT=<project> BIGLAKE_CATALOG=<catalog> scripts/ci/test.py --build-dir build_clangd \
+  --biglake --suite recovery --jobs 2 --test 'recovery:recovery/view_index_*_iceberg.test_slow'
 ```
 
-CI runs the fixture pass always and adds the BigLake pass (`SDB_SQLLOGIC_SCOPE=biglake`,
-`SDB_RECOVERY_TESTS`) only when the workflow is dispatched with the `BIGLAKE` checkbox on
-and the `BIGLAKE_*` repository secrets are present. Locally the pass is off unless you export
-`RUN_BIGLAKE=true` yourself.
-
-## Key Features
-
-- Supports both simple and extended PostgreSQL protocols
-- Parallel test execution
-- JUnit XML report generation
-
-## Troubleshooting
-
-1. Check service logs:
-   - `serenedb-single.log`
-
-2. For Docker issues:
-   - Verify ports are available
-   - Check Docker resource limits
-
-3. For native execution:
-   - Ensure services are running
-   - Verify Rust toolchain is installed (`cargo --version`)
+CI runs the fixture pass always and adds the BigLake pass (`test.py --biglake` over sqllogic,
+recovery and the stress profile) only when the workflow is dispatched with the `BIGLAKE`
+checkbox on and the `BIGLAKE_*` repository secrets are present.
 
 ## Directory organization
 * `any/any/` - tests that **every SQL database** must pass (absent for now)

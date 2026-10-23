@@ -18,15 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/detail/phrase_of.hpp"
-#include "iresearch/search/fill/plan.hpp"
-#include "iresearch/search/fill/walk.hpp"
+#include "iresearch/search/fill/make_phrase.hpp"
 
 namespace irs::fill {
 
-Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query) {
-  return detail::MakeFixedPhraseOf<detail::PhraseMatch::Plain, ByWalkDocs,
-                                   Node::ptr>(query);
-}
+IRS_FILL_PHRASE_DOCS(FixedPhraseQuery, Plain);
 
 }  // namespace irs::fill

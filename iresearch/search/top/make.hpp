@@ -30,6 +30,7 @@
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
+#include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/fill/leaves.hpp"
@@ -117,18 +118,11 @@ Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
 
-Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx);
-Root::ptr MakeFixedPhraseIntervals(const FixedPhraseQuery& query,
-                                   const Context& ctx);
-Root::ptr MakeFixedPhraseSlop(const FixedPhraseQuery& query,
-                              const Context& ctx);
+template<irs::detail::PhraseMatch M, typename Query>
+Root::ptr MakePhrase(const Query& query, const Context& ctx);
 
-Root::ptr MakeVariadicPhrase(const VariadicPhraseQuery& query,
-                             const Context& ctx);
-Root::ptr MakeVariadicPhraseIntervals(const VariadicPhraseQuery& query,
-                                      const Context& ctx);
-Root::ptr MakeVariadicPhraseSlop(const VariadicPhraseQuery& query,
-                                 const Context& ctx);
+template<irs::detail::PhraseMatch M, typename Query>
+Root::ptr MakePhrasePruned(const Query& query, const Context& ctx);
 
 Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx);
 Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
@@ -143,13 +137,6 @@ Root::ptr MakePrunedPosting(
   std::span<const irs::detail::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx);
-
-Root::ptr MakeFixedPhrasePruned(const FixedPhraseQuery& query,
-                                const Context& ctx);
-Root::ptr MakeFixedPhraseIntervalsPruned(const FixedPhraseQuery& query,
-                                         const Context& ctx);
-Root::ptr MakeVariadicPhrasePruned(const VariadicPhraseQuery& query,
-                                   const Context& ctx);
 
 Root::ptr MakePrunedConjunction(
   std::span<const irs::detail::PostingClause> terms,

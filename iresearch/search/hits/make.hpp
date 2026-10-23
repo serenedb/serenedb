@@ -26,6 +26,7 @@
 
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
+#include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/hits/root.hpp"
@@ -79,18 +80,8 @@ Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
                   const irs::detail::StatsRecord& record, score_t boost);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
 
-Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx);
-Root::ptr MakeFixedPhraseIntervals(const FixedPhraseQuery& query,
-                                   const Context& ctx);
-Root::ptr MakeFixedPhraseSlop(const FixedPhraseQuery& query,
-                              const Context& ctx);
-
-Root::ptr MakeVariadicPhrase(const VariadicPhraseQuery& query,
-                             const Context& ctx);
-Root::ptr MakeVariadicPhraseIntervals(const VariadicPhraseQuery& query,
-                                      const Context& ctx);
-Root::ptr MakeVariadicPhraseSlop(const VariadicPhraseQuery& query,
-                                 const Context& ctx);
+template<irs::detail::PhraseMatch M, typename Query>
+Root::ptr MakePhrase(const Query& query, const Context& ctx);
 
 Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx);
 Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);

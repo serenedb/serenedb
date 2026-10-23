@@ -51,14 +51,20 @@
 namespace irs::hits {
 namespace {
 
-Root::ptr MakeUnscored(const FixedPhraseQuery& query, const Context&) {
-  return irs::detail::MakeFixedPhrase<ConstantWalk, Root::ptr>(query,
-                                                               score_t{0});
-}
-
-Root::ptr MakeUnscored(const VariadicPhraseQuery& query, const Context&) {
-  return irs::detail::MakeVariadicPhrase<ConstantWalk, Root::ptr>(query,
-                                                                  score_t{0});
+template<typename Query>
+Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
+  if (!query.Stats().stats) {
+    return irs::detail::ResolveMatch(query, [&]<irs::detail::PhraseMatch M> {
+      return irs::detail::BuildPhrase<M>(
+        query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
+          return MakeShape<ConstantWalk, lead::TwoPhaseDocs<Slots>>(
+            ctx, score_t{0}, std::forward<decltype(args)>(args)...);
+        });
+    });
+  }
+  return irs::detail::ResolveMatch(query, [&]<irs::detail::PhraseMatch M> {
+    return MakePhrase<M>(query, ctx);
+  });
 }
 
 Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {
@@ -103,23 +109,11 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
 }
 
 Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
-  if (query.Stats().stats == nullptr) {
-    return MakeUnscored(query, ctx);
-  }
-  return irs::detail::ResolveMatch(
-    query, [&] { return MakeFixedPhraseSlop(query, ctx); },
-    [&] { return MakeFixedPhraseIntervals(query, ctx); },
-    [&] { return MakeFixedPhrase(query, ctx); });
+  return MakeAnyPhrase(query, ctx);
 }
 
 Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx) {
-  if (query.Stats().stats == nullptr) {
-    return MakeUnscored(query, ctx);
-  }
-  return irs::detail::ResolveMatch(
-    query, [&] { return MakeVariadicPhraseSlop(query, ctx); },
-    [&] { return MakeVariadicPhraseIntervals(query, ctx); },
-    [&] { return MakeVariadicPhrase(query, ctx); });
+  return MakeAnyPhrase(query, ctx);
 }
 
 Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {

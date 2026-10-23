@@ -105,40 +105,41 @@ Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,
     detail::UniformityOf(*field, scorer), recipe, merge);
 }
 
-Node::ptr Make(const FixedPhraseQuery& query) {
+namespace {
+
+template<typename Query>
+Node::ptr MakeAnyPhrase(const Query& query) {
   return detail::ResolveMatch(
-    query, [&] { return MakeFixedPhraseSlopDocs(query); },
-    [&] { return MakeFixedPhraseIntervalsDocs(query); },
-    [&] { return MakeFixedPhraseDocs(query); });
+    query, [&]<detail::PhraseMatch M> { return MakePhraseDocs<M>(query); });
 }
+
+template<typename Query>
+Node::ptr MakeAnyPhrase(const Query& query, const detail::ScoredCtx& ctx,
+                        ScoreMergeType merge) {
+  if (!query.Stats().stats) {
+    return MakeAnyPhrase(query);
+  }
+  return detail::ResolveMatch(query, [&]<detail::PhraseMatch M> {
+    return MakePhraseScored<M>(query, ctx, merge);
+  });
+}
+
+}  // namespace
+
+Node::ptr Make(const FixedPhraseQuery& query) { return MakeAnyPhrase(query); }
 
 Node::ptr Make(const FixedPhraseQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
-  if (query.Stats().stats == nullptr) {
-    return Make(query);
-  }
-  return detail::ResolveMatch(
-    query, [&] { return MakeFixedPhraseSlopScored(query, ctx, merge); },
-    [&] { return MakeFixedPhraseIntervalsScored(query, ctx, merge); },
-    [&] { return MakeFixedPhraseScored(query, ctx, merge); });
+  return MakeAnyPhrase(query, ctx, merge);
 }
 
 Node::ptr Make(const VariadicPhraseQuery& query) {
-  return detail::ResolveMatch(
-    query, [&] { return MakeVariadicPhraseSlopDocs(query); },
-    [&] { return MakeVariadicPhraseIntervalsDocs(query); },
-    [&] { return MakeVariadicPhraseDocs(query); });
+  return MakeAnyPhrase(query);
 }
 
 Node::ptr Make(const VariadicPhraseQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
-  if (query.Stats().stats == nullptr) {
-    return Make(query);
-  }
-  return detail::ResolveMatch(
-    query, [&] { return MakeVariadicPhraseSlopScored(query, ctx, merge); },
-    [&] { return MakeVariadicPhraseIntervalsScored(query, ctx, merge); },
-    [&] { return MakeVariadicPhraseScored(query, ctx, merge); });
+  return MakeAnyPhrase(query, ctx, merge);
 }
 
 Node::ptr Make(const NGramSimilarityQuery& query) {

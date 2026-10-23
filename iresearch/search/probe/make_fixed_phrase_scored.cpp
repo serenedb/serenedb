@@ -18,21 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/detail/phrase_of.hpp"
-#include "iresearch/search/probe/impl.hpp"
-#include "iresearch/search/probe/make.hpp"
-#include "iresearch/search/probe/two_phase_scored.hpp"
+#include "iresearch/search/probe/make_phrase.hpp"
 
 namespace irs::probe {
 
-Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
-                                const detail::ScoreArgs& args) {
-  if (args.stats == nullptr || query.state.reader == nullptr) {
-    return {};
-  }
-  return detail::MakeFixedPhraseOf<detail::PhraseMatch::Plain, Impl, Node::ptr,
-                                   true, probe::TwoPhaseScored>(
-    query, query.Segment(), *query.state.reader, args);
-}
+IRS_PROBE_PHRASE_SCORED(FixedPhraseQuery, Plain);
 
 }  // namespace irs::probe

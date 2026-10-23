@@ -18,67 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <span>
-
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
-#include "iresearch/search/detail/phrase_slots.hpp"
-#include "iresearch/search/detail/phrase_variadic_pos.hpp"
-#include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/queries/phrase_query.hpp"
-#include "iresearch/search/top/make.hpp"
-#include "iresearch/search/top/pruned_phrase.hpp"
+#include "iresearch/search/top/make_phrase.hpp"
 
 namespace irs::top {
-namespace {
 
-template<irs::detail::PhraseMatch M>
-Root::ptr MakeOf(const VariadicPhraseQuery& query, const Context& ctx,
-                 const irs::detail::ScoreArgs& args) {
-  const auto& state = query.state;
-  const auto& h = state.handles;
-  const std::span<const PostingMeta> metas{state.metas.data(),
-                                           state.metas.size()};
-  const std::span offsets{state.offsets.data(), state.offsets.size()};
-  const std::span intervals{query.positions};
-  return irs::detail::ResolveBounds(h.bounds, [&]<bool Bounds> -> Root::ptr {
-    return irs::detail::ResolveInput(*h.doc, [&]<typename Input> -> Root::ptr {
-      return irs::detail::ResolveSlotMatcherOf<M, Bounds, Input, true>(
-        query, [&]<typename Matcher, typename Leaf>() -> Root::ptr {
-          using Slots =
-            irs::detail::PhraseSlots<Matcher, Leaf, 0,
-                                     irs::detail::PhraseVariadicPos<Leaf>>;
-          return MakeShape<PrunedPhrase, Slots>(
-            ctx, query.Segment(), *state.reader, args, metas, offsets,
-            std::span<const score_t>{}, intervals, *h.doc, h.Layout(), *h.pos,
-            h.pay);
-        });
-    });
-  });
-}
-
-}  // namespace
-
-Root::ptr MakeVariadicPhrasePruned(const VariadicPhraseQuery& query,
-                                   const Context& ctx) {
-  SDB_ASSERT(query.slop == 0);
-  const auto& state = query.state;
-  if (!state.boosts.empty() || !state.reader) {
-    return {};
-  }
-  const auto record = query.Stats(ScoredOf(ctx));
-  if (!record.stats) {
-    return {};
-  }
-  const irs::detail::ScoreArgs args{.scorer = record.scorer,
-                                    .stats = record.stats,
-                                    .fetcher = &ctx.fetcher,
-                                    .boost = query.Boost()};
-  if (query.has_intervals) {
-    return MakeOf<irs::detail::PhraseMatch::Intervals>(query, ctx, args);
-  }
-  return MakeOf<irs::detail::PhraseMatch::Plain>(query, ctx, args);
-}
+IRS_TOP_PHRASE_PRUNED(VariadicPhraseQuery, Plain);
 
 }  // namespace irs::top

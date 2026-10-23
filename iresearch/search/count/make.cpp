@@ -58,16 +58,12 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
 
 Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
   return detail::ResolveMatch(
-    query, [&] { return MakeFixedPhraseSlop(query, ctx); },
-    [&] { return MakeFixedPhraseIntervals(query, ctx); },
-    [&] { return MakeFixedPhrase(query, ctx); });
+    query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(query, ctx); });
 }
 
 Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx) {
   return detail::ResolveMatch(
-    query, [&] { return MakeVariadicPhraseSlop(query, ctx); },
-    [&] { return MakeVariadicPhraseIntervals(query, ctx); },
-    [&] { return MakeVariadicPhrase(query, ctx); });
+    query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(query, ctx); });
 }
 
 Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {

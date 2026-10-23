@@ -18,29 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/detail/phrase_of.hpp"
-#include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/fill/plan.hpp"
-#include "iresearch/search/fill/walk.hpp"
-#include "iresearch/search/lead/two_phase_scored.hpp"
+#include "iresearch/search/fill/make_phrase.hpp"
 
 namespace irs::fill {
 
-Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
-                                const detail::ScoredCtx& ctx,
-                                ScoreMergeType merge) {
-  const auto record = query.Stats(ctx);
-  const auto* const stats = record.stats;
-  if (stats == nullptr || query.state.reader == nullptr) {
-    return {};
-  }
-  return detail::MakeFixedPhraseOf<detail::PhraseMatch::Plain, ByWalkScored,
-                                   Node::ptr, true, lead::TwoPhaseScored>(
-    query, merge, *ctx.fetcher, query.Segment(), *query.state.reader,
-    detail::ScoreArgs{.scorer = record.scorer,
-                      .stats = stats,
-                      .fetcher = ctx.fetcher,
-                      .boost = query.Boost()});
-}
+IRS_FILL_PHRASE_SCORED(FixedPhraseQuery, Plain);
 
 }  // namespace irs::fill

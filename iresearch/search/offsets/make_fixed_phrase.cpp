@@ -18,13 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/offsets/make.hpp"
 #include "iresearch/search/offsets/make_impl.hpp"
 
 namespace irs::offsets {
 
-Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query) {
-  return detail::MakeFixedPhraseOffsets<detail::PhraseMatch::Plain>(query);
-}
+IRS_OFFSETS_PHRASE(FixedPhraseQuery, Plain);
 
 }  // namespace irs::offsets

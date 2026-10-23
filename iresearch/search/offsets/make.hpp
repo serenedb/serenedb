@@ -21,6 +21,7 @@
 #pragma once
 
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/offsets/root.hpp"
 
@@ -44,13 +45,8 @@ Root::ptr Make(const FixedPhraseQuery& query);
 Root::ptr Make(const VariadicPhraseQuery& query);
 Root::ptr Make(const NGramSimilarityQuery& query);
 
-Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query);
-Root::ptr MakeFixedPhraseIntervals(const FixedPhraseQuery& query);
-Root::ptr MakeFixedPhraseSlop(const FixedPhraseQuery& query);
-
-Root::ptr MakeVariadicPhrase(const VariadicPhraseQuery& query);
-Root::ptr MakeVariadicPhraseIntervals(const VariadicPhraseQuery& query);
-Root::ptr MakeVariadicPhraseSlop(const VariadicPhraseQuery& query);
+template<detail::PhraseMatch M, typename Query>
+Root::ptr MakePhrase(const Query& query);
 
 Root::ptr MakeNGram(const NGramSimilarityQuery& query);
 Root::ptr MakeNGramAll(const NGramSimilarityQuery& query);

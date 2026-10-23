@@ -18,36 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
-#include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/hits/make.hpp"
-#include "iresearch/search/hits/walk.hpp"
-#include "iresearch/search/lead/two_phase_scored.hpp"
-#include "iresearch/search/queries/phrase_query.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
+#include "iresearch/search/hits/make_phrase.hpp"
 
 namespace irs::hits {
 
-Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx) {
-  const auto record = query.Stats(ScoredOf(ctx));
-  const auto* const stats = record.stats;
-  if (stats == nullptr || query.state.reader == nullptr) {
-    return {};
-  }
-  const irs::detail::ScoreArgs args{.scorer = record.scorer,
-                                    .stats = stats,
-                                    .fetcher = &ctx.fetcher,
-                                    .boost = query.Boost()};
-  if (const auto value =
-        irs::detail::ConstantOf(query.Segment(), *query.state.reader, args)) {
-    return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Plain,
-                                          ConstantWalk, Root::ptr>(query,
-                                                                   *value);
-  }
-  return irs::detail::MakeFixedPhraseOf<irs::detail::PhraseMatch::Plain, Walk,
-                                        Root::ptr, true, lead::TwoPhaseScored>(
-    query, ctx.fetcher, query.Segment(), *query.state.reader, args);
-}
+IRS_HITS_PHRASE(FixedPhraseQuery, Plain);
 
 }  // namespace irs::hits

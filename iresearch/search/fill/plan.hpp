@@ -29,37 +29,19 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/fill_posting_scored.hpp"
+#include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 
 namespace irs::fill {
 
-Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query);
-Node::ptr MakeFixedPhraseIntervalsDocs(const FixedPhraseQuery& query);
-Node::ptr MakeFixedPhraseSlopDocs(const FixedPhraseQuery& query);
-Node::ptr MakeVariadicPhraseDocs(const VariadicPhraseQuery& query);
-Node::ptr MakeVariadicPhraseIntervalsDocs(const VariadicPhraseQuery& query);
-Node::ptr MakeVariadicPhraseSlopDocs(const VariadicPhraseQuery& query);
+template<detail::PhraseMatch M, typename Query>
+Node::ptr MakePhraseDocs(const Query& query);
 
-Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
-                                const detail::ScoredCtx& ctx,
-                                ScoreMergeType merge);
-Node::ptr MakeFixedPhraseIntervalsScored(const FixedPhraseQuery& query,
-                                         const detail::ScoredCtx& ctx,
-                                         ScoreMergeType merge);
-Node::ptr MakeFixedPhraseSlopScored(const FixedPhraseQuery& query,
-                                    const detail::ScoredCtx& ctx,
-                                    ScoreMergeType merge);
-Node::ptr MakeVariadicPhraseScored(const VariadicPhraseQuery& query,
-                                   const detail::ScoredCtx& ctx,
-                                   ScoreMergeType merge);
-Node::ptr MakeVariadicPhraseIntervalsScored(const VariadicPhraseQuery& query,
-                                            const detail::ScoredCtx& ctx,
-                                            ScoreMergeType merge);
-Node::ptr MakeVariadicPhraseSlopScored(const VariadicPhraseQuery& query,
-                                       const detail::ScoredCtx& ctx,
-                                       ScoreMergeType merge);
+template<detail::PhraseMatch M, typename Query>
+Node::ptr MakePhraseScored(const Query& query, const detail::ScoredCtx& ctx,
+                           ScoreMergeType merge);
 
 Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query);
 Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query);

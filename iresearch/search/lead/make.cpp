@@ -93,48 +93,43 @@ Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx) {
     detail::UniformityOf(*field, scorer), query.Segment(), ctx, merge, 0);
 }
 
-Node::ptr Make(const FixedPhraseQuery& query) {
+namespace {
+
+template<typename Query>
+Node::ptr MakeAnyPhrase(const Query& query) {
   return detail::ResolveMatch(
-    query, [&] { return MakeFixedPhraseSlopDocs(query); },
-    [&] { return MakeFixedPhraseIntervalsDocs(query); },
-    [&] { return MakeFixedPhraseDocs(query); });
+    query, [&]<detail::PhraseMatch M> { return MakePhraseDocs<M>(query); });
 }
 
-Node::ptr Make(const FixedPhraseQuery& query, const detail::ScoredCtx& ctx) {
+template<typename Query>
+Node::ptr MakeAnyPhrase(const Query& query, const detail::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
   const detail::ScoreArgs args{.scorer = record.scorer,
                                .stats = record.stats,
                                .fetcher = ctx.fetcher,
                                .boost = query.Boost()};
-  if (args.stats == nullptr) {
-    return Make(query);
+  if (!args.stats) {
+    return MakeAnyPhrase(query);
   }
-  return detail::ResolveMatch(
-    query, [&] { return MakeFixedPhraseSlopScored(query, args); },
-    [&] { return MakeFixedPhraseIntervalsScored(query, args); },
-    [&] { return MakeFixedPhraseScored(query, args); });
+  return detail::ResolveMatch(query, [&]<detail::PhraseMatch M> {
+    return MakePhraseScored<M>(query, args);
+  });
+}
+
+}  // namespace
+
+Node::ptr Make(const FixedPhraseQuery& query) { return MakeAnyPhrase(query); }
+
+Node::ptr Make(const FixedPhraseQuery& query, const detail::ScoredCtx& ctx) {
+  return MakeAnyPhrase(query, ctx);
 }
 
 Node::ptr Make(const VariadicPhraseQuery& query) {
-  return detail::ResolveMatch(
-    query, [&] { return MakeVariadicPhraseSlopDocs(query); },
-    [&] { return MakeVariadicPhraseIntervalsDocs(query); },
-    [&] { return MakeVariadicPhraseDocs(query); });
+  return MakeAnyPhrase(query);
 }
 
 Node::ptr Make(const VariadicPhraseQuery& query, const detail::ScoredCtx& ctx) {
-  const auto record = query.Stats(ctx);
-  const detail::ScoreArgs args{.scorer = record.scorer,
-                               .stats = record.stats,
-                               .fetcher = ctx.fetcher,
-                               .boost = query.Boost()};
-  if (args.stats == nullptr) {
-    return Make(query);
-  }
-  return detail::ResolveMatch(
-    query, [&] { return MakeVariadicPhraseSlopScored(query, args); },
-    [&] { return MakeVariadicPhraseIntervalsScored(query, args); },
-    [&] { return MakeVariadicPhraseScored(query, args); });
+  return MakeAnyPhrase(query, ctx);
 }
 
 Node::ptr Make(const NGramSimilarityQuery& query) {

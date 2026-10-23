@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -39,6 +40,7 @@
 #include "iresearch/search/detail/token_phrase.hpp"
 #include "iresearch/search/probe/posting_scored.hpp"
 #include "iresearch/search/queries/token_phrase_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/utils/memory.hpp"
 
 namespace irs::detail {
@@ -209,6 +211,10 @@ class TokenPhraseSlots {
   bool _end = false;
 };
 
+inline bool IsSloppy(const TokenPhraseQuery& query) noexcept {
+  return query.Compiled().slop.max != 0;
+}
+
 template<template<typename> typename Impl, typename Result, bool Scored = false,
          template<typename> typename Wrap = DeducedNode, typename... Prefix>
 Result MakeTokenPhrase(const TokenPhraseQuery& query, uint64_t interrogations,
@@ -224,10 +230,18 @@ Result MakeTokenPhrase(const TokenPhraseQuery& query, uint64_t interrogations,
       std::forward_as_tuple(std::move(node)), query, Scored);
   };
   if constexpr (Scored) {
-    return ResolveBool(query.Compiled().slop.max != 0, make);
+    return ResolveBool(IsSloppy(query), make);
   } else {
     return make.template operator()<false>();
   }
+}
+
+inline std::optional<score_t> TokenPhraseConstantOf(
+  const TokenPhraseQuery& query, const ScoreArgs& args) {
+  if (IsSloppy(query)) {
+    return std::nullopt;
+  }
+  return ConstantOf(query.Segment(), query.Reader(), args);
 }
 
 }  // namespace irs::detail

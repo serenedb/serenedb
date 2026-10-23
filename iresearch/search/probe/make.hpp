@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/probe/node.hpp"
@@ -128,13 +129,8 @@ Node::ptr MakeSparseExclusionDocs(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t interrogations);
 
-Node::ptr MakeFixedPhraseDocs(const FixedPhraseQuery& query);
-Node::ptr MakeFixedPhraseIntervalsDocs(const FixedPhraseQuery& query);
-Node::ptr MakeFixedPhraseSlopDocs(const FixedPhraseQuery& query);
-
-Node::ptr MakeVariadicPhraseDocs(const VariadicPhraseQuery& query);
-Node::ptr MakeVariadicPhraseIntervalsDocs(const VariadicPhraseQuery& query);
-Node::ptr MakeVariadicPhraseSlopDocs(const VariadicPhraseQuery& query);
+template<detail::PhraseMatch M, typename Query>
+Node::ptr MakePhraseDocs(const Query& query);
 
 Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query);
 Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query);
@@ -215,19 +211,8 @@ Node::ptr MakeSparseBoostScored(
   const detail::ScoreRecipe& recipe, ScoreMergeType merge,
   uint64_t interrogations, const detail::ScoredCtx& ctx, score_t absorbed = 0);
 
-Node::ptr MakeFixedPhraseScored(const FixedPhraseQuery& query,
-                                const detail::ScoreArgs& args);
-Node::ptr MakeFixedPhraseIntervalsScored(const FixedPhraseQuery& query,
-                                         const detail::ScoreArgs& args);
-Node::ptr MakeFixedPhraseSlopScored(const FixedPhraseQuery& query,
-                                    const detail::ScoreArgs& args);
-
-Node::ptr MakeVariadicPhraseScored(const VariadicPhraseQuery& query,
-                                   const detail::ScoreArgs& args);
-Node::ptr MakeVariadicPhraseIntervalsScored(const VariadicPhraseQuery& query,
-                                            const detail::ScoreArgs& args);
-Node::ptr MakeVariadicPhraseSlopScored(const VariadicPhraseQuery& query,
-                                       const detail::ScoreArgs& args);
+template<detail::PhraseMatch M, typename Query>
+Node::ptr MakePhraseScored(const Query& query, const detail::ScoreArgs& args);
 
 Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
                           const detail::ScoreArgs& args);

@@ -43,8 +43,7 @@ Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx) {
                                     .stats = stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
-  if (const auto value =
-        irs::detail::ConstantOf(query.Segment(), *query.State().reader, args)) {
+  if (const auto value = irs::detail::NGramAllConstantOf(query, args)) {
     return irs::detail::BuildAll(
       query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
         using Node = lead::TwoPhaseDocs<Slots>;

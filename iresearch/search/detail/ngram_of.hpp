@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -35,8 +36,20 @@
 #include "iresearch/search/lead/two_phase_docs.hpp"
 #include "iresearch/search/probe/two_phase_docs.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::detail {
+
+inline std::optional<score_t> NGramAllConstantOf(
+  const NGramSimilarityQuery& query, const ScoreArgs& args) {
+  const auto value = ConstantOf(query.Segment(), *query.State().reader, args);
+  if (!value) {
+    return std::nullopt;
+  }
+  const auto scale = static_cast<score_t>(query.Present()) /
+                     static_cast<score_t>(query.TotalTerms());
+  return scale * *value;
+}
 
 template<bool Scored = false, typename F>
 auto Build(const NGramSimilarityQuery& query, F&& f) {

@@ -49,22 +49,28 @@
 namespace irs::top {
 namespace {
 
-Root::ptr MakeUnscored(const FixedPhraseQuery& query, const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeFixedPhrase<FilteredConstantWalk, Root::ptr>(
-      query, ctx.table, score_t{0});
+template<typename Query>
+Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
+  if (!query.Stats().stats) {
+    return irs::detail::ResolveMatch(query, [&]<irs::detail::PhraseMatch M> {
+      return irs::detail::BuildPhrase<M>(
+        query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
+          return MakeShape<ConstantWalk, lead::TwoPhaseDocs<Slots>>(
+            ctx, score_t{0}, std::forward<decltype(args)>(args)...);
+        });
+    });
   }
-  return irs::detail::MakeFixedPhrase<PlainConstantWalk, Root::ptr>(
-    query, utils::Empty{}, score_t{0});
-}
-
-Root::ptr MakeUnscored(const VariadicPhraseQuery& query, const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeVariadicPhrase<FilteredConstantWalk, Root::ptr>(
-      query, ctx.table, score_t{0});
-  }
-  return irs::detail::MakeVariadicPhrase<PlainConstantWalk, Root::ptr>(
-    query, utils::Empty{}, score_t{0});
+  return irs::detail::ResolveMatch(
+    query, [&]<irs::detail::PhraseMatch M> -> Root::ptr {
+      if constexpr (M != irs::detail::PhraseMatch::Slop) {
+        if (ctx.prune) {
+          if (auto pruned = MakePhrasePruned<M>(query, ctx)) {
+            return pruned;
+          }
+        }
+      }
+      return MakePhrase<M>(query, ctx);
+    });
 }
 
 Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {
@@ -130,40 +136,11 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
 }
 
 Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
-  if (query.Stats().stats == nullptr) {
-    return MakeUnscored(query, ctx);
-  }
-  const auto match = irs::detail::MatchOf(query);
-  if (match == irs::detail::PhraseMatch::Slop) {
-    return MakeFixedPhraseSlop(query, ctx);
-  }
-  const auto intervals = match == irs::detail::PhraseMatch::Intervals;
-  if (ctx.prune) {
-    if (auto pruned = intervals ? MakeFixedPhraseIntervalsPruned(query, ctx)
-                                : MakeFixedPhrasePruned(query, ctx)) {
-      return pruned;
-    }
-  }
-  return intervals ? MakeFixedPhraseIntervals(query, ctx)
-                   : MakeFixedPhrase(query, ctx);
+  return MakeAnyPhrase(query, ctx);
 }
 
 Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx) {
-  if (query.Stats().stats == nullptr) {
-    return MakeUnscored(query, ctx);
-  }
-  const auto match = irs::detail::MatchOf(query);
-  if (match == irs::detail::PhraseMatch::Slop) {
-    return MakeVariadicPhraseSlop(query, ctx);
-  }
-  if (ctx.prune) {
-    if (auto pruned = MakeVariadicPhrasePruned(query, ctx)) {
-      return pruned;
-    }
-  }
-  return match == irs::detail::PhraseMatch::Intervals
-           ? MakeVariadicPhraseIntervals(query, ctx)
-           : MakeVariadicPhrase(query, ctx);
+  return MakeAnyPhrase(query, ctx);
 }
 
 Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {

@@ -18,15 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/detail/phrase_of.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/lead/plan.hpp"
+#include "iresearch/search/lead/make_phrase.hpp"
 
 namespace irs::lead {
 
-Node::ptr MakeVariadicPhraseSlopDocs(const VariadicPhraseQuery& query) {
-  return detail::MakeVariadicPhraseOf<detail::PhraseMatch::Slop, Impl,
-                                      Node::ptr>(query);
-}
+IRS_LEAD_PHRASE_DOCS(VariadicPhraseQuery, Slop);
 
 }  // namespace irs::lead

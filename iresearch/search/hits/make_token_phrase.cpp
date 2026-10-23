@@ -34,8 +34,7 @@ Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx) {
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
-  if (const auto value =
-        irs::detail::ConstantOf(query.Segment(), query.Reader(), args)) {
+  if (const auto value = irs::detail::TokenPhraseConstantOf(query, args)) {
     return irs::detail::MakeTokenPhrase<ConstantWalk, Root::ptr>(query, 0,
                                                                  *value);
   }

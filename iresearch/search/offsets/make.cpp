@@ -34,16 +34,12 @@ bool Resolve(const TermReader* field, Handles& out) {
 
 Root::ptr Make(const FixedPhraseQuery& query) {
   return detail::ResolveMatch(
-    query, [&] { return MakeFixedPhraseSlop(query); },
-    [&] { return MakeFixedPhraseIntervals(query); },
-    [&] { return MakeFixedPhrase(query); });
+    query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(query); });
 }
 
 Root::ptr Make(const VariadicPhraseQuery& query) {
   return detail::ResolveMatch(
-    query, [&] { return MakeVariadicPhraseSlop(query); },
-    [&] { return MakeVariadicPhraseIntervals(query); },
-    [&] { return MakeVariadicPhrase(query); });
+    query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(query); });
 }
 
 Root::ptr Make(const NGramSimilarityQuery& query) {

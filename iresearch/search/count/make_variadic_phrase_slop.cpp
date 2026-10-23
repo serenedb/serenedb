@@ -18,15 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/count/plan.hpp"
-#include "iresearch/search/count/walk.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
+#include "iresearch/search/count/make_phrase.hpp"
 
 namespace irs::count {
 
-Root::ptr MakeVariadicPhraseSlop(const VariadicPhraseQuery& query,
-                                 const Context& ctx) {
-  return MakeVariadicPhraseWalk<detail::PhraseMatch::Slop>(query, ctx);
-}
+IRS_COUNT_PHRASE(VariadicPhraseQuery, Slop);
 
 }  // namespace irs::count

@@ -220,11 +220,12 @@ def cmd_update_timing(args):
         old = tmp / "old.parquet"
         key = f"timing/{args.config}-{args.arch}.parquet"
         have_old = store.get(key, old)
-        runs = (f"SELECT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, sum(duration) AS d "
+        runs = (f"SELECT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, "
+                f"sum(CASE WHEN status = 'stuck' THEN 2 * duration ELSE duration END) AS d "
                 f"FROM read_parquet([{store.quoted(files)}], union_by_name = true) "
                 f"WHERE coalesce(pr, '') = '{args.pr}' AND NOT coalesce(attribute, false) "
                 f"AND attempt = 0 AND NOT wrapper "
-                f"AND status IN ('passed', 'failed', 'flaky') "
+                f"AND (status IN ('passed', 'failed', 'flaky') OR status = 'stuck' AND duration > 0) "
                 f"GROUP BY 1, coalesce(run, concat(sha, ':', started))")
         fresh = (f"SELECT unit, quantile_cont(d, 0.95) AS p95, count(*) AS n FROM ({runs}) "
                  f"GROUP BY unit")

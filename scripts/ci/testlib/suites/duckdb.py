@@ -43,10 +43,10 @@ BATCH_MAX = 200
 JOBS = 2
 THREADS = {"SLURM_CPUS_ON_NODE": str(min(os.cpu_count() or 16, 16))}
 _REQUIRE_ENV = re.compile(r"^require-env\s+([A-Z0-9_]+)", re.M)
-_EVENT = re.compile(r"^\[TEST_EVENT\] (\{.*\})\s*$")
+_EVENT = re.compile(r"\[TEST_EVENT\] (\{.*\})\s*$")
 _ENDED = re.compile(r"^(.+) \(pid (\d+)\) (was terminated by signal|exited with status) (\d+) "
                     r"(before|after) reporting its result$")
-_TOOK = re.compile(r"^\[\d+/\d+\] \(\d+%\): (.+) took ([0-9.]+)s\s*$")
+_TOOK = re.compile(r"^\[\d+/\d+\] \(\d+%\): (.+?) took ([0-9.]+)s")
 
 
 def unittest_binary(ctx):
@@ -192,7 +192,7 @@ def _batches(ctx, skips, suite, tests, cpp=False, serial=None, fixtures=()):
         members = tuple(n for n, _ in batch)
         uid = f"duckdb:{suite}:batch:{members[0]}+{len(members) - 1}"
         jobs = 1 if serial else JOBS
-        expected = batch_cost / jobs
+        expected = max(batch_cost / jobs, max(c for _, c in batch))
         timeout = max(ctx.timeout_floor, 5 * expected + 60 * ctx.config.slowdown)
         units.append(Unit(uid, "duckdb", _batch_run(ctx, suite, members, cpp, jobs),
                           cpus=jobs, mem_gb=3.0 * jobs, fixtures=fixtures, group=serial,
@@ -227,7 +227,7 @@ def _parse_events(text, members, label):
         m = _TOOK.match(line)
         if m:
             took[m.group(1)] = float(m.group(2))
-        m = _EVENT.match(line)
+        m = _EVENT.search(line)
         if m:
             try:
                 ev = json.loads(m.group(1))
@@ -289,8 +289,13 @@ def _batch_run(ctx, suite, members, cpp, jobs):
         else:
             member_results, pids = _parse_events(text, members, label)
         if res.stuck:
-            for m in members:
-                member_results.setdefault(f"{label}:{m}", (STUCK, 0.0, "batch timed out; stacks saved"))
+            launched = sorted(members, key=lambda m: not m.endswith(".test_slow"))
+            unfinished = [m for m in launched if f"{label}:{m}" not in member_results]
+            running = set(unfinished[:max(2, jobs)])
+            for m in unfinished:
+                member_results[f"{label}:{m}"] = (
+                    (STUCK, res.duration, f"no result after {res.duration:.0f}s; stacks saved")
+                    if m in running else (SKIPPED, 0.0, "not run: the batch timed out"))
             return Outcome(STUCK, "batch did not finish; stacks saved", signature="stuck",
                            members=member_results)
         out = r.outcome(res)

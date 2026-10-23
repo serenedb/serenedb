@@ -7,6 +7,8 @@ from . import plan, skipped
 
 LANGS = ("python", "java", "js", "go", "rust", "php", "csharp", "c", "ruby", "r", "psql")
 CPUS = {"java": 4, "csharp": 2, "js": 2, "python": 3}
+HTTP_TOKEN = "drivers-ci-token"
+TRUST_HBA = "host all all 0.0.0.0/0 trust\nhost all all ::0/0 trust\nlocal all all trust\n"
 
 
 def driver_units(ctx, args, skips):
@@ -43,10 +45,15 @@ def _driver_run(ctx, lang):
         try:
             server = pool.server(i)
             r.stack_pids = lambda: (server.pid(),)
+            shared = ctx.out_dir / "drivers-shared"
+            shared.mkdir(exist_ok=True)
             res = r.exec([ctx.root / "tests" / "drivers" / "run.sh", "--lang", lang,
                           "--host", "127.0.0.1", "--port", str(server.port),
                           "--database", "postgres", "--user", "postgres",
-                          "--junit", str(r.dir / "junit")])
+                          "--junit", str(r.dir / "junit")],
+                         env={"SDB_DRV_HTTP_PORT": str(server.http_port),
+                              "SDB_DRV_HTTP_TOKEN": HTTP_TOKEN,
+                              "SDB_DRV_SHARED_DIR": str(shared)})
         finally:
             pool.release(i)
         out = r.outcome(res)
@@ -102,5 +109,7 @@ def _plain_run(argv):
 
 
 def fixture_factories(ctx, args):
-    return {"driver-servers": lambda c: ServerPool(c, count=1, threads=0,
-                                                   name="driver-servers")}
+    return {"driver-servers": lambda c: ServerPool(
+        c, count=1, threads=0, name="driver-servers", listen_ssl=False,
+        http_apis=("es", "mcp", "test", "otel"), hba=TRUST_HBA,
+        extra_args=(f"--auth_bearer_token={HTTP_TOKEN}",))}

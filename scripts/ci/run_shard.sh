@@ -86,7 +86,8 @@ if compgen -G "$out/profiles/*.prof*" >/dev/null; then
 fi
 
 if [[ $rc -ne 0 ]]; then
-	tar -C out -I 'zstd -T0 -3' -cf "out/failure-${CONFIG}-${SHARD/\//of}.tar.zst" \
+	docker run --rm --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE/out" "$BUILD_IMAGE" \
+		tar -I 'zstd -T0 -3' -cf "failure-${CONFIG}-${SHARD/\//of}.tar.zst" \
 		--exclude=profiles --exclude='*/data.*' "${out#out/}" || true
 fi
 exit $rc

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _SAN_HEAD = re.compile(
-    r"^(?:==\d+==\s*)?(?:ERROR|WARNING): (AddressSanitizer|LeakSanitizer|ThreadSanitizer|"
+    r"^(?:==(?:[^=\s]+==)?\d+==\s*)?(?:ERROR|WARNING): (AddressSanitizer|LeakSanitizer|ThreadSanitizer|"
     r"MemorySanitizer|UndefinedBehaviorSanitizer): ([\w-]+(?: [\w-]+)*)"
 )
 _UBSAN_HEAD = re.compile(r"^(\S+:\d+:\d+): runtime error: (.*)$")
@@ -61,11 +61,10 @@ def scan_sanitizer_text(text, path):
     return reports
 
 
-def scan_sanitizer_dir(directory):
-    reports = []
+def scan_sanitizer_files(directory):
     directory = Path(directory)
     if not directory.is_dir():
-        return reports
+        return
     for path in sorted(directory.iterdir()):
         if not re.match(r"^(asan|ubsan|tsan|msan|lsan)\.", path.name):
             continue
@@ -73,7 +72,11 @@ def scan_sanitizer_dir(directory):
             text = path.read_text(errors="replace")
         except OSError:
             continue
-        reports.extend(scan_sanitizer_text(text, path))
+        yield path, scan_sanitizer_text(text, path)
+
+
+def scan_sanitizer_dir(directory):
+    reports = [r for _, found in scan_sanitizer_files(directory) for r in found]
     seen = set()
     unique = []
     for r in reports:

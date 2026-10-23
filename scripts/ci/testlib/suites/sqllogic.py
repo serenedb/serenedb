@@ -14,6 +14,7 @@ from . import Skip, plan, skipped
 ENGINES = ("pg-wire-simple", "pg-wire-extended")
 PLANNED_EXITS = (0, 75)
 STATEFUL_SERVICES = ("minio", "azurite", "iceberg", "postgres", "clickhouse")
+INFERENCE_CPUS = {"svc:ollama": 8, "svc:kev": 8}
 CORPUS = "sdb/pg/any/sqlite/"
 PART_SECONDS = 10.0
 MAX_PARTS = 64
@@ -162,7 +163,8 @@ def sqllogic_units(ctx, args, skips):
                 continue
             cost, timeout = plan(ctx, uid, 2.0)
             if CORPUS not in rel:
-                units.append(Unit(uid, "sqllogic", _sqllogic_run(ctx, rel, engine), cpus=1,
+                cpus = 1 + sum(INFERENCE_CPUS.get(f, 0) for f in fixtures)
+                units.append(Unit(uid, "sqllogic", _sqllogic_run(ctx, rel, engine), cpus=cpus,
                                   mem_gb=0.3, fixtures=pool + fixtures, cost=cost,
                                   timeout=timeout, group=f"sqllogic:{rel}"))
                 continue

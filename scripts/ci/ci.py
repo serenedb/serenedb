@@ -139,7 +139,10 @@ def cmd_fetch(args):
     prune_bundles()
     dest = BUNDLE_CACHE / f"{args.config}-{args.arch}-{args.digest}"
     path = fetch_bundle(args.config, args.arch, args.digest, dest)
-    os.utime(path)
+    try:
+        os.utime(path)
+    except PermissionError:
+        pass
     print(path)
 
 

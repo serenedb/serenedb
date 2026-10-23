@@ -76,10 +76,10 @@ def _driver_run(ctx, lang):
         if crash and out.status != PASSED:
             return Outcome(CRASHED, f"serened died during this unit: {crash}", signature=crash)
         summary = _summary_line(r.log.read_text(errors="replace") if r.log.exists() else "", lang)
-        if out.status == FAILED:
-            out.detail = summary or out.detail
-        else:
+        if out.status != FAILED:
             out.detail = summary
+        elif not out.signature:
+            out.detail = summary or out.detail
         return out
 
     return run

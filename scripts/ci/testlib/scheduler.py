@@ -266,10 +266,10 @@ class Scheduler:
         res = Result(unit.id, unit.suite, out.status, duration, attempt, started_wall,
                      out.detail, out.signature, dir=unit_dir, wrapper=bool(out.members))
         member_results = []
-        for member, (status, seconds, detail) in out.members.items():
+        for member, (status, seconds, detail, *signature) in out.members.items():
             member_results.append(Result(member, unit.suite, status, seconds, attempt,
-                                         started_wall, detail, "", member_of=unit.id,
-                                         dir=unit_dir))
+                                         started_wall, detail, signature[0] if signature else "",
+                                         member_of=unit.id, dir=unit_dir))
         if run is not None:
             shutil.rmtree(run.tmp, ignore_errors=True)
             if out.status == PASSED and not self.ctx.verbose:

@@ -57,7 +57,7 @@ def put(path, src, timeout=1800):
 
 def files(path, timeout=60):
     try:
-        with urllib.request.urlopen(url(path), timeout=timeout) as r:
+        with urllib.request.urlopen(url(path.rstrip("/") + "/"), timeout=timeout) as r:
             return [e["name"] for e in json.load(r) if e["type"] == "file"]
     except urllib.error.HTTPError as e:
         if e.code == 404:

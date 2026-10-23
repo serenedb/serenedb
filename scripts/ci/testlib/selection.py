@@ -19,34 +19,13 @@ BATCH = 200
 TEST_PREFIXES = ("tests/", "resources/tests/")
 
 
-def _llvm_cov(args, profdata, objects):
-    argv = ["llvm-cov-23", "export", *args, f"-instr-profile={profdata}", objects[0]]
-    for o in objects[1:]:
-        argv += ["-object", o]
-    return argv
-
-
-def coverage_objects(bundle):
-    bundle = Path(bundle)
-    found = []
-    for b in [*sorted((bundle / "bin").iterdir()), bundle / "third_party/duckdb/test/unittest"]:
-        if not b.is_file():
-            continue
-        sections = subprocess.run(["llvm-readelf-23", "-S", str(b)], capture_output=True).stdout
-        if b"__llvm_covmap" in sections:
-            found.append(str(b))
-    return found
-
-
 def _functions(profdata, objects, dest):
-    lcov = subprocess.run(_llvm_cov(["-format=lcov", "-summary-only"], profdata, objects),
-                          capture_output=True, text=True, check=True).stdout
+    lcov = diff.export("lcov", profdata, objects, extra=["-summary-only"])
     files = [line[3:] for line in lcov.splitlines() if line.startswith("SF:")]
     with open(dest, "w") as fh:
         for i in range(0, len(files), BATCH):
-            out = subprocess.run(_llvm_cov(["-format=text", "-skip-expansions"], profdata, objects)
-                                 + ["-sources", *files[i:i + BATCH]],
-                                 capture_output=True, text=True, check=True).stdout
+            out = diff.export("text", profdata, objects, files[i:i + BATCH],
+                              extra=["-skip-expansions"])
             for fn in json.loads(out)["data"][0]["functions"]:
                 if not fn["regions"] or not fn["filenames"]:
                     continue
@@ -68,7 +47,7 @@ def build_map(run, config, arch, bundle, work):
         raise SystemExit(f"no profile for {config}/{arch} in run {run}")
     profdata = work / "any.profdata"
     store.get(f"profdata/{run}/{profiles[0]}", profdata)
-    _functions(profdata, coverage_objects(bundle), work / "functions.jsonl")
+    _functions(profdata, diff.objects(bundle), work / "functions.jsonl")
     timing = work / "timing.parquet"
     costs = (f"SELECT unit, p95 FROM read_parquet('{timing}')"
              if store.get(f"timing/{config}-{arch}.parquet", timing)

@@ -56,15 +56,56 @@ def changed_lines(base):
     return lines
 
 
-def export(fmt, profdata, objects, sources):
-    cmd = ["llvm-cov-23", "export", f"-format={fmt}", f"-instr-profile={profdata}", objects[0]]
+def objects(build_dir):
+    build_dir = Path(build_dir)
+    candidates = sorted((build_dir / "bin").iterdir()) if (build_dir / "bin").is_dir() else []
+    found = []
+    for b in [*candidates, build_dir / "third_party" / "duckdb" / "test" / "unittest"]:
+        if not b.is_file():
+            continue
+        sections = subprocess.run(["llvm-readelf-23", "-S", str(b)], capture_output=True).stdout
+        if b"__llvm_covmap" in sections:
+            found.append(str(b))
+    if not found:
+        raise SystemExit(f"no coverage-instrumented binaries in {build_dir}")
+    return found
+
+
+def merge(profiles, dest):
+    files = []
+    for p in map(Path, profiles):
+        if p.is_dir():
+            files += sorted(str(f) for f in p.iterdir() if f.suffix in (".profraw", ".profdata"))
+        else:
+            files.append(str(p))
+    if not files:
+        raise SystemExit(f"no profiles in {' '.join(profiles)}")
+    subprocess.run(["llvm-profdata-23", "merge", "-sparse", "-failure-mode=any", "-o", str(dest),
+                    *files], check=True)
+    return dest
+
+
+def _with_objects(cmd, objects, sources):
+    cmd.append(objects[0])
     for o in objects[1:]:
         cmd += ["-object", o]
-    cmd += ["-sources", *sources]
+    return cmd + (["-sources", *sources] if sources else [])
+
+
+def export(fmt, profdata, objects, sources=(), extra=()):
+    cmd = _with_objects(["llvm-cov-23", "export", f"-format={fmt}", f"-instr-profile={profdata}",
+                         *extra], objects, sources)
     res = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
     if res.returncode != 0:
         raise SystemExit(f"llvm-cov export failed: {res.stderr[-2000:]}")
     return res.stdout
+
+
+def html(profdata, objects, sources, dest):
+    cmd = _with_objects(["llvm-cov-23", "show", "-format=html", f"-output-dir={dest}",
+                         "-show-mcdc", "-show-branches=count", f"-instr-profile={profdata}"],
+                        objects, sources)
+    subprocess.run(cmd, check=True, cwd=ROOT)
 
 
 def parse_lcov(text):
@@ -172,16 +213,27 @@ def ranges(numbers):
 
 def main():
     ap = argparse.ArgumentParser(description="Coverage of the lines a change touches.")
-    ap.add_argument("--profdata", required=True)
-    ap.add_argument("--objects", nargs="+", required=True)
+    profile = ap.add_mutually_exclusive_group(required=True)
+    profile.add_argument("--profdata", help="a merged profile")
+    profile.add_argument("--profiles", nargs="+",
+                         help=".profraw/.profdata files or directories of them, to merge")
+    binaries = ap.add_mutually_exclusive_group(required=True)
+    binaries.add_argument("--objects", nargs="+", help="the instrumented binaries")
+    binaries.add_argument("--build-dir", help="a coverage build (SDB_COVERAGE=On) or its bundle")
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--label", default="coverage")
+    ap.add_argument("--html", action="store_true",
+                    help="also render the changed files as HTML into <out>/html")
     ap.add_argument("--out", required=True, help="output directory")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    args.profdata = args.profdata or merge(args.profiles, out / "merged.profdata")
+    args.objects = args.objects or objects(args.build_dir)
     changed = changed_lines(args.base)
     sources = [p for p in changed if (ROOT / p).is_file()]
+    if args.html and sources:
+        html(args.profdata, args.objects, sources, out / "html")
     summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0], "mcdc": [0, 0]}
     details = []
     uncovered_ranges = {}

@@ -24,7 +24,7 @@ paths:
 - A config whose build inputs did not change since a finished build reuses that bundle from the store (`scripts/ci/ci.py digest`), so a tests-only PR builds nothing.
 - `dev` measures the coverage of the change: the PR comment has the summary; `gh run download <id> -n coverage-dev-linux-amd64` fetches `coverage.json` with every uncovered changed line, branch direction, function and MC/DC condition, and the units that run the code nearest to it, where a test for it goes.
 - `main.yml` runs every merge's suites in every config and teaches the timing store.
-- The daily run (`daily.yml`, by hand until it is scheduled) runs every suite in every config with long fuzz and stress budgets, macOS and `validate pg` over everything, attributes coverage to every `dev` unit for test selection, then the release pipeline; with `PUBLISH` it replaces the draft release and pushes the images.
+- The daily run (`serenedb | daily`, `jobs-schedule.yml`, by hand until it is scheduled) runs every suite in every config with long fuzz and stress budgets, macOS and `validate pg` over everything, attributes coverage to every `dev` unit for test selection, then the release pipeline; with `PUBLISH` it replaces the draft release and pushes the images.
 
 ## A red run
 

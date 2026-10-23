@@ -4,19 +4,20 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
-import urllib.request
+from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "harness")]
 
 from testlib import selection, store  # noqa: E402
+from testlib.scheduler import BAD  # noqa: E402
 
 DIGEST_VERSION = "2"
 NOT_BUILD_INPUTS = (
@@ -146,6 +147,15 @@ def cmd_upload(args):
     store.put(args.dest, args.src)
 
 
+def cmd_download(args):
+    dest = Path(args.dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in store.files(args.dir):
+        if name.startswith(args.prefix):
+            store.get(f"{args.dir.rstrip('/')}/{name}", dest / name)
+            print(name)
+
+
 def cmd_exists(args):
     try:
         found = store.exists(args.path)
@@ -191,41 +201,24 @@ def cmd_timing(args):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _listing(path):
-    try:
-        with urllib.request.urlopen(store.url(path), timeout=60) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return []
-        raise
-
-
 def cmd_update_timing(args):
     tmp = Path(tempfile.mkdtemp())
     try:
-        files = []
-        now = time.time()
-        for i in range(args.days):
-            day = time.strftime("%Y-%m-%d", time.gmtime(now - i * 86400))
-            for e in _listing(f"results/{day}/"):
-                name = e["name"]
-                if e["type"] != "file" or f"-{args.config}-{args.arch}-" not in name:
-                    continue
-                if not args.pr and "-pr" in name:
-                    continue
-                dest = tmp / f"{day}-{name}"
-                if store.get(f"results/{day}/{name}", dest):
-                    files.append(dest)
+        wanted = []
+        for key in store.recent("results", args.days):
+            name = key.rsplit("/", 1)[1]
+            if f"-{args.config}-{args.arch}-" in name and (
+                    f"-pr{args.pr}-" in name if args.pr else "-pr" not in name):
+                wanted.append(key)
+        files = store.fetch_all(wanted, tmp)
         if not files:
             print("no results to learn timings from")
             return
         old = tmp / "old.parquet"
         key = f"timing/{args.config}-{args.arch}.parquet"
         have_old = store.get(key, old)
-        listed = ", ".join(f"'{f}'" for f in files)
         runs = (f"SELECT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, sum(duration) AS d "
-                f"FROM read_parquet([{listed}], union_by_name = true) "
+                f"FROM read_parquet([{store.quoted(files)}], union_by_name = true) "
                 f"WHERE coalesce(pr, '') = '{args.pr}' AND NOT coalesce(attribute, false) "
                 f"AND attempt = 0 AND NOT wrapper "
                 f"AND status IN ('passed', 'failed', 'flaky') "
@@ -243,12 +236,105 @@ def cmd_update_timing(args):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def cmd_nearest(args):
+    path = Path(args.coverage)
+    data = json.loads(path.read_text())
+    files = sorted({d["file"] for d in data["uncovered"]})
+    if not files:
+        return
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        local = tmp / "map.parquet"
+        if not store.get(f"selection/dev-{args.arch}.parquet", local):
+            print("no selection map in the store yet")
+            return
+        rows = store.shell(f"SELECT file, start, \"end\", unit FROM read_parquet('{local}') "
+                           f"WHERE file IN ({store.quoted(files)}) AND rank <= {selection.CHEAPEST} "
+                           f"ORDER BY rank, unit", tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    spans = defaultdict(dict)
+    for r in rows:
+        units = spans[r["file"]].setdefault((r["start"], r["end"]), [])
+        if r["unit"] not in units and len(units) < selection.CHEAPEST:
+            units.append(r["unit"])
+    for d in data["uncovered"]:
+        found = spans.get(d["file"])
+        if not found:
+            continue
+        line = d["line"]
+        inside = [s for s in found if s[0] <= line <= s[1]]
+        span = (max(inside, key=lambda s: (s[0], -s[1])) if inside
+                else min(found, key=lambda s: min(abs(line - s[0]), abs(line - s[1]))))
+        d["tests"] = found[span]
+        d["tests_run"] = f"{d['file']}:{span[0]}-{span[1]}"
+    path.write_text(json.dumps(data, indent=1))
+
+
 def cmd_selection_map(args):
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
     stats = selection.build_map(args.run, args.config, args.arch, args.bundle, work)
     print(f"selection/{args.config}-{args.arch}.parquet: {stats['functions']} functions, "
           f"{stats['units']} units, {stats['rows']} rows")
+
+
+def _rows(path):
+    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+
+
+def _is_failure(row):
+    return row["status"] in BAD and row["attempt"] == 0
+
+
+def _failures(rows):
+    return [r for r in rows if _is_failure(r)]
+
+
+def _unit_key(unit):
+    return re.sub(r"#\d+/\d+$", "", unit)
+
+
+def cmd_elsewhere(args):
+    src = Path(args.results).resolve()
+    rows = _rows(src)
+    meta = json.loads((src.parent / "meta.json").read_text())
+    units = sorted({_unit_key(r["unit"]) for r in _failures(rows)})
+    if not units:
+        return
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        own = f"{meta['run']}-"
+        files = store.fetch_all([k for k in store.recent("failures", args.days)
+                                 if not k.rsplit("/", 1)[1].startswith(own)], tmp)
+        if not files:
+            return
+        found = store.shell(
+            f"SELECT unit, pr, count(DISTINCT run) AS runs, "
+            f"string_agg(DISTINCT config, ',' ORDER BY config) AS configs, "
+            f"strftime(to_timestamp(max(started)), '%Y-%m-%d') AS last FROM ("
+            f"SELECT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, coalesce(pr, '') AS pr, "
+            f"coalesce(branch, '') AS branch, run, config, started "
+            f"FROM read_parquet([{store.quoted(files)}], union_by_name = true)) "
+            f"WHERE unit IN ({store.quoted(units)}) AND (pr NOT IN ('', {store.quoted([meta['pr']])}) "
+            f"OR (pr = '' AND branch = 'main')) GROUP BY unit, pr", tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    found.sort(key=lambda f: f["last"], reverse=True)
+    found.sort(key=lambda f: f["pr"] != "")
+    seen = defaultdict(list)
+    for f in found:
+        where = f"#{f['pr']}" if f["pr"] else "main"
+        seen[f["unit"]].append(f"{where} ({f['configs']}, {f['runs']} run(s), last {f['last']})")
+    if not seen:
+        return
+    with open(src, "w") as fh:
+        for r in rows:
+            places = seen.get(_unit_key(r["unit"]))
+            if places and _is_failure(r):
+                r["elsewhere"] = "; ".join(places[:4])
+            fh.write(json.dumps(r) + "\n")
+    print(f"{len(seen)} of {len(units)} failed unit(s) failed elsewhere too")
 
 
 def cmd_results(args):
@@ -262,6 +348,13 @@ def cmd_results(args):
     name = f"results/{day}/{args.run}-{pr}{shard}.parquet"
     store.put(name, parquet)
     print(name)
+    failures = _failures(_rows(src))
+    if failures:
+        bad = src.with_name("failures.jsonl")
+        bad.write_text("".join(json.dumps(r) + "\n" for r in failures))
+        store.jsonl_to_parquet(bad, bad.with_suffix(".parquet"))
+        store.put(f"failures/{day}/{args.run}-{pr}{shard}.parquet", bad.with_suffix(".parquet"))
+        print(f"failures/{day}/{args.run}-{pr}{shard}.parquet")
     attribution = src.parent / "attribution.parquet"
     if attribution.is_file():
         store.put(f"attribution/{args.run}/{shard}.parquet", attribution)
@@ -291,6 +384,12 @@ def main(argv):
     p.add_argument("src")
     p.add_argument("dest")
     p.set_defaults(fn=cmd_upload)
+    p = sub.add_parser("download", help="get the files of a store directory whose names start "
+                                        "with a prefix")
+    p.add_argument("dir")
+    p.add_argument("prefix")
+    p.add_argument("dest")
+    p.set_defaults(fn=cmd_download)
     p = sub.add_parser("exists", help="exit 0 when the store has the path")
     p.add_argument("path")
     p.set_defaults(fn=cmd_exists)
@@ -322,10 +421,20 @@ def main(argv):
     p.add_argument("--bundle", required=True, help="the unpacked coverage bundle of that run")
     p.add_argument("--work", required=True)
     p.set_defaults(fn=cmd_selection_map)
+    p = sub.add_parser("nearest", help="name the units that run the code nearest to each "
+                                       "uncovered line of a coverage report")
+    p.add_argument("--coverage", required=True)
+    p.add_argument("--arch", required=True)
+    p.set_defaults(fn=cmd_nearest)
     p = sub.add_parser("results", help="store a shard's results as Parquet")
     p.add_argument("--results", required=True)
     p.add_argument("--run", required=True)
     p.set_defaults(fn=cmd_results)
+    p = sub.add_parser("elsewhere", help="mark a shard's failures that failed on main or in "
+                                         "other PRs too")
+    p.add_argument("--results", required=True)
+    p.add_argument("--days", type=int, default=7)
+    p.set_defaults(fn=cmd_elsewhere)
     args = ap.parse_args(argv)
     args.fn(args)
 

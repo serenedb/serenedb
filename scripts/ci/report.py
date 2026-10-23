@@ -6,8 +6,9 @@ import subprocess
 from collections import defaultdict
 from pathlib import Path
 
+from testlib.scheduler import BAD
+
 MARKER = "<!-- serenedb-ci-report -->"
-BAD = ("failed", "stuck", "crashed", "flaky")
 ORDER = ("perf", "dev", "asan", "tsan", "msan")
 
 
@@ -110,7 +111,10 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
         lines += ["", f"**Failures** ({len(failures)})", "",
                   "| config | status | unit | detail |", "| --- | --- | --- | --- |"]
         for r in sorted(failures, key=lambda r: (r["config"], r["status"], r["unit"]))[:60]:
-            detail = (r.get("detail") or "").replace("|", "\\|").replace("\n", " ")[:200]
+            detail = r.get("detail") or ""
+            if r.get("elsewhere"):
+                detail = f"also failed in {r['elsewhere']} · {detail}"
+            detail = detail.replace("|", "\\|").replace("\n", " ")[:300]
             lines.append(f"| {r['config']}/{r['arch']} | {r['status']} | `{r['unit']}` | {detail} |")
         if len(failures) > 60:
             lines.append(f"\n... and {len(failures) - 60} more in the `report` artifact")

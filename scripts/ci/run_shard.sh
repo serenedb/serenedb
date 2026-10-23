@@ -53,7 +53,8 @@ docker run --rm --name "$name" \
 	"${hosts[@]}" \
 	-e HOME="$WORKSPACE/out/home" -e CI=true \
 	-e SDB_SERVICE_NETNS="container:$name" -e SDB_SERVICE_BIND="$gateway" -e SDB_SERVICE_HOST="$gateway" \
-	-e SDB_DOCKER_OWNER -e SDB_SHA="${SDB_SHA:-}" -e SDB_PR="${SDB_PR:-}" -e SDB_RUN_ID="$SDB_RUN_ID" \
+	-e SDB_DOCKER_OWNER -e SDB_SHA="${SDB_SHA:-}" -e SDB_PR="${SDB_PR:-}" -e SDB_BRANCH="${SDB_BRANCH:-}" \
+	-e SDB_RUN_ID="$SDB_RUN_ID" \
 	-e SDB_SERVICE_SOCKET_ROOT="$WORKSPACE/out/sockets" \
 	"${pass[@]}" \
 	-v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
@@ -67,6 +68,8 @@ docker run --rm --name "$name" \
 rc=$?
 
 if [[ -f "$out/results.jsonl" ]] && [[ "$SDB_STORE_RESULTS" == true ]]; then
+	python3 scripts/ci/ci.py elsewhere --results "$out/results.jsonl" ||
+		echo "warning: cannot tell whether the failures fail elsewhere too" >&2
 	python3 scripts/ci/ci.py results --results "$out/results.jsonl" --run "$SDB_RUN_ID" ||
 		echo "warning: results did not reach the store" >&2
 fi

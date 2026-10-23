@@ -38,19 +38,14 @@ def summary(meta, results, skips, limit=40):
 
 
 def write(out_dir, meta, results, skips):
+    common = {k: meta[k] for k in ("config", "arch", "sha", "pr", "branch", "run", "attribute")}
     with open(out_dir / "results.jsonl", "w") as fh:
         for r in results:
-            row = asdict(r)
-            row.update(config=meta["config"], arch=meta["arch"], sha=meta["sha"], pr=meta["pr"],
-                       run=meta["run"], attribute=meta["attribute"])
-            fh.write(json.dumps(row) + "\n")
+            fh.write(json.dumps({**asdict(r), **common}) + "\n")
         for uid, skip in skips:
             fh.write(json.dumps({"unit": uid, "suite": uid.split(":")[0], "status": SKIPPED,
                                  "duration": 0, "attempt": 0, "started": meta["started"],
                                  "detail": f"{skip.kind}: {skip.reason}", "signature": "",
-                                 "member_of": "", "dir": "", "wrapper": False,
-                                 "config": meta["config"], "arch": meta["arch"],
-                                 "sha": meta["sha"], "pr": meta["pr"], "run": meta["run"],
-                                 "attribute": meta["attribute"]}) + "\n")
+                                 "member_of": "", "dir": "", "wrapper": False, **common}) + "\n")
     (out_dir / "summary.txt").write_text(summary(meta, results, skips) + "\n")
     (out_dir / "meta.json").write_text(json.dumps(meta))

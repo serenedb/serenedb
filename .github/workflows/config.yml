@@ -47,6 +47,7 @@ env:
   SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
   SDB_SHA: ${{ inputs.PR_SHA || github.sha }}
   SDB_PR: ${{ inputs.PR_NUMBER }}
+  SDB_BRANCH: ${{ inputs.PR_NUMBER == '' && github.ref_name || '' }}
 
 jobs:
   build:

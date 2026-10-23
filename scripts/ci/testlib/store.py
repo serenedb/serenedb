@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -52,6 +53,37 @@ def put(path, src, timeout=1800):
                 pass
         except urllib.error.HTTPError as e:
             raise _failed("PUT", path, e) from e
+
+
+def files(path, timeout=60):
+    try:
+        with urllib.request.urlopen(url(path), timeout=timeout) as r:
+            return [e["name"] for e in json.load(r) if e["type"] == "file"]
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return []
+        raise _failed("GET", path, e) from e
+
+
+def recent(prefix, days):
+    now = time.time()
+    for i in range(days):
+        day = time.strftime("%Y-%m-%d", time.gmtime(now - i * 86400))
+        for name in files(f"{prefix}/{day}/"):
+            yield f"{prefix}/{day}/{name}"
+
+
+def quoted(values):
+    return ", ".join("'" + str(v).replace("'", "''") + "'" for v in values)
+
+
+def fetch_all(keys, work):
+    local = []
+    for key in keys:
+        dest = Path(work) / key.replace("/", "_")
+        if get(key, dest):
+            local.append(dest)
+    return local
 
 
 def reachable(timeout=5):

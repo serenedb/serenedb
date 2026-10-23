@@ -404,7 +404,7 @@ def main(argv):
     p.add_argument("--timing", required=True)
     p.add_argument("--cpus", type=int, default=32)
     p.add_argument("--target-seconds", type=float, default=900.0)
-    p.add_argument("--max-shards", type=int, default=12)
+    p.add_argument("--max-shards", type=int, default=64)
     p.add_argument("test_args", nargs=argparse.REMAINDER,
                    help="test.py selection arguments after --")
     p.set_defaults(fn=cmd_shards)

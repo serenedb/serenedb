@@ -50,7 +50,7 @@ class BooleanSparse {
   static constexpr bool kDecides =
     kOptional && probe::OptionalDecides<Optional>();
   static_assert(kProbes || kOptional || kExcludes);
-  static_assert(kScored || !kOptional);
+  static_assert(kScored || kDecides || !kOptional);
   static_assert(!kInherited || (!kProbes && !kOptional));
 
   template<typename LeadArgs, typename ProbesArgs, typename OptionalArgs,

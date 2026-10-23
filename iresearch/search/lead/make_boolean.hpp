@@ -47,6 +47,9 @@ struct Api {
   using Result = Node::ptr;
   using Context = utils::Empty;
 
+  static constexpr bool kScored = false;
+  static constexpr bool kPrunes = false;
+  static constexpr bool kWrapsMerge = false;
   static constexpr bool kWindowNodes = false;
   static constexpr bool kLazyGroups = false;
   static constexpr bool kWindowLeadDrains = true;
@@ -71,16 +74,19 @@ struct Api {
       std::piecewise_construct, std::forward<Args>(args)..., score);
   }
 
-  static Result PlanChild(const QueryBuilder& child, const Context&) {
+  static Result PlanChild(const QueryBuilder& child, const Context&,
+                          ScoreMergeType) {
     return child.PlanLead({});
   }
 
-  static Result MakeTerm(const detail::PostingClause& term,
-                         const SubReader& segment, const Context&) {
+  static Result MakePosting(const detail::PostingClause& term,
+                            const SubReader& segment, const Context&,
+                            ScoreMergeType) {
     return LeadOf(term, nullptr, segment);
   }
 
-  static Result MakeAll(const SubReader& segment, const Context&) {
+  static Result MakeAll(const SubReader& segment, const Context&,
+                        ScoreMergeType, score_t) {
     return MakeAllDocs(segment);
   }
 
@@ -92,7 +98,8 @@ struct Api {
     return docs_count;
   }
 
-  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx);
+  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx,
+                              ScoreMergeType merge, score_t absorbed);
 
   static Result MakeWindowExclusion(
     std::span<const detail::PostingClause> terms,
@@ -111,6 +118,7 @@ struct ScoredApi {
   using Result = Node::ptr;
   using Context = detail::ScoredCtx;
 
+  static constexpr bool kScored = true;
   static constexpr bool kRoot = false;
   static constexpr bool kPrunes = false;
   static constexpr bool kWrapsMerge = false;
@@ -153,12 +161,6 @@ struct ScoredApi {
                             const SubReader& segment, const Context& ctx,
                             ScoreMergeType) {
     return MakePostingScored(posting, segment, Recipe(segment, ctx));
-  }
-
-  static Result MakeSinglePosting(const detail::PostingClause& posting,
-                                  const SubReader& segment, const Context& ctx,
-                                  ScoreMergeType merge) {
-    return MakePosting(posting, segment, ctx, merge);
   }
 
   static Result MakeAll(const SubReader& segment, const Context&,

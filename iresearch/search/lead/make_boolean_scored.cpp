@@ -21,7 +21,7 @@
 #include <span>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/scored_builder.hpp"
+#include "iresearch/search/detail/boolean_planner.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/make_boolean.hpp"
@@ -38,7 +38,7 @@ Node::ptr MakeRequiredScored(std::span<const detail::PostingClause> must,
                              const SubReader& segment,
                              const detail::ScoredCtx& ctx, ScoreMergeType merge,
                              score_t absorbed) {
-  return detail::builder::MakeScoredRequired<ScoredApi>(
+  return detail::builder::MakeRequired<ScoredApi>(
     must, must_filters, should, should_filters, should_uniformity,
     min_should_match, segment, ctx, merge, absorbed);
 }
@@ -46,12 +46,11 @@ Node::ptr MakeRequiredScored(std::span<const detail::PostingClause> must,
 Node::ptr ScoredApi::MakeExclusion(const BooleanQuery& query,
                                    const Context& ctx, ScoreMergeType merge,
                                    score_t absorbed) {
-  return detail::builder::MakeScoredExclusion<ScoredApi>(query, ctx, merge,
-                                                         absorbed);
+  return detail::builder::MakeExclusion<ScoredApi>(query, ctx, merge, absorbed);
 }
 
 Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx) {
-  return detail::builder::MakeScored<ScoredApi>(query, ctx, query.MergeType());
+  return detail::builder::Make<ScoredApi>(query, ctx, query.MergeType());
 }
 
 }  // namespace irs::lead

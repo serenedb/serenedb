@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/detail/scored_builder.hpp"
+#include "iresearch/search/detail/boolean_planner.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/top/make_boolean.hpp"
 
@@ -26,8 +26,7 @@ namespace irs::top {
 
 Root::ptr Api::MakeExclusion(const BooleanQuery& query, const Context& ctx,
                              ScoreMergeType merge, score_t absorbed) {
-  return irs::detail::builder::MakeScoredExclusion<Api>(query, ctx, merge,
-                                                        absorbed);
+  return irs::detail::builder::MakeExclusion<Api>(query, ctx, merge, absorbed);
 }
 
 }  // namespace irs::top

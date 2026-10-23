@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/detail/scored_builder.hpp"
+#include "iresearch/search/detail/boolean_planner.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/top/make_boolean.hpp"
 

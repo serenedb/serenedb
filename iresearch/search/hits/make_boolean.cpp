@@ -20,13 +20,13 @@
 
 #include "iresearch/search/hits/make_boolean.hpp"
 
-#include "iresearch/search/detail/scored_builder.hpp"
+#include "iresearch/search/detail/boolean_planner.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::hits {
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
-  return irs::detail::builder::MakeScored<Api>(query, ctx, query.MergeType());
+  return irs::detail::builder::Make<Api>(query, ctx, query.MergeType());
 }
 
 }  // namespace irs::hits

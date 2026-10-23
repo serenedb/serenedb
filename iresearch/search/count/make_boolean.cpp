@@ -26,7 +26,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/count/live_count.hpp"
 #include "iresearch/search/count/make.hpp"
-#include "iresearch/search/detail/boolean_builder.hpp"
+#include "iresearch/search/detail/boolean_planner.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 
@@ -91,7 +91,7 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
       }
     }
   }
-  return detail::builder::Make<Api>(query, ctx);
+  return detail::builder::Make<Api>(query, ctx, query.MergeType());
 }
 
 }  // namespace irs::count

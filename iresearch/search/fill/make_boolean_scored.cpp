@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/scored_builder.hpp"
+#include "iresearch/search/detail/boolean_planner.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/fill/make_boolean.hpp"
@@ -30,13 +30,12 @@ namespace irs::fill {
 Node::ptr ScoredApi::MakeExclusion(const BooleanQuery& query,
                                    const Context& ctx, ScoreMergeType merge,
                                    score_t absorbed) {
-  return detail::builder::MakeScoredExclusion<ScoredApi>(query, ctx, merge,
-                                                         absorbed);
+  return detail::builder::MakeExclusion<ScoredApi>(query, ctx, merge, absorbed);
 }
 
 Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
-  return detail::builder::MakeScored<ScoredApi>(query, ctx, merge);
+  return detail::builder::Make<ScoredApi>(query, ctx, merge);
 }
 
 }  // namespace irs::fill

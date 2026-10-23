@@ -27,7 +27,6 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/approx_of.hpp"
-#include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/scored_context.hpp"

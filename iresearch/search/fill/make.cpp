@@ -29,7 +29,6 @@
 #include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
-#include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/fill_posting_scored.hpp"
 #include "iresearch/search/detail/make.hpp"

@@ -54,6 +54,9 @@ struct Api {
   using Result = Node::ptr;
   using Context = utils::Empty;
 
+  static constexpr bool kScored = false;
+  static constexpr bool kPrunes = false;
+  static constexpr bool kWrapsMerge = false;
   static constexpr bool kWindowNodes = false;
   static constexpr bool kLazyGroups = false;
   static constexpr bool kWindowLeadDrains = false;
@@ -84,16 +87,19 @@ struct Api {
     }
   }
 
-  static Result PlanChild(const QueryBuilder& child, const Context&) {
+  static Result PlanChild(const QueryBuilder& child, const Context&,
+                          ScoreMergeType) {
     return child.PlanFill({}, ScoreMergeType::Noop);
   }
 
-  static Result MakeTerm(const detail::PostingClause& term,
-                         const SubReader& segment, const Context&) {
+  static Result MakePosting(const detail::PostingClause& term,
+                            const SubReader& segment, const Context&,
+                            ScoreMergeType) {
     return FillOf(term, nullptr, segment);
   }
 
-  static Result MakeAll(const SubReader& segment, const Context&) {
+  static Result MakeAll(const SubReader& segment, const Context&,
+                        ScoreMergeType, score_t) {
     return MakeAllDocs(segment);
   }
 
@@ -105,7 +111,8 @@ struct Api {
     return docs_count;
   }
 
-  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx);
+  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx,
+                              ScoreMergeType merge, score_t absorbed);
 
   static Result MakeWindowExclusion(
     std::span<const detail::PostingClause> terms,
@@ -124,6 +131,7 @@ struct ScoredApi {
   using Result = Node::ptr;
   using Context = detail::ScoredCtx;
 
+  static constexpr bool kScored = true;
   static constexpr bool kRoot = false;
   static constexpr bool kPrunes = false;
   static constexpr bool kWrapsMerge = true;
@@ -165,13 +173,9 @@ struct ScoredApi {
   static Result MakePosting(const detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx,
                             ScoreMergeType merge) {
-    return MakePostingScored(posting, segment, ctx, merge);
-  }
-
-  static Result MakeSinglePosting(const detail::PostingClause& posting,
-                                  const SubReader& segment, const Context& ctx,
-                                  ScoreMergeType merge) {
-    return MakeSinglePostingScored(posting, segment, ctx, merge);
+    return posting.state.cookie.docs_count == 1
+             ? MakeSinglePostingScored(posting, segment, ctx, merge)
+             : MakePostingScored(posting, segment, ctx, merge);
   }
 
   static Result MakeAll(const SubReader& segment, const Context&,

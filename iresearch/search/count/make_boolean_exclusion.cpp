@@ -19,13 +19,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/count/make_boolean.hpp"
-#include "iresearch/search/detail/boolean_builder.hpp"
+#include "iresearch/search/detail/boolean_planner.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::count {
 
-Root::ptr Api::MakeExclusion(const BooleanQuery& query, const Context& ctx) {
-  return detail::builder::MakeExclusion<Api>(query, ctx);
+Root::ptr Api::MakeExclusion(const BooleanQuery& query, const Context& ctx,
+                             ScoreMergeType merge, score_t absorbed) {
+  return detail::builder::MakeExclusion<Api>(query, ctx, merge, absorbed);
 }
 
 }  // namespace irs::count

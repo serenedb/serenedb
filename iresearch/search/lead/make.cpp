@@ -28,7 +28,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
-#include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/make.hpp"

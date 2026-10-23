@@ -48,6 +48,9 @@ struct Api {
   using Result = Root::ptr;
   using Context = docs::Context;
 
+  static constexpr bool kScored = false;
+  static constexpr bool kPrunes = false;
+  static constexpr bool kWrapsMerge = false;
   static constexpr bool kWindowNodes = true;
   static constexpr bool kLazyGroups = false;
   static constexpr bool kWindowLeadDrains = true;
@@ -66,24 +69,27 @@ struct Api {
            typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
            typename ExcludesArgs>
   static Result MakeSparse(const Context& ctx, ScoreMergeType, utils::Empty,
-                           LeadArgs&& lead, ProbesArgs&& probes, OptionalArgs&&,
-                           ExcludesArgs&& excludes) {
-    static_assert(std::is_same_v<Optional, utils::Empty>);
-    return MakeShape<BooleanSparse, Lead, Probes, Excludes>(
+                           LeadArgs&& lead, ProbesArgs&& probes,
+                           OptionalArgs&& optional, ExcludesArgs&& excludes) {
+    return MakeShape<BooleanSparse, Lead, Probes, Optional, Excludes>(
       ctx, std::piecewise_construct, std::forward<LeadArgs>(lead),
-      std::forward<ProbesArgs>(probes), std::forward<ExcludesArgs>(excludes));
+      std::forward<ProbesArgs>(probes), std::forward<OptionalArgs>(optional),
+      std::forward<ExcludesArgs>(excludes));
   }
 
-  static Result PlanChild(const QueryBuilder& child, const Context& ctx) {
+  static Result PlanChild(const QueryBuilder& child, const Context& ctx,
+                          ScoreMergeType) {
     return child.PlanDocs(ctx);
   }
 
-  static Result MakeTerm(const detail::PostingClause& term,
-                         const SubReader& segment, const Context& ctx) {
-    return MakePosting(term, segment, ctx);
+  static Result MakePosting(const detail::PostingClause& term,
+                            const SubReader& segment, const Context& ctx,
+                            ScoreMergeType) {
+    return docs::MakePosting(term, segment, ctx);
   }
 
-  static Result MakeAll(const SubReader& segment, const Context& ctx) {
+  static Result MakeAll(const SubReader& segment, const Context& ctx,
+                        ScoreMergeType, score_t) {
     return docs::MakeAll(static_cast<doc_id_t>(segment.docs_count()), ctx);
   }
 
@@ -95,7 +101,8 @@ struct Api {
     return FoldSpan(ctx, docs_count);
   }
 
-  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx);
+  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx,
+                              ScoreMergeType merge, score_t absorbed);
 
   static Result MakeWindowExclusion(
     std::span<const detail::PostingClause> terms,

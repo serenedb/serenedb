@@ -193,22 +193,4 @@ inline Node::ptr BuildOptionalProbe(
                                      min_should_match, interrogations);
 }
 
-inline Node::ptr BuildOptionalProbeScored(
-  std::span<const detail::PostingClause> should,
-  std::span<const QueryBuilder::ptr> should_filters, detail::Terms uniformity,
-  uint32_t min_should_match, const SubReader& segment,
-  const detail::ScoreRecipe& recipe, ScoreMergeType merge,
-  uint64_t interrogations, const detail::ScoredCtx& ctx) {
-  SDB_ASSERT(min_should_match != 0);
-  SDB_ASSERT(should.size() + should_filters.size() >= min_should_match);
-  return min_should_match == 1
-           ? MakeDisjunctionScored(should, should_filters, uniformity, nullptr,
-                                   nullptr, kNoBoost, segment, recipe, merge,
-                                   interrogations,
-                                   ScoredClauseOf(segment, ctx, recipe), ctx)
-           : MakeSparseThresholdScored(should, should_filters, uniformity,
-                                       segment, recipe, merge, min_should_match,
-                                       interrogations, ctx);
-}
-
 }  // namespace irs::probe

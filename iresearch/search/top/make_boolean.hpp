@@ -25,9 +25,9 @@
 #include <tuple>
 #include <utility>
 
+#include "iresearch/search/detail/boolean_planner.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/detail/scored_builder.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_policy.hpp"
@@ -45,6 +45,7 @@ struct Api {
   using Result = Root::ptr;
   using Context = top::Context;
 
+  static constexpr bool kScored = true;
   static constexpr bool kRoot = true;
   static constexpr bool kWrapsMerge = false;
   static constexpr bool kPrunes = true;
@@ -120,13 +121,9 @@ struct Api {
   static Result MakePosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx,
                             ScoreMergeType) {
-    return top::MakePosting(posting, segment, ctx);
-  }
-
-  static Result MakeSinglePosting(const irs::detail::PostingClause& posting,
-                                  const SubReader& segment, const Context& ctx,
-                                  ScoreMergeType) {
-    return top::MakeSinglePosting(posting, segment, ctx);
+    return posting.state.cookie.docs_count == 1
+             ? top::MakeSinglePosting(posting, segment, ctx)
+             : top::MakePosting(posting, segment, ctx);
   }
 
   static Result MakeAll(const SubReader& segment, const Context& ctx,

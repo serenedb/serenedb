@@ -52,7 +52,6 @@ Result BuildConjunction(std::span<const Term> terms,
                         LeadClause&& lead_clause, Make&& make) {
   constexpr bool kScored = kScores<Scoring>;
   SDB_ASSERT(!terms.empty() || !filters.empty());
-  SDB_ASSERT(kScored || terms.size() + filters.size() > 1);
   const bool head_term = HeadIsTerm(terms, filters);
   const auto rest = head_term ? terms.subspan(1) : terms;
   const auto rest_filters = head_term ? filters : filters.subspan(1);
@@ -172,11 +171,9 @@ Result BuildConjunction(std::span<const Term> terms,
   };
 
   const auto build_opaque = [&]<typename Head>(auto&& head) -> Result {
-    if constexpr (kScored) {
-      if (rest_size == 0) {
-        return make.template operator()<Head, probe::NoLeaves>(
-          std::forward<decltype(head)>(head), std::forward_as_tuple());
-      }
+    if (rest_size == 0) {
+      return make.template operator()<Head, probe::NoLeaves>(
+        std::forward<decltype(head)>(head), std::forward_as_tuple());
     }
     return build_erased.template operator()<Head>(
       std::forward<decltype(head)>(head));

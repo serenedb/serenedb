@@ -23,7 +23,7 @@
 #include <span>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/boolean_builder.hpp"
+#include "iresearch/search/detail/boolean_planner.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::lead {
@@ -35,11 +35,12 @@ Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
                            uint32_t min_should_match,
                            const SubReader& segment) {
   return detail::builder::MakeRequired<Api>(
-    must, must_filters, should, should_filters, min_should_match, segment, {});
+    must, must_filters, should, should_filters, detail::Terms::Mixed,
+    min_should_match, segment, {}, ScoreMergeType::Noop, 0);
 }
 
 Node::ptr Make(const BooleanQuery& query) {
-  return detail::builder::Make<Api>(query, {});
+  return detail::builder::Make<Api>(query, {}, query.MergeType());
 }
 
 }  // namespace irs::lead

@@ -148,92 +148,141 @@ Result<Api> ResolveBoostArity(size_t size, F&& f) {
 }
 
 template<typename Api>
-Result<Api> MakeScoredConjunction(
-  std::span<const PostingClause> must,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const PostingClause> should,
-  std::span<const QueryBuilder::ptr> should_filters, Terms uniformity,
-  uint32_t min_match, const SubReader& segment, const Context<Api>& ctx,
-  ScoreMergeType merge, score_t absorbed) {
+auto ScoringFor(const SubReader& segment, const Context<Api>& ctx,
+                ScoreMergeType merge, Terms uniformity) {
+  if constexpr (Api::kScored) {
+    return ScoringOf<Api>(segment, ctx, merge, uniformity);
+  } else {
+    return NoScoring{};
+  }
+}
+
+template<typename Api>
+auto ScoreFor(ScoreMergeType merge, score_t absorbed) {
+  if constexpr (Api::kScored) {
+    return Scored{merge, absorbed};
+  } else {
+    return utils::Empty{};
+  }
+}
+
+template<typename Api>
+Result<Api> MakeConjunction(std::span<const PostingClause> must,
+                            std::span<const QueryBuilder::ptr> must_filters,
+                            std::span<const PostingClause> should,
+                            std::span<const QueryBuilder::ptr> should_filters,
+                            Terms uniformity, uint32_t min_match,
+                            const SubReader& segment, const Context<Api>& ctx,
+                            ScoreMergeType merge, score_t absorbed) {
   const bool no_must = must.empty() && must_filters.empty();
-  const bool optional = !should.empty() || !should_filters.empty();
+  const bool optional = (!should.empty() || !should_filters.empty()) &&
+                        (Api::kScored || min_match != 0);
   SDB_ASSERT(!no_must || optional);
-  const auto recipe = Api::Recipe(segment, ctx);
-  const auto child = Api::ChildContext(ctx);
-  const auto clause = probe::ScoredClauseOf(segment, child, recipe);
-  const auto candidates = IncludeCandidates(must, must_filters, segment);
-  const Scored score{merge, absorbed};
+  const auto score = ScoreFor<Api>(merge, absorbed);
   const auto conjunction = [&]<typename Make>(Make&& make) -> Result<Api> {
-    return BuildSparseConjunction<Api>(must, must_filters, segment, ctx,
-                                       ScoringOf<Api>(segment, ctx, merge),
-                                       std::forward<Make>(make));
+    return BuildSparseConjunction<Api>(
+      must, must_filters, segment, ctx,
+      ScoringFor<Api>(segment, ctx, merge, Terms::Mixed),
+      std::forward<Make>(make));
   };
-  if (optional && min_match == 0) {
-    if constexpr (requires { &Api::MakeBoosted; }) {
-      if (auto boosted =
-            Api::MakeBoosted(must, must_filters, should, should_filters,
-                             segment, ctx, merge, absorbed)) {
-        return boosted;
+  if constexpr (Api::kScored) {
+    if (optional && min_match == 0) {
+      if constexpr (requires { &Api::MakeBoosted; }) {
+        if (auto boosted =
+              Api::MakeBoosted(must, must_filters, should, should_filters,
+                               segment, ctx, merge, absorbed)) {
+          return boosted;
+        }
       }
-    }
-    return BuildProbeLeaves<Result<Api>>(
-      should, should_filters, nullptr, segment, candidates, ProbeOrder::Densest,
-      TermScoring{.scorer = nullptr,
-                  .boost = kNoBoost,
-                  .uniformity = uniformity,
-                  .recipe = recipe},
-      clause, [&]<typename Leaf>(size_t size, auto&& init) -> Result<Api> {
-        return ResolveBoostArity<Api>(size, [&]<size_t N> -> Result<Api> {
-          using Boost = probe::BoostLeaves<Leaf, N>;
-          const auto boost =
-            std::forward_as_tuple(size, std::forward<decltype(init)>(init));
-          if (no_must) {
-            auto all = lead::MakeAllScored(segment, 0);
-            if (!all) {
-              return {};
+      const auto recipe = Api::Recipe(segment, ctx);
+      return BuildProbeLeaves<Result<Api>>(
+        should, should_filters, nullptr, segment,
+        IncludeCandidates(must, must_filters, segment), ProbeOrder::Densest,
+        TermScoring{.scorer = nullptr,
+                    .boost = kNoBoost,
+                    .uniformity = uniformity,
+                    .recipe = recipe},
+        probe::ScoredClauseOf(segment, Api::ChildContext(ctx), recipe),
+        [&]<typename Leaf>(size_t size, auto&& init) -> Result<Api> {
+          return ResolveBoostArity<Api>(size, [&]<size_t N> -> Result<Api> {
+            using Boost = probe::BoostLeaves<Leaf, N>;
+            const auto boost =
+              std::forward_as_tuple(size, std::forward<decltype(init)>(init));
+            if (no_must) {
+              auto all = lead::MakeAllScored(segment, 0);
+              if (!all) {
+                return {};
+              }
+              return Api::template MakeSparse<lead::Erased, utils::Empty, Boost,
+                                              utils::Empty>(
+                ctx, merge, score, std::forward_as_tuple(std::move(all)),
+                std::forward_as_tuple(), boost, std::forward_as_tuple());
             }
-            return Api::template MakeSparse<lead::Erased, utils::Empty, Boost,
-                                            utils::Empty>(
-              ctx, merge, score, std::forward_as_tuple(std::move(all)),
-              std::forward_as_tuple(), boost, std::forward_as_tuple());
-          }
-          return conjunction([&]<typename Head, typename Tail>(
-                               auto&& head, auto&& tail) -> Result<Api> {
-            return Api::template MakeSparse<Head, Tail, Boost, utils::Empty>(
-              ctx, merge, score, std::forward<decltype(head)>(head),
-              std::forward<decltype(tail)>(tail), boost,
-              std::forward_as_tuple());
+            return conjunction([&]<typename Head, typename Tail>(
+                                 auto&& head, auto&& tail) -> Result<Api> {
+              return Api::template MakeSparse<Head, Tail, Boost, utils::Empty>(
+                ctx, merge, score, std::forward<decltype(head)>(head),
+                std::forward<decltype(tail)>(tail), boost,
+                std::forward_as_tuple());
+            });
           });
         });
-      });
+    }
   }
   SDB_ASSERT(!no_must);
+  if (!optional) {
+    if (must.size() + must_filters.size() == 1 && absorbed == 0) {
+      return must.empty() ? Api::PlanChild(*must_filters.front(), ctx, merge)
+                          : Api::MakePosting(must.front(), segment, ctx, merge);
+    }
+    if constexpr (!Api::kScored) {
+      if (auto windowed =
+            MakeWindowConjunction<Api>(must, must_filters, segment, ctx)) {
+        return windowed;
+      }
+      if (!must_filters.empty()) {
+        if (auto folded = MakeBitset<Api>(
+              {.must = must, .must_filters = must_filters}, segment, ctx)) {
+          return folded;
+        }
+      }
+    }
+    return conjunction([&]<typename Head, typename Tail>(
+                         auto&& head, auto&& tail) -> Result<Api> {
+      return Api::template MakeSparse<Head, Tail, utils::Empty, utils::Empty>(
+        ctx, merge, score, std::forward<decltype(head)>(head),
+        std::forward<decltype(tail)>(tail), std::forward_as_tuple(),
+        std::forward_as_tuple());
+    });
+  }
+  const auto candidates = IncludeCandidates(must, must_filters, segment);
   probe::Node::ptr held;
-  if (optional) {
+  if constexpr (Api::kScored) {
     held = probe::MakeRequiredScored({}, {}, Terms::Mixed, should,
                                      should_filters, uniformity, min_match,
-                                     segment, recipe, merge, candidates, child);
-    if (!held) {
-      return {};
-    }
+                                     segment, Api::Recipe(segment, ctx), merge,
+                                     candidates, Api::ChildContext(ctx));
+  } else {
+    held = probe::BuildOptionalProbe(should, should_filters, min_match, segment,
+                                     candidates);
   }
-  if (must.size() + must_filters.size() == 1 && !held && absorbed == 0) {
-    if (must.empty()) {
-      return Api::PlanChild(*must_filters.front(), ctx, merge);
+  if (!held) {
+    return {};
+  }
+  if constexpr (!Api::kScored) {
+    if (must.size() + must_filters.size() > 1) {
+      if (auto folded = MakeConjunctionBitset<LeadNode::ptr>(
+            must, must_filters, nullptr, segment, nullptr)) {
+        return Api::template MakeSparse<lead::Erased, utils::Empty,
+                                        probe::Erased, utils::Empty>(
+          ctx, merge, score, std::forward_as_tuple(std::move(folded)),
+          std::forward_as_tuple(), std::forward_as_tuple(std::move(held)),
+          std::forward_as_tuple());
+      }
     }
-    const auto& posting = must.front();
-    return posting.state.cookie.docs_count == 1
-             ? Api::MakeSinglePosting(posting, segment, ctx, merge)
-             : Api::MakePosting(posting, segment, ctx, merge);
   }
   return conjunction(
     [&]<typename Head, typename Tail>(auto&& head, auto&& tail) -> Result<Api> {
-      if (!held) {
-        return Api::template MakeSparse<Head, Tail, utils::Empty, utils::Empty>(
-          ctx, merge, score, std::forward<decltype(head)>(head),
-          std::forward<decltype(tail)>(tail), std::forward_as_tuple(),
-          std::forward_as_tuple());
-      }
       return Api::template MakeSparse<Head, Tail, probe::Erased, utils::Empty>(
         ctx, merge, score, std::forward<decltype(head)>(head),
         std::forward<decltype(tail)>(tail),
@@ -242,19 +291,20 @@ Result<Api> MakeScoredConjunction(
 }
 
 template<typename Api>
-Result<Api> MakeScoredRequired(
-  std::span<const PostingClause> must,
-  std::span<const QueryBuilder::ptr> must_filters,
-  std::span<const PostingClause> should,
-  std::span<const QueryBuilder::ptr> should_filters, Terms uniformity,
-  uint32_t min_match, const SubReader& segment, const Context<Api>& ctx,
-  ScoreMergeType merge, score_t absorbed) {
-  const bool optional = !should.empty() || !should_filters.empty();
+Result<Api> MakeRequired(std::span<const PostingClause> must,
+                         std::span<const QueryBuilder::ptr> must_filters,
+                         std::span<const PostingClause> should,
+                         std::span<const QueryBuilder::ptr> should_filters,
+                         Terms uniformity, uint32_t min_match,
+                         const SubReader& segment, const Context<Api>& ctx,
+                         ScoreMergeType merge, score_t absorbed) {
+  const bool optional = (!should.empty() || !should_filters.empty()) &&
+                        (Api::kScored || min_match != 0);
   if (must.empty() && must_filters.empty() && (!optional || min_match != 0)) {
     if (!optional) {
       return Api::MakeAll(segment, ctx, merge, absorbed);
     }
-    const auto scoring = ScoringOf<Api>(segment, ctx, merge, uniformity);
+    const auto scoring = ScoringFor<Api>(segment, ctx, merge, uniformity);
     if (min_match == 1) {
       return MakeDisjunction<Api>(should, should_filters, nullptr, segment,
                                   scoring, ctx, absorbed);
@@ -262,15 +312,14 @@ Result<Api> MakeScoredRequired(
     return MakeThreshold<Api>(should, should_filters, segment, min_match,
                               scoring, ctx, absorbed);
   }
-  return MakeScoredConjunction<Api>(must, must_filters, should, should_filters,
-                                    uniformity, min_match, segment, ctx, merge,
-                                    absorbed);
+  return MakeConjunction<Api>(must, must_filters, should, should_filters,
+                              uniformity, min_match, segment, ctx, merge,
+                              absorbed);
 }
 
 template<typename Api>
-Result<Api> MakeScoredExclusion(const BooleanQuery& query,
-                                const Context<Api>& ctx, ScoreMergeType merge,
-                                score_t absorbed) {
+Result<Api> MakeExclusion(const BooleanQuery& query, const Context<Api>& ctx,
+                          ScoreMergeType merge, score_t absorbed) {
   const auto& segment = query.Segment();
   const auto own = query.MergeType();
   const std::span must = query.Terms(Occur::Must);
@@ -279,55 +328,90 @@ Result<Api> MakeScoredExclusion(const BooleanQuery& query,
   const std::span should_filters = query.Queries(Occur::Should);
   const std::span excludes = query.Terms(Occur::MustNot);
   const std::span exclude_filters = query.Queries(Occur::MustNot);
+  const auto min_match = query.MinShouldMatch();
   SDB_ASSERT(!excludes.empty() || !exclude_filters.empty());
+  const bool no_must = must.empty() && must_filters.empty();
   auto candidates = IncludeCandidates(must, must_filters, segment);
-  if (must.empty() && must_filters.empty() && query.MinShouldMatch() != 0) {
+  if (no_must && min_match != 0) {
     candidates = std::min(
       candidates, LeadCandidates(should, should_filters, segment.docs_count()));
   }
-  if (absorbed == 0 && should.empty() && should_filters.empty() &&
-      must.size() == 1 && must_filters.empty() &&
-      ScoresPerDocTerm(must.front())) {
-    const auto& posting = must.front();
-    const auto& own_field = *posting.state.reader;
-    const auto& doc = *DocOf(own_field);
-    const auto recipe = Api::Recipe(segment, ctx);
-    return ResolveInput(doc, [&]<typename Input> -> Result<Api> {
-      return BuildExcludesOf<Result<Api>, Input>(
-        Api::kRoot ? ExcludeUse::PerBlock : ExcludeUse::PerDoc, excludes,
-        exclude_filters, nullptr, segment, candidates, candidates,
-        [&]<typename Exclude>(auto&& negated) -> Result<Api> {
-          if constexpr (Api::kRoot) {
-            return Api::template MakeExcludedPosting<Input, Exclude>(
-              ctx, std::forward<decltype(negated)>(negated), posting, doc,
-              segment, own_field, recipe);
-          } else {
-            return Api::template MakeSparse<
-              PostingLeadScored<Input>, utils::Empty, utils::Empty, Exclude>(
-              ctx, merge, Inherited{},
-              std::forward_as_tuple(posting.state.cookie, doc, segment,
-                                    own_field,
-                                    recipe.Args(posting.stats, posting.boost)),
-              std::forward_as_tuple(), std::forward_as_tuple(),
-              std::forward<decltype(negated)>(negated));
-          }
-        });
-    });
-  }
-  auto include = lead::MakeRequiredScored(
-    must, must_filters, should, should_filters, query.Uniformity(Occur::Should),
-    query.MinShouldMatch(), segment, Api::ChildContext(ctx), own, absorbed);
-  if (!include) {
-    return {};
-  }
-  if constexpr (Api::kRoot) {
-    return MakeSparseExclusionOf<Api>(std::move(include), excludes,
-                                      exclude_filters, segment, candidates, ctx,
-                                      merge, Scored{merge, 0});
+  if constexpr (Api::kScored) {
+    if (absorbed == 0 && should.empty() && should_filters.empty() &&
+        must.size() == 1 && must_filters.empty() &&
+        ScoresPerDocTerm(must.front())) {
+      const auto& posting = must.front();
+      const auto& own_field = *posting.state.reader;
+      const auto& doc = *DocOf(own_field);
+      const auto recipe = Api::Recipe(segment, ctx);
+      return ResolveInput(doc, [&]<typename Input> -> Result<Api> {
+        return BuildExcludesOf<Result<Api>, Input>(
+          Api::kRoot ? ExcludeUse::PerBlock : ExcludeUse::PerDoc, excludes,
+          exclude_filters, nullptr, segment, candidates, candidates,
+          [&]<typename Exclude>(auto&& negated) -> Result<Api> {
+            if constexpr (Api::kRoot) {
+              return Api::template MakeExcludedPosting<Input, Exclude>(
+                ctx, std::forward<decltype(negated)>(negated), posting, doc,
+                segment, own_field, recipe);
+            } else {
+              return Api::template MakeSparse<
+                PostingLeadScored<Input>, utils::Empty, utils::Empty, Exclude>(
+                ctx, merge, Inherited{},
+                std::forward_as_tuple(
+                  posting.state.cookie, doc, segment, own_field,
+                  recipe.Args(posting.stats, posting.boost)),
+                std::forward_as_tuple(), std::forward_as_tuple(),
+                std::forward<decltype(negated)>(negated));
+            }
+          });
+      });
+    }
+    auto include =
+      lead::MakeRequiredScored(must, must_filters, should, should_filters,
+                               query.Uniformity(Occur::Should), min_match,
+                               segment, Api::ChildContext(ctx), own, absorbed);
+    if (!include) {
+      return {};
+    }
+    if constexpr (Api::kRoot) {
+      return MakeSparseExclusionOf<Api>(std::move(include), excludes,
+                                        exclude_filters, segment, candidates,
+                                        ctx, merge, Scored{merge, 0});
+    } else {
+      return MakeSparseExclusionOf<Api>(std::move(include), excludes,
+                                        exclude_filters, segment, candidates,
+                                        ctx, merge, Inherited{});
+    }
   } else {
+    if (min_match == 0) {
+      if (no_must) {
+        return Api::MakeNegation(excludes, exclude_filters, segment, candidates,
+                                 ctx);
+      }
+      if (auto folded = MakeBitset<Api>({.must = must,
+                                         .must_filters = must_filters,
+                                         .must_not = excludes,
+                                         .must_not_filters = exclude_filters},
+                                        segment, ctx)) {
+        return folded;
+      }
+      if (auto windowed = Api::MakeWindowExclusion(must, must_filters, excludes,
+                                                   exclude_filters, segment,
+                                                   candidates, ctx)) {
+        return windowed;
+      }
+      return MakeSparseExclusion<Api>(must, must_filters, excludes,
+                                      exclude_filters, segment, candidates,
+                                      ctx);
+    }
+    auto include = lead::MakeRequiredDocs(must, must_filters, should,
+                                          should_filters, min_match, segment);
+    if (!include) {
+      return {};
+    }
     return MakeSparseExclusionOf<Api>(std::move(include), excludes,
                                       exclude_filters, segment, candidates, ctx,
-                                      merge, Inherited{});
+                                      merge, utils::Empty{});
   }
 }
 
@@ -376,10 +460,12 @@ Result<Api> MakePruned(const BooleanQuery& query, const Context<Api>& ctx,
 }
 
 template<typename Api>
-Result<Api> MakeScored(const BooleanQuery& query, const Context<Api>& ctx,
-                       ScoreMergeType merge) {
-  const auto own = query.MergeType();
-  const auto absorbed = query.Absorbed();
+Result<Api> Make(const BooleanQuery& query, const Context<Api>& ctx,
+                 ScoreMergeType merge) {
+  score_t absorbed = 0;
+  if constexpr (Api::kScored) {
+    absorbed = query.Absorbed();
+  }
   if constexpr (Api::kPrunes) {
     if (Api::Prunes(ctx, merge, absorbed)) {
       if (auto pruned = MakePruned<Api>(query, ctx, merge)) {
@@ -389,23 +475,25 @@ Result<Api> MakeScored(const BooleanQuery& query, const Context<Api>& ctx,
   }
   if (!query.Terms(Occur::MustNot).empty() ||
       !query.Queries(Occur::MustNot).empty()) {
-    if constexpr (Api::kRoot) {
-      if (auto windowed = Api::MakeExclusionWindow(query, ctx, absorbed)) {
-        return windowed;
+    if constexpr (Api::kScored) {
+      if constexpr (Api::kRoot) {
+        if (auto windowed = Api::MakeExclusionWindow(query, ctx, absorbed)) {
+          return windowed;
+        }
       }
     }
     return Api::MakeExclusion(query, ctx, merge, absorbed);
   }
   if constexpr (Api::kWrapsMerge) {
-    if (own != merge) {
-      auto child = MakeScored<Api>(query, ctx, own);
+    if (const auto own = query.MergeType(); own != merge) {
+      auto child = Make<Api>(query, ctx, own);
       if (!child) {
         return {};
       }
       return Api::WrapMerge(merge, std::move(child));
     }
   }
-  return MakeScoredRequired<Api>(
+  return MakeRequired<Api>(
     query.Terms(Occur::Must), query.Queries(Occur::Must),
     query.Terms(Occur::Should), query.Queries(Occur::Should),
     query.Uniformity(Occur::Should), query.MinShouldMatch(), query.Segment(),

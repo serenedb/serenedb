@@ -31,7 +31,6 @@
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/boolean_bitset.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
-#include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/conjunction.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
@@ -446,24 +445,6 @@ Result<Api> MakeSparseConjunction(std::span<const PostingClause> terms,
     });
 }
 
-template<typename Api>
-Result<Api> MakeSparseConjunctionWith(
-  std::span<const PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  ProbeNode::ptr other, const Context<Api>& ctx) {
-  SDB_ASSERT(other);
-  return BuildRequiredLeadOf<Result<Api>>(
-    terms, filters, nullptr, segment,
-    [&]<typename Head>(auto&& head) -> Result<Api> {
-      return Api::template MakeSparse<Head, probe::Erased, utils::Empty,
-                                      utils::Empty>(
-        ctx, ScoreMergeType::Noop, utils::Empty{},
-        std::forward<decltype(head)>(head),
-        std::forward_as_tuple(std::move(other)), std::forward_as_tuple(),
-        std::forward_as_tuple());
-    });
-}
-
 template<typename Api, typename Score>
 Result<Api> MakeSparseExclusionOf(
   LeadNode::ptr include, std::span<const PostingClause> exclude_terms,
@@ -601,30 +582,6 @@ Result<Api> MakeDisjunction(std::span<const Term> terms,
                                     absorbed);
 }
 
-template<typename Api>
-Result<Api> MakeConjunction(std::span<const PostingClause> terms,
-                            std::span<const QueryBuilder::ptr> filters,
-                            const SubReader& segment, const Context<Api>& ctx) {
-  SDB_ASSERT(terms.size() + filters.size() != 0);
-  if (terms.size() + filters.size() == 1) {
-    return HeadIsTerm(terms, filters)
-             ? Api::MakeTerm(terms.front(), segment, ctx)
-             : Api::PlanChild(*filters.front(), ctx);
-  }
-  if (auto windowed =
-        MakeWindowConjunction<Api>(terms, filters, segment, ctx)) {
-    return windowed;
-  }
-  if (!filters.empty()) {
-    if (auto folded = MakeBitset<Api>({.must = terms, .must_filters = filters},
-                                      segment, ctx)) {
-      return folded;
-    }
-  }
-  return MakeSparseConjunction<Api>(terms, filters, segment, ctx, NoScoring{},
-                                    utils::Empty{});
-}
-
 template<typename Api, typename Scoring>
 Result<Api> MakeThreshold(std::span<const PostingClause> terms,
                           std::span<const QueryBuilder::ptr> filters,
@@ -642,101 +599,6 @@ Result<Api> MakeThreshold(std::span<const PostingClause> terms,
   }
   return MakeWindowThreshold<Api>(terms, doc, rest, min_match, scoring, ctx,
                                   absorbed);
-}
-
-template<typename Api>
-Result<Api> MakeRequired(std::span<const PostingClause> must_terms,
-                         std::span<const QueryBuilder::ptr> must_filters,
-                         std::span<const PostingClause> should_terms,
-                         std::span<const QueryBuilder::ptr> should_filters,
-                         uint32_t min_match, const SubReader& segment,
-                         const Context<Api>& ctx) {
-  const bool no_must = must_terms.empty() && must_filters.empty();
-  if (min_match == 0) {
-    if (no_must) {
-      return Api::MakeAll(segment, ctx);
-    }
-    return MakeConjunction<Api>(must_terms, must_filters, segment, ctx);
-  }
-  if (no_must) {
-    return min_match == 1
-             ? MakeDisjunction<Api>(should_terms, should_filters, nullptr,
-                                    segment, NoScoring{}, ctx, 0)
-             : MakeThreshold<Api>(should_terms, should_filters, segment,
-                                  min_match, NoScoring{}, ctx, 0);
-  }
-  auto probe = probe::BuildOptionalProbe(
-    should_terms, should_filters, min_match, segment,
-    IncludeCandidates(must_terms, must_filters, segment));
-  if (!probe) {
-    return {};
-  }
-  return MakeSparseConjunctionWith<Api>(must_terms, must_filters, segment,
-                                        std::move(probe), ctx);
-}
-
-template<typename Api>
-Result<Api> MakeRequired(const BooleanQuery& query, const Context<Api>& ctx) {
-  return MakeRequired<Api>(query.Terms(Occur::Must), query.Queries(Occur::Must),
-                           query.Terms(Occur::Should),
-                           query.Queries(Occur::Should), query.MinShouldMatch(),
-                           query.Segment(), ctx);
-}
-
-template<typename Api>
-Result<Api> MakeExclusion(const BooleanQuery& query, const Context<Api>& ctx) {
-  const auto& segment = query.Segment();
-  const auto must_terms = query.Terms(Occur::Must);
-  const auto must_filters = query.Queries(Occur::Must);
-  const auto exclude_terms = query.Terms(Occur::MustNot);
-  const auto exclude_filters = query.Queries(Occur::MustNot);
-  SDB_ASSERT(!exclude_terms.empty() || !exclude_filters.empty());
-  auto candidates = IncludeCandidates(must_terms, must_filters, segment);
-  const auto min_match = query.MinShouldMatch();
-  if (min_match != 0) {
-    const std::span should_terms = query.Terms(Occur::Should);
-    const std::span should_filters = query.Queries(Occur::Should);
-    if (must_terms.empty() && must_filters.empty()) {
-      candidates = std::min(
-        candidates,
-        LeadCandidates(should_terms, should_filters, segment.docs_count()));
-    }
-    auto driven = lead::MakeRequiredDocs(must_terms, must_filters, should_terms,
-                                         should_filters, min_match, segment);
-    if (!driven) {
-      return {};
-    }
-    return MakeSparseExclusionOf<Api>(std::move(driven), exclude_terms,
-                                      exclude_filters, segment, candidates, ctx,
-                                      ScoreMergeType::Noop, utils::Empty{});
-  }
-  if (must_terms.empty() && must_filters.empty()) {
-    return Api::MakeNegation(exclude_terms, exclude_filters, segment,
-                             candidates, ctx);
-  }
-  if (auto folded = MakeBitset<Api>({.must = must_terms,
-                                     .must_filters = must_filters,
-                                     .must_not = exclude_terms,
-                                     .must_not_filters = exclude_filters},
-                                    segment, ctx)) {
-    return folded;
-  }
-  if (auto windowed =
-        Api::MakeWindowExclusion(must_terms, must_filters, exclude_terms,
-                                 exclude_filters, segment, candidates, ctx)) {
-    return windowed;
-  }
-  return MakeSparseExclusion<Api>(must_terms, must_filters, exclude_terms,
-                                  exclude_filters, segment, candidates, ctx);
-}
-
-template<typename Api>
-Result<Api> Make(const BooleanQuery& query, const Context<Api>& ctx) {
-  if (query.Terms(Occur::MustNot).empty() &&
-      query.Queries(Occur::MustNot).empty()) {
-    return MakeRequired<Api>(query, ctx);
-  }
-  return Api::MakeExclusion(query, ctx);
 }
 
 }  // namespace irs::detail::builder

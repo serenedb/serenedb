@@ -21,13 +21,13 @@
 #include "iresearch/search/docs/make_boolean.hpp"
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/boolean_builder.hpp"
+#include "iresearch/search/detail/boolean_planner.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::docs {
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
-  return detail::builder::Make<Api>(query, ctx);
+  return detail::builder::Make<Api>(query, ctx, query.MergeType());
 }
 
 }  // namespace irs::docs

@@ -268,11 +268,12 @@ int main(int argc, char* argv[]) {
   if (all_paths == 0) {
     std::filesystem::remove(TestEnv::test_results_dir());
   } else {
+    const auto outside = TestEnv::test_results_dir().parent_path();
     for (auto& path : empty_paths) {
       do {
         std::filesystem::remove(path);
         path = path.parent_path();
-      } while (std::filesystem::is_empty(path));
+      } while (path != outside && std::filesystem::is_empty(path));
     }
   }
 

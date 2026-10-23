@@ -62,13 +62,15 @@ jobs:
 
       - name: Install toolchain
         run: |
+          set -euo pipefail
           brew install bison bash ninja ccache pkg-config cmake zstd
           dir="$RUNNER_TOOL_CACHE/llvm-$LLVM_VERSION"
           if [[ ! -x "$dir/bin/clang++" ]]; then
             mkdir -p "$dir"
             curl -fsSL --retry 3 "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/LLVM-$LLVM_VERSION-macOS-ARM64.tar.zst" |
-              zstd -dc | tar -x -C "$dir" --strip-components=1
+              zstd -dc --long=30 | tar -x -C "$dir" --strip-components=1
           fi
+          "$dir/bin/clang++" --version
           echo "LLVM_DIR=$dir" >> "$GITHUB_ENV"
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
 

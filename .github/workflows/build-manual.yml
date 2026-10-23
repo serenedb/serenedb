@@ -201,6 +201,7 @@ jobs:
         run: |
           git clean -ffdxq -e '/build_*/'
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
+          git submodule update --init --checkout --depth=1 tests/sqllogic/any/pg/sqlite
       - name: The changed tests fail without the fix
         run: ./scripts/ci/bugfix_check.sh origin/main
       - name: Summary

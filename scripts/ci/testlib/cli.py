@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import report
+from . import attribution, report, store
 from .config import CONFIGS, Build, cpu_count, memory_gb
 from .scheduler import Context, Scheduler, install_signal_handlers
 from .suites import load_skips
@@ -57,6 +57,9 @@ def parse_args(argv):
                     help="run only the --changed units")
     ap.add_argument("--expect-fail", action="store_true",
                     help="every unit must fail (a fix's tests against the build without it)")
+    ap.add_argument("--attribute", action="store_true",
+                    help="coverage builds: every unit gets its own server and profile, and the "
+                         "functions it runs are recorded for test selection")
     ap.add_argument("--list", action="store_true", help="print the units and exit")
     ap.add_argument("--keep", action="store_true", help="keep the directories of passed units")
     ap.add_argument("--verbose", action="store_true", help="log every unit")
@@ -176,10 +179,12 @@ def main(argv):
     base_env["SDB_DRV_SERENED_BIN"] = str(build.bin("serened"))
     base_env.setdefault("SDB_DOCKER_OWNER", f"test-py-{os.getpid()}")
     os.environ["SDB_DOCKER_OWNER"] = base_env["SDB_DOCKER_OWNER"]
+    if args.attribute and not build.coverage:
+        raise SystemExit("--attribute needs a coverage build (SDB_COVERAGE=On)")
     ctx = Context(root=ROOT, build=build, config=config, out_dir=out,
                   timing=Timing.load(args.timing), jobs=jobs,
                   mem_gb=args.mem or memory_gb() * 0.75, verbose=args.verbose or args.keep,
-                  base_env=base_env)
+                  base_env=base_env, attribute=args.attribute)
     suites = args.suite or list(SUITES)
     skips = load_skips(ROOT, config.name)
     units = build_units(ctx, args, suites, skips)
@@ -224,5 +229,7 @@ def main(argv):
         "run": os.environ.get("SDB_RUN_ID", ""),
     }
     report.write(out, meta, results, ctx.skips)
+    if args.attribute and (attribution.directory(ctx) / "index.jsonl").is_file():
+        store.attribution_parquet(attribution.directory(ctx), out / "attribution.parquet")
     print(report.summary(meta, results, ctx.skips))
     return 1 if report.failed(results) else 0

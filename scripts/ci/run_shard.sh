@@ -71,9 +71,9 @@ if [[ -f "$out/results.jsonl" ]] && [[ "$SDB_STORE_RESULTS" == true ]]; then
 		echo "warning: results did not reach the store" >&2
 fi
 
-if compgen -G "$out/profiles/*.profraw" >/dev/null; then
+if compgen -G "$out/profiles/*.prof*" >/dev/null; then
 	docker run --rm --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" "$BUILD_IMAGE" \
-		bash -c 'llvm-profdata-23 merge -sparse -failure-mode=any -o "$0/shard.profdata" "$0"/profiles/*.profraw' "$out" &&
+		bash -c 'llvm-profdata-23 merge -sparse -failure-mode=any -o "$0/shard.profdata" "$0"/profiles/*.prof*' "$out" &&
 		rm -rf "$out/profiles"
 	if [[ "$SDB_STORE_RESULTS" == true ]]; then
 		python3 scripts/ci/ci.py upload "$out/shard.profdata" \

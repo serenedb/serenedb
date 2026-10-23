@@ -356,6 +356,37 @@ class Scheduler:
             elif later:
                 r.detail += f" (failed again on {len(later)} rerun(s): deterministic)"
 
+    def repeat(self, units, rounds, budget_s):
+        first = {r.unit: r for r in self.results if r.attempt == 0 and r.status == PASSED}
+        candidates = [u for u in units if u.id in first]
+        if not candidates:
+            return
+        self._log(f"repeating {len(candidates)} changed unit(s) up to {rounds} time(s)")
+        deadline = time.monotonic() + budget_s
+        for k in range(rounds):
+            if time.monotonic() > deadline:
+                break
+            self.run_pass(candidates, attempt=100 + k, deadline=deadline)
+        for r in list(first.values()):
+            reps = [x for x in self.results if x.unit == r.unit and x.attempt >= 100]
+            bad = [x for x in reps if x.status in RERUN]
+            if bad:
+                r.status = FLAKY
+                r.signature = bad[0].signature
+                r.detail = (f"passed, then failed {len(bad)} of {len(reps)} repeat(s): "
+                            f"{bad[0].detail}")
+
+    def invert(self):
+        for r in self.results:
+            if r.attempt != 0 or r.status == SKIPPED:
+                continue
+            if r.status == PASSED:
+                r.status = FAILED
+                r.detail = "passes without the fix: the test does not reproduce the bug"
+            else:
+                r.detail = f"fails without the fix, as it should: {r.detail}"
+                r.status = PASSED
+
     def stop_fixtures(self):
         shutil.rmtree(self.ctx.tmp_root, ignore_errors=True)
         for name, fixture in list(self.ctx.fixtures.items()):

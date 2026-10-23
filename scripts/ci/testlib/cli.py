@@ -1,9 +1,9 @@
 import argparse
 import fnmatch
-import json
 import os
 import platform
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -47,6 +47,16 @@ def parse_args(argv):
     ap.add_argument("--timing", default="", help="timing snapshot (JSON) for ordering and timeouts")
     ap.add_argument("--relabel", type=float, default=600.0,
                     help="seconds to spend rerunning failed units to label them flaky")
+    ap.add_argument("--changed", default="",
+                    help="base ref: units whose test files changed since its merge-base")
+    ap.add_argument("--repeat", type=int, default=0,
+                    help="run the --changed units this many more times; a failure is flaky")
+    ap.add_argument("--repeat-budget", type=float, default=900.0,
+                    help="seconds the --repeat rounds may take")
+    ap.add_argument("--only-changed", action="store_true",
+                    help="run only the --changed units")
+    ap.add_argument("--expect-fail", action="store_true",
+                    help="every unit must fail (a fix's tests against the build without it)")
     ap.add_argument("--list", action="store_true", help="print the units and exit")
     ap.add_argument("--keep", action="store_true", help="keep the directories of passed units")
     ap.add_argument("--verbose", action="store_true", help="log every unit")
@@ -81,6 +91,31 @@ def build_units(ctx, args, suites, skips):
     if args.exclude:
         units = [u for u in units if not any(fnmatch.fnmatchcase(u.id, p) for p in args.exclude)]
     return units
+
+
+def changed_units(units, base):
+    merge_base = subprocess.run(["git", "-C", str(ROOT), "merge-base", base, "HEAD"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+    names = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", "--diff-filter=AMR",
+                            merge_base, "HEAD"], capture_output=True, text=True,
+                           check=True).stdout.split()
+    keys = set()
+    for name in names:
+        if name.startswith("tests/sqllogic/generators/") and name.endswith(".py"):
+            name = "tests/sqllogic/" + name[len("tests/sqllogic/generators/"):-3] + ".gen.test"
+        if name.startswith("tests/sqllogic/"):
+            keys.add(name[len("tests/sqllogic/"):])
+        elif name.startswith("tests/drivers/"):
+            keys.add("drivers:" + name.split("/")[2])
+        elif "/test/" in name and name.startswith("third_party/"):
+            keys.add(str(ROOT / name))
+            keys.add(name.split("/", 2)[2])
+    picked = []
+    for u in units:
+        tail = u.id.split(":", 2)[-1]
+        if tail in keys or u.id in keys or any(m.split(":", 2)[-1] in keys for m in u.members):
+            picked.append(u)
+    return picked
 
 
 def shard(units, index, count):
@@ -124,7 +159,12 @@ def main(argv):
     suites = args.suite or list(SUITES)
     skips = load_skips(ROOT, config.name)
     units = build_units(ctx, args, suites, skips)
+    changed = changed_units(units, args.changed) if args.changed else []
+    if args.only_changed:
+        units = changed
     units = shard(units, index - 1, count)
+    changed_ids = {u.id for u in changed}
+    changed = [u for u in units if u.id in changed_ids]
     if args.list:
         for u in sorted(units, key=lambda u: (-u.cost, u.id)):
             print(f"{u.cost:8.1f}s {u.timeout:7.0f}s {u.cpus} {u.id}")
@@ -144,7 +184,12 @@ def main(argv):
           f"output in {out}", flush=True)
     try:
         sched.run_pass(sched.units)
-        sched.relabel(args.relabel)
+        if args.expect_fail:
+            sched.invert()
+        else:
+            sched.relabel(args.relabel)
+            if args.repeat and changed:
+                sched.repeat(changed, args.repeat, args.repeat_budget)
     finally:
         sched.stop_fixtures()
     results = sched.results

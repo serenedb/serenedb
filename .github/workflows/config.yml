@@ -79,6 +79,7 @@ jobs:
         run: |
           git clean -ffdxq -e '/build_*/'
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
+          git fetch -q --no-tags --depth=1000 origin main
 
       - name: Build
         id: build
@@ -153,6 +154,7 @@ jobs:
         run: |
           git clean -ffdxq -e '/build_*/'
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
+          git fetch -q --no-tags --depth=1000 origin main
 
       - name: Fetch the timing snapshot
         uses: actions/download-artifact@v7
@@ -224,7 +226,7 @@ jobs:
           git config --global --add safe.directory '*'
           git clean -ffdxq -e '/build_*/'
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
-          git fetch -q --no-tags --depth=1000 origin main "${{ inputs.PR_SHA || github.sha }}"
+          git fetch -q --no-tags --depth=1000 origin main
 
       - name: Coverage of the change
         run: |

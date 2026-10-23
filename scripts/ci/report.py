@@ -31,7 +31,13 @@ def _duration(seconds):
     return f"{h}h{m:02d}m" if h else f"{m}m{s:02d}s"
 
 
-def build_report(metas, rows, needs, run_url):
+def load_coverage(coverage_dir):
+    if not coverage_dir:
+        return []
+    return [p.read_text().strip() for p in sorted(Path(coverage_dir).glob("**/summary.txt"))]
+
+
+def build_report(metas, rows, needs, run_url, coverage=()):
     by_config = defaultdict(lambda: defaultdict(int))
     longest = defaultdict(float)
     shards = defaultdict(int)
@@ -70,6 +76,8 @@ def build_report(metas, rows, needs, run_url):
         result = info.get("result")
         if result in ("failure", "cancelled") and not any(k[0] == job for k in keys):
             lines.append(f"- ❌ **{job}**: {result} before any test result")
+    if coverage:
+        lines += ["", "**Coverage of the change**", "", "```", *coverage, "```"]
     if signatures:
         lines += ["", "**Sanitizer reports**", ""]
         for sig, where in sorted(signatures.items()):
@@ -88,6 +96,7 @@ def build_report(metas, rows, needs, run_url):
         "configs": {f"{k[0]}/{k[1]}": dict(by_config[k]) for k in keys},
         "failures": failures,
         "sanitizer_signatures": {k: sorted(v) for k, v in signatures.items()},
+        "coverage": list(coverage),
     }
     return "\n".join(lines) + "\n", summary
 
@@ -109,11 +118,13 @@ def post_comment(pr, body):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True)
+    ap.add_argument("--coverage", default="")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     metas, rows = load(args.results)
     needs = json.loads(os.environ.get("NEEDS", "{}") or "{}")
-    body, summary = build_report(metas, rows, needs, os.environ.get("RUN_URL", ""))
+    body, summary = build_report(metas, rows, needs, os.environ.get("RUN_URL", ""),
+                                 load_coverage(args.coverage))
     Path(args.out).write_text(body)
     Path(args.out).with_suffix(".json").write_text(json.dumps(summary, indent=1))
     step = os.environ.get("GITHUB_STEP_SUMMARY")

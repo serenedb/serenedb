@@ -53,6 +53,7 @@ jobs:
     outputs:
       test_args: ${{ steps.select.outputs.test_args }}
       pg_tests: ${{ steps.classify.outputs.pg_tests }}
+      is_fix: ${{ steps.title.outputs.is_fix }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -69,6 +70,13 @@ jobs:
           RE2: ${{ steps.classify.outputs.re2 }}
           DUCKDB_SUITES: ${{ steps.classify.outputs.duckdb_suites }}
         run: echo "test_args=$(./scripts/ci/select_suites.sh)" >> "$GITHUB_OUTPUT"
+      - id: title
+        if: inputs.PR_NUMBER != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title=$(gh api "repos/${{ github.repository }}/pulls/${{ inputs.PR_NUMBER }}" --jq .title)
+          [[ "$title" =~ ^fix(\(.*\))?!?: ]] && echo "is_fix=true" >> "$GITHUB_OUTPUT" || true
 
   perf:
     needs: prepare
@@ -86,7 +94,7 @@ jobs:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: dev
-      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }} --changed origin/main --repeat 3
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
       BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
@@ -108,7 +116,7 @@ jobs:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: tsan
-      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }} --changed origin/main --repeat 3
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
       BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
@@ -163,6 +171,56 @@ jobs:
       BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
+  bugfix:
+    name: bugfix check
+    needs: prepare
+    if: needs.prepare.outputs.is_fix == 'true'
+    runs-on:
+      - linux-amd64
+    timeout-minutes: 240
+    env:
+      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || 'serenedb/serenedb-build-ubuntu:latest' }}
+      SDB_STORE_RESULTS: "false"
+    steps:
+      - name: Reap containers left on this runner
+        run: |
+          echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
+          filter="label=serenedb.owner=ci-${RUNNER_NAME}"
+          docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
+          docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
+          docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
+          git config --global --add safe.directory '*'
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.PR_SHA || github.sha }}
+          fetch-depth: 1
+          submodules: true
+          clean: false
+      - name: Clean the checkout, keeping the build directories
+        run: |
+          git clean -ffdxq -e '/build_*/'
+          git submodule foreach --quiet --recursive 'git clean -ffdxq'
+      - name: The changed tests fail without the fix
+        run: ./scripts/ci/bugfix_check.sh origin/main
+      - name: Summary
+        if: always()
+        run: cat out/test-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: results-bugfix
+          path: |
+            out/test-*/results.jsonl
+            out/test-*/summary.txt
+            out/test-*/meta.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Reap containers of this job
+        if: always()
+        run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"
+
   validate-pg:
     name: validate pg
     needs: prepare
@@ -177,7 +235,7 @@ jobs:
 
   report:
     name: Report Status
-    needs: [prepare, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, biglake, validate-pg]
+    needs: [prepare, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, biglake, bugfix, validate-pg]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -194,6 +252,11 @@ jobs:
         with:
           pattern: results-*
           path: results
+      - name: Fetch the coverage
+        uses: actions/download-artifact@v7
+        with:
+          pattern: coverage-*
+          path: coverage
       - name: Write the report
         id: report
         env:
@@ -201,7 +264,7 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           PR_NUMBER: ${{ contains(inputs.BUILD_CONFIG, 'PR_SHA') && inputs.PR_NUMBER || '' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: python3 scripts/ci/report.py --results results --out report.md
+        run: python3 scripts/ci/report.py --results results --coverage coverage --out report.md
       - name: Upload the report
         if: always()
         uses: actions/upload-artifact@v7

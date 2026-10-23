@@ -69,6 +69,11 @@ records how many they return; `same_scores(actual, expected)` checks that two
 queries give each `id` the same `s`. `t.rng` is seeded with `seed`, so a
 generator writes the same cases on every run.
 
+A generator whose test would run longer than about 20 s splits it with
+`t.part()`: everything before the first `t.part()` is shared, and each part
+becomes `<path>.<k>.gen.test` with that setup and what follows its
+`t.part()`, so a part builds only the tables and indexes it checks.
+
 Where only the server knows the answer, such as a row count, a generator prints
 `<recorded>`. `run.sh` fills those cells from `generators/<path>.recorded`, and
 `run.sh --override` records them there, as values or, for a query that fails,

@@ -30,7 +30,7 @@ NOT_BUILD_INPUTS = (
     "scripts/ci/classify-changes.sh", "scripts/ci/check_gitlinks.sh", "scripts/ci/config.sh",
     "scripts/ci/build-image.txt", "scripts/coverage/*", "scripts/land.sh",
     "scripts/check_submodule_pointers.py",
-    "*.md", ".pre-commit-config.yaml", ".clang-format", ".clang-tidy", ".actrc", ".lldbinit",
+    "*.md", ".pre-commit-config.yaml", ".clang-format", ".clang-tidy", ".lldbinit",
     "lldb_addons.py", "LICENSE",
 )
 BUILD_INPUT_EXCEPTIONS = ("docs/*", "tests/sqllogic/sdb/pg/site_docs/*", "tests/sqllogic/recovery/site_docs/*")

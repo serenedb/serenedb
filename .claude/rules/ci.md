@@ -12,7 +12,7 @@ paths:
 
 - Workflows, `scripts/ci/`, CI images and fixtures change, and failed or flaky jobs rerun, only when the user asks. Runs: [pull-requests.md](pull-requests.md).
 - A red unit is reproduced natively: `scripts/ci/test.py --build-dir <a local build of the job's config> --config <config> --test '<unit>'` runs it with CI's scheduler, servers and services ([testing.md](testing.md)). Only a failure that needs CI's image or network goes through `scripts/ci/run_shard.sh <config> <bundle digest or build dir> 1/1 <timing.json> --test '<unit>'`, which runs the same in the CI image.
-- `act` checks a workflow change locally: `./scripts/ci/act-local.sh validate <workflow>.yml`.
+- pre-commit lints every workflow with actionlint (`.github/actionlint.yaml` names the self-hosted runner labels); what a job runs is a script that runs the same locally, through `test.py` or `run_shard.sh`.
 
 ## Containers
 

@@ -69,7 +69,7 @@ struct Family {
 
   static Result PlanChild(const QueryBuilder& child, const DocsContext& ctx,
                           ScoreMergeType) {
-    return child.PlanProbe({}, ctx.interrogations);
+    return child.PlanProbeDocs(ctx.interrogations);
   }
 
   template<typename Node, typename... Args>

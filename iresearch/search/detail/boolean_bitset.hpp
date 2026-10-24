@@ -123,7 +123,7 @@ void CollectExcludeBuckets(std::span<const Term> terms,
 inline bool PlanExcludeFills(const ExcludeFills& fills, BitsetBuckets& out) {
   out.exclude_fills.reserve(fills.children.size());
   for (const auto* child : fills.children) {
-    auto node = child->PlanFill({}, ScoreMergeType::Noop);
+    auto node = child->PlanFillDocs();
     if (!node) {
       return false;
     }

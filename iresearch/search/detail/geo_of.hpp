@@ -42,9 +42,9 @@ Result Build(GeoKind, const GeoQuery<Parser, Acceptor>& query,
   SDB_ASSERT(cells.Kind() != QueryKind::Empty);
   auto node = [&] {
     if constexpr (kProbed) {
-      return cells.PlanProbe({}, interrogations);
+      return cells.PlanProbeDocs(interrogations);
     } else {
-      return cells.PlanLead({});
+      return cells.PlanLeadDocs();
     }
   }();
   if (!node) {

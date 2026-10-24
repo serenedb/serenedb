@@ -160,6 +160,12 @@ class QueryBuilder : public memory::Managed {
   virtual fill::Node::ptr PlanFill(const detail::ScoredCtx& ctx,
                                    ScoreMergeType merge) const = 0;
 
+  virtual lead::Node::ptr PlanLeadDocs() const = 0;
+
+  virtual probe::Node::ptr PlanProbeDocs(uint64_t interrogations) const = 0;
+
+  virtual fill::Node::ptr PlanFillDocs() const = 0;
+
  protected:
   const SubReader& _segment;
   uint32_t _estimate_max = 0;

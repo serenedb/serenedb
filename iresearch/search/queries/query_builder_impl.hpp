@@ -45,6 +45,12 @@ class QueryBuilderImpl : public Base {
   fill::Node::ptr PlanFill(const detail::ScoredCtx& ctx,
                            ScoreMergeType merge) const final;
 
+  lead::Node::ptr PlanLeadDocs() const final;
+
+  probe::Node::ptr PlanProbeDocs(uint64_t interrogations) const final;
+
+  fill::Node::ptr PlanFillDocs() const final;
+
  private:
   const Derived& Self() const noexcept {
     return static_cast<const Derived&>(*this);

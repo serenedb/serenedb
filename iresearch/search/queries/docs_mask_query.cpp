@@ -46,19 +46,28 @@ class MaskQuery : public QueryBuilder {
   MaskQuery(const SubReader& segment, uint32_t masked) noexcept
     : QueryBuilder{segment, masked, QueryKind::DocsMask} {}
 
-  probe::Node::ptr PlanProbe(const detail::ScoredCtx&, uint64_t) const final {
+  probe::Node::ptr PlanProbeDocs(uint64_t) const final {
     return ResolveDocsMask(
       _segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> probe::Node::ptr {
         return memory::make_managed<probe::Impl<Mask>>(std::move(docs_mask));
       });
   }
 
-  fill::Node::ptr PlanFill(const detail::ScoredCtx&,
-                           ScoreMergeType) const final {
+  fill::Node::ptr PlanFillDocs() const final {
     return ResolveDocsMask(
       _segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> fill::Node::ptr {
         return memory::make_managed<fill::Impl<Mask>>(std::move(docs_mask));
       });
+  }
+
+  probe::Node::ptr PlanProbe(const detail::ScoredCtx&,
+                             uint64_t interrogations) const final {
+    return PlanProbeDocs(interrogations);
+  }
+
+  fill::Node::ptr PlanFill(const detail::ScoredCtx&,
+                           ScoreMergeType) const final {
+    return PlanFillDocs();
   }
 
   count::Root::ptr PlanCount(const count::Context&) const final { return {}; }
@@ -66,6 +75,7 @@ class MaskQuery : public QueryBuilder {
   hits::Root::ptr PlanScored(const hits::Context&) const final { return {}; }
   top::Root::ptr PlanTop(const top::Context&) const final { return {}; }
   lead::Node::ptr PlanLead(const detail::ScoredCtx&) const final { return {}; }
+  lead::Node::ptr PlanLeadDocs() const final { return {}; }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 

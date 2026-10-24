@@ -110,7 +110,7 @@ inline bool ScoresPerDocTerm(const PostingClause& posting) noexcept {
 }
 
 inline constexpr auto kPlanFillDocs = [](const QueryBuilder& child) {
-  return child.PlanFill({}, ScoreMergeType::Noop);
+  return child.PlanFillDocs();
 };
 
 template<typename Term, typename PlanChild>

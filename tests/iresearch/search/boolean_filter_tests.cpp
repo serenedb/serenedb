@@ -551,6 +551,21 @@ struct Boosted : public irs::FilterWithType<Boosted> {
                                                    Stats().stats, merge);
     }
 
+    irs::lead::Node::ptr PlanLeadDocs() const final {
+      Boosted::gExecuteCount++;
+      return irs::memory::make_managed<LeadDocs>(docs);
+    }
+
+    irs::probe::Node::ptr PlanProbeDocs(uint64_t) const final {
+      Boosted::gExecuteCount++;
+      return irs::memory::make_managed<ProbeDocs>(docs);
+    }
+
+    irs::fill::Node::ptr PlanFillDocs() const final {
+      Boosted::gExecuteCount++;
+      return irs::memory::make_managed<FillDocs>(docs);
+    }
+
     DocList::DocidsT docs;
 
    private:
@@ -631,6 +646,15 @@ struct Unestimated : public irs::FilterWithType<Unestimated> {
         DocList::DocidsT{}, Segment(), ctx, irs::kNoBoost, Stats().stats,
         merge);
     }
+    irs::lead::Node::ptr PlanLeadDocs() const final {
+      return irs::memory::make_managed<LeadDocs>(DocList::DocidsT{});
+    }
+    irs::probe::Node::ptr PlanProbeDocs(uint64_t) const final {
+      return irs::memory::make_managed<ProbeDocs>(DocList::DocidsT{});
+    }
+    irs::fill::Node::ptr PlanFillDocs() const final {
+      return irs::memory::make_managed<FillDocs>(DocList::DocidsT{});
+    }
   };
 
   irs::QueryBuilder::ptr PrepareSegment(
@@ -694,6 +718,15 @@ struct Estimated : public irs::FilterWithType<Estimated> {
       return irs::memory::make_managed<FillScored>(
         DocList::DocidsT{}, Segment(), ctx, irs::kNoBoost, Stats().stats,
         merge);
+    }
+    irs::lead::Node::ptr PlanLeadDocs() const final {
+      return irs::memory::make_managed<LeadDocs>(DocList::DocidsT{});
+    }
+    irs::probe::Node::ptr PlanProbeDocs(uint64_t) const final {
+      return irs::memory::make_managed<ProbeDocs>(DocList::DocidsT{});
+    }
+    irs::fill::Node::ptr PlanFillDocs() const final {
+      return irs::memory::make_managed<FillDocs>(DocList::DocidsT{});
     }
   };
 

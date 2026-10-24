@@ -173,7 +173,7 @@ class QueryWrapper : public irs::QueryBuilder {
 
   irs::lead::Node::ptr PlanLead(const irs::detail::ScoredCtx& ctx) const final {
     auto it = _query->PlanLead(ctx);
-    if (!it || !_query->Scores() || !ctx.fetcher) {
+    if (!it || !_query->Scores()) {
       return it;
     }
     return irs::memory::make_managed<ScoredWrapper>(std::move(it), Segment(),
@@ -188,6 +188,18 @@ class QueryWrapper : public irs::QueryBuilder {
   irs::fill::Node::ptr PlanFill(const irs::detail::ScoredCtx& ctx,
                                 irs::ScoreMergeType merge) const final {
     return _query->PlanFill(ctx, merge);
+  }
+
+  irs::lead::Node::ptr PlanLeadDocs() const final {
+    return _query->PlanLeadDocs();
+  }
+
+  irs::probe::Node::ptr PlanProbeDocs(uint64_t interrogations) const final {
+    return _query->PlanProbeDocs(interrogations);
+  }
+
+  irs::fill::Node::ptr PlanFillDocs() const final {
+    return _query->PlanFillDocs();
   }
 
  private:
@@ -512,7 +524,7 @@ class PreparedFilter {
       return std::make_unique<LeadCursor>(
         irs::memory::make_managed<LeadEmpty>());
     }
-    auto node = query->PlanLead({});
+    auto node = query->PlanLeadDocs();
     if (!node) {
       return nullptr;
     }

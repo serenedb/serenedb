@@ -166,7 +166,7 @@ Result<Family> MakeWindowOfNodes(std::span<const PostingClause> terms,
           return take(FillOf(term, nullptr, segment));
         },
         [&](const QueryBuilder& child) {
-          return take(child.PlanFill({}, ScoreMergeType::Noop));
+          return take(child.PlanFillDocs());
         })) {
     return {};
   }
@@ -188,7 +188,7 @@ FillNode::ptr PlanFillOf(const QueryBuilder& child, const Ctx& ctx,
   if constexpr (kScores<Scoring>) {
     return child.PlanFill(Family::Scoring(ctx), scoring.merge);
   } else {
-    return child.PlanFill({}, ScoreMergeType::Noop);
+    return child.PlanFillDocs();
   }
 }
 
@@ -338,7 +338,7 @@ Result<Family> MakeWindowExclusion(
           });
       });
     }
-    auto node = filters.front()->PlanFill({}, ScoreMergeType::Noop);
+    auto node = filters.front()->PlanFillDocs();
     if (!node) {
       return {};
     }
@@ -542,7 +542,7 @@ Result<Family> MakeSparseExclusion(
       });
   }
   if (!HeadIsTerm(terms, filters)) {
-    auto lead = filters.front()->PlanLead({});
+    auto lead = filters.front()->PlanLeadDocs();
     if (!lead) {
       return {};
     }

@@ -264,7 +264,7 @@ inline LazyBitset MakeDocSet(const QueryBuilder* query, doc_id_t docs_count,
   if (!query) {
     return LazyBitset{docs_count, MakeGenericDocsMask(nullptr), table};
   }
-  auto node = query->PlanFill({}, ScoreMergeType::Noop);
+  auto node = query->PlanFillDocs();
   SDB_ASSERT(node);
   if (auto* folded = node->Folded()) {
     return LazyBitset{std::move(*folded), MakeGenericDocsMask(nullptr), table};

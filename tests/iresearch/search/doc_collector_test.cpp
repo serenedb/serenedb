@@ -448,7 +448,7 @@ TEST_P(DocCollectorTestCase, test_lead_all_walks_live_docs) {
     ASSERT_LT(segment.live_docs_count(), segment.docs_count());
     auto query = irs::PrepareMasked(filter, segment, {});
     ASSERT_NE(nullptr, query);
-    auto lead = query->PlanLead({});
+    auto lead = query->PlanLeadDocs();
     ASSERT_NE(nullptr, lead);
 
     std::vector<irs::doc_id_t> expected;
@@ -512,7 +512,7 @@ TEST_P(DocCollectorTestCase, test_count_negation_skips_deleted) {
       ASSERT_NE(nullptr, query);
 
       size_t expected = 0;
-      auto lead = query->PlanLead({});
+      auto lead = query->PlanLeadDocs();
       ASSERT_NE(nullptr, lead);
       while (!irs::doc_limits::eof(lead->Next())) {
         ++expected;
@@ -620,7 +620,7 @@ TEST_P(DocCollectorTestCase, test_count_split_single_doc_term) {
     static_cast<irs::doc_id_t>(irs::doc_limits::min() + kDocs / 2);
   uint64_t expected_front = 0;
   uint64_t expected_back = 0;
-  auto lead = query->PlanLead({});
+  auto lead = query->PlanLeadDocs();
   ASSERT_NE(nullptr, lead);
   for (auto doc = lead->Next(); !irs::doc_limits::eof(doc);
        doc = lead->Next()) {

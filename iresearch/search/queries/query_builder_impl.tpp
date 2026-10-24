@@ -59,9 +59,9 @@ top::Root::ptr QueryBuilderImpl<Derived, Base>::PlanTop(
 template<typename Derived, typename Base>
 lead::Node::ptr QueryBuilderImpl<Derived, Base>::PlanLead(
   const detail::ScoredCtx& ctx) const {
+  SDB_ASSERT(ctx.fetcher);
   if (!Base::Scores()) {
-    if (auto node =
-          detail::Plan<lead::Family>(Self(), lead::Family::DocsContext{})) {
+    if (auto node = PlanLeadDocs()) {
       return node;
     }
   }
@@ -71,9 +71,9 @@ lead::Node::ptr QueryBuilderImpl<Derived, Base>::PlanLead(
 template<typename Derived, typename Base>
 probe::Node::ptr QueryBuilderImpl<Derived, Base>::PlanProbe(
   const detail::ScoredCtx& ctx, uint64_t interrogations) const {
+  SDB_ASSERT(ctx.fetcher);
   if (!Base::Scores()) {
-    if (auto node = detail::Plan<probe::Family>(
-          Self(), probe::Family::DocsContext{interrogations})) {
+    if (auto node = PlanProbeDocs(interrogations)) {
       return node;
     }
   }
@@ -84,14 +84,31 @@ probe::Node::ptr QueryBuilderImpl<Derived, Base>::PlanProbe(
 template<typename Derived, typename Base>
 fill::Node::ptr QueryBuilderImpl<Derived, Base>::PlanFill(
   const detail::ScoredCtx& ctx, ScoreMergeType merge) const {
+  SDB_ASSERT(ctx.fetcher);
   if (!Base::Scores()) {
-    if (auto node =
-          detail::Plan<fill::Family>(Self(), fill::Family::DocsContext{})) {
+    if (auto node = PlanFillDocs()) {
       return node;
     }
   }
   return detail::Plan<fill::Family>(Self(),
                                     fill::Family::ScoredContext{ctx, merge});
+}
+
+template<typename Derived, typename Base>
+lead::Node::ptr QueryBuilderImpl<Derived, Base>::PlanLeadDocs() const {
+  return detail::Plan<lead::Family>(Self(), lead::Family::DocsContext{});
+}
+
+template<typename Derived, typename Base>
+probe::Node::ptr QueryBuilderImpl<Derived, Base>::PlanProbeDocs(
+  uint64_t interrogations) const {
+  return detail::Plan<probe::Family>(
+    Self(), probe::Family::DocsContext{interrogations});
+}
+
+template<typename Derived, typename Base>
+fill::Node::ptr QueryBuilderImpl<Derived, Base>::PlanFillDocs() const {
+  return detail::Plan<fill::Family>(Self(), fill::Family::DocsContext{});
 }
 
 }  // namespace irs

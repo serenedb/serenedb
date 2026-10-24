@@ -113,7 +113,7 @@ probe::Node::ptr InnerProbe(const Query& query) {
   if (inner == nullptr) {
     return {};
   }
-  return inner->PlanProbe({}, query.State().estimation);
+  return inner->PlanProbeDocs(query.State().estimation);
 }
 
 template<typename Gate, typename Query, typename F>

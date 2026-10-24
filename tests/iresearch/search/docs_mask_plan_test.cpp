@@ -381,7 +381,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     if (!unmasked) {
       return docs;
     }
-    auto lead = unmasked->PlanLead({});
+    auto lead = unmasked->PlanLeadDocs();
     if (!lead) {
       return docs;
     }
@@ -402,7 +402,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     const auto end =
       static_cast<doc_id_t>(irs::doc_limits::min() + segment.docs_count());
 
-    auto lead = query->PlanLead({});
+    auto lead = query->PlanLeadDocs();
     if (expected.empty() && !lead) {
       return;
     }
@@ -410,7 +410,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     ASSERT_EQ(expected, Drain(*lead));
 
     {
-      auto seeker = query->PlanLead({});
+      auto seeker = query->PlanLeadDocs();
       ASSERT_NE(nullptr, seeker);
       auto it = expected.begin();
       for (doc_id_t target = 1; target < end + 5; target += 997) {
@@ -465,7 +465,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     }
 
     {
-      auto probe = query->PlanProbe({}, expected.size() + 1);
+      auto probe = query->PlanProbeDocs(expected.size() + 1);
       ASSERT_NE(nullptr, probe);
       auto it = expected.begin();
       for (doc_id_t target = 1; target < end; target += 1 + target % 13) {
@@ -479,7 +479,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     }
 
     {
-      auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
+      auto fill = query->PlanFillDocs();
       ASSERT_NE(nullptr, fill);
       std::vector<doc_id_t> actual;
       for (doc_id_t min = irs::doc_limits::min(); min < end;

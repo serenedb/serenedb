@@ -63,14 +63,8 @@ std::string NormalizedExpression(
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context,
   const StoredExpressionOf& stored_expression = {});
 
-std::string NormalizedIndexKey(const duckdb::Expression& expr,
-                               duckdb::idx_t table_id,
-                               std::span<const ColumnId> col_index_to_id,
-                               duckdb::ClientContext& context);
-
 void NormalizeIndexKey(const duckdb::Expression& expr, duckdb::idx_t table_id,
                        std::span<const ColumnId> col_index_to_id,
-                       duckdb::ClientContext& context,
                        catalog::persistence::KeyRecord& record);
 
 uint64_t RootSignatureOf(const duckdb::Expression& expr);

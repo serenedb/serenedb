@@ -35,11 +35,7 @@
 #include <duckdb/common/type_visitor.hpp>
 #include <duckdb/execution/column_binding_resolver.hpp>
 #include <duckdb/execution/expression_executor.hpp>
-#include <duckdb/function/scalar/string_functions.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/optimizer/expression_rewriter.hpp>
-#include <duckdb/optimizer/rule/concat_flattening.hpp>
-#include <duckdb/optimizer/rule/constant_folding.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
@@ -47,12 +43,10 @@
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
-#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_lambda_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
-#include <duckdb/planner/operator/logical_projection.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
@@ -61,28 +55,6 @@
 
 namespace sdb::connector {
 namespace {
-
-// TODO(mkornaukhov): replace with the regular constant-folding optimizer.
-duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
-  duckdb::unique_ptr<duckdb::Expression> expr, duckdb::ClientContext& context) {
-  duckdb::ExpressionIterator::EnumerateChildren(
-    *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
-      child = FoldConstantCasts(std::move(child), context);
-    });
-  if (duckdb::BoundCastExpression::IsCast(*expr)) {
-    if (duckdb::BoundCastExpression::Child(
-          expr->Cast<duckdb::BoundFunctionExpression>())
-          .GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
-      duckdb::Value folded;
-      if (duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr,
-                                                        folded)) {
-        return duckdb::make_uniq<duckdb::BoundConstantExpression>(
-          std::move(folded));
-      }
-    }
-  }
-  return expr;
-}
 
 class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
  public:
@@ -99,40 +71,6 @@ std::string SerializeBoundExpression(const duckdb::Expression& expr) {
   duckdb::BinarySerializer::Serialize(expr, stream);
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};
-}
-
-bool IsConcat(const duckdb::Expression& expr) {
-  return expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION &&
-         expr.Cast<duckdb::BoundFunctionExpression>().Function().GetName() ==
-           duckdb::ConcatOperatorFun::Name;
-}
-
-bool HasConcatOperator(const duckdb::Expression& expr) {
-  return IsConcat(expr) || duckdb::ExpressionIterator::AnyChild(
-                             expr, [](const duckdb::Expression& child) {
-                               return HasConcatOperator(child);
-                             });
-}
-
-duckdb::unique_ptr<duckdb::Expression> ApplyOptimizerRules(
-  duckdb::unique_ptr<duckdb::Expression> expr, bool fold_constants,
-  duckdb::ClientContext& context) {
-  if (!fold_constants && !HasConcatOperator(*expr)) {
-    return expr;
-  }
-  duckdb::ExpressionRewriter rewriter{context};
-  if (fold_constants) {
-    rewriter.rules.push_back(
-      duckdb::make_uniq<duckdb::ConstantFoldingRule>(rewriter));
-  }
-  rewriter.rules.push_back(
-    duckdb::make_uniq<duckdb::ConcatFlatteningRule>(rewriter));
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> select_list;
-  select_list.push_back(std::move(expr));
-  duckdb::LogicalProjection projection{duckdb::TableIndex{0},
-                                       std::move(select_list)};
-  rewriter.VisitOperator(projection);
-  return std::move(projection.expressions[0]);
 }
 
 void ClearSource(duckdb::Expression& expr);
@@ -158,10 +96,8 @@ void ClearSource(duckdb::Expression& expr) {
 
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
-  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context,
-  bool fold_constants) {
-  auto copy = ApplyOptimizerRules(FoldConstantCasts(expr.Copy(), context),
-                                  fold_constants, context);
+  std::span<const ColumnId> col_index_to_id) {
+  auto copy = expr.Copy();
   duckdb::ExpressionIterator::EnumerateExpression(
     copy, [&](duckdb::Expression& e) {
       ClearSource(e);
@@ -243,20 +179,11 @@ std::string NormalizedExpression(const duckdb::Expression& expr,
                                  std::span<const ColumnId> col_index_to_id,
                                  duckdb::ClientContext& context,
                                  const StoredExpressionOf& stored_expression) {
-  auto normalized =
-    NormalizeBoundExpression(expr, table_id, col_index_to_id, context, false);
+  auto normalized = NormalizeBoundExpression(expr, table_id, col_index_to_id);
   if (stored_expression) {
     ExpandStoredExpressions(normalized, stored_expression, context);
   }
   return SerializeBoundExpression(*normalized);
-}
-
-std::string NormalizedIndexKey(const duckdb::Expression& expr,
-                               duckdb::idx_t table_id,
-                               std::span<const ColumnId> col_index_to_id,
-                               duckdb::ClientContext& context) {
-  return SerializeBoundExpression(
-    *NormalizeBoundExpression(expr, table_id, col_index_to_id, context, true));
 }
 
 namespace {
@@ -286,14 +213,6 @@ const duckdb::Expression* LambdaBody(
 
 void ForEachRootChainLevel(const duckdb::Expression& expr, const auto& level) {
   for (const auto* node = &expr; node;) {
-    if (duckdb::BoundCastExpression::IsCast(*node)) {
-      const auto& child = duckdb::BoundCastExpression::Child(
-        node->Cast<duckdb::BoundFunctionExpression>());
-      if (IsConcat(child)) {
-        node = &child;
-        continue;
-      }
-    }
     const auto cls = node->GetExpressionClass();
     const auto type = node->GetExpressionType();
     if (cls != duckdb::ExpressionClass::BOUND_FUNCTION) {
@@ -311,10 +230,9 @@ void ForEachRootChainLevel(const duckdb::Expression& expr, const auto& level) {
 
 void NormalizeIndexKey(const duckdb::Expression& expr, duckdb::idx_t table_id,
                        std::span<const ColumnId> col_index_to_id,
-                       duckdb::ClientContext& context,
                        catalog::persistence::KeyRecord& record) {
   const auto normalized =
-    NormalizeBoundExpression(expr, table_id, col_index_to_id, context, true);
+    NormalizeBoundExpression(expr, table_id, col_index_to_id);
   record.normalized_expression = SerializeBoundExpression(*normalized);
   record.root_chain.clear();
   ForEachRootChainLevel(*normalized, [&](duckdb::ExpressionClass cls,

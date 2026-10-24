@@ -13,11 +13,6 @@ on:
         type: string
         required: false
         default: ""
-      BUILD_IMAGE:
-        description: "Build image (empty = the one scripts/ci/build-image.txt pins)"
-        type: string
-        required: false
-        default: ""
       CHANGED:
         description: "Only the pg tests the diff against main changes"
         type: boolean
@@ -40,11 +35,6 @@ on:
         type: string
         required: false
         default: ""
-      BUILD_IMAGE:
-        description: "Build image (empty = the one scripts/ci/build-image.txt pins)"
-        type: string
-        required: false
-        default: ""
       CHANGED:
         description: "Only the pg tests the diff against main changes"
         type: boolean
@@ -57,7 +47,6 @@ on:
         default: false
 
 env:
-  BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
   SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
 
 jobs:

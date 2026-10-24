@@ -1,1 +1,0 @@
-serenedb/serenedb-build-ubuntu:26.04.1_clang-23.1.5_commit-bc5185ecae

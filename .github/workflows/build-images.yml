@@ -15,29 +15,25 @@ on:
           - linux
         default: 'linux-amd64'
       PUSH_IMAGES_2_REGISTRY:
-        description: 'Push build images to Docker Hub'
+        description: 'Push the images the registry lacks to Docker Hub (off: build them for this runner only)'
         required: true
         type: boolean
         default: false
-      TAG_LATEST:
-        description: 'Also tag the build image :latest, which every CI run uses by default'
-        required: true
-        type: boolean
-        default: false
-      TAG:
-        description: 'Also tag the build image with this name (e.g. a branch, / becomes -)'
-        required: false
+  workflow_call:
+    inputs:
+      REF:
+        description: 'The commit whose images the registry must have'
         type: string
-        default: ''
+        required: true
 
 permissions:
   contents: read
 
 jobs:
   build-image:
-    name: Produce Build Image
+    name: Build the missing images
     runs-on:
-      - ${{ inputs.LOCATION }}
+      - ${{ inputs.LOCATION || 'linux-amd64' }}
     steps:
       - name: Reap containers left on this runner
         run: |
@@ -50,26 +46,21 @@ jobs:
       - name: Checkout SereneDB
         uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.REF || github.sha }}
           fetch-depth: 1
           submodules: false
           clean: true
 
-      - name: Setup QEMU for multi-arch
-        run: docker run --rm --label "serenedb.owner=$SDB_DOCKER_OWNER" --privileged tonistiigi/binfmt --install all
-
-      - name: Build and push build images
+      - name: Build and push the images the registry lacks
         working-directory: ./scripts/ci
         env:
-          DOCKER_REGISTRY: serenedb
           DOCKER_USERNAME: serenedb
           DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
-          PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
-          TAG_LATEST: ${{ inputs.TAG_LATEST }}
-          EXTRA_TAG: ${{ inputs.TAG }}
+          PUSH_IMAGES_2_REGISTRY: ${{ inputs.REF != '' || inputs.PUSH_IMAGES_2_REGISTRY }}
         run: ./build_images.sh
 
       - name: Send notification
-        if: always() && !cancelled()
+        if: always() && !cancelled() && inputs.REF == ''
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}

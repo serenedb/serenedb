@@ -13,7 +13,7 @@ mkdir -p out
 rm -f out/bugfix-build.env
 echo "building the merge-base $merge_base, or reusing its bundle"
 git checkout -q --force "$merge_base" && git submodule update -q --init --force --recursive || exit 1
-env -u BUILD_IMAGE GITHUB_OUTPUT="$WORKSPACE/out/bugfix-build.env" ./scripts/ci/build_bundle.sh dev
+GITHUB_OUTPUT="$WORKSPACE/out/bugfix-build.env" ./scripts/ci/build_bundle.sh dev
 built=$?
 git checkout -q --force "$head" && git submodule update -q --init --force --recursive || exit 1
 digest=$(sed -n 's/^digest=//p' out/bugfix-build.env 2>/dev/null)

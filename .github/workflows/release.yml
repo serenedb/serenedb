@@ -259,7 +259,7 @@ jobs:
         env:
           DOCKER_TEST_IMAGE: serenedb/serenedb:${{ env.DOCKER_TAG }}-${{ steps.prepare.outputs.test_arch }}
           WORKSPACE: ${{ github.workspace }}
-        run: BUILD_IMAGE="$(<scripts/ci/build-image.txt)" ./scripts/ci/steps/08-ci-docker-rta.bash
+        run: BUILD_IMAGE="$(python3 scripts/ci/ci.py image)" ./scripts/ci/steps/08-ci-docker-rta.bash
 
       - name: Push Docker images
         if: >-

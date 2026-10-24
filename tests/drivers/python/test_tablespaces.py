@@ -937,9 +937,15 @@ def test_a_restart_lists_each_directory_once(tmp_path: Path, kind: str) -> None:
             assert _matches(again) == [1]
             assert _eventually(lambda: orphan not in keys(bucket, f"{index}/")), \
                 keys(bucket, f"{index}/")
+            assert fake.requests["LIST"] - listings == 3, fake.requests
+            objects = len(keys(bucket, f"{prefix}/"))
+            page = 1000 if kind == "s3" else 5000
+            listings = fake.requests["LIST"]
+            with again.connect() as conn:
+                assert conn.execute("SELECT pg_tablespace_size('idx')").fetchone()[0] > 0
+            assert fake.requests["LIST"] - listings == -(-objects // page), fake.requests
         finally:
             again.stop()
-        assert fake.requests["LIST"] - listings == 3, fake.requests
 
 
 def test_restored_objects_are_read_by_the_etags_they_are_listed_with(

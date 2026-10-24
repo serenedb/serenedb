@@ -220,14 +220,27 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def _list(self, container: str, query: dict[str, list[str]]) -> None:
         prefix = query.get("prefix", [""])[0]
+        delimiter = query.get("delimiter", [""])[0]
         marker = query.get("marker", [""])[0]
         max_results = int(query.get("maxresults", ["5000"])[0])
-        names = [name for name in self.fake.names(container, prefix) if not marker or name > marker]
-        page, rest = names[:max_results], names[max_results:]
+        entries: list[tuple[str, bool]] = []
+        for name in self.fake.names(container, prefix):
+            cut = name.find(delimiter, len(prefix)) if delimiter else -1
+            entry = (name[:cut + len(delimiter)], True) if cut != -1 else (name, False)
+            if (marker and entry[0] <= marker) or (entries and entries[-1] == entry):
+                continue
+            entries.append(entry)
+        page, rest = entries[:max_results], entries[max_results:]
         body = [f'<?xml version="1.0" encoding="utf-8"?><EnumerationResults '
                 f'ServiceEndpoint="{escape(self.fake.endpoint)}" ContainerName="{escape(container)}">'
-                f"<Prefix>{escape(prefix)}</Prefix><MaxResults>{max_results}</MaxResults><Blobs>"]
-        for name in page:
+                f"<Prefix>{escape(prefix)}</Prefix><MaxResults>{max_results}</MaxResults>"]
+        if delimiter:
+            body.append(f"<Delimiter>{escape(delimiter)}</Delimiter>")
+        body.append("<Blobs>")
+        for name, is_prefix in page:
+            if is_prefix:
+                body.append(f"<BlobPrefix><Name>{escape(name)}</Name></BlobPrefix>")
+                continue
             blob = self._find(container, name)
             if blob is None:
                 continue
@@ -238,7 +251,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                         "<Content-Type>application/octet-stream</Content-Type><BlobType>BlockBlob</BlobType>"
                         "<ServerEncrypted>true</ServerEncrypted></Properties></Blob>")
         body.append("</Blobs>")
-        body.append(f"<NextMarker>{escape(page[-1]) if rest else ''}</NextMarker></EnumerationResults>")
+        body.append(f"<NextMarker>{escape(page[-1][0]) if rest else ''}</NextMarker></EnumerationResults>")
         self._reply(200, "".join(body).encode(), {"Content-Type": "application/xml"})
 
     def do_PUT(self) -> None:

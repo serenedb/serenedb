@@ -895,6 +895,53 @@ def test_an_orphan_object_of_a_search_table_is_removed_after_a_restart(
             again.stop()
 
 
+@pytest.mark.parametrize("kind", ["s3", "azure"])
+def test_a_restart_lists_each_directory_once(tmp_path: Path, kind: str) -> None:
+    prefix = f"listed-{tmp_path.name}"
+    datadir = tmp_path / "data"
+    with FakeS3() if kind == "s3" else FakeAzure() as fake:
+        if kind == "s3":
+            bucket, location = "bucket", f"s3://bucket/{prefix}"
+            keys = fake.keys
+        else:
+            bucket, location = "indexes", f"az://indexes/{prefix}"
+            keys = fake.names
+        server = _Server(datadir)
+        try:
+            assert server.wait_ready(), server.output()
+            if kind == "s3":
+                _create_secret(server, _Store(fake.endpoint, "key", "secret", bucket),
+                               location)
+            else:
+                with server.connect() as conn:
+                    conn.execute(
+                        "CREATE PERSISTENT SECRET index_store (TYPE azure, "
+                        f"CONNECTION_STRING '{fake.connection_string}', "
+                        f"SCOPE '{location}')")
+                _create_tablespace(server, location)
+            _create_index(server)
+        finally:
+            server.stop()
+        markers = [key for key in keys(bucket, f"{prefix}/") if key.endswith(".storage")]
+        assert len(markers) == 1, keys(bucket)
+        index = markers[0].removesuffix(".storage")
+        database = index.rsplit("/", 1)[0]
+        for i in range(6000):
+            fake.replace(bucket, f"{database}/archive/{i}", b"")
+        orphan = f"{index}/_99.doc"
+        fake.replace(bucket, orphan, b"written by an upload no commit names")
+        listings = fake.requests["LIST"]
+        again = _Server(datadir)
+        try:
+            assert again.wait_ready(), again.output()
+            assert _matches(again) == [1]
+            assert _eventually(lambda: orphan not in keys(bucket, f"{index}/")), \
+                keys(bucket, f"{index}/")
+        finally:
+            again.stop()
+        assert fake.requests["LIST"] - listings == 3, fake.requests
+
+
 def test_restored_objects_are_read_by_the_etags_they_are_listed_with(
         tmp_path: Path) -> None:
     location = f"s3://bucket/restored-{tmp_path.name}"

@@ -425,24 +425,20 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         delimiter = query.get("delimiter", [""])[0]
         start_after = query.get("continuation-token", [""])[0]
         max_keys = int(query.get("max-keys", ["1000"])[0])
-        contents, prefixes = [], []
+        entries: list[tuple[str, bool]] = []
         for key in self.fake.keys(bucket, prefix):
-            if start_after and key <= start_after:
+            cut = key.find(delimiter, len(prefix)) if delimiter else -1
+            entry = (key[:cut + len(delimiter)], True) if cut != -1 else (key, False)
+            if (start_after and entry[0] <= start_after) or (entries and entries[-1] == entry):
                 continue
-            if delimiter:
-                cut = key.find(delimiter, len(prefix))
-                if cut != -1:
-                    common = key[:cut + len(delimiter)]
-                    if not prefixes or prefixes[-1] != common:
-                        prefixes.append(common)
-                    continue
-            contents.append(key)
-        entries = sorted([(key, False) for key in contents] + [(p, True) for p in prefixes])
+            entries.append(entry)
         truncated = len(entries) > max_keys
         entries = entries[:max_keys]
         body = [f'<ListBucketResult xmlns="{NS}"><Name>{escape(bucket)}</Name>'
                 f"<Prefix>{escape(prefix)}</Prefix><KeyCount>{len(entries)}</KeyCount>"
                 f"<MaxKeys>{max_keys}</MaxKeys><IsTruncated>{str(truncated).lower()}</IsTruncated>"]
+        if delimiter:
+            body.append(f"<Delimiter>{escape(delimiter)}</Delimiter>")
         if truncated:
             body.append(f"<NextContinuationToken>{escape(entries[-1][0])}</NextContinuationToken>")
         for name, is_prefix in entries:

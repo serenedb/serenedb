@@ -68,9 +68,9 @@ What costs requests to the object store:
 | A query | reads of the blocks that are not cached |
 | A refresh or a merge | the upload of each new index file: one request for a file up to 5 MiB, parts for a larger one |
 | Each commit of an index | a copy and a delete of one small file |
-| Opening an index at startup | a listing of its files, then one read of its commit file and one of each segment's metadata; the footers of the index files come with the metadata, and the segments open in parallel |
-| Cleanup | one request for up to 1000 files (256 on Azure) that no index reader uses anymore; the first cleanup after an index opens also lists its files, to remove those an interrupted write left behind |
-| Startup | listings of every tablespace location, to remove files that belong to no index |
+| Opening an index at startup | one listing of its files, then one read of its commit file and one of each segment's metadata; the footers of the index files come with the metadata, and the segments open in parallel. While the index stays open it lists its files again only after a failed upload, delete or rename |
+| Cleanup | one request for up to 1000 files (256 on Azure) that no index reader uses anymore; the first cleanup after an index opens also removes the files an interrupted write left behind, which the listing of the open found |
+| Startup | a listing of each tablespace location and of each database directory in it, to remove files that belong to no index; a listing returns only the entries one level down, so the files of the indexes cost no listing requests here |
 
 The parts of a large file upload at the same time, up to `s3_uploader_parts_in_flight` of them on S3 and `azure_write_blocks_in_flight` on Azure, 20 by default; setting it to `1` uploads one part at a time.
 

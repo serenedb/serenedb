@@ -128,6 +128,10 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
                               duckdb::Value{duckdb::LogicalType::BOOLEAN});
     } else {
       SDB_ASSERT(column < _table.Columns().LogicalColumnCount());
+      if (((_needed >> column) & 1) != 0) {
+        _aliases.emplace_back(place, _slots[column]);
+        continue;
+      }
       _slots[column] = place;
       _needed |= uint64_t{1} << column;
       if (!_roles && _table.Sql().columns[column].type == kAclitemArray) {
@@ -165,6 +169,9 @@ void SystemScan::End(duckdb::DataChunk& output) {
   output.SetChildCardinality(_row);
   for (const auto& [place, value] : _constants) {
     _vectors[place].vector->Reference(value, duckdb::count_t{_row});
+  }
+  for (const auto& [place, source] : _aliases) {
+    _vectors[place].vector->Reference(*_vectors[source].vector);
   }
 }
 

@@ -501,6 +501,11 @@ struct SystemConstant {
   duckdb::Value value;
 };
 
+struct SystemAlias {
+  uint32_t place;
+  uint32_t source;
+};
+
 struct SystemStableText {
   std::string_view text;
 };
@@ -996,6 +1001,7 @@ class SystemScan {
   std::vector<SystemFilter> _filters;
   std::array<uint32_t, 64> _slots{};
   std::vector<SystemConstant> _constants;
+  std::vector<SystemAlias> _aliases;
   std::vector<SystemVector> _vectors;
   duckdb::idx_t _row = 0;
   size_t _skip = 0;

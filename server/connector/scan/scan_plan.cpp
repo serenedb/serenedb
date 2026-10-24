@@ -668,8 +668,7 @@ ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
     g.col_filters,
     [](const ScanGlobalState::ColFilter& f) { return f.is_score; });
   if (!g.has_output_column && !g.needs_lookup && !score_filter) {
-    return ss.IsMatchAll() && g.col_filters.empty() ? ScanShape::CountFast
-                                                    : ScanShape::Count;
+    return ScanShape::Count;
   }
   if (g.top_k && (ss.score.text || ss.score.order) &&
       (!g.has_lookup_filter || ss.score.vector)) {

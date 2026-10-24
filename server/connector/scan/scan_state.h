@@ -62,7 +62,6 @@ struct ScanBindData;
 
 enum class ScanShape : uint8_t {
   TsDict,
-  CountFast,
   Count,
   TopK,
   ColScan,

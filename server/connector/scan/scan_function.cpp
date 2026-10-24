@@ -278,11 +278,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     return state;
   }
 
-  if (state->shape == ScanShape::CountFast) {
-    state->workers = 1;
-    return state;
-  }
-
   if (state->needs_lookup && ss.relation.IsInvertedIndex()) {
     const auto pk_kind = ss.relation.ScannedIndex().pk.column;
     if (pk_kind == catalog::PkColumnKind::None) {
@@ -391,13 +386,6 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       result = MakeTsDictLocal(g, input);
       break;
     }
-    case ScanShape::CountFast: {
-      auto l = duckdb::make_uniq<CountLocalState>();
-      l->local_count = g.reader->live_docs_count();
-      l->units_exhausted = true;
-      result = std::move(l);
-      break;
-    }
     case ScanShape::Count: {
       result = duckdb::make_uniq<CountLocalState>();
       break;
@@ -448,7 +436,6 @@ void IResearchScanFunction(duckdb::ClientContext& context,
     case ScanShape::TsDict:
       RunTsDictScan(context, g, *data.local_state, out);
       break;
-    case ScanShape::CountFast:
     case ScanShape::Count:
       RunCountScan(data, g, data.local_state->Cast<CountLocalState>(), out);
       break;
@@ -494,15 +481,24 @@ void IResearchSetScanOrder(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::RowGroupOrderOptions> options,
   duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
-  if (!bind_data || !options || !options->single_order_key ||
+  if (!bind_data || !options) {
+    return;
+  }
+  auto& bd = bind_data->Cast<ScanBindData>();
+  if (options->row_group_offset != 0 ||
+      options->leading_null_group_offset != 0) {
+    bd.search.filter = std::make_shared<irs::Empty>();
+    return;
+  }
+  if (!options->single_order_key ||
       (!options->row_limit.IsValid() && !options->row_limit_expression)) {
     return;
   }
   if (GetBoolSetting(context, "sdb_disable_top_k_optimization")) {
     return;
   }
-  auto& bd = bind_data->Cast<ScanBindData>();
-  const auto order_col = options->column_idx.GetPrimaryIndex();
+  const auto order_col =
+    ScanColumnOfStorage(bd, options->column_idx.GetPrimaryIndex());
   if (order_col >= bd.columns.ids.size()) {
     return;
   }
@@ -646,6 +642,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   };
   func.init_local = IResearchScanInitLocal;
   func.cardinality = ScanCardinality;
+  func.get_partition_stats = &IResearchScanPartitionStats;
   func.get_metrics = IResearchScanGetMetrics;
   func.to_string_value = ScanToStringValue;
   func.table_scan_progress = IResearchScanProgress;

@@ -204,8 +204,8 @@ def stress_units(ctx, args, skips):
         return []
     seconds = _stress_seconds(ctx, args.stress_profile)
     cost, timeout = plan(ctx, uid, seconds + 30.0)
-    return [Unit(uid, "stress", _stress_run(ctx, args.stress_profile), cpus=8, mem_gb=12.0,
-                 cost=cost, timeout=max(timeout, 3 * seconds + 600), label=False)]
+    return [Unit(uid, "stress", _stress_run(ctx, args.stress_profile, args.biglake), cpus=8,
+                 mem_gb=12.0, cost=cost, timeout=max(timeout, 3 * seconds + 600), label=False)]
 
 
 def stress_harness_units(ctx, args, skips):
@@ -223,11 +223,12 @@ def stress_harness_units(ctx, args, skips):
     return [Unit(uid, "stress", run, cpus=1, mem_gb=1.0, cost=cost, timeout=timeout)]
 
 
-def _stress_run(ctx, profile):
+def _stress_run(ctx, profile, biglake):
     def run(r):
         res = r.exec([ctx.root / "tests" / "drivers" / "stress" / "run.sh", "--profile", profile,
                       "--outdir", str(r.dir / "stress"), "--junit", str(r.dir / "junit")],
-                     env={"SERENED": str(ctx.build.bin("serened"))})
+                     env={"SERENED": str(ctx.build.bin("serened")),
+                          "ICEBERG_BACKEND": "biglake" if biglake else "local"})
         out = r.outcome(res)
         summary = r.dir / "stress" / "summary.txt"
         if out.status == FAILED and summary.is_file():

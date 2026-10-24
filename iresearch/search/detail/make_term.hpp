@@ -25,6 +25,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -49,7 +50,7 @@ ScoreMergeType MergeOf(const Query& query, const Ctx& ctx) noexcept {
 
 template<typename Family, typename Ctx>
 typename Family::Result MakeTerm(const TermQuery& query, const Ctx& ctx) {
-  if constexpr (builder::kScoredPlan<Family, Ctx>) {
+  if constexpr (kScoredPlan<Family, Ctx>) {
     const PostingClause posting{query.State(), query.Boost(),
                                 query.Stats(Family::Scoring(ctx))};
     return Family::MakePosting(posting, query.Segment(), ctx,
@@ -67,7 +68,7 @@ typename Family::Result MakeMultiTerm(const MultiTermQuery& query,
   const auto& segment = query.Segment();
   const auto* const field = state.Reader();
   const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if constexpr (builder::kScoredPlan<Family, Ctx>) {
+  if constexpr (kScoredPlan<Family, Ctx>) {
     const auto* const scorer = query.Stats(Family::Scoring(ctx)).scorer;
     const auto boost = query.Boost();
     const auto merge = MergeOf(query, ctx);

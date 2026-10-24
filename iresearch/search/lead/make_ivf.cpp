@@ -25,22 +25,15 @@
 namespace irs::lead {
 
 Node::ptr Make(const RangeVectorQuery& query) {
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
-    return detail::MakeVectorDocs<Family, detail::RadiusGate<Inclusive>>(
-      query, {}, query.Threshold());
-  });
+  return detail::MakeRangeVector<Family>(query, Family::DocsContext{});
 }
 
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx) {
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
-    return detail::MakeVectorScored<Family, detail::RadiusGate<Inclusive>>(
-      query, ctx, query.Threshold());
-  });
+  return detail::MakeRangeVector<Family>(query, ctx);
 }
 
 Node::ptr Make(const KnnVectorQuery& query, const detail::ScoredCtx& ctx) {
-  return detail::MakeVectorScored<Family, detail::AcceptAll>(
-    query, ctx, detail::Unbounded());
+  return detail::MakeKnnVector<Family>(query, ctx);
 }
 
 }  // namespace irs::lead

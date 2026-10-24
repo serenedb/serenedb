@@ -38,6 +38,7 @@
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/window.hpp"
@@ -693,6 +694,26 @@ typename Family::Result MakeVectorScored(
 
 inline score_t Unbounded() noexcept {
   return std::numeric_limits<score_t>::lowest();
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeRangeVector(const RangeVectorQuery& query,
+                                        const Ctx& ctx) {
+  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
+    if constexpr (kScoredPlan<Family, Ctx>) {
+      return MakeVectorScored<Family, RadiusGate<Inclusive>>(query, ctx,
+                                                             query.Threshold());
+    } else {
+      return MakeVectorDocs<Family, RadiusGate<Inclusive>>(query, ctx,
+                                                           query.Threshold());
+    }
+  });
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeKnnVector(const KnnVectorQuery& query,
+                                      const Ctx& ctx) {
+  return MakeVectorScored<Family, AcceptAll>(query, ctx, Unbounded());
 }
 
 }  // namespace irs::detail

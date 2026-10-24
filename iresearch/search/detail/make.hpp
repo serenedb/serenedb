@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <type_traits>
 
 #include "iresearch/search/detail/phrase_match.hpp"
 
@@ -60,6 +61,18 @@ struct GeoKind {
 struct WildcardNGramKind {
   static constexpr bool kConstant = true;
 };
+
+template<typename Family, typename Ctx>
+consteval bool ScoredPlan() {
+  if constexpr (requires { typename Family::ScoredContext; }) {
+    return std::is_same_v<Ctx, typename Family::ScoredContext>;
+  } else {
+    return false;
+  }
+}
+
+template<typename Family, typename Ctx>
+inline constexpr bool kScoredPlan = ScoredPlan<Family, Ctx>();
 
 template<typename Family, typename Kind, typename Query>
 typename Family::Result MakeDocs(const Query& query,

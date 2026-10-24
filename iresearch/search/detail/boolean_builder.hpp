@@ -54,18 +54,6 @@ template<typename Family>
 using Result = typename Family::Result;
 
 template<typename Family, typename Ctx>
-consteval bool ScoredPlan() {
-  if constexpr (requires { typename Family::ScoredContext; }) {
-    return std::is_same_v<Ctx, typename Family::ScoredContext>;
-  } else {
-    return false;
-  }
-}
-
-template<typename Family, typename Ctx>
-inline constexpr bool kScoredPlan = ScoredPlan<Family, Ctx>();
-
-template<typename Family, typename Ctx>
 ScoreRecipe RecipeOf(const SubReader& segment, const Ctx& ctx) noexcept {
   return {.segment = &segment, .fetcher = Family::Scoring(ctx).fetcher};
 }

@@ -25,10 +25,7 @@
 namespace irs::count {
 
 Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
-    return detail::MakeVectorDocs<Family, detail::RadiusGate<Inclusive>>(
-      query, ctx, query.Threshold());
-  });
+  return detail::MakeRangeVector<Family>(query, ctx);
 }
 
 }  // namespace irs::count

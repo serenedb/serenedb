@@ -96,11 +96,7 @@ class VectorChain : public Root {
 }  // namespace
 
 Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
-    return irs::detail::MakeVectorScored<Family,
-                                         irs::detail::RadiusGate<Inclusive>>(
-      query, ctx, query.Threshold());
-  });
+  return irs::detail::MakeRangeVector<Family>(query, ctx);
 }
 
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
@@ -122,8 +118,7 @@ Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
       });
   }
 
-  return irs::detail::MakeVectorScored<Family, irs::detail::AcceptAll>(
-    query, ctx, irs::detail::Unbounded());
+  return irs::detail::MakeKnnVector<Family>(query, ctx);
 }
 
 }  // namespace irs::top

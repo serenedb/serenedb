@@ -33,6 +33,7 @@
 #include "iresearch/search/detail/conjunction.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/fill_posting_scored.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/probe_leaves.hpp"
@@ -279,7 +280,7 @@ namespace irs::detail {
 template<typename Family, typename Ctx>
 typename Family::Result MakeBoolean(const BooleanQuery& query, const Ctx& ctx) {
   if constexpr (kProbePlan<Family>) {
-    if constexpr (builder::kScoredPlan<Family, Ctx>) {
+    if constexpr (kScoredPlan<Family, Ctx>) {
       const auto& segment = query.Segment();
       return probe::MakeBoolean(
         query, Family::Interrogations(ctx),

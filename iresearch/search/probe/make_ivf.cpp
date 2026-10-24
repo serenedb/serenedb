@@ -25,19 +25,14 @@
 namespace irs::probe {
 
 Node::ptr Make(const RangeVectorQuery& query, uint64_t interrogations) {
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
-    return detail::MakeVectorDocs<Family, detail::RadiusGate<Inclusive>>(
-      query, {.interrogations = interrogations}, query.Threshold());
-  });
+  return detail::MakeRangeVector<Family>(query,
+                                         Family::DocsContext{interrogations});
 }
 
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
-    return detail::MakeVectorScored<Family, detail::RadiusGate<Inclusive>>(
-      query, {.scored = ctx, .interrogations = interrogations},
-      query.Threshold());
-  });
+  return detail::MakeRangeVector<Family>(
+    query, Family::ScoredContext{ctx, interrogations});
 }
 
 }  // namespace irs::probe

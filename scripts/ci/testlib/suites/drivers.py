@@ -7,6 +7,7 @@ from . import plan, skipped
 
 LANGS = ("python", "java", "js", "go", "rust", "php", "csharp", "c", "ruby", "r", "psql")
 CPUS = {"java": 4, "csharp": 2, "js": 2, "python": 3}
+OWN_SERVER = ("psql",)
 HTTP_TOKEN = "drivers-ci-token"
 TRUST_HBA = "host all all 0.0.0.0/0 trust\nhost all all ::0/0 trust\nlocal all all trust\n"
 
@@ -20,8 +21,9 @@ def driver_units(ctx, args, skips):
             ctx.skips.append((uid, skip))
             continue
         cost, timeout = plan(ctx, uid, 120.0)
-        units.append(Unit(uid, "drivers", _driver_run(ctx, lang), cpus=CPUS.get(lang, 2),
-                          mem_gb=2.0, fixtures=() if ctx.attribute else ("driver-servers",),
+        own = ctx.attribute or lang in OWN_SERVER
+        units.append(Unit(uid, "drivers", _driver_run(ctx, lang, own), cpus=CPUS.get(lang, 2),
+                          mem_gb=2.0, fixtures=() if own else ("driver-servers",),
                           cost=cost, timeout=timeout))
     uid = "network:hba"
     if not skipped(skips, uid):
@@ -52,11 +54,12 @@ def _run_lang(ctx, r, lang, server):
                        "SDB_DRV_SHARED_DIR": str(shared)})
 
 
-def _driver_run(ctx, lang):
+def _driver_run(ctx, lang, own):
     def run(r):
         crash = None
-        if ctx.attribute:
-            server = Server(ctx, r.dir / "server", profile_dir=r.profile_dir, **SERVER).start()
+        if own:
+            server = Server(ctx, r.dir / "server",
+                            profile_dir=r.profile_dir if ctx.attribute else None, **SERVER).start()
             try:
                 res = _run_lang(ctx, r, lang, server)
             finally:

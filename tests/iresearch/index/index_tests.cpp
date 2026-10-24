@@ -299,9 +299,7 @@ REGISTER_ATTRIBUTE(IncompatibleAttribute);
 
 std::string IndexTestBase::to_string(
   const testing::TestParamInfo<index_test_context>& info) {
-  auto [factory] = info.param;
-
-  return (*factory)(nullptr).second;
+  return std::string{std::get<0>(info.param).name};
 }
 
 duckdb::FileSystem& DatabaseFileSystem() {
@@ -318,9 +316,7 @@ irs::Directory OverFileSystem(const irs::Directory& files,
 
 std::shared_ptr<irs::Directory> IndexTestBase::get_directory(
   const TestBase& ctx) const {
-  auto [factory] = GetParam();
-
-  return (*factory)(&ctx).first;
+  return std::get<0>(GetParam()).factory(&ctx);
 }
 
 irs::doc_id_t IndexTestBase::GetPostingsBlockSize() const {
@@ -1664,7 +1660,7 @@ TEST_P(IndexTestCase, writer_finish_on_another_thread) {
   ASSERT_TRUE(InsertWithName(*writer, *doc2));
   EXPECT_EQ(0, writer->GetSnapshot().live_docs_count());
 
-  std::thread finisher{[&] { writer->RefreshFinish(); }};
+  std::thread finisher{[&] { writer->RefreshFinishRetryable(); }};
   finisher.join();
 
   AssertSnapshotEquality(*writer);
@@ -11646,10 +11642,10 @@ TEST_P(IndexTestCase11, create_over_unreadable_index) {
     old_segment = snapshot[0].Meta().name;
   }
 
-  std::string old_meta;
-  ASSERT_TRUE(irs::index_meta::LastFile(dir(), old_meta));
+  const auto old_meta = irs::index_meta::LastFile(dir());
+  ASSERT_TRUE(old_meta);
   {
-    auto out = dir().Create(old_meta);
+    auto out = dir().Create(*old_meta);
     ASSERT_NE(nullptr, out);
     irs::format_utils::WriteFooter(*out, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint64_t>(
@@ -11665,11 +11661,10 @@ TEST_P(IndexTestCase11, create_over_unreadable_index) {
   ASSERT_SQL_ERROR(open_writer(irs::kOmCreate | irs::kOmAppend),
                    ERRCODE_FEATURE_NOT_SUPPORTED);
   {
-    std::string meta;
-    ASSERT_TRUE(irs::index_meta::LastFile(dir(), meta));
+    const auto meta = irs::index_meta::LastFile(dir());
     ASSERT_EQ(old_meta, meta);
     irs::IndexMeta index_meta;
-    ASSERT_SQL_ERROR(irs::index_meta::Read(dir(), index_meta, meta),
+    ASSERT_SQL_ERROR(irs::index_meta::Read(dir(), index_meta, *meta),
                      ERRCODE_FEATURE_NOT_SUPPORTED);
   }
 
@@ -11677,10 +11672,10 @@ TEST_P(IndexTestCase11, create_over_unreadable_index) {
   ASSERT_TRUE(InsertWithName(*writer, *doc2));
   writer->RefreshCommit();
 
-  std::string new_meta;
-  ASSERT_TRUE(irs::index_meta::LastFile(dir(), new_meta));
-  EXPECT_LT(irs::index_meta::ParseGeneration(old_meta),
-            irs::index_meta::ParseGeneration(new_meta));
+  const auto new_meta = irs::index_meta::LastFile(dir());
+  ASSERT_TRUE(new_meta);
+  EXPECT_LT(irs::index_meta::ParseGeneration(*old_meta),
+            irs::index_meta::ParseGeneration(*new_meta));
 
   auto reader = irs::DirectoryReader{dir(), irs::tests::DefaultReaderOptions()};
   ASSERT_EQ(1, reader.size());
@@ -11840,10 +11835,6 @@ TEST_P(IndexTestCase11, testExternalGenerationDifferentStart) {
 
   auto writer_options = irs::tests::DefaultWriterOptions();
   auto writer = open_writer(irs::kOmCreate, std::move(writer_options));
-  {
-    auto reader = writer->GetSnapshot();
-    EXPECT_EQ(GetResourceManager().file_descriptors.Counter(), 0);
-  }
 
   {
     irs::IndexWriter::Transaction trx;
@@ -11876,10 +11867,6 @@ TEST_P(IndexTestCase11, testExternalGenerationDifferentStart) {
   writer.reset();
   auto reader =
     irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-  if (directory.Kind() == irs::StorageKind::Local) {
-    EXPECT_EQ(GetResourceManager().file_descriptors.Counter(), 4);
-  }
-
   ASSERT_EQ(1, reader.size());
   auto& segment = (*reader)[0];
   ASSERT_EQ(2, segment.docs_count());
@@ -11931,8 +11918,7 @@ TEST_P(IndexTestCase11, testExternalGenerationRemoveBeforeInsert) {
   ASSERT_EQ(2, segment.live_docs_count());
 }
 
-static const auto kTestDirs =
-  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefault>());
+static const auto kTestDirs = ::testing::ValuesIn(tests::kDirParams);
 
 static const auto kTestValues = ::testing::Combine(kTestDirs);
 

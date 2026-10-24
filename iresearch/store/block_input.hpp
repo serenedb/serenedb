@@ -111,7 +111,6 @@ class BlockInput final : public IndexInput {
   }
 
   ptr Dup() const final { return std::make_unique<BlockInput>(*this); }
-  ptr Reopen() const final { return Dup(); }
   uint32_t Checksum(uint64_t offset) const final;
 
   void Prefetch(uint64_t offset, uint64_t count) const noexcept final;

@@ -115,17 +115,12 @@ namespace {
 IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
                                          MetaPayloadReader payload) {
   IndexFileRefs::ref_t ref;
-  std::string filename;
-
-  // ensure have a valid ref to a filename
   while (!ref) {
-    const bool index_exists = index_meta::LastFile(dir, filename);
-
-    if (!index_exists) {
+    const auto filename = index_meta::LastFile(dir);
+    if (!filename) {
       return nullptr;
     }
-
-    ref = dir.Reference(filename);
+    ref = dir.Reference(*filename);
   }
 
   SDB_ASSERT(ref);

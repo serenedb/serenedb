@@ -51,6 +51,13 @@ ERROR:  directory "/mnt/nvme/serenedb/engine_v1" already in use as a tablespace
 
 If the server stops while `CREATE TABLESPACE` runs, `engine_v1` can be left at the location without a tablespace that uses it; remove it before creating the tablespace again.
 
+A `memory://` location is refused, since files there are lost when the server stops:
+
+```text
+ERROR:  tablespace location cannot be in memory
+DETAIL:  Files under memory:// are lost when the server stops.
+```
+
 The server reaches an object store location with the credentials of a persistent secret whose scope covers its normal form:
 
 <SqlLogicTest id="sql/statements/create_tablespace/index/example_011" />
@@ -124,7 +131,7 @@ Renaming a tablespace or changing its owner needs ownership of it. The objects i
 DROP TABLESPACE [ IF EXISTS ] name
 ```
 
-Only the owner of a tablespace, or a superuser, can drop it, and only when it is empty: no database was created in it and no search table or inverted index is placed in it. Dropping it removes `engine_v1` at its location; the location itself stays. A new tablespace can use the location once the transactions that began before the drop have ended and `engine_v1` is removed; until then `CREATE TABLESPACE` refuses it. `DROP TABLESPACE` cannot run inside a transaction block, and a tablespace that another session is placing an object in at that moment is not dropped.
+Only the owner of a tablespace, or a superuser, can drop it, and only when it is empty: no database was created in it and no search table or inverted index is placed in it, including those of a database the server left unattached at startup with `--missing_database=skip`. Dropping it removes `engine_v1` at its location; the location itself stays. A new tablespace can use the location once the transactions that began before the drop have ended and `engine_v1` is removed; until then `CREATE TABLESPACE` refuses it. `DROP TABLESPACE` cannot run inside a transaction block, and a tablespace that another session is placing an object in at that moment is not dropped.
 
 <SqlLogicTest id="sql/statements/create_tablespace/index/example_010" />
 

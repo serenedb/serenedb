@@ -220,7 +220,6 @@ class BytesViewInput : public IndexInput {
   Type GetType() const noexcept final { return Type::BytesViewInput; }
 
   ptr Dup() const override { return std::make_unique<BytesViewInput>(*this); }
-  ptr Reopen() const final { return Dup(); }
 
   uint32_t Checksum(uint64_t offset) const final;
 
@@ -245,78 +244,6 @@ class BytesViewInput : public IndexInput {
 
   bytes_view _data;
   const byte_type* _pos = _data.data();
-};
-
-// same as BytesViewInput but with support of adress remapping
-// usable when original data offses needs to be persistent
-// NOTE: remapped data blocks may have gaps but should not overlap!
-class RemappedBytesViewInput final : public IndexInput {
- public:
-  using MappingValue = std::pair<uint64_t, uint64_t>;
-  using Mapping = std::vector<MappingValue>;
-
-  explicit RemappedBytesViewInput(bytes_view data, Mapping&& mapping)
-    : _input{data}, _mapping{std::move(mapping)} {
-    absl::c_sort(_mapping, [](const auto& lhs, const auto& rhs) {
-      return lhs.first < rhs.first;
-    });
-  }
-
-  const byte_type* ReadStable(uint64_t count) noexcept final {
-    return _input.ReadStable(count);
-  }
-  const byte_type* ReadStable(uint64_t offset, uint64_t count) noexcept final {
-    return _input.ReadStable(SourceToInternal(offset), count);
-  }
-
-  const byte_type* ReadVolatile(uint64_t count) noexcept final {
-    return _input.ReadVolatile(count);
-  }
-  const byte_type* ReadVolatile(uint64_t offset,
-                                uint64_t count) noexcept final {
-    return _input.ReadVolatile(SourceToInternal(offset), count);
-  }
-
-  byte_type ReadByte() noexcept final { return _input.ReadByte(); }
-  using DataInput::ReadData;
-  void ReadData(byte_type* b, uint64_t size) final { _input.ReadData(b, size); }
-  void ReadData(duckdb::QueryContext, byte_type* b, uint64_t size) final {
-    _input.ReadData(b, size);
-  }
-  void ReadData(uint64_t offset, byte_type* b, size_t size) noexcept final {
-    _input.ReadData(SourceToInternal(offset), b, size);
-  }
-
-  int16_t ReadI16() noexcept final { return _input.ReadI16(); }
-  int32_t ReadI32() noexcept final { return _input.ReadI32(); }
-  int64_t ReadI64() noexcept final { return _input.ReadI64(); }
-  uint32_t ReadV32() noexcept final { return _input.ReadV32(); }
-  uint64_t ReadV64() noexcept final { return _input.ReadV64(); }
-
-  void SkipV32() noexcept final { _input.SkipV32(); }
-  void SkipV64() noexcept final { _input.SkipV64(); }
-
-  uint64_t Position() const noexcept final;
-  uint64_t Length() const noexcept final { return _input.Length(); }
-  bool IsEOF() const noexcept final { return _input.IsEOF(); }
-
-  void Skip(uint64_t count) noexcept final { _input.Skip(count); }
-  void Seek(uint64_t pos) noexcept final { _input.Seek(SourceToInternal(pos)); }
-
-  ptr Dup() const final {
-    return std::make_unique<RemappedBytesViewInput>(*this);
-  }
-  ptr Reopen() const final { return Dup(); }
-
-  uint32_t Checksum(uint64_t offset) const final {
-    return _input.Checksum(SourceToInternal(offset));
-  }
-
- private:
-  uint64_t SourceToInternal(uint64_t offset) const noexcept;
-
-  BytesViewInput _input;
-  Mapping _mapping;
 };
 
 namespace encode::delta {

@@ -1585,7 +1585,7 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionThreeTermsSameField) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(BlockScoringTest, BlockScoringTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

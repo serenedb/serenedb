@@ -51,18 +51,13 @@ struct IdxReader::Impl {
 };
 
 IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
-                     HnswBases* hnsw_bases)
-  : IdxReader{dir, segment_name, dir.Has(FileName(segment_name, kIdxFormatExt)),
-              hnsw_bases} {}
-
-IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
                      bool present, HnswBases* hnsw_bases)
   : _impl{std::make_unique<Impl>()} {
   if (!present) {
     return;
   }
   const auto filename = FileName(segment_name, kIdxFormatExt);
-  _impl->in = dir.Open(filename, IOAdvice::SEQUENTIAL);
+  _impl->in = dir.Open(filename, duckdb::MappedFileAccess::SEQUENTIAL);
 
   format_utils::ReadFooter(
     *_impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
@@ -164,7 +159,7 @@ std::span<const uint64_t> IdxReader::AnnEnds() const noexcept {
 }
 
 IndexInput::ptr IdxReader::ReopenIn() const {
-  return _impl->in ? _impl->in->Reopen() : IndexInput::ptr{};
+  return _impl->in ? _impl->in->Dup() : IndexInput::ptr{};
 }
 
 }  // namespace irs

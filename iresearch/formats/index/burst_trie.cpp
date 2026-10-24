@@ -596,7 +596,6 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
 
   auto copy = [this](const byte_type* b, size_t len) {
     _blocks_out->WriteData(b, len);
-    return true;
   };
 
   _suffix.file.Visit(copy);
@@ -1665,7 +1664,7 @@ class TermIteratorBase {
   // term dictionary stream in lazy fashion
   IndexInput& TermsInput() const {
     if (!_terms_in) {
-      _terms_in = _terms_in_source->Reopen();  // reopen thread-safe stream
+      _terms_in = _terms_in_source->Dup();
       SDB_ASSERT(_terms_in);
     }
 
@@ -2782,7 +2781,7 @@ class FieldReader::Impl {
         return {};
       }
 
-      SingleTermLookup<FST> it{*this, _owner->_pr, _owner->_terms_in->Reopen(),
+      SingleTermLookup<FST> it{*this, _owner->_pr, _owner->_terms_in->Dup(),
                                *_fst};
 
       if (!it.seek(term)) {
@@ -2814,7 +2813,7 @@ class FieldReader::Impl {
         return;
       }
 
-      SingleTermLookup<FST> it{*this, _owner->_pr, _owner->_terms_in->Reopen(),
+      SingleTermLookup<FST> it{*this, _owner->_pr, _owner->_terms_in->Dup(),
                                *_fst};
 
       if (!it.seek(term)) {
@@ -2975,7 +2974,7 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
       std::upper_bound(ends.begin(), ends.end(), field.BodyOffset());
     field.SetBlocksBegin(it == ends.begin() ? 0 : *std::prev(it));
   }
-  _terms_in->Advise(IOAdvice::RANDOM);
+  _terms_in->Advise(duckdb::MappedFileAccess::RANDOM);
 }
 
 const TermReader* FieldReader::Impl::field(field_id id) const {

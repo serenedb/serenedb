@@ -94,61 +94,24 @@ class RefCounter : public util::Noncopyable {
     return _refs.erase(std::forward<T>(key)) > 0;
   }
 
-  template<typename T>
-  bool contains(T&& key) const noexcept {
+  template<typename Removed, typename Finish>
+  void RemoveUnused(const Removed& removed, const Finish& finish) {
     absl::MutexLock lock{&_lock};
-    return _refs.contains(std::forward<T>(key));
-  }
-
-  template<typename T>
-  size_t find(T&& key) const noexcept {
-    absl::MutexLock lock{&_lock};
-    auto itr = _refs.find(std::forward<T>(key));
-
-    return itr == _refs.end()
-             ? 0
-             : (itr->use_count() - 1);  // -1 for usage by refs_ itself
-  }
-
-  bool empty() const noexcept {
-    absl::MutexLock lock{&_lock};
-    return _refs.empty();
-  }
-
-  template<typename Visitor>
-  bool visit(const Visitor& visitor, bool remove_unused = false) {
-    return visit(visitor, remove_unused, [] {});
-  }
-
-  template<typename Visitor, typename Finish>
-  bool visit(const Visitor& visitor, bool remove_unused, const Finish& finish) {
-    absl::MutexLock lock{&_lock};
-
     for (auto itr = _refs.begin(), end = _refs.end(); itr != end;) {
-      auto& ref = *itr;
       SDB_ASSERT(*itr);
-
-      // -1 for usage by refs_ itself
-      auto visit_next = visitor(ref, ref.use_count() - 1);
-
-      if (remove_unused && ref.use_count() == 1) {
-        const auto erase_me = itr++;
-        _refs.erase(erase_me);
-      } else {
+      if (itr->use_count() != 1) {
         ++itr;
+        continue;
       }
-
-      if (!visit_next) {
-        return false;
-      }
+      removed(**itr);
+      const auto erase_me = itr++;
+      _refs.erase(erase_me);
     }
-
     finish();
-    return true;
   }
 
  private:
-  mutable absl::Mutex _lock;
+  absl::Mutex _lock;
   absl::flat_hash_set<ref_t, Hash, EqualTo> _refs ABSL_GUARDED_BY(_lock);
 };
 

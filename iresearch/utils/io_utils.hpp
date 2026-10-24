@@ -28,31 +28,25 @@
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/string.hpp"
 
-#define IRS_MAKE_IO_PTR(method)                                                \
-  template<typename T>                                                         \
-  struct Auto##method : std::default_delete<T> {                               \
-    using ptr = std::unique_ptr<T, Auto##method<T>>;                           \
-    void operator()(T* p) const noexcept {                                     \
-      try {                                                                    \
-        p->method();                                                           \
-        std::default_delete<T>::operator()(p);                                 \
-      } catch (const std::exception& e) {                                      \
-        SDB_ERROR(IRESEARCH,                                                   \
-                  absl::StrCat("caught exception while closing i/o stream: '", \
-                               e.what(), "'"));                                \
-      } catch (...) {                                                          \
-        SDB_ERROR(IRESEARCH,                                                   \
-                  "caught an unspecified exception while closing i/o stream"); \
-      }                                                                        \
-    }                                                                          \
-  }
-
 namespace irs::io_utils {
 
-IRS_MAKE_IO_PTR(Close);
-IRS_MAKE_IO_PTR(unlock);
+template<typename T>
+struct AutoClose : std::default_delete<T> {
+  using ptr = std::unique_ptr<T, AutoClose<T>>;
+
+  void operator()(T* p) const noexcept {
+    try {
+      p->Close();
+    } catch (const std::exception& e) {
+      SDB_ERROR(IRESEARCH,
+                absl::StrCat("caught exception while closing i/o stream: '",
+                             e.what(), "'"));
+    } catch (...) {
+      SDB_ERROR(IRESEARCH,
+                "caught an unspecified exception while closing i/o stream");
+    }
+    std::default_delete<T>::operator()(p);
+  }
+};
 
 }  // namespace irs::io_utils
-
-#define IRS_USING_IO_PTR(type, method) \
-  using ptr = irs::io_utils::Auto##method<type>::ptr

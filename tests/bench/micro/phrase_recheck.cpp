@@ -181,7 +181,6 @@ struct Field {
 };
 
 struct Index {
-  std::optional<irs::Directory> dir;
   irs::DirectoryReader reader;
 };
 
@@ -199,14 +198,14 @@ const Index& IndexOf(size_t dictionary) {
   std::filesystem::create_directories(path);
   index = std::make_unique<Index>();
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  index->dir.emplace(*db, path.string());
+  const irs::Directory dir{*db, path.string()};
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
   writer_opts.reader_options.scorer = &Bm25();
   writer_opts.norm_column_id = [](irs::field_id id) { return id + kNormBase; };
   auto writer =
-    irs::IndexWriter::Make(*index->dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
   auto plain_tokens = spec.make();
   auto positional_tokens = spec.make();
   Field plain{.tokenizer = plain_tokens.get(),
@@ -238,7 +237,7 @@ const Index& IndexOf(size_t dictionary) {
   }
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  index->reader = irs::DirectoryReader{*index->dir, reader_opts};
+  index->reader = irs::DirectoryReader{dir, reader_opts};
   std::fprintf(stderr, "[index] %-8s %zu segments\n", spec.name,
                index->reader.size());
   return *index;

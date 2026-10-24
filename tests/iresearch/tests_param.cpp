@@ -36,33 +36,13 @@ constinit std::atomic<uint64_t> gLocalDirectories{0};
 
 }  // namespace
 
-std::string ToString(dir_generator_f generator) {
-  if (generator == &MemoryDirectory) {
-    return "memory";
-  }
-
-  if (generator == &LocalDirectory) {
-    return "local";
-  }
-
-  if (generator == &ObjectStoreDirectory) {
-    return "sim";
-  }
-
-  return "unknown";
-}
-
 std::shared_ptr<irs::Directory> MemoryDirectory(const TestBase* test) {
   return std::make_shared<irs::Directory>(
     irs::DuckDBEngine::Instance().instance(), irs::MemoryIndexRoot(),
-    test ? test->GetResourceManager().options
-         : irs::ResourceManagementOptions::gDefault);
+    test->GetResourceManager().options);
 }
 
 std::shared_ptr<irs::Directory> LocalDirectory(const TestBase* test) {
-  if (!test) {
-    return nullptr;
-  }
   auto path =
     test->test_dir() / absl::StrCat("index_", gLocalDirectories.fetch_add(
                                                 1, std::memory_order_relaxed));
@@ -77,9 +57,6 @@ std::shared_ptr<irs::Directory> LocalDirectory(const TestBase* test) {
 }
 
 std::shared_ptr<irs::Directory> ObjectStoreDirectory(const TestBase* test) {
-  if (!test) {
-    return nullptr;
-  }
   ObjectStore();
   auto root =
     absl::StrCat(irs::SimulatedObjectStore::kPrefix, "tests/",

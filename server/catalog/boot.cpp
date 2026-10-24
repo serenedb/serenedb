@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/flags/flag.h>
-#include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
@@ -100,26 +99,16 @@ void RequirePresent(const Storage& storage, const duckdb::CatalogEntry& entry) {
 }
 
 absl::flat_hash_set<duckdb::idx_t> StorageOids(SereneDBCatalog& catalog) {
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  catalog.ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
   absl::flat_hash_set<duckdb::idx_t> oids;
-  for (auto& schema : schemas) {
-    schema.get().Scan(
-      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        if (const auto* table = dynamic_cast<SearchTableEntry*>(&entry)) {
-          RequirePresent(*table->Storage(), entry);
-          oids.insert(entry.oid);
-        }
-      });
-    schema.get().Scan(
-      duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        const auto* index = dynamic_cast<InvertedIndexEntry*>(&entry);
-        if (index && index->Storage()) {
-          RequirePresent(*index->Storage(), entry);
-          oids.insert(entry.oid);
-        }
-      });
+  for (const SearchTableEntry& table : SearchTableEntries(catalog)) {
+    RequirePresent(*table.Storage(), table);
+    oids.insert(table.oid);
+  }
+  for (const InvertedIndexEntry& index : InvertedIndexEntries(catalog)) {
+    if (const auto& storage = index.Storage()) {
+      RequirePresent(*storage, index);
+      oids.insert(index.oid);
+    }
   }
   return oids;
 }
@@ -148,9 +137,6 @@ void RemoveUnownedDatabases(ClusterCatalog& cluster) {
 
 void RemoveUnownedStorages(ClusterCatalog& cluster,
                            duckdb::DatabaseManager& manager) {
-  if (gMissingDatabases.fresh_cluster) {
-    return;
-  }
   const auto roots = TablespaceRoots(cluster);
   for (const auto& db : manager.GetDatabases()) {
     auto& catalog = db->GetCatalog();
@@ -178,11 +164,6 @@ duckdb::unique_ptr<duckdb::TransactionManager> MakeClusterTransactionManager(
   duckdb::optional_ptr<duckdb::StorageExtensionInfo> storage_info,
   duckdb::AttachedDatabase& db, duckdb::Catalog& catalog) {
   return duckdb::make_uniq<duckdb::DuckTransactionManager>(db);
-}
-
-const DataDirectory& Layout(duckdb::AttachedDatabase& db) {
-  return static_cast<const DataDirectory&>(
-    *db.GetStorageExtension()->storage_info);
 }
 
 void ApplyMissingDatabasePolicy(const DatabaseCatalogEntry& database) {
@@ -230,10 +211,6 @@ std::filesystem::path DataDirectory::EngineDir() const {
 
 std::string DataDirectory::CatalogLogFile() const {
   return (EngineDir() / kCatalogLog).string();
-}
-
-std::filesystem::path DataDirectory::DatabaseDir(duckdb::idx_t oid) const {
-  return EngineDir() / absl::StrCat(oid);
 }
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
@@ -284,7 +261,8 @@ duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
 }
 
 const DataDirectory& ClusterLayout(duckdb::AttachedDatabase& cluster) {
-  return Layout(cluster);
+  return static_cast<const DataDirectory&>(
+    *cluster.GetStorageExtension()->storage_info);
 }
 
 void RegisterClusterStorage(duckdb::DBConfig& config,

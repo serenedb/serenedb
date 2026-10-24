@@ -41,36 +41,20 @@ class MemoryFile : public container_utils::RawBlockVector<16, 8> {
   MemoryFile(MemoryFile&& rhs) noexcept
     : Base{static_cast<Base&&>(rhs)}, _len{std::exchange(rhs._len, 0)} {}
 
-  MemoryFile& operator>>(DataOutput& out) {
-    Visit([&](const byte_type* b, size_t len) {
-      out.WriteData(b, len);
-      return true;
-    });
-    return *this;
-  }
-
   size_t Length() const noexcept { return _len; }
 
   void Length(size_t length) noexcept { _len = length; }
 
   void Reset() noexcept { _len = 0; }
 
-  void Clear() noexcept {
-    Base::clear();
-    Reset();
-  }
-
   template<typename Visitor>
-  bool Visit(const Visitor& visitor) {
+  void Visit(const Visitor& visitor) {
     auto len = _len;
     for (const auto& buffer : _buffers) {
       const auto to_visit = std::min(len, buffer.size);
-      if (!visitor(buffer.data, to_visit)) {
-        return false;
-      }
+      visitor(buffer.data, to_visit);
       len -= to_visit;
     }
-    return true;
   }
 
  private:
@@ -93,10 +77,9 @@ class MemoryIndexOutput : public IndexOutput {
                     ERR_MSG("this memory output keeps no checksum"));
   }
 
-  uint64_t CloseImpl() noexcept final {
+  void CloseImpl() noexcept final {
     // TODO(mbkkt) maybe we need reset?
     Flush();
-    return Position();
   }
 
  protected:

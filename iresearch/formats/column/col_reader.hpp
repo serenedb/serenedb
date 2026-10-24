@@ -59,11 +59,9 @@ inline std::string FileName(std::string_view segment_name) {
 class ColReader final {
  public:
   ColReader(const Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db,
-            IOAdvice advice = IOAdvice::SEQUENTIAL);
+            duckdb::DatabaseInstance& db);
   ColReader(const Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db, bool present,
-            IOAdvice advice = IOAdvice::SEQUENTIAL);
+            duckdb::DatabaseInstance& db, bool present);
   ~ColReader();
 
   ColReader(const ColReader&) = delete;
@@ -79,7 +77,7 @@ class ColReader final {
   ReadContext& Ctx() noexcept { return _ctx; }
 
   IndexInput::ptr ReopenIn() const {
-    return _ctx.HasIn() ? _ctx.In().Reopen() : nullptr;
+    return _ctx.HasIn() ? _ctx.In().Dup() : nullptr;
   }
   void PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
     if (_ctx.HasIn()) {
@@ -89,6 +87,9 @@ class ColReader final {
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
 
  private:
+  ColReader(duckdb::DatabaseInstance& db, std::string_view segment_name,
+            IndexInput::ptr in);
+
   duckdb::DatabaseInstance* _db;
   ReadContext _ctx;
   std::vector<std::unique_ptr<ColumnReader>> _columns;

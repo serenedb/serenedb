@@ -1278,7 +1278,7 @@ TEST_P(TfidfTestCase, test_order) {
   counter.Reset();
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 TEST_P(TfidfTestCase, test_query_norms) { TestQueryNorms(); }
 

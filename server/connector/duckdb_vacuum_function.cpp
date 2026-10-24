@@ -516,11 +516,10 @@ void DispatchInverted(duckdb::ClientContext& context,
       absl::Status status;
       if (action == Action::Refresh) {
         status = search->VacuumRefresh();
-      } else if (action == Action::Compact) {
+      } else {
+        SDB_ASSERT(action == Action::Compact);
         status = search->VacuumCompact(
           GetIntSetting(context, "sdb_compact_target_segments"));
-      } else {
-        status = search->OptimizeInMemory();
       }
       if (!status.ok()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),

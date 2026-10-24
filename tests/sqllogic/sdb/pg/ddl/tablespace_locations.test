@@ -20,6 +20,13 @@ CREATE TABLESPACE loc_empty_${__DATABASE__} LOCATION '';
 db error: ERROR: tablespace location must be an absolute path
 
 
+statement error
+CREATE TABLESPACE loc_memory_${__DATABASE__} LOCATION 'memory://bucket/loc_memory_${__DATABASE__}';
+----
+db error: ERROR: tablespace location cannot be in memory
+DETAIL: Files under memory:// are lost when the server stops.
+
+
 statement ok
 CREATE TABLESPACE loc_norm_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc//base/./skip/..///';
 

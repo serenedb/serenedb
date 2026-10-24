@@ -21,7 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <array>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bit_packing.hpp>
 #include <iresearch/utils/bitpack.hpp>
@@ -774,52 +773,4 @@ TEST(store_utils_tests, delta_encode_decode) {
   tests::detail::DeltaEncodeDecodeCore(128,
                                        1000);     // step = 128, count = 1000
   tests::detail::DeltaEncodeDecodeCore(1000, 1);  // step = 1000, count = 1
-}
-
-TEST(store_utils_tests, test_remapped_bytes_view) {
-  std::array<irs::byte_type, 15> data = {0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8,
-                                         0x9, 0xA, 0xB, 0xC, 0xD, 0xE, 0xF};
-
-  {
-    RemappedBytesViewInput::Mapping mapping;
-    mapping.emplace_back(3, 0);
-    RemappedBytesViewInput in(bytes_view(data.data(), data.size()),
-                              std::move(mapping));
-    auto actual = in.ReadVolatile(3, 2);
-    ASSERT_EQ(actual[0], data[0]);
-    ASSERT_EQ(5, in.Position());
-    std::array<irs::byte_type, 2> read;
-    in.ReadData(5, read.data(), 2);
-    ASSERT_EQ(0x3, read[0]);
-    ASSERT_EQ(0x4, read[1]);
-    ASSERT_EQ(7, in.Position());
-    in.ReadData(read.data(), 2);
-    ASSERT_EQ(0x5, read[0]);
-    ASSERT_EQ(0x6, read[1]);
-    ASSERT_EQ(9, in.Position());
-    auto actual2 = in.ReadVolatile(4, 2);
-    ASSERT_EQ(actual2[0], data[1]);
-    ASSERT_EQ(6, in.Position());
-    auto actual3 = in.ReadVolatile(17, 1);
-    ASSERT_EQ(actual3[0], data[14]);
-    ASSERT_EQ(18, in.Position());
-  }
-
-  {
-    RemappedBytesViewInput::Mapping mapping;
-    mapping.emplace_back(3, 0);
-    mapping.emplace_back(5, 7);
-    mapping.emplace_back(25, 14);
-    RemappedBytesViewInput in(bytes_view(data.data(), data.size()),
-                              std::move(mapping));
-    auto actual = in.ReadVolatile(3, 2);
-    ASSERT_EQ(actual[1], data[1]);
-    ASSERT_EQ(5, in.Position());
-    auto actual2 = in.ReadVolatile(5, 2);
-    ASSERT_EQ(actual2[0], data[7]);
-    ASSERT_EQ(7, in.Position());
-    auto actual3 = in.ReadVolatile(25, 1);
-    ASSERT_EQ(actual3[0], data[14]);
-    ASSERT_EQ(26, in.Position());
-  }
 }

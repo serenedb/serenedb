@@ -105,7 +105,7 @@ struct CallbackFileSystem : HookFileSystem {
   AfterCallback after;
 };
 
-typedef std::tuple<tests::dir_param_f> index_test_context;
+typedef std::tuple<tests::DirParam> index_test_context;
 
 void AssertSnapshotEquality(irs::DirectoryReader lhs, irs::DirectoryReader rhs);
 

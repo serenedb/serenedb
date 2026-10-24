@@ -34,11 +34,11 @@
 
 namespace irs {
 
-inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
+inline void PrepareInput(std::string& str, IndexInput::ptr& in,
                          const ReaderState& state, std::string_view ext) {
   SDB_ASSERT(!in);
   irs::FileName(str, state.meta->name, ext);
-  in = state.dir->Open(str, advice);
+  in = state.dir->Open(str, duckdb::MappedFileAccess::RANDOM);
 
   format_utils::ReadFooter(*in, str);
 }
@@ -63,7 +63,7 @@ class PostingsReader final {
                              TermPostings::ptr reuse = {}) const;
 
   std::unique_ptr<IndexInput> ReopenPayload() const {
-    return _pay_in ? _pay_in->Reopen() : nullptr;
+    return _pay_in ? _pay_in->Dup() : nullptr;
   }
 
  private:
@@ -88,16 +88,14 @@ inline void PostingsReader::prepare(const ReaderState& state,
     (features & (IndexFeatures::Offs | IndexFeatures::Vec));
 
   // prepare document input
-  PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state, PostingsWriter::kDocExt);
+  PrepareInput(buf, _doc_in, state, PostingsWriter::kDocExt);
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state,
-                 PostingsWriter::kPosExt);
+    PrepareInput(buf, _pos_in, state, PostingsWriter::kPosExt);
   }
 
   if (needs_pay) {
-    PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
-                 PostingsWriter::kPayExt);
+    PrepareInput(buf, _pay_in, state, PostingsWriter::kPayExt);
   }
 }
 

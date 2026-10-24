@@ -162,8 +162,8 @@ void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
   const auto present = [&](std::string_view ext) {
     return absl::c_linear_search(meta.files, irs::FileName(meta.name, ext));
   };
-  col_reader = std::make_unique<ColReader>(
-    dir, meta.name, *options.db, present(kFormatExt), IOAdvice::RANDOM);
+  col_reader = std::make_unique<ColReader>(dir, meta.name, *options.db,
+                                           present(kFormatExt));
   idx_reader = std::make_unique<IdxReader>(
     dir, meta.name, present(kIdxFormatExt), options.hnsw_bases);
 }

@@ -212,7 +212,7 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
   ASSERT_TRUE(files.Has("segment"));
 
   store.ResetRequests();
-  auto in = files.Open("segment", irs::IOAdvice::NORMAL);
+  auto in = files.Open("segment", duckdb::MappedFileAccess::NORMAL);
   ASSERT_EQ(irs::DataInput::Type::Generic, in->GetType());
   for (uint32_t i = 0; i != 100000; ++i) {
     ASSERT_EQ(i, static_cast<uint32_t>(in->ReadI32()));
@@ -220,7 +220,7 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
   EXPECT_LE(store.Requests().get, 2);
 
   store.ResetRequests();
-  auto whole = files.Open("segment", irs::IOAdvice::READONCE);
+  auto whole = files.ReadWhole("segment");
   EXPECT_EQ(400000, whole->Length());
   EXPECT_EQ(1, store.Requests().get);
 
@@ -229,7 +229,7 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
   files.Visit([&](std::string_view name) { names.emplace_back(name); });
   EXPECT_EQ(std::vector<std::string>{"renamed"}, names);
   ASSERT_TRUE(files.Remove("renamed"));
-  ASSERT_THROW(files.Open("renamed", irs::IOAdvice::NORMAL),
+  ASSERT_THROW(files.Open("renamed", duckdb::MappedFileAccess::NORMAL),
                duckdb::IOException);
 }
 
@@ -263,7 +263,7 @@ TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
 
   store.ResetRequests();
   ASSERT_TRUE(files.Has("data"));
-  auto in = files.Open("data", irs::IOAdvice::NORMAL);
+  auto in = files.Open("data", duckdb::MappedFileAccess::NORMAL);
   EXPECT_EQ(400000, irs::format_utils::ReadFooter(*in, "data").data_len);
   in->Seek(399996);
   EXPECT_EQ(99999, static_cast<uint32_t>(in->ReadI32()));
@@ -273,7 +273,7 @@ TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
   EXPECT_EQ(0, store.Requests().get);
 
   duckdb::BlockCache::Get(db).Clear();
-  auto uncached = files.Open("data", irs::IOAdvice::NORMAL);
+  auto uncached = files.Open("data", duckdb::MappedFileAccess::NORMAL);
   EXPECT_EQ(400000, irs::format_utils::ReadFooter(*uncached, "data").data_len);
   EXPECT_EQ(0, store.Requests().get);
   uncached->Seek(399996);
@@ -283,7 +283,7 @@ TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
   EXPECT_EQ(2, store.Requests().get);
 
   store.ResetRequests();
-  auto whole = files.Open("data", irs::IOAdvice::READONCE);
+  auto whole = files.ReadWhole("data");
   EXPECT_EQ(400000, irs::format_utils::ReadFooter(*whole, "data").data_len);
   EXPECT_EQ(0, store.Requests().head);
   EXPECT_EQ(1, store.Requests().get);
@@ -300,12 +300,12 @@ TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
   irs::Directory restarted{db, root};
   store.ResetRequests();
   ASSERT_TRUE(restarted.Has("data"));
-  auto cold = restarted.Open("data", irs::IOAdvice::NORMAL);
+  auto cold = restarted.Open("data", duckdb::MappedFileAccess::NORMAL);
   EXPECT_EQ(400000, irs::format_utils::ReadFooter(*cold, "data").data_len);
   EXPECT_EQ(2, store.Requests().head);
 
   store.ResetRequests();
-  auto cold_whole = restarted.Open("data", irs::IOAdvice::READONCE);
+  auto cold_whole = restarted.ReadWhole("data");
   EXPECT_EQ(400000,
             irs::format_utils::ReadFooter(*cold_whole, "data").data_len);
   EXPECT_EQ(0, store.Requests().head);

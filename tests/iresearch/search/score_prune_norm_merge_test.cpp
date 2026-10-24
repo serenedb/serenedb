@@ -861,7 +861,7 @@ TEST_P(ScorePruneNormMergeCase, NonEssentialSingleBlockTermInLaterSegment) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs));
 INSTANTIATE_TEST_SUITE_P(ScorePruneNormMergeTest, ScorePruneNormMergeCase,

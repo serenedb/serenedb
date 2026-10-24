@@ -210,7 +210,7 @@ TEST_P(Format12TestCase, formats_12) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs));
 

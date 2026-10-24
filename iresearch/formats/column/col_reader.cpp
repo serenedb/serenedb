@@ -43,11 +43,11 @@ namespace irs {
 namespace {
 
 IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
-                            bool present, IOAdvice advice) {
+                            bool present, duckdb::MappedFileAccess access) {
   if (!present) {
     return nullptr;
   }
-  return dir.Open(FileName(segment_name), advice);
+  return dir.Open(FileName(segment_name), access);
 }
 
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
@@ -146,13 +146,20 @@ NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
 }  // namespace
 
 ColReader::ColReader(const Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db, IOAdvice advice)
-  : ColReader{dir, segment_name, db, dir.Has(FileName(segment_name)), advice} {}
+                     duckdb::DatabaseInstance& db)
+  : ColReader{db, segment_name,
+              OpenColFile(dir, segment_name, dir.Has(FileName(segment_name)),
+                          duckdb::MappedFileAccess::SEQUENTIAL)} {}
 
 ColReader::ColReader(const Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db, bool present,
-                     IOAdvice advice)
-  : _db{&db}, _ctx{db, OpenColFile(dir, segment_name, present, advice)} {
+                     duckdb::DatabaseInstance& db, bool present)
+  : ColReader{db, segment_name,
+              OpenColFile(dir, segment_name, present,
+                          duckdb::MappedFileAccess::RANDOM)} {}
+
+ColReader::ColReader(duckdb::DatabaseInstance& db,
+                     std::string_view segment_name, IndexInput::ptr in)
+  : _db{&db}, _ctx{db, std::move(in)} {
   if (!_ctx.HasIn()) {
     return;
   }

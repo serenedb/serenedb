@@ -5248,7 +5248,7 @@ TEST_P(BooleanFilterTestCase, excluded_only_child_is_discarded) {
   EXPECT_TRUE(CollectDocs(root, rdr, nullptr).empty());
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(boolean_filter_test, BooleanFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

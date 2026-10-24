@@ -25,17 +25,14 @@
 
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 
 namespace irs {
 
 class MappedFile {
  public:
-  MappedFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping,
-             IResourceManager* file_descriptors);
+  explicit MappedFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping);
   MappedFile(const MappedFile&) = delete;
   MappedFile& operator=(const MappedFile&) = delete;
-  ~MappedFile();
 
   bytes_view Bytes() const noexcept;
   duckdb::MemoryMappedFile& Mapping() noexcept { return *_mapping; }
@@ -45,7 +42,6 @@ class MappedFile {
 
  private:
   std::unique_ptr<duckdb::MemoryMappedFile> _mapping;
-  IResourceManager* _file_descriptors;
   file_utils::ResidencyMap _residency;
 };
 
@@ -56,7 +52,7 @@ class MappedInput final : public BytesViewInput {
   ptr Dup() const final { return std::make_unique<MappedInput>(*this); }
 
   void Prefetch(uint64_t offset, uint64_t count) const noexcept final;
-  void Advise(IOAdvice advice) noexcept final;
+  void Advise(duckdb::MappedFileAccess access) noexcept final;
   bool Warm(uint64_t offset, uint64_t count) const noexcept final;
   void MarkWarm(uint64_t offset, uint64_t count) const noexcept final;
 
@@ -65,7 +61,5 @@ class MappedInput final : public BytesViewInput {
 
   std::shared_ptr<MappedFile> _file;
 };
-
-duckdb::MappedFileAccess ToMappedFileAccess(IOAdvice advice) noexcept;
 
 }  // namespace irs

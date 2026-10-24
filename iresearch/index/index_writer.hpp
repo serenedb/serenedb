@@ -463,11 +463,6 @@ class IndexWriter : private util::Noncopyable {
     Abort();
   }
 
-  void RefreshFinish() {
-    std::lock_guard lock{_commit_lock};
-    Finish(true);
-  }
-
   void RefreshFinishRetryable() {
     _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
@@ -660,7 +655,7 @@ class IndexWriter : private util::Noncopyable {
   };
 
   struct FlushContext {
-    std::unique_ptr<RefTracker> refs;
+    RefTracker refs;
     absl::Mutex context_mutex;
     FlushContext* next{nullptr};
 

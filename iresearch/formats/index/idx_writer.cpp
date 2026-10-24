@@ -50,7 +50,7 @@ struct TermDictEntry {
 };
 
 struct IdxWriter::Impl {
-  const Directory* dir;
+  Directory dir;
   std::string filename;
   IndexOutput::ptr out;
   std::vector<IvfCentroidEntry> ivf_entries;
@@ -59,10 +59,8 @@ struct IdxWriter::Impl {
 };
 
 IdxWriter::IdxWriter(const Directory& dir, std::string_view segment_name)
-  : _impl{std::make_unique<Impl>()} {
-  _impl->dir = &dir;
-  _impl->filename = FileName(segment_name, kIdxFormatExt);
-}
+  : _impl{std::make_unique<Impl>(
+      Impl{.dir = dir, .filename = FileName(segment_name, kIdxFormatExt)})} {}
 
 IdxWriter::~IdxWriter() {
   if (_impl && _impl->out) {
@@ -74,7 +72,7 @@ void IdxWriter::EnsureOut() {
   if (_impl->out) {
     return;
   }
-  _impl->out = _impl->dir->Create(_impl->filename);
+  _impl->out = _impl->dir.Create(_impl->filename);
 }
 
 IndexOutput& IdxWriter::BlocksOut() {

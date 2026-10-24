@@ -39,15 +39,11 @@
 namespace sdb::catalog {
 
 inline constexpr std::string_view kEngineDir = "engine_v1";
-inline constexpr std::string_view kDataFile = "data.db";
 inline constexpr std::string_view kCatalogLog = "catalog.wal";
-inline constexpr std::string_view kStorageMarker = ".storage";
-inline constexpr std::string_view kTablespaceMarker = "tablespace";
 
 void SyncDirectory(const std::filesystem::path& directory);
 
 duckdb::FileSystem& StorageFileSystem();
-bool IsRemote(std::string_view path);
 std::string EngineDirOf(std::string_view location);
 
 struct StorageEntry {
@@ -117,11 +113,11 @@ class StorageDirectory final {
 
  private:
   std::string MarkerPath(duckdb::idx_t oid) const;
+  bool Remote() const noexcept { return _root && _root->Remote(); }
 
   std::shared_ptr<DatabaseDirectory> _database;
   std::shared_ptr<TablespaceRoot> _root;
   std::string _path;
-  bool _remote;
 };
 
 class DatabaseDirectory final
@@ -130,9 +126,10 @@ class DatabaseDirectory final
  public:
   DatabaseDirectory(duckdb::idx_t oid, std::shared_ptr<TablespaceRoot> root,
                     std::filesystem::path path);
-  explicit DatabaseDirectory(std::filesystem::path path);
+  DatabaseDirectory(duckdb::idx_t oid, std::filesystem::path path);
   ~DatabaseDirectory() final;
 
+  duckdb::idx_t Oid() const noexcept { return _oid; }
   const std::filesystem::path& Path() const noexcept { return _path; }
   std::string DataFile() const;
 

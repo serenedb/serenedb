@@ -356,7 +356,6 @@ constexpr irs::PosAttr::value_t kSlopValues[] = {1, 2, 5};
 
 struct Corpus {
   std::filesystem::path dir_path;
-  irs::Directory dir;
   irs::DirectoryReader reader;
 };
 
@@ -429,9 +428,7 @@ Corpus BuildIndex() {
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
   auto rdr = irs::DirectoryReader{dir, reader_opts};
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr)};
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
 // Builds a synthetic corpus where every document is 30x "zzcmn", one
@@ -489,9 +486,7 @@ Corpus BuildSyntheticIndex() {
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
   auto rdr = irs::DirectoryReader{dir, reader_opts};
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr)};
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
 // Builds a dense 3-term corpus: each doc is "aaa bbb ccc" repeated
@@ -545,9 +540,7 @@ Corpus BuildDense3Index() {
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
   auto rdr = irs::DirectoryReader{dir, reader_opts};
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr)};
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
 // Single-term corpus: each doc is "aaa" repeated kAllSameReps times.
@@ -598,9 +591,7 @@ Corpus BuildAllSameIndex() {
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
   auto rdr = irs::DirectoryReader{dir, reader_opts};
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr)};
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
 // Never-matching dense pair corpus: each doc is kFarApartReps of "aaa",
@@ -661,9 +652,7 @@ Corpus BuildFarApartIndex() {
   irs::IndexReaderOptions reader_opts2;
   reader_opts2.db = db;
   auto rdr2 = irs::DirectoryReader{dir, reader_opts2};
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr2)};
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr2)};
 }
 
 const Corpus& GetCorpus() {

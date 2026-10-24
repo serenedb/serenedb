@@ -55,18 +55,29 @@ struct IndexStamp {
   static IndexStamp Read(duckdb::BinaryDeserializer& in);
 };
 
+struct OpenedDirectory {
+  irs::Directory directory;
+  bool absent = false;
+};
+
 class IndexDurability {
  public:
   using ManifestSource =
     absl::AnyInvocable<std::shared_ptr<const FileManifest>() const>;
 
-  IndexDurability(duckdb::idx_t db_id, std::string name);
+  IndexDurability(duckdb::AttachedDatabase& database, std::string name,
+                  OpenedDirectory files);
+
+  const duckdb::weak_ptr<duckdb::AttachedDatabase>& Database() const noexcept {
+    return _database;
+  }
+  bool Absent() const noexcept { return _absent; }
 
   std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp> OpenWriter(
-    const irs::Directory& dir, bool on_disk, bool is_new,
-    irs::IndexWriterOptions options, ManifestSource manifest = nullptr);
-  static std::pair<irs::DirectoryReader, IndexStamp> OpenReader(
-    const irs::Directory& dir, const irs::IndexReaderOptions& options);
+    bool is_new, irs::IndexWriterOptions options,
+    ManifestSource manifest = nullptr);
+  std::pair<irs::DirectoryReader, IndexStamp> OpenReader(
+    const irs::IndexReaderOptions& options) const;
 
   const irs::SourcePosition& Position() const noexcept { return _position; }
   void MarkStaged(const irs::SourcePosition& position);
@@ -107,16 +118,16 @@ class IndexDurability {
   void WritePayload(const irs::SourcePosition& position,
                     const FileManifest* manifest,
                     duckdb::BinarySerializer& out);
-  void ResolvePendingSave(const irs::Directory& dir) const;
+  void ResolvePendingSave() const;
   bool CanPersist() const;
   uint64_t RunningCheckpoint(uint64_t generation) const;
   bool CheckpointWritten(uint64_t iteration) const;
   void WaitForCheckpoint() const;
 
-  duckdb::idx_t _db_id;
+  duckdb::weak_ptr<duckdb::AttachedDatabase> _database;
   std::string _name;
-  std::optional<irs::Directory> _files;
-  bool _on_disk = false;
+  irs::Directory _files;
+  bool _absent = false;
   std::atomic<bool> _directory_dirty{true};
   std::atomic<bool> _out_of_sync{false};
   std::atomic<bool> _reopen{false};

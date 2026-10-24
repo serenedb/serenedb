@@ -45,7 +45,6 @@ struct DataDirectory final : duckdb::StorageExtensionInfo {
 
   std::filesystem::path EngineDir() const;
   std::string CatalogLogFile() const;
-  std::filesystem::path DatabaseDir(duckdb::idx_t oid) const;
 
   std::string directory;
 };

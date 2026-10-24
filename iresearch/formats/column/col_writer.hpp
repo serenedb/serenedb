@@ -106,7 +106,7 @@ class ColWriter final {
                                    duckdb::CompressionType forced,
                                    bool hyperloglog);
 
-  const Directory* _dir;
+  Directory _dir;
   std::string _segment_name;
   std::string _filename;
   duckdb::DatabaseInstance* _db;

@@ -124,17 +124,13 @@ struct MaxMemoryCounter final : irs::IResourceManager {
 };
 
 struct TestResourceManager {
-  SimpleMemoryAccounter cached_columns;
   SimpleMemoryAccounter compactions;
-  SimpleMemoryAccounter file_descriptors;
   SimpleMemoryAccounter readers;
   SimpleMemoryAccounter transactions;
 
   irs::ResourceManagementOptions options{.transactions = &transactions,
                                          .readers = &readers,
-                                         .compactions = &compactions,
-                                         .file_descriptors = &file_descriptors,
-                                         .cached_columns = &cached_columns};
+                                         .compactions = &compactions};
 };
 
 class TestBase : public TestEnv, public ::testing::Test {

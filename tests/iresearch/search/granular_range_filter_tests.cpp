@@ -2162,7 +2162,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(granular_range_filter_test,
                          GranularRangeFilterTestCase,

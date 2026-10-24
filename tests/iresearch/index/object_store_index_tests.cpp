@@ -279,7 +279,7 @@ irs::IndexInput::ptr WriteUncached(const irs::Directory& dir) {
     }
   }
   duckdb::BlockCache::Get(Db()).Clear();
-  auto in = dir.Open("blocks", irs::IOAdvice::NORMAL);
+  auto in = dir.Open("blocks", duckdb::MappedFileAccess::NORMAL);
   tests::ObjectStore().ResetRequests();
   return in;
 }

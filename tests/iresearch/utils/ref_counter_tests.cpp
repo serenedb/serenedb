@@ -21,8 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <iresearch/utils/ref_counter.hpp>
-#include <unordered_map>
+#include <vector>
 
 #include "gtest/gtest.h"
 
@@ -40,6 +42,17 @@ class RefCounterTests : public ::testing::Test {
   }
 };
 
+template<typename Key>
+std::vector<Key> RemoveUnused(irs::RefCounter<Key>& refs) {
+  std::vector<Key> removed;
+  size_t finished = 0;
+  refs.RemoveUnused([&](const Key& key) { removed.push_back(key); },
+                    [&] { ++finished; });
+  EXPECT_EQ(1, finished);
+  absl::c_sort(removed);
+  return removed;
+}
+
 }  // namespace tests
 
 using namespace tests;
@@ -48,102 +61,71 @@ TEST_F(RefCounterTests, test_ref_counter_add) {
   {
     irs::RefCounter<int> refs;
 
-    ASSERT_EQ(0, refs.find(1));
-    ASSERT_EQ(0, refs.find(2));
-
     auto ref1a = refs.add(1);
     auto* ref1a_val = ref1a.get();
 
     ASSERT_EQ(2, ref1a.use_count());
     ASSERT_EQ(1, *(ref1a.get()));
-    ASSERT_EQ(1, refs.find(1));
 
     auto ref2 = refs.add(2);
 
     ASSERT_EQ(2, ref2.use_count());
     ASSERT_EQ(2, *(ref2.get()));
-    ASSERT_EQ(1, refs.find(2));
 
     auto ref1b = refs.add(1);
 
     ASSERT_EQ(3, ref1b.use_count());
     ASSERT_EQ(1, *(ref1b.get()));
     ASSERT_EQ(ref1a_val, ref1b.get());
-    ASSERT_EQ(2, refs.find(1));
 
     ref1a.reset();
     ASSERT_EQ(2, ref1b.use_count());
     ASSERT_EQ(1, *(ref1b.get()));
-    ASSERT_EQ(1, refs.find(1));
 
     ref1b.reset();
-    ASSERT_EQ(0, refs.find(1));
 
     auto ref1c = refs.add(1);
 
     ASSERT_EQ(2, ref1c.use_count());
     ASSERT_EQ(1, *(ref1c.get()));
     ASSERT_EQ(ref1a_val, ref1c.get());
-    ASSERT_EQ(1, refs.find(1));
   }
 
   {
     irs::RefCounter<std::string> refs;
-
-    ASSERT_EQ(0, refs.find("abc"));
-    ASSERT_EQ(0, refs.find("def"));
 
     auto ref1a = refs.add("abc");
     auto* ref1a_val = ref1a.get();
 
     ASSERT_EQ(2, ref1a.use_count());
     ASSERT_EQ(std::string("abc"), *(ref1a.get()));
-    ASSERT_EQ(1, refs.find("abc"));
 
     auto ref2 = refs.add("def");
 
     ASSERT_EQ(2, ref2.use_count());
     ASSERT_EQ(std::string("def"), *(ref2.get()));
-    ASSERT_EQ(1, refs.find("def"));
 
     auto ref1b = refs.add("abc");
 
     ASSERT_EQ(3, ref1b.use_count());
     ASSERT_EQ(std::string("abc"), *(ref1b.get()));
     ASSERT_EQ(ref1a_val, ref1b.get());
-    ASSERT_EQ(2, refs.find("abc"));
 
     ref1a.reset();
     ASSERT_EQ(2, ref1b.use_count());
     ASSERT_EQ(std::string("abc"), *(ref1b.get()));
-    ASSERT_EQ(1, refs.find("abc"));
 
     ref1b.reset();
-    ASSERT_EQ(0, refs.find("abc"));
 
     auto ref1c = refs.add("abc");
 
     ASSERT_EQ(2, ref1c.use_count());
     ASSERT_EQ(std::string("abc"), *(ref1c.get()));
     ASSERT_EQ(ref1a_val, ref1c.get());
-    ASSERT_EQ(1, refs.find("abc"));
   }
 }
 
-TEST_F(RefCounterTests, test_ref_counter_contains) {
-  irs::RefCounter<int> refs;
-
-  ASSERT_FALSE(refs.contains(1));
-  ASSERT_FALSE(refs.contains(2));
-
-  auto ref = refs.add(1);
-
-  ASSERT_TRUE(refs.contains(1));
-  ref.reset();
-  ASSERT_TRUE(refs.contains(1));
-}
-
-TEST_F(RefCounterTests, test_ref_counter_visit) {
+TEST_F(RefCounterTests, test_ref_counter_remove_unused) {
   irs::RefCounter<int> refs;
 
   auto ref1a = refs.add(1);
@@ -152,67 +134,34 @@ TEST_F(RefCounterTests, test_ref_counter_visit) {
   auto ref2b = refs.add(2);
   auto ref2c = refs.add(2);
 
-  // test full visitation
-  {
-    std::unordered_map<int, size_t> expected = {{1, 2}, {2, 3}};
-    auto visitor = [&expected](const irs::RefCounter<int>::ref_t& ref,
-                               size_t count) -> bool {
-      auto itr = expected.find(*ref);
-      EXPECT_EQ(itr->second, count);
-      expected.erase(itr);
-      return true;
-    };
+  ASSERT_TRUE(RemoveUnused(refs).empty());
 
-    ASSERT_TRUE(refs.visit(visitor));
-    ASSERT_TRUE(expected.empty());
-  }
+  ref1a.reset();
+  ref1b.reset();
+  ref2a.reset();
+  ASSERT_EQ(std::vector<int>{1}, RemoveUnused(refs));
+  ASSERT_TRUE(RemoveUnused(refs).empty());
 
-  // test early terminate
-  {
-    std::unordered_map<int, size_t> expected = {{1, 2}, {2, 3}};
-    auto visitor = [&expected](const irs::RefCounter<int>::ref_t& ref,
-                               size_t count) -> bool {
-      auto itr = expected.find(*ref);
-      EXPECT_EQ(itr->second, count);
-      expected.erase(itr);
-      return false;
-    };
+  ref2b.reset();
+  ref2c.reset();
+  ASSERT_EQ(std::vector<int>{2}, RemoveUnused(refs));
+  ASSERT_TRUE(RemoveUnused(refs).empty());
 
-    ASSERT_FALSE(refs.visit(visitor));
-    ASSERT_EQ(1, expected.size());  // only 1 element removed out of 2
-  }
+  auto ref1c = refs.add(1);
+  ASSERT_EQ(2, ref1c.use_count());
+  ASSERT_TRUE(RemoveUnused(refs).empty());
+}
 
-  // test remove unused
-  {
-    std::unordered_map<int, size_t> expected = {{1, 0}, {2, 2}};
-    auto visitor = [&expected](const irs::RefCounter<int>::ref_t& ref,
-                               size_t count) -> bool {
-      auto itr = expected.find(*ref);
-      EXPECT_EQ(itr->second, count);
-      expected.erase(itr);
-      return true;
-    };
+TEST_F(RefCounterTests, test_ref_counter_remove) {
+  irs::RefCounter<int> refs;
 
-    ref1a.reset();
-    ref1b.reset();
-    ref2a.reset();
-    ASSERT_FALSE(expected.empty());
-    ASSERT_TRUE(refs.visit(visitor, true));
-    ASSERT_TRUE(expected.empty());
-  }
+  auto ref = refs.add(1);
+  auto* value = ref.get();
+  ASSERT_TRUE(refs.remove(1));
+  ASSERT_FALSE(refs.remove(1));
+  ASSERT_EQ(1, ref.use_count());
 
-  // test empty
-  {
-    auto visitor = [](const irs::RefCounter<int>::ref_t& /*ref*/,
-                      size_t /*count*/) -> bool { return true; };
-
-    ASSERT_FALSE(refs.empty());
-    ASSERT_TRUE(refs.visit(visitor, true));
-    ASSERT_FALSE(refs.empty());
-    ref2b.reset();
-    ref2c.reset();
-    ASSERT_FALSE(refs.empty());
-    ASSERT_TRUE(refs.visit(visitor, true));
-    ASSERT_TRUE(refs.empty());
-  }
+  auto readded = refs.add(1);
+  ASSERT_NE(value, readded.get());
+  ASSERT_EQ(1, *readded);
 }

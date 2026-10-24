@@ -40,7 +40,7 @@ namespace irs {
 struct FieldMeta;
 
 // The streams a posting list lives in. Handed to whatever decodes a term's
-// postings so it can reopen what it needs; `pos` and `pay` are null for a
+// postings so it can duplicate what it needs; `pos` and `pay` are null for a
 // field that stores neither.
 struct PostingsHandles {
   const IndexInput* doc = nullptr;

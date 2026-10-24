@@ -141,7 +141,7 @@ class PositionImpl final : public PosAttr {
   template<typename InputType>
   void Prepare(const DocState& state) {
     if (!_pos.in) {
-      _pos.in = irs::utils::downCast<InputType>(*state.pos_in).Reopen();
+      _pos.in = irs::utils::downCast<InputType>(*state.pos_in).Dup();
       SDB_ASSERT(_pos.in);
       _pos.view = block_io::View(*_pos.in);
     }
@@ -151,7 +151,7 @@ class PositionImpl final : public PosAttr {
 
     if constexpr (IteratorTraits::Offset()) {
       if (!_pay.in) {
-        _pay.in = irs::utils::downCast<InputType>(*state.pay_in).Reopen();
+        _pay.in = irs::utils::downCast<InputType>(*state.pay_in).Dup();
         SDB_ASSERT(_pay.in);
         _pay.view = block_io::View(*_pay.in);
       }

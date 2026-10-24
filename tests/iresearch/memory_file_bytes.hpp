@@ -30,7 +30,8 @@ namespace tests {
 inline irs::bstring Bytes(irs::MemoryFile& file) {
   irs::bstring bytes;
   irs::BytesOutput out{bytes};
-  file >> out;
+  file.Visit(
+    [&](const irs::byte_type* b, size_t len) { out.WriteData(b, len); });
   return bytes;
 }
 

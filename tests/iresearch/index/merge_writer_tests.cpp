@@ -136,7 +136,7 @@ void ValidateTerms(
 
 using namespace tests;
 
-struct MergeWriterTestCase : public tests::DirectoryTestCaseBase<> {
+struct MergeWriterTestCase : public tests::DirectoryTestCaseBase {
   void EnsureDocBlocksNotMixed();
 };
 
@@ -2220,7 +2220,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
   GTEST_SKIP() << "sorted-index merge path not supported";
 }
 
-INSTANTIATE_TEST_SUITE_P(merge_writer_test, MergeWriterTestCase,
-                         ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>)),
-                         &MergeWriterTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  merge_writer_test, MergeWriterTestCase,
+  ::testing::Combine(::testing::Values(tests::kMemoryDirParam)),
+  &MergeWriterTestCase::to_string);

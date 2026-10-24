@@ -374,7 +374,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
 
   const irs::ReaderState state{.dir = &dir, .meta = &meta};
 
-  auto in = dir.Open("attributes", irs::IOAdvice::NORMAL);
+  auto in = dir.Open("attributes", duckdb::MappedFileAccess::NORMAL);
   EXPECT_FALSE(!in);
   [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(*in);
 
@@ -723,8 +723,7 @@ void Format15TestCase::AssertStressPostings(DocsView docs) {
   AssertPostings(docs, kOffs, kOffs);
 }
 
-static const auto kTestDirs =
-  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefault>());
+static const auto kTestDirs = ::testing::ValuesIn(tests::kDirParams);
 
 static const auto kTestValues = ::testing::Combine(kTestDirs);
 

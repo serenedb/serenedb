@@ -83,7 +83,7 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
 
 ColWriter::ColWriter(const Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db)
-  : _dir{&dir},
+  : _dir{dir},
     _segment_name{segment_name},
     _filename{FileName(segment_name)},
     _db{&db} {}
@@ -98,7 +98,7 @@ void ColWriter::EnsureOut() {
   if (_out) {
     return;
   }
-  _out = _dir->Create(_filename);
+  _out = _dir.Create(_filename);
   _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
 }
 
@@ -310,7 +310,7 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
   if (!_committed || _ann_writers.empty()) {
     co_return true;
   }
-  ColReader reader{*_dir, _segment_name, *_db};
+  ColReader reader{_dir, _segment_name, *_db};
   for (auto& entry : _ann_writers) {
     if (!progress()) {
       co_return false;

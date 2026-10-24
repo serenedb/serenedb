@@ -208,6 +208,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   duckdb::idx_t _tablespace;
 };
 
+std::vector<duckdb::reference<SearchTableEntry>> SearchTableEntries(
+  duckdb::DuckCatalog& catalog);
 std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
   duckdb::DuckCatalog& catalog);
 

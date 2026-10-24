@@ -1057,7 +1057,7 @@ void IndexWriter::FlushContext::Reset() noexcept {
     }
   }
   ClearPending();
-  refs->Clear();
+  refs.Clear();
 }
 
 void IndexWriter::Cleanup(FlushContext& curr) noexcept {
@@ -1082,8 +1082,7 @@ void IndexWriter::FlushContext::FlushPending() {
 IndexWriter::SegmentContext::SegmentContext(
   const Directory& dir, segment_meta_generator_t&& meta_generator,
   const SegmentWriterOptions& options)
-  : refs{dir.Refs()},
-    dir{dir.Tracking(refs)},
+  : dir{dir.Tracking(refs)},
     queries{{options.resource_manager}},
     flushed{{options.resource_manager}},
     meta_generator{std::move(meta_generator)},
@@ -1267,10 +1266,8 @@ IndexWriter::IndexWriter(
   // setup round-robin chain
   auto* ctx = _flush_contexts.data();
   for (auto* last = ctx + _flush_contexts.size() - 1; ctx != last; ++ctx) {
-    ctx->refs = std::make_unique<RefTracker>(dir.Refs());
     ctx->next = ctx + 1;
   }
-  ctx->refs = std::make_unique<RefTracker>(dir.Refs());
   ctx->next = _flush_contexts.data();
 }
 
@@ -1342,19 +1339,17 @@ IndexWriter::ptr IndexWriter::Make(const Directory& dir, OpenMode mode,
   DirectoryMeta meta;
 
   {
-    const bool index_exists = index_meta::LastFile(dir, meta.filename);
-
-    if (kOmCreate == mode ||
-        ((kOmCreate | kOmAppend) == mode && !index_exists)) {
-      if (index_exists) {
-        meta.index_meta.gen = index_meta::ParseGeneration(meta.filename);
+    auto last = index_meta::LastFile(dir);
+    if (kOmCreate == mode || ((kOmCreate | kOmAppend) == mode && !last)) {
+      if (last) {
+        meta.index_meta.gen = index_meta::ParseGeneration(*last);
         meta.index_meta.seg_counter = MaxSegmentId(dir);
-        meta.filename.clear();  // Empty index meta -> new index
       }
-    } else if (!index_exists) {
+    } else if (!last) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
                       ERR_MSG("the directory holds no index to open"));
     } else {
+      meta.filename = std::move(*last);
       index_meta::Read(dir, meta.index_meta, meta.filename,
                        std::move(options.meta_payload_reader));
     }
@@ -1556,7 +1551,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   // Increment active meta
   compaction_segment.meta.name = FileName(NextSegmentId());
 
-  RefTracker tracker{_dir.Refs()};
+  RefTracker tracker;
   const auto dir = _dir.Tracking(tracker);
 
   MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
@@ -2008,7 +2003,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   const auto& progress =
     (info.progress != nullptr ? info.progress : kNoProgress);
 
-  const auto dir = _dir.Tracking(*ctx->refs);
+  const auto dir = _dir.Tracking(ctx->refs);
   const auto& committed_reader = *_committed_reader;
   const auto queries = CollectQueries(ctx->segments);
 
@@ -2113,9 +2108,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 void IndexWriter::ApplyFlush(PendingContext&& context) {
   SDB_ASSERT(!_pending_state.Valid());
   SDB_ASSERT(context.ctx);
-  SDB_ASSERT(context.ctx->refs != nullptr);
 
-  const auto dir = _dir.Tracking(*context.ctx->refs);
+  const auto dir = _dir.Tracking(context.ctx->refs);
 
   std::string index_meta_file;
   DirectoryMeta to_commit{.index_meta = std::move(context.meta)};

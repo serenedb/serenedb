@@ -90,21 +90,18 @@ void FormatTestCase::AssertNoDirectoryArtifacts(
   dir.Visit(visitor);
 
   irs::IndexMeta index_meta;
-  std::string segment_file;
 
   std::unordered_set<std::string> index_files(expect_additional.begin(),
                                               expect_additional.end());
-  const bool exists = irs::index_meta::LastFile(dir, segment_file);
-
-  if (exists) {
-    irs::index_meta::Read(dir, index_meta, segment_file);
+  if (const auto segment_file = irs::index_meta::LastFile(dir)) {
+    irs::index_meta::Read(dir, index_meta, *segment_file);
 
     VisitFiles(index_meta, [&index_files](const std::string& file) {
       index_files.emplace(file);
       return true;
     });
 
-    index_files.insert(segment_file);
+    index_files.insert(*segment_file);
   }
 
   for (auto& file : dir_files) {
@@ -121,7 +118,7 @@ auto MakeByTerm(irs::field_id id, std::string_view value) {
   return filter;
 }
 
-TEST_P(FormatTestCase, directory_artifact_cleaner) {
+TEST_P(FormatTestCase, unreferenced_files_removed) {
   tests::JsonDocGenerator gen{resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory};
   const tests::Document* doc1 = gen.next();
@@ -278,18 +275,17 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     std::unordered_set<std::string> reader_files;
     {
       irs::IndexMeta index_meta;
-      std::string segments_file;
-      const bool exists = irs::index_meta::LastFile(*dir, segments_file);
-      ASSERT_TRUE(exists);
+      const auto segments_file = irs::index_meta::LastFile(*dir);
+      ASSERT_TRUE(segments_file);
 
-      irs::index_meta::Read(*dir, index_meta, segments_file);
+      irs::index_meta::Read(*dir, index_meta, *segments_file);
 
       VisitFiles(index_meta, [&reader_files](std::string_view file) {
         reader_files.emplace(file);
         return true;
       });
 
-      reader_files.emplace(segments_file);
+      reader_files.emplace(*segments_file);
     }
 
     // add second segment (creating new index_meta file, not-removing old)
@@ -404,8 +400,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     auto writer = irs::IndexWriter::Make(*dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
-    // if directory has files (for fs directory) then ensure only valid
-    // meta+segments loaded
+    // opening the writer removes files no index meta references
     ASSERT_FALSE(dir->Has("dummy.file.1"));
     ASSERT_FALSE(dir->Has("dummy.file.2"));
     AssertNoDirectoryArtifacts(*dir);
@@ -736,7 +731,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     irs::SegmentMeta meta;
     meta.name = "segment_name";
 
-    irs::IdxReader idx{dir(), "segment_name", nullptr};
+    irs::IdxReader idx{dir(), "segment_name", true, nullptr};
     irs::burst_trie::FieldReader reader_obj{irs::IResourceManager::gNoop};
     auto* reader = &reader_obj;
     reader->prepare(
@@ -1135,7 +1130,7 @@ TEST_P(FormatTestCase, format_utils_footer) {
     });
   };
   const auto read = [&](std::string_view name, std::string_view data) {
-    auto stream = dir().Open(name, irs::IOAdvice::NORMAL);
+    auto stream = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
     ASSERT_NE(nullptr, stream);
     uint32_t value = 0;
     uint64_t data_size = 0;
@@ -1171,7 +1166,7 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
 
   irs::bstring bytes;
   {
-    auto stream = dir().Open("file", irs::IOAdvice::NORMAL);
+    auto stream = dir().Open("file", duckdb::MappedFileAccess::NORMAL);
     ASSERT_NE(nullptr, stream);
     bytes.resize(stream->Length());
     stream->ReadData(0, bytes.data(), bytes.size());
@@ -1185,7 +1180,7 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
     }
   };
   const auto read = [&](std::string_view name) {
-    auto stream = dir().Open(name, irs::IOAdvice::NORMAL);
+    auto stream = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
     ASSERT_NE(nullptr, stream);
     irs::format_utils::ReadFooter(
       *stream, name, [](duckdb::BinaryDeserializer& meta, uint64_t) {

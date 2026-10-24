@@ -282,7 +282,7 @@ class PostingReader {
 
   Input& In() {
     if (_in == nullptr) [[unlikely]] {
-      _owned = _doc->Reopen();
+      _owned = _doc->Dup();
       SDB_ASSERT(_owned);
       _in = &irs::utils::downCast<Input>(*_owned);
     }

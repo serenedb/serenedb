@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <duckdb/common/file_opener.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <limits>
@@ -43,25 +42,31 @@ struct PendingUploads {
 
 PendingUploads CurrentUploads() noexcept;
 
+struct RemoteUpload {
+  FileInfos& infos;
+  duckdb::BlockCache& cache;
+  std::string_view name;
+};
+
 class FileOutput final : public IndexOutput {
  public:
   static constexpr size_t kMaxTail = 16 << 10;
 
   static ptr Open(duckdb::FileSystem& fs, const std::string& path,
-                  const ResourceManagementOptions& rm, FileInfos* infos,
-                  std::string_view name, duckdb::BlockCache* cache);
+                  const ResourceManagementOptions& rm, FileTracker* tracker,
+                  const RemoteUpload* remote);
 
   ~FileOutput() final;
 
  private:
   FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
-             const ResourceManagementOptions& rm, FileInfos* infos,
-             std::string_view name, duckdb::BlockCache* cache);
+             const ResourceManagementOptions& rm, FileTracker* tracker,
+             const RemoteUpload* remote);
 
   void Flush() final;
   uint32_t Checksum() final;
   void BeginTail() final;
-  uint64_t CloseImpl() final;
+  void CloseImpl() final;
   void WriteDirect(const byte_type* b, size_t len) final;
   void WriteHandle(const byte_type* b, size_t len);
   void KeepTail(const byte_type* b, size_t len);
@@ -75,6 +80,7 @@ class FileOutput final : public IndexOutput {
   std::unique_ptr<duckdb::FileHandle> _handle;
   Crc32c _crc;
   uint64_t _unhinted = 0;
+  FileTracker* _tracker = nullptr;
   FileInfos* _infos = nullptr;
   std::string _name;
   uint64_t _tail_start = std::numeric_limits<uint64_t>::max();

@@ -86,27 +86,26 @@ struct SearchTable::ReplaySession {
 };
 
 SearchTable::SearchTable(std::optional<catalog::StorageDirectory> parent,
-                         bool in_memory, bool read_only, duckdb::idx_t db_id,
+                         duckdb::AttachedDatabase& database,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
                          catalog::CompressionByColumn compression)
-  : _db_id{db_id},
+  : _db_id{database.oid},
     _table_id{table_id},
     _parent{std::move(parent)},
-    _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
     _compression{std::move(compression)},
-    _durability{db_id, absl::StrCat("search table ", table_id)} {
+    _durability{database, absl::StrCat("search table ", table_id),
+                OpenStorageDirectory(_parent, table_id, is_new,
+                                     database.GetStorageManager().InMemory())} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
   }
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
-  if (read_only) {
-    OpenDirectory();
-  } else {
-    OpenWriter(in_memory);
+  if (!database.IsReadOnly()) {
+    OpenWriter(is_new);
   }
   ApplyOptions(options);
 }
@@ -115,32 +114,22 @@ SearchTable::~SearchTable() {
   _replay.reset();
   _writer.reset();
   _reader = {};
-  _dir.reset();
   if (!_parent || !_dropped.load(std::memory_order_acquire)) {
     return;
   }
   _parent->RemoveStorage(_table_id);
 }
 
-void SearchTable::OpenWriter(bool in_memory) {
-  irs::ResourceManagementOptions resource_manager;
-  auto opened = OpenStorageDirectory(_parent, GetTableId(), _is_new, in_memory,
-                                     resource_manager);
-  _dir = std::move(opened.directory);
-  _absent = opened.absent;
-
+void SearchTable::OpenWriter(bool is_new) {
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
-  writer_options.cleanup_on_open = _is_new;
+  writer_options.cleanup_on_open = is_new;
   writer_options.lock_repository = false;
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
 
-  _writer =
-    _durability
-      .OpenWriter(*_dir, opened.on_disk, _is_new, std::move(writer_options))
-      .first;
+  _writer = _durability.OpenWriter(is_new, std::move(writer_options)).first;
 
   auto& db_manager =
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
@@ -161,16 +150,8 @@ void SearchTable::OpenWriter(bool in_memory) {
   }
 }
 
-void SearchTable::OpenDirectory() {
-  irs::ResourceManagementOptions resource_manager;
-  auto opened =
-    OpenStorageDirectory(_parent, GetTableId(), false, false, resource_manager);
-  _dir = std::move(opened.directory);
-  _absent = opened.absent;
-}
-
 void SearchTable::OpenReader() {
-  _reader = IndexDurability::OpenReader(*_dir, ReaderOptions()).first;
+  _reader = _durability.OpenReader(ReaderOptions()).first;
 }
 
 irs::IndexReaderOptions SearchTable::ReaderOptions() const {
@@ -439,17 +420,6 @@ absl::Status SearchTable::VacuumRefresh() {
     return res;
   }
   return CleanupUnsafe().res;
-}
-
-absl::Status SearchTable::OptimizeInMemory() {
-  RefreshResult code = RefreshResult::Undefined;
-  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-    return res;
-  }
-  if (auto res = _durability.CompactFiles(*_writer); !res.ok()) {
-    return res;
-  }
-  return RefreshUnsafe(/*wait=*/true, nullptr, code).res;
 }
 
 absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {

@@ -82,7 +82,6 @@ class IndexBuilder {
 
   void IndexFrom(LineSource& source, BatchHandlerFactory factory);
 
-  irs::Directory& GetDirectory() { return _dir; }
   irs::IndexWriter& GetWriter() { return *_writer; }
   auto GetReader() { return _writer->GetSnapshot(); }
 

@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/common/serializer/read_stream.hpp>
 #include <iterator>
 #include <memory>
@@ -32,8 +33,6 @@
 #include "iresearch/utils/noncopyable.hpp"
 
 namespace irs {
-
-enum class IOAdvice : uint32_t;
 
 class DataInput : public duckdb::ReadStream {
  public:
@@ -116,10 +115,7 @@ class IndexInput : public DataInput {
   using DataInput::ReadData;
   virtual void ReadData(uint64_t offset, byte_type* b, size_t count) = 0;
 
-  // TODO(mbkkt) now they're both implemented the same they,
-  // also it doesn't look like all users aware. Maybe we should remove dup?
-  virtual ptr Dup() const = 0;     // thread-unsafe fd copy (offset preserved)
-  virtual ptr Reopen() const = 0;  // thread-safe fd copy (offset preserved)
+  virtual ptr Dup() const = 0;
 
   // Checksum from the current position to a specified offset
   // without changing current position.
@@ -140,7 +136,7 @@ class IndexInput : public DataInput {
 
   virtual void MarkWarm(uint64_t, uint64_t) const noexcept {}
 
-  virtual void Advise(IOAdvice) noexcept {}
+  virtual void Advise(duckdb::MappedFileAccess) noexcept {}
 
   IndexInput& operator=(const IndexInput&) = delete;
 

@@ -167,7 +167,9 @@ void SegmentWriter::flush(IndexSegment& segment,
   meta.docs_count = state.doc_count;
   meta.live_docs_count =
     meta.docs_count - static_cast<doc_id_t>(docs_mask.Count());
-  meta.files = _tracker.Flush(meta.byte_size);
+  auto flushed = _tracker.Flush();
+  meta.files = std::move(flushed.files);
+  meta.byte_size = flushed.bytes;
 }
 
 void SegmentWriter::SetFieldOptions(

@@ -868,7 +868,9 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     co_return false;
   }
 
-  segment.files = tracker.Flush(segment.byte_size);
+  auto flushed = tracker.Flush();
+  segment.files = std::move(flushed.files);
+  segment.byte_size = flushed.bytes;
   if (segment.live_docs_count == 0) {
     co_return false;
   }

@@ -67,7 +67,7 @@ inline IndexInput::ptr OpenDocInput(const PostingMeta& meta,
   if (meta.inline_size != 0) {
     return std::make_unique<BytesViewInput>(meta.Inline());
   }
-  auto in = doc_in.Reopen();
+  auto in = doc_in.Dup();
   SDB_ASSERT(in);
   in->Seek(meta.doc_start);
   return in;

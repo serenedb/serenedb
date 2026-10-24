@@ -36,7 +36,7 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(
     _tablespace{info.tablespace_oid},
     _directory{directory ? std::move(directory)
                          : catalog.Cast<ClusterCatalog>().MakeDatabaseDirectory(
-                             oid, _tablespace)} {
+                             oid, Tablespace())} {
   comment = info.comment;
   tags = info.tags;
   permissions = info.permissions;

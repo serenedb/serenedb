@@ -114,7 +114,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
  private:
   void CompactCatalogLog();
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
-  bool HoldsTablespaceObjects(duckdb::idx_t tablespace);
+  bool HoldsTablespaceObjects(const TablespaceCatalogEntry& tablespace);
 
   struct KnownRoot {
     std::weak_ptr<TablespaceRoot> root;

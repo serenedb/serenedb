@@ -73,38 +73,4 @@ uint32_t BytesViewInput::Checksum(uint64_t offset) const {
   return crc.checksum();
 }
 
-uint64_t RemappedBytesViewInput::Position() const noexcept {
-  const auto addr = _input.Position();
-  auto diff = std::numeric_limits<size_t>::max();
-  SDB_ASSERT(!_mapping.empty());
-  MappingValue src = _mapping.front();
-  for (const auto& m : _mapping) {
-    if (m.second < addr) {
-      if (addr - m.second < diff) {
-        diff = addr - m.second;
-        src = m;
-      }
-    }
-  }
-  if (diff == std::numeric_limits<size_t>::max()) [[unlikely]] {
-    SDB_ASSERT(false);
-    return 0;
-  }
-  return src.first + (addr - src.second);
-}
-
-uint64_t RemappedBytesViewInput::SourceToInternal(
-  uint64_t offset) const noexcept {
-  SDB_ASSERT(!_mapping.empty());
-  auto it = absl::c_lower_bound(
-    _mapping, offset, [](const auto& l, const auto& r) { return l.first < r; });
-  if (it == _mapping.end()) {
-    --it;
-  } else if (it->first > offset) {
-    SDB_ASSERT(it != _mapping.begin());
-    --it;
-  }
-  return it->second + (offset - it->first);
-}
-
 }  // namespace irs

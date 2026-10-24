@@ -55,29 +55,26 @@ MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
   auto& context = _context;
   auto& cluster = catalog::ClusterOf(context);
   cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-    .Scan(cluster.GetCatalogTransaction(context),
-          [&](duckdb::CatalogEntry& db) {
-            values.push_back(PgDatabase{
-              .oid = db.oid,
-              .datname = db.name.GetIdentifierName(),
-              .datdba = db.permissions.owner,
-              .encoding = 6,  // UTF8
-              .datlocprovider = PgDatabase::Datlocprovider::Libc,
-              .datistemplate = false,
-              .datallowconn = true,
-              .dathasloginevt = false,
-              .datconnlimit = -1,
-              .datfrozenxid = 0,
-              .datminmxid = 0,
-              .dattablespace =
-                db.Cast<catalog::DatabaseCatalogEntry>().Tablespace() == 0
-                  ? kPgDefaultTablespace
-                  : db.Cast<catalog::DatabaseCatalogEntry>().Tablespace(),
-              .datcollate = "C.UTF-8",
-              .datctype = "C.UTF-8",
-              .datacl = {std::span<const duckdb::AclItem>{db.permissions.acl}},
-            });
-          });
+    .Scan(cluster.GetCatalogTransaction(context), [&](
+                                                    duckdb::CatalogEntry& db) {
+      values.push_back(PgDatabase{
+        .oid = db.oid,
+        .datname = db.name.GetIdentifierName(),
+        .datdba = db.permissions.owner,
+        .encoding = 6,  // UTF8
+        .datlocprovider = PgDatabase::Datlocprovider::Libc,
+        .datistemplate = false,
+        .datallowconn = true,
+        .dathasloginevt = false,
+        .datconnlimit = -1,
+        .datfrozenxid = 0,
+        .datminmxid = 0,
+        .dattablespace = db.Cast<catalog::DatabaseCatalogEntry>().Tablespace(),
+        .datcollate = "C.UTF-8",
+        .datctype = "C.UTF-8",
+        .datacl = {std::span<const duckdb::AclItem>{db.permissions.acl}},
+      });
+    });
 
   auto result = CreateColumns<PgDatabase>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

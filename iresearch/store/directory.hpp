@@ -25,8 +25,8 @@
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
-#include <atomic>
 #include <duckdb/common/memory_file_system.hpp>
+#include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <memory>
@@ -38,20 +38,10 @@
 
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/ref_counter.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 
 namespace irs {
-
-enum class IOAdvice : uint32_t {
-  NORMAL = 0,
-  SEQUENTIAL = 1,
-  RANDOM = 2,
-  READONCE = 4,
-};
-
-ENABLE_BITMASK_ENUM(IOAdvice);
 
 enum class StorageKind : uint8_t {
   Local,
@@ -83,12 +73,17 @@ class FileInfos {
   absl::flat_hash_map<std::string, FileInfo> _infos ABSL_GUARDED_BY(_mutex);
 };
 
+struct TrackedFiles {
+  std::vector<std::string> files;
+  uint64_t bytes = 0;
+};
+
 class FileTracker {
  public:
   void Add(std::string_view name) { _files.emplace(name); }
   void AddBytes(uint64_t size) noexcept { _files_size += size; }
 
-  std::vector<std::string> Flush(uint64_t& files_size);
+  TrackedFiles Flush();
   void Clear() noexcept;
 
  private:
@@ -98,24 +93,19 @@ class FileTracker {
 
 class RefTracker {
  public:
-  explicit RefTracker(IndexFileRefs& refs) noexcept : _refs{&refs} {}
-
-  IndexFileRefs::ref_t Add(std::string_view name) { return _refs->add(name); }
-  void Forget(std::string_view name) { _refs->remove(name); }
   void Keep(IndexFileRefs::ref_t ref);
-  void Remove(std::string_view name);
-  void Rename(std::string_view src, std::string_view dst);
+  void Forget(std::string_view name);
+  void Replace(std::string_view src, IndexFileRefs::ref_t dst);
 
   std::vector<IndexFileRefs::ref_t> GetRefs() const;
-  void Clear() const;
+  void Clear();
 
  private:
   using Refs = absl::flat_hash_set<IndexFileRefs::ref_t, IndexFileRefs::Hash,
                                    IndexFileRefs::EqualTo>;
 
-  IndexFileRefs* _refs;
   mutable absl::Mutex _mutex;
-  mutable Refs _tracked ABSL_GUARDED_BY(_mutex);
+  Refs _tracked ABSL_GUARDED_BY(_mutex);
 };
 
 class Directory {
@@ -127,14 +117,14 @@ class Directory {
     duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
     const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
 
-  static Directory PrivateMemory(
-    duckdb::DatabaseInstance& db,
-    const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
+  static Directory PrivateMemory(duckdb::DatabaseInstance& db);
 
   IndexOutput::ptr Create(std::string_view name) const;
-  IndexInput::ptr Open(std::string_view name, IOAdvice advice) const;
+  IndexInput::ptr Open(std::string_view name,
+                       duckdb::MappedFileAccess access) const;
+  IndexInput::ptr ReadWhole(std::string_view name) const;
   bool Has(std::string_view name) const;
-  bool Remove(std::string_view name) const noexcept;
+  bool Remove(std::string_view name) const;
   void Rename(std::string_view src, std::string_view dst) const;
   void Sync(std::span<const std::string_view> names) const;
   void SyncDirectory() const;
@@ -172,7 +162,7 @@ class Directory {
     ResourceManagementOptions rm;
     std::unique_ptr<duckdb::MemoryFileSystem> heap;
     IndexFileRefs refs;
-    std::optional<FileInfos> infos;
+    FileInfos infos;
   };
 
   explicit Directory(std::shared_ptr<State> state) noexcept
@@ -182,13 +172,13 @@ class Directory {
     return Kind() == StorageKind::Remote ||
            (Kind() == StorageKind::Memory && !_state->heap);
   }
-  bool RemoveFile(std::string_view name) const noexcept;
+  bool RemoveFile(std::string_view name) const;
+  bool RemoveUnusedFile(std::string_view name) const noexcept;
   size_t RemoveFiles(std::span<const std::string> names) const noexcept;
-  IndexInput::ptr OpenMapped(const std::string& path, IOAdvice advice) const;
+  IndexInput::ptr OpenMapped(const std::string& path,
+                             duckdb::MappedFileAccess access) const;
   IndexInput::ptr OpenBlocks(const std::string& path, std::string_view name,
-                             IOAdvice advice) const;
-  IndexInput::ptr ReadWhole(const std::string& path,
-                            std::string_view name) const;
+                             duckdb::MappedFileAccess access) const;
   duckdb::BlockCache& Cache() const;
   duckdb::MemoryFileSystem& MemoryFiles() const;
 

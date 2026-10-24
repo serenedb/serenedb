@@ -106,7 +106,7 @@ class Format10TestCase : public tests::FormatTestCase {
       state.dir = dir.get();
       state.meta = &meta;
 
-      auto in = dir->Open("attributes", irs::IOAdvice::NORMAL);
+      auto in = dir->Open("attributes", duckdb::MappedFileAccess::NORMAL);
       ASSERT_FALSE(!in);
       const auto tmp = irs::ReadString<std::string>(*in);
 
@@ -333,7 +333,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     state.dir = &dir();
     state.meta = &meta;
 
-    auto in = dir().Open("attributes", irs::IOAdvice::NORMAL);
+    auto in = dir().Open("attributes", duckdb::MappedFileAccess::NORMAL);
     ASSERT_FALSE(!in);
 
     // prepare reader
@@ -471,7 +471,7 @@ TEST_P(Format10TestCase, postings_read_write) {
     state.dir = &dir();
     state.meta = &meta;
 
-    auto in = dir().Open("attributes", irs::IOAdvice::NORMAL);
+    auto in = dir().Open("attributes", duckdb::MappedFileAccess::NORMAL);
     ASSERT_FALSE(!in);
 
     // prepare reader
@@ -777,7 +777,7 @@ TEST_P(Format10TestCase, ires336) {
   irs::SegmentMeta meta;
   meta.name = segment_name;
 
-  irs::IdxReader idx_reader{*dir, segment_name, nullptr};
+  irs::IdxReader idx_reader{*dir, segment_name, true, nullptr};
   irs::burst_trie::FieldReader fr_obj{irs::IResourceManager::gNoop};
   auto* fr = &fr_obj;
   fr->prepare(
@@ -982,7 +982,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         state.dir = dir.get();
         state.meta = &meta;
 
-        auto in = dir->Open("attributes", irs::IOAdvice::NORMAL);
+        auto in = dir->Open("attributes", duckdb::MappedFileAccess::NORMAL);
         ASSERT_FALSE(!in);
         const auto tmp = irs::ReadString<std::string>(*in);
 
@@ -1124,7 +1124,7 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
     << message;
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs));
 

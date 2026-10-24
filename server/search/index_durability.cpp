@@ -27,7 +27,6 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
-#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/valid_checker.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_lock.hpp>
@@ -36,12 +35,10 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <mutex>
-
-#include "catalog/database_directory.h"
+#include <tuple>
 
 namespace sdb::search {
 namespace {
@@ -50,18 +47,6 @@ constexpr duckdb::field_id_t kFieldWalGeneration = 1;
 constexpr duckdb::field_id_t kFieldWalOffset = 2;
 constexpr duckdb::field_id_t kFieldManifest = 3;
 constexpr duckdb::field_id_t kFieldCheckpoint = 4;
-
-duckdb::shared_ptr<duckdb::AttachedDatabase> AttachedDatabaseById(
-  duckdb::idx_t id) {
-  auto& manager =
-    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
-  for (auto& attached : manager.GetDatabases()) {
-    if (attached->oid == id) {
-      return attached;
-    }
-  }
-  return nullptr;
-}
 
 }  // namespace
 
@@ -82,15 +67,16 @@ IndexStamp IndexStamp::Read(duckdb::BinaryDeserializer& in) {
   return stamp;
 }
 
-IndexDurability::IndexDurability(duckdb::idx_t db_id, std::string name)
-  : _db_id{db_id}, _name{std::move(name)} {}
+IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
+                                 std::string name, OpenedDirectory files)
+  : _database{database.shared_from_this()},
+    _name{std::move(name)},
+    _files{std::move(files.directory)},
+    _absent{files.absent} {}
 
 std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp>
-IndexDurability::OpenWriter(const irs::Directory& dir, bool on_disk,
-                            bool is_new, irs::IndexWriterOptions options,
+IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,
                             ManifestSource manifest) {
-  _files = dir;
-  _on_disk = on_disk;
   options.meta_payload_writer = [this, manifest = std::move(manifest)](
                                   const irs::SourcePosition& position,
                                   duckdb::BinarySerializer& out) {
@@ -101,15 +87,15 @@ IndexDurability::OpenWriter(const irs::Directory& dir, bool on_disk,
   options.meta_payload_reader = [&](duckdb::BinaryDeserializer& in) {
     stamp = IndexStamp::Read(in);
   };
-  if (!on_disk || is_new) {
-    auto writer =
-      irs::IndexWriter::Make(dir, irs::OpenMode::kOmCreate, std::move(options));
+  if (is_new || _files.Kind() == irs::StorageKind::Memory) {
+    auto writer = irs::IndexWriter::Make(_files, irs::OpenMode::kOmCreate,
+                                         std::move(options));
     writer->RefreshCommit();
     return {std::move(writer), std::move(stamp)};
   }
-  ResolvePendingSave(dir);
+  ResolvePendingSave();
   auto writer = irs::IndexWriter::Make(
-    dir, irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate,
+    _files, irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate,
     std::move(options));
   _position = stamp.position;
   absl::MutexLock lock{&_positions_mutex};
@@ -120,10 +106,10 @@ IndexDurability::OpenWriter(const irs::Directory& dir, bool on_disk,
 }
 
 std::pair<irs::DirectoryReader, IndexStamp> IndexDurability::OpenReader(
-  const irs::Directory& dir, const irs::IndexReaderOptions& options) {
+  const irs::IndexReaderOptions& options) const {
   IndexStamp stamp;
   irs::DirectoryReader reader{
-    dir, options,
+    _files, options,
     [&](duckdb::BinaryDeserializer& in) { stamp = IndexStamp::Read(in); }};
   return {std::move(reader), std::move(stamp)};
 }
@@ -146,14 +132,14 @@ void IndexDurability::WritePayload(const irs::SourcePosition& position,
                                          _pending_checkpoint, 0);
 }
 
-void IndexDurability::ResolvePendingSave(const irs::Directory& dir) const {
-  std::string pending;
-  if (!irs::index_meta::LastPendingFile(dir, pending)) {
+void IndexDurability::ResolvePendingSave() const {
+  const auto pending = irs::index_meta::LastPendingFile(_files);
+  if (!pending) {
     return;
   }
   uint64_t checkpoint = 0;
   try {
-    irs::index_meta::ReadPayload(dir, pending,
+    irs::index_meta::ReadPayload(_files, *pending,
                                  [&](duckdb::BinaryDeserializer& in) {
                                    checkpoint = IndexStamp::Read(in).checkpoint;
                                  });
@@ -164,21 +150,18 @@ void IndexDurability::ResolvePendingSave(const irs::Directory& dir) const {
     checkpoint = 0;
   }
   if (checkpoint != 0) {
-    const auto store = AttachedDatabaseById(_db_id);
-    SDB_ENSURE(store, _name, ": database ", _db_id,
-               " of a pending checkpoint save is not attached");
+    const auto store = duckdb::AttachedDatabase::TryGetReference(_database);
+    SDB_ENSURE(store, _name,
+               ": the database of a pending checkpoint save is not attached");
     if (checkpoint <=
         store->GetStorageManager().GetBlockManager().GetCheckpointIteration()) {
       const auto committed = irs::index_meta::FileName(
-        irs::index_meta::ParsePendingGeneration(pending));
-      dir.Rename(pending, committed);
+        irs::index_meta::ParsePendingGeneration(*pending));
+      _files.Rename(*pending, committed);
       return;
     }
   }
-  if (!dir.Remove(pending)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("failed to remove '", pending, "'"));
-  }
+  std::ignore = _files.Remove(*pending);
 }
 
 void IndexDurability::MarkStaged(const irs::SourcePosition& position) {
@@ -406,7 +389,7 @@ std::pair<irs::DirectoryReader, irs::SourcePosition> IndexDurability::Snapshot(
 }
 
 void IndexDurability::SyncDirectory() {
-  if (!_on_disk ||
+  if (_files.Kind() == irs::StorageKind::Memory ||
       !_directory_dirty.exchange(false, std::memory_order_acq_rel)) {
     return;
   }
@@ -416,7 +399,7 @@ void IndexDurability::SyncDirectory() {
     published = _published;
   }
   try {
-    _files->SyncDirectory();
+    _files.SyncDirectory();
   } catch (...) {
     _directory_dirty.store(true, std::memory_order_relaxed);
     throw;
@@ -426,13 +409,12 @@ void IndexDurability::SyncDirectory() {
 }
 
 absl::Status IndexDurability::Cleanup() {
-  SDB_ASSERT(_files);
   try {
     SyncDirectory();
-    if (_files->Kind() == irs::StorageKind::Remote) {
-      _files->RemoveUnreferenced();
+    if (_files.Kind() == irs::StorageKind::Remote) {
+      _files.RemoveUnreferenced();
     } else {
-      _files->RemoveAllUnreferenced();
+      _files.RemoveAllUnreferenced();
     }
   } catch (const std::exception& e) {
     return absl::InternalError(
@@ -450,7 +432,7 @@ absl::Status IndexDurability::CompactFiles(irs::IndexWriter& writer) {
     const auto reader = writer.GetSnapshot();
     for (const auto& segment : reader.Meta().index_meta.segments) {
       for (const auto& file : segment.meta.files) {
-        _files->Compact(file);
+        _files.Compact(file);
       }
     }
   } catch (const std::exception& e) {
@@ -466,13 +448,13 @@ bool IndexDurability::CanPersist() const {
   if (IsOutOfSync()) {
     return false;
   }
-  const auto store = AttachedDatabaseById(_db_id);
+  const auto store = duckdb::AttachedDatabase::TryGetReference(_database);
   return !store || (!duckdb::ValidChecker::IsInvalidated(*store) &&
                     !duckdb::ValidChecker::IsInvalidated(store->GetDatabase()));
 }
 
 uint64_t IndexDurability::RunningCheckpoint(uint64_t generation) const {
-  const auto store = AttachedDatabaseById(_db_id);
+  const auto store = duckdb::AttachedDatabase::TryGetReference(_database);
   if (!store || !store->HasStorageManager()) {
     return 0;
   }
@@ -482,7 +464,7 @@ uint64_t IndexDurability::RunningCheckpoint(uint64_t generation) const {
 }
 
 bool IndexDurability::CheckpointWritten(uint64_t iteration) const {
-  const auto store = AttachedDatabaseById(_db_id);
+  const auto store = duckdb::AttachedDatabase::TryGetReference(_database);
   return store && store->HasStorageManager() &&
          store->GetStorageManager()
              .GetBlockManager()
@@ -490,7 +472,7 @@ bool IndexDurability::CheckpointWritten(uint64_t iteration) const {
 }
 
 void IndexDurability::WaitForCheckpoint() const {
-  if (const auto store = AttachedDatabaseById(_db_id);
+  if (const auto store = duckdb::AttachedDatabase::TryGetReference(_database);
       store && store->HasStorageManager()) {
     std::ignore =
       duckdb::DuckTransactionManager::Get(*store).SharedCheckpointLock();

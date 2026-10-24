@@ -171,13 +171,9 @@ class BufferedOutput : public DataOutput {
 
 class IndexOutput : public BufferedOutput {
  public:
-  using OnClose = absl::FunctionRef<void(uint64_t)>;
-
   using BufferedOutput::BufferedOutput;
 
-  void SetOnClose(OnClose on_close) noexcept { _on_close = on_close; }
-
-  IRS_USING_IO_PTR(IndexOutput, Close);
+  using ptr = io_utils::AutoClose<IndexOutput>::ptr;
 
   uint64_t Position() const noexcept { return _offset + Length(); }
 
@@ -195,17 +191,15 @@ class IndexOutput : public BufferedOutput {
     if (std::exchange(_closed, true)) {
       return;
     }
-    const auto size = CloseImpl();
-    _on_close(size);
+    CloseImpl();
   }
 
  protected:
   uint64_t _offset = 0;
 
  private:
-  virtual uint64_t CloseImpl() = 0;
+  virtual void CloseImpl() = 0;
 
-  OnClose _on_close{absl::FunctionValue{}, [](uint64_t) noexcept {}};
   bool _closed = false;
 };
 

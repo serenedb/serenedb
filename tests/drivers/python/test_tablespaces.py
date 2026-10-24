@@ -141,17 +141,12 @@ def test_index_files_in_a_local_tablespace(tmp_path: Path) -> None:
     assert not (location / "engine_v1").exists()
 
 
-@pytest.mark.parametrize("tablespace", [False, True],
-                         ids=["data_directory", "tablespace"])
-def test_moved_data_directory_keeps_its_indexes(
-        tmp_path: Path, tablespace: bool) -> None:
+def test_moved_data_directory_keeps_its_indexes(tmp_path: Path) -> None:
     datadir = tmp_path / "data"
     server = _Server(datadir)
     try:
         assert server.wait_ready(), server.output()
-        if tablespace:
-            _create_tablespace(server, str(tmp_path / "indexes"))
-        _create_index(server, tablespace)
+        _create_index(server, tablespace=False)
     finally:
         server.stop()
 

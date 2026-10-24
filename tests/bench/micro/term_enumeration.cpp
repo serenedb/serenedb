@@ -40,7 +40,6 @@
 #include <iresearch/utils/string.hpp>
 #include <map>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -82,7 +81,6 @@ std::string TermAt(size_t i) {
 
 struct CachedIndex {
   std::filesystem::path path;
-  std::optional<irs::Directory> dir;
   irs::DirectoryReader reader;
   std::vector<std::string> terms;
 };
@@ -100,7 +98,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
   std::filesystem::remove_all(cached.path);
   std::filesystem::create_directories(cached.path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  cached.dir.emplace(*db, cached.path.string());
+  const irs::Directory dir{*db, cached.path.string()};
 
   cached.terms.reserve(num_terms);
   for (size_t i = 0; i < num_terms; ++i) {
@@ -114,7 +112,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
     return {};
   };
   auto writer =
-    irs::IndexWriter::Make(*cached.dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
 
   KeywordField field{.id = kKwFieldId};
   {
@@ -128,8 +126,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
   }
   writer->RefreshCommit();
 
-  cached.reader =
-    irs::DirectoryReader{*cached.dir, irs::IndexReaderOptions{.db = db}};
+  cached.reader = irs::DirectoryReader{dir, irs::IndexReaderOptions{.db = db}};
   return cached;
 }
 

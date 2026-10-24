@@ -135,7 +135,15 @@ void IndexMetaWriter::rollback() noexcept {
     return;
   }
 
-  if (!_dir->Remove(seg_file)) {  // suppress all errors
+  try {
+    if (!_dir->Remove(seg_file)) {
+      SDB_ERROR(IRESEARCH,
+                absl::StrCat("Failed to remove file, path: ", seg_file));
+    }
+  } catch (const std::exception& e) {
+    SDB_ERROR(IRESEARCH, absl::StrCat("Failed to remove file, path: ", seg_file,
+                                      ", reason: ", e.what()));
+  } catch (...) {
     SDB_ERROR(IRESEARCH,
               absl::StrCat("Failed to remove file, path: ", seg_file));
   }

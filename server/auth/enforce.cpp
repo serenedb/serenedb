@@ -466,12 +466,13 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_TABLE: {
         auto& create = op.Cast<duckdb::LogicalCreateTable>();
         auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
-        info.tablespace_oid =
-          Place(info.tablespace, create.schema.ParentCatalog(),
-                catalog::ReadStorageEngine(info.options) ==
-                  catalog::TableEngine::Search,
-                "only a table created WITH (storage = 'search') can be placed "
-                "in a tablespace");
+        info.tablespace_oid = Place(
+          info.tablespace, create.schema.ParentCatalog(),
+          catalog::ReadStorageEngine(info.options) ==
+              catalog::TableEngine::Search
+            ? std::string_view{}
+            : "only a table created WITH (storage = 'search') can be placed "
+              "in a tablespace");
         Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
         for (auto& serial : create.info->serial_sequences) {
           Stamp(serial.permissions, create.schema.ParentCatalog(),
@@ -568,8 +569,7 @@ class Enforcer {
             "cannot be placed in a tablespace";
         }
         create.info->tablespace_oid =
-          Place(create.info->tablespace, create.table.ParentCatalog(),
-                refusal.empty(), refusal);
+          Place(create.info->tablespace, create.table.ParentCatalog(), refusal);
         break;
       }
       case LogicalOperatorType::LOGICAL_DROP: {
@@ -1230,8 +1230,7 @@ class Enforcer {
   }
 
   duckdb::idx_t Place(const duckdb::Identifier& requested,
-                      duckdb::Catalog& catalog, bool own_files,
-                      std::string_view refusal) {
+                      duckdb::Catalog& catalog, std::string_view refusal) {
     const bool named = !requested.empty();
     std::string name;
     if (named) {
@@ -1263,8 +1262,8 @@ class Enforcer {
                : nullptr;
     const auto own =
       database ? database->Cast<catalog::DatabaseCatalogEntry>().Tablespace()
-               : 0;
-    if (tablespace->oid == (own == 0 ? pg::kPgDefaultTablespace : own)) {
+               : pg::kPgDefaultTablespace;
+    if (tablespace->oid == own) {
       return 0;
     }
     if (catalog.GetAttached().IsTemporary()) {
@@ -1275,7 +1274,7 @@ class Enforcer {
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("temporary objects cannot be placed in a tablespace"));
     }
-    if (!own_files || !serenedb) {
+    if (!refusal.empty() || !serenedb) {
       if (!named) {
         return 0;
       }

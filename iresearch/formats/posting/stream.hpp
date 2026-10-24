@@ -69,7 +69,7 @@ class PostingsStream : public TermPostings {
         _doc_in = &_inline_in;
       } else {
         if (!_file_in) {
-          _file_in = doc_in.Reopen();
+          _file_in = doc_in.Dup();
           SDB_ASSERT(_file_in);
         }
         _file_in->Seek(meta.doc_start);

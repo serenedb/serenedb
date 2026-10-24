@@ -593,7 +593,7 @@ TEST_P(IndexProfileTestCase,
   ProfileBulkIndex(16, 5, 10000);  // 5 does not divide evenly into 16
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(index_profile_test, IndexProfileTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

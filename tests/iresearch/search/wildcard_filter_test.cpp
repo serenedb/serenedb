@@ -502,7 +502,7 @@ TEST_P(WildcardFilterTestCase, visit) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 // A term other terms extend is written inside the block it names, as the
 // entry with an empty suffix, so finding it means descending into that block.

@@ -60,32 +60,22 @@ InvertedIndexStorage::InvertedIndexStorage(
   const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
   : _index_id{index_id},
     _db_id{database.oid},
-    _database{database.shared_from_this()},
     _parent{std::move(parent)},
     _search{GetSearchEngine()},
-    _durability{database.oid, absl::StrCat("inverted index ", index_id)} {
-  const bool in_memory = database.GetStorageManager().InMemory();
-  const bool read_only = database.IsReadOnly();
+    _durability{database, absl::StrCat("inverted index ", index_id),
+                OpenStorageDirectory(_parent, index_id, is_new,
+                                     database.GetStorageManager().InMemory())} {
   SetTasksSettings(options);
 
   SDB_ASSERT(index_id != 0);
 
   _delete_log_open = is_new;
-  irs::ResourceManagementOptions resource_manager;
-  resource_manager.transactions = _writers_memory;
-  resource_manager.readers = _readers_memory;
-  resource_manager.compactions = _compactions_memory;
-  resource_manager.file_descriptors = _file_descriptors_count;
-  auto opened = OpenStorageDirectory(_parent, index_id, is_new, in_memory,
-                                     resource_manager);
-  _dir = std::move(opened.directory);
-  _absent = opened.absent;
 
   if (const auto& scorer_options = top_k_scorer) {
     _topk_scorer = MakeScorer(*scorer_options);
   }
 
-  if (read_only) {
+  if (database.IsReadOnly()) {
     return;
   }
 
@@ -115,8 +105,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   }
 
   auto [writer, stamp] = _durability.OpenWriter(
-    *_dir, opened.on_disk, is_new, std::move(writer_options),
-    [this] { return GetFileManifest(); });
+    is_new, std::move(writer_options), [this] { return GetFileManifest(); });
   _writer = std::move(writer);
 
   auto reader = _writer->GetSnapshot();
@@ -135,7 +124,7 @@ irs::IndexReaderOptions InvertedIndexStorage::ReaderOptions() const {
 }
 
 void InvertedIndexStorage::OpenReader() {
-  auto [reader, stamp] = IndexDurability::OpenReader(*_dir, ReaderOptions());
+  auto [reader, stamp] = _durability.OpenReader(ReaderOptions());
   SetFileManifest(stamp.manifest);
   StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
     std::move(reader), std::move(stamp.manifest)));
@@ -143,8 +132,7 @@ void InvertedIndexStorage::OpenReader() {
 
 OpenedDirectory OpenStorageDirectory(
   const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
-  bool is_new, bool in_memory,
-  const irs::ResourceManagementOptions& resources) {
+  bool is_new, bool in_memory) {
   SDB_ASSERT(parent || in_memory);
   std::optional<std::string> path;
   if (!in_memory) {
@@ -152,15 +140,14 @@ OpenedDirectory OpenStorageDirectory(
   }
   auto& db = irs::DuckDBEngine::Instance().instance();
   if (!path) {
-    return {.directory = irs::Directory{db, irs::MemoryIndexRoot(), resources},
+    return {.directory = irs::Directory{db, irs::MemoryIndexRoot()},
             .absent = !in_memory};
   }
-  return {.directory = irs::Directory{db, *path, resources}, .on_disk = true};
+  return {.directory = irs::Directory{db, *path}};
 }
 
 InvertedIndexStorage::~InvertedIndexStorage() {
   _writer.reset();
-  _dir.reset();
   if (_parent && _dropped.load(std::memory_order_acquire)) {
     _parent->RemoveStorage(_index_id);
   }

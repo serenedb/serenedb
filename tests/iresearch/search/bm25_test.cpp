@@ -1428,7 +1428,7 @@ TEST_P(Bm25TestCase, test_order) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 TEST_P(Bm25TestCase, test_query_norms) { TestQueryNorms(); }
 

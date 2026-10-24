@@ -37,7 +37,7 @@
 
 using namespace irs;
 
-TEST(index_meta_tests, memory_directory_read_write_15) {
+TEST(index_meta_tests, read_write) {
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
                      irs::MemoryIndexRoot()};
   irs::IndexMetaWriter writer{
@@ -80,13 +80,10 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   irs::IndexMeta meta_read;
   std::string payload;
   {
-    std::string segments_file;
-
-    const bool index_exists = irs::index_meta::LastFile(dir, segments_file);
-
-    ASSERT_TRUE(index_exists);
+    const auto segments_file = irs::index_meta::LastFile(dir);
+    ASSERT_TRUE(segments_file);
     irs::index_meta::Read(
-      dir, meta_read, segments_file, [&](duckdb::BinaryDeserializer& in) {
+      dir, meta_read, *segments_file, [&](duckdb::BinaryDeserializer& in) {
         payload = in.ReadProperty<std::string>(0, "payload");
       });
   }
@@ -139,13 +136,9 @@ TEST(index_meta_tests, last_generation) {
     ASSERT_FALSE(!out);
   }
 
-  std::string last_seg_file;
-
-  const bool index_exists = irs::index_meta::LastFile(dir, last_seg_file);
-  const std::string expected_seg_file = "segments_" + std::to_string(max);
-
-  ASSERT_TRUE(index_exists);
-  EXPECT_EQ(expected_seg_file, last_seg_file);
+  const auto last_seg_file = irs::index_meta::LastFile(dir);
+  ASSERT_TRUE(last_seg_file);
+  EXPECT_EQ("segments_" + std::to_string(max), *last_seg_file);
 }
 
 TEST(index_meta_tests, rejects_unknown_fields) {

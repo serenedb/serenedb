@@ -85,7 +85,7 @@ struct EmitResult {
 class Executor {
  public:
   explicit Executor(std::string_view path);
-  explicit Executor(irs::Directory dir);
+  explicit Executor(const irs::Directory& dir);
 
   size_t ExecuteTopK(size_t k, std::string_view query);
   size_t ExecuteTopKWithCount(size_t k, std::string_view query);
@@ -126,7 +126,6 @@ class Executor {
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
   irs::analysis::Tokenizer::ptr _tokenizer;
-  irs::Directory _dir;
   irs::DirectoryReader _reader;
 };
 

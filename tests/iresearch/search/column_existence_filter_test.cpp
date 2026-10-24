@@ -822,7 +822,7 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
   counter.Reset();
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(column_existence_filter_test,
                          ColumnExistenceFilterTestCase,

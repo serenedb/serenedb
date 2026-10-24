@@ -20,7 +20,10 @@
 
 #include "connector/duckdb_storage_extension.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/numbers.h>
 
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
@@ -75,7 +78,16 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
                     ERR_MSG("could not open database directory \"", info.path,
                             "\": ", ec.message()));
   }
-  auto directory = std::make_shared<catalog::DatabaseDirectory>(path);
+  const auto name = path.filename().string();
+  duckdb::idx_t oid = 0;
+  if (!absl::c_all_of(name, absl::ascii_isdigit) ||
+      !absl::SimpleAtoi(name, &oid)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("\"", path.string(),
+                            "\" is not a SereneDB database directory: its "
+                            "name is not a database oid"));
+  }
+  auto directory = std::make_shared<catalog::DatabaseDirectory>(oid, path);
   info.path = directory->DataFile();
   options.defer_storage_load = true;
   db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{

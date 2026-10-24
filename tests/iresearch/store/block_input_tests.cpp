@@ -71,7 +71,6 @@ TEST_F(BlockInputTest, stable_reads_outlive_evictions) {
     EXPECT_EQ(nullptr, in.ReadStable(20));
     EXPECT_EQ(kBlock - 10, in.Position());
   }
-  cache.DropFile(*file);
 }
 
 }  // namespace

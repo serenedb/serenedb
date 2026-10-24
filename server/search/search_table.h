@@ -73,8 +73,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   // `is_new` opens a fresh index; otherwise the durable one is reopened.
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
-  SearchTable(std::optional<catalog::StorageDirectory> parent, bool in_memory,
-              bool read_only, duckdb::idx_t db_id, duckdb::idx_t table_id,
+  SearchTable(std::optional<catalog::StorageDirectory> parent,
+              duckdb::AttachedDatabase& database, duckdb::idx_t table_id,
               bool is_new, const catalog::SearchTableOptions& options,
               catalog::CompressionByColumn compression);
   ~SearchTable();
@@ -82,13 +82,13 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   SearchTable(const SearchTable&) = delete;
   SearchTable& operator=(const SearchTable&) = delete;
   static std::shared_ptr<SearchTable> Create(
-    std::optional<catalog::StorageDirectory> parent, bool in_memory,
-    bool read_only, duckdb::idx_t db_id, duckdb::idx_t table_id, bool is_new,
+    std::optional<catalog::StorageDirectory> parent,
+    duckdb::AttachedDatabase& database, duckdb::idx_t table_id, bool is_new,
     const catalog::SearchTableOptions& options,
     catalog::CompressionByColumn compression) {
-    return std::make_shared<SearchTable>(std::move(parent), in_memory,
-                                         read_only, db_id, table_id, is_new,
-                                         options, std::move(compression));
+    return std::make_shared<SearchTable>(std::move(parent), database, table_id,
+                                         is_new, options,
+                                         std::move(compression));
   }
 
   static catalog::CompressionByColumn DeclaredCompression(
@@ -111,7 +111,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     }
   }
   std::string Path() const { return _parent->StoragePath(GetTableId()); }
-  bool Absent() const noexcept { return _absent; }
+  bool Absent() const noexcept { return _durability.Absent(); }
   void OpenReader();
 
   // `exclusive_segment` is required of a writer that will record its flushed
@@ -190,7 +190,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   [[nodiscard]] absl::Status VacuumRefresh();
   [[nodiscard]] absl::Status VacuumCompact(uint32_t target_segments);
-  [[nodiscard]] absl::Status OptimizeInMemory();
 
   [[nodiscard]] std::optional<unsigned> RegisterWriter() {
     return _writers.Register();
@@ -286,8 +285,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   };
   struct ReplaySession;
 
-  void OpenWriter(bool in_memory);
-  void OpenDirectory();
+  void OpenWriter(bool is_new);
   irs::IndexReaderOptions ReaderOptions() const;
   std::shared_ptr<const catalog::InvertedIndexConfig> MergeConfigs(
     std::span<const IndexConfig> configs,
@@ -302,8 +300,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   duckdb::idx_t _db_id;
   duckdb::idx_t _table_id;
   std::optional<catalog::StorageDirectory> _parent;
-  bool _is_new;
-  bool _absent = false;
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
   catalog::CompressionByColumn _compression;
@@ -313,7 +309,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   std::shared_ptr<const catalog::InvertedIndexConfig> _config;
   std::shared_ptr<const catalog::InvertedIndexConfig> _scan_config;
   std::optional<duckdb::idx_t> _building_index;
-  std::optional<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   irs::DirectoryReader _reader;
   std::optional<irs::ScorerOptions> _topk_options;

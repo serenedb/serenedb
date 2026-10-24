@@ -309,7 +309,6 @@ constexpr int kRepetitions = 5;
 
 struct Corpus {
   std::filesystem::path dir_path;
-  irs::Directory dir;
   irs::DirectoryReader reader;
 };
 
@@ -380,9 +379,7 @@ Corpus BuildIndex() {
                inserted, data_path.string().c_str());
 
   auto rdr = irs::DirectoryReader{dir, irs::IndexReaderOptions{.db = db}};
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr)};
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
 const Corpus& GetCorpus() {

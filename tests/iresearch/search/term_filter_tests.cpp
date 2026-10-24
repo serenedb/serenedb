@@ -721,7 +721,7 @@ TEST(by_term_test, boost) {
   counter.Reset();
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(term_filter_test, TermFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

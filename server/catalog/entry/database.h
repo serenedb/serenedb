@@ -27,6 +27,7 @@
 #include <string_view>
 
 #include "catalog/database_directory.h"
+#include "pg/pg_types.h"
 
 namespace sdb::catalog {
 
@@ -55,7 +56,9 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
   const std::shared_ptr<DatabaseDirectory>& Directory() const {
     return _directory;
   }
-  duckdb::idx_t Tablespace() const noexcept { return _tablespace; }
+  duckdb::idx_t Tablespace() const noexcept {
+    return _tablespace == 0 ? pg::kPgDefaultTablespace : _tablespace;
+  }
 
  private:
   duckdb::case_insensitive_map_t<duckdb::Value> _options;

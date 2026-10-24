@@ -116,12 +116,12 @@ def cmd_prepare(args):
     try:
         with psycopg.connect(server.dsn(), autocommit=True) as con:
             placement = ""
-            if args.index_location:
+            if args.tablespace:
                 if args.s3_endpoint:
                     con.execute(f"CREATE PERSISTENT SECRET index_store (TYPE s3, KEY_ID 'key', SECRET 'secret', "
                                 f"ENDPOINT '{args.s3_endpoint}', URL_STYLE 'path', USE_SSL false, "
-                                f"SCOPE '{args.index_location}')")
-                con.execute(f"CREATE TABLESPACE index_store LOCATION '{args.index_location}'")
+                                f"SCOPE '{args.tablespace}')")
+                con.execute(f"CREATE TABLESPACE index_store LOCATION '{args.tablespace}'")
                 placement = " TABLESPACE index_store"
             con.execute(f"CREATE TABLE {TABLE} (id VARCHAR, text VARCHAR)")
             con.execute("CREATE TEXT SEARCH DICTIONARY wiki_dict AS split_text(case := 'lower') "
@@ -406,7 +406,7 @@ def main():
     p.add_argument("--data", required=True)
     p.add_argument("--segments", type=int, required=True)
     p.add_argument("--node", type=int, default=0)
-    p.add_argument("--index-location", default="", help="a tablespace location for the index, e.g. s3://bucket/wiki")
+    p.add_argument("--tablespace", default="", help="the location of a tablespace for the index, e.g. s3://bucket/wiki")
     p.add_argument("--s3-endpoint", default="", help="host:port of the S3 endpoint for an s3:// location")
     p.set_defaults(func=cmd_prepare)
     m = sub.add_parser("remote", help="open, cold and warm statement latency of one build, with store requests")

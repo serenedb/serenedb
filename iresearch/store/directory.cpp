@@ -23,7 +23,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
-#include <duckdb/common/error_data.hpp>
+#include <atomic>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/common/numeric_utils.hpp>
@@ -38,7 +38,6 @@
 #include "iresearch/store/file_output.hpp"
 #include "iresearch/store/mapped_input.hpp"
 #include "iresearch/utils/log.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
@@ -89,23 +88,16 @@ std::string RootPath(std::string_view root) {
   return absl::StrCat(root, "/");
 }
 
-class BytesMapping final : public duckdb::MemoryMappedFile {
+class WholeFileInput final : public BytesViewInput {
  public:
-  BytesMapping(std::string path, bytes_view bytes,
-               std::unique_ptr<byte_type[]> owner = nullptr)
-    : duckdb::MemoryMappedFile{std::move(path),
-                               duckdb::FileFlags::FILE_FLAGS_READ,
-                               const_cast<byte_type*>(bytes.data()),
-                               bytes.size()},
-      _owner{std::move(owner)} {}
+  explicit WholeFileInput(std::shared_ptr<const byte_type[]> bytes,
+                          uint64_t size) noexcept
+    : BytesViewInput{bytes_view{bytes.get(), size}}, _bytes{std::move(bytes)} {}
 
-  void Sync() final {}
-  bool Trim(duckdb::idx_t, duckdb::idx_t) final { return false; }
-  bool OnDiskFile() const final { return false; }
-  void Close() final {}
+  ptr Dup() const final { return std::make_unique<WholeFileInput>(*this); }
 
  private:
-  std::unique_ptr<byte_type[]> _owner;
+  std::shared_ptr<const byte_type[]> _bytes;
 };
 
 class ForEachTask final : public duckdb::BaseExecutorTask {
@@ -167,14 +159,14 @@ void FileInfos::Rename(std::string_view src, std::string_view dst) {
   _infos.insert_or_assign(dst, std::move(info));
 }
 
-std::vector<std::string> FileTracker::Flush(uint64_t& files_size) {
-  std::vector<std::string> files;
-  files.reserve(_files.size());
+TrackedFiles FileTracker::Flush() {
+  TrackedFiles flushed;
+  flushed.files.reserve(_files.size());
   for (auto it = _files.begin(), end = _files.end(); it != end;) {
-    files.emplace_back(std::move(_files.extract(it++).value()));
+    flushed.files.emplace_back(std::move(_files.extract(it++).value()));
   }
-  files_size = std::exchange(_files_size, uint64_t{0});
-  return files;
+  flushed.bytes = std::exchange(_files_size, uint64_t{0});
+  return flushed;
 }
 
 void FileTracker::Clear() noexcept {
@@ -187,20 +179,15 @@ void RefTracker::Keep(IndexFileRefs::ref_t ref) {
   _tracked.insert(std::move(ref));
 }
 
-void RefTracker::Remove(std::string_view name) {
-  _refs->remove(name);
+void RefTracker::Forget(std::string_view name) {
   absl::MutexLock lock{&_mutex};
   _tracked.erase(name);
 }
 
-void RefTracker::Rename(std::string_view src, std::string_view dst) {
-  auto ref = _refs->add(dst);
-  {
-    absl::MutexLock lock{&_mutex};
-    _tracked.emplace(std::move(ref));
-    _tracked.erase(src);
-  }
-  _refs->remove(src);
+void RefTracker::Replace(std::string_view src, IndexFileRefs::ref_t dst) {
+  absl::MutexLock lock{&_mutex};
+  _tracked.erase(src);
+  _tracked.emplace(std::move(dst));
 }
 
 std::vector<IndexFileRefs::ref_t> RefTracker::GetRefs() const {
@@ -208,7 +195,7 @@ std::vector<IndexFileRefs::ref_t> RefTracker::GetRefs() const {
   return {_tracked.begin(), _tracked.end()};
 }
 
-void RefTracker::Clear() const {
+void RefTracker::Clear() {
   absl::MutexLock lock{&_mutex};
   _tracked.clear();
 }
@@ -231,19 +218,14 @@ Directory::Directory(duckdb::DatabaseInstance& db, std::string_view root,
 
 Directory::Directory(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
                      std::string_view root, const ResourceManagementOptions& rm)
-  : _state{std::make_shared<State>(db, fs, RootPath(root), KindOf(root), rm)} {
-  if (_state->kind == StorageKind::Remote) {
-    _state->infos.emplace();
-  }
-}
+  : _state{std::make_shared<State>(db, fs, RootPath(root), KindOf(root), rm)} {}
 
-Directory Directory::PrivateMemory(duckdb::DatabaseInstance& db,
-                                   const ResourceManagementOptions& rm) {
+Directory Directory::PrivateMemory(duckdb::DatabaseInstance& db) {
   auto heap = std::make_unique<duckdb::MemoryFileSystem>();
   auto& fs = *heap;
-  return Directory{std::make_shared<State>(db, fs, RootPath(MemoryIndexRoot()),
-                                           StorageKind::Memory, rm,
-                                           std::move(heap))};
+  return Directory{std::make_shared<State>(
+    db, fs, RootPath(MemoryIndexRoot()), StorageKind::Memory,
+    ResourceManagementOptions::gDefault, std::move(heap))};
 }
 
 std::string Directory::Path(std::string_view name) const {
@@ -251,15 +233,15 @@ std::string Directory::Path(std::string_view name) const {
 }
 
 std::optional<FileInfo> Directory::Info(std::string_view name) const {
-  if (!_state->infos) {
+  if (Kind() != StorageKind::Remote) {
     return std::nullopt;
   }
-  return _state->infos->Find(name);
+  return _state->infos.Find(name);
 }
 
 void Directory::Remember(std::string_view name, FileInfo info) const {
-  if (_state->infos) {
-    _state->infos->Remember(name, std::move(info));
+  if (Kind() == StorageKind::Remote) {
+    _state->infos.Remember(name, std::move(info));
   }
 }
 
@@ -294,26 +276,25 @@ IndexOutput::ptr Directory::Create(std::string_view name) const {
   const auto path = Path(name);
   IndexFileRefs::ref_t ref;
   if (_ref_tracker) {
-    ref = _ref_tracker->Add(name);
+    ref = Refs().add(name);
   }
   absl::Cleanup forget = [&] {
     if (_ref_tracker) {
-      _ref_tracker->Forget(name);
+      Refs().remove(name);
     }
   };
+  std::optional<RemoteUpload> remote;
   if (Kind() == StorageKind::Remote) {
-    Cache().ForgetFile(path);
-    _state->infos->Forget(name);
+    auto& cache = Cache();
+    cache.ForgetFile(path);
+    _state->infos.Forget(name);
+    remote.emplace(
+      RemoteUpload{.infos = _state->infos, .cache = cache, .name = name});
   }
-  auto output = FileOutput::Open(
-    _state->fs, path, _state->rm, _state->infos ? &*_state->infos : nullptr,
-    name, Kind() == StorageKind::Remote ? &Cache() : nullptr);
+  auto output = FileOutput::Open(_state->fs, path, _state->rm, _tracker,
+                                 remote ? &*remote : nullptr);
   if (_tracker) {
     _tracker->Add(name);
-    output->SetOnClose(
-      {absl::FunctionValue{}, [tracker = _tracker](uint64_t size) noexcept {
-         tracker->AddBytes(size);
-       }});
   }
   if (ref) {
     _ref_tracker->Keep(std::move(ref));
@@ -322,82 +303,51 @@ IndexOutput::ptr Directory::Create(std::string_view name) const {
   return output;
 }
 
-IndexInput::ptr Directory::Open(std::string_view name, IOAdvice advice) const {
+IndexInput::ptr Directory::Open(std::string_view name,
+                                duckdb::MappedFileAccess access) const {
   const auto path = Path(name);
-  if ((advice & IOAdvice::READONCE) == IOAdvice::READONCE) {
-    return ReadWhole(path, name);
-  }
   if (InBlocks()) {
-    return OpenBlocks(path, name, advice);
+    return OpenBlocks(path, name, access);
   }
-  return OpenMapped(path, advice);
+  return OpenMapped(path, access);
 }
 
-IndexInput::ptr Directory::ReadWhole(const std::string& path,
-                                     std::string_view name) const {
-  const bool counted = Kind() == StorageKind::Local;
-  if (counted) {
-    _state->rm.file_descriptors->Increase(1);
-  }
-  absl::Cleanup release = [&] noexcept {
-    if (counted) {
-      _state->rm.file_descriptors->Decrease(1);
-    }
-  };
+IndexInput::ptr Directory::ReadWhole(std::string_view name) const {
+  const auto path = Path(name);
   duckdb::OpenFileInfo file{path};
   if (Kind() == StorageKind::Remote) {
-    const auto info = _state->infos->Find(name);
+    const auto info = _state->infos.Find(name);
     file = ObjectToRead(path, info ? &*info : nullptr, true);
   }
   auto handle = _state->fs.OpenFile(file, duckdb::FileFlags::FILE_FLAGS_READ);
   const auto size = duckdb::NumericCast<duckdb::idx_t>(handle->GetFileSize());
-  auto bytes = std::make_unique_for_overwrite<byte_type[]>(size);
+  auto bytes = std::make_shared_for_overwrite<byte_type[]>(size);
   if (size != 0) {
     handle->Read(duckdb::QueryContext{}, bytes.get(), size, 0);
   }
-  handle.reset();
-  const bytes_view view{bytes.get(), size};
-  return std::make_unique<MappedInput>(std::make_shared<MappedFile>(
-    std::make_unique<BytesMapping>(path, view, std::move(bytes)), nullptr));
+  return std::make_unique<WholeFileInput>(std::move(bytes), size);
 }
 
 IndexInput::ptr Directory::OpenMapped(const std::string& path,
-                                      IOAdvice advice) const {
-  auto* file_descriptors =
-    Kind() == StorageKind::Local ? _state->rm.file_descriptors : nullptr;
-  if (file_descriptors) {
-    file_descriptors->Increase(1);
-  }
-  absl::Cleanup release = [&] noexcept {
-    if (file_descriptors) {
-      file_descriptors->Decrease(1);
-    }
-  };
+                                      duckdb::MappedFileAccess access) const {
   auto mapping = _state->fs.MemoryMapFile(duckdb::OpenFileInfo{path},
                                           duckdb::FileFlags::FILE_FLAGS_READ,
                                           duckdb::MMapOptions{});
-  if (!mapping) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("Cannot map index file '", path, "'"));
-  }
-  const auto access = ToMappedFileAccess(advice);
   if (access != duckdb::MappedFileAccess::NORMAL) {
     mapping->Advise(access);
   }
-  auto file =
-    std::make_shared<MappedFile>(std::move(mapping), file_descriptors);
-  std::move(release).Cancel();
-  return std::make_unique<MappedInput>(std::move(file));
+  return std::make_unique<MappedInput>(
+    std::make_shared<MappedFile>(std::move(mapping)));
 }
 
 IndexInput::ptr Directory::OpenBlocks(const std::string& path,
                                       std::string_view name,
-                                      IOAdvice advice) const {
+                                      duckdb::MappedFileAccess access) const {
   auto& cache = Cache();
   if (Kind() == StorageKind::Memory) {
     auto blocks = MemoryFiles().GetBlockFile(path);
     if (!blocks) {
-      return OpenMapped(path, advice);
+      return OpenMapped(path, access);
     }
     return std::make_unique<BlockInput>(cache, std::move(blocks));
   }
@@ -417,38 +367,42 @@ IndexInput::ptr Directory::OpenBlocks(const std::string& path,
 }
 
 bool Directory::Has(std::string_view name) const {
-  if (_state->infos && _state->infos->Contains(name)) {
+  if (Kind() == StorageKind::Remote && _state->infos.Contains(name)) {
     return true;
   }
   return _state->fs.FileExists(Path(name));
 }
 
-bool Directory::RemoveFile(std::string_view name) const noexcept try {
+bool Directory::RemoveFile(std::string_view name) const {
   const auto path = Path(name);
-  if (_state->infos) {
-    _state->infos->Forget(name);
+  const bool remote = Kind() == StorageKind::Remote;
+  if (remote) {
+    _state->infos.Forget(name);
   }
   if (!_state->fs.TryRemoveFile(path)) {
     return false;
   }
-  if (Kind() == StorageKind::Remote) {
+  if (remote) {
     Cache().ForgetFile(path);
   }
   return true;
+}
+
+bool Directory::RemoveUnusedFile(std::string_view name) const noexcept try {
+  return RemoveFile(name);
 } catch (...) {
   return false;
 }
 
-bool Directory::Remove(std::string_view name) const noexcept try {
+bool Directory::Remove(std::string_view name) const {
   if (!RemoveFile(name)) {
     return false;
   }
   if (_ref_tracker) {
-    _ref_tracker->Remove(name);
+    Refs().remove(name);
+    _ref_tracker->Forget(name);
   }
   return true;
-} catch (...) {
-  return false;
 }
 
 void Directory::Rename(std::string_view src, std::string_view dst) const {
@@ -456,10 +410,11 @@ void Directory::Rename(std::string_view src, std::string_view dst) const {
   _state->fs.MoveFile(Path(src), target);
   if (Kind() == StorageKind::Remote) {
     Cache().ForgetFile(target);
-    _state->infos->Rename(src, dst);
+    _state->infos.Rename(src, dst);
   }
   if (_ref_tracker) {
-    _ref_tracker->Rename(src, dst);
+    _ref_tracker->Replace(src, Refs().add(dst));
+    Refs().remove(src);
   }
 }
 
@@ -504,19 +459,15 @@ IndexFileRefs::ref_t Directory::Reference(std::string_view name) const {
 size_t Directory::RemoveUnreferenced() const {
   size_t removed = 0;
   std::vector<std::string> batch;
-  Refs().visit(
-    [&](const IndexFileRefs::ref_t& ref, size_t count) {
-      if (count != 0) {
-        return true;
-      }
+  Refs().RemoveUnused(
+    [&](const std::string& name) {
       if (Kind() == StorageKind::Remote) {
-        batch.emplace_back(*ref);
-      } else if (RemoveFile(*ref)) {
+        batch.emplace_back(name);
+      } else if (RemoveUnusedFile(name)) {
         ++removed;
       }
-      return true;
     },
-    true, [&] { removed += RemoveFiles(batch); });
+    [&] { removed += RemoveFiles(batch); });
   return removed;
 }
 
@@ -529,7 +480,7 @@ size_t Directory::RemoveFiles(std::span<const std::string> names) const noexcept
   paths.reserve(names.size());
   size_t known = 0;
   for (const auto& name : names) {
-    known += _state->infos->Forget(name);
+    known += _state->infos.Forget(name);
     paths.push_back(Path(name));
   }
   absl::Cleanup forget = [&] noexcept {
@@ -577,7 +528,7 @@ void Directory::ForEach(size_t count,
 }
 
 void Directory::Visit(absl::FunctionRef<void(std::string_view)> visitor) const {
-  if (!_state->infos) {
+  if (Kind() != StorageKind::Remote) {
     _state->fs.ListFiles(_state->root,
                          [&](const std::string& name, bool is_directory) {
                            if (!is_directory) {
@@ -598,7 +549,7 @@ void Directory::Visit(absl::FunctionRef<void(std::string_view)> visitor) const {
           file.extended_info->TryGetOption("file_size", size)) {
         std::string etag;
         file.extended_info->TryGetOption("etag", etag);
-        _state->infos->Listed(file.path, size, std::move(etag));
+        _state->infos.Listed(file.path, size, std::move(etag));
       }
       visitor(file.path);
     },

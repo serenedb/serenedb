@@ -73,8 +73,6 @@ inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
 
 class IdxReader final {
  public:
-  IdxReader(const Directory& dir, std::string_view segment_name,
-            HnswBases* hnsw_bases);
   IdxReader(const Directory& dir, std::string_view segment_name, bool present,
             HnswBases* hnsw_bases);
   ~IdxReader();

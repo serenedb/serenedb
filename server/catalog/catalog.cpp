@@ -21,8 +21,6 @@
 #include "catalog/catalog.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/ascii.h>
-#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -102,6 +100,29 @@ namespace sdb::catalog {
 namespace {
 
 constexpr uint64_t kPkSequenceCache = uint64_t{1} << 20;
+
+template<typename Storage>
+void OpenReadOnly(const std::filesystem::path& directory, std::string_view kind,
+                  const duckdb::CatalogEntry& entry, duckdb::idx_t tablespace,
+                  Storage& storage) {
+  if (tablespace != 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("cannot attach \"", directory.string(), "\" read-only: ", kind,
+              " \"", entry.name.GetIdentifierName(),
+              "\" is placed in a tablespace"));
+  }
+  if (storage.Absent()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_FILE),
+      ERR_MSG("cannot attach \"", directory.string(),
+              "\" read-only: the files of ", kind, " \"",
+              entry.name.GetIdentifierName(), "\" are missing"),
+      ERR_HINT("A database created in a tablespace on an object store keeps "
+               "them in the tablespace."));
+  }
+  storage.OpenReader();
+}
 
 }  // namespace
 
@@ -485,15 +506,6 @@ void SereneDBCatalog::FinalizeLoad(
   }
   SDB_ASSERT(context);
   const auto& path = _directory->Path();
-  const auto name = path.filename().string();
-  duckdb::idx_t oid = 0;
-  if (!absl::c_all_of(name, absl::ascii_isdigit) ||
-      !absl::SimpleAtoi(name, &oid)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("\"", path.string(),
-                            "\" is not a SereneDB database directory: its "
-                            "name is not a database oid"));
-  }
   const auto log_path = (path.parent_path() / kCatalogLog).string();
   _catalog_log_lock =
     duckdb::FileSystem::Get(GetAttached())
@@ -507,13 +519,16 @@ void SereneDBCatalog::FinalizeLoad(
               "\" in read-only mode: catalog log does not exist"));
   }
   auto& storage = GetAttached().GetStorageManager();
-  duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path, oid);
-  for (auto& table : SearchTableStorages(*this)) {
-    table->OpenReader();
+  duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path,
+                                       _directory->Oid());
+  for (const SearchTableEntry& table : SearchTableEntries(*this)) {
+    OpenReadOnly(path, "search table", table, table.Tablespace(),
+                 *table.Storage());
   }
-  for (auto& index : InvertedIndexEntries(*this)) {
-    if (const auto& index_storage = index.get().Storage()) {
-      index_storage->OpenReader();
+  for (const InvertedIndexEntry& index : InvertedIndexEntries(*this)) {
+    if (const auto& index_storage = index.Storage()) {
+      OpenReadOnly(path, "inverted index", index, index.Tablespace(),
+                   *index_storage);
     }
   }
   auto attached = GetAttached().shared_from_this();

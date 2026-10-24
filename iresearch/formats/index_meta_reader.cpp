@@ -48,23 +48,23 @@ uint64_t ParseGeneration(std::string_view file,
   return index_gen_limits::invalid();
 }
 
-bool LastFile(const Directory& dir, std::string_view prefix, std::string& out) {
+std::optional<std::string> LastFile(const Directory& dir,
+                                    std::string_view prefix) {
   uint64_t max_gen = index_gen_limits::invalid();
+  std::optional<std::string> last;
   dir.Visit([&](std::string_view name) {
-    const uint64_t gen = ParseGeneration(name, prefix);
-
-    if (gen > max_gen) {
-      out = name;
+    if (const uint64_t gen = ParseGeneration(name, prefix); gen > max_gen) {
+      last = name;
       max_gen = gen;
     }
   });
-  return index_gen_limits::valid(max_gen);
+  return last;
 }
 
 uint64_t ReadFile(const Directory& dir, std::string_view filename,
                   MetaPayloadReader& payload,
                   std::vector<IndexSegment>* segments) {
-  auto in = dir.Open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
+  auto in = dir.ReadWhole(filename);
 
   uint64_t cnt = 0;
   format_utils::ReadFooter(
@@ -113,12 +113,12 @@ uint64_t ParsePendingGeneration(std::string_view file) noexcept {
   return ParseGeneration(file, kPendingPrefix);
 }
 
-bool LastFile(const Directory& dir, std::string& out) {
-  return LastFile(dir, kPrefix, out);
+std::optional<std::string> LastFile(const Directory& dir) {
+  return LastFile(dir, kPrefix);
 }
 
-bool LastPendingFile(const Directory& dir, std::string& out) {
-  return LastFile(dir, kPendingPrefix, out);
+std::optional<std::string> LastPendingFile(const Directory& dir) {
+  return LastFile(dir, kPendingPrefix);
 }
 
 void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,

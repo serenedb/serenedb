@@ -20,24 +20,15 @@
 
 #include "iresearch/store/mapped_input.hpp"
 
-#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/math_utils.hpp"
 
 namespace irs {
 
-MappedFile::MappedFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping,
-                       IResourceManager* file_descriptors)
-  : _mapping{std::move(mapping)}, _file_descriptors{file_descriptors} {
+MappedFile::MappedFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping)
+  : _mapping{std::move(mapping)} {
   SDB_ASSERT(_mapping);
   if (_mapping->Size() != 0) {
     _residency.Reset(math::DivCeil64(_mapping->Size(), file_utils::kPage));
-  }
-}
-
-MappedFile::~MappedFile() {
-  _mapping.reset();
-  if (_file_descriptors) {
-    _file_descriptors->Decrease(1);
   }
 }
 
@@ -55,8 +46,8 @@ void MappedInput::Prefetch(uint64_t offset, uint64_t count) const noexcept {
   _file->Mapping().Prefetch(offset, count);
 }
 
-void MappedInput::Advise(IOAdvice advice) noexcept {
-  _file->Mapping().Advise(ToMappedFileAccess(advice));
+void MappedInput::Advise(duckdb::MappedFileAccess access) noexcept {
+  _file->Mapping().Advise(access);
 }
 
 bool MappedInput::Warm(uint64_t offset, uint64_t count) const noexcept {
@@ -81,17 +72,6 @@ void MappedInput::MarkWarm(uint64_t offset, uint64_t count) const noexcept {
 
 uint64_t MappedInput::LastPage(uint64_t offset, uint64_t count) const noexcept {
   return (std::min<uint64_t>(offset + count, Length()) - 1) / file_utils::kPage;
-}
-
-duckdb::MappedFileAccess ToMappedFileAccess(IOAdvice advice) noexcept {
-  switch (advice) {
-    case IOAdvice::SEQUENTIAL:
-      return duckdb::MappedFileAccess::SEQUENTIAL;
-    case IOAdvice::RANDOM:
-      return duckdb::MappedFileAccess::RANDOM;
-    default:
-      return duckdb::MappedFileAccess::NORMAL;
-  }
 }
 
 }  // namespace irs

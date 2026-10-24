@@ -21,6 +21,7 @@
 #include "catalog/cluster.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -31,6 +32,7 @@
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/path.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -74,6 +76,13 @@ std::string NormalizeLocation(const std::string& location) {
   std::string result;
   if (parsed.IsRemote()) {
     result = parsed.ToString();
+    if (result.starts_with(duckdb::MemoryFileSystem::PREFIX)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+        ERR_MSG("tablespace location cannot be in memory"),
+        ERR_DETAIL("Files under ", duckdb::MemoryFileSystem::PREFIX,
+                   " are lost when the server stops."));
+    }
   } else {
     const std::filesystem::path path{location};
     if (!path.is_absolute()) {
@@ -94,25 +103,11 @@ bool Nested(std::string_view outer, std::string_view inner) {
 }
 
 bool UsesTablespace(duckdb::DuckCatalog& catalog, duckdb::idx_t tablespace) {
-  if (absl::c_any_of(InvertedIndexEntries(catalog), [&](const auto& index) {
-        return index.get().Tablespace() == tablespace;
-      })) {
-    return true;
-  }
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  catalog.ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
-  bool uses = false;
-  for (auto& schema : schemas) {
-    schema.get().Scan(
-      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        uses =
-          uses || (entry.type == duckdb::CatalogType::TABLE_ENTRY &&
-                   entry.Cast<duckdb::TableCatalogEntry>().GetLogStorage() &&
-                   entry.Cast<SearchTableEntry>().Tablespace() == tablespace);
-      });
-  }
-  return uses;
+  const auto in_tablespace = [&](const auto& entry) {
+    return entry.get().Tablespace() == tablespace;
+  };
+  return absl::c_any_of(InvertedIndexEntries(catalog), in_tablespace) ||
+         absl::c_any_of(SearchTableEntries(catalog), in_tablespace);
 }
 
 class BuiltinTablespaces final : public duckdb::DefaultGenerator {
@@ -210,10 +205,10 @@ std::shared_ptr<TablespaceRoot> ClusterCatalog::TablespaceRootOf(
 
 std::shared_ptr<DatabaseDirectory> ClusterCatalog::MakeDatabaseDirectory(
   duckdb::idx_t oid, duckdb::idx_t tablespace) {
-  auto root =
-    TablespaceRootOf(tablespace == 0 ? pg::kPgDefaultTablespace : tablespace);
-  auto path = root->Remote() ? ClusterLayout(GetAttached()).DatabaseDir(oid)
-                             : std::filesystem::path{root->DatabaseDir(oid)};
+  auto root = TablespaceRootOf(tablespace);
+  std::filesystem::path path =
+    (root->Remote() ? TablespaceRootOf(pg::kPgDefaultTablespace) : root)
+      ->DatabaseDir(oid);
   return std::make_shared<DatabaseDirectory>(oid, std::move(root),
                                              std::move(path));
 }
@@ -303,7 +298,7 @@ void ClusterCatalog::DropTablespace(duckdb::CatalogTransaction transaction,
                       ERR_MSG("tablespace \"", name.GetIdentifierName(),
                               "\" is being used by another transaction"));
     }
-    if (HoldsTablespaceObjects(tablespace.oid)) {
+    if (HoldsTablespaceObjects(tablespace)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
         ERR_MSG("tablespace \"", name.GetIdentifierName(), "\" is not empty"));
@@ -317,12 +312,15 @@ void ClusterCatalog::DropTablespace(duckdb::CatalogTransaction transaction,
   duckdb::DuckCatalog::DropTablespace(transaction, info);
 }
 
-bool ClusterCatalog::HoldsTablespaceObjects(duckdb::idx_t tablespace) {
+bool ClusterCatalog::HoldsTablespaceObjects(
+  const TablespaceCatalogEntry& tablespace) {
   bool holds = false;
+  absl::flat_hash_set<duckdb::idx_t> unattached;
   GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
     .Scan([&](duckdb::CatalogEntry& entry) {
-      holds =
-        holds || entry.Cast<DatabaseCatalogEntry>().Tablespace() == tablespace;
+      holds = holds ||
+              entry.Cast<DatabaseCatalogEntry>().Tablespace() == tablespace.oid;
+      unattached.insert(entry.oid);
     });
   for (const auto& db :
        duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
@@ -330,9 +328,12 @@ bool ClusterCatalog::HoldsTablespaceObjects(duckdb::idx_t tablespace) {
     if (holds || catalog.GetCatalogType() != SereneDBCatalog::kStorageType) {
       continue;
     }
-    holds = UsesTablespace(catalog.Cast<duckdb::DuckCatalog>(), tablespace);
+    unattached.erase(db->oid);
+    holds = UsesTablespace(catalog.Cast<duckdb::DuckCatalog>(), tablespace.oid);
   }
-  return holds;
+  return holds || absl::c_any_of(unattached, [&](duckdb::idx_t oid) {
+           return !ListStorages(tablespace.Root()->DatabaseDir(oid)).empty();
+         });
 }
 
 duckdb::Catalog& ClusterCatalog::ReplayUseCatalog(

@@ -46,6 +46,14 @@
 namespace sdb::catalog {
 namespace {
 
+constexpr std::string_view kDataFile = "data.db";
+constexpr std::string_view kStorageMarker = ".storage";
+constexpr std::string_view kTablespaceMarker = "tablespace";
+
+bool IsRemote(std::string_view path) {
+  return duckdb::Path::FromString(std::string{path}).IsRemote();
+}
+
 bool CreateDirectory(const std::filesystem::path& path) {
   if (!StorageFileSystem().CreateDirectoryExtended(path.string(), {})) {
     return false;
@@ -119,10 +127,6 @@ void SyncDirectory(const std::filesystem::path& directory) {
 duckdb::FileSystem& StorageFileSystem() {
   return duckdb::FileSystem::GetFileSystem(
     irs::DuckDBEngine::Instance().instance());
-}
-
-bool IsRemote(std::string_view path) {
-  return duckdb::Path::FromString(std::string{path}).IsRemote();
 }
 
 std::string EngineDirOf(std::string_view location) {
@@ -283,8 +287,7 @@ StorageDirectory::StorageDirectory(std::shared_ptr<DatabaseDirectory> database,
                                    std::string path)
   : _database{std::move(database)},
     _root{std::move(root)},
-    _path{std::move(path)},
-    _remote{IsRemote(_path)} {}
+    _path{std::move(path)} {}
 
 std::string StorageDirectory::StoragePath(duckdb::idx_t oid) const {
   return absl::StrCat(_path, "/", oid);
@@ -296,7 +299,7 @@ std::string StorageDirectory::MarkerPath(duckdb::idx_t oid) const {
 
 std::string StorageDirectory::CreateStorage(duckdb::idx_t oid) const {
   auto path = StoragePath(oid);
-  if (!_remote) {
+  if (!Remote()) {
     CreateDirectory(_path);
     CreateNewDirectory(path);
     return path;
@@ -313,7 +316,7 @@ std::optional<std::string> StorageDirectory::OpenStorage(
   duckdb::idx_t oid) const {
   auto path = StoragePath(oid);
   auto& fs = StorageFileSystem();
-  if (_remote ? fs.FileExists(MarkerPath(oid)) : fs.DirectoryExists(path)) {
+  if (Remote() ? fs.FileExists(MarkerPath(oid)) : fs.DirectoryExists(path)) {
     return path;
   }
   return std::nullopt;
@@ -322,7 +325,7 @@ std::optional<std::string> StorageDirectory::OpenStorage(
 void StorageDirectory::RemoveStorage(duckdb::idx_t oid) const {
   RunRemoval([directory = *this, oid] {
     RemoveTree(directory.StoragePath(oid));
-    if (directory._remote) {
+    if (directory.Remote()) {
       RemoveObject(directory.MarkerPath(oid));
     }
   });
@@ -333,8 +336,9 @@ DatabaseDirectory::DatabaseDirectory(duckdb::idx_t oid,
                                      std::filesystem::path path)
   : _oid{oid}, _root{std::move(root)}, _path{std::move(path)} {}
 
-DatabaseDirectory::DatabaseDirectory(std::filesystem::path path)
-  : _oid{0}, _path{std::move(path)} {}
+DatabaseDirectory::DatabaseDirectory(duckdb::idx_t oid,
+                                     std::filesystem::path path)
+  : _oid{oid}, _path{std::move(path)} {}
 
 DatabaseDirectory::~DatabaseDirectory() {
   if (!_dropped.load(std::memory_order_acquire)) {

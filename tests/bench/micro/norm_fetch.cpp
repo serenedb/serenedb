@@ -273,7 +273,8 @@ struct PackedColumn {
                (region.exceptions == 0 ? 0 : irs::NormTableSize(region));
     }
     irs::BytesOutput sink{data};
-    file >> sink;
+    file.Visit(
+      [&](const irs::byte_type* b, size_t len) { sink.WriteData(b, len); });
     in = std::make_unique<irs::BytesViewInput>(data);
     column = std::make_unique<irs::NormColumnReader>(1, writer.Meta(), *in);
     reader = irs::MakePersistedNormReader(*column);

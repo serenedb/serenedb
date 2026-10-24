@@ -34,7 +34,6 @@
 #include <iresearch/utils/string.hpp>
 #include <map>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <tuple>
@@ -86,13 +85,12 @@ struct BodyField {
 
 struct Index {
   std::filesystem::path path;
-  std::optional<irs::Directory> dir;
   irs::DirectoryReader reader;
 };
 
 const Index& IndexOf() {
   static Index index;
-  if (index.dir) {
+  if (index.reader) {
     return index;
   }
   index.path =
@@ -100,14 +98,13 @@ const Index& IndexOf() {
   std::filesystem::remove_all(index.path);
   std::filesystem::create_directories(index.path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  index.dir.emplace(*db, index.path.string());
+  const irs::Directory dir{*db, index.path.string()};
 
   irs::IndexWriterOptions opts;
   opts.db = db;
   opts.reader_options.db = db;
   opts.column_options = [](irs::field_id) -> irs::ColumnOptions { return {}; };
-  auto writer =
-    irs::IndexWriter::Make(*index.dir, irs::kOmCreate, std::move(opts));
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
   {
     auto trx = writer->GetBatch();
     BodyField field;
@@ -126,8 +123,7 @@ const Index& IndexOf() {
     trx.Commit();
   }
   writer->RefreshCommit();
-  index.reader =
-    irs::DirectoryReader{*index.dir, irs::IndexReaderOptions{.db = db}};
+  index.reader = irs::DirectoryReader{dir, irs::IndexReaderOptions{.db = db}};
   SDB_ASSERT(index.reader.size() == 1);
   return index;
 }

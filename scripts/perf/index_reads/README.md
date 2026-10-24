@@ -8,7 +8,7 @@ Each query runs in a fresh `search-benchmark-game-query` process after the index
 
 ## Prerequisites
 
-- `search-benchmark-game-build` and `search-benchmark-game-query` from the `perf` preset: `ninja -C build_perf serenedb-bench-micro`.
+- `search-benchmark-game-build` and `search-benchmark-game-query` from the `perf` preset: `ninja -C build_perf search-benchmark-game`.
 - `curl`, `python3`, about 20 GB in the data directory.
 
 ## Commands

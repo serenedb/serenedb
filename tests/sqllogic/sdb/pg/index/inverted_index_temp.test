@@ -163,6 +163,17 @@ DETAIL: VACUUM (OPTIMIZE_IN_MEMORY_TABLE) applies to temporary tables.
 
 
 statement ok
+CREATE TABLE search_docs (id INTEGER, body TEXT) WITH (storage = 'search');
+
+
+statement error
+VACUUM (OPTIMIZE_IN_MEMORY_TABLE) search_docs;
+----
+db error: ERROR: "search_docs" is not an in-memory table
+DETAIL: VACUUM (OPTIMIZE_IN_MEMORY_TABLE) applies to temporary tables.
+
+
+statement ok
 CREATE TABLESPACE temp_ts_${__DATABASE__} LOCATION '${__TEST_DIR__}/temp_ts';
 
 
@@ -238,3 +249,6 @@ Did you mean "pg_index"?
 
 statement ok
 DROP TABLE plain_docs;
+
+statement ok
+DROP TABLE search_docs;

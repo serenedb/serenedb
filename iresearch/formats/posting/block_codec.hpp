@@ -577,7 +577,6 @@ struct SizeShape {
   uint16_t fixed = 0;
   uint8_t bits = 0;
   uint8_t per = 0;
-  uint8_t count = 0;
   uint8_t highs = 0;
 };
 
@@ -607,12 +606,10 @@ inline constexpr auto kSizeShapes = [] {
       case Family::PatchByte:
         s.fixed = 2;
         s.per = 2;
-        s.count = std::numeric_limits<byte_type>::max();
         break;
       case Family::PatchBit:
         s.fixed = 3;
         s.per = 1;
-        s.count = std::numeric_limits<byte_type>::max();
         s.highs = std::numeric_limits<byte_type>::max();
         break;
     }
@@ -624,7 +621,7 @@ template<typename Encoding>
 IRS_FORCE_INLINE uint32_t BlockBytes(const byte_type* in,
                                      uint32_t len) noexcept {
   const auto& s = kSizeShapes<Encoding>[in[0]];
-  const uint32_t n = in[1] & s.count;
+  const uint32_t n = in[1];
   return s.fixed + PackedSize(len, s.bits) + n * s.per +
          PackedSize(n, in[2] & s.highs);
 }

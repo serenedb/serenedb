@@ -14,6 +14,8 @@ target_sources(
         geo_filter_builder.cpp
         inet_filter_builder.cpp
         inet_terms.cpp
+        curve_index.cpp
+        curve_filter_builder.cpp
         search_filter_printer.cpp
         duckdb_client_state.cpp
         duckdb_subscription.cpp

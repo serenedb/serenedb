@@ -234,9 +234,8 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
                        IndexColumnAt(relation, columns.get(), key).type});
         continue;
       }
-      const auto type =
-        IndexExpressionType(Context(), relation, columns.get(),
-                            *expressions[static_cast<size_t>(attnum)]);
+      const auto type = IndexExpressionType(
+        Context(), relation, *expressions[static_cast<size_t>(attnum)]);
       Emit<kColumn>({oid, name, ++attnum, type});
     }
   }

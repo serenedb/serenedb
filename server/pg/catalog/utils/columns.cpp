@@ -43,17 +43,25 @@
 #include "pg/catalog/utils/lookup.h"
 
 namespace sdb::pg {
+namespace {
+
+duckdb::shared_ptr<duckdb::ViewColumnInfo> BoundColumns(
+  duckdb::ClientContext& context, duckdb::ViewCatalogEntry& view) {
+  if (auto columns = view.GetColumnInfo()) {
+    return columns;
+  }
+  try {
+    view.BindView(context);
+  } catch (const std::exception&) {
+  }
+  return view.GetColumnInfo();
+}
+
+}  // namespace
 
 duckdb::shared_ptr<duckdb::ViewColumnInfo> ViewColumns(
   duckdb::ClientContext& context, duckdb::ViewCatalogEntry& view) {
-  auto columns = view.GetColumnInfo();
-  if (!columns) {
-    try {
-      view.BindView(context);
-    } catch (const std::exception&) {
-    }
-    columns = view.GetColumnInfo();
-  }
+  auto columns = BoundColumns(context, view);
   if (!columns || view.aliases.empty()) {
     return columns;
   }
@@ -135,7 +143,7 @@ std::vector<int16_t> IndexAttnums(duckdb::ClientContext& context,
   auto* view = relation.type == duckdb::CatalogType::VIEW_ENTRY
                  ? &relation.Cast<duckdb::ViewCatalogEntry>()
                  : nullptr;
-  const auto columns = view ? ViewColumns(context, *view) : nullptr;
+  const auto columns = view ? BoundColumns(context, *view) : nullptr;
   const auto attnum = [&](const duckdb::Identifier& name) -> int16_t {
     if (!view) {
       const auto& table = relation.Cast<duckdb::TableCatalogEntry>();
@@ -181,12 +189,13 @@ std::string IndexExpressionName(const duckdb::ParsedExpression& expression) {
 }
 
 duckdb::LogicalType IndexExpressionType(
-  duckdb::ClientContext& context, const duckdb::CatalogEntry& relation,
-  const duckdb::ViewColumnInfo* columns,
+  duckdb::ClientContext& context, duckdb::CatalogEntry& relation,
   const duckdb::ParsedExpression& expression) {
   duckdb::vector<duckdb::Identifier> names;
   duckdb::vector<duckdb::LogicalType> types;
   if (relation.type == duckdb::CatalogType::VIEW_ENTRY) {
+    const auto columns =
+      BoundColumns(context, relation.Cast<duckdb::ViewCatalogEntry>());
     if (!columns) {
       return duckdb::LogicalType::SQLNULL;
     }

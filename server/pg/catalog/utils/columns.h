@@ -124,8 +124,7 @@ struct IndexColumn {
 std::string IndexExpressionName(const duckdb::ParsedExpression& expression);
 
 duckdb::LogicalType IndexExpressionType(
-  duckdb::ClientContext& context, const duckdb::CatalogEntry& relation,
-  const duckdb::ViewColumnInfo* columns,
+  duckdb::ClientContext& context, duckdb::CatalogEntry& relation,
   const duckdb::ParsedExpression& expression);
 
 IndexColumn IndexColumnAt(const duckdb::CatalogEntry& relation,

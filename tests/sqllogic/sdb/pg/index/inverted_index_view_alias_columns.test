@@ -5,6 +5,10 @@ DROP INDEX IF EXISTS view_alias_columns_idx;
 
 
 statement ok
+DROP INDEX IF EXISTS view_alias_columns_expr_idx;
+
+
+statement ok
 DROP VIEW IF EXISTS view_alias_columns_v;
 
 
@@ -47,6 +51,26 @@ SELECT indkey, indnatts FROM pg_index WHERE indexrelid = 'view_alias_columns_idx
 ----
 indkey	indnatts
 (empty)	2
+
+
+statement ok
+CREATE INDEX view_alias_columns_expr_idx ON view_alias_columns_v
+  USING inverted(k, (body || k) view_alias_columns_en);
+
+
+query
+SELECT attnum, attname, atttypid::regtype
+FROM pg_attribute
+WHERE attrelid = 'view_alias_columns_expr_idx'::regclass
+ORDER BY attnum;
+----
+attnum	attname	atttypid
+1	key	text
+2	expr	text
+
+
+statement ok
+DROP INDEX view_alias_columns_expr_idx;
 
 
 statement ok

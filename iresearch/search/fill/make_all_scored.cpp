@@ -18,11 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/fill_posting_scored.hpp"
+#include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
 #include "iresearch/search/fill/constant_scored.hpp"
 #include "iresearch/search/fill/impl.hpp"
-#include "iresearch/search/fill/plan.hpp"
+#include "iresearch/search/fill/make.hpp"
+#include "iresearch/search/fill/set_leaves.hpp"
 
 namespace irs::fill {
 

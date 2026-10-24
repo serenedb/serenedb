@@ -18,7 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <array>
+#include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
@@ -35,6 +38,8 @@
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/search/top/make.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <limits>
+#include <map>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "search/filter_test_case_base.hpp"
@@ -253,6 +258,62 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
       {.scorer = &scorer, .fetcher = &_fetcher}, _docs);
     ASSERT_NE(nullptr, probe);
     check_scores(*probe, [&](auto doc) { return probe->Probe(doc); });
+  }
+}
+
+TEST_F(VectorSimilarityQueryTest, KnnScoresAreTheSameInHitsLeadAndTop) {
+  Build(300);
+  irs::VectorSimilarityScorer scorer;
+  tests::PreparedFilter prepared{_filter, *_reader, &scorer};
+  const auto* query = prepared.Query(0);
+  ASSERT_NE(nullptr, query);
+
+  std::map<irs::doc_id_t, irs::score_t> lead;
+  {
+    auto docs = prepared.ExecuteScored(0, _fetcher);
+    ASSERT_NE(nullptr, docs);
+    auto score = docs->PrepareScore();
+    while (!irs::doc_limits::eof(docs->Next())) {
+      docs->FetchScoreArgs(0);
+      _fetcher.Fetch(docs->Value());
+      irs::score_t value{};
+      score.Score(&value, 1);
+      lead.emplace(docs->Value(), value);
+    }
+  }
+  ASSERT_EQ(_docs, lead.size());
+  ASSERT_TRUE(absl::c_any_of(lead, [](const auto& hit) {
+    const auto x = static_cast<float>(hit.first);
+    return hit.second != -x * x;
+  }));
+
+  {
+    SCOPED_TRACE("hits");
+    auto hits = query->PlanScored({.scorer = scorer, .fetcher = _fetcher});
+    ASSERT_NE(nullptr, hits);
+    std::vector<irs::doc_id_t> docs(_docs + irs::doc_limits::kDocsSlack);
+    std::vector<irs::score_t> scores(_docs + irs::doc_limits::kScoresSlack);
+    const auto n = hits->Run(irs::doc_limits::min(), irs::doc_limits::eof(),
+                             docs.data(), scores.data());
+    ASSERT_EQ(_docs, n);
+    for (uint32_t i = 0; i != n; ++i) {
+      EXPECT_FLOAT_EQ(lead.at(docs[i]), scores[i]) << docs[i];
+    }
+  }
+  {
+    SCOPED_TRACE("top");
+    auto top = query->PlanTop(
+      {.scorer = scorer, .fetcher = _fetcher, .prune = false, .k = _docs});
+    ASSERT_NE(nullptr, top);
+    std::vector<irs::ScoreDoc> hits(_docs);
+    std::atomic<irs::score_t> threshold{
+      std::numeric_limits<irs::score_t>::lowest()};
+    irs::LoserScoreCollector collector{threshold, hits};
+    top->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
+    ASSERT_EQ(_docs, collector.AcceptedCount());
+    for (size_t i = 0; i != collector.AcceptedCount(); ++i) {
+      EXPECT_FLOAT_EQ(lead.at(hits[i].doc), hits[i].score) << hits[i].doc;
+    }
   }
 }
 

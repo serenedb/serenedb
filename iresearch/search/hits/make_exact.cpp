@@ -21,6 +21,7 @@
 #include <algorithm>
 
 #include "iresearch/search/detail/exact_scan.hpp"
+#include "iresearch/search/hits/family.hpp"
 #include "iresearch/search/hits/make.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 
@@ -77,7 +78,7 @@ class ExactHits : public Root {
 
 }  // namespace
 
-Root::ptr Make(const ExactVectorQuery& query, const Context& ctx) {
+Root::ptr Family::Make(const ExactVectorQuery& query, const Context& ctx) {
   const auto record = query.Stats(ScoredOf(ctx));
   const irs::detail::ScoreArgs args{.scorer = record.scorer,
                                     .stats = record.stats,

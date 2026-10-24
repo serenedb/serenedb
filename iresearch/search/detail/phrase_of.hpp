@@ -20,54 +20,22 @@
 
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
-#include <numeric>
+#include <optional>
 #include <span>
-#include <type_traits>
-#include <vector>
+#include <utility>
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/detail/node_of.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
 #include "iresearch/search/detail/phrase_slots.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"
-#include "iresearch/search/fill/walk.hpp"
-#include "iresearch/search/lead/two_phase_docs.hpp"
-#include "iresearch/search/probe/two_phase_docs.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::detail {
-
-enum class PhraseMatch : uint8_t {
-  Plain,
-  Intervals,
-  Slop,
-};
-
-template<typename Query>
-PhraseMatch MatchOf(const Query& query) noexcept {
-  if (query.slop != 0) {
-    return PhraseMatch::Slop;
-  }
-  return query.has_intervals ? PhraseMatch::Intervals : PhraseMatch::Plain;
-}
-
-template<typename Query, typename Slop, typename Intervals, typename Plain>
-auto ResolveMatch(const Query& query, Slop&& slop, Intervals&& intervals,
-                  Plain&& plain) {
-  switch (MatchOf(query)) {
-    case PhraseMatch::Slop:
-      return slop();
-    case PhraseMatch::Intervals:
-      return intervals();
-    case PhraseMatch::Plain:
-      break;
-  }
-  return plain();
-}
 
 template<PhraseMatch M, bool Bounds, typename Input, bool HasFreq = false,
          bool Offs = false, bool HasBoost = false, typename Query, typename F>
@@ -99,121 +67,92 @@ auto ResolveMatcherOf(const Query& query, F&& f) {
   }
 }
 
-template<PhraseMatch M, typename Leaf, typename Result,
-         template<typename> typename Impl, bool Scored = false,
-         template<typename> typename Wrap = DeducedNode, typename Query,
-         typename... Prefix>
-Result MakePhraseNodeOf(const Query& query, std::span<const PostingMeta> metas,
-                        std::span<const TermInterval> intervals,
-                        const PhraseHandles& h, Prefix&&... prefix) {
-  return ResolveArity<kSlotArity, kSlotFloor>(
-    metas.size(), [&]<size_t N> -> Result {
-      static constexpr size_t kSlots = N == 1 ? 0 : N;
-      return ResolveMatcherOf<M, kSlots, Scored>(
-        query, [&]<typename Matcher>(auto&&... args) -> Result {
-          using Slots = detail::PhraseSlots<Matcher, Leaf, kSlots>;
-          using Node = NodeOf<Wrap, Result, Slots>;
-          return memory::make_managed<Impl<Node>>(
-            std::forward<Prefix>(prefix)..., metas, intervals, *h.doc,
-            h.Layout(), *h.pos, h.pay, std::forward<decltype(args)>(args)...);
-        });
-    });
-}
-
-template<PhraseMatch M, template<typename> typename Impl, typename Result,
-         bool Scored = false, template<typename> typename Wrap = DeducedNode,
-         typename... Prefix>
-Result MakeFixedPhraseOf(const FixedPhraseQuery& query, Prefix&&... prefix) {
+template<PhraseMatch M, bool HasFreq = false, bool Offs = false,
+         bool Boosts = HasFreq, typename F>
+auto BuildPhrase(const FixedPhraseQuery& query, F&& f) {
   const auto& state = query.state;
   const auto& h = state.handles;
   const std::span<const PostingMeta> metas{state.metas.data(),
                                            state.metas.size()};
-  return ResolveBounds(h.bounds, [&]<bool Bounds> -> Result {
-    return ResolveInput(*h.doc, [&]<typename Input> -> Result {
-      using Leaf = detail::PostingPos<Input, Bounds>;
-      return MakePhraseNodeOf<M, Leaf, Result, Impl, Scored, Wrap>(
-        query, metas, query.positions, h, std::forward<Prefix>(prefix)...);
+  const std::span<const TermInterval> intervals{query.positions};
+  return ResolveBounds(h.bounds, [&]<bool Bounds> {
+    return ResolveInput(*h.doc, [&]<typename Input> {
+      using Leaf = PostingPos<Input, Bounds, Offs>;
+      const auto build = [&]<size_t N> {
+        return ResolveMatcherOf<M, N, HasFreq, Offs>(
+          query, [&]<typename Matcher>(auto&&... args) {
+            return f.template operator()<PhraseSlots<Matcher, Leaf, N>>(
+              metas, intervals, *h.doc, h.Layout(), *h.pos, h.pay,
+              std::forward<decltype(args)>(args)...);
+          });
+      };
+      if constexpr (Offs) {
+        return build.template operator()<0>();
+      } else {
+        return ResolveArity<kSlotArity, kSlotFloor>(metas.size(), build);
+      }
     });
   });
 }
 
-template<PhraseMatch M, template<typename> typename Impl, typename Result,
-         bool Scored = false, template<typename> typename Wrap = DeducedNode,
-         typename... Prefix>
-Result MakeVariadicPhraseOf(const VariadicPhraseQuery& query,
-                            Prefix&&... prefix) {
+template<PhraseMatch M, bool HasFreq = false, bool Offs = false,
+         bool Boosts = HasFreq, typename F>
+auto BuildPhrase(const VariadicPhraseQuery& query, F&& f) {
   const auto& state = query.state;
   const auto& h = state.handles;
   const std::span<const PostingMeta> metas{state.metas.data(),
                                            state.metas.size()};
   const std::span offsets{state.offsets.data(), state.offsets.size()};
-  const std::span intervals{query.positions};
+  const std::span<const TermInterval> intervals{query.positions};
   SDB_ASSERT(!state.Fixed());
-
-  return ResolveBounds(h.bounds, [&]<bool Bounds> -> Result {
-    return ResolveInput(*h.doc, [&]<typename Input> -> Result {
-      return ResolveBool(
-        Scored && !state.boosts.empty(), [&]<bool HasBoosts> -> Result {
-          return ResolveSlotMatcherOf < M, Bounds, Input, Scored, false,
-                 Scored &&
-                   HasBoosts >
-                     (query,
-                      [&]<typename Matcher, typename Leaf>(
-                        auto&&... args) -> Result {
-                        using SlotPositions = std::remove_pointer_t<
-                          typename Matcher::TermPosition::first_type>;
-                        using Slots = detail::PhraseSlots<
-                          Matcher, Leaf, 0,
-                          PhraseVariadicPos<Leaf, SlotPositions::kHasBoost>>;
-                        using Node = NodeOf<Wrap, Result, Slots>;
-                        const std::span boosts =
-                          SlotPositions::kHasBoost
-                            ? std::span{state.boosts.data(),
-                                        state.boosts.size()}
-                            : std::span<const score_t>{};
-                        return memory::make_managed<Impl<Node>>(
-                          std::forward<Prefix>(prefix)..., metas, offsets,
-                          boosts, intervals, *h.doc, h.Layout(), *h.pos, h.pay,
-                          std::forward<decltype(args)>(args)...);
-                      });
-        });
+  return ResolveBounds(h.bounds, [&]<bool Bounds> {
+    return ResolveInput(*h.doc, [&]<typename Input> {
+      const auto build = [&]<bool HasBoost> {
+        return ResolveSlotMatcherOf<M, Bounds, Input, HasFreq, Offs, HasBoost>(
+          query, [&]<typename Matcher, typename Leaf>(auto&&... args) {
+            const std::span boosts =
+              HasBoost ? std::span{state.boosts.data(), state.boosts.size()}
+                       : std::span<const score_t>{};
+            return f.template operator()<
+              PhraseSlots<Matcher, Leaf, 0, PhraseVariadicPos<Leaf, HasBoost>>>(
+              metas, offsets, boosts, intervals, *h.doc, h.Layout(), *h.pos,
+              h.pay, std::forward<decltype(args)>(args)...);
+          });
+      };
+      if constexpr (Boosts) {
+        return ResolveBool(!state.boosts.empty(), build);
+      } else {
+        return build.template operator()<false>();
+      }
     });
   });
 }
 
-template<template<typename> typename Impl, typename Result, bool Scored = false,
-         template<typename> typename Wrap = DeducedNode, typename... Prefix>
-Result MakeFixedPhrase(const FixedPhraseQuery& query, Prefix&&... prefix) {
-  switch (MatchOf(query)) {
-    case PhraseMatch::Slop:
-      return MakeFixedPhraseOf<PhraseMatch::Slop, Impl, Result, Scored, Wrap>(
-        query, std::forward<Prefix>(prefix)...);
-    case PhraseMatch::Intervals:
-      return MakeFixedPhraseOf<PhraseMatch::Intervals, Impl, Result, Scored,
-                               Wrap>(query, std::forward<Prefix>(prefix)...);
-    case PhraseMatch::Plain:
-      break;
-  }
-  return MakeFixedPhraseOf<PhraseMatch::Plain, Impl, Result, Scored, Wrap>(
-    query, std::forward<Prefix>(prefix)...);
+template<typename Result, bool Scored, PhraseMatch M, typename Query,
+         typename F>
+Result Build(PhraseKind<M>, const Query& query, uint64_t, F&& f) {
+  return BuildPhrase<M, Scored>(query, std::forward<F>(f));
 }
 
-template<template<typename> typename Impl, typename Result, bool Scored = false,
-         template<typename> typename Wrap = DeducedNode, typename... Prefix>
-Result MakeVariadicPhrase(const VariadicPhraseQuery& query,
-                          Prefix&&... prefix) {
-  switch (MatchOf(query)) {
-    case PhraseMatch::Slop:
-      return MakeVariadicPhraseOf<PhraseMatch::Slop, Impl, Result, Scored,
-                                  Wrap>(query, std::forward<Prefix>(prefix)...);
-    case PhraseMatch::Intervals:
-      return MakeVariadicPhraseOf<PhraseMatch::Intervals, Impl, Result, Scored,
-                                  Wrap>(query, std::forward<Prefix>(prefix)...);
-    case PhraseMatch::Plain:
-      break;
-  }
-  return MakeVariadicPhraseOf<PhraseMatch::Plain, Impl, Result, Scored, Wrap>(
-    query, std::forward<Prefix>(prefix)...);
+template<PhraseMatch M>
+std::optional<score_t> ConstantOf(PhraseKind<M>, const FixedPhraseQuery& query,
+                                  const ScoreArgs& args) {
+  return ConstantOf(query.Segment(), *query.state.reader, args,
+                    M == PhraseMatch::Slop);
+}
+
+template<PhraseMatch M>
+std::optional<score_t> ConstantOf(PhraseKind<M>,
+                                  const VariadicPhraseQuery& query,
+                                  const ScoreArgs& args) {
+  return ConstantOf(query.Segment(), *query.state.reader, args,
+                    M == PhraseMatch::Slop || !query.state.boosts.empty());
+}
+
+template<PhraseMatch M, typename Query>
+const TermReader& FieldOf(PhraseKind<M>, const Query& query) {
+  SDB_ASSERT(query.state.reader);
+  return *query.state.reader;
 }
 
 }  // namespace irs::detail

@@ -29,9 +29,9 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
-#include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/probe/boolean_window.hpp"
@@ -44,9 +44,9 @@
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting_pruned_clause.hpp"
 #include "iresearch/search/top/posting_pruned_lead.hpp"
-#include "iresearch/search/top/prune_leaves.hpp"
 #include "iresearch/search/top/pruned_clause.hpp"
 #include "iresearch/search/top/pruned_conjunction.hpp"
+#include "iresearch/search/top/pruned_leaves.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 
@@ -261,12 +261,12 @@ Root::ptr MakeNestedPrunedConjunction(
     };
     const auto make = [&]<typename Lead>(auto&& lead) -> Root::ptr {
       if (constants) {
-        using Others = PruneLeaves<ErasedClause>;
+        using Others = PrunedLeaves<ErasedClause>;
         return build.template operator()<Lead, Others>(
           std::forward<decltype(lead)>(lead),
           [&](size_t i) { return std::make_tuple(erased(i + 1)); });
       }
-      using Others = PruneLeaves<Group>;
+      using Others = PrunedLeaves<Group>;
       return build.template operator()<Lead, Others>(
         std::forward<decltype(lead)>(lead), [&](size_t i) {
           const auto& clause = clauses[i + 1];

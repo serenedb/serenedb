@@ -23,24 +23,31 @@
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
-#include "iresearch/search/top/make.hpp"
+#include "iresearch/search/top/family.hpp"
 #include "iresearch/search/top/posting.hpp"
+#include "iresearch/search/top/single_posting.hpp"
 #include "iresearch/search/top/walk.hpp"
 
 namespace irs::top {
 
-Root::ptr MakePosting(const irs::detail::PostingClause& posting,
-                      const SubReader& segment, const Context& ctx) {
+Root::ptr Family::MakePosting(const irs::detail::PostingClause& posting,
+                              const SubReader& segment, const Context& ctx,
+                              ScoreMergeType) {
   const auto& meta = posting.state.cookie;
-  SDB_ASSERT(meta.docs_count > 1, "a single document has its own unit");
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
-  const auto* const doc = irs::detail::DocOf(own);
   const irs::detail::ScoreArgs args{.scorer = posting.stats.scorer,
                                     .stats = posting.stats.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = posting.boost};
-
+  if (meta.docs_count == 1) {
+    return MakePrepared(ctx, [&](auto table) -> Root::ptr {
+      auto root = memory::make_managed<SinglePosting<decltype(table)>>(table);
+      root->Prepare(meta, segment, own, args);
+      return root;
+    });
+  }
+  const auto* const doc = irs::detail::DocOf(own);
   if (const auto value = irs::detail::ConstantOf(segment, own, args)) {
     return lead::ResolvePostingDocs<Root::ptr>(
       posting, [&]<typename Leaf>(auto&&... rest) -> Root::ptr {

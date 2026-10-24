@@ -39,84 +39,41 @@
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/utils/memory.hpp"
 
-namespace irs::detail {
+namespace irs::offsets {
 
-template<PhraseMatch M>
-inline constexpr bool kOffsetsCount = M == PhraseMatch::Slop;
-
-template<PhraseMatch M>
-offsets::Root::ptr MakeFixedPhraseOffsets(const FixedPhraseQuery& query) {
-  const auto& state = query.state;
-  const auto& h = state.handles;
-  if (!h.HasOffsets()) {
+template<detail::PhraseMatch M, typename Query>
+Root::ptr MakePhrase(const Query& query) {
+  if (!query.state.handles.HasOffsets()) {
     return {};
   }
-  const std::span metas{state.metas.data(), state.metas.size()};
-  return ResolveBounds(h.bounds, [&]<bool Bounds> -> offsets::Root::ptr {
-    return ResolveInput(*h.doc, [&]<typename Input> -> offsets::Root::ptr {
-      using Leaf = detail::PostingPos<Input, Bounds, true>;
-      return ResolveMatcherOf<M, 0, kOffsetsCount<M>, true>(
-        query, [&]<typename Matcher>(auto&&... args) -> offsets::Root::ptr {
-          using Slots = detail::PhraseSlots<Matcher, Leaf>;
-          using Impl = offsets::Impl<offsets::Phrase<Slots>>;
-          return memory::make_managed<Impl>(
-            metas, std::span<const TermInterval>{query.positions}, *h.doc,
-            h.Layout(), *h.pos, h.pay, std::forward<decltype(args)>(args)...);
-        });
+  static constexpr bool kCount = M == detail::PhraseMatch::Slop;
+  return detail::BuildPhrase<M, kCount, true, false>(
+    query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
+      return memory::make_managed<Impl<Phrase<Slots>>>(
+        std::forward<decltype(args)>(args)...);
     });
-  });
 }
 
-template<PhraseMatch M>
-offsets::Root::ptr MakeVariadicPhraseOffsets(const VariadicPhraseQuery& query) {
-  const auto& state = query.state;
-  const auto& h = state.handles;
-  if (!h.HasOffsets()) {
-    return {};
-  }
-  const std::span<const PostingMeta> metas{state.metas.data(),
-                                           state.metas.size()};
-  const std::span offsets{state.offsets.data(), state.offsets.size()};
-  const std::span<const TermInterval> intervals{query.positions};
-  SDB_ASSERT(!state.Fixed());
-
-  return ResolveBounds(h.bounds, [&]<bool Bounds> -> offsets::Root::ptr {
-    return ResolveInput(*h.doc, [&]<typename Input> -> offsets::Root::ptr {
-      return ResolveSlotMatcherOf<M, Bounds, Input, kOffsetsCount<M>, true>(
-        query,
-        [&]<typename Matcher, typename Leaf>(
-          auto&&... args) -> offsets::Root::ptr {
-          using Slots =
-            detail::PhraseSlots<Matcher, Leaf, 0, PhraseVariadicPos<Leaf>>;
-          using Impl = offsets::Impl<offsets::Phrase<Slots>>;
-          return memory::make_managed<Impl>(
-            metas, offsets, std::span<const score_t>{}, intervals, *h.doc,
-            h.Layout(), *h.pos, h.pay, std::forward<decltype(args)>(args)...);
-        });
-    });
-  });
-}
-
-template<bool All>
-offsets::Root::ptr MakeNGramOffsets(const NGramSimilarityQuery& query) {
+template<detail::NGramMatch M>
+Root::ptr MakeNGram(const NGramSimilarityQuery& query) {
   const auto& state = query.State();
   const auto& h = state.handles;
   if (!h.HasOffsets()) {
     return {};
   }
   const std::span metas{state.metas.data(), state.metas.size()};
-  return ResolveBounds(h.bounds, [&]<bool Bounds> -> offsets::Root::ptr {
-    return ResolveInput(*h.doc, [&]<typename Input> -> offsets::Root::ptr {
+  return detail::ResolveBounds(h.bounds, [&]<bool Bounds> -> Root::ptr {
+    return detail::ResolveInput(*h.doc, [&]<typename Input> -> Root::ptr {
       using Leaf = detail::PostingPos<Input, Bounds, true>;
-      if constexpr (All) {
+      if constexpr (M == detail::NGramMatch::All) {
         using Slots = detail::NGramAllSlots<Leaf, 0, false, true>;
-        using Impl = offsets::Impl<offsets::NGram<Slots>>;
-        return memory::make_managed<Impl>(metas, *h.doc, h.Layout(), *h.pos,
+        using Node = Impl<NGram<Slots>>;
+        return memory::make_managed<Node>(metas, *h.doc, h.Layout(), *h.pos,
                                           h.pay, query.TotalTerms());
       } else {
         using Slots = detail::NGramSlots<Leaf, false, true>;
-        using Impl = offsets::Impl<offsets::NGram<Slots>>;
-        return memory::make_managed<Impl>(
+        using Node = Impl<NGram<Slots>>;
+        return memory::make_managed<Node>(
           metas.size(),
           [&](Leaf& leaf, size_t i) {
             leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
@@ -126,6 +83,17 @@ offsets::Root::ptr MakeNGramOffsets(const NGramSimilarityQuery& query) {
     });
   });
 }
+
+}  // namespace irs::offsets
+
+#define IRS_OFFSETS_PHRASE(Query, Match) \
+  template Root::ptr MakePhrase<detail::PhraseMatch::Match>(const Query&)
+
+#define IRS_OFFSETS_NGRAM(Match)                           \
+  template Root::ptr MakeNGram<detail::NGramMatch::Match>( \
+    const NGramSimilarityQuery&)
+
+namespace irs::detail {
 
 inline offsets::Root::ptr MakePostingOffsets(const PostingMeta& meta,
                                              const PhraseHandles& h) {

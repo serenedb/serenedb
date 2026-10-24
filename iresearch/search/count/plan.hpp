@@ -30,7 +30,6 @@
 #include "iresearch/search/count/walk.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 
 namespace irs::count {
@@ -45,47 +44,5 @@ Root::ptr MakeShape(const Context& ctx, Args&&... args) {
   return memory::make_managed<Shape<Parts..., utils::Empty>>(
     utils::Empty{}, std::forward<Args>(args)...);
 }
-
-template<typename Node>
-using PlainWalk = Walk<Node, utils::Empty>;
-template<typename Node>
-using FilteredWalk = Walk<Node, detail::TableFilter*>;
-
-template<detail::PhraseMatch M>
-Root::ptr MakeFixedPhraseWalk(const FixedPhraseQuery& query,
-                              const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return detail::MakeFixedPhraseOf<M, FilteredWalk, Root::ptr>(query,
-                                                                 ctx.table);
-  }
-  return detail::MakeFixedPhraseOf<M, PlainWalk, Root::ptr>(query,
-                                                            utils::Empty{});
-}
-
-template<detail::PhraseMatch M>
-Root::ptr MakeVariadicPhraseWalk(const VariadicPhraseQuery& query,
-                                 const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return detail::MakeVariadicPhraseOf<M, FilteredWalk, Root::ptr>(query,
-                                                                    ctx.table);
-  }
-  return detail::MakeVariadicPhraseOf<M, PlainWalk, Root::ptr>(query,
-                                                               utils::Empty{});
-}
-
-Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx);
-Root::ptr MakeFixedPhraseIntervals(const FixedPhraseQuery& query,
-                                   const Context& ctx);
-Root::ptr MakeFixedPhraseSlop(const FixedPhraseQuery& query,
-                              const Context& ctx);
-Root::ptr MakeVariadicPhrase(const VariadicPhraseQuery& query,
-                             const Context& ctx);
-Root::ptr MakeVariadicPhraseIntervals(const VariadicPhraseQuery& query,
-                                      const Context& ctx);
-Root::ptr MakeVariadicPhraseSlop(const VariadicPhraseQuery& query,
-                                 const Context& ctx);
-
-Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx);
-Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
 
 }  // namespace irs::count

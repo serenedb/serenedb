@@ -28,9 +28,10 @@
 #include <vector>
 
 #include "iresearch/search/detail/bitset_of.hpp"
-#include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
+#include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/filters/filter.hpp"
@@ -76,65 +77,15 @@ Root::ptr MakePrepared(const Context& ctx, Make&& make) {
   return make(utils::Empty{});
 }
 
-template<typename Node>
-using PlainWalk = Walk<Node, utils::Empty>;
-template<typename Node>
-using FilteredWalk = Walk<Node, irs::detail::TableFilter*>;
-template<typename Node>
-using PlainConstantWalk = ConstantWalk<Node, utils::Empty>;
-template<typename Node>
-using FilteredConstantWalk = ConstantWalk<Node, irs::detail::TableFilter*>;
-
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 
 Root::ptr MakeEmpty();
 
-Root::ptr Make(const TermQuery& query, const Context& ctx);
-Root::ptr Make(const MultiTermQuery& query, const Context& ctx);
-Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx);
-Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx);
-Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx);
-Root::ptr Make(const AllQuery& query, const Context& ctx);
-Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx);
-Root::ptr Make(const ApproxQuery& query, const Context& ctx);
-Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx);
-Root::ptr Make(const ByNestedQuery& query, const Context& ctx);
-Root::ptr Make(const HnswQuery& query, const Context& ctx);
-Root::ptr Make(const KnnVectorQuery& query, const Context& ctx);
-Root::ptr Make(const ExactVectorQuery& query, const Context& ctx);
-Root::ptr Make(const RangeVectorQuery& query, const Context& ctx);
-Root::ptr Make(const BooleanQuery& query, const Context& ctx);
-template<typename Parser, typename Acceptor>
-Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx);
+template<irs::detail::PhraseMatch M, typename Query>
+Root::ptr MakePhrasePruned(const Query& query, const Context& ctx);
 
-inline Root::ptr Make(const EmptyQueryBuilder&, const Context&) {
-  return MakeEmpty();
-}
-
-Root::ptr MakePosting(const irs::detail::PostingClause& posting,
-                      const SubReader& segment, const Context& ctx);
-Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
-                            const SubReader& segment, const Context& ctx);
-Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
-
-Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx);
-Root::ptr MakeFixedPhraseIntervals(const FixedPhraseQuery& query,
-                                   const Context& ctx);
-Root::ptr MakeFixedPhraseSlop(const FixedPhraseQuery& query,
-                              const Context& ctx);
-
-Root::ptr MakeVariadicPhrase(const VariadicPhraseQuery& query,
-                             const Context& ctx);
-Root::ptr MakeVariadicPhraseIntervals(const VariadicPhraseQuery& query,
-                                      const Context& ctx);
-Root::ptr MakeVariadicPhraseSlop(const VariadicPhraseQuery& query,
-                                 const Context& ctx);
-
-Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx);
-Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
-
-Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
-                            const Context& ctx);
+Root::ptr MakeTokenPhrasePruned(const TokenPhraseQuery& query,
+                                const Context& ctx);
 
 Root::ptr MakePrunedPosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
@@ -143,13 +94,6 @@ Root::ptr MakePrunedPosting(
   std::span<const irs::detail::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx);
-
-Root::ptr MakeFixedPhrasePruned(const FixedPhraseQuery& query,
-                                const Context& ctx);
-Root::ptr MakeFixedPhraseIntervalsPruned(const FixedPhraseQuery& query,
-                                         const Context& ctx);
-Root::ptr MakeVariadicPhrasePruned(const VariadicPhraseQuery& query,
-                                   const Context& ctx);
 
 Root::ptr MakePrunedConjunction(
   std::span<const irs::detail::PostingClause> terms,

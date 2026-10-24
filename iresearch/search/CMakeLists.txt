@@ -3,23 +3,11 @@ target_sources(
     PRIVATE
         count/make.cpp
         count/make_boolean.cpp
-        count/make_boolean_exclusion.cpp
-        count/make_boolean_exclusion_window.cpp
         count/make_boolean_negation.cpp
         count/make_constant.cpp
-        count/make_fixed_phrase.cpp
-        count/make_fixed_phrase_intervals.cpp
-        count/make_fixed_phrase_slop.cpp
-        count/make_ngram.cpp
-        count/make_ngram_all.cpp
         count/make_subtract_conjunction.cpp
         count/make_subtract_disjunction.cpp
         count/make_term_counts.cpp
-        count/make_token_phrase.cpp
-        count/make_variadic_phrase.cpp
-        count/make_variadic_phrase_intervals.cpp
-        count/make_variadic_phrase_slop.cpp
-        count/make_wildcard_ngram.cpp
         detail/collectors.cpp
         detail/compiled_phrase.cpp
         detail/pattern_cache.cpp
@@ -28,53 +16,10 @@ target_sources(
         detail/token_phrase.cpp
         docs/make.cpp
         docs/make_all.cpp
-        docs/make_boolean.cpp
-        docs/make_boolean_exclusion.cpp
-        docs/make_boolean_exclusion_window.cpp
-        docs/make_boolean_negation.cpp
-        docs/make_fixed_phrase.cpp
-        docs/make_fixed_phrase_intervals.cpp
-        docs/make_fixed_phrase_slop.cpp
-        docs/make_ngram.cpp
-        docs/make_ngram_all.cpp
         docs/make_posting.cpp
-        docs/make_single_posting.cpp
-        docs/make_token_phrase.cpp
-        docs/make_variadic_phrase.cpp
-        docs/make_variadic_phrase_intervals.cpp
-        docs/make_variadic_phrase_slop.cpp
-        docs/make_wildcard_ngram.cpp
-        fill/make.cpp
         fill/make_all_docs.cpp
         fill/make_all_scored.cpp
-        fill/make_boolean.cpp
-        fill/make_boolean_exclusion.cpp
-        fill/make_boolean_exclusion_window.cpp
-        fill/make_boolean_negation.cpp
-        fill/make_boolean_scored.cpp
-        fill/make_fixed_phrase_docs.cpp
-        fill/make_fixed_phrase_intervals_docs.cpp
-        fill/make_fixed_phrase_intervals_scored.cpp
-        fill/make_fixed_phrase_scored.cpp
-        fill/make_fixed_phrase_slop_docs.cpp
-        fill/make_fixed_phrase_slop_scored.cpp
-        fill/make_ngram_all_docs.cpp
-        fill/make_ngram_all_scored.cpp
-        fill/make_ngram_docs.cpp
-        fill/make_ngram_scored.cpp
-        fill/make_posting_docs.cpp
-        fill/make_posting_scored.cpp
-        fill/make_single_posting_docs.cpp
-        fill/make_single_posting_scored.cpp
-        fill/make_token_phrase.cpp
-        fill/make_variadic_phrase_docs.cpp
-        fill/make_variadic_phrase_intervals_docs.cpp
-        fill/make_variadic_phrase_intervals_scored.cpp
-        fill/make_variadic_phrase_scored.cpp
-        fill/make_variadic_phrase_slop_docs.cpp
-        fill/make_variadic_phrase_slop_scored.cpp
-        fill/make_wildcard_ngram_docs.cpp
-        fill/make_wildcard_ngram_scored.cpp
+        fill/make_posting.cpp
         filters/all_filter.cpp
         filters/automaton_filter.cpp
         filters/boolean_filter.cpp
@@ -97,81 +42,158 @@ target_sources(
         filters/wildcard_ngram_filter.cpp
         hits/make.cpp
         hits/make_all.cpp
-        hits/make_boolean.cpp
-        hits/make_boolean_exclusion.cpp
-        hits/make_boolean_exclusion_window.cpp
         hits/make_boosted_posting.cpp
-        hits/make_fixed_phrase.cpp
-        hits/make_fixed_phrase_intervals.cpp
-        hits/make_fixed_phrase_slop.cpp
-        hits/make_ngram.cpp
-        hits/make_ngram_all.cpp
         hits/make_posting.cpp
-        hits/make_single_posting.cpp
-        hits/make_token_phrase.cpp
-        hits/make_variadic_phrase.cpp
-        hits/make_variadic_phrase_intervals.cpp
-        hits/make_variadic_phrase_slop.cpp
-        hits/make_wildcard_ngram.cpp
-        lead/make.cpp
         lead/make_all_docs.cpp
         lead/make_all_scored.cpp
-        lead/make_boolean.cpp
-        lead/make_boolean_exclusion.cpp
-        lead/make_boolean_exclusion_window.cpp
-        lead/make_boolean_negation.cpp
-        lead/make_boolean_scored.cpp
-        lead/make_fixed_phrase_docs.cpp
-        lead/make_fixed_phrase_intervals_docs.cpp
-        lead/make_fixed_phrase_intervals_scored.cpp
-        lead/make_fixed_phrase_scored.cpp
-        lead/make_fixed_phrase_slop_docs.cpp
-        lead/make_fixed_phrase_slop_scored.cpp
-        lead/make_ngram_all_docs.cpp
-        lead/make_ngram_all_scored.cpp
-        lead/make_ngram_docs.cpp
-        lead/make_ngram_scored.cpp
-        lead/make_posting_docs.cpp
-        lead/make_posting_scored.cpp
-        lead/make_token_phrase.cpp
-        lead/make_variadic_phrase_docs.cpp
-        lead/make_variadic_phrase_intervals_docs.cpp
-        lead/make_variadic_phrase_intervals_scored.cpp
-        lead/make_variadic_phrase_scored.cpp
-        lead/make_variadic_phrase_slop_docs.cpp
-        lead/make_variadic_phrase_slop_scored.cpp
-        lead/make_wildcard_ngram_docs.cpp
-        lead/make_wildcard_ngram_scored.cpp
-        probe/make.cpp
+        lead/make_posting.cpp
+        make/boolean/count.cpp
+        make/boolean/count_exclusion.cpp
+        make/boolean/count_exclusion_window.cpp
+        make/boolean/docs.cpp
+        make/boolean/docs_exclusion.cpp
+        make/boolean/docs_exclusion_window.cpp
+        make/boolean/docs_negation.cpp
+        make/boolean/fill_docs.cpp
+        make/boolean/fill_exclusion_docs.cpp
+        make/boolean/fill_exclusion_scored.cpp
+        make/boolean/fill_exclusion_window.cpp
+        make/boolean/fill_negation.cpp
+        make/boolean/fill_scored.cpp
+        make/boolean/hits.cpp
+        make/boolean/hits_exclusion.cpp
+        make/boolean/hits_exclusion_window.cpp
+        make/boolean/lead_docs.cpp
+        make/boolean/lead_exclusion_docs.cpp
+        make/boolean/lead_exclusion_scored.cpp
+        make/boolean/lead_exclusion_window.cpp
+        make/boolean/lead_negation.cpp
+        make/boolean/lead_scored.cpp
+        make/boolean/probe_docs.cpp
+        make/boolean/probe_exclusion_docs.cpp
+        make/boolean/probe_exclusion_scored.cpp
+        make/boolean/probe_optional_docs.cpp
+        make/boolean/probe_optional_scored.cpp
+        make/boolean/probe_scored.cpp
+        make/boolean/top.cpp
+        make/boolean/top_exclusion.cpp
+        make/boolean/top_exclusion_window.cpp
+        make/ngram/count_all.cpp
+        make/ngram/count_threshold.cpp
+        make/ngram/docs_all.cpp
+        make/ngram/docs_threshold.cpp
+        make/ngram/fill_all_docs.cpp
+        make/ngram/fill_all_scored.cpp
+        make/ngram/fill_threshold_docs.cpp
+        make/ngram/fill_threshold_scored.cpp
+        make/ngram/hits_all.cpp
+        make/ngram/hits_threshold.cpp
+        make/ngram/lead_all_docs.cpp
+        make/ngram/lead_all_scored.cpp
+        make/ngram/lead_threshold_docs.cpp
+        make/ngram/lead_threshold_scored.cpp
+        make/ngram/probe_all_docs.cpp
+        make/ngram/probe_all_scored.cpp
+        make/ngram/probe_threshold_docs.cpp
+        make/ngram/probe_threshold_scored.cpp
+        make/ngram/top_all.cpp
+        make/ngram/top_threshold.cpp
+        make/phrase/count_fixed.cpp
+        make/phrase/count_fixed_intervals.cpp
+        make/phrase/count_fixed_slop.cpp
+        make/phrase/count_variadic.cpp
+        make/phrase/count_variadic_intervals.cpp
+        make/phrase/count_variadic_slop.cpp
+        make/phrase/docs_fixed.cpp
+        make/phrase/docs_fixed_intervals.cpp
+        make/phrase/docs_fixed_slop.cpp
+        make/phrase/docs_variadic.cpp
+        make/phrase/docs_variadic_intervals.cpp
+        make/phrase/docs_variadic_slop.cpp
+        make/phrase/fill_fixed_docs.cpp
+        make/phrase/fill_fixed_intervals_docs.cpp
+        make/phrase/fill_fixed_intervals_scored.cpp
+        make/phrase/fill_fixed_scored.cpp
+        make/phrase/fill_fixed_slop_docs.cpp
+        make/phrase/fill_fixed_slop_scored.cpp
+        make/phrase/fill_variadic_docs.cpp
+        make/phrase/fill_variadic_intervals_docs.cpp
+        make/phrase/fill_variadic_intervals_scored.cpp
+        make/phrase/fill_variadic_scored.cpp
+        make/phrase/fill_variadic_slop_docs.cpp
+        make/phrase/fill_variadic_slop_scored.cpp
+        make/phrase/hits_fixed.cpp
+        make/phrase/hits_fixed_intervals.cpp
+        make/phrase/hits_fixed_slop.cpp
+        make/phrase/hits_variadic.cpp
+        make/phrase/hits_variadic_intervals.cpp
+        make/phrase/hits_variadic_slop.cpp
+        make/phrase/lead_fixed_docs.cpp
+        make/phrase/lead_fixed_intervals_docs.cpp
+        make/phrase/lead_fixed_intervals_scored.cpp
+        make/phrase/lead_fixed_scored.cpp
+        make/phrase/lead_fixed_slop_docs.cpp
+        make/phrase/lead_fixed_slop_scored.cpp
+        make/phrase/lead_variadic_docs.cpp
+        make/phrase/lead_variadic_intervals_docs.cpp
+        make/phrase/lead_variadic_intervals_scored.cpp
+        make/phrase/lead_variadic_scored.cpp
+        make/phrase/lead_variadic_slop_docs.cpp
+        make/phrase/lead_variadic_slop_scored.cpp
+        make/phrase/probe_fixed_docs.cpp
+        make/phrase/probe_fixed_intervals_docs.cpp
+        make/phrase/probe_fixed_intervals_scored.cpp
+        make/phrase/probe_fixed_scored.cpp
+        make/phrase/probe_fixed_slop_docs.cpp
+        make/phrase/probe_fixed_slop_scored.cpp
+        make/phrase/probe_variadic_docs.cpp
+        make/phrase/probe_variadic_intervals_docs.cpp
+        make/phrase/probe_variadic_intervals_scored.cpp
+        make/phrase/probe_variadic_scored.cpp
+        make/phrase/probe_variadic_slop_docs.cpp
+        make/phrase/probe_variadic_slop_scored.cpp
+        make/phrase/top_fixed.cpp
+        make/phrase/top_fixed_intervals.cpp
+        make/phrase/top_fixed_intervals_pruned.cpp
+        make/phrase/top_fixed_pruned.cpp
+        make/phrase/top_fixed_slop.cpp
+        make/phrase/top_variadic.cpp
+        make/phrase/top_variadic_intervals.cpp
+        make/phrase/top_variadic_intervals_pruned.cpp
+        make/phrase/top_variadic_pruned.cpp
+        make/phrase/top_variadic_slop.cpp
+        make/query/all.cpp
+        make/query/approx.cpp
+        make/query/boolean.cpp
+        make/query/multi_term.cpp
+        make/query/ngram_similarity.cpp
+        make/query/phrase.cpp
+        make/query/term.cpp
+        make/query/token_phrase.cpp
+        make/query/wildcard_ngram.cpp
+        make/token_phrase/count.cpp
+        make/token_phrase/docs.cpp
+        make/token_phrase/fill_docs.cpp
+        make/token_phrase/fill_scored.cpp
+        make/token_phrase/hits.cpp
+        make/token_phrase/lead_docs.cpp
+        make/token_phrase/lead_scored.cpp
+        make/token_phrase/probe_docs.cpp
+        make/token_phrase/probe_scored.cpp
+        make/token_phrase/top.cpp
+        make/wildcard_ngram/count.cpp
+        make/wildcard_ngram/docs.cpp
+        make/wildcard_ngram/fill_docs.cpp
+        make/wildcard_ngram/fill_scored.cpp
+        make/wildcard_ngram/hits.cpp
+        make/wildcard_ngram/lead_docs.cpp
+        make/wildcard_ngram/lead_scored.cpp
+        make/wildcard_ngram/probe_docs.cpp
+        make/wildcard_ngram/probe_scored.cpp
+        make/wildcard_ngram/top.cpp
         probe/make_all_docs.cpp
         probe/make_all_scored.cpp
-        probe/make_boolean.cpp
-        probe/make_boolean_scored.cpp
-        probe/make_boolean_sparse.cpp
-        probe/make_boolean_sparse_exclusion.cpp
-        probe/make_boolean_sparse_scored.cpp
-        probe/make_fixed_phrase_docs.cpp
-        probe/make_fixed_phrase_intervals_docs.cpp
-        probe/make_fixed_phrase_intervals_scored.cpp
-        probe/make_fixed_phrase_scored.cpp
-        probe/make_fixed_phrase_slop_docs.cpp
-        probe/make_fixed_phrase_slop_scored.cpp
-        probe/make_ngram_all_docs.cpp
-        probe/make_ngram_all_scored.cpp
-        probe/make_ngram_docs.cpp
-        probe/make_ngram_scored.cpp
-        probe/make_posting_docs.cpp
-        probe/make_posting_scored.cpp
-        probe/make_single_posting_scored.cpp
-        probe/make_token_phrase.cpp
-        probe/make_variadic_phrase_docs.cpp
-        probe/make_variadic_phrase_intervals_docs.cpp
-        probe/make_variadic_phrase_intervals_scored.cpp
-        probe/make_variadic_phrase_scored.cpp
-        probe/make_variadic_phrase_slop_docs.cpp
-        probe/make_variadic_phrase_slop_scored.cpp
-        probe/make_wildcard_ngram_docs.cpp
-        probe/make_wildcard_ngram_scored.cpp
+        probe/make_posting.cpp
         queries/boolean_query.cpp
         queries/docs_mask_query.cpp
         queries/multiterm_query.cpp
@@ -185,29 +207,14 @@ target_sources(
         scorers/score_function.cpp
         top/make.cpp
         top/make_all.cpp
-        top/make_boolean.cpp
-        top/make_boolean_exclusion.cpp
-        top/make_boolean_exclusion_window.cpp
-        top/make_fixed_phrase.cpp
-        top/make_fixed_phrase_intervals.cpp
-        top/make_fixed_phrase_intervals_pruned.cpp
-        top/make_fixed_phrase_pruned.cpp
-        top/make_fixed_phrase_slop.cpp
-        top/make_ngram.cpp
-        top/make_ngram_all.cpp
         top/make_posting.cpp
+        top/make_pruned.cpp
         top/make_pruned_conjunction.cpp
         top/make_pruned_conjunction_nested.cpp
         top/make_pruned_disjunction.cpp
         top/make_pruned_posting.cpp
         top/make_pruned_req_opt.cpp
-        top/make_single_posting.cpp
         top/make_token_phrase.cpp
-        top/make_variadic_phrase.cpp
-        top/make_variadic_phrase_intervals.cpp
-        top/make_variadic_phrase_pruned.cpp
-        top/make_variadic_phrase_slop.cpp
-        top/make_wildcard_ngram.cpp
 )
 
 if(IRESEARCH_BENCH)
@@ -218,28 +225,9 @@ target_sources(
     iresearch
     PRIVATE
         count/make_exact.cpp
-        count/make_geo_contains.cpp
-        count/make_geo_distance.cpp
-        count/make_geo_intersects.cpp
-        count/make_geo_is_contained.cpp
         count/make_hnsw.cpp
-        count/make_ivf.cpp
         docs/make_exact.cpp
-        docs/make_geo_contains.cpp
-        docs/make_geo_distance.cpp
-        docs/make_geo_intersects.cpp
-        docs/make_geo_is_contained.cpp
         docs/make_hnsw.cpp
-        docs/make_ivf.cpp
-        fill/make_geo_contains_docs.cpp
-        fill/make_geo_contains_scored.cpp
-        fill/make_geo_distance_docs.cpp
-        fill/make_geo_distance_scored.cpp
-        fill/make_geo_intersects_docs.cpp
-        fill/make_geo_intersects_scored.cpp
-        fill/make_geo_is_contained_docs.cpp
-        fill/make_geo_is_contained_scored.cpp
-        fill/make_ivf.cpp
         filters/geo_filter.cpp
         filters/nested_filter.cpp
         filters/shingle_phrase.cpp
@@ -247,42 +235,67 @@ target_sources(
         filters/vector_radius_filter.cpp
         filters/vector_similarity_filter.cpp
         hits/make_exact.cpp
-        hits/make_geo_contains.cpp
-        hits/make_geo_distance.cpp
-        hits/make_geo_intersects.cpp
-        hits/make_geo_is_contained.cpp
         hits/make_hnsw.cpp
         hits/make_ivf.cpp
-        lead/make_geo_contains_docs.cpp
-        lead/make_geo_contains_scored.cpp
-        lead/make_geo_distance_docs.cpp
-        lead/make_geo_distance_scored.cpp
-        lead/make_geo_intersects_docs.cpp
-        lead/make_geo_intersects_scored.cpp
-        lead/make_geo_is_contained_docs.cpp
-        lead/make_geo_is_contained_scored.cpp
         lead/make_hnsw.cpp
         lead/make_ivf.cpp
+        make/geo/count_contains.cpp
+        make/geo/count_distance.cpp
+        make/geo/count_intersects.cpp
+        make/geo/count_is_contained.cpp
+        make/geo/docs_contains.cpp
+        make/geo/docs_distance.cpp
+        make/geo/docs_intersects.cpp
+        make/geo/docs_is_contained.cpp
+        make/geo/fill_contains_docs.cpp
+        make/geo/fill_contains_scored.cpp
+        make/geo/fill_distance_docs.cpp
+        make/geo/fill_distance_scored.cpp
+        make/geo/fill_intersects_docs.cpp
+        make/geo/fill_intersects_scored.cpp
+        make/geo/fill_is_contained_docs.cpp
+        make/geo/fill_is_contained_scored.cpp
+        make/geo/hits_contains.cpp
+        make/geo/hits_distance.cpp
+        make/geo/hits_intersects.cpp
+        make/geo/hits_is_contained.cpp
+        make/geo/lead_contains_docs.cpp
+        make/geo/lead_contains_scored.cpp
+        make/geo/lead_distance_docs.cpp
+        make/geo/lead_distance_scored.cpp
+        make/geo/lead_intersects_docs.cpp
+        make/geo/lead_intersects_scored.cpp
+        make/geo/lead_is_contained_docs.cpp
+        make/geo/lead_is_contained_scored.cpp
+        make/geo/probe_contains_docs.cpp
+        make/geo/probe_contains_scored.cpp
+        make/geo/probe_distance_docs.cpp
+        make/geo/probe_distance_scored.cpp
+        make/geo/probe_intersects_docs.cpp
+        make/geo/probe_intersects_scored.cpp
+        make/geo/probe_is_contained_docs.cpp
+        make/geo/probe_is_contained_scored.cpp
+        make/geo/top_contains.cpp
+        make/geo/top_distance.cpp
+        make/geo/top_intersects.cpp
+        make/geo/top_is_contained.cpp
+        make/query/exact_vector.cpp
+        make/query/hnsw.cpp
+        make/query/knn_vector.cpp
+        make/query/nested.cpp
+        make/query/range_vector.cpp
+        make/ngram/offsets_all.cpp
+        make/ngram/offsets_threshold.cpp
+        make/phrase/offsets_fixed.cpp
+        make/phrase/offsets_fixed_intervals.cpp
+        make/phrase/offsets_fixed_slop.cpp
+        make/phrase/offsets_variadic.cpp
+        make/phrase/offsets_variadic_intervals.cpp
+        make/phrase/offsets_variadic_slop.cpp
         offsets/make.cpp
-        offsets/make_fixed_phrase.cpp
-        offsets/make_fixed_phrase_intervals.cpp
-        offsets/make_fixed_phrase_slop.cpp
-        offsets/make_ngram.cpp
-        offsets/make_ngram_all.cpp
         offsets/make_posting.cpp
-        offsets/make_variadic_phrase.cpp
-        offsets/make_variadic_phrase_intervals.cpp
-        offsets/make_variadic_phrase_slop.cpp
-        probe/make_geo_contains_docs.cpp
-        probe/make_geo_contains_scored.cpp
-        probe/make_geo_distance_docs.cpp
-        probe/make_geo_distance_scored.cpp
-        probe/make_geo_intersects_docs.cpp
-        probe/make_geo_intersects_scored.cpp
-        probe/make_geo_is_contained_docs.cpp
-        probe/make_geo_is_contained_scored.cpp
-        probe/make_ivf.cpp
         queries/hnsw_query.cpp
+        queries/nested_query.cpp
         queries/vector_similarity_query.cpp
         scorers/dfi.cpp
         scorers/idf.cpp
@@ -295,10 +308,6 @@ target_sources(
         scorers/tfidf.cpp
         scorers/vector_similarity_scorer.cpp
         top/make_exact.cpp
-        top/make_geo_contains.cpp
-        top/make_geo_distance.cpp
-        top/make_geo_intersects.cpp
-        top/make_geo_is_contained.cpp
         top/make_hnsw.cpp
         top/make_ivf.cpp
 )

@@ -83,6 +83,9 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   duckdb::ClientContext& context,
   duckdb::TableFunctionGetStatisticsInput& input);
 
+duckdb::vector<duckdb::PartitionStatistics> IResearchScanPartitionStats(
+  duckdb::ClientContext& context, duckdb::GetPartitionStatsInput& input);
+
 duckdb::vector<duckdb::column_t> IResearchGetRowIdColumns(
   duckdb::ClientContext& context,
   duckdb::optional_ptr<duckdb::FunctionData> bind_data);

@@ -135,6 +135,8 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
   ScoreMergeType _merge_type;
 };
 
+extern template class QueryBuilderImpl<BooleanQuery>;
+
 class BooleanBuilder {
  public:
   BooleanBuilder(const SubReader& segment, IResourceManager& memory,

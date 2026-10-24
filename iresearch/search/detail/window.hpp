@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -101,6 +102,34 @@ inline IRS_FORCE_INLINE void Clear(uint64_t* IRS_RESTRICT dst,
                                    size_t words) noexcept {
   for (size_t w = 0; w != words; ++w) {
     dst[w] = 0;
+  }
+}
+
+inline void ClearScored(uint64_t* IRS_RESTRICT words,
+                        score_t* IRS_RESTRICT window) noexcept {
+  for (uint32_t w = 0; w != kWindowWords; ++w) {
+    auto word = words[w];
+    words[w] = 0;
+    const auto base = w * kWindowBits;
+    while (word != 0) {
+      window[base + std::countr_zero(word)] = 0;
+      word = PopBit(word);
+    }
+  }
+}
+
+inline doc_id_t FindSet(const uint64_t* IRS_RESTRICT mask,
+                        doc_id_t offset) noexcept {
+  auto word = offset / kWindowBits;
+  auto bits = mask[word] & (~uint64_t{0} << (offset % kWindowBits));
+  for (;;) {
+    if (bits != 0) {
+      return static_cast<doc_id_t>(word * kWindowBits + std::countr_zero(bits));
+    }
+    if (++word == kWindowWords) {
+      return kWindowDocs;
+    }
+    bits = mask[word];
   }
 }
 

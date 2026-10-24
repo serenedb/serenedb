@@ -20,6 +20,7 @@
 
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
+#include "iresearch/search/top/family.hpp"
 #include "iresearch/search/top/make.hpp"
 
 namespace irs::top {
@@ -94,35 +95,7 @@ class VectorChain : public Root {
 
 }  // namespace
 
-Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
-  auto inner = irs::detail::InnerProbe(query);
-  if (query.Inner() != nullptr && !inner) {
-    return {};
-  }
-  const auto record = query.Stats(ScoredOf(ctx));
-  const irs::detail::ScoreArgs score{.scorer = record.scorer,
-                                     .stats = record.stats,
-                                     .fetcher = &ctx.fetcher,
-                                     .boost = query.Boost()};
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Root::ptr {
-    return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Root::ptr {
-      if (ctx.table != nullptr) {
-        return irs::detail::MakeVectorScored<FilteredWalk, Root::ptr,
-                                             irs::detail::RadiusGate<Inclusive>,
-                                             Rescore, lead::TwoPhaseScored>(
-          query, *query.State().reader, score, query.Threshold(),
-          std::move(inner), ctx.table, ctx.fetcher);
-      }
-      return irs::detail::MakeVectorScored<PlainWalk, Root::ptr,
-                                           irs::detail::RadiusGate<Inclusive>,
-                                           Rescore, lead::TwoPhaseScored>(
-        query, *query.State().reader, score, query.Threshold(),
-        std::move(inner), utils::Empty{}, ctx.fetcher);
-    });
-  });
-}
-
-Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
+Root::ptr Family::Make(const KnnVectorQuery& query, const Context& ctx) {
   const auto record = query.Stats(ScoredOf(ctx));
   const irs::detail::ScoreArgs score{.scorer = record.scorer,
                                      .stats = record.stats,
@@ -141,21 +114,7 @@ Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
       });
   }
 
-  auto inner = irs::detail::InnerProbe(query);
-  if (!inner) {
-    return {};
-  }
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeVectorScored<FilteredWalk, Root::ptr,
-                                         irs::detail::AcceptAll, false,
-                                         lead::TwoPhaseScored>(
-      query, field, score, irs::detail::Unbounded(), std::move(inner),
-      ctx.table, ctx.fetcher);
-  }
-  return irs::detail::MakeVectorScored<
-    PlainWalk, Root::ptr, irs::detail::AcceptAll, false, lead::TwoPhaseScored>(
-    query, field, score, irs::detail::Unbounded(), std::move(inner),
-    utils::Empty{}, ctx.fetcher);
+  return irs::detail::MakeKnnVector<Family>(query, ctx);
 }
 
 }  // namespace irs::top

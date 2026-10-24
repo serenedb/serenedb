@@ -322,6 +322,17 @@ duckdb::shared_ptr<duckdb::PlanDataVersion> ScanBindData::GetPlanDataVersion()
                                                   search.acquire_snapshot);
 }
 
+duckdb::idx_t ScanColumnOfStorage(const ScanBindData& bind,
+                                  duckdb::idx_t storage_index) {
+  const auto table = bind.relation.table_entry;
+  if (!table || storage_index >= table->GetColumns().PhysicalColumnCount()) {
+    return storage_index;
+  }
+  return table->GetColumns()
+    .PhysicalToLogical(duckdb::PhysicalIndex{storage_index})
+    .index;
+}
+
 std::string_view ScanBindData::ColumnNameById(ColumnId col_id) const {
   if (view) {
     const auto idx = static_cast<size_t>(col_id);

@@ -21,58 +21,35 @@
 #include "iresearch/search/top/make.hpp"
 
 #include <span>
-#include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/approx_of.hpp"
-#include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
-#include "iresearch/search/detail/ngram_of.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
-#include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/filters/all_filter.hpp"
-#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/lead/make.hpp"
-#include "iresearch/search/lead/two_phase_docs.hpp"
+#include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_term.hpp"
+#include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
-#include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
-#include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
+#include "iresearch/search/queries/token_phrase_query.hpp"
 #include "iresearch/search/top/empty.hpp"
-#include "iresearch/search/top/make_boolean.hpp"
-#include "iresearch/search/top/walk.hpp"
+#include "iresearch/search/top/family.hpp"
 
 namespace irs::top {
 namespace {
 
-Root::ptr MakeUnscored(const FixedPhraseQuery& query, const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeFixedPhrase<FilteredConstantWalk, Root::ptr>(
-      query, ctx.table, score_t{0});
-  }
-  return irs::detail::MakeFixedPhrase<PlainConstantWalk, Root::ptr>(
-    query, utils::Empty{}, score_t{0});
-}
-
-Root::ptr MakeUnscored(const VariadicPhraseQuery& query, const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return irs::detail::MakeVariadicPhrase<FilteredConstantWalk, Root::ptr>(
-      query, ctx.table, score_t{0});
-  }
-  return irs::detail::MakeVariadicPhrase<PlainConstantWalk, Root::ptr>(
-    query, utils::Empty{}, score_t{0});
-}
-
-Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {
-  return irs::detail::Build(
-    query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
-      using Node = lead::TwoPhaseDocs<Slots>;
-      return MakeShape<ConstantWalk, Node>(
-        ctx, score_t{0}, std::forward<decltype(args)>(args)...);
+template<typename Query>
+Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
+  return irs::detail::ResolveMatch(
+    query, [&]<irs::detail::PhraseMatch M> -> Root::ptr {
+      if constexpr (M != irs::detail::PhraseMatch::Slop) {
+        if (ctx.prune) {
+          if (auto pruned = MakePhrasePruned<M>(query, ctx)) {
+            return pruned;
+          }
+        }
+      }
+      return irs::detail::MakeScored<Family, irs::detail::PhraseKind<M>>(query,
+                                                                         ctx);
     });
 }
 
@@ -80,124 +57,70 @@ Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {
 
 Root::ptr MakeEmpty() { return memory::make_managed<Empty>(); }
 
-Root::ptr Make(const TermQuery& query, const Context& ctx) {
-  const irs::detail::PostingClause posting{.state = query.State(),
-                                           .boost = query.Boost(),
-                                           .stats = query.Stats(ScoredOf(ctx))};
-  if (posting.state.cookie.docs_count == 1) {
-    return MakeSinglePosting(posting, query.Segment(), ctx);
-  }
-  if (ctx.prune) {
-    if (auto pruned = MakePrunedPosting(posting, query.Segment(), ctx)) {
-      return pruned;
-    }
-  }
-  return MakePosting(posting, query.Segment(), ctx);
-}
-
-Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
-  const auto& state = query.State();
-  const auto merge = query.MergeType();
-  const auto* const field = state.Reader();
-  const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
-  const auto boost = query.Boost();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (terms.size() == 1) {
-    const auto posting =
-      irs::detail::ClauseOf(terms.front(), field, scorer, boost);
-    if (posting.state.cookie.docs_count == 1) {
-      return MakeSinglePosting(posting, query.Segment(), ctx);
-    }
-    if (ctx.prune) {
-      if (auto pruned = MakePrunedPosting(posting, query.Segment(), ctx)) {
-        return pruned;
-      }
-    }
-    return MakePosting(posting, query.Segment(), ctx);
-  }
-  const auto uniformity = irs::detail::UniformityOf(*state.Reader(), scorer);
-  if (ctx.prune) {
-    if (merge == ScoreMergeType::Sum) {
-      if (auto pruned = MakePrunedDisjunction<false>(
-            terms, {}, uniformity, field, scorer, boost, {}, {},
-            query.Segment(), ctx, merge)) {
-        return pruned;
-      }
-    }
-  }
-  return MakeWindowDisjunction(terms, {}, uniformity, field, scorer, boost,
-                               query.Segment(), ctx, merge, 0);
-}
-
-Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
-  if (query.Stats().stats == nullptr) {
-    return MakeUnscored(query, ctx);
-  }
-  const auto match = irs::detail::MatchOf(query);
-  if (match == irs::detail::PhraseMatch::Slop) {
-    return MakeFixedPhraseSlop(query, ctx);
-  }
-  const auto intervals = match == irs::detail::PhraseMatch::Intervals;
-  if (ctx.prune) {
-    if (auto pruned = intervals ? MakeFixedPhraseIntervalsPruned(query, ctx)
-                                : MakeFixedPhrasePruned(query, ctx)) {
-      return pruned;
-    }
-  }
-  return intervals ? MakeFixedPhraseIntervals(query, ctx)
-                   : MakeFixedPhrase(query, ctx);
-}
-
-Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx) {
-  if (query.Stats().stats == nullptr) {
-    return MakeUnscored(query, ctx);
-  }
-  const auto match = irs::detail::MatchOf(query);
-  if (match == irs::detail::PhraseMatch::Slop) {
-    return MakeVariadicPhraseSlop(query, ctx);
-  }
-  if (ctx.prune) {
-    if (auto pruned = MakeVariadicPhrasePruned(query, ctx)) {
-      return pruned;
-    }
-  }
-  return match == irs::detail::PhraseMatch::Intervals
-           ? MakeVariadicPhraseIntervals(query, ctx)
-           : MakeVariadicPhrase(query, ctx);
-}
-
-Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {
-  if (query.Stats().stats == nullptr) {
-    return MakeUnscored(query, ctx);
-  }
-  return query.Every() ? MakeNGramAll(query, ctx) : MakeNGram(query, ctx);
-}
-
-Root::ptr Make(const AllQuery& query, const Context& ctx) {
-  return MakeAll(query.Segment(), ctx,
-                 irs::detail::AllDocsScoreOf(query, ScoredOf(ctx)));
-}
-
-Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
-  return MakeWildcardNGram(query, ctx);
-}
-
-Root::ptr Make(const ApproxQuery& query, const Context& ctx) {
-  const auto value = irs::detail::AllDocsScoreOf(query, ScoredOf(ctx));
-  if (ctx.table) {
-    return irs::detail::MakeApprox<FilteredConstantWalk, Root::ptr>(
-      query, 0, ctx.table, value);
-  }
-  return irs::detail::MakeApprox<PlainConstantWalk, Root::ptr>(
-    query, 0, utils::Empty{}, value);
-}
-
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
     return MakeEmpty();
   }
   const detail::FoldReachScope reach{ctx.span};
   return query.PlanTop(ctx);
+}
+
+Root::ptr Family::Make(const FixedPhraseQuery& query, const Context& ctx) {
+  return MakeAnyPhrase(query, ctx);
+}
+
+Root::ptr Family::Make(const VariadicPhraseQuery& query, const Context& ctx) {
+  return MakeAnyPhrase(query, ctx);
+}
+
+Root::ptr Family::Make(const TokenPhraseQuery& query, const Context& ctx) {
+  if (ctx.prune) {
+    if (auto pruned = MakeTokenPhrasePruned(query, ctx)) {
+      return pruned;
+    }
+  }
+  return irs::detail::MakeScored<Family, irs::detail::TokenPhraseKind>(query,
+                                                                       ctx);
+}
+
+Root::ptr Family::Make(const TermQuery& query, const Context& ctx) {
+  if (ctx.prune && query.State().cookie.docs_count != 1) {
+    const irs::detail::PostingClause posting{
+      .state = query.State(),
+      .boost = query.Boost(),
+      .stats = query.Stats(ScoredOf(ctx)),
+    };
+    if (auto pruned = MakePrunedPosting(posting, query.Segment(), ctx)) {
+      return pruned;
+    }
+  }
+  return irs::detail::MakeQuery<Family>(query, ctx);
+}
+
+Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
+  if (ctx.prune) {
+    const auto& state = query.State();
+    const auto* const field = state.Reader();
+    const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
+    const auto boost = query.Boost();
+    const std::span<const MultiTermState::Entry> terms{state.Terms()};
+    if (terms.size() == 1) {
+      const auto posting =
+        irs::detail::ClauseOf(terms.front(), field, scorer, boost);
+      if (posting.state.cookie.docs_count != 1) {
+        if (auto pruned = MakePrunedPosting(posting, query.Segment(), ctx)) {
+          return pruned;
+        }
+      }
+    } else if (query.MergeType() == ScoreMergeType::Sum) {
+      if (auto pruned = MakePrunedDisjunction<false>(
+            terms, {}, irs::detail::UniformityOf(*field, scorer), field, scorer,
+            boost, {}, {}, query.Segment(), ctx, ScoreMergeType::Sum)) {
+        return pruned;
+      }
+    }
+  }
+  return irs::detail::MakeQuery<Family>(query, ctx);
 }
 
 }  // namespace irs::top

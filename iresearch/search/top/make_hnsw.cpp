@@ -32,6 +32,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/search/top/family.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 
@@ -89,7 +90,7 @@ class HnswHits : public Root {
 
 }  // namespace
 
-Root::ptr Make(const HnswQuery& query, const Context& ctx) {
+Root::ptr Family::Make(const HnswQuery& query, const Context& ctx) {
   auto* const narrow =
     ctx.table && !ctx.table->Foldable() ? ctx.table : nullptr;
   auto hits = query.RunSearch(ctx.table);

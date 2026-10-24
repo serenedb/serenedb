@@ -1,0 +1,101 @@
+query
+SELECT regexp_full_match('aé', '^(a)\C.*$') AS r;
+----
+r
+f
+
+
+query
+SELECT regexp_replace('aé' || repeat('x', 100000), '^(a)\C.*$', '[\1]') = 'aé' || repeat('x', 100000) AS r;
+----
+r
+t
+
+
+statement error
+SELECT regexp_replace('aéb', '^(a)\C(.*)', '[\1]');
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+query
+SELECT regexp_replace('aé', '^(a)\C.*$', '[\1]') AS r;
+----
+r
+aé
+
+
+query
+SELECT regexp_replace('aé', '^(a)\C.*$', '\1') AS r;
+----
+r
+aé
+
+
+query
+SELECT regexp_match('aé', '^(a)\C.*$') IS NULL AS r;
+----
+r
+t
+
+
+query
+SELECT regexp_count('aé', '^(a)\C.*$') AS r;
+----
+r
+0
+
+
+query
+SELECT regexp_replace('aé', 'a(?:\C|(é)).*$', '[\1]') AS r;
+----
+r
+[é]
+
+
+query
+SELECT regexp_extract('aé', 'a(?:\C|(é)).*$', 1) AS r;
+----
+r
+é
+
+
+query
+SELECT regexp_match('aé', 'a(?:\C|(é)).*$') AS r;
+----
+r
+{é}
+
+
+statement error
+SELECT regexp_replace('aéb', '^(a)\C.*', '[\1]');
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+query
+SELECT regexp_replace('https://www.пример.рф/путь?q=ё', '^https?://(?:www\.)?([^/]+)/.*$', '\1') AS r;
+----
+r
+пример.рф
+
+
+query
+SELECT regexp_extract('héllo wörld', '^(.*)ö(.*)$', 1) AS a, regexp_extract('héllo wörld', '^(.*)ö(.*)$', 2) AS b;
+----
+a b
+héllo w rld
+
+
+query
+SELECT regexp_extract('ab€€x', '(.{2})x', 1) AS r;
+----
+r
+€€
+
+
+query
+SELECT regexp_extract('aé', '^(.+)$', 1) AS r, regexp_extract('é/€', '^([^/]*)/(.+)$', 2) AS s;
+----
+r s
+aé €

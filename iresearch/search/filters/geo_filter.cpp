@@ -34,24 +34,19 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/count/family.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/geo_parsers.hpp"
 #include "iresearch/search/detail/geo_terms.hpp"
 #include "iresearch/search/detail/make.hpp"
-#include "iresearch/search/docs/family.hpp"
-#include "iresearch/search/fill/family.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
-#include "iresearch/search/hits/family.hpp"
-#include "iresearch/search/lead/family.hpp"
-#include "iresearch/search/probe/family.hpp"
 #include "iresearch/search/queries/approx_query.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/search/queries/query_builder_impl.tpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/top/family.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/geo/geo_params.hpp"
@@ -420,82 +415,13 @@ PrepareCollector::ptr GeoDistanceFilter::MakeCollectorImpl(const Scorer* scorer,
   return std::make_unique<AllCollector>(scorer, stats);
 }
 
-namespace count {
+namespace detail {
 
-template<typename Parser, typename Acceptor>
-Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
-  return irs::detail::MakeDocs<Family, irs::detail::GeoKind>(query, ctx);
+template<typename Family, typename Parser, typename Acceptor, typename Ctx>
+typename Family::Result MakeQuery(const GeoQuery<Parser, Acceptor>& query,
+                                  const Ctx& ctx) {
+  return MakeKind<Family, GeoKind>(query, ctx);
 }
 
-}  // namespace count
-namespace docs {
-
-template<typename Parser, typename Acceptor>
-Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
-  return irs::detail::MakeDocs<Family, irs::detail::GeoKind>(query, ctx);
-}
-
-}  // namespace docs
-namespace hits {
-
-template<typename Parser, typename Acceptor>
-Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
-  return irs::detail::MakeScored<Family, irs::detail::GeoKind>(query, ctx);
-}
-
-}  // namespace hits
-namespace top {
-
-template<typename Parser, typename Acceptor>
-Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
-  return irs::detail::MakeScored<Family, irs::detail::GeoKind>(query, ctx);
-}
-
-}  // namespace top
-namespace lead {
-
-template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query) {
-  return irs::detail::MakeDocs<Family, irs::detail::GeoKind>(query, {});
-}
-
-template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
-               const irs::detail::ScoredCtx& ctx) {
-  return irs::detail::MakeNode<Family, irs::detail::GeoKind>(query, ctx);
-}
-
-}  // namespace lead
-namespace probe {
-
-template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
-               uint64_t interrogations) {
-  return irs::detail::MakeDocs<Family, irs::detail::GeoKind>(
-    query, {.interrogations = interrogations});
-}
-
-template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
-               const irs::detail::ScoredCtx& ctx, uint64_t interrogations) {
-  return irs::detail::MakeNode<Family, irs::detail::GeoKind>(
-    query, {.scored = ctx, .interrogations = interrogations});
-}
-
-}  // namespace probe
-namespace fill {
-
-template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query) {
-  return irs::detail::MakeDocs<Family, irs::detail::GeoKind>(query, {});
-}
-
-template<typename Parser, typename Acceptor>
-Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
-               const irs::detail::ScoredCtx& ctx, ScoreMergeType merge) {
-  return irs::detail::MakeNode<Family, irs::detail::GeoKind>(
-    query, {.scored = ctx, .merge = merge});
-}
-
-}  // namespace fill
+}  // namespace detail
 }  // namespace irs

@@ -697,20 +697,6 @@ inline score_t Unbounded() noexcept {
 }
 
 template<typename Family, typename Ctx>
-typename Family::Result MakeRangeVector(const RangeVectorQuery& query,
-                                        const Ctx& ctx) {
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
-    if constexpr (kScoredPlan<Family, Ctx>) {
-      return MakeVectorScored<Family, RadiusGate<Inclusive>>(query, ctx,
-                                                             query.Threshold());
-    } else {
-      return MakeVectorDocs<Family, RadiusGate<Inclusive>>(query, ctx,
-                                                           query.Threshold());
-    }
-  });
-}
-
-template<typename Family, typename Ctx>
 typename Family::Result MakeKnnVector(const KnnVectorQuery& query,
                                       const Ctx& ctx) {
   return MakeVectorScored<Family, AcceptAll>(query, ctx, Unbounded());

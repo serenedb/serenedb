@@ -78,7 +78,6 @@ struct Family {
   }
 
   static constexpr bool kRoot = false;
-  static constexpr bool kPrunes = false;
   static constexpr bool kWrapsMerge = false;
   static constexpr bool kLazyGroups = true;
   static constexpr bool kBoostArity = true;
@@ -150,6 +149,10 @@ struct Family {
   static doc_id_t BitsetSpan(const DocsContext&, doc_id_t docs_count) noexcept {
     return docs_count;
   }
+
+  static Result Make(const HnswQuery& query, const ScoredContext& ctx);
+
+  static Result Make(const KnnVectorQuery& query, const ScoredContext& ctx);
 };
 
 }  // namespace irs::lead

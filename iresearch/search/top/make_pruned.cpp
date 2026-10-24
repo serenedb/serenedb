@@ -21,15 +21,17 @@
 #include <span>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/top/family.hpp"
 #include "iresearch/search/top/make.hpp"
 
 namespace irs::top {
+namespace {
 
-Root::ptr Family::MakePruned(const BooleanQuery& query, const Context& ctx,
-                             ScoreMergeType merge, score_t absorbed) {
-  if (!ctx.prune || merge != ScoreMergeType::Sum || absorbed != 0) {
+Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
+  const auto merge = query.MergeType();
+  if (!ctx.prune || merge != ScoreMergeType::Sum || query.Absorbed() != 0) {
     return {};
   }
   const auto& segment = query.Segment();
@@ -70,6 +72,15 @@ Root::ptr Family::MakePruned(const BooleanQuery& query, const Context& ctx,
     return MakePrunedReqOpt(must.front(), should, segment, ctx, merge);
   }
   return {};
+}
+
+}  // namespace
+
+Root::ptr Family::Make(const BooleanQuery& query, const Context& ctx) {
+  if (auto pruned = MakePruned(query, ctx)) {
+    return pruned;
+  }
+  return irs::detail::MakeQuery<Family>(query, ctx);
 }
 
 }  // namespace irs::top

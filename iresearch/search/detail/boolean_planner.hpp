@@ -246,11 +246,6 @@ Result<Family> Make(const BooleanQuery& query, const Ctx& ctx,
   score_t absorbed = 0;
   if constexpr (kScoredPlan<Family, Ctx>) {
     absorbed = query.Absorbed();
-    if constexpr (Family::kPrunes) {
-      if (auto pruned = Family::MakePruned(query, ctx, merge, absorbed)) {
-        return pruned;
-      }
-    }
   }
   if (!query.Terms(Occur::MustNot).empty() ||
       !query.Queries(Occur::MustNot).empty()) {
@@ -278,7 +273,7 @@ Result<Family> Make(const BooleanQuery& query, const Ctx& ctx,
 namespace irs::detail {
 
 template<typename Family, typename Ctx>
-typename Family::Result MakeBoolean(const BooleanQuery& query, const Ctx& ctx) {
+typename Family::Result MakeQuery(const BooleanQuery& query, const Ctx& ctx) {
   if constexpr (kProbePlan<Family>) {
     if constexpr (kScoredPlan<Family, Ctx>) {
       const auto& segment = query.Segment();
@@ -294,11 +289,6 @@ typename Family::Result MakeBoolean(const BooleanQuery& query, const Ctx& ctx) {
                                 ScoredCtx{});
     }
   } else {
-    if constexpr (requires { Family::MakeShortcut(query, ctx); }) {
-      if (auto shortcut = Family::MakeShortcut(query, ctx)) {
-        return shortcut;
-      }
-    }
     return builder::Make<Family>(query, ctx, MergeOf(query, ctx));
   }
 }

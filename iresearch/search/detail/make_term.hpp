@@ -26,6 +26,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -37,19 +38,8 @@ template<typename Family>
 inline constexpr bool kProbePlan =
   std::is_same_v<typename Family::Result, ProbeNode::ptr>;
 
-template<typename Query, typename Ctx>
-ScoreMergeType MergeOf(const Query& query, const Ctx& ctx) noexcept {
-  if constexpr (requires { ctx.merge; }) {
-    return ctx.merge;
-  } else if constexpr (requires { query.MergeType(); }) {
-    return query.MergeType();
-  } else {
-    return ScoreMergeType::Noop;
-  }
-}
-
 template<typename Family, typename Ctx>
-typename Family::Result MakeTerm(const TermQuery& query, const Ctx& ctx) {
+typename Family::Result MakeQuery(const TermQuery& query, const Ctx& ctx) {
   if constexpr (kScoredPlan<Family, Ctx>) {
     const PostingClause posting{query.State(), query.Boost(),
                                 query.Stats(Family::Scoring(ctx))};
@@ -62,8 +52,7 @@ typename Family::Result MakeTerm(const TermQuery& query, const Ctx& ctx) {
 }
 
 template<typename Family, typename Ctx>
-typename Family::Result MakeMultiTerm(const MultiTermQuery& query,
-                                      const Ctx& ctx) {
+typename Family::Result MakeQuery(const MultiTermQuery& query, const Ctx& ctx) {
   const auto& state = query.State();
   const auto& segment = query.Segment();
   const auto* const field = state.Reader();

@@ -67,6 +67,11 @@ struct Family {
     return ctx.scored;
   }
 
+  static Result PlanChild(const QueryBuilder& child, const DocsContext& ctx,
+                          ScoreMergeType) {
+    return child.PlanProbe({}, ctx.interrogations);
+  }
+
   template<typename Node, typename... Args>
   static Result Docs(const DocsContext&, Args&&... args) {
     return memory::make_managed<Impl<Node>>(std::forward<Args>(args)...);

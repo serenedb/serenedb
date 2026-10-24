@@ -24,15 +24,8 @@
 
 namespace irs::lead {
 
-Node::ptr Make(const RangeVectorQuery& query) {
-  return detail::MakeRangeVector<Family>(query, Family::DocsContext{});
-}
-
-Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx) {
-  return detail::MakeRangeVector<Family>(query, ctx);
-}
-
-Node::ptr Make(const KnnVectorQuery& query, const detail::ScoredCtx& ctx) {
+Node::ptr Family::Make(const KnnVectorQuery& query,
+                       const detail::ScoredCtx& ctx) {
   return detail::MakeKnnVector<Family>(query, ctx);
 }
 

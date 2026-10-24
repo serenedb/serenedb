@@ -20,18 +20,11 @@
 
 #pragma once
 
-#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 
-namespace irs::detail {
-
-template<typename Family, typename Ctx>
-typename Family::Result MakeBoolean(const BooleanQuery& query, const Ctx& ctx);
-
-}  // namespace irs::detail
-
-#define IRS_MAKE_BOOLEAN(Family, Ctx)                                   \
-  template Family::Result MakeBoolean<Family, Ctx>(const BooleanQuery&, \
-                                                   const Ctx&)
+#define IRS_MAKE_BOOLEAN(Family, Ctx)                                 \
+  template Family::Result MakeQuery<Family, Ctx>(const BooleanQuery&, \
+                                                 const Ctx&)
 
 #define IRS_MAKE_BOOLEAN_REQUIRED(Family, Ctx)                                 \
   template Family::Result builder::MakeRequired<Family, Ctx>(                  \

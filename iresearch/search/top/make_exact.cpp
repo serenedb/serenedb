@@ -26,6 +26,7 @@
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/detail/exact_scan.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
+#include "iresearch/search/top/family.hpp"
 #include "iresearch/search/top/make.hpp"
 
 namespace irs::top {
@@ -167,7 +168,7 @@ class ExactChain : public Root {
 
 }  // namespace
 
-Root::ptr Make(const ExactVectorQuery& query, const Context& ctx) {
+Root::ptr Family::Make(const ExactVectorQuery& query, const Context& ctx) {
   const auto record = query.Stats(ScoredOf(ctx));
   const irs::detail::ScoreArgs score{.scorer = record.scorer,
                                      .stats = record.stats,

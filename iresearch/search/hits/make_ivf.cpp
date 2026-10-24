@@ -24,11 +24,7 @@
 
 namespace irs::hits {
 
-Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
-  return irs::detail::MakeRangeVector<Family>(query, ctx);
-}
-
-Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
+Root::ptr Family::Make(const KnnVectorQuery& query, const Context& ctx) {
   return irs::detail::MakeKnnVector<Family>(query, ctx);
 }
 

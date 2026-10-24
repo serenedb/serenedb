@@ -27,6 +27,7 @@
 #include "iresearch/search/count/make.hpp"
 #include "iresearch/search/count/subtract.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 
@@ -41,9 +42,7 @@ bool FewRuns(const detail::PostingClause& term,
          uint64_t{kDenseRuns} * detail::CookieOf(term).docs_count;
 }
 
-}  // namespace
-
-Root::ptr Family::MakeShortcut(const BooleanQuery& query, const Context& ctx) {
+Root::ptr MakeShortcut(const BooleanQuery& query, const Context& ctx) {
   const auto& segment = query.Segment();
   const auto must_terms = query.Terms(Occur::Must);
   const auto must_filters = query.Queries(Occur::Must);
@@ -92,6 +91,15 @@ Root::ptr Family::MakeShortcut(const BooleanQuery& query, const Context& ctx) {
     }
   }
   return {};
+}
+
+}  // namespace
+
+Root::ptr Family::Make(const BooleanQuery& query, const Context& ctx) {
+  if (auto shortcut = MakeShortcut(query, ctx)) {
+    return shortcut;
+  }
+  return detail::MakeQuery<Family>(query, ctx);
 }
 
 }  // namespace irs::count

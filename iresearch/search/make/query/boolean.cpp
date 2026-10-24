@@ -18,20 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/detail/vector_of.hpp"
-#include "iresearch/search/fill/family.hpp"
-#include "iresearch/search/fill/make.hpp"
+#include "iresearch/search/detail/make_query.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/search/queries/query_builder_impl.tpp"
 
-namespace irs::fill {
+namespace irs {
 
-Node::ptr Make(const RangeVectorQuery& query) {
-  return detail::MakeRangeVector<Family>(query, Family::DocsContext{});
-}
+template class QueryBuilderImpl<BooleanQuery>;
 
-Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
-               ScoreMergeType merge) {
-  return detail::MakeRangeVector<Family>(
-    query, Family::ScoredContext{.scored = ctx, .merge = merge});
-}
-
-}  // namespace irs::fill
+}  // namespace irs

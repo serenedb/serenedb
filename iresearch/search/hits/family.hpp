@@ -66,7 +66,6 @@ struct Family {
   }
 
   static constexpr bool kRoot = true;
-  static constexpr bool kPrunes = false;
   static constexpr bool kWrapsMerge = false;
   static constexpr bool kLazyGroups = false;
   static constexpr bool kBoostArity = false;
@@ -130,6 +129,16 @@ struct Family {
                             std::span<const QueryBuilder::ptr> should_filters,
                             const SubReader& segment, const Context& ctx,
                             ScoreMergeType merge, score_t absorbed);
+
+  static Result Make(const HnswQuery& query, const Context& ctx);
+
+  static Result Make(const KnnVectorQuery& query, const Context& ctx);
+
+  static Result Make(const ExactVectorQuery& query, const Context& ctx);
+
+  static Result Make(const EmptyQueryBuilder&, const Context&) {
+    return MakeEmpty();
+  }
 };
 
 }  // namespace irs::hits

@@ -17,7 +17,6 @@ target_sources(
         docs/make.cpp
         docs/make_all.cpp
         docs/make_posting.cpp
-        fill/make.cpp
         fill/make_all_docs.cpp
         fill/make_all_scored.cpp
         fill/make_posting.cpp
@@ -45,7 +44,6 @@ target_sources(
         hits/make_all.cpp
         hits/make_boosted_posting.cpp
         hits/make_posting.cpp
-        lead/make.cpp
         lead/make_all_docs.cpp
         lead/make_all_scored.cpp
         lead/make_posting.cpp
@@ -164,6 +162,15 @@ target_sources(
         make/phrase/top_variadic_intervals_pruned.cpp
         make/phrase/top_variadic_pruned.cpp
         make/phrase/top_variadic_slop.cpp
+        make/query/all.cpp
+        make/query/approx.cpp
+        make/query/boolean.cpp
+        make/query/multi_term.cpp
+        make/query/ngram_similarity.cpp
+        make/query/phrase.cpp
+        make/query/term.cpp
+        make/query/token_phrase.cpp
+        make/query/wildcard_ngram.cpp
         make/token_phrase/count.cpp
         make/token_phrase/docs.cpp
         make/token_phrase/fill_docs.cpp
@@ -184,7 +191,6 @@ target_sources(
         make/wildcard_ngram/probe_docs.cpp
         make/wildcard_ngram/probe_scored.cpp
         make/wildcard_ngram/top.cpp
-        probe/make.cpp
         probe/make_all_docs.cpp
         probe/make_all_scored.cpp
         probe/make_posting.cpp
@@ -220,11 +226,8 @@ target_sources(
     PRIVATE
         count/make_exact.cpp
         count/make_hnsw.cpp
-        count/make_ivf.cpp
         docs/make_exact.cpp
         docs/make_hnsw.cpp
-        docs/make_ivf.cpp
-        fill/make_ivf.cpp
         filters/geo_filter.cpp
         filters/nested_filter.cpp
         filters/shingle_phrase.cpp
@@ -276,6 +279,10 @@ target_sources(
         make/geo/top_distance.cpp
         make/geo/top_intersects.cpp
         make/geo/top_is_contained.cpp
+        make/query/exact_vector.cpp
+        make/query/hnsw.cpp
+        make/query/knn_vector.cpp
+        make/query/range_vector.cpp
         make/ngram/offsets_all.cpp
         make/ngram/offsets_threshold.cpp
         make/phrase/offsets_fixed.cpp
@@ -286,7 +293,6 @@ target_sources(
         make/phrase/offsets_variadic_slop.cpp
         offsets/make.cpp
         offsets/make_posting.cpp
-        probe/make_ivf.cpp
         queries/hnsw_query.cpp
         queries/vector_similarity_query.cpp
         scorers/dfi.cpp

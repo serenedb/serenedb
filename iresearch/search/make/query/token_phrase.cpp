@@ -18,14 +18,22 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/detail/vector_of.hpp"
-#include "iresearch/search/docs/family.hpp"
-#include "iresearch/search/docs/make.hpp"
+#include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_query.hpp"
+#include "iresearch/search/queries/query_builder_impl.tpp"
+#include "iresearch/search/queries/token_phrase_query.hpp"
 
-namespace irs::docs {
+namespace irs::detail {
 
-Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
-  return detail::MakeRangeVector<Family>(query, ctx);
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const TokenPhraseQuery& query,
+                                  const Ctx& ctx) {
+  return MakeKind<Family, TokenPhraseKind>(query, ctx);
 }
 
-}  // namespace irs::docs
+}  // namespace irs::detail
+namespace irs {
+
+template class QueryBuilderImpl<TokenPhraseQuery>;
+
+}  // namespace irs

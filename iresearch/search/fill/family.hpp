@@ -85,7 +85,6 @@ struct Family {
   }
 
   static constexpr bool kRoot = false;
-  static constexpr bool kPrunes = false;
   static constexpr bool kWrapsMerge = true;
   static constexpr bool kLazyGroups = false;
   static constexpr bool kBoostArity = true;

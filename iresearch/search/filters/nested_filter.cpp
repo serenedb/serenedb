@@ -32,18 +32,12 @@
 #include <utility>
 #include <variant>
 
-#include "iresearch/search/count/family.hpp"
-#include "iresearch/search/docs/family.hpp"
-#include "iresearch/search/fill/family.hpp"
-#include "iresearch/search/hits/family.hpp"
-#include "iresearch/search/lead/family.hpp"
-#include "iresearch/search/probe/family.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
-#include "iresearch/search/queries/query_builder_impl.hpp"
+#include "iresearch/search/queries/query_builder_impl.tpp"
 #include "iresearch/search/scorers/make_window.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/top/family.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -539,111 +533,47 @@ typename Family::Result PlanNestedDocs(const ByNestedQuery& query,
     });
 }
 
-template<typename Family>
-typename Family::Result PlanNestedDocs(
-  const ByNestedQuery& query, const typename Family::DocsContext& ctx) {
-  return PlanNestedDocs<Family>(
-    query, [&]<typename Node>(auto&&... args) -> typename Family::Result {
-      return Family::template Docs<Node>(ctx,
-                                         std::forward<decltype(args)>(args)...);
-    });
-}
+}  // namespace
+namespace detail {
 
-template<typename Family>
-typename Family::Result PlanNestedScored(
-  const ByNestedQuery& query, const typename Family::ScoredContext& ctx) {
-  if (!query.ScoresChildren()) {
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const ByNestedQuery& query, const Ctx& ctx) {
+  if constexpr (!kScoredPlan<Family, Ctx>) {
     return PlanNestedDocs<Family>(
       query, [&]<typename Node>(auto&&... args) -> typename Family::Result {
-        return Family::template Constant<Node>(
-          ctx, query.Constant(), std::forward<decltype(args)>(args)...);
+        return Family::template Docs<Node>(
+          ctx, std::forward<decltype(args)>(args)...);
+      });
+  } else {
+    if (!query.ScoresChildren()) {
+      return PlanNestedDocs<Family>(
+        query, [&]<typename Node>(auto&&... args) -> typename Family::Result {
+          return Family::template Constant<Node>(
+            ctx, query.Constant(), std::forward<decltype(args)>(args)...);
+        });
+    }
+    auto fetcher = std::make_unique<ColumnArgsFetcher>();
+    ScoredCtx scoring = Family::Scoring(ctx);
+    scoring.fetcher = fetcher.get();
+    auto child = query.Child().PlanLead(scoring);
+    if (!child) {
+      return {};
+    }
+    auto parent = query.Parents();
+    const auto merge = query.Merge();
+    return ResolveRule<false>(
+      query.Segment(), query.MatchKind(),
+      [&]<typename Rule>(Rule rule) -> typename Family::Result {
+        using Node = NestedScored<NestedSlots<ScoredChild, Rule>>;
+        return Family::template Scored<Node>(
+          ctx, std::piecewise_construct, std::move(parent),
+          std::forward_as_tuple(std::move(child), std::move(fetcher), merge),
+          std::move(rule));
       });
   }
-  auto fetcher = std::make_unique<ColumnArgsFetcher>();
-  detail::ScoredCtx scoring = Family::Scoring(ctx);
-  scoring.fetcher = fetcher.get();
-  auto child = query.Child().PlanLead(scoring);
-  if (!child) {
-    return {};
-  }
-  auto parent = query.Parents();
-  const auto merge = query.Merge();
-  return ResolveRule<false>(
-    query.Segment(), query.MatchKind(),
-    [&]<typename Rule>(Rule rule) -> typename Family::Result {
-      using Node = NestedScored<NestedSlots<ScoredChild, Rule>>;
-      return Family::template Scored<Node>(
-        ctx, std::piecewise_construct, std::move(parent),
-        std::forward_as_tuple(std::move(child), std::move(fetcher), merge),
-        std::move(rule));
-    });
 }
 
-}  // namespace
-namespace count {
-
-Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
-  return PlanNestedDocs<Family>(query, ctx);
-}
-
-}  // namespace count
-namespace docs {
-
-Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
-  return PlanNestedDocs<Family>(query, ctx);
-}
-
-}  // namespace docs
-namespace lead {
-
-Node::ptr Make(const ByNestedQuery& query) {
-  return PlanNestedDocs<Family>(query, {});
-}
-
-Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx) {
-  return PlanNestedScored<Family>(query, ctx);
-}
-
-}  // namespace lead
-namespace probe {
-
-Node::ptr Make(const ByNestedQuery& query, uint64_t interrogations) {
-  return PlanNestedDocs<Family>(query, {.interrogations = interrogations});
-}
-
-Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx,
-               uint64_t interrogations) {
-  return PlanNestedScored<Family>(
-    query, {.scored = ctx, .interrogations = interrogations});
-}
-
-}  // namespace probe
-namespace fill {
-
-Node::ptr Make(const ByNestedQuery& query) {
-  return PlanNestedDocs<Family>(query, {});
-}
-
-Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx,
-               ScoreMergeType merge) {
-  return PlanNestedScored<Family>(query, {.scored = ctx, .merge = merge});
-}
-
-}  // namespace fill
-namespace hits {
-
-Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
-  return PlanNestedScored<Family>(query, ctx);
-}
-
-}  // namespace hits
-namespace top {
-
-Root::ptr Make(const ByNestedQuery& query, const Context& ctx) {
-  return PlanNestedScored<Family>(query, ctx);
-}
-
-}  // namespace top
+}  // namespace detail
 
 PrepareCollector::ptr ByNestedFilter::MakeCollectorImpl(
   const Scorer* scorer, StatsArena& stats, uint32_t threads) const {

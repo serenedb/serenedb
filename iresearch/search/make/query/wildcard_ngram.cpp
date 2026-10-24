@@ -18,21 +18,22 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/detail/vector_of.hpp"
-#include "iresearch/search/probe/family.hpp"
-#include "iresearch/search/probe/make.hpp"
+#include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_query.hpp"
+#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
+#include "iresearch/search/queries/query_builder_impl.tpp"
 
-namespace irs::probe {
+namespace irs::detail {
 
-Node::ptr Make(const RangeVectorQuery& query, uint64_t interrogations) {
-  return detail::MakeRangeVector<Family>(query,
-                                         Family::DocsContext{interrogations});
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const WildcardNGramQuery& query,
+                                  const Ctx& ctx) {
+  return MakeKind<Family, WildcardNGramKind>(query, ctx);
 }
 
-Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
-               uint64_t interrogations) {
-  return detail::MakeRangeVector<Family>(
-    query, Family::ScoredContext{ctx, interrogations});
-}
+}  // namespace irs::detail
+namespace irs {
 
-}  // namespace irs::probe
+template class QueryBuilderImpl<WildcardNGramQuery>;
+
+}  // namespace irs

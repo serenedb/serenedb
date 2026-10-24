@@ -68,7 +68,6 @@ struct Family {
   }
 
   static constexpr bool kRoot = true;
-  static constexpr bool kPrunes = true;
   static constexpr bool kWrapsMerge = false;
   static constexpr bool kLazyGroups = false;
   static constexpr bool kBoostArity = true;
@@ -137,8 +136,27 @@ struct Family {
   static Result MakeAll(const SubReader& segment, const Context& ctx,
                         ScoreMergeType, score_t score);
 
-  static Result MakePruned(const BooleanQuery& query, const Context& ctx,
-                           ScoreMergeType merge, score_t absorbed);
+  static Result Make(const TermQuery& query, const Context& ctx);
+
+  static Result Make(const MultiTermQuery& query, const Context& ctx);
+
+  static Result Make(const FixedPhraseQuery& query, const Context& ctx);
+
+  static Result Make(const VariadicPhraseQuery& query, const Context& ctx);
+
+  static Result Make(const TokenPhraseQuery& query, const Context& ctx);
+
+  static Result Make(const BooleanQuery& query, const Context& ctx);
+
+  static Result Make(const HnswQuery& query, const Context& ctx);
+
+  static Result Make(const KnnVectorQuery& query, const Context& ctx);
+
+  static Result Make(const ExactVectorQuery& query, const Context& ctx);
+
+  static Result Make(const EmptyQueryBuilder&, const Context&) {
+    return MakeEmpty();
+  }
 };
 
 }  // namespace irs::top

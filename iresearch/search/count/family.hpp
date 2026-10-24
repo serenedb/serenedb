@@ -92,7 +92,17 @@ struct Family {
     return ctx.span != 0 ? std::min(ctx.span, docs_count) : docs_count;
   }
 
-  static Result MakeShortcut(const BooleanQuery& query, const Context& ctx);
+  static Result Make(const MultiTermQuery& query, const Context& ctx);
+
+  static Result Make(const BooleanQuery& query, const Context& ctx);
+
+  static Result Make(const HnswQuery& query, const Context& ctx);
+
+  static Result Make(const ExactVectorQuery& query, const Context& ctx);
+
+  static Result Make(const EmptyQueryBuilder&, const Context&) {
+    return MakeConstant(0);
+  }
 
   static Result MakeNegation(
     std::span<const detail::PostingClause> exclude_terms,

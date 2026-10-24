@@ -91,6 +91,14 @@ struct Family {
   static doc_id_t BitsetSpan(const Context& ctx, doc_id_t docs_count) noexcept {
     return ctx.span != 0 ? std::min(ctx.span, docs_count) : docs_count;
   }
+
+  static Result Make(const HnswQuery& query, const Context& ctx);
+
+  static Result Make(const ExactVectorQuery& query, const Context& ctx);
+
+  static Result Make(const EmptyQueryBuilder&, const Context&) {
+    return memory::make_managed<Empty>();
+  }
 };
 
 }  // namespace irs::docs

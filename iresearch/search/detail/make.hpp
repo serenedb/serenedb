@@ -82,15 +82,18 @@ template<typename Family, typename Kind, typename Query>
 typename Family::Result MakeScored(const Query& query,
                                    const typename Family::ScoredContext& ctx);
 
-template<typename Family, typename Kind, typename Query>
-typename Family::Result MakeNode(const Query& query,
-                                 const typename Family::ScoredContext& ctx) {
-  if constexpr (!Kind::kConstant) {
-    if (!query.Stats().stats) {
-      return MakeDocs<Family, Kind>(query, Family::DocsOf(ctx));
+template<typename Family, typename Kind, typename Query, typename Ctx>
+typename Family::Result MakeKind(const Query& query, const Ctx& ctx) {
+  if constexpr (!kScoredPlan<Family, Ctx>) {
+    return MakeDocs<Family, Kind>(query, ctx);
+  } else {
+    if constexpr (!Kind::kConstant && requires { Family::DocsOf(ctx); }) {
+      if (!query.Stats().stats) {
+        return MakeDocs<Family, Kind>(query, Family::DocsOf(ctx));
+      }
     }
+    return MakeScored<Family, Kind>(query, ctx);
   }
-  return MakeScored<Family, Kind>(query, ctx);
 }
 
 }  // namespace irs::detail

@@ -18,14 +18,26 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/count/family.hpp"
-#include "iresearch/search/count/make.hpp"
-#include "iresearch/search/detail/vector_of.hpp"
+#include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_query.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
+#include "iresearch/search/queries/query_builder_impl.tpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
-namespace irs::count {
+namespace irs::detail {
 
-Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
-  return detail::MakeRangeVector<Family>(query, ctx);
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const AllQuery& query, const Ctx& ctx) {
+  score_t score = 0;
+  if constexpr (kScoredPlan<Family, Ctx>) {
+    score = AllDocsScoreOf(query, Family::Scoring(ctx));
+  }
+  return Family::MakeAll(query.Segment(), ctx, MergeOf(query, ctx), score);
 }
 
-}  // namespace irs::count
+}  // namespace irs::detail
+namespace irs {
+
+template class QueryBuilderImpl<AllQuery>;
+
+}  // namespace irs

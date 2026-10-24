@@ -23,7 +23,6 @@
 
 #include "index_writer.hpp"
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_cat.h>
@@ -434,12 +433,6 @@ struct WriterRoots {
 WriterRoots& GetWriterRoots() {
   static WriterRoots writers;
   return writers;
-}
-
-void ReleaseWriterRoot(const std::string& root) noexcept {
-  auto& writers = GetWriterRoots();
-  absl::MutexLock lock{&writers.mutex};
-  writers.roots.erase(root);
 }
 
 uint64_t MaxSegmentId(const Directory& dir) {
@@ -1243,8 +1236,18 @@ void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
   committed = true;
 }
 
+void IndexWriter::RootRelease::operator()(
+  const std::string* root) const noexcept {
+  auto& writers = GetWriterRoots();
+  {
+    absl::MutexLock lock{&writers.mutex};
+    writers.roots.erase(*root);
+  }
+  delete root;
+}
+
 IndexWriter::IndexWriter(
-  ConstructToken, const Directory& dir, bool owns_root,
+  ConstructToken, const Directory& dir, RootClaim root_claim,
   size_t segment_pool_size, const SegmentOptions& segment_limits,
   MetaPayloadWriter&& meta_payload_writer,
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
@@ -1255,7 +1258,7 @@ IndexWriter::IndexWriter(
     _seg_counter{_committed_reader->Meta().index_meta.seg_counter},
     _last_gen{_committed_reader->Meta().index_meta.gen},
     _writer{std::move(meta_payload_writer)},
-    _owns_root{owns_root} {
+    _root_claim{std::move(root_claim)} {
   _topk_scorer = _committed_reader->Options().scorer;
   if (_topk_scorer) {
     _score_bound_features |= _topk_scorer->GetIndexFeatures();
@@ -1318,22 +1321,18 @@ IndexWriter::ptr IndexWriter::Make(const Directory& dir, OpenMode mode,
              "IndexWriterOptions::db must be set; iresearch indexes require a "
              "duckdb::DatabaseInstance");
 
-  bool owns_root = false;
+  RootClaim root_claim;
   if (options.lock_repository) {
+    auto root = std::make_unique<const std::string>(dir.Root());
     auto& writers = GetWriterRoots();
     absl::MutexLock lock{&writers.mutex};
-    if (!writers.roots.emplace(dir.Root()).second) {
+    if (!writers.roots.emplace(*root).second) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_LOCK_NOT_AVAILABLE),
                       ERR_MSG("the index at '", dir.Root(),
                               "' already has a writer in this process"));
     }
-    owns_root = true;
+    root_claim.reset(root.release());
   }
-  absl::Cleanup release_root = [&] noexcept {
-    if (owns_root) {
-      ReleaseWriterRoot(dir.Root());
-    }
-  };
 
   // read from directory or create index metadata
   DirectoryMeta meta;
@@ -1374,10 +1373,9 @@ IndexWriter::ptr IndexWriter::Make(const Directory& dir, OpenMode mode,
   }(dir, std::move(meta), options.reader_options);
 
   auto writer = std::make_shared<IndexWriter>(
-    ConstructToken{}, dir, owns_root, options.segment_pool_size,
+    ConstructToken{}, dir, std::move(root_claim), options.segment_pool_size,
     SegmentOptions{options}, std::move(options.meta_payload_writer),
     std::move(reader));
-  std::move(release_root).Cancel();
   writer->_db = options.db;
   writer->_ann_env = options.ann_env;
   writer->_hnsw_bases = std::move(hnsw_bases);
@@ -1388,8 +1386,12 @@ IndexWriter::ptr IndexWriter::Make(const Directory& dir, OpenMode mode,
       options.row_group_size);
   }
   if (options.cleanup_on_open) {
-    // Remove non-index files from directory
-    dir.RemoveAllUnreferenced();
+    try {
+      dir.RemoveAllUnreferenced();
+    } catch (const std::exception& e) {
+      SDB_WARN(IRESEARCH, "Failed to remove the unreferenced files of '",
+               dir.Root(), "': ", duckdb::ErrorData{e}.RawMessage());
+    }
   } else {
     // Unreferenced segments are kept for a host WAL to adopt, so their ids are
     // still live and the committed seg_counter sits below them.
@@ -1405,9 +1407,6 @@ IndexWriter::ptr IndexWriter::Make(const Directory& dir, OpenMode mode,
 IndexWriter::~IndexWriter() noexcept {
   // Failure may indicate a dangling 'document' instance
   SDB_ASSERT(!_segments_active.load());
-  if (_owns_root) {
-    ReleaseWriterRoot(_dir.Root());
-  }
   // Reset pending state (if any) before destroying flush contexts
   _pending_state.Reset(*this);
 }
@@ -1968,8 +1967,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   // later via SetFieldOptions, so non-owning here.
   return {
     .scorer = _topk_scorer,
-    .resource_manager = compaction ? *_dir.ResourceManager().compactions
-                                   : *_dir.ResourceManager().transactions,
+    .resource_manager = IResourceManager::gNoop,
     .db = _db,
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,

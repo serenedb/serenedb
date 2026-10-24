@@ -38,6 +38,16 @@ SELECT has_tablespace_privilege('priv_member_${__DATABASE__}', 'priv_ts_${__DATA
 member	lowercase	other
 t	t	f
 
+query
+SELECT has_tablespace_privilege('priv_member_${__DATABASE__}', oid, 'CREATE') AS member,
+       has_tablespace_privilege('priv_other_${__DATABASE__}', oid, 'CREATE') AS other,
+       has_tablespace_privilege('priv_member_${__DATABASE__}', 4294967295, 'CREATE') AS missing,
+       pg_tablespace_location(4294967295) AS no_location
+FROM pg_tablespace WHERE spcname = 'priv_ts_${__DATABASE__}';
+----
+member	other	missing	no_location
+t	f	NULL	NULL
+
 statement ok
 SET ROLE priv_member_${__DATABASE__};
 

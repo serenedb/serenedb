@@ -348,6 +348,46 @@ CREATE DATABASE global_db_${__DATABASE__} TABLESPACE pg_global;
 db error: ERROR: pg_global cannot be used as default tablespace
 
 
+statement error
+CREATE DATABASE missing_db_${__DATABASE__} TABLESPACE missing_ts_${__DATABASE__};
+----
+db error: ERROR: tablespace "<slt:ignore>" does not exist
+
+
+statement ok
+CREATE TABLESPACE owned_ts_${__DATABASE__} OWNER CURRENT_USER LOCATION '${__TEST_DIR__}/owned_ts';
+
+query
+SELECT pg_get_userbyid(spcowner) AS owner FROM pg_tablespace WHERE spcname = 'owned_ts_${__DATABASE__}';
+----
+owner
+postgres
+
+statement ok
+DROP TABLESPACE owned_ts_${__DATABASE__};
+
+statement ok
+CREATE ROLE admin;
+
+statement ok
+CREATE TABLESPACE keyword_owner_${__DATABASE__} OWNER admin LOCATION '${__TEST_DIR__}/keyword_owner';
+
+statement ok
+ALTER TABLESPACE keyword_owner_${__DATABASE__} OWNER TO admin;
+
+query
+SELECT pg_get_userbyid(spcowner) AS owner FROM pg_tablespace WHERE spcname = 'keyword_owner_${__DATABASE__}';
+----
+owner
+admin
+
+statement ok
+DROP TABLESPACE keyword_owner_${__DATABASE__};
+
+statement ok
+DROP ROLE admin;
+
+
 query
 SELECT d.datname = 'ts_db_${__DATABASE__}' AS in_ts_db, t.spcname = 'db_ts_${__DATABASE__}' AS in_db_ts
 FROM pg_database d JOIN pg_tablespace t ON t.oid = d.dattablespace

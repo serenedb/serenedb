@@ -20,8 +20,6 @@
 
 #include "replication/functions.h"
 
-#include <absl/algorithm/container.h>
-#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
@@ -48,6 +46,7 @@
 #include "connector/pg_logical_types.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
+#include "pg/pg_types.h"
 #include "replication/subscription_engine.h"
 
 namespace sdb::replication {
@@ -147,13 +146,7 @@ std::optional<idx_t> SubscriptionOriginOid(std::string_view name) {
   if (!name.starts_with("pg_")) {
     return std::nullopt;
   }
-  const auto digits = name.substr(3);
-  idx_t oid = 0;
-  if (digits.empty() || !absl::c_all_of(digits, absl::ascii_isdigit) ||
-      !absl::SimpleAtoi(digits, &oid)) {
-    return std::nullopt;
-  }
-  return oid;
+  return pg::OidFromName(name.substr(3));
 }
 
 std::optional<Origin> FindOrigin(duckdb::ClientContext& context,

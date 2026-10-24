@@ -75,6 +75,8 @@ TEST_P(DirectoryTestCase, rename) {
     ASSERT_NE(nullptr, stream1);
     stream1->WriteU32(2);
     stream1->Flush();
+    stream0->Close();
+    stream1->Close();
   }
 
   ASSERT_TRUE(_dir->Has("foo"));
@@ -152,6 +154,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
     out->WriteV32(300);
     out->WriteV32(4);
     out->WriteV32(50000);
+    out->Close();
   }
 
   // read data
@@ -231,6 +234,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
       for (uint32_t i = 0; i < 10000; ++i) {
         out->WriteV32(i);
       }
+      out->Close();
     }
 
     auto in = _dir->Open("test_async", duckdb::MappedFileAccess::NORMAL);
@@ -403,6 +407,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
         strcrc(crc, str);
       }
       ASSERT_EQ(crc.checksum(), out->Checksum());
+      out->Close();
     }
 
     // read strings
@@ -1935,6 +1940,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
         strcrc(crc, str);
       }
       ASSERT_EQ(crc.checksum(), out->Checksum());
+      out->Close();
     }
 
     // read strings
@@ -3566,6 +3572,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
         strcrc(crc, str);
       }
       ASSERT_EQ(crc.checksum(), out->Checksum());
+      out->Close();
     }
 
     // read strings
@@ -3636,7 +3643,9 @@ TEST_P(DirectoryTestCase, visit) {
 
   // add files
   for (const auto& name : names) {
-    ASSERT_FALSE(!_dir->Create(name));
+    auto out = _dir->Create(name);
+    ASSERT_FALSE(!out);
+    out->Close();
   }
 
   // visit directory
@@ -3700,7 +3709,9 @@ TEST_P(DirectoryTestCase, list) {
     "UKb3uiFuGEi7m9", "yeRCnG0EEZ8Vrr"};
 
   for (const auto& name : names) {
-    ASSERT_FALSE(!_dir->Create(name));
+    auto out = _dir->Create(name);
+    ASSERT_FALSE(!out);
+    out->Close();
   }
 
   files.clear();
@@ -3758,6 +3769,7 @@ TEST_P(DirectoryTestCase, smoke_index_io) {
     out->WriteV64(std::numeric_limits<uint64_t>::max());
 
     WriteStr(*out, str.c_str(), str.size());
+    out->Close();
   }
 
   // read from file
@@ -3918,6 +3930,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
     EXPECT_EQ(crc.checksum(), file->Checksum());
 
     file->Flush();
+    file->Close();
   }
 
   // Check files count
@@ -4117,6 +4130,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
     {
       auto out = dir.Create("empty_file");
       ASSERT_FALSE(!out);
+      out->Close();
     }
 
     {
@@ -4145,6 +4159,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
       out->WriteData(buf, sizeof buf);
       out->WriteData(buf, 691);
       out->Flush();
+      out->Close();
     }
 
     {
@@ -4180,6 +4195,7 @@ TEST_P(DirectoryTestCase, directory_size) {
 
     file->WriteU32(100);
     file->Flush();
+    file->Close();
   }
 
   // visit directory
@@ -4221,6 +4237,7 @@ TEST_P(DirectoryTestCase, input_type_follows_storage) {
     auto out = _dir->Create("file");
     ASSERT_FALSE(!out);
     out->WriteU32(42);
+    out->Close();
   }
 
   const auto type = _dir->Kind() == irs::StorageKind::Local
@@ -4249,6 +4266,7 @@ TEST_P(DirectoryTestCase, reads_across_cache_blocks) {
     auto out = _dir->Create("blocks");
     ASSERT_FALSE(!out);
     out->WriteData(data.data(), data.size());
+    out->Close();
   }
   const auto expected = [&](uint64_t offset, uint64_t count) {
     return irs::bytes_view{data.data() + offset, count};
@@ -4327,6 +4345,7 @@ TEST_P(DirectoryTestCase, numbers_across_cache_blocks) {
     out->WriteU64(kU64);
     out->WriteData(filler.data(), kBlock - 6);
     out->WriteU32(kU32);
+    out->Close();
   }
 
   auto in = _dir->Open("numbers", duckdb::MappedFileAccess::NORMAL);
@@ -4364,6 +4383,7 @@ TEST_P(DirectoryTestCase, stable_reads_follow_storage) {
     auto out = _dir->Create("stable");
     ASSERT_FALSE(!out);
     out->WriteData(data.data(), data.size());
+    out->Close();
   }
 
   auto in = _dir->Open("stable", duckdb::MappedFileAccess::NORMAL);
@@ -4394,6 +4414,7 @@ TEST_P(DirectoryTestCase, read_whole) {
     auto out = _dir->Create("file");
     ASSERT_FALSE(!out);
     out->WriteData(data.data(), data.size());
+    out->Close();
   }
 
   auto in = _dir->ReadWhole("file");
@@ -4421,6 +4442,7 @@ TEST_P(DirectoryTestCase, create_truncates_existing_file) {
     ASSERT_FALSE(!out);
     const std::vector<irs::byte_type> data(1000, 1);
     out->WriteData(data.data(), data.size());
+    out->Close();
   }
   ASSERT_EQ(1000,
             _dir->Open("file", duckdb::MappedFileAccess::NORMAL)->Length());
@@ -4429,6 +4451,7 @@ TEST_P(DirectoryTestCase, create_truncates_existing_file) {
     auto out = _dir->Create("file");
     ASSERT_FALSE(!out);
     out->WriteU32(42);
+    out->Close();
   }
   {
     auto in = _dir->Open("file", duckdb::MappedFileAccess::NORMAL);
@@ -4441,6 +4464,7 @@ TEST_P(DirectoryTestCase, create_truncates_existing_file) {
   {
     auto out = _dir->Create("file");
     ASSERT_FALSE(!out);
+    out->Close();
   }
   EXPECT_EQ(0, _dir->Open("file", duckdb::MappedFileAccess::NORMAL)->Length());
 }
@@ -4482,8 +4506,10 @@ TEST_P(DirectoryTestCase, remove_unreferenced) {
     irs::IndexOutput::ptr tmp;
     tmp = dir.Create("dummy.file.1");
     ASSERT_FALSE(!tmp);
+    tmp->Close();
     tmp = dir.Create("dummy.file.2");
     ASSERT_FALSE(!tmp);
+    tmp->Close();
   }
 
   // test clean before initializing directory
@@ -4496,8 +4522,10 @@ TEST_P(DirectoryTestCase, remove_unreferenced) {
     irs::IndexOutput::ptr tmp;
     tmp = dir.Create("dummy.file.3");
     ASSERT_FALSE(!tmp);
+    tmp->Close();
     tmp = dir.Create("dummy.file.4");
     ASSERT_FALSE(!tmp);
+    tmp->Close();
   }
 
   auto& refs = dir.Refs();
@@ -4509,8 +4537,10 @@ TEST_P(DirectoryTestCase, remove_unreferenced) {
     irs::IndexOutput::ptr tmp;
     tmp = dir.Create("tracked.file.1");
     ASSERT_FALSE(!tmp);
+    tmp->Close();
     tmp = dir.Create("tracked.file.2");
     ASSERT_FALSE(!tmp);
+    tmp->Close();
   }
 
   // test initial directory state
@@ -4590,8 +4620,8 @@ TEST_P(DirectoryTestCase, remove_unreferenced) {
   }
 
   // test empty references removed too
-  size_t unused = 0;
-  refs.RemoveUnused([&](const std::string&) { ++unused; }, [] {});
+  const auto unused = refs.RemoveUnused(
+    [](std::vector<std::string>& names) { return names.size(); });
   ASSERT_EQ(0, unused);
 }
 
@@ -4707,7 +4737,9 @@ TEST_P(DirectoryTestCase, remove_unreferenced_current_segment) {
 
 TEST_P(DirectoryTestCase, reference) {
   auto& dir = this->dir();
-  ASSERT_FALSE(!dir.Create("abc"));
+  auto out = dir.Create("abc");
+  ASSERT_FALSE(!out);
+  out->Close();
   const auto ref = dir.Reference("abc");
   ASSERT_NE(nullptr, ref);
   EXPECT_EQ("abc", *ref);
@@ -4735,6 +4767,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
 
     ASSERT_FALSE(!file1);
     file1->WriteByte(42);
+    file1->Close();
     file1.reset();
 
     auto file2 = track_dir.Open(file, duckdb::MappedFileAccess::NORMAL);
@@ -4769,6 +4802,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
     auto track_dir = dir.Tracking(tracker);
     auto file1 = dir.Create("abc");
     ASSERT_FALSE(!file1);
+    file1->Close();
     auto file2 = track_dir.Open("abc", duckdb::MappedFileAccess::NORMAL);
     ASSERT_FALSE(!file2);
 
@@ -4809,6 +4843,7 @@ TEST_P(DirectoryTestCase, file_tracker) {
       ASSERT_FALSE(!file1);
       file1->WriteByte(42);
       file1->Flush();
+      file1->Close();
     }
     track_dir.Sync({&file, 1});
     ASSERT_EQ(1,
@@ -4852,6 +4887,7 @@ TEST(DirectoryTest, memory_files_removed_with_last_copy) {
     auto out = files->Create("file");
     ASSERT_FALSE(!out);
     out->WriteU32(42);
+    out->Close();
   }
   const auto path = files->Path("file");
   ASSERT_TRUE(memory.FileExists(path));
@@ -4904,6 +4940,7 @@ TEST(DirectoryTest, compacted_memory_files_map_in_place) {
     auto out = files.Create("file");
     ASSERT_FALSE(!out);
     out->WriteData(data.data(), data.size());
+    out->Close();
   }
   auto blocks = files.Open("file", duckdb::MappedFileAccess::NORMAL);
   ASSERT_EQ(irs::DataInput::Type::Generic, blocks->GetType());
@@ -5005,6 +5042,7 @@ TEST(DirectoryTest, private_memory) {
     auto out = files.Create("file");
     ASSERT_FALSE(!out);
     out->WriteData(data.data(), data.size());
+    out->Close();
   }
   ASSERT_TRUE(files.Has("file"));
   EXPECT_FALSE(db.GetMemoryFileSystem().FileExists(files.Path("file")));
@@ -5058,6 +5096,7 @@ TEST(DirectoryTest, private_memory_roots_are_separate) {
     auto out = files.Create(name);
     ASSERT_FALSE(!out);
     out->WriteU32(value);
+    out->Close();
   };
   write(lhs, "file", 1);
   write(lhs, "lhs", 1);
@@ -5122,27 +5161,67 @@ TEST_F(DirectoryHookTest, remove_failures) {
     using ::tests::HookFileSystem::HookFileSystem;
 
     void OnRemove(std::string_view) final {
-      throw duckdb::IOException("injected");
+      if (fail) {
+        throw duckdb::IOException("injected");
+      }
     }
+
+    bool fail = true;
   } fs{::tests::DatabaseFileSystem()};
 
   auto local = ::tests::LocalDirectory(this);
   ASSERT_NE(nullptr, local);
-  {
-    auto out = local->Create("abc");
-    ASSERT_FALSE(!out);
-  }
+  local->Create("abc")->Close();
+  local->Create("def")->Close();
   auto hooked = ::tests::OverFileSystem(*local, fs);
 
   ASSERT_THROW(hooked.Remove("abc"), duckdb::IOException);
   ASSERT_TRUE(local->Has("abc"));
 
   hooked.Refs().add("abc");
-  EXPECT_EQ(0, hooked.RemoveUnreferenced());
+  hooked.Refs().add("def");
+  ASSERT_THROW(hooked.RemoveUnreferenced(), duckdb::IOException);
   ASSERT_TRUE(local->Has("abc"));
+  ASSERT_TRUE(local->Has("def"));
 
-  ASSERT_TRUE(local->Remove("abc"));
-  ASSERT_FALSE(local->Remove("abc"));
+  fs.fail = false;
+  EXPECT_EQ(2, hooked.RemoveUnreferenced());
+  EXPECT_FALSE(local->Has("abc"));
+  EXPECT_FALSE(local->Has("def"));
+  EXPECT_EQ(0, hooked.RemoveUnreferenced());
+}
+
+TEST_F(DirectoryHookTest, abandoned_output_is_not_published) {
+  auto store = ::tests::ObjectStoreDirectory(this);
+  ASSERT_NE(nullptr, store);
+  {
+    auto out = store->Create("abandoned");
+    out->WriteU32(42);
+  }
+  EXPECT_FALSE(store->Has("abandoned"));
+
+  auto out = store->Create("closed");
+  out->WriteU32(42);
+  out->Close();
+  EXPECT_TRUE(store->Has("closed"));
+}
+
+TEST_F(DirectoryHookTest, failed_object_removal_is_retried) {
+  auto store = ::tests::ObjectStoreDirectory(this);
+  ASSERT_NE(nullptr, store);
+  store->Create("abc")->Close();
+  store->Refs().add("abc");
+
+  if (!irs::AddFailurePointDebugging("object_store_delete_fails")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  absl::Cleanup clear = [] { irs::ClearFailurePointsDebugging(); };
+  EXPECT_THROW(store->RemoveUnreferenced(), duckdb::IOException);
+  irs::ClearFailurePointsDebugging();
+  ASSERT_TRUE(store->Has("abc"));
+
+  EXPECT_EQ(1, store->RemoveUnreferenced());
+  EXPECT_FALSE(store->Has("abc"));
 }
 
 }  // namespace

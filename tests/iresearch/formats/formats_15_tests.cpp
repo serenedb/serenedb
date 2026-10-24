@@ -367,6 +367,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
       out->WriteData(posting_meta.inline_data, posting_meta.inline_size);
     }
     writer.End();
+    out->Close();
   }
 
   irs::SegmentMeta meta;

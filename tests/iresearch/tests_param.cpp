@@ -36,10 +36,9 @@ constinit std::atomic<uint64_t> gLocalDirectories{0};
 
 }  // namespace
 
-std::shared_ptr<irs::Directory> MemoryDirectory(const TestBase* test) {
+std::shared_ptr<irs::Directory> MemoryDirectory(const TestBase*) {
   return std::make_shared<irs::Directory>(
-    irs::DuckDBEngine::Instance().instance(), irs::MemoryIndexRoot(),
-    test->GetResourceManager().options);
+    irs::DuckDBEngine::Instance().instance(), irs::MemoryIndexRoot());
 }
 
 std::shared_ptr<irs::Directory> LocalDirectory(const TestBase* test) {
@@ -48,21 +47,20 @@ std::shared_ptr<irs::Directory> LocalDirectory(const TestBase* test) {
                                                 1, std::memory_order_relaxed));
   std::filesystem::create_directories(path);
   auto* files =
-    new irs::Directory{irs::DuckDBEngine::Instance().instance(), path.string(),
-                       test->GetResourceManager().options};
+    new irs::Directory{irs::DuckDBEngine::Instance().instance(), path.string()};
   return {files, [path = std::move(path)](irs::Directory* p) {
             delete p;
             std::filesystem::remove_all(path);
           }};
 }
 
-std::shared_ptr<irs::Directory> ObjectStoreDirectory(const TestBase* test) {
+std::shared_ptr<irs::Directory> ObjectStoreDirectory(const TestBase*) {
   ObjectStore();
   auto root =
     absl::StrCat(irs::SimulatedObjectStore::kPrefix, "tests/",
                  gLocalDirectories.fetch_add(1, std::memory_order_relaxed));
-  auto* files = new irs::Directory{irs::DuckDBEngine::Instance().instance(),
-                                   root, test->GetResourceManager().options};
+  auto* files =
+    new irs::Directory{irs::DuckDBEngine::Instance().instance(), root};
   return {files, [root = std::move(root)](irs::Directory* p) {
             delete p;
             ObjectStore().RemoveDirectory(root);

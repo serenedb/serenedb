@@ -389,8 +389,10 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       irs::IndexOutput::ptr tmp;
       tmp = dir->Create("dummy.file.1");
       ASSERT_FALSE(!tmp);
+      tmp->Close();
       tmp = dir->Create("dummy.file.2");
       ASSERT_FALSE(!tmp);
+      tmp->Close();
     }
 
     ASSERT_TRUE(dir->Has("dummy.file.1"));
@@ -1027,6 +1029,7 @@ TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {
         meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize + 1,
                                          "from_the_future", 123);
       });
+    out->Close();
   }
 
   irs::SegmentMeta read_meta;
@@ -1098,6 +1101,7 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
       meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count", 100);
       meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size", 42);
     });
+    out->Close();
   };
 
   // the mask is not a bitmap at all
@@ -1128,6 +1132,7 @@ TEST_P(FormatTestCase, format_utils_footer) {
     irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint32_t>(0, "value", 42);
     });
+    stream->Close();
   };
   const auto read = [&](std::string_view name, std::string_view data) {
     auto stream = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
@@ -1162,6 +1167,7 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
     irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint32_t>(0, "value", 42);
     });
+    stream->Close();
   }
 
   irs::bstring bytes;
@@ -1178,6 +1184,7 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
     if (!data.empty()) {
       stream->WriteData(data.data(), data.size());
     }
+    stream->Close();
   };
   const auto read = [&](std::string_view name) {
     auto stream = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
@@ -1218,6 +1225,7 @@ TEST_P(FormatTestCase, index_meta_reads_its_storage_version_range) {
                                      "storage_version", version);
         meta.WriteProperty<uint64_t>(im::kFieldSegCounter, "seg_counter", 0);
       });
+      out->Close();
     }
     try {
       irs::IndexMeta meta;

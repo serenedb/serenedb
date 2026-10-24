@@ -22,6 +22,7 @@
 
 #include <vector>
 
+#include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/search/queries/multiterm_state.hpp"
 #include "iresearch/search/queries/phrase_state.hpp"
@@ -84,7 +85,7 @@ class PostingHeads final : public PreparedStateVisitor {
       return;
     }
     const auto handles = reader->Handles();
-    if (handles.doc && meta.docs_count > 1 && meta.inline_size == 0) {
+    if (handles.doc && DocExtent(meta) != 0) {
       ++_lists;
       auto& extents = _extents[handles.doc];
       extents.push_back({.offset = meta.doc_start, .size = file_utils::kPage});

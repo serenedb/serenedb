@@ -20,8 +20,6 @@
 
 #include "iresearch/store/block_input.hpp"
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <cstring>
 #include <utility>
@@ -205,18 +203,9 @@ void BlockInput::Prefetch(uint64_t offset, uint64_t count) const noexcept {
 }
 
 void BlockInput::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
-  absl::c_sort(extents, [](const ByteExtent& l, const ByteExtent& r) {
-    return l.offset < r.offset;
-  });
-  for (size_t i = 0; i != extents.size();) {
-    const auto offset = extents[i].offset;
-    auto end = offset + extents[i].size;
-    for (++i; i != extents.size() &&
-              extents[i].offset <= end + duckdb::BlockCache::MERGE_GAP;
-         ++i) {
-      end = std::max(end, extents[i].offset + extents[i].size);
-    }
-    Prefetch(offset, end - offset);
+  for (const auto& extent :
+       CoalesceExtents(extents, duckdb::BlockCache::MERGE_GAP)) {
+    Prefetch(extent.offset, extent.size);
   }
 }
 

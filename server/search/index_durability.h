@@ -42,6 +42,7 @@
 #include <string_view>
 #include <utility>
 
+#include "catalog/database_directory.h"
 #include "connector/file_manifest.h"
 #include "search/maintenance.h"
 
@@ -55,18 +56,14 @@ struct IndexStamp {
   static IndexStamp Read(duckdb::BinaryDeserializer& in);
 };
 
-struct OpenedDirectory {
-  irs::Directory directory;
-  bool absent = false;
-};
-
 class IndexDurability {
  public:
   using ManifestSource =
     absl::AnyInvocable<std::shared_ptr<const FileManifest>() const>;
 
   IndexDurability(duckdb::AttachedDatabase& database, std::string name,
-                  OpenedDirectory files);
+                  const std::optional<catalog::StorageDirectory>& parent,
+                  duckdb::idx_t oid, bool is_new);
 
   const duckdb::weak_ptr<duckdb::AttachedDatabase>& Database() const noexcept {
     return _database;
@@ -109,9 +106,14 @@ class IndexDurability {
   }
 
  private:
+  IndexDurability(duckdb::AttachedDatabase& database, std::string name,
+                  std::optional<std::string> path);
+
   void SyncDirectory();
   void MarkPublished();
   bool FinishRefresh(irs::IndexWriter& writer);
+  bool FinishUnfinished(irs::IndexWriter& writer);
+  void RequireFinished(irs::IndexWriter& writer);
   bool FinishPendingSave(irs::IndexWriter& writer);
   void AwaitPendingSave(std::unique_lock<absl::Mutex>& lock,
                         irs::IndexWriter& writer);
@@ -131,6 +133,7 @@ class IndexDurability {
   std::atomic<bool> _directory_dirty{true};
   std::atomic<bool> _out_of_sync{false};
   std::atomic<bool> _reopen{false};
+  std::atomic<bool> _swept{false};
   absl::Mutex _refresh_mutex;
   irs::SourcePosition _position;
   mutable absl::Mutex _positions_mutex;

@@ -23,10 +23,10 @@
 #pragma once
 
 #include <duckdb/common/serializer/write_stream.hpp>
+#include <memory>
 #include <utility>
 
 #include "iresearch/utils/bytes_utils.hpp"
-#include "iresearch/utils/io_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -173,7 +173,7 @@ class IndexOutput : public BufferedOutput {
  public:
   using BufferedOutput::BufferedOutput;
 
-  using ptr = io_utils::AutoClose<IndexOutput>::ptr;
+  using ptr = std::unique_ptr<IndexOutput>;
 
   uint64_t Position() const noexcept { return _offset + Length(); }
 

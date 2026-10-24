@@ -95,6 +95,7 @@ class Format10TestCase : public tests::FormatTestCase {
       ASSERT_EQ(docs.size(), stats.docs_count);
 
       writer.End();
+      out->Close();
     }
 
     // read postings
@@ -322,6 +323,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
     // finish writing
     writer.End();
+    out->Close();
   }
 
   // read postings
@@ -460,6 +462,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
     // finish writing
     writer.End();
+    out->Close();
   }
 
   // read postings
@@ -971,6 +974,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
         writer.EndField();
         writer.End();
+        out->Close();
       }
 
       // read postings and test reset
@@ -1105,6 +1109,7 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
       } else {
         irs::format_utils::WriteFooter(*out);
       }
+      out->Close();
     }
     std::string message;
     try {

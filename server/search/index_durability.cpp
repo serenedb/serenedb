@@ -35,6 +35,7 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <mutex>
@@ -47,6 +48,17 @@ constexpr duckdb::field_id_t kFieldWalGeneration = 1;
 constexpr duckdb::field_id_t kFieldWalOffset = 2;
 constexpr duckdb::field_id_t kFieldManifest = 3;
 constexpr duckdb::field_id_t kFieldCheckpoint = 4;
+
+std::optional<std::string> StoragePath(
+  duckdb::AttachedDatabase& database,
+  const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
+  bool is_new) {
+  if (database.GetStorageManager().InMemory()) {
+    return std::nullopt;
+  }
+  SDB_ASSERT(parent);
+  return is_new ? parent->CreateStorage(oid) : parent->OpenStorage(oid);
+}
 
 }  // namespace
 
@@ -67,12 +79,21 @@ IndexStamp IndexStamp::Read(duckdb::BinaryDeserializer& in) {
   return stamp;
 }
 
+IndexDurability::IndexDurability(
+  duckdb::AttachedDatabase& database, std::string name,
+  const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
+  bool is_new)
+  : IndexDurability{database, std::move(name),
+                    StoragePath(database, parent, oid, is_new)} {}
+
 IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
-                                 std::string name, OpenedDirectory files)
+                                 std::string name,
+                                 std::optional<std::string> path)
   : _database{database.shared_from_this()},
     _name{std::move(name)},
-    _files{std::move(files.directory)},
-    _absent{files.absent} {}
+    _files{irs::DuckDBEngine::Instance().instance(),
+           path ? *path : irs::MemoryIndexRoot()},
+    _absent{!path && !database.GetStorageManager().InMemory()} {}
 
 std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp>
 IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,
@@ -201,12 +222,9 @@ absl::Status IndexDurability::Refresh(
                 " is already in progress, waiting");
       refresh_lock.lock();
     }
-    if (_unfinished) {
-      if (!FinishRefresh(writer)) {
-        return absl::UnavailableError(
-          absl::StrCat(_name, " cannot commit its last refresh yet"));
-      }
-      _unfinished = false;
+    if (!FinishUnfinished(writer)) {
+      return absl::UnavailableError(
+        absl::StrCat(_name, " cannot commit its last refresh yet"));
     }
     if (wait) {
       AwaitPendingSave(refresh_lock, writer);
@@ -279,6 +297,7 @@ void IndexDurability::ReplaceSegments(
   absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
     removal_provider) {
   std::unique_lock lock{_refresh_mutex};
+  RequireFinished(writer);
   AwaitPendingSave(lock, writer);
   writer.ReplaceSegments(replaced, adopted_metas, removal_provider);
 }
@@ -296,15 +315,7 @@ void IndexDurability::PrepareCheckpoint(irs::IndexWriter& writer,
                                         uint64_t iteration) {
   std::lock_guard lock{_refresh_mutex};
   SDB_ASSERT(_pending_checkpoint == 0 || _pending_checkpoint == iteration);
-  if (_unfinished) {
-    if (!FinishRefresh(writer)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                      ERR_MSG(_name,
-                              " cannot commit its last refresh; refusing to "
-                              "checkpoint"));
-    }
-    _unfinished = false;
-  }
+  RequireFinished(writer);
   _checkpoint = iteration;
   absl::Cleanup reset = [&]() noexcept { _checkpoint = 0; };
   try {
@@ -360,6 +371,24 @@ bool IndexDurability::FinishRefresh(irs::IndexWriter& writer) {
   return true;
 }
 
+bool IndexDurability::FinishUnfinished(irs::IndexWriter& writer) {
+  if (!_unfinished) {
+    return true;
+  }
+  if (!FinishRefresh(writer)) {
+    return false;
+  }
+  _unfinished = false;
+  return true;
+}
+
+void IndexDurability::RequireFinished(irs::IndexWriter& writer) {
+  if (!FinishUnfinished(writer)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG(_name, " cannot commit its last refresh"));
+  }
+}
+
 bool IndexDurability::FinishPendingSave(irs::IndexWriter& writer) {
   if (_pending_checkpoint == 0 || !CheckpointWritten(_pending_checkpoint)) {
     return false;
@@ -389,8 +418,7 @@ std::pair<irs::DirectoryReader, irs::SourcePosition> IndexDurability::Snapshot(
 }
 
 void IndexDurability::SyncDirectory() {
-  if (_files.Kind() == irs::StorageKind::Memory ||
-      !_directory_dirty.exchange(false, std::memory_order_acq_rel)) {
+  if (!_directory_dirty.exchange(false, std::memory_order_acq_rel)) {
     return;
   }
   irs::SourcePosition published;
@@ -411,10 +439,11 @@ void IndexDurability::SyncDirectory() {
 absl::Status IndexDurability::Cleanup() {
   try {
     SyncDirectory();
-    if (_files.Kind() == irs::StorageKind::Remote) {
+    if (_swept.load(std::memory_order_relaxed)) {
       _files.RemoveUnreferenced();
     } else {
       _files.RemoveAllUnreferenced();
+      _swept.store(true, std::memory_order_relaxed);
     }
   } catch (const std::exception& e) {
     return absl::InternalError(

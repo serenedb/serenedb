@@ -96,9 +96,8 @@ SearchTable::SearchTable(std::optional<catalog::StorageDirectory> parent,
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
     _compression{std::move(compression)},
-    _durability{database, absl::StrCat("search table ", table_id),
-                OpenStorageDirectory(_parent, table_id, is_new,
-                                     database.GetStorageManager().InMemory())} {
+    _durability{database, absl::StrCat("search table ", table_id), _parent,
+                table_id, is_new} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);

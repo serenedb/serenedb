@@ -152,8 +152,8 @@ class BuiltinTablespaces final : public duckdb::DefaultGenerator {
 
 void ClusterCatalog::Initialize(bool load_builtin) {
   duckdb::DuckCatalog::Initialize(load_builtin);
-  auto root = std::make_shared<TablespaceRoot>(
-    ClusterLayout(GetAttached()).EngineDir().string());
+  auto root =
+    std::make_shared<TablespaceRoot>(ClusterLayout(GetAttached()).EngineDir());
   {
     absl::MutexLock lock{&_tablespaces_mutex};
     _tablespace_roots[pg::kPgDefaultTablespace] = {.root = root,
@@ -314,26 +314,31 @@ void ClusterCatalog::DropTablespace(duckdb::CatalogTransaction transaction,
 
 bool ClusterCatalog::HoldsTablespaceObjects(
   const TablespaceCatalogEntry& tablespace) {
-  bool holds = false;
+  bool placed = false;
   absl::flat_hash_set<duckdb::idx_t> unattached;
   GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
     .Scan([&](duckdb::CatalogEntry& entry) {
-      holds = holds ||
-              entry.Cast<DatabaseCatalogEntry>().Tablespace() == tablespace.oid;
+      placed = placed || entry.Cast<DatabaseCatalogEntry>().Tablespace() ==
+                           tablespace.oid;
       unattached.insert(entry.oid);
     });
+  if (placed) {
+    return true;
+  }
   for (const auto& db :
        duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
     auto& catalog = db->GetCatalog();
-    if (holds || catalog.GetCatalogType() != SereneDBCatalog::kStorageType) {
+    if (catalog.GetCatalogType() != SereneDBCatalog::kStorageType) {
       continue;
     }
+    if (UsesTablespace(catalog.Cast<duckdb::DuckCatalog>(), tablespace.oid)) {
+      return true;
+    }
     unattached.erase(db->oid);
-    holds = UsesTablespace(catalog.Cast<duckdb::DuckCatalog>(), tablespace.oid);
   }
-  return holds || absl::c_any_of(unattached, [&](duckdb::idx_t oid) {
-           return !ListStorages(tablespace.Root()->DatabaseDir(oid)).empty();
-         });
+  return absl::c_any_of(unattached, [&](duckdb::idx_t oid) {
+    return !ListStorages(tablespace.Root()->DatabaseDir(oid)).empty();
+  });
 }
 
 duckdb::Catalog& ClusterCatalog::ReplayUseCatalog(
@@ -475,7 +480,8 @@ void ClusterCatalog::CompactCatalogLog() {
   }
   _live_bytes.store(size, std::memory_order_relaxed);
   try {
-    SyncDirectory(std::filesystem::path{path}.parent_path());
+    StorageFileSystem().SyncDirectory(
+      std::filesystem::path{path}.parent_path().string());
   } catch (const std::exception& e) {
     SDB_FATAL(GENERAL,
               "catalog log rewrite: ", duckdb::ErrorData{e}.RawMessage());
@@ -669,6 +675,27 @@ ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db) {
 
 ClusterCatalog& ClusterOf() {
   return ClusterOf(irs::DuckDBEngine::Instance().instance());
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
+  duckdb::ClientContext& context, duckdb::CatalogType type,
+  std::string_view name) {
+  auto& cluster = ClusterOf(context);
+  return cluster.GetCatalogSet(type).GetEntry(
+    cluster.GetCatalogTransaction(context), duckdb::Identifier{name});
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntryById(
+  duckdb::ClientContext& context, duckdb::CatalogType type, duckdb::idx_t oid) {
+  auto& cluster = ClusterOf(context);
+  duckdb::optional_ptr<duckdb::CatalogEntry> result;
+  cluster.GetCatalogSet(type).Scan(cluster.GetCatalogTransaction(context),
+                                   [&](duckdb::CatalogEntry& entry) {
+                                     if (!result && entry.oid == oid) {
+                                       result = &entry;
+                                     }
+                                   });
+  return result;
 }
 
 }  // namespace sdb::catalog

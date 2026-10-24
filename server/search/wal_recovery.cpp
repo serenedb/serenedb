@@ -60,18 +60,6 @@ namespace {
 using BoundIndexHandle =
   duckdb::IndexWriteHandle<connector::InvertedStoreIndex>;
 
-struct FinishReplayTask final : duckdb::BaseExecutorTask {
-  FinishReplayTask(duckdb::TaskExecutor& executor,
-                   absl::AnyInvocable<void()> finish)
-    : BaseExecutorTask{executor}, finish{std::move(finish)} {}
-
-  void ExecuteTask() final { finish(); }
-
-  std::string TaskType() const final { return "SearchFinishReplay"; }
-
-  absl::AnyInvocable<void()> finish;
-};
-
 std::vector<duckdb::reference<catalog::SereneDBCatalog>> SereneDBCatalogs() {
   std::vector<duckdb::reference<catalog::SereneDBCatalog>> catalogs;
   for (const auto& database :
@@ -160,8 +148,9 @@ void RecoverSearchStorages() {
   duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance())};
   for (auto& [index, storage] : recovering) {
-    executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
-      executor, [&replayed, index = std::move(index), storage]() mutable {
+    executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+      executor,
+      [&replayed, index = std::move(index), storage]() mutable {
         if (index && (*index)->FinishReplay()) {
           replayed.fetch_add(1, std::memory_order_relaxed);
         }
@@ -169,11 +158,13 @@ void RecoverSearchStorages() {
           SDB_WARN(SEARCH, "refresh of index '", storage->GetId(),
                    "' after WAL replay failed: ", status.message());
         }
-      }));
+      },
+      "SearchFinishReplay"));
   }
   for (auto& [db, table] : tables) {
-    executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
-      executor, [&replayed_tables, &db = db.get(), table] {
+    executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+      executor,
+      [&replayed_tables, &db = db.get(), table] {
         if (table->FinishReplay(db)) {
           replayed_tables.fetch_add(1, std::memory_order_relaxed);
         }
@@ -181,7 +172,8 @@ void RecoverSearchStorages() {
           SDB_WARN(SEARCH, "refresh of search table '", table->GetTableId(),
                    "' after WAL replay failed: ", status.message());
         }
-      }));
+      },
+      "SearchFinishReplay"));
   }
   executor.WorkOnTasks();
   for (auto& catalog : SereneDBCatalogs()) {

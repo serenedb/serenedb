@@ -282,8 +282,7 @@ ViewFastPath IcebergFastPath(ViewFastPath out, bool has_limit) {
 
 std::optional<ViewFastPath> AttachedDuckDBFastPath(duckdb::Catalog& catalog,
                                                    ViewFastPath out) {
-  if (catalog.IsSystemCatalog() || catalog.IsTemporaryCatalog() ||
-      catalog.InMemory()) {
+  if (catalog.IsSystemCatalog() || catalog.InMemory()) {
     return std::nullopt;
   }
   out.function_name = "read_duckdb";

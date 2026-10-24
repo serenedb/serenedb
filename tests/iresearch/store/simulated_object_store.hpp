@@ -85,6 +85,7 @@ class SimulatedObjectStore final : public duckdb::FileSystem {
   }
   void Truncate(duckdb::FileHandle& handle, int64_t new_size) final;
   void FileSync(duckdb::FileHandle& handle) final;
+  void AbortFileWrite(duckdb::FileHandle& handle) final;
 
   duckdb::FileExistence TryFileExists(
     const std::string& filename,

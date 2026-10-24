@@ -203,6 +203,17 @@ set(iresearch-tests_headers
     ${CMAKE_CURRENT_BINARY_DIR}/tests_config.hpp # auto generated
 )
 
+add_library(
+    iresearch-test-object-store
+    STATIC
+    ./store/simulated_object_store.cpp
+)
+target_link_libraries(iresearch-test-object-store PUBLIC iresearch-static)
+target_include_directories(
+    iresearch-test-object-store
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
 add_executable(
     iresearch-tests
     ${iresearch-tests_sources}
@@ -220,6 +231,7 @@ target_link_libraries(
     # Shutdown the LogManager that backs SDB_*. It re-exports duckdb_static
     # PUBLICly.
     iresearch-static
+    iresearch-test-object-store
     search-benchmark-common
     gtest
     simdjson
@@ -257,6 +269,7 @@ target_link_libraries(
     # load_test.cpp reads the corpus through sdb::SlurpFile / Sha256Functor,
     # which live in server/utils.
     serene
+    iresearch-test-object-store
     search-benchmark-common
     gtest
     simdjson

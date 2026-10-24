@@ -31,8 +31,6 @@
 
 namespace sdb::catalog {
 
-inline constexpr std::string_view kTablespaceOption = "tablespace_oid";
-
 class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
  public:
   static constexpr duckdb::CatalogType Type =

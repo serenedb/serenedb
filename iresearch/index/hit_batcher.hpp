@@ -58,6 +58,9 @@ class HitBatcher {
                     ColFilterStateCache* states = nullptr,
                     std::span<const ColFilterSpec> filters = {});
 
+  void CollectBlocks(const irs::ColReader& col_reader, uint64_t first,
+                     uint64_t last, std::vector<ByteExtent>& out) const;
+
   bool Bound(uint32_t seg_idx) const noexcept {
     return _bound && _seg_idx == seg_idx;
   }

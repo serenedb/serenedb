@@ -27,6 +27,7 @@
 #include <expected>
 #include <iresearch/utils/assert.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -52,6 +53,8 @@ constexpr uint64_t OidFromSql(int64_t value) {
 }
 
 constexpr int64_t OidToSql(uint64_t oid) { return static_cast<int64_t>(oid); }
+
+std::optional<uint64_t> OidFromName(std::string_view name);
 
 inline constexpr uint8_t kPgsqlAfInet = 2;
 inline constexpr uint8_t kPgsqlAfInet6 = 3;

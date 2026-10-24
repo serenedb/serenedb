@@ -214,6 +214,9 @@ std::optional<ScorerOptions> TopKScorer(
   duckdb::ClientContext& context,
   const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 
+duckdb::optional_ptr<duckdb::Catalog> DictionaryCatalog(
+  duckdb::ClientContext& context, duckdb::Catalog& catalog);
+
 class IndexTokenizers {
  public:
   using Bound = irs::containers::FlatHashMap<irs::field_id, ColumnTokenizer>;

@@ -25,13 +25,13 @@
 
 #include <array>
 #include <iresearch/store/directory.hpp>
-#include <iresearch/store/simulated_object_store.hpp>
 #include <iresearch/utils/type_id.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <tuple>
 
+#include "store/simulated_object_store.hpp"
 #include "tests_shared.hpp"
 
 class TestBase;

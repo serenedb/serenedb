@@ -22,8 +22,7 @@
 
 #include "iresearch/formats/index_meta_writer.hpp"
 
-#include <absl/strings/str_cat.h>
-
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/storage/storage_info.hpp>
 
@@ -61,7 +60,7 @@ bool IndexMetaWriter::prepare(const Directory& dir, IndexMeta& meta,
   pending_filename = PendingFileName(meta.gen);
   filename = index_meta::FileName(meta.gen);
 
-  auto out = dir.Create(pending_filename);
+  auto out = dir.CreateWhole(pending_filename);
 
   format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta_out) {
     meta_out.WriteProperty<uint64_t>(
@@ -125,9 +124,8 @@ void IndexMetaWriter::rollback() noexcept {
   } catch (const std::exception& e) {
     SDB_ERROR(
       IRESEARCH,
-      absl::StrCat(
-        "Caught error while generating file name for index meta, reason: ",
-        e.what()));
+      "Caught error while generating file name for index meta, reason: ",
+      e.what());
     return;
   } catch (...) {
     SDB_ERROR(IRESEARCH,
@@ -137,15 +135,13 @@ void IndexMetaWriter::rollback() noexcept {
 
   try {
     if (!_dir->Remove(seg_file)) {
-      SDB_ERROR(IRESEARCH,
-                absl::StrCat("Failed to remove file, path: ", seg_file));
+      SDB_ERROR(IRESEARCH, "Failed to remove file, path: ", seg_file);
     }
   } catch (const std::exception& e) {
-    SDB_ERROR(IRESEARCH, absl::StrCat("Failed to remove file, path: ", seg_file,
-                                      ", reason: ", e.what()));
+    SDB_ERROR(IRESEARCH, "Failed to remove file, path: ", seg_file,
+              ", reason: ", duckdb::ErrorData{e}.RawMessage());
   } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Failed to remove file, path: ", seg_file));
+    SDB_ERROR(IRESEARCH, "Failed to remove file, path: ", seg_file);
   }
 
   // clear pending state

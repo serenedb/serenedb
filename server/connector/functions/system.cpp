@@ -321,27 +321,6 @@ const catalog::RoleCatalogEntry* FindRole(duckdb::ClientContext& context,
   return entry ? &entry->Cast<catalog::RoleCatalogEntry>() : nullptr;
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> FindClusterEntry(
-  duckdb::ClientContext& context, duckdb::CatalogType type,
-  std::string_view name) {
-  auto& cluster = catalog::ClusterOf(context);
-  return cluster.GetCatalogSet(type).GetEntry(
-    cluster.GetCatalogTransaction(context), duckdb::Identifier{name});
-}
-
-duckdb::optional_ptr<duckdb::CatalogEntry> FindClusterEntryById(
-  duckdb::ClientContext& context, duckdb::CatalogType type, duckdb::idx_t id) {
-  auto& cluster = catalog::ClusterOf(context);
-  duckdb::optional_ptr<duckdb::CatalogEntry> result;
-  cluster.GetCatalogSet(type).Scan(cluster.GetCatalogTransaction(context),
-                                   [&](duckdb::CatalogEntry& entry) {
-                                     if (!result && entry.oid == id) {
-                                       result = &entry;
-                                     }
-                                   });
-  return result;
-}
-
 bool IsClusterObject(duckdb::CatalogType type) {
   return type == duckdb::CatalogType::DATABASE_ENTRY ||
          type == duckdb::CatalogType::TABLESPACE_ENTRY;
@@ -774,7 +753,7 @@ void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
 
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-      auto entry = FindClusterEntryById(
+      auto entry = catalog::ClusterEntryById(
         context, duckdb::CatalogType::DATABASE_ENTRY, pg::OidFromSql(oid));
       auto database = entry
                         ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
@@ -795,7 +774,7 @@ void PgTablespaceLocationFunction(duckdb::DataChunk& args,
   auto& context = state.GetContext();
   duckdb::VariadicExecutor::Execute<duckdb::string_t, int64_t>(
     args, result, [&](int64_t oid) -> duckdb::optional<duckdb::string_t> {
-      auto entry = FindClusterEntryById(
+      auto entry = catalog::ClusterEntryById(
         context, duckdb::CatalogType::TABLESPACE_ENTRY, pg::OidFromSql(oid));
       if (!entry) {
         return duckdb::nullopt;
@@ -808,19 +787,19 @@ void PgTablespaceLocationFunction(duckdb::DataChunk& args,
 int64_t TablespaceBytes(duckdb::ClientContext& context,
                         const duckdb::CatalogEntry& tablespace) {
   duckdb::TaskScheduler::BlockingScope blocking;
-  if (tablespace.oid != pg::kPgDefaultTablespace &&
-      tablespace.oid != pg::kPgGlobalTablespace) {
-    return static_cast<int64_t>(catalog::StorageBytes(
-      tablespace.Cast<catalog::TablespaceCatalogEntry>().Root()->Path(),
-      catalog::StorageScope::All));
+  const auto root =
+    tablespace.oid == pg::kPgGlobalTablespace
+      ? catalog::ClusterOf(context).TablespaceRootOf(pg::kPgDefaultTablespace)
+      : tablespace.Cast<catalog::TablespaceCatalogEntry>().Root();
+  const auto size = catalog::StorageBytes(root->Path());
+  switch (tablespace.oid) {
+    case pg::kPgGlobalTablespace:
+      return static_cast<int64_t>(size.files);
+    case pg::kPgDefaultTablespace:
+      return static_cast<int64_t>(size.nested);
+    default:
+      return static_cast<int64_t>(size.files + size.nested);
   }
-  const auto data_directory = catalog::ClusterOf(context)
-                                .TablespaceRootOf(pg::kPgDefaultTablespace)
-                                ->Path();
-  return static_cast<int64_t>(catalog::StorageBytes(
-    data_directory, tablespace.oid == pg::kPgGlobalTablespace
-                      ? catalog::StorageScope::Files
-                      : catalog::StorageScope::Directories));
 }
 
 // pg_tablespace_size(name) -> bigint
@@ -831,8 +810,8 @@ void PgTablespaceSizeNameFunction(duckdb::DataChunk& args,
   duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
     args.data[0], result, args.size(), [&](duckdb::string_t input) -> int64_t {
       const std::string_view name{input.GetData(), input.GetSize()};
-      const auto entry =
-        FindClusterEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY, name);
+      const auto entry = catalog::ClusterEntry(
+        context, duckdb::CatalogType::TABLESPACE_ENTRY, name);
       if (!entry) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                         ERR_MSG("tablespace \"", name, "\" does not exist"));
@@ -849,7 +828,7 @@ void PgTablespaceSizeOidFunction(duckdb::DataChunk& args,
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(),
     [&](int64_t oid) -> duckdb::optional<int64_t> {
-      const auto entry = FindClusterEntryById(
+      const auto entry = catalog::ClusterEntryById(
         context, duckdb::CatalogType::TABLESPACE_ENTRY, pg::OidFromSql(oid));
       if (!entry) {
         return duckdb::nullopt;
@@ -1226,7 +1205,7 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
   // object -- so its owner and ACL come off the entry the cluster-global set
   // holds.
   if (IsClusterObject(type)) {
-    auto object = FindClusterEntry(context, type, obj_name);
+    auto object = catalog::ClusterEntry(context, type, obj_name);
     if (!object) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -1398,7 +1377,7 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
                                  std::string_view priv_text, bool& is_null) {
   is_null = false;
   if (IsClusterObject(type)) {
-    auto object = FindClusterEntryById(context, type, obj_id);
+    auto object = catalog::ClusterEntryById(context, type, obj_id);
     if (!object) {
       is_null = true;
       return false;

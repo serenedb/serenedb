@@ -88,7 +88,7 @@ void Write(const Directory& dir, std::string& meta_file, SegmentMeta& meta) {
   const auto infos = FileInfosOf(dir, meta.files);
 
   meta_file = FileName(meta);
-  auto out = dir.Create(meta_file);
+  auto out = dir.CreateWhole(meta_file);
 
   if (has_mask) {
     WriteDocumentMask(*out, *docs_mask, mask_size);

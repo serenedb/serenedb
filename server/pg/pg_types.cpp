@@ -20,7 +20,9 @@
 
 #include "pg/pg_types.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/numbers.h>
 #include <absl/time/civil_time.h>
@@ -715,6 +717,15 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
     return schema->oid;
   }
   return kInvalidOid;
+}
+
+std::optional<uint64_t> OidFromName(std::string_view name) {
+  uint64_t oid = 0;
+  if (name.empty() || !absl::c_all_of(name, absl::ascii_isdigit) ||
+      !absl::SimpleAtoi(name, &oid)) {
+    return std::nullopt;
+  }
+  return oid;
 }
 
 }  // namespace sdb::pg

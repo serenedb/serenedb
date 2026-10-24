@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/store/simulated_object_store.hpp"
+#include "store/simulated_object_store.hpp"
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/btree_map.h>
@@ -33,10 +33,9 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/virtual_file_system.hpp>
 #include <duckdb/main/database.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <thread>
 #include <vector>
-
-#include "iresearch/utils/debugging.hpp"
 
 namespace irs {
 namespace {
@@ -87,10 +86,8 @@ class ObjectHandle final : public duckdb::FileHandle {
 bool KnowsObject(const duckdb::ExtendedOpenFileInfo& info, duckdb::idx_t& size,
                  uint64_t& version) {
   std::string etag;
-  duckdb::timestamp_t last_modified;
   if (!info.TryGetOption("file_size", size) ||
-      !info.TryGetOption("etag", etag) ||
-      !info.TryGetOption("last_modified", last_modified)) {
+      !info.TryGetOption("etag", etag)) {
     return false;
   }
   if (etag.empty() || !absl::SimpleAtoi(etag, &version)) {
@@ -337,6 +334,12 @@ void SimulatedObjectStore::Truncate(duckdb::FileHandle& handle,
 
 void SimulatedObjectStore::FileSync(duckdb::FileHandle& handle) {
   handle.Cast<ObjectHandle>().Close();
+}
+
+void SimulatedObjectStore::AbortFileWrite(duckdb::FileHandle& handle) {
+  auto& object = handle.Cast<ObjectHandle>();
+  object.writing = false;
+  object.pending.clear();
 }
 
 duckdb::FileExistence SimulatedObjectStore::TryFileExists(

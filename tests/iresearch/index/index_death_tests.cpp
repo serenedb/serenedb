@@ -2151,11 +2151,9 @@ TEST_F(index_death_test_formats_15, fails_in_compact_with_removals) {
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    // Register REMOVE failures on superseded segment `.col` files;
-    // RemoveUnreferenced should tolerate the failures (leave stale
-    // files) and let the next commit observe the empty mask.
     fs.RegisterFailure(FailingFileSystem::Failure::REMOVE, "_3.col");
     fs.RegisterFailure(FailingFileSystem::Failure::REMOVE, "_5.col");
+    ASSERT_SQL_ERROR(dir.RemoveUnreferenced(), ERRCODE_IO_ERROR);
     dir.RemoveUnreferenced();
     ASSERT_FALSE(writer->RefreshCommit());  // nothing changed
     tests::AssertSnapshotEquality(

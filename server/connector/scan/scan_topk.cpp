@@ -34,7 +34,6 @@
 #include "connector/index_source_factory.h"
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
-#include "connector/term_dict.h"
 #include "query/config.h"
 
 namespace sdb::connector {
@@ -199,11 +198,14 @@ std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
 }
 
 void PrefetchColumns(
-  const ScanGlobalState& g, std::span<const irs::ScoreDoc> hits,
+  const ScanGlobalState& g, TopKLocalState& l,
+  std::span<const irs::ScoreDoc> hits,
   std::span<const ScanGlobalState::TopKState::FetchUnit> units) {
   if (!g.remote) {
     return;
   }
+  l.EnsureHitBatcher(g);
+  const auto& batcher = *l.hit_batcher;
   std::vector<irs::ByteExtent> extents;
   for (size_t u = 0; u < units.size();) {
     const auto seg = units[u].seg;
@@ -211,20 +213,11 @@ void PrefetchColumns(
     extents.clear();
     for (; u < units.size() && units[u].seg == seg; ++u) {
       const auto& unit = units[u];
-      const uint64_t first = hits[unit.first].doc - irs::doc_limits::min();
-      const uint64_t last =
-        hits[unit.first + unit.count - 1].doc - irs::doc_limits::min();
-      const auto collect = [&](irs::field_id id) {
-        if (const auto* column =
-              col_reader ? col_reader->Column(id) : nullptr) {
-          column->CollectBlocks(first, last, extents);
-        }
-      };
-      if (g.needs_lookup) {
-        collect(term_dict::kPKFieldId);
-      }
-      for (const auto& p : g.cs_projections) {
-        collect(p.column_id);
+      if (col_reader) {
+        batcher.CollectBlocks(
+          *col_reader, hits[unit.first].doc - irs::doc_limits::min(),
+          hits[unit.first + unit.count - 1].doc - irs::doc_limits::min(),
+          extents);
       }
     }
     if (!extents.empty()) {
@@ -233,16 +226,16 @@ void PrefetchColumns(
   }
 }
 
-void PlanFetch(ScanGlobalState& g) {
+void PlanFetch(ScanGlobalState& g, TopKLocalState& l) {
   auto& t = g.topk;
   SortByAddress(t.answer);
   t.fetch_units = FetchUnitsOf(t.answer, g.rg_size);
   t.fetched.resize(t.fetch_units.size());
   t.fetched_pk.resize(t.fetch_units.size());
-  PrefetchColumns(g, t.answer, t.fetch_units);
+  PrefetchColumns(g, l, t.answer, t.fetch_units);
 }
 
-void Merge(ScanGlobalState& g) {
+void Merge(ScanGlobalState& g, TopKLocalState& l) {
   auto& t = g.topk;
   size_t total = 0;
   for (uint32_t w = 0; w < g.workers; ++w) {
@@ -263,7 +256,7 @@ void Merge(ScanGlobalState& g) {
     all = all.first(want);
   }
   t.answer.assign(all.begin(), all.end());
-  PlanFetch(g);
+  PlanFetch(g, l);
 }
 
 bool FetchedColumn(const ScanGlobalState& g, duckdb::idx_t col) noexcept {
@@ -486,7 +479,7 @@ void FillShortAnswer(ScanGlobalState& g, TopKLocalState& l) {
   }
   t.answer = RankExactly(g, l, t.limit);
   t.answer.resize(std::min<size_t>(t.answer.size(), t.limit));
-  PlanFetch(g);
+  PlanFetch(g, l);
 }
 
 void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
@@ -522,7 +515,7 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
     verified += take;
     SortByAddress(hits);
     const auto units = FetchUnitsOf(hits, g.rg_size);
-    PrefetchColumns(g, hits, units);
+    PrefetchColumns(g, l, hits, units);
     for (size_t u = 0; u < units.size(); ++u) {
       const auto& unit = units[u];
       const std::span<const irs::ScoreDoc> part{hits.data() + unit.first,
@@ -672,7 +665,7 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
       t.published.load(std::memory_order_acquire) ==
         g.worker_count.load(std::memory_order_acquire);
     if (collected && !t.merge_taken.exchange(true, std::memory_order_acq_rel)) {
-      Merge(g);
+      Merge(g, l);
       FillShortAnswer(g, l);
       t.merge_barrier.Release(input);
     } else {

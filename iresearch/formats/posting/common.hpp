@@ -94,15 +94,18 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
 inline constexpr uint64_t kMaxPrefetch = uint64_t{16} << 20;
 
 template<typename Input>
-void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
+bool Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
   if (in.Warm(offset, size)) {
     file_utils::PollResidency();
-    return;
+    return false;
   }
-  if (size <= file_utils::kPrefetchChunk || !in.Resident(offset, size)) {
+  const bool fetch =
+    size <= file_utils::kPrefetchChunk || !in.Resident(offset, size);
+  if (fetch) {
     in.Prefetch(offset, size);
   }
   in.MarkWarm(offset, size);
+  return fetch;
 }
 
 inline uint64_t DocExtent(const PostingMeta& meta) noexcept {

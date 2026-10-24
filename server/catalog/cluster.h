@@ -136,6 +136,12 @@ ClusterCatalog& ClusterOf(duckdb::ClientContext& context);
 ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db);
 ClusterCatalog& ClusterOf();
 
+duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
+  duckdb::ClientContext& context, duckdb::CatalogType type,
+  std::string_view name);
+duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntryById(
+  duckdb::ClientContext& context, duckdb::CatalogType type, duckdb::idx_t oid);
+
 inline bool ReadDatabase(
   std::string_view name,
   absl::FunctionRef<void(const DatabaseCatalogEntry&)> read) {

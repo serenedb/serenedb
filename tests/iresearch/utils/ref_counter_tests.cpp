@@ -44,13 +44,10 @@ class RefCounterTests : public ::testing::Test {
 
 template<typename Key>
 std::vector<Key> RemoveUnused(irs::RefCounter<Key>& refs) {
-  std::vector<Key> removed;
-  size_t finished = 0;
-  refs.RemoveUnused([&](const Key& key) { removed.push_back(key); },
-                    [&] { ++finished; });
-  EXPECT_EQ(1, finished);
-  absl::c_sort(removed);
-  return removed;
+  return refs.RemoveUnused([](std::vector<Key>& unused) {
+    absl::c_sort(unused);
+    return unused;
+  });
 }
 
 }  // namespace tests
@@ -149,6 +146,19 @@ TEST_F(RefCounterTests, test_ref_counter_remove_unused) {
 
   auto ref1c = refs.add(1);
   ASSERT_EQ(2, ref1c.use_count());
+  ASSERT_TRUE(RemoveUnused(refs).empty());
+}
+
+TEST_F(RefCounterTests, test_ref_counter_keeps_what_was_not_removed) {
+  irs::RefCounter<int> refs;
+  refs.add(1);
+  refs.add(2);
+
+  refs.RemoveUnused([](std::vector<int>& unused) {
+    std::erase(unused, 2);
+    return 0;
+  });
+  ASSERT_EQ(std::vector<int>{2}, RemoveUnused(refs));
   ASSERT_TRUE(RemoveUnused(refs).empty());
 }
 

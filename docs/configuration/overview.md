@@ -340,7 +340,7 @@ Local paths, remote object stores and the external file cache.
 | `enable_server_cert_verification` | Enable server side certificate verification. | `BOOLEAN` | `SESSION` | `false` |
 | `extension_directory` | Deprecated: use `extension_directories` instead. The directory to store extensions in. | `VARCHAR` | `GLOBAL` | `<datadir>/extensions` |
 | `external_file_cache_size` | The memory the external file cache may use for blocks of remote and in-memory files (e.g. `4GB`). The buffer pool takes memory back from the cache when queries need it. A value above the size the cache started with takes effect after a restart. | `VARCHAR` | `GLOBAL` | a quarter of `memory_limit` |
-| `external_file_cache_spill_path` | The file evicted cache blocks spill to. Empty spills only blocks of in-memory files, into the temporary directory. | `VARCHAR` | `GLOBAL` |  |
+| `external_file_cache_spill_path` | The file evicted cache blocks spill to. Empty spills only blocks of in-memory files, into the temporary directory. Changing it fails while the spill file holds blocks of in-memory files. | `VARCHAR` | `GLOBAL` |  |
 | `external_file_cache_spill_size` | The disk space evicted cache blocks of remote files may take in the spill file (e.g. `50GB`); `0` drops them instead, so they are fetched again. | `VARCHAR` | `GLOBAL` | `0` |
 | `extra_http_headers` | Extra HTTP headers added to every request. | `MAP(VARCHAR, VARCHAR)` | `GLOBAL` | `{}` |
 | `file_search_path` | A comma separated list of directories to search for input files | `VARCHAR` | `SESSION` |  |

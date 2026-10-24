@@ -41,6 +41,7 @@
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/utils/index_utils.hpp"
+#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -90,7 +91,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options);
   reader->_field_reader =
-    std::make_shared<burst_trie::FieldReader>(*dir.ResourceManager().readers);
+    std::make_shared<burst_trie::FieldReader>(IResourceManager::gNoop);
   if (options.index) {
     reader->_field_reader->prepare(ReaderState{
       .dir = &dir,

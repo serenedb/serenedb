@@ -134,6 +134,7 @@ TEST(index_meta_tests, last_generation) {
   for (auto& name : names) {
     auto out = dir.Create(name);
     ASSERT_FALSE(!out);
+    out->Close();
   }
 
   const auto last_seg_file = irs::index_meta::LastFile(dir);
@@ -159,6 +160,7 @@ TEST(index_meta_tests, rejects_unknown_fields) {
       meta.WriteProperty<uint64_t>(irs::index_meta::kFieldPayload + 1,
                                    "from_the_future", 1);
     });
+    out->Close();
   }
 
   std::string message;

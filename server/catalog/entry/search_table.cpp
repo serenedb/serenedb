@@ -55,6 +55,7 @@
 #include <vector>
 
 #include "catalog/catalog.h"
+#include "catalog/entry/entries_of.h"
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
@@ -482,20 +483,9 @@ void SearchTableEntry::ReplayAdoptSegments(
 
 std::vector<duckdb::reference<SearchTableEntry>> SearchTableEntries(
   duckdb::DuckCatalog& catalog) {
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  catalog.ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
-  std::vector<duckdb::reference<SearchTableEntry>> tables;
-  for (auto& schema : schemas) {
-    schema.get().Scan(
-      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        if (entry.type == duckdb::CatalogType::TABLE_ENTRY &&
-            entry.Cast<duckdb::TableCatalogEntry>().GetLogStorage()) {
-          tables.emplace_back(entry.Cast<SearchTableEntry>());
-        }
-      });
-  }
-  return tables;
+  return EntriesOf<SearchTableEntry>(catalog, [](duckdb::CatalogEntry& entry) {
+    return entry.Cast<duckdb::TableCatalogEntry>().GetLogStorage();
+  });
 }
 
 std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(

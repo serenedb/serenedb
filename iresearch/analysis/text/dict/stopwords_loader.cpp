@@ -21,30 +21,27 @@
 #include "iresearch/analysis/text/dict/stopwords_loader.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
 
-#include <cctype>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/common/numeric_utils.hpp>
 #include <duckdb/common/query_context.hpp>
 #include <string>
 #include <vector>
 
 #include "iresearch/utils/pg/errcodes.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/slurp.hpp"
 
 namespace irs::analysis::dict {
 namespace {
 
 void LoadStopwordsFile(duckdb::FileSystem& fs, const std::string& file,
                        StringSet<std::string>& buf) {
-  auto handle = fs.OpenFile(file, duckdb::FileFlags::FILE_FLAGS_READ);
-  std::string text(duckdb::NumericCast<size_t>(handle->GetFileSize()), '\0');
-  handle->Read(duckdb::QueryContext{}, text.data(), text.size(), 0);
+  const auto text = file_utils::Slurp(duckdb::QueryContext{}, fs, file);
   for (const std::string_view line : absl::StrSplit(text, '\n')) {
-    const auto end = absl::c_find_if(line, [](char c) {
-      return std::isspace(static_cast<unsigned char>(c)) != 0;
-    });
+    const auto end =
+      absl::c_find_if(line, [](char c) { return absl::ascii_isspace(c); });
     if (end != line.begin()) {
       buf.Insert(std::string_view{line.begin(), end});
     }

@@ -29,6 +29,7 @@
 
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
 
@@ -36,28 +37,19 @@ namespace irs {
 
 template<typename Metas>
 void PrefetchDocExtents(const IndexInput& in, Metas&& metas) {
-  std::vector<std::pair<uint64_t, uint64_t>> ranges;
+  std::vector<ByteExtent> extents;
   for (const PostingMeta& meta : metas) {
     if (const auto extent = DocExtent(meta); extent != 0) {
-      ranges.emplace_back(meta.doc_start, meta.doc_start + extent);
-    }
-  }
-  if (ranges.empty()) {
-    return;
-  }
-  absl::c_sort(ranges);
-  size_t n = 0;
-  for (const auto& range : ranges) {
-    if (n != 0 && range.first <= ranges[n - 1].second + file_utils::kPage) {
-      ranges[n - 1].second = std::max(ranges[n - 1].second, range.second);
-    } else {
-      ranges[n++] = range;
+      extents.emplace_back(meta.doc_start, extent);
     }
   }
   uint64_t budget = kMaxPrefetch;
-  for (size_t i = 0; i != n && budget != 0; ++i) {
-    const auto size = std::min(ranges[i].second - ranges[i].first, budget);
-    Hint(in, ranges[i].first, size);
+  for (const auto& extent : CoalesceExtents(extents, file_utils::kPage)) {
+    if (budget == 0) {
+      break;
+    }
+    const auto size = std::min(extent.size, budget);
+    Hint(in, extent.offset, size);
     budget -= size;
   }
 }

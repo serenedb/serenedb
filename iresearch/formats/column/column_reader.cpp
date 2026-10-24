@@ -357,23 +357,6 @@ void ColumnReader::CollectBlocks(uint64_t first, uint64_t last,
   if (_validity) {
     _validity->CollectBlocks(first, last, out);
   }
-  switch (_type.id()) {
-    case duckdb::LogicalTypeId::UNION:
-    case duckdb::LogicalTypeId::STRUCT:
-    case duckdb::LogicalTypeId::TUPLE:
-      for (const auto& child : _children) {
-        child->CollectBlocks(first, last, out);
-      }
-      break;
-    case duckdb::LogicalTypeId::ARRAY:
-      if (_array_size != 0 && !_children.empty()) {
-        _children.front()->CollectBlocks(first * _array_size,
-                                         (last + 1) * _array_size - 1, out);
-      }
-      break;
-    default:
-      break;
-  }
 }
 
 bool ColumnReader::NextSegment(BlockWindow& w) const noexcept {

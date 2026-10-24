@@ -24,13 +24,13 @@
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/crc.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -44,7 +44,7 @@ PendingUploads CurrentUploads() noexcept;
 
 struct RemoteUpload {
   FileInfos& infos;
-  duckdb::BlockCache& cache;
+  duckdb::BlockCache* cache;
   std::string_view name;
 };
 
@@ -53,30 +53,28 @@ class FileOutput final : public IndexOutput {
   static constexpr size_t kMaxTail = 16 << 10;
 
   static ptr Open(duckdb::FileSystem& fs, const std::string& path,
-                  const ResourceManagementOptions& rm, FileTracker* tracker,
-                  const RemoteUpload* remote);
+                  FileTracker* tracker, const RemoteUpload* remote);
 
   ~FileOutput() final;
 
  private:
-  FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
-             const ResourceManagementOptions& rm, FileTracker* tracker,
+  FileOutput(std::unique_ptr<duckdb::FileHandle> handle, FileTracker* tracker,
              const RemoteUpload* remote);
 
   void Flush() final;
   uint32_t Checksum() final;
   void BeginTail() final;
   void CloseImpl() final;
+  void Release() noexcept;
   void WriteDirect(const byte_type* b, size_t len) final;
   void WriteHandle(const byte_type* b, size_t len);
   void KeepTail(const byte_type* b, size_t len);
   void CacheBytes(const byte_type* b, size_t len) noexcept;
-  void FinishCache(uint64_t size, bool published) noexcept;
+  void FinishCache(bool published) noexcept;
 
   static constexpr size_t kWritebackHintBytes = 8 << 20;
 
   byte_type _buf[64 * 1024];
-  const ResourceManagementOptions& _rm;
   std::unique_ptr<duckdb::FileHandle> _handle;
   Crc32c _crc;
   uint64_t _unhinted = 0;
@@ -85,10 +83,7 @@ class FileOutput final : public IndexOutput {
   std::string _name;
   uint64_t _tail_start = std::numeric_limits<uint64_t>::max();
   bstring _tail;
-  duckdb::BlockCache* _cache = nullptr;
-  duckdb::shared_ptr<duckdb::BlockCacheFile> _cached;
-  duckdb::BlockCachePin _block;
-  uint64_t _block_index = std::numeric_limits<uint64_t>::max();
+  std::optional<duckdb::BlockCacheAppender> _cached;
 };
 
 }  // namespace irs

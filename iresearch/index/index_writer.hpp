@@ -161,6 +161,11 @@ class IndexWriter : private util::Noncopyable {
     explicit ConstructToken() = default;
   };
 
+  struct RootRelease {
+    void operator()(const std::string* root) const noexcept;
+  };
+  using RootClaim = std::unique_ptr<const std::string, RootRelease>;
+
   class ActiveSegmentContext {
    public:
     ActiveSegmentContext() = default;
@@ -464,7 +469,6 @@ class IndexWriter : private util::Noncopyable {
   }
 
   void RefreshFinishRetryable() {
-    _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     Finish(false);
   }
@@ -478,7 +482,7 @@ class IndexWriter : private util::Noncopyable {
 
   bool FlushRequired(const SegmentWriter& writer) const noexcept;
 
-  IndexWriter(ConstructToken, const Directory& dir, bool owns_root,
+  IndexWriter(ConstructToken, const Directory& dir, RootClaim root_claim,
               size_t segment_pool_size, const SegmentOptions& segment_limits,
               MetaPayloadWriter&& meta_payload_writer,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
@@ -784,7 +788,7 @@ class IndexWriter : private util::Noncopyable {
   std::atomic_uint64_t _tick{writer_limits::kMinTick + 1};
   uint64_t _last_gen;
   IndexMetaWriter _writer;
-  bool _owns_root;
+  RootClaim _root_claim;
   std::array<FlushContext, 2> _flush_contexts;
 };
 

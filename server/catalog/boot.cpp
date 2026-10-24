@@ -205,12 +205,10 @@ void RequestSereneDBStorageVersion(duckdb::AttachOptions& options) {
       duckdb::StorageVersion::SERENEDB_LATEST)};
 }
 
-std::filesystem::path DataDirectory::EngineDir() const {
-  return std::filesystem::path{directory} / kEngineDir;
-}
+std::string DataDirectory::EngineDir() const { return EngineDirOf(directory); }
 
 std::string DataDirectory::CatalogLogFile() const {
-  return (EngineDir() / kCatalogLog).string();
+  return absl::StrCat(EngineDir(), "/", kCatalogLog);
 }
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
@@ -233,9 +231,8 @@ duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
     }
     manager.DetachDatabase(context, name, duckdb::OnEntryNotFound::RETURN_NULL);
   }
-  auto& cluster = ClusterOf(context);
-  const auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-                       .GetEntry(cluster.GetCatalogTransaction(context), name);
+  const auto entry = ClusterEntry(context, duckdb::CatalogType::DATABASE_ENTRY,
+                                  name.GetIdentifierName());
   SDB_ASSERT(entry);
   const auto& database = entry->Cast<DatabaseCatalogEntry>();
   const auto file = database.Directory()->DataFile();
@@ -278,7 +275,7 @@ void RegisterClusterStorage(duckdb::DBConfig& config,
 void InitCatalog(std::string_view directory) {
   const DataDirectory layout{std::string{directory}};
   if (std::filesystem::create_directories(layout.EngineDir())) {
-    SyncDirectory(layout.EngineDir().parent_path());
+    StorageFileSystem().SyncDirectory(layout.directory);
   }
   auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   auto& context = *conn->context;
@@ -289,18 +286,17 @@ void InitCatalog(std::string_view directory) {
     SDB_FATAL(STARTUP, "cannot stat '", log_path, "': ", log_ec.message());
   }
   if (gMissingDatabases.fresh_cluster &&
-      absl::c_any_of(ListStoragesOrDie(layout.EngineDir().string()),
-                     [](const StorageEntry& entry) {
-                       bool holds = false;
-                       if (entry.is_directory) {
-                         StorageFileSystem().ListFiles(
-                           entry.path,
-                           [&](const std::string&, bool) { holds = true; });
-                       }
-                       return holds;
-                     })) {
+      absl::c_any_of(
+        ListStoragesOrDie(layout.EngineDir()), [](const StorageEntry& entry) {
+          bool holds = false;
+          if (entry.is_directory) {
+            StorageFileSystem().ListFiles(
+              entry.path, [&](const std::string&, bool) { holds = true; });
+          }
+          return holds;
+        })) {
     SDB_FATAL(STARTUP, "'", log_path, "' does not exist, but '",
-              layout.EngineDir().string(),
+              layout.EngineDir(),
               "' holds database directories: refusing to start without the "
               "catalog that owns them");
   }

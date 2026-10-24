@@ -20,10 +20,7 @@
 
 #include "connector/duckdb_storage_extension.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
-#include <absl/strings/ascii.h>
-#include <absl/strings/numbers.h>
 
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
@@ -78,16 +75,15 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
                     ERR_MSG("could not open database directory \"", info.path,
                             "\": ", ec.message()));
   }
-  const auto name = path.filename().string();
-  duckdb::idx_t oid = 0;
-  if (!absl::c_all_of(name, absl::ascii_isdigit) ||
-      !absl::SimpleAtoi(name, &oid)) {
+  const auto oid = pg::OidFromName(path.filename().string());
+  if (!oid) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("\"", path.string(),
                             "\" is not a SereneDB database directory: its "
                             "name is not a database oid"));
   }
-  auto directory = std::make_shared<catalog::DatabaseDirectory>(oid, path);
+  auto directory =
+    std::make_shared<catalog::DatabaseDirectory>(*oid, nullptr, path);
   info.path = directory->DataFile();
   options.defer_storage_load = true;
   db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{
@@ -122,16 +118,10 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   const auto transaction = cluster.GetCatalogTransaction(context);
   auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
                  .GetEntry(transaction, info.name);
-  duckdb::idx_t tablespace = 0;
-  if (const auto option = options.options.find(catalog::kTablespaceOption);
-      option != options.options.end()) {
-    tablespace = option->second.GetValue<duckdb::idx_t>();
-    options.options.erase(option);
-  }
   if (!entry) {
     duckdb::CreateDatabaseInfo database;
     database.SetName(info.name);
-    database.tablespace_oid = tablespace;
+    database.tablespace_oid = info.tablespace_oid;
     for (const auto* key : {"block_size", "row_group_size"}) {
       if (auto option = options.options.find(key);
           option != options.options.end()) {

@@ -583,11 +583,8 @@ class Enforcer {
         if (info.type == CatalogType::PREPARED_STATEMENT &&
             info.extra_drop_info &&
             info.extra_drop_info->Cast<duckdb::ExtraDropDiscardInfo>().target ==
-              duckdb::DiscardTarget::ALL &&
-            !_context.transaction.IsAutoCommit()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-            ERR_MSG("DISCARD ALL cannot run inside a transaction block"));
+              duckdb::DiscardTarget::ALL) {
+          RequireOutsideTransaction(_context, "DISCARD ALL");
         }
         if (_enforce) {
           CheckDrop(info);
@@ -1208,18 +1205,16 @@ class Enforcer {
     }
   }
 
-  void RequireTablespaceCreate(const duckdb::CatalogEntry& tablespace) {
+  void UseTablespace(const duckdb::CatalogEntry& tablespace) {
     if (_enforce &&
         !_caller_closure.Can(CatalogType::TABLESPACE_ENTRY,
                              tablespace.permissions, AclMode::Create)) {
       Denied(tablespace);
     }
-  }
-
-  void Pin(const duckdb::CatalogEntry& tablespace) {
     const auto& root =
       tablespace.Cast<catalog::TablespaceCatalogEntry>().Root();
-    auto pin = root ? root->Pin() : nullptr;
+    SDB_ASSERT(root);
+    auto pin = root->Pin();
     if (!pin) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -1267,25 +1262,19 @@ class Enforcer {
       return 0;
     }
     if (catalog.GetAttached().IsTemporary()) {
+      refusal = "temporary objects cannot be placed in a tablespace";
+    } else if (!serenedb) {
+      refusal =
+        "only an object of a SereneDB database can be placed in a tablespace";
+    }
+    if (!refusal.empty()) {
       if (!named) {
         return 0;
       }
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("temporary objects cannot be placed in a tablespace"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG(refusal));
     }
-    if (!refusal.empty() || !serenedb) {
-      if (!named) {
-        return 0;
-      }
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG(serenedb ? refusal
-                         : "only an object of a SereneDB database can be "
-                           "placed in a tablespace"));
-    }
-    RequireTablespaceCreate(*tablespace);
-    Pin(*tablespace);
+    UseTablespace(*tablespace);
     return tablespace->oid;
   }
 
@@ -1305,10 +1294,8 @@ class Enforcer {
     if (tablespace.oid == pg::kPgDefaultTablespace) {
       return;
     }
-    RequireTablespaceCreate(tablespace);
-    Pin(tablespace);
-    info.options.emplace(catalog::kTablespaceOption,
-                         duckdb::Value::UBIGINT(tablespace.oid));
+    UseTablespace(tablespace);
+    info.tablespace_oid = tablespace.oid;
   }
 
   // CREATE OR REPLACE keeps an existing object under its own name, which is the
@@ -1500,10 +1487,6 @@ class Enforcer {
       RequireGrantable(*server);
       return;
     }
-    if (info.entry_catalog_type == CatalogType::TABLESPACE_ENTRY) {
-      RequireGrantable(ResolveTarget(info));
-      return;
-    }
     if (info.all_in_schema) {
       return;
     }
@@ -1624,9 +1607,7 @@ class Enforcer {
 
   duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
     CatalogType type, std::string_view name) {
-    auto& cluster = catalog::ClusterOf(_context);
-    return cluster.GetCatalogSet(type).GetEntry(
-      cluster.GetCatalogTransaction(_context), duckdb::Identifier{name});
+    return catalog::ClusterEntry(_context, type, name);
   }
 
   void RequireDatabasePrivilege(AclMode need) {

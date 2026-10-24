@@ -2797,11 +2797,8 @@ class FieldReader::Impl {
       }
       bool fetching = false;
       VisitTermBlock(*_fst, term, [&](const BlockIterator& block) {
-        const auto& in = *_owner->_terms_in;
-        if (!in.Warm(block.LoadStart(), kTermBlockPrefetch)) {
-          in.Prefetch(block.LoadStart(), kTermBlockPrefetch);
-          fetching = true;
-        }
+        fetching |=
+          Hint(*_owner->_terms_in, block.LoadStart(), file_utils::kPage);
         return true;
       });
       return fetching;
@@ -2910,7 +2907,6 @@ class FieldReader::Impl {
     static constexpr uint64_t kMaxBlocksPrefetch = uint64_t{256} << 20;
     static constexpr uint64_t kBlocksProbes = 4;
     static constexpr int kWideStart = 128;
-    static constexpr uint64_t kTermBlockPrefetch = 4096;
 
     FieldReader::Impl* _owner;
     std::unique_ptr<FST> _fst;

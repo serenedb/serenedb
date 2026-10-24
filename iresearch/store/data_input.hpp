@@ -100,6 +100,9 @@ struct ByteExtent {
   uint64_t size = 0;
 };
 
+std::span<ByteExtent> CoalesceExtents(std::span<ByteExtent> extents,
+                                      uint64_t gap) noexcept;
+
 class IndexInput : public DataInput {
  public:
   using ptr = std::unique_ptr<IndexInput>;

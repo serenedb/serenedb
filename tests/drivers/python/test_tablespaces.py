@@ -281,6 +281,34 @@ def test_the_tablespace_of_its_database_needs_no_grant(tmp_path: Path) -> None:
         server.stop()
 
 
+def test_attach_cannot_place_a_database_by_tablespace_oid(
+        tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    server = _Server(tmp_path / "data")
+    try:
+        assert server.wait_ready(), server.output()
+        with server.connect() as conn:
+            conn.execute(f"CREATE TABLESPACE home LOCATION '{home}'")
+            oid = conn.execute(
+                "SELECT oid FROM pg_tablespace WHERE spcname = 'home'"
+            ).fetchone()[0]
+            conn.execute("CREATE ROLE creator CREATEDB")
+            conn.execute("SET ROLE creator")
+            with pytest.raises(psycopg.errors.InsufficientPrivilege,
+                               match="permission denied for tablespace home"):
+                conn.execute("CREATE DATABASE placed TABLESPACE home")
+            with pytest.raises(psycopg.Error, match="tablespace_oid"):
+                conn.execute(
+                    f"ATTACH '' AS attached (TYPE serenedb, tablespace_oid {oid})")
+            conn.execute("RESET ROLE")
+            assert conn.execute(
+                "SELECT count(*) FROM pg_database WHERE datname = 'attached'"
+            ).fetchone()[0] == 0
+    finally:
+        server.stop()
+    assert not list((home / "engine_v1").glob("[0-9]*"))
+
+
 MINIO = ("MINIO_HOST", "MINIO_PORT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",
          "MINIO_BUCKET")
 
@@ -548,38 +576,31 @@ def test_a_failed_part_aborts_its_upload(tmp_path: Path) -> None:
             server.stop()
 
 
-COPY_FAULT = "object_store_copy_fails"
-
-
-def _simulated_tablespace(server: _Server, location: str) -> None:
-    assert server.wait_ready(), server.output()
-    try:
-        _create_tablespace(server, location)
-    except psycopg.Error:
-        pytest.skip("the simulated object store exists in dev builds")
-
-
 def test_failed_commit_is_retried(tmp_path: Path) -> None:
-    datadir = tmp_path / "data"
-    server = _Server(datadir)
-    try:
-        _simulated_tablespace(server, "sim://bucket/retried")
-        _create_index(server)
-        with server.connect() as conn:
-            try:
-                conn.execute(f"SET sdb_faults = '{COPY_FAULT}'")
-            except psycopg.Error:
-                pytest.skip("built without fault injection")
-            conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
-            with pytest.raises(psycopg.Error):
+    location = f"s3://bucket/retried-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            _create_index(server)
+            fake.copy_error = "AccessDenied"
+            with server.connect() as conn:
+                conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
+                with pytest.raises(psycopg.Error):
+                    conn.execute("VACUUM (REFRESH_TABLE) docs")
+                with pytest.raises(psycopg.Error,
+                                   match="cannot commit its last refresh"):
+                    conn.execute("CHECKPOINT")
+            assert _matches(server) == [1]
+            fake.copy_error = None
+            with server.connect() as conn:
                 conn.execute("VACUUM (REFRESH_TABLE) docs")
-        assert _matches(server) == [1]
-        with server.connect() as conn:
-            conn.execute(f"SET sdb_faults = '-{COPY_FAULT}'")
-            conn.execute("VACUUM (REFRESH_TABLE) docs")
-        assert _matches(server) == [1, 3]
-    finally:
-        server.stop()
+                conn.execute("CHECKPOINT")
+            assert _matches(server) == [1, 3]
+        finally:
+            server.stop()
 
 
 def test_throttled_requests_are_retried(tmp_path: Path) -> None:
@@ -838,6 +859,66 @@ def test_an_orphan_object_is_removed_when_its_index_opens(tmp_path: Path) -> Non
         finally:
             again.stop()
         assert orphan not in fake.keys("bucket"), fake.keys("bucket")
+
+
+def test_an_orphan_object_of_a_search_table_is_removed_after_a_restart(
+        tmp_path: Path) -> None:
+    location = f"s3://bucket/orphan-table-{tmp_path.name}"
+    datadir = tmp_path / "data"
+    with FakeS3() as fake:
+        server = _Server(datadir)
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            with server.connect() as conn:
+                conn.execute("CREATE TABLE notes (id INT, body TEXT) "
+                             "WITH (storage = 'search') TABLESPACE idx")
+                conn.execute("INSERT INTO notes VALUES (1, 'kept on s3')")
+                conn.execute("VACUUM (REFRESH_TABLE) notes")
+        finally:
+            server.stop()
+        commits = [key for key in fake.keys("bucket", f"orphan-table-{tmp_path.name}/")
+                   if key.rsplit("/", 1)[-1].startswith("segments_")]
+        assert commits, fake.keys("bucket")
+        orphan = commits[0].rsplit("/", 1)[0] + "/_99.doc"
+        fake.replace("bucket", orphan, b"written by an upload no commit names")
+        again = _Server(datadir)
+        try:
+            assert again.wait_ready(), again.output()
+            with again.connect() as conn:
+                assert conn.execute("SELECT body FROM notes").fetchall() == [
+                    ("kept on s3",)]
+            assert _eventually(lambda: orphan not in fake.keys("bucket")), \
+                fake.keys("bucket")
+        finally:
+            again.stop()
+
+
+def test_restored_objects_are_read_by_the_etags_they_are_listed_with(
+        tmp_path: Path) -> None:
+    location = f"s3://bucket/restored-{tmp_path.name}"
+    datadir = tmp_path / "data"
+    with FakeS3() as fake:
+        server = _Server(datadir)
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            _create_index(server)
+            assert _matches(server) == [1]
+        finally:
+            server.stop()
+        with fake.lock:
+            for (_, key), obj in fake.objects.items():
+                if key.startswith(f"restored-{tmp_path.name}/"):
+                    obj.etag = '"copied-' + obj.etag.strip('"') + '"'
+        again = _Server(datadir)
+        try:
+            assert again.wait_ready(), again.output()
+            assert _matches(again) == [1]
+        finally:
+            again.stop()
 
 
 def _token_secret(store: _Store, location: str, token: str) -> str:
@@ -1180,21 +1261,23 @@ def test_cold_count_reads_its_postings_in_one_round(tmp_path: Path) -> None:
             entry["ended"] for entry in reads), reads
 
 
-def test_index_files_on_an_object_store(tmp_path: Path) -> None:
-    datadir = tmp_path / "data"
-    server = _Server(datadir)
-    try:
-        _simulated_tablespace(server, "sim://bucket/cluster")
-        _create_index(server)
-        assert _matches(server) == [1]
-        with server.connect() as conn:
-            conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
-            conn.execute("VACUUM (REFRESH_TABLE) docs")
-        assert _matches(server) == [1, 3]
-        with server.connect() as conn:
-            conn.execute("DROP INDEX docs_body")
-            conn.execute(
-                CREATE_INDEX)
-        assert _matches(server) == [1, 3]
-    finally:
-        server.stop()
+def test_an_index_is_created_again_where_it_was_dropped(tmp_path: Path) -> None:
+    location = f"s3://bucket/recreated-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            _create_index(server)
+            assert _matches(server) == [1]
+            with server.connect() as conn:
+                conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
+                conn.execute("VACUUM (REFRESH_TABLE) docs")
+            assert _matches(server) == [1, 3]
+            with server.connect() as conn:
+                conn.execute("DROP INDEX docs_body")
+                conn.execute(CREATE_INDEX)
+            assert _matches(server) == [1, 3]
+        finally:
+            server.stop()

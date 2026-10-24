@@ -41,8 +41,6 @@ namespace sdb::catalog {
 inline constexpr std::string_view kEngineDir = "engine_v1";
 inline constexpr std::string_view kCatalogLog = "catalog.wal";
 
-void SyncDirectory(const std::filesystem::path& directory);
-
 duckdb::FileSystem& StorageFileSystem();
 std::string EngineDirOf(std::string_view location);
 
@@ -54,13 +52,12 @@ struct StorageEntry {
 
 std::vector<StorageEntry> ListStorages(const std::string& root);
 
-enum class StorageScope : uint8_t {
-  All,
-  Files,
-  Directories,
+struct StorageSize {
+  uint64_t files = 0;
+  uint64_t nested = 0;
 };
 
-uint64_t StorageBytes(const std::string& directory, StorageScope scope);
+StorageSize StorageBytes(const std::string& directory);
 
 void RemoveUnowned(std::span<const StorageEntry> entries,
                    const absl::flat_hash_set<duckdb::idx_t>& owned);
@@ -126,7 +123,6 @@ class DatabaseDirectory final
  public:
   DatabaseDirectory(duckdb::idx_t oid, std::shared_ptr<TablespaceRoot> root,
                     std::filesystem::path path);
-  DatabaseDirectory(duckdb::idx_t oid, std::filesystem::path path);
   ~DatabaseDirectory() final;
 
   duckdb::idx_t Oid() const noexcept { return _oid; }

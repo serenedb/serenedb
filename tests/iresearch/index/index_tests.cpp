@@ -311,7 +311,7 @@ irs::Directory OverFileSystem(const irs::Directory& files,
                               duckdb::FileSystem& fs) {
   SDB_ASSERT(files.Kind() != irs::StorageKind::Memory);
   return irs::Directory{irs::DuckDBEngine::Instance().instance(), fs,
-                        files.Root(), files.ResourceManager()};
+                        files.Root()};
 }
 
 std::shared_ptr<irs::Directory> IndexTestBase::get_directory(
@@ -11652,6 +11652,7 @@ TEST_P(IndexTestCase11, create_over_unreadable_index) {
         irs::index_meta::kFieldStorageVersion, "storage_version",
         static_cast<uint64_t>(duckdb::SERENEDB_VERSION_UPPER) + 1);
     });
+    out->Close();
   }
 
   ASSERT_SQL_ERROR(

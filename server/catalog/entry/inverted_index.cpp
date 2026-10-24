@@ -53,6 +53,7 @@
 #include <string>
 
 #include "catalog/catalog.h"
+#include "catalog/entry/entries_of.h"
 #include "catalog/entry/job.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
@@ -288,20 +289,28 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
            : irs::field_limits::invalid();
 }
 
+duckdb::optional_ptr<duckdb::Catalog> DictionaryCatalog(
+  duckdb::ClientContext& context, duckdb::Catalog& catalog) {
+  if (catalog.GetAttached().IsTemporary()) {
+    return DefaultSereneDBCatalog(context).get();
+  }
+  return catalog;
+}
+
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
                                  duckdb::Catalog& catalog,
                                  const InvertedIndexConfig& config)
   : _context{&context} {
   const bool temporary = catalog.GetAttached().IsTemporary();
-  auto dictionaries = temporary ? DefaultSereneDBCatalog(context)
-                                : &catalog.Cast<SereneDBCatalog>();
+  auto dictionaries = DictionaryCatalog(context, catalog);
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
     if (field.HasTextDictionary()) {
-      const auto dict = dictionaries
-                          ? dictionaries->FindIn<TokenizerCatalogEntry>(
-                              &context, field.text_dictionary)
-                          : nullptr;
+      const auto dict =
+        dictionaries
+          ? dictionaries->Cast<SereneDBCatalog>().FindIn<TokenizerCatalogEntry>(
+              &context, field.text_dictionary)
+          : nullptr;
       if (!dict && temporary) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                         ERR_MSG("text search dictionary with OID ",
@@ -747,20 +756,10 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
 
 std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(
   duckdb::DuckCatalog& catalog) {
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  catalog.ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
-  std::vector<duckdb::reference<InvertedIndexEntry>> indexes;
-  for (auto& schema : schemas) {
-    schema.get().Scan(
-      duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        if (connector::IsInvertedIndex(
-              entry.Cast<duckdb::IndexCatalogEntry>())) {
-          indexes.emplace_back(entry.Cast<InvertedIndexEntry>());
-        }
-      });
-  }
-  return indexes;
+  const auto inverted = [](duckdb::CatalogEntry& entry) {
+    return connector::IsInvertedIndex(entry.Cast<duckdb::IndexCatalogEntry>());
+  };
+  return EntriesOf<InvertedIndexEntry>(catalog, inverted);
 }
 
 }  // namespace sdb::catalog

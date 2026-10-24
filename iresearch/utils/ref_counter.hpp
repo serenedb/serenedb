@@ -28,6 +28,7 @@
 
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/noncopyable.hpp"
@@ -94,20 +95,21 @@ class RefCounter : public util::Noncopyable {
     return _refs.erase(std::forward<T>(key)) > 0;
   }
 
-  template<typename Removed, typename Finish>
-  void RemoveUnused(const Removed& removed, const Finish& finish) {
+  template<typename Remove>
+  auto RemoveUnused(const Remove& remove) {
     absl::MutexLock lock{&_lock};
-    for (auto itr = _refs.begin(), end = _refs.end(); itr != end;) {
-      SDB_ASSERT(*itr);
-      if (itr->use_count() != 1) {
-        ++itr;
-        continue;
+    std::vector<Key> unused;
+    for (const auto& ref : _refs) {
+      SDB_ASSERT(ref);
+      if (ref.use_count() == 1) {
+        unused.push_back(*ref);
       }
-      removed(**itr);
-      const auto erase_me = itr++;
-      _refs.erase(erase_me);
     }
-    finish();
+    auto result = remove(unused);
+    for (const auto& key : unused) {
+      _refs.erase(key);
+    }
+    return result;
   }
 
  private:

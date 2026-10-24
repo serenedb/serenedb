@@ -62,9 +62,8 @@ InvertedIndexStorage::InvertedIndexStorage(
     _db_id{database.oid},
     _parent{std::move(parent)},
     _search{GetSearchEngine()},
-    _durability{database, absl::StrCat("inverted index ", index_id),
-                OpenStorageDirectory(_parent, index_id, is_new,
-                                     database.GetStorageManager().InMemory())} {
+    _durability{database, absl::StrCat("inverted index ", index_id), _parent,
+                index_id, is_new} {
   SetTasksSettings(options);
 
   SDB_ASSERT(index_id != 0);
@@ -128,22 +127,6 @@ void InvertedIndexStorage::OpenReader() {
   SetFileManifest(stamp.manifest);
   StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
     std::move(reader), std::move(stamp.manifest)));
-}
-
-OpenedDirectory OpenStorageDirectory(
-  const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
-  bool is_new, bool in_memory) {
-  SDB_ASSERT(parent || in_memory);
-  std::optional<std::string> path;
-  if (!in_memory) {
-    path = is_new ? parent->CreateStorage(oid) : parent->OpenStorage(oid);
-  }
-  auto& db = irs::DuckDBEngine::Instance().instance();
-  if (!path) {
-    return {.directory = irs::Directory{db, irs::MemoryIndexRoot()},
-            .absent = !in_memory};
-  }
-  return {.directory = irs::Directory{db, *path}};
 }
 
 InvertedIndexStorage::~InvertedIndexStorage() {

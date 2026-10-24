@@ -99,8 +99,8 @@ class IndexAdoptTest : public TestBase {
   void Open(irs::OpenMode mode, bool cleanup_on_open = true,
             uint32_t segment_docs_max = 0) {
     _fs = std::make_unique<CountingFileSystem>();
-    _dir.emplace(irs::DuckDBEngine::Instance().instance(), *_fs, _path.string(),
-                 GetResourceManager().options);
+    _dir.emplace(irs::DuckDBEngine::Instance().instance(), *_fs,
+                 _path.string());
     auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
     options.cleanup_on_open = cleanup_on_open;
     options.segment_docs_max = segment_docs_max;
@@ -645,7 +645,9 @@ TEST_F(IndexAdoptTest, AdoptSegmentRejectsAnUnreadableMeta) {
   ASSERT_EQ(1, adopt.size());
 
   Restart(/*cleanup_on_open=*/false);
-  ASSERT_NE(nullptr, _dir->Create(adopt.front()));
+  auto out = _dir->Create(adopt.front());
+  ASSERT_NE(nullptr, out);
+  out->Close();
   ASSERT_SQL_ERROR(_writer->AdoptSegment(adopt.front(), /*tick=*/1),
                    ERRCODE_INDEX_CORRUPTED);
 

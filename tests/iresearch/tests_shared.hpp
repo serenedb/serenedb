@@ -123,23 +123,10 @@ struct MaxMemoryCounter final : irs::IResourceManager {
   size_t max{0};
 };
 
-struct TestResourceManager {
-  SimpleMemoryAccounter compactions;
-  SimpleMemoryAccounter readers;
-  SimpleMemoryAccounter transactions;
-
-  irs::ResourceManagementOptions options{.transactions = &transactions,
-                                         .readers = &readers,
-                                         .compactions = &compactions};
-};
-
 class TestBase : public TestEnv, public ::testing::Test {
  public:
   const std::filesystem::path& test_dir() const { return _test_dir; }
   const std::filesystem::path& test_case_dir() const { return _test_case_dir; }
-  TestResourceManager& GetResourceManager() const noexcept {
-    return _resource_manager;
-  }
 
  protected:
   TestBase() = default;
@@ -149,7 +136,6 @@ class TestBase : public TestEnv, public ::testing::Test {
  private:
   std::filesystem::path _test_dir;       // res_dir_/<test-name>
   std::filesystem::path _test_case_dir;  // test_dir/<test-case-name>
-  mutable TestResourceManager _resource_manager;
 };
 
 template<typename T>

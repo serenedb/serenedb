@@ -398,7 +398,6 @@ set(IResearch_core_sources
     ./store/file_output.cpp
     ./store/mapped_input.cpp
     ./store/memory_file.cpp
-    ./store/simulated_object_store.cpp
     ./store/store_utils.cpp
     ./utils/attributes.cpp
     ./utils/index_utils.cpp

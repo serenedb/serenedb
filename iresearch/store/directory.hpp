@@ -39,7 +39,6 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/ref_counter.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 
 namespace irs {
 
@@ -48,6 +47,8 @@ enum class StorageKind : uint8_t {
   Memory,
   Remote,
 };
+
+StorageKind StorageKindOf(std::string_view location);
 
 using IndexFileRefs = RefCounter<std::string>;
 
@@ -61,8 +62,9 @@ struct FileInfo {
 
 class FileInfos {
  public:
-  void Remember(std::string_view name, FileInfo info);
+  void Written(std::string_view name, FileInfo info);
   void Listed(std::string_view name, uint64_t size, std::string etag);
+  void Persisted(std::string_view name, FileInfo info);
   std::optional<FileInfo> Find(std::string_view name) const;
   bool Contains(std::string_view name) const;
   bool Forget(std::string_view name);
@@ -110,16 +112,14 @@ class RefTracker {
 
 class Directory {
  public:
-  Directory(
-    duckdb::DatabaseInstance& db, std::string_view root,
-    const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
-  Directory(
-    duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
-    const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
+  Directory(duckdb::DatabaseInstance& db, std::string_view root);
+  Directory(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+            std::string_view root);
 
   static Directory PrivateMemory(duckdb::DatabaseInstance& db);
 
   IndexOutput::ptr Create(std::string_view name) const;
+  IndexOutput::ptr CreateWhole(std::string_view name) const;
   IndexInput::ptr Open(std::string_view name,
                        duckdb::MappedFileAccess access) const;
   IndexInput::ptr ReadWhole(std::string_view name) const;
@@ -143,9 +143,6 @@ class Directory {
   const std::string& Root() const noexcept { return _state->root; }
   std::string Path(std::string_view name) const;
   IndexFileRefs& Refs() const noexcept { return _state->refs; }
-  const ResourceManagementOptions& ResourceManager() const noexcept {
-    return _state->rm;
-  }
 
   Directory Tracking(FileTracker& tracker) const noexcept;
   Directory Tracking(RefTracker& tracker) const noexcept;
@@ -159,7 +156,6 @@ class Directory {
     duckdb::FileSystem& fs;
     std::string root;
     StorageKind kind;
-    ResourceManagementOptions rm;
     std::unique_ptr<duckdb::MemoryFileSystem> heap;
     IndexFileRefs refs;
     FileInfos infos;
@@ -172,9 +168,9 @@ class Directory {
     return Kind() == StorageKind::Remote ||
            (Kind() == StorageKind::Memory && !_state->heap);
   }
+  IndexOutput::ptr Create(std::string_view name, bool cached) const;
   bool RemoveFile(std::string_view name) const;
-  bool RemoveUnusedFile(std::string_view name) const noexcept;
-  size_t RemoveFiles(std::span<const std::string> names) const noexcept;
+  size_t RemoveFiles(std::span<const std::string> names) const;
   IndexInput::ptr OpenMapped(const std::string& path,
                              duckdb::MappedFileAccess access) const;
   IndexInput::ptr OpenBlocks(const std::string& path, std::string_view name,

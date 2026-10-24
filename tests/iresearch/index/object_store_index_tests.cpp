@@ -25,6 +25,7 @@
 #include <chrono>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
+#include <duckdb/main/connection.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
@@ -32,10 +33,11 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/queries/posting_heads.hpp>
 #include <iresearch/store/directory.hpp>
-#include <iresearch/store/simulated_object_store.hpp>
+#include <iresearch/store/file_output.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <string>
@@ -47,6 +49,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
+#include "store/simulated_object_store.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 
@@ -277,6 +280,7 @@ irs::IndexInput::ptr WriteUncached(const irs::Directory& dir) {
     for (uint64_t i = 0; i != kBlocks; ++i) {
       out->WriteData(block.data(), block.size());
     }
+    out->Close();
   }
   duckdb::BlockCache::Get(Db()).Clear();
   auto in = dir.Open("blocks", duckdb::MappedFileAccess::NORMAL);
@@ -445,6 +449,110 @@ TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
   EXPECT_EQ(prefetched, cache.GetStatistics().misses);
 }
 
+TEST(ObjectStoreIndexTest, collected_variant_blocks_serve_gathers) {
+  constexpr uint32_t kRgSize = 64 * 1024;
+  constexpr irs::field_id kVariant = 4;
+  tests::ObjectStore();
+  const irs::Directory dir{Db(), Root()};
+  {
+    irs::ColWriter writer{dir, "seg", Db()};
+    auto& variants = writer.OpenColumn(kVariant, duckdb::LogicalType::VARIANT(),
+                                       /*skip_validity=*/false, kRgSize);
+    duckdb::Connection con{Db()};
+    auto result = con.Query(
+      absl::StrCat("SELECT CASE WHEN i % 7 = 0 THEN NULL ELSE "
+                   "{'a': i, 'b': 'v' || (i % 1000)}::VARIANT END FROM range(",
+                   4 * kRgSize, ") t(i)"));
+    ASSERT_FALSE(result->HasError()) << result->GetError();
+    while (auto chunk = result->Fetch()) {
+      if (chunk->size() != 0) {
+        variants.Append(chunk->data[0], chunk->size());
+      }
+    }
+    writer.Commit(0);
+  }
+  const irs::ColReader reader{dir, "seg", Db()};
+  const auto* column = reader.Column(kVariant);
+  ASSERT_NE(nullptr, column);
+
+  const std::vector<uint64_t> rows{kRgSize + 10, kRgSize + 30000,
+                                   2 * kRgSize + 5};
+  std::vector<irs::ByteExtent> extents;
+  column->CollectBlocks(rows.front(), rows.back(), extents);
+  ASSERT_FALSE(extents.empty());
+  auto& cache = duckdb::BlockCache::Get(Db());
+  cache.Clear();
+  for (auto& extent : extents) {
+    reader.PrefetchExtents({&extent, 1});
+  }
+  const auto prefetched = cache.GetStatistics().misses;
+
+  irs::ReadContext ctx{reader};
+  auto state = column->InitScan(ctx);
+  duckdb::Vector out{duckdb::LogicalType::VARIANT(), STANDARD_VECTOR_SIZE};
+  irs::column_internal::GatherRows(*column, state, Rows{rows}, out, 0);
+  for (size_t i = 0; i != rows.size(); ++i) {
+    EXPECT_EQ(rows[i] % 7 == 0, out.GetValue(i).IsNull()) << rows[i];
+  }
+  EXPECT_EQ(prefetched, cache.GetStatistics().misses);
+}
+
+TEST(ObjectStoreIndexTest, reads_past_the_end_are_refused) {
+  tests::ObjectStore();
+  const irs::Directory dir{Db(), Root()};
+  {
+    auto out = dir.Create("short");
+    out->WriteU32(42);
+    out->Close();
+  }
+  auto in = dir.Open("short", duckdb::MappedFileAccess::NORMAL);
+  EXPECT_EQ(42, in->ReadI32());
+  EXPECT_THROW(in->ReadByte(), irs::SqlException);
+  in->Seek(2);
+  irs::byte_type buf[8];
+  EXPECT_THROW(in->ReadData(buf, sizeof(buf)), irs::SqlException);
+}
+
+TEST(ObjectStoreIndexTest, a_tail_is_kept_up_to_its_limit) {
+  tests::ObjectStore();
+  const irs::Directory dir{Db(), Root()};
+  const auto write = [&](std::string_view name, size_t tail) {
+    auto out = dir.Create(name);
+    const irs::bstring head(100, irs::byte_type{1});
+    out->WriteData(head.data(), head.size());
+    out->BeginTail();
+    const irs::bstring bytes(tail, irs::byte_type{2});
+    out->WriteData(bytes.data(), bytes.size());
+    out->Close();
+  };
+  write("small", 1000);
+  write("large", irs::FileOutput::kMaxTail + 1);
+
+  const auto small = dir.Info("small");
+  ASSERT_TRUE(small);
+  EXPECT_EQ(1100, small->size);
+  ASSERT_NE(nullptr, small->tail);
+  EXPECT_EQ(irs::bstring(1000, irs::byte_type{2}), *small->tail);
+
+  const auto large = dir.Info("large");
+  ASSERT_TRUE(large);
+  EXPECT_EQ(100 + irs::FileOutput::kMaxTail + 1, large->size);
+  EXPECT_EQ(nullptr, large->tail);
+}
+
+TEST(ObjectStoreIndexTest, a_listing_skips_nested_objects) {
+  tests::ObjectStore();
+  const auto root = Root();
+  const irs::Directory dir{Db(), root};
+  dir.Create("top")->Close();
+  const irs::Directory nested{Db(), absl::StrCat(root, "/nested")};
+  nested.Create("inner")->Close();
+
+  std::vector<std::string> names;
+  dir.Visit([&](std::string_view name) { names.emplace_back(name); });
+  EXPECT_EQ(std::vector<std::string>{"top"}, names);
+}
+
 TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   constexpr size_t kDocs = 20000;
   constexpr irs::field_id kWords = 1;
@@ -518,6 +626,29 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   cache.Clear();
   EXPECT_FALSE(text.pos->Warm(quick.pos_start, 1));
   irs::PrefetchPostingHeads(*phrase_query, 1);
+  EXPECT_TRUE(text.doc->Warm(quick.doc_start, 1));
+  EXPECT_TRUE(text.pos->Warm(quick.pos_start, 1));
+
+  irs::ByPrefix prefix;
+  *prefix.mutable_field_id() = kWords;
+  prefix.mutable_options()->term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"sh"});
+  const auto prefix_query = prefix.PrepareSegment(segment, {});
+  cache.Clear();
+  EXPECT_FALSE(words.doc->Warm(short_list.doc_start, 1));
+  irs::PrefetchPostingHeads(*prefix_query, 1);
+  EXPECT_TRUE(words.doc->Warm(short_list.doc_start, 1));
+
+  irs::ByPhrase variadic;
+  *variadic.mutable_field_id() = kText;
+  variadic.mutable_options()->push_back<irs::ByPrefixOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"qui"});
+  variadic.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
+  const auto variadic_query = variadic.PrepareSegment(segment, {});
+  cache.Clear();
+  EXPECT_FALSE(text.pos->Warm(quick.pos_start, 1));
+  irs::PrefetchPostingHeads(*variadic_query, 1);
   EXPECT_TRUE(text.doc->Warm(quick.doc_start, 1));
   EXPECT_TRUE(text.pos->Warm(quick.pos_start, 1));
 }

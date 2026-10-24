@@ -55,7 +55,6 @@
 #include <string>
 #include <utility>
 
-#include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
@@ -1053,14 +1052,9 @@ duckdb::optional_ptr<const TokenizerCatalogEntry> ResolveOpclassTokenizer(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
                             duckdb::QualifiedName::Parse(name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!dict) {
-    return nullptr;
-  }
-  const duckdb::Catalog* owner = &schema.ParentCatalog();
-  if (owner->GetAttached().IsTemporary()) {
-    owner = catalog::DefaultSereneDBCatalog(context).get();
-  }
-  if (&dict->ParentCatalog() != owner) {
+  if (!dict ||
+      &dict->ParentCatalog() !=
+        catalog::DictionaryCatalog(context, schema.ParentCatalog()).get()) {
     return nullptr;
   }
   return &dict->Cast<TokenizerCatalogEntry>();

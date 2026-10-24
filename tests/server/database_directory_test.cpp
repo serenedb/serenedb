@@ -25,10 +25,10 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
-#include <iresearch/store/simulated_object_store.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <optional>
+#include <store/simulated_object_store.hpp>
 #include <string>
 #include <thread>
 

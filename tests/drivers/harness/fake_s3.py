@@ -151,6 +151,7 @@ class FakeS3:
         self.session_tokens: set[str] | None = None
         self.drop: collections.Counter[str] = collections.Counter()
         self.dropped: list[str] = []
+        self.copy_error: str | None = None
         self.stalling: tuple[str, str] | None = None
         self.stalled = threading.Event()
         self.release = threading.Event()
@@ -475,6 +476,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 return
             self.fake.count("COPY")
             self._wait()
+            with self.fake.lock:
+                error = self.fake.copy_error
+            if error:
+                self._xml(200, f"<Error><Code>{escape(error)}</Code>"
+                               "<Message>The copy failed.</Message></Error>")
+                return
             src_bucket, _, src_key = urllib.parse.unquote(source).lstrip("/").partition("/")
             obj = self._find(src_bucket, src_key)
             if obj is None:

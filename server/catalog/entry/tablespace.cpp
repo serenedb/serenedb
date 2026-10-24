@@ -68,15 +68,15 @@ duckdb::unique_ptr<duckdb::CatalogEntry> TablespaceCatalogEntry::Copy(
 }
 
 void TablespaceCatalogEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
-  if (prev_entry.type == duckdb::CatalogType::INVALID && _root) {
+  if (prev_entry.type == duckdb::CatalogType::INVALID) {
+    SDB_ASSERT(_root);
     _root->Abandon();
   }
 }
 
 void TablespaceCatalogEntry::OnDrop() {
-  if (_root) {
-    _root->MarkDropped();
-  }
+  SDB_ASSERT(_root);
+  _root->MarkDropped();
 }
 
 }  // namespace sdb::catalog

@@ -21,17 +21,15 @@
 #include "catalog/database_directory.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
-#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/strip.h>
 
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/common/path.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -40,6 +38,7 @@
 #include <utility>
 
 #include "catalog/cluster.h"
+#include "pg/pg_types.h"
 #include "scheduler/background_scheduler.h"
 #include "server/utils/lifecycle.h"
 
@@ -50,15 +49,12 @@ constexpr std::string_view kDataFile = "data.db";
 constexpr std::string_view kStorageMarker = ".storage";
 constexpr std::string_view kTablespaceMarker = "tablespace";
 
-bool IsRemote(std::string_view path) {
-  return duckdb::Path::FromString(std::string{path}).IsRemote();
-}
-
 bool CreateDirectory(const std::filesystem::path& path) {
-  if (!StorageFileSystem().CreateDirectoryExtended(path.string(), {})) {
+  auto& fs = StorageFileSystem();
+  if (!fs.CreateDirectoryExtended(path.string(), {})) {
     return false;
   }
-  SyncDirectory(path.parent_path());
+  fs.SyncDirectory(path.parent_path().string());
   return true;
 }
 
@@ -119,11 +115,6 @@ std::shared_ptr<void> Hold(std::shared_ptr<TablespaceRoot> root,
 
 }  // namespace
 
-void SyncDirectory(const std::filesystem::path& directory) {
-  duckdb::FileSystem::GetLocal(irs::DuckDBEngine::Instance().instance())
-    .SyncDirectory(directory.string());
-}
-
 duckdb::FileSystem& StorageFileSystem() {
   return duckdb::FileSystem::GetFileSystem(
     irs::DuckDBEngine::Instance().instance());
@@ -148,40 +139,33 @@ std::vector<StorageEntry> ListStorages(const std::string& root) {
       if (!directory && !absl::ConsumeSuffix(&digits, kStorageMarker)) {
         return;
       }
-      duckdb::idx_t oid = 0;
-      if (digits.empty() || !absl::c_all_of(digits, absl::ascii_isdigit) ||
-          !absl::SimpleAtoi(digits, &oid) || !seen.emplace(entry).second) {
+      const auto oid = pg::OidFromName(digits);
+      if (!oid || !seen.emplace(entry).second) {
         return;
       }
-      found.push_back({.oid = oid,
+      found.push_back({.oid = *oid,
                        .path = absl::StrCat(root, "/", entry),
                        .is_directory = directory});
     });
   return found;
 }
 
-uint64_t StorageBytes(const std::string& directory, StorageScope scope) {
+StorageSize StorageBytes(const std::string& directory) {
   auto& fs = StorageFileSystem();
-  uint64_t bytes = 0;
+  StorageSize size;
   fs.ListFiles(directory, [&](duckdb::OpenFileInfo& info) {
-    const bool is_directory = duckdb::FileSystem::IsDirectory(info);
-    const bool nested = is_directory || absl::StrContains(info.path, '/');
-    if (scope != StorageScope::All &&
-        nested != (scope == StorageScope::Directories)) {
+    if (duckdb::FileSystem::IsDirectory(info)) {
+      const auto inner = StorageBytes(fs.JoinPath(directory, info.path));
+      size.nested += inner.files + inner.nested;
       return;
     }
-    if (is_directory) {
-      bytes +=
-        StorageBytes(fs.JoinPath(directory, info.path), StorageScope::All);
-      return;
-    }
-    duckdb::idx_t size = 0;
+    duckdb::idx_t bytes = 0;
     if (info.extended_info &&
-        info.extended_info->TryGetOption("file_size", size)) {
-      bytes += size;
+        info.extended_info->TryGetOption("file_size", bytes)) {
+      (absl::StrContains(info.path, '/') ? size.nested : size.files) += bytes;
     }
   });
-  return bytes;
+  return size;
 }
 
 void RemoveUnowned(std::span<const StorageEntry> entries,
@@ -200,7 +184,7 @@ void RemoveUnowned(std::span<const StorageEntry> entries,
 
 TablespaceRoot::TablespaceRoot(std::string path)
   : _path{std::make_shared<const std::string>(std::move(path))},
-    _remote{IsRemote(*_path)} {}
+    _remote{irs::StorageKindOf(*_path) == irs::StorageKind::Remote} {}
 
 TablespaceRoot::~TablespaceRoot() {
   if (_state != State::Dropped) {
@@ -335,10 +319,6 @@ DatabaseDirectory::DatabaseDirectory(duckdb::idx_t oid,
                                      std::shared_ptr<TablespaceRoot> root,
                                      std::filesystem::path path)
   : _oid{oid}, _root{std::move(root)}, _path{std::move(path)} {}
-
-DatabaseDirectory::DatabaseDirectory(duckdb::idx_t oid,
-                                     std::filesystem::path path)
-  : _oid{oid}, _path{std::move(path)} {}
 
 DatabaseDirectory::~DatabaseDirectory() {
   if (!_dropped.load(std::memory_order_acquire)) {

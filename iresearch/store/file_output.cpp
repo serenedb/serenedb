@@ -22,12 +22,12 @@
 
 #include <absl/cleanup/cleanup.h>
 
-#include <algorithm>
 #include <atomic>
-#include <cstring>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/query_context.hpp>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
 namespace irs {
@@ -44,27 +44,17 @@ PendingUploads CurrentUploads() noexcept {
 }
 
 IndexOutput::ptr FileOutput::Open(duckdb::FileSystem& fs,
-                                  const std::string& path,
-                                  const ResourceManagementOptions& rm,
-                                  FileTracker* tracker,
+                                  const std::string& path, FileTracker* tracker,
                                   const RemoteUpload* remote) {
   auto handle =
     fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
                         duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-  rm.transactions->Increase(sizeof(FileOutput));
-  absl::Cleanup untrack = [&] noexcept {
-    rm.transactions->Decrease(sizeof(FileOutput));
-  };
-  ptr output{new FileOutput{std::move(handle), rm, tracker, remote}};
-  std::move(untrack).Cancel();
-  return output;
+  return ptr{new FileOutput{std::move(handle), tracker, remote}};
 }
 
 FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
-                       const ResourceManagementOptions& rm,
                        FileTracker* tracker, const RemoteUpload* remote)
   : IndexOutput{_buf, std::end(_buf)},
-    _rm{rm},
     _handle{std::move(handle)},
     _tracker{tracker} {
   SDB_ASSERT(_handle);
@@ -74,15 +64,23 @@ FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
   _infos = &remote->infos;
   _name = remote->name;
   gUploadingFiles.fetch_add(1, std::memory_order_relaxed);
-  if (remote->cache.IsEnabled()) {
-    _cache = &remote->cache;
-    _cached = _cache->CreateWrittenFile(_handle->GetPath());
+  if (remote->cache && remote->cache->IsEnabled()) {
+    _cached.emplace(*remote->cache,
+                    remote->cache->CreateWrittenFile(_handle->GetPath()));
   }
 }
 
 FileOutput::~FileOutput() {
-  SDB_ASSERT(!_handle);
-  _rm.transactions->Decrease(sizeof(FileOutput));
+  if (!_handle) {
+    return;
+  }
+  try {
+    _handle->AbortWrite();
+  } catch (const std::exception& e) {
+    SDB_WARN(IRESEARCH, "Failed to abandon the write of '", _handle->GetPath(),
+             "': ", duckdb::ErrorData{e}.RawMessage());
+  }
+  Release();
 }
 
 void FileOutput::Flush() {
@@ -104,27 +102,29 @@ void FileOutput::BeginTail() {
   }
 }
 
+void FileOutput::Release() noexcept {
+  if (_cached) {
+    FinishCache(false);
+  }
+  _handle.reset();
+  if (_infos) {
+    gUploadingFiles.fetch_sub(1, std::memory_order_relaxed);
+    gUploadingBytes.fetch_sub(_offset, std::memory_order_relaxed);
+  }
+  _crc = Crc32c{};
+  _offset = 0;
+}
+
 void FileOutput::CloseImpl() {
   const auto size = Position();
-  absl::Cleanup release = [&] noexcept {
-    if (_cached) {
-      FinishCache(size, false);
-    }
-    _handle.reset();
-    if (_infos) {
-      gUploadingFiles.fetch_sub(1, std::memory_order_relaxed);
-      gUploadingBytes.fetch_sub(_offset, std::memory_order_relaxed);
-    }
-    _crc = Crc32c{};
-    _offset = 0;
-  };
+  absl::Cleanup release = [&] noexcept { Release(); };
   Flush();
   _handle->Close();
   if (_cached) {
-    FinishCache(size, true);
+    FinishCache(true);
   }
   if (_infos) {
-    _infos->Remember(
+    _infos->Written(
       _name, {.size = size,
               .tail = _tail.empty()
                         ? nullptr
@@ -192,33 +192,18 @@ void FileOutput::WriteHandle(const byte_type* b, size_t len) {
 }
 
 void FileOutput::CacheBytes(const byte_type* b, size_t len) noexcept try {
-  constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
-  for (auto offset = _offset; len != 0;) {
-    const auto block = offset / kBlock;
-    if (block != _block_index) {
-      _block = _cache->CreateBlock(*_cached, block);
-      _block_index = block;
-    }
-    const auto in_block = offset % kBlock;
-    const auto chunk = std::min<uint64_t>(len, kBlock - in_block);
-    std::memcpy(_block.GetDataMutable() + in_block, b, chunk);
-    b += chunk;
-    len -= chunk;
-    offset += chunk;
-  }
+  _cached->Append(b, len);
 } catch (...) {
-  FinishCache(_offset, false);
+  FinishCache(false);
 }
 
-void FileOutput::FinishCache(uint64_t size, bool published) noexcept {
-  _block.Reset();
+void FileOutput::FinishCache(bool published) noexcept {
   try {
-    _cache->FinishWrittenFile(
-      *_cached,
-      published || _block_index == std::numeric_limits<uint64_t>::max()
-        ? size
-        : (_block_index + 1) * duckdb::BlockCache::BLOCK_SIZE,
-      published);
+    if (published) {
+      _cached->Finish();
+    } else {
+      _cached->Abandon();
+    }
   } catch (...) {
   }
   _cached.reset();

@@ -32,13 +32,13 @@
 #include <functional>
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/store/directory.hpp>
-#include <iresearch/store/simulated_object_store.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "store/simulated_object_store.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 
@@ -208,6 +208,7 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
     for (uint32_t i = 0; i != 100000; ++i) {
       out->WriteU32(i);
     }
+    out->Close();
   }
   ASSERT_TRUE(files.Has("segment"));
 
@@ -259,6 +260,7 @@ TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
       out->WriteU32(i);
     }
     irs::format_utils::WriteFooter(*out);
+    out->Close();
   }
 
   store.ResetRequests();

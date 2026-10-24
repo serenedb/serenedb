@@ -73,10 +73,6 @@ struct InvertedIndexSnapshot {
 };
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
-OpenedDirectory OpenStorageDirectory(
-  const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
-  bool is_new, bool in_memory);
-
 // Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
 // SearchEngine registry keyed by index_id, not in the catalog snapshot.

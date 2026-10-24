@@ -87,6 +87,13 @@ struct RaBitQLayout {
   uint32_t GroupBytes() const noexcept {
     return static_cast<uint32_t>(kFastScanBbs) * record_size;
   }
+  PayloadBlockSetting BlockSetting() const noexcept {
+    return {
+      .group_size = row_major ? 1U : uint32_t{kFastScanBbs},
+      .record_size = record_size,
+      .alignment = row_major ? 1U : uint32_t{alignof(float)},
+    };
+  }
 };
 
 RaBitQLayout MakeRaBitQLayout(uint32_t d, uint32_t nb_bits,
@@ -139,8 +146,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   }
 
   PayloadBlockSetting BlockSetting() const noexcept final {
-    return {.group_size = _lay.row_major ? 1U : uint32_t{kFastScanBbs},
-            .record_size = _lay.record_size};
+    return _lay.BlockSetting();
   }
 
   void Encode(IndexOutput& out, const float* vecs, size_t n) final {
@@ -420,8 +426,7 @@ class RaBitQuantizerReader final : public QuantizerReader {
   }
 
   PayloadBlockSetting BlockSetting() const noexcept final {
-    return {.group_size = _lay.row_major ? 1U : uint32_t{kFastScanBbs},
-            .record_size = _lay.record_size};
+    return _lay.BlockSetting();
   }
 
   void StartCluster(const float* centroid) final {

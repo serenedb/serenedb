@@ -27,7 +27,7 @@ NOT_BUILD_INPUTS = (
     "tests/drivers/*", "tests/duckdb/*", "scripts/ci/testlib/*", "scripts/ci/skips/*",
     "scripts/ci/test.py", "scripts/ci/ci.py", "scripts/ci/steps/*", "scripts/gtest-parallel/*",
     "scripts/ci/run_shard.sh", "scripts/ci/bugfix_check.sh", "scripts/ci/report.py",
-    "scripts/ci/classify-changes.sh", "scripts/ci/check_gitlinks.sh", "scripts/ci/config.sh",
+    "scripts/ci/classify-changes.sh", "scripts/ci/config.sh",
     "scripts/ci/build-image.txt", "scripts/coverage/*", "scripts/land.sh",
     "scripts/check_submodule_pointers.py",
     "*.md", ".pre-commit-config.yaml", ".clang-format", ".clang-tidy", ".lldbinit",
@@ -360,6 +360,25 @@ def cmd_coverage_report(args):
         print("warning: no selection report", file=sys.stderr)
 
 
+def cmd_wait_check(args):
+    deadline = time.monotonic() + args.timeout
+    while True:
+        res = subprocess.run(["gh", "api", f"repos/{args.repo}/commits/{args.sha}/check-runs",
+                              "-X", "GET", "-f", f"check_name={args.name}", "--jq",
+                              '.check_runs | sort_by(.id) | last | select(.) '
+                              '| [.status, .conclusion // ""] | @tsv'],
+                             capture_output=True, text=True)
+        status, _, conclusion = res.stdout.strip().partition("\t")
+        if res.returncode == 0 and status == "completed":
+            if conclusion in ("success", "neutral", "skipped"):
+                print(f"{args.name} on {args.sha}: {conclusion}")
+                return
+            raise SystemExit(f"{args.name} on {args.sha} concluded {conclusion}")
+        if time.monotonic() > deadline:
+            raise SystemExit(f"{args.name} on {args.sha} did not finish within {args.timeout:.0f}s")
+        time.sleep(15)
+
+
 def _rows(path):
     return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
 
@@ -524,6 +543,13 @@ def main(argv):
     p.add_argument("--test-args", default="", help="the run's test.py arguments, for the selection")
     p.add_argument("--everything", action="store_true", help="the run ignored the selection")
     p.set_defaults(fn=cmd_coverage_report)
+    p = sub.add_parser("wait-check", help="wait for a commit's check run to finish; fail unless it "
+                                          "succeeded")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--sha", required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--timeout", type=float, default=3600.0)
+    p.set_defaults(fn=cmd_wait_check)
     p = sub.add_parser("nearest", help="name the units that run the code nearest to each "
                                        "uncovered line of a coverage report")
     p.add_argument("--coverage", required=True)

@@ -18,20 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <duckdb/common/serializer/binary_serializer.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
 #include <initializer_list>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/utils/pg/errcodes.hpp>
 #include <limits>
 #include <map>
 #include <memory>
@@ -40,7 +36,6 @@
 #include <set>
 #include <span>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -62,16 +57,11 @@ irs::DocRemoval Build(std::span<const Row> rows) {
 }
 
 std::vector<irs::doc_id_t> DocsOf(const irs::DocumentMask* docs) {
-  return docs == nullptr ? std::vector<irs::doc_id_t>{} : docs->Docs();
-}
-
-std::optional<irs::doc_id_t> Mapped(const irs::DocMap& map, irs::doc_id_t doc) {
-  std::vector<irs::doc_id_t> docs{doc};
-  irs::MapDocs(map, docs);
-  if (docs.empty()) {
-    return std::nullopt;
+  std::vector<irs::doc_id_t> out;
+  if (docs != nullptr) {
+    docs->ForEach([&](irs::doc_id_t doc) { out.emplace_back(doc); });
   }
-  return docs.front();
+  return out;
 }
 
 class FakeSegment final : public irs::SubReader {
@@ -101,6 +91,22 @@ std::shared_ptr<const irs::DocumentMask> MaskOf(
     builder.Add(doc);
   }
   return std::make_shared<const irs::DocumentMask>(std::move(builder).Finish());
+}
+
+std::vector<irs::doc_id_t> MappedDocs(const irs::DocMap& map,
+                                      const irs::DocumentMask& docs) {
+  irs::DocumentMaskBuilder out;
+  irs::MapDocs(map, docs, out);
+  const auto mapped = std::move(out).Finish();
+  return DocsOf(&mapped);
+}
+
+std::optional<irs::doc_id_t> Mapped(const irs::DocMap& map, irs::doc_id_t doc) {
+  const auto docs = MappedDocs(map, *MaskOf({doc}));
+  if (docs.empty()) {
+    return std::nullopt;
+  }
+  return docs.front();
 }
 
 irs::DocMap Direct(uint32_t source, uint32_t target, irs::DocMap window) {
@@ -146,87 +152,6 @@ std::vector<irs::doc_id_t> Resolve(const irs::DocRemoval& removal,
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
   resolver.Prepare(removals, targets, maps);
   return DocsOf(resolver.PositionalDocs(removal, segment));
-}
-
-std::string Bytes(const auto& write) {
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer out{stream};
-  out.Begin();
-  write(out);
-  out.End();
-  return std::string{reinterpret_cast<const char*>(stream.GetData()),
-                     stream.GetPosition()};
-}
-
-void WriteBlob(duckdb::BinarySerializer& out, duckdb::field_id_t field,
-               std::string_view blob) {
-  out.WriteProperty(field, "blob",
-                    reinterpret_cast<duckdb::const_data_ptr_t>(blob.data()),
-                    blob.size());
-}
-
-std::string FrozenOf(const irs::DocumentMask& mask) {
-  std::string frozen(mask.FrozenSize(), '\0');
-  mask.WriteFrozen(frozen.data());
-  return frozen;
-}
-
-struct RawGroup {
-  uint32_t segment;
-  std::string docs;
-};
-
-std::string RemovalBytes(std::initializer_list<RawGroup> groups) {
-  return Bytes([&](duckdb::BinarySerializer& out) {
-    out.WriteList(0, "groups", groups.size(),
-                  [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                    const auto& group = groups.begin()[i];
-                    list.WriteObject([&](duckdb::BinarySerializer& obj) {
-                      obj.WriteProperty<uint32_t>(0, "segment", group.segment);
-                      WriteBlob(obj, 1, group.docs);
-                    });
-                  });
-  });
-}
-
-struct RawMap {
-  uint32_t source = 3;
-  uint32_t target = 9;
-  uint32_t rank_begin = 0;
-  uint32_t rank_end = 10;
-  uint32_t base = 1;
-  std::optional<std::string> mask;
-};
-
-std::string MapBytes(const RawMap& map) {
-  return Bytes([&](duckdb::BinarySerializer& out) {
-    out.WriteList(
-      0, "maps", 1, [&](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
-        list.WriteObject([&](duckdb::BinarySerializer& obj) {
-          obj.WriteProperty<uint32_t>(0, "source", map.source);
-          obj.WriteProperty<uint32_t>(1, "target", map.target);
-          obj.WriteProperty<uint32_t>(2, "rank_begin", map.rank_begin);
-          obj.WriteProperty<uint32_t>(3, "rank_end", map.rank_end);
-          obj.WriteProperty<uint32_t>(4, "base", map.base);
-          if (map.mask) {
-            WriteBlob(obj, 5, *map.mask);
-          }
-        });
-      });
-  });
-}
-
-void ExpectMalformed(const auto& read, std::string_view bytes,
-                     std::string_view what, std::string_view why) {
-  try {
-    read(bytes);
-    ADD_FAILURE() << why;
-  } catch (const irs::SqlException& e) {
-    EXPECT_EQ(ERRCODE_DATA_CORRUPTED, e.error().errcode) << e.message();
-    EXPECT_TRUE(
-      e.message().starts_with(absl::StrCat("Malformed ", what, ": ", why)))
-      << e.message();
-  }
 }
 
 }  // namespace
@@ -426,7 +351,6 @@ TEST(DocRemovalBuilderTest, ARunOfRowsTakesAFewBytes) {
   const auto removal = std::move(builder).Finish();
   ASSERT_EQ(1000000, removal.Docs(0).Count());
   EXPECT_GT(1024, removal.Docs(0).FrozenSize());
-  EXPECT_GT(1024, irs::WriteDocRemoval(removal).size());
 }
 
 TEST(DocRemovalBuilderTest, ScatteredDocsStayCompact) {
@@ -468,7 +392,6 @@ TEST(MapDocsTest, AWindowWithoutAMaskShiftsTheDocToItsBase) {
   EXPECT_EQ(35, Mapped(map, 5));
   EXPECT_EQ(40, Mapped(map, 10));
   EXPECT_EQ(std::nullopt, Mapped(map, 11));
-  EXPECT_EQ(std::nullopt, Mapped(map, irs::doc_limits::invalid()));
 }
 
 TEST(MapDocsTest, MaskedDocsAreGoneAndTheRestCloseUp) {
@@ -494,6 +417,15 @@ TEST(MapDocsTest, AWindowTakesOnlyItsRanks) {
   EXPECT_EQ(std::nullopt, Mapped(map, 8));
 }
 
+TEST(MapDocsTest, TellsWhetherItAddedADoc) {
+  const auto map = Window(0, 10, 31);
+  irs::DocumentMaskBuilder out;
+  EXPECT_FALSE(irs::MapDocs(map, *MaskOf({11}), out));
+  EXPECT_TRUE(irs::MapDocs(map, *MaskOf({1, 11}), out));
+  EXPECT_FALSE(irs::MapDocs(map, *MaskOf({1}), out));
+  EXPECT_EQ(1, out.Count());
+}
+
 TEST(MapDocsTest, ManyDocsMapLikeOneAtATime) {
   std::mt19937 gen{29};
   const auto one_at_a_time =
@@ -511,10 +443,11 @@ TEST(MapDocsTest, ManyDocsMapLikeOneAtATime) {
     return map.base + (rank - map.rank_begin);
   };
   for (int round = 0; round < 30; ++round) {
+    const bool unmasked = round % 5 == 0;
     std::vector<irs::doc_id_t> masked;
     irs::DocumentMaskBuilder builder;
     const auto every = 2 + gen() % 40;
-    for (irs::doc_id_t doc = 1; doc < 300000; ++doc) {
+    for (irs::doc_id_t doc = 1; !unmasked && doc < 300000; ++doc) {
       if (gen() % every == 0) {
         builder.Add(doc);
         masked.push_back(doc);
@@ -522,21 +455,21 @@ TEST(MapDocsTest, ManyDocsMapLikeOneAtATime) {
     }
     const irs::doc_id_t begin = gen() % 50000;
     const irs::DocMap map{
-      .mask =
-        std::make_shared<const irs::DocumentMask>(std::move(builder).Finish()),
+      .mask = unmasked ? nullptr
+                       : std::make_shared<const irs::DocumentMask>(
+                           std::move(builder).Finish()),
       .rank_begin = begin,
       .rank_end = static_cast<irs::doc_id_t>(begin + gen() % 250000),
       .base = static_cast<irs::doc_id_t>(1 + gen() % 100000)};
-    std::vector<irs::doc_id_t> docs;
+    irs::DocumentMaskBuilder docs;
     std::vector<irs::doc_id_t> expected;
     for (irs::doc_id_t doc = 1; doc < 400000; doc += 1 + gen() % 9) {
-      docs.push_back(doc);
+      docs.Add(doc);
       if (const auto mapped = one_at_a_time(masked, map, doc)) {
         expected.push_back(*mapped);
       }
     }
-    irs::MapDocs(map, docs);
-    ASSERT_EQ(expected, docs) << round;
+    ASSERT_EQ(expected, MappedDocs(map, std::move(docs).Finish())) << round;
   }
 }
 
@@ -900,97 +833,4 @@ TEST(DocMapsTest, AUseRestartsTheRetirement) {
   EXPECT_EQ(1, maps.Of(3).size());
   maps.Retire(1, unused);
   EXPECT_TRUE(maps.Of(3).empty());
-}
-
-TEST(DocMapsCodecTest, MapsSurviveTheirBytes) {
-  const auto maps = Shared(
-    {Direct(
-       3, 12,
-       {.mask = MaskOf({2, 7}), .rank_begin = 0, .rank_end = 8, .base = 1}),
-     Direct(5, 9, Window(4, 6, 2))});
-  const auto read = irs::ReadDocMaps(irs::WriteDocMaps(maps));
-  ASSERT_EQ(maps.size(), read.size());
-  for (size_t i = 0; i < maps.size(); ++i) {
-    const auto& written = *maps[i];
-    const auto& back = *read[i];
-    EXPECT_EQ(written.source, back.source);
-    EXPECT_EQ(written.target, back.target);
-    EXPECT_EQ(written.rank_begin, back.rank_begin);
-    EXPECT_EQ(written.rank_end, back.rank_end);
-    EXPECT_EQ(written.base, back.base);
-    ASSERT_EQ(written.mask == nullptr, back.mask == nullptr);
-    if (written.mask != nullptr) {
-      EXPECT_EQ(*written.mask, *back.mask);
-    }
-  }
-}
-
-TEST(DocMapsCodecTest, NoMapsAreNoBytes) {
-  EXPECT_TRUE(irs::WriteDocMaps({}).empty());
-  EXPECT_TRUE(irs::ReadDocMaps("").empty());
-}
-
-TEST(DocMapsCodecTest, MalformedBytesAreCorruptData) {
-  const auto valid = MapBytes({});
-  ASSERT_EQ(1, irs::ReadDocMaps(valid).size());
-  const auto read = [](std::string_view bytes) { irs::ReadDocMaps(bytes); };
-  for (const auto& [bytes, why] :
-       std::initializer_list<std::pair<std::string, std::string_view>>{
-         {"x", "Failed to deserialize"},
-         {valid.substr(0, valid.size() - 1), "Failed to deserialize"},
-         {valid + "x", "it has trailing bytes"},
-         {MapBytes({.source = irs::DocRemoval::kNoSegment}),
-          "a segment number is out of range"},
-         {MapBytes({.target = irs::DocRemoval::kNoSegment}),
-          "a segment number is out of range"},
-         {MapBytes({.rank_begin = 5, .rank_end = 4}),
-          "a window is out of range"},
-         {MapBytes({.base = 0}), "a window is out of range"},
-         {MapBytes({.base = irs::doc_limits::eof() - 5}),
-          "a window is out of range"}}) {
-    ExpectMalformed(read, bytes, "doc map", why);
-  }
-  ASSERT_SQL_ERROR(irs::ReadDocMaps(MapBytes({.mask = "abcd"})),
-                   ERRCODE_INDEX_CORRUPTED);
-}
-
-TEST(DocRemovalCodecTest, RemovalsSurviveTheirBytes) {
-  std::vector<Row> rows{{9, 70000}, {2, 1}, {9, 3}};
-  for (irs::doc_id_t doc = 100; doc < 200000; ++doc) {
-    rows.push_back({4, doc});
-  }
-  const auto removal = Build(rows);
-  const auto read = irs::ReadDocRemoval(irs::WriteDocRemoval(removal));
-  EXPECT_FALSE(read.all);
-  EXPECT_EQ(nullptr, read.maps);
-  ASSERT_EQ(removal.segments, read.segments);
-  ASSERT_EQ(removal.docs.size(), read.docs.size());
-  for (size_t group = 0; group < removal.segments.size(); ++group) {
-    EXPECT_EQ(removal.Docs(group), read.Docs(group)) << group;
-  }
-}
-
-TEST(DocRemovalCodecTest, MalformedBytesAreCorruptData) {
-  const auto three = FrozenOf(*MaskOf({1, 2}));
-  const auto five = FrozenOf(*MaskOf({4}));
-  const auto valid = RemovalBytes({{3, three}, {5, five}});
-  ASSERT_EQ((std::vector<uint32_t>{3, 5}), irs::ReadDocRemoval(valid).segments);
-  const auto read = [](std::string_view bytes) { irs::ReadDocRemoval(bytes); };
-  for (const auto& [bytes, why] :
-       std::initializer_list<std::pair<std::string, std::string_view>>{
-         {"", "Failed to deserialize"},
-         {valid.substr(0, valid.size() - 1), "Failed to deserialize"},
-         {valid + "x", "it has trailing bytes"},
-         {RemovalBytes({}), "it names no segment"},
-         {RemovalBytes({{irs::DocRemoval::kNoSegment, three}}),
-          "a segment number is out of range"},
-         {RemovalBytes({{5, five}, {3, three}}),
-          "its segments are out of order"},
-         {RemovalBytes({{3, three}, {3, three}}),
-          "its segments are out of order"},
-         {RemovalBytes({{3, ""}}), "a segment names no rows"}}) {
-    ExpectMalformed(read, bytes, "doc removal", why);
-  }
-  ASSERT_SQL_ERROR(irs::ReadDocRemoval(RemovalBytes({{3, "abcd"}})),
-                   ERRCODE_INDEX_CORRUPTED);
 }

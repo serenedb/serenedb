@@ -337,7 +337,6 @@ TEST_P(DocumentMaskTest, docs_and_count_up_to_match_reference) {
     }
   }
   ASSERT_EQ(expected, visited);
-  ASSERT_EQ(expected, _mask.Docs());
   std::vector<uint64_t> counts(docs.size());
   _mask.CountUpTo(docs, counts);
   for (size_t i = 0, next = 0; i < docs.size(); ++i) {

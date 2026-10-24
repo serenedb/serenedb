@@ -56,6 +56,7 @@
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/inverted_index_storage.h"
+#include "search/row_position_wal.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
 #include "storage_engine/search_engine.h"
@@ -528,9 +529,10 @@ void SearchTable::ReplayInsert(duckdb::ClientContext& context,
                                     _table_id, context);
 }
 
-void SearchTable::ReplayDeleteRowPositions(duckdb::AttachedDatabase& db,
-                                           std::string_view positions) {
-  auto removal = irs::ReadDocRemoval(positions);
+void SearchTable::ReplayDeleteRowPositions(
+  duckdb::AttachedDatabase& db,
+  const duckdb::WALDeleteRowPositions& positions) {
+  auto removal = FromWal(positions);
   auto* session = BeginReplay(db);
   if (!session) {
     return;
@@ -539,9 +541,9 @@ void SearchTable::ReplayDeleteRowPositions(duckdb::AttachedDatabase& db,
   session->trx.Remove(std::move(removal));
 }
 
-void SearchTable::ReplayRowPositionMaps(duckdb::AttachedDatabase& db,
-                                        std::string_view maps) {
-  auto parsed = irs::ReadDocMaps(maps);
+void SearchTable::ReplayRowPositionMaps(
+  duckdb::AttachedDatabase& db, const duckdb::WALRowPositionMaps& maps) {
+  auto parsed = FromWal(maps);
   if (auto* session = BeginReplay(db)) {
     session->maps = std::make_shared<const irs::DocMapList>(std::move(parsed));
   }

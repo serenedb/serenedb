@@ -46,6 +46,7 @@
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
+#include "search/row_position_wal.h"
 #include "search/search_table.h"
 #include "server/utils/primary_key.h"
 
@@ -119,16 +120,14 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
         const auto& removal = op.Removal();
         _segments.insert(_segments.end(), removal.segments.begin(),
                          removal.segments.end());
-        auto positions = irs::WriteDocRemoval(removal);
+        auto positions = ToWal(removal);
         SDB_IF_FAILURE("search_delete_wal_truncated_positions") {
-          positions.pop_back();
+          positions.docs.front().pop_back();
         }
         SDB_IF_FAILURE("search_delete_wal_no_segment") {
-          auto corrupt = removal;
-          corrupt.segments.front() = irs::DocRemoval::kNoSegment;
-          positions = irs::WriteDocRemoval(corrupt);
+          positions.segments.front() = irs::DocRemoval::kNoSegment;
         }
-        _entries.WriteDeleteRowPositions(std::move(positions));
+        _entries.WriteDeleteRowPositions(positions);
       });
     absl::c_sort(_segments);
     _segments.erase(std::unique(_segments.begin(), _segments.end()),
@@ -140,11 +139,14 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
     RegisterFlush(_writes);
     SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_registered");
     wal.WriteSetTable(_table);
-    auto maps = irs::WriteDocMaps(_writes.shard->CopyDocMaps(_segments));
-    SDB_IF_FAILURE("search_delete_wal_malformed_maps") { maps.push_back('x'); }
-    if (!maps.empty()) {
+    auto maps = ToWal(_writes.shard->CopyDocMaps(_segments));
+    SDB_IF_FAILURE("search_delete_wal_malformed_maps") {
+      auto& map = maps.maps.emplace_back();
+      map.rank_begin = map.rank_end + 1;
+    }
+    if (!maps.maps.empty()) {
       duckdb::WALEntryBuffer entry{_table.catalog.GetAttached(), 0};
-      entry.WriteRowPositionMaps(std::move(maps));
+      entry.WriteRowPositionMaps(maps);
       wal.WriteEntries(entry);
     }
     wal.WriteEntries(_entries);

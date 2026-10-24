@@ -64,6 +64,8 @@ namespace duckdb {
 class Catalog;
 class ClientContext;
 class DataChunk;
+struct WALDeleteRowPositions;
+struct WALRowPositionMaps;
 
 }  // namespace duckdb
 namespace sdb::search {
@@ -133,9 +135,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                     std::span<const connector::ColumnId> column_ids,
                     duckdb::DataChunk& chunk);
   void ReplayDeleteRowPositions(duckdb::AttachedDatabase& db,
-                                std::string_view positions);
+                                const duckdb::WALDeleteRowPositions& positions);
   void ReplayRowPositionMaps(duckdb::AttachedDatabase& db,
-                             std::string_view maps);
+                             const duckdb::WALRowPositionMaps& maps);
   void ReplayTruncate(duckdb::AttachedDatabase& db);
   void ReplayAdoptSegments(duckdb::AttachedDatabase& db,
                            std::vector<std::string> segments);

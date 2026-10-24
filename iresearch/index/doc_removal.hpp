@@ -24,7 +24,6 @@
 #include <limits>
 #include <memory>
 #include <span>
-#include <string>
 #include <string_view>
 #include <vector>
 
@@ -86,13 +85,8 @@ class DocRemovalBuilder {
 
 uint32_t SegmentNumber(std::string_view name) noexcept;
 
-void MapDocs(const DocMap& map, std::vector<doc_id_t>& docs);
-
-std::string WriteDocMaps(const DocMapList& maps);
-DocMapList ReadDocMaps(std::string_view bytes);
-
-std::string WriteDocRemoval(const DocRemoval& removal);
-DocRemoval ReadDocRemoval(std::string_view bytes);
+bool MapDocs(const DocMap& map, const DocumentMask& docs,
+             DocumentMaskBuilder& out);
 
 class DocRemovalResolver;
 

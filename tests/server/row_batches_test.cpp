@@ -43,9 +43,9 @@ Found Find(const RowBatches& batches, std::vector<int64_t> rows) {
   batches.Find(rows, builder, found.missing);
   const auto removal = std::move(builder).Finish();
   for (size_t i = 0; i < removal.segments.size(); ++i) {
-    for (const auto doc : removal.Docs(i).Docs()) {
+    removal.Docs(i).ForEach([&](irs::doc_id_t doc) {
       found.docs.emplace_back(removal.segments[i], doc);
-    }
+    });
   }
   return found;
 }

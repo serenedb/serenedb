@@ -28,12 +28,12 @@ pytestmark = pytest.mark.skipif(
 @pytest.mark.parametrize(
     ("fault", "error"),
     [
-        (TRUNCATED_POSITIONS_FAULT, "Malformed doc removal: Failed to deserialize"),
+        (TRUNCATED_POSITIONS_FAULT, "Corrupted frozen document mask"),
         (
             NO_SEGMENT_FAULT,
             "Malformed doc removal: a segment number is out of range",
         ),
-        (MALFORMED_MAPS_FAULT, "Malformed doc map: Failed to deserialize"),
+        (MALFORMED_MAPS_FAULT, "Malformed doc map: a window is out of range"),
     ],
 )
 def test_corrupt_delete_refuses_replay(tmp_path: Path, fault: str, error: str) -> None:

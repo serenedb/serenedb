@@ -420,13 +420,13 @@ void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
   _storage->ReplayInsert(context, catalog, column_ids, chunk);
 }
 
-void SearchTableEntry::ReplayDeleteRowPositions(duckdb::ClientContext&,
-                                                std::string positions) {
+void SearchTableEntry::ReplayDeleteRowPositions(
+  duckdb::ClientContext&, const duckdb::WALDeleteRowPositions& positions) {
   _storage->ReplayDeleteRowPositions(catalog.GetAttached(), positions);
 }
 
-void SearchTableEntry::ReplayRowPositionMaps(duckdb::ClientContext&,
-                                             std::string maps) {
+void SearchTableEntry::ReplayRowPositionMaps(
+  duckdb::ClientContext&, const duckdb::WALRowPositionMaps& maps) {
   _storage->ReplayRowPositionMaps(catalog.GetAttached(), maps);
 }
 

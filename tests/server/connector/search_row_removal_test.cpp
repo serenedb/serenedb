@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -40,6 +41,8 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -49,6 +52,7 @@
 #include <random>
 #include <set>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -56,6 +60,7 @@
 #include "connector/row_position.h"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
+#include "search/row_position_wal.h"
 
 namespace {
 
@@ -96,6 +101,34 @@ std::optional<irs::DocRemoval> MakeRemoval(
   return removal;
 }
 
+template<typename Entry>
+Entry ThroughWal(const Entry& entry) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer::Serialize(entry, stream);
+  stream.Rewind();
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Begin();
+  auto back = Entry::Deserialize(deserializer);
+  deserializer.End();
+  return back;
+}
+
+uint64_t WalBytes(const irs::DocRemoval& removal) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer::Serialize(search::ToWal(removal), stream);
+  return stream.GetPosition();
+}
+
+void ExpectRejected(const auto& entry, int errcode, std::string_view message) {
+  try {
+    search::FromWal(entry);
+    ADD_FAILURE() << message;
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(errcode, e.error().errcode) << e.message();
+    EXPECT_TRUE(e.message().starts_with(message)) << e.message();
+  }
+}
+
 std::optional<irs::DocRemoval> ReplayedRemoval(
   std::span<const uint64_t> positions,
   std::shared_ptr<const irs::DocMapList> maps = nullptr) {
@@ -103,7 +136,7 @@ std::optional<irs::DocRemoval> ReplayedRemoval(
   if (!removal) {
     return std::nullopt;
   }
-  auto replayed = irs::ReadDocRemoval(irs::WriteDocRemoval(*removal));
+  auto replayed = search::FromWal(ThroughWal(search::ToWal(*removal)));
   replayed.maps = std::move(maps);
   return replayed;
 }
@@ -435,7 +468,7 @@ TEST(RowRemovalTest, ARunOfAMillionRowsTakesAFewWalBytes) {
   }
   const auto removal = MakeRemoval(positions);
   ASSERT_TRUE(removal);
-  EXPECT_GT(1024, irs::WriteDocRemoval(*removal).size());
+  EXPECT_GT(1024, WalBytes(*removal));
 }
 
 TEST(RowRemovalTest, ScatteredRowsTakeAtMostAboutTwoWalBytesEach) {
@@ -447,7 +480,7 @@ TEST(RowRemovalTest, ScatteredRowsTakeAtMostAboutTwoWalBytesEach) {
   }
   const auto removal = MakeRemoval(positions);
   ASSERT_TRUE(removal);
-  EXPECT_GT(2 * positions.size() + 4096, irs::WriteDocRemoval(*removal).size());
+  EXPECT_GT(2 * positions.size() + 4096, WalBytes(*removal));
 }
 
 TEST(RowRemovalTest, WalBytesGiveBackTheSortedPositions) {
@@ -482,38 +515,114 @@ TEST(WalDeleteEntryTest, RoundTripsThePositions) {
   const std::array<uint64_t, 4> positions{
     MakeRowPosition(4, 9), MakeRowPosition(0, 1), MakeRowPosition(1, 2),
     MakeRowPosition(4, 10)};
-  const duckdb::WALDeleteRowPositions entry{
-    irs::WriteDocRemoval(*MakeRemoval(positions))};
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer::Serialize(entry, stream);
-  stream.Rewind();
-  duckdb::BinaryDeserializer deserializer{stream};
-  deserializer.Begin();
-  const auto back = duckdb::WALDeleteRowPositions::Deserialize(deserializer);
-  deserializer.End();
-  EXPECT_EQ(entry.positions, back.positions);
+  const auto entry = search::ToWal(*MakeRemoval(positions));
+  const auto back = ThroughWal(entry);
+  EXPECT_EQ(entry.segments, back.segments);
+  EXPECT_EQ(entry.docs, back.docs);
   EXPECT_EQ(
     (std::vector<uint64_t>{MakeRowPosition(0, 1), MakeRowPosition(1, 2),
                            MakeRowPosition(4, 9), MakeRowPosition(4, 10)}),
-    RemovedPositions(irs::ReadDocRemoval(back.positions)));
+    RemovedPositions(search::FromWal(back)));
+}
+
+TEST(WalDeleteEntryTest, MalformedEntriesAreCorruptData) {
+  const std::array<uint64_t, 3> positions{
+    MakeRowPosition(3, 1), MakeRowPosition(3, 2), MakeRowPosition(5, 4)};
+  const auto valid = search::ToWal(*MakeRemoval(positions));
+  ASSERT_EQ((std::vector<uint32_t>{3, 5}), search::FromWal(valid).segments);
+  const auto malformed = [&](void (*change)(duckdb::WALDeleteRowPositions&)) {
+    auto entry = valid;
+    change(entry);
+    return entry;
+  };
+  for (const auto& [entry, why] : std::initializer_list<
+         std::pair<duckdb::WALDeleteRowPositions, std::string_view>>{
+         {malformed([](auto& wal) { wal.docs.pop_back(); }),
+          "its segments and doc sets differ in count"},
+         {malformed(
+            [](auto& wal) { wal.segments[0] = irs::DocRemoval::kNoSegment; }),
+          "a segment number is out of range"},
+         {malformed([](auto& wal) {
+            std::swap(wal.segments[0], wal.segments[1]);
+            std::swap(wal.docs[0], wal.docs[1]);
+          }),
+          "its segments are out of order"},
+         {malformed([](auto& wal) { wal.segments[1] = wal.segments[0]; }),
+          "its segments are out of order"}}) {
+    ExpectRejected(entry, ERRCODE_DATA_CORRUPTED,
+                   absl::StrCat("Malformed doc removal: ", why));
+  }
+  for (const auto& entry :
+       {malformed([](auto& wal) { wal.docs[0].clear(); }),
+        malformed([](auto& wal) { wal.docs[0] = "abcd"; }),
+        malformed([](auto& wal) { wal.docs[0].pop_back(); })}) {
+    ExpectRejected(entry, ERRCODE_INDEX_CORRUPTED,
+                   "Corrupted frozen document mask");
+  }
 }
 
 TEST(WalRowPositionMapsTest, RoundTripsTheMaps) {
-  const duckdb::WALRowPositionMaps entry{
-    irs::WriteDocMaps({std::make_shared<const irs::DocMap>(
-      irs::DocMap{.source = 3, .target = 9, .rank_end = 5, .base = 2})})};
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer::Serialize(entry, stream);
-  stream.Rewind();
-  duckdb::BinaryDeserializer deserializer{stream};
-  deserializer.Begin();
-  const auto back = duckdb::WALRowPositionMaps::Deserialize(deserializer);
-  deserializer.End();
-  EXPECT_EQ(entry.maps, back.maps);
-  const auto maps = irs::ReadDocMaps(back.maps);
-  ASSERT_EQ(1, maps.size());
-  EXPECT_EQ(3, maps.front()->source);
-  EXPECT_EQ(9, maps.front()->target);
+  irs::DocumentMaskBuilder mask;
+  mask.Add(2);
+  mask.Add(7);
+  const irs::DocMapList maps{
+    std::make_shared<const irs::DocMap>(irs::DocMap{
+      .source = 3,
+      .target = 12,
+      .mask =
+        std::make_shared<const irs::DocumentMask>(std::move(mask).Finish()),
+      .rank_end = 8}),
+    std::make_shared<const irs::DocMap>(irs::DocMap{
+      .source = 5, .target = 9, .rank_begin = 4, .rank_end = 6, .base = 2})};
+  const auto back = search::FromWal(ThroughWal(search::ToWal(maps)));
+  ASSERT_EQ(maps.size(), back.size());
+  for (size_t i = 0; i < maps.size(); ++i) {
+    const auto& written = *maps[i];
+    const auto& read = *back[i];
+    EXPECT_EQ(written.source, read.source);
+    EXPECT_EQ(written.target, read.target);
+    EXPECT_EQ(written.rank_begin, read.rank_begin);
+    EXPECT_EQ(written.rank_end, read.rank_end);
+    EXPECT_EQ(written.base, read.base);
+    ASSERT_EQ(written.mask == nullptr, read.mask == nullptr);
+    if (written.mask != nullptr) {
+      EXPECT_EQ(*written.mask, *read.mask);
+    }
+  }
+}
+
+TEST(WalRowPositionMapsTest, MalformedEntriesAreCorruptData) {
+  const auto valid =
+    search::ToWal(irs::DocMapList{std::make_shared<const irs::DocMap>(
+      irs::DocMap{.source = 3, .target = 9, .rank_end = 10})});
+  ASSERT_EQ(1, search::FromWal(valid).size());
+  const auto malformed = [&](void (*change)(duckdb::WALRowPositionMap&)) {
+    auto entry = valid;
+    change(entry.maps[0]);
+    return entry;
+  };
+  for (const auto& [entry, why] : std::initializer_list<
+         std::pair<duckdb::WALRowPositionMaps, std::string_view>>{
+         {malformed(
+            [](auto& map) { map.source = irs::DocRemoval::kNoSegment; }),
+          "a segment number is out of range"},
+         {malformed(
+            [](auto& map) { map.target = irs::DocRemoval::kNoSegment; }),
+          "a segment number is out of range"},
+         {malformed([](auto& map) {
+            map.rank_begin = 5;
+            map.rank_end = 4;
+          }),
+          "a window is out of range"},
+         {malformed([](auto& map) { map.base = 0; }),
+          "a window is out of range"},
+         {malformed([](auto& map) { map.base = irs::doc_limits::eof() - 5; }),
+          "a window is out of range"}}) {
+    ExpectRejected(entry, ERRCODE_DATA_CORRUPTED,
+                   absl::StrCat("Malformed doc map: ", why));
+  }
+  ExpectRejected(malformed([](auto& map) { map.mask = "abcd"; }),
+                 ERRCODE_INDEX_CORRUPTED, "Corrupted frozen document mask");
 }
 
 TEST_F(SearchRowRemovalTest, EmptyRemovalRemovesNothing) {
@@ -582,7 +691,7 @@ TEST_F(SearchRowRemovalTest, StalePositionsAfterAReopenNeedTheMapsTheyCarry) {
     victims.push_back(r);
   }
   std::vector<uint64_t> positions;
-  std::string record;
+  duckdb::WALRowPositionMaps record;
   {
     const auto snapshot = _writer->GetSnapshot();
     positions = PositionsOf(snapshot, victims);
@@ -592,16 +701,16 @@ TEST_F(SearchRowRemovalTest, StalePositionsAfterAReopenNeedTheMapsTheyCarry) {
     for (const auto& segment : snapshot) {
       segments.push_back(irs::SegmentNumber(segment.Meta().name));
     }
-    record = irs::WriteDocMaps(_writer->CopyDocMaps(segments));
+    record = ThroughWal(search::ToWal(_writer->CopyDocMaps(segments)));
   }
-  ASSERT_FALSE(record.empty());
+  ASSERT_FALSE(record.maps.empty());
   Reopen();
   ASSERT_EQ(1, _writer->GetSnapshot().size());
   RemoveReplayed(positions, {});
   ExpectModel();
   RemoveReplayed(
     positions, victims,
-    std::make_shared<const irs::DocMapList>(irs::ReadDocMaps(record)));
+    std::make_shared<const irs::DocMapList>(search::FromWal(record)));
   ExpectModel();
 }
 
@@ -903,7 +1012,7 @@ TEST_F(SearchRowRemovalTest, LongRunsOfPositionsRemoveTheirRows) {
   const auto removal = MakeRemoval(positions);
   ASSERT_TRUE(removal);
   EXPECT_EQ(2, removal->segments.size());
-  EXPECT_GT(128, irs::WriteDocRemoval(*removal).size());
+  EXPECT_GT(128, WalBytes(*removal));
   Remove(positions, victims);
   ExpectModel();
 }

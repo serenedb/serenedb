@@ -503,10 +503,9 @@ bool CarryRemovals(DocumentMaskBuilder& docs_mask, const DocMapList& replaced,
     if (current == nullptr) {
       continue;
     }
-    auto docs = current->Docs();
-    MapDocs(*map, docs);
-    for (const auto doc : docs) {
-      modified |= docs_mask.Add(doc);
+    DocumentMaskBuilder removed;
+    if (removed.MergeLive(*current, map->mask.get(), doc_limits::eof())) {
+      modified |= MapDocs(*map, std::move(removed).Finish(), docs_mask);
     }
   }
   return modified;

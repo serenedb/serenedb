@@ -168,10 +168,11 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
 
   void ReplayInsert(duckdb::ClientContext& context,
                     duckdb::DataChunk& chunk) final;
-  void ReplayDeleteRowPositions(duckdb::ClientContext& context,
-                                std::string positions) final;
+  void ReplayDeleteRowPositions(
+    duckdb::ClientContext& context,
+    const duckdb::WALDeleteRowPositions& positions) final;
   void ReplayRowPositionMaps(duckdb::ClientContext& context,
-                             std::string maps) final;
+                             const duckdb::WALRowPositionMaps& maps) final;
   void ReplayTruncate(duckdb::ClientContext& context) final;
   void ReplayAdoptSegments(duckdb::ClientContext& context,
                            duckdb::vector<std::string> segments) final;

@@ -291,12 +291,6 @@ void DocumentMask::CountUpTo(std::span<const doc_id_t> docs,
     &_set.roaring, docs.data(), docs.data() + docs.size(), counts.data());
 }
 
-std::vector<doc_id_t> DocumentMask::Docs() const {
-  std::vector<doc_id_t> docs(_count);
-  roaring::api::roaring_bitmap_to_uint32_array(&_set.roaring, docs.data());
-  return docs;
-}
-
 size_t DocumentMask::ByteSize() const noexcept {
   return ByteSizeOf(_set.roaring);
 }

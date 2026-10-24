@@ -4,6 +4,7 @@ target_sources(
         index_durability.cpp
         inverted_index_storage.cpp
         row_batches.cpp
+        row_position_wal.cpp
         store_stats.cpp
         search_analyzer_impl.cpp
         scorer_options.cpp

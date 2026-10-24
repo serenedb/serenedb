@@ -33,8 +33,10 @@ namespace sdb::catalog {
 
 inline constexpr std::string_view kDataFile = "data.db";
 inline constexpr std::string_view kCatalogLog = "catalog.wal";
+inline constexpr std::string_view kDroppedSuffix = ".dropped";
 
 void SyncDirectory(const std::filesystem::path& directory);
+void RemoveDirectory(const std::filesystem::path& path);
 
 class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
  public:

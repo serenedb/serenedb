@@ -85,6 +85,7 @@ TEST_F(DatabaseDirectoryTest, ARemovedStorageLeavesItsSiblings) {
   std::ofstream{_root / "5" / "7" / "segment"} << "rows";
   DatabaseDirectory::RemoveStorage(directory, 7);
   EXPECT_TRUE(Gone(_root / "5" / "7"));
+  EXPECT_TRUE(Gone(_root / "5" / "7.dropped"));
   EXPECT_TRUE(std::filesystem::is_directory(_root / "5" / "8"));
   directory.reset();
   EXPECT_TRUE(std::filesystem::is_directory(_root / "5" / "8"));
@@ -102,6 +103,7 @@ TEST_F(DatabaseDirectoryTest, ADroppedDatabaseGoesAfterItsLastStorage) {
   EXPECT_TRUE(std::filesystem::is_directory(_root / "5" / "7"));
   DatabaseDirectory::RemoveStorage(std::move(storage), 7);
   EXPECT_TRUE(Gone(_root / "5"));
+  EXPECT_TRUE(Gone(_root / "5.dropped"));
 }
 
 }  // namespace

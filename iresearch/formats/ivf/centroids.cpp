@@ -365,8 +365,8 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
     }
     const uint64_t offset = layout.CentroidPos(start, d);
     const size_t centroids_bytes = size * d * sizeof(float);
-    if (const byte_type* p = in.ReadStable(offset, centroids_bytes);
-        p && reinterpret_cast<uintptr_t>(p) % alignof(float) == 0) {
+    if (const byte_type* p = in.ReadStable(offset, centroids_bytes)) {
+      SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % alignof(float) == 0);
       node.centroids =
         std::span<const float>{reinterpret_cast<const float*>(p), size * d};
     } else {

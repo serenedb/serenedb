@@ -5231,11 +5231,12 @@ std::vector<std::string> VisitedNames(const irs::Directory& files) {
   return names;
 }
 
-TEST_F(DirectoryHookTest, object_store_listing_serves_every_visit) {
+TEST_F(DirectoryHookTest, object_store_listing_is_reused_while_enabled) {
   auto store = ::tests::ObjectStoreDirectory(this);
   ASSERT_NE(nullptr, store);
   auto& objects = ::tests::ObjectStore();
   objects.Publish(store->Path("left"), "left behind");
+  store->ReuseListings(true);
   objects.ResetRequests();
 
   EXPECT_EQ((std::vector<std::string>{"left"}), VisitedNames(*store));
@@ -5246,6 +5247,14 @@ TEST_F(DirectoryHookTest, object_store_listing_serves_every_visit) {
   store->Rename("written", "renamed");
   EXPECT_EQ((std::vector<std::string>{"renamed"}), VisitedNames(*store));
   EXPECT_EQ(1, objects.Requests().list);
+
+  store->ReuseListings(false);
+  objects.Publish(store->Path("published"), "by another writer");
+  EXPECT_EQ((std::vector<std::string>{"published", "renamed"}),
+            VisitedNames(*store));
+  EXPECT_EQ((std::vector<std::string>{"published", "renamed"}),
+            VisitedNames(*store));
+  EXPECT_EQ(3, objects.Requests().list);
 }
 
 TEST_F(DirectoryHookTest, object_store_lists_again_after_a_failed_change) {
@@ -5256,6 +5265,7 @@ TEST_F(DirectoryHookTest, object_store_lists_again_after_a_failed_change) {
   auto store = ::tests::ObjectStoreDirectory(this);
   ASSERT_NE(nullptr, store);
   auto& objects = ::tests::ObjectStore();
+  store->ReuseListings(true);
   store->Create("abc")->Close();
   const auto listings = [&] {
     objects.ResetRequests();

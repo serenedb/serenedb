@@ -70,6 +70,7 @@ class FileInfos {
   bool Forget(std::string_view name);
   void Rename(std::string_view src, std::string_view dst);
 
+  void ReuseListings(bool reuse);
   void MarkComplete();
   void MarkIncomplete();
   std::optional<std::vector<std::string>> Names() const;
@@ -77,6 +78,7 @@ class FileInfos {
  private:
   mutable absl::Mutex _mutex;
   absl::flat_hash_map<std::string, FileInfo> _infos ABSL_GUARDED_BY(_mutex);
+  bool _reuse ABSL_GUARDED_BY(_mutex) = false;
   bool _complete ABSL_GUARDED_BY(_mutex) = false;
 };
 
@@ -139,6 +141,7 @@ class Directory {
 
   std::optional<FileInfo> Info(std::string_view name) const;
   void Remember(std::string_view name, FileInfo info) const;
+  void ReuseListings(bool reuse) const { _state->infos.ReuseListings(reuse); }
 
   IndexFileRefs::ref_t Reference(std::string_view name) const;
   size_t RemoveUnreferenced() const;

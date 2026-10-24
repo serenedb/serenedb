@@ -157,9 +157,15 @@ void FileInfos::Rename(std::string_view src, std::string_view dst) {
   _infos.insert_or_assign(dst, std::move(info));
 }
 
+void FileInfos::ReuseListings(bool reuse) {
+  absl::MutexLock lock{&_mutex};
+  _reuse = reuse;
+  _complete = _complete && reuse;
+}
+
 void FileInfos::MarkComplete() {
   absl::MutexLock lock{&_mutex};
-  _complete = true;
+  _complete = _reuse;
 }
 
 void FileInfos::MarkIncomplete() {

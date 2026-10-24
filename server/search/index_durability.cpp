@@ -114,6 +114,7 @@ IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,
     writer->RefreshCommit();
     return {std::move(writer), std::move(stamp)};
   }
+  _files.ReuseListings(true);
   ResolvePendingSave();
   auto writer = irs::IndexWriter::Make(
     _files, irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate,
@@ -444,6 +445,7 @@ absl::Status IndexDurability::Cleanup() {
     } else {
       _files.RemoveAllUnreferenced();
       _swept.store(true, std::memory_order_relaxed);
+      _files.ReuseListings(false);
     }
   } catch (const std::exception& e) {
     return absl::InternalError(

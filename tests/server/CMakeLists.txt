@@ -48,6 +48,7 @@ add_executable(
     connector/copy_in_batches_test.cpp
     connector/duckdb_search_filter_builder_test.cpp
     connector/duckdb_search_sink_writer_test.cpp
+    connector/zip_filesystem_test.cpp
     connector/index_lifecycle_test.cpp
     connector/inet_terms_test.cpp
     connector/pg_progress_registry_test.cpp
@@ -57,6 +58,7 @@ add_executable(
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
     connector/writer_generations_test.cpp
+    connector/zip_reader_test.cpp
 )
 
 target_link_libraries(

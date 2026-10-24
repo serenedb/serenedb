@@ -60,6 +60,7 @@
 #include "connector/pg_logical_types.h"
 #include "connector/scan/scan_function.h"
 #include "connector/system_table_scan.h"
+#include "connector/zip_filesystem.hpp"
 #include "docs/docs_functions.h"
 #include "pg/pg_catalog/pg_prepared_statements.h"
 #include "pg/pg_catalog/pg_replication_origin.h"
@@ -362,6 +363,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   // Intercepts "/dev/stdin" and reads from PG CopyData messages.
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
   fs.RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
+  fs.RegisterSubSystem(duckdb::make_uniq<connector::ZipFileSystem>());
 
   // Parse and cache system functions/views for serving from our attached
   // catalog.

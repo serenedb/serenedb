@@ -31,6 +31,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
+#include <new>
 #include <utility>
 #include <vector>
 
@@ -737,6 +738,10 @@ irs::pg::SqlErrorData ToSqlError(const std::exception& exception) {
   }
   if (const auto* duck = dynamic_cast<const duckdb::Exception*>(&exception)) {
     return DuckErrorToSqlData(duckdb::ErrorData{*duck});
+  }
+  if (dynamic_cast<const std::bad_alloc*>(&exception)) {
+    return irs::pg::SqlErrorData{.errcode = ERRCODE_OUT_OF_MEMORY,
+                                 .errmsg = exception.what()};
   }
   return irs::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
                                .errmsg = exception.what()};

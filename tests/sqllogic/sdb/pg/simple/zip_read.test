@@ -1,0 +1,118 @@
+control substitution on
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 2), (2, 4), (3, 6)) t(id, value))
+TO '${__TEST_DIR__}/zip_data.csv' (FORMAT CSV, HEADER);
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 2), (2, 4), (3, 6)) t(id, value))
+TO '${__TEST_DIR__}/zip_data.jsonl' (FORMAT JSON);
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 2), (2, 4), (3, 6)) t(id, value))
+TO '${__TEST_DIR__}/zip_data.parquet' (FORMAT PARQUET);
+
+system ok
+python3 - "$__TEST_DIR__" <<'PY'
+import pathlib, sys, zipfile
+root = pathlib.Path(sys.argv[1])
+for name, method in [('store', zipfile.ZIP_STORED), ('deflate', zipfile.ZIP_DEFLATED)]:
+    with zipfile.ZipFile(root / ('zip_' + name + '.zip'), 'w', compression=method) as archive:
+        for extension in ['csv', 'jsonl', 'parquet']:
+            archive.write(root / ('zip_data.' + extension), 'nested/data.' + extension)
+        archive.writestr('data.json', '[{"id":1,"value":2},{"id":2,"value":4},{"id":3,"value":6}]')
+PY
+
+query
+SELECT * FROM read_csv('zip://${__TEST_DIR__}/zip_store.zip/nested/data.csv') ORDER BY id;
+----
+id	value
+1	2
+2	4
+3	6
+
+query
+SELECT * FROM read_csv('zip://${__TEST_DIR__}/zip_deflate.zip/nested/data.csv') ORDER BY id;
+----
+id	value
+1	2
+2	4
+3	6
+
+query
+SELECT sum(value) AS total FROM read_json('zip://${__TEST_DIR__}/zip_store.zip/nested/data.jsonl');
+----
+total
+12
+
+query
+SELECT sum(value) AS total FROM read_json('zip://${__TEST_DIR__}/zip_deflate.zip/nested/data.jsonl');
+----
+total
+12
+
+query
+SELECT sum(value) AS total FROM read_json('zip://${__TEST_DIR__}/zip_store.zip/data.json');
+----
+total
+12
+
+query
+SELECT sum(value) AS total FROM read_json('zip://${__TEST_DIR__}/zip_deflate.zip/data.json');
+----
+total
+12
+
+query
+SELECT * FROM read_parquet('zip://${__TEST_DIR__}/zip_store.zip/nested/data.parquet') ORDER BY id;
+----
+id	value
+1	2
+2	4
+3	6
+
+query
+SELECT * FROM read_parquet('zip://${__TEST_DIR__}/zip_deflate.zip/nested/data.parquet') ORDER BY id;
+----
+id	value
+1	2
+2	4
+3	6
+
+query
+SELECT sum(value) AS total FROM 'zip://${__TEST_DIR__}/zip_deflate.zip/nested/data.parquet' WHERE id > 1;
+----
+total
+10
+
+query
+SELECT count(*) AS count FROM (SELECT * FROM 'zip://${__TEST_DIR__}/zip_deflate.zip/nested/data.csv' LIMIT 1) t;
+----
+count
+1
+
+statement ok
+CREATE TABLE zip_import(id INTEGER, value INTEGER);
+
+statement count 3
+COPY zip_import FROM 'zip://${__TEST_DIR__}/zip_deflate.zip/nested/data.csv' (FORMAT CSV, HEADER);
+
+query
+SELECT * FROM zip_import ORDER BY id;
+----
+id	value
+1	2
+2	4
+3	6
+
+statement error
+SELECT * FROM read_csv('zip://${__TEST_DIR__}/zip_deflate.zip/missing.csv');
+
+statement error
+SELECT * FROM read_csv('zip://s3://bucket/data.zip/data.csv');
+
+statement error
+SELECT * FROM read_csv('zip://https://example.org/data.zip/data.csv');
+
+statement error
+SELECT * FROM read_csv('zip://${__TEST_DIR__}/zip_deflate.zip/');

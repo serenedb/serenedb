@@ -21,10 +21,12 @@
 #include <absl/base/internal/endian.h>
 #include <gtest/gtest.h>
 
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -102,4 +104,26 @@ TEST(NetworkPgFrames, CommandCompleteAndError) {
   EXPECT_EQ(error[0], PQ_MSG_ERROR_RESPONSE);
   EXPECT_NE(error.find("42601"), std::string::npos);
   EXPECT_NE(error.find("boom"), std::string::npos);
+}
+
+TEST(NetworkPgFrames, BadAllocPreservesOutOfMemoryAfterDuckDbRethrow) {
+  duckdb::ErrorData error;
+  try {
+    throw std::bad_alloc{};
+  } catch (const std::exception& exception) {
+    error = duckdb::ErrorData{exception};
+  }
+
+  ASSERT_EQ(error.Type(), duckdb::ExceptionType::OUT_OF_MEMORY);
+  try {
+    error.Throw();
+    FAIL() << "Expected the stored exception to be rethrown";
+  } catch (const std::exception& exception) {
+    const auto sql_error = ToSqlError(exception);
+    EXPECT_EQ(sql_error.errcode, ERRCODE_OUT_OF_MEMORY);
+
+    message::Buffer buffer{256, 4096};
+    WriteErrorResponse(buffer, sql_error);
+    EXPECT_NE(Flatten(buffer.Written()).find("53200"), std::string::npos);
+  }
 }

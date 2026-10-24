@@ -412,6 +412,8 @@ if(SDB_COVERAGE)
         -fprofile-instr-generate
         -fcoverage-mapping
         -fcoverage-mcdc
+        "SHELL:-Xclang -fmcdc-max-test-vectors=65536"
+        -Wno-pgo-coverage
         "SHELL:-mllvm -enable-single-byte-coverage=true"
         "SHELL:-mllvm -conditional-counter-update"
         -Wno-pass-failed

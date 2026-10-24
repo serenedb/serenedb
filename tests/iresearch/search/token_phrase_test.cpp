@@ -1994,8 +1994,9 @@ void ExpectFamiliesScoreAlike(const tests::Families& expected,
 
 TEST(TokenPhraseIndexTest, constant_scores_keep_what_scales_each_row) {
   const std::vector<std::string> docs{
-    "quick brown",   "quick a brown", "quick a b brown", "quick brawn",
-    "quick a brawn", "brown quick",   "ab bc"};
+    "quick brown", "quick a brown", "quick a b brown",
+    "quick brawn", "quick a brawn", "brown quick",
+    "ab bc"};
   const Index index{docs, std::type_identity<DenseWords>{}};
   const irs::ConstantScore scorer{2.f};
   auto fixed = Phrase("quick brown");
@@ -2016,9 +2017,8 @@ TEST(TokenPhraseIndexTest, constant_scores_keep_what_scales_each_row) {
     if (options != &fuzzy) {
       ExpectFamiliesScoreAlike(
         positional,
-        index.Run(
-          *Lowered(PhraseOn(kPlainId, *options, Tokens<DenseWords>())),
-          scorer));
+        index.Run(*Lowered(PhraseOn(kPlainId, *options, Tokens<DenseWords>())),
+                  scorer));
     }
   }
   irs::ByNGramSimilarity ngram;

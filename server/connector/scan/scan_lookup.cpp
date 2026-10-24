@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/container/flat_hash_map.h>
 
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
@@ -26,6 +27,7 @@
 
 #include "connector/column_id.h"
 #include "connector/index_source_factory.h"
+#include "connector/row_position.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/scan/scan_function.h"
 #include "connector/scan/scan_plan.h"
@@ -58,6 +60,7 @@ struct LookupLocalState final : duckdb::LocalTableFunctionState,
   std::unique_ptr<duckdb::Vector> pk;
   std::vector<duckdb::idx_t> order;
   std::vector<irs::ScoreDoc> hits;
+  absl::flat_hash_map<uint32_t, uint32_t> segments;
 };
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> LookupInitLocal(
@@ -67,6 +70,11 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> LookupInitLocal(
   auto state = duckdb::make_uniq<LookupLocalState>();
   state->tmp.Initialize(context.client, g.projected_types);
   state->fetched.Initialize(context.client, g.projected_types);
+  state->segments.reserve(g.reader->size());
+  for (uint32_t seg = 0; seg < g.reader->size(); ++seg) {
+    state->segments.emplace(irs::SegmentNumber((*g.reader)[seg].Meta().name),
+                            seg);
+  }
   return state;
 }
 
@@ -85,21 +93,25 @@ duckdb::OperatorResultType LookupFunction(duckdb::ExecutionContext& context,
   });
   l.hits.resize(count);
   for (duckdb::idx_t r = 0; r < count; ++r) {
-    const auto address = addresses[l.order[r]].GetValue();
-    l.hits[r] = {.doc = static_cast<irs::doc_id_t>(address),
-                 .segment_idx = static_cast<uint32_t>(address >> 32)};
+    const auto position =
+      static_cast<uint64_t>(addresses[l.order[r]].GetValue());
+    l.hits[r] = {.doc = RowPositionDoc(position),
+                 .segment_idx = RowPositionSegment(position)};
   }
   l.fetched.Reset();
   duckdb::idx_t appended = 0;
   std::span<const irs::ScoreDoc> hits = l.hits;
   while (!hits.empty()) {
-    const auto seg = hits.front().segment_idx;
+    const auto number = hits.front().segment_idx;
     const auto in_segment = static_cast<size_t>(
-      absl::c_find_if(hits,
-                      [&](const auto& hit) { return hit.segment_idx != seg; }) -
+      absl::c_find_if(
+        hits, [&](const auto& hit) { return hit.segment_idx != number; }) -
       hits.begin());
-    AppendHits(context.client, g, l, l.tmp, seg, hits.first(in_segment), true,
-               l.fetched, l.pk, appended);
+    const auto seg = l.segments.find(number);
+    SDB_ENSURE(seg != l.segments.end(), "lookup of a row in segment ", number,
+               " that the scanned snapshot does not have");
+    AppendHits(context.client, g, l, l.tmp, seg->second, hits.first(in_segment),
+               true, l.fetched, l.pk, appended);
     hits = hits.subspan(in_segment);
   }
   auto found = count;
@@ -190,7 +202,7 @@ duckdb::TableFunction SourceGetLookupFunction(duckdb::ClientContext&,
 
 duckdb::vector<duckdb::column_t> IResearchGetRowIdColumns(
   duckdb::ClientContext&, duckdb::optional_ptr<duckdb::FunctionData>) {
-  return {kColumnIdentifierDocAddress};
+  return {kColumnIdentifierRowPosition};
 }
 
 bool IResearchSupportsLookup(duckdb::ClientContext& context,

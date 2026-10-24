@@ -21,9 +21,11 @@
 
 #include "search/inverted_index_storage.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
 
+#include <algorithm>
 #include <chrono>
 #include <duckdb/common/error_data.hpp>
 #include <filesystem>
@@ -46,13 +48,16 @@
 #include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <memory>
+#include <string>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "connector/term_dict.h"
 #include "query/transaction.h"
 #include "search/scorer_options.h"
+#include "server/utils/primary_key.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -268,6 +273,10 @@ ResultWithTime InvertedIndexStorage::RefreshUnsafe(
         _writer->GetSnapshot(), GetFileManifest()));
     },
     [&] { PublishSnapshot(); });
+  {
+    absl::MutexLock lock{&_rows_mutex};
+    _rows.Prune(_writer->CommittedGeneration());
+  }
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
@@ -372,6 +381,86 @@ std::vector<int64_t> InvertedIndexStorage::TakeDeleteLog() {
     rows.insert(rows.end(), batch.begin(), batch.end());
   }
   return rows;
+}
+
+void InvertedIndexStorage::AddRows(std::vector<RowBatch>&& batches,
+                                   uint64_t generation) {
+  if (batches.empty()) {
+    return;
+  }
+  absl::MutexLock lock{&_rows_mutex};
+  _rows.Prune(_writer->CommittedGeneration());
+  _rows.Add(std::move(batches), generation);
+}
+
+void InvertedIndexStorage::FindRows(std::span<const int64_t> rows,
+                                    irs::DocRemovalBuilder& found,
+                                    std::vector<int64_t>& missing) {
+  absl::MutexLock lock{&_rows_mutex};
+  _rows.Prune(_writer->CommittedGeneration());
+  _rows.Find(rows, found, missing);
+}
+
+irs::DirectoryReader InvertedIndexStorage::ResolveRows(
+  std::vector<int64_t> rows, irs::DocRemovalBuilder& found) const {
+  auto reader = _writer->GetSnapshot();
+  if (rows.empty()) {
+    return reader;
+  }
+  absl::c_sort(rows);
+  rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+  std::vector<std::string> keys(rows.size());
+  for (size_t i = 0; i < rows.size(); ++i) {
+    connector::primary_key::AppendSigned(keys[i], rows[i]);
+  }
+  std::vector<uint8_t> resolved(keys.size());
+  irs::TermPostings::ptr postings;
+  irs::doc_id_t docs[irs::doc_limits::kBlockSize];
+  for (size_t s = 0; s < reader.size(); ++s) {
+    const auto& segment = reader[s];
+    const auto* field = segment.field(connector::term_dict::kPKFieldId);
+    SDB_ENSURE(field != nullptr, "inverted index segment ", segment.Meta().name,
+               " has no row ids");
+    const auto number = irs::SegmentNumber(segment.Meta().name);
+    SDB_ENSURE(number != irs::DocRemoval::kNoSegment, "inverted index segment ",
+               segment.Meta().name, " has no position");
+    const auto masked = segment.MaskedDocs();
+    const auto first =
+      absl::c_lower_bound(keys, irs::ViewCast<char>(field->min()));
+    const auto last =
+      std::upper_bound(first, keys.end(), irs::ViewCast<char>(field->max()));
+    auto terms = field->iterator();
+    for (auto key = first; key != last; ++key) {
+      auto& done = resolved[key - keys.begin()];
+      if (done ||
+          !terms->seek(irs::ViewCast<irs::byte_type>(std::string_view{*key}))) {
+        continue;
+      }
+      if (const auto& meta = terms->cookie(); meta.docs_count == 1) {
+        const auto doc = irs::doc_limits::min() + meta.doc_delta;
+        if (!masked.Contains(doc)) {
+          found.Add(number, doc);
+          done = true;
+        }
+        continue;
+      }
+      postings =
+        terms->ReusePostings(irs::IndexFeatures::None, std::move(postings));
+      while (!done) {
+        const auto count = postings->NextDocs(docs, nullptr);
+        if (count == 0) {
+          break;
+        }
+        for (uint32_t i = 0; i < count && !done; ++i) {
+          if (!masked.Contains(docs[i])) {
+            found.Add(number, docs[i]);
+            done = true;
+          }
+        }
+      }
+    }
+  }
+  return reader;
 }
 
 void ThrowIfRefreshFailed(const absl::Status& status,

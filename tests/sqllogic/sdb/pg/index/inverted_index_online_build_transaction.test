@@ -1,0 +1,89 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY obt_words AS split_text();
+
+statement ok
+CREATE TABLE obt (id BIGINT, body VARCHAR);
+
+statement ok
+INSERT INTO obt SELECT i, 'w' || (i % 4) FROM range(400) r(i);
+
+statement ok
+CREATE TABLE obt_log (i INT);
+
+statement ok
+INSERT INTO obt_log VALUES (1), (2);
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM obt_log WHERE i = 1;
+
+statement error
+CREATE INDEX obt_idx ON obt USING inverted(id, body obt_words);
+----
+db error: ERROR: CREATE INDEX on "obt" cannot run in a transaction that has updated or deleted rows
+
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+statement ok
+UPDATE obt SET body = 'changed' WHERE id = 0;
+
+statement error
+CREATE INDEX obt_idx ON obt USING inverted(id, body obt_words);
+----
+db error: ERROR: CREATE INDEX on "obt" cannot run in a transaction that has updated or deleted rows
+
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM obt_log WHERE i = 99;
+
+statement ok
+UPDATE obt_log SET i = 0 WHERE i > 99;
+
+statement ok
+INSERT INTO obt SELECT i, 'own' FROM range(400, 450) r(i);
+
+statement ok
+UPDATE obt SET body = 'own2' WHERE id = 400;
+
+statement ok
+DELETE FROM obt WHERE id = 401;
+
+statement ok
+CREATE INDEX obt_idx ON obt USING inverted(id, body obt_words);
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) obt;
+
+query
+SELECT count(*) AS n FROM obt_idx WHERE body @@ ts_phrase('own');
+----
+n
+48
+
+query
+SELECT count(*) AS n FROM obt_idx WHERE body @@ ts_phrase('own2');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM obt_idx WHERE body @@ ts_phrase('w0');
+----
+n
+100

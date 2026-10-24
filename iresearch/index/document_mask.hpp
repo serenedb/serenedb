@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <memory>
 #include <roaring/roaring.hh>
+#include <span>
 
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
@@ -83,6 +84,16 @@ class DocumentMask final {
   void WriteFrozen(char* buf) const noexcept { _set.writeFrozen(buf); }
 
   bool Contains(doc_id_t doc) const noexcept;
+
+  void CountUpTo(std::span<const doc_id_t> docs,
+                 std::span<uint64_t> counts) const noexcept;
+
+  template<typename Visitor>
+  void ForEach(Visitor&& visitor) const {
+    for (const auto doc : _set) {
+      visitor(static_cast<doc_id_t>(doc));
+    }
+  }
 
   size_t Count() const noexcept { return _count; }
 
@@ -157,12 +168,18 @@ class DocumentMaskBuilder final {
   void AddRange(doc_id_t first, doc_id_t last);
   void Merge(const DocumentMaskBuilder& other);
   void Merge(const DocumentMask& published);
+  bool MergeLive(const DocumentMask& docs, const DocumentMask* masked,
+                 doc_id_t end);
+  bool MergeLiveRange(doc_id_t first, doc_id_t last,
+                      const DocumentMask* masked);
   void Clear() noexcept;
 
   DocumentMask Finish(uint32_t bitset_from = kBitsetFrom) && noexcept;
 
  private:
   DocumentMaskBuilder(const roaring::api::roaring_bitmap_t& set, size_t count);
+
+  bool MergeOwned(roaring::api::roaring_bitmap_t* live, doc_id_t end);
 
   roaring::api::roaring_bitmap_t _set;
   size_t _count = 0;

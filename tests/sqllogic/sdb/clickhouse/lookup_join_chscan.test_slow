@@ -49,7 +49,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
                              ├──────────────────────────────────────────╮
 ╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮  ╭─ INDEX_SOURCE ─────╮
-│ Key: iresearch_pk                                       │  │ Projections: title │
+│ Key: rowid                                              │  │ Projections: title │
 │ ~5 rows                                                 │  │ ~5 rows            │
 ╰────────────────────────────┬────────────────────────────╯  ╰────────────────────╯
                              ├─────────────────────────────────────────╮
@@ -68,7 +68,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: sdb_inverted_index_score, rowid            │
 │ ~600 rows                                               │
 ╰─────────────────────────────────────────────────────────╯
 

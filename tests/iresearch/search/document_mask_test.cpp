@@ -18,7 +18,11 @@
 /// Copyright holder is SereneDB GmbH
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
+#include <roaring/memory.h>
+
 #include <algorithm>
+#include <cstdlib>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/search/count/live_count.hpp>
@@ -316,6 +320,31 @@ TEST_P(DocumentMaskTest, contains_and_count) {
         << first << ".." << last;
     }
   });
+}
+
+TEST_P(DocumentMaskTest, docs_and_count_up_to_match_reference) {
+  std::vector<doc_id_t> visited;
+  _mask.ForEach([&](doc_id_t doc) { visited.push_back(doc); });
+  std::vector<doc_id_t> expected;
+  std::vector<doc_id_t> docs;
+  uint64_t count = 0;
+  for (doc_id_t doc = 1; doc <= kLimit; doc += 1 + doc % 5) {
+    docs.push_back(doc);
+  }
+  for (doc_id_t doc = 1; doc <= kLimit; ++doc) {
+    if (_ref->Masked(doc)) {
+      expected.push_back(doc);
+    }
+  }
+  ASSERT_EQ(expected, visited);
+  std::vector<uint64_t> counts(docs.size());
+  _mask.CountUpTo(docs, counts);
+  for (size_t i = 0, next = 0; i < docs.size(); ++i) {
+    for (; next < expected.size() && expected[next] <= docs[i]; ++next) {
+      ++count;
+    }
+    ASSERT_EQ(count, counts[i]) << docs[i];
+  }
 }
 
 TEST_P(DocumentMaskTest, probe_test_and_next_live) {
@@ -638,6 +667,141 @@ TEST(document_mask_test, builder_copies_and_merges_a_frozen_mask) {
   ASSERT_TRUE(mask.Contains(200000));
   ASSERT_FALSE(mask.Contains(5));
   ASSERT_EQ(mask, RoundTrip(mask));
+}
+
+TEST(document_mask_test, builder_merges_the_live_docs_below_an_end) {
+  const auto removed =
+    Join({Every(1, 65536, 3), Every(70000, 70100, 1), {200000}});
+  const auto masked_docs = std::vector<doc_id_t>{1, 4, 70000, 70001, 200000};
+  for (const bool frozen : {false, true}) {
+    SCOPED_TRACE(frozen);
+    auto docs = Build(removed);
+    auto masked = Build(masked_docs);
+    if (frozen) {
+      docs = RoundTrip(docs);
+      masked = RoundTrip(masked);
+    }
+    auto builder = Builder({7, 300000});
+    ASSERT_TRUE(builder.MergeLive(docs, &masked, 70050));
+    std::vector<doc_id_t> expected{300000};
+    for (const auto doc : removed) {
+      if (doc < 70050 && !masked.Contains(doc)) {
+        expected.push_back(doc);
+      }
+    }
+    expected = Join({expected});
+    ASSERT_EQ(expected.size(), builder.Count());
+    for (const auto doc : expected) {
+      ASSERT_TRUE(builder.Contains(doc)) << doc;
+    }
+    ASSERT_FALSE(builder.Contains(1));
+    ASSERT_FALSE(builder.Contains(70050));
+    ASSERT_FALSE(builder.Contains(200000));
+    ASSERT_FALSE(builder.MergeLive(docs, &masked, 70050));
+    ASSERT_EQ(expected.size(), builder.Count());
+    const auto empty = Build({});
+    ASSERT_TRUE(builder.MergeLive(docs, &empty, 70050));
+    ASSERT_EQ(expected.size() + 4, builder.Count());
+    ASSERT_TRUE(builder.MergeLive(docs, nullptr, kEof));
+    ASSERT_TRUE(builder.Contains(200000));
+    ASSERT_FALSE(builder.MergeLive(docs, nullptr, kEof));
+  }
+}
+
+TEST(document_mask_test, builder_merges_a_live_range) {
+  const auto masked = Build(Join({Every(10, 20, 1), {65536, 99999}}));
+  irs::DocumentMaskBuilder builder;
+  ASSERT_FALSE(builder.MergeLiveRange(5, 5, &masked));
+  ASSERT_TRUE(builder.Empty());
+  ASSERT_TRUE(builder.MergeLiveRange(1, 100000, &masked));
+  ASSERT_EQ(99999 - 12, builder.Count());
+  ASSERT_TRUE(builder.Contains(1));
+  ASSERT_TRUE(builder.Contains(9));
+  ASSERT_FALSE(builder.Contains(10));
+  ASSERT_FALSE(builder.Contains(19));
+  ASSERT_TRUE(builder.Contains(65535));
+  ASSERT_FALSE(builder.Contains(65536));
+  ASSERT_FALSE(builder.Contains(99999));
+  ASSERT_FALSE(builder.Contains(100000));
+  ASSERT_FALSE(builder.MergeLiveRange(1, 100000, &masked));
+  ASSERT_TRUE(builder.MergeLiveRange(1, 100001, nullptr));
+  ASSERT_EQ(100000, builder.Count());
+  const auto empty = Build({});
+  irs::DocumentMaskBuilder unmasked;
+  ASSERT_TRUE(unmasked.MergeLiveRange(10, 20, &empty));
+  ASSERT_EQ(10, unmasked.Count());
+  ASSERT_TRUE(unmasked.Contains(10));
+  ASSERT_TRUE(unmasked.Contains(19));
+  ASSERT_FALSE(unmasked.Contains(20));
+}
+
+TEST(document_mask_test, builder_reports_a_failed_allocation) {
+  const auto docs = Build({3, 7});
+  roaring_init_memory_hook({
+    .malloc = [](size_t) -> void* { return nullptr; },
+    .realloc = [](void*, size_t) -> void* { return nullptr; },
+    .calloc = [](size_t, size_t) -> void* { return nullptr; },
+    .free = [](void* p) { std::free(p); },
+    .aligned_malloc = [](size_t, size_t) -> void* { return nullptr; },
+    .aligned_free = [](void* p) { std::free(p); },
+  });
+  absl::Cleanup restore = [] {
+    roaring_init_memory_hook({
+      .malloc = [](size_t size) { return std::malloc(size); },
+      .realloc = [](void* p, size_t size) { return std::realloc(p, size); },
+      .calloc = [](size_t n, size_t size) { return std::calloc(n, size); },
+      .free = [](void* p) { std::free(p); },
+      .aligned_malloc = [](size_t alignment, size_t size) -> void* {
+        void* p = nullptr;
+        return posix_memalign(&p, alignment, size) == 0 ? p : nullptr;
+      },
+      .aligned_free = [](void* p) { std::free(p); },
+    });
+  };
+  irs::DocumentMaskBuilder builder;
+  ASSERT_SQL_ERROR(builder.MergeLive(docs, nullptr, 100),
+                   ERRCODE_OUT_OF_MEMORY);
+  std::move(restore).Invoke();
+  ASSERT_TRUE(builder.Empty());
+  ASSERT_TRUE(builder.MergeLive(docs, nullptr, 100));
+  ASSERT_EQ(2, builder.Count());
+}
+
+TEST(document_mask_test, builder_counts_the_docs_ranges_add) {
+  std::mt19937 gen{17};
+  for (int round = 0; round < 60; ++round) {
+    irs::DocumentMaskBuilder builder;
+    std::vector<bool> model(kLimit + 70000, false);
+    size_t count = 0;
+    const auto add = [&](doc_id_t first, doc_id_t last) {
+      for (auto doc = first; doc < last; ++doc) {
+        if (!model[doc]) {
+          model[doc] = true;
+          ++count;
+        }
+      }
+    };
+    const uint32_t singles = round % 3 == 0 ? 0 : round % 3 == 1 ? 500 : 20000;
+    for (uint32_t i = 0; i < singles; ++i) {
+      const doc_id_t doc = 1 + gen() % kLimit;
+      builder.Add(doc);
+      add(doc, doc + 1);
+    }
+    ASSERT_EQ(count, builder.Count());
+    for (int step = 0; step < 64; ++step) {
+      const doc_id_t first = 1 + gen() % kLimit;
+      const doc_id_t length =
+        gen() % 8 == 0 ? 1 + gen() % 70000 : 1 + gen() % 40;
+      builder.AddRange(first, first + length);
+      add(first, first + length);
+      ASSERT_EQ(count, builder.Count()) << round << " " << step;
+    }
+    const auto mask = std::move(builder).Finish();
+    ASSERT_EQ(count, mask.Count());
+    for (doc_id_t doc = 1; doc < model.size(); doc += 7) {
+      ASSERT_EQ(model[doc], mask.Contains(doc)) << doc;
+    }
+  }
 }
 
 TEST(document_mask_test, read_frozen_rejects_corruption) {

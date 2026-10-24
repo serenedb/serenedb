@@ -204,7 +204,7 @@ A full-text search is a first-class part of the SQL query plan, not a black box 
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan" />
 
-When the query keeps only some of the matches — `ORDER BY … LIMIT k`, a plain `LIMIT`, or `USING SAMPLE k ROWS`, with `k` up to [`late_materialization_lookup_max_rows`](../../../configuration/overview.md#query-execution-and-the-optimizer) (2048 by default) — the columns it only returns are read for the rows it keeps, not for every match. The scan produces just what the sort and the filters need, plus an `iresearch_pk` that identifies each row in the index, and a `LOOKUP_JOIN` above the `TOP_N` or `LIMIT` reads the other columns of the kept rows by it (`Key: iresearch_pk`):
+When the query keeps only some of the matches — `ORDER BY … LIMIT k`, a plain `LIMIT`, or `USING SAMPLE k ROWS`, with `k` up to [`late_materialization_lookup_max_rows`](../../../configuration/overview.md#query-execution-and-the-optimizer) (2048 by default) — the columns it only returns are read for the rows it keeps, not for every match. The scan produces just what the sort and the filters need, plus the `rowid` of each row, its position in the index, and a `LOOKUP_JOIN` above the `TOP_N` or `LIMIT` reads the other columns of the kept rows by it (`Key: rowid`):
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan_lookup_join" />
 

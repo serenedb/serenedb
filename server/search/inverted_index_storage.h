@@ -30,6 +30,7 @@
 #include <atomic>
 #include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/store/directory.hpp>
@@ -39,6 +40,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -47,6 +49,7 @@
 #include "connector/file_manifest.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
+#include "search/row_batches.h"
 #include "search/store_stats.h"
 #include "storage_engine/search_engine.h"
 
@@ -128,19 +131,16 @@ class InvertedIndexStorage final
   bool ReadOnly() const noexcept { return !_writer; }
   void OpenReader();
 
-  auto GetTransaction() {
+  auto GetTransaction(bool exclusive_segment = false) {
     SDB_ASSERT(_writer);
-    return _writer->GetBatch();
+    return _writer->GetBatch(exclusive_segment);
   }
 
   // Delete-log for online CREATE INDEX: open while the build runs, drained
-  // once at publish by TakeDeleteLog, then latched forever. It holds removes
-  // for rowids in [begin, end) -- rows whose backfill copy may still be
-  // uncommitted, where a native remove could get lost. Outside the window
-  // removes go native: below begin the copy is already committed, at/above
-  // end the row came through the live writer during the build.
-  //   begin: rises as backfill segments commit (stale read = over-log, safe).
-  //   end:   the rowid allocator at build start, fixed.
+  // once by TakeDeleteLog after the backfill is committed, then latched
+  // forever. It holds removes for rowids below end -- rows the backfill
+  // copies, which have no position until the copy commits. At/above end the
+  // row came through the live writer during the build and removes go native.
   // AppendDeleteLog returns false once latched; the caller then removes
   // natively (a delete racing publish is an ordinary post-publish remove).
   bool IsDeleteLogOpen() const noexcept {
@@ -154,12 +154,16 @@ class InvertedIndexStorage final
   int64_t DeleteLogRowidEnd() const noexcept {
     return _delete_log_rowid_end.load(std::memory_order_relaxed);
   }
-  void SetDeleteLogRowidBegin(int64_t begin) noexcept {
-    _delete_log_rowid_begin.store(begin, std::memory_order_release);
+
+  irs::DirectoryReader CommittedReader() const {
+    return _writer->GetSnapshot();
   }
-  int64_t DeleteLogRowidBegin() const noexcept {
-    return _delete_log_rowid_begin.load(std::memory_order_acquire);
-  }
+
+  void AddRows(std::vector<RowBatch>&& batches, uint64_t generation);
+  void FindRows(std::span<const int64_t> rows, irs::DocRemovalBuilder& found,
+                std::vector<int64_t>& missing);
+  irs::DirectoryReader ResolveRows(std::vector<int64_t> rows,
+                                   irs::DocRemovalBuilder& found) const;
 
   // `field_options` (nullable) is the per-merge per-column encoding config: the
   // compaction task hands the info from its own DDL view so the
@@ -290,8 +294,10 @@ class InvertedIndexStorage final
   std::atomic<bool> _delete_log_open{false};
   std::atomic<int64_t> _delete_log_rowid_end{
     std::numeric_limits<int64_t>::max()};
-  std::atomic<int64_t> _delete_log_rowid_begin{0};
   std::vector<std::vector<int64_t>> _delete_log;
+
+  absl::Mutex _rows_mutex;
+  RowBatches _rows ABSL_GUARDED_BY(_rows_mutex);
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

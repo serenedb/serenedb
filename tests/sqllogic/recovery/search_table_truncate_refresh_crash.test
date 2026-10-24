@@ -17,7 +17,7 @@ statement ok
 INSERT INTO trc VALUES (3, 'c');
 
 statement ok
-SET sdb_faults = 'pause_search_commit_before_delete_log';
+SET sdb_faults = 'pause_search_commit_before_build_truncate';
 
 connection truncater
 statement async error connection closed
@@ -25,7 +25,7 @@ TRUNCATE trc;
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
+SET sdb_faults = '-pause_search_commit_before_build_truncate:parked';
 
 connection default
 statement ok

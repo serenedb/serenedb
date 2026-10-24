@@ -22,10 +22,13 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/functional/any_invocable.h>
+#include <absl/functional/function_ref.h>
 #include <absl/status/statusor.h>
 #include <absl/strings/str_cat.h>
 #include <absl/time/time.h>
 
+#include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
@@ -72,6 +75,10 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <functional>
+#include <iresearch/formats/term_reader.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/doc_removal.hpp>
+#include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -80,6 +87,11 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <limits>
+#include <optional>
+#include <span>
+#include <string>
+#include <vector>
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
@@ -94,7 +106,6 @@
 #include "connector/file_manifest.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
-#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
@@ -691,8 +702,14 @@ void DemoteEqCoveredToRescan(const Source& src, FileDiff& files,
   });
 }
 
-SearchRemovePrefixFilter::DeadRowCursor MakeRowsCursor(
-  std::vector<int64_t> rows) {
+using DeadRowCursor = absl::AnyInvocable<std::optional<int64_t>(int64_t)>;
+
+struct FileRemove {
+  std::string prefix;
+  std::optional<DeadRowCursor> dead;
+};
+
+DeadRowCursor MakeRowsCursor(std::vector<int64_t> rows) {
   return [rows = std::move(rows)](int64_t min_row) -> std::optional<int64_t> {
     const auto it = absl::c_lower_bound(rows, min_row);
     if (it == rows.end()) {
@@ -703,7 +720,7 @@ SearchRemovePrefixFilter::DeadRowCursor MakeRowsCursor(
 }
 
 // Buckets ascend by (high, low) = ascending row.
-SearchRemovePrefixFilter::DeadRowCursor MakeDvCursor(
+DeadRowCursor MakeDvCursor(
   std::vector<std::pair<int32_t, roaring::Roaring>> buckets) {
   return
     [buckets = std::move(buckets)](int64_t min_row) -> std::optional<int64_t> {
@@ -723,48 +740,130 @@ SearchRemovePrefixFilter::DeadRowCursor MakeDvCursor(
     };
 }
 
-// Delete kind 1 -- deleted files: one prefix entry per file. nullptr =
-// none.
-std::shared_ptr<SearchRemovePrefixFilter> BuildDeletedFilesRemove(
-  std::vector<uint64_t>& del_files) {
-  if (del_files.empty()) {
-    return nullptr;
-  }
-  absl::c_sort(del_files);
-  auto remove =
-    std::make_shared<SearchRemovePrefixFilter>(term_dict::kPKFieldId);
+// Delete kind 1 -- deleted files: every key under the file's prefix.
+void AddDeletedFiles(std::span<const uint64_t> del_files,
+                     std::vector<FileRemove>& removes) {
   for (const auto id : del_files) {
-    remove->AddFile(primary_key::PkFilePrefix(id));
+    removes.push_back({.prefix = primary_key::PkFilePrefix(id)});
   }
-  return remove;
 }
 
 // Delete kind 2 -- changed bitmasks (iceberg): kept files whose dead rows
-// leapfrog the cursors against the sorted terms. nullptr = nothing to
-// remove (row-less masks are eq-covered files).
-std::shared_ptr<SearchRemovePrefixFilter> BuildMaskRemove(
-  const std::vector<IcebergObserve::DeleteMask>& del_masks) {
-  std::vector<const IcebergObserve::DeleteMask*> masks;
-  masks.reserve(del_masks.size());
+// leapfrog the cursors against the sorted terms. Row-less masks are
+// eq-covered files.
+void AddMaskRemoves(const std::vector<IcebergObserve::DeleteMask>& del_masks,
+                    std::vector<FileRemove>& removes) {
   for (const auto& mask : del_masks) {
-    if (!mask.rows.empty() || !mask.dv.empty()) {
-      masks.push_back(&mask);
+    if (mask.rows.empty() && mask.dv.empty()) {
+      continue;
+    }
+    removes.push_back({.prefix = primary_key::PkFilePrefix(mask.file_id),
+                       .dead = mask.dv.empty() ? MakeRowsCursor(mask.rows)
+                                               : MakeDvCursor(mask.dv)});
+  }
+}
+
+void ForEachPostingDoc(irs::SeekTermIterator& terms,
+                       absl::FunctionRef<void(irs::doc_id_t)> visit) {
+  auto postings = terms.postings(irs::IndexFeatures::None);
+  std::array<irs::doc_id_t, irs::doc_limits::kBlockSize> docs;
+  for (uint32_t count; (count = postings->NextDocs(docs.data(), nullptr));) {
+    for (uint32_t i = 0; i < count; ++i) {
+      visit(docs[i]);
     }
   }
-  if (masks.empty()) {
-    return nullptr;
+}
+
+// A cursor entry leapfrogs: the cursor names the next dead row, seek_ge jumps
+// to its term, and a landed alive term gallops the cursor forward, so neither
+// the row set nor the dictionary is enumerated. Only a seek that lands on the
+// term leaves the iterator usable: the other outcomes advance it internally and
+// leave its floor-block state stale, so the iterator is dropped and the next
+// dead row starts from a fresh one.
+void ForEachFileDoc(const irs::TermReader& field, FileRemove& file,
+                    absl::FunctionRef<void(irs::doc_id_t)> visit) {
+  const auto prefix =
+    irs::ViewCast<irs::byte_type>(std::string_view{file.prefix});
+  if (!file.dead) {
+    auto terms = field.iterator();
+    if (terms->seek_ge(prefix) == irs::SeekResult::End) {
+      return;
+    }
+    do {
+      if (!terms->value().starts_with(prefix)) {
+        return;
+      }
+      ForEachPostingDoc(*terms, visit);
+    } while (terms->next());
+    return;
   }
-  absl::c_sort(masks, [](const auto* a, const auto* b) {
-    return a->file_id < b->file_id;
-  });
-  auto remove =
-    std::make_shared<SearchRemovePrefixFilter>(term_dict::kPKFieldId);
-  for (const auto* mask : masks) {
-    remove->AddFileRows(
-      primary_key::PkFilePrefix(mask->file_id),
-      mask->dv.empty() ? MakeRowsCursor(mask->rows) : MakeDvCursor(mask->dv));
+  auto resume = std::numeric_limits<int64_t>::min();
+  std::string key;
+  irs::SeekTermIterator::ptr terms;
+  while (const auto dead_row = (*file.dead)(resume)) {
+    resume = *dead_row + 1;
+    key = file.prefix;
+    primary_key::AppendSigned(key, *dead_row);
+    if (!terms) {
+      terms = field.iterator();
+    }
+    const auto found =
+      terms->seek_ge(irs::ViewCast<irs::byte_type>(std::string_view{key}));
+    if (found == irs::SeekResult::End) {
+      return;
+    }
+    if (found == irs::SeekResult::NotFound) {
+      const auto term = terms->value();
+      if (!term.starts_with(prefix)) {
+        return;
+      }
+      SDB_ASSERT(term.size() == prefix.size() + sizeof(int64_t));
+      resume = primary_key::ReadSigned<int64_t>(
+        irs::ViewCast<char>(term.substr(prefix.size())));
+      terms.reset();
+      continue;
+    }
+    ForEachPostingDoc(*terms, visit);
   }
-  return remove;
+}
+
+std::optional<irs::DocRemoval> ResolveRemoves(
+  const irs::DirectoryReader& snapshot, std::span<FileRemove> files,
+  std::span<const std::string> keys) {
+  if (files.empty() && keys.empty()) {
+    return std::nullopt;
+  }
+  irs::DocRemovalBuilder removal;
+  for (size_t i = 0; i < snapshot.size(); ++i) {
+    const auto& segment = snapshot[i];
+    const auto* field = segment.field(term_dict::kPKFieldId);
+    if (field == nullptr) {
+      continue;
+    }
+    const auto number = irs::SegmentNumber(segment.Meta().name);
+    SDB_ENSURE(number != irs::DocRemoval::kNoSegment, "REINDEX: segment ",
+               segment.Meta().name, " has no position");
+    const auto masked = segment.MaskedDocs();
+    const auto add = [&](irs::doc_id_t doc) {
+      if (!masked.Contains(doc)) {
+        removal.Add(number, doc);
+      }
+    };
+    for (auto& file : files) {
+      ForEachFileDoc(*field, file, add);
+    }
+    for (const auto& key : keys) {
+      field->ReadDocs(irs::ViewCast<irs::byte_type>(std::string_view{key}),
+                      [&](irs::doc_id_t doc) {
+                        add(doc);
+                        return true;
+                      });
+    }
+  }
+  if (removal.Empty()) {
+    return std::nullopt;
+  }
+  return std::move(removal).Finish();
 }
 
 // Old manifest minus dying files, plus fresh ids for the scans: a scan
@@ -814,32 +913,20 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   }
   uint64_t file_base = 0;
   auto manifest_next = BuildNextManifest(manifest, files, file_base);
-  auto file_removes = BuildDeletedFilesRemove(files.del_files);
-  std::shared_ptr<SearchRemovePrefixFilter> mask_removes;
+  std::vector<FileRemove> file_removes;
+  AddDeletedFiles(files.del_files, file_removes);
   if constexpr (kIceberg) {
-    mask_removes = BuildMaskRemove(observe.del_masks);
+    AddMaskRemoves(observe.del_masks, file_removes);
   }
 
-  // The removes commit first as their own transaction; the pass's docs land
-  // above them (the pass transactions pull domain ticks). A crash between
-  // the two loses the removed rows until the next tick: the manifest
-  // version only moves at the end, so the tick re-runs the delta.
-  if (file_removes || mask_removes || !eq_pks.empty()) {
+  // The removes commit first as their own transaction, so the pass's docs land
+  // above them. A crash between the two loses the removed rows until the next
+  // tick: the manifest version only moves at the end, so the tick re-runs the
+  // delta.
+  if (auto removal = ResolveRemoves(storage.GetInvertedIndexSnapshot()->reader,
+                                    file_removes, eq_pks)) {
     auto trx = storage.GetTransaction();
-    if (file_removes) {
-      trx.Remove(std::move(file_removes));
-    }
-    if (mask_removes) {
-      trx.Remove(std::move(mask_removes));
-    }
-    if (!eq_pks.empty()) {
-      SearchSinkDeleteBaseImpl remover{trx};
-      remover.InitImpl(eq_pks.size());
-      for (const auto& pk : eq_pks) {
-        remover.DeleteRowImpl(pk);
-      }
-      remover.FinishImpl();
-    }
+    trx.Remove(std::move(*removal));
     trx.RegisterFlush();
     if (!trx.Commit()) {
       THROW_SQL_ERROR(

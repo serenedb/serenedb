@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/inlined_vector.h>
 
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -31,6 +32,7 @@
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -171,19 +173,31 @@ Transaction::SearchSlot& Transaction::EnsureIndexSlot(
   duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
   std::shared_ptr<const catalog::InvertedIndexConfig> config, size_t slot) {
   auto& entry = _search_transactions.try_emplace(index_id).first->second;
-  if (entry.slots.size() <= slot) {
-    entry.slots.resize(slot + 1);
-  }
-  auto& result = entry.slots[slot];
-  if (!result.transaction) {
-    result.transaction = std::make_unique<irs::IndexWriter::Transaction>(
-      storage->GetTransaction());
-    result.transaction->SetFieldOptions(std::move(config));
+  SDB_ASSERT(slot <= entry.slots.size());
+  if (slot == entry.slots.size()) {
+    auto& created = entry.slots.emplace_back();
+    created.transaction = std::make_unique<irs::IndexWriter::Transaction>(
+      storage->GetTransaction(/*exclusive_segment=*/slot != 0));
+    created.transaction->SetFieldOptions(std::move(config));
   }
   if (!entry.storage) {
     entry.storage = std::move(storage);
   }
-  return result;
+  return entry.slots[slot];
+}
+
+void Transaction::RemoveIndexRows(
+  duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
+  std::shared_ptr<const catalog::InvertedIndexConfig> config,
+  std::span<const int64_t> rows) {
+  EnsureIndexSlot(index_id, storage, std::move(config))
+    .transaction->AcquireSegment();
+  auto& removed = _search_transactions.find(index_id)->second.removed;
+  if (!removed) {
+    removed = std::make_unique<RemovedRows>();
+    removed->pinned = storage->CommittedReader();
+  }
+  storage->FindRows(rows, removed->found, removed->missing);
 }
 
 void Transaction::StageSearch(const irs::SourcePosition& position,
@@ -192,13 +206,34 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
     if (entry.storage->GetDatabaseId() != database) {
       continue;
     }
-    uint64_t queries = 0;
+    absl::InlinedVector<irs::IndexWriter::Transaction*, 16> transactions;
     for (auto& slot : entry.slots) {
       slot.writer.reset();
-      if (slot.transaction) {
-        slot.transaction->RegisterFlush();
-        queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
+      transactions.push_back(&*slot.transaction);
+    }
+    SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_written");
+    irs::IndexWriter::Transaction::RegisterFlush(transactions);
+    SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_registered");
+    uint64_t queries = 0;
+    for (auto& slot : entry.slots) {
+      queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
+      try {
+        SDB_IF_FAILURE("inverted_rows_record_fails") {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                          ERR_MSG("debug failure point"));
+        }
+        entry.storage->AddRows(std::move(slot.rows),
+                               slot.transaction->FlushGeneration());
+      } catch (const std::exception& e) {
+        SDB_ERROR(SEARCH, "recording the rows written to index '", index_id,
+                  "' failed: ", e.what(),
+                  "; the index replays them from the WAL on next boot");
+        entry.storage->MarkOutOfSync();
       }
+    }
+    if (entry.removed) {
+      queries = std::max<uint64_t>(
+        queries, entry.slots.front().transaction->GetQueries() + 1);
     }
     entry.tick = entry.storage->NextTick(queries);
     entry.position = position;
@@ -218,9 +253,30 @@ void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
     }
     auto& [index_id, entry] = item;
     SDB_ASSERT(entry.tick != 0);
+    irs::DirectoryReader resolved;
+    if (entry.removed) {
+      try {
+        SDB_IF_FAILURE("inverted_rows_resolve_fails") {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                          ERR_MSG("debug failure point"));
+        }
+        auto& removed = *entry.removed;
+        resolved =
+          entry.storage->ResolveRows(std::move(removed.missing), removed.found);
+        if (!removed.found.Empty()) {
+          auto removal = std::move(removed.found).Finish();
+          removal.unflushed = true;
+          entry.slots.front().transaction->Remove(std::move(removal));
+        }
+      } catch (const std::exception& e) {
+        SDB_ERROR(SEARCH, "removing rows from index '", index_id,
+                  "' failed: ", e.what(),
+                  "; the index replays them from the WAL on next boot");
+        entry.storage->MarkOutOfSync();
+      }
+    }
     for (auto& slot : entry.slots) {
-      if (!slot.transaction ||
-          slot.transaction->Commit(entry.tick, entry.position)) {
+      if (slot.transaction->Commit(entry.tick, entry.position)) {
         continue;
       }
       SDB_ERROR(SEARCH, "search index commit failed for index '", index_id,

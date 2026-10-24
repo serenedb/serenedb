@@ -103,8 +103,7 @@ class SearchTableTransaction {
                             duckdb::BufferManager& buffer_manager,
                             const duckdb::vector<duckdb::LogicalType>& types,
                             std::span<const connector::ColumnId> column_ids,
-                            duckdb::Catalog& catalog, duckdb::DataChunk& chunk,
-                            uint64_t pk_base);
+                            duckdb::Catalog& catalog, duckdb::DataChunk& chunk);
 
   // Bytes a flush would reclaim for `shard_id`; deletes are not counted.
   uint64_t BufferedBytes(duckdb::idx_t shard_id) const noexcept {
@@ -121,9 +120,9 @@ class SearchTableTransaction {
                    duckdb::ClientContext& context);
   void FlushBufferTransaction(duckdb::idx_t shard_id);
 
-  // Rowids to remove, in issue order with the buffered rows.
+  // Row positions to remove, in issue order with the buffered rows.
   void AddSearchDeletes(const std::shared_ptr<SearchTable>& shard,
-                        std::span<const int64_t> rows);
+                        const duckdb::Vector& positions);
 
   void AddSearchTruncate(const std::shared_ptr<SearchTable>& shard,
                          const duckdb::Identifier& table_name,

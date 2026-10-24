@@ -1,0 +1,75 @@
+control substitution on
+
+statement ok
+CREATE TABLE rows_resolve (id BIGINT, msg TEXT);
+
+
+statement ok
+CREATE INDEX rows_resolve_idx ON rows_resolve USING inverted (id, msg)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO rows_resolve SELECT i, 'm' || (i % 7) FROM range(1000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rows_resolve;
+
+
+statement ok
+SET sdb_faults = 'inverted_rows_resolve_fails';
+
+
+statement ok
+DELETE FROM rows_resolve WHERE id < 400;
+
+
+statement ok
+SET sdb_faults = '-inverted_rows_resolve_fails';
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rows_resolve;
+
+
+query
+SELECT count(*) AS n FROM rows_resolve_idx;
+----
+n
+1000
+
+
+statement error refusing to checkpoint
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM rows_resolve;
+----
+n
+600
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) rows_resolve;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM rows_resolve_idx) AS total,
+       (SELECT count(*) FROM rows_resolve_idx WHERE msg @@ 'm3') AS three,
+       (SELECT count(*) FROM rows_resolve_idx WHERE id < 400) AS deleted;
+----
+total	three	deleted
+600	86	0

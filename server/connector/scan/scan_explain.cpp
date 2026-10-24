@@ -222,8 +222,8 @@ std::string ProjectionDisplayName(const ScanBindData& bind,
   if (col_id == kColumnIdentifierPkRowNumber) {
     return "row_number";
   }
-  if (col_id == kColumnIdentifierDocAddress) {
-    return "iresearch_pk";
+  if (col_id == kColumnIdentifierRowPosition) {
+    return "rowid";
   }
   return absl::StrCat("column_", col_id);
 }

@@ -23,7 +23,6 @@
 
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/directory_cleaner.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/directory_utils.hpp>
@@ -40,11 +39,8 @@ namespace {
 
 using namespace irs;
 
-auto MakeByTerm(irs::field_id field_id, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = field_id;
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
+::tests::Terms MakeByTerm(field_id field, std::string_view value) {
+  return {field, {std::string{value}}};
 }
 
 template<typename Visitor>
@@ -254,7 +250,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
                                 &::tests::GenericJsonFieldFactory);
   const ::tests::Document* doc1 = gen.next();
   const ::tests::Document* doc2 = gen.next();
-  Filter::ptr query_doc1 = MakeByTerm(irs::field_id{1}, "A");
+  auto query_doc1 = MakeByTerm(irs::field_id{1}, "A");
   irs::MemoryDirectory dir;
 
   // writer commit tracks files that are in active segments

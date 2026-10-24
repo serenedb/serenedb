@@ -24,6 +24,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/row_id_deduplicator.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
@@ -31,6 +32,7 @@
 #include <vector>
 
 #include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
@@ -43,7 +45,6 @@ namespace {
 
 struct SearchTableDeleteState final : duckdb::GlobalSinkState {
   query::Transaction* sdb_txn = nullptr;
-  std::vector<primary_key::PKColumn> pk_columns;
   std::optional<duckdb::RowIdDeduplicator> deleted_rows;
   duckdb::idx_t delete_count = 0;
   std::shared_ptr<search::SearchTable> search_table;
@@ -64,6 +65,7 @@ SereneDBSearchDelete::SereneDBSearchDelete(
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk,
   duckdb::vector<duckdb::idx_t> return_columns,
+  const duckdb::vector<duckdb::column_t>& returning_virtual_columns,
   duckdb::RowIdHandling row_id_handling)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
@@ -71,18 +73,37 @@ SereneDBSearchDelete::SereneDBSearchDelete(
     _return_chunk(return_chunk),
     _return_columns(std::move(return_columns)),
     _row_id_handling(row_id_handling) {
-  const auto row_ids = table.GetRowIdColumns().size();
-  _pk_columns.reserve(row_ids);
-  for (duckdb::idx_t i = 0; i < row_ids; ++i) {
-    const auto& ref = expressions[i]->Cast<duckdb::BoundReferenceExpression>();
-    _pk_columns.emplace_back(ref.Index(), ref.GetReturnType());
-  }
+  SDB_ASSERT(table.GetRowIdColumns().size() == 1);
+  const auto& rowid =
+    expressions.front()->Cast<duckdb::BoundReferenceExpression>();
+  _rowid = {rowid.Index(), rowid.GetReturnType()};
   for (auto& column : _return_columns) {
     if (column != duckdb::DConstants::INVALID_INDEX) {
       column =
         expressions[column]->Cast<duckdb::BoundReferenceExpression>().Index();
     }
   }
+  if (!_return_chunk) {
+    return;
+  }
+  const auto& output_types = GetTypes();
+  _returned_constants.reserve(output_types.size());
+  for (duckdb::idx_t i = 0; i < _return_columns.size(); ++i) {
+    _returned_constants.emplace_back(output_types[i]);
+  }
+  for (const auto column_id : returning_virtual_columns) {
+    auto from = duckdb::DConstants::INVALID_INDEX;
+    duckdb::Value constant{output_types[_return_columns.size()]};
+    if (column_id == kColumnIdentifierRowPosition) {
+      from = _rowid.input_col_idx;
+    } else {
+      SDB_ASSERT(column_id == kColumnIdentifierTableOid);
+      constant = duckdb::Value::BIGINT(static_cast<int64_t>(table.oid));
+    }
+    _return_columns.emplace_back(from);
+    _returned_constants.emplace_back(std::move(constant));
+  }
+  SDB_ASSERT(_return_columns.size() == output_types.size());
 }
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
@@ -93,10 +114,9 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
   conn_ctx.SearchTxn().RegisterWriter(state->search_table, *_table);
 
-  state->pk_columns = _pk_columns;
   if (_row_id_handling != duckdb::RowIdHandling::ASSUME_UNIQUE) {
-    state->deleted_rows.emplace(context, duckdb::vector<duckdb::LogicalType>{
-                                           state->pk_columns.front().type});
+    state->deleted_rows.emplace(
+      context, duckdb::vector<duckdb::LogicalType>{_rowid.type});
   }
 
   state->sdb_txn = &conn_ctx;
@@ -111,8 +131,7 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
   if (gstate.deleted_rows &&
-      primary_key::KeepFirstRowIds(*gstate.deleted_rows, chunk,
-                                   gstate.pk_columns.front()) == 0) {
+      primary_key::KeepFirstRowIds(*gstate.deleted_rows, chunk, _rowid) == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   const auto num_rows = chunk.size();
@@ -120,29 +139,19 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   // Buffered, not removed here. The removal reaches iresearch when the write
   // buffer is replayed, after exactly the rows that precede it, which is what
   // reproduces the ordering these statements would have had.
-  duckdb::UnifiedVectorFormat rowid;
-  chunk.data[gstate.pk_columns[0].input_col_idx].ToUnifiedFormat(num_rows,
-                                                                 rowid);
-  const auto* rowid_data = duckdb::UnifiedVectorFormat::GetData<int64_t>(rowid);
-  std::vector<int64_t> rows;
-  rows.reserve(num_rows);
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    rows.push_back(rowid_data[rowid.sel->get_index(row)]);
-  }
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, rows);
+  gstate.sdb_txn->SearchTxn().AddSearchDeletes(
+    gstate.search_table, chunk.data[_rowid.input_col_idx]);
 
   if (gstate.returned) {
     duckdb::DataChunk row;
     row.InitializeEmpty(GetTypes());
     for (duckdb::idx_t i = 0; i < row.ColumnCount(); ++i) {
-      const auto from = i < _return_columns.size()
-                          ? _return_columns[i]
-                          : duckdb::DConstants::INVALID_INDEX;
-      if (from == duckdb::DConstants::INVALID_INDEX) {
-        row.data[i].Reference(duckdb::Value(row.data[i].GetType()),
-                              duckdb::count_t(num_rows));
-      } else {
+      if (const auto from = _return_columns[i];
+          from != duckdb::DConstants::INVALID_INDEX) {
         row.data[i].Reference(chunk.data[from]);
+      } else {
+        row.data[i].Reference(_returned_constants[i],
+                              duckdb::count_t(num_rows));
       }
     }
     row.SetCardinality(num_rows);

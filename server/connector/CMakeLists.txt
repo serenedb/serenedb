@@ -6,7 +6,6 @@ target_sources(
         offsets_collector.cpp
         search_sink_writer.cpp
         search_table_backfill.cpp
-        search_remove_filter.cpp
         duckdb_storage_extension.cpp
         index_expression.cpp
         inverted_index_bind.cpp

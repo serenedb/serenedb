@@ -36,8 +36,8 @@
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_meta.hpp>
-#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -54,9 +54,9 @@
 #include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
-#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "search/inverted_index_storage.h"
+#include "search/row_position_wal.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
 #include "storage_engine/search_engine.h"
@@ -83,6 +83,7 @@ struct SearchTable::ReplaySession {
   irs::IndexWriter::Transaction trx;
   std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
   std::vector<PendingAdopt> adopts;
+  std::shared_ptr<const irs::DocMapList> maps;
 };
 
 SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
@@ -228,36 +229,23 @@ void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
   }
 }
 
-void SearchTable::OpenDeleteLog() {
-  absl::MutexLock lock{&_delete_log_mutex};
-  _delete_log.clear();
+void SearchTable::WatchTruncates() {
+  absl::MutexLock lock{&_truncate_mutex};
   _build_truncate = {};
-  _delete_log_open.store(true, std::memory_order_release);
+  _truncate_watch = true;
 }
 
 void SearchTable::RecordTruncateForBuild(const irs::SourcePosition& position) {
-  absl::MutexLock lock{&_delete_log_mutex};
-  if (!_delete_log_open.load(std::memory_order_relaxed)) {
+  absl::MutexLock lock{&_truncate_mutex};
+  if (!_truncate_watch) {
     return;
   }
   _build_truncate = std::max(_build_truncate, position);
 }
 
-void SearchTable::AppendDeleteLog(std::span<const RowRange> rows) {
-  if (rows.empty()) {
-    return;
-  }
-  absl::MutexLock lock{&_delete_log_mutex};
-  if (!_delete_log_open.load(std::memory_order_relaxed)) {
-    return;
-  }
-  _delete_log.insert(_delete_log.end(), rows.begin(), rows.end());
-}
-
-void SearchTable::CloseDeleteLog() {
-  absl::MutexLock lock{&_delete_log_mutex};
-  _delete_log_open.store(false, std::memory_order_release);
-  _delete_log.clear();
+void SearchTable::StopWatchingTruncates() {
+  absl::MutexLock lock{&_truncate_mutex};
+  _truncate_watch = false;
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::Config()
@@ -289,7 +277,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   }
   auto merged = std::make_shared<catalog::InvertedIndexConfig>(
     std::move(keys), std::move(fields));
-  merged->pk = {.index_term = true, .column = catalog::PkColumnKind::None};
+  merged->pk = {.index_term = false, .column = catalog::PkColumnKind::None};
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
   merged->declared_compression = _compression;
@@ -487,6 +475,7 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
     if (!status.ok()) {
       return status;
     }
+    SDB_WAIT_ON_FAILURE("pause_search_compact_before_publish");
     if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
       return res;
     }
@@ -527,7 +516,7 @@ SearchTable::ReplaySession* SearchTable::BeginReplay(
 void SearchTable::ReplayInsert(duckdb::ClientContext& context,
                                duckdb::Catalog& catalog,
                                std::span<const connector::ColumnId> column_ids,
-                               duckdb::DataChunk& chunk, uint64_t row_start) {
+                               duckdb::DataChunk& chunk) {
   auto* session = BeginReplay(catalog.GetAttached());
   if (!session) {
     return;
@@ -537,37 +526,32 @@ void SearchTable::ReplayInsert(duckdb::ClientContext& context,
                                                          catalog, context);
   }
   connector::WriteChunkToSearchSink(*session->sink, chunk, column_ids,
-                                    row_start, _table_id, context);
+                                    _table_id, context);
 }
 
-void SearchTable::ReplayDelete(duckdb::AttachedDatabase& db,
-                               duckdb::DataChunk& chunk) {
+void SearchTable::ReplayDeleteRowPositions(
+  duckdb::AttachedDatabase& db,
+  const duckdb::WALDeleteRowPositions& positions) {
+  auto removal = FromWal(positions);
   auto* session = BeginReplay(db);
   if (!session) {
     return;
   }
-  auto& rows = chunk.data[0];
-  SDB_ASSERT(rows.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
-  connector::RemoveGeneratedRows(
-    session->trx, std::span<const int64_t>{
-                    duckdb::FlatVector::GetData<int64_t>(rows), chunk.size()});
+  removal.maps = session->maps;
+  session->trx.Remove(std::move(removal));
 }
 
-void SearchTable::ReplayDeleteRanges(duckdb::AttachedDatabase& db,
-                                     std::vector<RowRange> rows) {
-  auto* session = BeginReplay(db);
-  if (!session) {
-    return;
-  }
-  NormalizeRowRanges(rows);
-  if (auto removal = connector::MakeRowRangeRemoval(rows)) {
-    session->trx.Remove(std::move(removal));
+void SearchTable::ReplayRowPositionMaps(
+  duckdb::AttachedDatabase& db, const duckdb::WALRowPositionMaps& maps) {
+  auto parsed = FromWal(maps);
+  if (auto* session = BeginReplay(db)) {
+    session->maps = std::make_shared<const irs::DocMapList>(std::move(parsed));
   }
 }
 
 void SearchTable::ReplayTruncate(duckdb::AttachedDatabase& db) {
   if (auto* session = BeginReplay(db)) {
-    session->trx.Remove(std::make_shared<irs::All>());
+    session->trx.Remove(irs::DocRemoval::All());
   }
 }
 

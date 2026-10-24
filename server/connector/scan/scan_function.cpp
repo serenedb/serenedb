@@ -242,6 +242,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   ClassifyColumnstoreProjections(*state, bind_data);
   state->shape = DecideShape(*state, ss);
+  if (state->row_position_output_idx != duckdb::DConstants::INVALID_INDEX &&
+      state->shape != ScanShape::Stream && state->shape != ScanShape::ColScan &&
+      state->shape != ScanShape::TopK) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("the rowid is not served by this scan"));
+  }
 
   if (state->shape == ScanShape::TsDict) {
     const auto& out = state->output_projection_ids;
@@ -597,6 +603,10 @@ duckdb::virtual_column_map_t ScanGetVirtualColumns(
   if (bind.relation.table_entry) {
     result = bind.relation.table_entry->GetVirtualColumns();
     result.erase(duckdb::COLUMN_IDENTIFIER_TABLE_OID);
+    if (const auto table_row_id = result.find(duckdb::COLUMN_IDENTIFIER_ROW_ID);
+        table_row_id != result.end()) {
+      table_row_id->second.name = duckdb::Identifier{};
+    }
   }
   if (bind.IsViewBacked()) {
     result.insert(
@@ -610,9 +620,8 @@ duckdb::virtual_column_map_t ScanGetVirtualColumns(
     result.insert({kColumnIdentifierGeneratedPk,
                    duckdb::TableColumn("pk", *GeneratedPkTypeOf(bind))});
   }
-  result.insert(
-    {kColumnIdentifierDocAddress,
-     duckdb::TableColumn("iresearch_pk", duckdb::LogicalType::BIGINT)});
+  result.insert({kColumnIdentifierRowPosition,
+                 duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});
   result.insert({kColumnIdentifierTableOid,
                  duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
   result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,

@@ -76,6 +76,12 @@ An index on a search table can't be partial: there, `CREATE INDEX … WHERE …`
 
 An inverted index can be built over a base table or a view (including a view over `read_parquet`/`read_csv` on local disk or S3). The index derives each row's identity automatically from the view's source; there is no `pk` option, and only attached external databases accept an explicit key through `key_columns` (see [Row identity](../../indexes/inverted/views.md#row-identity)). The postings are a snapshot of the source, refreshed by `REINDEX INDEX` or the `reindex_interval` option (see [Refreshing the index](../../indexes/inverted/views.md#refreshing-the-index)). See also [Indexing a table vs. a view](../../indexes/inverted/index.md#indexing-a-table-or-a-view).
 
+## Building next to writes
+
+`CREATE INDEX` on a regular table does not block writes: other sessions keep inserting, updating and deleting rows while the index is built, and the finished index contains their changes. The build first waits for every transaction that was open when it started to commit or roll back; while it waits, `pg_stat_progress_create_index` shows the phase `waiting for writers before build`. A long transaction, an idle one included, holds the build until it ends. Cancelling the build, for example with `pg_cancel_backend`, leaves no index behind.
+
+In a transaction that has already updated or deleted rows, `CREATE INDEX` on a regular table fails with `CREATE INDEX on "<table>" cannot run in a transaction that has updated or deleted rows`; run it in a transaction of its own. Inserting rows earlier in the same transaction is allowed, and so is updating or deleting rows the transaction inserted itself.
+
 ## Examples
 
 Create a dictionary, index two text columns with it, then query the index:

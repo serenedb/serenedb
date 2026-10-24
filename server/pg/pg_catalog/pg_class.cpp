@@ -171,12 +171,9 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
       indexes.emplace_back(&entry, host_id);
     });
   irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> relation_owners;
-  // The tables in set order, for the synthetic key-index rows below, and the
-  // sequences that feed a synthetic primary key -- serenedb's own machinery,
-  // which postgres has no relation for.
+  // The tables in set order, for the synthetic key-index rows below.
   std::vector<std::pair<duckdb::idx_t, const duckdb::TableCatalogEntry*>>
     tables;
-  irs::containers::FlatHashSet<duckdb::idx_t> generated_pk_sequences;
   std::vector<std::pair<size_t, duckdb::ViewCatalogEntry*>> views;
 
   VisitSchemas(context, database, [&](duckdb::SchemaCatalogEntry& schema_ref) {
@@ -209,9 +206,6 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           row.relacl = {table->permissions.acl};
           if (const auto* search =
                 dynamic_cast<const catalog::SearchTableEntry*>(table)) {
-            if (const auto pk_sequence = search->GeneratedPkSequence(context)) {
-              generated_pk_sequences.insert(pk_sequence->oid);
-            }
             auto& strings = reloptions_storage.emplace_back();
             auto& views = reloptions_views.emplace_back();
             const auto info = search->GetInfo();
@@ -288,14 +282,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
 
   VisitEntries<duckdb::SequenceCatalogEntry>(
     context, database, [&](const duckdb::SequenceCatalogEntry& sequence) {
-      // The synthetic primary-key sequence of a table declaring none is
-      // serenedb's own machinery, like the column it feeds: postgres has no
-      // such relation and neither does pg_class. Every other sequence is
-      // listed, internal or not, as PG lists it.
       const auto& perm = sequence.permissions;
-      if (generated_pk_sequences.contains(sequence.oid)) {
-        return;
-      }
       auto row = MakeBaseRow(sequence.ParentSchemaOid(), sequence.oid,
                              sequence.name.GetIdentifierName(), perm.owner);
       row.relkind = PgClass::Relkind::Sequence;

@@ -53,7 +53,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
                              ├──────────────────────────────────────────╮
 ╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮  ╭─ INDEX_SOURCE ─────╮
-│ Key: iresearch_pk                                       │  │ Projections: title │
+│ Key: rowid                                              │  │ Projections: title │
 │ ~5 rows                                                 │  │ ~5 rows            │
 ╰────────────────────────────┬────────────────────────────╯  ╰────────────────────╯
                              ├───────────────────────────────────────────╮
@@ -72,7 +72,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: sdb_inverted_index_score, rowid            │
 │ ~600 rows                                               │
 ╰─────────────────────────────────────────────────────────╯
 
@@ -80,26 +80,26 @@ query
 EXPLAIN SELECT title, n FROM ljpg_unkeyed_idx LIMIT 2500 OFFSET 7;
 ----
 QUERY PLAN
-╭─ LOOKUP_JOIN ─────────────╮
-│ Key: ctid                 │
-│ ~2,500 rows               │
-╰─────────────┬─────────────╯
-              ├───────────────────────────╮
-╭─ LOOKUP_JOIN ─────────────╮  ╭─ INDEX_SOURCE ─────╮
-│ Key: iresearch_pk         │  │ Projections: title │
-│ ~2,500 rows               │  │ ~2,500 rows        │
-╰─────────────┬─────────────╯  ╰────────────────────╯
-              ├─────────────────────────────╮
-╭─ STREAMING_LIMIT ─────────╮  ╭─ IRESEARCH_SCAN ────────╮
-│ Limit: 2500               │  │ Index: ljpg_unkeyed_idx │
-│ Offset: 7                 │  │ Projections: n, pk      │
-│ ~0 rows                   │  │ ~2,500 rows             │
-╰─────────────┬─────────────╯  ╰─────────────────────────╯
-╭─ IRESEARCH_SCAN ──────────╮
-│ Index: ljpg_unkeyed_idx   │
-│ Projections: iresearch_pk │
-│ ~3,000 rows               │
-╰───────────────────────────╯
+╭─ LOOKUP_JOIN ───────────╮
+│ Key: ctid               │
+│ ~2,500 rows             │
+╰────────────┬────────────╯
+             ├──────────────────────────╮
+╭─ LOOKUP_JOIN ───────────╮  ╭─ INDEX_SOURCE ─────╮
+│ Key: rowid              │  │ Projections: title │
+│ ~2,500 rows             │  │ ~2,500 rows        │
+╰────────────┬────────────╯  ╰────────────────────╯
+             ├────────────────────────────╮
+╭─ STREAMING_LIMIT ───────╮  ╭─ IRESEARCH_SCAN ────────╮
+│ Limit: 2500             │  │ Index: ljpg_unkeyed_idx │
+│ Offset: 7               │  │ Projections: n, pk      │
+│ ~0 rows                 │  │ ~2,500 rows             │
+╰────────────┬────────────╯  ╰─────────────────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: ljpg_unkeyed_idx │
+│ Projections: rowid      │
+│ ~3,000 rows             │
+╰─────────────────────────╯
 
 query
 SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)

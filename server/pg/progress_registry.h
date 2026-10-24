@@ -64,6 +64,7 @@ enum class CreateIndex : int64_t {
   BuildingIndex = 2,
   Committing = 3,
   Finalizing = 4,
+  WaitingForWriters = 5,
 };
 
 enum class CreateTableAs : int64_t {

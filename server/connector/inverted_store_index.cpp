@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/container/inlined_vector.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -217,6 +218,7 @@ struct InvertedStoreIndex::FeedQueue {
   DuckDBSinkIndexWriter& insert_writer;
   irs::IndexWriter::Transaction& trx;
   const size_t depth;
+  std::vector<search::RowBatch> written;
   absl::Mutex mutex;
   std::deque<std::unique_ptr<ReplayOp>> ops ABSL_GUARDED_BY(mutex);
   bool running ABSL_GUARDED_BY(mutex) = false;
@@ -239,8 +241,7 @@ struct InvertedStoreIndex::ReplaySession {
   ReplaySession(InvertedStoreIndex& index, duckdb::ClientContext& context)
     : context{context},
       executor{duckdb::TaskScheduler::GetScheduler(index.db.GetDatabase())},
-      delete_trx{index.NewTransaction()},
-      delete_writer{delete_trx} {
+      delete_trx{index.NewTransaction()} {
     auto& storage_manager = index.db.GetStorageManager();
     const auto& position = index._storage->PersistedPosition();
     if (position.generation ==
@@ -274,7 +275,7 @@ struct InvertedStoreIndex::ReplaySession {
   std::vector<std::unique_ptr<ReplaySlot>> slots;
   size_t next = 0;
   irs::IndexWriter::Transaction delete_trx;
-  DuckDBSearchSinkDeleteWriter delete_writer;
+  std::vector<int64_t> deleted_rows;
   bool deleting = false;
   bool replayed = false;
 };
@@ -340,6 +341,7 @@ struct InvertedStoreIndex::RangeTask final : duckdb::BaseExecutorTask {
     InvertedStoreIndex* index;
     DuckDBSinkIndexWriter* writer;
     irs::IndexWriter::Transaction* transaction;
+    std::vector<search::RowBatch>* written;
   };
 
   RangeTask(duckdb::TaskExecutor& executor,
@@ -390,7 +392,7 @@ struct InvertedStoreIndex::RangeTask final : duckdb::BaseExecutorTask {
       const auto fed = targets[t].index->Evaluate(
         context, view, row_ids, results[t], rows, executors[t].get());
       targets[t].index->Feed(*targets[t].writer, *targets[t].transaction,
-                             results[t], rows, fed);
+                             results[t], rows, fed, *targets[t].written);
     }
     row += static_cast<duckdb::row_t>(size);
     return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
@@ -491,20 +493,35 @@ duckdb::idx_t InvertedStoreIndex::Evaluate(
 void InvertedStoreIndex::Feed(DuckDBSinkIndexWriter& writer,
                               irs::IndexWriter::Transaction& trx,
                               duckdb::DataChunk& results, duckdb::Vector& rows,
-                              duckdb::idx_t count) {
+                              duckdb::idx_t count,
+                              std::vector<search::RowBatch>& written) {
   if (count != 0) {
     duckdb::UnifiedVectorFormat row_fmt;
     rows.ToUnifiedFormat(count, row_fmt);
     const auto* row_data =
       duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(row_fmt);
+    const auto row_at = [&](duckdb::idx_t i) {
+      return row_data[row_fmt.sel->get_index(i)];
+    };
     thread_local std::vector<duckdb::string_t> key_views;
     key_views.resize(count);
     for (duckdb::idx_t i = 0; i < count; ++i) {
-      key_views[i] =
-        primary_key::SignedKeyTerm(row_data[row_fmt.sel->get_index(i)]);
+      key_views[i] = primary_key::SignedKeyTerm(row_at(i));
     }
     FeedChunk(writer, count, PkChunk{.key_terms = key_views, .column = &rows},
               results, _columns, _expressions);
+    const auto start = writer.LastBatch();
+    auto& batch = written.emplace_back();
+    batch.begin = row_at(0);
+    batch.end = row_at(count - 1) + 1;
+    batch.segment = start.segment;
+    batch.doc = start.doc;
+    if (batch.end - batch.begin != static_cast<int64_t>(count)) {
+      batch.offsets.reserve(count);
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        batch.offsets.push_back(static_cast<uint32_t>(row_at(i) - batch.begin));
+      }
+    }
   }
   trx.AdvanceQueries(1);
 }
@@ -564,7 +581,8 @@ void InvertedStoreIndex::Apply(FeedQueue& queue, ReplayOp& op) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                     ERR_MSG("inverted index feed failed"));
   }
-  Feed(queue.insert_writer, queue.trx, op.results, op.rows, op.count);
+  Feed(queue.insert_writer, queue.trx, op.results, op.rows, op.count,
+       queue.written);
 }
 
 std::unique_ptr<InvertedStoreIndex::ReplayOp> InvertedStoreIndex::CopyInsert(
@@ -617,22 +635,22 @@ irs::SourcePosition InvertedStoreIndex::ReplayPosition() const {
 void InvertedStoreIndex::CommitReplay(
   std::span<irs::IndexWriter::Transaction* const> trxs,
   const irs::SourcePosition& position) {
+  absl::InlinedVector<irs::IndexWriter::Transaction*, 16> written;
   uint64_t queries = 0;
   for (auto* trx : trxs) {
     if (trx->GetQueries() != 0) {
-      trx->RegisterFlush();
+      written.push_back(trx);
       queries = std::max<uint64_t>(queries, trx->GetQueries());
     }
   }
-  if (queries == 0) {
+  if (written.empty()) {
     return;
   }
+  irs::IndexWriter::Transaction::RegisterFlush(written);
   const auto tick = _storage->NextTick(queries);
-  for (auto* trx : trxs) {
-    if (trx->GetQueries() != 0) {
-      SDB_ENSURE(trx->Commit(tick, position),
-                 "inverted index replay: commit failed for index ", _index_id);
-    }
+  for (auto* trx : written) {
+    SDB_ENSURE(trx->Commit(tick, position),
+               "inverted index replay: commit failed for index ", _index_id);
   }
 }
 
@@ -643,7 +661,30 @@ void InvertedStoreIndex::CommitReplaySlots(
   for (auto& slot : session.slots) {
     trxs.push_back(&slot->trx);
   }
+  irs::IndexWriter::Transaction::RegisterFlush(trxs);
+  for (auto& slot : session.slots) {
+    _storage->AddRows(std::exchange(slot->queue.written, {}),
+                      slot->trx.FlushGeneration());
+  }
   CommitReplay(trxs, position);
+}
+
+void InvertedStoreIndex::CommitReplayDeletes(
+  ReplaySession& session, const irs::SourcePosition& position) {
+  const auto pinned = _storage->CommittedReader();
+  irs::DocRemovalBuilder found;
+  std::vector<int64_t> missing;
+  _storage->FindRows(session.deleted_rows, found, missing);
+  session.deleted_rows.clear();
+  const auto resolved = _storage->ResolveRows(std::move(missing), found);
+  if (found.Empty()) {
+    return;
+  }
+  auto removal = std::move(found).Finish();
+  removal.unflushed = true;
+  session.delete_trx.Remove(std::move(removal));
+  irs::IndexWriter::Transaction* deletes[] = {&session.delete_trx};
+  CommitReplay(deletes, position);
 }
 
 void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
@@ -654,8 +695,7 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
   }
   session->replayed = true;
   if (std::exchange(session->deleting, false)) {
-    irs::IndexWriter::Transaction* deletes[] = {&session->delete_trx};
-    CommitReplay(deletes, ReplayPosition());
+    CommitReplayDeletes(*session, ReplayPosition());
   }
   duckdb::DataChunk results;
   duckdb::Vector rows{duckdb::LogicalType::ROW_TYPE, nullptr, 0};
@@ -686,9 +726,9 @@ void InvertedStoreIndex::ReplayDelete(duckdb::DataChunk& chunk,
   duckdb::UnifiedVectorFormat fmt;
   row_ids.ToUnifiedFormat(count, fmt);
   const auto* data = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(fmt);
-  std::string key;
-  FeedDeletes(session->delete_writer, key, count,
-              [&](size_t i) { return data[fmt.sel->get_index(i)]; });
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    session->deleted_rows.push_back(data[fmt.sel->get_index(i)]);
+  }
 }
 
 bool InvertedStoreIndex::FinishReplay() {
@@ -702,8 +742,7 @@ bool InvertedStoreIndex::FinishReplay() {
     storage_manager.GetBlockManager().GetCheckpointIteration(),
     storage_manager.GetWALSize()};
   if (session.deleting) {
-    irs::IndexWriter::Transaction* deletes[] = {&session.delete_trx};
-    CommitReplay(deletes, end);
+    CommitReplayDeletes(session, end);
   } else {
     CommitReplaySlots(session, end);
   }
@@ -733,17 +772,16 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
   }
   if (prepared == 0) {
     auto& context = conn->GetClientContext();
-    auto& trx = conn->EnsureIndexTransaction(_index_id, _storage, _config);
-    const auto writer = MakeInsertWriter(trx, *_config, [&](irs::field_id id) {
-      return _tokenizers.Acquire(id, context);
-    });
-    Feed(*writer, trx, results, rows, count);
-    conn->RegisterIndexFlush(_index_id);
+    auto& slot = conn->EnsureIndexSlot(_index_id, _storage, _config);
+    const auto writer = MakeInsertWriter(
+      *slot.transaction, *_config,
+      [&](irs::field_id id) { return _tokenizers.Acquire(id, context); });
+    Feed(*writer, *slot.transaction, results, rows, count, slot.rows);
     return {};
   }
   if (prepared == 1) {
-    Feed(*slots[0].writer, *slots[0].transaction, results, rows, count);
-    conn->RegisterIndexFlush(_index_id);
+    Feed(*slots[0].writer, *slots[0].transaction, results, rows, count,
+         slots[0].rows);
   } else if (count != 0) {
     if (!_live) {
       _live = std::make_unique<LiveFeed>(db.GetDatabase());
@@ -770,7 +808,14 @@ duckdb::ErrorData InvertedStoreIndex::FinishAppend() {
     return duckdb::ErrorData{e};
   }
   if (auto* conn = CurrentCommittingContext()) {
-    conn->RegisterIndexFlush(_index_id);
+    const auto slots = conn->IndexSlots(_index_id);
+    SDB_ASSERT(live->queues.size() <= slots.size());
+    for (size_t k = 0; k < live->queues.size(); ++k) {
+      auto& written = live->queues[k].written;
+      slots[k].rows.insert(slots[k].rows.end(),
+                           std::make_move_iterator(written.begin()),
+                           std::make_move_iterator(written.end()));
+    }
   }
   return {};
 }
@@ -838,6 +883,7 @@ bool InvertedStoreIndex::AppendLocal(
     return row - (row - group) % STANDARD_VECTOR_SIZE;
   };
   const auto ranges = std::max<duckdb::idx_t>(2, slots - 1);
+  std::vector<std::vector<search::RowBatch>> written(ranges * indexes.size());
   for (duckdb::idx_t k = 0; k < ranges; ++k) {
     const auto begin = vector_start(k * count / ranges);
     const auto end =
@@ -847,9 +893,11 @@ bool InvertedStoreIndex::AppendLocal(
     }
     std::vector<RangeTask::Target> targets;
     targets.reserve(indexes.size());
-    for (const auto& [inverted, prepared] : indexes) {
-      targets.push_back(
-        {inverted, prepared[k].writer.get(), prepared[k].transaction.get()});
+    for (size_t i = 0; i < indexes.size(); ++i) {
+      const auto& [inverted, prepared] = indexes[i];
+      targets.push_back({inverted, prepared[k].writer.get(),
+                         prepared[k].transaction.get(),
+                         &written[k * indexes.size() + i]});
     }
     executor.ScheduleTask(duckdb::make_uniq<RangeTask>(
       executor, transaction, context, source, mapped_column_ids,
@@ -860,8 +908,13 @@ bool InvertedStoreIndex::AppendLocal(
   } catch (const std::exception& e) {
     error = duckdb::ErrorData{e};
   }
-  for (const auto& [inverted, prepared] : indexes) {
-    conn->RegisterIndexFlush(inverted->_index_id);
+  for (duckdb::idx_t k = 0; k < ranges; ++k) {
+    for (size_t i = 0; i < indexes.size(); ++i) {
+      auto& rows = indexes[i].second[k].rows;
+      auto& batches = written[k * indexes.size() + i];
+      rows.insert(rows.end(), std::make_move_iterator(batches.begin()),
+                  std::make_move_iterator(batches.end()));
+    }
   }
   return true;
 }
@@ -886,25 +939,18 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
               "the index first or recreate it without store_pk = "
               "'none'"));
   }
-  auto& trx = conn->EnsureIndexTransaction(_index_id, _storage, _config);
-  const auto remove = [&](size_t n, auto&& row_at) {
-    DuckDBSearchSinkDeleteWriter writer{trx};
-    std::string key;
-    FeedDeletes(writer, key, n, row_at);
-  };
   duckdb::UnifiedVectorFormat fmt;
   row_ids.ToUnifiedFormat(count, fmt);
   const auto* data = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(fmt);
+  std::vector<int64_t> native;
+  native.reserve(count);
   if (_storage->IsDeleteLogOpen()) {
-    const auto log_begin = _storage->DeleteLogRowidBegin();
     const auto log_end = _storage->DeleteLogRowidEnd();
-    std::vector<int64_t> native;
     std::vector<int64_t> logged;
-    native.reserve(count);
     logged.reserve(count);
     for (duckdb::idx_t i = 0; i < count; ++i) {
       const int64_t row = data[fmt.sel->get_index(i)];
-      (row < log_begin || row >= log_end ? native : logged).push_back(row);
+      (row >= log_end ? native : logged).push_back(row);
     }
     // Reads like a use-after-move and is not: AppendDeleteLog only takes the
     // vector when it accepts it, and returns false without touching it once the
@@ -912,13 +958,14 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
     if (!logged.empty() && !_storage->AppendDeleteLog(std::move(logged))) {
       absl::c_move(logged, std::back_inserter(native));
     }
-    if (!native.empty()) {
-      remove(native.size(), [&](size_t i) { return native[i]; });
-    }
   } else {
-    remove(count, [&](size_t i) { return data[fmt.sel->get_index(i)]; });
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      native.push_back(data[fmt.sel->get_index(i)]);
+    }
   }
-  conn->RegisterIndexFlush(_index_id);
+  if (!native.empty()) {
+    conn->RemoveIndexRows(_index_id, _storage, _config, native);
+  }
 }
 
 idx_t InvertedStoreIndex::TryDelete(
@@ -957,8 +1004,12 @@ duckdb::unique_ptr<duckdb::BoundIndex> InvertedStoreIndex::Create(
 
 duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(
   duckdb::QueryContext, const duckdb::case_insensitive_map_t<duckdb::Value>&) {
-  SDB_ENSURE(!_storage->IsOutOfSync(), "inverted index ", _index_id,
-             " is out of sync with its store table; refusing to checkpoint");
+  if (_storage->IsOutOfSync()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("inverted index ", _index_id,
+              " is out of sync with its store table; refusing to checkpoint"));
+  }
   return StorageRecord(*this);
 }
 
@@ -1006,15 +1057,21 @@ PublishedInvertedIndex PublishInvertedIndex(
     entry.ResolveTokenizers(context), static_cast<bool>(entry.where_clause));
   auto commit_lock = data.db.GetStorageManager().GetCommitLock();
   data.AddIndex(std::move(index), entry.oid);
-  const auto rowid_horizon = data.GetNextRowId();
-  auto& transaction = duckdb::DuckTransaction::Get(context, data.db);
-  const auto undo = transaction.GetUndoProperties();
-  if (!undo.has_updates && !undo.has_deletes) {
-    auto& manager = duckdb::DuckTransactionManager::Get(data.db);
-    manager.WaitForDurability();
-    manager.AdvanceStartTime(transaction);
+  return {std::move(storage), data.GetNextRowId()};
+}
+
+void WaitForWritersBeforeBuild(duckdb::ClientContext& context,
+                               duckdb::DataTable& data,
+                               pg::ProgressMetrics* progress) {
+  if (progress) {
+    progress->SetPhase(pg::progress_phase::CreateIndex::WaitingForWriters);
   }
-  return {std::move(storage), rowid_horizon};
+  auto& manager = duckdb::DuckTransactionManager::Get(data.db);
+  auto& transaction = duckdb::DuckTransaction::Get(context, data.db);
+  manager.WaitForOlderTransactions(context, transaction);
+  auto commit_lock = data.db.GetStorageManager().GetCommitLock();
+  manager.WaitForDurability();
+  manager.AdvanceStartTime(transaction);
 }
 
 }  // namespace sdb::connector

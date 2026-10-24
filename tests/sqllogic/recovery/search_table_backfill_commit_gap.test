@@ -30,7 +30,7 @@ tuples_done
 
 connection default
 statement ok
-SET sdb_faults = 'pause_search_commit_before_delete_log';
+SET sdb_faults = 'pause_search_commit_before_build_truncate';
 
 connection deleter
 statement async ok
@@ -38,7 +38,7 @@ DELETE FROM bcg WHERE id = 2;
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
+SET sdb_faults = '-pause_search_commit_before_build_truncate:parked';
 
 connection default
 statement ok
@@ -62,14 +62,14 @@ SET sdb_faults = '-pause_search_backfill_before_swap';
 
 # Best effort: nothing observable says the build has reached the swap and is
 # waiting on the commit-gap lock, so the sleep only gives it time to get there.
-# If the deleter wins anyway, it records its delete before the swap drains the
-# log and the test passes even without the gap lock -- it misses a regression
-# on that run rather than failing spuriously.
+# If the deleter wins anyway, its delete reaches the rebuilt segment through the
+# swap's carry-over and the test passes even without the gap lock -- it misses a
+# regression on that run rather than failing spuriously.
 sleep 1s
 
 connection default
 statement ok
-SET sdb_faults = 'pause_search_commit_before_delete_log:release';
+SET sdb_faults = 'pause_search_commit_before_build_truncate:release';
 
 wait
 

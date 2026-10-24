@@ -46,6 +46,8 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/async_utils.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/object_pool.hpp"
 
@@ -54,6 +56,7 @@ namespace duckdb {
 class DatabaseInstance;
 }
 #include "iresearch/index/directory_reader.hpp"
+#include "iresearch/index/doc_removal.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -61,7 +64,6 @@ class DatabaseInstance;
 #include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
-#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -177,6 +179,7 @@ class IndexWriter : private util::Noncopyable {
     auto* Segment() const noexcept { return _segment.get(); }
     auto* Segment() noexcept { return _segment.get(); }
     auto* Flush() noexcept { return _flush; }
+    const FlushContext* Flush() const noexcept { return _flush; }
 
    private:
     friend struct FlushContext;
@@ -198,25 +201,6 @@ class IndexWriter : private util::Noncopyable {
   }
 
  public:
-  struct QueryContext {
-    using FilterPtr = std::shared_ptr<const irs::Filter>;
-
-    QueryContext() = default;
-
-    QueryContext(FilterPtr filter, uint64_t tick)
-      : filter{std::move(filter)}, tick{tick} {
-      SDB_ASSERT(this->filter);
-    }
-    QueryContext(const irs::Filter& filter, uint64_t tick)
-      : QueryContext{{FilterPtr{}, &filter}, tick} {}
-    QueryContext(irs::Filter::ptr&& filter, uint64_t tick)
-      : QueryContext{FilterPtr{std::move(filter)}, tick} {}
-
-    FilterPtr filter;
-    uint64_t tick;
-  };
-  static_assert(std::is_nothrow_move_constructible_v<QueryContext>);
-
   class Document : private util::Noncopyable {
    public:
     Document(SegmentContext& segment, uint64_t tick, doc_id_t batch_size = 1);
@@ -262,6 +246,8 @@ class IndexWriter : private util::Noncopyable {
 
     doc_id_t DocId() const noexcept { return _doc_id; }
 
+    std::string_view SegmentName() const noexcept { return _writer.name(); }
+
    private:
     void Finish() noexcept;
 
@@ -288,19 +274,22 @@ class IndexWriter : private util::Noncopyable {
       return {*_active.Segment(), _queries, batch_size};
     }
 
-    template<bool TickBound = true, typename Filter>
-    void Remove(Filter&& filter) {
+    void Remove(DocRemoval removal) {
       UpdateSegment(true, nullptr);
-      _active.Segment()->queries.emplace_back(std::forward<Filter>(filter),
-                                              _queries);
-      if constexpr (TickBound) {
-        ++_queries;
-      }
+      removal.tick = _queries++;
+      _active.Segment()->removals.emplace_back(std::move(removal));
     }
+
+    void AcquireSegment() { UpdateSegment(true, nullptr); }
 
     void Reset() noexcept;
 
     void RegisterFlush() noexcept;
+
+    static void RegisterFlush(
+      std::span<Transaction* const> transactions) noexcept;
+
+    uint64_t FlushGeneration() const noexcept;
 
     bool Commit() noexcept {
       auto* segment = _active.Segment();
@@ -391,6 +380,10 @@ class IndexWriter : private util::Noncopyable {
     return DirectoryReader{GetSnapshotImpl()};
   }
 
+  uint64_t CommittedGeneration() const noexcept {
+    return _committed_generation.load(std::memory_order_acquire);
+  }
+
   uint64_t BufferedDocs() const;
 
   bool HasActiveSegments() const noexcept {
@@ -446,10 +439,15 @@ class IndexWriter : private util::Noncopyable {
 
   uint64_t CurrentSegmentId() const noexcept;
 
-  void ReplaceSegments(
-    std::span<const std::string_view> replaced,
-    std::span<const std::string_view> adopted_metas,
-    absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider);
+  struct Replacement {
+    std::string_view meta_file;
+    std::vector<DocMap> absorbed;
+  };
+
+  void ReplaceSegments(std::span<const std::string_view> replaced,
+                       std::span<Replacement> adopted);
+
+  DocMapList CopyDocMaps(std::span<const uint32_t> segments) const;
 
   static IndexWriter::ptr Make(Directory& dir, OpenMode mode,
                                IndexWriterOptions opts = {});
@@ -539,7 +537,7 @@ class IndexWriter : private util::Noncopyable {
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
     CompactionContext compaction_ctx;
-    QueryContext::FilterPtr removal;
+    DocMapList replaced;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<IncomingSegment>);
@@ -570,13 +568,13 @@ class IndexWriter : private util::Noncopyable {
     std::atomic_size_t buffered_docs{0};
     RefTrackingDirectory dir;
 
-    ManagedVector<QueryContext> queries;
+    ManagedVector<DocRemoval> removals;
     ManagedVector<FlushedSegment> flushed;
 
     segment_meta_generator_t meta_generator;
 
-    size_t flushed_queries{0};
-    size_t committed_queries{0};
+    size_t flushed_removals{0};
+    size_t committed_removals{0};
     size_t committed_buffered_docs{0};
 
     bool committed{false};
@@ -659,6 +657,7 @@ class IndexWriter : private util::Noncopyable {
     RefTrackingDirectory::ptr dir;
     absl::Mutex context_mutex;
     FlushContext* next{nullptr};
+    std::atomic_uint64_t generation{0};
 
     std::vector<std::shared_ptr<SegmentContext>> segments;
     SourcePosition position;
@@ -704,6 +703,8 @@ class IndexWriter : private util::Noncopyable {
   struct PendingBase {
     FlushContextPtr ctx{nullptr, nullptr};
     SourcePosition position;
+    uint64_t seq = 0;
+    uint64_t generation = 0;
 
     void StartReset(IndexWriter& writer) noexcept {
       auto* curr = ctx.get();
@@ -757,6 +758,7 @@ class IndexWriter : private util::Noncopyable {
 
   uint64_t NextSegmentId() noexcept;
   void InitMeta(IndexMeta& meta) const;
+  void AbsorbDocMaps(DocMapList maps);
 
   bool Start(const CommitInfo& info);
   void Finish();
@@ -776,7 +778,16 @@ class IndexWriter : private util::Noncopyable {
   } _compacting;
   Directory& _dir;
   std::atomic<FlushContext*> _flush_context;
+  std::atomic_uint64_t _committed_generation{0};
   std::shared_ptr<const DirectoryReaderImpl> _committed_reader;
+  struct PublishedReader {
+    uint64_t seq;
+    std::weak_ptr<const DirectoryReaderImpl> reader;
+  };
+  std::vector<PublishedReader> _published;
+  uint64_t _commit_seq = 0;
+  mutable absl::Mutex _doc_maps_mutex;
+  DocMaps _doc_maps ABSL_GUARDED_BY(_doc_maps_mutex);
   PendingState _pending_state;
   SegmentLimits _segment_limits;
   SegmentPool _segment_writer_pool;

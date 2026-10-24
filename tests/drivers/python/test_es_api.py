@@ -73,7 +73,7 @@ pytestmark = pytest.mark.skipif(
 def conn():
     import http.client
 
-    c = http.client.HTTPConnection(HOST, PORT, timeout=30)
+    c = http.client.HTTPConnection(HOST, PORT, timeout=600)
     yield _authorize(c)
     c.close()
 

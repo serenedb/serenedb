@@ -29,13 +29,9 @@ Common options:
 
 ## The sqlite corpus
 
-`any/pg/sqlite` is a submodule of [serenedb/sqllogictest](https://github.com/serenedb/sqllogictest): DuckDB's copy of SQLite's sqllogictest corpus as upstream ships it, with our changes on top as commits (the tests SereneDB doesn't run removed, the skips for PostgreSQL and SereneDB, PostgreSQL's results where they differ from SQLite's). Only CI's test jobs check it out:
+`any/pg/sqlite` is a submodule of [serenedb/sqllogictest](https://github.com/serenedb/sqllogictest): DuckDB's copy of SQLite's sqllogictest corpus as upstream ships it, with our changes on top as commits (the tests SereneDB doesn't run removed, the skips for PostgreSQL and SereneDB, PostgreSQL's results where they differ from SQLite's). Nothing clones it by default: `scripts/ci/test.py --corpus` checks it out and runs it, and a CI run does so only when asked (the trigger comment's sqlite corpus box, the nightly's `CORPUS` input) or when its diff changes the corpus.
 
-```bash
-git submodule update --init --checkout tests/sqllogic/any/pg/sqlite
-```
-
-Its files are in sqllogictest's original format (no column names, one value per line, results over 8 values hashed), which `test.py` and `run.sh` tell the runner. A big file runs as several units of the runner's `--part`, sized from the timing store; `--fast` skips the corpus.
+Its files are in sqllogictest's original format (no column names, one value per line, results over 8 values hashed), which `test.py` tells the runner. A big file runs as several units of the runner's `--part`, sized from the timing store.
 
 ## Generated Tests
 

@@ -31,7 +31,7 @@ rm -rf "$out/profiles" "$out/merged.profdata"
 python3 scripts/ci/ci.py nearest --coverage "$out/coverage.json" --spans "$out/spans.json" --arch "$ARCH" ||
 	echo "warning: no nearest tests for the uncovered lines" >&2
 
-if [[ "$CONFIG" == dev && -n "${SDB_PR:-}" ]]; then
+if [[ "$CONFIG" == dev && -n "${SDB_PR:-}" && "${SDB_EVERYTHING:-false}" != true ]]; then
 	read -ra test_args <<<"${TEST_ARGS:-}"
 	python3 scripts/ci/ci.py timing --config "$CONFIG" --arch "$ARCH" --out "$out/timing.json"
 	docker run --rm --user "$(id -u):$(id -g)" --group-add "$(stat -c '%g' /var/run/docker.sock)" \

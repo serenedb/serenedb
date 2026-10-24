@@ -2,11 +2,16 @@
 
 set -euo pipefail
 
+args=()
+if [[ "${CORPUS:-false}" == true ]]; then
+	args+=(--corpus)
+fi
 if [[ "${EVERYTHING:-false}" == true ]]; then
+	echo "${args[*]}"
 	exit 0
 fi
 
-args=(--suite sqllogic --suite recovery --suite gtest --suite drivers --suite stress)
+args+=(--suite sqllogic --suite recovery --suite gtest --suite drivers --suite stress)
 if [[ "${IRESEARCH:-false}" == true ]]; then
 	args+=(--suite iresearch --suite iresearch-load)
 fi
@@ -22,7 +27,5 @@ if [[ -n "${DUCKDB_SUITES:-}" ]]; then
 fi
 if [[ ",${DUCKDB_SUITES:-}," == *,core,* ]]; then
 	args+=(--suite sqlsmith)
-elif [[ "${CORPUS:-false}" != true ]]; then
-	args+=(--exclude 'sqllogic:*:sdb/pg/any/sqlite/*')
 fi
 echo "${args[*]}"

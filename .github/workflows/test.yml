@@ -89,9 +89,6 @@ jobs:
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
           git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
 
-      - name: Check out the sqlite corpus
-        run: git submodule update --init --checkout --depth=1 tests/sqllogic/any/pg/sqlite
-
       - name: Fetch the timing snapshot
         uses: actions/download-artifact@v7
         with:

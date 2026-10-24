@@ -9,7 +9,7 @@ import services
 from .. import reports
 from ..scheduler import CRASHED, FAILED, PASSED, STUCK, Fixture, Outcome, Unit
 from ..servers import RestartingServer, Server, ServerPool
-from . import Skip, plan, skipped
+from . import plan, skipped
 
 ENGINES = ("pg-wire-simple", "pg-wire-extended")
 PLANNED_EXITS = (0, 75)
@@ -133,19 +133,24 @@ def corpus_parts(ctx, uid):
     return max(1, min(MAX_PARTS, round(cost / (PART_SECONDS * ctx.config.slowdown))))
 
 
+def check_out_corpus(ctx):
+    corpus = sqllogic_dir(ctx) / "any" / "pg" / "sqlite"
+    if corpus.is_dir() and any(corpus.iterdir()):
+        return
+    subprocess.run(["git", "-C", str(ctx.root), "submodule", "update", "--init", "--checkout",
+                    "--depth=1", "tests/sqllogic/any/pg/sqlite"], check=True)
+
+
 def sqllogic_units(ctx, args, skips):
     base = sqllogic_dir(ctx)
     generate_tests(ctx)
+    if args.corpus:
+        check_out_corpus(ctx)
     units = []
-    corpus = base / "any" / "pg" / "sqlite"
-    if not corpus.is_dir() or not any(corpus.iterdir()):
-        ctx.skips.append((f"sqllogic:*:{CORPUS}*", Skip(CORPUS, "submodule",
-                          "not checked out: git submodule update --init --checkout "
-                          "tests/sqllogic/any/pg/sqlite")))
     pool = () if ctx.attribute else ("servers",)
     for path in find_tests(base / "sdb", args.fast):
         rel = str(path.relative_to(base))
-        if args.fast and CORPUS in rel:
+        if CORPUS in rel and not args.corpus:
             continue
         try:
             fixtures = service_fixture_names(path, args.biglake)

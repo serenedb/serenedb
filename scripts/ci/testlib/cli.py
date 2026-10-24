@@ -38,6 +38,9 @@ def parse_args(argv):
     ap.add_argument("--exclude", action="append", default=[],
                     help="drop units whose id matches this glob (repeatable)")
     ap.add_argument("--fast", action="store_true", help="skip .test_slow files")
+    ap.add_argument("--corpus", action="store_true",
+                    help="also run the sqlite corpus (tests/sqllogic/any/pg/sqlite), "
+                         "checking the submodule out when it is not")
     ap.add_argument("--biglake", action="store_true",
                     help="run the iceberg tests against Google BigLake (needs BIGLAKE_* env)")
     ap.add_argument("--duckdb-suite", dest="duckdb_suites", action="append",

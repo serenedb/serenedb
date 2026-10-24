@@ -42,7 +42,9 @@ jobs:
               '',
               '#### Extra (optional; every config runs every suite the diff selects)',
               '- [ ] All architectures (arm64 tests too; arm64 always builds)',
-              '- [ ] Ignore diff, run everything',
+              '- [ ] Ignore diff and coverage mapping, run everything',
+              '- [ ] Bugfix check (the changed tests must fail on the merge base)',
+              '- [ ] sqlite corpus (tests/sqllogic/any/pg/sqlite)',
               '- [ ] BigLake tests (sqllogic + recovery + stress against the real catalog)',
               '',
               '---',
@@ -102,7 +104,9 @@ jobs:
             const isChecked = (label) => body.includes(`- [x] ${label}`);
 
             const allArch = isChecked('All architectures');
-            const everything = isChecked('Ignore diff, run everything');
+            const everything = isChecked('Ignore diff and coverage mapping, run everything');
+            const bugfix = isChecked('Bugfix check');
+            const corpus = isChecked('sqlite corpus');
             const biglake = isChecked('BigLake tests');
 
             const { owner, repo } = context.repo;
@@ -132,6 +136,8 @@ jobs:
               inputs: {
                 LOCATION: allArch ? 'all' : 'linux-amd64',
                 EVERYTHING: everything.toString(),
+                BUGFIX: bugfix.toString(),
+                CORPUS: corpus.toString(),
                 BIGLAKE: biglake.toString(),
                 PR_SHA: sha,
                 PR_NUMBER: String(context.payload.issue.number),
@@ -169,6 +175,8 @@ jobs:
 
             const opts = [
               everything && 'everything',
+              bugfix && 'bugfix check',
+              corpus && 'corpus',
               allArch && 'all arch',
               biglake && 'biglake',
             ].filter(Boolean);

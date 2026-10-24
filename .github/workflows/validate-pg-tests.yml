@@ -23,6 +23,11 @@ on:
         type: string
         required: false
         default: ""
+      CORPUS:
+        description: "Also validate the sqlite corpus (tests/sqllogic/any/pg/sqlite)"
+        type: boolean
+        required: false
+        default: false
   workflow_call:
     inputs:
       LOCATION:
@@ -45,6 +50,11 @@ on:
         type: string
         required: false
         default: ""
+      CORPUS:
+        description: "Also validate the sqlite corpus (tests/sqllogic/any/pg/sqlite)"
+        type: boolean
+        required: false
+        default: false
 
 env:
   WORKSPACE: ${{ github.workspace }}
@@ -78,9 +88,11 @@ jobs:
           clean: true
 
       - name: Checkout test submodules
-        run: |
-          git submodule update --init --depth=1 third_party/sqllogictest-rs
-          git submodule update --init --checkout --depth=1 tests/sqllogic/any/pg/sqlite
+        run: git submodule update --init --depth=1 third_party/sqllogictest-rs
+
+      - name: Checkout the sqlite corpus
+        if: inputs.CORPUS
+        run: git submodule update --init --checkout --depth=1 tests/sqllogic/any/pg/sqlite
 
       - name: Prepare
         run: |

@@ -91,35 +91,11 @@ struct LmJmScore : public ScoreOperatorOf<LmJmScore<HasScale>> {
 
 void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
                               const TermCollector* term) const {
-  auto* stats = stats_cast(stats_buf);
-
-  const auto ttf_field = field ? field->total_term_freq : 0;
-  const auto ttf_term = term ? term->total_term_freq : 0;
-
-  const double num = static_cast<double>(ttf_term) + 1.0;
-  const double den = static_cast<double>(ttf_field) + 1.0;
-  stats->collection_prob = static_cast<score_t>(num / den);
+  CollectLMStats(*stats_cast(stats_buf), field, term);
 }
 
 ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
-  auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
-  if (!freq) {
-    return ScoreFunction::Default();
-  }
-
-  auto* stats = stats_cast(ctx.stats);
-  if (stats->collection_prob <= 0.f) {
-    return ScoreFunction::Default();
-  }
-
-  const uint32_t* norm = NormsOf(ctx);
-
-  const auto* scale = ScaleOf(ctx);
-
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
-    return ScoreFunction::Make<LmJmScore<HasScale>>(ctx.boost, _lambda, *stats,
-                                                    freq, norm, scale);
-  });
+  return PrepareLMScorer<LmJmScore>(ctx, *stats_cast(ctx.stats), _lambda);
 }
 
 std::string LMJelinekMercer::ToString() const {

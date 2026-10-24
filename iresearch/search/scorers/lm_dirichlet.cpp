@@ -94,35 +94,14 @@ struct LmDirScore : public ScoreOperatorOf<LmDirScore<HasScale>> {
 
 void LMDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
                           const TermCollector* term) const {
-  auto* stats = stats_cast(stats_buf);
-
-  const auto ttf_field = field ? field->total_term_freq : 0;
-  const auto ttf_term = term ? term->total_term_freq : 0;
-
-  const double num = static_cast<double>(ttf_term) + 1.0;
-  const double den = static_cast<double>(ttf_field) + 1.0;
-  stats->collection_prob = static_cast<score_t>(num / den);
+  CollectLMStats(*stats_cast(stats_buf), field, term);
 }
 
 ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
-  auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
-  if (!freq) {
+  if (_mu <= 0.f) {
     return ScoreFunction::Default();
   }
-
-  auto* stats = stats_cast(ctx.stats);
-  if (stats->collection_prob <= 0.f || _mu <= 0.f) {
-    return ScoreFunction::Default();
-  }
-
-  const uint32_t* norm = NormsOf(ctx);
-
-  const auto* scale = ScaleOf(ctx);
-
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
-    return ScoreFunction::Make<LmDirScore<HasScale>>(ctx.boost, _mu, *stats,
-                                                     freq, norm, scale);
-  });
+  return PrepareLMScorer<LmDirScore>(ctx, *stats_cast(ctx.stats), _mu);
 }
 
 std::string LMDirichlet::ToString() const {

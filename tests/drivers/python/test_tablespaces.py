@@ -895,6 +895,32 @@ def test_an_orphan_object_of_a_search_table_is_removed_after_a_restart(
             again.stop()
 
 
+def test_a_partitioned_copy_to_s3_checks_its_target_with_one_listing(tmp_path: Path) -> None:
+    target = f"s3://bucket/copied-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE PERSISTENT SECRET copy_store (TYPE s3, KEY_ID 'key', SECRET 'secret', "
+                    f"ENDPOINT '{fake.endpoint}', URL_STYLE 'path', USE_SSL false, SCOPE '{target}')")
+                conn.execute(f"COPY (SELECT i % 10 AS p, i FROM range(1000) t(i)) TO '{target}' "
+                             "(FORMAT csv, PARTITION_BY (p))")
+                written = fake.keys("bucket", f"copied-{tmp_path.name}/")
+                assert len(written) == 10, written
+                listings = fake.requests["LIST"]
+                conn.execute(f"COPY (SELECT i % 5 AS p, i FROM range(100) t(i)) TO '{target}' "
+                             "(FORMAT csv, PARTITION_BY (p), OVERWRITE)")
+                assert fake.requests["LIST"] - listings == 1, fake.requests
+                rewritten = fake.keys("bucket", f"copied-{tmp_path.name}/")
+                assert [key.split("/")[1] for key in rewritten] == [f"p={i}" for i in range(5)], rewritten
+                with pytest.raises(psycopg.Error, match="is not empty"):
+                    conn.execute(f"COPY (SELECT 1 AS p, 2 AS i) TO '{target}' (FORMAT csv, PARTITION_BY (p))")
+        finally:
+            server.stop()
+
+
 @pytest.mark.parametrize("kind", ["s3", "azure"])
 def test_a_restart_lists_each_directory_once(tmp_path: Path, kind: str) -> None:
     prefix = f"listed-{tmp_path.name}"

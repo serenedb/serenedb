@@ -30,11 +30,15 @@ def free_port():
 
 
 def listens_on(pid, ports):
+    if not os.path.isdir("/proc/self/fd"):
+        return True
     fd_dir = f"/proc/{pid}/fd"
-    if not os.path.isdir(fd_dir):
-        return not os.path.isdir("/proc/self/fd")
+    try:
+        names = os.listdir(fd_dir)
+    except OSError:
+        return False
     sockets = set()
-    for name in os.listdir(fd_dir):
+    for name in names:
         try:
             target = os.readlink(os.path.join(fd_dir, name))
         except OSError:

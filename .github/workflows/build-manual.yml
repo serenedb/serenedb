@@ -184,11 +184,11 @@ jobs:
           submodules: true
           clean: false
 
-      - name: Clean the checkout, keeping the build directories
+      - name: Clean the checkout
         run: |
           git config --global --add safe.directory '*'
           docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
-          git clean -ffdxq -e '/build_*/'
+          git clean -ffdxq
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
           git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
 
@@ -260,10 +260,10 @@ jobs:
           fetch-depth: 1
           submodules: true
           clean: false
-      - name: Clean the checkout, keeping the build directories
+      - name: Clean the checkout
         run: |
           docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
-          git clean -ffdxq -e '/build_*/'
+          git clean -ffdxq
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
           git submodule update --init --checkout --depth=1 tests/sqllogic/any/pg/sqlite
       - name: The changed tests fail without the fix

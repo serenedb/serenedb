@@ -40,14 +40,8 @@ on:
         type: string
         required: false
         default: ""
-      BUILD_IMAGE:
-        description: "Build image (empty = the one scripts/ci/build-image.txt pins)"
-        type: string
-        required: false
-        default: ""
 
 env:
-  BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
   SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
   SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
   SDB_SHA: ${{ inputs.PR_SHA || github.sha }}

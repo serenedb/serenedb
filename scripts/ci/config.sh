@@ -1,6 +1,6 @@
 #!/bin/bash
 
-: "${BUILD_IMAGE:=$(<"$(dirname "${BASH_SOURCE[0]}")/build-image.txt")}"
+BUILD_IMAGE=$(python3 "$(dirname "${BASH_SOURCE[0]}")/ci.py" image)
 export BUILD_IMAGE
 
 sdb_config() {

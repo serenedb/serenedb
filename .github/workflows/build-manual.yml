@@ -96,63 +96,65 @@ jobs:
             echo "corpus=$CORPUS"
           } >> "$GITHUB_OUTPUT"
 
-  perf:
+  image:
     needs: prepare
+    uses: ./.github/workflows/build-images.yml
+    with:
+      REF: ${{ inputs.PR_SHA || github.sha }}
+    secrets: inherit
+
+  perf:
+    needs: [prepare, image]
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: perf
       TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   dev:
-    needs: prepare
+    needs: [prepare, image]
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: dev
       TEST_ARGS: ${{ needs.prepare.outputs.test_args }} --changed origin/main --repeat 3
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   asan:
-    needs: prepare
+    needs: [prepare, image]
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: asan
       TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   tsan:
-    needs: prepare
+    needs: [prepare, image]
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: tsan
       TEST_ARGS: ${{ needs.prepare.outputs.test_args }} --changed origin/main --repeat 3
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   msan:
-    needs: prepare
+    needs: [prepare, image]
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: msan
       TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   perf-arm64:
-    needs: prepare
+    needs: [prepare, image]
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: perf
@@ -161,11 +163,10 @@ jobs:
       TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   dev-arm64:
-    needs: prepare
+    needs: [prepare, image]
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: dev
@@ -174,7 +175,6 @@ jobs:
       TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   coverage:
@@ -185,7 +185,6 @@ jobs:
       - linux-amd64
     timeout-minutes: 60
     env:
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
       SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       SDB_SHA: ${{ inputs.PR_SHA || github.sha }}
       SDB_PR: ${{ inputs.PR_NUMBER }}
@@ -249,18 +248,16 @@ jobs:
       TEST_ARGS: --biglake --suite sqllogic --suite recovery --suite stress --stress-profile biglake-reindex-smoke
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   bugfix:
     name: bugfix check
-    needs: prepare
+    needs: [prepare, image]
     if: inputs.BUGFIX
     runs-on:
       - linux-amd64
     timeout-minutes: 240
     env:
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
       SDB_STORE_RESULTS: "false"
     steps:
       - name: Reap containers left on this runner
@@ -305,20 +302,19 @@ jobs:
 
   validate-pg:
     name: validate pg
-    needs: prepare
+    needs: [prepare, image]
     if: ${{ !cancelled() && (inputs.EVERYTHING || needs.prepare.outputs.pg == 'true') }}
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
       LOCATION: linux-amd64
       PR_SHA: ${{ inputs.PR_SHA }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
       CHANGED: ${{ !inputs.EVERYTHING }}
       CORPUS: ${{ needs.prepare.outputs.corpus == 'true' }}
     secrets: inherit
 
   report:
     name: Report Status
-    needs: [prepare, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, coverage, biglake, bugfix, validate-pg]
+    needs: [prepare, image, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, coverage, biglake, bugfix, validate-pg]
     if: always()
     runs-on: ubuntu-latest
     steps:

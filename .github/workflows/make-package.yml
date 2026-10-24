@@ -56,7 +56,7 @@ on:
         required: false
         default: ""
       BUILD_CONFIG:
-        description: "Internal: JSON overrides (e.g. BUILD_IMAGE)"
+        description: "Internal: JSON environment overrides"
         type: string
         required: false
         default: '{}'
@@ -135,7 +135,7 @@ jobs:
           clean: true
 
       - name: Pick the build image
-        run: echo "BUILD_IMAGE=${BUILD_IMAGE:-$(<scripts/ci/build-image.txt)}" >> "$GITHUB_ENV"
+        run: echo "BUILD_IMAGE=$(python3 scripts/ci/ci.py image)" >> "$GITHUB_ENV"
 
       - name: Build Docker environment file
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash

@@ -145,9 +145,10 @@ The `sqllogic` suite runs `sdb/` against SereneDB and the `postgres` suite runs 
 Tests under `any/pg/` also run against real PostgreSQL (`test.py --suite postgres`,
 CI's `validate pg` job), so everything they use has to exist there too.
 `any/pg/geometry/` needs PostGIS, which the stock `postgres` images do not ship, so
-the suite runs `serenedb/serenedb-test-postgres`, built from `fixtures/postgres/Dockerfile` by the
-`build-images` workflow: `postgres:18.6` plus the PostGIS package from the PGDG apt repo
-the base image already configures. `fixtures/image_tag.sh` gives its tag.
+the suite runs `serenedb/serenedb-test-postgres`, built from `fixtures/postgres/Dockerfile`:
+`postgres:18.6` plus the PostGIS package from the PGDG apt repo the base image already
+configures. `fixtures/image_tag.sh` gives its tag, and a CI run builds it when the registry
+lacks that tag ([ci.md](../../.claude/rules/ci.md), "CI images").
 
 Installing the package does not enable it. A test that needs an extension asks
 for it itself, guarded so SereneDB -- where the same functionality is built in

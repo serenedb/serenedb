@@ -28,7 +28,7 @@ NOT_BUILD_INPUTS = (
     "scripts/ci/test.py", "scripts/ci/ci.py", "scripts/ci/steps/*", "scripts/gtest-parallel/*",
     "scripts/ci/run_shard.sh", "scripts/ci/bugfix_check.sh", "scripts/ci/report.py",
     "scripts/ci/classify-changes.sh", "scripts/ci/config.sh",
-    "scripts/ci/build-image.txt", "scripts/coverage/*", "scripts/land.sh",
+    "scripts/coverage/*", "scripts/land.sh",
     "scripts/check_submodule_pointers.py",
     "*.md", ".pre-commit-config.yaml", ".clang-format", ".clang-tidy", ".lldbinit",
     "lldb_addons.py", "LICENSE",
@@ -40,10 +40,37 @@ BUNDLE_PATHS = (
     "third_party/duckdb/test/unittest", "third_party/re2/CTestTestfile.cmake", "CMakeCache.txt",
 )
 BUNDLE_CACHE = Path(os.environ.get("SDB_BUNDLE_CACHE", "/mnt/data/sdb-ci/bundles"))
+IMAGE_REPO = "serenedb/serenedb-build-ubuntu"
+IMAGE_DOCKERFILE = "scripts/ci/build-ubuntu.Dockerfile"
+IMAGE_CONTEXTS = {"": "scripts/ci", "drivers": "tests/drivers"}
 
 
-def build_image():
-    return os.environ.get("BUILD_IMAGE") or (ROOT / "scripts" / "ci" / "build-image.txt").read_text().strip()
+def image_inputs():
+    paths = [IMAGE_DOCKERFILE]
+    for line in (ROOT / IMAGE_DOCKERFILE).read_text().splitlines():
+        words = line.split()
+        if words[:1] != ["COPY"]:
+            continue
+        context = ""
+        sources = []
+        for word in words[1:-1]:
+            if word.startswith("--from="):
+                context = word.removeprefix("--from=")
+            elif not word.startswith("--"):
+                sources.append(word)
+        if context in IMAGE_CONTEXTS:
+            paths += [f"{IMAGE_CONTEXTS[context]}/{s}" for s in sources]
+    return paths
+
+
+def image_name():
+    files = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z", "-c", "-o", "--exclude-standard", "--",
+                            *image_inputs()], capture_output=True, text=True, check=True).stdout
+    h = hashlib.sha256()
+    for path in sorted(set(filter(None, files.split("\0")))):
+        if (ROOT / path).is_file():
+            h.update(f"{path}\t{hashlib.sha256((ROOT / path).read_bytes()).hexdigest()}\n".encode())
+    return f"{IMAGE_REPO}:{h.hexdigest()[:12]}"
 
 
 def _is_build_input(path):
@@ -81,6 +108,10 @@ def image_id(image):
 
 def cmd_digest(args):
     print(digest(args.config, args.flags, image_id(args.image) if args.image else "", args.rev))
+
+
+def cmd_image(args):
+    print(image_name())
 
 
 def cmd_pack(args):
@@ -121,7 +152,7 @@ def fetch_bundle(config, arch, dig, dest, archive=None):
         subprocess.run(["docker", "run", "--rm", *(["--label", f"serenedb.owner={owner}"] if owner else []),
                         "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{BUNDLE_CACHE}:{BUNDLE_CACHE}",
                         "-v", f"{archive.parent}:{archive.parent}",
-                        build_image(), "tar", "-C", str(unpacked), "-I", "zstd -T0",
+                        image_name(), "tar", "-C", str(unpacked), "-I", "zstd -T0",
                         "-xf", str(archive)], check=True)
         (unpacked / ".complete").write_text(dig)
         if dest.exists():
@@ -320,7 +351,7 @@ def cmd_select_suites(args):
 
 def cmd_coverage_report(args):
     arch = platform.machine()
-    image = build_image()
+    image = image_name()
     bundle = fetched(args.config, arch, args.digest)
     out = ROOT / "out" / f"coverage-{args.config}"
     shutil.rmtree(out, ignore_errors=True)
@@ -465,6 +496,8 @@ def cmd_results(args):
 def main(argv):
     ap = argparse.ArgumentParser(prog="scripts/ci/ci.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("image", help="the build image, tagged with a hash of the files its Dockerfile reads")
+    p.set_defaults(fn=cmd_image)
     p = sub.add_parser("digest", help="hash of everything a config's build reads")
     p.add_argument("--config", required=True)
     p.add_argument("--flags", default="")

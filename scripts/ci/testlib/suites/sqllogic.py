@@ -16,6 +16,7 @@ PLANNED_EXITS = (0, 75)
 STATEFUL_SERVICES = ("minio", "azurite", "iceberg", "postgres", "clickhouse")
 INFERENCE_CPUS = {"svc:ollama": 8, "svc:kev": 8}
 CORPUS = "any/sqlite/"
+CORPUS_SECONDS_PER_MB = 18.0
 PART_SECONDS = 10.0
 MAX_PARTS = 64
 _runner_lock = threading.Lock()
@@ -182,11 +183,16 @@ def _runner_args(ctx, args, rel, engine, server, env, part=None, label="serenedb
     return argv
 
 
-def corpus_parts(ctx, args, uid):
-    cost = ctx.timing.expect(uid)
-    if cost is None or args.override:
+def corpus_parts(ctx, args, cost):
+    if args.override:
         return 1
     return max(1, min(MAX_PARTS, round(cost / (PART_SECONDS * ctx.config.slowdown))))
+
+
+def default_seconds(path, rel):
+    if CORPUS in rel:
+        return max(2.0, path.stat().st_size / 1e6 * CORPUS_SECONDS_PER_MB)
+    return 30.0 if rel.endswith(".test_slow") else 2.0
 
 
 def check_out_corpus(ctx):
@@ -226,14 +232,14 @@ def sqllogic_units(ctx, args, skips):
             if skip:
                 ctx.skips.append((uid, skip))
                 continue
-            cost, timeout = plan(ctx, uid, 30.0 if rel.endswith(".test_slow") else 2.0)
+            cost, timeout = plan(ctx, uid, default_seconds(path, rel))
             if CORPUS not in rel:
                 cpus = 1 + sum(INFERENCE_CPUS.get(f, 0) for f in fixtures)
                 units.append(Unit(uid, "sqllogic", _sqllogic_run(ctx, args, rel, engine), cpus=cpus,
                                   mem_gb=0.3, fixtures=pool + fixtures, cost=cost,
                                   timeout=timeout, group=f"sqllogic:{rel}"))
                 continue
-            parts = corpus_parts(ctx, args, uid)
+            parts = corpus_parts(ctx, args, cost)
             for k in range(1, parts + 1):
                 part = (k, parts) if parts > 1 else None
                 units.append(Unit(f"{uid}#{k}/{parts}" if part else uid, "sqllogic",
@@ -258,7 +264,7 @@ def postgres_units(ctx, args, skips):
             if skip:
                 ctx.skips.append((uid, skip))
                 continue
-            cost, timeout = plan(ctx, uid, 30.0 if CORPUS in rel else 2.0)
+            cost, timeout = plan(ctx, uid, default_seconds(path, rel))
             units.append(Unit(uid, "postgres", _shared_run(ctx, args, rel, engine, "pgref", "postgres"),
                               cpus=1, mem_gb=0.3, fixtures=("pgref",), cost=cost, timeout=timeout,
                               group=f"postgres:{rel}"))

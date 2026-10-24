@@ -122,9 +122,7 @@ struct Family {
                             ScoreMergeType);
 
   static Result MakeAll(const SubReader& segment, const Context& ctx,
-                        ScoreMergeType, score_t absorbed) {
-    return hits::MakeAll(segment, ctx, absorbed);
-  }
+                        ScoreMergeType, score_t score);
 
   static Result MakeBoosted(std::span<const irs::detail::PostingClause> must,
                             std::span<const QueryBuilder::ptr> must_filters,

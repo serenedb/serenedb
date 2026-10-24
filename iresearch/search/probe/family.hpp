@@ -83,6 +83,16 @@ struct Family {
     return memory::make_managed<Impl<Node>>(std::forward<Args>(args)...);
   }
 
+  static Result MakeAll(const SubReader& segment, const DocsContext&,
+                        ScoreMergeType, score_t) {
+    return MakeAllDocs(segment);
+  }
+
+  static Result MakeAll(const SubReader& segment, const ScoredContext&,
+                        ScoreMergeType, score_t score) {
+    return MakeAllScored(segment, score);
+  }
+
   static Result MakePosting(const detail::PostingClause& posting,
                             const SubReader& segment, const DocsContext&,
                             ScoreMergeType) {

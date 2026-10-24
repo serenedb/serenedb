@@ -41,7 +41,6 @@ Root::ptr MakeTermCount(const detail::PostingClause& posting,
 
 Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs);
 
-Root::ptr MakeAll(const SubReader& segment, const Context& ctx);
 Root::ptr MakeLiveTerm(const detail::PostingClause& term,
                        const SubReader& segment);
 

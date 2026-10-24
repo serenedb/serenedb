@@ -82,9 +82,7 @@ struct Family {
                             ScoreMergeType);
 
   static Result MakeAll(const SubReader& segment, const Context& ctx,
-                        ScoreMergeType, score_t) {
-    return docs::MakeAll(static_cast<doc_id_t>(segment.docs_count()), ctx);
-  }
+                        ScoreMergeType, score_t score);
 
   static detail::TableFilter* BitsetTable(const Context&) noexcept {
     return nullptr;

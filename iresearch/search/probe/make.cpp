@@ -29,6 +29,7 @@
 #include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_all.hpp"
 #include "iresearch/search/detail/make_boolean.hpp"
 #include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
@@ -84,10 +85,6 @@ Node::ptr Make(const NGramSimilarityQuery& query, uint64_t interrogations) {
   });
 }
 
-Node::ptr Make(const AllQuery& query, uint64_t) {
-  return MakeAllDocs(query.Segment());
-}
-
 Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations) {
   return detail::MakeDocs<Family, detail::WildcardNGramKind>(
     query, {.interrogations = interrogations});
@@ -114,10 +111,6 @@ Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx,
     return detail::MakeNode<Family, detail::NGramKind<M>>(
       query, {.scored = ctx, .interrogations = interrogations});
   });
-}
-
-Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx, uint64_t) {
-  return MakeAllScored(query.Segment(), detail::AllDocsScoreOf(query, ctx));
 }
 
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
@@ -171,6 +164,17 @@ Node::ptr Make(const MultiTermQuery& query, uint64_t interrogations) {
 Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
   return detail::MakeMultiTerm<Family>(
+    query, Family::ScoredContext{ctx, interrogations});
+}
+
+Node::ptr Make(const AllQuery& query, uint64_t interrogations) {
+  return detail::MakeAllQuery<Family>(query,
+                                      Family::DocsContext{interrogations});
+}
+
+Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx,
+               uint64_t interrogations) {
+  return detail::MakeAllQuery<Family>(
     query, Family::ScoredContext{ctx, interrogations});
 }
 

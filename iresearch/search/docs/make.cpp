@@ -26,6 +26,7 @@
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_all.hpp"
 #include "iresearch/search/detail/make_boolean.hpp"
 #include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/docs/empty.hpp"
@@ -95,6 +96,10 @@ Root::ptr Make(const TermQuery& query, const Context& ctx) {
 
 Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
   return detail::MakeMultiTerm<Family>(query, ctx);
+}
+
+Root::ptr Make(const AllQuery& query, const Context& ctx) {
+  return detail::MakeAllQuery<Family>(query, ctx);
 }
 
 }  // namespace irs::docs

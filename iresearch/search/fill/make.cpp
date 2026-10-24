@@ -32,6 +32,7 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/fill_posting_scored.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_all.hpp"
 #include "iresearch/search/detail/make_boolean.hpp"
 #include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
@@ -107,14 +108,6 @@ Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx,
   });
 }
 
-Node::ptr Make(const AllQuery& query) { return MakeAllDocs(query.Segment()); }
-
-Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx,
-               ScoreMergeType merge) {
-  return MakeAllScored(query.Segment(), merge,
-                       detail::AllDocsScoreOf(query, ctx));
-}
-
 Node::ptr Make(const WildcardNGramQuery& query) {
   return detail::MakeDocs<Family, detail::WildcardNGramKind>(query, {});
 }
@@ -170,6 +163,15 @@ Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
   return detail::MakeMultiTerm<Family>(query,
                                        Family::ScoredContext{ctx, merge});
+}
+
+Node::ptr Make(const AllQuery& query) {
+  return detail::MakeAllQuery<Family>(query, Family::DocsContext{});
+}
+
+Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx,
+               ScoreMergeType merge) {
+  return detail::MakeAllQuery<Family>(query, Family::ScoredContext{ctx, merge});
 }
 
 }  // namespace irs::fill

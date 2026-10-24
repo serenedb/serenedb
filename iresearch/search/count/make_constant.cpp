@@ -257,17 +257,14 @@ Root::ptr Family::MakePosting(const detail::PostingClause& posting,
   return MakeTermWalk(posting, ctx);
 }
 
-Root::ptr MakeAll(const SubReader& segment, const Context& ctx) {
+Root::ptr Family::MakeAll(const SubReader& segment, const Context& ctx,
+                          ScoreMergeType, score_t) {
   if (ctx.table == nullptr &&
       segment.live_docs_count() == segment.docs_count()) {
     return memory::make_managed<AllCount>(
       static_cast<doc_id_t>(segment.docs_count()));
   }
   return MakeShape<Walk, lead::AllDocs>(ctx, segment);
-}
-
-Root::ptr Make(const AllQuery& query, const Context& ctx) {
-  return MakeAll(query.Segment(), ctx);
 }
 
 }  // namespace irs::count

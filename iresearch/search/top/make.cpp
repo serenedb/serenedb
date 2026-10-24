@@ -30,6 +30,7 @@
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_all.hpp"
 #include "iresearch/search/detail/make_boolean.hpp"
 #include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
@@ -82,11 +83,6 @@ Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {
     return irs::detail::MakeScored<Family, irs::detail::NGramKind<M>>(query,
                                                                       ctx);
   });
-}
-
-Root::ptr Make(const AllQuery& query, const Context& ctx) {
-  return MakeAll(query.Segment(), ctx,
-                 irs::detail::AllDocsScoreOf(query, ScoredOf(ctx)));
 }
 
 Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
@@ -158,6 +154,10 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
     }
   }
   return irs::detail::MakeMultiTerm<Family>(query, ctx);
+}
+
+Root::ptr Make(const AllQuery& query, const Context& ctx) {
+  return irs::detail::MakeAllQuery<Family>(query, ctx);
 }
 
 }  // namespace irs::top

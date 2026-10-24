@@ -135,9 +135,7 @@ struct Family {
                             ScoreMergeType);
 
   static Result MakeAll(const SubReader& segment, const Context& ctx,
-                        ScoreMergeType, score_t absorbed) {
-    return top::MakeAll(segment, ctx, absorbed);
-  }
+                        ScoreMergeType, score_t score);
 
   static Result MakePruned(const BooleanQuery& query, const Context& ctx,
                            ScoreMergeType merge, score_t absorbed);

@@ -103,8 +103,6 @@ inline Root::ptr Make(const EmptyQueryBuilder&, const Context&) {
   return MakeEmpty();
 }
 
-Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
-
 template<irs::detail::PhraseMatch M, typename Query>
 Root::ptr MakePhrasePruned(const Query& query, const Context& ctx);
 

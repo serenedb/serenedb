@@ -30,7 +30,6 @@ A server keeps its catalog and its databases under `engine_v1` in its data direc
 
 - `engine_v1/catalog.wal`: the catalog log.
 - `engine_v1/<oid>/`: one database, named by its `pg_database.oid`. It holds the database file `data.db` with its write-ahead log, which also logs the changes of the database's search tables, the write-ahead logs that checkpoints [kept for search tables](../sql/indexes/inverted/maintenance.md#durability) (`data.db.wal.retained.<n>`), and one directory for each search table and each inverted index on a table or view, named by the object's `pg_class.oid`.
-- `<oid>.dropped/`, in `engine_v1` or in a database's directory: the directory of a dropped database, search table or inverted index while the server removes it. One left behind by a server that stopped first is removed when a server starts on the data directory.
 
 Beside `engine_v1`, the root of the data directory holds:
 
@@ -42,6 +41,6 @@ Beside `engine_v1`, the root of the data directory holds:
 
 `engine_v1` holds neither the persistent secrets nor the authentication rules, so a copy of the data directory needs `pg_hba.conf` and `secrets/` as well. `tmp/`, `extensions/` and `LOCK` hold nothing a server needs when it starts again.
 
-Dropping a database, a table or an index removes its directory once no query uses it any more. If the server stops before that, or crashes while an object is being created, it removes the leftover directory when it starts again. A server refuses to start when the catalog log is missing but database directories hold data, instead of starting empty beside them.
+Dropping a database, a table or an index removes its directory once no query uses it any more. If the server stops before that or in the middle of it, or crashes while an object is being created, it removes what is left of the directory when it starts again. A server refuses to start when the catalog log is missing but database directories hold data, instead of starting empty beside them.
 
 For the meaning of version numbers and release lines, see [Versioning](./versioning.md).

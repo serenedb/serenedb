@@ -27,6 +27,12 @@ VACUUM (REFRESH_TABLE) rmc_kept;
 
 
 statement ok
+CREATE TABLE rmc_oids AS
+  SELECT table_oid AS oid FROM duckdb_tables()
+  WHERE database_name = current_database() AND table_name = 'rmc_gone';
+
+
+statement ok
 SET sdb_faults = 'pause_removal_midway';
 
 
@@ -54,8 +60,13 @@ n
 0
 
 
-system ok
-test -z "$(find ${SDB_DATADIR}/engine_v1 -name '*.dropped')"
+connection after_crash
+query
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*')
+WHERE file LIKE '%/' || (SELECT oid FROM rmc_oids) || '/%';
+----
+leftover
+0
 
 
 connection after_crash

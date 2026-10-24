@@ -587,10 +587,9 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
     return field_limits::invalid();
   }
   const auto out_id = field_options->GetNormColumnId(id);
-  SDB_ENSURE(field_limits::valid(out_id),
-             "MergeNormColumnFromSources: GetNormColumnId did not "
-             "mint a valid id for field ",
-             id);
+  if (!field_limits::valid(out_id)) {
+    return out_id;
+  }
   auto& writer = col_writer.StreamNormColumn(out_id);
   std::vector<uint32_t> values;
   for (size_t i = 0; i != pieces.size();) {

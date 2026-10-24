@@ -234,6 +234,43 @@ db error: ERROR: Column 'list_value(s, 'x')[1]' is listed more than once with a 
 
 
 statement ok
+CREATE TABLE rewrites_stored_parts (id INT PRIMARY KEY, a VARCHAR, b VARCHAR, s VARCHAR);
+
+statement ok
+INSERT INTO rewrites_stored_parts VALUES (1, 'foo', 'bar', 'AbcDef'), (2, 'baz', 'qux', 'Xyz');
+
+statement ok
+CREATE INDEX rewrites_stored_parts_idx ON rewrites_stored_parts USING inverted (id, (a || b) included(),
+  (a || b || '!') verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) rewrites_stored_parts;
+
+# The subquery reads its part of the key from the index, and the filter around
+# that part still matches the key.
+query
+SELECT id, ab FROM (SELECT id, a || b AS ab FROM rewrites_stored_parts_idx) t WHERE ab || '!' @@ 'foobar!' ORDER BY id;
+----
+id	ab
+1	foobar
+
+query
+EXPLAIN SELECT id, ab FROM (SELECT id, a || b AS ab FROM rewrites_stored_parts_idx) t WHERE ab || '!' @@ 'foobar!';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────╮
+│ Index: rewrites_stored_parts_idx     │
+│ Lookup: table                        │
+│ Index Filter:                        │
+│ ╭─ Term ───────────────────────────╮ │
+│ │ Field: ((a || b) || '!')(string) │ │
+│ │ Value: foobar!                   │ │
+│ ╰──────────────────────────────────╯ │
+│ Projections: id (l), (a || b) (i)    │
+│ ~1 row                               │
+╰──────────────────────────────────────╯
+
+statement ok
 CREATE TABLE rewrites_stored (id INT PRIMARY KEY, n INT, s VARCHAR, d DATE);
 
 statement ok

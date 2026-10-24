@@ -604,13 +604,13 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     return index_field(ColumnIdByName(bind_data, name));
   };
 
-  const connector::StoredExpressionOf stored_expression =
-    [&](connector::ColumnId col_id) -> std::string_view {
-    if (!bind_data.relation.StoresExpression(col_id)) {
-      return {};
+  absl::InlinedVector<connector::StoredColumn, 2> stored_columns;
+  for (const auto col_id : projected_ids) {
+    if (const auto expression = config.StoredExpression(col_id);
+        !expression.empty()) {
+      stored_columns.emplace_back(col_id, expression);
     }
-    return config.FindKey(col_id)->normalized_expression;
-  };
+  }
 
   connector::ColumnGetter getter =
     [&](const duckdb::BoundColumnRefExpression& ref)
@@ -632,11 +632,11 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
           config, catalog::KeyKind::Term, expr,
           connector::RootSignatureOf(expr),
           [&] { return std::span<const connector::ColumnId>{projected_ids}; },
-          stored_expression)) {
+          stored_columns)) {
       return std::nullopt;
     }
     const auto keys = config.FindExpressionKeys(connector::NormalizedExpression(
-      expr, bind_data.RelationId(), projected_ids, context, stored_expression));
+      expr, bind_data.RelationId(), projected_ids, context, stored_columns));
     return finish_info(
       ExpressionColumnInfo(
         config, dicts, keys.term,

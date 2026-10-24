@@ -29,6 +29,15 @@
 
 namespace irs::lead {
 
+Node::ptr MakePostingDocs(const detail::PostingClause& posting,
+                          const SubReader&) {
+  return ResolvePostingDocs<Node::ptr>(
+    posting, [&]<typename Leaf>(auto&&... args) -> Node::ptr {
+      return memory::make_managed<Impl<Leaf>>(
+        std::forward<decltype(args)>(args)...);
+    });
+}
+
 Node::ptr MakePostingScored(const detail::PostingClause& posting,
                             const SubReader& segment,
                             const detail::ScoreRecipe& recipe) {

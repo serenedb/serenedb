@@ -29,6 +29,7 @@
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make_boolean.hpp"
+#include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/queries/approx_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -38,29 +39,6 @@
 #include "iresearch/search/queries/token_phrase_query.hpp"
 
 namespace irs::count {
-
-Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
-  const auto& state = query.State();
-  const auto* const field = state.Reader();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (terms.size() == 1) {
-    return MakeTerm(detail::ClauseOf(terms.front(), field), query.Segment(),
-                    ctx);
-  }
-  if (ctx.table == nullptr &&
-      SubtractsPair(terms,
-                    static_cast<doc_id_t>(query.Segment().docs_count()))) {
-    if (auto subtracted = MakeSubtractDisjunction(
-          detail::ClauseOf(terms.front(), field),
-          detail::ClauseOf(terms.back(), field), query.Segment(), ctx)) {
-      return subtracted;
-    }
-  }
-  return detail::builder::MakeDisjunctionOfTerms<Family>(
-    terms, field, *detail::DocOf(*field),
-    static_cast<doc_id_t>(query.Segment().docs_count()), ctx);
-}
-
 namespace {
 
 template<typename Query>
@@ -108,6 +86,26 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
   return detail::MakeBoolean<Family>(query, ctx);
+}
+
+Root::ptr Make(const TermQuery& query, const Context& ctx) {
+  return detail::MakeTerm<Family>(query, ctx);
+}
+
+Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
+  const auto& state = query.State();
+  const auto* const field = state.Reader();
+  const std::span<const MultiTermState::Entry> terms{state.Terms()};
+  if (ctx.table == nullptr &&
+      SubtractsPair(terms,
+                    static_cast<doc_id_t>(query.Segment().docs_count()))) {
+    if (auto subtracted = MakeSubtractDisjunction(
+          detail::ClauseOf(terms.front(), field),
+          detail::ClauseOf(terms.back(), field), query.Segment(), ctx)) {
+      return subtracted;
+    }
+  }
+  return detail::MakeMultiTerm<Family>(query, ctx);
 }
 
 }  // namespace irs::count

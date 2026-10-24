@@ -32,6 +32,7 @@
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/make_boolean.hpp"
+#include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
@@ -50,59 +51,6 @@
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::lead {
-
-Node::ptr Make(const TermQuery& query) {
-  return MakePostingDocs(detail::PostingClause{query.State()}, query.Segment());
-}
-
-Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx) {
-  const detail::PostingClause posting{query.State(), query.Boost(),
-                                      query.Stats(ctx)};
-  const detail::ScoreRecipe recipe{.segment = &query.Segment(),
-                                   .fetcher = ctx.fetcher};
-  return MakePostingScored(posting, query.Segment(), recipe);
-}
-
-Node::ptr Make(const MultiTermQuery& query) {
-  const auto& state = query.State();
-  const auto* const field = state.Reader();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (terms.size() == 1) {
-    return MakePostingDocs(detail::ClauseOf(terms.front(), field),
-                           query.Segment());
-  }
-  return detail::builder::MakeDisjunctionOfTerms<Family>(
-    terms, field, *detail::DocOf(*field),
-    static_cast<doc_id_t>(query.Segment().docs_count()), Family::DocsContext{});
-}
-
-Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx) {
-  const auto& state = query.State();
-  const auto merge = query.MergeType();
-  const auto* const field = state.Reader();
-  const auto* const scorer = query.Stats(ctx).scorer;
-  const auto boost = query.Boost();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (terms.size() == 1) {
-    const detail::ScoreRecipe recipe{.segment = &query.Segment(),
-                                     .fetcher = ctx.fetcher};
-    return MakePostingScored(
-      detail::ClauseOf(terms.front(), field, scorer, boost), query.Segment(),
-      recipe);
-  }
-  std::vector<fill::Node::ptr> rest;
-  return detail::builder::MakeWindowDisjunction<Family>(
-    terms, field, detail::DocOf(*field), rest,
-    detail::TermScoring{
-      .scorer = scorer,
-      .boost = boost,
-      .uniformity = detail::UniformityOf(*field, scorer),
-      .recipe = {.segment = &query.Segment(), .fetcher = ctx.fetcher},
-      .merge = merge,
-    },
-    ctx, 0);
-}
-
 namespace {
 
 template<typename Query>
@@ -182,6 +130,22 @@ Node::ptr Make(const BooleanQuery& query) {
 
 Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx) {
   return detail::MakeBoolean<Family>(query, ctx);
+}
+
+Node::ptr Make(const TermQuery& query) {
+  return detail::MakeTerm<Family>(query, Family::DocsContext{});
+}
+
+Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx) {
+  return detail::MakeTerm<Family>(query, ctx);
+}
+
+Node::ptr Make(const MultiTermQuery& query) {
+  return detail::MakeMultiTerm<Family>(query, Family::DocsContext{});
+}
+
+Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx) {
+  return detail::MakeMultiTerm<Family>(query, ctx);
 }
 
 }  // namespace irs::lead

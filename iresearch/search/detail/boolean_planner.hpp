@@ -33,6 +33,7 @@
 #include "iresearch/search/detail/conjunction.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/fill_posting_scored.hpp"
+#include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/probe_leaves.hpp"
 #include "iresearch/search/detail/resolve.hpp"
@@ -277,7 +278,7 @@ namespace irs::detail {
 
 template<typename Family, typename Ctx>
 typename Family::Result MakeBoolean(const BooleanQuery& query, const Ctx& ctx) {
-  if constexpr (std::is_same_v<typename Family::Result, ProbeNode::ptr>) {
+  if constexpr (kProbePlan<Family>) {
     if constexpr (builder::kScoredPlan<Family, Ctx>) {
       const auto& segment = query.Segment();
       return probe::MakeBoolean(
@@ -297,11 +298,7 @@ typename Family::Result MakeBoolean(const BooleanQuery& query, const Ctx& ctx) {
         return shortcut;
       }
     }
-    if constexpr (requires { ctx.merge; }) {
-      return builder::Make<Family>(query, ctx, ctx.merge);
-    } else {
-      return builder::Make<Family>(query, ctx, query.MergeType());
-    }
+    return builder::Make<Family>(query, ctx, MergeOf(query, ctx));
   }
 }
 

@@ -27,6 +27,7 @@
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/make_boolean.hpp"
+#include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/docs/empty.hpp"
 #include "iresearch/search/docs/family.hpp"
 #include "iresearch/search/docs/plan.hpp"
@@ -39,20 +40,6 @@
 #include "iresearch/search/queries/token_phrase_query.hpp"
 
 namespace irs::docs {
-
-Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
-  const auto& state = query.State();
-  const auto* const field = state.Reader();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (terms.size() == 1) {
-    return MakePosting(detail::ClauseOf(terms.front(), field), query.Segment(),
-                       ctx);
-  }
-  return detail::builder::MakeDisjunctionOfTerms<Family>(
-    terms, field, *detail::DocOf(*field),
-    static_cast<doc_id_t>(query.Segment().docs_count()), ctx);
-}
-
 namespace {
 
 template<typename Query>
@@ -100,6 +87,14 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
   return detail::MakeBoolean<Family>(query, ctx);
+}
+
+Root::ptr Make(const TermQuery& query, const Context& ctx) {
+  return detail::MakeTerm<Family>(query, ctx);
+}
+
+Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
+  return detail::MakeMultiTerm<Family>(query, ctx);
 }
 
 }  // namespace irs::docs

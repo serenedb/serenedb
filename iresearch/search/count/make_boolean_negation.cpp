@@ -89,7 +89,8 @@ Root::ptr Family::MakeNegation(
   if (exclude_terms.size() + exclude_filters.size() == 1) {
     excluded = exclude_terms.empty()
                  ? exclude_filters.front()->PlanCount(ctx)
-                 : count::MakeTerm(exclude_terms.front(), segment, ctx);
+                 : MakePosting(exclude_terms.front(), segment, ctx,
+                               ScoreMergeType::Noop);
   } else {
     if (exclude_filters.empty() &&
         SubtractsPair(exclude_terms,

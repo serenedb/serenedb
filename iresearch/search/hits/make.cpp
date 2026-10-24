@@ -32,6 +32,7 @@
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/make_boolean.hpp"
+#include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/hits/empty.hpp"
@@ -61,42 +62,6 @@ Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
 }  // namespace
 
 Root::ptr MakeEmpty() { return memory::make_managed<Empty>(); }
-
-Root::ptr Make(const TermQuery& query, const Context& ctx) {
-  const irs::detail::PostingClause posting{.state = query.State(),
-                                           .boost = query.Boost(),
-                                           .stats = query.Stats(ScoredOf(ctx))};
-  return posting.state.cookie.docs_count == 1
-           ? MakeSinglePosting(posting, query.Segment(), ctx)
-           : MakePosting(posting, query.Segment(), ctx);
-}
-
-Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
-  const auto& state = query.State();
-  const auto merge = query.MergeType();
-  const auto* const field = state.Reader();
-  const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
-  const auto boost = query.Boost();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (terms.size() == 1) {
-    const auto posting =
-      irs::detail::ClauseOf(terms.front(), field, scorer, boost);
-    return posting.state.cookie.docs_count == 1
-             ? MakeSinglePosting(posting, query.Segment(), ctx)
-             : MakePosting(posting, query.Segment(), ctx);
-  }
-  const auto& segment = query.Segment();
-  return irs::detail::builder::MakeDisjunction<Family>(
-    terms, {}, field, segment,
-    irs::detail::TermScoring{
-      .scorer = scorer,
-      .boost = boost,
-      .uniformity = irs::detail::UniformityOf(*state.Reader(), scorer),
-      .recipe = {.segment = &segment, .fetcher = &ctx.fetcher},
-      .merge = merge,
-    },
-    ctx, 0);
-}
 
 Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
   return MakeAnyPhrase(query, ctx);
@@ -142,6 +107,14 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
   return irs::detail::MakeBoolean<Family>(query, ctx);
+}
+
+Root::ptr Make(const TermQuery& query, const Context& ctx) {
+  return irs::detail::MakeTerm<Family>(query, ctx);
+}
+
+Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
+  return irs::detail::MakeMultiTerm<Family>(query, ctx);
 }
 
 }  // namespace irs::hits

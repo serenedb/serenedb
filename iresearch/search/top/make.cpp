@@ -31,6 +31,7 @@
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/make_boolean.hpp"
+#include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
@@ -67,64 +68,6 @@ Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
 }  // namespace
 
 Root::ptr MakeEmpty() { return memory::make_managed<Empty>(); }
-
-Root::ptr Make(const TermQuery& query, const Context& ctx) {
-  const irs::detail::PostingClause posting{.state = query.State(),
-                                           .boost = query.Boost(),
-                                           .stats = query.Stats(ScoredOf(ctx))};
-  if (posting.state.cookie.docs_count == 1) {
-    return MakeSinglePosting(posting, query.Segment(), ctx);
-  }
-  if (ctx.prune) {
-    if (auto pruned = MakePrunedPosting(posting, query.Segment(), ctx)) {
-      return pruned;
-    }
-  }
-  return MakePosting(posting, query.Segment(), ctx);
-}
-
-Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
-  const auto& state = query.State();
-  const auto merge = query.MergeType();
-  const auto* const field = state.Reader();
-  const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
-  const auto boost = query.Boost();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (terms.size() == 1) {
-    const auto posting =
-      irs::detail::ClauseOf(terms.front(), field, scorer, boost);
-    if (posting.state.cookie.docs_count == 1) {
-      return MakeSinglePosting(posting, query.Segment(), ctx);
-    }
-    if (ctx.prune) {
-      if (auto pruned = MakePrunedPosting(posting, query.Segment(), ctx)) {
-        return pruned;
-      }
-    }
-    return MakePosting(posting, query.Segment(), ctx);
-  }
-  const auto uniformity = irs::detail::UniformityOf(*state.Reader(), scorer);
-  if (ctx.prune) {
-    if (merge == ScoreMergeType::Sum) {
-      if (auto pruned = MakePrunedDisjunction<false>(
-            terms, {}, uniformity, field, scorer, boost, {}, {},
-            query.Segment(), ctx, merge)) {
-        return pruned;
-      }
-    }
-  }
-  const auto& segment = query.Segment();
-  return irs::detail::builder::MakeDisjunction<Family>(
-    terms, {}, field, segment,
-    irs::detail::TermScoring{
-      .scorer = scorer,
-      .boost = boost,
-      .uniformity = uniformity,
-      .recipe = {.segment = &segment, .fetcher = &ctx.fetcher},
-      .merge = merge,
-    },
-    ctx, 0);
-}
 
 Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
   return MakeAnyPhrase(query, ctx);
@@ -175,6 +118,46 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
   return irs::detail::MakeBoolean<Family>(query, ctx);
+}
+
+Root::ptr Make(const TermQuery& query, const Context& ctx) {
+  if (ctx.prune && query.State().cookie.docs_count != 1) {
+    const irs::detail::PostingClause posting{
+      .state = query.State(),
+      .boost = query.Boost(),
+      .stats = query.Stats(ScoredOf(ctx)),
+    };
+    if (auto pruned = MakePrunedPosting(posting, query.Segment(), ctx)) {
+      return pruned;
+    }
+  }
+  return irs::detail::MakeTerm<Family>(query, ctx);
+}
+
+Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
+  if (ctx.prune) {
+    const auto& state = query.State();
+    const auto* const field = state.Reader();
+    const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
+    const auto boost = query.Boost();
+    const std::span<const MultiTermState::Entry> terms{state.Terms()};
+    if (terms.size() == 1) {
+      const auto posting =
+        irs::detail::ClauseOf(terms.front(), field, scorer, boost);
+      if (posting.state.cookie.docs_count != 1) {
+        if (auto pruned = MakePrunedPosting(posting, query.Segment(), ctx)) {
+          return pruned;
+        }
+      }
+    } else if (query.MergeType() == ScoreMergeType::Sum) {
+      if (auto pruned = MakePrunedDisjunction<false>(
+            terms, {}, irs::detail::UniformityOf(*field, scorer), field, scorer,
+            boost, {}, {}, query.Segment(), ctx, ScoreMergeType::Sum)) {
+        return pruned;
+      }
+    }
+  }
+  return irs::detail::MakeMultiTerm<Family>(query, ctx);
 }
 
 }  // namespace irs::top

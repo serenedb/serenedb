@@ -119,11 +119,7 @@ struct Family {
 
   static Result MakePosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx,
-                            ScoreMergeType) {
-    return posting.state.cookie.docs_count == 1
-             ? hits::MakeSinglePosting(posting, segment, ctx)
-             : hits::MakePosting(posting, segment, ctx);
-  }
+                            ScoreMergeType);
 
   static Result MakeAll(const SubReader& segment, const Context& ctx,
                         ScoreMergeType, score_t absorbed) {

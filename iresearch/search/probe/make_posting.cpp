@@ -18,17 +18,50 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <utility>
+
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/plain_scored.hpp"
+#include "iresearch/search/detail/posting_probe.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/probe/posting_scored.hpp"
+#include "iresearch/search/probe/single_posting.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::probe {
+
+Node::ptr MakePostingDocs(const detail::PostingClause& posting,
+                          const SubReader&) {
+  return ResolvePostingDocs<Node::ptr>(
+    posting, [&]<typename Leaf>(auto&&... args) -> Node::ptr {
+      return memory::make_managed<Impl<Leaf>>(
+        std::forward<decltype(args)>(args)...);
+    });
+}
+
+namespace {
+
+Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
+                                  const SubReader& segment,
+                                  const detail::ScoreRecipe& recipe) {
+  const auto& meta = posting.state.cookie;
+  SDB_ASSERT(meta.docs_count == 1);
+  SDB_ASSERT(posting.state.reader != nullptr);
+  const auto doc = doc_limits::min() + meta.doc_delta;
+  const auto value =
+    posting.stats.stats != nullptr
+      ? detail::SingleDocScore(segment, *posting.state.reader, doc, meta.freq,
+                               recipe.Args(posting.stats, posting.boost))
+      : score_t{0};
+  using Node = ConstantScored<SinglePostingDocs>;
+  return memory::make_managed<Impl<Node>>(value, meta);
+}
+
+}  // namespace
 
 Node::ptr MakePostingScored(const detail::PostingClause& posting,
                             const SubReader& segment,

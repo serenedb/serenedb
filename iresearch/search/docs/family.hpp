@@ -79,9 +79,7 @@ struct Family {
 
   static Result MakePosting(const detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx,
-                            ScoreMergeType) {
-    return docs::MakePosting(posting, segment, ctx);
-  }
+                            ScoreMergeType);
 
   static Result MakeAll(const SubReader& segment, const Context& ctx,
                         ScoreMergeType, score_t) {

@@ -103,10 +103,6 @@ inline Root::ptr Make(const EmptyQueryBuilder&, const Context&) {
   return MakeEmpty();
 }
 
-Root::ptr MakePosting(const irs::detail::PostingClause& posting,
-                      const SubReader& segment, const Context& ctx);
-Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
-                            const SubReader& segment, const Context& ctx);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
 
 template<irs::detail::PhraseMatch M, typename Query>

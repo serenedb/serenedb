@@ -17,14 +17,10 @@ target_sources(
         docs/make.cpp
         docs/make_all.cpp
         docs/make_posting.cpp
-        docs/make_single_posting.cpp
         fill/make.cpp
         fill/make_all_docs.cpp
         fill/make_all_scored.cpp
-        fill/make_posting_docs.cpp
-        fill/make_posting_scored.cpp
-        fill/make_single_posting_docs.cpp
-        fill/make_single_posting_scored.cpp
+        fill/make_posting.cpp
         filters/all_filter.cpp
         filters/automaton_filter.cpp
         filters/boolean_filter.cpp
@@ -49,12 +45,10 @@ target_sources(
         hits/make_all.cpp
         hits/make_boosted_posting.cpp
         hits/make_posting.cpp
-        hits/make_single_posting.cpp
         lead/make.cpp
         lead/make_all_docs.cpp
         lead/make_all_scored.cpp
-        lead/make_posting_docs.cpp
-        lead/make_posting_scored.cpp
+        lead/make_posting.cpp
         make/boolean/count.cpp
         make/boolean/count_exclusion.cpp
         make/boolean/count_exclusion_window.cpp
@@ -193,9 +187,7 @@ target_sources(
         probe/make.cpp
         probe/make_all_docs.cpp
         probe/make_all_scored.cpp
-        probe/make_posting_docs.cpp
-        probe/make_posting_scored.cpp
-        probe/make_single_posting_scored.cpp
+        probe/make_posting.cpp
         queries/boolean_query.cpp
         queries/docs_mask_query.cpp
         queries/multiterm_query.cpp
@@ -216,7 +208,6 @@ target_sources(
         top/make_pruned_disjunction.cpp
         top/make_pruned_posting.cpp
         top/make_pruned_req_opt.cpp
-        top/make_single_posting.cpp
         top/make_token_phrase.cpp
 )
 

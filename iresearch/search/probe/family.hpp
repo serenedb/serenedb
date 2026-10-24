@@ -27,6 +27,7 @@
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/probe/node.hpp"
 #include "iresearch/search/probe/two_phase.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
@@ -80,6 +81,19 @@ struct Family {
   template<typename Node, typename... Args>
   static Result Scored(const ScoredContext&, Args&&... args) {
     return memory::make_managed<Impl<Node>>(std::forward<Args>(args)...);
+  }
+
+  static Result MakePosting(const detail::PostingClause& posting,
+                            const SubReader& segment, const DocsContext&,
+                            ScoreMergeType) {
+    return MakePostingDocs(posting, segment);
+  }
+
+  static Result MakePosting(const detail::PostingClause& posting,
+                            const SubReader& segment, const ScoredContext& ctx,
+                            ScoreMergeType) {
+    return MakePostingScored(
+      posting, segment, {.segment = &segment, .fetcher = ctx.scored.fetcher});
   }
 };
 

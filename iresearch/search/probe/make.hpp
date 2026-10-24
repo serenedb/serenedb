@@ -108,10 +108,6 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
                             const SubReader& segment,
                             const detail::ScoreRecipe& recipe);
 
-Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
-                                  const SubReader& segment,
-                                  const detail::ScoreRecipe& recipe);
-
 Node::ptr MakeAllScored(const SubReader& segment, score_t score);
 
 inline auto ScoredClauseOf(const SubReader& segment,

@@ -30,6 +30,7 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/make_boolean.hpp"
+#include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
@@ -49,11 +50,6 @@
 namespace irs::probe {
 namespace {
 
-detail::ScoreRecipe RecipeOf(const SubReader& segment,
-                             const detail::ScoredCtx& ctx) {
-  return {.segment = &segment, .fetcher = ctx.fetcher};
-}
-
 template<typename Query>
 Node::ptr MakeAnyPhrase(const Query& query, uint64_t interrogations) {
   return detail::ResolveMatch(query, [&]<detail::PhraseMatch M> {
@@ -72,22 +68,6 @@ Node::ptr MakeAnyPhrase(const Query& query, const detail::ScoredCtx& ctx,
 }
 
 }  // namespace
-
-Node::ptr Make(const TermQuery& query, uint64_t) {
-  return MakePostingDocs(detail::PostingClause{query.State()}, query.Segment());
-}
-
-Node::ptr Make(const MultiTermQuery& query, uint64_t interrogations) {
-  const auto& state = query.State();
-  const auto* const field = state.Reader();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (terms.size() == 1) {
-    return MakePostingDocs(detail::ClauseOf(terms.front(), field),
-                           query.Segment());
-  }
-  return MakeDisjunction(terms, {}, field, query.Segment(), interrogations,
-                         detail::NoScoring{}, {});
-}
 
 Node::ptr Make(const FixedPhraseQuery& query, uint64_t interrogations) {
   return MakeAnyPhrase(query, interrogations);
@@ -116,37 +96,6 @@ Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations) {
 Node::ptr Make(const TokenPhraseQuery& query, uint64_t interrogations) {
   return detail::MakeDocs<Family, detail::TokenPhraseKind>(
     query, {.interrogations = interrogations});
-}
-
-Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx, uint64_t) {
-  const detail::PostingClause posting{query.State(), query.Boost(),
-                                      query.Stats(ctx)};
-  return MakePostingScored(posting, query.Segment(),
-                           RecipeOf(query.Segment(), ctx));
-}
-
-Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,
-               uint64_t interrogations) {
-  const auto merge = query.MergeType();
-  const auto& segment = query.Segment();
-  const auto recipe = RecipeOf(segment, ctx);
-  const auto& state = query.State();
-  const auto* const field = state.Reader();
-  const auto* const scorer = query.Stats(ctx).scorer;
-  const auto boost = query.Boost();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (terms.size() == 1) {
-    return MakePostingScored(
-      detail::ClauseOf(terms.front(), field, scorer, boost), segment, recipe);
-  }
-  return MakeDisjunction(
-    terms, {}, field, segment, interrogations,
-    detail::TermScoring{.scorer = scorer,
-                        .boost = boost,
-                        .uniformity = detail::UniformityOf(*field, scorer),
-                        .recipe = recipe,
-                        .merge = merge},
-    ctx);
 }
 
 Node::ptr Make(const FixedPhraseQuery& query, const detail::ScoredCtx& ctx,
@@ -201,6 +150,27 @@ Node::ptr Make(const BooleanQuery& query, uint64_t interrogations) {
 Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
   return detail::MakeBoolean<Family>(
+    query, Family::ScoredContext{ctx, interrogations});
+}
+
+Node::ptr Make(const TermQuery& query, uint64_t interrogations) {
+  return detail::MakeTerm<Family>(query, Family::DocsContext{interrogations});
+}
+
+Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx,
+               uint64_t interrogations) {
+  return detail::MakeTerm<Family>(query,
+                                  Family::ScoredContext{ctx, interrogations});
+}
+
+Node::ptr Make(const MultiTermQuery& query, uint64_t interrogations) {
+  return detail::MakeMultiTerm<Family>(query,
+                                       Family::DocsContext{interrogations});
+}
+
+Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,
+               uint64_t interrogations) {
+  return detail::MakeMultiTerm<Family>(
     query, Family::ScoredContext{ctx, interrogations});
 }
 

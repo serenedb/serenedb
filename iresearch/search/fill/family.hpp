@@ -134,7 +134,9 @@ struct Family {
   static Result MakePosting(const detail::PostingClause& posting,
                             const SubReader& segment, const DocsContext&,
                             ScoreMergeType) {
-    return detail::FillOf(posting, nullptr, segment);
+    return posting.state.cookie.docs_count == 1
+             ? MakeSinglePostingDocs(posting)
+             : MakePostingDocs(posting, segment);
   }
 
   static Result MakePosting(const detail::PostingClause& posting,

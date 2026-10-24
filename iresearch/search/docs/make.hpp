@@ -56,11 +56,6 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx);
 template<typename Parser, typename Acceptor>
 Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx);
 
-Root::ptr MakePosting(const detail::PostingClause& posting,
-                      const SubReader& segment, const Context& ctx);
-
-Root::ptr MakeSinglePosting(doc_id_t doc, const Context& ctx);
-
 Root::ptr MakeAll(doc_id_t docs_count, const Context& ctx);
 
 }  // namespace irs::docs

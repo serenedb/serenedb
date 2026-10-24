@@ -35,7 +35,7 @@ if [[ "$CONFIG" == dev && -n "${SDB_PR:-}" ]]; then
 	read -ra test_args <<<"${TEST_ARGS:-}"
 	python3 scripts/ci/ci.py timing --config "$CONFIG" --arch "$ARCH" --out "$out/timing.json"
 	docker run --rm --user "$(id -u):$(id -g)" --group-add "$(stat -c '%g' /var/run/docker.sock)" \
-		-e HOME=/tmp -e SDB_PR -v /var/run/docker.sock:/var/run/docker.sock \
+		-e HOME=/tmp -e SDB_PR -e SDB_STORE_HOST -v /var/run/docker.sock:/var/run/docker.sock \
 		-v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" -v "$bundle:$bundle" "$BUILD_IMAGE" \
 		python3 scripts/ci/test.py --build-dir "$bundle" --config dev --timing "$out/timing.json" \
 		--list "${test_args[@]}" --changed "$BASE" --selection-report "$out/selection.json" \

@@ -36,7 +36,8 @@ paths:
 
 ## The store
 
-- bulavka (`store-host:8640`) holds the build bundles, results (and an index of the failures), timings, coverage profiles, attribution and the selection map under `/store/`, and the shared ccache under `/ccache/`; only the CI and dev machines reach it. Results and timings are Parquet, read and written with the release image's `serened shell` (`scripts/ci/ci.py`).
+- The store holds the build bundles, results (and an index of the failures), timings, coverage profiles, attribution and the selection map under `/store/`, and the shared ccache under `/ccache/`; only the CI and dev machines reach it. Results and timings are Parquet, read and written with the release image's `serened shell` (`scripts/ci/ci.py`).
+- Its address is the `SDB_STORE_HOST` secret, which every CI job gets as an environment variable; on a dev machine, export it yourself. Without it, a local run uses no store. An infrastructure address never goes into the repository: it is public.
 
 ## CI images
 

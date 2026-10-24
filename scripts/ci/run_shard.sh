@@ -40,7 +40,7 @@ for h in duckdb-minio.com test-bucket.duckdb-minio.com test-bucket-2.duckdb-mini
 done
 pass=()
 for var in SEARCHBENCH_S3_KEY_ID SEARCHBENCH_S3_SECRET BIGLAKE_PROJECT BIGLAKE_CATALOG \
-	BIGLAKE_CLIENT_EMAIL BIGLAKE_PRIVATE_KEY BIGLAKE_PRIVATE_KEY_ID SDB_STORE; do
+	BIGLAKE_CLIENT_EMAIL BIGLAKE_PRIVATE_KEY BIGLAKE_PRIVATE_KEY_ID SDB_STORE_HOST; do
 	[[ -n "${!var:-}" ]] && pass+=(-e "$var")
 done
 mkdir -p /mnt/data/searchbench 2>/dev/null || true

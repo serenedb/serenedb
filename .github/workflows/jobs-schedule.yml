@@ -20,6 +20,9 @@ concurrency:
   group: daily
   cancel-in-progress: false
 
+env:
+  SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
+
 jobs:
   perf:
     uses: ./.github/workflows/config.yml
@@ -61,12 +64,14 @@ jobs:
     with:
       CONFIG: perf
       LOCATION: linux-arm64
+    secrets: inherit
 
   dev-arm64:
     uses: ./.github/workflows/build.yml
     with:
       CONFIG: dev
       LOCATION: linux-arm64
+    secrets: inherit
 
   validate-pg:
     name: validate pg

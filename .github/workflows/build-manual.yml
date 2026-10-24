@@ -46,6 +46,9 @@ concurrency:
   group: build-manual-${{ inputs.PR_NUMBER && format('pr-{0}', inputs.PR_NUMBER) || github.run_id }}
   cancel-in-progress: true
 
+env:
+  SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
+
 jobs:
   prepare:
     name: prepare

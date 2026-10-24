@@ -62,6 +62,7 @@ jobs:
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
       BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
+    secrets: inherit
 
   test:
     needs: build

@@ -7,13 +7,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-DEFAULT_URL = "http://store-host:8640/store"
 RELEASE_IMAGE = "serenedb/serenedb:latest"
 
 
 def url(path):
-    base = os.environ.get("SDB_STORE", DEFAULT_URL).rstrip("/")
-    return f"{base}/{path.lstrip('/')}"
+    host = os.environ.get("SDB_STORE_HOST", "").rstrip("/")
+    if not host:
+        raise RuntimeError("SDB_STORE_HOST is not set: it holds the address of the CI store")
+    return f"{host}/store/{path.lstrip('/')}"
 
 
 def _failed(method, path, e):
@@ -99,6 +100,8 @@ def fetch_all(keys, work):
 
 
 def reachable(timeout=5):
+    if not os.environ.get("SDB_STORE_HOST"):
+        return False
     try:
         req = urllib.request.Request(url(""), method="HEAD")
         with urllib.request.urlopen(req, timeout=timeout):

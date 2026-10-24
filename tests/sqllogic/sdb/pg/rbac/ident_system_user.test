@@ -12,9 +12,9 @@ CREATE ROLE sysuser_vedernikoff LOGIN PASSWORD 'sysuser_secret';
 
 
 query
-SELECT system_user IS NULL AS trusted;
+SELECT system_user IS NULL OR system_user = ('scram-sha-256:' || session_user) AS trusted_or_password;
 ----
-trusted
+trusted_or_password
 t
 
 

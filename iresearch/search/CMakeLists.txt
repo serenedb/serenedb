@@ -282,6 +282,7 @@ target_sources(
         make/query/exact_vector.cpp
         make/query/hnsw.cpp
         make/query/knn_vector.cpp
+        make/query/nested.cpp
         make/query/range_vector.cpp
         make/ngram/offsets_all.cpp
         make/ngram/offsets_threshold.cpp
@@ -294,6 +295,7 @@ target_sources(
         offsets/make.cpp
         offsets/make_posting.cpp
         queries/hnsw_query.cpp
+        queries/nested_query.cpp
         queries/vector_similarity_query.cpp
         scorers/dfi.cpp
         scorers/idf.cpp

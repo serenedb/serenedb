@@ -24,10 +24,9 @@
 #include <type_traits>
 #include <utility>
 
+#include "iresearch/search/detail/geo_slots.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/lead/geo_slots_docs.hpp"
-#include "iresearch/search/probe/geo_slots_docs.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
 
 namespace irs::detail {
@@ -52,12 +51,9 @@ Result Build(GeoKind, const GeoQuery<Parser, Acceptor>& query,
     return {};
   }
   using Cells = std::conditional_t<kProbed, probe::Erased, lead::Erased>;
-  using Slots =
-    std::conditional_t<kProbed, probe::GeoSlotsDocs<Parser, Acceptor, Cells>,
-                       lead::GeoSlotsDocs<Parser, Acceptor, Cells>>;
-  return f.template operator()<Slots>(std::piecewise_construct,
-                                      std::forward_as_tuple(std::move(node)),
-                                      query.MakeRecipe());
+  return f.template operator()<GeoSlots<Parser, Acceptor, Cells>>(
+    std::piecewise_construct, std::forward_as_tuple(std::move(node)),
+    query.MakeRecipe());
 }
 
 }  // namespace irs::detail

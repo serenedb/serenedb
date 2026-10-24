@@ -20,26 +20,29 @@
 
 #pragma once
 
+#include <tuple>
 #include <utility>
 
 #include "iresearch/search/queries/geo_query.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::lead {
+namespace irs::detail {
 
 template<typename Parser, typename Acceptor, typename Cells>
-class GeoSlotsDocs {
+class GeoSlots {
  public:
   using Recipe = typename GeoQuery<Parser, Acceptor>::Recipe;
+
   template<typename CellsArgs>
-  GeoSlotsDocs(std::piecewise_construct_t, CellsArgs&& cells,
-               const Recipe& recipe)
+  GeoSlots(std::piecewise_construct_t, CellsArgs&& cells, const Recipe& recipe)
     : _cells{std::make_from_tuple<Cells>(std::forward<CellsArgs>(cells))},
       _shape{recipe.Make()} {}
 
   doc_id_t Seek(doc_id_t target) { return _cells.Seek(target); }
 
   doc_id_t Next(doc_id_t) { return _cells.Next(); }
+
+  doc_id_t Probe(doc_id_t target) { return _cells.Probe(target); }
 
   bool Match(doc_id_t doc) { return _shape.Check(doc); }
 
@@ -48,4 +51,4 @@ class GeoSlotsDocs {
   typename GeoQuery<Parser, Acceptor>::Verifier _shape;
 };
 
-}  // namespace irs::lead
+}  // namespace irs::detail

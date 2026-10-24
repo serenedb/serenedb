@@ -24,6 +24,7 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/wildcard_ngram_slots.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/fill/walk.hpp"
@@ -31,11 +32,9 @@
 #include "iresearch/search/lead/all_docs.hpp"
 #include "iresearch/search/lead/boolean_window.hpp"
 #include "iresearch/search/lead/two_phase.hpp"
-#include "iresearch/search/lead/wildcard_ngram_slots_docs.hpp"
 #include "iresearch/search/probe/all_docs.hpp"
 #include "iresearch/search/probe/leaves.hpp"
 #include "iresearch/search/probe/two_phase.hpp"
-#include "iresearch/search/probe/wildcard_ngram_slots_docs.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/utils/down_cast.hpp"
@@ -65,10 +64,7 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
 
   const auto recipe = query.MakeRecipe();
   const auto make = [&]<typename Approx>(auto&&... args) -> Result {
-    using Slots =
-      std::conditional_t<kProbed, probe::WildcardNGramSlotsDocs<Approx>,
-                         lead::WildcardNGramSlotsDocs<Approx>>;
-    return f.template operator()<Slots>(
+    return f.template operator()<WildcardNGramSlots<Approx>>(
       std::piecewise_construct,
       std::forward_as_tuple(std::forward<decltype(args)>(args)...), recipe);
   };

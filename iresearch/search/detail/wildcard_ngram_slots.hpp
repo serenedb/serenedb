@@ -20,28 +20,30 @@
 
 #pragma once
 
+#include <tuple>
 #include <utility>
 
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
-#include "iresearch/search/lead/impl.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace irs::lead {
+namespace irs::detail {
 
 template<typename NGrams>
-class WildcardNGramSlotsDocs {
+class WildcardNGramSlots {
  public:
   using Recipe = WildcardNGramQuery::Recipe;
 
   template<typename NGramsArgs>
-  WildcardNGramSlotsDocs(std::piecewise_construct_t, NGramsArgs&& ngrams,
-                         const Recipe& recipe)
+  WildcardNGramSlots(std::piecewise_construct_t, NGramsArgs&& ngrams,
+                     const Recipe& recipe)
     : _ngrams{std::make_from_tuple<NGrams>(std::forward<NGramsArgs>(ngrams))},
       _pattern{recipe.Make()} {}
 
   doc_id_t Seek(doc_id_t target) { return _ngrams.Seek(target); }
 
   doc_id_t Next(doc_id_t) { return _ngrams.Next(); }
+
+  doc_id_t Probe(doc_id_t target) { return _ngrams.Probe(target); }
 
   bool Match(doc_id_t doc) { return _pattern.Check(doc); }
 
@@ -50,4 +52,4 @@ class WildcardNGramSlotsDocs {
   WildcardNGramVerifier _pattern;
 };
 
-}  // namespace irs::lead
+}  // namespace irs::detail

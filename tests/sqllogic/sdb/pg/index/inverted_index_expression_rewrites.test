@@ -1,0 +1,460 @@
+# Index keys go through the optimizer's expression rules the way the same
+# expression in a query does, so a key the optimizer rewrites in queries still
+# matches them: LIKE becomes prefix, contains or equality, regexp_matches and
+# starts_with become prefix or contains, instr(...) = 1 becomes prefix, negations
+# are pushed into comparisons, constants move across a comparison, a double
+# negation cancels, a no-op replace, an empty concatenation and a list built only
+# to be indexed are dropped.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY verbatim_dict AS keyword() WITH (frequency);
+
+statement ok
+CREATE TABLE rewrites (id INT PRIMARY KEY, n INT, s VARCHAR);
+
+statement ok
+INSERT INTO rewrites VALUES (1, 5, 'abcdef'), (2, 7, 'xyz');
+
+statement ok
+CREATE INDEX rewrites_idx ON rewrites USING inverted (id,
+  (s LIKE 'abc%') included(), (regexp_matches(s, 'bcd')) included(),
+  (NOT (n > 6)) included(), (lower(s) || '') verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) rewrites;
+
+statement ok
+CREATE TABLE rewrites_composed (id INT PRIMARY KEY, a VARCHAR, b VARCHAR, s VARCHAR);
+
+statement ok
+INSERT INTO rewrites_composed VALUES (1, 'foo', 'bar', 'AbcDef'), (2, 'baz', 'qux', 'Xyz');
+
+statement ok
+CREATE INDEX rewrites_composed_idx ON rewrites_composed USING inverted (id, (a || b || '!') verbatim_dict,
+  ([upper(s), 'x'][1]) verbatim_dict, ({'x': lower(s)}.x) verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) rewrites_composed;
+
+statement ok
+CREATE VIEW rewrites_composed_view AS
+  SELECT id, a || b AS ab, [upper(s), 'x'] AS l, {'x': lower(s)} AS st FROM rewrites_composed_idx;
+
+# A subquery, a view or a GROUP BY supplies part of the key's expression.
+query
+SELECT id FROM (SELECT id, a || b AS ab FROM rewrites_composed_idx) t WHERE ab || '!' @@ 'foobar!' ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM (SELECT id, a || b AS ab FROM rewrites_composed_idx) t WHERE ab || '!' @@ 'foobar!';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────╮
+│ Index: rewrites_composed_idx         │
+│ Lookup: table                        │
+│ Index Filter:                        │
+│ ╭─ Term ───────────────────────────╮ │
+│ │ Field: ((a || b) || '!')(string) │ │
+│ │ Value: foobar!                   │ │
+│ ╰──────────────────────────────────╯ │
+│ Projections: id                      │
+│ ~1 row                               │
+╰──────────────────────────────────────╯
+
+query
+SELECT id FROM (SELECT id, [upper(s), 'x'] AS l FROM rewrites_composed_idx) t WHERE l[1] @@ 'XYZ' ORDER BY id;
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM (SELECT id, [upper(s), 'x'] AS l FROM rewrites_composed_idx) t WHERE l[1] @@ 'XYZ';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: rewrites_composed_idx             │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Term ───────────────────────────────╮ │
+│ │ Field:                               │ │
+│ │ list_value(upper(s), 'x')[1](string) │ │
+│ │ Value: XYZ                           │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT id FROM rewrites_composed_view WHERE st.x @@ 'abcdef' ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM rewrites_composed_view WHERE st.x @@ 'abcdef';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────╮
+│ Index: rewrites_composed_idx               │
+│ Lookup: table                              │
+│ Index Filter:                              │
+│ ╭─ Term ─────────────────────────────────╮ │
+│ │ Field:                                 │ │
+│ │ (struct_pack(x := lower(s))).x(string) │ │
+│ │ Value: abcdef                          │ │
+│ ╰────────────────────────────────────────╯ │
+│ Projections: id                            │
+│ ~1 row                                     │
+╰────────────────────────────────────────────╯
+
+query
+SELECT id FROM rewrites_composed_view WHERE l[1] @@ 'XYZ' AND ab || '!' @@ 'bazqux!' ORDER BY id;
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM rewrites_composed_view WHERE l[1] @@ 'XYZ' AND ab || '!' @@ 'bazqux!';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────╮
+│ Index: rewrites_composed_idx                                                   │
+│ Lookup: table                                                                  │
+│ Index Filter:                                                                  │
+│ ╭─ And ────────────────────────────╮                                           │
+│ ╰─────────────────┬────────────────╯                                           │
+│                   ├───────────────────────────────────────╮                    │
+│ ╭─ Terms ─────────┴────────────────╮  ╭─ Terms ───────────┴──────────────────╮ │
+│ │ Field: ((a || b) || '!')(string) │  │ Field:                               │ │
+│ │ Values: 'bazqux!'                │  │ list_value(upper(s), 'x')[1](string) │ │
+│ ╰──────────────────────────────────╯  │ Values: 'XYZ'                        │ │
+│                                       ╰──────────────────────────────────────╯ │
+│ Projections: id                                                                │
+│ ~1 row                                                                         │
+╰────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT ab FROM (SELECT a || b AS ab FROM rewrites_composed_idx GROUP BY a || b) t WHERE ab || '!' @@ 'bazqux!';
+----
+ab
+bazqux
+
+query
+EXPLAIN SELECT ab FROM (SELECT a || b AS ab FROM rewrites_composed_idx GROUP BY a || b) t WHERE ab || '!' @@ 'bazqux!';
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────╮
+│ Groups: #0                           │
+│ ~0 rows                              │
+╰───────────────────┬──────────────────╯
+╭─ PROJECTION ──────┴──────────────────╮
+│ Projections: a || b                  │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ──┴──────────────────╮
+│ Index: rewrites_composed_idx         │
+│ Lookup: table                        │
+│ Index Filter:                        │
+│ ╭─ Term ───────────────────────────╮ │
+│ │ Field: ((a || b) || '!')(string) │ │
+│ │ Value: bazqux!                   │ │
+│ ╰──────────────────────────────────╯ │
+│ Projections: a, b                    │
+│ ~1 row                               │
+╰──────────────────────────────────────╯
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rewrites_words_dict AS split_text(case := 'lower') WITH (frequency);
+
+statement ok
+CREATE TABLE rewrites_columns (id INT PRIMARY KEY, s VARCHAR, n INT);
+
+statement ok
+INSERT INTO rewrites_columns VALUES (1, 'abc', 5), (2, 'xyz', 7);
+
+# A key the rules reduce to a column is a key on that column.
+statement ok
+CREATE INDEX rewrites_columns_idx ON rewrites_columns USING inverted (id, ([s, 'x'][1]) verbatim_dict, (n + 0) included());
+
+statement ok
+VACUUM (REFRESH_TABLE) rewrites_columns;
+
+query
+SELECT id FROM rewrites_columns_idx WHERE [s, 'x'][1] @@ 'abc' ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM rewrites_columns_idx WHERE [s, 'x'][1] @@ 'abc';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: rewrites_columns_idx │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Term ───────────╮        │
+│ │ Field: s(string) │        │
+│ │ Value: abc       │        │
+│ ╰──────────────────╯        │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
+
+query
+SELECT id FROM rewrites_columns_idx WHERE s @@ 'xyz' ORDER BY id;
+----
+id
+2
+
+query
+SELECT id, n + 0 AS m FROM rewrites_columns_idx ORDER BY id;
+----
+id	m
+1	5
+2	7
+
+query
+EXPLAIN SELECT id, n + 0 FROM rewrites_columns_idx;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: rewrites_columns_idx │
+│ Lookup: table               │
+│ Projections: id (l), n (i)  │
+│ ~2 rows                     │
+╰─────────────────────────────╯
+
+statement error
+CREATE INDEX rewrites_columns_twice_idx ON rewrites_columns USING inverted (id, s verbatim_dict, ([s, 'x'][1]) rewrites_words_dict);
+----
+db error: ERROR: Column 'list_value(s, 'x')[1]' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+statement ok
+CREATE TABLE rewrites_stored_parts (id INT PRIMARY KEY, a VARCHAR, b VARCHAR, s VARCHAR);
+
+statement ok
+INSERT INTO rewrites_stored_parts VALUES (1, 'foo', 'bar', 'AbcDef'), (2, 'baz', 'qux', 'Xyz');
+
+statement ok
+CREATE INDEX rewrites_stored_parts_idx ON rewrites_stored_parts USING inverted (id, (a || b) included(),
+  (a || b || '!') verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) rewrites_stored_parts;
+
+# The subquery reads its part of the key from the index, and the filter around
+# that part still matches the key.
+query
+SELECT id, ab FROM (SELECT id, a || b AS ab FROM rewrites_stored_parts_idx) t WHERE ab || '!' @@ 'foobar!' ORDER BY id;
+----
+id	ab
+1	foobar
+
+query
+EXPLAIN SELECT id, ab FROM (SELECT id, a || b AS ab FROM rewrites_stored_parts_idx) t WHERE ab || '!' @@ 'foobar!';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────╮
+│ Index: rewrites_stored_parts_idx     │
+│ Lookup: table                        │
+│ Index Filter:                        │
+│ ╭─ Term ───────────────────────────╮ │
+│ │ Field: ((a || b) || '!')(string) │ │
+│ │ Value: foobar!                   │ │
+│ ╰──────────────────────────────────╯ │
+│ Projections: id (l), (a || b) (i)    │
+│ ~1 row                               │
+╰──────────────────────────────────────╯
+
+statement ok
+CREATE TABLE rewrites_stored (id INT PRIMARY KEY, n INT, s VARCHAR, d DATE);
+
+statement ok
+INSERT INTO rewrites_stored VALUES (1, 5, 'abcdef', DATE '2024-03-15'), (2, 7, 'xyz', DATE '2025-06-02');
+
+statement ok
+CREATE INDEX rewrites_stored_idx ON rewrites_stored USING inverted (id,
+  (s LIKE '%bcd%') included(), (s LIKE 'abcdef') included(), (regexp_matches(s, '^abc')) included(),
+  (instr(s, 'ab') = 1) included(), (NOT (n > 1 AND n < 6)) included(), (n + 1 > 5) included(),
+  (-(-n) * 2) included(), (date_trunc('month', d) = DATE '2024-03-01') included(),
+  (starts_with(s, 'ab')) included(), (CASE WHEN n > 6 THEN 'big' ELSE 'small' END) included());
+
+statement ok
+VACUUM (REFRESH_TABLE) rewrites_stored;
+
+query
+SELECT id, s LIKE '%bcd%' AS a, s LIKE 'abcdef' AS b, regexp_matches(s, '^abc') AS c, instr(s, 'ab') = 1 AS e,
+    NOT (n > 1 AND n < 6) AS f, n + 1 > 5 AS g, -(-n) * 2 AS h, date_trunc('month', d) = DATE '2024-03-01' AS i,
+    starts_with(s, 'ab') AS j, CASE WHEN n > 6 THEN 'big' ELSE 'small' END AS k
+FROM rewrites_stored_idx ORDER BY id;
+----
+id	a	b	c	e	f	g	h	i	j	k
+1	t	t	t	t	f	t	10	t	t	small
+2	f	f	f	f	t	t	14	f	f	big
+
+query
+EXPLAIN SELECT id, s LIKE '%bcd%', s LIKE 'abcdef', regexp_matches(s, '^abc'), instr(s, 'ab') = 1,
+    NOT (n > 1 AND n < 6), n + 1 > 5, -(-n) * 2, date_trunc('month', d) = DATE '2024-03-01',
+    starts_with(s, 'ab'), CASE WHEN n > 6 THEN 'big' ELSE 'small' END
+FROM rewrites_stored_idx;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────╮
+│ Index: rewrites_stored_idx                                 │
+│ Lookup: table                                              │
+│ Projections:                                               │
+│ id (l), (s ~~ '%bcd%') (i), (s ~~ 'abcdef') (i),           │
+│ regexp_matches(s, '^abc') (i), (instr(s, 'ab') = 1) (i),   │
+│ (NOT ((n > 1) AND (n < 6))) (i), ((n + 1) > 5) (i),        │
+│ ((-((-(n)))) * 2) (i),                                     │
+│ (date_trunc('month', d) = CAST('2024-03-01' AS date)) (i), │
+│ starts_with(s, 'ab') (i),                                  │
+│ CASE  WHEN ((n > 6)) THEN ('big') ELSE 'small' END (i)     │
+│ ~2 rows                                                    │
+╰────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id, s LIKE '%bcd%', regexp_matches(s, '^abc') FROM rewrites_stored;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────╮
+│ Projections: id,                 │
+│              contains(s, 'bcd'), │
+│              prefix(s, 'abc')    │
+│ ~2 rows                          │
+╰─────────────────┬────────────────╯
+╭─ SEQ_SCAN ──────┴────────────────╮
+│ Table: rewrites_stored           │
+│ Type: Sequential Scan            │
+│ Projections: id, s               │
+│ ~2 rows                          │
+╰──────────────────────────────────╯
+
+statement ok
+CREATE TABLE rewrites_terms (id INT PRIMARY KEY, s VARCHAR);
+
+statement ok
+INSERT INTO rewrites_terms VALUES (1, 'AbcDef'), (2, 'Xyz');
+
+statement ok
+CREATE INDEX rewrites_terms_idx ON rewrites_terms USING inverted (id,
+  (replace(lower(s), 'q', 'q')) verbatim_dict, ([upper(s), 'x'][1]) verbatim_dict,
+  (concat(lower(s), '', '')) verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) rewrites_terms;
+
+query
+SELECT id FROM rewrites_terms_idx WHERE replace(lower(s), 'q', 'q') @@ 'abcdef' ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM rewrites_terms_idx WHERE replace(lower(s), 'q', 'q') @@ 'abcdef';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────╮
+│ Index: rewrites_terms_idx                 │
+│ Lookup: table                             │
+│ Index Filter:                             │
+│ ╭─ Term ────────────────────────────────╮ │
+│ │ Field:                                │ │
+│ │ "replace"(lower(s), 'q', 'q')(string) │ │
+│ │ Value: abcdef                         │ │
+│ ╰───────────────────────────────────────╯ │
+│ Projections: id                           │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query
+SELECT id FROM rewrites_terms_idx WHERE [upper(s), 'x'][1] @@ 'XYZ' ORDER BY id;
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM rewrites_terms_idx WHERE [upper(s), 'x'][1] @@ 'XYZ';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: rewrites_terms_idx                │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Term ───────────────────────────────╮ │
+│ │ Field:                               │ │
+│ │ list_value(upper(s), 'x')[1](string) │ │
+│ │ Value: XYZ                           │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT id FROM rewrites_terms_idx WHERE concat(lower(s), '', '') @@ 'xyz' ORDER BY id;
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM rewrites_terms_idx WHERE concat(lower(s), '', '') @@ 'xyz';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────╮
+│ Index: rewrites_terms_idx                   │
+│ Lookup: table                               │
+│ Index Filter:                               │
+│ ╭─ Term ──────────────────────────────────╮ │
+│ │ Field: concat(lower(s), '', '')(string) │ │
+│ │ Value: xyz                              │ │
+│ ╰─────────────────────────────────────────╯ │
+│ Projections: id                             │
+│ ~1 row                                      │
+╰─────────────────────────────────────────────╯
+
+query
+SELECT id, s LIKE 'abc%' AS l, regexp_matches(s, 'bcd') AS r, NOT (n > 6) AS g FROM rewrites_idx ORDER BY id;
+----
+id	l	r	g
+1	t	t	t
+2	f	f	f
+
+query
+EXPLAIN SELECT id, s LIKE 'abc%', regexp_matches(s, 'bcd'), NOT (n > 6) FROM rewrites_idx;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: rewrites_idx            │
+│ Lookup: table                  │
+│ Projections:                   │
+│ id (l), (s ~~ 'abc%') (i),     │
+│ regexp_matches(s, 'bcd') (i),  │
+│ (NOT (n > 6)) (i)              │
+│ ~2 rows                        │
+╰────────────────────────────────╯
+
+query
+SELECT id FROM rewrites_idx WHERE lower(s) || '' @@ 'abcdef' ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM rewrites_idx WHERE lower(s) || '' @@ 'abcdef';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────╮
+│ Index: rewrites_idx                 │
+│ Lookup: table                       │
+│ Index Filter:                       │
+│ ╭─ Term ──────────────────────────╮ │
+│ │ Field: (lower(s) || '')(string) │ │
+│ │ Value: abcdef                   │ │
+│ ╰─────────────────────────────────╯ │
+│ Projections: id                     │
+│ ~1 row                              │
+╰─────────────────────────────────────╯

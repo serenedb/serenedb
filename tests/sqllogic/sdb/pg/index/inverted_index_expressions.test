@@ -1847,6 +1847,67 @@ QUERY PLAN
 ╰─────────────────────────────────╯
 
 
+# --- Stored keys of every shape are read back: concatenation chains, CASE, several columns, a macro that binds its argument once, a comparison. The same function over another column is computed.
+
+statement ok
+CREATE TABLE inc_e_shapes(id INT PRIMARY KEY, a VARCHAR, b VARCHAR, n INT);
+
+statement ok
+CREATE MACRO inc_e_twice(x) AS x || '-' || x;
+
+statement ok
+CREATE INDEX inc_e_shapes_idx ON inc_e_shapes USING inverted(
+    id, (a || b || 'x') included(), (CASE WHEN n > 1 THEN a ELSE b END) included(), (concat(a, b)) included(),
+    (inc_e_twice(lower(a))) included(), (n > 1) included(), (lower(a)) included());
+
+statement ok
+INSERT INTO inc_e_shapes VALUES (1, 'Ab', 'Cd', 1), (2, 'Ef', 'Gh', 2);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_shapes;
+
+query
+SELECT id, a || b || 'x' AS c, CASE WHEN n > 1 THEN a ELSE b END AS w, concat(a, b) AS j, inc_e_twice(lower(a)) AS t,
+    n > 1 AS g, lower(a) AS la, lower(b) AS lb
+FROM inc_e_shapes_idx ORDER BY id;
+----
+id	c	w	j	t	g	la	lb
+1	AbCdx	Cd	AbCd	ab-ab	f	ab	cd
+2	EfGhx	Ef	EfGh	ef-ef	t	ef	gh
+
+query
+EXPLAIN SELECT id, a || b || 'x', CASE WHEN n > 1 THEN a ELSE b END, concat(a, b), inc_e_twice(lower(a)), n > 1, lower(a)
+FROM inc_e_shapes_idx;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────╮
+│ Index: inc_e_shapes_idx                       │
+│ Lookup: table                                 │
+│ Projections:                                  │
+│ id (l), ((a || b) || 'x') (i),                │
+│ CASE  WHEN ((n > 1)) THEN (a) ELSE b END (i), │
+│ concat(a, b) (i), inc_e_twice(lower(a)) (i),  │
+│ (n > 1) (i), lower(a) (i)                     │
+│ ~2 rows                                       │
+╰───────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id, lower(b), concat(b, a) FROM inc_e_shapes_idx;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────╮
+│ Projections: id, lower(b), │
+│              concat(b, a)  │
+│ ~2 rows                    │
+╰──────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: inc_e_shapes_idx    │
+│ Lookup: table              │
+│ Projections: id, b, a      │
+│ ~2 rows                    │
+╰────────────────────────────╯
+
+
 # --- A stored value that depends on the session, not only on its row, is computed from the row instead.
 
 statement ok

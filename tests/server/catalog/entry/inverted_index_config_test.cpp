@@ -36,11 +36,25 @@ TEST(InvertedIndexConfigTest, StoresExpressionNeedsAStoredField) {
   const InvertedIndexConfig unstored{keys(), {}};
   EXPECT_FALSE(unstored.StoresExpression(7));
   EXPECT_FALSE(unstored.StoresExpressions());
+  EXPECT_TRUE(unstored
+                .ExpressionsWithRootSignature(
+                  RootSignatureSeed(duckdb::LogicalTypeId::VARCHAR))
+                .empty());
+  EXPECT_TRUE(unstored.HasExpressionKeyOfType(duckdb::LogicalTypeId::VARCHAR));
   InvertedIndexFields fields;
   fields.emplace(7, InvertedIndexField{{.store_values = true}});
   const InvertedIndexConfig stored{keys(), std::move(fields)};
   EXPECT_TRUE(stored.StoresExpression(7));
   EXPECT_TRUE(stored.StoresExpressions());
+  EXPECT_TRUE(stored
+                .ExpressionsWithRootSignature(
+                  RootSignatureSeed(duckdb::LogicalTypeId::VARCHAR))
+                .empty());
+  EXPECT_TRUE(stored
+                .ExpressionsWithRootSignature(
+                  RootSignatureSeed(duckdb::LogicalTypeId::BOOLEAN))
+                .empty());
+  EXPECT_FALSE(stored.HasExpressionKeyOfType(duckdb::LogicalTypeId::BOOLEAN));
 }
 
 TEST(InvertedIndexConfigTest, LookupsFollowKeyOrder) {
@@ -83,16 +97,64 @@ TEST(InvertedIndexConfigTest, LookupsFollowKeyOrder) {
   EXPECT_EQ(kTerms, config.ColumnOf(kTerms));
   EXPECT_EQ(kTerms, config.FindFieldIdByExpression("e"));
   const auto expression = config.FindExpressionKeys("e");
+  EXPECT_EQ(&config.keys[2], expression.first);
   EXPECT_EQ(&config.keys[4], expression.term);
   EXPECT_EQ(&config.keys[3], expression.stored);
   EXPECT_EQ(nullptr, config.FindExpressionKeys("f").term);
   EXPECT_TRUE(config.StoresExpression(kStored));
   EXPECT_FALSE(config.StoresExpression(kTerms));
+  EXPECT_TRUE(config
+                .ExpressionsWithRootSignature(
+                  RootSignatureSeed(duckdb::LogicalTypeId::VARCHAR))
+                .empty());
   EXPECT_TRUE(config.StoresExpressions());
   const auto owner = config.LookupField(kNull);
   EXPECT_EQ(kColumn, owner.entry_field_id);
   EXPECT_EQ(config.FindEntry(kColumn), owner.entry);
   EXPECT_EQ(nullptr, config.LookupField(77).entry);
+}
+
+TEST(InvertedIndexConfigTest, KeysAreFoundByRootSignature) {
+  constexpr uint8_t kClass = 1;
+  constexpr uint8_t kType = 2;
+  const auto key = [](irs::field_id field, std::string function) {
+    return InvertedIndexKey{{.field_id = field,
+                             .type = duckdb::LogicalType::VARCHAR,
+                             .normalized_expression = function,
+                             .root_chain = {{.expression_class = kClass,
+                                             .expression_type = kType,
+                                             .function = function}},
+                             .columns = {5}},
+                            function};
+  };
+  const auto signature = [](std::string_view function) {
+    return RootSignatureStep(RootSignatureSeed(duckdb::LogicalTypeId::VARCHAR),
+                             kClass, kType, function);
+  };
+  InvertedIndexFields fields;
+  fields.emplace(20, InvertedIndexField{{.indexed_term_dict = true}});
+  fields.emplace(21, InvertedIndexField{{.store_values = true}});
+  fields.emplace(22, InvertedIndexField{{.store_values = true}});
+  const InvertedIndexConfig config{
+    {key(20, "lower"), key(21, "upper"), key(22, "lower")}, std::move(fields)};
+
+  const auto lower = config.ExpressionsWithRootSignature(signature("lower"));
+  ASSERT_EQ(1, lower.size());
+  EXPECT_EQ(&config.keys[0], lower[0].first);
+  EXPECT_EQ(&config.keys[0], lower[0].term);
+  EXPECT_EQ(&config.keys[2], lower[0].stored);
+  const auto upper = config.ExpressionsWithRootSignature(signature("upper"));
+  ASSERT_EQ(1, upper.size());
+  EXPECT_EQ(&config.keys[1], upper[0].first);
+  EXPECT_EQ(nullptr, upper[0].term);
+  EXPECT_EQ(&config.keys[1], upper[0].stored);
+  EXPECT_TRUE(config.ExpressionsWithRootSignature(signature("trim")).empty());
+  EXPECT_TRUE(config.StoresExpressions());
+  EXPECT_TRUE(config
+                .ExpressionsWithRootSignature(
+                  RootSignatureSeed(duckdb::LogicalTypeId::VARCHAR))
+                .empty());
+  EXPECT_TRUE(config.HasExpressionKeyOfType(duckdb::LogicalTypeId::VARCHAR));
 }
 
 }  // namespace

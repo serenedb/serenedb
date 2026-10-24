@@ -20,17 +20,20 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
+#include <cstdint>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/planner/expression.hpp>
-#include <functional>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <span>
 #include <string>
 #include <string_view>
 
+#include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
 
 namespace sdb::connector {
@@ -49,7 +52,10 @@ duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
                                      std::span<const ColumnId> slot_to_col_id,
                                      duckdb::ClientContext& context);
 
-using StoredExpressionOf = std::function<std::string_view(ColumnId)>;
+struct StoredColumn {
+  ColumnId column;
+  std::string_view expression;
+};
 
 // Rewrites binder-state noise so bytes match across binding contexts:
 // alias/query_location cleared, is_operator=false, column refs keyed by
@@ -57,7 +63,19 @@ using StoredExpressionOf = std::function<std::string_view(ColumnId)>;
 std::string NormalizedExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context,
-  const StoredExpressionOf& stored_expression = {});
+  std::span<const StoredColumn> stored_columns = {});
+
+void NormalizeIndexKey(const duckdb::Expression& expr, duckdb::idx_t table_id,
+                       std::span<const ColumnId> col_index_to_id,
+                       catalog::persistence::KeyRecord& record);
+
+uint64_t RootSignatureOf(const duckdb::Expression& expr);
+
+bool PassesKeyPrefilter(
+  const catalog::InvertedIndexConfig& config, catalog::KeyKind kind,
+  const duckdb::Expression& expr, uint64_t signature,
+  absl::FunctionRef<std::span<const ColumnId>()> col_index_to_id,
+  std::span<const StoredColumn> stored_columns = {});
 
 bool ComputedFromRowAlone(const duckdb::Expression& expr);
 

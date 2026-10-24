@@ -15,7 +15,8 @@ INSERT INTO rek VALUES (1, 'The Quick Brown Fox', 10), (2, 'quick fox brown', 20
 onlyif serenedb
 statement ok
 CREATE INDEX rek_idx ON rek USING inverted(
-    id, (lower(body)) rek_words, (lower(body)) included(), (n + 1) included());
+    id, (lower(body)) rek_words, (lower(body)) included(), (n + 1) included(),
+    (body LIKE 'The%') included());
 
 onlyif serenedb
 statement ok
@@ -71,6 +72,45 @@ id	l	m
 1	the quick brown fox	11
 2	quick fox brown	21
 3	a quick brown dog	31
+
+onlyif serenedb
+connection after_crash
+query
+EXPLAIN SELECT id, lower(body), n + 1 FROM rek_idx;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: rek_idx                │
+│ Lookup: table                 │
+│ Projections: id (l),          │
+│              lower(body) (i), │
+│              (n + 1) (i)      │
+│ ~3 rows                       │
+╰───────────────────────────────╯
+
+onlyif serenedb
+connection after_crash
+query
+SELECT id, body LIKE 'The%' AS p FROM rek_idx ORDER BY id;
+----
+id	p
+1	t
+2	f
+3	f
+
+onlyif serenedb
+connection after_crash
+query
+EXPLAIN SELECT id, body LIKE 'The%' FROM rek_idx;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────╮
+│ Index: rek_idx                     │
+│ Lookup: table                      │
+│ Projections: id (l),               │
+│              (body ~~ 'The%') (i)  │
+│ ~3 rows                            │
+╰────────────────────────────────────╯
 
 onlyif serenedb
 connection after_crash

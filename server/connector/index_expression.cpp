@@ -21,37 +21,22 @@
 #include "connector/index_expression.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/str_cat.h>
+#include <absl/container/inlined_vector.h>
 
-#include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
-#include <duckdb/common/constants.hpp>
-#include <duckdb/common/exception.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/type_visitor.hpp>
 #include <duckdb/execution/column_binding_resolver.hpp>
 #include <duckdb/execution/expression_executor.hpp>
-#include <duckdb/function/lambda_functions.hpp>
-#include <duckdb/main/database_manager.hpp>
 #include <duckdb/optimizer/expression_rewriter.hpp>
-#include <duckdb/optimizer/rule/concat_flattening.hpp>
-#include <duckdb/parser/expression/columnref_expression.hpp>
-#include <duckdb/parser/expression/constant_expression.hpp>
-#include <duckdb/parser/expression/function_expression.hpp>
-#include <duckdb/parser/expression/lambda_expression.hpp>
-#include <duckdb/parser/parsed_expression_iterator.hpp>
+#include <duckdb/optimizer/optimizer.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
-#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_lambda_expression.hpp>
-#include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
 #include "connector/column_id.h"
@@ -60,38 +45,6 @@
 namespace sdb::connector {
 namespace {
 
-// TODO(mkornaukhov): replace with the regular constant-folding optimizer.
-duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
-  duckdb::unique_ptr<duckdb::Expression> expr, duckdb::ClientContext& context) {
-  duckdb::ExpressionIterator::EnumerateChildren(
-    *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
-      child = FoldConstantCasts(std::move(child), context);
-    });
-  if (duckdb::BoundCastExpression::IsCast(*expr)) {
-    if (duckdb::BoundCastExpression::Child(
-          expr->Cast<duckdb::BoundFunctionExpression>())
-          .GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
-      duckdb::Value folded;
-      if (duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr,
-                                                        folded)) {
-        return duckdb::make_uniq<duckdb::BoundConstantExpression>(
-          std::move(folded));
-      }
-    }
-  }
-  return expr;
-}
-
-class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
- public:
-  ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
-                       duckdb::vector<duckdb::LogicalType> t)
-    : duckdb::ColumnBindingResolver(std::move(b), std::move(t)) {}
-  void Resolve(duckdb::unique_ptr<duckdb::Expression>& expr) {
-    VisitExpression(&expr);
-  }
-};
-
 std::string SerializeBoundExpression(const duckdb::Expression& expr) {
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer::Serialize(expr, stream);
@@ -99,11 +52,10 @@ std::string SerializeBoundExpression(const duckdb::Expression& expr) {
                      stream.GetPosition()};
 }
 
-duckdb::unique_ptr<duckdb::Expression> FlattenConcats(
+duckdb::unique_ptr<duckdb::Expression> ApplyOptimizerRules(
   duckdb::unique_ptr<duckdb::Expression> expr, duckdb::ClientContext& context) {
   duckdb::ExpressionRewriter rewriter{context};
-  rewriter.rules.push_back(
-    duckdb::make_uniq<duckdb::ConcatFlatteningRule>(rewriter));
+  duckdb::Optimizer::AddExpressionRules(rewriter);
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> select_list;
   select_list.push_back(std::move(expr));
   duckdb::LogicalProjection projection{duckdb::TableIndex{0},
@@ -129,22 +81,14 @@ void ClearSource(duckdb::Expression& expr) {
     lambda.SetLambdaExpr(WithoutSource(*lambda.LambdaExpr()));
   } else if (expr.GetExpressionClass() ==
              duckdb::ExpressionClass::BOUND_FUNCTION) {
-    auto& function = expr.Cast<duckdb::BoundFunctionExpression>();
-    function.IsOperatorMutable() = false;
-    if (function.Function().HasBindLambdaCallback() && function.BindInfo()) {
-      auto& data =
-        function.BindInfoMutable()->Cast<duckdb::LambdaFunctionData>();
-      if (const auto body = data.GetLambdaExpression()) {
-        data.SetLambdaExpression(WithoutSource(*body));
-      }
-    }
+    expr.Cast<duckdb::BoundFunctionExpression>().IsOperatorMutable() = false;
   }
 }
 
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
-  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
-  auto copy = FlattenConcats(FoldConstantCasts(expr.Copy(), context), context);
+  std::span<const ColumnId> col_index_to_id) {
+  auto copy = expr.Copy();
   duckdb::ExpressionIterator::EnumerateExpression(
     copy, [&](duckdb::Expression& e) {
       ClearSource(e);
@@ -188,9 +132,9 @@ duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
                           duckdb::ProjectionIndex(slot_to_col_id[slot]));
     types.emplace_back(chunk.data[slot].GetType());
   }
-  ChunkBindingResolver resolver(std::move(bindings), std::move(types));
+  duckdb::ColumnBindingResolver resolver{std::move(bindings), std::move(types)};
   auto resolved = bound_expr.Copy();
-  resolver.Resolve(resolved);
+  resolver.VisitExpression(&resolved);
   const auto num_rows = chunk.size();
   duckdb::Vector result(resolved->GetReturnType(), num_rows);
   duckdb::ExpressionExecutor executor(context, *resolved);
@@ -200,23 +144,35 @@ duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
 
 namespace {
 
-void ExpandStoredExpressions(duckdb::unique_ptr<duckdb::Expression>& expr,
-                             const StoredExpressionOf& stored_expression,
+std::string_view StoredExpression(std::span<const StoredColumn> stored_columns,
+                                  ColumnId column) {
+  const auto it = absl::c_find_if(
+    stored_columns,
+    [&](const StoredColumn& stored) { return stored.column == column; });
+  return it == stored_columns.end() ? std::string_view{} : it->expression;
+}
+
+bool ExpandStoredExpressions(duckdb::unique_ptr<duckdb::Expression>& expr,
+                             std::span<const StoredColumn> stored_columns,
                              duckdb::ClientContext& context) {
   if (expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    const auto stored = stored_expression(
+    const auto stored = StoredExpression(
+      stored_columns,
       static_cast<ColumnId>(expr->Cast<duckdb::BoundColumnRefExpression>()
                               .Binding()
                               .column_index.GetIndex()));
-    if (!stored.empty()) {
-      expr = DeserializeBoundExpression(stored, context);
+    if (stored.empty()) {
+      return false;
     }
-    return;
+    expr = DeserializeBoundExpression(stored, context);
+    return true;
   }
+  bool expanded = false;
   duckdb::ExpressionIterator::EnumerateChildren(
     *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
-      ExpandStoredExpressions(child, stored_expression, context);
+      expanded |= ExpandStoredExpressions(child, stored_columns, context);
     });
+  return expanded;
 }
 
 }  // namespace
@@ -225,13 +181,128 @@ std::string NormalizedExpression(const duckdb::Expression& expr,
                                  duckdb::idx_t table_id,
                                  std::span<const ColumnId> col_index_to_id,
                                  duckdb::ClientContext& context,
-                                 const StoredExpressionOf& stored_expression) {
-  auto normalized =
-    NormalizeBoundExpression(expr, table_id, col_index_to_id, context);
-  if (stored_expression) {
-    ExpandStoredExpressions(normalized, stored_expression, context);
+                                 std::span<const StoredColumn> stored_columns) {
+  auto normalized = NormalizeBoundExpression(expr, table_id, col_index_to_id);
+  if (!stored_columns.empty()) {
+    const bool composite = normalized->GetExpressionClass() !=
+                           duckdb::ExpressionClass::BOUND_COLUMN_REF;
+    if (ExpandStoredExpressions(normalized, stored_columns, context) &&
+        composite) {
+      normalized = ApplyOptimizerRules(std::move(normalized), context);
+      duckdb::ExpressionIterator::EnumerateExpression(normalized, ClearSource);
+    }
   }
   return SerializeBoundExpression(*normalized);
+}
+
+namespace {
+
+using ColumnSet = absl::InlinedVector<ColumnId, 8>;
+
+ColumnSet Columns(const duckdb::Expression& expr, const auto& column_of) {
+  ColumnSet columns;
+  duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
+    expr, [&](const duckdb::BoundColumnRefExpression& ref) {
+      columns.push_back(column_of(ref.Binding().column_index.GetIndex()));
+    });
+  absl::c_sort(columns);
+  columns.erase(std::ranges::unique(columns).begin(), columns.end());
+  return columns;
+}
+
+const duckdb::Expression* LambdaBody(
+  const duckdb::BoundFunctionExpression& function) {
+  for (const auto& child : function.GetChildren()) {
+    if (child->GetExpressionClass() == duckdb::ExpressionClass::BOUND_LAMBDA) {
+      return child->Cast<duckdb::BoundLambdaExpression>().LambdaExpr().get();
+    }
+  }
+  return nullptr;
+}
+
+void ForEachRootChainLevel(const duckdb::Expression& expr, const auto& level) {
+  for (const auto* node = &expr; node;) {
+    const auto cls = node->GetExpressionClass();
+    const auto type = node->GetExpressionType();
+    if (cls != duckdb::ExpressionClass::BOUND_FUNCTION) {
+      level(cls, type, std::string_view{});
+      return;
+    }
+    const auto& function = node->Cast<duckdb::BoundFunctionExpression>();
+    level(cls, type,
+          std::string_view{function.Function().GetName().GetIdentifierName()});
+    node = LambdaBody(function);
+  }
+}
+
+}  // namespace
+
+void NormalizeIndexKey(const duckdb::Expression& expr, duckdb::idx_t table_id,
+                       std::span<const ColumnId> col_index_to_id,
+                       catalog::persistence::KeyRecord& record) {
+  const auto normalized =
+    NormalizeBoundExpression(expr, table_id, col_index_to_id);
+  record.normalized_expression = SerializeBoundExpression(*normalized);
+  record.root_chain.clear();
+  ForEachRootChainLevel(*normalized, [&](duckdb::ExpressionClass cls,
+                                         duckdb::ExpressionType type,
+                                         std::string_view function) {
+    record.root_chain.emplace_back(
+      std::to_underlying(cls), std::to_underlying(type), std::string{function});
+  });
+  const auto columns = Columns(
+    *normalized, [](duckdb::idx_t idx) { return static_cast<ColumnId>(idx); });
+  record.columns.assign(columns.begin(), columns.end());
+}
+
+uint64_t RootSignatureOf(const duckdb::Expression& expr) {
+  auto signature = catalog::RootSignatureSeed(expr.GetReturnType().id());
+  ForEachRootChainLevel(
+    expr, [&](duckdb::ExpressionClass cls, duckdb::ExpressionType type,
+              std::string_view function) {
+      signature = catalog::RootSignatureStep(
+        signature, std::to_underlying(cls), std::to_underlying(type), function);
+    });
+  return signature;
+}
+
+bool PassesKeyPrefilter(
+  const catalog::InvertedIndexConfig& config, catalog::KeyKind kind,
+  const duckdb::Expression& expr, uint64_t signature,
+  absl::FunctionRef<std::span<const ColumnId>()> col_index_to_id,
+  std::span<const StoredColumn> stored_columns) {
+  if (!config.HasExpressionKeyOfType(expr.GetReturnType().id())) {
+    return false;
+  }
+  const auto expands = [&](ColumnId column) {
+    return !StoredExpression(stored_columns, column).empty();
+  };
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    const auto ids = col_index_to_id();
+    const auto idx = expr.Cast<duckdb::BoundColumnRefExpression>()
+                       .Binding()
+                       .column_index.GetIndex();
+    SDB_ASSERT(idx < ids.size());
+    return expands(ids[idx]);
+  }
+  const auto key_of = [&](const catalog::ExpressionKeys& keys) {
+    return kind == catalog::KeyKind::Term ? keys.term : keys.stored;
+  };
+  const auto expressions = config.ExpressionsWithRootSignature(signature);
+  if (absl::c_none_of(expressions, key_of)) {
+    return false;
+  }
+  const auto ids = col_index_to_id();
+  const auto columns = Columns(expr, [&](duckdb::idx_t idx) {
+    SDB_ASSERT(idx < ids.size());
+    return ids[idx];
+  });
+  const bool expanded = absl::c_any_of(columns, expands);
+  return absl::c_any_of(expressions, [&](const catalog::ExpressionKeys& keys) {
+    const auto* key = key_of(keys);
+    return key && key->type == expr.GetReturnType() &&
+           (expanded || absl::c_equal(columns, key->columns));
+  });
 }
 
 namespace {
@@ -253,6 +324,10 @@ bool PinsTimeZone(const duckdb::BoundFunctionExpression& func) {
 }  // namespace
 
 bool ComputedFromRowAlone(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_LAMBDA) {
+    return ComputedFromRowAlone(
+      *expr.Cast<duckdb::BoundLambdaExpression>().LambdaExpr());
+  }
   if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
     if (DependsOnSession(func.GetReturnType()) ||

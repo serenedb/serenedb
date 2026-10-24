@@ -59,11 +59,19 @@ struct PkPolicy {
   PkColumnKind column = PkColumnKind::Has;
 };
 
+struct RootChainLevel {
+  uint8_t expression_class = 0;
+  uint8_t expression_type = 0;
+  std::string function;
+};
+
 struct KeyRecord {
   irs::field_id field_id = irs::field_limits::invalid();
   irs::field_id column_id = irs::field_limits::invalid();
   duckdb::LogicalType type;
   std::string normalized_expression;
+  std::vector<RootChainLevel> root_chain;
+  std::vector<irs::field_id> columns;
 };
 
 struct FieldRecord {

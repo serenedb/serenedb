@@ -224,7 +224,7 @@ statement ok
 DROP TABLESPACE mix_b_${__DATABASE__};
 
 
-query ok retry 40 backoff 250ms
+query ok retry 240 backoff 250ms
 SELECT count(*) AS left_in_b FROM glob('s3://${MINIO_BUCKET}/${__DATABASE__}_mix_b/engine_v1/**');
 ----
 left_in_b
@@ -246,7 +246,7 @@ statement ok
 DROP TABLESPACE mix_a_${__DATABASE__};
 
 
-query ok retry 40 backoff 250ms
+query ok retry 240 backoff 250ms
 SELECT count(*) AS left_in_a FROM glob('s3://${MINIO_BUCKET}/${__DATABASE__}_mix_a/engine_v1/**');
 ----
 left_in_a

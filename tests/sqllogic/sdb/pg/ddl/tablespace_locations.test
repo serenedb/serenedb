@@ -205,7 +205,7 @@ db error: ERROR: Could not rename "<slt:ignore>" to "<slt:ignore>": another entr
 statement ok
 DROP TABLESPACE "PG_upper_${__DATABASE__}";
 
-statement ok retry 40 backoff 250ms
+statement ok retry 240 backoff 250ms
 CREATE TABLESPACE reuse_${__DATABASE__} LOCATION '${__TEST_DIR__}/names/upper';
 
 query

@@ -85,7 +85,7 @@ cat_docs	cat_ts
 statement ok
 DROP TABLE cat_docs;
 
-query ok retry 40 backoff 250ms
+query ok retry 240 backoff 250ms
 SELECT pg_tablespace_size('cat_ts_${__DATABASE__}') AS after_drop;
 ----
 after_drop

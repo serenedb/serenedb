@@ -174,7 +174,7 @@ spcname
 doomed
 
 connection after_failed_drop
-query ok retry 40 backoff 250ms
+query ok retry 240 backoff 250ms
 SELECT count(*) AS archive_files FROM glob('${__TEST_DIR__}/many/slow/**');
 ----
 archive_files

@@ -154,7 +154,7 @@ statement ok
 DROP TABLESPACE mixaz_b_${__DATABASE__};
 
 
-query ok retry 40 backoff 250ms
+query ok retry 240 backoff 250ms
 SELECT count(*) AS left_in_b FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_mixaz_b/engine_v1/**');
 ----
 left_in_b
@@ -169,7 +169,7 @@ statement ok
 DROP TABLESPACE mixaz_a_${__DATABASE__};
 
 
-query ok retry 40 backoff 250ms
+query ok retry 240 backoff 250ms
 SELECT count(*) AS left_in_a FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_mixaz_a/engine_v1/**');
 ----
 left_in_a

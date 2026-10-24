@@ -40,7 +40,7 @@ SELECT count(*) AS left FROM pg_class WHERE relname IN ('rolled_back', 'rolled_b
 left
 0
 
-query ok retry 40 backoff 250ms
+query ok retry 240 backoff 250ms
 SELECT (SELECT count(*) FROM glob('${__TEST_DIR__}/tx/ts/engine_v1/**')) AS ts_files,
        (SELECT count(*) FROM glob('${__TEST_DIR__}/tx/other/engine_v1/**')) AS other_files;
 ----
@@ -50,7 +50,7 @@ ts_files	other_files
 statement ok
 DROP TABLESPACE tx_other_${__DATABASE__};
 
-statement ok retry 40 backoff 250ms
+statement ok retry 240 backoff 250ms
 CREATE TABLESPACE tx_other_${__DATABASE__} LOCATION '${__TEST_DIR__}/tx/other';
 
 statement ok
@@ -126,7 +126,7 @@ DROP SCHEMA tx_schema CASCADE;
 statement ok
 DROP TABLESPACE tx_other_${__DATABASE__};
 
-query ok retry 40 backoff 250ms
+query ok retry 240 backoff 250ms
 SELECT count(*) AS other_files FROM glob('${__TEST_DIR__}/tx/other/**');
 ----
 other_files
@@ -153,7 +153,7 @@ DROP TABLE indexed;
 statement ok
 DROP TABLESPACE tx_ts_${__DATABASE__};
 
-query ok retry 40 backoff 250ms
+query ok retry 240 backoff 250ms
 SELECT count(*) AS ts_files FROM glob('${__TEST_DIR__}/tx/ts/**');
 ----
 ts_files

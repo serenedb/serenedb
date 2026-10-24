@@ -159,14 +159,17 @@ void SubstringFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         duckdb::PostgresSubstringBounds(offset, length);
         return duckdb::SubstringASCII(result, bytes, offset, length);
       });
-    return;
+  } else {
+    duckdb::BinaryExecutor::Execute<duckdb::string_t, int64_t,
+                                    duckdb::string_t>(
+      args.data[0], args.data[1], result, args.size(),
+      [&](duckdb::string_t bytes, int64_t offset) {
+        return duckdb::SubstringASCII(
+          result, bytes, std::max<int64_t>(offset, 1),
+          duckdb::NumericLimits<uint32_t>::Maximum());
+      });
   }
-  duckdb::BinaryExecutor::Execute<duckdb::string_t, int64_t, duckdb::string_t>(
-    args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t bytes, int64_t offset) {
-      return duckdb::SubstringASCII(result, bytes, std::max<int64_t>(offset, 1),
-                                    duckdb::NumericLimits<uint32_t>::Maximum());
-    });
+  duckdb::StringVector::AddHeapReference(result, args.data[0]);
 }
 
 duckdb::string_t Overlay(duckdb::Vector& result, duckdb::string_t bytes,

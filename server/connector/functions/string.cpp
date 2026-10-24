@@ -305,6 +305,7 @@ void QuoteIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
       return duckdb::StringVector::AddString(result, pg::QuoteIdentifier(str));
     });
+  duckdb::StringVector::AddHeapReference(result, args.data[0]);
 }
 
 // octet_length(text) -> int: byte length (DuckDB has it for BLOB/BIT, not

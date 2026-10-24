@@ -73,7 +73,7 @@ bool Unique(Clauses& clauses, Same same, ScoreMergeType merge) {
 
 score_t AbsorbedOf(const BooleanQuery::Clauses& clauses,
                    const SubReader& segment, ScoreMergeType merge,
-                   ColumnArgsFetcher* fetcher) {
+                   ColumnArgsFetcher& fetcher) {
   score_t out = 0;
   bool any = false;
   for (const auto occur : {Occur::Must, Occur::Should}) {
@@ -85,7 +85,7 @@ score_t AbsorbedOf(const BooleanQuery::Clauses& clauses,
       const auto one = detail::AllDocsScore(segment, detail::ScoreArgs{
                                                        .scorer = record.scorer,
                                                        .stats = record.stats,
-                                                       .fetcher = fetcher,
+                                                       .fetcher = &fetcher,
                                                        .boost = clause.boost,
                                                      });
       if (!any) {
@@ -477,7 +477,7 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
   return query;
 }
 
-score_t BooleanQuery::Absorbed(ColumnArgsFetcher* fetcher) const noexcept {
+score_t BooleanQuery::Absorbed(ColumnArgsFetcher& fetcher) const noexcept {
   return AbsorbedOf(_clauses, _segment, _merge_type, fetcher);
 }
 

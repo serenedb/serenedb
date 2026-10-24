@@ -32,7 +32,7 @@ namespace {
 Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
   const auto merge = query.MergeType();
   if (!ctx.prune || merge != ScoreMergeType::Sum ||
-      query.Absorbed(&ctx.fetcher) != 0) {
+      query.Absorbed(ctx.fetcher) != 0) {
     return {};
   }
   const auto& segment = query.Segment();

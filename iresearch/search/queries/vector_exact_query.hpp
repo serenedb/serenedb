@@ -77,4 +77,6 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
   bool _inclusive;
 };
 
+extern template class QueryBuilderImpl<ExactVectorQuery>;
+
 }  // namespace irs

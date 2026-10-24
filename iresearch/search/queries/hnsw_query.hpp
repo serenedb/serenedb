@@ -88,4 +88,6 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   bool _inclusive;
 };
 
+extern template class QueryBuilderImpl<HnswQuery>;
+
 }  // namespace irs

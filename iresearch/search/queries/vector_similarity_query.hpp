@@ -83,6 +83,8 @@ class KnnVectorQuery : public QueryBuilderImpl<KnnVectorQuery>,
   score_t _boost;
 };
 
+extern template class QueryBuilderImpl<KnnVectorQuery>;
+
 class RangeVectorQuery : public QueryBuilderImpl<RangeVectorQuery>,
                          public VectorQueryBase {
  public:
@@ -114,6 +116,8 @@ class RangeVectorQuery : public QueryBuilderImpl<RangeVectorQuery>,
   score_t _boost;
   bool _inclusive;
 };
+
+extern template class QueryBuilderImpl<RangeVectorQuery>;
 
 void RerankExactDistances(const SubReader& segment,
                           const ColumnReader& vector_column, uint32_t d,

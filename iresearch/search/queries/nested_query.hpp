@@ -80,4 +80,6 @@ class ByNestedQuery : public QueryBuilderImpl<ByNestedQuery> {
   score_t _constant;
 };
 
+extern template class QueryBuilderImpl<ByNestedQuery>;
+
 }  // namespace irs

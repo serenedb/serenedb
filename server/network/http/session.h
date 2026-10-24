@@ -381,9 +381,8 @@ class HttpSession final
   message::Buffer _decoded{kReadBlock, kWireChunkMax};
 
   std::atomic<ReadPhase> _read_phase{ReadPhase::Idle};
-  std::atomic<std::chrono::steady_clock::time_point> _idle_since;
-  std::atomic<size_t> _response_end{0};
   std::chrono::steady_clock::time_point _last_read;
+  std::chrono::steady_clock::time_point _busy_at;
   size_t _written_seen = 0;
   bool _peer_is_loopback = false;
   // Lazily created on first handler use; lives (and dies) on the session
@@ -498,14 +497,12 @@ void HttpSession<Kind>::OnReadDeadline() {
   const auto phase = _read_phase.load(std::memory_order_acquire);
   const auto written = _send_written.load(std::memory_order_acquire);
   const bool sent = std::exchange(_written_seen, written) != written;
-  auto at = now + gHttpKeepAliveTimeout;
-  if (phase == ReadPhase::Request) {
-    at = _last_read + gHttpBodyTimeout;
-  } else if (phase == ReadPhase::Idle && !sent &&
-             written >= _response_end.load(std::memory_order_relaxed)) {
-    at = std::max(_last_read, _idle_since.load(std::memory_order_relaxed)) +
-         gHttpKeepAliveTimeout;
+  if (sent || phase == ReadPhase::Handling || HasUnsentBytes()) {
+    _busy_at = now;
   }
+  const auto at = phase == ReadPhase::Request
+                    ? _last_read + gHttpBodyTimeout
+                    : std::max(_last_read, _busy_at) + gHttpKeepAliveTimeout;
   if (at <= now || SendBroken()) {
     _socket.Close();
     return;
@@ -784,9 +781,6 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
         break;
       }
       _codec.Reset();
-      _response_end.store(_send.TotalCommitted(), std::memory_order_relaxed);
-      _idle_since.store(std::chrono::steady_clock::now(),
-                        std::memory_order_relaxed);
       _read_phase.store(ReadPhase::Idle, std::memory_order_release);
     }
   } catch (const std::exception& e) {

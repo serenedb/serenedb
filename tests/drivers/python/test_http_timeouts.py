@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import http.client
 import os
+import socket
 import time
 from pathlib import Path
 
@@ -51,3 +52,32 @@ def test_a_response_read_slower_than_the_timeouts_arrives_whole(http_port):
         assert response.read() == b"pong"
     finally:
         conn.close()
+
+
+def echo_head(length):
+    return (f"POST /_test/echo HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+            f"Authorization: {AUTH}\r\nContent-Length: {length}\r\n\r\n").encode()
+
+
+def test_a_request_whose_body_stalls_past_the_body_timeout_is_cut_off(http_port):
+    with socket.create_connection(("127.0.0.1", http_port), timeout=30) as sock:
+        sock.sendall(echo_head(100) + b"x" * 10)
+        start = time.monotonic()
+        received = b""
+        while chunk := sock.recv(4096):
+            received += chunk
+        assert time.monotonic() - start >= 0.9
+        assert b" 200 " not in received
+
+
+def test_a_body_slower_than_the_body_timeout_in_total_arrives_whole(http_port):
+    body = b"0123456789"
+    with socket.create_connection(("127.0.0.1", http_port), timeout=30) as sock:
+        sock.sendall(echo_head(len(body)))
+        for byte in body:
+            time.sleep(0.3)
+            sock.sendall(bytes([byte]))
+        response = http.client.HTTPResponse(sock)
+        response.begin()
+        assert response.status == 200
+        assert response.read() == body

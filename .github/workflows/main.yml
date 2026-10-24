@@ -13,6 +13,9 @@ concurrency:
   group: main-postmerge
   cancel-in-progress: true
 
+env:
+  SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
+
 jobs:
   prepare:
     name: prepare

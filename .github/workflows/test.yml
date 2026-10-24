@@ -48,6 +48,7 @@ on:
 
 env:
   BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
+  SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
   SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
   SDB_SHA: ${{ inputs.PR_SHA || github.sha }}
   SDB_PR: ${{ inputs.PR_NUMBER }}

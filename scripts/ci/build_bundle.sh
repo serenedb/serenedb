@@ -11,7 +11,6 @@ sdb_config "$1"
 : "${CCACHE_HOST_DIR:=/mnt/data/.ccache}"
 : "${CARGO_HOME_CACHE:=/mnt/data/.cargo-home-sqllogic}"
 : "${CARGO_TARGET_CACHE:=/mnt/data/.cargo-target-sqllogic}"
-: "${SDB_STORE_CCACHE:=http://store-host:8640/ccache|layout=bazel}"
 
 output() {
 	echo "$1=$2"
@@ -40,8 +39,8 @@ fi
 output reused false
 
 remote=()
-if [[ "$ARCH" == x86_64 ]]; then
-	remote=(-e "CCACHE_REMOTE_STORAGE=$SDB_STORE_CCACHE")
+if [[ "$ARCH" == x86_64 && -n "${SDB_STORE_HOST:-}" ]]; then
+	remote=(-e "CCACHE_REMOTE_STORAGE=$SDB_STORE_HOST/ccache|layout=bazel")
 fi
 mkdir -p "$WORKSPACE/out/logs" "$WORKSPACE/out/home" "$CARGO_HOME_CACHE" "$CARGO_TARGET_CACHE"
 

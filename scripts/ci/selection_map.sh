@@ -13,7 +13,7 @@ SHARDS="$2"
 rm -rf out/selection-map
 mkdir -p out/selection-map
 docker run --rm --user "$(id -u):$(id -g)" --group-add "$(stat -c '%g' /var/run/docker.sock)" \
-	-e HOME=/tmp -v /var/run/docker.sock:/var/run/docker.sock \
+	-e HOME=/tmp -e SDB_STORE_HOST -v /var/run/docker.sock:/var/run/docker.sock \
 	-v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" "$BUILD_IMAGE" \
 	python3 scripts/ci/ci.py selection-map --run "$RUN" --config "$CONFIG" --arch "$ARCH" \
 	--work out/selection-map --shards "$SHARDS"

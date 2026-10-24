@@ -16,6 +16,7 @@ paths:
 - `tests/drivers/stress/`: concurrency and soak profiles, and the harness's own pytest tests (`test_*.py`, the `stress:harness` unit); `tests/drivers/sqlsmith/` and `tests/drivers/fuzz/`: fuzzers.
 - `tests/bench/micro/`: microbenchmarks; `scripts/perf/`: end-to-end performance scripts. `tests/duckdb/`: DuckDB's and the extensions' own suites.
 - `third_party/re2/re2/testing/`: the re2 fork's own suites, whose exhaustive and random tests check every matching engine against a backtracking reference; CI runs them when `third_party/re2` or what it builds against changes.
+- `scripts/ci/tests/`: pytest tests of the CI scripts, which pre-commit runs when those scripts change.
 
 ## When a change needs one
 

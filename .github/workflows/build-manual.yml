@@ -48,6 +48,7 @@ on:
 permissions:
   statuses: write
   contents: read
+  checks: read
   pull-requests: write
 
 concurrency:
@@ -70,8 +71,11 @@ jobs:
         with:
           ref: ${{ inputs.PR_SHA || github.sha }}
           fetch-depth: 0
-      - name: Every gitlink can be fetched
-        run: ./scripts/ci/check_gitlinks.sh
+      - name: pre-commit is not red
+        if: inputs.PR_SHA != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/ci.py wait-check --repo "${{ github.repository }}" --sha "${{ inputs.PR_SHA }}" --name pre-commit
       - id: classify
         run: ./scripts/ci/classify-changes.sh origin/main
       - id: select

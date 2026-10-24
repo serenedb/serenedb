@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       NAME:
-        description: "A second run of CONFIG in the same workflow (biglake): names its artifacts and results; it gets no coverage or selection report"
+        description: "A second run of CONFIG in the same workflow (biglake): names its artifacts and results"
         type: string
         required: false
         default: ""
@@ -50,225 +50,31 @@ on:
         description: "The test shards, as JSON"
         value: ${{ jobs.build.outputs.shards }}
 
-env:
-  BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
-  SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-  SDB_SHA: ${{ inputs.PR_SHA || github.sha }}
-  SDB_PR: ${{ inputs.PR_NUMBER }}
-  SDB_BRANCH: ${{ inputs.PR_NUMBER == '' && github.ref_name || '' }}
-
 jobs:
   build:
-    name: build ${{ inputs.CONFIG }} (${{ inputs.LOCATION }})
-    runs-on:
-      - ${{ inputs.LOCATION }}
-    timeout-minutes: 300
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-      shards: ${{ steps.plan.outputs.shards }}
-    steps:
-      - name: Reap containers left on this runner
-        run: |
-          echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
-          filter="label=serenedb.owner=ci-${RUNNER_NAME}"
-          docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
-          docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
-          docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
-          git config --global --add safe.directory '*'
-
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.PR_SHA || github.sha }}
-          fetch-depth: 1
-          submodules: true
-          clean: false
-
-      - name: Clean the checkout, keeping the build directories
-        run: |
-          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
-          git clean -ffdxq -e '/build_*/'
-          git submodule foreach --quiet --recursive 'git clean -ffdxq'
-          git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
-
-      - name: Build
-        id: build
-        run: ./scripts/ci/build_bundle.sh "${{ inputs.CONFIG }}"
-
-      - name: Plan the test shards
-        id: plan
-        if: inputs.TESTS
-        run: |
-          set -f
-          source scripts/ci/config.sh
-          sdb_config "${{ inputs.CONFIG }}"
-          python3 scripts/ci/ci.py timing --config "$CONFIG" --arch "$ARCH" --out out/timing.json
-          bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "${{ steps.build.outputs.digest }}")
-          shards=$(docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
-            -v "$PWD:$PWD" -w "$PWD" -v "$bundle:$bundle" "$BUILD_IMAGE" \
-            python3 scripts/ci/ci.py shards --build-dir "$bundle" --config "$CONFIG" \
-              --timing out/timing.json --cpus "$(nproc)" -- ${{ inputs.TEST_ARGS }})
-          echo "shards=$shards" >> "$GITHUB_OUTPUT"
-          echo "shards: $shards"
-
-      - name: Keep the timing snapshot for the shards
-        if: inputs.TESTS
-        uses: actions/upload-artifact@v7
-        with:
-          name: timing-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: out/timing.json
-          retention-days: 3
-
-      - name: Upload the build logs
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: build-logs-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: out/logs/
-          retention-days: 14
-
-      - name: Reap containers of this job
-        if: always()
-        run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"
+    uses: ./.github/workflows/build.yml
+    with:
+      CONFIG: ${{ inputs.CONFIG }}
+      NAME: ${{ inputs.NAME }}
+      LOCATION: ${{ inputs.LOCATION }}
+      TESTS: ${{ inputs.TESTS }}
+      TEST_ARGS: ${{ inputs.TEST_ARGS }}
+      PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+      BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
 
   test:
-    name: test ${{ inputs.CONFIG }} ${{ matrix.shard.name }} (${{ inputs.LOCATION }})
     needs: build
     if: inputs.TESTS
-    runs-on:
-      - ${{ inputs.LOCATION }}
-    timeout-minutes: 360
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ${{ fromJSON(needs.build.outputs.shards) }}
-    steps:
-      - name: Reap containers left on this runner
-        run: |
-          echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
-          filter="label=serenedb.owner=ci-${RUNNER_NAME}"
-          docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
-          docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
-          docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
-          git config --global --add safe.directory '*'
-
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.PR_SHA || github.sha }}
-          fetch-depth: 1
-          submodules: true
-          clean: false
-
-      - name: Clean the checkout, keeping the build directories
-        run: |
-          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
-          git clean -ffdxq -e '/build_*/'
-          git submodule foreach --quiet --recursive 'git clean -ffdxq'
-          git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
-
-      - name: Check out the sqlite corpus
-        run: git submodule update --init --checkout --depth=1 tests/sqllogic/any/pg/sqlite
-
-      - name: Fetch the timing snapshot
-        uses: actions/download-artifact@v7
-        with:
-          name: timing-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: out
-
-      - name: Run the shard
-        env:
-          SDB_CHECK: ${{ inputs.NAME }}
-          SEARCHBENCH_S3_KEY_ID: ${{ secrets.SEARCHBENCH_S3_KEY_ID }}
-          SEARCHBENCH_S3_SECRET: ${{ secrets.SEARCHBENCH_S3_SECRET }}
-          BIGLAKE_PROJECT: ${{ secrets.BIGLAKE_PROJECT }}
-          BIGLAKE_CATALOG: ${{ secrets.BIGLAKE_CATALOG }}
-          BIGLAKE_CLIENT_EMAIL: ${{ secrets.BIGLAKE_CLIENT_EMAIL }}
-          BIGLAKE_PRIVATE_KEY: ${{ secrets.BIGLAKE_PRIVATE_KEY }}
-          BIGLAKE_PRIVATE_KEY_ID: ${{ secrets.BIGLAKE_PRIVATE_KEY_ID }}
-        run: |
-          set -f
-          ./scripts/ci/run_shard.sh "${{ inputs.CONFIG }}" "${{ needs.build.outputs.digest }}" \
-            "${{ matrix.shard.spec }}" out/timing.json --budget 19800 ${{ inputs.TEST_ARGS }}
-
-      - name: Summary
-        if: always()
-        run: cat out/test-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-
-      - name: Upload the results
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: results-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ matrix.shard.name }}
-          path: |
-            out/test-*/results.jsonl
-            out/test-*/summary.txt
-            out/test-*/meta.json
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Upload what failed
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: failure-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ matrix.shard.name }}
-          path: out/failure-*.tar.zst
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Reap containers of this job
-        if: always()
-        run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"
-
-  coverage:
-    name: coverage ${{ inputs.CONFIG }} (${{ inputs.LOCATION }})
-    needs: [build, test]
-    if: ${{ !cancelled() && inputs.TESTS && inputs.CONFIG == 'dev' && inputs.NAME == '' && needs.build.result == 'success' }}
-    runs-on:
-      - ${{ inputs.LOCATION }}
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.PR_SHA || github.sha }}
-          fetch-depth: 1
-          submodules: true
-          clean: false
-
-      - name: Clean the checkout, keeping the build directories
-        run: |
-          git config --global --add safe.directory '*'
-          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
-          git clean -ffdxq -e '/build_*/'
-          git submodule foreach --quiet --recursive 'git clean -ffdxq'
-          git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
-
-      - name: Coverage of the change
-        env:
-          SHARDS: ${{ needs.build.outputs.shards }}
-          TEST_ARGS: ${{ inputs.TEST_ARGS }}
-        run: |
-          ./scripts/ci/coverage_report.sh "${{ inputs.CONFIG }}" "${{ needs.build.outputs.digest }}" \
-            "$SDB_RUN_ID" origin/main "$(python3 -c 'import json, os; print(len(json.loads(os.environ["SHARDS"])))')"
-          cat out/coverage-*/summary.txt >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload the coverage
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: |
-            out/coverage-*/summary.txt
-            out/coverage-*/coverage.json
-          if-no-files-found: ignore
-          retention-days: 30
-
-      - name: Keep the test selection report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: selection-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: out/coverage-${{ inputs.CONFIG }}/selection.json
-          if-no-files-found: ignore
-          retention-days: 14
+    uses: ./.github/workflows/test.yml
+    with:
+      CONFIG: ${{ inputs.CONFIG }}
+      NAME: ${{ inputs.NAME }}
+      LOCATION: ${{ inputs.LOCATION }}
+      DIGEST: ${{ needs.build.outputs.digest }}
+      SHARDS: ${{ needs.build.outputs.shards }}
+      TEST_ARGS: ${{ inputs.TEST_ARGS }}
+      PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+      BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
+    secrets: inherit

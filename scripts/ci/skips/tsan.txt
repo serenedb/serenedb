@@ -1,2 +1,1 @@
 duckdb:core:test/sql/index/art/memory/test_art_varchar.test_slow	issue	CREATE INDEX's debug check renders the whole 57.6M-key ART as text (#1884)
-duckdb:core:test/parquet/parquet_combine.test	issue	a parallel COPY writes 3 or 4 row groups depending on how the threads split the rows (#1891)

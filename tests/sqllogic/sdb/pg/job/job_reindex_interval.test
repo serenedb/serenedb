@@ -96,7 +96,7 @@ ALTER INDEX jri_idx RENAME TO jri_idx_renamed;
 
 
 query
-SELECT job_name FROM sdb_jobs() WHERE job_name LIKE 'jri%';
+SELECT job_name FROM sdb_jobs() WHERE database_name = current_database() AND job_name LIKE 'jri%';
 ----
 job_name
 jri_idx
@@ -134,7 +134,7 @@ ALTER INDEX jri_idx_renamed SET (reindex_interval=0);
 
 
 query
-SELECT count(*) FROM sdb_jobs() WHERE job_name LIKE 'jri%';
+SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name LIKE 'jri%';
 ----
 count
 0
@@ -145,7 +145,7 @@ ALTER INDEX jri_idx_renamed SET (reindex_interval=200);
 
 
 query
-SELECT job_name, schedule, suspended FROM sdb_jobs() WHERE job_name LIKE 'jri%';
+SELECT job_name, schedule, suspended FROM sdb_jobs() WHERE database_name = current_database() AND job_name LIKE 'jri%';
 ----
 job_name	schedule	suspended
 jri_idx_renamed	AFTER INTERVAL '00:00:00.2'	f
@@ -168,7 +168,7 @@ ALTER INDEX jri_idx_renamed RESET (reindex_interval);
 
 
 query
-SELECT count(*) FROM sdb_jobs() WHERE job_name LIKE 'jri%';
+SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name LIKE 'jri%';
 ----
 count
 0
@@ -183,7 +183,7 @@ DROP INDEX jri_idx_renamed;
 
 
 query
-SELECT count(*) FROM sdb_jobs() WHERE job_name LIKE 'jri%';
+SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name LIKE 'jri%';
 ----
 count
 0
@@ -219,7 +219,7 @@ DROP VIEW jri_v CASCADE;
 
 
 query
-SELECT count(*) FROM sdb_jobs() WHERE job_name LIKE 'jri%';
+SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name LIKE 'jri%';
 ----
 count
 0
@@ -238,7 +238,7 @@ CREATE INDEX jri_tidx ON jri_t USING inverted(id, body);
 
 
 query
-SELECT count(*) FROM sdb_jobs() WHERE job_name LIKE 'jri%';
+SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name LIKE 'jri%';
 ----
 count
 0

@@ -19,5 +19,5 @@ git checkout -q --force "$head" && git submodule update -q --init --force --recu
 digest=$(sed -n 's/^digest=//p' out/bugfix-build.env 2>/dev/null)
 ((built == 0)) && [[ -n "$digest" ]] || exit 1
 echo '{"units": {}}' >out/timing-bugfix.json
-./scripts/ci/run_shard.sh dev "$digest" 1/1 out/timing-bugfix.json \
+SDB_CHECK=bugfix ./scripts/ci/run_shard.sh dev "$digest" 1/1 out/timing-bugfix.json \
 	--changed "$BASE" --only-changed --expect-fail --relabel 0

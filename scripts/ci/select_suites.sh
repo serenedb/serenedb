@@ -22,7 +22,7 @@ if [[ -n "${DUCKDB_SUITES:-}" ]]; then
 fi
 if [[ ",${DUCKDB_SUITES:-}," == *,core,* ]]; then
 	args+=(--suite sqlsmith)
-else
+elif [[ "${CORPUS:-false}" != true ]]; then
 	args+=(--exclude 'sqllogic:*:sdb/pg/any/sqlite/*')
 fi
 echo "${args[*]}"

@@ -69,6 +69,7 @@ jobs:
           IRESEARCH: ${{ steps.classify.outputs.iresearch }}
           RE2: ${{ steps.classify.outputs.re2 }}
           DUCKDB_SUITES: ${{ steps.classify.outputs.duckdb_suites }}
+          CORPUS: ${{ steps.classify.outputs.corpus }}
         run: echo "test_args=$(./scripts/ci/select_suites.sh)" >> "$GITHUB_OUTPUT"
       - id: title
         if: inputs.PR_NUMBER != ''
@@ -165,6 +166,7 @@ jobs:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: dev
+      NAME: biglake
       TEST_ARGS: --biglake --suite sqllogic --suite recovery --suite stress --stress-profile biglake-reindex-smoke
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}

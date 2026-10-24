@@ -7,6 +7,7 @@ on:
 permissions:
   statuses: write
   contents: read
+  actions: read
 
 concurrency:
   group: main-postmerge
@@ -21,14 +22,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 2
+          fetch-depth: 0
+      - id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(gh run list -R "${{ github.repository }}" --workflow main.yml --branch main --limit 100 \
+            --json headSha,conclusion --jq '[.[] | select(.conclusion == "success" or .conclusion == "failure")][0].headSha // ""')
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "suites changed since ${sha:-the first run: every suite}"
       - id: classify
-        run: ./scripts/ci/classify-changes.sh HEAD^
+        if: steps.base.outputs.sha != ''
+        run: ./scripts/ci/classify-changes.sh "${{ steps.base.outputs.sha }}"
       - id: select
         env:
+          EVERYTHING: ${{ steps.base.outputs.sha == '' }}
           IRESEARCH: ${{ steps.classify.outputs.iresearch }}
           RE2: ${{ steps.classify.outputs.re2 }}
           DUCKDB_SUITES: ${{ steps.classify.outputs.duckdb_suites }}
+          CORPUS: ${{ steps.classify.outputs.corpus }}
         run: echo "test_args=$(./scripts/ci/select_suites.sh)" >> "$GITHUB_OUTPUT"
 
   perf:

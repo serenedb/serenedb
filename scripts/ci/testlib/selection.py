@@ -35,18 +35,18 @@ def _functions(profdata, objects, dest):
                                      "start": body[0], "end": body[2]}) + "\n")
 
 
-def build_map(run, config, arch, bundle, work):
+def build_map(run, config, arch, bundle, work, expected):
     work = Path(work)
     prefix = f"{config}-{arch}-"
-    shards = store.fetch_all([f"attribution/{run}/{n}" for n in store.files(f"attribution/{run}/")
-                              if n.startswith(prefix)], work)
-    if not shards:
-        raise SystemExit(f"no attribution for {config}/{arch} in run {run}")
-    profiles = [n for n in store.files(f"profdata/{run}/") if n.startswith(prefix)]
+    shards = store.fetch_all(store.run_files("attribution", run, prefix), work)
+    if len(shards) < expected:
+        raise SystemExit(f"attribution of {len(shards)} of {expected} {config}/{arch} shards in run "
+                         f"{run}: the selection map stays as it is")
+    profiles = store.run_files("profdata", run, prefix)
     if not profiles:
         raise SystemExit(f"no profile for {config}/{arch} in run {run}")
     profdata = work / "any.profdata"
-    store.get(f"profdata/{run}/{profiles[0]}", profdata)
+    store.get(profiles[0], profdata)
     _functions(profdata, diff.objects(bundle), work / "functions.jsonl")
     timing = work / "timing.parquet"
     costs = (f"SELECT unit, p95 FROM read_parquet('{timing}')"

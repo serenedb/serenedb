@@ -49,7 +49,7 @@ def scan_sanitizer_text(text, path):
     for i, line in enumerate(lines):
         m = _SAN_HEAD.match(line)
         if m:
-            tool, kind = m.group(1), m.group(2)
+            tool, kind = m.group(1), re.split(r" (?:on\b|0x)", m.group(2))[0]
             frames = _frames(lines, i + 1)
             sig = f"{tool}: {kind}" + (f" in {' < '.join(frames)}" if frames else "")
             reports.append(Report(tool, sig, str(path), "\n".join(lines[i:i + 40])))

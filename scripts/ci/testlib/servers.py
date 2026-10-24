@@ -209,6 +209,8 @@ class ServerPool(Fixture):
             s = self.servers[i]
             if s.generation != generation:
                 return self.crash_info.get((i, generation), "shared serened restarted")
+            if s.proc is not None and s.proc.poll() is not None:
+                return s.crash_signature()
         return None
 
     def stop(self):

@@ -50,6 +50,11 @@ def parse_log(text):
     return results, unfinished
 
 
+def _halt_on_reports(r):
+    return {key: f"{r.env[key]}:halt_on_error=1" for key in ("TSAN_OPTIONS", "UBSAN_OPTIONS")
+            if r.env.get(key)}
+
+
 def _failure_text(text, test):
     lines = text.splitlines()
     out = []
@@ -128,13 +133,14 @@ class GtestBinary:
             outcome_members = {}
             failures = []
             crash = None
+            exit_failure = None
             round_no = 0
             while remaining:
                 round_no += 1
                 log = r.dir / f"log.{round_no}.txt"
                 argv = [self.path, "--gtest_filter=" + ":".join(remaining), *self.extra_args,
                         *self.run_args(r)]
-                res = r.exec(argv, env=self.env, log=log)
+                res = r.exec(argv, env={**self.env, **_halt_on_reports(r)}, log=log)
                 text = log.read_text(errors="replace") if log.exists() else ""
                 results, unfinished = parse_log(text)
                 for t, (status, seconds) in results.items():
@@ -151,10 +157,13 @@ class GtestBinary:
                         outcome_members.setdefault(key, (SKIPPED, 0.0, "not run: batch timed out"))
                     return Outcome(STUCK, f"{stuck} did not finish; stacks saved",
                                    signature="stuck", members=outcome_members)
-                out = r.outcome(res)
+                out = r.outcome(res, log=log)
                 done = set(results)
                 if out.status == PASSED or (out.status == FAILED and not unfinished
                                             and not out.signature):
+                    if out.status == FAILED and results and all(
+                            status != FAILED for status, _ in results.values()):
+                        exit_failure = f"exited {res.returncode} with every test passing"
                     remaining = [t for t in remaining if t not in done]
                     if not remaining:
                         break
@@ -182,6 +191,8 @@ class GtestBinary:
             if bad:
                 return Outcome(FAILED, f"{len(bad)} test(s) failed: {', '.join(bad[:3])}",
                                members=outcome_members)
+            if exit_failure:
+                return Outcome(FAILED, exit_failure, members=outcome_members)
             return Outcome(PASSED, members=outcome_members)
 
         return run

@@ -38,7 +38,8 @@ def summary(meta, results, skips, limit=40):
 
 
 def write(out_dir, meta, results, skips):
-    common = {k: meta[k] for k in ("config", "arch", "sha", "pr", "branch", "run", "attribute")}
+    common = {k: meta[k] for k in ("config", "arch", "sha", "pr", "branch", "run", "attribute",
+                                   "check")}
     with open(out_dir / "results.jsonl", "w") as fh:
         for r in results:
             fh.write(json.dumps({**asdict(r), **common}) + "\n")

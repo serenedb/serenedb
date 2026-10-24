@@ -158,10 +158,10 @@ def cmd_upload(args):
 def cmd_download(args):
     dest = Path(args.dest)
     dest.mkdir(parents=True, exist_ok=True)
-    for name in store.files(args.dir):
-        if name.startswith(args.prefix):
-            store.get(f"{args.dir.rstrip('/')}/{name}", dest / name)
-            print(name)
+    for key in store.run_files(args.kind, args.run, args.prefix):
+        name = key.rsplit("/", 1)[1]
+        store.get(key, dest / name)
+        print(name)
 
 
 def cmd_exists(args):
@@ -214,10 +214,10 @@ def cmd_update_timing(args):
     tmp = Path(tempfile.mkdtemp())
     try:
         wanted = []
+        shard = re.compile(rf"-{re.escape(args.config)}-{re.escape(args.arch)}-\d+of\d+\.parquet$")
         for key in store.recent("results", args.days):
             name = key.rsplit("/", 1)[1]
-            if f"-{args.config}-{args.arch}-" in name and (
-                    f"-pr{args.pr}-" in name if args.pr else "-pr" not in name):
+            if shard.search(name) and (f"-pr{args.pr}-" in name if args.pr else "-pr" not in name):
                 wanted.append(key)
         files = store.fetch_all(wanted, tmp)
         if not files:
@@ -285,7 +285,7 @@ def cmd_nearest(args):
 def cmd_selection_map(args):
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
-    stats = selection.build_map(args.run, args.config, args.arch, args.bundle, work)
+    stats = selection.build_map(args.run, args.config, args.arch, args.bundle, work, args.shards)
     print(f"selection/{args.config}-{args.arch}.parquet: {stats['functions']} functions, "
           f"{stats['units']} units, {stats['rows']} rows")
 
@@ -295,7 +295,7 @@ def _rows(path):
 
 
 def _is_failure(row):
-    return row["status"] in BAD and row["attempt"] == 0
+    return row["status"] in BAD and row["attempt"] == 0 and row.get("check") != "bugfix"
 
 
 def _failures(rows):
@@ -354,7 +354,8 @@ def cmd_results(args):
     parquet = src.with_suffix(".parquet")
     store.jsonl_to_parquet(src, parquet)
     day = time.strftime("%Y-%m-%d", time.gmtime(meta["started"]))
-    shard = f"{meta['config']}-{meta['arch']}-{meta['shard'].replace('/', 'of')}"
+    check = f"{meta['check']}-" if meta.get("check") else ""
+    shard = f"{meta['config']}-{meta['arch']}-{check}{meta['shard'].replace('/', 'of')}"
     pr = f"pr{meta['pr']}-" if meta.get("pr") else ""
     name = f"results/{day}/{args.run}-{pr}{shard}.parquet"
     store.put(name, parquet)
@@ -396,9 +397,10 @@ def main(argv):
     p.add_argument("src")
     p.add_argument("dest")
     p.set_defaults(fn=cmd_upload)
-    p = sub.add_parser("download", help="get the files of a store directory whose names start "
-                                        "with a prefix")
-    p.add_argument("dir")
+    p = sub.add_parser("download", help="get a run's files of a kind whose names start with a "
+                                        "prefix, each from the latest attempt that has it")
+    p.add_argument("kind")
+    p.add_argument("run", help="<run id>-<attempt>")
     p.add_argument("prefix")
     p.add_argument("dest")
     p.set_defaults(fn=cmd_download)
@@ -432,6 +434,8 @@ def main(argv):
     p.add_argument("--arch", required=True)
     p.add_argument("--bundle", required=True, help="the unpacked coverage bundle of that run")
     p.add_argument("--work", required=True)
+    p.add_argument("--shards", type=int, required=True,
+                   help="how many shards the run had: a map from fewer is not published")
     p.set_defaults(fn=cmd_selection_map)
     p = sub.add_parser("nearest", help="name the units that run the code nearest to each "
                                        "uncovered line of a coverage report")

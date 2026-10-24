@@ -146,6 +146,9 @@ class Run:
     def remaining(self):
         return max(1.0, self.deadline - time.monotonic())
 
+    def cut_by_budget(self):
+        return self.deadline >= self.ctx.budget_end and time.monotonic() >= self.ctx.budget_end
+
     def exec(self, argv, *, cwd=None, env=None, log=None, timeout=None):
         merged = dict(self.env)
         if env:
@@ -157,7 +160,8 @@ class Run:
             cancelled=self.cancelled,
         )
 
-    def outcome(self, res, detail="", san_dirs=()):
+    def outcome(self, res, detail="", san_dirs=(), log=None):
+        log = log or self.log
         if res.stuck:
             return Outcome(STUCK, detail or f"no result after {res.duration:.0f}s; stacks saved",
                            signature="stuck", artifacts=[str(p) for p in res.stacks])
@@ -165,18 +169,25 @@ class Run:
         for d in san_dirs:
             sanitizer += reports.scan_sanitizer_dir(d)
         if res.signal:
-            crash = reports.scan_crash(reports.tail(self.log, 20000), self.log)
+            crash = reports.scan_crash(reports.tail(log, 20000), log)
             sig = sanitizer[0].signature if sanitizer else (
                 crash.signature if crash else f"signal {res.signal}")
             return Outcome(CRASHED, detail or sig, signature=sig)
         if sanitizer:
             return Outcome(FAILED, sanitizer[0].signature, signature=sanitizer[0].signature)
         if res.returncode != 0:
-            crash = reports.scan_crash(reports.tail(self.log, 20000), self.log)
+            crash = reports.scan_crash(reports.tail(log, 20000), log)
             if crash:
                 return Outcome(CRASHED, crash.signature, signature=crash.signature)
             return Outcome(FAILED, detail or f"exit {res.returncode}")
         return Outcome(PASSED, detail)
+
+
+def _budget_outcome(out):
+    detail = "not finished when the run's time budget ran out; stacks saved"
+    members = {k: (FAILED, v[1], detail, "budget") if v[0] == STUCK else v
+               for k, v in out.members.items()}
+    return Outcome(FAILED, detail, signature="budget", members=members, artifacts=out.artifacts)
 
 
 class Scheduler:
@@ -255,6 +266,8 @@ class Scheduler:
                 self._fixture(name)
             run = Run(self.ctx, unit, attempt, lambda: self._stopping)
             out = unit.run(run)
+            if out.status == STUCK and run.cut_by_budget():
+                out = _budget_outcome(out)
             if self.ctx.attribute and attempt == 0:
                 attribution.collect(self.ctx, unit, run, out.status)
         except Exception as e:
@@ -397,9 +410,13 @@ class Scheduler:
                 r.detail = (f"passed, then failed {len(bad)} of {len(reps)} repeat(s): "
                             f"{bad[0].detail}")
 
-    def invert(self):
+    def invert(self, changed):
         for r in self.results:
-            if r.attempt != 0 or r.status == SKIPPED:
+            if r.attempt != 0 or r.status == SKIPPED or r.suite == "fixture":
+                continue
+            if r.suite != "server" and r.unit not in changed:
+                r.status = SKIPPED
+                r.detail = "not a changed test"
                 continue
             if r.status == PASSED:
                 r.status = FAILED

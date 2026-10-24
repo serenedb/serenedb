@@ -1,0 +1,89 @@
+statement ok
+DROP ROLE IF EXISTS rubick_sql_impl_steal;
+
+
+statement ok
+CREATE ROLE rubick_sql_impl_steal LOGIN PASSWORD 'rubick_sql_impl_pw';
+
+
+query
+SELECT c.relkind, n.nspname, c.relnatts
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'sql_implementation_info';
+----
+relkind	nspname	relnatts
+r	information_schema	5
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'information_schema.sql_implementation_info'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+implementation_info_id	information_schema.character_data	f
+implementation_info_name	information_schema.character_data	f
+integer_value	information_schema.cardinal_number	f
+character_value	information_schema.character_data	f
+comments	information_schema.character_data	f
+
+
+query
+SELECT count(*) AS infos, count(integer_value) AS with_integer, count(character_value) AS with_character
+FROM information_schema.sql_implementation_info;
+----
+infos	with_integer	with_character
+12	5	7
+
+
+query
+SELECT implementation_info_id, implementation_info_name, integer_value,
+       CASE WHEN implementation_info_id = '18' AND strpos(version(), character_value) > 0
+            THEN 'server version' ELSE character_value END AS character_value,
+       comments
+FROM information_schema.sql_implementation_info
+ORDER BY implementation_info_id::text;
+----
+implementation_info_id	implementation_info_name	integer_value	character_value	comments
+10003	CATALOG NAME	NULL	Y	NULL
+10004	COLLATING SEQUENCE	NULL	C.UTF-8	NULL
+13	SERVER NAME	NULL	(empty)	NULL
+17	DBMS NAME	NULL	SereneDB	NULL
+18	DBMS VERSION	NULL	server version	NULL
+2	DATA SOURCE NAME	NULL	(empty)	NULL
+23	CURSOR COMMIT BEHAVIOR	1	NULL	close cursors and retain prepared statements
+26	DEFAULT TRANSACTION ISOLATION	4	NULL	REPEATABLE READ; user-settable
+28	IDENTIFIER CASE	3	NULL	stored in mixed case - case sensitive
+46	TRANSACTION CAPABLE	2	NULL	both DML and DDL
+85	NULL COLLATION	4	NULL	nulls sort at the end
+94	SPECIAL CHARACTERS	NULL	(empty)	all non-ASCII characters allowed
+
+
+query
+SELECT character_value
+FROM information_schema.sql_implementation_info
+WHERE implementation_info_name = 'DBMS NAME';
+----
+character_value
+SereneDB
+
+
+query
+SELECT has_table_privilege('rubick_sql_impl_steal', 'information_schema.sql_implementation_info', 'SELECT') AS can_read;
+----
+can_read
+t
+
+
+connection rubick_sql_impl user=rubick_sql_impl_steal password=rubick_sql_impl_pw
+query
+SELECT count(*) AS infos FROM information_schema.sql_implementation_info;
+----
+infos
+12
+
+
+connection default
+statement ok
+DROP ROLE rubick_sql_impl_steal;

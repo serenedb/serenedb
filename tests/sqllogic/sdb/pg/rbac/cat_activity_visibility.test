@@ -1,0 +1,104 @@
+statement ok
+DROP ROLE IF EXISTS chin_activity_boss;
+
+
+statement ok
+DROP ROLE IF EXISTS pudge_activity_spy;
+
+
+statement ok
+CREATE ROLE pudge_activity_spy LOGIN PASSWORD 'pudge_activity_pw';
+
+
+statement ok
+CREATE ROLE chin_activity_boss LOGIN PASSWORD 'chin_activity_pw';
+
+
+statement ok
+GRANT pudge_activity_spy TO chin_activity_boss;
+
+
+connection spy user=pudge_activity_spy password=pudge_activity_pw
+query
+SELECT 'fresh meat' AS pudge_activity_marker;
+----
+pudge_activity_marker
+fresh meat
+
+
+connection spy user=pudge_activity_spy password=pudge_activity_pw
+query
+SELECT count(*) > 0 AS sees_others,
+       bool_and(query = '<insufficient privilege>') AS hidden,
+       bool_and(state IS NULL AND query_start_us IS NULL AND command IS NULL) AS no_details,
+       bool_and(pid IS NOT NULL AND usename IS NOT NULL) AS identity_kept
+FROM sdb_progress
+WHERE usename <> current_user;
+----
+sees_others	hidden	no_details	identity_kept
+t	t	t	t
+
+
+connection spy user=pudge_activity_spy password=pudge_activity_pw
+query
+SELECT bool_and(query = '<insufficient privilege>') AS hidden,
+       bool_and(state IS NULL AND backend_start IS NULL AND query_start IS NULL) AS no_details
+FROM pg_stat_activity
+WHERE usename <> current_user;
+----
+hidden	no_details
+t	t
+
+
+connection spy user=pudge_activity_spy password=pudge_activity_pw
+query
+SELECT query LIKE '%pudge_activity_self%' AS own_query, state
+FROM pg_stat_activity
+WHERE pid = pg_backend_pid();
+----
+own_query	state
+t	active
+
+
+connection boss user=chin_activity_boss password=chin_activity_pw
+query
+SELECT query LIKE '%pudge_activity_self%' AS member_sees_query, state
+FROM sdb_progress
+WHERE usename = 'pudge_activity_spy';
+----
+member_sees_query	state
+t	idle
+
+
+connection default
+query
+SELECT count(*) AS seen_by_superuser
+FROM sdb_progress
+WHERE usename = 'pudge_activity_spy' AND query LIKE '%pudge_activity_self%';
+----
+seen_by_superuser
+1
+
+
+connection default
+statement ok
+REVOKE pudge_activity_spy FROM chin_activity_boss;
+
+
+connection boss user=chin_activity_boss password=chin_activity_pw
+query
+SELECT query
+FROM sdb_progress
+WHERE usename = 'pudge_activity_spy';
+----
+query
+<insufficient privilege>
+
+
+connection default
+statement ok
+DROP ROLE chin_activity_boss;
+
+
+statement ok
+DROP ROLE pudge_activity_spy;

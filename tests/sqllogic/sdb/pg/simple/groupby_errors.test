@@ -281,6 +281,7 @@ db error: ERROR: No function matches the given name and argument types 'sum(BIGI
 	sum(arg HUGEINT, /) -> HUGEINT
 	sum(arg DOUBLE, /) -> DOUBLE
 	sum(arg BIGNUM, /) -> BIGNUM
+	sum(arg money, /) -> money
 
 
 query error

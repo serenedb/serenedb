@@ -98,6 +98,14 @@ The `generate_series` table function returns `integer` values for `integer` argu
 
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/range_st" />
 
+### Column Definition Lists
+
+A table function that returns `record`, such as [`json_to_record` and `json_to_recordset`](../../../data_import_and_export/json/json_functions.md#json-record-functions), takes the names and types of its columns from a column definition list after its alias: `AS alias(name type, ...)`. `AS` can be left out before an alias, and the alias can be left out after `AS`: `AS (name type, ...)`.
+
+<SqlLogicTest id="sql/query_syntax/from_and_join/index/example_050" />
+
+Such a function requires a column definition list, and any other function rejects one. The column names in the list must be distinct, and a column definition list can't be combined with `WITH ORDINALITY`.
+
 ## Joins
 
 Joins are a fundamental relational operation used to connect two tables or relations horizontally.
@@ -159,7 +167,7 @@ Return the regions for the nations:
 
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/example_024" />
 
-The expressions do not have to be equalities – any predicate can be used:
+The expressions do not have to be equalities - any predicate can be used:
 
 Return the pairs of jobs where one ran longer but cost less:
 
@@ -193,7 +201,7 @@ Anti joins provide the same logic as the `NOT IN` operator, except anti joins ig
 
 #### Semi Join Example
 
-Return a list of city–airport code pairs from the `city_airport` table where the airport name **is available** in the `airport_names` table:
+Return a list of city-airport code pairs from the `city_airport` table where the airport name **is available** in the `airport_names` table:
 
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/example_029" />
 
@@ -203,7 +211,7 @@ This query is equivalent to:
 
 #### Anti Join Example
 
-Return a list of city–airport code pairs from the `city_airport` table where the airport name **is not available** in the `airport_names` table:
+Return a list of city-airport code pairs from the `city_airport` table where the airport name **is not available** in the `airport_names` table:
 
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/example_031" />
 

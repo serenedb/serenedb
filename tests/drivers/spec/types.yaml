@@ -1,9 +1,9 @@
 # Driver-test type matrix. Source of truth for which PG types every driver
 # harness must round-trip and in which formats. Reconciled against
-# server/pg/pg_types.h `enum PgTypeOID` by gen/oids_from_pg_types.py (CI gate).
+# server/pg/catalog/generated/builtin_type_oids.gen.inc (`enum PgTypeOID`) by gen/oids_from_pg_types.py (CI gate).
 #
 # Schema:
-#   oid:            postgres OID (must match pg_types.h)
+#   oid:            postgres OID (must match `enum PgTypeOID`)
 #   name:           short identifier used in test ids
 #   pg_typname:     name as in pg_catalog.pg_type.typname; used in cast SQL
 #   cast_sql:       SQL fragment used to cast a $1 placeholder server-side.
@@ -237,12 +237,10 @@
 - oid: 829
   name: macaddr
   pg_typname: macaddr
-  # TODO: SereneDB - macaddr is not yet recognized as a bindable type
-  # ("invalid input syntax for bind parameter").
-  text: false
-  binary: false
-  array: false
-  samples: ["08:00:2b:01:02:03", null]
+  text: true
+  binary: true
+  array: true
+  samples: ["08:00:2b:01:02:03", "ff:ff:ff:ff:ff:ff", null]
 
 - oid: 869
   name: inet
@@ -289,9 +287,8 @@
 - oid: 3220
   name: pg_lsn
   pg_typname: pg_lsn
-  # TODO: SereneDB - pg_lsn rejects bind parameters.
-  text: false
-  binary: false
+  text: true
+  binary: true
   array: false
   samples: ["0/0", "16/B374D848", null]
 
@@ -376,18 +373,24 @@
 - oid: 3904
   name: int4range
   pg_typname: int4range
-  text: false
-  binary: false
-  array: false
-  samples: ["empty", "[1,10)", "[0,)", null]
+  text: true
+  binary: true
+  array: true
+  samples: ["[1,5)", "(1,5]", "empty", "(,)", null]
+  skip:
+    # asyncpg binds ranges only from asyncpg.Range objects, never from the
+    # text samples. Simple-mode literal casts still exercise range input.
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 3926
   name: int8range
   pg_typname: int8range
-  text: false
-  binary: false
-  array: false
-  samples: ["empty", "[1,10)", null]
+  text: true
+  binary: true
+  array: true
+  samples: ["[1,9223372036854775806]", "empty", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 # ---- arrays of common scalars (already covered by `array: true` above,
 #      but a small number of explicit array-OID entries keeps the harness
@@ -433,12 +436,10 @@
 - oid: 18
   name: char
   pg_typname: char
-  binary: false
-  text: false
+  binary: true
+  text: true
   array: false
-  samples: []
-  skip:
-    all: ["TODO: triage Char"]
+  samples: ["a", "Z", "", null]
 
 - oid: 22
   name: int2_vector
@@ -463,12 +464,10 @@
 - oid: 27
   name: tid
   pg_typname: tid
-  binary: false
-  text: false
+  binary: true
+  text: true
   array: false
-  samples: []
-  skip:
-    all: ["TODO: triage Tid"]
+  samples: ["(0,1)", "(4294967295,65535)", null]
 
 - oid: 28
   name: xid
@@ -494,11 +493,9 @@
   name: oidvector
   pg_typname: oidvector
   binary: false
-  text: false
+  text: true
   array: false
-  samples: []
-  skip:
-    all: ["TODO: triage Oidvector"]
+  samples: ["23 25", "", null]
 
 - oid: 32
   name: pg_ddl_command
@@ -553,12 +550,10 @@
 - oid: 142
   name: xml
   pg_typname: xml
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage Xml"]
+  binary: true
+  text: true
+  array: true
+  samples: ["<a x=\"1\">b &amp; c</a>", "text", "<?xml version=\"1.0\" standalone=\"yes\"?><a/>", null]
 
 - oid: 143
   name: xml_array
@@ -663,52 +658,75 @@
 - oid: 600
   name: point
   pg_typname: point
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["(1,2)", "(-1.5,1e+300)", null]
   skip:
-    all: ["TODO: triage Point"]
+    # asyncpg binds geometric values only from its own Point, Box, ...
+    # objects, never from the text samples. Simple-mode literal casts still
+    # exercise geometric input.
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 601
   name: lseg
   pg_typname: lseg
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["[(0,0),(1,1)]", "[(1.5,2),(-3,4)]", null]
   skip:
-    all: ["TODO: triage Lseg"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 602
   name: path
   pg_typname: path
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["((0,0),(1,1),(1,0))", "[(0,0),(1,1)]", null]
   skip:
-    all: ["TODO: triage Path"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 603
   name: box
   pg_typname: box
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["(1,1),(0,0)", "(2.5,3),(-1,-2)", null]
   skip:
-    all: ["TODO: triage Box"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 604
   name: polygon
   pg_typname: polygon
+  binary: true
+  text: true
+  array: true
+  samples: ["((0,0),(1,1),(1,0))", "((7,8))", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 628
+  name: line
+  pg_typname: line
+  text: true
+  binary: true
+  array: true
+  samples: ["{1,-1,0}", "{0,1,-2.5}", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 629
+  name: line_array
+  pg_typname: line_array
   binary: false
   text: false
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Polygon"]
+    all: ["TODO: triage LineArray"]
 
 - oid: 651
   name: cidr_array
@@ -733,12 +751,12 @@
 - oid: 718
   name: circle
   pg_typname: circle
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["<(0,0),1>", "<(1.5,-2),0.5>", null]
   skip:
-    all: ["TODO: triage Circle"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 719
   name: circle_array
@@ -753,12 +771,10 @@
 - oid: 774
   name: macaddr8
   pg_typname: macaddr8
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage Macaddr8"]
+  binary: true
+  text: true
+  array: true
+  samples: ["08:00:2b:01:02:03:04:05", "08:00:2b:ff:fe:01:02:03", null]
 
 - oid: 775
   name: macaddr8_array
@@ -773,12 +789,10 @@
 - oid: 790
   name: money
   pg_typname: money
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage Money"]
+  binary: true
+  text: true
+  array: true
+  samples: ["$1,234.56", "-$0.01", "$0.00", null]
 
 - oid: 791
   name: money_array
@@ -1143,12 +1157,10 @@
 - oid: 1790
   name: refcursor
   pg_typname: refcursor
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage Refcursor"]
+  binary: true
+  text: true
+  array: true
+  samples: ["portal1", "", null]
 
 - oid: 2201
   name: refcursor_array
@@ -1563,12 +1575,12 @@
 - oid: 3906
   name: numrange
   pg_typname: numrange
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["[1.5,2.5)", "(,3]", null]
   skip:
-    all: ["TODO: triage Numrange"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 3907
   name: numrange_array
@@ -1583,12 +1595,12 @@
 - oid: 3908
   name: tsrange
   pg_typname: tsrange
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["[\"2020-01-01 10:00:00\",\"2020-01-02 10:00:00\")", "(,)", null]
   skip:
-    all: ["TODO: triage Tsrange"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 3909
   name: tsrange_array
@@ -1603,12 +1615,12 @@
 - oid: 3910
   name: tstzrange
   pg_typname: tstzrange
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["[\"2020-01-01 10:00:00+00\",)", "empty", null]
   skip:
-    all: ["TODO: triage Tstzrange"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 3911
   name: tstzrange_array
@@ -1623,12 +1635,12 @@
 - oid: 3912
   name: daterange
   pg_typname: daterange
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["[2020-01-01,2020-02-01)", "(2020-01-01,infinity]", "empty", null]
   skip:
-    all: ["TODO: triage Daterange"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 3913
   name: daterange_array
@@ -1721,64 +1733,64 @@
     all: ["TODO: triage RegcollationArray"]
 
 - oid: 4451
-  name: int4_multirange
-  pg_typname: int4_multirange
-  binary: false
-  text: false
-  array: false
-  samples: []
+  name: int4multirange
+  pg_typname: int4multirange
+  binary: true
+  text: true
+  array: true
+  samples: ["{[1,5),[7,9]}", "{}", "{(,)}", null]
   skip:
-    all: ["TODO: triage Int4Multirange"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 4532
   name: nummultirange
   pg_typname: nummultirange
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["{[1.5,2.5),(3,)}", "{}", null]
   skip:
-    all: ["TODO: triage Nummultirange"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 4533
   name: tsmultirange
   pg_typname: tsmultirange
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["{[\"2020-01-01 10:00:00\",\"2020-01-02 10:00:00\")}", "{(,)}", null]
   skip:
-    all: ["TODO: triage Tsmultirange"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 4534
   name: tstzmultirange
   pg_typname: tstzmultirange
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["{[\"2020-01-01 10:00:00+00\",)}", "{}", null]
   skip:
-    all: ["TODO: triage Tstzmultirange"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 4535
   name: datemultirange
   pg_typname: datemultirange
-  binary: false
-  text: false
-  array: false
-  samples: []
+  binary: true
+  text: true
+  array: true
+  samples: ["{[2020-01-01,2020-02-01),(2020-03-01,infinity]}", "{}", null]
   skip:
-    all: ["TODO: triage Datemultirange"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 4536
-  name: int8_multirange
-  pg_typname: int8_multirange
-  binary: false
-  text: false
-  array: false
-  samples: []
+  name: int8multirange
+  pg_typname: int8multirange
+  binary: true
+  text: true
+  array: true
+  samples: ["{[1,9223372036854775806]}", "{}", null]
   skip:
-    all: ["TODO: triage Int8Multirange"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 4537
   name: anymultirange
@@ -1959,3 +1971,103 @@
   samples: []
   skip:
     all: ["TODO: triage Int8MultirangeArray"]
+
+- oid: 12241
+  name: cardinal_number_array
+  pg_typname: cardinal_number_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CardinalNumberArray"]
+
+- oid: 12242
+  name: cardinal_number
+  pg_typname: cardinal_number
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CardinalNumber"]
+
+- oid: 12243
+  name: character_data_array
+  pg_typname: character_data_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CharacterDataArray"]
+
+- oid: 12244
+  name: character_data
+  pg_typname: character_data
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CharacterData"]
+
+- oid: 12245
+  name: sql_identifier_array
+  pg_typname: sql_identifier_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage SqlIdentifierArray"]
+
+- oid: 12246
+  name: sql_identifier
+  pg_typname: sql_identifier
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage SqlIdentifier"]
+
+- oid: 12250
+  name: time_stamp_array
+  pg_typname: time_stamp_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TimeStampArray"]
+
+- oid: 12251
+  name: time_stamp
+  pg_typname: time_stamp
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TimeStamp"]
+
+- oid: 12252
+  name: yes_or_no_array
+  pg_typname: yes_or_no_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage YesOrNoArray"]
+
+- oid: 12253
+  name: yes_or_no
+  pg_typname: yes_or_no
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage YesOrNo"]

@@ -1,0 +1,87 @@
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS aegis_tstmpl_reincarnate;
+
+
+statement ok
+DROP ROLE IF EXISTS aegis_tstmpl_snatch;
+
+
+statement ok
+CREATE ROLE aegis_tstmpl_snatch LOGIN PASSWORD 'aegis_tstmpl_snatch_pw';
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_ts_template'::regclass;
+----
+oid	relname	relkind	relnatts
+3764	pg_ts_template	r	5
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_ts_template'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+tmplname	name	t
+tmplnamespace	oid	t
+tmplinit	regproc	t
+tmpllexize	regproc	t
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY aegis_tstmpl_reincarnate AS keyword();
+
+
+query
+SELECT * FROM pg_ts_template;
+----
+oid	tmplname	tmplnamespace	tmplinit	tmpllexize
+
+
+query
+SELECT tmplname FROM pg_ts_template WHERE tmplname = 'keyword';
+----
+tmplname
+
+
+query
+SELECT count(*) AS n
+FROM pg_ts_dict d
+JOIN pg_ts_template t ON t.oid = d.dicttemplate
+WHERE d.dictname = 'aegis_tstmpl_reincarnate';
+----
+n
+0
+
+
+query
+SELECT tmplname FROM pg_ts_template WHERE oid = 3727;
+----
+tmplname
+
+
+connection aegis_conn user=aegis_tstmpl_snatch password=aegis_tstmpl_snatch_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_ts_template', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection aegis_conn user=aegis_tstmpl_snatch password=aegis_tstmpl_snatch_pw
+query
+SELECT tmplname, tmplnamespace FROM pg_ts_template;
+----
+tmplname	tmplnamespace
+
+
+connection default
+statement ok
+DROP TEXT SEARCH DICTIONARY aegis_tstmpl_reincarnate;
+
+
+statement ok
+DROP ROLE aegis_tstmpl_snatch;

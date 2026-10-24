@@ -1,0 +1,88 @@
+statement ok
+DROP TABLE IF EXISTS courier_pubrel_items;
+
+
+statement ok
+DROP ROLE IF EXISTS courier_pubrel_shield;
+
+
+statement ok
+CREATE ROLE courier_pubrel_shield LOGIN PASSWORD 'courier_pubrel_shield_pw';
+
+
+statement ok
+CREATE TABLE courier_pubrel_items (id int PRIMARY KEY, item text);
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_publication_rel'::regclass;
+----
+oid	relname	relkind	relnatts
+6106	pg_publication_rel	r	5
+
+
+query
+SELECT a.attname, t.typname, a.attnotnull
+FROM pg_attribute a
+JOIN pg_type t ON t.oid = a.atttypid
+WHERE a.attrelid = 'pg_catalog.pg_publication_rel'::regclass AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	typname	attnotnull
+oid	oid	t
+prpubid	oid	t
+prrelid	oid	t
+prqual	pg_node_tree	f
+prattrs	int2vector	f
+
+
+query
+SELECT * FROM pg_publication_rel;
+----
+oid	prpubid	prrelid	prqual	prattrs
+
+
+query
+SELECT prpubid FROM pg_publication_rel WHERE prrelid = 'courier_pubrel_items'::regclass;
+----
+prpubid
+
+
+query
+SELECT prrelid FROM pg_publication_rel WHERE oid = 75319;
+----
+prrelid
+
+
+query
+SELECT count(*) AS n
+FROM pg_publication_rel pr
+JOIN pg_publication p ON p.oid = pr.prpubid
+JOIN pg_class c ON c.oid = pr.prrelid;
+----
+n
+0
+
+
+connection courier_conn user=courier_pubrel_shield password=courier_pubrel_shield_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_publication_rel', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection courier_conn user=courier_pubrel_shield password=courier_pubrel_shield_pw
+query
+SELECT prpubid, prrelid FROM pg_publication_rel;
+----
+prpubid	prrelid
+
+
+connection default
+statement ok
+DROP TABLE courier_pubrel_items;
+
+
+statement ok
+DROP ROLE courier_pubrel_shield;

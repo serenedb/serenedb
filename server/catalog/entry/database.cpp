@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "catalog/boot.h"
+#include "pg/progress_registry.h"
 
 namespace sdb::catalog {
 
@@ -56,6 +57,11 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DatabaseCatalogEntry::Copy(
   auto info = GetInfo();
   return duckdb::make_uniq<DatabaseCatalogEntry>(
     catalog, info->Cast<duckdb::CreateDatabaseInfo>(), _directory);
+}
+
+void DatabaseCatalogEntry::OnDrop() {
+  _directory->MarkDropped();
+  pg::ProgressRegistry::Instance().ForgetDatabase(oid);
 }
 
 void DatabaseCatalogEntry::Rollback(duckdb::CatalogEntry& prev_entry) {

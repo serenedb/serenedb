@@ -86,8 +86,8 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "connector/scan/scan_bind.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 #include "pg/progress_registry.h"
 
 namespace sdb::auth {
@@ -139,6 +139,17 @@ std::string KindName(CatalogType type) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                   ERR_MSG("must be owner of ", KindName(entry.type), " ",
                           entry.name.GetIdentifierName()));
+}
+
+void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
+  if (const auto* system =
+        pg::FindSystemObject(pg::kSystemNamespaces, schema)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied to create \"", system->name, ".",
+              info.GetQualifiedName().Name().GetIdentifierName(), "\""),
+      ERR_DETAIL("System catalog modifications are currently disallowed."));
+  }
 }
 
 [[noreturn]] void DenyRoleAction(std::string_view verb,
@@ -447,6 +458,7 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_TABLE: {
         auto& create = op.Cast<duckdb::LogicalCreateTable>();
         auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
+        RequireUserSchema(create.schema.oid, info);
         Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
         for (auto& serial : create.info->serial_sequences) {
           Stamp(serial.permissions, create.schema.ParentCatalog(),
@@ -466,6 +478,7 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_JOB:
       case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
+        RequireUserSchema(create.schema->oid, *create.info);
         Stamp(*create.info, DefaultObjType(op.type), create.schema,
               OwnerFor(*create.info));
         if (_enforce) {
@@ -493,6 +506,7 @@ class Enforcer {
       }
       case LogicalOperatorType::LOGICAL_CREATE_TRIGGER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
+        RequireUserSchema(create.schema->oid, *create.info);
         Stamp(*create.info, CatalogType::TRIGGER_ENTRY, create.schema);
         if (_enforce) {
           CheckCreateTrigger(create.info->Cast<duckdb::CreateTriggerInfo>());

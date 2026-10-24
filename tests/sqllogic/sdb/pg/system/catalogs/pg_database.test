@@ -1,0 +1,259 @@
+statement ok
+DROP DATABASE IF EXISTS chopa_dat_meat;
+
+
+statement ok
+DROP DATABASE IF EXISTS chopa_dat_aegis;
+
+
+statement ok
+DROP ROLE IF EXISTS chopa_dat_roshan;
+
+
+statement ok
+DROP ROLE IF EXISTS chopa_dat_courier;
+
+
+query
+SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
+FROM pg_class WHERE oid = 'pg_database'::regclass;
+----
+oid	relname	relkind	nsp	relnatts
+1262	pg_database	r	pg_catalog	18
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute WHERE attrelid = 'pg_database'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+datname	name	t
+datdba	oid	t
+encoding	integer	t
+datlocprovider	"char"	t
+datistemplate	boolean	t
+datallowconn	boolean	t
+dathasloginevt	boolean	t
+datconnlimit	integer	t
+datfrozenxid	xid	t
+datminmxid	xid	t
+dattablespace	oid	t
+datcollate	text	t
+datctype	text	t
+datlocale	text	f
+daticurules	text	f
+datcollversion	text	f
+datacl	aclitem[]	f
+
+
+query
+SELECT oid, datname, datdba::regrole::text AS owner, pg_encoding_to_char(encoding) AS encoding,
+       datlocprovider, datistemplate, datallowconn, datconnlimit, dattablespace
+FROM pg_database WHERE datname = 'postgres';
+----
+oid	datname	owner	encoding	datlocprovider	datistemplate	datallowconn	datconnlimit	dattablespace
+5	postgres	postgres	UTF8	c	f	t	-1	1663
+
+
+query
+SELECT datname FROM pg_database WHERE oid = 5;
+----
+datname
+postgres
+
+
+query
+SELECT count(*), min(datdba::regrole::text) AS owner, min(datconnlimit) AS connlimit
+FROM pg_database WHERE datname = current_database();
+----
+count	owner	connlimit
+1	postgres	-1
+
+
+query
+SELECT count(*) FROM pg_database WHERE datname LIKE 'chopa\_dat\_%';
+----
+count
+0
+
+
+statement ok
+CREATE ROLE chopa_dat_roshan LOGIN CREATEDB PASSWORD 'aegis_snatch';
+
+
+statement ok
+CREATE ROLE chopa_dat_courier;
+
+
+statement ok
+CREATE DATABASE chopa_dat_meat;
+
+
+connection c_chopa_dat user=chopa_dat_roshan password=aegis_snatch
+statement ok
+CREATE DATABASE chopa_dat_aegis;
+
+
+connection default
+query
+SELECT datname, datdba::regrole::text AS owner, pg_encoding_to_char(encoding) AS encoding,
+       datlocprovider, datistemplate, datallowconn, datconnlimit, dattablespace, datacl
+FROM pg_database WHERE datname LIKE 'chopa\_dat\_%' ORDER BY datname;
+----
+datname	owner	encoding	datlocprovider	datistemplate	datallowconn	datconnlimit	dattablespace	datacl
+chopa_dat_aegis	chopa_dat_roshan	UTF8	c	f	t	-1	1663	NULL
+chopa_dat_meat	postgres	UTF8	c	f	t	-1	1663	NULL
+
+
+query
+SELECT d.datname FROM pg_database d
+WHERE d.oid = (SELECT oid FROM pg_database WHERE datname = 'chopa_dat_aegis');
+----
+datname
+chopa_dat_aegis
+
+
+query
+SELECT count(*) FROM pg_database
+WHERE datname = 'chopa_dat_aegis' AND datdba = 'chopa_dat_roshan'::regrole;
+----
+count
+1
+
+
+query
+SELECT count(*) FROM pg_database
+WHERE datname || '' = 'chopa_dat_aegis' AND datdba = 'chopa_dat_roshan'::regrole;
+----
+count
+1
+
+
+statement ok
+GRANT CONNECT, CREATE ON DATABASE chopa_dat_meat TO chopa_dat_roshan;
+
+
+statement ok
+GRANT TEMPORARY ON DATABASE chopa_dat_meat TO chopa_dat_courier WITH GRANT OPTION;
+
+
+query
+SELECT CASE WHEN a.grantee = 0 THEN 'public' ELSE a.grantee::regrole::text END AS grantee,
+       a.grantor::regrole::text AS grantor, a.privilege_type, a.is_grantable
+FROM pg_database d, aclexplode(d.datacl) a
+WHERE d.datname = 'chopa_dat_meat'
+ORDER BY 1, 3;
+----
+grantee	grantor	privilege_type	is_grantable
+chopa_dat_courier	postgres	TEMPORARY	t
+chopa_dat_roshan	postgres	CONNECT	f
+chopa_dat_roshan	postgres	CREATE	f
+postgres	postgres	CONNECT	f
+postgres	postgres	CREATE	f
+postgres	postgres	TEMPORARY	f
+public	postgres	CONNECT	f
+public	postgres	TEMPORARY	f
+
+
+query
+SELECT has_database_privilege('chopa_dat_roshan', 'chopa_dat_meat', 'CREATE') AS meat_create,
+       has_database_privilege('chopa_dat_courier', 'chopa_dat_meat', 'CREATE') AS courier_create,
+       has_database_privilege('chopa_dat_courier', 'chopa_dat_meat', 'TEMPORARY WITH GRANT OPTION') AS courier_temp,
+       has_database_privilege('chopa_dat_roshan', 'chopa_dat_aegis', 'CREATE') AS aegis_create;
+----
+meat_create	courier_create	courier_temp	aegis_create
+t	f	t	t
+
+
+statement ok
+REVOKE CONNECT ON DATABASE chopa_dat_meat FROM PUBLIC;
+
+
+statement ok
+REVOKE CREATE ON DATABASE chopa_dat_meat FROM chopa_dat_roshan;
+
+
+query
+SELECT CASE WHEN a.grantee = 0 THEN 'public' ELSE a.grantee::regrole::text END AS grantee,
+       a.privilege_type, a.is_grantable
+FROM pg_database d, aclexplode(d.datacl) a
+WHERE d.datname = 'chopa_dat_meat'
+ORDER BY 1, 2;
+----
+grantee	privilege_type	is_grantable
+chopa_dat_courier	TEMPORARY	t
+chopa_dat_roshan	CONNECT	f
+postgres	CONNECT	f
+postgres	CREATE	f
+postgres	TEMPORARY	f
+public	TEMPORARY	f
+
+
+connection c_chopa_dat user=chopa_dat_roshan password=aegis_snatch
+statement ok
+GRANT CONNECT ON DATABASE chopa_dat_aegis TO chopa_dat_courier;
+
+
+connection c_chopa_dat user=chopa_dat_roshan password=aegis_snatch
+query
+SELECT CASE WHEN a.grantee = 0 THEN 'public' ELSE a.grantee::regrole::text END AS grantee,
+       a.grantor::regrole::text AS grantor, a.privilege_type
+FROM pg_database d, aclexplode(d.datacl) a
+WHERE d.datname = 'chopa_dat_aegis'
+ORDER BY 1, 3;
+----
+grantee	grantor	privilege_type
+chopa_dat_courier	chopa_dat_roshan	CONNECT
+chopa_dat_roshan	chopa_dat_roshan	CONNECT
+chopa_dat_roshan	chopa_dat_roshan	CREATE
+chopa_dat_roshan	chopa_dat_roshan	TEMPORARY
+public	chopa_dat_roshan	CONNECT
+public	chopa_dat_roshan	TEMPORARY
+
+
+connection c_chopa_dat user=chopa_dat_roshan password=aegis_snatch
+query
+SELECT has_table_privilege('pg_database', 'SELECT') AS readable,
+       count(*) FILTER (WHERE datname LIKE 'chopa\_dat\_%') AS visible
+FROM pg_database;
+----
+readable	visible
+t	2
+
+
+connection default
+statement ok
+REVOKE ALL ON DATABASE chopa_dat_meat FROM chopa_dat_roshan;
+
+
+statement ok
+REVOKE ALL ON DATABASE chopa_dat_meat FROM chopa_dat_courier;
+
+
+statement ok
+REVOKE ALL ON DATABASE chopa_dat_aegis FROM chopa_dat_courier;
+
+
+statement ok
+DROP DATABASE chopa_dat_meat;
+
+
+statement ok
+DROP DATABASE chopa_dat_aegis;
+
+
+query
+SELECT count(*) FROM pg_database WHERE datname LIKE 'chopa\_dat\_%';
+----
+count
+0
+
+
+statement ok
+DROP ROLE chopa_dat_courier;
+
+
+statement ok
+DROP ROLE chopa_dat_roshan;

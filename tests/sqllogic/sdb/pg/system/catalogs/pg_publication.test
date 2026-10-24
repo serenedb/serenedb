@@ -1,0 +1,77 @@
+statement ok
+DROP ROLE IF EXISTS courier_pub_bottle;
+
+
+statement ok
+CREATE ROLE courier_pub_bottle LOGIN PASSWORD 'courier_pub_bottle_pw';
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_publication'::regclass;
+----
+oid	relname	relkind	relnatts
+6104	pg_publication	r	10
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_publication'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+pubname	name	t
+pubowner	oid	t
+puballtables	boolean	t
+pubinsert	boolean	t
+pubupdate	boolean	t
+pubdelete	boolean	t
+pubtruncate	boolean	t
+pubviaroot	boolean	t
+pubgencols	"char"	t
+
+
+query
+SELECT * FROM pg_publication;
+----
+oid	pubname	pubowner	puballtables	pubinsert	pubupdate	pubdelete	pubtruncate	pubviaroot	pubgencols
+
+
+query
+SELECT pubname FROM pg_publication WHERE pubname = 'courier_pub_bottle';
+----
+pubname
+
+
+query
+SELECT pubname FROM pg_publication WHERE oid = 97531;
+----
+pubname
+
+
+query
+SELECT count(*) AS n FROM pg_publication p JOIN pg_roles r ON r.oid = p.pubowner;
+----
+n
+0
+
+
+connection courier_conn user=courier_pub_bottle password=courier_pub_bottle_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_publication', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection courier_conn user=courier_pub_bottle password=courier_pub_bottle_pw
+query
+SELECT pubname, puballtables FROM pg_publication;
+----
+pubname	puballtables
+
+
+connection default
+statement ok
+DROP ROLE courier_pub_bottle;

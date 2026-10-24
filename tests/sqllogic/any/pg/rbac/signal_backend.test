@@ -1,0 +1,109 @@
+# pg_cancel_backend and pg_terminate_backend signal a backend only for a caller
+# with the privileges of the backend's login role; only a superuser signals a
+# superuser's backend. SET ROLE leaves the caller's own backend logged in as the
+# superuser.
+
+statement ok
+DROP TABLE IF EXISTS sbk_pids;
+
+
+statement ok
+DROP ROLE IF EXISTS sbk_watcher;
+
+
+statement ok
+DROP ROLE IF EXISTS sbk_worker;
+
+
+statement ok
+CREATE ROLE sbk_watcher LOGIN PASSWORD 'sbk_watcher_pw';
+
+
+statement ok
+CREATE ROLE sbk_worker LOGIN PASSWORD 'sbk_worker_pw';
+
+
+statement ok
+CREATE TABLE sbk_pids (pid int);
+
+
+statement ok
+GRANT INSERT ON sbk_pids TO sbk_worker;
+
+
+statement ok
+GRANT SELECT ON sbk_pids TO sbk_watcher;
+
+
+statement ok
+SET ROLE sbk_watcher;
+
+
+statement error
+SELECT pg_cancel_backend(pg_backend_pid());
+----
+db error: ERROR: permission denied to cancel query
+DETAIL: Only roles with the SUPERUSER attribute may cancel queries of roles with the SUPERUSER attribute.
+
+
+statement error
+SELECT pg_terminate_backend(pg_backend_pid());
+----
+db error: ERROR: permission denied to terminate process
+DETAIL: Only roles with the SUPERUSER attribute may terminate processes of roles with the SUPERUSER attribute.
+
+
+statement ok
+RESET ROLE;
+
+
+connection c_worker user=sbk_worker password=sbk_worker_pw
+statement ok
+INSERT INTO sbk_pids SELECT pg_backend_pid();
+
+
+connection c_watcher user=sbk_watcher password=sbk_watcher_pw
+statement error
+SELECT pg_cancel_backend(pid) FROM sbk_pids;
+----
+db error: ERROR: permission denied to cancel query
+DETAIL: Only roles with privileges of the role whose query is being canceled or with privileges of the "pg_signal_backend" role may cancel this query.
+
+
+connection c_watcher user=sbk_watcher password=sbk_watcher_pw
+statement error
+SELECT pg_terminate_backend(pid) FROM sbk_pids;
+----
+db error: ERROR: permission denied to terminate process
+DETAIL: Only roles with privileges of the role whose process is being terminated or with privileges of the "pg_signal_backend" role may terminate this process.
+
+
+statement ok
+GRANT sbk_worker TO sbk_watcher;
+
+
+connection c_watcher user=sbk_watcher password=sbk_watcher_pw
+query
+SELECT pg_cancel_backend(pid) AS cancelled FROM sbk_pids;
+----
+cancelled
+t
+
+
+connection c_worker user=sbk_worker password=sbk_worker_pw
+statement error
+SELECT pg_cancel_backend(pg_backend_pid());
+----
+db error: ERROR: canceling statement due to user request
+
+
+statement ok
+DROP TABLE sbk_pids;
+
+
+statement ok
+DROP ROLE sbk_watcher;
+
+
+statement ok
+DROP ROLE sbk_worker;

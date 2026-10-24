@@ -75,6 +75,7 @@
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
 #include "pg/connection_context.h"
+#include "pg/types/logical.h"
 #include "query/config.h"
 #include "search/scorer_options.h"
 #include "search/search_table.h"

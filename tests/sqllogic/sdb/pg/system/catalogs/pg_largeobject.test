@@ -1,0 +1,76 @@
+statement ok
+DROP ROLE IF EXISTS tango_lob_courier;
+
+
+query
+SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
+FROM pg_class WHERE oid = 'pg_largeobject'::regclass;
+----
+oid	relname	relkind	nsp	relnatts
+2613	pg_largeobject	r	pg_catalog	3
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute WHERE attrelid = 'pg_largeobject'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+loid	oid	t
+pageno	integer	t
+data	bytea	t
+
+
+query
+SELECT count(*) >= 0 AS readable FROM pg_largeobject;
+----
+readable
+t
+
+
+query
+SELECT count(*) FROM pg_largeobject WHERE loid = 0;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_largeobject l
+LEFT JOIN pg_largeobject_metadata m ON m.oid = l.loid
+WHERE m.oid IS NULL;
+----
+count
+0
+
+
+statement ok
+CREATE ROLE tango_lob_courier LOGIN PASSWORD 'eat_the_tree';
+
+
+connection c_tango_lob user=tango_lob_courier password=eat_the_tree
+statement error
+SELECT count(*) FROM pg_largeobject;
+----
+db error: ERROR: permission denied for table pg_largeobject<slt:ignore>
+
+
+connection c_tango_lob user=tango_lob_courier password=eat_the_tree
+statement error
+SELECT loid, pageno FROM pg_largeobject WHERE loid = 0;
+----
+db error: ERROR: permission denied for table pg_largeobject<slt:ignore>
+
+
+connection c_tango_lob user=tango_lob_courier password=eat_the_tree
+query
+SELECT has_table_privilege('pg_largeobject', 'SELECT') AS lob,
+       has_table_privilege('pg_largeobject_metadata', 'SELECT') AS lob_metadata;
+----
+lob	lob_metadata
+f	t
+
+
+connection default
+statement ok
+DROP ROLE tango_lob_courier;

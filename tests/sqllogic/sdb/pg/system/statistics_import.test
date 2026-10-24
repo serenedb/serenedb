@@ -1,0 +1,19 @@
+# serenedb keeps no imported planner statistics: the restore functions accept
+# what pg_dump --statistics writes and report that nothing was restored.
+
+statement ok
+CREATE TABLE stats_import (a int);
+
+
+query
+SELECT pg_restore_relation_stats('version', 180006::integer, 'schemaname', 'public', 'relname', 'stats_import',
+                                 'relpages', 1::integer, 'reltuples', 10::real) AS relation,
+       pg_restore_attribute_stats('version', 180006::integer, 'schemaname', 'public', 'relname', 'stats_import',
+                                  'attname', 'a', 'inherited', false, 'null_frac', 0.5::real) AS attribute;
+----
+relation	attribute
+f	f
+
+
+statement ok
+DROP TABLE stats_import;

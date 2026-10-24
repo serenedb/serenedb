@@ -57,7 +57,7 @@
 #include <iterator>
 
 #include "catalog/catalog.h"
-#include "connector/pg_logical_types.h"
+#include "pg/types/logical.h"
 #include "planning/iceberg_multi_file_list.hpp"
 
 namespace sdb::connector {

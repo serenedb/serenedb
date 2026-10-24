@@ -121,6 +121,17 @@ SELECT pg_get_viewdef('ru.no_such_view');
 db error: ERROR: relation "ru.no_such_view" does not exist
 
 
+query
+SELECT pg_get_viewdef('pg_catalog.pg_tables'::regclass) LIKE '%pg_class%' AS pg_tables,
+       pg_get_viewdef('information_schema.tables'::regclass) LIKE '%pg_class%' AS info_tables,
+       pg_get_viewdef('pg_tables') LIKE '%relkind%' AS by_name,
+       pg_get_ruledef((SELECT oid FROM pg_rewrite WHERE ev_class = 'pg_catalog.pg_tables'::regclass))
+         LIKE 'CREATE RULE "\_RETURN" AS%pg_tables%' AS ruledef;
+----
+pg_tables	info_tables	by_name	ruledef
+t	t	t	t
+
+
 statement ok
 CREATE FUNCTION ru.add1(x integer, y integer) RETURNS integer LANGUAGE sql AS 'SELECT x + y';
 

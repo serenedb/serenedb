@@ -42,6 +42,22 @@ float4
 0
 
 
+onlyif postgres
+query
+SELECT '-0'::float4, ARRAY['-0'::float4];
+----
+float4	array
+-0	{-0}
+
+
+skipif postgres
+query
+SELECT '-0'::float4, ARRAY['-0'::float4];
+----
+float4	array
+0	{0}
+
+
 query
 SELECT 'Infinity'::float4;
 ----

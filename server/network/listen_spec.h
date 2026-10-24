@@ -22,6 +22,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -130,5 +131,10 @@ struct ListenSpec {
 // resolution into one spec per bound address, and the historical default when
 // empty. Fatal (SDB_FATAL) on any error -- this runs once at startup.
 std::vector<ListenSpec> ParseListenSpecs(const std::vector<std::string>& urls);
+
+inline constexpr uint32_t kMaxConnectionsFromSetting =
+  std::numeric_limits<uint32_t>::max();
+
+uint32_t MaxConnections(uint32_t listener);
 
 }  // namespace sdb::network

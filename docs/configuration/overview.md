@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serened shell` has other defaults for some options, such as `integer_division` (`false`), `preserve_identifier_case` (`preserve_case`) and the default schema (`main`).
+SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serened shell` has other defaults for some options, such as `integer_division` (`false`), `question_mark_operators` (`false`), `preserve_identifier_case` (`preserve_case`) and the default schema (`main`).
 
 The configuration options can be set using either the [`SET` statement](../sql/statements/set/index.md) or the [`PRAGMA` statement](../configuration/pragmas.md). They can be reset to their original values using the [`RESET` statement](../sql/statements/set/index.md#reset).
 
@@ -247,13 +247,17 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `IntervalStyle` | Sets the display format for interval values. | `VARCHAR` | `SESSION` | `postgres` |
 | `is_superuser` | Shows whether the current session's user is a superuser. | `BOOLEAN` | `SESSION` | `on` |
 | `lock_configuration` | Whether or not configurations can be altered | `BOOLEAN` | `GLOBAL` | `false` |
+| `max_connections` | The maximum number of concurrent client connections across all listeners, checked when a connection is accepted; 0 means no limit. `--max_connections` sets it at startup, and a listener's `?max_connections=` overrides it. Server-wide, superuser only. | `UINTEGER` | `GLOBAL` | `0` |
 | `max_execution_time` | The maximum execution time per query in milliseconds (0 = no limit). | `BIGINT` | `SESSION` | `0` |
+| `max_identifier_length` | Shows the maximum identifier length. SereneDB keeps longer identifiers in full. Read-only. | `INTEGER` | `SESSION` | `63` |
+| `max_index_keys` | Shows the maximum number of index keys. Clients read it as the bound of index and constraint key arrays, such as `pg_index.indkey` and `pg_constraint.conkey`. Read-only. | `INTEGER` | `SESSION` | `32` |
+| `question_mark_operators` | Whether `?#`, `?-`, `?\|`, `?-\|` and `?\|\|` are operators rather than a `?` parameter followed by an operator. | `BOOLEAN` | `SESSION` | `true` |
 | `regex_match_operator_semantics` | Deprecated. Configures whether regex match operators use partial or full string matching. | `VARCHAR` | `SESSION` | `partial` |
 | `role` | Sets the current role. | `VARCHAR` | `SESSION` | `none` |
 | `search_path` | Sets the default catalog search path as a comma-separated list of values | `VARCHAR` | `SESSION` | `"$user", public` |
 | `server_encoding` | Shows the server (database) character set encoding. | `VARCHAR` | `SESSION` | `UTF8` |
-| `server_version` | Shows the server version. | `VARCHAR` | `SESSION` | `18.3` |
-| `server_version_num` | Shows the server version as an integer. | `INTEGER` | `SESSION` | `180003` |
+| `server_version` | Shows the server version. | `VARCHAR` | `SESSION` | `18.6` |
+| `server_version_num` | Shows the server version as an integer. | `INTEGER` | `SESSION` | `180006` |
 | `session_authorization` | Sets the current session's user name. | `VARCHAR` | `SESSION` | the session's user |
 | `session_replication_role` | Sets the session's behavior for triggers, as in PostgreSQL: `origin` (the default) and `local` fire the triggers enabled with `ENABLE TRIGGER`, `replica` fires only those enabled with `ENABLE REPLICA TRIGGER` and skips foreign key checks; `ENABLE ALWAYS` triggers fire in every role. Only superusers may change it. The apply worker of a subscription runs as `replica`. | `VARCHAR` | `SESSION` | `origin` |
 | `show_behavior` | Configures how `SHOW` resolves a bare identifier: `auto` describes a table if one exists, else a setting (deprecated); `table` always describes a table; `setting` always describes a setting. | `VARCHAR` | `SESSION` | `SETTING` |
@@ -262,6 +266,9 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `table_function_identifier_conversion` | Deprecated. Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments. | `VARCHAR` | `SESSION` | `DISABLE_IMPLICIT_STRING` |
 | `TimeZone` | Sets the time zone for displaying and interpreting time stamps. | `VARCHAR` | `SESSION` | `Etc/UTC` |
 | `transaction_isolation` | Sets the current transaction's isolation level. | `VARCHAR` | `SESSION` | `repeatable read` |
+| `xmloption` | Whether text read as `xml`, and the argument of `xml_is_well_formed`, must be an XML `document` or may be `content`. | `VARCHAR` | `SESSION` | `content` |
+
+PostgreSQL settings that are not listed here, such as `work_mem`, `lock_timeout` or `shared_buffers`, do not exist in SereneDB: `SET` and `SHOW` fail with `unrecognized configuration parameter`. This includes several of the `SET` lines at the top of a `pg_dump` script.
 
 ### Logical replication
 

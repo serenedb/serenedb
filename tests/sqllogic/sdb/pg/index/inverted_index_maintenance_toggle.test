@@ -31,7 +31,7 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'mt_s_idx';
 ----
 reloptions
-{}
+NULL
 
 
 statement error

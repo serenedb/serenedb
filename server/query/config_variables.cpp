@@ -55,6 +55,7 @@
 #include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
+#include "pg/types/xml.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "scheduler/job_scheduler.h"
@@ -1373,7 +1374,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Shows the server version.",
-        [] { return duckdb::Value{"18.3"}; },
+        [] { return duckdb::Value{pg::kPgServerVersion}; },
         nullptr,  // refused via kUnchangeableSettings
       },
     },
@@ -1382,7 +1383,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::INTEGER,
         "Shows the server version as an integer.",
-        [] { return duckdb::Value::INTEGER(180003); },
+        [] { return duckdb::Value::INTEGER(pg::kPgServerVersionNum); },
         nullptr,  // refused via kUnchangeableSettings
       },
     },
@@ -1530,6 +1531,53 @@ constexpr std::pair<std::string_view, VariableDescription>
         [] { return duckdb::Value{"Etc/UTC"}; },
       },
     },
+    {
+      kMaxConnectionsSetting,
+      {
+        LogicalTypeId::UINTEGER,
+        "Sets the maximum number of concurrent client connections across all "
+        "listeners, checked when a connection is accepted; 0 means no limit. "
+        "A listener's ?max_connections= overrides it. Server-wide, superuser "
+        "only.",
+        [] { return duckdb::Value::UINTEGER(0); },
+        [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value&) {
+          RequireSuperuser(ctx, kMaxConnectionsSetting,
+                           "Only roles with the SUPERUSER attribute may change "
+                           "the connection limit.");
+        },
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      "max_identifier_length",
+      {
+        LogicalTypeId::INTEGER,
+        "Shows the maximum identifier length. SereneDB keeps longer "
+        "identifiers in full.",
+        [] { return duckdb::Value::INTEGER(63); },
+      },
+    },
+    {
+      "max_index_keys",
+      {
+        LogicalTypeId::INTEGER,
+        "Shows the maximum number of index keys. Clients read it as the bound "
+        "of index and constraint key arrays, such as pg_index.indkey and "
+        "pg_constraint.conkey.",
+        [] { return duckdb::Value::INTEGER(32); },
+      },
+    },
+    {
+      "xmloption",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets whether XML data in implicit parsing and serialization "
+        "operations is to be considered as documents or content fragments.",
+        [] { return duckdb::Value{"content"}; },
+        OneOfEnum<pg::XmlOption, "xmloption">,
+      },
+    },
 };
 
 const duckdb::case_insensitive_set_view_t kVariableIndex = [] {
@@ -1562,6 +1610,8 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
   // the GUC.
   "in_hot_standby",
   "is_superuser",
+  "max_identifier_length",
+  "max_index_keys",
   "server_encoding",
   "server_version",
   "server_version_num",

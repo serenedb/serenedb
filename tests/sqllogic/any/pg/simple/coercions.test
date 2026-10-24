@@ -835,3 +835,10 @@ public
 
 statement ok
 DROP FUNCTION test_name_coerce(NAME)
+
+
+query
+SELECT '"any"'::regtype::text AS any_type, 0::regoper::text AS no_oper, 0::regoperator::text AS no_operator
+----
+any_type	no_oper	no_operator
+"any"	0	0

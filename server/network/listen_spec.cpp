@@ -28,9 +28,14 @@
 #include <fast_float/fast_float.h>
 
 #include <charconv>
+#include <duckdb/main/config.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/string_utils.hpp>
 #include <set>
+
+#include "query/config.h"
+#include "query/config_variable_names.h"
 
 namespace sdb::network {
 namespace {
@@ -360,6 +365,16 @@ std::vector<ListenSpec> ParseListenSpecs(
     SDB_FATAL(GENERAL, "no listeners configured");
   }
   return out;
+}
+
+uint32_t MaxConnections(uint32_t listener) {
+  if (listener != kMaxConnectionsFromSetting) {
+    return listener;
+  }
+  return GetGlobalSetting(duckdb::DBConfig::GetConfig(
+                            irs::DuckDBEngine::Instance().instance()),
+                          kMaxConnectionsSetting)
+    .GetValue<uint32_t>();
 }
 
 }  // namespace sdb::network

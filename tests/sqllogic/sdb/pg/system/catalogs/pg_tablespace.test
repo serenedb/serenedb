@@ -1,0 +1,80 @@
+statement ok
+DROP ROLE IF EXISTS sven_tbs_rogue_knight;
+
+
+query
+SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
+FROM pg_class WHERE oid = 'pg_tablespace'::regclass;
+----
+oid	relname	relkind	nsp	relnatts
+1213	pg_tablespace	r	pg_catalog	5
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute WHERE attrelid = 'pg_tablespace'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+spcname	name	t
+spcowner	oid	t
+spcacl	aclitem[]	f
+spcoptions	text[]	f
+
+
+query
+SELECT oid, spcname, spcowner::regrole::text AS owner, spcacl, spcoptions
+FROM pg_tablespace ORDER BY oid;
+----
+oid	spcname	owner	spcacl	spcoptions
+1663	pg_default	postgres	NULL	NULL
+1664	pg_global	postgres	NULL	NULL
+
+
+query
+SELECT spcname FROM pg_tablespace WHERE oid = 1664;
+----
+spcname
+pg_global
+
+
+query
+SELECT oid FROM pg_tablespace WHERE spcname = 'pg_default';
+----
+oid
+1663
+
+
+query
+SELECT t.spcname FROM pg_tablespace t JOIN pg_database d ON d.dattablespace = t.oid
+WHERE d.datname = current_database();
+----
+spcname
+pg_default
+
+
+statement ok
+CREATE ROLE sven_tbs_rogue_knight LOGIN PASSWORD 'gods_strength';
+
+
+connection c_sven_tbs user=sven_tbs_rogue_knight password=gods_strength
+query
+SELECT oid, spcname FROM pg_tablespace ORDER BY oid;
+----
+oid	spcname
+1663	pg_default
+1664	pg_global
+
+
+connection c_sven_tbs user=sven_tbs_rogue_knight password=gods_strength
+query
+SELECT has_table_privilege('pg_tablespace', 'SELECT') AS readable;
+----
+readable
+t
+
+
+connection default
+statement ok
+DROP ROLE sven_tbs_rogue_knight;

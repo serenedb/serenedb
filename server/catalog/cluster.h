@@ -37,6 +37,7 @@
 #include "auth/role_closure.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
+#include "catalog/snapshot.h"
 
 namespace sdb::catalog {
 
@@ -94,6 +95,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
                     duckdb::DropInfo& info) final;
 
   auth::RoleCache& Roles() noexcept { return _roles; }
+  CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
 
  private:
   void CompactCatalogLog();
@@ -104,6 +106,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   bool _compactable = false;
   std::atomic<duckdb::idx_t> _live_bytes{0};
   auth::RoleCache _roles;
+  CatalogSnapshots _snapshots{*this};
 };
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);

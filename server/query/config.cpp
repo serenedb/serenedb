@@ -121,13 +121,15 @@ void Config::RefreshCatalogEpoch() noexcept try {
   // by starting one: a transaction captures its snapshot when it starts, and
   // REPEATABLE READ takes that snapshot at the first statement that reads data
   // -- not at BEGIN, and not because a plan wanted to know a version.
+  auto& manager = duckdb::DatabaseManager::Get(_client_ctx);
+  const auto name = duckdb::DatabaseManager::GetDefaultDatabase(_client_ctx);
   if (!_client_ctx.transaction.HasActiveTransaction()) {
+    if (const auto database = manager.GetDatabase(name)) {
+      _catalog_epoch = CommittedCatalogEpoch(*database, _catalog_epoch);
+    }
     return;
   }
-  auto database =
-    duckdb::DatabaseManager::Get(_client_ctx)
-      .GetDatabase(_client_ctx,
-                   duckdb::DatabaseManager::GetDefaultDatabase(_client_ctx));
+  auto database = manager.GetDatabase(_client_ctx, name);
   if (!database) {
     return;
   }

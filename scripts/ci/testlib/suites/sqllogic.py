@@ -161,7 +161,7 @@ def sqllogic_units(ctx, args, skips):
             if skip:
                 ctx.skips.append((uid, skip))
                 continue
-            cost, timeout = plan(ctx, uid, 2.0)
+            cost, timeout = plan(ctx, uid, 30.0 if rel.endswith(".test_slow") else 2.0)
             if CORPUS not in rel:
                 cpus = 1 + sum(INFERENCE_CPUS.get(f, 0) for f in fixtures)
                 units.append(Unit(uid, "sqllogic", _sqllogic_run(ctx, rel, engine), cpus=cpus,
@@ -205,10 +205,13 @@ def _private_run(ctx, rel, engine, part):
 
 
 def _sqllogic_run(ctx, rel, engine, part=None):
+    private = _private_run(ctx, rel, engine, part)
     if ctx.attribute:
-        return _private_run(ctx, rel, engine, part)
+        return private
 
     def run(r):
+        if 0 < r.attempt < 100:
+            return private(r)
         pool = r.fixture("servers")
         i, generation = pool.acquire()
         try:
@@ -232,9 +235,7 @@ def _sqllogic_run(ctx, rel, engine, part=None):
 def recovery_units(ctx, args, skips):
     base = sqllogic_dir(ctx)
     units = []
-    for path in sorted((base / "recovery").iterdir()):
-        if not (path.name.endswith(".test") or (not args.fast and path.name.endswith(".test_slow"))):
-            continue
+    for path in find_tests(base / "recovery", args.fast):
         rel = str(path.relative_to(base))
         try:
             fixtures = service_fixture_names(path, args.biglake)
@@ -248,7 +249,7 @@ def recovery_units(ctx, args, skips):
         if skip:
             ctx.skips.append((uid, skip))
             continue
-        cost, timeout = plan(ctx, uid, 10.0)
+        cost, timeout = plan(ctx, uid, 60.0 if rel.endswith(".test_slow") else 10.0)
         units.append(Unit(uid, "recovery", _recovery_run(ctx, rel), cpus=2, mem_gb=1.5,
                           fixtures=fixtures, cost=cost, timeout=timeout))
     return units

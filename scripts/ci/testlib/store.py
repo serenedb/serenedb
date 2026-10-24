@@ -65,6 +65,18 @@ def files(path, timeout=60):
         raise _failed("GET", path, e) from e
 
 
+def run_files(kind, run, prefix):
+    run_id, _, attempt = run.rpartition("-")
+    attempts = range(int(attempt), 0, -1) if run_id and attempt.isdigit() else ()
+    dirs = [f"{kind}/{run_id}-{a}" for a in attempts] or [f"{kind}/{run}"]
+    latest = {}
+    for d in dirs:
+        for name in files(f"{d}/"):
+            if name.startswith(prefix):
+                latest.setdefault(name, f"{d}/{name}")
+    return sorted(latest.values())
+
+
 def recent(prefix, days):
     now = time.time()
     for i in range(days):

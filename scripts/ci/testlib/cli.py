@@ -136,29 +136,43 @@ def changed_files(base):
     return names
 
 
+def _changed(uid, keys, generated):
+    tail = uid.split(":", 2)[-1].split("#", 1)[0]
+    if tail in keys or uid in keys:
+        return True
+    if not uid.startswith(("sqllogic:", "recovery:")):
+        return False
+    base = ROOT / "tests" / "sqllogic"
+    if os.path.realpath(base / tail) in keys:
+        return True
+    source = _GENERATED.match(tail)
+    return bool(source) and os.path.realpath(base / source.group(1)) in generated
+
+
 def changed_units(units, base):
     names = changed_files(base)
     keys = set()
     generated = set()
     for name in names:
         if name.startswith("tests/sqllogic/generators/") and name.endswith((".py", ".recorded")):
-            generated.add(name[len("tests/sqllogic/generators/"):].rsplit(".", 1)[0])
+            rel = name[len("tests/sqllogic/generators/"):].rsplit(".", 1)[0]
+            generated.add(os.path.realpath(ROOT / "tests" / "sqllogic" / rel))
             continue
         if name.startswith("tests/sqllogic/"):
-            keys.add(name[len("tests/sqllogic/"):])
+            keys.add(os.path.realpath(ROOT / name))
         elif name.startswith("tests/drivers/"):
             keys.add("drivers:" + name.split("/")[2])
         elif "/test/" in name and name.startswith("third_party/"):
             keys.add(str(ROOT / name))
             keys.add(name.split("/", 2)[2])
     picked = []
+    tests = set()
     for u in units:
-        tail = u.id.split(":", 2)[-1].split("#", 1)[0]
-        source = _GENERATED.match(tail)
-        if (tail in keys or u.id in keys or (source and source.group(1) in generated)
-                or any(m.split(":", 2)[-1] in keys for m in u.members)):
+        members = {m for m in u.members if _changed(m, keys, generated)}
+        if members or _changed(u.id, keys, generated):
             picked.append(u)
-    return picked
+            tests |= members or {u.id}
+    return picked, tests
 
 
 def write_selection(args, units, changed, out):
@@ -217,7 +231,9 @@ def main(argv):
     suites = args.suite or list(SUITES)
     skips = load_skips(ROOT, config.name)
     units = build_units(ctx, args, suites, skips)
-    changed = changed_units(units, args.changed) if args.changed else []
+    if args.expect_fail and not args.changed:
+        raise SystemExit("--expect-fail needs --changed")
+    changed, changed_tests = changed_units(units, args.changed) if args.changed else ([], set())
     if args.only_changed:
         units = changed
     if args.selection_report:
@@ -247,14 +263,14 @@ def main(argv):
           f"output in {out}", flush=True)
     try:
         sched.run_pass(sched.units)
-        if args.expect_fail:
-            sched.invert()
-        else:
+        if not args.expect_fail:
             sched.relabel(args.relabel)
             if args.repeat and changed:
                 sched.repeat(changed, args.repeat, args.repeat_budget)
     finally:
         sched.stop_fixtures()
+    if args.expect_fail:
+        sched.invert(changed_tests)
     results = sched.results
     meta = {
         "config": config.name, "arch": platform.machine(), "shard": args.shard,
@@ -262,6 +278,7 @@ def main(argv):
         "sha": os.environ.get("SDB_SHA", ""), "pr": os.environ.get("SDB_PR", ""),
         "branch": os.environ.get("SDB_BRANCH", ""), "run": os.environ.get("SDB_RUN_ID", ""),
         "attribute": args.attribute, "plan": plan,
+        "check": os.environ.get("SDB_CHECK", ""),
     }
     report.write(out, meta, results, ctx.skips)
     if args.attribute and (attribution.directory(ctx) / "index.jsonl").is_file():

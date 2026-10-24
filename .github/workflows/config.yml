@@ -7,6 +7,11 @@ on:
         description: "perf, dev, asan, tsan or msan (scripts/ci/config.sh)"
         type: string
         required: true
+      NAME:
+        description: "A second run of CONFIG in the same workflow (biglake): names its artifacts and results; it gets no coverage or selection report"
+        type: string
+        required: false
+        default: ""
       LOCATION:
         description: "Runner label"
         type: string
@@ -41,6 +46,9 @@ on:
       digest:
         description: "Input digest of the build"
         value: ${{ jobs.build.outputs.digest }}
+      shards:
+        description: "The test shards, as JSON"
+        value: ${{ jobs.build.outputs.shards }}
 
 env:
   BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
@@ -102,7 +110,7 @@ jobs:
               --timing out/timing.json --cpus "$(nproc)" -- ${{ inputs.TEST_ARGS }})
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
           echo "shards: $shards"
-          if [[ "$CONFIG" == dev && -n "$SDB_PR" ]]; then
+          if [[ "$CONFIG" == dev && -n "$SDB_PR" && -z "${{ inputs.NAME }}" ]]; then
             docker run --rm --user "$(id -u):$(id -g)" --group-add "$(stat -c '%g' /var/run/docker.sock)" \
               -e HOME=/tmp -e SDB_PR -v /var/run/docker.sock:/var/run/docker.sock \
               -v "$PWD:$PWD" -w "$PWD" -v "$bundle:$bundle" "$BUILD_IMAGE" \
@@ -113,7 +121,7 @@ jobs:
           fi
 
       - name: Keep the test selection report
-        if: inputs.TESTS && inputs.CONFIG == 'dev'
+        if: inputs.TESTS && inputs.CONFIG == 'dev' && inputs.NAME == ''
         uses: actions/upload-artifact@v7
         with:
           name: selection-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
@@ -125,7 +133,7 @@ jobs:
         if: inputs.TESTS
         uses: actions/upload-artifact@v7
         with:
-          name: timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
+          name: timing-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}
           path: out/timing.json
           retention-days: 3
 
@@ -133,7 +141,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: build-logs-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
+          name: build-logs-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}
           path: out/logs/
           retention-days: 14
 
@@ -183,11 +191,12 @@ jobs:
       - name: Fetch the timing snapshot
         uses: actions/download-artifact@v7
         with:
-          name: timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
+          name: timing-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}
           path: out
 
       - name: Run the shard
         env:
+          SDB_CHECK: ${{ inputs.NAME }}
           SEARCHBENCH_S3_KEY_ID: ${{ secrets.SEARCHBENCH_S3_KEY_ID }}
           SEARCHBENCH_S3_SECRET: ${{ secrets.SEARCHBENCH_S3_SECRET }}
           BIGLAKE_PROJECT: ${{ secrets.BIGLAKE_PROJECT }}
@@ -208,7 +217,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: results-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ matrix.shard.name }}
+          name: results-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ matrix.shard.name }}
           path: |
             out/test-*/results.jsonl
             out/test-*/summary.txt
@@ -220,7 +229,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: failure-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ matrix.shard.name }}
+          name: failure-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ matrix.shard.name }}
           path: out/failure-*.tar.zst
           if-no-files-found: ignore
           retention-days: 14
@@ -232,7 +241,7 @@ jobs:
   coverage:
     name: coverage ${{ inputs.CONFIG }} (${{ inputs.LOCATION }})
     needs: [build, test]
-    if: ${{ !cancelled() && inputs.TESTS && inputs.CONFIG == 'dev' && needs.build.result == 'success' }}
+    if: ${{ !cancelled() && inputs.TESTS && inputs.CONFIG == 'dev' && inputs.NAME == '' && needs.build.result == 'success' }}
     runs-on:
       - ${{ inputs.LOCATION }}
     timeout-minutes: 60
@@ -254,9 +263,11 @@ jobs:
           git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
 
       - name: Coverage of the change
+        env:
+          SHARDS: ${{ needs.build.outputs.shards }}
         run: |
           ./scripts/ci/coverage_report.sh "${{ inputs.CONFIG }}" "${{ needs.build.outputs.digest }}" \
-            "$SDB_RUN_ID" origin/main
+            "$SDB_RUN_ID" origin/main "$(python3 -c 'import json, os; print(len(json.loads(os.environ["SHARDS"])))')"
           cat out/coverage-*/summary.txt >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the coverage

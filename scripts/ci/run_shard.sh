@@ -15,14 +15,16 @@ shift 4
 : "${SDB_RUN_ID:=local-$$}"
 : "${SDB_STORE_RESULTS:=${GITHUB_ACTIONS:-false}}"
 : "${SDB_DOCKER_OWNER:=test-$(id -un)-$$}"
-export SDB_DOCKER_OWNER
+: "${SDB_CHECK:=}"
+export SDB_DOCKER_OWNER SDB_CHECK
+run_name="${CONFIG}${SDB_CHECK:+-$SDB_CHECK}-${SHARD/\//of}"
 
 if [[ -d "$DIGEST" ]]; then
 	bundle=$(realpath "$DIGEST")
 else
 	bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "$DIGEST") || exit 1
 fi
-out="out/test-${CONFIG}-${SHARD/\//of}"
+out="out/test-$run_name"
 rm -rf "$out"
 mkdir -p "$out" out/home out/sockets
 docker run --rm "$BUILD_IMAGE" cat /etc/passwd >out/passwd
@@ -30,7 +32,7 @@ echo "ci:x:$(id -u):$(id -g)::$WORKSPACE/out/home:/bin/bash" >>out/passwd
 docker run --rm "$BUILD_IMAGE" cat /etc/group >out/group
 grep -q ":$(id -g):" out/group || echo "ci:x:$(id -g):" >>out/group
 
-name="sdbt-${SDB_DOCKER_OWNER//[^A-Za-z0-9_.-]/-}-${CONFIG}-${SHARD/\//of}"
+name="sdbt-${SDB_DOCKER_OWNER//[^A-Za-z0-9_.-]/-}-$run_name"
 gateway=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
 hosts=()
 for h in duckdb-minio.com test-bucket.duckdb-minio.com test-bucket-2.duckdb-minio.com test-bucket-public.duckdb-minio.com; do
@@ -53,7 +55,7 @@ docker run --rm --name "$name" \
 	"${hosts[@]}" \
 	-e HOME="$WORKSPACE/out/home" -e CI=true \
 	-e SDB_SERVICE_NETNS="container:$name" -e SDB_SERVICE_BIND="$gateway" -e SDB_SERVICE_HOST="$gateway" \
-	-e SDB_DOCKER_OWNER -e SDB_SHA="${SDB_SHA:-}" -e SDB_PR="${SDB_PR:-}" -e SDB_BRANCH="${SDB_BRANCH:-}" \
+	-e SDB_DOCKER_OWNER -e SDB_CHECK -e SDB_SHA="${SDB_SHA:-}" -e SDB_PR="${SDB_PR:-}" -e SDB_BRANCH="${SDB_BRANCH:-}" \
 	-e SDB_RUN_ID="$SDB_RUN_ID" \
 	-e SDB_SERVICE_SOCKET_ROOT="$WORKSPACE/out/sockets" \
 	"${pass[@]}" \
@@ -78,7 +80,7 @@ if compgen -G "$out/profiles/*.prof*" >/dev/null; then
 	docker run --rm --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" "$BUILD_IMAGE" \
 		bash -c 'llvm-profdata-23 merge -sparse -failure-mode=any -o "$0/shard.profdata" "$0"/profiles/*.prof*' "$out" &&
 		rm -rf "$out/profiles"
-	if [[ "$SDB_STORE_RESULTS" == true ]]; then
+	if [[ "$SDB_STORE_RESULTS" == true && -z "$SDB_CHECK" ]]; then
 		python3 scripts/ci/ci.py upload "$out/shard.profdata" \
 			"profdata/${SDB_RUN_ID}/${CONFIG}-${ARCH}-${SHARD/\//of}.profdata" ||
 			echo "warning: the coverage profile did not reach the store" >&2
@@ -87,7 +89,7 @@ fi
 
 if [[ $rc -ne 0 ]]; then
 	docker run --rm --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE/out" "$BUILD_IMAGE" \
-		tar -I 'zstd -T0 -3' -cf "failure-${CONFIG}-${SHARD/\//of}.tar.zst" \
+		tar -I 'zstd -T0 -3' -cf "failure-$run_name.tar.zst" \
 		--exclude=profiles --exclude='*/data.*' "${out#out/}" || true
 fi
 exit $rc

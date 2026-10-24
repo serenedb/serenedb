@@ -45,7 +45,7 @@ declare -A SUITE_OF_DIR=(
 	[openssl-cmake]="httpfs azure iceberg postgres_scanner"
 )
 
-iresearch=false other_tp=false re2=false
+iresearch=false other_tp=false re2=false corpus=false
 declare -A suite_hit=()
 declare -a pg_files=()
 
@@ -56,6 +56,9 @@ while IFS= read -r f; do
 		third_party/googletest | third_party/googletest/* | third_party/simdutf | third_party/simdutf/* | \
 		third_party/CMakeLists.txt | cmake/OptimizeForArchitecture.cmake)
 		re2=true
+		;;
+	tests/sqllogic/any/pg/sqlite)
+		corpus=true
 		;;
 	esac
 	case "$f" in
@@ -69,6 +72,23 @@ while IFS= read -r f; do
 		;;
 	tests/duckdb/interop/*)
 		suite_hit[interop]=1
+		continue
+		;;
+	tests/duckdb/config/*.json)
+		suite="${f#tests/duckdb/config/}"
+		suite="${suite%.json}"
+		if [[ " $ALL_SUITES " == *" $suite "* ]]; then
+			suite_hit[$suite]=1
+		else
+			for s in $ALL_SUITES; do suite_hit[$s]=1; done
+		fi
+		continue
+		;;
+	tests/duckdb/*.md)
+		continue
+		;;
+	tests/duckdb/*)
+		for s in $ALL_SUITES; do suite_hit[$s]=1; done
 		continue
 		;;
 	esac
@@ -136,5 +156,6 @@ emit_multiline() {
 emit iresearch "$iresearch"
 emit duckdb_suites "$duckdb_suites"
 emit re2 "$re2"
+emit corpus "$corpus"
 [[ -n "$pg_list" ]] && emit_multiline pg_tests "$pg_list"
 exit 0

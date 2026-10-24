@@ -105,7 +105,11 @@ jobs:
           fetch-depth: 1
           clean: false
       - name: Map every function to the units that run it
-        run: ./scripts/ci/selection_map.sh "${{ github.run_id }}-${{ github.run_attempt }}" "${{ needs.dev.outputs.digest }}"
+        env:
+          SHARDS: ${{ needs.dev.outputs.shards }}
+        run: |
+          ./scripts/ci/selection_map.sh "${{ github.run_id }}-${{ github.run_attempt }}" "${{ needs.dev.outputs.digest }}" \
+            "$(python3 -c 'import json, os; print(len(json.loads(os.environ["SHARDS"])))')"
 
   timing:
     name: learn the timings

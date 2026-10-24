@@ -226,6 +226,7 @@ def _parse_events(text, members, label):
     results = {}
     pids = {}
     took = {}
+    began = set()
     for line in text.splitlines():
         m = _TOOK.match(line)
         if m:
@@ -236,7 +237,9 @@ def _parse_events(text, members, label):
                 ev = json.loads(m.group(1))
             except json.JSONDecodeError:
                 continue
-            if ev.get("event") == "end":
+            if ev.get("event") == "begin":
+                began.add(ev.get("name", ""))
+            elif ev.get("event") == "end":
                 status = {"ok": PASSED, "error": FAILED}.get(ev.get("status"), SKIPPED)
                 detail = (ev.get("data") or "").strip().splitlines()
                 results[ev.get("name", "")] = [status, detail[0][:300] if detail else ""]
@@ -252,7 +255,7 @@ def _parse_events(text, members, label):
         if name in results:
             status, detail = results[name]
             out[key] = (status, took.get(name, 0.0), detail)
-    return out, pids
+    return out, pids, began
 
 
 def _attribute(san_dir, pids, member_results, label):
@@ -287,17 +290,19 @@ def _batch_run(ctx, suite, members, cpp, jobs, may_fail=frozenset()):
             argv += ["--emit-test-events", "--jobs", str(max(2, jobs)), "-f", str(listing)]
         res = r.exec(argv, env={**THREADS, **_halt_on_ubsan(r)}, cwd=core_dir(ctx))
         text = r.log.read_text(errors="replace") if r.log.exists() else ""
+        began = set()
         if cpp:
             member_results, pids = _parse_catch(text, members, label, may_fail)
         else:
-            member_results, pids = _parse_events(text, members, label)
+            member_results, pids, began = _parse_events(text, members, label)
         if res.stuck:
-            launched = sorted(members, key=lambda m: not m.endswith(".test_slow"))
-            unfinished = [m for m in launched if f"{label}:{m}" not in member_results]
-            for i, m in enumerate(unfinished):
+            unfinished = [m for m in members if f"{label}:{m}" not in member_results]
+            launched = sorted(unfinished, key=lambda m: not m.endswith(".test_slow"))
+            head = next((m for m in unfinished if m in began), launched[0] if launched else None)
+            for m in unfinished:
                 member_results[f"{label}:{m}"] = (
                     (STUCK, res.duration, f"no result after {res.duration:.0f}s; stacks saved")
-                    if i == 0 else (SKIPPED, 0.0, "no result: the batch timed out"))
+                    if m == head else (SKIPPED, 0.0, "no result: the batch timed out"))
             return Outcome(STUCK, "batch did not finish; stacks saved", signature="stuck",
                            members=member_results)
         out = r.outcome(res)
@@ -397,7 +402,7 @@ def _ordered_run(ctx, steps):
                     "--order", "lex", *extra, "--emit-test-events", "-f", str(listing)]
             res = r.exec(argv, env=local_env, cwd=core_dir(ctx))
             text = r.log.read_text(errors="replace") if r.log.exists() else ""
-            results, _ = _parse_events(text, members, label)
+            results, _, _ = _parse_events(text, members, label)
             member_results.update(results)
             if res.stuck:
                 return Outcome(STUCK, f"{key} did not finish; stacks saved", signature="stuck",

@@ -26,6 +26,11 @@ def load(results_dir):
     return metas, rows
 
 
+def _label(key):
+    config, arch, check = key
+    return f"{config}/{arch}" + (f" {check}" if check else "")
+
+
 def _duration(seconds):
     m, s = divmod(int(seconds), 60)
     h, m = divmod(m, 60)
@@ -62,30 +67,30 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
     planned = defaultdict(int)
     plans = defaultdict(set)
     for m in metas:
-        key = (m["config"], m["arch"])
+        key = (m["config"], m["arch"], m.get("check", ""))
         longest[key] = max(longest[key], m["duration"])
         shards[key] += 1
         planned[key] = max(planned[key], int(m["shard"].split("/")[1]))
         plans[key].add(m.get("plan"))
     failures = []
     signatures = defaultdict(set)
-    covered_wrappers = {(r["member_of"], r["config"], r["arch"]) for r in rows
+    covered_wrappers = {(r["member_of"], r["config"], r["arch"], r.get("check", "")) for r in rows
                         if r.get("member_of") and r["status"] in BAD and r["attempt"] == 0}
     for r in rows:
         if r["attempt"] != 0:
             continue
-        key = (r["config"], r["arch"])
+        key = (r["config"], r["arch"], r.get("check", ""))
         if not r.get("wrapper"):
             by_config[key][r["status"]] += 1
         if r["status"] in BAD:
-            if r.get("wrapper") and (r["unit"], r["config"], r["arch"]) in covered_wrappers:
+            if r.get("wrapper") and (r["unit"], *key) in covered_wrappers:
                 continue
             failures.append(r)
             if "Sanitizer" in (r.get("signature") or ""):
                 signatures[r["signature"]].add(f"{r['config']}/{r['arch']}")
     lines = [MARKER, "### CI results", ""]
     keys = sorted(set(by_config) | set(longest),
-                  key=lambda k: (ORDER.index(k[0]) if k[0] in ORDER else 99, k[1]))
+                  key=lambda k: (ORDER.index(k[0]) if k[0] in ORDER else 99, k[1], k[2]))
     for key in keys:
         c = by_config[key]
         bad = sum(c[s] for s in BAD)
@@ -93,7 +98,7 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
         split = len(plans[key]) > 1
         mark = "❌" if bad or missing or split else "✅"
         lines.append(
-            f"- {mark} **{key[0]}/{key[1]}**: {c['passed']} passed, {c['failed']} failed, "
+            f"- {mark} **{_label(key)}**: {c['passed']} passed, {c['failed']} failed, "
             f"{c['flaky']} flaky, {c['stuck']} stuck, {c['crashed']} crashed, {c['skipped']} skipped; "
             f"{shards[key]} of {planned[key]} shards"
             + (f" ({missing} without results)" if missing else "")
@@ -102,8 +107,9 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
             + f", longest {_duration(longest[key])}")
     for job, info in sorted((needs or {}).items()):
         result = info.get("result")
-        if result in ("failure", "cancelled") and not any(k[0] == job for k in keys):
-            lines.append(f"- ❌ **{job}**: {result} before any test result")
+        if result in ("failure", "cancelled"):
+            before = "" if any(job in (k[0], k[2]) for k in keys) else " before any test result"
+            lines.append(f"- ❌ **{job}**: {result}{before}")
     if coverage:
         lines += ["", "**Coverage of the change**", "", "```", *coverage, "```"]
     if selection:
@@ -129,7 +135,7 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
     lines += ["", f"[Run]({run_url}) · `gh run download {run_url.rsplit('/', 1)[-1]} -n report` "
               "for report.json"]
     summary = {
-        "configs": {f"{k[0]}/{k[1]}": dict(by_config[k]) for k in keys},
+        "configs": {_label(k): dict(by_config[k]) for k in keys},
         "failures": failures,
         "sanitizer_signatures": {k: sorted(v) for k, v in signatures.items()},
         "coverage": list(coverage),

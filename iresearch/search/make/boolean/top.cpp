@@ -19,15 +19,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/detail/boolean_planner.hpp"
-#include "iresearch/search/hits/make_boolean.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/search/detail/make_boolean.hpp"
+#include "iresearch/search/top/family.hpp"
 
-namespace irs::hits {
+namespace irs::detail {
 
-Root::ptr Api::MakeExclusionWindow(const BooleanQuery& query,
-                                   const Context& ctx, score_t absorbed) {
-  return irs::detail::builder::MakeScoredExclusionWindow<Api>(
-    query, query.Segment(), ctx, query.MergeType(), absorbed);
-}
+IRS_MAKE_BOOLEAN(top::Family, top::Context);
 
-}  // namespace irs::hits
+}  // namespace irs::detail

@@ -138,4 +138,8 @@ Node::ptr MakeExclusion(const BooleanQuery& query, uint64_t interrogations,
                         const Scoring& scoring, const detail::ScoredCtx& ctx,
                         score_t absorbed);
 
+template<typename Scoring>
+Node::ptr MakeBoolean(const BooleanQuery& query, uint64_t interrogations,
+                      const Scoring& scoring, const detail::ScoredCtx& ctx);
+
 }  // namespace irs::probe

@@ -18,22 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <cstdint>
-#include <span>
+#include "iresearch/search/detail/boolean_planner.hpp"
+#include "iresearch/search/detail/make_boolean.hpp"
+#include "iresearch/search/fill/family.hpp"
 
-#include "iresearch/search/detail/boolean_builder.hpp"
-#include "iresearch/search/fill/make_boolean.hpp"
+namespace irs::detail {
 
-namespace irs::fill {
+IRS_MAKE_BOOLEAN(fill::Family, fill::Family::ScoredContext);
 
-Node::ptr Api::MakeWindowExclusion(
-  std::span<const detail::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters,
-  std::span<const detail::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx) {
-  return detail::builder::MakeWindowExclusion<Api>(
-    terms, filters, exclude_terms, exclude_filters, segment, candidates, ctx);
-}
-
-}  // namespace irs::fill
+}  // namespace irs::detail

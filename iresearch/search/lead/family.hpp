@@ -24,12 +24,19 @@
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/filters/filter.hpp"
+#include "iresearch/search/lead/boolean_sparse.hpp"
+#include "iresearch/search/lead/boolean_window.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"
 #include "iresearch/search/lead/impl.hpp"
+#include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/lead/two_phase.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/memory.hpp"
 
@@ -68,6 +75,80 @@ struct Family {
   template<typename Node, typename... Args>
   static Result Scored(const ScoredContext&, Args&&... args) {
     return memory::make_managed<Impl<Node>>(std::forward<Args>(args)...);
+  }
+
+  static constexpr bool kRoot = false;
+  static constexpr bool kPrunes = false;
+  static constexpr bool kWrapsMerge = false;
+  static constexpr bool kLazyGroups = true;
+  static constexpr bool kBoostArity = true;
+  static constexpr bool kSparseNegation = true;
+  static constexpr bool kWindowNodes = false;
+  static constexpr bool kWindowLeadDrains = true;
+  static constexpr double kSparseLeadCost = 1.0;
+  static constexpr bool kWindowLeadRefills = true;
+
+  static score_t Base(score_t) noexcept { return 0; }
+
+  template<typename Lead, typename Others, typename Optional, typename Excludes,
+           typename Ctx, typename Score, typename... Args>
+  static Result MakeWindow(const Ctx&, ScoreMergeType, Score score,
+                           Args&&... args) {
+    using Window = BooleanWindow<Lead, Others, Optional, Excludes, Score>;
+    return memory::make_managed<Impl<Window>>(
+      std::piecewise_construct, std::forward<Args>(args)..., score);
+  }
+
+  template<typename Lead, typename Probes, typename Optional, typename Excludes,
+           typename Ctx, typename Score, typename... Args>
+  static Result MakeSparse(const Ctx&, ScoreMergeType, Score score,
+                           Args&&... args) {
+    using Sparse = BooleanSparse<Lead, Probes, Optional, Excludes, Score>;
+    return memory::make_managed<Impl<Sparse>>(
+      std::piecewise_construct, std::forward<Args>(args)..., score);
+  }
+
+  static Result PlanChild(const QueryBuilder& child, const DocsContext&,
+                          ScoreMergeType) {
+    return child.PlanLead({});
+  }
+
+  static Result PlanChild(const QueryBuilder& child, const ScoredContext& ctx,
+                          ScoreMergeType) {
+    return child.PlanLead(ctx);
+  }
+
+  static Result MakePosting(const detail::PostingClause& posting,
+                            const SubReader& segment, const DocsContext&,
+                            ScoreMergeType) {
+    return detail::LeadOf(posting, nullptr, segment);
+  }
+
+  static Result MakePosting(const detail::PostingClause& posting,
+                            const SubReader& segment, const ScoredContext& ctx,
+                            ScoreMergeType) {
+    return MakePostingScored(posting, segment,
+                             {.segment = &segment, .fetcher = ctx.fetcher});
+  }
+
+  static Result MakeAll(const SubReader& segment, const DocsContext&,
+                        ScoreMergeType, score_t) {
+    return MakeAllDocs(segment);
+  }
+
+  static Result MakeAll(const SubReader& segment, const ScoredContext&,
+                        ScoreMergeType, score_t absorbed) {
+    return MakeAllScored(segment, absorbed);
+  }
+
+  static Result MakeLiveDocs(const SubReader& segment);
+
+  static detail::TableFilter* BitsetTable(const DocsContext&) noexcept {
+    return nullptr;
+  }
+
+  static doc_id_t BitsetSpan(const DocsContext&, doc_id_t docs_count) noexcept {
+    return docs_count;
   }
 };
 

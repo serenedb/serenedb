@@ -25,10 +25,12 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/approx_of.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_boolean.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
@@ -41,7 +43,6 @@
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/top/empty.hpp"
 #include "iresearch/search/top/family.hpp"
-#include "iresearch/search/top/make_boolean.hpp"
 #include "iresearch/search/top/walk.hpp"
 
 namespace irs::top {
@@ -112,8 +113,17 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
       }
     }
   }
-  return MakeWindowDisjunction(terms, {}, uniformity, field, scorer, boost,
-                               query.Segment(), ctx, merge, 0);
+  const auto& segment = query.Segment();
+  return irs::detail::builder::MakeDisjunction<Family>(
+    terms, {}, field, segment,
+    irs::detail::TermScoring{
+      .scorer = scorer,
+      .boost = boost,
+      .uniformity = uniformity,
+      .recipe = {.segment = &segment, .fetcher = &ctx.fetcher},
+      .merge = merge,
+    },
+    ctx, 0);
 }
 
 Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
@@ -161,6 +171,10 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   }
   const detail::FoldReachScope reach{ctx.span};
   return query.PlanTop(ctx);
+}
+
+Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
+  return irs::detail::MakeBoolean<Family>(query, ctx);
 }
 
 }  // namespace irs::top

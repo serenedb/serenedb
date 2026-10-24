@@ -32,11 +32,11 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/fill_posting_scored.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_boolean.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/fill/family.hpp"
 #include "iresearch/search/fill/impl.hpp"
-#include "iresearch/search/fill/make_boolean.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/fill/window_scored.hpp"
@@ -84,9 +84,9 @@ Node::ptr Make(const MultiTermQuery& query) {
              ? MakeSinglePostingDocs(posting)
              : MakePostingDocs(posting, segment);
   }
-  return detail::builder::MakeDisjunctionOfTerms<Api>(
+  return detail::builder::MakeDisjunctionOfTerms<Family>(
     terms, field, *detail::DocOf(*field),
-    static_cast<doc_id_t>(segment.docs_count()), {});
+    static_cast<doc_id_t>(segment.docs_count()), Family::DocsContext{});
 }
 
 Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,
@@ -103,11 +103,17 @@ Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,
              ? MakeSinglePostingScored(posting, segment, ctx, merge)
              : MakePostingScored(posting, segment, ctx, merge);
   }
-  const detail::ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
   std::vector<Node::ptr> rest;
-  return MakeWindowDisjunctionScored(
-    terms, field, scorer, boost, detail::DocOf(*field), rest,
-    detail::UniformityOf(*field, scorer), recipe, ctx, merge);
+  return detail::builder::MakeWindowDisjunction<Family>(
+    terms, field, detail::DocOf(*field), rest,
+    detail::TermScoring{
+      .scorer = scorer,
+      .boost = boost,
+      .uniformity = detail::UniformityOf(*field, scorer),
+      .recipe = {.segment = &segment, .fetcher = ctx.fetcher},
+      .merge = merge,
+    },
+    Family::ScoredContext{ctx, merge}, 0);
 }
 
 namespace {
@@ -195,6 +201,15 @@ Node::ptr Make(const ApproxQuery& query) {
 Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
   return detail::MakeApprox<Family>(query, {.scored = ctx, .merge = merge});
+}
+
+Node::ptr Make(const BooleanQuery& query) {
+  return detail::MakeBoolean<Family>(query, Family::DocsContext{});
+}
+
+Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx,
+               ScoreMergeType merge) {
+  return detail::MakeBoolean<Family>(query, Family::ScoredContext{ctx, merge});
 }
 
 }  // namespace irs::fill

@@ -31,13 +31,13 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_boolean.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"
 #include "iresearch/search/lead/family.hpp"
-#include "iresearch/search/lead/make_boolean.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
@@ -71,9 +71,9 @@ Node::ptr Make(const MultiTermQuery& query) {
     return MakePostingDocs(detail::ClauseOf(terms.front(), field),
                            query.Segment());
   }
-  return detail::builder::MakeDisjunctionOfTerms<Api>(
+  return detail::builder::MakeDisjunctionOfTerms<Family>(
     terms, field, *detail::DocOf(*field),
-    static_cast<doc_id_t>(query.Segment().docs_count()), {});
+    static_cast<doc_id_t>(query.Segment().docs_count()), Family::DocsContext{});
 }
 
 Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx) {
@@ -90,9 +90,17 @@ Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx) {
       detail::ClauseOf(terms.front(), field, scorer, boost), query.Segment(),
       recipe);
   }
-  return MakeWindowDisjunctionOfTermsScored<MultiTermState::Entry>(
-    terms, field, scorer, boost, *detail::DocOf(*field),
-    detail::UniformityOf(*field, scorer), query.Segment(), ctx, merge, 0);
+  std::vector<fill::Node::ptr> rest;
+  return detail::builder::MakeWindowDisjunction<Family>(
+    terms, field, detail::DocOf(*field), rest,
+    detail::TermScoring{
+      .scorer = scorer,
+      .boost = boost,
+      .uniformity = detail::UniformityOf(*field, scorer),
+      .recipe = {.segment = &query.Segment(), .fetcher = ctx.fetcher},
+      .merge = merge,
+    },
+    ctx, 0);
 }
 
 namespace {
@@ -166,6 +174,14 @@ Node::ptr Make(const ApproxQuery& query) { return query.Approx().PlanLead({}); }
 
 Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx) {
   return detail::MakeApprox<Family>(query, ctx);
+}
+
+Node::ptr Make(const BooleanQuery& query) {
+  return detail::MakeBoolean<Family>(query, Family::DocsContext{});
+}
+
+Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx) {
+  return detail::MakeBoolean<Family>(query, ctx);
 }
 
 }  // namespace irs::lead

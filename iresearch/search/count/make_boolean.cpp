@@ -18,15 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/count/make_boolean.hpp"
-
 #include <span>
 
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/live_count.hpp"
 #include "iresearch/search/count/make.hpp"
-#include "iresearch/search/detail/boolean_planner.hpp"
+#include "iresearch/search/count/subtract.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 
@@ -43,7 +43,7 @@ bool FewRuns(const detail::PostingClause& term,
 
 }  // namespace
 
-Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
+Root::ptr Family::MakeShortcut(const BooleanQuery& query, const Context& ctx) {
   const auto& segment = query.Segment();
   const auto must_terms = query.Terms(Occur::Must);
   const auto must_filters = query.Queries(Occur::Must);
@@ -60,7 +60,7 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
         return live;
       }
     }
-    if (auto folded = detail::builder::MakeBitset<Api>(
+    if (auto folded = detail::builder::MakeBitset<Family>(
           {.must = must_terms,
            .must_not_filters = query.Queries(Occur::MustNot)},
           segment, ctx)) {
@@ -91,7 +91,7 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
       }
     }
   }
-  return detail::builder::Make<Api>(query, ctx, query.MergeType());
+  return {};
 }
 
 }  // namespace irs::count

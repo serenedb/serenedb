@@ -26,15 +26,16 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/approx_of.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_boolean.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/hits/empty.hpp"
 #include "iresearch/search/hits/family.hpp"
-#include "iresearch/search/hits/make_boolean.hpp"
 #include "iresearch/search/hits/walk.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
@@ -84,9 +85,17 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
              ? MakeSinglePosting(posting, query.Segment(), ctx)
              : MakePosting(posting, query.Segment(), ctx);
   }
-  return MakeWindowDisjunction(
-    terms, {}, irs::detail::UniformityOf(*state.Reader(), scorer), field,
-    scorer, boost, query.Segment(), ctx, merge, {});
+  const auto& segment = query.Segment();
+  return irs::detail::builder::MakeDisjunction<Family>(
+    terms, {}, field, segment,
+    irs::detail::TermScoring{
+      .scorer = scorer,
+      .boost = boost,
+      .uniformity = irs::detail::UniformityOf(*state.Reader(), scorer),
+      .recipe = {.segment = &segment, .fetcher = &ctx.fetcher},
+      .merge = merge,
+    },
+    ctx, 0);
 }
 
 Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
@@ -129,6 +138,10 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   }
   const detail::FoldReachScope reach{ctx.span};
   return query.PlanScored(ctx);
+}
+
+Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
+  return irs::detail::MakeBoolean<Family>(query, ctx);
 }
 
 }  // namespace irs::hits

@@ -18,15 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/hits/make_boolean.hpp"
-
 #include "iresearch/search/detail/boolean_planner.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/search/detail/make_boolean.hpp"
+#include "iresearch/search/probe/boolean_planner.hpp"
+#include "iresearch/search/probe/family.hpp"
 
-namespace irs::hits {
+namespace irs::detail {
 
-Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
-  return irs::detail::builder::Make<Api>(query, ctx, query.MergeType());
-}
+IRS_MAKE_BOOLEAN(probe::Family, probe::Family::ScoredContext);
 
-}  // namespace irs::hits
+}  // namespace irs::detail

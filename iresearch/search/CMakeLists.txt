@@ -3,8 +3,6 @@ target_sources(
     PRIVATE
         count/make.cpp
         count/make_boolean.cpp
-        count/make_boolean_exclusion.cpp
-        count/make_boolean_exclusion_window.cpp
         count/make_boolean_negation.cpp
         count/make_constant.cpp
         count/make_subtract_conjunction.cpp
@@ -18,20 +16,11 @@ target_sources(
         detail/token_phrase.cpp
         docs/make.cpp
         docs/make_all.cpp
-        docs/make_boolean.cpp
-        docs/make_boolean_exclusion.cpp
-        docs/make_boolean_exclusion_window.cpp
-        docs/make_boolean_negation.cpp
         docs/make_posting.cpp
         docs/make_single_posting.cpp
         fill/make.cpp
         fill/make_all_docs.cpp
         fill/make_all_scored.cpp
-        fill/make_boolean.cpp
-        fill/make_boolean_exclusion.cpp
-        fill/make_boolean_exclusion_window.cpp
-        fill/make_boolean_negation.cpp
-        fill/make_boolean_scored.cpp
         fill/make_posting_docs.cpp
         fill/make_posting_scored.cpp
         fill/make_single_posting_docs.cpp
@@ -58,26 +47,45 @@ target_sources(
         filters/wildcard_ngram_filter.cpp
         hits/make.cpp
         hits/make_all.cpp
-        hits/make_boolean.cpp
-        hits/make_boolean_exclusion.cpp
-        hits/make_boolean_exclusion_window.cpp
         hits/make_boosted_posting.cpp
         hits/make_posting.cpp
         hits/make_single_posting.cpp
         lead/make.cpp
         lead/make_all_docs.cpp
         lead/make_all_scored.cpp
-        lead/make_boolean.cpp
-        lead/make_boolean_exclusion.cpp
-        lead/make_boolean_exclusion_window.cpp
-        lead/make_boolean_negation.cpp
-        lead/make_boolean_scored.cpp
         lead/make_posting_docs.cpp
         lead/make_posting_scored.cpp
+        make/boolean/count.cpp
+        make/boolean/count_exclusion.cpp
+        make/boolean/count_exclusion_window.cpp
+        make/boolean/docs.cpp
+        make/boolean/docs_exclusion.cpp
+        make/boolean/docs_exclusion_window.cpp
+        make/boolean/docs_negation.cpp
+        make/boolean/fill_docs.cpp
+        make/boolean/fill_exclusion_docs.cpp
+        make/boolean/fill_exclusion_scored.cpp
+        make/boolean/fill_exclusion_window.cpp
+        make/boolean/fill_negation.cpp
+        make/boolean/fill_scored.cpp
+        make/boolean/hits.cpp
+        make/boolean/hits_exclusion.cpp
+        make/boolean/hits_exclusion_window.cpp
+        make/boolean/lead_docs.cpp
+        make/boolean/lead_exclusion_docs.cpp
+        make/boolean/lead_exclusion_scored.cpp
+        make/boolean/lead_exclusion_window.cpp
+        make/boolean/lead_negation.cpp
+        make/boolean/lead_scored.cpp
+        make/boolean/probe_docs.cpp
         make/boolean/probe_exclusion_docs.cpp
         make/boolean/probe_exclusion_scored.cpp
         make/boolean/probe_optional_docs.cpp
         make/boolean/probe_optional_scored.cpp
+        make/boolean/probe_scored.cpp
+        make/boolean/top.cpp
+        make/boolean/top_exclusion.cpp
+        make/boolean/top_exclusion_window.cpp
         make/ngram/count_all.cpp
         make/ngram/count_threshold.cpp
         make/ngram/docs_all.cpp
@@ -185,8 +193,6 @@ target_sources(
         probe/make.cpp
         probe/make_all_docs.cpp
         probe/make_all_scored.cpp
-        probe/make_boolean.cpp
-        probe/make_boolean_scored.cpp
         probe/make_posting_docs.cpp
         probe/make_posting_scored.cpp
         probe/make_single_posting_scored.cpp
@@ -203,10 +209,8 @@ target_sources(
         scorers/score_function.cpp
         top/make.cpp
         top/make_all.cpp
-        top/make_boolean.cpp
-        top/make_boolean_exclusion.cpp
-        top/make_boolean_exclusion_window.cpp
         top/make_posting.cpp
+        top/make_pruned.cpp
         top/make_pruned_conjunction.cpp
         top/make_pruned_conjunction_nested.cpp
         top/make_pruned_disjunction.cpp

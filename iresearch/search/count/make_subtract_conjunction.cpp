@@ -23,7 +23,7 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/count/make_boolean.hpp"
+#include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/subtract.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/collect.hpp"
@@ -40,7 +40,7 @@ Root::ptr MakeSubtractConjunction(std::span<const detail::PostingClause> terms,
     return {};
   }
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-  auto disjunction = detail::builder::MakeDisjunctionOfTerms<Api>(
+  auto disjunction = detail::builder::MakeDisjunctionOfTerms<Family>(
     terms, nullptr, *doc, docs_count, ctx);
   if (!disjunction) {
     return {};

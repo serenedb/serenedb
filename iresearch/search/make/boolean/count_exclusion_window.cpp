@@ -18,15 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/top/make_boolean.hpp"
+#include "iresearch/search/count/family.hpp"
+#include "iresearch/search/detail/boolean_exclusion_window.hpp"
+#include "iresearch/search/detail/make_boolean.hpp"
 
-#include "iresearch/search/detail/boolean_planner.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
+namespace irs::detail {
 
-namespace irs::top {
+IRS_MAKE_BOOLEAN_EXCLUSION_WINDOW(count::Family, count::Context);
 
-Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
-  return irs::detail::builder::Make<Api>(query, ctx, query.MergeType());
-}
-
-}  // namespace irs::top
+}  // namespace irs::detail

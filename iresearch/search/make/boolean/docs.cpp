@@ -18,29 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/lead/make_boolean.hpp"
-
-#include <span>
-
-#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/boolean_planner.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/search/detail/make_boolean.hpp"
+#include "iresearch/search/docs/family.hpp"
 
-namespace irs::lead {
+namespace irs::detail {
 
-Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
-                           std::span<const QueryBuilder::ptr> must_filters,
-                           std::span<const detail::PostingClause> should,
-                           std::span<const QueryBuilder::ptr> should_filters,
-                           uint32_t min_should_match,
-                           const SubReader& segment) {
-  return detail::builder::MakeRequired<Api>(
-    must, must_filters, should, should_filters, detail::Terms::Mixed,
-    min_should_match, segment, {}, ScoreMergeType::Noop, 0);
-}
+IRS_MAKE_BOOLEAN(docs::Family, docs::Context);
 
-Node::ptr Make(const BooleanQuery& query) {
-  return detail::builder::Make<Api>(query, {}, query.MergeType());
-}
-
-}  // namespace irs::lead
+}  // namespace irs::detail

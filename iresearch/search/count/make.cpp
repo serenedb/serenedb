@@ -24,10 +24,11 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/count/family.hpp"
-#include "iresearch/search/count/make_boolean.hpp"
 #include "iresearch/search/count/plan.hpp"
+#include "iresearch/search/count/subtract.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
+#include "iresearch/search/detail/make_boolean.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/queries/approx_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -55,7 +56,7 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
       return subtracted;
     }
   }
-  return detail::builder::MakeDisjunctionOfTerms<Api>(
+  return detail::builder::MakeDisjunctionOfTerms<Family>(
     terms, field, *detail::DocOf(*field),
     static_cast<doc_id_t>(query.Segment().docs_count()), ctx);
 }
@@ -103,6 +104,10 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   }
   const detail::FoldReachScope reach{ctx.span};
   return query.PlanCount(ctx);
+}
+
+Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
+  return detail::MakeBoolean<Family>(query, ctx);
 }
 
 }  // namespace irs::count

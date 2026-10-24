@@ -29,6 +29,7 @@
 #include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_boolean.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
@@ -190,6 +191,17 @@ Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
   return detail::MakeApprox<Family>(
     query, {.scored = ctx, .interrogations = interrogations});
+}
+
+Node::ptr Make(const BooleanQuery& query, uint64_t interrogations) {
+  return detail::MakeBoolean<Family>(query,
+                                     Family::DocsContext{interrogations});
+}
+
+Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx,
+               uint64_t interrogations) {
+  return detail::MakeBoolean<Family>(
+    query, Family::ScoredContext{ctx, interrogations});
 }
 
 }  // namespace irs::probe

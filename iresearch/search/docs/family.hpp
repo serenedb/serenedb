@@ -20,12 +20,19 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <utility>
 
+#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/docs/boolean_sparse.hpp"
+#include "iresearch/search/docs/boolean_window.hpp"
+#include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/docs/walk.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/lead/two_phase.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::docs {
 
@@ -41,6 +48,52 @@ struct Family {
   template<typename Node, typename... Args>
   static Result Docs(const Context& ctx, Args&&... args) {
     return MakeShape<Walk, Node>(ctx, std::forward<Args>(args)...);
+  }
+
+  static constexpr bool kWindowNodes = true;
+  static constexpr bool kWindowLeadDrains = true;
+  static constexpr double kSparseLeadCost = 1.0;
+  static constexpr bool kWindowLeadRefills = true;
+  static constexpr bool kSparseNegation = false;
+
+  template<typename Lead, typename Others, typename Optional, typename Excludes,
+           typename... Args>
+  static Result MakeWindow(const Context& ctx, ScoreMergeType, utils::Empty,
+                           Args&&... args) {
+    return MakeShape<BooleanWindow, Lead, Others, Optional, Excludes>(
+      ctx, std::piecewise_construct, std::forward<Args>(args)...);
+  }
+
+  template<typename Lead, typename Probes, typename Optional, typename Excludes,
+           typename... Args>
+  static Result MakeSparse(const Context& ctx, ScoreMergeType, utils::Empty,
+                           Args&&... args) {
+    return MakeShape<BooleanSparse, Lead, Probes, Optional, Excludes>(
+      ctx, std::piecewise_construct, std::forward<Args>(args)...);
+  }
+
+  static Result PlanChild(const QueryBuilder& child, const Context& ctx,
+                          ScoreMergeType) {
+    return child.PlanDocs(ctx);
+  }
+
+  static Result MakePosting(const detail::PostingClause& posting,
+                            const SubReader& segment, const Context& ctx,
+                            ScoreMergeType) {
+    return docs::MakePosting(posting, segment, ctx);
+  }
+
+  static Result MakeAll(const SubReader& segment, const Context& ctx,
+                        ScoreMergeType, score_t) {
+    return docs::MakeAll(static_cast<doc_id_t>(segment.docs_count()), ctx);
+  }
+
+  static detail::TableFilter* BitsetTable(const Context&) noexcept {
+    return nullptr;
+  }
+
+  static doc_id_t BitsetSpan(const Context& ctx, doc_id_t docs_count) noexcept {
+    return ctx.span != 0 ? std::min(ctx.span, docs_count) : docs_count;
   }
 };
 

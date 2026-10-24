@@ -85,22 +85,6 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
                             const detail::ScoreRecipe& recipe);
 
 Node::ptr MakeAllDocs(const SubReader& segment);
-Node::ptr MakeLiveDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, score_t score);
-
-Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
-                           std::span<const QueryBuilder::ptr> must_filters,
-                           std::span<const detail::PostingClause> should,
-                           std::span<const QueryBuilder::ptr> should_filters,
-                           uint32_t min_should_match, const SubReader& segment);
-Node::ptr MakeRequiredScored(std::span<const detail::PostingClause> must,
-                             std::span<const QueryBuilder::ptr> must_filters,
-                             std::span<const detail::PostingClause> should,
-                             std::span<const QueryBuilder::ptr> should_filters,
-                             detail::Terms should_uniformity,
-                             uint32_t min_should_match,
-                             const SubReader& segment,
-                             const detail::ScoredCtx& ctx, ScoreMergeType merge,
-                             score_t absorbed);
 
 }  // namespace irs::lead

@@ -24,9 +24,9 @@
 
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/live_count.hpp"
 #include "iresearch/search/count/make.hpp"
-#include "iresearch/search/count/make_boolean.hpp"
 #include "iresearch/search/count/subtract.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/resolve.hpp"
@@ -64,12 +64,12 @@ Root::ptr MakeLiveTerm(const detail::PostingClause& term,
     });
 }
 
-Root::ptr Api::MakeNegation(
+Root::ptr Family::MakeNegation(
   std::span<const detail::PostingClause> exclude_terms,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t candidates, const Context& ctx) {
   if (ctx.table != nullptr) {
-    return detail::builder::MakeSparseNegation<Api>(
+    return detail::builder::MakeSparseNegation<Family>(
       exclude_terms, exclude_filters, segment, candidates, ctx);
   }
   if (detail::OnlyMask(exclude_terms, exclude_filters)) {
@@ -82,7 +82,7 @@ Root::ptr Api::MakeNegation(
                                               std::move(live), ctx.partial);
       }
     }
-    return detail::builder::MakeWindowNegation<Api>(
+    return detail::builder::MakeWindowNegation<Family>(
       exclude_terms, exclude_filters, segment, ctx);
   }
   Root::ptr excluded;
@@ -98,7 +98,7 @@ Root::ptr Api::MakeNegation(
                                          exclude_terms.back(), segment, ctx);
     }
     if (!excluded) {
-      excluded = detail::builder::MakeDisjunction<Api>(
+      excluded = detail::builder::MakeDisjunction<Family>(
         exclude_terms, exclude_filters, nullptr, segment, detail::NoScoring{},
         ctx, 0);
     }

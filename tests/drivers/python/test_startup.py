@@ -10,6 +10,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from serened import listens_on  # type: ignore[import-untyped]
 
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
@@ -44,12 +45,14 @@ class _Server:
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
                 return False
-            try:
-                psycopg.connect(host="127.0.0.1", port=self.port,
-                                user="postgres", dbname="postgres").close()
-                return True
-            except psycopg.OperationalError:
-                time.sleep(0.2)
+            if listens_on(self.proc.pid, [self.port]):
+                try:
+                    psycopg.connect(host="127.0.0.1", port=self.port,
+                                    user="postgres", dbname="postgres").close()
+                    return True
+                except psycopg.OperationalError:
+                    pass
+            time.sleep(0.2)
         return False
 
     def stop(self) -> None:
@@ -127,6 +130,19 @@ def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
     restarted = _run_until_ready(datadir)
     assert ("search index recovery: replayed the WAL into 1 of 2 search "
             "table(s) in " in restarted.output()), restarted.output()
+
+
+def test_terminate_while_starting(tmp_path: Path) -> None:
+    server = _Server(tmp_path / "data")
+    deadline = time.monotonic() + 60
+    while "Created database directory: " not in server.output():
+        assert server.proc.poll() is None, server.output()
+        assert time.monotonic() < deadline, server.output()
+        time.sleep(0.005)
+    server.proc.terminate()
+    assert server.proc.wait(timeout=60) == 0, server.output()
+    assert "SIGTERM received" not in server.output(), server.output()
+    assert "SereneDB is shut down" in server.output(), server.output()
 
 
 def test_second_instance_on_the_same_datadir(tmp_path: Path) -> None:

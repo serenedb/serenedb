@@ -20,6 +20,7 @@
 
 #include "catalog/database_directory.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -27,17 +28,29 @@
 #include <cerrno>
 #include <cstring>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include "scheduler/background_scheduler.h"
 #include "server/utils/lifecycle.h"
 
 namespace sdb::catalog {
 namespace {
+
+int FsyncDirectory(const std::filesystem::path& directory) noexcept {
+  const int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  const bool synced = fd >= 0 && ::fsync(fd) == 0;
+  const int error = synced ? 0 : errno;
+  if (fd >= 0) {
+    ::close(fd);
+  }
+  return error;
+}
 
 void CreateDirectory(const std::filesystem::path& path) {
   std::error_code ec;
@@ -52,10 +65,39 @@ void CreateDirectory(const std::filesystem::path& path) {
 
 void RemoveTree(const std::filesystem::path& path) {
   duckdb::TaskScheduler::BlockingScope blocking;
+  auto dropped = path;
+  dropped += kDroppedSuffix;
   std::error_code ec;
-  std::filesystem::remove_all(path, ec);
+  std::filesystem::rename(path, dropped, ec);
   if (ec) {
-    SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
+    if (ec != std::errc::no_such_file_or_directory) {
+      SDB_WARN(GENERAL, "could not rename '", path.string(), "' to '",
+               dropped.string(), "': ", ec.message());
+    }
+    return;
+  }
+  if (const int error = FsyncDirectory(path.parent_path()); error != 0) {
+    SDB_WARN(GENERAL, "could not fsync directory '",
+             path.parent_path().string(), "': ", std::strerror(error));
+    return;
+  }
+  SDB_IF_FAILURE("pause_storage_removal") {
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry :
+         std::filesystem::recursive_directory_iterator{dropped, ec}) {
+      if (entry.is_regular_file(ec)) {
+        files.emplace_back(entry.path());
+      }
+    }
+    if (!files.empty()) {
+      std::filesystem::remove(*absl::c_min_element(files), ec);
+    }
+    SDB_PARK_ONCE_ON_FAILURE("pause_storage_removal");
+  }
+  std::filesystem::remove_all(dropped, ec);
+  if (ec) {
+    SDB_WARN(GENERAL, "could not remove '", dropped.string(),
+             "': ", ec.message());
   }
 }
 
@@ -71,13 +113,7 @@ void RunRemoval(Removal&& removal) {
 }  // namespace
 
 void SyncDirectory(const std::filesystem::path& directory) {
-  const int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-  const bool synced = fd >= 0 && ::fsync(fd) == 0;
-  const int error = errno;
-  if (fd >= 0) {
-    ::close(fd);
-  }
-  if (!synced) {
+  if (const int error = FsyncDirectory(directory); error != 0) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                     ERR_MSG("could not fsync directory \"", directory.string(),
                             "\": ", std::strerror(error)));

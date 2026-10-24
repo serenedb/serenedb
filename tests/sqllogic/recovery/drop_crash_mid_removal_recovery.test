@@ -1,0 +1,138 @@
+control substitution on
+
+
+# A crash while the directory of a dropped search table, or of a dropped
+# database, is being removed leaves a data directory that boots without the
+# dropped object (#1572). The fault point removes the first file of the
+# directory and parks the removal; crash_on_packet crashes the server while it
+# is parked.
+
+statement ok
+CREATE TABLE removal_crash (id INTEGER, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO removal_crash VALUES (1, 'one');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) removal_crash;
+
+
+statement ok
+CREATE TABLE removal_survivor (id INTEGER, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO removal_survivor VALUES (2, 'two');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) removal_survivor;
+
+
+statement ok
+SET sdb_faults = 'pause_storage_removal';
+
+
+statement ok
+DROP TABLE removal_crash;
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_storage_removal:parked';
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_table_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_table_crash
+query
+SELECT count(*) AS dropped FROM pg_class WHERE relname = 'removal_crash';
+----
+dropped
+0
+
+
+connection after_table_crash
+query
+SELECT id, body FROM removal_survivor;
+----
+id	body
+2	two
+
+
+connection after_table_crash
+statement ok
+CREATE DATABASE removal_crash_${__DATABASE__};
+
+
+connection after_table_crash
+statement ok
+CREATE TABLE removal_crash_${__DATABASE__}.public.docs (id INTEGER, body TEXT) WITH (storage = 'search');
+
+
+connection after_table_crash
+statement ok
+INSERT INTO removal_crash_${__DATABASE__}.public.docs VALUES (3, 'three');
+
+
+connection after_table_crash
+statement ok
+VACUUM (REFRESH_TABLE) removal_crash_${__DATABASE__}.public.docs;
+
+
+connection after_table_crash
+statement ok
+SET sdb_faults = 'pause_storage_removal';
+
+
+connection after_table_crash
+statement ok
+DROP DATABASE removal_crash_${__DATABASE__};
+
+
+connection after_table_crash
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_storage_removal:parked';
+
+
+connection after_table_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_table_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_database_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_database_crash
+query
+SELECT count(*) AS dropped FROM pg_database WHERE datname = 'removal_crash_${__DATABASE__}';
+----
+dropped
+0
+
+
+connection after_database_crash
+query
+SELECT id, body FROM removal_survivor;
+----
+id	body
+2	two

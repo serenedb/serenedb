@@ -31,7 +31,7 @@ RUN \
   apt-get install -y --no-install-recommends \
       curl wget gnupg \
       ninja-build cmake ccache make \
-      llvm-23 clang-23 lld-23 libclang-rt-23-dev \
+      llvm-23 clang-23 lld-23 lldb-23 libclang-rt-23-dev zstd libcap2-bin \
       bison flex libfl-dev \
       dh-make fakeroot \
       python3 python3-dev python3-pip perl \
@@ -59,6 +59,7 @@ RUN \
   Rscript -e 'install.packages("RPostgres", repos="https://cloud.r-project.org", quiet=TRUE)' && \
   Rscript -e 'library(RPostgres)' && \
   gem install --no-document pg && \
+  setcap cap_sys_ptrace+ep /usr/lib/llvm-23/bin/lldb-server && \
   ln -sf /usr/bin/clang-23 /usr/bin/clang && \
   ln -sf /usr/bin/clang++-23 /usr/bin/clang++ && \
   ln -sf /usr/bin/ccache /usr/local/bin/clang && \

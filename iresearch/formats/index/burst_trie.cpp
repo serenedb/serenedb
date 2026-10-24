@@ -741,8 +741,8 @@ void FieldWriter::Impl::prepare(const FlushState& state) {
 void FieldWriter::Impl::write(const BasicTermReader& reader) {
   const auto props = reader.properties();
   const auto index_features = props.index_features;
-  BeginField(props);
   _pw.SetTermPayloadWriter(reader.PayloadWriter());
+  BeginField(props);
 
   uint64_t term_count = 0;
   uint64_t sum_dfreq = 0;

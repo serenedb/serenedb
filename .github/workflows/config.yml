@@ -1,0 +1,74 @@
+name: task | serenedb config
+
+on:
+  workflow_call:
+    inputs:
+      CONFIG:
+        description: "perf, dev, asan, tsan or msan (scripts/ci/config.sh)"
+        type: string
+        required: true
+      NAME:
+        description: "A second run of CONFIG in the same workflow (biglake): names its artifacts and results"
+        type: string
+        required: false
+        default: ""
+      LOCATION:
+        description: "Runner label"
+        type: string
+        required: false
+        default: "linux-amd64"
+      TESTS:
+        description: "Run the tests after the build"
+        type: boolean
+        required: false
+        default: true
+      TEST_ARGS:
+        description: "Extra scripts/ci/test.py arguments (suite selection, budgets)"
+        type: string
+        required: false
+        default: ""
+      PR_SHA:
+        description: "Commit SHA to check out (empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
+      PR_NUMBER:
+        description: "PR number, recorded with the results"
+        type: string
+        required: false
+        default: ""
+    outputs:
+      digest:
+        description: "Input digest of the build"
+        value: ${{ jobs.build.outputs.digest }}
+      shards:
+        description: "The test shards, as JSON"
+        value: ${{ jobs.build.outputs.shards }}
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      CONFIG: ${{ inputs.CONFIG }}
+      NAME: ${{ inputs.NAME }}
+      LOCATION: ${{ inputs.LOCATION }}
+      TESTS: ${{ inputs.TESTS }}
+      TEST_ARGS: ${{ inputs.TEST_ARGS }}
+      PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+    secrets: inherit
+
+  test:
+    needs: build
+    if: inputs.TESTS
+    uses: ./.github/workflows/test.yml
+    with:
+      CONFIG: ${{ inputs.CONFIG }}
+      NAME: ${{ inputs.NAME }}
+      LOCATION: ${{ inputs.LOCATION }}
+      DIGEST: ${{ needs.build.outputs.digest }}
+      SHARDS: ${{ needs.build.outputs.shards }}
+      TEST_ARGS: ${{ inputs.TEST_ARGS }}
+      PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+    secrets: inherit

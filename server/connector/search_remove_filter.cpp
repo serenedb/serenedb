@@ -51,10 +51,13 @@ class SearchRemoveQuery : public irs::QueryBuilder {
                     const irs::DocumentMaskBuilder* pending)
     : irs::QueryBuilder{segment}, _filter{filter}, _pending{pending} {}
 
-  irs::lead::Node::ptr PlanLead(const irs::detail::ScoredCtx&) const final {
+  irs::lead::Node::ptr PlanLeadDocs() const final {
     return _filter.MakeLead(_segment, _pending);
   }
 
+  irs::lead::Node::ptr PlanLead(const irs::detail::ScoredCtx&) const final {
+    return {};
+  }
   irs::count::Root::ptr PlanCount(const irs::count::Context&) const final {
     return {};
   }
@@ -75,6 +78,8 @@ class SearchRemoveQuery : public irs::QueryBuilder {
                                 irs::ScoreMergeType) const final {
     return {};
   }
+  irs::probe::Node::ptr PlanProbeDocs(uint64_t) const final { return {}; }
+  irs::fill::Node::ptr PlanFillDocs() const final { return {}; }
 
   void Visit(irs::PreparedStateVisitor&, irs::score_t) const final {}
 
@@ -473,7 +478,7 @@ irs::lead::Node::ptr SearchRemoveUnion::MakeLead(
     if (!prepared) {
       continue;
     }
-    auto lead = prepared->PlanLead({});
+    auto lead = prepared->PlanLeadDocs();
     if (!lead) {
       continue;
     }

@@ -109,7 +109,7 @@ struct Family {
 
   static Result PlanChild(const QueryBuilder& child, const DocsContext&,
                           ScoreMergeType) {
-    return child.PlanLead({});
+    return child.PlanLeadDocs();
   }
 
   static Result PlanChild(const QueryBuilder& child, const ScoredContext& ctx,

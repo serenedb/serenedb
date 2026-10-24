@@ -1,0 +1,23 @@
+name: auto | release published
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    name: Tag the published release latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Retag the release's images
+        env:
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${TAG#v}"
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker buildx imagetools create -t serenedb/serenedb:latest "serenedb/serenedb:${version}"

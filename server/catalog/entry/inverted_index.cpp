@@ -61,6 +61,7 @@
 #include "connector/duckdb_reindex_function.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
+#include "connector/term_dict.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -286,6 +287,10 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
   return it->second.features.HasFeatures(irs::IndexFeatures::Norm)
            ? it->second.synthetic_column
            : irs::field_limits::invalid();
+}
+
+bool InvertedIndexConfig::HasField(irs::field_id id) const {
+  return id == connector::term_dict::kPKFieldId || LookupField(id).entry;
 }
 
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,

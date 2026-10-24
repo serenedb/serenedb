@@ -53,8 +53,7 @@ struct ClusterFeed {
     const float* centroid =
       has_centroids ? state->cluster_centroids.data() + c * state->d : nullptr;
     quantizer->StartCluster(centroid);
-    VectorBlockReader pay{payload->Dup(),
-                          quantizer->BlockSetting().record_size};
+    VectorBlockReader pay{payload->Dup(), quantizer->BlockSetting()};
     pay.Reset(state->pay_starts[c]);
     return Args{state->cookies[c], *detail::DocOf(*state->reader),
                 std::move(quantizer), std::move(pay), state->pay_lanes[c]};
@@ -114,7 +113,7 @@ probe::Node::ptr InnerProbe(const Query& query) {
   if (inner == nullptr) {
     return {};
   }
-  return inner->PlanProbe({}, query.State().estimation);
+  return inner->PlanProbeDocs(query.State().estimation);
 }
 
 template<typename Gate, typename Query, typename F>

@@ -504,7 +504,7 @@ void ForEachMatchIn(const irs::DirectoryReader& reader,
     if (!query || irs::QueryBuilder::IsEmpty(*query)) {
       continue;
     }
-    auto node = query->PlanFill({}, irs::ScoreMergeType::Noop);
+    auto node = query->PlanFillDocs();
     if (!node) {
       continue;
     }

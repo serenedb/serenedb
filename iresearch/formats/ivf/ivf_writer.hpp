@@ -106,6 +106,11 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
     return _qw->PendingLanes();
   }
 
+  uint32_t Alignment() const noexcept final {
+    SDB_ASSERT(_qw);
+    return _qw->BlockSetting().alignment;
+  }
+
  private:
   std::span<const doc_id_t> _cluster_docs;
   std::span<const uint64_t> _cluster_offsets;

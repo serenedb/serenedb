@@ -107,7 +107,9 @@ std::filesystem::path TestEnv::resource(const std::string& name) {
 }
 
 bool TestEnv::prepare() {
-  make_directories();
+  if (!make_directories()) {
+    return false;
+  }
 
   // NOTE: --ires_log_level is parsed but currently has no effect: SDB_*
   // levels are now driven by the duckdb LogManager config installed at
@@ -127,7 +129,7 @@ bool TestEnv::prepare() {
   return true;
 }
 
-void TestEnv::make_directories() {
+bool TestEnv::make_directories() {
   std::filesystem::path exec_path(gArgv[0]);
   auto path_parts = irs::file_utils::PathParts(exec_path.c_str());
 
@@ -180,8 +182,14 @@ void TestEnv::make_directories() {
 
   auto res_dir_templ = gResDir.string();
 
-  gResDir = mkdtemp(res_dir_templ.data());
+  if (!mkdtemp(res_dir_templ.data())) {
+    std::cerr << "cannot create " << res_dir_templ << ": "
+              << std::strerror(errno) << std::endl;
+    return false;
+  }
+  gResDir = res_dir_templ;
   (gResPath = gResDir) /= kTestResults;
+  return true;
 }
 
 void TestEnv::parse_command_line() {
@@ -251,6 +259,10 @@ int main(int argc, char* argv[]) {
   irs::DuckDBEngine::Instance().Initialize();
 
   const int code = TestEnv::initialize(argc, argv);
+  if (code < 0) {
+    irs::DuckDBEngine::Instance().Shutdown();
+    return EXIT_FAILURE;
+  }
 
   SDB_INFO(IRESEARCH, "Path to test result directory: ",
            TestEnv::test_results_dir().string());
@@ -268,11 +280,12 @@ int main(int argc, char* argv[]) {
   if (all_paths == 0) {
     std::filesystem::remove(TestEnv::test_results_dir());
   } else {
+    const auto outside = TestEnv::test_results_dir().parent_path();
     for (auto& path : empty_paths) {
       do {
         std::filesystem::remove(path);
         path = path.parent_path();
-      } while (std::filesystem::is_empty(path));
+      } while (path != outside && std::filesystem::is_empty(path));
     }
   }
 

@@ -456,7 +456,7 @@ Result BuildExcludeBitset(std::span<const Term> metas,
   }
   for (const auto& child : filters) {
     SDB_ASSERT(child);
-    auto node = child->PlanFill({}, ScoreMergeType::Noop);
+    auto node = child->PlanFillDocs();
     if (!node) {
       return {};
     }

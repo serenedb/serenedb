@@ -63,7 +63,7 @@ auto ResolveRule(const SubReader& segment,
 }
 
 inline lead::Node::ptr ChildDocs(const ByNestedQuery& query) {
-  auto child = query.Child().PlanLead({});
+  auto child = query.Child().PlanLeadDocs();
   if (!child && QueryBuilder::IsEmpty(query.Child())) {
     return SubReader::empty().docs_iterator();
   }

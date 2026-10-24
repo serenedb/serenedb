@@ -111,7 +111,7 @@ bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
     return false;  // skip invalid prepared filters
   }
 
-  auto plan = prepared->PlanLead({});
+  auto plan = prepared->PlanLeadDocs();
 
   if (!plan) [[unlikely]] {
     return false;  // skip a query kind that has no plan
@@ -149,7 +149,7 @@ void FlushedSegmentContext::Remove(const IndexWriter::QueryContext& query) {
     return;  // Skip invalid prepared filters
   }
 
-  auto plan = prepared->PlanLead({});
+  auto plan = prepared->PlanLeadDocs();
 
   if (!plan) [[unlikely]] {
     return;  // Skip a query kind that has no plan

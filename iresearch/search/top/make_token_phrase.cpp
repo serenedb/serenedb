@@ -157,7 +157,7 @@ Root::ptr MakeTokenPhrasePruned(const TokenPhraseQuery& query,
   if (!record.stats || !HasScoreBounds(record.scorer)) {
     return {};
   }
-  auto approx = query.Approx().PlanLead({});
+  auto approx = query.Approx().PlanLeadDocs();
   if (!approx) {
     return {};
   }

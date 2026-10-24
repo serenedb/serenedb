@@ -190,9 +190,9 @@ using ApproxNode = std::conditional_t<std::is_same_v<Result, ProbeNode::ptr>,
 template<typename Result>
 auto PlanApprox(const QueryBuilder& approx, uint64_t interrogations) {
   if constexpr (std::is_same_v<Result, ProbeNode::ptr>) {
-    return approx.PlanProbe({}, interrogations);
+    return approx.PlanProbeDocs(interrogations);
   } else {
-    return approx.PlanLead({});
+    return approx.PlanLeadDocs();
   }
 }
 

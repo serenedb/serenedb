@@ -47,7 +47,7 @@ db error: ERROR: invalid connection string syntax: invalid target_session_attrs 
 
 
 statement ok
-CREATE SUBSCRIPTION rcin_hosts CONNECTION 'host=${PGHOST},${PGHOST} port=1,${PGPORT} dbname=postgres user=${PGUSER} target_session_attrs=read-write load_balance_hosts=random' PUBLICATION rcin_pub_hosts WITH (slot_name = 'rcin_hosts');
+CREATE SUBSCRIPTION rcin_hosts CONNECTION 'host=127.0.0.1,${PGHOST} port=1,${PGPORT} dbname=postgres user=${PGUSER} target_session_attrs=read-write load_balance_hosts=random' PUBLICATION rcin_pub_hosts WITH (slot_name = 'rcin_hosts');
 
 
 statement ok

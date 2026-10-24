@@ -150,7 +150,7 @@ class FamilyIndex {
         auto docs = query->PlanDocs({});
         std::vector<irs::doc_id_t> buf(irs::detail::kWindowDocs +
                                        irs::doc_limits::kDocsSlack);
-        auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
+        auto fill = query->PlanFillDocs();
         std::vector<uint64_t> mask(irs::detail::kWindowWords);
         for (auto min = irs::doc_limits::min(); min < end;
              min += irs::detail::kWindowDocs) {
@@ -166,7 +166,7 @@ class FamilyIndex {
           });
         }
 
-        auto probe = query->PlanProbe({}, end - irs::doc_limits::min());
+        auto probe = query->PlanProbeDocs(end - irs::doc_limits::min());
         for (auto doc = irs::doc_limits::min(); doc < end; ++doc) {
           if (probe->Probe(doc) == doc) {
             out.probe.push_back(Global(i, doc));

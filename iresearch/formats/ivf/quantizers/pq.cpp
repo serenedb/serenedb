@@ -98,10 +98,13 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   }
 
   PayloadBlockSetting BlockSetting() const noexcept final {
-    return {.group_size = kFastScanBbs,
-            .record_size = static_cast<uint32_t>(
-              FastScanNsq(_pq.M) / 2 +
-              (M == VectorMetric::L2Sqr ? sizeof(float) : 0))};
+    return {
+      .group_size = kFastScanBbs,
+      .record_size =
+        static_cast<uint32_t>(FastScanNsq(_pq.M) / 2 +
+                              (M == VectorMetric::L2Sqr ? sizeof(float) : 0)),
+      .alignment = M == VectorMetric::L2Sqr ? alignof(float) : 1U,
+    };
   }
 
   void Encode(IndexOutput& out, const float* vecs, size_t n) final {
@@ -280,8 +283,11 @@ class ProductQuantizerReader final : public QuantizerReader {
                                     : 0)} {}
 
   PayloadBlockSetting BlockSetting() const noexcept final {
-    return {.group_size = kFastScanBbs,
-            .record_size = static_cast<uint32_t>(_group_bytes / kFastScanBbs)};
+    return {
+      .group_size = kFastScanBbs,
+      .record_size = static_cast<uint32_t>(_group_bytes / kFastScanBbs),
+      .alignment = M == VectorMetric::L2Sqr ? alignof(float) : 1U,
+    };
   }
 
   void StartCluster(const float* centroid) final {

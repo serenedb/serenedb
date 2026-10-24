@@ -221,7 +221,7 @@ inline IRS_FORCE_INLINE void ClearBitRange(uint64_t* IRS_RESTRICT words,
 
 template<typename Merge>
 IRS_FORCE_INLINE void MergeBitsetAt(uint64_t* IRS_RESTRICT dst, uint64_t begin,
-                                    const uint64_t* IRS_RESTRICT src,
+                                    const UnalignedWord* IRS_RESTRICT src,
                                     uint32_t words, uint64_t last,
                                     Merge&& merge) noexcept {
   SDB_ASSERT(words != 0);
@@ -251,7 +251,7 @@ IRS_FORCE_INLINE void MergeBitsetAt(uint64_t* IRS_RESTRICT dst, uint64_t begin,
 
 inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
                                         uint64_t begin,
-                                        const uint64_t* IRS_RESTRICT src,
+                                        const UnalignedWord* IRS_RESTRICT src,
                                         uint32_t words,
                                         uint64_t last) noexcept {
   MergeBitsetAt(dst, begin, src, words, last,
@@ -259,11 +259,10 @@ inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
                   IRS_FORCE_INLINE { word |= bits; });
 }
 
-inline IRS_FORCE_INLINE void AndNotBitsetAt(uint64_t* IRS_RESTRICT dst,
-                                            uint64_t begin,
-                                            const uint64_t* IRS_RESTRICT src,
-                                            uint32_t words,
-                                            uint64_t last) noexcept {
+inline IRS_FORCE_INLINE void AndNotBitsetAt(
+  uint64_t* IRS_RESTRICT dst, uint64_t begin,
+  const UnalignedWord* IRS_RESTRICT src, uint32_t words,
+  uint64_t last) noexcept {
   MergeBitsetAt(dst, begin, src, words, last,
                 [](uint64_t& word, uint64_t bits)
                   IRS_FORCE_INLINE { word &= ~bits; });

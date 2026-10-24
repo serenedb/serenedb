@@ -294,13 +294,11 @@ struct Prepared {
   Prepared(const irs::SubReader& segment, const irs::Filter& filter)
     : query{filter.PrepareSegment(segment, {})} {}
 
-  irs::lead::Node::ptr Lead() const { return query->PlanLead({}); }
+  irs::lead::Node::ptr Lead() const { return query->PlanLeadDocs(); }
 
   irs::docs::Root::ptr Docs() const { return irs::docs::MakeRoot(*query); }
 
-  irs::fill::Node::ptr Fill() const {
-    return query->PlanFill({}, irs::ScoreMergeType::Noop);
-  }
+  irs::fill::Node::ptr Fill() const { return query->PlanFillDocs(); }
 };
 
 void Report(benchmark::State& state, size_t docs) {

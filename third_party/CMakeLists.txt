@@ -43,6 +43,9 @@ set(SIMDUTF_TOOLS OFF CACHE BOOL "" FORCE)
 set(SIMDUTF_ICONV OFF CACHE BOOL "" FORCE)
 set(SIMDUTF_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
 sdb_add_module(simdutf)
+if(SDB_SANITIZE MATCHES "^Memory")
+    target_compile_definitions(simdutf PUBLIC SIMDUTF_IMPLEMENTATION_ICELAKE=0)
+endif()
 
 ################################################################################
 ## fast_float

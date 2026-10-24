@@ -56,7 +56,7 @@ on:
         required: false
         default: ""
       BUILD_CONFIG:
-        description: "Internal: JSON overrides (e.g. BUILD_IMAGE)"
+        description: "Internal: JSON environment overrides"
         type: string
         required: false
         default: '{}'
@@ -69,7 +69,6 @@ on:
         value: ${{ jobs.package.outputs.rta_ok }}
 env:
   WORKSPACE: ${{ github.workspace }}
-  BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
   CARGO_HOME_CACHE: /mnt/data/.cargo-home-sqllogic
 
@@ -96,32 +95,34 @@ jobs:
       - name: Set build flags
         run: |
           # Hardcoded release configuration
-          echo "BUILDMODE=Release" >> $GITHUB_ENV
-          echo "SDB_DEBUG_INFO=STACK" >> $GITHUB_ENV
-          echo "SDB_DEV=Off" >> $GITHUB_ENV
-          echo "SDB_GTEST=Off" >> $GITHUB_ENV
-          echo "SDB_FAULT_INJECTION=Off" >> $GITHUB_ENV
-          echo "SDB_LTO=On" >> $GITHUB_ENV
-          echo "SDB_COVERAGE=Off" >> $GITHUB_ENV
-          echo "SANITIZERS=" >> $GITHUB_ENV
-          echo "SDB_ALLOC=JE" >> $GITHUB_ENV
-          echo "SDB_VTUNE=Off" >> $GITHUB_ENV
-          echo "DEB_TAR_PACKAGES=true" >> $GITHUB_ENV
-          echo "STRIP_TARBALL=true" >> $GITHUB_ENV
-          echo "DEBUG_SYMBOLS=true" >> $GITHUB_ENV
-          echo "SDB_STATIC=On" >> $GITHUB_ENV
+          {
+            echo "BUILDMODE=Release"
+            echo "SDB_DEBUG_INFO=STACK"
+            echo "SDB_DEV=Off"
+            echo "SDB_GTEST=Off"
+            echo "SDB_FAULT_INJECTION=Off"
+            echo "SDB_LTO=On"
+            echo "SDB_COVERAGE=Off"
+            echo "SANITIZERS="
+            echo "SDB_ALLOC=JE"
+            echo "SDB_VTUNE=Off"
+            echo "DEB_TAR_PACKAGES=true"
+            echo "STRIP_TARBALL=true"
+            echo "DEBUG_SYMBOLS=true"
+            echo "SDB_STATIC=On"
+          } >> "$GITHUB_ENV"
 
           # Version
           PATCH="${{ inputs.SERENEDB_VERSION_PATCH }}"
           if [[ -z "$PATCH" ]]; then
             PATCH="0"
           fi
-          echo "SERENEDB_VERSION_PATCH=$PATCH" >> $GITHUB_ENV
+          echo "SERENEDB_VERSION_PATCH=$PATCH" >> "$GITHUB_ENV"
 
           # Parse BUILD_CONFIG overrides
           BUILD_CONFIG='${{ inputs.BUILD_CONFIG }}'
           if [[ -n "$BUILD_CONFIG" && "$BUILD_CONFIG" != "{}" ]]; then
-            echo "$BUILD_CONFIG" | docker run --rm -i --label "serenedb.owner=$SDB_DOCKER_OWNER" ghcr.io/jqlang/jq:1.8.1 -r 'to_entries | .[] | "\(.key)=\(.value)"' >> $GITHUB_ENV
+            echo "$BUILD_CONFIG" | docker run --rm -i --label "serenedb.owner=$SDB_DOCKER_OWNER" ghcr.io/jqlang/jq:1.8.1 -r 'to_entries | .[] | "\(.key)=\(.value)"' >> "$GITHUB_ENV"
           fi
 
           git config --global --add safe.directory '*'
@@ -132,6 +133,9 @@ jobs:
           fetch-depth: 1
           submodules: true
           clean: true
+
+      - name: Pick the build image
+        run: echo "BUILD_IMAGE=$(python3 scripts/ci/ci.py image)" >> "$GITHUB_ENV"
 
       - name: Build Docker environment file
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash

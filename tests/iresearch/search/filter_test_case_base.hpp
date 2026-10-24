@@ -190,6 +190,18 @@ class QueryWrapper : public irs::QueryBuilder {
     return _query->PlanFill(ctx, merge);
   }
 
+  irs::lead::Node::ptr PlanLeadDocs() const final {
+    return _query->PlanLeadDocs();
+  }
+
+  irs::probe::Node::ptr PlanProbeDocs(uint64_t interrogations) const final {
+    return _query->PlanProbeDocs(interrogations);
+  }
+
+  irs::fill::Node::ptr PlanFillDocs() const final {
+    return _query->PlanFillDocs();
+  }
+
  private:
   irs::QueryBuilder::ptr _query;
 };
@@ -512,7 +524,7 @@ class PreparedFilter {
       return std::make_unique<LeadCursor>(
         irs::memory::make_managed<LeadEmpty>());
     }
-    auto node = query->PlanLead({});
+    auto node = query->PlanLeadDocs();
     if (!node) {
       return nullptr;
     }

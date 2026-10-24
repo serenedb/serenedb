@@ -47,7 +47,7 @@ inline LeadNode::ptr LeadOf(const PostingClause& posting,
                             const QueryBuilder* child,
                             const SubReader& segment) {
   return child == nullptr ? lead::MakePostingDocs(posting, segment)
-                          : child->PlanLead({});
+                          : child->PlanLeadDocs();
 }
 
 inline ProbeNode::ptr ProbeOf(const PostingClause& posting,
@@ -55,14 +55,14 @@ inline ProbeNode::ptr ProbeOf(const PostingClause& posting,
                               const SubReader& segment,
                               uint64_t interrogations) {
   return child == nullptr ? probe::MakePostingDocs(posting, segment)
-                          : child->PlanProbe({}, interrogations);
+                          : child->PlanProbeDocs(interrogations);
 }
 
 inline FillNode::ptr FillOf(const PostingClause& posting,
                             const QueryBuilder* child,
                             const SubReader& segment) {
   return child == nullptr ? fill::MakePostingDocs(posting, segment)
-                          : child->PlanFill({}, ScoreMergeType::Noop);
+                          : child->PlanFillDocs();
 }
 
 inline auto ProbeClauseOf(const SubReader& segment) noexcept {
@@ -73,7 +73,7 @@ inline auto ProbeClauseOf(const SubReader& segment) noexcept {
 }
 
 inline constexpr auto kPlanLeadDocs = [](const QueryBuilder& child) {
-  return child.PlanLead({});
+  return child.PlanLeadDocs();
 };
 
 template<typename Term>
@@ -94,9 +94,7 @@ bool CollectFills(std::span<const Term> terms,
     [&](const Term& term) {
       return take(FillOf(ClauseOf(term, field), nullptr, segment));
     },
-    [&](const QueryBuilder& child) {
-      return take(child.PlanFill({}, ScoreMergeType::Noop));
-    });
+    [&](const QueryBuilder& child) { return take(child.PlanFillDocs()); });
 }
 
 template<typename Term>

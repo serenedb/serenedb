@@ -353,9 +353,11 @@ class CompoundFieldIterator final : public BasicTermReader {
  public:
   static constexpr const size_t kProgressStepFields = size_t{1};
 
-  explicit CompoundFieldIterator(size_t size,
-                                 const MergeWriter::FlushProgress& progress)
-    : _term_itr(progress), _progress(progress, kProgressStepFields) {
+  CompoundFieldIterator(size_t size, const MergeWriter::FlushProgress& progress,
+                        const IndexFieldOptions* field_options)
+    : _term_itr(progress),
+      _progress(progress, kProgressStepFields),
+      _field_options{field_options} {
     _field_iterators.reserve(size);
     _field_iterator_mask.reserve(size);
   }
@@ -402,6 +404,7 @@ class CompoundFieldIterator final : public BasicTermReader {
   std::vector<FieldIteratorImpl> _field_iterators;
   mutable CompoundTermIterator _term_itr;
   ProgressTracker _progress;
+  const IndexFieldOptions* _field_options;
 };
 
 void CompoundFieldIterator::Add(const SubReader& reader,
@@ -428,6 +431,10 @@ bool CompoundFieldIterator::Next() {
 
   for (size_t i = 0, count = _field_iterators.size(); i != count; ++i) {
     auto& field_itr = _field_iterators[i];
+    while (_field_options && field_itr.pos < field_itr.ids.size() &&
+           !_field_options->HasField(field_itr.ids[field_itr.pos])) {
+      ++field_itr.pos;
+    }
     if (field_itr.pos >= field_itr.ids.size()) {
       continue;
     }
@@ -470,10 +477,11 @@ TermOnlyIterator::ptr CompoundFieldIterator::iterator() const {
 }
 
 bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
-                      IndexFeatures& index_features, const SubReader& reader) {
+                      IndexFeatures& index_features, const SubReader& reader,
+                      const IndexFieldOptions* field_options) {
   for (auto id : reader.field_ids()) {
     const auto* term_reader = reader.field(id);
-    if (!term_reader) {
+    if (!term_reader || (field_options && !field_options->HasField(id))) {
       continue;
     }
     const auto& field_meta = term_reader->meta();
@@ -709,7 +717,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
 bool ComputeDocMappingsAndFieldMeta(
   ManagedVector<MergeWriter::ReaderCtx>& readers, SegmentMeta& segment,
   FieldMetaMapT& field_meta_map, CompoundFieldIterator& fields_itr,
-  IndexFeatures& index_features) {
+  IndexFeatures& index_features, const IndexFieldOptions* field_options) {
   doc_id_t base_id = doc_limits::min();
   for (auto& reader_ctx : readers) {
     SDB_ASSERT(reader_ctx.reader);
@@ -726,7 +734,8 @@ bool ComputeDocMappingsAndFieldMeta(
     if (!doc_limits::valid(base_id)) {
       return false;
     }
-    if (!ComputeFieldMeta(field_meta_map, index_features, reader)) {
+    if (!ComputeFieldMeta(field_meta_map, index_features, reader,
+                          field_options)) {
       return false;
     }
     fields_itr.Add(reader, reader_ctx.remap);
@@ -780,10 +789,12 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   TrackingDirectory track_dir{_dir};
 
   FieldMetaMapT field_meta_map;
-  CompoundFieldIterator fields_itr{_readers.size(), progress_callback};
+  CompoundFieldIterator fields_itr{_readers.size(), progress_callback,
+                                   _field_options};
   IndexFeatures index_features{IndexFeatures::None};
   if (!ComputeDocMappingsAndFieldMeta(_readers, segment, field_meta_map,
-                                      fields_itr, index_features)) {
+                                      fields_itr, index_features,
+                                      _field_options)) {
     co_return false;
   }
 

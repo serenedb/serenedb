@@ -104,7 +104,7 @@ std::vector<OffsetMatch> CollectOffsets(const tests::PreparedFilter& prepared,
     if (!phrase_query) {
       continue;
     }
-    auto docs = phrase_query->PlanLead({});
+    auto docs = phrase_query->PlanLeadDocs();
     auto offsets = irs::offsets::Make(*phrase_query);
     if (!docs || !offsets) {
       continue;

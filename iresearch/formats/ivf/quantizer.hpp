@@ -41,6 +41,7 @@ class IndexOutput;
 struct PayloadBlockSetting {
   uint32_t group_size = 1;
   uint32_t record_size = 0;
+  uint32_t alignment = 1;
 
   size_t RecordCount(size_t docs) const noexcept {
     return (docs + group_size - 1) / group_size * group_size;

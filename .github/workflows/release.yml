@@ -44,6 +44,36 @@ on:
         required: true
         type: boolean
         default: true
+  workflow_call:
+    inputs:
+      SERENEDB_VERSION_PATCH:
+        type: string
+        required: false
+        default: ''
+      RTA:
+        type: string
+        required: false
+        default: required
+      PUSH_IMAGES_2_REGISTRY:
+        type: boolean
+        required: false
+        default: false
+      CREATE_GITHUB_RELEASE:
+        type: boolean
+        required: false
+        default: false
+      DOCKER_EXTRA_TAGS:
+        type: string
+        required: false
+        default: ''
+      BUILD_AMD64:
+        type: boolean
+        required: false
+        default: true
+      BUILD_ARM64:
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   statuses: write
@@ -77,9 +107,11 @@ jobs:
             echo "SERENEDB_VERSION_PATCH must be N or N.M, both > 0, got '$PATCH'" >&2
             exit 1
           fi
-          echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
-          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
-          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
+          {
+            echo "patch=$PATCH"
+            echo "major=$MAJOR"
+            echo "minor=$MINOR"
+          } >> "$GITHUB_OUTPUT"
 
   build-amd64:
     if: inputs.BUILD_AMD64
@@ -139,8 +171,10 @@ jobs:
           PATCH="${{ needs.resolve-version.outputs.patch }}"
           MAJOR="${{ needs.resolve-version.outputs.major }}"
           MINOR="${{ needs.resolve-version.outputs.minor }}"
-          echo "SERENEDB_VERSION_PATCH=$PATCH" >> $GITHUB_ENV
-          echo "DOCKER_TAG=${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
+          {
+            echo "SERENEDB_VERSION_PATCH=$PATCH"
+            echo "DOCKER_TAG=${MAJOR}.${MINOR}.${PATCH}"
+          } >> "$GITHUB_ENV"
 
       - name: Download amd64 packages
         if: needs.build-amd64.outputs.packages_ok == 'true'
@@ -204,7 +238,7 @@ jobs:
           CHART=$(find packages/helm/out -maxdepth 1 -name 'serenedb-*.tgz' | head -1)
           [ -n "$CHART" ] || { echo "no packaged helm chart found" >&2; exit 1; }
           cp "$CHART" release-packages/
-          echo "CHART_FILE=$(basename "$CHART")" >> $GITHUB_ENV
+          echo "CHART_FILE=$(basename "$CHART")" >> "$GITHUB_ENV"
 
       - name: Setup QEMU
         if: steps.prepare.outputs.has_tarballs == 'true'
@@ -224,9 +258,8 @@ jobs:
         continue-on-error: ${{ inputs.RTA == 'test' }}
         env:
           DOCKER_TEST_IMAGE: serenedb/serenedb:${{ env.DOCKER_TAG }}-${{ steps.prepare.outputs.test_arch }}
-          BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
           WORKSPACE: ${{ github.workspace }}
-        run: ./scripts/ci/steps/08-ci-docker-rta.bash
+        run: BUILD_IMAGE="$(python3 scripts/ci/ci.py image)" ./scripts/ci/steps/08-ci-docker-rta.bash
 
       - name: Push Docker images
         if: >-
@@ -241,11 +274,7 @@ jobs:
           DOCKER_REGISTRY: serenedb
           DOCKER_USERNAME: serenedb
           DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
-          # 'latest' is appended automatically when creating a GitHub release
-          DOCKER_EXTRA_TAGS: >-
-            ${{ inputs.CREATE_GITHUB_RELEASE
-              && (inputs.DOCKER_EXTRA_TAGS != '' && format('{0},latest', inputs.DOCKER_EXTRA_TAGS) || 'latest')
-              || inputs.DOCKER_EXTRA_TAGS }}
+          DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
           DOCKER_TAG: ${{ env.DOCKER_TAG }}
         run: ./packages/push_docker.bash
 

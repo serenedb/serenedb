@@ -264,7 +264,7 @@ inline LazyBitset MakeDocSet(const QueryBuilder* query, doc_id_t docs_count,
   if (!query) {
     return LazyBitset{docs_count, MakeGenericDocsMask(nullptr), table};
   }
-  auto node = query->PlanFill({}, ScoreMergeType::Noop);
+  auto node = query->PlanFillDocs();
   SDB_ASSERT(node);
   if (auto* folded = node->Folded()) {
     return LazyBitset{std::move(*folded), MakeGenericDocsMask(nullptr), table};
@@ -300,7 +300,8 @@ class CountAgainst {
     _total += CountBitRange(_set->Words(), begin - kMin, end - kMin);
   }
 
-  IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
+  IRS_FORCE_INLINE void Bitset(uint64_t prev,
+                               const UnalignedWord* IRS_RESTRICT src,
                                uint32_t n, uint64_t max) {
     _set->Reach(static_cast<doc_id_t>(max + 1));
     const auto begin = prev + 1;

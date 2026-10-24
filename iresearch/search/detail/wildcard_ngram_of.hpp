@@ -76,13 +76,13 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
 
   const auto erased = [&]() -> Result {
     if constexpr (kProbed) {
-      auto node = ngrams.PlanProbe({}, interrogations);
+      auto node = ngrams.PlanProbeDocs(interrogations);
       if (!node) {
         return {};
       }
       return make.template operator()<probe::Erased>(std::move(node));
     } else {
-      auto node = ngrams.PlanLead({});
+      auto node = ngrams.PlanLeadDocs();
       if (!node) {
         return {};
       }

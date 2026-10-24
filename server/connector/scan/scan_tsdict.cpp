@@ -324,7 +324,7 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
   if (!_live) {
     const auto& query = where_query ? *where_query : *_all_query;
     SDB_ASSERT(!irs::QueryBuilder::IsEmpty(query));
-    auto node = query.PlanFill({}, irs::ScoreMergeType::Noop);
+    auto node = query.PlanFillDocs();
     EnsurePlanned(node != nullptr);
     if (auto* folded = node->Folded()) {
       _live = std::make_unique<irs::detail::LazyBitset>(

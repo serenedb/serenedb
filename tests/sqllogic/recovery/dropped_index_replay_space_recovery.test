@@ -1,0 +1,145 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE rsp_kept (id INT PRIMARY KEY, v INT);
+
+
+statement ok
+INSERT INTO rsp_kept VALUES (1, 10), (2, 20);
+
+
+statement ok
+CREATE INDEX rsp_kept_v ON rsp_kept (v);
+
+
+statement ok
+FORCE CHECKPOINT;
+
+
+statement ok
+CREATE TABLE rsp_baseline AS
+SELECT used_blocks FROM pragma_database_size() WHERE database_name = current_database();
+
+
+statement ok
+CREATE TABLE rsp_gone_1 (id INT PRIMARY KEY, v INT);
+
+
+statement ok
+INSERT INTO rsp_gone_1 VALUES (1, 1), (2, 2);
+
+
+statement ok
+CREATE INDEX rsp_gone_1_v ON rsp_gone_1 (v);
+
+
+statement ok
+DROP TABLE rsp_gone_1;
+
+
+statement ok
+CREATE TABLE rsp_gone_2 (id INT PRIMARY KEY, v INT);
+
+
+statement ok
+INSERT INTO rsp_gone_2 VALUES (1, 1), (2, 2);
+
+
+statement ok
+CREATE INDEX rsp_gone_2_v ON rsp_gone_2 (v);
+
+
+statement ok
+DROP TABLE rsp_gone_2;
+
+
+statement ok
+CREATE TABLE rsp_unindexed (id INT PRIMARY KEY, v INT);
+
+
+statement ok
+INSERT INTO rsp_unindexed VALUES (1, 1), (2, 2);
+
+
+statement ok
+CREATE INDEX rsp_unindexed_v ON rsp_unindexed (v);
+
+
+statement ok
+DROP INDEX rsp_unindexed_v;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT d.used_blocks - b.used_blocks AS added
+FROM pragma_database_size() d, rsp_baseline b
+WHERE d.database_name = current_database();
+----
+added
+0
+
+
+connection after_crash
+query
+SELECT id, v FROM rsp_unindexed ORDER BY id;
+----
+id	v
+1	1
+2	2
+
+
+connection after_crash
+statement ok
+CREATE TABLE rsp_late (id INT PRIMARY KEY, v INT);
+
+
+connection after_crash
+statement ok
+INSERT INTO rsp_late VALUES (1, 10), (2, 20);
+
+
+connection after_crash
+statement ok
+CREATE UNIQUE INDEX rsp_late_v ON rsp_late (v);
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM rsp_late WHERE v = 20;
+----
+id
+2
+
+
+connection after_second_crash
+statement error
+INSERT INTO rsp_late VALUES (3, 20);
+----
+db error: ERROR: Duplicate key "v: 20" violates unique constraint.
+
+
+connection after_second_crash
+query
+SELECT id FROM rsp_kept WHERE v = 20;
+----
+id
+2

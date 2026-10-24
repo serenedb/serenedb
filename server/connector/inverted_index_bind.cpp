@@ -59,6 +59,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
 #include "connector/column_id.h"
+#include "connector/curve_index.h"
 #include "connector/geo_validate.h"
 #include "connector/index_expression.hpp"
 #include "connector/pg_logical_types.h"
@@ -1274,6 +1275,13 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
       record.field_id = it->second;
     }
 
+    const auto* curve = bare_column ? nullptr : TryGetCurveSpec(*exprs[i]);
+    if (curve && !opclass.name.empty()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("Expression '", label,
+                              "' is a curve() key and takes no opclass"));
+    }
+
     ValidateInvertedIndexKey(label, value_type, opclass);
 
     // A built-in is only a built-in in the parenthesised form, so a bare name
@@ -1311,6 +1319,11 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
     ApplyOpclassToEntry(context,
                         entry.ParentSchema(context).name.GetIdentifierName(),
                         label, value_type, opclass, dict, next_id, field);
+    if (curve) {
+      field.curve = curve->options;
+      field.whole_value = true;
+      field.trim_curve_terms = true;
+    }
     if (auto& ivf = field.column_options.ann_info) {
       ivf->centroids_id = record.field_id;
       ivf->postings_id = record.field_id;

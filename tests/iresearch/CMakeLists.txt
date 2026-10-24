@@ -153,6 +153,7 @@ add_executable(
     search/sort_tests.cpp
     search/term_filter_tests.cpp
     search/term_predicate_test.cpp
+    search/term_ranges_filter_test.cpp
     search/terms_filter_test.cpp
     search/tfidf_test.cpp
     search/token_phrase_test.cpp
@@ -192,6 +193,7 @@ add_executable(
     utils/regexp_ngram_test.cpp
     utils/regexp_utils_test.cpp
     utils/simd_utils_test.cpp
+    utils/space_filling_curve_test.cpp
     utils/std_test.cpp
     utils/string_tests.cpp
     utils/thread_pool_test.cpp

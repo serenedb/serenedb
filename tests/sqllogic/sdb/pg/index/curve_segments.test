@@ -1,0 +1,380 @@
+control substitution on
+
+statement ok
+CREATE TABLE curve_batches(id INTEGER PRIMARY KEY, x DOUBLE, y DOUBLE, z DOUBLE);
+
+statement ok
+CREATE INDEX curve_batches_flushed ON curve_batches USING inverted(id, (curve(ROW(x, y, z)))) INCLUDE (x, y, z);
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(0, 500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(500, 1000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(1000, 1500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(1500, 2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(2000, 2500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(2500, 3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(3000, 3500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(3500, 4000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(4000, 4500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(4500, 5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(5000, 5500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(5500, 6000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(6000, 6500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(6500, 7000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(7000, 7500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+INSERT INTO curve_batches SELECT i, ((i * 48271) % 8003) / 8.0, ((i * 69621 + 123) % 8033) / 8.0, ((i * 40699 + 321) % 8039) / 8.0 FROM range(7500, 8000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+CREATE INDEX curve_batches_built ON curve_batches USING inverted(id, (curve(ROW(x, y, z)))) INCLUDE (x, y, z);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_batches;
+
+statement ok
+CREATE MACRO curve_batches_box(h) AS ts_between(ROW(500 - h, 500 - h, 500 - h), ROW(500 + h, 500 + h, 500 + h), true, true);
+
+statement ok
+CREATE MACRO curve_batches_scanned(path) AS (
+ SELECT max(CAST(j.atom AS BIGINT)) FROM read_text(path) f, json_tree(f.content) j WHERE j.key = 'rows_scanned');
+
+query
+SELECT count(*), sum(id) FROM curve_batches_flushed WHERE curve(ROW(x, y, z)) @@ curve_batches_box(40);
+----
+count	sum
+1	869
+
+query
+SELECT count(*), sum(id) FROM curve_batches_built WHERE curve(ROW(x, y, z)) @@ curve_batches_box(40);
+----
+count	sum
+1	869
+
+query
+SELECT count(*), sum(id) FROM curve_batches WHERE x BETWEEN 500 - 40 AND 500 + 40 AND y BETWEEN 500 - 40 AND 500 + 40 AND z BETWEEN 500 - 40 AND 500 + 40;
+----
+count	sum
+1	869
+
+statement ok
+SET enable_profiling = 'json';
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_batches_flushed_flushed_40.json';
+
+statement ok
+SELECT max(id) FROM curve_batches_flushed WHERE curve(ROW(x, y, z)) @@ curve_batches_box(40);
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_batches_built_flushed_40.json';
+
+statement ok
+SELECT max(id) FROM curve_batches_built WHERE curve(ROW(x, y, z)) @@ curve_batches_box(40);
+
+statement ok
+RESET enable_profiling;
+
+query
+SELECT curve_batches_scanned('${__TEST_DIR__}/curve_batches_flushed_flushed_40.json') = curve_batches_scanned('${__TEST_DIR__}/curve_batches_built_flushed_40.json') AS same;
+----
+same
+t
+
+query
+SELECT count(*), sum(id) FROM curve_batches_flushed WHERE curve(ROW(x, y, z)) @@ curve_batches_box(120);
+----
+count	sum
+93	330647
+
+query
+SELECT count(*), sum(id) FROM curve_batches_built WHERE curve(ROW(x, y, z)) @@ curve_batches_box(120);
+----
+count	sum
+93	330647
+
+query
+SELECT count(*), sum(id) FROM curve_batches WHERE x BETWEEN 500 - 120 AND 500 + 120 AND y BETWEEN 500 - 120 AND 500 + 120 AND z BETWEEN 500 - 120 AND 500 + 120;
+----
+count	sum
+93	330647
+
+statement ok
+SET enable_profiling = 'json';
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_batches_flushed_flushed_120.json';
+
+statement ok
+SELECT max(id) FROM curve_batches_flushed WHERE curve(ROW(x, y, z)) @@ curve_batches_box(120);
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_batches_built_flushed_120.json';
+
+statement ok
+SELECT max(id) FROM curve_batches_built WHERE curve(ROW(x, y, z)) @@ curve_batches_box(120);
+
+statement ok
+RESET enable_profiling;
+
+query
+SELECT curve_batches_scanned('${__TEST_DIR__}/curve_batches_flushed_flushed_120.json') = curve_batches_scanned('${__TEST_DIR__}/curve_batches_built_flushed_120.json') AS same;
+----
+same
+t
+
+query
+SELECT count(*), sum(id) FROM curve_batches_flushed WHERE curve(ROW(x, y, z)) @@ curve_batches_box(300);
+----
+count	sum
+1716	6902131
+
+query
+SELECT count(*), sum(id) FROM curve_batches_built WHERE curve(ROW(x, y, z)) @@ curve_batches_box(300);
+----
+count	sum
+1716	6902131
+
+query
+SELECT count(*), sum(id) FROM curve_batches WHERE x BETWEEN 500 - 300 AND 500 + 300 AND y BETWEEN 500 - 300 AND 500 + 300 AND z BETWEEN 500 - 300 AND 500 + 300;
+----
+count	sum
+1716	6902131
+
+statement ok
+SET enable_profiling = 'json';
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_batches_flushed_flushed_300.json';
+
+statement ok
+SELECT max(id) FROM curve_batches_flushed WHERE curve(ROW(x, y, z)) @@ curve_batches_box(300);
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_batches_built_flushed_300.json';
+
+statement ok
+SELECT max(id) FROM curve_batches_built WHERE curve(ROW(x, y, z)) @@ curve_batches_box(300);
+
+statement ok
+RESET enable_profiling;
+
+query
+SELECT curve_batches_scanned('${__TEST_DIR__}/curve_batches_flushed_flushed_300.json') = curve_batches_scanned('${__TEST_DIR__}/curve_batches_built_flushed_300.json') AS same;
+----
+same
+t
+
+statement ok
+VACUUM (COMPACT_TABLE) curve_batches;
+
+query
+SELECT count(*), sum(id) FROM curve_batches_flushed WHERE curve(ROW(x, y, z)) @@ curve_batches_box(40);
+----
+count	sum
+1	869
+
+query
+SELECT count(*), sum(id) FROM curve_batches_built WHERE curve(ROW(x, y, z)) @@ curve_batches_box(40);
+----
+count	sum
+1	869
+
+query
+SELECT count(*), sum(id) FROM curve_batches WHERE x BETWEEN 500 - 40 AND 500 + 40 AND y BETWEEN 500 - 40 AND 500 + 40 AND z BETWEEN 500 - 40 AND 500 + 40;
+----
+count	sum
+1	869
+
+statement ok
+SET enable_profiling = 'json';
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_batches_flushed_compacted_40.json';
+
+statement ok
+SELECT max(id) FROM curve_batches_flushed WHERE curve(ROW(x, y, z)) @@ curve_batches_box(40);
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_batches_built_compacted_40.json';
+
+statement ok
+SELECT max(id) FROM curve_batches_built WHERE curve(ROW(x, y, z)) @@ curve_batches_box(40);
+
+statement ok
+RESET enable_profiling;
+
+query
+SELECT curve_batches_scanned('${__TEST_DIR__}/curve_batches_flushed_compacted_40.json') = curve_batches_scanned('${__TEST_DIR__}/curve_batches_built_compacted_40.json') AS same;
+----
+same
+t
+
+query
+SELECT count(*), sum(id) FROM curve_batches_flushed WHERE curve(ROW(x, y, z)) @@ curve_batches_box(120);
+----
+count	sum
+93	330647
+
+query
+SELECT count(*), sum(id) FROM curve_batches_built WHERE curve(ROW(x, y, z)) @@ curve_batches_box(120);
+----
+count	sum
+93	330647
+
+query
+SELECT count(*), sum(id) FROM curve_batches WHERE x BETWEEN 500 - 120 AND 500 + 120 AND y BETWEEN 500 - 120 AND 500 + 120 AND z BETWEEN 500 - 120 AND 500 + 120;
+----
+count	sum
+93	330647
+
+statement ok
+SET enable_profiling = 'json';
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_batches_flushed_compacted_120.json';
+
+statement ok
+SELECT max(id) FROM curve_batches_flushed WHERE curve(ROW(x, y, z)) @@ curve_batches_box(120);
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_batches_built_compacted_120.json';
+
+statement ok
+SELECT max(id) FROM curve_batches_built WHERE curve(ROW(x, y, z)) @@ curve_batches_box(120);
+
+statement ok
+RESET enable_profiling;
+
+query
+SELECT curve_batches_scanned('${__TEST_DIR__}/curve_batches_flushed_compacted_120.json') = curve_batches_scanned('${__TEST_DIR__}/curve_batches_built_compacted_120.json') AS same;
+----
+same
+t
+
+query
+SELECT count(*), sum(id) FROM curve_batches_flushed WHERE curve(ROW(x, y, z)) @@ curve_batches_box(300);
+----
+count	sum
+1716	6902131
+
+query
+SELECT count(*), sum(id) FROM curve_batches_built WHERE curve(ROW(x, y, z)) @@ curve_batches_box(300);
+----
+count	sum
+1716	6902131
+
+query
+SELECT count(*), sum(id) FROM curve_batches WHERE x BETWEEN 500 - 300 AND 500 + 300 AND y BETWEEN 500 - 300 AND 500 + 300 AND z BETWEEN 500 - 300 AND 500 + 300;
+----
+count	sum
+1716	6902131
+
+statement ok
+SET enable_profiling = 'json';
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_batches_flushed_compacted_300.json';
+
+statement ok
+SELECT max(id) FROM curve_batches_flushed WHERE curve(ROW(x, y, z)) @@ curve_batches_box(300);
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_batches_built_compacted_300.json';
+
+statement ok
+SELECT max(id) FROM curve_batches_built WHERE curve(ROW(x, y, z)) @@ curve_batches_box(300);
+
+statement ok
+RESET enable_profiling;
+
+query
+SELECT curve_batches_scanned('${__TEST_DIR__}/curve_batches_flushed_compacted_300.json') = curve_batches_scanned('${__TEST_DIR__}/curve_batches_built_compacted_300.json') AS same;
+----
+same
+t
+
+statement ok
+DROP MACRO curve_batches_scanned;
+
+statement ok
+DROP MACRO curve_batches_box;
+
+statement ok
+DROP TABLE curve_batches;

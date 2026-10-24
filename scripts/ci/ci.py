@@ -197,6 +197,7 @@ def cmd_shards(args):
 
 
 def cmd_timing(args):
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp())
     try:
         scales = {}

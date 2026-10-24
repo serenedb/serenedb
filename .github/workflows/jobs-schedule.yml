@@ -113,8 +113,9 @@ jobs:
         env:
           SHARDS: ${{ needs.dev.outputs.shards }}
         run: |
-          ./scripts/ci/selection_map.sh "${{ github.run_id }}-${{ github.run_attempt }}" \
-            "$(python3 -c 'import json, os; print(len(json.loads(os.environ["SHARDS"])))')"
+          python3 scripts/ci/ci.py selection-map --run "${{ github.run_id }}-${{ github.run_attempt }}" \
+            --config dev --arch x86_64 --work out/selection-map \
+            --shards "$(python3 -c 'import json, os; print(len(json.loads(os.environ["SHARDS"])))')"
 
   timing:
     name: learn the timings

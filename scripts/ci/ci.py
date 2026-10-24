@@ -4,6 +4,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -25,8 +26,7 @@ NOT_BUILD_INPUTS = (
     ".github/*", ".claude/*", "packages/*", "serene-ui/*", "apps/*",
     "tests/drivers/*", "tests/duckdb/*", "scripts/ci/testlib/*", "scripts/ci/skips/*",
     "scripts/ci/test.py", "scripts/ci/ci.py", "scripts/ci/steps/*", "scripts/gtest-parallel/*",
-    "scripts/ci/run_shard.sh", "scripts/ci/coverage_report.sh", "scripts/ci/bugfix_check.sh",
-    "scripts/ci/selection_map.sh", "scripts/ci/report.py", "scripts/ci/select_suites.sh",
+    "scripts/ci/run_shard.sh", "scripts/ci/bugfix_check.sh", "scripts/ci/report.py",
     "scripts/ci/classify-changes.sh", "scripts/ci/check_gitlinks.sh", "scripts/ci/config.sh",
     "scripts/ci/build-image.txt", "scripts/coverage/*", "scripts/land.sh",
     "scripts/check_submodule_pointers.py",
@@ -40,6 +40,10 @@ BUNDLE_PATHS = (
     "third_party/duckdb/test/unittest", "third_party/re2/CTestTestfile.cmake", "CMakeCache.txt",
 )
 BUNDLE_CACHE = Path(os.environ.get("SDB_BUNDLE_CACHE", "/mnt/data/sdb-ci/bundles"))
+
+
+def build_image():
+    return os.environ.get("BUILD_IMAGE") or (ROOT / "scripts" / "ci" / "build-image.txt").read_text().strip()
 
 
 def _is_build_input(path):
@@ -117,7 +121,7 @@ def fetch_bundle(config, arch, dig, dest, archive=None):
         subprocess.run(["docker", "run", "--rm", *(["--label", f"serenedb.owner={owner}"] if owner else []),
                         "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{BUNDLE_CACHE}:{BUNDLE_CACHE}",
                         "-v", f"{archive.parent}:{archive.parent}",
-                        os.environ["BUILD_IMAGE"], "tar", "-C", str(unpacked), "-I", "zstd -T0",
+                        build_image(), "tar", "-C", str(unpacked), "-I", "zstd -T0",
                         "-xf", str(archive)], check=True)
         (unpacked / ".complete").write_text(dig)
         if dest.exists():
@@ -140,15 +144,18 @@ def prune_bundles(keep_days=2):
             pass
 
 
-def cmd_fetch(args):
+def fetched(config, arch, dig, archive=None):
     prune_bundles()
-    dest = BUNDLE_CACHE / f"{args.config}-{args.arch}-{args.digest}"
-    path = fetch_bundle(args.config, args.arch, args.digest, dest, args.archive)
+    path = fetch_bundle(config, arch, dig, BUNDLE_CACHE / f"{config}-{arch}-{dig}", archive)
     try:
         os.utime(path)
     except PermissionError:
         pass
-    print(path)
+    return path
+
+
+def cmd_fetch(args):
+    print(fetched(args.config, args.arch, args.digest, args.archive))
 
 
 def cmd_upload(args):
@@ -290,6 +297,67 @@ def cmd_selection_map(args):
     stats = selection.build_map(args.run, args.config, args.arch, work, args.shards)
     print(f"selection/{args.config}-{args.arch}.parquet: {stats['functions']} functions, "
           f"{stats['units']} units, {stats['rows']} rows")
+
+
+def cmd_select_suites(args):
+    out = ["--corpus"] if args.corpus else []
+    if not args.everything:
+        out += ["--suite", "sqllogic", "--suite", "recovery", "--suite", "cancellation",
+                "--suite", "gtest", "--suite", "drivers", "--suite", "stress"]
+        if args.iresearch:
+            out += ["--suite", "iresearch", "--suite", "iresearch-load"]
+        if args.re2:
+            out += ["--suite", "re2"]
+        suites = [s for s in args.duckdb_suites.split(",") if s]
+        if suites:
+            out += ["--suite", "duckdb"]
+            for s in suites:
+                out += ["--duckdb-suite", s]
+        if "core" in suites:
+            out += ["--suite", "sqlsmith"]
+    print(" ".join(out))
+
+
+def cmd_coverage_report(args):
+    arch = platform.machine()
+    image = build_image()
+    bundle = fetched(args.config, arch, args.digest)
+    out = ROOT / "out" / f"coverage-{args.config}"
+    shutil.rmtree(out, ignore_errors=True)
+    profiles = out / "profiles"
+    profiles.mkdir(parents=True)
+    got = 0
+    for key in store.run_files("profdata", args.run, f"{args.config}-{arch}-"):
+        store.get(key, profiles / key.rsplit("/", 1)[1])
+        got += 1
+    label = f"coverage {args.config}/{arch}"
+    if got < args.shards:
+        label += f" (partial: profiles of {got} of {args.shards} shards)"
+    docker = ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp",
+              "-v", f"{ROOT}:{ROOT}", "-w", str(ROOT), "-v", f"{bundle}:{bundle}"]
+    subprocess.run([*docker, image, "python3", "scripts/coverage/diff.py", "--build-dir", str(bundle),
+                    "--profiles", str(profiles), "--base", args.base, "--label", label,
+                    "--out", str(out)], check=True)
+    shutil.rmtree(profiles)
+    (out / "merged.profdata").unlink(missing_ok=True)
+    try:
+        cmd_nearest(argparse.Namespace(coverage=out / "coverage.json", spans=out / "spans.json",
+                                       arch=arch))
+    except (OSError, RuntimeError, ValueError) as e:
+        print(f"warning: no nearest tests for the uncovered lines: {e}", file=sys.stderr)
+    if args.config != "dev" or not os.environ.get("SDB_PR") or args.everything:
+        return
+    timing = out / "timing.json"
+    cmd_timing(argparse.Namespace(config=args.config, arch=arch, out=timing))
+    socket_group = str(os.stat("/var/run/docker.sock").st_gid)
+    res = subprocess.run([*docker, "--group-add", socket_group, "-e", "SDB_PR", "-e", "SDB_STORE_HOST",
+                          "-v", "/var/run/docker.sock:/var/run/docker.sock", image,
+                          "python3", "scripts/ci/test.py", "--build-dir", str(bundle), "--config", "dev",
+                          "--timing", str(timing), "--list", *args.test_args.split(),
+                          "--changed", args.base, "--selection-report", str(out / "selection.json"),
+                          "--selection-spans", str(out / "spans.json")], stdout=subprocess.DEVNULL)
+    if res.returncode != 0:
+        print("warning: no selection report", file=sys.stderr)
 
 
 def _rows(path):
@@ -438,6 +506,24 @@ def main(argv):
     p.add_argument("--shards", type=int, required=True,
                    help="how many shards the run had: a map from fewer is not published")
     p.set_defaults(fn=cmd_selection_map)
+    p = sub.add_parser("select-suites", help="print the test.py arguments for the suites a diff "
+                                             "opens (scripts/ci/classify-changes.sh)")
+    p.add_argument("--everything", action="store_true", help="every suite, whatever the diff")
+    p.add_argument("--corpus", action="store_true", help="the sqlite corpus too")
+    p.add_argument("--iresearch", action="store_true")
+    p.add_argument("--re2", action="store_true")
+    p.add_argument("--duckdb-suites", default="", help="comma-separated DuckDB suites")
+    p.set_defaults(fn=cmd_select_suites)
+    p = sub.add_parser("coverage-report", help="report the coverage of a change from a run's "
+                                               "profiles, with the nearest units and the selection")
+    p.add_argument("--config", default="dev")
+    p.add_argument("--digest", required=True, help="the bundle the run tested")
+    p.add_argument("--run", required=True, help="<run id>-<attempt>")
+    p.add_argument("--base", default="origin/main")
+    p.add_argument("--shards", type=int, default=0, help="how many shards the run had")
+    p.add_argument("--test-args", default="", help="the run's test.py arguments, for the selection")
+    p.add_argument("--everything", action="store_true", help="the run ignored the selection")
+    p.set_defaults(fn=cmd_coverage_report)
     p = sub.add_parser("nearest", help="name the units that run the code nearest to each "
                                        "uncovered line of a coverage report")
     p.add_argument("--coverage", required=True)

@@ -6,9 +6,6 @@
 #       ninja serened
 #       ./build/bin/serened /tmp/datadir --listen postgres://0.0.0.0:5432
 #       tests/drivers/run.sh --lang python
-#
-# Mirrors the shape of tests/sqllogic/run.sh on purpose so contributors
-# transfer their knowledge.
 
 set -u
 

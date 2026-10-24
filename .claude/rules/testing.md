@@ -8,7 +8,7 @@ paths:
 
 ## Where a test goes
 
-- `tests/sqllogic/any/`: behaviour SereneDB shares with PostgreSQL. PostgreSQL is the ground truth: validate on real PostgreSQL before pinning (`PG_CHANGED_TESTS=any/pg/<file>.test ./tests/sqllogic/run_pg_tests.sh --host <host> --single-port <port>`, against the image `tests/sqllogic/fixtures/postgres`); outcomes must match, error text may differ.
+- `tests/sqllogic/any/`: behaviour SereneDB shares with PostgreSQL. PostgreSQL is the ground truth: validate on real PostgreSQL before pinning (`scripts/ci/test.py --suite postgres --test 'postgres:*:pg/any/<file>.test'`, which runs the file against the image `tests/sqllogic/fixtures/postgres`); outcomes must match, error text may differ.
 - `tests/sqllogic/sdb/`: SereneDB only. `tests/sqllogic/pg/`: PostgreSQL only, validating the spec.
 - `tests/sqllogic/recovery/`: a fresh serened per file, for crashes, restarts and anything server-wide ([sqllogic.md](sqllogic.md)).
 - `tests/server/<area>/`, `tests/iresearch/`: gtests, for isolated C++ logic a sqllogic test can't reach well.
@@ -30,8 +30,9 @@ paths:
 
 ## Running
 
-- `scripts/ci/test.py --build-dir <build>` runs the suites as CI does: every test as a unit in one queue over the machine, the servers and services the units need, a watchdog that saves every thread's stack on a hang, and a summary in `out/test/summary.txt` (every unit in `out/test/results.jsonl`, a failed unit's logs under `out/test/units/`). `--suite` and repeated `--test '<unit glob>'` scope it, `--list` prints the units it would run, `--fast` skips `.test_slow` files, `--corpus` adds the sqlite corpus. Recovery tests and the DuckDB suites run only this way.
-- `run.sh` runs sqllogic files against a server you started (CLAUDE.md, "Local smoke server"), for an edit-run loop and `--override`; scope it with repeated `--test '<glob>'`, no positional arguments. Both wire engines run by default. Boolean flags take the next argument as their value: write `--fast=true`. The exit code says nothing when no file matched: count one `[OK]`/`[FAILED]` line per file.
+- `scripts/ci/test.py --build-dir <build>` runs the suites as CI does: every test as a unit in one queue over the machine, the servers and services the units need, a watchdog that saves every thread's stack on a hang, and a summary in `out/test/summary.txt` (every unit in `out/test/results.jsonl`, a failed unit's logs under `out/test/units/`). `--suite` and repeated `--test '<unit glob>'` scope it, `--list` prints the units it would run, `--fast` skips `.test_slow` files, `--corpus` adds the sqlite corpus. It is the only test runner.
+- `--server <host>:<port>` runs the sqllogic units against a server you started (CLAUDE.md, "Local smoke server"), for an edit-run loop; `--override` rewrites the files with the results, on one wire engine, and records the generated tests' values.
+- `--suite postgres` runs the tests under `pg/` and `any/pg/` against PostgreSQL; `--suite cancellation` cancels queries of random sqllogic files at random moments, on both wire engines, and checks that serened keeps answering.
 - The sqlite corpus (`tests/sqllogic/any/pg/sqlite`) is a submodule nothing clones by default: `test.py --corpus` checks it out and runs it, and CI does only when a run asks for it or changes it ([ci.md](ci.md)).
 - Choose the parallelism before a run (`--jobs`, `nproc / 2` when the machine is shared), never after a failure: a test that fails under load is a bug.
 - gtests: one test runs directly (`--gtest_filter=...`); more go through `test.py --suite gtest` or `scripts/gtest-parallel/gtest-parallel`. `iresearch-load-tests` run as one process. `ninja serened` doesn't relink the test binaries.
@@ -44,7 +45,7 @@ paths:
 scripts/ci/test.py --build-dir build_clangd --suite sqllogic --test 'sqllogic:*:sdb/pg/simple/*'
 scripts/ci/test.py --build-dir build_clangd --suite recovery --test 'recovery:recovery/<file>.test'
 scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite core --test '*test/sql/aggregate/*'
-./tests/sqllogic/run.sh --single-port <port> --test 'tests/sqllogic/sdb/pg/simple/*.test'
+scripts/ci/test.py --suite sqllogic --server 127.0.0.1:<port> --test 'sqllogic:*:sdb/pg/simple/*'
 ./scripts/gtest-parallel/gtest-parallel --gtest_filter='*StorageVersion*' ./build/bin/serenedb-tests
 ```
 

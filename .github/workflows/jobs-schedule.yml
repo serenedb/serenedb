@@ -82,7 +82,6 @@ jobs:
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
       LOCATION: linux-amd64
-      PG_TESTS: ''
       CORPUS: ${{ inputs.CORPUS }}
     secrets: inherit
 

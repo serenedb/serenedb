@@ -49,6 +49,11 @@ def lldb_binary():
 
 
 def session_pids(sid):
+    if not os.path.isdir("/proc"):
+        out = subprocess.run(["ps", "-A", "-o", "pid=,pgid="], capture_output=True,
+                             text=True).stdout
+        return sorted(int(pid) for pid, pgid in (ln.split() for ln in out.splitlines())
+                      if int(pgid) == sid)
     pids = []
     for entry in os.listdir("/proc"):
         if not entry.isdigit():
@@ -67,7 +72,10 @@ def process_name(pid):
     try:
         return Path(f"/proc/{pid}/comm").read_text().strip()
     except OSError:
-        return "?"
+        pass
+    name = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True,
+                          text=True).stdout.strip()
+    return Path(name).name or "?"
 
 
 def dump_stacks(pid, out_path, timeout=120):

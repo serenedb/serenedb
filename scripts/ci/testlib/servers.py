@@ -25,6 +25,7 @@ class Server:
         self.hba = hba
         self.extra_args = list(extra_args)
         self.extra_env = dict(extra_env or {})
+        self.host = "127.0.0.1"
         self.port = None
         self.ssl_port = None
         self.http_port = None

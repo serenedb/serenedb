@@ -9,7 +9,13 @@ source scripts/ci/config.sh
 sdb_config "$1"
 DIGEST="$2"
 SHARD="$3"
-TIMING="$(realpath "$4")"
+timing=()
+timing_mount=()
+if [[ "$4" != - ]]; then
+	TIMING="$(realpath "$4")"
+	timing=(--timing "$TIMING")
+	timing_mount=(-v "$TIMING:$TIMING:ro")
+fi
 shift 4
 
 : "${SDB_RUN_ID:=local-$$}"
@@ -19,14 +25,26 @@ shift 4
 export SDB_DOCKER_OWNER SDB_CHECK
 run_name="${CONFIG}${SDB_CHECK:+-$SDB_CHECK}-${SHARD/\//of}"
 
-if [[ -d "$DIGEST" ]]; then
-	bundle=$(realpath "$DIGEST")
+build=()
+if [[ "$DIGEST" == - ]]; then
+	: "${CARGO_HOME_CACHE:=/mnt/data/.cargo-home-sqllogic}"
+	: "${CARGO_TARGET_CACHE:=/mnt/data/.cargo-target-sqllogic}"
+	mkdir -p "$CARGO_HOME_CACHE" "$CARGO_TARGET_CACHE"
+	build=(-v "$CARGO_HOME_CACHE:/cargo-home" -v "$CARGO_TARGET_CACHE:/cargo-target"
+		-e CARGO_HOME=/cargo-home -e CARGO_TARGET_DIR=/cargo-target)
+	test_args=()
 else
-	bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "$DIGEST") || exit 1
+	if [[ -d "$DIGEST" ]]; then
+		bundle=$(realpath "$DIGEST")
+	else
+		bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "$DIGEST") || exit 1
+	fi
+	build=(-v "$bundle:$bundle")
+	test_args=(--build-dir "$bundle")
 fi
 out="out/test-$run_name"
 rm -rf "$out"
-mkdir -p "$out" out/home out/sockets
+mkdir -p "$out" out/home out/sockets out/tmp
 docker run --rm "$BUILD_IMAGE" cat /etc/passwd >out/passwd
 echo "ci:x:$(id -u):$(id -g)::$WORKSPACE/out/home:/bin/bash" >>out/passwd
 docker run --rm "$BUILD_IMAGE" cat /etc/group >out/group
@@ -57,16 +75,16 @@ docker run --rm --name "$name" \
 	-e SDB_SERVICE_NETNS="container:$name" -e SDB_SERVICE_BIND="$gateway" -e SDB_SERVICE_HOST="$gateway" \
 	-e SDB_DOCKER_OWNER -e SDB_CHECK -e SDB_SHA="${SDB_SHA:-}" -e SDB_PR="${SDB_PR:-}" -e SDB_BRANCH="${SDB_BRANCH:-}" \
 	-e SDB_RUN_ID="$SDB_RUN_ID" \
-	-e SDB_SERVICE_SOCKET_ROOT="$WORKSPACE/out/sockets" \
+	-e SDB_SERVICE_SOCKET_ROOT="$WORKSPACE/out/sockets" -e SDB_TEST_TMP_ROOT="$WORKSPACE/out/tmp" \
 	"${pass[@]}" \
 	-v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
 	-v "$WORKSPACE/out/passwd:/etc/passwd:ro" -v "$WORKSPACE/out/group:/etc/group:ro" \
-	-v "$bundle:$bundle" \
-	-v "$TIMING:$TIMING:ro" \
+	"${build[@]}" \
+	"${timing_mount[@]}" \
 	-v /var/run/docker.sock:/var/run/docker.sock \
 	-v /mnt/data/searchbench:/mnt/data/searchbench \
-	"$BUILD_IMAGE" python3 scripts/ci/test.py --build-dir "$bundle" --config "$CONFIG" \
-	--shard "$SHARD" --timing "$TIMING" --out "$out" "$@"
+	"$BUILD_IMAGE" python3 scripts/ci/test.py "${test_args[@]}" --config "$CONFIG" \
+	--shard "$SHARD" "${timing[@]}" --out "$out" "$@"
 rc=$?
 
 if [[ -f "$out/results.jsonl" ]] && [[ "$SDB_STORE_RESULTS" == true ]]; then

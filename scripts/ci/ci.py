@@ -250,8 +250,9 @@ def cmd_update_timing(args):
 def cmd_nearest(args):
     path = Path(args.coverage)
     data = json.loads(path.read_text())
-    files = sorted({d["file"] for d in data["uncovered"]})
-    if not files:
+    spans = json.loads(Path(args.spans).read_text())
+    functions = {s[2] for d in data["uncovered"] for s in spans.get(d["file"], [])}
+    if not functions:
         return
     tmp = Path(tempfile.mkdtemp())
     try:
@@ -259,25 +260,25 @@ def cmd_nearest(args):
         if not store.get(f"selection/dev-{args.arch}.parquet", local):
             print("no selection map in the store yet")
             return
-        rows = store.shell(f"SELECT file, start, \"end\", unit FROM read_parquet('{local}') "
-                           f"WHERE file IN ({store.quoted(files)}) AND rank <= {selection.CHEAPEST} "
-                           f"ORDER BY rank, unit", tmp)
+        covering = selection.covering_units(local, functions, tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    spans = defaultdict(dict)
-    for r in rows:
-        units = spans[r["file"]].setdefault((r["start"], r["end"]), [])
-        if r["unit"] not in units and len(units) < selection.CHEAPEST:
-            units.append(r["unit"])
+    run = defaultdict(list)
+    for file, found in spans.items():
+        for start, end, function in found:
+            units = run[(file, start, end)]
+            for r in covering.get(function, []):
+                if r["unit"] not in units and r["rank"] <= selection.CHEAPEST:
+                    units.append(r["unit"])
     for d in data["uncovered"]:
-        found = spans.get(d["file"])
+        found = [(s, e) for s, e, _ in spans.get(d["file"], []) if run[(d["file"], s, e)]]
         if not found:
             continue
         line = d["line"]
         inside = [s for s in found if s[0] <= line <= s[1]]
         span = (max(inside, key=lambda s: (s[0], -s[1])) if inside
                 else min(found, key=lambda s: min(abs(line - s[0]), abs(line - s[1]))))
-        d["tests"] = found[span]
+        d["tests"] = run[(d["file"], *span)][:selection.CHEAPEST]
         d["tests_run"] = f"{d['file']}:{span[0]}-{span[1]}"
     path.write_text(json.dumps(data, indent=1))
 
@@ -285,7 +286,7 @@ def cmd_nearest(args):
 def cmd_selection_map(args):
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
-    stats = selection.build_map(args.run, args.config, args.arch, args.bundle, work, args.shards)
+    stats = selection.build_map(args.run, args.config, args.arch, work, args.shards)
     print(f"selection/{args.config}-{args.arch}.parquet: {stats['functions']} functions, "
           f"{stats['units']} units, {stats['rows']} rows")
 
@@ -432,7 +433,6 @@ def main(argv):
     p.add_argument("--run", required=True)
     p.add_argument("--config", default="dev")
     p.add_argument("--arch", required=True)
-    p.add_argument("--bundle", required=True, help="the unpacked coverage bundle of that run")
     p.add_argument("--work", required=True)
     p.add_argument("--shards", type=int, required=True,
                    help="how many shards the run had: a map from fewer is not published")
@@ -440,6 +440,7 @@ def main(argv):
     p = sub.add_parser("nearest", help="name the units that run the code nearest to each "
                                        "uncovered line of a coverage report")
     p.add_argument("--coverage", required=True)
+    p.add_argument("--spans", required=True, help="the changed files' function spans (spans.json)")
     p.add_argument("--arch", required=True)
     p.set_defaults(fn=cmd_nearest)
     p = sub.add_parser("results", help="store a shard's results as Parquet")

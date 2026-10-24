@@ -1,4 +1,3 @@
-import json
 import subprocess
 import sys
 import time
@@ -15,39 +14,16 @@ import diff  # noqa: E402
 KEEP = 200
 CUTOFF = 25
 CHEAPEST = 3
-BATCH = 200
 TEST_PREFIXES = ("tests/", "resources/tests/")
 
 
-def _functions(profdata, objects, dest):
-    lcov = diff.export("lcov", profdata, objects, extra=["-summary-only"])
-    files = [line[3:] for line in lcov.splitlines() if line.startswith("SF:")]
-    with open(dest, "w") as fh:
-        for i in range(0, len(files), BATCH):
-            out = diff.export("text", profdata, objects, files[i:i + BATCH],
-                              extra=["-skip-expansions"])
-            for fn in json.loads(out)["data"][0]["functions"]:
-                if not fn["regions"] or not fn["filenames"]:
-                    continue
-                body = fn["regions"][0]
-                fh.write(json.dumps({"function": fn["name"],
-                                     "file": diff.normalize(fn["filenames"][body[5]]),
-                                     "start": body[0], "end": body[2]}) + "\n")
-
-
-def build_map(run, config, arch, bundle, work, expected):
+def build_map(run, config, arch, work, expected):
     work = Path(work)
     prefix = f"{config}-{arch}-"
     shards = store.fetch_all(store.run_files("attribution", run, prefix), work)
     if len(shards) < expected:
         raise SystemExit(f"attribution of {len(shards)} of {expected} {config}/{arch} shards in run "
                          f"{run}: the selection map stays as it is")
-    profiles = store.run_files("profdata", run, prefix)
-    if not profiles:
-        raise SystemExit(f"no profile for {config}/{arch} in run {run}")
-    profdata = work / "any.profdata"
-    store.get(profiles[0], profdata)
-    _functions(profdata, diff.objects(bundle), work / "functions.jsonl")
     timing = work / "timing.parquet"
     costs = (f"SELECT unit, p95 FROM read_parquet('{timing}')"
              if store.get(f"timing/{config}-{arch}.parquet", timing)
@@ -56,18 +32,15 @@ def build_map(run, config, arch, bundle, work, expected):
     store.shell(
         f"COPY (WITH a AS (SELECT DISTINCT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, "
         f"function FROM read_parquet([{store.quoted(shards)}])), "
-        f"f AS (SELECT DISTINCT function, file, start, \"end\" FROM "
-        f"read_json('{work / 'functions.jsonl'}', format = 'newline_delimited')), "
         f"c AS ({costs}), "
-        f"j AS (SELECT f.file, f.start, f.\"end\", a.function, a.unit, "
-        f"split_part(a.unit, ':', 1) AS suite, coalesce(c.p95, 1e9) AS cost "
-        f"FROM a JOIN f USING (function) LEFT JOIN c USING (unit)), "
+        f"j AS (SELECT a.function, a.unit, split_part(a.unit, ':', 1) AS suite, "
+        f"coalesce(c.p95, 1e9) AS cost FROM a LEFT JOIN c USING (unit)), "
         f"r AS (SELECT *, count(*) OVER (PARTITION BY function) AS covering, "
         f"row_number() OVER (PARTITION BY function, suite ORDER BY cost, unit) AS in_suite FROM j), "
         f"o AS (SELECT *, row_number() OVER (PARTITION BY function ORDER BY in_suite > 1, cost, "
         f"unit) AS rank FROM r) "
-        f"SELECT file, start, \"end\", function, unit, cost, covering, rank FROM o "
-        f"WHERE covering <= {KEEP} OR rank <= {CHEAPEST} ORDER BY file, start, function, rank) "
+        f"SELECT function, unit, cost, covering, rank FROM o "
+        f"WHERE covering <= {KEEP} OR rank <= {CHEAPEST} ORDER BY function, rank) "
         f"TO '{dest}' (FORMAT parquet, COMPRESSION zstd)", work)
     stats = store.shell(f"SELECT count(DISTINCT function) AS functions, count(DISTINCT unit) AS "
                         f"units, count(*) AS rows FROM read_parquet('{dest}')", work)[0]
@@ -81,7 +54,27 @@ def _is_test(path):
     return path.startswith(TEST_PREFIXES) or (path.startswith("third_party/") and "/test/" in path)
 
 
-def report(units, base, changed, changed_units, map_path, work, pr="", cutoff=CUTOFF):
+def covering_units(map_path, functions, work):
+    if not functions:
+        return {}
+    rows = store.shell(f"SELECT function, unit, covering, rank FROM read_parquet('{map_path}') "
+                       f"WHERE function IN ({store.quoted(sorted(functions))}) ORDER BY rank, unit",
+                       work)
+    found = defaultdict(list)
+    for r in rows:
+        found[r["function"]].append(r)
+    return found
+
+
+def innermost(spans, line):
+    inside = [s for s in spans if s[0] <= line <= s[1]]
+    if not inside:
+        return []
+    start = max(s[0] for s in inside)
+    return [s[2] for s in inside if s[0] == start]
+
+
+def report(units, base, changed, changed_units, map_path, spans, work, pr="", cutoff=CUTOFF):
     work = Path(work)
     files = diff.changed_lines(base)
     selected = defaultdict(set)
@@ -111,24 +104,18 @@ def report(units, base, changed, changed_units, map_path, work, pr="", cutoff=CU
             continue
         elif path not in files:
             everything.append(path)
-    rows = []
     sources = sorted(p for p in files if p not in tests)
+    covering = {}
     if sources and not everything:
-        rows = store.shell(f"SELECT file, start, \"end\", function, unit, covering, rank FROM "
-                           f"read_parquet('{map_path}') WHERE file IN ({store.quoted(sources)})",
-                           work)
-    by_file = defaultdict(list)
-    for r in rows:
-        by_file[r["file"]].append(r)
+        covering = covering_units(map_path, {s[2] for p in sources for s in spans.get(p, [])}, work)
     for path in sources:
         for line in sorted(files[path]):
-            hits = [r for r in by_file[path] if r["start"] <= line <= r["end"]]
+            hits = [r for f in innermost(spans.get(path, []), line) for r in covering.get(f, [])]
             if not hits:
                 everything.append(f"{path}:{line}")
                 break
-            inner = max(r["start"] for r in hits)
             for r in hits:
-                if r["start"] == inner and (r["covering"] <= cutoff or r["rank"] <= CHEAPEST):
+                if r["covering"] <= cutoff or r["rank"] <= CHEAPEST:
                     selected[r["unit"]].add(f"{path}:{line}")
     known = {u.id.split("#", 1)[0] for u in units}
     picked = sorted(u for u in selected if u in known)

@@ -157,7 +157,8 @@ def parse_json(text):
         body = fn["regions"][0]
         entry = files.get(fn["filenames"][body[5]])
         if entry is not None:
-            entry["functions"].append((body[0], body[2], names.get(fn["name"], fn["name"])))
+            entry["functions"].append((body[0], body[2], names.get(fn["name"], fn["name"]),
+                                       fn["name"]))
     return files
 
 
@@ -237,6 +238,7 @@ def main():
     summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0], "mcdc": [0, 0]}
     details = []
     uncovered_ranges = {}
+    regions = {}
     if sources:
         report = {normalize(k): v for k, v in parse_lcov(export("lcov", args.profdata, args.objects,
                                                                   sources)).items()}
@@ -309,6 +311,9 @@ def main():
     (out / "summary.txt").write_text(text + "\n")
     (out / "coverage.json").write_text(json.dumps({"summary": summary, "uncovered": details},
                                                   indent=1))
+    (out / "spans.json").write_text(json.dumps(
+        {path: sorted({(s, e, raw) for s, e, _, raw in regions[path]["functions"]})
+         for path in sorted(regions) if path in changed}))
     print(text)
 
 

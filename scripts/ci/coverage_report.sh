@@ -28,5 +28,17 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
 	python3 scripts/coverage/diff.py --build-dir "$bundle" --profiles "$out/profiles" --base "$BASE" \
 	--label "$label" --out "$out"
 rm -rf "$out/profiles" "$out/merged.profdata"
-python3 scripts/ci/ci.py nearest --coverage "$out/coverage.json" --arch "$ARCH" ||
+python3 scripts/ci/ci.py nearest --coverage "$out/coverage.json" --spans "$out/spans.json" --arch "$ARCH" ||
 	echo "warning: no nearest tests for the uncovered lines" >&2
+
+if [[ "$CONFIG" == dev && -n "${SDB_PR:-}" ]]; then
+	read -ra test_args <<<"${TEST_ARGS:-}"
+	python3 scripts/ci/ci.py timing --config "$CONFIG" --arch "$ARCH" --out "$out/timing.json"
+	docker run --rm --user "$(id -u):$(id -g)" --group-add "$(stat -c '%g' /var/run/docker.sock)" \
+		-e HOME=/tmp -e SDB_PR -v /var/run/docker.sock:/var/run/docker.sock \
+		-v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" -v "$bundle:$bundle" "$BUILD_IMAGE" \
+		python3 scripts/ci/test.py --build-dir "$bundle" --config dev --timing "$out/timing.json" \
+		--list "${test_args[@]}" --changed "$BASE" --selection-report "$out/selection.json" \
+		--selection-spans "$out/spans.json" >/dev/null ||
+		echo "warning: no selection report" >&2
+fi

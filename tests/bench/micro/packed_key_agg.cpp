@@ -126,9 +126,8 @@ void DuckDBSplitTable(benchmark::State& state, const Dataset& data,
         const size_t count =
           std::min<size_t>(STANDARD_VECTOR_SIZE, slice.size() - row);
         groups.Reset();
-        std::memcpy(
-          duckdb::FlatVector::GetDataMutable<int64_t>(groups.data[0]),
-          slice.data() + row, count * sizeof(int64_t));
+        std::memcpy(duckdb::FlatVector::GetDataMutable<int64_t>(groups.data[0]),
+                    slice.data() + row, count * sizeof(int64_t));
         groups.SetChildCardinality(count);
         ht.AddChunk(groups, payload, filter);
       }

@@ -96,11 +96,12 @@ jobs:
 
       - name: Run PG validation tests
         run: |
-          export DOCKER_UID="$(id -u)"
-          export DOCKER_GID="$(id -g)"
-          export SQLLOGIC_DIR="${WORKSPACE}/tests/sqllogic"
-          export PG_CHANGED_TESTS="${{ inputs.PG_TESTS }}"
-          export PG_FIXTURE_IMAGE="serenedb/serenedb-test-postgres:$(tests/sqllogic/fixtures/image_tag.sh tests/sqllogic/fixtures/postgres)"
+          DOCKER_UID="$(id -u)"
+          DOCKER_GID="$(id -g)"
+          SQLLOGIC_DIR="${WORKSPACE}/tests/sqllogic"
+          PG_CHANGED_TESTS="${{ inputs.PG_TESTS }}"
+          PG_FIXTURE_IMAGE="serenedb/serenedb-test-postgres:$(tests/sqllogic/fixtures/image_tag.sh tests/sqllogic/fixtures/postgres)"
+          export DOCKER_UID DOCKER_GID SQLLOGIC_DIR PG_CHANGED_TESTS PG_FIXTURE_IMAGE
 
           cd tests/sqllogic
           PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"

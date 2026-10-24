@@ -35,6 +35,11 @@ repos:
       - id: trailing-whitespace
         exclude: \.test$
 
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.7
+    hooks:
+      - id: actionlint-docker
+
   - repo: https://github.com/BlankSpruce/gersemi
     rev: 0.26.1
     hooks:

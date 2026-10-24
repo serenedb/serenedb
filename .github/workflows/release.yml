@@ -107,9 +107,11 @@ jobs:
             echo "SERENEDB_VERSION_PATCH must be N or N.M, both > 0, got '$PATCH'" >&2
             exit 1
           fi
-          echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
-          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
-          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
+          {
+            echo "patch=$PATCH"
+            echo "major=$MAJOR"
+            echo "minor=$MINOR"
+          } >> "$GITHUB_OUTPUT"
 
   build-amd64:
     if: inputs.BUILD_AMD64
@@ -169,8 +171,10 @@ jobs:
           PATCH="${{ needs.resolve-version.outputs.patch }}"
           MAJOR="${{ needs.resolve-version.outputs.major }}"
           MINOR="${{ needs.resolve-version.outputs.minor }}"
-          echo "SERENEDB_VERSION_PATCH=$PATCH" >> $GITHUB_ENV
-          echo "DOCKER_TAG=${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
+          {
+            echo "SERENEDB_VERSION_PATCH=$PATCH"
+            echo "DOCKER_TAG=${MAJOR}.${MINOR}.${PATCH}"
+          } >> "$GITHUB_ENV"
 
       - name: Download amd64 packages
         if: needs.build-amd64.outputs.packages_ok == 'true'
@@ -234,7 +238,7 @@ jobs:
           CHART=$(find packages/helm/out -maxdepth 1 -name 'serenedb-*.tgz' | head -1)
           [ -n "$CHART" ] || { echo "no packaged helm chart found" >&2; exit 1; }
           cp "$CHART" release-packages/
-          echo "CHART_FILE=$(basename "$CHART")" >> $GITHUB_ENV
+          echo "CHART_FILE=$(basename "$CHART")" >> "$GITHUB_ENV"
 
       - name: Setup QEMU
         if: steps.prepare.outputs.has_tarballs == 'true'

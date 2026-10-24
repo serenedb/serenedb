@@ -24,6 +24,7 @@ duckdb:core:test/sql/profiling/test_spilled_bytes_metric.test	issue	temporary fi
 duckdb:core:test/sql/storage/buffer_manager_temp_dir.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/encryption/temp_files/*	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/evict_unpinned_without_temp_directory.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:core:test/sql/storage/external_file_cache/external_file_cache_spill.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/parallel/memory_limit_mixed_batches.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/temp_directory/failed_spill_keeps_block_evictable.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/temp_directory/max_swap_space_explicit.test	issue	temporary files hold buffer bytes nothing wrote (#1883)

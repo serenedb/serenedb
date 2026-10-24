@@ -37,7 +37,6 @@
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
-#include <ranges>
 
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
@@ -345,11 +344,7 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     } else if (auto& target = relation.Cast<duckdb::ViewCatalogEntry>();
                const auto columns = ViewColumns(Context(), target)) {
       for (size_t i = 0; i < columns->types.size(); ++i) {
-        const auto& name = ViewColumnName(target, *columns, i);
-        if (referenced(name) &&
-            absl::c_none_of(std::views::iota(size_t{0}, i), [&](size_t j) {
-              return ViewColumnName(target, *columns, j) == name;
-            })) {
+        if (referenced(columns->names[i])) {
           depend(static_cast<int32_t>(i + 1));
         }
       }
@@ -467,9 +462,9 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     int32_t owner_column = 0;
     for (const auto& column : table.GetColumns().Logical()) {
       const bool names =
-        HasAttrdef(column) &&
+        (HasDefault(column) || column.Generated()) &&
         NamesSequence(DefaultExpression(column), sequence.name);
-      if (names) {
+      if (names && HasAttrdef(column)) {
         Depend(kPgAttrdefTable, column.CatalogOid(), 0, kPgClassTable,
                sequence.oid, 0, 'n');
       }

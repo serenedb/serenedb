@@ -25,6 +25,7 @@
 
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <duckdb/parser/constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/expression/cast_expression.hpp>
@@ -45,14 +46,24 @@ namespace sdb::pg {
 
 duckdb::shared_ptr<duckdb::ViewColumnInfo> ViewColumns(
   duckdb::ClientContext& context, duckdb::ViewCatalogEntry& view) {
-  if (auto columns = view.GetColumnInfo()) {
+  auto columns = view.GetColumnInfo();
+  if (!columns) {
+    try {
+      view.BindView(context);
+    } catch (const std::exception&) {
+    }
+    columns = view.GetColumnInfo();
+  }
+  if (!columns || view.aliases.empty()) {
     return columns;
   }
-  try {
-    view.BindView(context);
-  } catch (const std::exception&) {
+  auto aliased = duckdb::make_shared_ptr<duckdb::ViewColumnInfo>(*columns);
+  for (size_t i = 0; i < aliased->names.size() && i < view.aliases.size();
+       ++i) {
+    aliased->names[i] = view.aliases[i];
   }
-  return view.GetColumnInfo();
+  duckdb::QueryResult::DeduplicateColumns(aliased->names);
+  return aliased;
 }
 
 bool HasDefault(const duckdb::ColumnDefinition& column) {
@@ -73,7 +84,7 @@ int16_t ViewAttnum(duckdb::ClientContext& context,
                    const duckdb::Identifier& name) {
   const auto columns = ViewColumns(context, view);
   for (duckdb::idx_t i = 0; columns && i < columns->types.size(); ++i) {
-    if (ViewColumnName(view, *columns, i) == name) {
+    if (columns->names[i] == name) {
       return static_cast<int16_t>(i + 1);
     }
   }
@@ -157,10 +168,7 @@ IndexColumn IndexColumnAt(const duckdb::CatalogEntry& relation,
   }
   const auto column = static_cast<duckdb::idx_t>(attnum - 1);
   if (relation.type == duckdb::CatalogType::VIEW_ENTRY) {
-    return {ViewColumnName(relation.Cast<duckdb::ViewCatalogEntry>(), *columns,
-                           column)
-              .GetIdentifierName(),
-            columns->types[column]};
+    return {columns->names[column].GetIdentifierName(), columns->types[column]};
   }
   const auto& definition = relation.Cast<duckdb::TableCatalogEntry>().GetColumn(
     duckdb::LogicalIndex{column});
@@ -182,10 +190,7 @@ duckdb::LogicalType IndexExpressionType(
     if (!columns) {
       return duckdb::LogicalType::SQLNULL;
     }
-    const auto& view = relation.Cast<duckdb::ViewCatalogEntry>();
-    for (duckdb::idx_t i = 0; i < columns->types.size(); ++i) {
-      names.push_back(ViewColumnName(view, *columns, i));
-    }
+    names = columns->names;
     types = columns->types;
   } else {
     for (const auto& column :

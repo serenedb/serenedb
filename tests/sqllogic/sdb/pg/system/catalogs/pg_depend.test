@@ -19,6 +19,10 @@ DROP TABLE IF EXISTS roshan_dep_search;
 
 
 statement ok
+DROP TABLE IF EXISTS roshan_dep_search_serial;
+
+
+statement ok
 DROP TABLE IF EXISTS roshan_dep_virtual;
 
 
@@ -478,6 +482,24 @@ n
 
 statement ok
 DROP TABLE roshan_dep_search;
+
+
+statement ok
+CREATE TABLE roshan_dep_search_serial (id serial, txt text) WITH (storage = 'search');
+
+
+query
+SELECT d.refobjid::regclass::text AS ref, d.refobjsubid, d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_class'::regclass AND d.objid = 'roshan_dep_search_serial_id_seq'::regclass
+  AND d.refclassid = 'pg_class'::regclass;
+----
+ref	refobjsubid	deptype
+roshan_dep_search_serial	1	a
+
+
+statement ok
+DROP TABLE roshan_dep_search_serial;
 
 
 statement ok

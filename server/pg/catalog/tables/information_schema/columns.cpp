@@ -254,7 +254,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     Col<"is_generated">([](const auto&) { return std::string_view{"NEVER"}; }));
 
   void Row(const duckdb::TableCatalogEntry& table) {
-    const bool visible = Visible(table.permissions);
+    const bool visible = Visible(table);
     const auto [schema, relation] = NameOf(Transaction(), table);
     const auto not_null =
       Reads<"is_nullable">() ? NotNullColumns(table) : std::vector<bool>{};
@@ -281,7 +281,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
   }
 
   void Row(duckdb::ViewCatalogEntry& view) {
-    if (!Visible(view.permissions)) {
+    if (!Visible(view)) {
       return;
     }
     const auto columns = ViewColumns(Context(), view);
@@ -290,22 +290,23 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     }
     const auto [schema, relation] = NameOf(Transaction(), view);
     for (size_t i = 0; i < columns->types.size(); ++i) {
-      Emit<kViewColumn>(
-        {.scan = *this,
-         .database = _database,
-         .arrays = _arrays,
-         .schema = schema,
-         .relation = relation,
-         .name = ViewColumnName(view, *columns, i).GetIdentifierName(),
-         .position = i + 1,
-         .type = columns->types[i]});
+      Emit<kViewColumn>({.scan = *this,
+                         .database = _database,
+                         .arrays = _arrays,
+                         .schema = schema,
+                         .relation = relation,
+                         .name = columns->names[i].GetIdentifierName(),
+                         .position = i + 1,
+                         .type = columns->types[i]});
     }
   }
 
  private:
-  bool Visible(const duckdb::Permissions& permissions) const {
-    return !_closure || _closure->CanAny(duckdb::CatalogType::TABLE_ENTRY,
-                                         permissions, kAnyColumnPrivilege);
+  bool Visible(const duckdb::CatalogEntry& relation) const {
+    const auto& permissions = PrivilegePermissions(relation);
+    return !_closure || permissions.owner == kInvalidOid ||
+           _closure->CanAny(duckdb::CatalogType::TABLE_ENTRY, permissions,
+                            kAnyColumnPrivilege);
   }
 
   std::string_view _database = Database().GetName().GetIdentifierName();

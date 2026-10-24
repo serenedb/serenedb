@@ -151,20 +151,15 @@ std::vector<StorageEntry> ListStorages(const std::string& root) {
 }
 
 StorageSize StorageBytes(const std::string& directory) {
-  auto& fs = StorageFileSystem();
   StorageSize size;
-  for (const auto& info : fs.GlobFiles(fs.JoinPath(directory, "**"),
-                                       duckdb::FileGlobOptions::ALLOW_EMPTY)) {
-    duckdb::idx_t bytes = 0;
-    if (!info.extended_info ||
-        !info.extended_info->TryGetOption("file_size", bytes)) {
-      continue;
-    }
-    std::string_view name = info.path;
-    absl::ConsumePrefix(&name, directory);
-    absl::ConsumePrefix(&name, "/");
-    (absl::StrContains(name, '/') ? size.nested : size.files) += bytes;
-  }
+  StorageFileSystem().ListFilesRecursive(
+    directory, [&](duckdb::OpenFileInfo& info) {
+      duckdb::idx_t bytes = 0;
+      if (info.extended_info &&
+          info.extended_info->TryGetOption("file_size", bytes)) {
+        (absl::StrContains(info.path, '/') ? size.nested : size.files) += bytes;
+      }
+    });
   return size;
 }
 

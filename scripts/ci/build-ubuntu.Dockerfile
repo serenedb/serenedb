@@ -1,5 +1,5 @@
-FROM docker:latest AS docker-cli
-FROM rust:latest AS rust
+FROM docker:29.9.2 AS docker-cli
+FROM rust:1.99.1 AS rust
 
 FROM ubuntu:26.04
 

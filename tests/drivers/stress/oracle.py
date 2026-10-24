@@ -58,9 +58,14 @@ def check_models(models, snap):
     for key in snap.set_objects:
         if key[0] in ops.OID_IDENTITY_KINDS:
             observed[key] = Present(None)
-    findings = []
+    findings = [{
+        "kind": "table_unreadable",
+        "key": list(key),
+        "detail": f"reading its rows failed: {error}",
+        "candidates": None, "observed": None,
+    } for key, error in snap.row_errors.items()]
     for model in models:
-        for f in model.collapse(observed):
+        for f in model.collapse(observed, unread=snap.row_errors):
             findings.append(f.as_dict())
     return findings
 

@@ -65,7 +65,6 @@ jobs:
     outputs:
       test_args: ${{ steps.select.outputs.test_args }}
       pg: ${{ steps.classify.outputs.pg }}
-      corpus: ${{ steps.select.outputs.corpus }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -84,17 +83,14 @@ jobs:
           IRESEARCH: ${{ steps.classify.outputs.iresearch }}
           RE2: ${{ steps.classify.outputs.re2 }}
           DUCKDB_SUITES: ${{ steps.classify.outputs.duckdb_suites }}
-          CORPUS: ${{ inputs.CORPUS || steps.classify.outputs.corpus == 'true' }}
+          CORPUS: ${{ inputs.CORPUS }}
         run: |
           args=(--duckdb-suites "$DUCKDB_SUITES")
           [[ "$EVERYTHING" != true ]] || args+=(--everything)
           [[ "$CORPUS" != true ]] || args+=(--corpus)
           [[ "$IRESEARCH" != true ]] || args+=(--iresearch)
           [[ "$RE2" != true ]] || args+=(--re2)
-          {
-            echo "test_args=$(python3 scripts/ci/ci.py select-suites "${args[@]}")"
-            echo "corpus=$CORPUS"
-          } >> "$GITHUB_OUTPUT"
+          echo "test_args=$(python3 scripts/ci/ci.py select-suites "${args[@]}")" >> "$GITHUB_OUTPUT"
 
   image:
     needs: prepare
@@ -309,7 +305,7 @@ jobs:
       LOCATION: linux-amd64
       PR_SHA: ${{ inputs.PR_SHA }}
       CHANGED: ${{ !inputs.EVERYTHING }}
-      CORPUS: ${{ needs.prepare.outputs.corpus == 'true' }}
+      CORPUS: ${{ inputs.CORPUS }}
     secrets: inherit
 
   report:

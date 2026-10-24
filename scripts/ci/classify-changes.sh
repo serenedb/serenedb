@@ -45,7 +45,7 @@ declare -A SUITE_OF_DIR=(
 	[openssl-cmake]="httpfs azure iceberg postgres_scanner"
 )
 
-iresearch=false other_tp=false re2=false corpus=false pg=false
+iresearch=false other_tp=false re2=false pg=false
 declare -A suite_hit=()
 
 while IFS= read -r f; do
@@ -55,9 +55,6 @@ while IFS= read -r f; do
 		third_party/googletest | third_party/googletest/* | third_party/simdutf | third_party/simdutf/* | \
 		third_party/CMakeLists.txt | cmake/OptimizeForArchitecture.cmake)
 		re2=true
-		;;
-	tests/sqllogic/any/pg/sqlite)
-		corpus=true
 		;;
 	esac
 	case "$f" in
@@ -134,5 +131,4 @@ emit() {
 emit iresearch "$iresearch"
 emit duckdb_suites "$duckdb_suites"
 emit re2 "$re2"
-emit corpus "$corpus"
 emit pg "$pg"

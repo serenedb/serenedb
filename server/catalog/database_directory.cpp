@@ -88,26 +88,11 @@ void SyncDirectory(const std::filesystem::path& directory) {
 }
 
 void RemoveDirectory(const std::filesystem::path& path) {
-  auto dropped = path;
-  dropped += kDroppedSuffix;
   std::error_code ec;
-  std::filesystem::rename(path, dropped, ec);
-  if (ec == std::errc::no_such_file_or_directory) {
-    return;
-  }
-  if (ec) {
-    SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
-    return;
-  }
-  if (const int error = FsyncDirectory(path.parent_path())) {
-    SDB_WARN(GENERAL, "could not remove '", path.string(),
-             "': ", std::strerror(error));
-    return;
-  }
   SDB_IF_FAILURE("pause_removal_midway") {
     std::vector<std::filesystem::path> files;
     for (const auto& entry :
-         std::filesystem::recursive_directory_iterator{dropped}) {
+         std::filesystem::recursive_directory_iterator{path, ec}) {
       if (entry.is_regular_file()) {
         files.push_back(entry.path());
       }
@@ -117,10 +102,9 @@ void RemoveDirectory(const std::filesystem::path& path) {
     }
     SDB_PARK_ONCE_ON_FAILURE("pause_removal_midway");
   }
-  std::filesystem::remove_all(dropped, ec);
+  std::filesystem::remove_all(path, ec);
   if (ec) {
-    SDB_WARN(GENERAL, "could not remove '", dropped.string(),
-             "': ", ec.message());
+    SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
   }
 }
 

@@ -744,9 +744,6 @@ struct FloatBinCore {
   using Value = T;
   static constexpr uint32_t kMaxBytes = sizeof(T);
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
-    if (v == 0) {  // postgres renders -0.0 as 0.0
-      v = 0;
-    }
     absl::big_endian::Store(dst, v);
     return sizeof(T);
   }
@@ -759,9 +756,6 @@ struct FloatTextCore {
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, SerializationContext& ctx,
                                         Value v) {
     static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
-    if (v == 0) {  // Postgres converts -0.0 as 0.0
-      v = 0;
-    }
     char* buf = reinterpret_cast<char*>(dst);
     if (char* ptr = utils::dtoa_literals<utils::kPgDtoaLiterals>(v, buf)) {
       return static_cast<size_t>(ptr - buf);

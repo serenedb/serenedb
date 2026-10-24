@@ -22,7 +22,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
+#include <absl/synchronization/notification.h>
+#include <absl/time/time.h>
 
+#include <iresearch/utils/async_utils.hpp>
 #include <iresearch/utils/ref_counter.hpp>
 #include <vector>
 
@@ -147,6 +151,40 @@ TEST_F(RefCounterTests, test_ref_counter_remove_unused) {
   auto ref1c = refs.add(1);
   ASSERT_EQ(2, ref1c.use_count());
   ASSERT_TRUE(RemoveUnused(refs).empty());
+}
+
+TEST_F(RefCounterTests, test_ref_counter_waits_only_for_keys_being_removed) {
+  irs::RefCounter<int> refs;
+  refs.add(1);
+  absl::Notification removing;
+  absl::Notification proceed;
+  absl::Notification other_added;
+  absl::Notification removed_added;
+  irs::async_utils::ThreadPool<> pool{3};
+  absl::Cleanup release = [&] { proceed.Notify(); };
+  ASSERT_TRUE(pool.run([&] {
+    refs.RemoveUnused([&](std::vector<int>& unused) {
+      removing.Notify();
+      proceed.WaitForNotification();
+      return unused.size();
+    });
+  }));
+  removing.WaitForNotification();
+
+  ASSERT_TRUE(pool.run([&] {
+    refs.add(2);
+    other_added.Notify();
+  }));
+  EXPECT_TRUE(other_added.WaitForNotificationWithTimeout(absl::Seconds(30)));
+
+  ASSERT_TRUE(pool.run([&] {
+    refs.add(1);
+    removed_added.Notify();
+  }));
+  EXPECT_FALSE(
+    removed_added.WaitForNotificationWithTimeout(absl::Milliseconds(50)));
+  std::move(release).Invoke();
+  EXPECT_TRUE(removed_added.WaitForNotificationWithTimeout(absl::Seconds(30)));
 }
 
 TEST_F(RefCounterTests, test_ref_counter_keeps_what_was_not_removed) {

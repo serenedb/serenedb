@@ -116,6 +116,7 @@ add_bench(quant_quality)
 add_bench(table_fetch)
 add_bench(vfs_path_calls)
 add_bench(block_cache_pins)
+add_bench(directory_cleanup)
 
 if(ARCH_AMD64)
     add_bench(ci_lower)

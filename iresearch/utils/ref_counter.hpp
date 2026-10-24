@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <absl/base/thread_annotations.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/synchronization/mutex.h>
 
@@ -81,6 +83,10 @@ class RefCounter : public util::Noncopyable {
   template<typename T>
   ref_t add(T&& key) {
     absl::MutexLock lock{&_lock};
+    const auto settled = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+      return !_removing.contains(key);
+    };
+    _lock.Await(absl::Condition(&settled));
 
     auto it = _refs.lazy_emplace(key, [&](const auto& ctor) {
       ctor(std::make_shared<const Key>(std::forward<T>(key)));
@@ -97,24 +103,39 @@ class RefCounter : public util::Noncopyable {
 
   template<typename Remove>
   auto RemoveUnused(const Remove& remove) {
-    absl::MutexLock lock{&_lock};
-    std::vector<Key> unused;
-    for (const auto& ref : _refs) {
-      SDB_ASSERT(ref);
-      if (ref.use_count() == 1) {
-        unused.push_back(*ref);
+    std::vector<Key> claimed;
+    {
+      absl::MutexLock lock{&_lock};
+      for (const auto& ref : _refs) {
+        SDB_ASSERT(ref);
+        if (ref.use_count() == 1 && !_removing.contains(*ref)) {
+          claimed.push_back(*ref);
+        }
       }
+      _removing.insert(claimed.begin(), claimed.end());
     }
-    auto result = remove(unused);
-    for (const auto& key : unused) {
-      _refs.erase(key);
-    }
+    auto removed = claimed;
+    bool finished = false;
+    absl::Cleanup release = [&] noexcept {
+      absl::MutexLock lock{&_lock};
+      if (finished) {
+        for (const auto& key : removed) {
+          _refs.erase(key);
+        }
+      }
+      for (const auto& key : claimed) {
+        _removing.erase(key);
+      }
+    };
+    auto result = remove(removed);
+    finished = true;
     return result;
   }
 
  private:
   absl::Mutex _lock;
   absl::flat_hash_set<ref_t, Hash, EqualTo> _refs ABSL_GUARDED_BY(_lock);
+  absl::flat_hash_set<Key, Hasher, Equal> _removing ABSL_GUARDED_BY(_lock);
 };
 
 }  // namespace irs

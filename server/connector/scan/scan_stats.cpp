@@ -32,7 +32,8 @@ namespace sdb::connector {
 namespace {
 
 const duckdb::BaseStatistics* StoredColumnStats(
-  const ScanBindData& bind, const irs::DirectoryReader& reader, ColumnId col_id) {
+  const ScanBindData& bind, const irs::DirectoryReader& reader,
+  ColumnId col_id) {
   if (bind.relation.IsInvertedIndex()) {
     const auto* info = bind.relation.ScannedIndex().FindColumnInfo(col_id);
     if (!info || !info->store_values) {
@@ -45,8 +46,8 @@ const duckdb::BaseStatistics* StoredColumnStats(
 }
 
 const irs::FieldTermRange* KeywordTermRange(const ScanBindData& bind,
-                                         const irs::DirectoryReader& reader,
-                                         duckdb::idx_t column_index) {
+                                            const irs::DirectoryReader& reader,
+                                            duckdb::idx_t column_index) {
   if (!bind.relation.inverted_config ||
       bind.columns.types[column_index] != duckdb::LogicalType::VARCHAR) {
     return nullptr;
@@ -153,8 +154,8 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   if (column_index >= bind.columns.ids.size()) {
     return nullptr;
   }
-  const auto* stats = StoredColumnStats(bind, snapshot->reader,
-                                        bind.columns.ids[column_index]);
+  const auto* stats =
+    StoredColumnStats(bind, snapshot->reader, bind.columns.ids[column_index]);
   if (!stats) {
     return nullptr;
   }

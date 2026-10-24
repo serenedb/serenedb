@@ -254,8 +254,7 @@ struct ScanBindData final : duckdb::FunctionData {
   }
   bool ReadsEveryRow() const noexcept {
     return IsMatchAll() && search.deferred.empty() &&
-           search.row_filters.empty() && !score.HasTopK() &&
-           !ts_dict.Active();
+           search.row_filters.empty() && !score.HasTopK() && !ts_dict.Active();
   }
 
   using ColumnVisitor =

@@ -5,7 +5,7 @@ import threading
 import time
 from pathlib import Path
 
-from serened import free_port, pg_startup_reachable
+from serened import free_port, listens_on, pg_startup_reachable
 
 from . import proc, reports
 from .scheduler import CRASHED, FAILED, STUCK, Fixture, Result
@@ -86,7 +86,9 @@ class Server:
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
                 return False
-            if pg_startup_reachable("127.0.0.1", self.port, timeout=2.0):
+            ports = [p for p in (self.port, self.ssl_port, self.http_port) if p]
+            if (pg_startup_reachable("127.0.0.1", self.port, timeout=2.0)
+                    and listens_on(self.proc.pid, ports)):
                 return True
             time.sleep(0.2)
         return False

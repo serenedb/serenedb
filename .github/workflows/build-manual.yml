@@ -82,8 +82,15 @@ jobs:
           DUCKDB_SUITES: ${{ steps.classify.outputs.duckdb_suites }}
           CORPUS: ${{ inputs.CORPUS || steps.classify.outputs.corpus == 'true' }}
         run: |
-          echo "test_args=$(./scripts/ci/select_suites.sh)" >> "$GITHUB_OUTPUT"
-          echo "corpus=$CORPUS" >> "$GITHUB_OUTPUT"
+          args=(--duckdb-suites "$DUCKDB_SUITES")
+          [[ "$EVERYTHING" != true ]] || args+=(--everything)
+          [[ "$CORPUS" != true ]] || args+=(--corpus)
+          [[ "$IRESEARCH" != true ]] || args+=(--iresearch)
+          [[ "$RE2" != true ]] || args+=(--re2)
+          {
+            echo "test_args=$(python3 scripts/ci/ci.py select-suites "${args[@]}")"
+            echo "corpus=$CORPUS"
+          } >> "$GITHUB_OUTPUT"
 
   perf:
     needs: prepare
@@ -199,10 +206,13 @@ jobs:
         env:
           SHARDS: ${{ needs.dev.outputs.shards }}
           TEST_ARGS: ${{ needs.prepare.outputs.test_args }} --changed origin/main --repeat 3
-          SDB_EVERYTHING: ${{ inputs.EVERYTHING }}
+          EVERYTHING: ${{ inputs.EVERYTHING }}
         run: |
-          ./scripts/ci/coverage_report.sh dev "${{ needs.dev.outputs.digest }}" \
-            "$SDB_RUN_ID" origin/main "$(python3 -c 'import json, os; print(len(json.loads(os.environ["SHARDS"])))')"
+          args=()
+          [[ "$EVERYTHING" != true ]] || args+=(--everything)
+          python3 scripts/ci/ci.py coverage-report --config dev --digest "${{ needs.dev.outputs.digest }}" \
+            --run "$SDB_RUN_ID" --base origin/main --test-args "$TEST_ARGS" "${args[@]}" \
+            --shards "$(python3 -c 'import json, os; print(len(json.loads(os.environ["SHARDS"])))')"
           cat out/coverage-*/summary.txt >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the coverage

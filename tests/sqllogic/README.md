@@ -24,7 +24,7 @@ Without a build directory, the runner is built from `third_party/sqllogictest-rs
 
 ## The sqlite corpus
 
-`any/pg/sqlite` is a submodule of [serenedb/sqllogictest](https://github.com/serenedb/sqllogictest): DuckDB's copy of SQLite's sqllogictest corpus as upstream ships it, with our changes on top as commits (the C runner removed, the skips for PostgreSQL and SereneDB, PostgreSQL's results where they differ from SQLite's). Nothing clones it by default: `scripts/ci/test.py --corpus` checks it out and runs it, and a CI run does so only when asked (the trigger comment's sqlite corpus box, the nightly's `CORPUS` input).
+`any/pg/sqlite` is a submodule of [serenedb/sqllogictest](https://github.com/serenedb/sqllogictest): DuckDB's copy of SQLite's sqllogictest corpus as upstream ships it, with our changes on top as commits (the C runner removed, the skips for PostgreSQL and SereneDB, PostgreSQL's results where they differ from SQLite's). Every `skipif postgres` and `skipif serenedb` line gives its reason, and where SereneDB differs from PostgreSQL its skip names the issue that tracks the difference. Nothing clones it by default: `scripts/ci/test.py --corpus` checks it out and runs it, and a CI run does so only when asked (the trigger comment's sqlite corpus box, the nightly's `CORPUS` input).
 
 Its files are in sqllogictest's original format (no column names, one value per line, results over 8 values hashed), which `test.py` tells the runner. A big file runs as several units of the runner's `--part`, sized from the timing store.
 

@@ -63,7 +63,7 @@ jobs:
       - name: Install toolchain
         run: |
           set -euo pipefail
-          brew install bison flex bash ninja ccache pkg-config cmake zstd
+          brew install bison flex bash ninja ccache pkg-config cmake zstd flock
           dir="$RUNNER_TOOL_CACHE/llvm-$LLVM_VERSION"
           if [[ ! -x "$dir/bin/clang++" ]]; then
             mkdir -p "$dir"
@@ -81,6 +81,15 @@ jobs:
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/flex/bin"  >> "$GITHUB_PATH"
           echo "/opt/homebrew/bin"           >> "$GITHUB_PATH"
+
+      - name: Packages that generate the iceberg fixture
+        run: |
+          set -euo pipefail
+          venv="$RUNNER_TEMP/fixture-venv"
+          python3 -m venv "$venv"
+          grep -E '^(pyiceberg|pyarrow|fastavro)' scripts/ci/test-data-requirements.txt |
+            xargs "$venv/bin/pip" install --quiet
+          echo "$venv/bin" >> "$GITHUB_PATH"
 
       # Cache rotates every run (unique key) and restores the newest prior match,
       # so it rolls forward night to night. Nightly runs on the default branch, so

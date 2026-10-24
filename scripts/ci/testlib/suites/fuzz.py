@@ -1,24 +1,39 @@
 import importlib.util
+import os
+import random
+import signal
 import subprocess
+import time
 
 from serened import pg_startup_reachable
 
-from .. import proc
+from .. import proc, reports
 from ..scheduler import CRASHED, FAILED, PASSED, STUCK, Fixture, Outcome, Unit
 from ..servers import Server
-from . import plan, skipped
+from . import plan, skipped, sqllogic
+
+CANCEL_FILES = 4
+CANCEL_ROUND_FILES = 32
+CANCEL_FILE_SECONDS = 0.5
+CANCEL_STOP_SECONDS = 120.0
+ACTIVE_QUERIES = ("SELECT count(*) FROM pg_stat_activity "
+                  "WHERE state = 'active' AND pid <> pg_backend_pid()")
+
+
+def _psql(server, sql, timeout=60):
+    if not server.alive() or not pg_startup_reachable("127.0.0.1", server.port, timeout=10):
+        return None
+    try:
+        res = subprocess.run(["psql", f"host=127.0.0.1 port={server.port} user=postgres dbname=postgres "
+                              "connect_timeout=10", "-tAc", sql], capture_output=True,
+                             text=True, timeout=timeout, env={**os.environ, "PGPASSWORD": "postgres"})
+    except subprocess.TimeoutExpired:
+        return None
+    return res.stdout.strip() if res.returncode == 0 else None
 
 
 def _responsive(server, timeout=60):
-    if not server.alive() or not pg_startup_reachable("127.0.0.1", server.port, timeout=10):
-        return False
-    try:
-        res = subprocess.run(["psql", f"host=127.0.0.1 port={server.port} user=postgres dbname=postgres "
-                              "connect_timeout=10", "-tAc", "SELECT 1"], capture_output=True,
-                             text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return False
-    return res.returncode == 0 and res.stdout.strip() == "1"
+    return _psql(server, "SELECT 1", timeout) == "1"
 
 
 def sqlsmith_units(ctx, args, skips):
@@ -60,6 +75,116 @@ def _sqlsmith_run(ctx, seconds):
             fails = [ln for ln in text.splitlines() if "FAIL:" in ln]
             out.detail = fails[0][:300] if fails else out.detail
         return out
+
+    return run
+
+
+def _cancellable_files(ctx):
+    base = sqllogic.sqllogic_dir(ctx)
+    files = []
+    for path in sqllogic.find_tests(base / "sdb", True):
+        rel = str(path.relative_to(base))
+        if sqllogic.CORPUS in rel or path.name.endswith(".gen.test"):
+            continue
+        try:
+            if sqllogic.service_fixture_names(path, False):
+                continue
+        except ValueError:
+            continue
+        files.append(rel)
+    return files
+
+
+def cancellation_units(ctx, args, skips):
+    files = _cancellable_files(ctx)
+    if not files:
+        return []
+    seconds = args.fuzz_seconds
+    timeout = seconds + max(ctx.timeout_floor, 2 * CANCEL_STOP_SECONDS * ctx.config.slowdown)
+    units = []
+    for engine in sqllogic.ENGINES:
+        uid = f"cancellation:{engine}"
+        if skipped(skips, uid):
+            continue
+        units.append(Unit(uid, "cancellation", _cancellation_run(ctx, files, engine, seconds),
+                          cpus=CANCEL_FILES, mem_gb=4.0, cost=seconds, timeout=timeout,
+                          label=False))
+    return units
+
+
+def _cancellation_run(ctx, files, engine, seconds):
+    def run(r):
+        seed = int(os.environ.get("SDB_CANCEL_SEED") or random.randrange(1 << 32))
+        rng = random.Random(seed)
+        slowdown = ctx.config.slowdown
+        server = Server(ctx, r.dir / "server", profile_dir=r.profile_dir,
+                        extra_env={"POSTGRES_PASSWORD": "postgres"}).start()
+        r.stack_pids = lambda: (server.pid(),)
+        end = min(time.monotonic() + seconds,
+                  r.deadline - 2 * CANCEL_STOP_SECONDS * slowdown)
+        rounds = 0
+        try:
+            with open(r.log, "a") as log:
+                log.write(f"seed {seed} (SDB_CANCEL_SEED reruns these files and delays)\n")
+            while time.monotonic() < end and not r.cancelled() and server.alive():
+                picked = rng.sample(files, min(CANCEL_ROUND_FILES, len(files)))
+                expected = sum(ctx.timing.expect(f"sqllogic:{engine}:{rel}")
+                               or CANCEL_FILE_SECONDS * slowdown for rel in picked)
+                delay = rng.uniform(0.05, max(0.1, expected / CANCEL_FILES))
+                with open(r.log, "a") as log:
+                    log.write(f"round {rounds}: SIGINT after {delay:.2f}s: {' '.join(picked)}\n")
+                argv = [sqllogic.runner_binary(ctx), *picked, "--host", server.host,
+                        "--port", str(server.port), "--engine", engine,
+                        "--jobs", str(CANCEL_FILES), "--label", "serenedb",
+                        "--shutdown-timeout", "60"]
+                runner = proc.spawn(argv, env=r.env, cwd=sqllogic.sqllogic_dir(ctx), log_path=r.log)
+                try:
+                    runner.wait(timeout=delay)
+                except subprocess.TimeoutExpired:
+                    runner.send_signal(signal.SIGINT)
+                try:
+                    runner.wait(timeout=CANCEL_STOP_SECONDS * slowdown)
+                except subprocess.TimeoutExpired:
+                    stacks = proc.dump_all_stacks([p for p in (runner.pid, server.pid()) if p], r.dir)
+                    return Outcome(STUCK, f"round {rounds}: the runner did not stop within "
+                                   f"{CANCEL_STOP_SECONDS * slowdown:.0f}s of SIGINT; stacks saved",
+                                   signature="cancellation: runner stuck after SIGINT",
+                                   artifacts=[str(s) for s in stacks])
+                finally:
+                    proc.kill_session(runner.pid)
+                    runner.wait()
+                if server.alive() and not _responsive(server):
+                    stacks = proc.dump_all_stacks([server.pid()], r.dir, prefix="server-stacks")
+                    return Outcome(STUCK, f"serened stopped answering after round {rounds}; "
+                                   "stacks saved", signature="serened unresponsive after cancellation",
+                                   artifacts=[str(s) for s in stacks])
+                rounds += 1
+            drain_end = time.monotonic() + CANCEL_STOP_SECONDS * slowdown
+            active = None
+            while server.alive() and time.monotonic() < drain_end:
+                active = _psql(server, ACTIVE_QUERIES)
+                if active == "0":
+                    break
+                time.sleep(1.0)
+            if server.alive() and active != "0":
+                stacks = proc.dump_all_stacks([server.pid()], r.dir, prefix="server-stacks")
+                return Outcome(FAILED, f"{active or 'unknown'} queries still running "
+                               f"{CANCEL_STOP_SECONDS * slowdown:.0f}s after their sessions ended; "
+                               "stacks saved", signature="cancellation: queries outlive their sessions",
+                               artifacts=[str(s) for s in stacks])
+        finally:
+            stop = server.stop()
+        sanitizer = reports.scan_sanitizer_dir(server.san_dir)
+        if stop and stop[0] == "stuck":
+            return Outcome(STUCK, "serened did not stop on SIGTERM after the cancellation rounds",
+                           signature="serened stop stuck")
+        if stop and stop[1] not in (0, None):
+            sig = server.crash_signature()
+            return Outcome(CRASHED, f"serened exited with {stop[1]} after {rounds} rounds: {sig}",
+                           signature=sig)
+        if sanitizer:
+            return Outcome(FAILED, sanitizer[0].signature, signature=sanitizer[0].signature)
+        return Outcome(PASSED, f"{rounds} rounds")
 
     return run
 

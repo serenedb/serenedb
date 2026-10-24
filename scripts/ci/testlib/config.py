@@ -1,4 +1,5 @@
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,6 +56,11 @@ class Build:
     coverage: bool
     duckdb_unittests: bool
     build_type: str
+
+    @classmethod
+    def absent(cls, root):
+        return cls(root=root, dir=None, sanitize="", gtests=False, fault_injection=False,
+                   coverage=False, duckdb_unittests=False, build_type="")
 
     @classmethod
     def load(cls, root, build_dir):
@@ -141,4 +147,8 @@ def memory_gb():
                     return int(line.split()[1]) / (1 << 20)
     except OSError:
         pass
-    return 16.0
+    try:
+        return int(subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True,
+                                  check=True).stdout) / (1 << 30)
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return 16.0

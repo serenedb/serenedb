@@ -219,7 +219,7 @@ def main(command, generator, target):
             write(out, content)
         if missing:
             print(f"{target}: {missing} queries have no value in {path}, "
-                  "record them with run.sh --override", file=sys.stderr)
+                  "record them with scripts/ci/test.py --override", file=sys.stderr)
         return
     if not any(spots(block) for block in blocks(text)):
         return

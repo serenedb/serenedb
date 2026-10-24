@@ -50,19 +50,14 @@ services:
     depends_on:
       - serenedb
     volumes:
-      - "${WORKSPACE}/tests/sqllogic:/sqllogic"
-      - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
-      - "${WORKSPACE}/out/logs:/logs"
+      - "${WORKSPACE}:/workspace"
       - "sdb-test-tmp:/test-tmp"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
       - "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}:/cargo-home"
     environment:
-      - HOME=/sqllogic
-      - TMPDIR=/test-tmp
+      - HOME=/tmp
+      - SDB_TEST_TMP_ROOT=/test-tmp
       - SLT_TEST_DIR_SHARED=1
-      # Server-visible path of the workspace resources: fixture symlinks
-      # planted in /test-tmp resolve through the server's /workspace mount.
-      - RESOURCES=/workspace/resources
       - CARGO_HOME=/cargo-home
       - CARGO_TARGET_DIR=/cargo-target
     networks:
@@ -75,15 +70,9 @@ services:
           sleep 1
         done &&
         pg_isready -h serenedb -p 7890 -U postgres &&
-
-        cd /sqllogic &&
-        exec env SDB_SQLLOGIC_SCOPE=ours ./run_sdb_tests.sh \
-          --host serenedb \
-          --single-port 7890 \
-          --fast \
-          --skip "text_tokenizer|log_level|pg_typeof" \
-          --runner=/sqllogictest-rs \
-          --junit /logs/docker-rta-tests
+        exec python3 /workspace/scripts/ci/test.py --server serenedb:7890 --suite sqllogic --fast \
+          --exclude "sqllogic:*text_tokenizer*" --exclude "sqllogic:*log_level*" \
+          --exclude "sqllogic:*pg_typeof*" --out /workspace/out/test-docker-rta
       '
 
 networks:

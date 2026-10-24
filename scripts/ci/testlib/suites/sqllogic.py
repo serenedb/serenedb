@@ -15,7 +15,7 @@ ENGINES = ("pg-wire-simple", "pg-wire-extended")
 PLANNED_EXITS = (0, 75)
 STATEFUL_SERVICES = ("minio", "azurite", "iceberg", "postgres", "clickhouse")
 INFERENCE_CPUS = {"svc:ollama": 8, "svc:kev": 8}
-CORPUS = "sdb/pg/any/sqlite/"
+CORPUS = "any/sqlite/"
 PART_SECONDS = 10.0
 MAX_PARTS = 64
 _runner_lock = threading.Lock()
@@ -31,8 +31,8 @@ def runner_binary(ctx):
     with _runner_lock:
         if _runner_path:
             return _runner_path
-        bundled = ctx.build.bin("sqllogictest")
-        if bundled.is_file():
+        bundled = ctx.build.bin("sqllogictest") if ctx.build.dir else None
+        if bundled and bundled.is_file():
             _runner_path = bundled
             return bundled
         target = Path(os.environ.get("CARGO_TARGET_DIR", ctx.root / ".cache" / "cargo-target"))
@@ -43,12 +43,12 @@ def runner_binary(ctx):
         return _runner_path
 
 
-def generate_tests(ctx):
+def generated_tests(ctx, command):
     base = sqllogic_dir(ctx)
     for generator in sorted((base / "generators").rglob("*.py")):
         rel = generator.relative_to(base / "generators")
         target = base / rel.with_suffix(".gen.test")
-        subprocess.run(["python3", str(base / "generated.py"), "write", str(generator), str(target)],
+        subprocess.run(["python3", str(base / "generated.py"), command, str(generator), str(target)],
                        check=True)
 
 
@@ -85,6 +85,60 @@ class ServicesFixture(Fixture):
         self.services.stop()
 
 
+class ExternalServer(Fixture):
+    def __init__(self, address, ssl_port=None):
+        self.host, _, port = (address or "").rpartition(":")
+        self.port = int(port) if port else None
+        self.ssl_port = ssl_port
+
+    def start(self, ctx):
+        ctx.tmp_root.chmod(0o755)
+        if not services.tcp_open(self.host, self.port):
+            raise RuntimeError(f"nothing listens on {self.host}:{self.port}")
+
+    def env(self):
+        return {"SLT_TEST_DIR_SHARED": "1"}
+
+    def acquire(self):
+        return 0, 0
+
+    def release(self, i):
+        pass
+
+    def server(self, i):
+        return self
+
+    def pid(self):
+        return None
+
+    def crashed_during(self, i, generation):
+        return None
+
+
+class PostgresReference(ExternalServer):
+    stateful = True
+
+    def __init__(self, ctx):
+        super().__init__(None)
+        self.services = services.ServiceSet(log_dir=ctx.out_dir / "services", prefix="pgref")
+
+    def start(self, ctx):
+        image = f"serenedb/serenedb-test-postgres:{services.fixture_image_tag('postgres')}"
+        ctx.tmp_root.chmod(0o755)
+        name = self.services.run("pgref", image, "-c", "max_connections=900", ports=(5432,), extra=[
+            "--tmpfs", "/var/lib/postgresql:size=16g",
+            "-v", f"{ctx.tmp_root}:{ctx.tmp_root}",
+            "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "-e", "POSTGRES_DB=postgres"])
+        services.wait_for("PostgreSQL", lambda: subprocess.run(
+            ["docker", "exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "postgres"],
+            capture_output=True).returncode == 0, 120)
+        host, port = self.services.address(name, 5432)
+        self.host, self.port = host, int(port)
+
+    def stop(self):
+        self.services.stop()
+
+
 def service_fixture_names(path, biglake):
     names = services.services_for_test(str(path))
     if biglake:
@@ -112,23 +166,25 @@ def _runner_failure(log):
     return tail[-1][:300] if tail else ""
 
 
-def _runner_args(ctx, rel, engine, port, ssl_port, env, part=None):
-    argv = [runner_binary(ctx), rel, "--host", "127.0.0.1", "--port", str(port),
-            "--engine", engine, "--jobs", "1", "--label", "serenedb", "--shutdown-timeout", "60"]
-    if ssl_port:
-        argv += ["--ssl-port", str(ssl_port)]
+def _runner_args(ctx, args, rel, engine, server, env, part=None, label="serenedb"):
+    argv = [runner_binary(ctx), rel, "--host", server.host, "--port", str(server.port),
+            "--engine", engine, "--jobs", "1", "--label", label, "--shutdown-timeout", "60"]
+    if server.ssl_port:
+        argv += ["--ssl-port", str(server.ssl_port)]
     if env.get("PGSOCKETDIR"):
         argv += ["--label", "pgsocket"]
     if CORPUS in rel:
         argv += ["--show-column-names", "false", "--flat-values", "true", "--hash-threshold", "8"]
     if part:
         argv += ["--part", f"{part[0]}/{part[1]}"]
+    if args.override:
+        argv += ["--override"]
     return argv
 
 
-def corpus_parts(ctx, uid):
+def corpus_parts(ctx, args, uid):
     cost = ctx.timing.expect(uid)
-    if cost is None:
+    if cost is None or args.override:
         return 1
     return max(1, min(MAX_PARTS, round(cost / (PART_SECONDS * ctx.config.slowdown))))
 
@@ -141,9 +197,13 @@ def check_out_corpus(ctx):
                     "--depth=1", "tests/sqllogic/any/pg/sqlite"], check=True)
 
 
+def engines(args):
+    return ENGINES[:1] if args.override else ENGINES
+
+
 def sqllogic_units(ctx, args, skips):
     base = sqllogic_dir(ctx)
-    generate_tests(ctx)
+    generated_tests(ctx, "write")
     if args.corpus:
         check_out_corpus(ctx)
     units = []
@@ -160,7 +220,7 @@ def sqllogic_units(ctx, args, skips):
             continue
         if args.biglake and "svc:biglake" not in fixtures:
             continue
-        for engine in ENGINES:
+        for engine in engines(args):
             uid = f"sqllogic:{engine}:{rel}"
             skip = skipped(skips, uid)
             if skip:
@@ -169,27 +229,49 @@ def sqllogic_units(ctx, args, skips):
             cost, timeout = plan(ctx, uid, 30.0 if rel.endswith(".test_slow") else 2.0)
             if CORPUS not in rel:
                 cpus = 1 + sum(INFERENCE_CPUS.get(f, 0) for f in fixtures)
-                units.append(Unit(uid, "sqllogic", _sqllogic_run(ctx, rel, engine), cpus=cpus,
+                units.append(Unit(uid, "sqllogic", _sqllogic_run(ctx, args, rel, engine), cpus=cpus,
                                   mem_gb=0.3, fixtures=pool + fixtures, cost=cost,
                                   timeout=timeout, group=f"sqllogic:{rel}"))
                 continue
-            parts = corpus_parts(ctx, uid)
+            parts = corpus_parts(ctx, args, uid)
             for k in range(1, parts + 1):
                 part = (k, parts) if parts > 1 else None
                 units.append(Unit(f"{uid}#{k}/{parts}" if part else uid, "sqllogic",
-                                  _sqllogic_run(ctx, rel, engine, part), cpus=1, mem_gb=0.3,
+                                  _sqllogic_run(ctx, args, rel, engine, part), cpus=1, mem_gb=0.3,
                                   fixtures=pool + fixtures, cost=cost / parts,
                                   timeout=max(ctx.timeout_floor, timeout / parts)))
     return units
 
 
-def _private_run(ctx, rel, engine, part):
+def postgres_units(ctx, args, skips):
+    base = sqllogic_dir(ctx)
+    if args.corpus:
+        check_out_corpus(ctx)
+    units = []
+    for path in find_tests(base / "pg", args.fast):
+        rel = str(path.relative_to(base))
+        if CORPUS in rel and not args.corpus:
+            continue
+        for engine in engines(args):
+            uid = f"postgres:{engine}:{rel}"
+            skip = skipped(skips, uid)
+            if skip:
+                ctx.skips.append((uid, skip))
+                continue
+            cost, timeout = plan(ctx, uid, 30.0 if CORPUS in rel else 2.0)
+            units.append(Unit(uid, "postgres", _shared_run(ctx, args, rel, engine, "pgref", "postgres"),
+                              cpus=1, mem_gb=0.3, fixtures=("pgref",), cost=cost, timeout=timeout,
+                              group=f"postgres:{rel}"))
+    return units
+
+
+def _private_run(ctx, args, rel, engine, part):
     def run(r):
         server = Server(ctx, r.dir / "server", listen_ssl=True, profile_dir=r.profile_dir,
                         extra_env={"POSTGRES_PASSWORD": "postgres"}).start()
         r.stack_pids = lambda: (server.pid(),)
         try:
-            res = r.exec(_runner_args(ctx, rel, engine, server.port, server.ssl_port, r.env, part),
+            res = r.exec(_runner_args(ctx, args, rel, engine, server, r.env, part),
                          cwd=sqllogic_dir(ctx))
         finally:
             stop = server.stop()
@@ -209,20 +291,14 @@ def _private_run(ctx, rel, engine, part):
     return run
 
 
-def _sqllogic_run(ctx, rel, engine, part=None):
-    private = _private_run(ctx, rel, engine, part)
-    if ctx.attribute:
-        return private
-
+def _shared_run(ctx, args, rel, engine, fixture, label, part=None):
     def run(r):
-        if 0 < r.attempt < 100:
-            return private(r)
-        pool = r.fixture("servers")
+        pool = r.fixture(fixture)
         i, generation = pool.acquire()
         try:
             server = pool.server(i)
             r.stack_pids = lambda: (server.pid(),)
-            res = r.exec(_runner_args(ctx, rel, engine, server.port, server.ssl_port, r.env, part),
+            res = r.exec(_runner_args(ctx, args, rel, engine, server, r.env, part, label),
                          cwd=sqllogic_dir(ctx))
         finally:
             pool.release(i)
@@ -233,6 +309,20 @@ def _sqllogic_run(ctx, rel, engine, part=None):
         if out.status == FAILED and not out.signature:
             out.detail = _runner_failure(r.log) or out.detail
         return out
+
+    return run
+
+
+def _sqllogic_run(ctx, args, rel, engine, part=None):
+    private = _private_run(ctx, args, rel, engine, part)
+    if ctx.attribute:
+        return private
+    shared = _shared_run(ctx, args, rel, engine, "servers", "serenedb", part)
+
+    def run(r):
+        if 0 < r.attempt < 100 and not args.server:
+            return private(r)
+        return shared(r)
 
     return run
 
@@ -255,19 +345,19 @@ def recovery_units(ctx, args, skips):
             ctx.skips.append((uid, skip))
             continue
         cost, timeout = plan(ctx, uid, 60.0 if rel.endswith(".test_slow") else 10.0)
-        units.append(Unit(uid, "recovery", _recovery_run(ctx, rel), cpus=2, mem_gb=1.5,
+        units.append(Unit(uid, "recovery", _recovery_run(ctx, args, rel), cpus=2, mem_gb=1.5,
                           fixtures=fixtures, cost=cost, timeout=timeout))
     return units
 
 
-def _recovery_run(ctx, rel):
+def _recovery_run(ctx, args, rel):
     def run(r):
         server = RestartingServer(ctx, r.dir / "server", profile_dir=r.profile_dir).start()
         r.stack_pids = lambda: (server.pid(),)
         env = {"SDB_DATADIR": str(server.datadir), "RETRY_ATTEMPTS": "60",
                "BACKOFF_DURATION": "500ms"}
         try:
-            res = r.exec(_runner_args(ctx, rel, "pg-wire-simple", server.port, None, r.env),
+            res = r.exec(_runner_args(ctx, args, rel, "pg-wire-simple", server.server, r.env),
                          cwd=sqllogic_dir(ctx), env=env)
         finally:
             stop = server.stop()
@@ -291,7 +381,12 @@ def _recovery_run(ctx, rel):
 
 def fixture_factories(ctx, args):
     factories = service_factories(args.biglake)
+    if args.server:
+        factories["servers"] = lambda c: ExternalServer(args.server, args.server_ssl_port)
+        factories["pgref"] = lambda c: ExternalServer(args.server, args.server_ssl_port)
+        return factories
     factories["servers"] = lambda c: ServerPool(c, count=args.servers or max(
         1, c.jobs // c.config.units_per_server), threads=0,
         extra_env={"POSTGRES_PASSWORD": "postgres"})
+    factories["pgref"] = PostgresReference
     return factories

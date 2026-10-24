@@ -13,19 +13,14 @@ scripts/ci/test.py --build-dir build_clangd --suite sqllogic --list
 
 The summary lands in `out/test/summary.txt`, every file's result in `out/test/results.jsonl`, and a failed file's runner log under `out/test/units/`.
 
-`run.sh` runs files against a server you started, for an edit-run loop and for `--override`:
+`--server` runs the files against a server you started, for an edit-run loop, and `--override` rewrites them with the results it gives, on one wire engine:
 
 ```bash
-./tests/sqllogic/run.sh --single-port 7777 --test 'sdb/pg/simple_any/setop.test' --debug true
+scripts/ci/test.py --suite sqllogic --server 127.0.0.1:7777 --test 'sqllogic:*:sdb/pg/any/simple/setop.test'
+scripts/ci/test.py --suite sqllogic --server 127.0.0.1:7777 --override --test 'sqllogic:*:sdb/pg/any/simple/setop.test'
 ```
 
-Common options:
-- `--single-port 7777`: Test against SereneDB on this port
-- `--test 'path/to/*.test'`: Run specific test files
-- `--debug`: Enable debug mode (disables timeout)
-- `--jobs N`: Set parallelism level (default: CPU cores)
-- `--override`: Rewrite test file (Note: doesn't create empty database)
-- `--runner <dir>`: the runner's source (default `third_party/sqllogictest-rs`), built on first use
+Without a build directory, the runner is built from `third_party/sqllogictest-rs` on first use.
 
 ## The sqlite corpus
 
@@ -35,8 +30,8 @@ Its files are in sqllogictest's original format (no column names, one value per 
 
 ## Generated Tests
 
-A test of thousands of similar cases isn't committed: `run.sh` writes it before
-every run. Each `generators/<path>.py` prints the test that `run.sh` saves as
+A test of thousands of similar cases isn't committed: `test.py` writes it before
+every run. Each `generators/<path>.py` prints the test that `test.py` saves as
 `<path>.gen.test`, so `generators/sdb/pg/index/phrase_deferred_matrix.py`
 produces `sdb/pg/index/phrase_deferred_matrix.gen.test`. `.gitignore` ignores
 every `*.gen.test`; edit the generator, not its output.
@@ -71,13 +66,13 @@ becomes `<path>.<k>.gen.test` with that setup and what follows its
 `t.part()`, so a part builds only the tables and indexes it checks.
 
 Where only the server knows the answer, such as a row count, a generator prints
-`<recorded>`. `run.sh` fills those cells from `generators/<path>.recorded`, and
-`run.sh --override` records them there, as values or, for a query that fails,
+`<recorded>`. `test.py` fills those cells from `generators/<path>.recorded`, and
+`test.py --override` records them there, as values or, for a query that fails,
 as its exact error, which the test then expects in the block form. A value is
 keyed by a hash of its query's SQL, with `.2`, `.3` for repeats of the same SQL,
 and shows the start of that SQL, so a review sees which query changed. Adding,
 removing or reordering queries adds or removes only their lines; a query with no
-recorded value keeps `<recorded>` and fails until `run.sh --override` records
+recorded value keeps `<recorded>` and fails until `test.py --override` records
 it. A query that fails where the `.recorded` file has values or another error is
 recorded only with `SDB_RECORD_NEW_ERRORS=1` set; without it `--override` lists
 those queries and leaves the file unchanged. Query plans go into a committed
@@ -98,26 +93,6 @@ scripts/ci/test.py --build-dir build_clangd --suite recovery --test 'recovery:re
 
 A failed test keeps its serened logs, one per restart, under `out/test/units/<test>/server/`.
 
-### Run a single recovery test with serened's output live
-
-Start serened in one terminal:
-
-```bash
-PORT=7777 ./tests/sqllogic/run_serened_loop.sh /tmp/recdata
-```
-
-Run one test in another:
-
-```bash
-cd tests/sqllogic
-./run.sh --host localhost --single-port 7777 \
-         --test recovery/alter_rename.test \
-         --engines pg-wire-simple \
-         --runner ../../third_party/sqllogictest-rs
-```
-
-Terminal 1 shows serened's output live -- easier than tailing a log file.
-
 ## Tests that need a server of their own
 
 A test that leaves server-wide state other tests can observe, or that breaks on other tests' server-wide activity, goes under `recovery/`, where every file gets a server of its own. `recovery/detach_held_drop_database_pgscan.test_slow` is one: it drops a remote PostgreSQL database that only its own session may hold, while a listing in any other test that is not scoped to one database opens a session on every attached PostgreSQL catalog.
@@ -134,25 +109,23 @@ statement ok
 CREATE SERVER <name> FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
 ```
 
-and `run.sh` fills both variables from `ICEBERG_BACKEND`:
+and `test.py` fills both variables, from the fixture or, with `--biglake`, from BigLake:
 
-| `ICEBERG_BACKEND` | bootstrap | server options |
+| catalog | bootstrap | server options |
 |---|---|---|
-| `local` (default) | S3 secret `iceberg_ci_storage` for the MinIO warehouse | the iceberg-rest fixture, `authorization_type 'none'` |
-| `biglake` | ICEBERG secret `iceberg_ci_catalog`: `PROVIDER google` from `BIGLAKE_CLIENT_EMAIL` / `BIGLAKE_PRIVATE_KEY` / `BIGLAKE_PRIVATE_KEY_ID`, or your gcloud application-default credentials when those are unset | `bl://projects/$BIGLAKE_PROJECT/catalogs/$BIGLAKE_CATALOG` on `biglake.googleapis.com` |
+| the fixture (default) | S3 secret `iceberg_ci_storage` for the MinIO warehouse | the iceberg-rest fixture, `authorization_type 'none'` |
+| `--biglake` | ICEBERG secret `iceberg_ci_catalog`: `PROVIDER google` from `BIGLAKE_CLIENT_EMAIL` / `BIGLAKE_PRIVATE_KEY` / `BIGLAKE_PRIVATE_KEY_ID`, or your gcloud application-default credentials when those are unset | `bl://projects/$BIGLAKE_PROJECT/catalogs/$BIGLAKE_CATALOG` on `biglake.googleapis.com` |
 
 The bootstrap is shared by every test on one server, so it retries the catalog conflict two
 parallel files can hit creating it. Schemas are named after `${__DATABASE__}`, which carries a
 per-run suffix, so concurrent runs share one BigLake catalog without colliding. Tests that only
 make sense on the fixture (explicit `sigv4`, literal `iceberg_scan('s3://...')` paths) are named
-`*_fixture_iceberg.test_slow` and are skipped in `biglake` mode. BigLake rate-limits
+`*_fixture_iceberg.test_slow` and are skipped with `--biglake`. BigLake rate-limits
 `LoadTable`, so keep `--jobs` at 2 there:
 
 ```bash
-ICEBERG_BACKEND=biglake BIGLAKE_PROJECT=<project> BIGLAKE_CATALOG=<catalog> \
-  ./run.sh --single-port 7777 --jobs 2 --test 'sdb/**/*_iceberg.test_slow'
 BIGLAKE_PROJECT=<project> BIGLAKE_CATALOG=<catalog> scripts/ci/test.py --build-dir build_clangd \
-  --biglake --suite recovery --jobs 2 --test 'recovery:recovery/view_index_*_iceberg.test_slow'
+  --biglake --suite sqllogic --suite recovery --jobs 2 --test '*_iceberg.test_slow'
 ```
 
 CI runs the fixture pass always and adds the BigLake pass (`test.py --biglake` over sqllogic,
@@ -160,42 +133,19 @@ recovery and the stress profile) only when the workflow is dispatched with the `
 checkbox on and the `BIGLAKE_*` repository secrets are present.
 
 ## Directory organization
-* `any/any/` - tests that **every SQL database** must pass (absent for now)
-* `any/pg/` - tests that **every PostgreSQL-compatible backend** must pass, it should have symlink to `any/any/` when the last one appears.
-* `sdb/pg/` - tests that **only SereneDB PostgreSQL-compatible backend** must pass. It has symlink to `any/pg/` suites with suffix `_any`.
-* `pg/` - tests that only reference PostgreSQL backend must pass, but **SereneDB PostgreSQL-compatible backend strives to pass**. It has symlinks to `any/pg/` suites with suffix `_any`.
 
-This structure is applied for each protocol.
-```
-any
-  any/ (1)
-  protocolX/ (2) --> (1)
-  protocolY/ (3) --> (2)
-  ...
-sdb
-  protocolX/ --> (2)
-  protocolY/ --> (3)
-  ...
-protocolX/ --> (2)
-protocolY/ --> (3)
-...
-```
-where `protocolX` is PostgreSQL and `protocolY`, for example, **might be** MySql, DuckDB etc.
+* `any/pg/`: tests that every PostgreSQL-compatible database must pass. PostgreSQL's results are their expected output.
+* `sdb/pg/`: tests that only SereneDB must pass, and `sdb/pg/any`, a symlink to `../../any/pg/`.
+* `pg/`: tests that only PostgreSQL must pass and SereneDB strives to, and `pg/any`, a symlink to `../any/pg/`.
 
-Expected output for `any/pg` should be overriden by reference PostgreSQL implementation (as for any other future protocol).
-
-Let's see typical usages.
-
-1) Run tests with only SereneDB PostgreSQL-compatible backend: just use `tests/sqllogic/sdb/pg/*/*.test` path pattern.
-2) Run tests with both SereneDB PostgreSQL-compatible and reference PostreSQL: just use `tests/sqllogic/any/pg/*/*.test` path pattern.
-3) You're adding new features and want to run SereneDB PostgreSQL-compatible on PostgreSQL tests that prevoiusly weren't passed: just use `tests/sqllogic/any/pg/new_feature/*.test` path pattern.
+The `sqllogic` suite runs `sdb/` against SereneDB and the `postgres` suite runs `pg/` against PostgreSQL, so both run `any/pg/`. pre-commit checks the two symlinks.
 
 ## Reference PostgreSQL image
 
-Tests under `any/pg/` also run against real PostgreSQL in the `validate-pg` job,
-so everything they use has to exist there too. `any/pg/geometry/` needs PostGIS,
-which the stock `postgres` images do not ship, so that job runs
-`serenedb/serenedb-test-postgres`, built from `fixtures/postgres/Dockerfile` by the
+Tests under `any/pg/` also run against real PostgreSQL (`test.py --suite postgres`,
+CI's `validate pg` job), so everything they use has to exist there too.
+`any/pg/geometry/` needs PostGIS, which the stock `postgres` images do not ship, so
+the suite runs `serenedb/serenedb-test-postgres`, built from `fixtures/postgres/Dockerfile` by the
 `build-images` workflow: `postgres:18.6` plus the PostGIS package from the PGDG apt repo
 the base image already configures. `fixtures/image_tag.sh` gives its tag.
 
@@ -220,7 +170,7 @@ line. PGDG carries ~200 packages for PostgreSQL 18 (`pgvector`, `h3`, `cron`,
 `hll`, `hypopg`, ...); `apt-cache search postgresql-18-` inside the image lists
 them.
 
-One more trap in that setup: the healthcheck has to probe over TCP
+One more trap in that setup: the readiness probe has to go over TCP
 (`pg_isready -h 127.0.0.1`). While `docker-entrypoint.sh` runs the init scripts
 the server listens on the unix socket only, so a socket probe reports ready
-before the database is reachable from the `tests` container.
+before the database is reachable from the runner.

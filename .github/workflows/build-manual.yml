@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       test_args: ${{ steps.select.outputs.test_args }}
-      pg_tests: ${{ steps.classify.outputs.pg_tests }}
+      pg: ${{ steps.classify.outputs.pg }}
       corpus: ${{ steps.select.outputs.corpus }}
     steps:
       - uses: actions/checkout@v7
@@ -292,13 +292,13 @@ jobs:
   validate-pg:
     name: validate pg
     needs: prepare
-    if: ${{ !cancelled() && (inputs.EVERYTHING || needs.prepare.outputs.pg_tests != '') }}
+    if: ${{ !cancelled() && (inputs.EVERYTHING || needs.prepare.outputs.pg == 'true') }}
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
       LOCATION: linux-amd64
       PR_SHA: ${{ inputs.PR_SHA }}
       BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
-      PG_TESTS: ${{ inputs.EVERYTHING && '' || needs.prepare.outputs.pg_tests }}
+      CHANGED: ${{ !inputs.EVERYTHING }}
       CORPUS: ${{ needs.prepare.outputs.corpus == 'true' }}
     secrets: inherit
 

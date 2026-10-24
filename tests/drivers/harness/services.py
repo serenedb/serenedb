@@ -10,7 +10,6 @@ import shutil
 import socket
 import string
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.request
@@ -470,61 +469,3 @@ class IcebergRestFixture:
 
     def stop(self):
         self.services.stop()
-
-
-def main(argv):
-    import argparse
-    ap = argparse.ArgumentParser(prog="services.py")
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    up = sub.add_parser("up", help="start services and print their environment as exports")
-    up.add_argument("--state", required=True)
-    up.add_argument("--log-dir")
-    up.add_argument("names", nargs="*")
-    needs = sub.add_parser("needs", help="print the services the given tests need")
-    needs.add_argument("--biglake", action="store_true", help="iceberg tests use BigLake")
-    needs.add_argument("tests", nargs="*")
-    down = sub.add_parser("down", help="stop the services in a state file")
-    down.add_argument("--state", required=True)
-    args = ap.parse_args(argv)
-    if args.cmd == "needs":
-        names = []
-        try:
-            for t in args.tests:
-                for n in services_for_test(t):
-                    if args.biglake and n == "iceberg":
-                        n = "biglake"
-                    if n not in names:
-                        names.append(n)
-        except ValueError as e:
-            print(e, file=sys.stderr)
-            return 1
-        print(" ".join(names))
-        return 0
-    if args.cmd == "up":
-        services = ServiceSet(log_dir=args.log_dir)
-        try:
-            env = services.start(args.names)
-        finally:
-            Path(args.state).write_text(json.dumps({
-                "name": services.name, "network": services.network,
-                "containers": services.containers, "tmp_dirs": [str(d) for d in services.tmp_dirs],
-                "log_dir": args.log_dir}))
-        for key, value in env.items():
-            print(f"export {key}={_shell_quote(value)}")
-        return 0
-    state = json.loads(Path(args.state).read_text())
-    services = ServiceSet(log_dir=state.get("log_dir"))
-    services.name, services.network = state["name"], state["network"]
-    services.containers = state["containers"]
-    services.started = set(state["containers"])
-    services.tmp_dirs = [Path(d) for d in state["tmp_dirs"]]
-    services.stop()
-    return 0
-
-
-def _shell_quote(value):
-    return "'" + str(value).replace("'", "'\\''") + "'"
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

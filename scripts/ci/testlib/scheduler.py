@@ -97,7 +97,9 @@ class Context:
         self.findings = []
         self.skips = []
         self.timeout_floor = 180.0 if config.slowdown <= 2 else 900.0
-        self.tmp_root = Path(tempfile.mkdtemp(prefix="sdbt-", dir="/tmp"))
+        tmp_parent = os.environ.get("SDB_TEST_TMP_ROOT", "/tmp")
+        os.makedirs(tmp_parent, exist_ok=True)
+        self.tmp_root = Path(tempfile.mkdtemp(prefix="sdbt-", dir=tmp_parent))
         self._lock = threading.Lock()
         self._tmp_ids = itertools.count()
 

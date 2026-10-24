@@ -21,18 +21,29 @@ from .timing import Timing
 
 ROOT = Path(__file__).resolve().parents[3]
 _GENERATED = re.compile(r"^(.*?)(?:\.\d+)?\.gen\.test$")
-SUITES = ("sqllogic", "recovery", "gtest", "iresearch", "iresearch-load", "drivers", "re2",
-          "duckdb", "sqlsmith", "stress")
+SUITES = ("sqllogic", "recovery", "cancellation", "gtest", "iresearch", "iresearch-load", "drivers",
+          "re2", "duckdb", "sqlsmith", "stress", "postgres")
+DEFAULT_SUITES = tuple(s for s in SUITES if s != "postgres")
 
 
 def parse_args(argv):
     ap = argparse.ArgumentParser(prog="scripts/ci/test.py",
                                  description="Runs SereneDB's test suites as one queue of units.")
-    ap.add_argument("--build-dir", required=True, type=Path)
+    ap.add_argument("--build-dir", type=Path,
+                    help="the build to test (not needed for the postgres suite or with --server)")
     ap.add_argument("--config", choices=sorted(CONFIGS),
                     help="config name for timings and results (default: from the build)")
     ap.add_argument("--suite", action="append", choices=SUITES,
-                    help="suite to run (repeatable; default: every suite the build supports)")
+                    help="suite to run (repeatable; default: every suite the build supports but "
+                         "postgres, which runs the PostgreSQL-compatible tests against PostgreSQL)")
+    ap.add_argument("--server", metavar="HOST:PORT",
+                    help="run the sqllogic or postgres units against this running server instead "
+                         "of starting servers")
+    ap.add_argument("--server-ssl-port", type=int, default=None,
+                    help="the --server's port for encrypted connections")
+    ap.add_argument("--override", action="store_true",
+                    help="rewrite the sqllogic test files with the results the server gives, on "
+                         "one wire engine, and record the generated tests' values")
     ap.add_argument("--test", action="append", default=[],
                     help="only units whose id matches this glob (repeatable)")
     ap.add_argument("--exclude", action="append", default=[],
@@ -45,7 +56,8 @@ def parse_args(argv):
                     help="run the iceberg tests against Google BigLake (needs BIGLAKE_* env)")
     ap.add_argument("--duckdb-suite", dest="duckdb_suites", action="append",
                     choices=duckdb.SUITES, help="DuckDB suite (repeatable; default: all)")
-    ap.add_argument("--fuzz-seconds", type=float, default=300.0, help="sqlsmith time budget")
+    ap.add_argument("--fuzz-seconds", type=float, default=300.0,
+                    help="time budget of each sqlsmith and cancellation unit")
     ap.add_argument("--stress-profile", default="smoke", help="tests/drivers/stress profile")
     ap.add_argument("--jobs", type=int, default=0, help="CPU slots (default: all CPUs)")
     ap.add_argument("--mem", type=float, default=0, help="memory budget in GB (default: 75%% of RAM)")
@@ -89,6 +101,10 @@ def build_units(ctx, args, suites, skips):
         units += sqllogic.sqllogic_units(ctx, args, skips)
     if "recovery" in suites and ctx.build.fault_injection:
         units += sqllogic.recovery_units(ctx, args, skips)
+    if "cancellation" in suites:
+        units += fuzz.cancellation_units(ctx, args, skips)
+    if "postgres" in suites:
+        units += sqllogic.postgres_units(ctx, args, skips)
     if "gtest" in suites:
         units += gtest.gtest_units(ctx, args, skips)
     if "iresearch" in suites:
@@ -210,9 +226,22 @@ def shard(units, index, count):
 def main(argv):
     args = parse_args(argv)
     budget_end = time.monotonic() + args.budget if args.budget else math.inf
-    build_dir = args.build_dir if args.build_dir.is_absolute() else ROOT / args.build_dir
-    build = Build.load(ROOT, build_dir.resolve())
-    config = CONFIGS[args.config or build.config_name()]
+    suites = args.suite or list(DEFAULT_SUITES)
+    if args.server and {"sqllogic", "postgres"} <= set(suites):
+        raise SystemExit("--server serves either the sqllogic or the postgres suite, not both")
+    if args.server and "recovery" in suites:
+        raise SystemExit("recovery units restart their own servers: run them without --server")
+    needs_build = [s for s in suites if s != "postgres" and not (s == "sqllogic" and args.server)]
+    if args.build_dir:
+        build_dir = args.build_dir if args.build_dir.is_absolute() else ROOT / args.build_dir
+        build = Build.load(ROOT, build_dir.resolve())
+    elif needs_build:
+        raise SystemExit(f"--build-dir is needed for {', '.join(needs_build)}")
+    else:
+        build = Build.absent(ROOT)
+    config = CONFIGS[args.config or (build.config_name() if build.dir else "perf")]
+    if os.environ.get("SLT_TEST_DIR_SHARED"):
+        os.umask(0)
     index, count = (int(x) for x in args.shard.split("/"))
     out = args.out or ROOT / "out" / "test"
     out = out if out.is_absolute() else ROOT / out
@@ -224,9 +253,10 @@ def main(argv):
     base_env = dict(os.environ)
     base_env["RESOURCES"] = str(ROOT / "resources")
     base_env["WORKSPACE"] = str(ROOT)
-    base_env["BUILD_DIR"] = os.path.relpath(build.dir, ROOT)
-    base_env["SERENED"] = str(build.bin("serened"))
-    base_env["SDB_DRV_SERENED_BIN"] = str(build.bin("serened"))
+    if build.dir:
+        base_env["BUILD_DIR"] = os.path.relpath(build.dir, ROOT)
+        base_env["SERENED"] = str(build.bin("serened"))
+        base_env["SDB_DRV_SERENED_BIN"] = str(build.bin("serened"))
     base_env.setdefault("SDB_DOCKER_OWNER", f"test-py-{os.getpid()}")
     os.environ["SDB_DOCKER_OWNER"] = base_env["SDB_DOCKER_OWNER"]
     if args.attribute and not build.coverage:
@@ -235,7 +265,6 @@ def main(argv):
                   timing=Timing.load(args.timing), jobs=jobs,
                   mem_gb=args.mem or memory_gb() * 0.75, verbose=args.verbose or args.keep,
                   base_env=base_env, attribute=args.attribute, budget_end=budget_end)
-    suites = args.suite or list(SUITES)
     skips = load_skips(ROOT, config.name)
     units = build_units(ctx, args, suites, skips)
     if args.expect_fail and not args.changed:
@@ -270,12 +299,14 @@ def main(argv):
           f"output in {out}", flush=True)
     try:
         sched.run_pass(sched.units)
-        if not args.expect_fail:
+        if not args.expect_fail and not args.override:
             sched.relabel(args.relabel)
             if args.repeat and changed:
                 sched.repeat(changed, args.repeat, args.repeat_budget)
     finally:
         sched.stop_fixtures()
+    if args.override and "sqllogic" in suites:
+        sqllogic.generated_tests(ctx, "record")
     if args.expect_fail:
         sched.invert(changed_tests)
     results = sched.results

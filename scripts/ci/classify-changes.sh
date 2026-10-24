@@ -45,9 +45,8 @@ declare -A SUITE_OF_DIR=(
 	[openssl-cmake]="httpfs azure iceberg postgres_scanner"
 )
 
-iresearch=false other_tp=false re2=false corpus=false
+iresearch=false other_tp=false re2=false corpus=false pg=false
 declare -A suite_hit=()
-declare -a pg_files=()
 
 while IFS= read -r f; do
 	[[ -z "$f" ]] && continue
@@ -67,7 +66,7 @@ while IFS= read -r f; do
 		continue
 		;;
 	tests/sqllogic/pg/* | tests/sqllogic/any/pg/*)
-		pg_files+=("${f#tests/sqllogic/}")
+		pg=true
 		continue
 		;;
 	tests/duckdb/interop/*)
@@ -121,19 +120,10 @@ if [[ "$other_tp" == true ]]; then
 	iresearch=true
 fi
 
-# Ordered so the list reads the same way run.sh --list prints it.
 duckdb_suites=""
 for s in $ALL_SUITES; do
 	[[ -n "${suite_hit[$s]:-}" ]] && duckdb_suites="${duckdb_suites:+$duckdb_suites,}$s"
 done
-
-# No separate "any pg tests changed" flag: the list itself is the signal, so the
-# gate downstream is `pg_tests != ''`. It is only emitted when non-empty, since a
-# heredoc output of one blank line would otherwise read as set.
-pg_list=""
-if ((${#pg_files[@]} > 0)); then
-	pg_list=$(printf '%s\n' "${pg_files[@]}")
-fi
 
 emit() {
 	echo "$1=$2"
@@ -141,21 +131,8 @@ emit() {
 		echo "$1=$2" >>"$GITHUB_OUTPUT"
 	fi
 }
-emit_multiline() {
-	local key="$1" val="$2"
-	echo "$key (multiline):"
-	printf '%s\n' "$val" | sed 's/^/  /'
-	if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-		{
-			echo "${key}<<__SDB_EOF__"
-			printf '%s\n' "$val"
-			echo "__SDB_EOF__"
-		} >>"$GITHUB_OUTPUT"
-	fi
-}
 emit iresearch "$iresearch"
 emit duckdb_suites "$duckdb_suites"
 emit re2 "$re2"
 emit corpus "$corpus"
-[[ -n "$pg_list" ]] && emit_multiline pg_tests "$pg_list"
-exit 0
+emit pg "$pg"

@@ -202,8 +202,13 @@ TEST(GeoTokenizerTests, u32_coding_keeps_the_poles) {
     for (const double lat : {-90.0, 90.0}) {
       auto ll = S2LatLng::FromDegrees(lat, lng);
       irs::geo::ToLatLngU32(ll);
-      EXPECT_NEAR(lat, ll.lat().degrees(), 1e-6);
+      EXPECT_NEAR(lat, ll.lat().degrees(), 1e-9);
     }
+  }
+  for (const double lng : {-180.0, 180.0}) {
+    auto ll = S2LatLng::FromDegrees(0.0, lng);
+    irs::geo::ToLatLngU32(ll);
+    EXPECT_NEAR(lng, ll.lng().degrees(), 1e-9);
   }
 }
 

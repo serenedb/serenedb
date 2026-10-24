@@ -27,8 +27,6 @@
 #include <s2/s2polygon.h>
 #include <s2/s2polyline.h>
 
-#include <algorithm>
-
 #include "iresearch/utils/application_exit.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/geo/geo_json.hpp"
@@ -44,12 +42,12 @@ namespace {
 
 static_assert(std::endian::native == std::endian::little);
 
-constexpr auto kMaxVal = static_cast<double>(uint64_t{1} << 32);
-constexpr auto kMaxVal2 = static_cast<double>(uint64_t{1} << 31);
+constexpr auto kMaxVal =
+  static_cast<double>(std::numeric_limits<uint32_t>::max());
 constexpr auto kMaxValPi = kMaxVal / M_PI;
-constexpr auto kMaxVal2Pi = kMaxVal2 / M_PI;
+constexpr auto kMaxVal2Pi = kMaxVal / (2 * M_PI);
 constexpr auto kPiMaxVal = M_PI / kMaxVal;
-constexpr auto k2PiMaxVal = M_PI / kMaxVal2;
+constexpr auto k2PiMaxVal = 2 * M_PI / kMaxVal;
 
 template<bool WriteBack>
 void ConvertLatLngToU32(
@@ -59,11 +57,11 @@ void ConvertLatLngToU32(
 
   const auto lat_val = (ll.lat().radians() + M_PI_2) * kMaxValPi;
   SDB_ASSERT(lat_val <= kMaxVal, lat_val);
-  out_lat = static_cast<uint32_t>(std::min(lat_val + 0.5, kMaxVal - 1));
+  out_lat = static_cast<uint32_t>(lat_val + 0.5);
 
   const auto lng_val = (ll.lng().radians() + M_PI) * kMaxVal2Pi;
   SDB_ASSERT(lng_val <= kMaxVal, lng_val);
-  out_lng = static_cast<uint32_t>(std::min(lng_val + 0.5, kMaxVal - 1));
+  out_lng = static_cast<uint32_t>(lng_val + 0.5);
 
   if constexpr (WriteBack) {
     const auto lat_restored = static_cast<double>(out_lat) * kPiMaxVal - M_PI_2;

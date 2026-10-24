@@ -1,12 +1,12 @@
-name: serenedb | daily
+name: serenedb | nightly
 
-run-name: "serenedb | daily [${{ inputs.PUBLISH && 'publish' || 'no publish' }}]"
+run-name: "serenedb | nightly [${{ inputs.PUBLISH && 'publish' || 'no publish' }}]"
 
 on:
   workflow_dispatch:
     inputs:
       PUBLISH:
-        description: 'When everything is green: replace the draft release and push the images (version and daily tags)'
+        description: 'When everything is green: replace the draft release and push the images (version and nightly tags)'
         type: boolean
         default: false
 
@@ -17,7 +17,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: daily
+  group: nightly
   cancel-in-progress: false
 
 env:
@@ -91,7 +91,7 @@ jobs:
       RTA: required
       PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUBLISH }}
       CREATE_GITHUB_RELEASE: ${{ inputs.PUBLISH }}
-      DOCKER_EXTRA_TAGS: ${{ inputs.PUBLISH && 'daily' || '' }}
+      DOCKER_EXTRA_TAGS: ${{ inputs.PUBLISH && 'nightly' || '' }}
     secrets: inherit
 
   selection:
@@ -170,7 +170,7 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           JOB_STATUS: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
           ACTOR: ${{ github.event_name == 'schedule' && 'scheduled' || github.actor }}
-          RUN_NAME: "serenedb | daily"
+          RUN_NAME: "serenedb | nightly"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/send_notification.bash

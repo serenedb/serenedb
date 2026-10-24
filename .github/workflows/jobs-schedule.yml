@@ -108,7 +108,7 @@ jobs:
         env:
           SHARDS: ${{ needs.dev.outputs.shards }}
         run: |
-          ./scripts/ci/selection_map.sh "${{ github.run_id }}-${{ github.run_attempt }}" "${{ needs.dev.outputs.digest }}" \
+          ./scripts/ci/selection_map.sh "${{ github.run_id }}-${{ github.run_attempt }}" \
             "$(python3 -c 'import json, os; print(len(json.loads(os.environ["SHARDS"])))')"
 
   timing:

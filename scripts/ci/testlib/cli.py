@@ -71,6 +71,9 @@ def parse_args(argv):
     ap.add_argument("--selection-report", type=Path, default=None,
                     help="write which units the store's selection map picks for the --changed "
                          "diff (report only: the run still runs every unit)")
+    ap.add_argument("--selection-spans", type=Path, default=None,
+                    help="the changed files' function spans, from a coverage report "
+                         "(scripts/coverage/diff.py writes spans.json)")
     ap.add_argument("--list", action="store_true", help="print the units and exit")
     ap.add_argument("--keep", action="store_true", help="keep the directories of passed units")
     ap.add_argument("--verbose", action="store_true", help="log every unit")
@@ -183,7 +186,8 @@ def write_selection(args, units, changed, out):
         result = {"mode": "no map"}
     else:
         result = selection.report(units, args.changed, changed_files(args.changed), changed,
-                                  local, work, pr=os.environ.get("SDB_PR", ""))
+                                  local, json.loads(args.selection_spans.read_text()), work,
+                                  pr=os.environ.get("SDB_PR", ""))
     args.selection_report.write_text(json.dumps(result, indent=1))
 
 
@@ -237,8 +241,8 @@ def main(argv):
     if args.only_changed:
         units = changed
     if args.selection_report:
-        if not args.changed:
-            raise SystemExit("--selection-report needs --changed")
+        if not args.changed or not args.selection_spans:
+            raise SystemExit("--selection-report needs --changed and --selection-spans")
         write_selection(args, units, changed, out)
     plan = hashlib.sha256("".join(sorted(f"{u.id}\t{u.cost!r}\n" for u in units)).encode()).hexdigest()
     units = shard(units, index - 1, count)

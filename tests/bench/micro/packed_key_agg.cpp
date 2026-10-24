@@ -99,6 +99,47 @@ void DuckDBTable(benchmark::State& state, const Dataset& data) {
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * kRows));
 }
 
+void DuckDBSplitTable(benchmark::State& state, const Dataset& data,
+                      size_t split_bits) {
+  duckdb::Connection con(Db());
+  auto& context = *con.context;
+  auto& allocator = duckdb::Allocator::DefaultAllocator();
+  duckdb::DataChunk groups;
+  groups.Initialize(allocator, {duckdb::LogicalType::BIGINT});
+  duckdb::DataChunk payload;
+  const duckdb::unsafe_vector<duckdb::idx_t> filter;
+  const size_t splits = size_t{1} << split_bits;
+  std::vector<std::vector<int64_t>> slices(splits);
+  size_t total = 0;
+  for (auto _ : state) {
+    for (auto& slice : slices) {
+      slice.clear();
+    }
+    for (const int64_t key : data.keys) {
+      slices[(duckdb::Hash(key) >> 40) & (splits - 1)].push_back(key);
+    }
+    total = 0;
+    for (const auto& slice : slices) {
+      duckdb::GroupedAggregateHashTable ht(context, allocator,
+                                           {duckdb::LogicalType::BIGINT});
+      for (size_t row = 0; row < slice.size(); row += STANDARD_VECTOR_SIZE) {
+        const size_t count =
+          std::min<size_t>(STANDARD_VECTOR_SIZE, slice.size() - row);
+        groups.Reset();
+        std::memcpy(
+          duckdb::FlatVector::GetDataMutable<int64_t>(groups.data[0]),
+          slice.data() + row, count * sizeof(int64_t));
+        groups.SetChildCardinality(count);
+        ht.AddChunk(groups, payload, filter);
+      }
+      total += ht.Count();
+    }
+    benchmark::DoNotOptimize(total);
+  }
+  state.counters["groups"] = static_cast<double>(total);
+  state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * kRows));
+}
+
 class PackedTable {
  public:
   PackedTable() { Resize(1024); }
@@ -272,6 +313,14 @@ int Main(int argc, char** argv) {
       data.name + "/duckdb",
       [&data](benchmark::State& state) { DuckDBTable(state, data); })
       ->Unit(benchmark::kMillisecond);
+    for (size_t split_bits : {1, 2, 3, 4, 5}) {
+      benchmark::RegisterBenchmark(
+        data.name + "/duckdb_split" + std::to_string(size_t{1} << split_bits),
+        [&data, split_bits](benchmark::State& state) {
+          DuckDBSplitTable(state, data, split_bits);
+        })
+        ->Unit(benchmark::kMillisecond);
+    }
     benchmark::RegisterBenchmark(
       data.name + "/packed_rows",
       [&data](benchmark::State& state) { PackedRows(state, data); })

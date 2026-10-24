@@ -5224,4 +5224,69 @@ TEST_F(DirectoryHookTest, failed_object_removal_is_retried) {
   EXPECT_FALSE(store->Has("abc"));
 }
 
+std::vector<std::string> VisitedNames(const irs::Directory& files) {
+  std::vector<std::string> names;
+  files.Visit([&](std::string_view name) { names.emplace_back(name); });
+  absl::c_sort(names);
+  return names;
+}
+
+TEST_F(DirectoryHookTest, object_store_listing_serves_every_visit) {
+  auto store = ::tests::ObjectStoreDirectory(this);
+  ASSERT_NE(nullptr, store);
+  auto& objects = ::tests::ObjectStore();
+  objects.Publish(store->Path("left"), "left behind");
+  objects.ResetRequests();
+
+  EXPECT_EQ((std::vector<std::string>{"left"}), VisitedNames(*store));
+  store->Create("written")->Close();
+  EXPECT_EQ((std::vector<std::string>{"left", "written"}),
+            VisitedNames(*store));
+  ASSERT_TRUE(store->Remove("left"));
+  store->Rename("written", "renamed");
+  EXPECT_EQ((std::vector<std::string>{"renamed"}), VisitedNames(*store));
+  EXPECT_EQ(1, objects.Requests().list);
+}
+
+TEST_F(DirectoryHookTest, object_store_lists_again_after_a_failed_change) {
+  if (!irs::AddFailurePointDebugging("object_store_delete_fails")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  irs::ClearFailurePointsDebugging();
+  auto store = ::tests::ObjectStoreDirectory(this);
+  ASSERT_NE(nullptr, store);
+  auto& objects = ::tests::ObjectStore();
+  store->Create("abc")->Close();
+  const auto listings = [&] {
+    objects.ResetRequests();
+    VisitedNames(*store);
+    return objects.Requests().list;
+  };
+  const auto fail = [](std::string_view point, auto&& change) {
+    ASSERT_TRUE(irs::AddFailurePointDebugging(point));
+    absl::Cleanup clear = [] { irs::ClearFailurePointsDebugging(); };
+    EXPECT_THROW(change(), duckdb::IOException);
+  };
+  EXPECT_EQ(1, listings());
+  EXPECT_EQ(0, listings());
+
+  fail("object_store_delete_fails", [&] { store->Remove("abc"); });
+  EXPECT_EQ(1, listings());
+  EXPECT_EQ(0, listings());
+
+  fail("object_store_delete_fails", [&] { store->Rename("abc", "def"); });
+  EXPECT_EQ((std::vector<std::string>{"abc", "def"}), VisitedNames(*store));
+  EXPECT_EQ(0, listings());
+
+  fail("object_store_put_fails", [&] { store->Create("ghi")->Close(); });
+  EXPECT_EQ(1, listings());
+
+  store->Refs().add("abc");
+  store->Refs().add("def");
+  fail("object_store_delete_fails", [&] { store->RemoveUnreferenced(); });
+  EXPECT_EQ(1, listings());
+  EXPECT_EQ(2, store->RemoveUnreferenced());
+  EXPECT_TRUE(VisitedNames(*store).empty());
+}
+
 }  // namespace

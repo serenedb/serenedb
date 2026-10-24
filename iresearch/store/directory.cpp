@@ -148,12 +148,36 @@ void FileInfos::Rename(std::string_view src, std::string_view dst) {
   const auto it = _infos.find(src);
   if (it == _infos.end()) {
     _infos.erase(dst);
+    _complete = false;
     return;
   }
   auto info = std::move(it->second);
   _infos.erase(it);
   info.etag.clear();
   _infos.insert_or_assign(dst, std::move(info));
+}
+
+void FileInfos::MarkComplete() {
+  absl::MutexLock lock{&_mutex};
+  _complete = true;
+}
+
+void FileInfos::MarkIncomplete() {
+  absl::MutexLock lock{&_mutex};
+  _complete = false;
+}
+
+std::optional<std::vector<std::string>> FileInfos::Names() const {
+  absl::ReaderMutexLock lock{&_mutex};
+  if (!_complete) {
+    return std::nullopt;
+  }
+  std::vector<std::string> names;
+  names.reserve(_infos.size());
+  for (const auto& [name, info] : _infos) {
+    names.push_back(name);
+  }
+  return names;
 }
 
 TrackedFiles FileTracker::Flush() {
@@ -380,17 +404,16 @@ bool Directory::Has(std::string_view name) const {
 
 bool Directory::RemoveFile(std::string_view name) const {
   const auto path = Path(name);
-  const bool remote = Kind() == StorageKind::Remote;
-  if (remote) {
+  absl::Cleanup unknown = [&] { _state->infos.MarkIncomplete(); };
+  const bool removed = _state->fs.TryRemoveFile(path);
+  std::move(unknown).Cancel();
+  if (Kind() == StorageKind::Remote) {
     _state->infos.Forget(name);
+    if (removed) {
+      Cache().ForgetFile(path);
+    }
   }
-  if (!_state->fs.TryRemoveFile(path)) {
-    return false;
-  }
-  if (remote) {
-    Cache().ForgetFile(path);
-  }
-  return true;
+  return removed;
 }
 
 bool Directory::Remove(std::string_view name) const {
@@ -407,7 +430,9 @@ bool Directory::Remove(std::string_view name) const {
 void Directory::Rename(std::string_view src, std::string_view dst) const {
   const auto target = Path(dst);
   const auto source = Path(src);
+  absl::Cleanup unknown = [&] { _state->infos.MarkIncomplete(); };
   _state->fs.MoveFile(source, target);
+  std::move(unknown).Cancel();
   if (Kind() == StorageKind::Remote) {
     auto& cache = Cache();
     cache.ForgetFile(source);
@@ -491,7 +516,9 @@ size_t Directory::RemoveFiles(std::span<const std::string> names) const {
   for (const auto& name : names) {
     paths.push_back(Path(name));
   }
+  absl::Cleanup unknown = [&] { _state->infos.MarkIncomplete(); };
   _state->fs.RemoveFiles(paths);
+  std::move(unknown).Cancel();
   auto& cache = Cache();
   size_t known = 0;
   for (size_t i = 0; i != names.size(); ++i) {
@@ -541,23 +568,37 @@ void Directory::Visit(absl::FunctionRef<void(std::string_view)> visitor) const {
                          });
     return;
   }
-  _state->fs.ListFiles(
-    _state->root,
-    [&](duckdb::OpenFileInfo& file) {
-      if (duckdb::FileSystem::IsDirectory(file) ||
-          file.path.find('/') != std::string::npos) {
-        return;
-      }
-      duckdb::idx_t size = 0;
-      if (file.extended_info &&
-          file.extended_info->TryGetOption("file_size", size)) {
-        std::string etag;
-        file.extended_info->TryGetOption("etag", etag);
-        _state->infos.Listed(file.path, size, std::move(etag));
-      }
-      visitor(file.path);
-    },
-    nullptr);
+  auto& infos = _state->infos;
+  auto names = infos.Names();
+  if (!names) {
+    names.emplace();
+    bool sized = true;
+    _state->fs.ListFiles(
+      _state->root,
+      [&](duckdb::OpenFileInfo& file) {
+        if (duckdb::FileSystem::IsDirectory(file) ||
+            file.path.find('/') != std::string::npos) {
+          return;
+        }
+        duckdb::idx_t size = 0;
+        if (file.extended_info &&
+            file.extended_info->TryGetOption("file_size", size)) {
+          std::string etag;
+          file.extended_info->TryGetOption("etag", etag);
+          infos.Listed(file.path, size, std::move(etag));
+        } else {
+          sized = false;
+        }
+        names->push_back(std::move(file.path));
+      },
+      nullptr);
+    if (sized) {
+      infos.MarkComplete();
+    }
+  }
+  for (const auto& name : *names) {
+    visitor(name);
+  }
 }
 
 }  // namespace irs

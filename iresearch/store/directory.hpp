@@ -70,9 +70,14 @@ class FileInfos {
   bool Forget(std::string_view name);
   void Rename(std::string_view src, std::string_view dst);
 
+  void MarkComplete();
+  void MarkIncomplete();
+  std::optional<std::vector<std::string>> Names() const;
+
  private:
   mutable absl::Mutex _mutex;
   absl::flat_hash_map<std::string, FileInfo> _infos ABSL_GUARDED_BY(_mutex);
+  bool _complete ABSL_GUARDED_BY(_mutex) = false;
 };
 
 struct TrackedFiles {

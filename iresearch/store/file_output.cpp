@@ -118,6 +118,11 @@ void FileOutput::Release() noexcept {
 void FileOutput::CloseImpl() {
   const auto size = Position();
   absl::Cleanup release = [&] noexcept { Release(); };
+  absl::Cleanup unknown = [&] {
+    if (_infos) {
+      _infos->MarkIncomplete();
+    }
+  };
   Flush();
   _handle->Close();
   if (_cached) {
@@ -131,6 +136,7 @@ void FileOutput::CloseImpl() {
                         : std::make_shared<const bstring>(std::move(_tail)),
               .etag = _handle->file_system.GetVersionTag(*_handle)});
   }
+  std::move(unknown).Cancel();
   if (_tracker) {
     _tracker->AddBytes(size);
   }

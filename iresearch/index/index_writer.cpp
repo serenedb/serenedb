@@ -310,11 +310,11 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
   return true;
 }
 
-std::vector<DocMap> AbsorbedBy(const DirectoryReaderImpl& reader,
-                               CompactionView candidates,
-                               const MergeWriter& merger, uint32_t target) {
+DocMapList AbsorbedBy(const DirectoryReaderImpl& reader,
+                      CompactionView candidates, const MergeWriter& merger,
+                      uint32_t target) {
   const auto& segments = reader.Meta().index_meta.segments;
-  std::vector<DocMap> absorbed;
+  DocMapList absorbed;
   for (size_t i = 0; i < candidates.size(); ++i) {
     const auto& name = candidates[i]->Meta().name;
     const auto segment = absl::c_find_if(
@@ -324,12 +324,12 @@ std::vector<DocMap> AbsorbedBy(const DirectoryReaderImpl& reader,
     const auto removed = RemovalCount(meta);
     if (const auto number = SegmentNumber(name);
         number != DocRemoval::kNoSegment) {
-      absorbed.push_back(
-        {.source = number,
-         .target = target,
-         .steps = {{.mask = removed != 0 ? meta.docs_mask : nullptr,
-                    .rank_end = meta.docs_count - removed,
-                    .base = merger[i].remap.base_id}}});
+      absorbed.push_back(std::make_shared<const DocMap>(
+        DocMap{.source = number,
+               .target = target,
+               .mask = removed != 0 ? meta.docs_mask : nullptr,
+               .rank_end = meta.docs_count - removed,
+               .base = merger[i].remap.base_id}));
     }
   }
   return absorbed;
@@ -486,16 +486,15 @@ PublishResult UpdateExisting(const DirectoryReaderImpl& committed_reader,
 
 using SegmentsByNumber = containers::FlatHashMap<uint32_t, const SegmentMeta*>;
 
-bool CarryRemovals(DocumentMaskBuilder& docs_mask,
-                   std::span<const AbsorbedSegment> replaced,
+bool CarryRemovals(DocumentMaskBuilder& docs_mask, const DocMapList& replaced,
                    const SegmentsByNumber& committed) {
   bool modified = false;
-  for (const auto& [number, step] : replaced) {
-    const auto source = committed.find(number);
+  for (const auto& map : replaced) {
+    const auto source = committed.find(map->source);
     if (source == committed.end()) {
-      if (step.rank_begin != step.rank_end) {
-        docs_mask.AddRange(step.base,
-                           step.base + (step.rank_end - step.rank_begin));
+      if (map->rank_begin != map->rank_end) {
+        docs_mask.AddRange(map->base,
+                           map->base + (map->rank_end - map->rank_begin));
         modified = true;
       }
       continue;
@@ -505,7 +504,7 @@ bool CarryRemovals(DocumentMaskBuilder& docs_mask,
       continue;
     }
     auto docs = current->Docs();
-    AbsorbedDocs({&step, 1}, docs);
+    MapDocs(*map, docs);
     for (const auto doc : docs) {
       modified |= docs_mask.Add(doc);
     }
@@ -1277,9 +1276,9 @@ void IndexWriter::InitMeta(IndexMeta& meta) const {
   meta.gen = _last_gen;                   // Clone index metadata generation
 }
 
-void IndexWriter::AbsorbDocMaps(std::span<const DocMap> direct) {
+void IndexWriter::AbsorbDocMaps(DocMapList maps) {
   absl::MutexLock lock{&_doc_maps_mutex};
-  _doc_maps.Absorb(direct);
+  _doc_maps.Absorb(std::move(maps));
 }
 
 DocMapList IndexWriter::CopyDocMaps(std::span<const uint32_t> segments) const {
@@ -1579,8 +1578,8 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     // Nothing to compact or compaction failure
     co_return result;
   }
-  const auto absorbed = AbsorbedBy(*committed_reader, candidates, merger,
-                                   SegmentNumber(compaction_segment.meta.name));
+  auto absorbed = AbsorbedBy(*committed_reader, candidates, merger,
+                             SegmentNumber(compaction_segment.meta.name));
 
   auto opts = committed_reader->Options();
   auto pending_reader =
@@ -1620,7 +1619,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     auto refs = dir.GetRefs();
     // Prevent concurrent modification of incoming segments
     std::lock_guard ctx_lock{ctx->pending_mutex};
-    AbsorbDocMaps(absorbed);
+    AbsorbDocMaps(std::move(absorbed));
     // register compaction for the next transaction
     ctx->incoming.emplace_back(
       std::move(compaction_segment), writer_limits::kMaxTick,
@@ -1682,7 +1681,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   auto refs = dir.GetRefs();
   auto ctx = GetFlushContext();
   std::lock_guard ctx_lock{ctx->pending_mutex};
-  AbsorbDocMaps(absorbed);
+  AbsorbDocMaps(std::move(absorbed));
   auto& segment_mask = ctx->segment_mask;
   segment_mask.reserve(segment_mask.size() + mappings.size() +
                        candidates.size());
@@ -1796,11 +1795,11 @@ void IndexWriter::ReplaceSegments(std::span<const std::string_view> replaced,
     IndexSegment segment;
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
-    std::vector<AbsorbedSegment> replaced;
+    DocMapList replaced;
   };
   std::vector<Adopted> adopted;
   adopted.reserve(replacements.size());
-  std::vector<DocMap> absorbed;
+  DocMapList absorbed;
   for (auto& replacement : replacements) {
     Adopted entry;
     entry.segment.filename = replacement.meta_file;
@@ -1808,12 +1807,13 @@ void IndexWriter::ReplaceSegments(std::span<const std::string_view> replaced,
     if (entry.segment.meta.live_docs_count == 0) {
       continue;  // nothing to adopt; the sources are still replaced
     }
-    entry.replaced = std::move(replacement.absorbed);
-    for (const auto& [number, step] : entry.replaced) {
-      absorbed.push_back({.source = number,
-                          .target = SegmentNumber(entry.segment.meta.name),
-                          .steps = {step}});
+    const auto target = SegmentNumber(entry.segment.meta.name);
+    for (auto& map : replacement.absorbed) {
+      map.target = target;
+      entry.replaced.push_back(std::make_shared<const DocMap>(std::move(map)));
     }
+    absorbed.insert(absorbed.end(), entry.replaced.begin(),
+                    entry.replaced.end());
     auto meta_ref = directory_utils::Reference(_dir, entry.segment.filename);
     if (!meta_ref) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
@@ -1861,7 +1861,7 @@ void IndexWriter::ReplaceSegments(std::span<const std::string_view> replaced,
 
   auto flush = GetFlushContext();
   std::lock_guard lock{flush->pending_mutex};
-  AbsorbDocMaps(absorbed);
+  AbsorbDocMaps(std::move(absorbed));
 
   // Pre-allocation so tail is allocation-free
   auto& segment_mask = flush->segment_mask;
@@ -2053,7 +2053,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         _doc_maps.Committed(SegmentNumber(candidate->Meta().name), seq);
       }
       for (const auto& replaced : incoming.replaced) {
-        _doc_maps.Committed(replaced.number, seq);
+        _doc_maps.Committed(replaced->source, seq);
       }
     }
     if (!queued.empty()) {

@@ -303,17 +303,17 @@ class SearchRowRemovalTest : public ::testing::Test {
   void ReplaceAll(const irs::DirectoryReader& snapshot,
                   const std::vector<std::string>& metas) {
     std::vector<std::string_view> replaced;
-    std::vector<irs::AbsorbedSegment> absorbed;
+    std::vector<irs::DocMap> absorbed;
     irs::doc_id_t base = irs::doc_limits::min();
     for (const auto& segment : snapshot.Meta().index_meta.segments) {
       const auto live =
         static_cast<irs::doc_id_t>(segment.meta.live_docs_count);
       replaced.emplace_back(segment.meta.name);
-      absorbed.push_back({.number = irs::SegmentNumber(segment.meta.name),
-                          .step = {.mask = segment.meta.docs_mask,
-                                   .rank_begin = 0,
-                                   .rank_end = live,
-                                   .base = base}});
+      absorbed.push_back({.source = irs::SegmentNumber(segment.meta.name),
+                          .mask = segment.meta.docs_mask,
+                          .rank_begin = 0,
+                          .rank_end = live,
+                          .base = base});
       base += live;
     }
     ASSERT_EQ(1, metas.size());
@@ -500,8 +500,8 @@ TEST(WalDeleteEntryTest, RoundTripsThePositions) {
 
 TEST(WalRowPositionMapsTest, RoundTripsTheMaps) {
   const duckdb::WALRowPositionMaps entry{
-    irs::WriteDocMaps({std::make_shared<const irs::DocMap>(irs::DocMap{
-      .source = 3, .target = 9, .steps = {{.rank_end = 5, .base = 2}}})})};
+    irs::WriteDocMaps({std::make_shared<const irs::DocMap>(
+      irs::DocMap{.source = 3, .target = 9, .rank_end = 5, .base = 2})})};
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer::Serialize(entry, stream);
   stream.Rewind();

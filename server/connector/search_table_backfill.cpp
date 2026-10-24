@@ -184,15 +184,14 @@ void AppendReplacements(const irs::DirectoryReader& reader, const Slice& slice,
       if (begin >= end) {
         continue;
       }
-      out[first + i].absorbed.push_back(
-        {.number = irs::SegmentNumber(meta.name),
-         .step = {
-           .mask = live != meta.docs_count ? meta.docs_mask : nullptr,
-           .rank_begin = static_cast<irs::doc_id_t>(begin - fed),
-           .rank_end = static_cast<irs::doc_id_t>(end - fed),
-           .base =
-             static_cast<irs::doc_id_t>(irs::doc_limits::min() + begin - start),
-         }});
+      out[first + i].absorbed.push_back({
+        .source = irs::SegmentNumber(meta.name),
+        .mask = live != meta.docs_count ? meta.docs_mask : nullptr,
+        .rank_begin = static_cast<irs::doc_id_t>(begin - fed),
+        .rank_end = static_cast<irs::doc_id_t>(end - fed),
+        .base =
+          static_cast<irs::doc_id_t>(irs::doc_limits::min() + begin - start),
+      });
     }
     fed += live;
   }

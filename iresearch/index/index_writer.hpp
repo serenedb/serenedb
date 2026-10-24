@@ -441,7 +441,7 @@ class IndexWriter : private util::Noncopyable {
 
   struct Replacement {
     std::string_view meta_file;
-    std::vector<AbsorbedSegment> absorbed;
+    std::vector<DocMap> absorbed;
   };
 
   void ReplaceSegments(std::span<const std::string_view> replaced,
@@ -537,7 +537,7 @@ class IndexWriter : private util::Noncopyable {
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
     CompactionContext compaction_ctx;
-    std::vector<AbsorbedSegment> replaced;
+    DocMapList replaced;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<IncomingSegment>);
@@ -758,7 +758,7 @@ class IndexWriter : private util::Noncopyable {
 
   uint64_t NextSegmentId() noexcept;
   void InitMeta(IndexMeta& meta) const;
-  void AbsorbDocMaps(std::span<const DocMap> direct);
+  void AbsorbDocMaps(DocMapList maps);
 
   bool Start(const CommitInfo& info);
   void Finish();

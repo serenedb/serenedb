@@ -39,22 +39,13 @@ namespace irs {
 
 struct SubReader;
 
-struct AbsorbedStep {
+struct DocMap {
+  uint32_t source = 0;
+  uint32_t target = 0;
   std::shared_ptr<const DocumentMask> mask;
   doc_id_t rank_begin = 0;
   doc_id_t rank_end = 0;
   doc_id_t base = doc_limits::min();
-};
-
-struct AbsorbedSegment {
-  uint32_t number = 0;
-  AbsorbedStep step;
-};
-
-struct DocMap {
-  uint32_t source = 0;
-  uint32_t target = 0;
-  std::vector<AbsorbedStep> steps;
 };
 
 using DocMapList = std::vector<std::shared_ptr<const DocMap>>;
@@ -95,8 +86,7 @@ class DocRemovalBuilder {
 
 uint32_t SegmentNumber(std::string_view name) noexcept;
 
-void AbsorbedDocs(std::span<const AbsorbedStep> steps,
-                  std::vector<doc_id_t>& docs);
+void MapDocs(const DocMap& map, std::vector<doc_id_t>& docs);
 
 std::string WriteDocMaps(const DocMapList& maps);
 DocMapList ReadDocMaps(std::string_view bytes);
@@ -108,7 +98,7 @@ class DocRemovalResolver;
 
 class DocMaps {
  public:
-  void Absorb(std::span<const DocMap> direct);
+  void Absorb(DocMapList maps);
   void Committed(uint32_t source, uint64_t seq) noexcept;
   void CopyTo(std::span<const uint32_t> sources, DocMapList& out) const;
   std::span<const std::shared_ptr<const DocMap>> Of(
@@ -140,7 +130,7 @@ class DocRemovalResolver {
   }
 
  private:
-  containers::NodeHashMap<const DocRemoval*, DocRemoval> _resolved;
+  containers::NodeHashMap<const DocRemoval*, DocRemoval> _mapped;
   containers::FlatHashSet<uint32_t> _used;
 };
 

@@ -18,12 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/base/internal/endian.h>
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <initializer_list>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/document_mask.hpp>
@@ -63,10 +65,9 @@ std::vector<irs::doc_id_t> DocsOf(const irs::DocumentMask* docs) {
   return docs == nullptr ? std::vector<irs::doc_id_t>{} : docs->Docs();
 }
 
-std::optional<irs::doc_id_t> Absorbed(std::span<const irs::AbsorbedStep> steps,
-                                      irs::doc_id_t doc) {
+std::optional<irs::doc_id_t> Mapped(const irs::DocMap& map, irs::doc_id_t doc) {
   std::vector<irs::doc_id_t> docs{doc};
-  irs::AbsorbedDocs(steps, docs);
+  irs::MapDocs(map, docs);
   if (docs.empty()) {
     return std::nullopt;
   }
@@ -102,19 +103,28 @@ std::shared_ptr<const irs::DocumentMask> MaskOf(
   return std::make_shared<const irs::DocumentMask>(std::move(builder).Finish());
 }
 
-irs::DocMap Direct(uint32_t source, uint32_t target, irs::AbsorbedStep step) {
-  return {.source = source, .target = target, .steps = {std::move(step)}};
+irs::DocMap Direct(uint32_t source, uint32_t target, irs::DocMap window) {
+  window.source = source;
+  window.target = target;
+  return window;
 }
 
-irs::AbsorbedStep Window(irs::doc_id_t rank_begin, irs::doc_id_t rank_end,
-                         irs::doc_id_t base) {
+irs::DocMap Window(irs::doc_id_t rank_begin, irs::doc_id_t rank_end,
+                   irs::doc_id_t base) {
   return {.rank_begin = rank_begin, .rank_end = rank_end, .base = base};
+}
+
+irs::DocMapList Shared(std::initializer_list<irs::DocMap> maps) {
+  irs::DocMapList shared;
+  for (const auto& map : maps) {
+    shared.push_back(std::make_shared<const irs::DocMap>(map));
+  }
+  return shared;
 }
 
 irs::DocMaps MapsOf(std::initializer_list<irs::DocMap> direct) {
   irs::DocMaps maps;
-  const std::vector<irs::DocMap> batch{direct};
-  maps.Absorb(batch);
+  maps.Absorb(Shared(direct));
   return maps;
 }
 
@@ -138,14 +148,85 @@ std::vector<irs::doc_id_t> Resolve(const irs::DocRemoval& removal,
   return DocsOf(resolver.PositionalDocs(removal, segment));
 }
 
-std::string Words(std::initializer_list<uint32_t> words) {
-  std::string out;
-  for (const auto word : words) {
-    char buf[sizeof(uint32_t)];
-    absl::little_endian::Store32(buf, word);
-    out.append(buf, sizeof(buf));
+std::string Bytes(const auto& write) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer out{stream};
+  out.Begin();
+  write(out);
+  out.End();
+  return std::string{reinterpret_cast<const char*>(stream.GetData()),
+                     stream.GetPosition()};
+}
+
+void WriteBlob(duckdb::BinarySerializer& out, duckdb::field_id_t field,
+               std::string_view blob) {
+  out.WriteProperty(field, "blob",
+                    reinterpret_cast<duckdb::const_data_ptr_t>(blob.data()),
+                    blob.size());
+}
+
+std::string FrozenOf(const irs::DocumentMask& mask) {
+  std::string frozen(mask.FrozenSize(), '\0');
+  mask.WriteFrozen(frozen.data());
+  return frozen;
+}
+
+struct RawGroup {
+  uint32_t segment;
+  std::string docs;
+};
+
+std::string RemovalBytes(std::initializer_list<RawGroup> groups) {
+  return Bytes([&](duckdb::BinarySerializer& out) {
+    out.WriteList(0, "groups", groups.size(),
+                  [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                    const auto& group = groups.begin()[i];
+                    list.WriteObject([&](duckdb::BinarySerializer& obj) {
+                      obj.WriteProperty<uint32_t>(0, "segment", group.segment);
+                      WriteBlob(obj, 1, group.docs);
+                    });
+                  });
+  });
+}
+
+struct RawMap {
+  uint32_t source = 3;
+  uint32_t target = 9;
+  uint32_t rank_begin = 0;
+  uint32_t rank_end = 10;
+  uint32_t base = 1;
+  std::optional<std::string> mask;
+};
+
+std::string MapBytes(const RawMap& map) {
+  return Bytes([&](duckdb::BinarySerializer& out) {
+    out.WriteList(
+      0, "maps", 1, [&](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
+        list.WriteObject([&](duckdb::BinarySerializer& obj) {
+          obj.WriteProperty<uint32_t>(0, "source", map.source);
+          obj.WriteProperty<uint32_t>(1, "target", map.target);
+          obj.WriteProperty<uint32_t>(2, "rank_begin", map.rank_begin);
+          obj.WriteProperty<uint32_t>(3, "rank_end", map.rank_end);
+          obj.WriteProperty<uint32_t>(4, "base", map.base);
+          if (map.mask) {
+            WriteBlob(obj, 5, *map.mask);
+          }
+        });
+      });
+  });
+}
+
+void ExpectMalformed(const auto& read, std::string_view bytes,
+                     std::string_view what, std::string_view why) {
+  try {
+    read(bytes);
+    ADD_FAILURE() << why;
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(ERRCODE_DATA_CORRUPTED, e.error().errcode) << e.message();
+    EXPECT_TRUE(
+      e.message().starts_with(absl::StrCat("Malformed ", what, ": ", why)))
+      << e.message();
   }
-  return out;
 }
 
 }  // namespace
@@ -381,103 +462,80 @@ TEST(DocRemovalTest, FindAmongManySegments) {
   }
 }
 
-TEST(AbsorbedDocTest, NoStepsKeepTheDoc) { EXPECT_EQ(7, Absorbed({}, 7)); }
-
-TEST(AbsorbedDocTest, AStepWithoutAMaskShiftsTheDocToItsBase) {
-  const std::array<irs::AbsorbedStep, 1> steps{
-    {{.rank_begin = 0, .rank_end = 10, .base = 31}}};
-  EXPECT_EQ(31, Absorbed(steps, 1));
-  EXPECT_EQ(35, Absorbed(steps, 5));
-  EXPECT_EQ(40, Absorbed(steps, 10));
-  EXPECT_EQ(std::nullopt, Absorbed(steps, 11));
-  EXPECT_EQ(std::nullopt, Absorbed(steps, irs::doc_limits::invalid()));
+TEST(MapDocsTest, AWindowWithoutAMaskShiftsTheDocToItsBase) {
+  const auto map = Window(0, 10, 31);
+  EXPECT_EQ(31, Mapped(map, 1));
+  EXPECT_EQ(35, Mapped(map, 5));
+  EXPECT_EQ(40, Mapped(map, 10));
+  EXPECT_EQ(std::nullopt, Mapped(map, 11));
+  EXPECT_EQ(std::nullopt, Mapped(map, irs::doc_limits::invalid()));
 }
 
-TEST(AbsorbedDocTest, MaskedDocsAreGoneAndTheRestCloseUp) {
-  const std::array<irs::AbsorbedStep, 1> steps{
-    {{.mask = MaskOf({2, 3, 6}), .rank_begin = 0, .rank_end = 5, .base = 1}}};
-  EXPECT_EQ(1, Absorbed(steps, 1));
-  EXPECT_EQ(std::nullopt, Absorbed(steps, 2));
-  EXPECT_EQ(std::nullopt, Absorbed(steps, 3));
-  EXPECT_EQ(2, Absorbed(steps, 4));
-  EXPECT_EQ(3, Absorbed(steps, 5));
-  EXPECT_EQ(std::nullopt, Absorbed(steps, 6));
-  EXPECT_EQ(4, Absorbed(steps, 7));
-  EXPECT_EQ(5, Absorbed(steps, 8));
-  EXPECT_EQ(std::nullopt, Absorbed(steps, 9));
+TEST(MapDocsTest, MaskedDocsAreGoneAndTheRestCloseUp) {
+  const irs::DocMap map{
+    .mask = MaskOf({2, 3, 6}), .rank_begin = 0, .rank_end = 5, .base = 1};
+  EXPECT_EQ(1, Mapped(map, 1));
+  EXPECT_EQ(std::nullopt, Mapped(map, 2));
+  EXPECT_EQ(std::nullopt, Mapped(map, 3));
+  EXPECT_EQ(2, Mapped(map, 4));
+  EXPECT_EQ(3, Mapped(map, 5));
+  EXPECT_EQ(std::nullopt, Mapped(map, 6));
+  EXPECT_EQ(4, Mapped(map, 7));
+  EXPECT_EQ(5, Mapped(map, 8));
+  EXPECT_EQ(std::nullopt, Mapped(map, 9));
 }
 
-TEST(AbsorbedDocTest, AWindowTakesOnlyItsRanks) {
-  const std::array<irs::AbsorbedStep, 1> steps{
-    {{.mask = MaskOf({1}), .rank_begin = 3, .rank_end = 6, .base = 1}}};
-  EXPECT_EQ(std::nullopt, Absorbed(steps, 4));
-  EXPECT_EQ(1, Absorbed(steps, 5));
-  EXPECT_EQ(3, Absorbed(steps, 7));
-  EXPECT_EQ(std::nullopt, Absorbed(steps, 8));
+TEST(MapDocsTest, AWindowTakesOnlyItsRanks) {
+  const irs::DocMap map{
+    .mask = MaskOf({1}), .rank_begin = 3, .rank_end = 6, .base = 1};
+  EXPECT_EQ(std::nullopt, Mapped(map, 4));
+  EXPECT_EQ(1, Mapped(map, 5));
+  EXPECT_EQ(3, Mapped(map, 7));
+  EXPECT_EQ(std::nullopt, Mapped(map, 8));
 }
 
-TEST(AbsorbedDocTest, StepsChainInOrder) {
-  const std::array<irs::AbsorbedStep, 2> steps{
-    {{.mask = MaskOf({1}), .rank_begin = 0, .rank_end = 4, .base = 11},
-     {.mask = MaskOf({12}), .rank_begin = 0, .rank_end = 20, .base = 101}}};
-  EXPECT_EQ(std::nullopt, Absorbed(steps, 1));
-  EXPECT_EQ(std::nullopt, Absorbed(steps, 3));
-  EXPECT_EQ(111, Absorbed(steps, 2));
-  EXPECT_EQ(112, Absorbed(steps, 4));
-  EXPECT_EQ(113, Absorbed(steps, 5));
-  EXPECT_EQ(std::nullopt, Absorbed(steps, 6));
-}
-
-TEST(AbsorbedDocTest, ManyDocsMapLikeOneAtATime) {
+TEST(MapDocsTest, ManyDocsMapLikeOneAtATime) {
   std::mt19937 gen{29};
   const auto one_at_a_time =
-    [](const std::vector<std::vector<irs::doc_id_t>>& masks,
-       std::span<const irs::AbsorbedStep> steps,
+    [](const std::vector<irs::doc_id_t>& masked, const irs::DocMap& map,
        irs::doc_id_t doc) -> std::optional<irs::doc_id_t> {
-    for (size_t i = 0; i < steps.size(); ++i) {
-      const auto& masked = masks[i];
-      const auto below = std::lower_bound(masked.begin(), masked.end(), doc);
-      if (below != masked.end() && *below == doc) {
-        return std::nullopt;
-      }
-      const auto rank = static_cast<irs::doc_id_t>(
-        doc - irs::doc_limits::min() - (below - masked.begin()));
-      if (rank < steps[i].rank_begin || rank >= steps[i].rank_end) {
-        return std::nullopt;
-      }
-      doc = steps[i].base + (rank - steps[i].rank_begin);
+    const auto below = std::lower_bound(masked.begin(), masked.end(), doc);
+    if (below != masked.end() && *below == doc) {
+      return std::nullopt;
     }
-    return doc;
+    const auto rank = static_cast<irs::doc_id_t>(doc - irs::doc_limits::min() -
+                                                 (below - masked.begin()));
+    if (rank < map.rank_begin || rank >= map.rank_end) {
+      return std::nullopt;
+    }
+    return map.base + (rank - map.rank_begin);
   };
   for (int round = 0; round < 30; ++round) {
-    std::vector<std::vector<irs::doc_id_t>> masks(1 + round % 3);
-    std::vector<irs::AbsorbedStep> steps;
-    for (auto& masked : masks) {
-      irs::DocumentMaskBuilder builder;
-      const auto every = 2 + gen() % 40;
-      for (irs::doc_id_t doc = 1; doc < 300000; ++doc) {
-        if (gen() % every == 0) {
-          builder.Add(doc);
-          masked.push_back(doc);
-        }
+    std::vector<irs::doc_id_t> masked;
+    irs::DocumentMaskBuilder builder;
+    const auto every = 2 + gen() % 40;
+    for (irs::doc_id_t doc = 1; doc < 300000; ++doc) {
+      if (gen() % every == 0) {
+        builder.Add(doc);
+        masked.push_back(doc);
       }
-      const irs::doc_id_t begin = gen() % 50000;
-      steps.push_back(
-        {.mask = std::make_shared<const irs::DocumentMask>(
-           std::move(builder).Finish()),
-         .rank_begin = begin,
-         .rank_end = static_cast<irs::doc_id_t>(begin + gen() % 250000),
-         .base = static_cast<irs::doc_id_t>(1 + gen() % 100000)});
     }
+    const irs::doc_id_t begin = gen() % 50000;
+    const irs::DocMap map{
+      .mask =
+        std::make_shared<const irs::DocumentMask>(std::move(builder).Finish()),
+      .rank_begin = begin,
+      .rank_end = static_cast<irs::doc_id_t>(begin + gen() % 250000),
+      .base = static_cast<irs::doc_id_t>(1 + gen() % 100000)};
     std::vector<irs::doc_id_t> docs;
     std::vector<irs::doc_id_t> expected;
     for (irs::doc_id_t doc = 1; doc < 400000; doc += 1 + gen() % 9) {
       docs.push_back(doc);
-      if (const auto mapped = one_at_a_time(masks, steps, doc)) {
+      if (const auto mapped = one_at_a_time(masked, map, doc)) {
         expected.push_back(*mapped);
       }
     }
-    irs::AbsorbedDocs(steps, docs);
+    irs::MapDocs(map, docs);
     ASSERT_EQ(expected, docs) << round;
   }
 }
@@ -604,6 +662,7 @@ TEST(DocRemovalResolverTest, AllNeedsNoResolution) {
 
 TEST(DocRemovalResolverTest, RemovalLeftOutOfPrepareUsesItsOwnGroups) {
   const FakeSegment three{"_3", 10};
+  const FakeSegment nine{"_9", 10};
   const auto maps = MapsOf({Direct(3, 9, Window(0, 10, 1))});
   const std::vector<Row> rows{{3, 2}};
   const auto prepared = Build(rows);
@@ -612,9 +671,54 @@ TEST(DocRemovalResolverTest, RemovalLeftOutOfPrepareUsesItsOwnGroups) {
   const std::array<const irs::DocRemoval*, 1> removals{&prepared};
   const std::array<uint32_t, 1> targets{9};
   resolver.Prepare(removals, targets, maps);
-  EXPECT_EQ(nullptr, resolver.PositionalDocs(prepared, three));
   EXPECT_EQ((std::vector<irs::doc_id_t>{2}),
-            DocsOf(resolver.PositionalDocs(other, three)));
+            DocsOf(resolver.PositionalDocs(prepared, nine)));
+  EXPECT_EQ(nullptr, resolver.PositionalDocs(other, nine));
+  EXPECT_EQ(&other.Docs(0), resolver.PositionalDocs(other, three));
+}
+
+TEST(DocRemovalResolverTest, ARemovalFollowsAChainOfMaps) {
+  const FakeSegment twelve{irs::FileName(12), 30};
+  const auto maps = MapsOf(
+    {Direct(3, 9,
+            {.mask = MaskOf({1}), .rank_begin = 0, .rank_end = 4, .base = 11}),
+     Direct(
+       9, 12,
+       {.mask = MaskOf({12}), .rank_begin = 0, .rank_end = 20, .base = 101})});
+  const std::vector<Row> rows{{3, 1}, {3, 2}, {3, 3}, {3, 4}, {3, 5}, {3, 6}};
+  const auto removal = Build(rows);
+  irs::DocRemovalResolver resolver;
+  const std::array<const irs::DocRemoval*, 1> removals{&removal};
+  const std::array<uint32_t, 1> targets{12};
+  resolver.Prepare(removals, targets, maps);
+  EXPECT_EQ((std::vector<irs::doc_id_t>{111, 112, 113}),
+            DocsOf(resolver.PositionalDocs(removal, twelve)));
+  EXPECT_TRUE(resolver.Used(3));
+  EXPECT_TRUE(resolver.Used(9));
+}
+
+TEST(DocRemovalResolverTest, AChainStopsAtTheFirstLiveTarget) {
+  const FakeSegment nine{"_9", 10};
+  const FakeSegment twelve{irs::FileName(12), 10};
+  const auto maps =
+    MapsOf({Direct(3, 9, Window(0, 10, 1)), Direct(9, 12, Window(0, 10, 1))});
+  const std::vector<Row> rows{{3, 4}};
+  const auto removal = Build(rows);
+  const std::array<uint32_t, 2> targets{9, 12};
+  EXPECT_EQ((std::vector<irs::doc_id_t>{4}),
+            Resolve(removal, targets, maps, nine));
+  EXPECT_TRUE(Resolve(removal, targets, maps, twelve).empty());
+}
+
+TEST(DocRemovalResolverTest, ACarriedChainResolvesWithoutTheWritersMaps) {
+  const FakeSegment twelve{irs::FileName(12), 20};
+  const std::vector<Row> rows{{3, 2}};
+  auto removal = Build(rows);
+  removal.maps = std::make_shared<const irs::DocMapList>(
+    Shared({Direct(3, 9, Window(0, 10, 5)), Direct(9, 12, Window(0, 20, 1))}));
+  const std::array<uint32_t, 1> targets{12};
+  EXPECT_EQ((std::vector<irs::doc_id_t>{6}),
+            Resolve(removal, targets, {}, twelve));
 }
 
 TEST(DocRemovalResolverTest, SegmentsNamedLikeTheSentinelAreNeverPositional) {
@@ -680,34 +784,50 @@ TEST(DocRemovalResolverTest, CarriedMapsJoinTheWritersMaps) {
             Resolve(removal, targets, maps, nine));
 }
 
-TEST(DocMapsTest, AbsorbingAMergedSegmentComposesTheMapsIntoIt) {
+TEST(DocMapsTest, AbsorbingAMergedSegmentChainsItsMaps) {
   irs::DocMaps maps;
-  const std::vector<irs::DocMap> first{Direct(3, 9, Window(0, 10, 1)),
-                                       Direct(5, 9, Window(0, 10, 11))};
-  maps.Absorb(first);
-  const std::vector<irs::DocMap> second{Direct(9, 12, Window(0, 20, 31))};
-  maps.Absorb(second);
-  EXPECT_EQ((std::vector<std::pair<uint32_t, uint32_t>>{{3, 9}, {3, 12}}),
+  maps.Absorb(
+    Shared({Direct(3, 9, Window(0, 10, 1)), Direct(5, 9, Window(0, 10, 11))}));
+  maps.Absorb(Shared({Direct(9, 12, Window(0, 20, 31))}));
+  EXPECT_EQ((std::vector<std::pair<uint32_t, uint32_t>>{{3, 9}}),
             Edges(maps.Of(3)));
-  EXPECT_EQ((std::vector<std::pair<uint32_t, uint32_t>>{{5, 9}, {5, 12}}),
+  EXPECT_EQ((std::vector<std::pair<uint32_t, uint32_t>>{{5, 9}}),
             Edges(maps.Of(5)));
   EXPECT_EQ((std::vector<std::pair<uint32_t, uint32_t>>{{9, 12}}),
             Edges(maps.Of(9)));
-  for (const auto& map : maps.Of(5)) {
-    if (map->target == 12) {
-      EXPECT_EQ(43, Absorbed(map->steps, 3));
-    }
-  }
+  const FakeSegment twelve{irs::FileName(12), 30};
+  const std::vector<Row> rows{{5, 3}};
+  const std::array<uint32_t, 1> targets{12};
+  EXPECT_EQ((std::vector<irs::doc_id_t>{43}),
+            Resolve(Build(rows), targets, maps, twelve));
 }
 
 TEST(DocMapsTest, AbsorbingASourceAgainReplacesItsMaps) {
   irs::DocMaps maps;
-  const std::vector<irs::DocMap> dropped{Direct(3, 9, Window(0, 10, 1))};
-  maps.Absorb(dropped);
-  const std::vector<irs::DocMap> taken{Direct(3, 11, Window(0, 10, 1))};
-  maps.Absorb(taken);
+  maps.Absorb(Shared({Direct(3, 9, Window(0, 10, 1))}));
+  maps.Absorb(Shared({Direct(3, 11, Window(0, 10, 1))}));
   EXPECT_EQ((std::vector<std::pair<uint32_t, uint32_t>>{{3, 11}}),
             Edges(maps.Of(3)));
+}
+
+TEST(DocMapsTest, AbsorbingTakesTheMapsWithoutCopies) {
+  const auto taken = Shared({Direct(3, 9, Window(0, 10, 1))});
+  irs::DocMaps maps;
+  maps.Absorb(taken);
+  ASSERT_EQ(1, maps.Of(3).size());
+  EXPECT_EQ(taken.front().get(), maps.Of(3).front().get());
+}
+
+TEST(DocMapsTest, CopiesFollowTheChainOfTheNamedSources) {
+  const auto maps =
+    MapsOf({Direct(3, 9, Window(0, 10, 1)), Direct(9, 12, Window(0, 20, 1)),
+            Direct(12, 15, Window(0, 30, 1)), Direct(5, 7, Window(0, 4, 1))});
+  irs::DocMapList copied;
+  const std::array<uint32_t, 2> sources{3, 9};
+  maps.CopyTo(sources, copied);
+  EXPECT_EQ(
+    (std::vector<std::pair<uint32_t, uint32_t>>{{3, 9}, {9, 12}, {12, 15}}),
+    Edges(copied));
 }
 
 TEST(DocMapsTest, ASourceSplitInOneBatchKeepsEveryWindow) {
@@ -783,30 +903,24 @@ TEST(DocMapsTest, AUseRestartsTheRetirement) {
 }
 
 TEST(DocMapsCodecTest, MapsSurviveTheirBytes) {
-  const irs::DocMapList maps{
-    std::make_shared<const irs::DocMap>(irs::DocMap{
-      .source = 3,
-      .target = 12,
-      .steps =
-        {{.mask = MaskOf({2, 7}), .rank_begin = 0, .rank_end = 8, .base = 1},
-         Window(0, 20, 31)}}),
-    std::make_shared<const irs::DocMap>(Direct(5, 9, Window(4, 6, 2)))};
+  const auto maps = Shared(
+    {Direct(
+       3, 12,
+       {.mask = MaskOf({2, 7}), .rank_begin = 0, .rank_end = 8, .base = 1}),
+     Direct(5, 9, Window(4, 6, 2))});
   const auto read = irs::ReadDocMaps(irs::WriteDocMaps(maps));
   ASSERT_EQ(maps.size(), read.size());
   for (size_t i = 0; i < maps.size(); ++i) {
-    EXPECT_EQ(maps[i]->source, read[i]->source);
-    EXPECT_EQ(maps[i]->target, read[i]->target);
-    ASSERT_EQ(maps[i]->steps.size(), read[i]->steps.size());
-    for (size_t j = 0; j < maps[i]->steps.size(); ++j) {
-      const auto& written = maps[i]->steps[j];
-      const auto& back = read[i]->steps[j];
-      EXPECT_EQ(written.rank_begin, back.rank_begin);
-      EXPECT_EQ(written.rank_end, back.rank_end);
-      EXPECT_EQ(written.base, back.base);
-      ASSERT_EQ(written.mask == nullptr, back.mask == nullptr);
-      if (written.mask != nullptr) {
-        EXPECT_EQ(*written.mask, *back.mask);
-      }
+    const auto& written = *maps[i];
+    const auto& back = *read[i];
+    EXPECT_EQ(written.source, back.source);
+    EXPECT_EQ(written.target, back.target);
+    EXPECT_EQ(written.rank_begin, back.rank_begin);
+    EXPECT_EQ(written.rank_end, back.rank_end);
+    EXPECT_EQ(written.base, back.base);
+    ASSERT_EQ(written.mask == nullptr, back.mask == nullptr);
+    if (written.mask != nullptr) {
+      EXPECT_EQ(*written.mask, *back.mask);
     }
   }
 }
@@ -817,19 +931,26 @@ TEST(DocMapsCodecTest, NoMapsAreNoBytes) {
 }
 
 TEST(DocMapsCodecTest, MalformedBytesAreCorruptData) {
-  const auto valid = Words({1, 3, 9, 1, 0, 10, 1, 0});
+  const auto valid = MapBytes({});
   ASSERT_EQ(1, irs::ReadDocMaps(valid).size());
-  for (const auto& bytes :
-       {valid.substr(0, valid.size() - 1), valid + "x",
-        Words({2, 3, 9, 1, 0, 10, 1, 0}), Words({1, 3, 9, 0}),
-        Words({1, 3, 9, 1, 5, 4, 1, 0}), Words({1, 3, 9, 1, 0, 10, 0, 0}),
-        Words({1, 3, 9, 1, 0, 10, irs::doc_limits::eof() - 5, 0}),
-        Words({1, irs::DocRemoval::kNoSegment, 9, 1, 0, 10, 1, 0}),
-        Words({1, 3, irs::DocRemoval::kNoSegment, 1, 0, 10, 1, 0}),
-        Words({1, 3, 9, 1, 0, 10, 1, 100})}) {
-    ASSERT_SQL_ERROR(irs::ReadDocMaps(bytes), ERRCODE_DATA_CORRUPTED);
+  const auto read = [](std::string_view bytes) { irs::ReadDocMaps(bytes); };
+  for (const auto& [bytes, why] :
+       std::initializer_list<std::pair<std::string, std::string_view>>{
+         {"x", "Failed to deserialize"},
+         {valid.substr(0, valid.size() - 1), "Failed to deserialize"},
+         {valid + "x", "it has trailing bytes"},
+         {MapBytes({.source = irs::DocRemoval::kNoSegment}),
+          "a segment number is out of range"},
+         {MapBytes({.target = irs::DocRemoval::kNoSegment}),
+          "a segment number is out of range"},
+         {MapBytes({.rank_begin = 5, .rank_end = 4}),
+          "a window is out of range"},
+         {MapBytes({.base = 0}), "a window is out of range"},
+         {MapBytes({.base = irs::doc_limits::eof() - 5}),
+          "a window is out of range"}}) {
+    ExpectMalformed(read, bytes, "doc map", why);
   }
-  ASSERT_SQL_ERROR(irs::ReadDocMaps(Words({1, 3, 9, 1, 0, 10, 1, 4}) + "abcd"),
+  ASSERT_SQL_ERROR(irs::ReadDocMaps(MapBytes({.mask = "abcd"})),
                    ERRCODE_INDEX_CORRUPTED);
 }
 
@@ -850,35 +971,26 @@ TEST(DocRemovalCodecTest, RemovalsSurviveTheirBytes) {
 }
 
 TEST(DocRemovalCodecTest, MalformedBytesAreCorruptData) {
-  const std::vector<Row> three{{3, 1}, {3, 2}};
-  const std::vector<Row> five{{5, 4}};
-  const auto group3 = irs::WriteDocRemoval(Build(three));
-  const auto group5 = irs::WriteDocRemoval(Build(five));
-  const auto valid = Words({2}) + group3.substr(4) + group5.substr(4);
+  const auto three = FrozenOf(*MaskOf({1, 2}));
+  const auto five = FrozenOf(*MaskOf({4}));
+  const auto valid = RemovalBytes({{3, three}, {5, five}});
   ASSERT_EQ((std::vector<uint32_t>{3, 5}), irs::ReadDocRemoval(valid).segments);
+  const auto read = [](std::string_view bytes) { irs::ReadDocRemoval(bytes); };
   for (const auto& [bytes, why] :
        std::initializer_list<std::pair<std::string, std::string_view>>{
-         {"", "it ends early"},
-         {valid.substr(0, valid.size() - 1), "it ends early"},
-         {Words({3}) + group3.substr(4) + group5.substr(4), "it ends early"},
+         {"", "Failed to deserialize"},
+         {valid.substr(0, valid.size() - 1), "Failed to deserialize"},
          {valid + "x", "it has trailing bytes"},
-         {Words({0}), "it names no segment"},
-         {Words({1, irs::DocRemoval::kNoSegment}) + group3.substr(8),
+         {RemovalBytes({}), "it names no segment"},
+         {RemovalBytes({{irs::DocRemoval::kNoSegment, three}}),
           "a segment number is out of range"},
-         {Words({2}) + group5.substr(4) + group3.substr(4),
+         {RemovalBytes({{5, five}, {3, three}}),
           "its segments are out of order"},
-         {Words({2}) + group3.substr(4) + group3.substr(4),
+         {RemovalBytes({{3, three}, {3, three}}),
           "its segments are out of order"},
-         {Words({1, 3, 0}), "a segment names no rows"}}) {
-    try {
-      irs::ReadDocRemoval(bytes);
-      ADD_FAILURE() << why;
-    } catch (const irs::SqlException& e) {
-      EXPECT_EQ(ERRCODE_DATA_CORRUPTED, e.error().errcode) << e.message();
-      EXPECT_EQ(std::string{"Malformed doc removal: "}.append(why),
-                e.message());
-    }
+         {RemovalBytes({{3, ""}}), "a segment names no rows"}}) {
+    ExpectMalformed(read, bytes, "doc removal", why);
   }
-  ASSERT_SQL_ERROR(irs::ReadDocRemoval(Words({1, 3, 4}) + "abcd"),
+  ASSERT_SQL_ERROR(irs::ReadDocRemoval(RemovalBytes({{3, "abcd"}})),
                    ERRCODE_INDEX_CORRUPTED);
 }

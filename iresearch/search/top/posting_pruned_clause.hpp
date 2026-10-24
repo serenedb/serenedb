@@ -21,13 +21,13 @@
 #pragma once
 
 #include "iresearch/search/detail/masked_leaf.hpp"
-#include "iresearch/search/top/prune_leaf.hpp"
+#include "iresearch/search/top/pruned_leaf.hpp"
 
 namespace irs::top {
 
 template<typename InputType>
-class PostingPrunedClause : public PruneLeafBase<InputType, false> {
-  using Base = PruneLeafBase<InputType, false>;
+class PostingPrunedClause : public PrunedLeafBase<InputType, false> {
+  using Base = PrunedLeafBase<InputType, false>;
 
   using Base::_base;
   using Base::_cursor;

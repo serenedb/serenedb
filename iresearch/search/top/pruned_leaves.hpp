@@ -43,12 +43,12 @@
 namespace irs::top {
 
 template<typename Leaf, size_t N = 0>
-class PruneLeaves {
+class PrunedLeaves {
  public:
   using LeafType = Leaf;
 
   template<typename Init>
-  PruneLeaves(ColumnArgsFetcher& fetcher, size_t size, Init&& init)
+  PrunedLeaves(ColumnArgsFetcher& fetcher, size_t size, Init&& init)
     : _fetcher{fetcher},
       _leaves{size, std::forward<Init>(init)},
       _scorers{size, [this](ScoreFunction& scorer,
@@ -58,8 +58,8 @@ class PruneLeaves {
       _order{size} {}
 
   template<typename Args>
-  PruneLeaves(ColumnArgsFetcher& fetcher, size_t size,
-              std::piecewise_construct_t, Args&& args)
+  PrunedLeaves(ColumnArgsFetcher& fetcher, size_t size,
+               std::piecewise_construct_t, Args&& args)
     : _fetcher{fetcher},
       _leaves{size, std::piecewise_construct, std::forward<Args>(args)},
       _scorers{size, [this](ScoreFunction& scorer,
@@ -68,8 +68,8 @@ class PruneLeaves {
       _suffix{size},
       _order{size} {}
 
-  PruneLeaves(PruneLeaves&&) = delete;
-  PruneLeaves& operator=(PruneLeaves&&) = delete;
+  PrunedLeaves(PrunedLeaves&&) = delete;
+  PrunedLeaves& operator=(PrunedLeaves&&) = delete;
 
   size_t size() const noexcept { return _leaves.size(); }
 

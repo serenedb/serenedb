@@ -68,7 +68,7 @@ IRS_FORCE_INLINE uint32_t FirstCompetitive(const BlockIndex& index, uint32_t b,
 }
 
 template<typename InputType, bool Standalone>
-class PruneLeafBase {
+class PrunedLeafBase {
  protected:
   class NoBoundSource final : public ScoreBoundSource {
    public:
@@ -80,12 +80,12 @@ class PruneLeafBase {
  public:
   static constexpr bool kDefaultInit = true;
 
-  PruneLeafBase() = default;
+  PrunedLeafBase() = default;
 
-  PruneLeafBase(const PruneLeafBase&) = delete;
-  PruneLeafBase& operator=(const PruneLeafBase&) = delete;
-  PruneLeafBase(PruneLeafBase&&) = delete;
-  PruneLeafBase& operator=(PruneLeafBase&&) = delete;
+  PrunedLeafBase(const PrunedLeafBase&) = delete;
+  PrunedLeafBase& operator=(const PrunedLeafBase&) = delete;
+  PrunedLeafBase(PrunedLeafBase&&) = delete;
+  PrunedLeafBase& operator=(PrunedLeafBase&&) = delete;
 
   bool PrepareCommon(const PostingMeta& meta, const IndexInput& doc_in,
                      IndexFeatures layout, const SubReader& segment,

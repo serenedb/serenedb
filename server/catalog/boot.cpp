@@ -26,7 +26,6 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/strip.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
@@ -86,7 +85,7 @@ MissingDatabases gMissingDatabases;
 constexpr std::string_view kEngineDir = "engine_v1";
 
 std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
-  const std::filesystem::path& directory, std::string_view suffix) {
+  const std::filesystem::path& directory) {
   std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> found;
   std::error_code ec;
   std::filesystem::directory_iterator entries{directory, ec};
@@ -101,11 +100,9 @@ std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
                 "': ", ec.message());
     }
     const auto name = entry.path().filename().string();
-    std::string_view digits = name;
     duckdb::idx_t oid = 0;
-    if (is_directory && absl::ConsumeSuffix(&digits, suffix) &&
-        absl::c_all_of(digits, absl::ascii_isdigit) &&
-        absl::SimpleAtoi(digits, &oid)) {
+    if (is_directory && absl::c_all_of(name, absl::ascii_isdigit) &&
+        absl::SimpleAtoi(name, &oid)) {
       found.emplace_back(oid, entry.path());
     }
   }
@@ -114,21 +111,16 @@ std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
 
 void RemoveUnowned(const std::filesystem::path& directory,
                    const absl::flat_hash_set<duckdb::idx_t>& owned) {
-  const auto remove = [](const std::filesystem::path& path) {
+  for (const auto& [oid, path] : OidDirectories(directory)) {
+    if (owned.contains(oid)) {
+      continue;
+    }
     std::error_code ec;
     std::filesystem::remove_all(path, ec);
     if (ec) {
       SDB_WARN(STARTUP, "could not remove '", path.string(),
                "': ", ec.message());
     }
-  };
-  for (const auto& [oid, path] : OidDirectories(directory, "")) {
-    if (!owned.contains(oid)) {
-      remove(path);
-    }
-  }
-  for (const auto& [_, path] : OidDirectories(directory, kDroppedSuffix)) {
-    remove(path);
   }
 }
 
@@ -337,16 +329,15 @@ void InitCatalog(std::string_view directory) {
     SDB_FATAL(STARTUP, "cannot stat '", log_path, "': ", log_ec.message());
   }
   if (gMissingDatabases.fresh_cluster &&
-      absl::c_any_of(
-        OidDirectories(layout.EngineDir(), ""), [](const auto& dir) {
-          std::error_code ec;
-          const bool empty = std::filesystem::is_empty(dir.second, ec);
-          if (ec) {
-            SDB_FATAL(STARTUP, "cannot list directory '", dir.second.string(),
-                      "': ", ec.message());
-          }
-          return !empty;
-        })) {
+      absl::c_any_of(OidDirectories(layout.EngineDir()), [](const auto& dir) {
+        std::error_code ec;
+        const bool empty = std::filesystem::is_empty(dir.second, ec);
+        if (ec) {
+          SDB_FATAL(STARTUP, "cannot list directory '", dir.second.string(),
+                    "': ", ec.message());
+        }
+        return !empty;
+      })) {
     SDB_FATAL(STARTUP, "'", log_path, "' does not exist, but '",
               layout.EngineDir().string(),
               "' holds database directories: refusing to start without the "

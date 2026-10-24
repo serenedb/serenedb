@@ -160,6 +160,64 @@ jobs:
       BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
+  coverage:
+    name: coverage dev (linux-amd64)
+    needs: [prepare, dev]
+    if: ${{ !cancelled() && needs.dev.outputs.digest != '' }}
+    runs-on:
+      - linux-amd64
+    timeout-minutes: 60
+    env:
+      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
+      SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      SDB_SHA: ${{ inputs.PR_SHA || github.sha }}
+      SDB_PR: ${{ inputs.PR_NUMBER }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.PR_SHA || github.sha }}
+          fetch-depth: 1
+          submodules: true
+          clean: false
+
+      - name: Clean the checkout, keeping the build directories
+        run: |
+          git config --global --add safe.directory '*'
+          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
+          git clean -ffdxq -e '/build_*/'
+          git submodule foreach --quiet --recursive 'git clean -ffdxq'
+          git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
+
+      - name: Coverage of the change
+        env:
+          SHARDS: ${{ needs.dev.outputs.shards }}
+          TEST_ARGS: ${{ needs.prepare.outputs.test_args }} --changed origin/main --repeat 3
+        run: |
+          ./scripts/ci/coverage_report.sh dev "${{ needs.dev.outputs.digest }}" \
+            "$SDB_RUN_ID" origin/main "$(python3 -c 'import json, os; print(len(json.loads(os.environ["SHARDS"])))')"
+          cat out/coverage-*/summary.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-dev-linux-amd64
+          path: |
+            out/coverage-*/summary.txt
+            out/coverage-*/coverage.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Keep the test selection report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: selection-dev-linux-amd64
+          path: out/coverage-dev/selection.json
+          if-no-files-found: ignore
+          retention-days: 14
+
   biglake:
     needs: [prepare, dev]
     if: inputs.BIGLAKE
@@ -239,7 +297,7 @@ jobs:
 
   report:
     name: Report Status
-    needs: [prepare, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, biglake, bugfix, validate-pg]
+    needs: [prepare, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, coverage, biglake, bugfix, validate-pg]
     if: always()
     runs-on: ubuntu-latest
     steps:

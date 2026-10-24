@@ -57,20 +57,16 @@ jobs:
     secrets: inherit
 
   perf-arm64:
-    uses: ./.github/workflows/config.yml
+    uses: ./.github/workflows/build.yml
     with:
       CONFIG: perf
       LOCATION: linux-arm64
-      TESTS: false
-    secrets: inherit
 
   dev-arm64:
-    uses: ./.github/workflows/config.yml
+    uses: ./.github/workflows/build.yml
     with:
       CONFIG: dev
       LOCATION: linux-arm64
-      TESTS: false
-    secrets: inherit
 
   validate-pg:
     name: validate pg

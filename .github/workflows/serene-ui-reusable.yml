@@ -328,7 +328,7 @@ jobs:
     build-macos-app:
         name: Build macOS App
         if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
-        runs-on: macOS
+        runs-on: macos-latest
         permissions:
             contents: read
         timeout-minutes: 240

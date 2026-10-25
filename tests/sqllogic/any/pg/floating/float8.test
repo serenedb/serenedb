@@ -42,20 +42,11 @@ float8
 0
 
 
-onlyif postgres
 query
 SELECT '-0'::float8, ARRAY['-0'::float8];
 ----
 float8	array
 -0	{-0}
-
-
-skipif postgres
-query
-SELECT '-0'::float8, ARRAY['-0'::float8];
-----
-float8	array
-0	{0}
 
 
 query
@@ -131,22 +122,6 @@ NaN
 skipif pg-wire-extended
 query
 SELECT (-0.0)::float8;
-----
-float8
-0
-
-
-onlyif postgres
-query
-SELECT '-0'::float8;
-----
-float8
--0
-
-
-skipif postgres
-query
-SELECT '-0'::float8;
 ----
 float8
 0

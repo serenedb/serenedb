@@ -18,6 +18,23 @@ SERENED_BIN = os.environ.get(
     str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serened"),
 )
 
+SHELL_AGENT_MARKERS = (
+    "AI_AGENT",
+    "AGENT",
+    "CLAUDECODE",
+    "CODEX_CI",
+    "CODEX_SANDBOX",
+    "CODEX_THREAD_ID",
+    "CURSOR_AGENT",
+    "GEMINI_CLI",
+    "COPILOT_AGENT",
+    "COPILOT_CLI",
+    "COPILOT_AGENT_SESSION_ID",
+    "DUCKDB_AGENT_MODE",
+)
+for name in SHELL_AGENT_MARKERS:
+    os.environ.pop(name, None)
+
 
 def _own_server(tmp_dir: Path):
     if not (Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)):

@@ -46,16 +46,11 @@ query
 EXPLAIN SELECT * FROM t_choice WHERE cat = 20 AND score > 50;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────╮
-│ Projections: pid, cat,     │
-│              code, score   │
-│ ~1 row                     │
-╰──────────────┬─────────────╯
-╭─ SEQ_SCAN ───┴─────────────╮
+╭─ SEQ_SCAN ─────────────────╮
 │ Table: t_choice            │
 │ Type: Sequential Scan      │
-│ Projections: cat, score,   │
-│              pid, code     │
+│ Projections: pid, cat,     │
+│              code, score   │
 │ Column Filter: cat = 20,   │
 │                score > 50  │
 │ ~1 row                     │
@@ -118,16 +113,11 @@ query
 EXPLAIN SELECT * FROM t_choice WHERE pid > 2 AND score > 100;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────╮
-│ Projections: pid, cat,      │
-│              code, score    │
-│ ~1 row                      │
-╰──────────────┬──────────────╯
-╭─ SEQ_SCAN ───┴──────────────╮
+╭─ SEQ_SCAN ──────────────────╮
 │ Table: t_choice             │
 │ Type: Sequential Scan       │
-│ Projections: pid, score,    │
-│              cat, code      │
+│ Projections: pid, cat,      │
+│              code, score    │
 │ Column Filter: pid > 2,     │
 │                score > 100  │
 │ ~1 row                      │
@@ -179,16 +169,11 @@ query
 EXPLAIN SELECT * FROM t_choice WHERE pid IN (1, 2, 3) AND code = 200;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────╮
-│ Projections: pid, cat,     │
-│              code, score   │
-│ ~1 row                     │
-╰──────────────┬─────────────╯
-╭─ SEQ_SCAN ───┴─────────────╮
+╭─ SEQ_SCAN ─────────────────╮
 │ Table: t_choice            │
 │ Type: Sequential Scan      │
-│ Projections: pid, code,    │
-│              cat, score    │
+│ Projections: pid, cat,     │
+│              code, score   │
 │ Column Filter: pid <= 3,   │
 │                code = 200  │
 │ ~1 row                     │
@@ -243,16 +228,11 @@ query
 EXPLAIN SELECT * FROM t_choice WHERE score = 150 AND cat > 5;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────╮
-│ Projections: pid, cat,     │
-│              code, score   │
-│ ~1 row                     │
-╰──────────────┬─────────────╯
-╭─ SEQ_SCAN ───┴─────────────╮
+╭─ SEQ_SCAN ─────────────────╮
 │ Table: t_choice            │
 │ Type: Sequential Scan      │
-│ Projections: score, cat,   │
-│              pid, code     │
+│ Projections: pid, cat,     │
+│              code, score   │
 │ Column Filter: score = 150 │
 │ ~1 row                     │
 ╰────────────────────────────╯

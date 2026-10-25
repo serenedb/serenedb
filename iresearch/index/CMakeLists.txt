@@ -1,0 +1,23 @@
+target_sources(
+    iresearch
+    PRIVATE
+        column_extract.cpp
+        directory_reader.cpp
+        directory_reader_impl.cpp
+        docs_mask/chunks.cpp
+        document_mask.cpp
+        field_meta.cpp
+        file_names.cpp
+        hit_batcher.cpp
+        index_reader.cpp
+        index_writer.cpp
+        inverter/columnar_flush.cpp
+        inverter/fields_inverter.cpp
+        iterators.cpp
+        merge_writer.cpp
+        norm.cpp
+        segment_reader.cpp
+        segment_reader_impl.cpp
+        segment_writer.cpp
+        table_filter_iterator.cpp
+)

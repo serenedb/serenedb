@@ -9,6 +9,9 @@ hash-threshold 100
 
 # Setup: a wide parquet, used by most cases below.
 
+statement ok
+SET late_materialization_lookup_max_rows = 0;
+
 statement count 5
 COPY (SELECT 1 AS id, 'pudge goes mid'     AS body, 'alpha' AS unused1, 100 AS unused2, 'X' AS unused3
       UNION ALL SELECT 2, 'anchin reads manga',     'bravo', 200, 'Y'
@@ -192,11 +195,6 @@ QUERY PLAN
 │ Projections: body, unused1         │  │ Order By: unused1 ASC                  │
 │ ~1 row                             │  │ ~4 rows                                │
 ╰────────────────────────────────────╯  ╰────────────────────┬───────────────────╯
-                                        ╭─ PROJECTION ───────┴───────────────────╮
-                                        │ Projections: unused1, file_index,      │
-                                        │              file_row_number           │
-                                        │ ~5 rows                                │
-                                        ╰────────────────────┬───────────────────╯
                                         ╭─ READ_PARQUET ─────┴───────────────────╮
                                         │ Function: READ_PARQUET                 │
                                         │ Projections: unused1                   │

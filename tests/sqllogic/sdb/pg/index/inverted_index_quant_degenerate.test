@@ -10,12 +10,12 @@ hash-threshold 100
 # not a wrong order but an empty answer: the query returns no rows at all.
 #
 # That is what these assert. Battery A runs the degenerate queries through the
-# quantized pass alone (sdb_ann_oversample = 0) and checks only that a full
+# quantized pass alone (sdb_ann_rescore_width = 0) and checks only that a full
 # top-k comes back, because at one bit per dimension nothing stronger is true.
-# Battery B runs the same queries with a rescore pool wider than the table, so
-# the exact distance decides the order and every quantizer must agree on it --
-# and a code that scored NaN never reaches that pool, so B fails too when the
-# quantized pass is broken. Batteries C and D make the corpus degenerate rather
+# Battery B runs the same queries with a rescore width that re-scores every
+# candidate, so the exact distance decides the order and every quantizer must
+# agree on it -- and a code that scored NaN never reaches the rescore, so B
+# fails too when the quantized pass is broken. Batteries C and D make the corpus degenerate rather
 # than the query: all vectors identical, and all vectors zero.
 #
 # Fixtures are shared in shape across quantizers: 64 filler rows bounded in
@@ -55,10 +55,10 @@ INSERT INTO deg_ivf_sq8 VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_sq8
 
-# -- ivf sq8: quantized path alone (oversample 0) ------------------------------
+# -- ivf sq8: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -93,7 +93,7 @@ count
 # -- ivf sq8: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -141,7 +141,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_sq8_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -181,7 +181,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_sq8_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -192,7 +192,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -227,10 +227,10 @@ INSERT INTO deg_ivf_sq4 VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_sq4
 
-# -- ivf sq4: quantized path alone (oversample 0) ------------------------------
+# -- ivf sq4: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -265,7 +265,7 @@ count
 # -- ivf sq4: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -313,7 +313,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_sq4_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -353,7 +353,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_sq4_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -364,7 +364,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -399,10 +399,10 @@ INSERT INTO deg_ivf_usq8 VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_usq8
 
-# -- ivf usq8: quantized path alone (oversample 0) ------------------------------
+# -- ivf usq8: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -437,7 +437,7 @@ count
 # -- ivf usq8: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -485,7 +485,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_usq8_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -525,7 +525,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_usq8_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -536,7 +536,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -571,10 +571,10 @@ INSERT INTO deg_ivf_usq4 VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_usq4
 
-# -- ivf usq4: quantized path alone (oversample 0) ------------------------------
+# -- ivf usq4: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -609,7 +609,7 @@ count
 # -- ivf usq4: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -657,7 +657,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_usq4_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -697,7 +697,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_usq4_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -708,7 +708,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -743,10 +743,10 @@ INSERT INTO deg_ivf_pq VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_pq
 
-# -- ivf pq: quantized path alone (oversample 0) ------------------------------
+# -- ivf pq: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -781,7 +781,7 @@ count
 # -- ivf pq: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -829,7 +829,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_pq_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -869,7 +869,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_pq_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -880,7 +880,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -915,10 +915,10 @@ INSERT INTO deg_ivf_rabitq VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_rabitq
 
-# -- ivf rabitq: quantized path alone (oversample 0) ------------------------------
+# -- ivf rabitq: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -953,7 +953,7 @@ count
 # -- ivf rabitq: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -1001,7 +1001,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_rabitq_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -1041,7 +1041,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_rabitq_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -1052,7 +1052,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -1087,10 +1087,10 @@ INSERT INTO deg_ivf_tq3 VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_tq3
 
-# -- ivf tq3: quantized path alone (oversample 0) ------------------------------
+# -- ivf tq3: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -1125,7 +1125,7 @@ count
 # -- ivf tq3: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -1173,7 +1173,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_tq3_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -1213,7 +1213,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_tq3_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -1224,7 +1224,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -1259,10 +1259,10 @@ INSERT INTO deg_ivf_tq2 VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_tq2
 
-# -- ivf tq2: quantized path alone (oversample 0) ------------------------------
+# -- ivf tq2: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -1297,7 +1297,7 @@ count
 # -- ivf tq2: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -1345,7 +1345,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_tq2_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -1385,7 +1385,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_ivf_tq2_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -1396,7 +1396,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -1435,10 +1435,10 @@ INSERT INTO deg_hnsw_sq8 VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_sq8
 
-# -- hnsw sq8: quantized path alone (oversample 0) ------------------------------
+# -- hnsw sq8: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -1473,7 +1473,7 @@ count
 # -- hnsw sq8: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -1521,7 +1521,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_sq8_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -1561,7 +1561,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_sq8_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -1572,7 +1572,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -1607,10 +1607,10 @@ INSERT INTO deg_hnsw_sq4 VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_sq4
 
-# -- hnsw sq4: quantized path alone (oversample 0) ------------------------------
+# -- hnsw sq4: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -1645,7 +1645,7 @@ count
 # -- hnsw sq4: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -1693,7 +1693,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_sq4_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -1733,7 +1733,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_sq4_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -1744,7 +1744,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -1779,10 +1779,10 @@ INSERT INTO deg_hnsw_usq8 VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_usq8
 
-# -- hnsw usq8: quantized path alone (oversample 0) ------------------------------
+# -- hnsw usq8: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -1817,7 +1817,7 @@ count
 # -- hnsw usq8: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -1865,7 +1865,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_usq8_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -1905,7 +1905,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_usq8_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -1916,7 +1916,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -1951,10 +1951,10 @@ INSERT INTO deg_hnsw_usq4 VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_usq4
 
-# -- hnsw usq4: quantized path alone (oversample 0) ------------------------------
+# -- hnsw usq4: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -1989,7 +1989,7 @@ count
 # -- hnsw usq4: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -2037,7 +2037,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_usq4_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -2077,7 +2077,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_usq4_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -2088,7 +2088,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -2123,10 +2123,10 @@ INSERT INTO deg_hnsw_rabitq VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_rabitq
 
-# -- hnsw rabitq: quantized path alone (oversample 0) ------------------------------
+# -- hnsw rabitq: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -2161,7 +2161,7 @@ count
 # -- hnsw rabitq: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -2209,7 +2209,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_rabitq_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -2249,7 +2249,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_rabitq_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -2260,7 +2260,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -2295,10 +2295,10 @@ INSERT INTO deg_hnsw_tq3 VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_tq3
 
-# -- hnsw tq3: quantized path alone (oversample 0) ------------------------------
+# -- hnsw tq3: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -2333,7 +2333,7 @@ count
 # -- hnsw tq3: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -2381,7 +2381,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_tq3_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -2421,7 +2421,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_tq3_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -2432,7 +2432,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -2467,10 +2467,10 @@ INSERT INTO deg_hnsw_tq2 VALUES
 statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_tq2
 
-# -- hnsw tq2: quantized path alone (oversample 0) ------------------------------
+# -- hnsw tq2: quantized path alone (width 0) ------------------------------
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 # all-zero query: the inner-product table is all zeros, so the LUT has no range
 # to quantize against. Must still answer with a full top-k.
@@ -2505,7 +2505,7 @@ count
 # -- hnsw tq2: full pipeline, pool wider than the table -------------------------
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 # nearest to the origin is the row at the origin.
 query
@@ -2553,7 +2553,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_tq2_same
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -2593,7 +2593,7 @@ statement ok
 VACUUM (REFRESH_TABLE) deg_hnsw_tq2_zero
 
 statement ok
-SET sdb_ann_oversample = 0
+SET sdb_ann_rescore_width = 0
 
 query
 SELECT count(*) FROM (
@@ -2604,7 +2604,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 100
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT count(*) FROM (
@@ -2615,7 +2615,7 @@ count
 5
 
 statement ok
-RESET sdb_ann_oversample
+RESET sdb_ann_rescore_width
 
 statement ok
 RESET sdb_ivf_search_nprobe

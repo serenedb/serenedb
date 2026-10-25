@@ -37,7 +37,7 @@
 #include <vector>
 
 #include "break_test_utils.hpp"
-#include "tests_config.hpp"
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -225,7 +225,7 @@ struct NormalizationTestCase {
 
 std::vector<NormalizationTestCase> LoadNormalizationTestCases(
   std::vector<bool>& part1) {
-  std::ifstream in(IRS_TEST_RESOURCE_DIR "/unicode/NormalizationTest.txt");
+  std::ifstream in(TestEnv::resource("unicode/NormalizationTest.txt"));
   EXPECT_TRUE(in.is_open());
   std::vector<NormalizationTestCase> cases;
   std::string line;
@@ -392,7 +392,7 @@ TEST(UnicodeCaseTest, case_folding_conformance) {
   absl::flat_hash_map<uint32_t, std::string> full;
   absl::flat_hash_map<uint32_t, std::string> turkic;
   for (const auto& fields :
-       LoadUcdRows(IRS_TEST_RESOURCE_DIR "/unicode/CaseFolding.txt")) {
+       LoadUcdRows(TestEnv::resource("unicode/CaseFolding.txt").c_str())) {
     ASSERT_GE(fields.size(), 3u);
     const auto c = static_cast<uint32_t>(std::stoul(fields[0], nullptr, 16));
     const auto status = Trim(fields[1]);
@@ -430,7 +430,7 @@ TEST(UnicodeCaseTest, case_folding_conformance) {
 TEST(UnicodeCaseTest, special_casing_conformance) {
   size_t checked = 0;
   for (const auto& fields :
-       LoadUcdRows(IRS_TEST_RESOURCE_DIR "/unicode/SpecialCasing.txt")) {
+       LoadUcdRows(TestEnv::resource("unicode/SpecialCasing.txt").c_str())) {
     ASSERT_GE(fields.size(), 4u);
     const auto condition = fields.size() > 4 ? Trim(fields[4]) : "";
     CaseLocale locale;
@@ -897,15 +897,15 @@ TEST(UnicodeBreakIteratorTest, sentences) {
 }
 
 TEST(UnicodeBreakIteratorTest, word_break_test_conformance) {
-  const auto cases = tests::LoadBreakTestCases(IRS_TEST_RESOURCE_DIR
-                                               "/unicode/WordBreakTest.txt");
+  const auto cases = tests::LoadBreakTestCases(
+    TestEnv::resource("unicode/WordBreakTest.txt").c_str());
   ASSERT_EQ(1944u, cases.size());
   CheckBreakTestConformance(BreakKind::WORD, cases);
 }
 
 TEST(UnicodeBreakIteratorTest, sentence_break_test_conformance) {
   const auto cases = tests::LoadBreakTestCases(
-    IRS_TEST_RESOURCE_DIR "/unicode/SentenceBreakTest.txt");
+    TestEnv::resource("unicode/SentenceBreakTest.txt").c_str());
   ASSERT_EQ(512u, cases.size());
   CheckBreakTestConformance(BreakKind::SENTENCE, cases);
 }

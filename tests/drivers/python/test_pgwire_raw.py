@@ -1198,7 +1198,7 @@ def test_portal_dropped_at_committing_sync(conn):
         conn.run_ok("drop table if exists t_pdrop")
 
 
-@pytest.mark.exclusive
+@pytest.mark.usefixtures("own_server")
 def test_implicit_block_commit_error_replaces_command_complete(conn):
     # PG commits the implicit block in finish_xact_command BEFORE EndCommand
     # (postgres.c:1304-1314), so a commit-time failure is reported as an
@@ -1283,7 +1283,7 @@ def test_copy_from_stdin_quoted_upper_case_format(conn):
         conn.run_ok("drop table if exists smoke_copy_fmt_case")
 
 
-@pytest.mark.exclusive
+@pytest.mark.usefixtures("own_server")
 def test_copy_feeder_error_ends_the_copy(conn):
     # A throw in the COPY FROM STDIN feeder, the io coroutine that hands the
     # client's CopyData to the COPY, fails the COPY and closes the connection,
@@ -1311,7 +1311,7 @@ def test_copy_feeder_error_ends_the_copy(conn):
         conn.run("drop table if exists t_copy_feeder")
 
 
-@pytest.mark.exclusive
+@pytest.mark.usefixtures("own_server")
 def test_copy_feeder_wake_outlives_the_session(conn):
     if "E" in types(conn.run("set sdb_faults='copy_feeder_done_wake'")):
         pytest.skip("fault injection not enabled in this build")

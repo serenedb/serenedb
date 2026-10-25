@@ -44,6 +44,7 @@
 #include <vector>
 
 #include "filter_test_case_base.hpp"
+#include "phrase_slop_run.hpp"
 #include "tests_shared.hpp"
 
 namespace {

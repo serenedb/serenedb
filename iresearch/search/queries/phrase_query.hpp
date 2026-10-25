@@ -106,6 +106,8 @@ class FixedPhraseQuery
   }
 };
 
+extern template class QueryBuilderImpl<FixedPhraseQuery, PhraseQuery>;
+
 class VariadicPhraseQuery
   : public QueryBuilderImpl<VariadicPhraseQuery, PhraseQuery> {
  public:
@@ -121,5 +123,7 @@ class VariadicPhraseQuery
     visitor.Visit(*this, state, boost * this->boost);
   }
 };
+
+extern template class QueryBuilderImpl<VariadicPhraseQuery, PhraseQuery>;
 
 }  // namespace irs

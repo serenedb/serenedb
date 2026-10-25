@@ -36,6 +36,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
+#include <vector>
 
 #include "catalog/cluster.h"
 #include "pg/pg_types.h"
@@ -80,7 +81,18 @@ void CreateNewDirectory(const std::filesystem::path& path) {
 void RemoveTree(const std::string& path) {
   duckdb::TaskScheduler::BlockingScope blocking;
   try {
-    StorageFileSystem().RemoveDirectory(path);
+    auto& fs = StorageFileSystem();
+    SDB_IF_FAILURE("pause_removal_midway") {
+      std::vector<std::string> files;
+      fs.ListFilesRecursive(path, [&](duckdb::OpenFileInfo& info) {
+        files.push_back(std::move(info.path));
+      });
+      if (!files.empty()) {
+        fs.RemoveFile(fs.JoinPath(path, *absl::c_min_element(files)));
+      }
+      SDB_PARK_ONCE_ON_FAILURE("pause_removal_midway");
+    }
+    fs.RemoveDirectory(path);
   } catch (const std::exception& e) {
     SDB_WARN(GENERAL, "could not remove '", path,
              "': ", duckdb::ErrorData{e}.RawMessage());

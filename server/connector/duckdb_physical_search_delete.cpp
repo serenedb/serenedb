@@ -71,10 +71,17 @@ SereneDBSearchDelete::SereneDBSearchDelete(
     _return_chunk(return_chunk),
     _return_columns(std::move(return_columns)),
     _row_id_handling(row_id_handling) {
-  _pk_columns.reserve(expressions.size());
-  for (const auto& expr : expressions) {
-    const auto& ref = expr->Cast<duckdb::BoundReferenceExpression>();
+  const auto row_ids = table.GetRowIdColumns().size();
+  _pk_columns.reserve(row_ids);
+  for (duckdb::idx_t i = 0; i < row_ids; ++i) {
+    const auto& ref = expressions[i]->Cast<duckdb::BoundReferenceExpression>();
     _pk_columns.emplace_back(ref.Index(), ref.GetReturnType());
+  }
+  for (auto& column : _return_columns) {
+    if (column != duckdb::DConstants::INVALID_INDEX) {
+      column =
+        expressions[column]->Cast<duckdb::BoundReferenceExpression>().Index();
+    }
   }
 }
 

@@ -27,8 +27,8 @@
 
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/detail/collect_scored.hpp"
-#include "iresearch/search/detail/conjunction_scored.hpp"
+#include "iresearch/search/detail/conjunction.hpp"
+#include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"

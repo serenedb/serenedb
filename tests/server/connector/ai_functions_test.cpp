@@ -25,6 +25,7 @@
 #include <atomic>
 #include <chrono>
 #include <duckdb.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -72,7 +73,10 @@ class MockHandler final : public network::HttpHandler {
       std::lock_guard lock{_mutex};
       _bodies.push_back(body);
     }
-    const auto reply = _script(body);
+    const auto reply = [&] {
+      duckdb::TaskScheduler::BlockingScope blocking;
+      return _script(body);
+    }();
     writer.Fixed(static_cast<network::http::HttpStatus>(reply.status),
                  network::http::kJsonContentType, reply.body, reply.headers);
     return yaclib::MakeTask();

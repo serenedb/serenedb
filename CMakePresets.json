@@ -11,8 +11,8 @@
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
         "CMAKE_SHARED_LINKER_FLAGS": "-fuse-ld=lld",
-        "AUTO_UPDATE_MODULES": "Off",
-        "USE_DEBUG_INFO": "LLDB",
+        "SDB_UPDATE_SUBMODULES": "Off",
+        "SDB_DEBUG_INFO": "FULL",
         "SDB_SANITIZE": "",
         "SDB_FAULT_INJECTION": "On",
         "SDB_GTEST": "On"
@@ -26,7 +26,7 @@
       ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "STATIC_EXECUTABLES": "Off",
+        "SDB_STATIC": "Off",
         "SDB_DEV": "On",
         "SDB_ALLOC": "SYS"
       }
@@ -38,10 +38,10 @@
       ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "STATIC_EXECUTABLES": "Off",
+        "SDB_STATIC": "Off",
         "SDB_DEV": "On",
         "SDB_ALLOC": "JE",
-        "USE_JEMALLOC_PROF": "On"
+        "SDB_JEMALLOC_PROF": "On"
       }
     },
     {
@@ -52,7 +52,7 @@
       ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "STATIC_EXECUTABLES": "Off",
+        "SDB_STATIC": "Off",
         "SDB_SANITIZE": "Address",
         "SDB_DEV": "On",
         "SDB_ALLOC": "SYS"
@@ -66,7 +66,7 @@
       ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "STATIC_EXECUTABLES": "Off",
+        "SDB_STATIC": "Off",
         "SDB_SANITIZE": "Thread",
         "SDB_DEV": "On",
         "SDB_ALLOC": "SYS"
@@ -80,7 +80,7 @@
       ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "STATIC_EXECUTABLES": "Off",
+        "SDB_STATIC": "Off",
         "SDB_SANITIZE": "MemoryWithOrigins",
         "SDB_DEV": "On",
         "SDB_ALLOC": "SYS"
@@ -93,7 +93,7 @@
       ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "STATIC_EXECUTABLES": "On",
+        "SDB_STATIC": "On",
         "SDB_DEV": "Off",
         "SDB_FAULT_INJECTION": "Off",
         "SDB_GTEST": "Off",
@@ -107,8 +107,7 @@
       ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "STATIC_EXECUTABLES": "On",
-        "USE_IPO": "Off",
+        "SDB_STATIC": "On",
         "SDB_DEV": "Off",
         "SDB_FAULT_INJECTION": "Off",
         "SDB_GTEST": "Off",

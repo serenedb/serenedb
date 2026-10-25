@@ -33,18 +33,23 @@
 
 namespace irs::docs {
 
-template<lead::Type Lead, typename Probes, typename Excludes>
+template<lead::Type Lead, typename Probes, typename Optional, typename Excludes>
 class BooleanSparse : public Root {
  public:
   static constexpr bool kProbes = !std::is_same_v<Probes, utils::Empty>;
+  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  static_assert(kProbes || kExcludes);
+  static_assert(kProbes || kOptional || kExcludes);
 
-  template<typename LeadArgs, typename ProbesArgs, typename ExcludesArgs>
+  template<typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
+           typename ExcludesArgs>
   BooleanSparse(std::piecewise_construct_t, LeadArgs&& lead,
-                ProbesArgs&& probes, ExcludesArgs&& excludes)
+                ProbesArgs&& probes, OptionalArgs&& optional,
+                ExcludesArgs&& excludes)
     : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
       _probes{std::make_from_tuple<Probes>(std::forward<ProbesArgs>(probes))},
+      _optional{
+        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {}
 
@@ -66,6 +71,13 @@ class BooleanSparse : public Root {
           continue;
         }
       }
+      if constexpr (kOptional) {
+        const auto probe = _optional.Probe(doc);
+        if (probe != doc) {
+          doc = _lead.Seek(probe);
+          continue;
+        }
+      }
       if (detail::SkipSpan(_excludes, _lead, doc)) {
         continue;
       }
@@ -81,6 +93,7 @@ class BooleanSparse : public Root {
  private:
   Lead _lead;
   [[no_unique_address]] Probes _probes;
+  [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
   bool _spent = false;
 };

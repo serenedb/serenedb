@@ -158,7 +158,7 @@ class IndexSegment : irs::util::Noncopyable {
   auto& columns() const noexcept { return _columns; }
   auto& named_columns() const noexcept { return _named_columns; }
   auto& named_columns() noexcept { return _named_columns; }
-  auto& pk() const noexcept { return _sort; };
+  auto& pk() const noexcept { return _sort; }
 
   template<typename IndexedFieldIterator, typename StoredFieldIterator>
   void insert(IndexedFieldIterator indexed_begin,

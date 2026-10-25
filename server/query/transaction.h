@@ -44,7 +44,7 @@ class Transaction : public Config {
   using Config::Config;
 
 #ifdef SDB_DEV
-  virtual ~Transaction() {
+  ~Transaction() override {
     SDB_ASSERT(_search_transactions.empty());
     SDB_ASSERT(!_search_txn || _search_txn->Empty());
   }

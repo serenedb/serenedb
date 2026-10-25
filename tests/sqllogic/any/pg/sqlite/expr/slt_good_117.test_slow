@@ -8356,11 +8356,10 @@ SELECT DISTINCT - - 19 * + + 0 * ( - COUNT( * ) ) * 99 DIV NULLIF ( - + COALESCE
 0
 
 skipif mysql # not compatible
-skipif postgres # TODO(mbkkt)
 query I rowsort label-877
 SELECT DISTINCT - - 19 * + + 0 * ( - COUNT ( * ) ) * 99 / NULLIF ( - + COALESCE ( + 68, + - AVG ( ALL - 3 ), + 25, 75 ), - COUNT ( * ) + MAX ( - + 42 ) + - - 89 / + + SUM ( DISTINCT + + 54 ) * - CAST ( + MIN ( DISTINCT 34 ) AS REAL ) + + - 93 + - 0 ) AS col2
 ----
-0
+-0
 
 onlyif mysql # aggregate syntax: DIV for integer division:
 query I rowsort label-878

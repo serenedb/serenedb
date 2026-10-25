@@ -7,111 +7,17 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE
         Release
         CACHE STRING
-        "Choose the type of build, options are: Debug Release RelWithDebInfo MinSizeRel."
+        "Choose the type of build, options are: Debug RelWithDebInfo Release."
         FORCE
     )
 endif()
 
-if(
-    NOT CMAKE_BUILD_TYPE MATCHES "(Debug)|(Release)|(RelWithDebInfo)|(MinSizeRel)"
-)
+if(NOT CMAKE_BUILD_TYPE MATCHES "^(Debug|RelWithDebInfo|Release)$")
     message(
         FATAL_ERROR
-        "expecting CMAKE_BUILD_TYPE: Debug Release RelWithDebInfo MinSizeRel, got ${CMAKE_BUILD_TYPE}."
+        "expecting CMAKE_BUILD_TYPE: Debug RelWithDebInfo Release, got ${CMAKE_BUILD_TYPE}."
     )
 endif()
-
-# where to find CMAKE modules
-set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
-
-option(USE_FAIL_ON_WARNINGS "treat warnings as errors" ON)
-
-option(AUTO_UPDATE_MODULES "automatically update git modules" ON)
-
-option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serened" ON)
-
-option(SDB_GTEST "build the gtest suites under tests/" OFF)
-
-option(
-    IRESEARCH_BENCH
-    "build only search-benchmark-game, against iresearch-minimal: no server, vector, geo, fastText or DuckDB extensions besides icu"
-    OFF
-)
-if(IRESEARCH_BENCH AND SDB_GTEST)
-    message(
-        FATAL_ERROR
-        "IRESEARCH_BENCH builds only search-benchmark-game: turn SDB_GTEST off"
-    )
-endif()
-
-set(SDB_ALLOC
-    ""
-    CACHE STRING
-    "allocator: JE (jemalloc), TC (tcmalloc), empty for system"
-)
-set_property(CACHE SDB_ALLOC PROPERTY STRINGS "" JE TC)
-
-set(SDB_SANITIZE
-    ""
-    CACHE STRING
-    "sanitizer: Leak, Undefined, Address, AddressLight, UndefinedAddress, UndefinedAddressLight, Thread, Memory, MemoryWithOrigins, empty for none"
-)
-set_property(
-    CACHE SDB_SANITIZE
-    PROPERTY
-        STRINGS
-            ""
-            Leak
-            Undefined
-            Address
-            AddressLight
-            UndefinedAddress
-            UndefinedAddressLight
-            Thread
-            Memory
-            MemoryWithOrigins
-)
-
-set(USE_COVERAGE
-    ""
-    CACHE STRING
-    "coverage: SourceBased, SourceBasedMCDC, GCOV, empty for none"
-)
-set_property(
-    CACHE USE_COVERAGE
-    PROPERTY STRINGS "" SourceBased SourceBasedMCDC GCOV
-)
-
-set(USE_DEBUG_INFO
-    "FULL"
-    CACHE STRING
-    "debug info: NONE, LINES, COLUMNS, SANITIZE, COVERAGE, PROFILE, LLDB, GDB, FULL"
-)
-set_property(
-    CACHE USE_DEBUG_INFO
-    PROPERTY STRINGS NONE LINES COLUMNS SANITIZE COVERAGE PROFILE LLDB GDB FULL
-)
-
-if(APPLE)
-    set(SDB_SPLIT_DWARF_DEFAULT OFF)
-else()
-    set(SDB_SPLIT_DWARF_DEFAULT ON)
-endif()
-option(
-    SDB_SPLIT_DWARF
-    "debug info in a .dwo file beside each object instead of in every binary"
-    ${SDB_SPLIT_DWARF_DEFAULT}
-)
-
-set(SDB_GEN_PGO OFF CACHE BOOL "build instrumented for PGO profile generation")
-set(SDB_GEN_CS_PGO
-    ""
-    CACHE PATH
-    "profile to use while generating a context-sensitive PGO profile"
-)
-set(SDB_USE_PGO "" CACHE PATH "PGO profile to optimize with")
-
-find_package(Git REQUIRED)
 
 # ------------------------------------------------------------------------------
 # VERSION information
@@ -183,7 +89,188 @@ project(
     VERSION ${SERENEDB_VERSION_MAJOR}.${SERENEDB_VERSION_MINOR}
 )
 
-if(NOT APPLE)
+list(PREPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
+include(SereneDBUtils)
+
+################################################################################
+## OPTIONS
+################################################################################
+
+option(SDB_WERROR "treat warnings as errors" ON)
+
+option(
+    SDB_UPDATE_SUBMODULES
+    "check out every submodule at its recorded commit while configuring"
+    ON
+)
+
+option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serened" ON)
+
+option(SDB_GTEST "build the gtest suites under tests/" OFF)
+
+option(
+    IRESEARCH_BENCH
+    "build only search-benchmark-game, against a minimal iresearch: no server, vector, geo, fastText or DuckDB extensions besides icu"
+    OFF
+)
+if(IRESEARCH_BENCH AND SDB_GTEST)
+    message(
+        FATAL_ERROR
+        "IRESEARCH_BENCH builds only search-benchmark-game: turn SDB_GTEST off"
+    )
+endif()
+
+set(SDB_ARCH
+    ""
+    CACHE STRING
+    "instruction set: sandybridge, haswell, icelake, graviton1, graviton2, graviton3 or native; empty for haswell on x86-64 and graviton1 on arm64"
+)
+set_property(
+    CACHE SDB_ARCH
+    PROPERTY
+        STRINGS
+            ""
+            sandybridge
+            haswell
+            icelake
+            graviton1
+            graviton2
+            graviton3
+            native
+)
+
+set(SDB_ALLOC
+    SYS
+    CACHE STRING
+    "allocator: SYS (system), JE (jemalloc) or TC (tcmalloc)"
+)
+set_property(CACHE SDB_ALLOC PROPERTY STRINGS SYS JE TC)
+if(NOT SDB_ALLOC MATCHES "^(SYS|JE|TC)$")
+    message(FATAL_ERROR "SDB_ALLOC=${SDB_ALLOC}, expecting SYS, JE or TC")
+endif()
+option(SDB_JEMALLOC_PROF "jemalloc heap profiling, with SDB_ALLOC=JE" OFF)
+
+set(SDB_SANITIZE
+    ""
+    CACHE STRING
+    "sanitizer: Leak, Undefined, Address, AddressLight, UndefinedAddress, UndefinedAddressLight, Thread, Memory, MemoryWithOrigins, empty for none"
+)
+set_property(
+    CACHE SDB_SANITIZE
+    PROPERTY
+        STRINGS
+            ""
+            Leak
+            Undefined
+            Address
+            AddressLight
+            UndefinedAddress
+            UndefinedAddressLight
+            Thread
+            Memory
+            MemoryWithOrigins
+)
+
+option(
+    SDB_COVERAGE
+    "LLVM source-based coverage of our code, DuckDB and re2"
+    OFF
+)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(SDB_RELEASE_DEFAULT ON)
+else()
+    set(SDB_RELEASE_DEFAULT OFF)
+endif()
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(SDB_DEBUG_INFO_DEFAULT FULL)
+else()
+    set(SDB_DEBUG_INFO_DEFAULT STACK)
+endif()
+set(SDB_DEBUG_INFO
+    ${SDB_DEBUG_INFO_DEFAULT}
+    CACHE STRING
+    "debug info: NONE, STACK (line tables for symbolized stacks) or FULL (variables and types for lldb); FULL in Debug builds, STACK in the others"
+)
+set_property(CACHE SDB_DEBUG_INFO PROPERTY STRINGS NONE STACK FULL)
+
+if(SDB_RELEASE_DEFAULT)
+    set(SDB_FRAME_POINTERS_DEFAULT OFF)
+else()
+    set(SDB_FRAME_POINTERS_DEFAULT ON)
+endif()
+option(
+    SDB_FRAME_POINTERS
+    "keep frame pointers; off in Release builds"
+    ${SDB_FRAME_POINTERS_DEFAULT}
+)
+
+if(APPLE)
+    set(SDB_SPLIT_DWARF_DEFAULT OFF)
+else()
+    set(SDB_SPLIT_DWARF_DEFAULT ON)
+endif()
+option(
+    SDB_SPLIT_DWARF
+    "debug info in a .dwo file beside each object instead of in every binary"
+    ${SDB_SPLIT_DWARF_DEFAULT}
+)
+
+option(SDB_GEN_PGO "build instrumented for PGO profile generation" OFF)
+set(SDB_GEN_CS_PGO
+    ""
+    CACHE PATH
+    "profile to use while generating a context-sensitive PGO profile"
+)
+set(SDB_USE_PGO "" CACHE PATH "PGO profile to optimize with")
+
+option(
+    SDB_LTO
+    "ThinLTO, identical code folding and section GC; on in Release builds"
+    ${SDB_RELEASE_DEFAULT}
+)
+
+option(
+    SDB_REMAP_EXECUTABLE
+    "default of serened's --remap_executable, which copies its machine code into huge pages at startup; on in Release builds"
+    ${SDB_RELEASE_DEFAULT}
+)
+
+option(
+    SDB_DEV
+    "whether we want to have assertions and other development features"
+    OFF
+)
+
+option(
+    SDB_FAULT_INJECTION
+    "whether we want to have failure tests compiled in"
+    OFF
+)
+
+option(SDB_STATIC "link executables statically" OFF)
+
+option(
+    SDB_VTUNE
+    "keep the pthread symbols VTune needs in a statically linked executable"
+    OFF
+)
+
+################################################################################
+## PLATFORM
+################################################################################
+
+if(APPLE)
+    if(NOT CMAKE_CXX_COMPILER_AR)
+        message(
+            FATAL_ERROR
+            "llvm-ar (CMAKE_CXX_COMPILER_AR) is required on macOS"
+        )
+    endif()
+    set(CMAKE_AR "${CMAKE_CXX_COMPILER_AR}")
+    set(CMAKE_RANLIB "${CMAKE_CXX_COMPILER_RANLIB}")
+else()
     foreach(lang C CXX ASM)
         set(CMAKE_${lang}_ARCHIVE_CREATE
             "<CMAKE_AR> qcT <TARGET> <LINK_FLAGS> <OBJECTS>"
@@ -194,7 +281,12 @@ if(NOT APPLE)
     endforeach()
 endif()
 
-enable_testing()
+include(OptimizeForArchitecture)
+
+if(SDB_UPDATE_SUBMODULES)
+    find_package(Git REQUIRED)
+endif()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
@@ -205,9 +297,99 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # TODO(mbkkt) maybe disable in CI
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 
+set(CMAKE_CXX_STANDARD 26 CACHE STRING "" FORCE)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+
+################################################################################
+## DEFINITIONS
+################################################################################
+
 # disable not fatal logs and all vlogs in compile time
-add_definitions(-DABSL_MAX_VLOG_VERBOSITY=-1)
-add_definitions(-DABSL_MIN_LOG_LEVEL=3)
+add_compile_definitions(ABSL_MAX_VLOG_VERBOSITY=-1 ABSL_MIN_LOG_LEVEL=3)
+
+if(SDB_DEV)
+    add_compile_definitions(SDB_DEV=1 DEBUG)
+
+    # TODO(mbkkt) add_compile_definitions(_FORTIFY_SOURCE=3)
+else()
+    add_compile_definitions(NDEBUG)
+endif()
+
+if(SDB_GTEST)
+    add_compile_definitions(SDB_GTEST=1)
+endif()
+
+if(SDB_FAULT_INJECTION)
+    add_compile_definitions(SDB_FAULT_INJECTION=1)
+endif()
+
+# TODO(mbkkt) -fnew-alignment=8 and tcmalloc is nothrow -- ABSL_ALLOCATOR_NOTHROW
+if(SDB_ALLOC STREQUAL "JE")
+    add_compile_definitions(SERENEDB_HAVE_JEMALLOC=1)
+elseif(SDB_ALLOC STREQUAL "TC")
+    add_compile_definitions(SERENEDB_HAVE_TCMALLOC=1)
+endif()
+
+################################################################################
+## FLAGS
+################################################################################
+
+set(SDB_CODEGEN_FLAGS
+    "${SDB_ARCH_FLAGS} -falign-functions=64 -falign-loops=64 -fno-math-errno"
+)
+if(SDB_LTO)
+    # TODO(mbkkt) Try to apply -fsplit-lto-unit, -flo=full -fbasic-block-sections=all
+    # -fexperimental-relative-c++-abi-vtables, -fassume-unique-vtables -fvirtual-function-elimination
+    # -fassume-nothrow-exception-dtor -fasync-exceptions -fasynchronous-unwind-tables
+    string(
+        APPEND SDB_CODEGEN_FLAGS
+        " -flto=thin -faddrsig -ffunction-sections -fdata-sections"
+    )
+    # -fforce-emit-vtables -fwhole-program-vtables
+    string(APPEND CMAKE_EXE_LINKER_FLAGS " -Wl,-icf=safe -Wl,--gc-sections")
+endif()
+string(APPEND CMAKE_C_FLAGS " ${SDB_CODEGEN_FLAGS}")
+string(
+    APPEND CMAKE_CXX_FLAGS
+    " ${SDB_CODEGEN_FLAGS} -fsized-deallocation -fstrict-vtable-pointers"
+)
+
+file(
+    RELATIVE_PATH
+    SDB_SOURCE_FROM_BUILD
+    ${CMAKE_BINARY_DIR}
+    ${CMAKE_SOURCE_DIR}
+)
+file(
+    RELATIVE_PATH
+    SDB_BUILD_FROM_SOURCE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_BINARY_DIR}
+)
+if(SDB_BUILD_FROM_SOURCE STREQUAL "")
+    message(
+        FATAL_ERROR
+        "build in a directory of its own, such as the presets' build_<preset>"
+    )
+endif()
+string(REGEX REPLACE "/+$" "" SDB_SOURCE_FROM_BUILD "${SDB_SOURCE_FROM_BUILD}")
+string(APPEND SDB_SOURCE_FROM_BUILD "/")
+
+add_compile_options(
+    $<$<BOOL:${SDB_WERROR}>:-Werror>
+    -ffile-prefix-map=${CMAKE_SOURCE_DIR}/=
+    -ffile-prefix-map=${SDB_SOURCE_FROM_BUILD}=
+    -fdebug-prefix-map=${CMAKE_SOURCE_DIR}/=${SDB_SOURCE_FROM_BUILD}
+    -fdebug-prefix-map=${SDB_SOURCE_FROM_BUILD}=${SDB_SOURCE_FROM_BUILD}
+    -fdebug-compilation-dir=${SDB_BUILD_FROM_SOURCE}
+    -fcoverage-compilation-dir=.
+    $<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>
+    $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++>
+)
 
 if(SDB_GEN_PGO)
     # TODO(mbkkt) Does it make sense to use -ftemporal-profile ?
@@ -225,353 +407,134 @@ elseif(SDB_USE_PGO)
     #   add_link_options(-Wl,--symbol-ordering-file=path-to-code.orderfile)
 endif()
 
-if(USE_COVERAGE STREQUAL "SourceBased")
-    add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
-    add_link_options(-fprofile-instr-generate -fcoverage-mapping)
-elseif(USE_COVERAGE STREQUAL "SourceBasedMCDC")
-    add_compile_options(
+if(SDB_COVERAGE)
+    set(SDB_COVERAGE_FLAGS
         -fprofile-instr-generate
         -fcoverage-mapping
         -fcoverage-mcdc
+        "SHELL:-mllvm -enable-single-byte-coverage=true"
+        "SHELL:-mllvm -conditional-counter-update"
+        -Wno-pass-failed
     )
-    add_link_options(
-        -fprofile-instr-generate
-        -fcoverage-mapping
-        -fcoverage-mcdc
-    )
-elseif(USE_COVERAGE STREQUAL "GCOV")
-    add_compile_options(--coverage)
-    add_link_options(--coverage)
-elseif(NOT "${USE_COVERAGE}" STREQUAL "")
-    message(FATAL_ERROR "Invalid USE_COVERAGE value ${USE_COVERAGE}")
+    add_link_options(-fprofile-instr-generate)
 endif()
 
-# ------------------------------------------------------------------------------
-# update files containing VERSION information
-# ------------------------------------------------------------------------------
+# VTune needs these symbols in a statically linked binary, see
+# https://software.intel.com/content/www/us/en/develop/documentation/vtune-help/top/set-up-analysis-target/linux-targets/analyzing-statically-linked-binaries-on-linux-targets.html
+if(SDB_VTUNE)
+    string(
+        APPEND CMAKE_EXE_LINKER_FLAGS
+        " -upthread_getattr_np -upthread_create -upthread_key_create -upthread_setspecific -upthread_getspecific -upthread_self -upthread_attr_destroy -upthread_attr_setstack -upthread_attr_getstack -upthread_attr_getstacksize -upthread_attr_setstacksize -upthread_cancel -u_pthread_cleanup_push -u_pthread_cleanup_pop -upthread_mutex_lock -upthread_mutex_trylock -upthread_spin_lock -upthread_spin_trylock"
+    )
+endif()
 
-configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/server/utils/build.h.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/server/utils/build.h"
-    NEWLINE_STYLE UNIX
-)
-
-################################################################################
-## EXTERNAL PROGRAMS
-################################################################################
-
-find_package(Python3 REQUIRED)
-get_filename_component(PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" REALPATH)
-
-set(CMAKE_CXX_STANDARD 26 CACHE STRING "" FORCE)
-set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_VISIBILITY_PRESET hidden)
-set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
-
-################################################################################
-## TARGET ARCHITECTURE
-################################################################################
-
-include(OptimizeForArchitecture)
-
-if(APPLE)
-    set(OS_DARWIN 1)
-    if(NOT CMAKE_CXX_COMPILER_AR)
-        message(
-            FATAL_ERROR
-            "llvm-ar (CMAKE_CXX_COMPILER_AR) is required on macOS"
-        )
-    endif()
-    set(CMAKE_AR "${CMAKE_CXX_COMPILER_AR}")
-    set(CMAKE_RANLIB "${CMAKE_CXX_COMPILER_RANLIB}")
+if(SDB_FRAME_POINTERS)
+    set(SDB_FRAME_POINTER_FLAGS
+        "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
+    )
 else()
-    set(OS_LINUX 1)
-endif()
-
-################################################################################
-## MAINTAINER MODE
-################################################################################
-
-option(
-    SDB_DEV
-    "whether we want to have assertions and other development features"
-    OFF
-)
-
-if(SDB_DEV)
-    add_definitions("-DSDB_DEV=1")
-    add_definitions("-DDEBUG")
-
-    # TODO(mbkkt) add_definitions("-D_FORTIFY_SOURCE=3")
-else()
-    add_definitions(-DNDEBUG)
-endif()
-
-if(SDB_GTEST)
-    add_definitions("-DSDB_GTEST=1")
-endif()
-
-################################################################################
-## FAILURE TESTS
-################################################################################
-
-option(
-    SDB_FAULT_INJECTION
-    "whether we want to have failure tests compiled in"
-    OFF
-)
-
-if(SDB_FAULT_INJECTION)
-    add_definitions("-DSDB_FAULT_INJECTION=1")
-endif()
-
-################################################################################
-## INTERPROCEDURAL OPTIMIZATION (LINK TIME OPTIMIZATION)
-################################################################################
-
-set(USE_IPO
-    AUTO
-    CACHE STRING
-    "Use interprocedural optimization: ON, OFF or AUTO"
-)
-set_property(CACHE USE_IPO PROPERTY STRINGS AUTO ON OFF)
-
-set(IPO_ENABLED OFF)
-
-# Determine value if IPO_ENABLED from USE_IPO and CMAKE_BUILD_TYPE
-if(USE_IPO STREQUAL "AUTO")
-    if(
-        NOT SDB_GTEST
-        AND CMAKE_BUILD_TYPE MATCHES "(Release)|(RelWithDebInfo)|(MinSizeRel)"
-    )
-        set(IPO_ENABLED ON)
-    endif()
-elseif(USE_IPO)
-    set(IPO_ENABLED ON)
-endif()
-
-message(STATUS "IPO_ENABLED: ${IPO_ENABLED}")
-
-################################################################################
-## ALLOC
-################################################################################
-
-# TODO(mbkkt) -fnew-alignment=8 and tcmalloc is nothrow -- ABSL_ALLOCATOR_NOTHROW
-if("${SDB_ALLOC}" MATCHES "JE")
-    add_definitions("-DSERENEDB_HAVE_JEMALLOC=1")
-elseif("${SDB_ALLOC}" MATCHES "TC")
-    add_definitions("-DSERENEDB_HAVE_TCMALLOC=1")
-endif()
-
-################################################################################
-## FLAGS
-################################################################################
-
-function(add_compile_warnings_flags)
-    if(USE_FAIL_ON_WARNINGS)
-        add_compile_options(-Werror)
-    endif()
-endfunction()
-
-# compiler options
-set(EXTRA_FLAGS "-Wall -Wextra -Wthread-safety -Wdeprecated")
-set(EXTRA_FLAGS "${EXTRA_FLAGS} -Wno-unused-parameter")
-set(EXTRA_FLAGS "${EXTRA_FLAGS} ${ARCHITECTURE_OPTIMIZATIONS}")
-
-# TODO(mbkkt) add -Wheader-hygiene -Wignored-base-class-qualifiers
-set(EXTRA_CXX_FLAGS "-Wsuggest-override -Wsuggest-destructor-override")
-set(EXTRA_CXX_FLAGS
-    "${EXTRA_CXX_FLAGS} -Wno-missing-designated-field-initializers -Wno-deprecated-declarations -Wno-deprecated-copy-with-dtor"
-)
-set(EXTRA_CXX_FLAGS
-    "${EXTRA_CXX_FLAGS} -fsized-deallocation -fstrict-vtable-pointers"
-)
-if(IPO_ENABLED)
-    # TODO(mbkkt) Try to apply -fsplit-lto-unit, -flo=full -fbasic-block-sections=all
-    # -fexperimental-relative-c++-abi-vtables, -fassume-unique-vtables -fvirtual-function-elimination
-    # -fassume-nothrow-exception-dtor -fasync-exceptions -fasynchronous-unwind-tables
-    set(EXTRA_FLAGS
-        "${EXTRA_FLAGS} -flto=thin -faddrsig -ffunction-sections -fdata-sections"
-    )
-    # set(EXTRA_CXX_FLAGS "${EXTRA_CXX_FLAGS} -fforce-emit-vtables -fwhole-program-vtables")
-    set(CMAKE_EXE_LINKER_FLAGS
-        "${CMAKE_EXE_LINKER_FLAGS} -flto=thin -Wl,-icf=safe -Wl,--gc-sections"
+    set(SDB_FRAME_POINTER_FLAGS
+        "-fomit-frame-pointer -momit-leaf-frame-pointer"
     )
 endif()
 
-set(NONE_FRAME_INFO "-fomit-frame-pointer -momit-leaf-frame-pointer")
-set(FULL_FRAME_INFO "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer")
-
-# debug info flags
-set(NONE_DEBUG_INFO "-g0")
-# no-limit-debug-info to produce symbols for glibc/libc++/etc
-set(BASE_DEBUG_INFO "-fno-limit-debug-info")
-# no-standalone-debug to reduce size of debug info
-# eliminate-unused-debug to remove some unused symbols and types (they're can be used in compile time)
-# line-tables-only to remove everything except address => file:line mapping
-# TODO(mbkkt) eliminate-unused-debug-symbols eliminate-unused-debug-types unused for some reason
-set(LINES_DEBUG_INFO
-    "${BASE_DEBUG_INFO} -fno-standalone-debug -gline-tables-only"
-)
-# column-info to add column in line info
-# TODO(mbkkt) maybe gz=zstd
-set(COLUMNS_DEBUG_INFO "${LINES_DEBUG_INFO} -gcolumn-info")
-# TODO(mbkkt) maybe no-inline and no-optimize-sibling-calls
-set(SANITIZE_DEBUG_INFO "${COLUMNS_DEBUG_INFO}")
-set(COVERAGE_DEBUG_INFO "${COLUMNS_DEBUG_INFO}")
-set(PROFILE_DEBUG_INFO "${COLUMNS_DEBUG_INFO} -fdebug-info-for-profiling")
-# TODO(mbkkt) no-eliminate-unused-debug-symbols no-eliminate-unused-debug-types unused for some reason
-set(FULL_DEBUG_INFO "${BASE_DEBUG_INFO} -g3 -fstandalone-debug")
-# -fdebug-macro leads to crash on macOS, see issue
-# https://github.com/llvm/llvm-project/issues/212345
-if(NOT OS_DARWIN)
-    set(FULL_DEBUG_INFO "${FULL_DEBUG_INFO} -fdebug-macro")
+set(SDB_DEBUG_INFO_NONE "-g0")
+set(SDB_DEBUG_INFO_STACK "-gline-tables-only")
+set(SDB_DEBUG_INFO_FULL "-g -glldb")
+if(NOT DEFINED SDB_DEBUG_INFO_${SDB_DEBUG_INFO})
+    message(
+        FATAL_ERROR
+        "SDB_DEBUG_INFO=${SDB_DEBUG_INFO}, expecting NONE, STACK or FULL"
+    )
 endif()
-set(LLDB_DEBUG_INFO "${FULL_DEBUG_INFO} -glldb")
-set(GDB_DEBUG_INFO "${FULL_DEBUG_INFO} -ggdb")
+set(SDB_DEBUG_FLAGS "${SDB_DEBUG_INFO_${SDB_DEBUG_INFO}}")
 
-if(USE_DEBUG_INFO STREQUAL "NONE")
-    set(DEBUG_INFO_FLAGS "${NONE_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "LINES")
-    set(DEBUG_INFO_FLAGS "${LINES_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "COLUMNS")
-    set(DEBUG_INFO_FLAGS "${COLUMNS_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "SANITIZE")
-    set(DEBUG_INFO_FLAGS "${SANITIZE_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "COVERAGE")
-    set(DEBUG_INFO_FLAGS "${COVERAGE_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "PROFILE")
-    set(DEBUG_INFO_FLAGS "${PROFILE_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "LLDB")
-    set(DEBUG_INFO_FLAGS "${LLDB_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "GDB")
-    set(DEBUG_INFO_FLAGS "${GDB_DEBUG_INFO}")
-else()
-    set(DEBUG_INFO_FLAGS "${FULL_DEBUG_INFO}")
-endif()
-
-if(SDB_SPLIT_DWARF AND NOT USE_DEBUG_INFO STREQUAL "NONE")
-    set(DEBUG_INFO_FLAGS "${DEBUG_INFO_FLAGS} -gsplit-dwarf")
-    if(IPO_ENABLED)
-        add_link_options(
-            "-Wl,--plugin-opt=dwo_dir=${CMAKE_BINARY_DIR}/dwo/$<TARGET_PROPERTY:NAME>"
-        )
+if(SDB_SPLIT_DWARF AND NOT SDB_DEBUG_INFO STREQUAL "NONE")
+    string(APPEND SDB_DEBUG_FLAGS " -gsplit-dwarf")
+    if(SDB_LTO)
+        add_link_options("-Wl,--plugin-opt=dwo_dir=dwo/$<TARGET_PROPERTY:NAME>")
     endif()
 endif()
 
-# c
 # note: when building one of the build types, CMake will automatically combine
-# the base flags from CMAKE_C_FLAGS with build type-specific flags in
-# CMAKE_C_FLAGS_${CMAKE_BUILD_TYPE}.
+# the base flags from CMAKE_<LANG>_FLAGS with build type-specific flags in
+# CMAKE_<LANG>_FLAGS_${CMAKE_BUILD_TYPE}.
 # there is no need to repeat the base flags in the build-type specific flags!
-set(CMAKE_C_FLAGS_DEBUG
-    "-O0 ${FULL_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C debug flags"
-)
-set(CMAKE_C_FLAGS_MINSIZEREL
-    "-Os ${NONE_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C minimal size flags"
-)
-set(CMAKE_C_FLAGS_RELEASE
-    "-O3 ${NONE_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C release flags"
-)
-set(CMAKE_C_FLAGS_RELWITHDEBINFO
-    "-O3 ${FULL_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C release with debug info flags"
-)
-
-# cxx
-# note: when building one of the build types, CMake will automatically combine
-# the base flags from CMAKE_CXX_FLAGS with build type-specific flags in
-# CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE}.
-# there is no need to repeat the base flags in the build-type specific flags!
-set(CMAKE_CXX_FLAGS_DEBUG
-    "-O0 ${FULL_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C++ debug flags"
-)
-set(CMAKE_CXX_FLAGS_MINSIZEREL
-    "-Os ${NONE_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C++ minimal size flags"
-)
-set(CMAKE_CXX_FLAGS_RELEASE
-    "-O3 ${NONE_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C++ release flags"
-)
-set(CMAKE_CXX_FLAGS_RELWITHDEBINFO
-    "-O3 ${FULL_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C++ release with debug info flags"
-)
-
-# put together the final flags
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${EXTRA_FLAGS}")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${EXTRA_FLAGS} ${EXTRA_CXX_FLAGS}")
+foreach(lang C CXX)
+    set(CMAKE_${lang}_FLAGS_DEBUG
+        "-O0 ${SDB_FRAME_POINTER_FLAGS} ${SDB_DEBUG_FLAGS}"
+        CACHE INTERNAL
+        ""
+    )
+    set(CMAKE_${lang}_FLAGS_RELWITHDEBINFO
+        "-O3 ${SDB_FRAME_POINTER_FLAGS} ${SDB_DEBUG_FLAGS}"
+        CACHE INTERNAL
+        ""
+    )
+    set(CMAKE_${lang}_FLAGS_RELEASE
+        "-O3 ${SDB_FRAME_POINTER_FLAGS} ${SDB_DEBUG_FLAGS}"
+        CACHE INTERNAL
+        ""
+    )
+endforeach()
 
 ################################################################################
 ## Runtime
 ################################################################################
-option(STATIC_EXECUTABLES "produce static executables" OFF)
+
+cmake_host_system_information(RESULT SDB_DISTRIB_NAME QUERY DISTRIB_NAME)
+if(SDB_DISTRIB_NAME MATCHES "Alpine")
+    set(SDB_MUSL ON)
+else()
+    set(SDB_MUSL OFF)
+endif()
 
 execute_process(
     COMMAND ${CMAKE_CXX_COMPILER} --print-libgcc-file-name --rtlib=compiler-rt
-    OUTPUT_VARIABLE BUILTINS_LIBRARY_CLANG
+    OUTPUT_VARIABLE SDB_BUILTINS_LIBRARY
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 # link nothing by default and use clang_rt for builtins
-set(DEFAULT_LIBS "-nodefaultlibs ${BUILTINS_LIBRARY_CLANG}")
-
-cmake_host_system_information(RESULT DISTRIB_NAME QUERY DISTRIB_NAME)
-message(STATUS "DISTRIB_NAME=${DISTRIB_NAME}")
-if("${DISTRIB_NAME}" MATCHES "Alpine") # musl distr
-    set(DEFAULT_LIBS "${DEFAULT_LIBS} -lc")
-else() # glibc distr
+set(SDB_DEFAULT_LIBS "-nodefaultlibs ${SDB_BUILTINS_LIBRARY}")
+if(SDB_MUSL)
+    string(APPEND SDB_DEFAULT_LIBS " -lc")
+else()
     # TODO(mbkkt) think about -lrt -lpthread -ldl
-    set(DEFAULT_LIBS "${DEFAULT_LIBS} -lc -lm")
+    string(APPEND SDB_DEFAULT_LIBS " -lc -lm")
 endif()
-if(STATIC_EXECUTABLES)
+if(SDB_STATIC)
     set(CMAKE_POSITION_INDEPENDENT_CODE OFF CACHE BOOL "" FORCE)
-    set(DEFAULT_LIBS "-static ${DEFAULT_LIBS}")
+    set(SDB_DEFAULT_LIBS "-static ${SDB_DEFAULT_LIBS}")
 endif()
-
-message(STATUS "DEFAULT_LIBS=${DEFAULT_LIBS}")
-set(CMAKE_CXX_STANDARD_LIBRARIES ${DEFAULT_LIBS})
-set(CMAKE_C_STANDARD_LIBRARIES ${DEFAULT_LIBS})
+set(CMAKE_CXX_STANDARD_LIBRARIES ${SDB_DEFAULT_LIBS})
+set(CMAKE_C_STANDARD_LIBRARIES ${SDB_DEFAULT_LIBS})
 
 # One dispatch feeds both passes: the link options go on here, before the llvm
 # runtimes subdir is added, so libc++ links the sanitizer runtime; the compile
-# options go on after it, so libc++ itself is not instrumented. SDB_SANITIZE is
-# normalized to a name LLVM_USE_SANITIZER accepts.
-set(SDB_SANITIZE_WAS "${SDB_SANITIZE}")
+# options go on after it, so libc++ itself is not instrumented.
+# SDB_LLVM_SANITIZER is the same sanitizer in the names LLVM_USE_SANITIZER takes.
 set(SDB_SANITIZE_FLAGS "")
 set(SDB_SANITIZE_EXTRA "")
-set(SDB_SANITIZE_UNWINDER ON)
+set(SDB_LLVM_SANITIZER "${SDB_SANITIZE}")
+set(SDB_LLVM_UNWINDER ON)
 if(NOT SDB_SANITIZE STREQUAL "")
     # TODO(mbkkt) we also can apply sanitize-recover
     if(SDB_SANITIZE STREQUAL "Leak")
         set(SDB_SANITIZE_FLAGS -fsanitize=leak)
+        set(SDB_LLVM_SANITIZER "Leaks")
     elseif(SDB_SANITIZE STREQUAL "Undefined")
         # TODO(mbkkt) enable nullability checks and local-bounds
         set(SDB_SANITIZE_FLAGS -fsanitize=undefined)
     elseif(SDB_SANITIZE MATCHES "^(Undefined)?Address(Light)?$")
-        if(SDB_SANITIZE MATCHES "Undefined")
+        if(SDB_SANITIZE MATCHES "^Undefined")
             set(SDB_SANITIZE_FLAGS -fsanitize=undefined -fsanitize=address)
-            set(SDB_SANITIZE "Undefined;Address")
+            set(SDB_LLVM_SANITIZER "Undefined;Address")
         else()
             set(SDB_SANITIZE_FLAGS -fsanitize=address)
-            set(SDB_SANITIZE "Address")
+            set(SDB_LLVM_SANITIZER "Address")
         endif()
         # TODO(mbkkt) apply these settings to libc++?
-        if(SDB_SANITIZE_WAS MATCHES "Light")
+        if(SDB_SANITIZE MATCHES "Light$")
             set(SDB_SANITIZE_EXTRA
                 -fsanitize-address-use-after-return=never
                 -fno-sanitize-address-use-after-scope
@@ -586,7 +549,7 @@ if(NOT SDB_SANITIZE STREQUAL "")
         endif()
     elseif(SDB_SANITIZE STREQUAL "Thread")
         set(SDB_SANITIZE_FLAGS -fsanitize=thread)
-        set(SDB_SANITIZE_UNWINDER OFF) # crashes with llvm libunwinder
+        set(SDB_LLVM_UNWINDER OFF) # crashes with llvm libunwinder
     elseif(SDB_SANITIZE MATCHES "^Memory(WithOrigins)?$")
         # TODO(mbkkt) patch libc++ to be able work with -fsanitize-memory-track-origins=1 (default is 2)
         # TODO(mbkkt) add ability to apply -fno-sanitize-memory-use-after-dtor
@@ -598,7 +561,7 @@ if(NOT SDB_SANITIZE STREQUAL "")
         if(SDB_SANITIZE STREQUAL "MemoryWithOrigins")
             list(APPEND SDB_SANITIZE_EXTRA -fsanitize-memory-track-origins)
         endif()
-        set(SDB_SANITIZE_UNWINDER OFF) # crashes with llvm libunwinder
+        set(SDB_LLVM_UNWINDER OFF) # crashes with llvm libunwinder
     else()
         # TODO(mbkkt) Maybe support cfi, safe-stack?
         message(FATAL_ERROR "SDB_SANITIZE=${SDB_SANITIZE} not supported yet")
@@ -606,72 +569,59 @@ if(NOT SDB_SANITIZE STREQUAL "")
     add_link_options(${SDB_SANITIZE_FLAGS})
 endif()
 
-add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>)
-add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-nostdlib++>)
-
 include(Runtime)
 
 if(NOT SDB_SANITIZE STREQUAL "")
     # if will be some strange link error just enable this
     # add_compile_options(-fPIC -fPIE)
-    add_compile_options(${SDB_SANITIZE_FLAGS} ${SDB_SANITIZE_EXTRA})
-endif()
-
-if(SDB_SANITIZE_UNWINDER)
-    link_libraries(
-        $<BUILD_LOCAL_INTERFACE:unwind_static>
-        $<BUILD_LOCAL_INTERFACE:cxxabi_static>
-        $<BUILD_LOCAL_INTERFACE:cxx_static>
-    )
-else()
-    link_libraries(
-        $<BUILD_LOCAL_INTERFACE:cxxabi_static>
-        $<BUILD_LOCAL_INTERFACE:cxx_static>
+    add_compile_options(
+        ${SDB_SANITIZE_FLAGS}
+        ${SDB_SANITIZE_EXTRA}
+        -Wno-pass-failed
     )
 endif()
 
-################################################################################
-## VTUNE Symbols for profiling our build.
-## As we link statically we would miss some essential symbols for profiler.
-## So we force them to be included.
-## See https://software.intel.com/content/www/us/en/develop/documentation/vtune-help/top/set-up-analysis-target/linux-targets/analyzing-statically-linked-binaries-on-linux-targets.html
-################################################################################
-
-option(
-    ENSURE_VTUNE_SYMBOLS
-    "force needed by VTUNE profiler symbols to be included"
-    OFF
+if(SDB_LLVM_UNWINDER)
+    link_libraries($<BUILD_LOCAL_INTERFACE:unwind_static>)
+endif()
+link_libraries(
+    $<BUILD_LOCAL_INTERFACE:cxxabi_static>
+    $<BUILD_LOCAL_INTERFACE:cxx_static>
 )
-
-if(ENSURE_VTUNE_SYMBOLS)
-    set(CMAKE_EXE_LINKER_FLAGS
-        "${CMAKE_EXE_LINKER_FLAGS} -upthread_getattr_np -upthread_create\
-    -upthread_key_create -upthread_setspecific -upthread_getspecific -upthread_self -upthread_attr_destroy\
-    -upthread_attr_setstack -upthread_attr_getstack -upthread_attr_getstacksize -upthread_attr_setstacksize\
-    -upthread_cancel -u_pthread_cleanup_push -u_pthread_cleanup_pop -upthread_mutex_lock -upthread_mutex_trylock\
-    -upthread_spin_lock -upthread_spin_trylock"
-    )
-endif()
 
 ################################################################################
 ## 3RD PARTY
 ################################################################################
 
 set(CMAKE_SKIP_INSTALL_RULES TRUE)
-add_subdirectory(third_party EXCLUDE_FROM_ALL)
+add_subdirectory(third_party EXCLUDE_FROM_ALL SYSTEM)
 set(CMAKE_SKIP_INSTALL_RULES FALSE)
 
-if("${SDB_ALLOC}" MATCHES "JE")
+if(SDB_ALLOC STREQUAL "JE")
     link_libraries(jemalloc)
-elseif("${SDB_ALLOC}" MATCHES "TC")
+elseif(SDB_ALLOC STREQUAL "TC")
     link_libraries(tcmalloc::tcmalloc)
 endif()
 
 ################################################################################
-## PATHS, installation, packages, frontend
+## INSTALL
 ################################################################################
 
-include(SereneDBInstall)
+include(GNUInstallDirs)
+install(
+    FILES ${CMAKE_SOURCE_DIR}/LICENSE
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
+    RENAME LICENSE.txt
+)
+# glibc license files (required for static linking, see glibc LICENSES file)
+install(
+    DIRECTORY ${CMAKE_SOURCE_DIR}/resources/licenses/glibc/
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}/glibc
+)
+install(DIRECTORY DESTINATION ${CMAKE_INSTALL_LOCALSTATEDIR}/lib/serenedb)
+install(DIRECTORY DESTINATION ${CMAKE_INSTALL_LOCALSTATEDIR}/log/serenedb)
+# systemd service file is installed via debian packaging
+# (packages/debian/source/common/serenedb.service)
 
 ################################################################################
 ## SUB-PROJECTS
@@ -679,14 +629,48 @@ include(SereneDBInstall)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/")
 
+add_compile_options(
+    -Wall
+    -Wcomma
+    -Wdeprecated
+    -Wextra
+    -Wextra-semi
+    -Wfloat-conversion
+    -Wformat-signedness
+    -Wformat=2
+    -Wheader-hygiene
+    -Wignored-base-class-qualifiers
+    -Wimplicit-fallthrough
+    -Wimplicit-int-conversion-on-negation
+    -Wloop-analysis
+    -Wmissing-variable-declarations
+    -Wnon-virtual-dtor
+    -Wnull-dereference
+    -Wsuggest-destructor-override
+    -Wsuggest-override
+    -Wthread-safety
+    -Wthread-safety-beta
+    -Wundef
+    -Wunreachable-code-break
+    -Wunreachable-code-return
+    -Wunused-exception-parameter
+    -Wvla
+    -Wno-c++98-compat-extra-semi
+    -Wno-deprecated-copy-with-dtor
+    -Wno-deprecated-declarations
+    -Wno-missing-designated-field-initializers
+    -Wno-unused-parameter
+)
+if(SDB_COVERAGE)
+    add_compile_options(${SDB_COVERAGE_FLAGS})
+    add_compile_definitions(SDB_COVERAGE)
+endif()
+
 add_subdirectory(iresearch)
 if(NOT IRESEARCH_BENCH)
-    add_subdirectory(server/utils)
     add_subdirectory(server)
+    add_subdirectory(examples/iresearch EXCLUDE_FROM_ALL)
+    add_custom_target(serenedb)
+    add_dependencies(serenedb serened)
 endif()
 add_subdirectory(tests)
-if(NOT IRESEARCH_BENCH)
-    add_subdirectory(examples/iresearch EXCLUDE_FROM_ALL)
-
-    add_custom_target(serenedb DEPENDS serened)
-endif()

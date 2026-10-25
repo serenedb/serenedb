@@ -27,15 +27,28 @@ class WorkerState:
         self.search_col = {}
         self.uses_dict = {}
 
+    def note_ambiguous(self, op):
+        for key, _token in op.creates:
+            kind = key[0]
+            if kind == ops.TABLE and op.kind == "create_table_serial":
+                self.serial.add(key)
+            elif kind in (ops.VIEW, ops.INDEX) and op.needs:
+                self.parent[key] = op.needs[0]
+            if kind == ops.INDEX:
+                for need in op.needs[1:]:
+                    if need[0] == ops.TOKENIZER:
+                        self.uses_dict[key] = need
+                if op.search_column:
+                    self.search_col[key] = op.search_column
+
     def note_created(self, op):
+        self.note_ambiguous(op)
         for key, _token in op.creates:
             kind = key[0]
             if kind == ops.TABLE:
                 if key not in self.tables:
                     self.tables.append(key)
                 self.rows[key] = set(op.rows_added)
-                if op.kind == "create_table_serial":
-                    self.serial.add(key)
             elif kind == ops.SEQUENCE:
                 if key not in self.sequences:
                     self.sequences.append(key)
@@ -45,18 +58,9 @@ class WorkerState:
                 if op.kind == "create_iceberg_view" \
                         and key not in self.iceberg_views:
                     self.iceberg_views.append(key)
-                if op.needs:
-                    self.parent[key] = op.needs[0]
             elif kind == ops.INDEX:
                 if key not in self.indexes:
                     self.indexes.append(key)
-                if op.needs:
-                    self.parent[key] = op.needs[0]
-                for need in op.needs[1:]:
-                    if need[0] == ops.TOKENIZER:
-                        self.uses_dict[key] = need
-                if op.search_column:
-                    self.search_col[key] = op.search_column
             elif kind == ops.TOKENIZER:
                 if key not in self.tokenizers:
                     self.tokenizers.append(key)

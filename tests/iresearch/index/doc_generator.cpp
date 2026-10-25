@@ -491,7 +491,8 @@ const Document* JsonDocGenerator::next() {
     return nullptr;
   }
 
-  _prev = _next, ++_next;
+  _prev = _next;
+  ++_next;
   return &*_prev;
 }
 

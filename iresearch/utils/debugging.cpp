@@ -46,6 +46,8 @@ constinit absl::Mutex gFailurePointsLock{absl::kConstInit};
 // a global set containing the currently registered failure points
 containers::FlatHashSet<std::string> gFailurePoints;
 
+uint64_t gClears = 0;
+
 }  // namespace
 
 bool ShouldFailDebugging(std::string_view value) noexcept {
@@ -92,6 +94,7 @@ void ClearFailurePointsDebugging() noexcept {
     absl::WriterMutexLock write_locker{&gFailurePointsLock};
     num_existing = gFailurePoints.size();
     gFailurePoints.clear();
+    ++gClears;
     gHasFailurePoints.store(false, std::memory_order_relaxed);
   }
 
@@ -124,16 +127,22 @@ void ParkOnceOnFailurePointDebugging(std::string_view value) {
   if (!ShouldFailDebugging(value)) {
     return;
   }
-  auto release = absl::StrCat(value, ":release");
-  const auto released =
-    +[](std::string* v) noexcept { return gFailurePoints.contains(*v); };
+  struct Park {
+    std::string release;
+    uint64_t clears = 0;
+  };
+  Park park{.release = absl::StrCat(value, ":release")};
+  const auto released = +[](Park* p) noexcept {
+    return gClears != p->clears || gFailurePoints.contains(p->release);
+  };
   absl::MutexLock lock{&gFailurePointsLock};
   if (gFailurePoints.erase(value) == 0) {
     return;
   }
   gFailurePoints.emplace(absl::StrCat(value, ":parked"));
-  gFailurePointsLock.Await(absl::Condition{released, &release});
-  gFailurePoints.erase(release);
+  park.clears = gClears;
+  gFailurePointsLock.Await(absl::Condition{released, &park});
+  gFailurePoints.erase(park.release);
   if (gFailurePoints.empty()) {
     gHasFailurePoints.store(false, std::memory_order_relaxed);
   }

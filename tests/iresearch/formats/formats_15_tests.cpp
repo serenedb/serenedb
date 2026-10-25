@@ -377,13 +377,13 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
 
   auto in = dir.Open("attributes", duckdb::MappedFileAccess::NORMAL);
   EXPECT_FALSE(!in);
-  [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(*in);
+  [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(in);
 
   auto reader = std::make_unique<irs::PostingsReader>();
   reader->prepare(state, features);
 
-  irs::bstring in_data(in->Length() - in->Position(), 0);
-  in->ReadData(&in_data[0], in_data.size());
+  irs::bstring in_data(in.Length() - in.Position(), 0);
+  in.ReadData(&in_data[0], in_data.size());
   const auto* begin = in_data.c_str();
 
   irs::PostingMeta read_meta;

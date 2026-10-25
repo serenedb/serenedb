@@ -35,7 +35,7 @@ using namespace irs;
 
 namespace tests::detail {
 
-class BytesInput : public BytesViewInput {
+class BytesInput : public IndexInput {
  public:
   BytesInput() = default;
   BytesInput(BytesInput&& rhs) noexcept;
@@ -47,19 +47,19 @@ class BytesInput : public BytesViewInput {
   bstring _buf;
 };
 
-BytesInput::BytesInput(bytes_view data) : _buf{data} { reset(_buf); }
+BytesInput::BytesInput(bytes_view data) : _buf{data} { Reset(_buf); }
 
 BytesInput::BytesInput(BytesInput&& other) noexcept
   : _buf{std::move(other._buf)} {
-  reset(_buf);
-  other.reset({});
+  Reset(_buf);
+  other.Reset({});
 }
 
 BytesInput& BytesInput::operator=(BytesInput&& other) noexcept {
   if (this != &other) {
     _buf = std::move(other._buf);
-    reset(_buf);
-    other.reset({});
+    Reset(_buf);
+    other.Reset({});
   }
   return *this;
 }
@@ -118,7 +118,7 @@ void PackedReadWriteCore(const std::vector<uint32_t>& src) {
   {
     auto begin = read.data();
     for (size_t i = 0; i < blocks; ++i) {
-      irs::bitpack::read_block32(unpack, in, encoded, begin, kBlockSize);
+      irs::bitpack::read_block32(unpack, in, begin, kBlockSize);
       begin += kBlockSize;
     }
   }
@@ -148,17 +148,17 @@ void PackedReadWriteBlockCore(const std::vector<uint32_t>& src) {
   // decompress data from stream
   std::vector<uint32_t> read(src.size());
   irs::BytesViewInput in(buf);
-  irs::bitpack::read_block32(unpack, in, encoded, read.data(), kBlockSize);
+  irs::bitpack::read_block32(unpack, in, read.data(), kBlockSize);
 
   ASSERT_EQ(src, read);
 }
 
-using irs::DataInput;
 using irs::DataOutput;
+using irs::IndexInput;
 
 template<typename T>
 void ReadWriteCore(const std::vector<T>& src,
-                   const std::function<T(DataInput&)>& reader,
+                   const std::function<T(IndexInput&)>& reader,
                    const std::function<void(DataOutput&, T)>& writer) {
   irs::bstring buf;
   irs::BytesOutput out(buf);
@@ -172,7 +172,7 @@ void ReadWriteCore(const std::vector<T>& src,
 
 // Since NaN != NaN according to the ieee754
 template<typename T>
-void ReadWriteCoreNan(const std::function<T(DataInput&)>& reader,
+void ReadWriteCoreNan(const std::function<T(IndexInput&)>& reader,
                       const std::function<void(DataOutput&, T)>& writer) {
   irs::bstring buf;
   irs::BytesOutput out(buf);
@@ -186,7 +186,7 @@ void ReadWriteCoreNan(const std::function<T(DataInput&)>& reader,
 
 template<typename Cont>
 void ReadWriteCoreContainer(
-  const Cont& src, const std::function<Cont(DataInput&)>& reader,
+  const Cont& src, const std::function<Cont(IndexInput&)>& reader,
   const std::function<DataOutput&(DataOutput&, const Cont&)>& writer) {
   irs::bstring buf;
   irs::BytesOutput out(buf);
@@ -219,7 +219,7 @@ void ReadWriteBlock(const std::vector<uint32_t>& source,
   // read block
   BytesInput in(buf);
   std::vector<uint32_t> read(size);
-  irs::bitpack::read_block32(unpack, in, enc_dec_buf.data(), read.data(), size);
+  irs::bitpack::read_block32(unpack, in, read.data(), size);
 
   ASSERT_EQ(source, read);
 }
@@ -362,7 +362,7 @@ TEST(store_utils_tests, zvdouble_read_write) {
 }
 
 static void WriteSize(DataOutput& out, size_t size) { out.WriteU64(size); }
-static size_t ReadSize(DataInput& in) { return in.ReadI64(); }
+static size_t ReadSize(IndexInput& in) { return in.ReadI64(); }
 
 TEST(store_utils_tests, size_read_write) {
   static_assert(sizeof(uint64_t) == sizeof(size_t));

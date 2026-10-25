@@ -35,9 +35,7 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <exception>
 
-#include "iresearch/store/block_input.hpp"
 #include "iresearch/store/file_output.hpp"
-#include "iresearch/store/mapped_input.hpp"
 #include "iresearch/utils/log.hpp"
 
 namespace irs {
@@ -76,18 +74,6 @@ std::string RootPath(std::string_view root) {
   }
   return absl::StrCat(root, "/");
 }
-
-class WholeFileInput final : public BytesViewInput {
- public:
-  explicit WholeFileInput(std::shared_ptr<const byte_type[]> bytes,
-                          uint64_t size) noexcept
-    : BytesViewInput{bytes_view{bytes.get(), size}}, _bytes{std::move(bytes)} {}
-
-  ptr Dup() const final { return std::make_unique<WholeFileInput>(*this); }
-
- private:
-  std::shared_ptr<const byte_type[]> _bytes;
-};
 
 }  // namespace
 
@@ -338,16 +324,16 @@ IndexOutput::ptr Directory::Create(std::string_view name, bool cached) const {
   return output;
 }
 
-IndexInput::ptr Directory::Open(std::string_view name,
-                                duckdb::MappedFileAccess access) const {
+IndexInput Directory::Open(std::string_view name,
+                           duckdb::MappedFileAccess access) const {
   const auto path = Path(name);
   if (InBlocks()) {
-    return OpenBlocks(path, name, access);
+    return IndexInput{OpenBlocks(path, name, access)};
   }
-  return OpenMapped(path, access);
+  return IndexInput{OpenMapped(path, access)};
 }
 
-IndexInput::ptr Directory::ReadWhole(std::string_view name) const {
+IndexInput Directory::ReadWhole(std::string_view name) const {
   const auto path = Path(name);
   duckdb::OpenFileInfo file{path};
   if (Kind() == StorageKind::Remote) {
@@ -356,35 +342,34 @@ IndexInput::ptr Directory::ReadWhole(std::string_view name) const {
   }
   auto handle = _state->fs.OpenFile(file, duckdb::FileFlags::FILE_FLAGS_READ);
   const auto size = duckdb::NumericCast<duckdb::idx_t>(handle->GetFileSize());
-  auto bytes = std::make_shared_for_overwrite<byte_type[]>(size);
+  auto bytes = std::make_unique_for_overwrite<byte_type[]>(size);
   if (size != 0) {
     handle->Read(duckdb::QueryContext{}, bytes.get(), size, 0);
   }
-  return std::make_unique<WholeFileInput>(std::move(bytes), size);
+  return IndexInput{std::make_unique<InputFile>(path, std::move(bytes), size)};
 }
 
-IndexInput::ptr Directory::OpenMapped(const std::string& path,
-                                      duckdb::MappedFileAccess access) const {
+std::unique_ptr<InputFile> Directory::OpenMapped(
+  const std::string& path, duckdb::MappedFileAccess access) const {
   auto mapping = _state->fs.MemoryMapFile(duckdb::OpenFileInfo{path},
                                           duckdb::FileFlags::FILE_FLAGS_READ,
                                           duckdb::MMapOptions{});
   if (access != duckdb::MappedFileAccess::NORMAL) {
     mapping->Advise(access);
   }
-  return std::make_unique<MappedInput>(
-    std::make_shared<MappedFile>(std::move(mapping)));
+  return std::make_unique<InputFile>(std::move(mapping));
 }
 
-IndexInput::ptr Directory::OpenBlocks(const std::string& path,
-                                      std::string_view name,
-                                      duckdb::MappedFileAccess access) const {
+std::unique_ptr<InputFile> Directory::OpenBlocks(
+  const std::string& path, std::string_view name,
+  duckdb::MappedFileAccess access) const {
   auto& cache = Cache();
   if (Kind() == StorageKind::Memory) {
     auto blocks = MemoryFiles().GetBlockFile(path);
     if (!blocks) {
       return OpenMapped(path, access);
     }
-    return std::make_unique<BlockInput>(cache, std::move(blocks));
+    return std::make_unique<InputFile>(cache, std::move(blocks), nullptr);
   }
   const auto known = Info(name);
   duckdb::shared_ptr<duckdb::FileHandle> handle =
@@ -396,7 +381,7 @@ IndexInput::ptr Directory::OpenBlocks(const std::string& path,
     duckdb::NumericCast<duckdb::idx_t>(handle->GetFileSize());
   info.can_seek = handle->CanSeek();
   info.on_disk = handle->OnDiskFile();
-  return std::make_unique<BlockInput>(
+  return std::make_unique<InputFile>(
     cache, cache.OpenFile(path, info, false, std::move(handle)),
     known ? known->tail : nullptr);
 }

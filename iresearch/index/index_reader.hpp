@@ -163,7 +163,7 @@ struct SubReader : public IndexReader, public NormProvider {
     return nullptr;
   }
   virtual const AnnIndex* Ann(field_id /*field*/) const { return nullptr; }
-  virtual IndexInput::ptr ReopenAnn() const { return nullptr; }
+  virtual IndexInput ReopenAnn() const { return {}; }
 };
 
 template<typename Visitor, typename FilterVisitor>

@@ -50,7 +50,6 @@ template<typename InputType>
 class TermRange : public detail::PostingBatch<InputType, false> {
   using Base = detail::PostingBatch<InputType, false>;
 
-  using Base::_in;
   using Base::_last;
   using Base::_left_in_list;
   using Base::_walk;
@@ -78,7 +77,7 @@ class TermRange : public detail::PostingBatch<InputType, false> {
       }
       return _docs_count - Below(_cached, doc);
     }
-    const auto left = _walk.Seek(doc, *_in);
+    const auto left = _walk.Seek(doc, In());
     if (left == 0) {
       return 0;
     }

@@ -392,13 +392,10 @@ set(IResearch_core_sources
     ./search/scorers/constant_score.cpp
     ./search/scorers/raw_tf.cpp
     ./search/scorers/raw_dl.cpp
-    ./store/block_input.cpp
     ./store/data_input.cpp
     ./store/directory.cpp
     ./store/file_output.cpp
-    ./store/mapped_input.cpp
     ./store/memory_file.cpp
-    ./store/store_utils.cpp
     ./utils/attributes.cpp
     ./utils/index_utils.cpp
     ./utils/levenshtein_utils.cpp

@@ -40,7 +40,6 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -278,16 +277,9 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
 template<typename Input>
 class PostingReader {
  public:
-  explicit PostingReader(const IndexInput& doc) noexcept : _doc{&doc} {}
+  explicit PostingReader(const IndexInput& doc) noexcept : _in{doc} {}
 
-  Input& In() {
-    if (_in == nullptr) [[unlikely]] {
-      _owned = _doc->Dup();
-      SDB_ASSERT(_owned);
-      _in = &irs::utils::downCast<Input>(*_owned);
-    }
-    return *_in;
-  }
+  Input& In() noexcept { return _in; }
 
   template<typename Sink>
   void Read(const PostingMeta& meta, bool has_score_bounds, bool has_freq,
@@ -312,9 +304,7 @@ class PostingReader {
 
   doc_id_t* Docs() noexcept { return _buf; }
 
-  const IndexInput* _doc;
-  IndexInput::ptr _owned;
-  Input* _in = nullptr;
+  Input _in;
   DocsBuf _buf;
   HoleBuf _holes;
   [[no_unique_address]] NeedEnc<Input> _enc;

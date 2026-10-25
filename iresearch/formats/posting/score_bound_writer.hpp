@@ -332,7 +332,7 @@ class FreqNormSource final : public ScoreBoundSource {
     return nullptr;
   }
 
-  void Read(DataInput& in, size_t size) final {
+  void Read(IndexInput& in, size_t size) final {
     _freq = in.ReadV32();
     // TODO(mbkkt) don't compute vsize here
     const auto read = bytes_io<uint32_t>::vsize(_freq);

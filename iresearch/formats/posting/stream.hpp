@@ -32,7 +32,6 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -69,11 +68,10 @@ class PostingsStream : public TermPostings {
         _doc_in = &_inline_in;
       } else {
         if (!_file_in) {
-          _file_in = doc_in.Dup();
-          SDB_ASSERT(_file_in);
+          _file_in = InputType{doc_in};
         }
-        _file_in->Seek(meta.doc_start);
-        _doc_in = _file_in.get();
+        _file_in.Seek(meta.doc_start);
+        _doc_in = &_file_in;
       }
 
       auto& in = In();
@@ -91,7 +89,7 @@ class PostingsStream : public TermPostings {
         .term_state = &meta,
         .enc_buf = _enc_buf,
       };
-      _pos.template Prepare<InputType>(state);
+      _pos.Prepare(state);
     }
   }
 
@@ -132,7 +130,7 @@ class PostingsStream : public TermPostings {
   using Position = PositionImpl<IteratorTraits>;
 
   IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_doc_in);
+    return static_cast<InputType&>(*_doc_in);
   }
 
   void ReadLeaf(doc_id_t prev) {
@@ -169,7 +167,7 @@ class PostingsStream : public TermPostings {
     IteratorTraits::Frequency(),
     SlackBuf<uint32_t, doc_limits::kBlockSize, block_codec::kOutSlack>> _freqs;
   DocsBuf _docs;
-  IndexInput::ptr _file_in;
+  InputType _file_in;
   BytesViewInput _inline_in;
   IndexInput* _doc_in = nullptr;
   [[no_unique_address]] utils::Need<IteratorTraits::Position(), Position> _pos;

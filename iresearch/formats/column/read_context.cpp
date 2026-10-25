@@ -59,7 +59,7 @@ ReadContext::ReadContext(const ColReader& reader, bool random_access)
   ResetMapping();
 }
 
-ReadContext::ReadContext(duckdb::DatabaseInstance& db, IndexInput::ptr in)
+ReadContext::ReadContext(duckdb::DatabaseInstance& db, IndexInput in)
   : ReadContext{db} {
   _in = std::move(in);
   ResetMapping();
@@ -84,11 +84,11 @@ void ReadContext::ResetMapping() {
   if (!_in) {
     return;
   }
-  const auto pos = _in->Position();
-  const auto len = _in->Length();
-  if (const byte_type* data = _in->ReadStable(0, len); data != nullptr) {
+  const auto pos = _in.Position();
+  const auto len = _in.Length();
+  if (const byte_type* data = _in.ReadStable(0, len); data != nullptr) {
     _mapping = duckdb::make_uniq<ColMapping>(data, len);
-    _in->Seek(pos);
+    _in.Seek(pos);
   }
 }
 
@@ -98,33 +98,33 @@ duckdb::string_t ReadContext::ReadString(duckdb::Vector& result,
   SDB_ASSERT(offset == 0);
   const auto pos = static_cast<uint64_t>(block);
   uint32_t len;
-  _in->ReadData(pos, reinterpret_cast<byte_type*>(&len), sizeof(len));
+  _in.ReadData(pos, reinterpret_cast<byte_type*>(&len), sizeof(len));
   len = absl::little_endian::Load32(reinterpret_cast<byte_type*>(&len));
-  if (const auto* body = _in->ReadStable(pos + sizeof(len), len)) {
+  if (const auto* body = _in.ReadStable(pos + sizeof(len), len)) {
     return duckdb::string_t{reinterpret_cast<const char*>(body), len};
   }
   auto out = duckdb::StringVector::EmptyString(result, len);
-  _in->ReadData(pos + sizeof(len),
-                reinterpret_cast<byte_type*>(out.GetDataWriteable()), len);
+  _in.ReadData(pos + sizeof(len),
+               reinterpret_cast<byte_type*>(out.GetDataWriteable()), len);
   out.Finalize();
   return out;
 }
 
 duckdb::const_data_ptr_t ReadContext::TryReadStable(duckdb::idx_t position,
                                                     duckdb::idx_t size) {
-  SDB_ENSURE(size <= _in->Length() && position <= _in->Length() - size,
+  SDB_ENSURE(size <= _in.Length() && position <= _in.Length() - size,
              "ReadContext::TryReadStable: range [", position, ", ",
-             position + size, ") out of bounds (length ", _in->Length(), ")");
+             position + size, ") out of bounds (length ", _in.Length(), ")");
   return reinterpret_cast<duckdb::const_data_ptr_t>(
-    _in->ReadStable(position, size));
+    _in.ReadStable(position, size));
 }
 
 void ReadContext::Read(duckdb::idx_t position, duckdb::data_ptr_t target,
                        duckdb::idx_t size) {
-  SDB_ENSURE(size <= _in->Length() && position <= _in->Length() - size,
+  SDB_ENSURE(size <= _in.Length() && position <= _in.Length() - size,
              "ReadContext::Read: range [", position, ", ", position + size,
-             ") out of bounds (length ", _in->Length(), ")");
-  _in->ReadData(position, reinterpret_cast<byte_type*>(target), size);
+             ") out of bounds (length ", _in.Length(), ")");
+  _in.ReadData(position, reinterpret_cast<byte_type*>(target), size);
 }
 
 duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
@@ -164,7 +164,7 @@ void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
     block.Read(context, *_mapping, offset);
     return;
   }
-  _in->ReadData(offset, block.InternalBuffer(), size);
+  _in.ReadData(offset, block.InternalBuffer(), size);
 }
 
 void ReadContext::ReadBlocks(duckdb::QueryContext /*context*/,

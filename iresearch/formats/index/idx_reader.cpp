@@ -43,7 +43,7 @@
 namespace irs {
 
 struct IdxReader::Impl {
-  IndexInput::ptr in;
+  IndexInput in;
   std::vector<std::pair<field_id, std::unique_ptr<AnnIndex>>> ann_entries;
   irs::containers::FlatHashMap<field_id, size_t> ann_by_id;
   std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
@@ -60,7 +60,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
   _impl->in = dir.Open(filename, duckdb::MappedFileAccess::SEQUENTIAL);
 
   format_utils::ReadFooter(
-    *_impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+    _impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
       footer.ReadOptionalList(
         kIdxFieldTermDict, "term_dict",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -100,9 +100,9 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
             _impl->ann_ends.push_back(tree_offset + tree_byte_size);
             _impl->ann_ends.push_back(stats_offset + stats_byte_size);
 
-            auto body = _impl->in->Dup();
-            body->Seek(tree_offset);
-            auto entry = CentroidsTree::Deserialize(*body, tree_byte_size);
+            IndexInput body{_impl->in};
+            body.Seek(tree_offset);
+            auto entry = CentroidsTree::Deserialize(body, tree_byte_size);
             entry.SetQuantStatsLocation(stats_offset, stats_byte_size);
 
             const size_t idx = _impl->ann_entries.size();
@@ -120,9 +120,9 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
             const auto byte_size = obj.ReadProperty<uint64_t>(2, "byte_size");
             _impl->ann_ends.push_back(offset + byte_size);
 
-            auto body = _impl->in->Dup();
-            body->Seek(offset);
-            auto header = HnswIndex::ReadHeader(*body);
+            IndexInput body{_impl->in};
+            body.Seek(offset);
+            auto header = HnswIndex::ReadHeader(body);
 
             const size_t idx = _impl->ann_entries.size();
             _impl->ann_entries.emplace_back(
@@ -158,8 +158,6 @@ std::span<const uint64_t> IdxReader::AnnEnds() const noexcept {
   return _impl->ann_ends;
 }
 
-IndexInput::ptr IdxReader::ReopenIn() const {
-  return _impl->in ? _impl->in->Dup() : IndexInput::ptr{};
-}
+IndexInput IdxReader::ReopenIn() const { return _impl->in; }
 
 }  // namespace irs

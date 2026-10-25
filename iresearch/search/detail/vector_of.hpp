@@ -79,8 +79,8 @@ namespace irs::detail {
 
 class VectorBlockReader {
  public:
-  VectorBlockReader(IndexInput::ptr&& in, uint32_t record_size) noexcept
-    : _in{std::move(in)}, _record_size{record_size} {
+  VectorBlockReader(const IndexInput& in, uint32_t record_size) noexcept
+    : _in{in}, _record_size{record_size} {
     SDB_ASSERT(_in);
   }
 
@@ -89,17 +89,11 @@ class VectorBlockReader {
   std::span<const byte_type> Read(size_t index, size_t count) {
     const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
     const size_t bytes = count * size_t{_record_size};
-    if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
-      return {p, bytes};
-    }
-    _buf.resize(bytes);
-    _in->ReadData(offset, _buf.data(), bytes);
-    return _buf;
+    return {_in.ReadVolatile(offset, bytes), bytes};
   }
 
  private:
-  IndexInput::ptr _in;
-  std::vector<byte_type> _buf;
+  IndexInput _in;
   uint64_t _base = 0;
   uint32_t _record_size;
 };
@@ -599,7 +593,6 @@ class VectorSlots {
 
 struct ClusterFeed {
   const VectorState* state;
-  IndexInput* payload;
   bool has_centroids;
 
   using Args =
@@ -612,7 +605,7 @@ struct ClusterFeed {
     const float* centroid =
       has_centroids ? state->cluster_centroids.data() + c * state->d : nullptr;
     quantizer->StartCluster(centroid);
-    VectorBlockReader pay{payload->Dup(),
+    VectorBlockReader pay{state->payload,
                           quantizer->BlockSetting().record_size};
     pay.Reset(state->pay_starts[c]);
     return Args{state->cookies[c], *detail::DocOf(*state->reader),
@@ -636,12 +629,11 @@ template<typename Gate, typename Query, typename Emit>
 auto ResolveClusters(const Query& query, Emit&& emit) {
   const auto& state = query.State();
   SDB_ASSERT(state.reader != nullptr);
-  SDB_ASSERT(state.payload != nullptr);
+  SDB_ASSERT(state.payload);
   SDB_ASSERT(detail::DocOf(*state.reader) != nullptr);
   SDB_ASSERT(!state.cookies.empty());
 
   const ClusterFeed feed{.state = &state,
-                         .payload = state.payload.get(),
                          .has_centroids = state.cluster_centroids.size() ==
                                           state.cookies.size() * state.d};
   const auto count = state.cookies.size();

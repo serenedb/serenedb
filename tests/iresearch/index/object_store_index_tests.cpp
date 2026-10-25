@@ -273,7 +273,7 @@ TEST(ObjectStoreIndexTest, replace_adopts_segments) {
 constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
 constexpr uint64_t kBlocks = 16;
 
-irs::IndexInput::ptr WriteUncached(const irs::Directory& dir) {
+irs::IndexInput WriteUncached(const irs::Directory& dir) {
   const std::vector<irs::byte_type> block(kBlock, 0x5A);
   {
     auto out = dir.Create("blocks");
@@ -292,8 +292,8 @@ TEST(ObjectStoreIndexTest, sequential_reads_fetch_ahead) {
   tests::ObjectStore();
   const irs::Directory dir{Db(), Root()};
   auto in = WriteUncached(dir);
-  while (!in->IsEOF()) {
-    std::ignore = in->ReadByte();
+  while (!in.IsEOF()) {
+    std::ignore = in.ReadByte();
   }
   EXPECT_EQ(4, tests::ObjectStore().Requests().get);
 }
@@ -303,7 +303,7 @@ TEST(ObjectStoreIndexTest, large_reads_fetch_their_range_at_once) {
   const irs::Directory dir{Db(), Root()};
   auto in = WriteUncached(dir);
   irs::bstring buf(kBlocks * kBlock, 0);
-  in->ReadData(buf.data(), buf.size());
+  in.ReadData(buf.data(), buf.size());
   EXPECT_EQ(1, tests::ObjectStore().Requests().get);
 }
 
@@ -506,11 +506,11 @@ TEST(ObjectStoreIndexTest, reads_past_the_end_are_refused) {
     out->Close();
   }
   auto in = dir.Open("short", duckdb::MappedFileAccess::NORMAL);
-  EXPECT_EQ(42, in->ReadI32());
-  EXPECT_THROW(in->ReadByte(), irs::SqlException);
-  in->Seek(2);
+  EXPECT_EQ(42, in.ReadI32());
+  EXPECT_THROW(in.ReadByte(), irs::SqlException);
+  in.Seek(2);
   irs::byte_type buf[8];
-  EXPECT_THROW(in->ReadData(buf, sizeof(buf)), irs::SqlException);
+  EXPECT_THROW(in.ReadData(buf, sizeof(buf)), irs::SqlException);
 }
 
 TEST(ObjectStoreIndexTest, a_tail_is_kept_up_to_its_limit) {
@@ -658,13 +658,13 @@ TEST(ObjectStoreIndexTest, random_reads_fetch_only_their_blocks) {
   const irs::Directory dir{Db(), Root()};
   auto in = WriteUncached(dir);
   for (uint64_t block = 0; block < kBlocks; block += 2) {
-    in->Seek(block * kBlock);
-    std::ignore = in->ReadByte();
+    in.Seek(block * kBlock);
+    std::ignore = in.ReadByte();
   }
   EXPECT_EQ(kBlocks / 2, tests::ObjectStore().Requests().get);
 
   irs::bstring buf(2 * kBlock + 2, 0);
-  in->ReadData(3 * kBlock - 1, buf.data(), buf.size());
+  in.ReadData(3 * kBlock - 1, buf.data(), buf.size());
   EXPECT_EQ(kBlocks / 2 + 1, tests::ObjectStore().Requests().get);
 }
 

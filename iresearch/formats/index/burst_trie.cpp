@@ -906,7 +906,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
   const byte_type* InlineRegion() const noexcept { return _inline_region; }
 
-  void LoadFromMeta(field_id id, const TermDictMeta& meta, DataInput& in);
+  void LoadFromMeta(field_id id, const TermDictMeta& meta, IndexInput& in);
 
  protected:
   void MapInlineRegion(IndexInput& in) {
@@ -938,7 +938,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
 };
 
 void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta,
-                                  DataInput& in) {
+                                  IndexInput& in) {
   _field.id = id;
   _field.norm = meta.norm;
   _field.index_features = meta.features;
@@ -1573,7 +1573,7 @@ class TermIteratorBase {
                    const IndexInput& terms_in, const FST& fst)
     : _field{&field},
       _postings{&postings},
-      _terms_in_source{&terms_in},
+      _terms_in{terms_in},
       _fst{&fst},
       _matcher{&fst} {}
 
@@ -1659,17 +1659,7 @@ class TermIteratorBase {
     return &_block_stack.emplace_back(start, prefix);
   }
 
-  // as TermIterator is usually used by prepared queries
-  // to access term metadata by stored cookie, we initialize
-  // term dictionary stream in lazy fashion
-  IndexInput& TermsInput() const {
-    if (!_terms_in) {
-      _terms_in = _terms_in_source->Dup();
-      SDB_ASSERT(_terms_in);
-    }
-
-    return *_terms_in;
-  }
+  IndexInput& TermsInput() const { return _terms_in; }
 
   void LoadBlock(BlockIterator& block) {
     auto& in = TermsInput();
@@ -1707,8 +1697,7 @@ class TermIteratorBase {
   TermAttr _term;
   const TermReaderBase* _field;
   PostingsReader* _postings;
-  const IndexInput* _terms_in_source;
-  mutable IndexInput::ptr _terms_in;
+  mutable IndexInput _terms_in;
   const FST* _fst;
   ArcMatcher<FST> _matcher;
   bstring _term_buf;
@@ -2650,11 +2639,8 @@ template<typename FST>
 class SingleTermLookup {
  public:
   SingleTermLookup(const TermReaderBase& field, PostingsReader& postings,
-                   IndexInput::ptr&& terms_in, const FST& fst) noexcept
-    : _terms_in{std::move(terms_in)},
-      _postings{&postings},
-      _field{&field},
-      _fst{&fst} {
+                   const IndexInput& terms_in, const FST& fst) noexcept
+    : _terms_in{terms_in}, _postings{&postings}, _field{&field}, _fst{&fst} {
     SDB_ASSERT(_terms_in);
   }
 
@@ -2669,7 +2655,7 @@ class SingleTermLookup {
 
  private:
   PostingMeta _meta;
-  IndexInput::ptr _terms_in;
+  IndexInput _terms_in;
   PostingsReader* _postings;
   const TermReaderBase* _field;
   const FST* _fst;
@@ -2724,7 +2710,7 @@ bool VisitTermBlock(const FST& fst, bytes_view term, Visitor&& visit) {
 template<typename FST>
 bool SingleTermLookup<FST>::seek(bytes_view term) {
   return VisitTermBlock(*_fst, term, [&](BlockIterator& cur_block) {
-    cur_block.Load(*_terms_in);
+    cur_block.Load(_terms_in);
     if (SeekResult::Found != cur_block.ScanToTerm(term, [](auto, auto) {})) {
       return false;
     }
@@ -2772,7 +2758,7 @@ class FieldReader::Impl {
 
     SeekTermIterator::ptr iterator() const final {
       return memory::make_managed<TermIteratorImpl<FST>>(
-        *this, _owner->_pr, *_owner->_terms_in, *_fst);
+        *this, _owner->_pr, _owner->_terms_in, *_fst);
     }
 
     PostingMeta Lookup(bytes_view term) const final {
@@ -2781,8 +2767,7 @@ class FieldReader::Impl {
         return {};
       }
 
-      SingleTermLookup<FST> it{*this, _owner->_pr, _owner->_terms_in->Dup(),
-                               *_fst};
+      SingleTermLookup<FST> it{*this, _owner->_pr, _owner->_terms_in, *_fst};
 
       if (!it.seek(term)) {
         return {};
@@ -2798,7 +2783,7 @@ class FieldReader::Impl {
       bool fetching = false;
       VisitTermBlock(*_fst, term, [&](const BlockIterator& block) {
         fetching |=
-          Hint(*_owner->_terms_in, block.LoadStart(), file_utils::kPage);
+          Hint(_owner->_terms_in, block.LoadStart(), file_utils::kPage);
         return true;
       });
       return fetching;
@@ -2810,8 +2795,7 @@ class FieldReader::Impl {
         return;
       }
 
-      SingleTermLookup<FST> it{*this, _owner->_pr, _owner->_terms_in->Dup(),
-                               *_fst};
+      SingleTermLookup<FST> it{*this, _owner->_pr, _owner->_terms_in, *_fst};
 
       if (!it.seek(term)) {
         return;
@@ -2846,7 +2830,7 @@ class FieldReader::Impl {
         PrefetchBlocks();
       }
       return memory::make_managed<AcceptorTermIterator<FST, A>>(
-        *this, _owner->_pr, *_owner->_terms_in, *_fst, a);
+        *this, _owner->_pr, _owner->_terms_in, *_fst, a);
     }
 
     template<typename A>
@@ -2868,7 +2852,7 @@ class FieldReader::Impl {
       if (size == 0) {
         return;
       }
-      const auto& in = *_owner->_terms_in;
+      const auto& in = _owner->_terms_in;
       for (uint64_t i = 0; i != kBlocksProbes; ++i) {
         if (!in.Resident(_blocks_begin + size * i / kBlocksProbes, 1)) {
           in.Prefetch(_blocks_begin, size);
@@ -2893,7 +2877,7 @@ class FieldReader::Impl {
       return MakeAcceptorIterator(a);
     }
 
-    std::unique_ptr<IndexInput> ReopenPayload() const final {
+    IndexInput ReopenPayload() const final {
       SDB_ASSERT(_owner);
       return _owner->_pr.ReopenPayload();
     }
@@ -2922,7 +2906,7 @@ class FieldReader::Impl {
   absl::flat_hash_map<field_id, TermReader*> _id_to_field;
   std::vector<field_id> _sorted_ids;
   PostingsReader _pr;
-  IndexInput::ptr _terms_in;
+  IndexInput _terms_in;
   IResourceManager& _resource_manager;
 };
 
@@ -2951,7 +2935,7 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
   _sorted_ids.reserve(entries.size());
   for (const auto& [id, meta] : entries) {
     auto& field = _fields.emplace_back(*this);
-    field.PrepareFromMeta(id, meta, *_terms_in);
+    field.PrepareFromMeta(id, meta, _terms_in);
     auto [it, ok] = _id_to_field.emplace(id, &field);
     SDB_ENSURE(ok, ".idx footer: duplicate term-dict field_id ", id);
     _sorted_ids.push_back(id);
@@ -2970,7 +2954,7 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
       std::upper_bound(ends.begin(), ends.end(), field.BodyOffset());
     field.SetBlocksBegin(it == ends.begin() ? 0 : *std::prev(it));
   }
-  _terms_in->Advise(duckdb::MappedFileAccess::RANDOM);
+  _terms_in.Advise(duckdb::MappedFileAccess::RANDOM);
 }
 
 const TermReader* FieldReader::Impl::field(field_id id) const {

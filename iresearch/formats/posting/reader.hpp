@@ -34,13 +34,13 @@
 
 namespace irs {
 
-inline void PrepareInput(std::string& str, IndexInput::ptr& in,
+inline void PrepareInput(std::string& str, IndexInput& in,
                          const ReaderState& state, std::string_view ext) {
   SDB_ASSERT(!in);
   irs::FileName(str, state.meta->name, ext);
   in = state.dir->Open(str, duckdb::MappedFileAccess::RANDOM);
 
-  format_utils::ReadFooter(*in, str);
+  format_utils::ReadFooter(in, str);
 }
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
@@ -48,7 +48,9 @@ inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 class PostingsReader final {
  public:
   PostingsHandles Handles() const noexcept {
-    return {.doc = _doc_in.get(), .pos = _pos_in.get(), .pay = _pay_in.get()};
+    return {.doc = _doc_in ? &_doc_in : nullptr,
+            .pos = _pos_in ? &_pos_in : nullptr,
+            .pay = _pay_in ? &_pay_in : nullptr};
   }
 
   // features - the set of features available for segment
@@ -62,9 +64,7 @@ class PostingsReader final {
                              const PostingMeta& meta, bool has_score_bounds,
                              TermPostings::ptr reuse = {}) const;
 
-  std::unique_ptr<IndexInput> ReopenPayload() const {
-    return _pay_in ? _pay_in->Dup() : nullptr;
-  }
+  IndexInput ReopenPayload() const { return _pay_in; }
 
  private:
   template<typename FieldTraits, typename Factory>
@@ -74,9 +74,9 @@ class PostingsReader final {
   static auto IteratorImpl(IndexFeatures field_features,
                            IndexFeatures required_features, Factory&& factory);
 
-  IndexInput::ptr _doc_in;
-  IndexInput::ptr _pos_in;
-  IndexInput::ptr _pay_in;
+  IndexInput _doc_in;
+  IndexInput _pos_in;
+  IndexInput _pay_in;
 };
 
 inline void PostingsReader::prepare(const ReaderState& state,
@@ -225,8 +225,8 @@ auto PostingsReader::IteratorImpl(IndexFeatures field_features,
   }
 }
 
-auto ResolveInputType(DataInput::Type type, auto&& f) {
-  if (type == DataInput::Type::BytesViewInput) {
+auto ResolveInputType(const IndexInput& in, auto&& f) {
+  if (in.Whole()) {
     return f.template operator()<BytesViewInput>();
   } else {
     return f.template operator()<IndexInput>();
@@ -245,14 +245,15 @@ inline TermPostings::ptr PostingsReader::Postings(
     field_features, required_features,
     [&]<typename IteratorTraits, typename FieldTraits> -> TermPostings::ptr {
       return ResolveInputType(
-        _doc_in->GetType(), [&]<typename InputType> -> TermPostings::ptr {
+        _doc_in, [&]<typename InputType> -> TermPostings::ptr {
           using Stream = PostingsStream<IteratorTraits, FieldTraits, InputType>;
           if (!reuse) {
             reuse = memory::make_managed<Stream>();
           }
           SDB_ASSERT(dynamic_cast<Stream*>(reuse.get()) != nullptr);
-          static_cast<Stream&>(*reuse).Prepare(meta, *_doc_in, _pos_in.get(),
-                                               _pay_in.get(), has_score_bounds);
+          const auto handles = Handles();
+          static_cast<Stream&>(*reuse).Prepare(meta, _doc_in, handles.pos,
+                                               handles.pay, has_score_bounds);
           return std::move(reuse);
         });
     });

@@ -912,8 +912,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         "probability that a normal error exceeds z standard deviations. 0 "
         "disables the rescore: the query answers from the codes, which is "
         "faster and caps recall at whatever the codes can tell apart. -1 (the "
-        "default) uses 2 for sq8, tq, 1-bit rabitq and osq at 1 or 2 bits, 3 "
-        "for bq and multi-bit rabitq, 4 for usq8 and pq, 5 for sq4, 6 for "
+        "default) uses 2 for sq8, 1-bit rabitq and osq at 1 or 2 bits, 3 for "
+        "tq, bq and multi-bit rabitq, 4 for usq8 and pq, 5 for sq4, 6 for "
         "usq4 and osq at 4 or more bits, and 0 for fp16 and bf16, which answer "
         "from their codes. "
         "Unquantized (quant = \'none\') indexes are never rescored.",

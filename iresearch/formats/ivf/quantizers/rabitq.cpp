@@ -537,12 +537,21 @@ class RaBitQuantizerReader final : public QuantizerReader {
     }
     const size_t group = _lay.GroupBytes();
     const size_t storage = _lay.storage;
-    Errors(
-      [&](size_t i) {
-        return block.data() + i / kFastScanBbs * group + _lay.AuxOffset() +
-               i % kFastScanBbs * storage;
-      },
-      scores.size(), errors);
+    for (size_t first = 0; first < scores.size(); first += kFastScanBbs) {
+      const byte_type* aux =
+        block.data() + first / kFastScanBbs * group + _lay.AuxOffset();
+      const size_t n = std::min<size_t>(kFastScanBbs, scores.size() - first);
+      if (_lay.ex_bits > 0) {
+        Errors([&](size_t i) { return aux + i * storage; }, n, errors + first);
+      } else {
+        SDB_ASSERT(storage == sizeof(faiss::rabitq_utils::SignBitFactors));
+        Errors(
+          [&](size_t i) {
+            return aux + i * sizeof(faiss::rabitq_utils::SignBitFactors);
+          },
+          n, errors + first);
+      }
+    }
   }
 
   void ComputeBlock(std::span<const byte_type> block, score_t threshold,
@@ -592,18 +601,18 @@ class RaBitQuantizerReader final : public QuantizerReader {
                        std::sqrt(std::max(1.f, static_cast<float>(_rd) - 1.f));
     const float sign = unit * std::sqrt(1.f - kSignDot * kSignDot);
     for (size_t i = 0; i < n; ++i) {
-      const auto* fac =
-        reinterpret_cast<const faiss::rabitq_utils::SignBitFactors*>(aux_of(i));
-      const float dp = fac->dp_multiplier;
+      faiss::rabitq_utils::SignBitFactors fac;
+      std::memcpy(&fac, aux_of(i), sizeof(fac));
+      const float dp = fac.dp_multiplier;
+      const float spread = sign * std::abs(dp);
       if constexpr (M == VectorMetric::L2Sqr) {
-        if (dp > 0.f) {
-          const float oc2 = fac->or_minus_c_l2sqr;
-          errors[i] =
-            oc2 > 0.f ? unit * std::sqrt(std::max(0.f, dp * dp - oc2)) : 0.f;
-          continue;
-        }
+        const float oc2 = fac.or_minus_c_l2sqr;
+        const float dev =
+          oc2 > 0.f ? unit * std::sqrt(std::max(0.f, dp * dp - oc2)) : 0.f;
+        errors[i] = dp > 0.f ? dev : spread;
+      } else {
+        errors[i] = spread;
       }
-      errors[i] = sign * std::abs(dp);
     }
   }
 

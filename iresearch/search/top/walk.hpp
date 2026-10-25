@@ -34,6 +34,9 @@ namespace irs::top {
 
 template<typename Node, typename Table>
 class Walk : public Root {
+  static constexpr bool kSpreads =
+    requires(const Node& node) { node.Spreads(); };
+
  public:
   template<typename... Args>
   explicit Walk(Table table, ColumnArgsFetcher& fetcher, Args&&... args)
@@ -50,7 +53,7 @@ class Walk : public Root {
       if (++batch == kScoreBlock) {
         _fetcher.FetchScoreBlock(std::span<const doc_id_t, kScoreBlock>{_docs});
         _score.ScoreBlock(_scores);
-        _admit.AddDocs(collector, _docs, kScoreBlock, _scores);
+        AdmitBlock(collector, kScoreBlock);
         batch = 0;
       }
     }
@@ -58,18 +61,26 @@ class Walk : public Root {
     if (batch != 0) {
       _fetcher.Fetch(std::span<const doc_id_t>{_docs, batch});
       _score.Score(_scores, static_cast<scores_size_t>(batch));
-      _admit.AddDocs(collector, _docs, batch, _scores);
+      AdmitBlock(collector, batch);
     }
     _admit.Flush(collector);
   }
 
  private:
+  void AdmitBlock(LoserScoreCollector& collector, scores_size_t n) {
+    if constexpr (kSpreads) {
+      _admit.AddDocs(collector, _docs, n, _scores, _node.Spreads());
+    } else {
+      _admit.AddDocs(collector, _docs, n, _scores);
+    }
+  }
+
   ABSL_CACHELINE_ALIGNED doc_id_t _docs[kScoreBlock];
   ABSL_CACHELINE_ALIGNED score_t _scores[kScoreBlock];
   ColumnArgsFetcher& _fetcher;
   Node _node;
   ScoreFunction _score;
-  [[no_unique_address]] Admit<Table> _admit;
+  [[no_unique_address]] Admit<Table, kSpreads> _admit;
 };
 
 template<typename Node, typename Table>

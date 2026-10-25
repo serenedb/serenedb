@@ -140,4 +140,107 @@ statement ok
 RESET sdb_ann_rescore_width;
 
 statement ok
+CREATE TABLE sp_hnsw (pk INTEGER PRIMARY KEY, cat TEXT, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX sp_hnsw_idx ON sp_hnsw
+  USING inverted(pk, cat, emb hnsw (metric = 'l2', quant = 'sq8'));
+
+statement ok
+CREATE TABLE sp_ivf (pk INTEGER PRIMARY KEY, cat TEXT, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX sp_ivf_idx ON sp_ivf
+  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'sq8'));
+
+statement ok
+INSERT INTO sp_hnsw VALUES
+  (1, 'a', [3, 4, 0]::FLOAT[3]),
+  (2, 'a', [6, 8, 0]::FLOAT[3]),
+  (3, 'a', [0, 0, 12]::FLOAT[3]),
+  (4, 'a', [9, 12, 0]::FLOAT[3]),
+  (5, 'b', [6, 8, 1]::FLOAT[3]);
+
+statement ok
+INSERT INTO sp_ivf SELECT * FROM sp_hnsw;
+
+statement ok
+VACUUM (REFRESH_TABLE) sp_hnsw;
+
+statement ok
+VACUUM (REFRESH_TABLE) sp_ivf;
+
+statement ok
+SET sdb_ann_rescore_width = 100;
+
+query
+SELECT pk FROM sp_hnsw_idx WHERE emb <-> [0, 0, 0]::FLOAT[3] > 9
+  ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+2
+5
+
+query
+SELECT pk FROM sp_ivf_idx WHERE emb <-> [0, 0, 0]::FLOAT[3] > 9
+  ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+2
+5
+
+query
+SELECT pk FROM sp_hnsw_idx WHERE cat = 'a' AND emb <-> [0, 0, 0]::FLOAT[3] > 9
+  ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+2
+3
+
+query
+SELECT pk FROM sp_ivf_idx WHERE cat = 'a' AND emb <-> [0, 0, 0]::FLOAT[3] > 9
+  ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+2
+3
+
+query
+SELECT pk FROM sp_hnsw_idx WHERE emb <-> [0, 0, 0]::FLOAT[3] < 11
+  ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+1
+2
+5
+
+query
+SELECT pk FROM sp_ivf_idx WHERE emb <-> [0, 0, 0]::FLOAT[3] < 11
+  ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+1
+2
+5
+
+query
+SELECT pk FROM sp_hnsw_idx WHERE cat = 'a' AND emb <-> [0, 0, 0]::FLOAT[3] < 11
+  ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM sp_ivf_idx WHERE cat = 'a' AND emb <-> [0, 0, 0]::FLOAT[3] < 11
+  ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+pk
+1
+2
+
+statement ok
+RESET sdb_ann_rescore_width;
+
+statement ok
 RESET sdb_ivf_search_nprobe;

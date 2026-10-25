@@ -44,7 +44,7 @@ class VectorChain : public Root {
     _score = irs::detail::PrepareBlockScorer(score, segment, field.meta(),
                                              _provider, _block);
     if (_width > 0.f) {
-      _clusters.EnableErrors(_width);
+      _clusters.EnableErrors();
       _lower.reserve(2 * size_t{_top_k});
     }
   }
@@ -92,20 +92,21 @@ class VectorChain : public Root {
  private:
   static constexpr uint32_t kRun = Cluster::kRun;
 
-  uint32_t Widen(std::span<const doc_id_t> docs, std::span<const score_t> upper,
+  uint32_t Widen(std::span<const doc_id_t> docs,
+                 std::span<const score_t> scores,
                  std::span<const score_t> errors) {
-    const auto twice = 2.f * _width;
     uint32_t kept = 0;
     for (size_t i = 0; i < docs.size(); ++i) {
-      if (upper[i] < _floor) {
+      const auto spread = _width * errors[i];
+      if (scores[i] + spread < _floor) {
         continue;
       }
-      if (const auto lower = upper[i] - twice * errors[i]; lower > _floor) {
+      if (const auto lower = scores[i] - spread; lower > _floor) {
         _lower.push_back(lower);
       }
       _own[kept] = docs[i];
-      _block[kept] = upper[i] - _width * errors[i];
-      _spread[kept] = _width * errors[i];
+      _block[kept] = scores[i];
+      _spread[kept] = spread;
       ++kept;
     }
     const size_t limit =

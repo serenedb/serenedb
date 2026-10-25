@@ -94,10 +94,17 @@ class JsonParser {
   }
 
   simdjson::ondemand::document GetJsonDocument() {
-    auto doc =
-      Unwrap(_parser.iterate(_input.data(), _input_size, _input.size()));
-    if (const auto error = doc.type().error()) {
-      ThrowInvalidJson(error);
+    simdjson::ondemand::document doc;
+    auto ec =
+      _parser.iterate(_input.data(), _input_size, _input.size()).get(doc);
+    if (ec != simdjson::SUCCESS) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+        ERR_MSG("Invalid JSON input: ", simdjson::error_message(ec)));
+    }
+    if (doc.type().error()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      ERR_MSG("Invalid JSON input: tape error"));
     }
     return doc;
   }

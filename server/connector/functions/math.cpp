@@ -306,7 +306,7 @@ void LogBaseFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       if (base == 1.0) {
         ThrowDivisionByZero();
       }
-      return std::log10(value) / std::log10(base);
+      return std::log(value) / std::log(base);
     });
 }
 
@@ -399,10 +399,6 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], args.data[2], result, args.size(),
     [](duckdb::interval_t stride, duckdb::timestamp_t source,
        duckdb::timestamp_t origin) -> duckdb::timestamp_t {
-      if (!origin.IsFinite()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
-                        ERR_MSG("origin out of range"));
-      }
       if (stride.micros <= 0 && stride.days <= 0 && stride.months <= 0) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("stride must be greater than zero"));

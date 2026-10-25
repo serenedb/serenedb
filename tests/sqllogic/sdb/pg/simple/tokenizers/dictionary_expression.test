@@ -665,18 +665,6 @@ CREATE TEXT SEARCH DICTIONARY bad_no_input AS upper('x');
 db error: ERROR: sql: No function matches the given name and argument types 'upper(VARCHAR, STRING_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
 	upper(string VARCHAR) -> VARCHAR
-	upper(col0 int4range, /) -> INTEGER
-	upper(col0 int8range, /) -> BIGINT
-	upper(col0 numrange, /) -> DECIMAL(18,3)
-	upper(col0 daterange, /) -> DATE
-	upper(col0 tsrange, /) -> TIMESTAMP
-	upper(col0 tstzrange, /) -> TIMESTAMP WITH TIME ZONE
-	upper(col0 int4multirange, /) -> INTEGER
-	upper(col0 int8multirange, /) -> BIGINT
-	upper(col0 nummultirange, /) -> DECIMAL(18,3)
-	upper(col0 datemultirange, /) -> DATE
-	upper(col0 tsmultirange, /) -> TIMESTAMP
-	upper(col0 tstzmultirange, /) -> TIMESTAMP WITH TIME ZONE
 
 
 # A name close to a template is reported as a template typo; a distant one is

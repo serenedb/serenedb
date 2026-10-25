@@ -20,14 +20,29 @@
 
 #include "pg/types/function.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <iresearch/utils/assert.hpp>
 
 namespace sdb::pg {
+namespace {
+
+void ScopeToOwnTypes(duckdb::SimpleFunction& function) {
+  auto& signature = function.GetSignature();
+  SDB_ASSERT(absl::c_any_of(
+    signature.GetParameters(),
+    [](const auto& parameter) { return parameter.GetType().HasAlias(); }));
+  signature.SetTypeScoped();
+}
+
+}  // namespace
 
 void RegisterFunctions(duckdb::DatabaseInstance& db, Functions functions) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
   for (auto& [_, set] : functions.scalars) {
     if (loader.TryGetFunction(set.name)) {
+      set.ApplyToFunctions(ScopeToOwnTypes);
       loader.AddFunctionOverload(std::move(set));
     } else {
       loader.RegisterFunction(std::move(set));
@@ -35,6 +50,7 @@ void RegisterFunctions(duckdb::DatabaseInstance& db, Functions functions) {
   }
   for (auto& [_, set] : functions.aggregates) {
     if (loader.TryGetAggregateFunction(set.name)) {
+      set.ApplyToFunctions(ScopeToOwnTypes);
       for (const auto& function : set.functions) {
         loader.AddFunctionOverload(*function);
       }

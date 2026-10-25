@@ -388,6 +388,13 @@ CREATE SEQUENCE {schema}.bind_seq;<NL>SELECT nextval('{schema}.bind_seq') AS v, 
 > +---+----+
 > (1 row)
 
+\pset tuples_only on<NL>\pset format unaligned<NL>SELECT $1 + 1 AS r<NL>\bind 5<NL>\g<NL>SELECT $1 * 2 AS r<NL>\bind 5<NL>\g<NL>SELECT 7 - $1 AS r<NL>\bind 5<NL>\g<NL>SELECT upper($1) AS r<NL>\bind ab<NL>\g
+----
+> 6
+> 10
+> 2
+> AB
+
 SELECT 'r' AS rowcat, 'c' AS colcat, 1 AS val<NL>\crosstabview
 ----
 > +--------+---+

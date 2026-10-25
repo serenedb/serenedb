@@ -45,8 +45,9 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             HnswSearchLimits limits, score_t boost, QueryBuilder::ptr&& inner,
             AnnQueryCache* cache);
 
-  std::vector<ScoreDoc> RunSearch(detail::TableFilter* table = nullptr,
-                                  bool widen = false) const;
+  std::vector<ScoreDoc> RunSearch(
+    detail::TableFilter* table = nullptr,
+    std::vector<score_t>* spreads = nullptr) const;
 
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }
 
@@ -69,7 +70,8 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
 
   void ScanColumn(HnswSearchScratch& scratch) const;
 
-  void Widen(QuantizerReader& reader, HnswSearchScratch& scratch) const;
+  void Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
+             std::vector<score_t>& spreads) const;
 
   std::shared_ptr<const HnswData> _data;
   mutable std::shared_ptr<const QuantizerCodebook> _codebook;

@@ -678,7 +678,9 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& /*context*/) {
   const auto k = static_cast<double>(*g.top_k);
   double pool = k;
   if (vs && !vs->exact) {
-    t.rescore = vs->rescore_width > 0.f;
+    t.rescore =
+      vs->rescore_width > 0.f ||
+      (g.has_lookup_filter && vs->quant != irs::VectorQuantization::None);
     if (g.has_lookup_filter) {
       constexpr double kLookupFilterOverfetch = 4.0;
       pool = std::max(pool, vs->kind == irs::AnnKind::Hnsw

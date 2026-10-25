@@ -41,13 +41,15 @@ namespace {
 
 class HnswHits : public Root {
  public:
-  HnswHits(std::vector<ScoreDoc>&& hits, const SubReader& segment,
-           ColumnArgsFetcher& fetcher, irs::detail::TableFilter* table,
-           const irs::detail::ScoreArgs& args)
+  HnswHits(std::vector<ScoreDoc>&& hits, std::vector<score_t>&& spreads,
+           const SubReader& segment, ColumnArgsFetcher& fetcher,
+           irs::detail::TableFilter* table, const irs::detail::ScoreArgs& args)
     : _hits{hits.size(),
             [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }},
+      _spreads{std::move(spreads)},
       _fetcher{fetcher},
-      _table{table} {
+      _table{table},
+      _boost{args.boost} {
     _score = irs::detail::PrepareBlockScorer(
       args, segment, irs::detail::NoField(), _provider, _block);
   }
@@ -71,7 +73,17 @@ class HnswHits : public Root {
       }
       _fetcher.Fetch(std::span<const doc_id_t>{_docs, n});
       _score.Score(_scores, static_cast<scores_size_t>(n));
+      if (!_spreads.empty()) {
+        std::copy_n(_docs, n, _all);
+      }
       const auto live = _table ? _table->Narrow(_docs, _scores, n) : n;
+      if (!_spreads.empty()) {
+        for (uint32_t k = 0, j = 0; j < live; ++k) {
+          if (_all[k] == _docs[j]) {
+            _scores[j++] += _boost * _spreads[i + k];
+          }
+        }
+      }
       collector.AddDocs(_docs, live, _scores);
       i += n;
     }
@@ -79,13 +91,16 @@ class HnswHits : public Root {
 
  private:
   containers::Fixed<ScoreDoc> _hits;
+  std::vector<score_t> _spreads;
   irs::detail::ScaleProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
   irs::detail::TableFilter* _table;
+  score_t _boost;
   score_t _block[kScoreBlock];
   score_t _scores[kScoreBlock];
   doc_id_t _docs[kScoreBlock];
+  doc_id_t _all[kScoreBlock];
 };
 
 }  // namespace
@@ -93,7 +108,8 @@ class HnswHits : public Root {
 Root::ptr Family::Make(const HnswQuery& query, const Context& ctx) {
   auto* const narrow =
     ctx.table && !ctx.table->Foldable() ? ctx.table : nullptr;
-  auto hits = query.RunSearch(ctx.table, true);
+  std::vector<score_t> spreads;
+  auto hits = query.RunSearch(ctx.table, &spreads);
   if (hits.empty()) {
     return MakeEmpty();
   }
@@ -102,8 +118,9 @@ Root::ptr Family::Make(const HnswQuery& query, const Context& ctx) {
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
-  return memory::make_managed<HnswHits>(std::move(hits), query.Segment(),
-                                        ctx.fetcher, narrow, args);
+  return memory::make_managed<HnswHits>(std::move(hits), std::move(spreads),
+                                        query.Segment(), ctx.fetcher, narrow,
+                                        args);
 }
 
 }  // namespace irs::top

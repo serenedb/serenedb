@@ -71,6 +71,11 @@ class VectorChain : public Root {
         }
         _fetcher.Fetch(docs);
         _score.Score(_scores, static_cast<scores_size_t>(n));
+        if (_width > 0.f) {
+          n = Spread(n);
+          collector.AddDocs(_own, n, _scores);
+          continue;
+        }
         if (_table == nullptr) {
           collector.AddDocs(docs.data(), n, _scores);
           continue;
@@ -99,7 +104,8 @@ class VectorChain : public Root {
         _lower.push_back(lower);
       }
       _own[kept] = docs[i];
-      _block[kept] = upper[i];
+      _block[kept] = upper[i] - _width * errors[i];
+      _spread[kept] = _width * errors[i];
       ++kept;
     }
     const size_t limit =
@@ -113,6 +119,23 @@ class VectorChain : public Root {
     return kept;
   }
 
+  uint32_t Spread(uint32_t n) {
+    if (_table == nullptr) {
+      for (uint32_t i = 0; i < n; ++i) {
+        _scores[i] += _boost * _spread[i];
+      }
+      return n;
+    }
+    std::copy_n(_own, n, _all);
+    const auto live = _table->Narrow(_own, _scores, n);
+    for (uint32_t i = 0, j = 0; j < live; ++i) {
+      if (_all[i] == _own[j]) {
+        _scores[j++] += _boost * _spread[i];
+      }
+    }
+    return live;
+  }
+
   score_t Bar(const LoserScoreCollector& collector) const noexcept {
     if (collector.AcceptedCount() < _k || _boost <= 0.f) {
       return std::numeric_limits<score_t>::lowest();
@@ -123,6 +146,8 @@ class VectorChain : public Root {
   ABSL_CACHELINE_ALIGNED score_t _block[kRun];
   ABSL_CACHELINE_ALIGNED score_t _scores[kRun];
   ABSL_CACHELINE_ALIGNED doc_id_t _own[kRun];
+  ABSL_CACHELINE_ALIGNED score_t _spread[kRun];
+  ABSL_CACHELINE_ALIGNED doc_id_t _all[kRun];
   irs::detail::VectorClusters<Cluster> _clusters;
   irs::detail::ScaleProvider _provider;
   ScoreFunction _score;

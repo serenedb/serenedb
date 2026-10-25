@@ -201,8 +201,9 @@ duckdb::unique_ptr<ScanBindData> MakeViewScanBindData(
   return data;
 }
 
-float AutoRescoreWidth(irs::VectorQuantization quant,
-                       uint32_t nb_bits) noexcept {
+float AutoRescoreWidth(irs::VectorQuantization quant, uint32_t nb_bits,
+                       irs::AnnKind kind) noexcept {
+  const bool ivf = kind == irs::AnnKind::Ivf;
   switch (quant) {
     case irs::VectorQuantization::None:
     case irs::VectorQuantization::FP16:
@@ -213,13 +214,18 @@ float AutoRescoreWidth(irs::VectorQuantization quant,
     case irs::VectorQuantization::RaBitQ:
       return nb_bits > 1 ? 3.f : 2.f;
     case irs::VectorQuantization::OSQ:
-      return nb_bits > 2 ? 6.f : 2.f;
+      if (nb_bits > 2) {
+        return 6.f;
+      }
+      return ivf ? 3.f : 2.f;
     case irs::VectorQuantization::TQ:
-    case irs::VectorQuantization::BQ:
       return 3.f;
+    case irs::VectorQuantization::BQ:
+      return ivf ? 1.f : 3.f;
     case irs::VectorQuantization::USQ8:
-    case irs::VectorQuantization::PQ:
       return 4.f;
+    case irs::VectorQuantization::PQ:
+      return ivf ? 2.f : 4.f;
     case irs::VectorQuantization::SQ4:
       return 5.f;
     case irs::VectorQuantization::USQ4:
@@ -229,12 +235,13 @@ float AutoRescoreWidth(irs::VectorQuantization quant,
 }
 
 float AnnRescoreWidth(duckdb::ClientContext& context,
-                      irs::VectorQuantization quant, uint32_t nb_bits) {
-  if (quant == irs::VectorQuantization::None) {
+                      const VectorScorerOptions& vs) {
+  if (vs.quant == irs::VectorQuantization::None) {
     return 0.f;
   }
   const auto z = GetDoubleSetting(context, "sdb_ann_rescore_width");
-  return z < 0.0 ? AutoRescoreWidth(quant, nb_bits) : static_cast<float>(z);
+  return z < 0.0 ? AutoRescoreWidth(vs.quant, vs.nb_bits, vs.kind)
+                 : static_cast<float>(z);
 }
 
 template<typename AnnFilter>
@@ -289,7 +296,7 @@ void RefreshVectorKnobs(VectorScorerOptions& vs,
   vs.hnsw_column_filter =
     mode("sdb_hnsw_column_filter", irs::HnswColumnFilter::Auto);
   vs.exact = GetBoolSetting(context, "sdb_ann_force_exact");
-  vs.rescore_width = AnnRescoreWidth(context, vs.quant, vs.nb_bits);
+  vs.rescore_width = AnnRescoreWidth(context, vs);
 }
 
 TsDictRequest& TsDictSpec::For(irs::field_id field_id) {

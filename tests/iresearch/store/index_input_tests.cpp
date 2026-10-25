@@ -74,4 +74,29 @@ TEST_F(IndexInputTest, stable_reads_outlive_evictions) {
   }
 }
 
+TEST_F(IndexInputTest, volatile_reads_across_blocks_keep_alignment) {
+  duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance(),
+                           4 * kBlock};
+  cache.SetSpill((test_dir() / "spill").string(), 0);
+  auto file = cache.CreateUnbackedFile("memory://block_input_test/aligned");
+  for (uint64_t block = 0; block != 2; ++block) {
+    auto pin = cache.CreateBlock(*file, block);
+    for (uint64_t i = 0; i != kBlock; ++i) {
+      pin.GetDataMutable()[i] = ExpectedByte(block * kBlock + i);
+    }
+  }
+  cache.SetUnbackedSize(*file, 2 * kBlock);
+
+  constexpr uint64_t kAlign = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
+  irs::IndexInput in{std::make_unique<irs::InputFile>(cache, file, nullptr)};
+  for (const uint64_t count : {kAlign + 4, 4 * kAlign}) {
+    const auto offset = kBlock - kAlign;
+    const auto* data = in.ReadVolatile(offset, count);
+    ASSERT_EQ(0, reinterpret_cast<uintptr_t>(data) % kAlign) << count;
+    for (uint64_t j = 0; j != count; ++j) {
+      ASSERT_EQ(ExpectedByte(offset + j), data[j]) << count << " " << j;
+    }
+  }
+}
+
 }  // namespace

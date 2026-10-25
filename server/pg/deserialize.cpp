@@ -873,7 +873,7 @@ struct XmlIn {
   template<typename Sink>
   static bool Decode(DeserializeContext& context, std::string_view data,
                      Sink& sink) {
-    if (CheckXml(data, context.xml_option)) {
+    if (CheckXml(data, context.SessionXmlOption())) {
       return false;
     }
     sink.Varchar(data);
@@ -961,9 +961,17 @@ duckdb::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
   return it->second.get();
 }
 
+XmlOption DeserializeContext::SessionXmlOption() {
+  if (!xml_option) {
+    xml_option = CurrentXmlOption(*client);
+  }
+  return *xml_option;
+}
+
 void FillDeserializeContext(duckdb::ClientContext& client,
                             DeserializeContext& context) {
-  context.xml_option = CurrentXmlOption(client);
+  context.client = &client;
+  context.xml_option.reset();
   duckdb::Value value;
   if (!client.TryGetCurrentSetting("TimeZone", value) || value.IsNull()) {
     context.session_calendar.reset();

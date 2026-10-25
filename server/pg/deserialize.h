@@ -31,6 +31,7 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -55,9 +56,11 @@ struct DeserializeContext {
   irs::containers::FlatHashMap<std::string,
                                duckdb::unique_ptr<duckdb::Calendar>>
     named_calendars;
-  XmlOption xml_option = XmlOption::Content;
+  duckdb::optional_ptr<duckdb::ClientContext> client;
+  std::optional<XmlOption> xml_option;
 
   duckdb::Calendar* CalendarFor(std::string_view tz_name);
+  XmlOption SessionXmlOption();
 };
 
 void FillDeserializeContext(duckdb::ClientContext& client,

@@ -287,7 +287,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | string_to_table     | Yes           |                                                            |
 | strpos              | Yes           |                                                            |
 | substr              | Yes           |                                                            |
-| to_ascii            | Yes           | Only with an encoding argument (`LATIN1`, `LATIN2`, `LATIN9` or `WIN1250`): the database encoding is `UTF8` |
+| to_ascii            | No            |                                                            |
 | to_hex              | Yes           |                                                            |
 | translate           | Yes           |                                                            |
 | unistr              | Yes           |                                                            |
@@ -318,9 +318,9 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | sha384         | Yes           |                           |
 | sha512         | Yes           |                           |
 | substr         | Yes           |                           |
-| convert        | Yes           | Converts between `UTF8`, `LATIN1` and `SQL_ASCII`; a conversion that involves another encoding raises an error |
-| convert_from   | Yes           | Same encodings as `convert` |
-| convert_to     | Yes           | Same encodings as `convert` |
+| convert        | No            |                           |
+| convert_from   | Yes           |                           |
+| convert_to     | Yes           |                           |
 | encode         | Yes           |                           |
 | decode         | Yes           |                           |
 

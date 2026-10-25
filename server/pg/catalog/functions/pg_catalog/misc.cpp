@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
@@ -78,7 +79,6 @@
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/connection_context.h"
-#include "pg/encoding.h"
 #include "pg/progress_registry.h"
 #include "pg/sql_utils.h"
 #include "pg/types/cast.h"
@@ -333,19 +333,28 @@ void StatementTimestampFunction(duckdb::DataChunk& args,
                    duckdb::count_t(args.size()));
 }
 
+constexpr int32_t kUtf8Encoding = 6;
+
 void PgEncodingToCharFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<int32_t, duckdb::string_t>(
-    args.data[0], result, args.size(), [&](int32_t encoding) {
-      return duckdb::StringVector::AddString(result, EncodingName(encoding));
+    args.data[0], result, args.size(), [](int32_t encoding) {
+      return duckdb::string_t{encoding == kUtf8Encoding ? "UTF8" : ""};
     });
 }
 
 void PgCharToEncodingFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, int32_t>(
-    args.data[0], result, args.size(),
-    [](duckdb::string_t name) { return EncodingByName(AsView(name)); });
+    args.data[0], result, args.size(), [](duckdb::string_t name) {
+      std::string clean;
+      for (const auto c : AsView(name)) {
+        if (absl::ascii_isalnum(c)) {
+          clean.push_back(absl::ascii_tolower(c));
+        }
+      }
+      return clean == "utf8" || clean == "unicode" ? kUtf8Encoding : -1;
+    });
 }
 
 int64_t LiveTuples(const Session& session, int64_t oid) {

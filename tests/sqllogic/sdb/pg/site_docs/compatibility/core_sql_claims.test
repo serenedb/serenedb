@@ -1296,7 +1296,7 @@ statement ok
 SELECT substr('\x010203'::bytea, 2, 1);
 
 # op_bytea: convert
-statement ok
+statement error
 SELECT convert('\x010203'::bytea, 'UTF8', 'LATIN1');
 
 # op_bytea: convert_from

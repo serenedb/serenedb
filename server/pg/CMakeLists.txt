@@ -97,7 +97,6 @@ target_sources(
         types/tid.cpp
         types/vector.cpp
         types/xml.cpp
-        encoding.cpp
         serialize.cpp
         deserialize.cpp
         progress_registry.cpp

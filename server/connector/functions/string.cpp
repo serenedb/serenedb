@@ -49,7 +49,6 @@
 #include <utf8proc.hpp>
 
 #include "connector/common.h"
-#include "pg/encoding.h"
 #include "pg/serialize.h"
 #include "pg/sql_utils.h"
 #include "pg/types/bytea.h"
@@ -230,58 +229,33 @@ void SetBitFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-int32_t Encoding(std::string_view name, std::string_view direction) {
-  const auto encoding = pg::EncodingByName(name);
-  if (encoding < 0) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("invalid ", direction, " encoding name \"", name, "\""));
-  }
-  return encoding;
-}
-
-void ConvertFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                     duckdb::Vector& result) {
-  std::string buffer;
-  duckdb::TernaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
-                                   duckdb::string_t, duckdb::string_t>(
-    args.data[0], args.data[1], args.data[2], result, args.size(),
-    [&](duckdb::string_t data, duckdb::string_t from, duckdb::string_t to) {
-      const auto source = Encoding(AsView(from), "source");
-      const auto converted = pg::ConvertEncoding(
-        AsView(data), source, Encoding(AsView(to), "destination"), buffer);
-      return duckdb::StringVector::AddStringOrBlob(result, converted.data(),
-                                                   converted.size());
-    });
-}
-
 void ConvertFromFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                          duckdb::Vector& result) {
-  std::string buffer;
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t data, duckdb::string_t encoding) {
-      const auto converted =
-        pg::ConvertEncoding(AsView(data), Encoding(AsView(encoding), "source"),
-                            pg::kUtf8Encoding, buffer);
-      return duckdb::StringVector::AddString(result, converted.data(),
-                                             converted.size());
+    [&](duckdb::string_t data, duckdb::string_t encoding) -> duckdb::string_t {
+      std::string_view enc(encoding.GetData(), encoding.GetSize());
+      if (enc != "UTF8" && enc != "UTF-8" && enc != "utf8" && enc != "utf-8") {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG("conversion from ", enc, " is not supported"));
+      }
+      return duckdb::StringVector::AddString(result, data);
     });
 }
 
 void ConvertToFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                        duckdb::Vector& result) {
-  std::string buffer;
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t data, duckdb::string_t encoding) {
-      const auto converted =
-        pg::ConvertEncoding(AsView(data), pg::kUtf8Encoding,
-                            Encoding(AsView(encoding), "destination"), buffer);
-      return duckdb::StringVector::AddStringOrBlob(result, converted.data(),
-                                                   converted.size());
+    [&](duckdb::string_t data, duckdb::string_t encoding) -> duckdb::string_t {
+      std::string_view enc(encoding.GetData(), encoding.GetSize());
+      if (enc != "UTF8" && enc != "UTF-8" && enc != "utf8" && enc != "utf-8") {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG("conversion to ", enc, " is not supported"));
+      }
+      return duckdb::StringVector::AddStringOrBlob(result, data);
     });
 }
 
@@ -1324,90 +1298,6 @@ void ShaFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-constexpr std::string_view kLatin1Ascii =
-  R"(  cL Y  "Ca  -R     'u .,      ?AAAAAAACEEEEIIII NOOOOOxOUUUUYTBaaaaaaaceeeeiiii nooooo/ouuuuyty)";
-constexpr std::string_view kLatin2Ascii =
-  R"( A L LS "SSTZ-ZZ a,l'ls ,sstz"zzRAAAALCCCEEEEIIDDNNOOOOxRUUUUYTBraaaalccceeeeiiddnnoooo/ruuuuyt.)";
-constexpr std::string_view kLatin9Ascii =
-  R"(  cL YS sCa  -R     Zu .z   EeY?AAAAAAACEEEEIIII NOOOOOxOUUUUYTBaaaaaaaceeeeiiii nooooo/ouuuuyty)";
-constexpr std::string_view kWin1250Ascii =
-  R"(  ' "    %S<STZZ `'"".--  s>stzz   L A  "CS  -RZ  ,l'u .,as L"lzRAAAALCCCEEEEIIDDNNOOOOxRUUUUYTBraaaalccceeeeiiddnnoooo/ruuuuyt )";
-
-struct AsciiTable {
-  std::string_view chars;
-  unsigned char first;
-};
-
-AsciiTable AsciiTableFor(int32_t encoding) {
-  if (encoding == pg::kLatin1Encoding) {
-    return {.chars = kLatin1Ascii, .first = 160};
-  }
-  if (encoding == pg::kLatin2Encoding) {
-    return {.chars = kLatin2Ascii, .first = 160};
-  }
-  if (encoding == pg::kLatin9Encoding) {
-    return {.chars = kLatin9Ascii, .first = 160};
-  }
-  if (encoding == pg::kWin1250Encoding) {
-    return {.chars = kWin1250Ascii, .first = 128};
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-    ERR_MSG("encoding conversion from ", pg::EncodingName(encoding),
-            " to ASCII not supported"));
-}
-
-duckdb::string_t ToAscii(duckdb::Vector& result, duckdb::string_t text,
-                         int32_t encoding) {
-  const auto table = AsciiTableFor(encoding);
-  auto target = duckdb::StringVector::EmptyString(result, text.GetSize());
-  auto* out = target.GetDataWriteable();
-  for (const auto c : AsView(text)) {
-    const auto byte = static_cast<unsigned char>(c);
-    *out++ = byte < 128           ? c
-             : byte < table.first ? ' '
-                                  : table.chars[byte - table.first];
-  }
-  target.Finalize();
-  return target;
-}
-
-void ToAsciiFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                     duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
-    args.data[0], result, args.size(), [&](duckdb::string_t text) {
-      return ToAscii(result, text, pg::kUtf8Encoding);
-    });
-}
-
-void ToAsciiByNameFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                           duckdb::Vector& result) {
-  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
-                                  duckdb::string_t>(
-    args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t text, duckdb::string_t name) {
-      const auto encoding = pg::EncodingByName(AsView(name));
-      if (encoding < 0) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                        ERR_MSG(AsView(name), " is not a valid encoding name"));
-      }
-      return ToAscii(result, text, encoding);
-    });
-}
-
-void ToAsciiByCodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                           duckdb::Vector& result) {
-  duckdb::BinaryExecutor::Execute<duckdb::string_t, int32_t, duckdb::string_t>(
-    args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t text, int32_t encoding) {
-      if (pg::EncodingName(encoding).empty()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                        ERR_MSG(encoding, " is not a valid encoding code"));
-      }
-      return ToAscii(result, text, encoding);
-    });
-}
-
 duckdb::utf8proc_option_t NormalFormOptions(std::string_view form) {
   int options = 0;
   if (absl::EqualsIgnoreCase(form, "NFC")) {
@@ -1881,28 +1771,17 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BLOB,
     SetBitFunction});
 
-  for (auto function : {
-         duckdb::ScalarFunction{
-           "convert",
-           {duckdb::LogicalType::BLOB, duckdb::LogicalType::VARCHAR,
-            duckdb::LogicalType::VARCHAR},
-           duckdb::LogicalType::BLOB,
-           ConvertFunction},
-         duckdb::ScalarFunction{
-           "convert_from",
-           {duckdb::LogicalType::BLOB, duckdb::LogicalType::VARCHAR},
-           duckdb::LogicalType::VARCHAR,
-           ConvertFromFunction},
-         duckdb::ScalarFunction{
-           "convert_to",
-           {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-           duckdb::LogicalType::BLOB,
-           ConvertToFunction},
-       }) {
-    function.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
-    function.SetFallible();
-    loader.RegisterFunction(std::move(function));
-  }
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "convert_from",
+    {duckdb::LogicalType::BLOB, duckdb::LogicalType::VARCHAR},
+    duckdb::LogicalType::VARCHAR,
+    ConvertFromFunction});
+
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "convert_to",
+    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+    duckdb::LogicalType::BLOB,
+    ConvertToFunction});
 
   // pg_client_encoding() -> name
   {
@@ -2058,20 +1937,6 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     duckdb::ScalarFunction{"sha384", {blob}, blob, ShaFunction<EVP_sha384>});
   loader.RegisterFunction(
     duckdb::ScalarFunction{"sha512", {blob}, blob, ShaFunction<EVP_sha512>});
-
-  {
-    duckdb::ScalarFunctionSet set{"to_ascii"};
-    set.AddFunction(
-      duckdb::ScalarFunction{set.name, {text}, text, ToAsciiFunction});
-    set.AddFunction(duckdb::ScalarFunction{
-      set.name, {text, text}, text, ToAsciiByNameFunction});
-    set.AddFunction(duckdb::ScalarFunction{set.name,
-                                           {text, duckdb::LogicalType::INTEGER},
-                                           text,
-                                           ToAsciiByCodeFunction});
-    set.SetFallible();
-    loader.RegisterFunction(set);
-  }
 
   {
     duckdb::ScalarFunctionSet set{"parse_ident"};

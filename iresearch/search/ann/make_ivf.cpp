@@ -18,12 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/search/ann/family.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
-#include "iresearch/search/top/family.hpp"
-#include "iresearch/search/top/make.hpp"
 
-namespace irs::top {
+namespace irs::ann {
 namespace {
 
 template<typename Cluster>
@@ -32,84 +32,70 @@ class VectorChain : public Root {
   template<typename Args>
   VectorChain(ColumnArgsFetcher& fetcher, const SubReader& segment,
               const TermReader& field, const irs::detail::ScoreArgs& score,
-              uint32_t k, irs::detail::TableFilter* table, size_t count,
-              const VectorState& state, irs::detail::SharedFloor* shared,
-              Args&& args)
+              irs::detail::TableFilter* table, size_t count,
+              const VectorState& state, Args&& args)
     : _clusters{count, std::forward<Args>(args)},
       _fetcher{fetcher},
       _table{table},
-      _shared{shared},
       _boost{score.boost},
-      _k{k},
-      _top_k{state.top_k},
       _width{state.rescore_width} {
     _score = irs::detail::PrepareBlockScorer(score, segment, field.meta(),
                                              _provider, _block);
     if (_width > 0.f) {
-      SDB_ASSERT(_shared);
-      SDB_ASSERT(_top_k != 0);
       _clusters.EnableErrors();
-      _lower.reserve(size_t{_top_k} + kRun);
     }
   }
 
-  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
-    SDB_ASSERT(min == doc_limits::min() && doc_limits::eof(max));
-    for (size_t i = 0, n = _clusters.size(); i != n; ++i) {
-      auto& cluster = _clusters[i];
-      if (_table && i != 0) {
-        _table->Rewind();
-      }
-      for (;;) {
-        cluster.SetThreshold(_width > 0.f ? _shared->Load() : Bar(collector));
-        if (!cluster.NextRun()) {
-          break;
-        }
-        auto docs = cluster.RunDocs();
-        auto n = static_cast<uint32_t>(docs.size());
-        if (_width > 0.f) {
-          n = Widen(docs, cluster.RunScores(), cluster.RunErrors());
-          docs = {_own, n};
-        } else {
-          std::copy_n(cluster.RunScores().data(), n, _block);
-        }
-        _fetcher.Fetch(docs);
-        _score.Score(_scores, static_cast<scores_size_t>(n));
-        if (_width > 0.f) {
-          n = Spread(n);
-          collector.AddDocs(_own, n, _scores);
-          continue;
-        }
-        if (_table == nullptr) {
-          collector.AddDocs(docs.data(), n, _scores);
-          continue;
-        }
-        if (docs.data() != _own) {
-          std::copy_n(docs.data(), n, _own);
-        }
-        n = _table->Narrow(_own, _scores, n);
-        collector.AddDocs(_own, n, _scores);
-      }
+  void Run(Collector& collector) final {
+    if (_width > 0.f) {
+      Scan<true>(collector);
+    } else {
+      Scan<false>(collector);
     }
   }
 
  private:
   static constexpr uint32_t kRun = Cluster::kRun;
 
-  uint32_t Widen(std::span<const doc_id_t> docs,
+  template<bool Errors>
+  void Scan(Collector& collector) {
+    for (size_t i = 0, n = _clusters.size(); i != n; ++i) {
+      auto& cluster = _clusters[i];
+      if (_table && i != 0) {
+        _table->Rewind();
+      }
+      for (;;) {
+        const auto floor = collector.Floor();
+        cluster.SetThreshold(floor);
+        if (!cluster.NextRun()) {
+          break;
+        }
+        auto n = Widen<Errors>(floor, cluster.RunDocs(), cluster.RunScores(),
+                               cluster.RunErrors());
+        _fetcher.Fetch(std::span<const doc_id_t>{_own, n});
+        _score.Score(_scores, static_cast<scores_size_t>(n));
+        n = Spread(n);
+        collector.Append(_own, _scores, _spread, n);
+      }
+    }
+  }
+
+  template<bool Errors>
+  uint32_t Widen(score_t floor, std::span<const doc_id_t> docs,
                  std::span<const score_t> scores,
                  std::span<const score_t> errors) {
     const auto n = static_cast<uint32_t>(docs.size());
-    const auto floor = _shared->Load();
     uint32_t kept = 0;
     uint32_t i = 0;
 #ifdef __AVX2__
-    const auto width = _mm256_set1_ps(_width);
     const auto edge = _mm256_set1_ps(floor);
     for (; i + 8 <= n; i += 8) {
       const auto score = _mm256_loadu_ps(scores.data() + i);
-      const auto spread =
-        _mm256_mul_ps(width, _mm256_loadu_ps(errors.data() + i));
+      auto spread = _mm256_setzero_ps();
+      if constexpr (Errors) {
+        spread = _mm256_mul_ps(_mm256_set1_ps(_width),
+                               _mm256_loadu_ps(errors.data() + i));
+      }
       const auto mask = static_cast<uint32_t>(_mm256_movemask_ps(
         _mm256_cmp_ps(_mm256_add_ps(score, spread), edge, _CMP_NLT_UQ)));
       if (mask == 0) {
@@ -127,20 +113,14 @@ class VectorChain : public Root {
     }
 #endif
     for (; i < n; ++i) {
-      const auto spread = _width * errors[i];
+      score_t spread = 0.f;
+      if constexpr (Errors) {
+        spread = _width * errors[i];
+      }
       _own[kept] = docs[i];
       _block[kept] = scores[i];
       _spread[kept] = spread;
       kept += static_cast<uint32_t>(!(scores[i] + spread < floor));
-    }
-    for (uint32_t j = 0; j < kept; ++j) {
-      if (const auto lower = _block[j] - _spread[j]; lower > floor) {
-        _lower.push_back(lower);
-      }
-    }
-    if (_lower.size() >= _top_k) {
-      _shared->Merge(_lower);
-      _lower.clear();
     }
     return kept;
   }
@@ -148,7 +128,7 @@ class VectorChain : public Root {
   uint32_t Spread(uint32_t n) {
     if (_table == nullptr) {
       for (uint32_t i = 0; i < n; ++i) {
-        _scores[i] += _boost * _spread[i];
+        _spread[i] *= _boost;
       }
       return n;
     }
@@ -156,17 +136,10 @@ class VectorChain : public Root {
     const auto live = _table->Narrow(_own, _scores, n);
     for (uint32_t i = 0, j = 0; j < live; ++i) {
       if (_all[i] == _own[j]) {
-        _scores[j++] += _boost * _spread[i];
+        _spread[j++] = _boost * _spread[i];
       }
     }
     return live;
-  }
-
-  score_t Bar(const LoserScoreCollector& collector) const noexcept {
-    if (collector.AcceptedCount() < _k || _boost <= 0.f) {
-      return std::numeric_limits<score_t>::lowest();
-    }
-    return collector.ScoreThreshold() / _boost;
   }
 
   ABSL_CACHELINE_ALIGNED score_t _block[kRun];
@@ -179,37 +152,38 @@ class VectorChain : public Root {
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
   irs::detail::TableFilter* _table;
-  irs::detail::SharedFloor* _shared;
   score_t _boost;
-  uint32_t _k;
-  uint32_t _top_k;
   float _width;
-  std::vector<score_t> _lower;
 };
 
 }  // namespace
+}  // namespace irs::ann
+namespace irs {
 
-Root::ptr Family::Make(const KnnVectorQuery& query, const Context& ctx) {
-  const auto record = query.Stats(ScoredOf(ctx));
-  const irs::detail::ScoreArgs score{.scorer = record.scorer,
-                                     .stats = record.stats,
-                                     .fetcher = &ctx.fetcher,
-                                     .boost = query.Boost()};
-  const auto& segment = query.Segment();
-  const auto& field = *query.State().reader;
-
-  if (query.Inner() == nullptr) {
-    return irs::detail::ResolveClusters<irs::detail::AcceptAll>(
-      query,
-      [&]<typename Cluster>(size_t count,
-                            const irs::detail::ClusterFeed& feed) -> Root::ptr {
-        return memory::make_managed<VectorChain<Cluster>>(
-          ctx.fetcher, segment, field, score, ctx.k, ctx.table, count,
-          query.State(), ctx.floor, feed);
-      });
+ann::Root::ptr KnnVectorQuery::PlanAnn(const ann::Context& ctx) const {
+  if (Inner() != nullptr) {
+    return detail::MakeKnnVector<ann::Family>(*this, ctx);
   }
-
-  return irs::detail::MakeKnnVector<Family>(query, ctx);
+  const auto record = Stats(ann::ScoredOf(ctx));
+  const detail::ScoreArgs score{.scorer = record.scorer,
+                                .stats = record.stats,
+                                .fetcher = &ctx.fetcher,
+                                .boost = Boost()};
+  const auto& field = *State().reader;
+  return detail::ResolveClusters<detail::AcceptAll>(
+    *this,
+    [&]<typename Cluster>(size_t count,
+                          const detail::ClusterFeed& feed) -> ann::Root::ptr {
+      return memory::make_managed<ann::VectorChain<Cluster>>(
+        ctx.fetcher, Segment(), field, score, ctx.table, count, State(), feed);
+    });
 }
 
-}  // namespace irs::top
+ann::Root::ptr RangeVectorQuery::PlanAnn(const ann::Context& ctx) const {
+  return detail::ResolveBool(Inclusive(), [&]<bool Inclusive>() {
+    return detail::MakeVectorScored<ann::Family, detail::RadiusGate<Inclusive>>(
+      *this, ctx, Threshold());
+  });
+}
+
+}  // namespace irs

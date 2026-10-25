@@ -574,33 +574,36 @@ class RaBitQuantizerReader final : public QuantizerReader {
  private:
   template<typename Aux>
   void Errors(Aux aux_of, size_t n, score_t* errors) const {
-    constexpr double kSignDot = 0.79788456;
-    constexpr double kBoundSigmas = 1.9;
-    const double metric = M == VectorMetric::L2Sqr ? 2.0 : 1.0;
-    const double spread =
-      std::sqrt(std::max(1.0, static_cast<double>(_rd) - 1.0));
-    const double unit = metric * _qf.g_error / spread;
-    for (size_t i = 0; i < n; ++i) {
-      const auto* aux = aux_of(i);
-      const auto* fac =
-        reinterpret_cast<const faiss::rabitq_utils::SignBitFactors*>(aux);
-      const double dp = fac->dp_multiplier;
-      double deviation = 0.0;
-      if (_lay.ex_bits > 0) {
+    constexpr float kSignDot = 0.79788456f;
+    constexpr float kBoundSigmas = 1.9f;
+    constexpr float kMetric = M == VectorMetric::L2Sqr ? 2.f : 1.f;
+    if (_lay.ex_bits > 0) {
+      const float scale =
+        std::ldexp(_qf.g_error / kBoundSigmas, -static_cast<int>(_lay.ex_bits));
+      for (size_t i = 0; i < n; ++i) {
         const auto* fe =
           reinterpret_cast<const faiss::rabitq_utils::SignBitFactorsWithError*>(
-            aux);
-        deviation = std::ldexp(fe->f_error / (metric * kBoundSigmas) * spread,
-                               -static_cast<int>(_lay.ex_bits));
-      } else if (M == VectorMetric::L2Sqr && dp > 0.0) {
-        const double oc =
-          std::sqrt(std::max(0.0, double{fac->or_minus_c_l2sqr}));
-        const double dot = std::min(1.0, oc / dp);
-        deviation = dot > 0.0 ? oc * std::sqrt(1.0 / (dot * dot) - 1.0) : oc;
-      } else {
-        deviation = std::abs(dp) * std::sqrt(1.0 - kSignDot * kSignDot);
+            aux_of(i));
+        errors[i] = scale * fe->f_error;
       }
-      errors[i] = static_cast<score_t>(unit * deviation);
+      return;
+    }
+    const float unit = kMetric * _qf.g_error /
+                       std::sqrt(std::max(1.f, static_cast<float>(_rd) - 1.f));
+    const float sign = unit * std::sqrt(1.f - kSignDot * kSignDot);
+    for (size_t i = 0; i < n; ++i) {
+      const auto* fac =
+        reinterpret_cast<const faiss::rabitq_utils::SignBitFactors*>(aux_of(i));
+      const float dp = fac->dp_multiplier;
+      if constexpr (M == VectorMetric::L2Sqr) {
+        if (dp > 0.f) {
+          const float oc2 = fac->or_minus_c_l2sqr;
+          errors[i] =
+            oc2 > 0.f ? unit * std::sqrt(std::max(0.f, dp * dp - oc2)) : 0.f;
+          continue;
+        }
+      }
+      errors[i] = sign * std::abs(dp);
     }
   }
 

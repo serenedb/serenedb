@@ -24,12 +24,12 @@
 #include <vector>
 
 #include "iresearch/formats/ivf/quantizer.hpp"
+#include "iresearch/search/ann/family.hpp"
 #include "iresearch/search/detail/exact_scan.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
-#include "iresearch/search/top/family.hpp"
-#include "iresearch/search/top/make.hpp"
 
-namespace irs::top {
+namespace irs::ann {
 namespace {
 
 class ExactChain : public Root {
@@ -48,8 +48,8 @@ class ExactChain : public Root {
       score, query.Segment(), irs::detail::NoField(), _provider, _block);
   }
 
-  void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
-    _scanner.Reset(min, max);
+  void Run(Collector& collector) final {
+    _scanner.Reset(doc_limits::min(), doc_limits::eof());
     for (;;) {
       auto n = _scanner.NextDocs(_docs);
       if (n == 0) {
@@ -80,21 +80,22 @@ class ExactChain : public Root {
       if (_table) {
         n = _table->Narrow(_docs, _scores, n);
       }
-      collector.AddDocs(_docs, n, _scores);
+      std::fill_n(_spreads, n, score_t{0});
+      collector.Append(_docs, _scores, _spreads, n);
     }
   }
 
  private:
   static constexpr uint32_t kRun = irs::detail::ExactScanner::kRun;
 
-  score_t Bar(const LoserScoreCollector& collector) const noexcept {
-    if (collector.AcceptedCount() < _k || _boost <= 0.f) {
+  score_t Bar(const Collector& collector) const noexcept {
+    if (_boost <= 0.f) {
       return std::numeric_limits<score_t>::lowest();
     }
-    return collector.ScoreThreshold() / _boost;
+    return collector.Floor() / _boost;
   }
 
-  uint32_t Prune(uint32_t n, const LoserScoreCollector& collector) {
+  uint32_t Prune(uint32_t n, const Collector& collector) {
     uint32_t coded = 0;
     for (uint32_t i = 0; i < n; ++i) {
       const auto node = static_cast<uint32_t>(_docs[i] - doc_limits::min());
@@ -147,6 +148,7 @@ class ExactChain : public Root {
 
   ABSL_CACHELINE_ALIGNED score_t _block[kRun];
   ABSL_CACHELINE_ALIGNED score_t _scores[kRun];
+  ABSL_CACHELINE_ALIGNED score_t _spreads[kRun];
   ABSL_CACHELINE_ALIGNED score_t _dists[kRun];
   ABSL_CACHELINE_ALIGNED doc_id_t _docs[kRun];
   ABSL_CACHELINE_ALIGNED score_t _approx[kRun];
@@ -167,14 +169,16 @@ class ExactChain : public Root {
 };
 
 }  // namespace
+}  // namespace irs::ann
+namespace irs {
 
-Root::ptr Family::Make(const ExactVectorQuery& query, const Context& ctx) {
-  const auto record = query.Stats(ScoredOf(ctx));
-  const irs::detail::ScoreArgs score{.scorer = record.scorer,
-                                     .stats = record.stats,
-                                     .fetcher = &ctx.fetcher,
-                                     .boost = query.Boost()};
-  return memory::make_managed<ExactChain>(query, ctx, score);
+ann::Root::ptr ExactVectorQuery::PlanAnn(const ann::Context& ctx) const {
+  const auto record = Stats(ann::ScoredOf(ctx));
+  const detail::ScoreArgs score{.scorer = record.scorer,
+                                .stats = record.stats,
+                                .fetcher = &ctx.fetcher,
+                                .boost = Boost()};
+  return memory::make_managed<ann::ExactChain>(*this, ctx, score);
 }
 
-}  // namespace irs::top
+}  // namespace irs

@@ -680,25 +680,26 @@ class OsqQuantizerReader final : public QuantizerReader {
  private:
   template<typename Row>
   void Errors(Row row, size_t n, score_t* errors) const {
-    const double d = _lay.d;
-    const double span = static_cast<double>((1U << _lay.bits) - 1);
-    const double grid = kOsqGrid[_lay.bits - 1];
-    const double row_unit = OsqStepVariance(_lay.bits);
-    const double query_var = double{_query.step} * _query.step / 12.0;
-    const double metric = M == VectorMetric::L2Sqr ? 2.0 : 1.0;
+    constexpr float kMetric = M == VectorMetric::L2Sqr ? 2.f : 1.f;
+    const auto d = static_cast<float>(_lay.d);
+    const auto span = static_cast<float>((1U << _lay.bits) - 1);
+    const auto grid = static_cast<float>(kOsqGrid[_lay.bits - 1]);
+    const auto row_unit = static_cast<float>(OsqStepVariance(_lay.bits));
+    const auto query_norm2 = static_cast<float>(_query_norm2);
+    const float query_var = _query.step * _query.step / 12.f;
     for (size_t i = 0; i < n; ++i) {
       const OsqTerms t = RowTerms(row(i));
-      double row_norm2 = 0.0;
+      float row_norm2 = 0.f;
       if constexpr (M == VectorMetric::L2Sqr) {
         row_norm2 = t.extra;
       } else {
-        const double mean = t.lower + t.step * span / 2.0;
-        const double sd = t.step * span / (2.0 * grid);
+        const float mean = t.lower + t.step * span / 2.f;
+        const float sd = t.step * span / (2.f * grid);
         row_norm2 = d * (mean * mean + sd * sd);
       }
-      const double row_var = row_unit * t.step * t.step;
-      errors[i] = static_cast<score_t>(
-        metric * std::sqrt(row_norm2 * query_var + _query_norm2 * row_var));
+      const float row_var = row_unit * t.step * t.step;
+      errors[i] =
+        kMetric * std::sqrt(row_norm2 * query_var + query_norm2 * row_var);
     }
   }
 

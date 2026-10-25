@@ -32,14 +32,27 @@
 
 #include "iresearch/types.hpp"
 
-namespace irs::detail {
+namespace irs::ann {
 
 class SharedFloor {
  public:
-  explicit SharedFloor(uint32_t k) : _k{k} { _lowers.reserve(2 * size_t{k}); }
+  explicit SharedFloor(uint32_t k,
+                       score_t seed = std::numeric_limits<score_t>::lowest())
+    : _k{k}, _floor{seed} {
+    _lowers.reserve(2 * size_t{k});
+  }
+
+  uint32_t K() const noexcept { return _k; }
 
   score_t Load() const noexcept {
     return _floor.load(std::memory_order_acquire);
+  }
+
+  void Reset(score_t seed) noexcept {
+    absl::MutexLock lock{&_mutex};
+    _lowers.clear();
+    _ranked = false;
+    _floor.store(seed, std::memory_order_release);
   }
 
   void Merge(std::span<const score_t> lowers) {
@@ -53,13 +66,12 @@ class SharedFloor {
         _lowers.push_back(lower);
       }
     }
-    const size_t limit =
-      floor == std::numeric_limits<score_t>::lowest() ? _k : 2 * size_t{_k};
-    if (_lowers.size() >= limit) {
+    if (_lowers.size() >= (_ranked ? 2 * size_t{_k} : size_t{_k})) {
       const auto kth = _lowers.begin() + (_k - 1);
       absl::c_nth_element(_lowers, kth, std::greater{});
       _floor.store(*kth, std::memory_order_release);
       _lowers.resize(_k);
+      _ranked = true;
     }
   }
 
@@ -67,7 +79,8 @@ class SharedFloor {
   uint32_t _k;
   absl::Mutex _mutex;
   std::vector<score_t> _lowers ABSL_GUARDED_BY(_mutex);
+  bool _ranked ABSL_GUARDED_BY(_mutex) = false;
   std::atomic<score_t> _floor{std::numeric_limits<score_t>::lowest()};
 };
 
-}  // namespace irs::detail
+}  // namespace irs::ann

@@ -97,16 +97,26 @@ SearchTable::SearchTable(std::optional<catalog::StorageDirectory> parent,
     _row_group_size{options.row_group_size},
     _compression{std::move(compression)},
     _durability{database, absl::StrCat("search table ", table_id), _parent,
-                table_id, is_new ? StorageOpen::Create : StorageOpen::Open} {
+                table_id, StorageOpenOf(database, is_new)} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
   }
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
-  if (!database.IsReadOnly()) {
+  if (StorageOpenOf(database, is_new) == StorageOpen::Defer) {
+    _open_pending = true;
+  } else if (!database.IsReadOnly()) {
     OpenWriter(is_new);
   }
   ApplyOptions(options);
+}
+
+void SearchTable::OpenPendingWriter() {
+  SDB_ASSERT(_open_pending);
+  _open_pending = false;
+  if (_durability.Locate(*_parent, _table_id)) {
+    OpenWriter(false);
+  }
 }
 
 SearchTable::~SearchTable() {

@@ -106,13 +106,15 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   auto& GetTableLock() noexcept { return _table_lock; }
 
   void MarkDropped() noexcept {
-    if (_writer) {
+    if (_writer || _open_pending) {
       _dropped.store(true, std::memory_order_release);
     }
   }
   std::string Path() const { return _parent->StoragePath(GetTableId()); }
   bool Absent() const noexcept { return _durability.Absent(); }
   void OpenReader();
+  bool OpenPending() const noexcept { return _open_pending; }
+  void OpenPendingWriter();
 
   // `exclusive_segment` is required of a writer that will record its flushed
   // segments in the WAL -- see irs::IndexWriter::GetBatch.
@@ -310,6 +312,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   std::shared_ptr<const catalog::InvertedIndexConfig> _scan_config;
   std::optional<duckdb::idx_t> _building_index;
   std::shared_ptr<irs::IndexWriter> _writer;
+  bool _open_pending = false;
   irs::DirectoryReader _reader;
   std::optional<irs::ScorerOptions> _topk_options;
   std::unique_ptr<irs::Scorer> _topk_scorer;

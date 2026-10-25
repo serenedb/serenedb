@@ -62,6 +62,8 @@ enum class StorageOpen : uint8_t {
   Defer,
 };
 
+StorageOpen StorageOpenOf(duckdb::AttachedDatabase& database, bool is_new);
+
 class IndexDurability {
  public:
   using ManifestSource =

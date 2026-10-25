@@ -70,6 +70,15 @@ std::optional<std::string> StoragePath(
 
 }  // namespace
 
+StorageOpen StorageOpenOf(duckdb::AttachedDatabase& database, bool is_new) {
+  if (is_new) {
+    return StorageOpen::Create;
+  }
+  return database.IsReadOnly() || database.GetStorageManager().IsLoaded()
+           ? StorageOpen::Open
+           : StorageOpen::Defer;
+}
+
 IndexStamp IndexStamp::Read(duckdb::BinaryDeserializer& in) {
   IndexStamp stamp;
   stamp.position.generation =

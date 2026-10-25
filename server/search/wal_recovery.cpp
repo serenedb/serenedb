@@ -122,6 +122,16 @@ void OpenPendingStorages() {
       executor, [storage] { storage->OpenPendingWriter(); },
       "SearchOpenStorage"));
   }
+  for (auto& catalog : SereneDBCatalogs()) {
+    for (auto& table : catalog::SearchTableStorages(catalog.get())) {
+      if (!table->OpenPending()) {
+        continue;
+      }
+      executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+        executor, [table] { table->OpenPendingWriter(); },
+        "SearchOpenStorage"));
+    }
+  }
   executor.WorkOnTasks();
 }
 
@@ -153,6 +163,7 @@ void RecoverSearchStorages() {
   for (auto& catalog : SereneDBCatalogs()) {
     auto& db = catalog.get().GetAttached();
     for (auto& table : catalog::SearchTableStorages(catalog.get())) {
+      SDB_ASSERT(!table->OpenPending());
       add_database(db);
       tables.emplace_back(db, std::move(table));
     }

@@ -52,18 +52,6 @@
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
-namespace {
-
-StorageOpen OpenOf(duckdb::AttachedDatabase& database, bool is_new) {
-  if (is_new) {
-    return StorageOpen::Create;
-  }
-  return database.IsReadOnly() || database.GetStorageManager().IsLoaded()
-           ? StorageOpen::Open
-           : StorageOpen::Defer;
-}
-
-}  // namespace
 
 InvertedIndexStorage::InvertedIndexStorage(
   std::optional<catalog::StorageDirectory> parent,
@@ -75,7 +63,7 @@ InvertedIndexStorage::InvertedIndexStorage(
     _parent{std::move(parent)},
     _search{GetSearchEngine()},
     _durability{database, absl::StrCat("inverted index ", index_id), _parent,
-                index_id, OpenOf(database, is_new)} {
+                index_id, StorageOpenOf(database, is_new)} {
   SetTasksSettings(options);
 
   SDB_ASSERT(index_id != 0);
@@ -89,7 +77,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   if (database.IsReadOnly()) {
     return;
   }
-  if (OpenOf(database, is_new) == StorageOpen::Defer) {
+  if (StorageOpenOf(database, is_new) == StorageOpen::Defer) {
     _pending_options = options;
     return;
   }

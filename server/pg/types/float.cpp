@@ -27,8 +27,6 @@
 #include <cfloat>
 #include <charconv>
 #include <cmath>
-#include <duckdb/common/vector_operations/unary_executor.hpp>
-#include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -85,53 +83,6 @@ size_t WriteRounded(T value, int8_t extra_float_digits, char* buffer) {
   return static_cast<size_t>(end - buffer);
 }
 
-struct FloatTextCastData final : duckdb::BoundCastData {
-  explicit FloatTextCastData(int8_t extra_float_digits)
-    : extra_float_digits{extra_float_digits} {}
-
-  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
-    return duckdb::make_uniq<FloatTextCastData>(extra_float_digits);
-  }
-
-  int8_t extra_float_digits;
-};
-
-template<typename T, bool kShortest>
-bool FloatToText(duckdb::Vector& source, duckdb::Vector& result,
-                 duckdb::idx_t count, duckdb::CastParameters& parameters) {
-  int8_t extra_float_digits = 0;
-  if constexpr (!kShortest) {
-    extra_float_digits =
-      parameters.cast_data->Cast<FloatTextCastData>().extra_float_digits;
-  }
-  duckdb::UnaryExecutor::Execute<T, duckdb::string_t>(
-    source, result, count, [&](T value) {
-      char buffer[utils::kNumberStrMaxLen];
-      return duckdb::StringVector::AddString(
-        result, buffer,
-        WriteFloat<kShortest>(value, extra_float_digits, buffer));
-    });
-  return true;
-}
-
-template<typename T>
-duckdb::BoundCastInfo FloatToTextBind(duckdb::BindCastInput& input,
-                                      const duckdb::LogicalType&,
-                                      const duckdb::LogicalType&) {
-  duckdb::Value value;
-  if (input.context &&
-      input.context->TryGetCurrentSetting("extra_float_digits", value)) {
-    const auto extra_float_digits =
-      static_cast<int8_t>(value.GetValue<int32_t>());
-    if (extra_float_digits <= 0) {
-      return duckdb::BoundCastInfo{
-        FloatToText<T, false>,
-        duckdb::make_uniq<FloatTextCastData>(extra_float_digits)};
-    }
-  }
-  return duckdb::BoundCastInfo{FloatToText<T, true>};
-}
-
 }  // namespace
 
 size_t WriteFloatShortest(float value, char* buffer) {
@@ -164,15 +115,6 @@ void ThrowFloatUnderflow() {
 void ThrowDivisionByZero() {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
                   ERR_MSG("division by zero"));
-}
-
-void RegisterFloat(duckdb::CastFunctionSet& casts) {
-  casts.RegisterCastFunction(duckdb::LogicalType::FLOAT,
-                             duckdb::LogicalType::VARCHAR,
-                             FloatToTextBind<float>);
-  casts.RegisterCastFunction(duckdb::LogicalType::DOUBLE,
-                             duckdb::LogicalType::VARCHAR,
-                             FloatToTextBind<double>);
 }
 
 }  // namespace sdb::pg

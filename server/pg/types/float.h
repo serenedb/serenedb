@@ -24,7 +24,6 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <duckdb/function/cast/cast_function_set.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <limits>
 #include <type_traits>
@@ -66,7 +65,5 @@ size_t WriteFloatRounded(double value, int8_t extra_float_digits, char* buffer);
 [[noreturn]] void ThrowFloatOverflow();
 [[noreturn]] void ThrowFloatUnderflow();
 [[noreturn]] void ThrowDivisionByZero();
-
-void RegisterFloat(duckdb::CastFunctionSet& casts);
 
 }  // namespace sdb::pg

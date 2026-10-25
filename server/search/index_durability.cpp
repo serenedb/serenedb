@@ -28,6 +28,8 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/valid_checker.hpp>
+#include <duckdb/parallel/task_executor.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/storage_manager.hpp>
@@ -111,6 +113,24 @@ IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
     _files{irs::DuckDBEngine::Instance().instance(),
            path ? *path : irs::MemoryIndexRoot()},
     _absent{!path && !database.GetStorageManager().InMemory()} {}
+
+bool IndexDurability::Locate(const catalog::StorageDirectory& parent,
+                             duckdb::idx_t oid) {
+  if (_files.Kind() != irs::StorageKind::Remote) {
+    _absent = !parent.OpenStorage(oid);
+    return !_absent;
+  }
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
+    irs::DuckDBEngine::Instance().instance());
+  duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
+  executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+    executor, [&] { _absent = !parent.OpenStorage(oid); },
+    "SearchLocateStorage"));
+  _files.ReuseListings(true);
+  _files.Visit([](std::string_view) {});
+  executor.WorkOnTasks();
+  return !_absent;
+}
 
 std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp>
 IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,

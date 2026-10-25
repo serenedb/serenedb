@@ -25,9 +25,8 @@ bucket: GET /__admin/stats returns the counters as JSON, POST /__admin/reset
 clears them, PUT /__admin/latency?seconds=S sets the latency, and after
 PUT /__admin/log?enabled=1 each GET of an object is logged with its key, range
 and start and end times, which GET /__admin/log returns and clears. While
-`writes` is a list, each single-request upload is appended to it with its key
-and start and end times, and while `lists` is, each listing with its prefix
-and start and end times.
+`trace` is a list, each HEAD, listing and single-request upload is appended to
+it with its method, its key (a listing's prefix) and start and end times.
 """
 
 from __future__ import annotations
@@ -159,8 +158,7 @@ class FakeS3:
         self.stalled = threading.Event()
         self.release = threading.Event()
         self.log: list[dict] | None = None
-        self.writes: list[dict] | None = None
-        self.lists: list[dict] | None = None
+        self.trace: list[dict] | None = None
         store = self
 
         class Handler(_Handler):
@@ -280,6 +278,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if self.fake.latency:
             time.sleep(self.fake.latency)
 
+    def _traced(self, method: str, key: str, began: float) -> None:
+        with self.fake.lock:
+            if self.fake.trace is not None:
+                self.fake.trace.append({"method": method, "key": key, "began": began,
+                                        "ended": time.monotonic()})
+
     def _checksum(self, body: bytes) -> tuple[bool, int | None]:
         header = self.headers.get("x-amz-checksum-crc32c")
         if header is None:
@@ -374,8 +378,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if self._expired() or self._throttled():
             return
         self.fake.count("HEAD")
+        began = time.monotonic()
         self._wait()
         obj = self._find(bucket, key)
+        self._traced("HEAD", key, began)
         if obj is None:
             self._missing(key)
             return
@@ -395,10 +401,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             began = time.monotonic()
             self._wait()
             self._list(bucket, query)
-            with self.fake.lock:
-                if self.fake.lists is not None:
-                    self.fake.lists.append({"prefix": query.get("prefix", [""])[0],
-                                            "began": began, "ended": time.monotonic()})
+            self._traced("LIST", query.get("prefix", [""])[0], began)
             return
         self.fake.count("GET")
         began = time.monotonic()
@@ -510,9 +513,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         obj = _Object(body)
         with self.fake.lock:
             self.fake.objects[(bucket, key)] = obj
-            if self.fake.writes is not None:
-                self.fake.writes.append({"key": key, "began": began,
-                                         "ended": time.monotonic()})
+        self._traced("PUT", key, began)
         headers = {"ETag": obj.etag}
         if checksum is not None:
             headers["x-amz-checksum-crc32c"] = _encode_crc32c(checksum)

@@ -1029,12 +1029,12 @@ def test_a_restart_opens_its_indexes_and_search_tables_at_once(
             server.stop()
         fake.latency = 0.5
         fake.log = []
-        fake.lists = []
+        fake.trace = []
         again = _Server(datadir)
         try:
             assert again.wait_ready(), again.output()
             log, fake.log = fake.log, None
-            lists, fake.lists = fake.lists, None
+            trace, fake.trace = fake.trace, None
             fake.latency = 0
             with again.connect() as conn:
                 for i in range(each):
@@ -1055,12 +1055,22 @@ def test_a_restart_opens_its_indexes_and_search_tables_at_once(
     assert len(opens) == 2 * each, log
     assert max(entry["began"] for entry in opens.values()) < min(
         entry["ended"] for entry in opens.values()), opens
-    swept = [entry for entry in lists
-             if len(parts := entry["prefix"].split("/")) == 4
+    listings: dict[str, dict] = {}
+    for entry in sorted(trace, key=lambda entry: entry["began"]):
+        if entry["method"] == "LIST":
+            listings.setdefault(entry["key"], entry)
+    swept = [entry for prefix, entry in listings.items()
+             if len(parts := prefix.split("/")) == 4
              and parts[1] == "engine_v1" and parts[2].isdigit()]
-    assert len(swept) == 1, lists
+    assert len(swept) == 1, trace
     assert swept[0]["began"] < min(entry["began"] for entry in opens.values()), \
         (swept, opens)
+    for directory in opens:
+        marker = next(entry for entry in trace if entry["method"] == "HEAD"
+                      and entry["key"] == f"{directory}.storage")
+        listed = listings[f"{directory}/"]
+        assert max(marker["began"], listed["began"]) < min(
+            marker["ended"], listed["ended"]), (marker, listed)
 
 
 def test_a_checkpoint_saves_its_indexes_at_once(tmp_path: Path) -> None:
@@ -1084,9 +1094,9 @@ def test_a_checkpoint_saves_its_indexes_at_once(tmp_path: Path) -> None:
                 for i in range(each):
                     conn.execute(f"INSERT INTO docs{i} VALUES ({i}, 'quick brown fox')")
                 fake.latency = 0.5
-                fake.writes = []
+                fake.trace = []
                 conn.execute("CHECKPOINT")
-                writes, fake.writes = fake.writes, None
+                trace, fake.trace = fake.trace, None
                 fake.latency = 0
                 for i in range(each):
                     assert conn.execute(
@@ -1094,10 +1104,11 @@ def test_a_checkpoint_saves_its_indexes_at_once(tmp_path: Path) -> None:
                     ).fetchall() == [(i,)]
         finally:
             server.stop()
+    uploads = [entry for entry in trace if entry["method"] == "PUT"]
     saves: dict[str, dict] = {}
-    for entry in sorted(writes, key=lambda entry: entry["began"]):
+    for entry in sorted(uploads, key=lambda entry: entry["began"]):
         saves.setdefault(entry["key"].rsplit("/", 1)[0], entry)
-    assert len(saves) == each, writes
+    assert len(saves) == each, uploads
     assert max(entry["began"] for entry in saves.values()) < min(
         entry["ended"] for entry in saves.values()), saves
 

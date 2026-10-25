@@ -69,7 +69,7 @@ What costs requests to the object store:
 | A refresh or a merge | the upload of each new index file: one request for a file up to 5 MiB, parts for a larger one |
 | Each commit of an index | a copy and a delete of one small file |
 | A checkpoint | a refresh and a commit of each index of the database that has rows not yet refreshed; the indexes are saved in parallel, so a checkpoint waits for the slowest of them rather than for all of them in turn |
-| Opening an index at startup | one check that the index exists and one listing of its files, then one read of its commit file and one of each segment's metadata; the footers of the index files come with the metadata, and the segments open in parallel. Indexes and search tables open in parallel too, so startup waits for the slowest of them rather than for all of them in turn |
+| Opening an index at startup | one check that the index exists and, at the same time, one listing of its files, then one read of its commit file and one of each segment's metadata; the footers of the index files come with the metadata, and the segments open in parallel. Indexes and search tables open in parallel too, so startup waits for the slowest of them rather than for all of them in turn |
 | Cleanup | one request for up to 1000 files (256 on Azure) that no index reader uses anymore; the first cleanup after an index opens also removes the files an interrupted write left behind, which the listing of the open found |
 | Startup | a listing of each tablespace location and of each database directory in it, to remove files that belong to no index; a listing returns only the entries one level down, so the files of the indexes cost no listing requests here. The database directories are listed while the indexes open |
 

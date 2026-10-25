@@ -77,10 +77,7 @@ class IndexDurability {
     return _database;
   }
   bool Absent() const noexcept { return _absent; }
-  bool Locate(const catalog::StorageDirectory& parent, duckdb::idx_t oid) {
-    _absent = !parent.OpenStorage(oid);
-    return !_absent;
-  }
+  bool Locate(const catalog::StorageDirectory& parent, duckdb::idx_t oid);
 
   std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp> OpenWriter(
     bool is_new, irs::IndexWriterOptions options,

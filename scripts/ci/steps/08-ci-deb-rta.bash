@@ -8,7 +8,7 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CI_DIR="$(dirname "$SCRIPT_DIR")"
 
-DEB_PACKAGE="${DEB_PACKAGE:-$(find "${WORKSPACE}" -maxdepth 1 -name 'serenedb_*.deb' -print -quit)}"
+DEB_PACKAGE="${DEB_PACKAGE:-$(find -H "${WORKSPACE}" -maxdepth 1 -name 'serenedb_*.deb' -print -quit)}"
 if [[ -z "$DEB_PACKAGE" ]]; then
 	echo "ERROR: No .deb package found in ${WORKSPACE}"
 	exit 1

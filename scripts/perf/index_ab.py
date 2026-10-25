@@ -99,6 +99,9 @@ def io_counters(pid):
 def run_cold(binary, args, queries, commands):
     proc = subprocess.Popen(pinned(args) + [binary, args.index], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, text=True, bufsize=1)
+    proc.stdin.write("noop\n")
+    proc.stdin.flush()
+    proc.stdout.readline()
     result = {}
     for i, q in enumerate(queries):
         for cmd in commands:

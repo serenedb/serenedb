@@ -79,6 +79,8 @@ class KnnVectorQuery : public QueryBuilderImpl<KnnVectorQuery>,
 
   void SetBoost(score_t value) noexcept final { _boost = value; }
 
+  ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
+
  private:
   score_t _boost;
 };
@@ -110,6 +112,8 @@ class RangeVectorQuery : public QueryBuilderImpl<RangeVectorQuery>,
   score_t Boost() const noexcept final { return _boost; }
 
   void SetBoost(score_t value) noexcept final { _boost = value; }
+
+  ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
 
  private:
   float _radius;

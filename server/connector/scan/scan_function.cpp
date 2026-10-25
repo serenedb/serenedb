@@ -316,7 +316,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   state->needs_terms = !ss.offsets.requests.empty();
 
-  if (state->shape == ScanShape::TopK || state->shape == ScanShape::Stream) {
+  if (state->shape == ScanShape::TopK || state->shape == ScanShape::Ann ||
+      state->shape == ScanShape::Stream) {
     if (ss.score.text) {
       state->scorer_obj = search::MakeScorer(*ss.score.text);
     } else if (ss.score.order) {
@@ -368,6 +369,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   if (state->shape == ScanShape::TopK) {
     InitTopKGlobal(*state, context);
+  } else if (state->shape == ScanShape::Ann) {
+    InitAnnGlobal(*state, context);
   }
   return state;
 }
@@ -391,6 +394,13 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       auto l = duckdb::make_uniq<TopKLocalState>();
       l->worker = worker;
       InitTopKLocal(g, *l, input);
+      result = std::move(l);
+      break;
+    }
+    case ScanShape::Ann: {
+      auto l = duckdb::make_uniq<AnnLocalState>();
+      l->worker = worker;
+      InitAnnLocal(g, *l, input);
       result = std::move(l);
       break;
     }
@@ -439,6 +449,10 @@ void IResearchScanFunction(duckdb::ClientContext& context,
     case ScanShape::TopK:
       RunTopKScan(context, data, g, data.local_state->Cast<TopKLocalState>(),
                   out);
+      break;
+    case ScanShape::Ann:
+      RunAnnScan(context, data, g, data.local_state->Cast<AnnLocalState>(),
+                 out);
       break;
     case ScanShape::ColScan:
       RunColScan(context, data, g, data.local_state->Cast<ColScanLocalState>(),

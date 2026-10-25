@@ -58,6 +58,8 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
   VectorMetric Metric() const noexcept { return _metric; }
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }
   const AnnExactCodes& Codes() const noexcept { return _codes; }
+
+  ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
   std::optional<score_t> Threshold() const noexcept { return _threshold; }
   bool Inclusive() const noexcept { return _inclusive; }
 

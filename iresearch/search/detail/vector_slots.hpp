@@ -163,6 +163,7 @@ class RawVectorReader {
                  static_cast<uint16_t>(_d));
   }
 
+  template<int Locality = 3>
   const byte_type* PrefetchRow(doc_id_t doc) noexcept {
     const auto* child = _column->Child();
     const uint64_t elem = (static_cast<uint64_t>(doc) - doc_limits::min()) * _d;
@@ -183,9 +184,16 @@ class RawVectorReader {
       return nullptr;
     }
     for (uint64_t o = 0; o < span; o += 64) {
-      __builtin_prefetch(reinterpret_cast<const char*>(q) + o, 0, 3);
+      __builtin_prefetch(reinterpret_cast<const char*>(q) + o, 0, Locality);
     }
     return reinterpret_cast<const byte_type*>(q);
+  }
+
+  void PromoteRow(const byte_type* row) const noexcept {
+    const uint64_t span = static_cast<uint64_t>(_d) * sizeof(float);
+    for (uint64_t o = 0; o < span; o += 64) {
+      __builtin_prefetch(reinterpret_cast<const char*>(row) + o, 0, 3);
+    }
   }
 
  private:

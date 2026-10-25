@@ -32,7 +32,6 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/search/detail/shared_floor.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
@@ -46,9 +45,11 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             HnswSearchLimits limits, score_t boost, QueryBuilder::ptr&& inner,
             AnnQueryCache* cache);
 
-  std::vector<ScoreDoc> RunSearch(detail::TableFilter* table = nullptr,
-                                  std::vector<score_t>* spreads = nullptr,
-                                  detail::SharedFloor* floor = nullptr) const;
+  std::vector<ScoreDoc> RunSearch(
+    detail::TableFilter* table = nullptr,
+    std::vector<score_t>* spreads = nullptr) const;
+
+  ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
 
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }
 
@@ -72,7 +73,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   void ScanColumn(HnswSearchScratch& scratch) const;
 
   void Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
-             std::vector<score_t>& spreads, detail::SharedFloor* shared) const;
+             std::vector<score_t>& spreads) const;
 
   std::shared_ptr<const HnswData> _data;
   mutable std::shared_ptr<const QuantizerCodebook> _codebook;

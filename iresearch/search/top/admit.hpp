@@ -33,11 +33,10 @@
 
 namespace irs::top {
 
-template<typename Table, bool Spreads = false>
+template<typename Table>
 class Admit {
  public:
   static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
-  static constexpr bool kSpreads = kTable && Spreads;
   static constexpr uint32_t kRun = 2048;
 
   explicit Admit(Table table) noexcept : _table{table} {}
@@ -82,34 +81,6 @@ class Admit {
     }
   }
 
-  IRS_FORCE_INLINE void AddDocs(LoserScoreCollector& collector,
-                                const doc_id_t* docs, size_t n, score_t* scores,
-                                const score_t* spreads)
-    requires Spreads
-  {
-    if constexpr (kTable) {
-      while (n != 0) {
-        const auto take = std::min<size_t>(n, kRun - _staged);
-        std::memcpy(_docs.data() + _staged, docs, take * sizeof(doc_id_t));
-        std::memcpy(_scores.data() + _staged, scores, take * sizeof(score_t));
-        std::memcpy(_spreads.data() + _staged, spreads, take * sizeof(score_t));
-        _staged += static_cast<uint32_t>(take);
-        docs += take;
-        scores += take;
-        spreads += take;
-        n -= take;
-        if (_staged == kRun) {
-          Drain(collector);
-        }
-      }
-    } else {
-      for (size_t i = 0; i < n; ++i) {
-        scores[i] += spreads[i];
-      }
-      collector.AddDocs(docs, n, scores);
-    }
-  }
-
   IRS_FORCE_INLINE void Window(LoserScoreCollector& collector, score_t* scores,
                                uint64_t* mask, doc_id_t min, size_t words) {
     if constexpr (kTable) {
@@ -136,17 +107,7 @@ class Admit {
 
  private:
   void Drain(LoserScoreCollector& collector) {
-    if constexpr (kSpreads) {
-      std::memcpy(_all.data(), _docs.data(), _staged * sizeof(doc_id_t));
-    }
     const auto live = _table.Run(_docs.data(), _scores.data(), _staged);
-    if constexpr (kSpreads) {
-      for (uint32_t i = 0, j = 0; j < live; ++i) {
-        if (_all[i] == _docs[j]) {
-          _scores[j++] += _spreads[i];
-        }
-      }
-    }
     if (live != 0) {
       collector.AddDocs(_docs.data(), live, _scores.data());
     }
@@ -155,9 +116,6 @@ class Admit {
 
   [[no_unique_address]] utils::Need<kTable, std::array<doc_id_t, kRun>> _docs;
   [[no_unique_address]] utils::Need<kTable, std::array<score_t, kRun>> _scores;
-  [[no_unique_address]] utils::Need<kSpreads, std::array<score_t, kRun>>
-    _spreads;
-  [[no_unique_address]] utils::Need<kSpreads, std::array<doc_id_t, kRun>> _all;
   [[no_unique_address]] utils::Need<kTable, uint32_t> _staged{};
   [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };

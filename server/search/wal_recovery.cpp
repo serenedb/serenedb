@@ -109,6 +109,22 @@ void SyncWal(duckdb::AttachedDatabase& db) {
 
 }  // namespace
 
+void OpenPendingStorages() {
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
+    irs::DuckDBEngine::Instance().instance());
+  duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
+  for (auto& index : InvertedIndexEntries()) {
+    const auto& storage = index.get().Storage();
+    if (!storage || !storage->OpenPending()) {
+      continue;
+    }
+    executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+      executor, [storage] { storage->OpenPendingWriter(); },
+      "SearchOpenStorage"));
+  }
+  executor.WorkOnTasks();
+}
+
 void RecoverSearchStorages() {
   const auto begin = std::chrono::steady_clock::now();
   std::vector<std::pair<std::optional<BoundIndexHandle>,
@@ -127,6 +143,7 @@ void RecoverSearchStorages() {
   };
   for (auto& index : InvertedIndexEntries()) {
     const auto& storage = index.get().Storage();
+    SDB_ASSERT(!storage || !storage->OpenPending());
     if (!storage || !index.get().info) {
       continue;
     }

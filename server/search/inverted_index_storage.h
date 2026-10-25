@@ -92,7 +92,7 @@ class InvertedIndexStorage final
   // removes the directory once the last of them lets go. Never set on
   // shutdown or detach, where the directory must survive.
   void MarkDropped() noexcept {
-    if (_writer) {
+    if (_writer || _pending_options) {
       _dropped.store(true, std::memory_order_release);
     }
   }
@@ -111,8 +111,12 @@ class InvertedIndexStorage final
       std::move(parent), database, index_id, options, top_k_scorer, is_new);
   }
 
-  bool ReadOnly() const noexcept { return !_writer; }
+  bool ReadOnly() const noexcept { return !_writer && !_pending_options; }
+  bool OpenPending() const noexcept {
+    return static_cast<bool>(_pending_options);
+  }
   void OpenReader();
+  void OpenPendingWriter();
 
   auto GetTransaction() {
     SDB_ASSERT(_writer);
@@ -256,6 +260,7 @@ class InvertedIndexStorage final
                          const irs::AnnBuildEnv* env)
     -> yaclib::Future<absl::Status>;
   void PublishSnapshot();
+  void OpenWriter(bool is_new, const catalog::InvertedIndexSettings& options);
 
   duckdb::idx_t _index_id;
   duckdb::idx_t _db_id;
@@ -269,6 +274,7 @@ class InvertedIndexStorage final
   std::shared_ptr<const FileManifest> _file_manifest;
   std::unique_ptr<irs::Scorer> _topk_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
+  std::optional<catalog::InvertedIndexSettings> _pending_options;
   absl::Mutex _reindex_mutex;
   absl::CondVar _reindex_cv;
   bool _reindex_in_flight ABSL_GUARDED_BY(_reindex_mutex) = false;

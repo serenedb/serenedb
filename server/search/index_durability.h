@@ -56,6 +56,12 @@ struct IndexStamp {
   static IndexStamp Read(duckdb::BinaryDeserializer& in);
 };
 
+enum class StorageOpen : uint8_t {
+  Create,
+  Open,
+  Defer,
+};
+
 class IndexDurability {
  public:
   using ManifestSource =
@@ -63,12 +69,16 @@ class IndexDurability {
 
   IndexDurability(duckdb::AttachedDatabase& database, std::string name,
                   const std::optional<catalog::StorageDirectory>& parent,
-                  duckdb::idx_t oid, bool is_new);
+                  duckdb::idx_t oid, StorageOpen open);
 
   const duckdb::weak_ptr<duckdb::AttachedDatabase>& Database() const noexcept {
     return _database;
   }
   bool Absent() const noexcept { return _absent; }
+  bool Locate(const catalog::StorageDirectory& parent, duckdb::idx_t oid) {
+    _absent = !parent.OpenStorage(oid);
+    return !_absent;
+  }
 
   std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp> OpenWriter(
     bool is_new, irs::IndexWriterOptions options,

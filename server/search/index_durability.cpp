@@ -52,12 +52,20 @@ constexpr duckdb::field_id_t kFieldCheckpoint = 4;
 std::optional<std::string> StoragePath(
   duckdb::AttachedDatabase& database,
   const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
-  bool is_new) {
+  StorageOpen open) {
   if (database.GetStorageManager().InMemory()) {
     return std::nullopt;
   }
   SDB_ASSERT(parent);
-  return is_new ? parent->CreateStorage(oid) : parent->OpenStorage(oid);
+  switch (open) {
+    case StorageOpen::Create:
+      return parent->CreateStorage(oid);
+    case StorageOpen::Open:
+      return parent->OpenStorage(oid);
+    case StorageOpen::Defer:
+      return parent->StoragePath(oid);
+  }
+  SDB_UNREACHABLE();
 }
 
 }  // namespace
@@ -82,9 +90,9 @@ IndexStamp IndexStamp::Read(duckdb::BinaryDeserializer& in) {
 IndexDurability::IndexDurability(
   duckdb::AttachedDatabase& database, std::string name,
   const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
-  bool is_new)
+  StorageOpen open)
   : IndexDurability{database, std::move(name),
-                    StoragePath(database, parent, oid, is_new)} {}
+                    StoragePath(database, parent, oid, open)} {}
 
 IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
                                  std::string name,

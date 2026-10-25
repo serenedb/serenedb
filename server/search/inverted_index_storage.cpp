@@ -52,6 +52,18 @@
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
+namespace {
+
+StorageOpen OpenOf(duckdb::AttachedDatabase& database, bool is_new) {
+  if (is_new) {
+    return StorageOpen::Create;
+  }
+  return database.IsReadOnly() || database.GetStorageManager().IsLoaded()
+           ? StorageOpen::Open
+           : StorageOpen::Defer;
+}
+
+}  // namespace
 
 InvertedIndexStorage::InvertedIndexStorage(
   std::optional<catalog::StorageDirectory> parent,
@@ -63,7 +75,7 @@ InvertedIndexStorage::InvertedIndexStorage(
     _parent{std::move(parent)},
     _search{GetSearchEngine()},
     _durability{database, absl::StrCat("inverted index ", index_id), _parent,
-                index_id, is_new} {
+                index_id, OpenOf(database, is_new)} {
   SetTasksSettings(options);
 
   SDB_ASSERT(index_id != 0);
@@ -77,7 +89,23 @@ InvertedIndexStorage::InvertedIndexStorage(
   if (database.IsReadOnly()) {
     return;
   }
+  if (OpenOf(database, is_new) == StorageOpen::Defer) {
+    _pending_options = options;
+    return;
+  }
+  OpenWriter(is_new, options);
+}
 
+void InvertedIndexStorage::OpenPendingWriter() {
+  SDB_ASSERT(_pending_options);
+  const auto options = *std::exchange(_pending_options, std::nullopt);
+  if (_durability.Locate(*_parent, _index_id)) {
+    OpenWriter(false, options);
+  }
+}
+
+void InvertedIndexStorage::OpenWriter(
+  bool is_new, const catalog::InvertedIndexSettings& options) {
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = options.segment_memory_max;
@@ -139,6 +167,10 @@ InvertedIndexStorage::~InvertedIndexStorage() {
 void InvertedIndexStorage::ApplyOptions(
   const catalog::InvertedIndexSettings& options) {
   SetTasksSettings(options);
+  if (_pending_options) {
+    *_pending_options = options;
+    return;
+  }
   if (!_writer) {
     return;
   }

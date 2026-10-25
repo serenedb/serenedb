@@ -22,6 +22,7 @@
 
 namespace sdb::search {
 
+void OpenPendingStorages();
 void RecoverSearchStorages();
 void StartSearchStorageTasks();
 

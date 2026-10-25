@@ -712,6 +712,27 @@ def test_a_store_down_at_startup_refuses_the_start(tmp_path: Path) -> None:
     assert f"/bucket/down-{tmp_path.name}/" in output and "Could not connect" in output, output
 
 
+def test_a_missing_index_storage_refuses_the_start(tmp_path: Path) -> None:
+    prefix = f"missing-{tmp_path.name}/"
+    datadir = tmp_path / "data"
+    with FakeS3() as fake:
+        server = _Server(datadir)
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           f"s3://bucket/{prefix}")
+            _create_index(server)
+        finally:
+            server.stop()
+        with fake.lock:
+            for key in [key for _, key in fake.objects if key.startswith(prefix)
+                        and not key.endswith("/engine_v1/tablespace")]:
+                del fake.objects[("bucket", key)]
+        output = _refused(datadir)
+    assert f"/bucket/{prefix}" in output and "of docs_body" in output, output
+    assert "is missing" in output, output
+
+
 def test_a_crash_while_creating_an_index_leaves_no_objects(tmp_path: Path) -> None:
     location = f"s3://bucket/crash-{tmp_path.name}"
     prefix = f"crash-{tmp_path.name}/"
@@ -972,6 +993,51 @@ def test_a_restart_lists_each_directory_once(tmp_path: Path, kind: str) -> None:
             assert fake.requests["LIST"] - listings == -(-objects // page), fake.requests
         finally:
             again.stop()
+
+
+def test_a_restart_opens_its_indexes_at_once(tmp_path: Path) -> None:
+    indexes = 4
+    datadir = tmp_path / "data"
+    with FakeS3() as fake:
+        server = _Server(datadir)
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           f"s3://bucket/opened-{tmp_path.name}")
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE TEXT SEARCH DICTIONARY words AS "
+                    "split_by_non_alpha(case := 'lower')")
+                for i in range(indexes):
+                    conn.execute(f"CREATE TABLE docs{i}(id INTEGER, body TEXT)")
+                    conn.execute(f"INSERT INTO docs{i} VALUES ({i}, 'quick brown fox')")
+                    conn.execute(f"CREATE INDEX docs{i}_body ON docs{i} "
+                                 "USING inverted(body words) TABLESPACE idx")
+        finally:
+            server.stop()
+        fake.latency = 0.2
+        fake.log = []
+        again = _Server(datadir)
+        try:
+            assert again.wait_ready(), again.output()
+            log, fake.log = fake.log, None
+            fake.latency = 0
+            with again.connect() as conn:
+                for i in range(indexes):
+                    assert conn.execute(
+                        f"SELECT id FROM docs{i}_body WHERE body @@ 'fox'"
+                    ).fetchall() == [(i,)]
+        finally:
+            again.stop()
+    assert not [entry for entry in log if entry["key"].endswith(".storage")], log
+    opens: dict[str, dict] = {}
+    for entry in sorted(log, key=lambda entry: entry["began"]):
+        directory, name = entry["key"].rsplit("/", 1)
+        if name.startswith("segments_"):
+            opens.setdefault(directory, entry)
+    assert len(opens) == indexes, log
+    assert max(entry["began"] for entry in opens.values()) < min(
+        entry["ended"] for entry in opens.values()), opens
 
 
 def test_restored_objects_are_read_by_the_etags_they_are_listed_with(

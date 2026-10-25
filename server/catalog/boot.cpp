@@ -357,6 +357,7 @@ void InitCatalog(std::string_view directory) {
       cluster.DropDatabase(cluster.GetCatalogTransaction(context), drop);
     });
   }
+  search::OpenPendingStorages();
   RemoveUnownedStorages(cluster, manager);
   for (const auto& db : manager.GetDatabases()) {
     if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType) {

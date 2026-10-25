@@ -168,7 +168,8 @@ void RegisterCasts(duckdb::CastFunctionSet& casts) {
 
 void RegisterFunctions(Functions& functions) {
   Add(functions, "bit_count",
-      {{duckdb::LogicalType::BLOB}, duckdb::LogicalType::BIGINT,
+      {{duckdb::LogicalType::BLOB},
+       duckdb::LogicalType::BIGINT,
        BitCountFunction});
 }
 

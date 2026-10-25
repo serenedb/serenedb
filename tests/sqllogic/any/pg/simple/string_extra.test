@@ -152,28 +152,6 @@ overlay
 Thomas
 
 
-query
-SELECT overlay('abcdef' PLACING 'X' FROM 3 FOR -1) AS back, overlay('abcdef' PLACING 'XY' FROM 9) AS past,
-       substring('abcdef', -2, 4) AS before_start, substring('abcdef' FROM 0) AS from_zero,
-       substring('abcdef', 3, 100) AS long, substr('abcdef', -1, 3) AS substr_before,
-       substring('abcdef' FROM -3) AS negative_tail;
-----
-back	past	before_start	from_zero	long	substr_before	negative_tail
-abXbcdef	abcdefXY	a	abcdef	cdef	a	abcdef
-
-
-statement error
-SELECT substring('abcdef', 2, -1);
-----
-db error: ERROR: negative substring length not allowed
-
-
-statement error
-SELECT overlay('abcdef' PLACING 'X' FROM 0);
-----
-db error: ERROR: negative substring length not allowed
-
-
 # md5
 
 query

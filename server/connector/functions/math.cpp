@@ -158,7 +158,8 @@ void DivIntFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [](int64_t y, int64_t x) -> int64_t {
       if (x == 0) {
-        ThrowDivisionByZero();
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                        ERR_MSG("division by zero"));
       }
       if (y == std::numeric_limits<int64_t>::min() && x == -1) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
@@ -174,7 +175,8 @@ void DivDoubleFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [](double y, double x) -> int64_t {
       if (x == 0.0) {
-        ThrowDivisionByZero();
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                        ERR_MSG("division by zero"));
       }
       double truncated = std::trunc(y / x);
       if (truncated <
@@ -317,7 +319,8 @@ void LogBaseFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                         ERR_MSG("cannot take logarithm of a negative number"));
       }
       if (base == 1.0) {
-        ThrowDivisionByZero();
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                        ERR_MSG("division by zero"));
       }
       return std::log(value) / std::log(base);
     });
@@ -332,7 +335,8 @@ void CotDFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], result, args.size(), [](double x) -> double {
       double t = std::tan(x * kDegreesToRadians);
       if (t == 0.0) {
-        ThrowDivisionByZero();
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                        ERR_MSG("division by zero"));
       }
       return 1.0 / t;
     });

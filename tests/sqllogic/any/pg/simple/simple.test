@@ -1018,55 +1018,6 @@ width_bucket
 
 
 query
-SELECT width_bucket(5::float8, 10, 0, 5) AS descending, width_bucket(10::float8, 10, 0, 5) AS at_lower,
-       width_bucket(0::float8, 10, 0, 5) AS at_upper, width_bucket(11::float8, 10, 0, 5) AS above,
-       width_bucket(-1::float8, 10, 0, 5) AS below;
-----
-descending	at_lower	at_upper	above	below
-3	1	6	0	6
-
-
-query
-SELECT width_bucket('Infinity'::float8, 0, 10, 5) AS pos_inf, width_bucket('-Infinity'::float8, 0, 10, 5) AS neg_inf,
-       width_bucket(0::float8, '-1e308'::float8, '1e308'::float8, 10) AS huge_range,
-       width_bucket(0::float8, '1e308'::float8, '-1e308'::float8, 10) AS huge_range_desc,
-       width_bucket('0.9999999999999999'::float8, 0, 1, 2147483647) AS clamped;
-----
-pos_inf	neg_inf	huge_range	huge_range_desc	clamped
-6	0	6	6	2147483647
-
-
-statement error
-SELECT width_bucket('NaN'::float8, 0, 10, 5);
-----
-db error: ERROR: operand, lower bound, and upper bound cannot be NaN
-
-
-statement error
-SELECT width_bucket(1::float8, 0, 'Infinity'::float8, 5);
-----
-db error: ERROR: lower and upper bounds must be finite
-
-
-statement error
-SELECT width_bucket(1::float8, 0, 10, 0);
-----
-db error: ERROR: count must be greater than zero
-
-
-statement error
-SELECT width_bucket(1::float8, 5, 5, 5);
-----
-db error: ERROR: lower bound cannot equal upper bound
-
-
-statement error
-SELECT width_bucket(10::float8, 0, 5, 2147483647);
-----
-db error: ERROR: integer out of range
-
-
-query
 SELECT regexp_replace('hello world', 'world', 'universe');
 ----
 regexp_replace

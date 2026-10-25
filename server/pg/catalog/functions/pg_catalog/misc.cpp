@@ -23,7 +23,6 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
-#include <cmath>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
@@ -56,7 +55,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
-#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -619,44 +617,6 @@ duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
     duckdb::Value::BIGINT(oid).WithType(REGTYPE()));
 }
 
-[[noreturn]] void ThrowWidthBucketArgument(std::string_view message) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_WIDTH_BUCKET_FUNCTION),
-                  ERR_MSG(message));
-}
-
-int32_t WidthBucket(double operand, double bound1, double bound2,
-                    int32_t count) {
-  if (count <= 0) {
-    ThrowWidthBucketArgument("count must be greater than zero");
-  }
-  if (std::isnan(operand) || std::isnan(bound1) || std::isnan(bound2)) {
-    ThrowWidthBucketArgument(
-      "operand, lower bound, and upper bound cannot be NaN");
-  }
-  if (std::isinf(bound1) || std::isinf(bound2)) {
-    ThrowWidthBucketArgument("lower and upper bounds must be finite");
-  }
-  if (bound1 == bound2) {
-    ThrowWidthBucketArgument("lower bound cannot equal upper bound");
-  }
-  const bool ascending = bound1 < bound2;
-  if (ascending ? operand < bound1 : operand > bound1) {
-    return 0;
-  }
-  if (ascending ? operand >= bound2 : operand <= bound2) {
-    if (count == std::numeric_limits<int32_t>::max()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-                      ERR_MSG("integer out of range"));
-    }
-    return count + 1;
-  }
-  const auto fraction =
-    std::isinf(bound2 - bound1)
-      ? (operand / 2 - bound1 / 2) / (bound2 / 2 - bound1 / 2)
-      : (operand - bound1) / (bound2 - bound1);
-  return std::min(static_cast<int32_t>(count * fraction), count - 1) + 1;
-}
-
 void WidthBucketFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                          duckdb::Vector& result) {
   duckdb::GenericExecutor::ExecuteQuaternary<
@@ -664,11 +624,27 @@ void WidthBucketFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     duckdb::PrimitiveType<double>, duckdb::PrimitiveType<int32_t>,
     duckdb::PrimitiveType<int32_t>>(
     args.data[0], args.data[1], args.data[2], args.data[3], result, args.size(),
-    [](duckdb::PrimitiveType<double> operand,
-       duckdb::PrimitiveType<double> bound1,
-       duckdb::PrimitiveType<double> bound2,
+    [](duckdb::PrimitiveType<double> operand, duckdb::PrimitiveType<double> low,
+       duckdb::PrimitiveType<double> high,
        duckdb::PrimitiveType<int32_t> count) -> duckdb::PrimitiveType<int32_t> {
-      return {WidthBucket(operand.val, bound1.val, bound2.val, count.val)};
+      if (count.val <= 0) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_WIDTH_BUCKET_FUNCTION),
+          ERR_MSG("count must be greater than 0"));
+      }
+      if (low.val >= high.val) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_WIDTH_BUCKET_FUNCTION),
+          ERR_MSG("lower bound must be less than upper bound"));
+      }
+      if (operand.val < low.val) {
+        return {0};
+      }
+      if (operand.val >= high.val) {
+        return {count.val + 1};
+      }
+      return {static_cast<int32_t>(
+        (operand.val - low.val) / (high.val - low.val) * count.val + 1)};
     });
 }
 

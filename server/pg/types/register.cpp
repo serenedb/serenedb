@@ -22,7 +22,6 @@
 
 #include <duckdb/main/config.hpp>
 
-#include "pg/types/bit.h"
 #include "pg/types/bytea.h"
 #include "pg/types/char.h"
 #include "pg/types/function.h"
@@ -46,7 +45,6 @@ void RegisterTypes(duckdb::DatabaseInstance& db) {
   RegisterRegTypes(casts);
   RegisterPgLsn(casts, functions);
   RegisterBytea(casts, functions);
-  RegisterBit(functions);
   RegisterOid(casts);
   RegisterVectors(casts);
   RegisterTid(casts);

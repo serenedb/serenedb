@@ -984,112 +984,23 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
   }
 }
 
-template<bool Left, bool Right>
 std::string_view TrimBytes(std::string_view bytes, std::string_view set) {
   if (set.empty()) {
     return bytes;
   }
-  if constexpr (Left) {
-    bytes.remove_prefix(std::min(bytes.find_first_not_of(set), bytes.size()));
-  }
-  if constexpr (Right) {
-    bytes = bytes.substr(0, bytes.find_last_not_of(set) + 1);
-  }
-  return bytes;
+  bytes.remove_prefix(std::min(bytes.find_first_not_of(set), bytes.size()));
+  return bytes.substr(0, bytes.find_last_not_of(set) + 1);
 }
 
-template<bool Left, bool Right>
 void ByteaTrimFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                        duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t data, duckdb::string_t set) {
-      const auto bytes = TrimBytes<Left, Right>(AsView(data), AsView(set));
+      const auto bytes = TrimBytes(AsView(data), AsView(set));
       return duckdb::StringVector::AddStringOrBlob(result, bytes.data(),
                                                    bytes.size());
-    });
-}
-
-enum class LikeMatch : uint8_t {
-  False,
-  True,
-  Abort,
-};
-
-[[noreturn]] void ThrowLikeEndsWithEscape() {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ESCAPE_SEQUENCE),
-                  ERR_MSG("LIKE pattern must not end with escape character"));
-}
-
-LikeMatch MatchBytes(std::string_view text, std::string_view pattern) {
-  if (pattern == "%") {
-    return LikeMatch::True;
-  }
-  while (!text.empty() && !pattern.empty()) {
-    if (pattern.front() == '%') {
-      pattern.remove_prefix(1);
-      while (!pattern.empty()) {
-        if (pattern.front() == '%') {
-          pattern.remove_prefix(1);
-        } else if (pattern.front() == '_') {
-          if (text.empty()) {
-            return LikeMatch::Abort;
-          }
-          text.remove_prefix(1);
-          pattern.remove_prefix(1);
-        } else {
-          break;
-        }
-      }
-      if (pattern.empty()) {
-        return LikeMatch::True;
-      }
-      if (pattern.front() == '\\' && pattern.size() < 2) {
-        ThrowLikeEndsWithEscape();
-      }
-      const auto first = pattern.front() == '\\' ? pattern[1] : pattern.front();
-      for (; !text.empty(); text.remove_prefix(1)) {
-        if (text.front() == first) {
-          if (const auto matched = MatchBytes(text, pattern);
-              matched != LikeMatch::False) {
-            return matched;
-          }
-        }
-      }
-      return LikeMatch::Abort;
-    }
-    if (pattern.front() == '\\') {
-      pattern.remove_prefix(1);
-      if (pattern.empty()) {
-        ThrowLikeEndsWithEscape();
-      }
-      if (pattern.front() != text.front()) {
-        return LikeMatch::False;
-      }
-    } else if (pattern.front() != '_' && pattern.front() != text.front()) {
-      return LikeMatch::False;
-    }
-    text.remove_prefix(1);
-    pattern.remove_prefix(1);
-  }
-  if (!text.empty()) {
-    return LikeMatch::False;
-  }
-  while (!pattern.empty() && pattern.front() == '%') {
-    pattern.remove_prefix(1);
-  }
-  return pattern.empty() ? LikeMatch::True : LikeMatch::Abort;
-}
-
-template<bool Negate>
-void ByteaLikeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                       duckdb::Vector& result) {
-  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t, bool>(
-    args.data[0], args.data[1], result, args.size(),
-    [](duckdb::string_t data, duckdb::string_t pattern) {
-      return (MatchBytes(AsView(data), AsView(pattern)) == LikeMatch::True) !=
-             Negate;
     });
 }
 
@@ -1553,10 +1464,6 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                                  {duckdb::LogicalType::VARCHAR},
                                                  duckdb::LogicalType::BIGINT,
                                                  OctetLengthFunction});
-  loader.RegisterFunction(duckdb::ScalarFunction{"length",
-                                                 {duckdb::LogicalType::BLOB},
-                                                 duckdb::LogicalType::BIGINT,
-                                                 OctetLengthFunction});
 
   // to_bin(int32), to_bin(int64)
   loader.RegisterFunction(duckdb::ScalarFunction{"to_bin",
@@ -1709,41 +1616,22 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
          loader.GetFunction(duckdb::Identifier{"trim"}).functions.functions) {
       set.AddFunction(function);
     }
-    set.AddFunction(duckdb::ScalarFunction{
-      set.name, {blob, blob}, blob, ByteaTrimFunction<true, true>});
+    set.AddFunction(
+      duckdb::ScalarFunction{set.name, {blob, blob}, blob, ByteaTrimFunction});
     loader.RegisterFunction(set);
-  }
-
-  struct Trim {
-    std::string_view name;
-    duckdb::scalar_function_t bytea;
-  };
-  for (const auto& [name, bytea_trim] : {
-         Trim{"ltrim", ByteaTrimFunction<true, false>},
-         Trim{"rtrim", ByteaTrimFunction<false, true>},
-         Trim{"trim", ByteaTrimFunction<true, true>},
-       }) {
-    loader.AddFunctionOverload(duckdb::ScalarFunction{
-      duckdb::Identifier{name}, {blob, blob}, blob, bytea_trim});
   }
 
   struct OperatorAlias {
     std::string_view name;
     std::string_view source;
-    duckdb::scalar_function_t bytea;
   };
-  for (const auto& [name, source, bytea_like] : {
-         OperatorAlias{"like", "~~", ByteaLikeFunction<false>},
-         OperatorAlias{"notlike", "!~~", ByteaLikeFunction<true>},
+  for (const auto& [name, source] : {
+         OperatorAlias{"like", "~~"},
+         OperatorAlias{"notlike", "!~~"},
        }) {
-    const duckdb::Identifier source_name{source};
-    duckdb::ScalarFunction like{
-      source_name, {blob, blob}, duckdb::LogicalType::BOOLEAN, bytea_like};
-    like.SetFallible();
-    loader.RegisterFunction(std::move(like));
     duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
     for (const auto& function :
-         loader.GetFunction(source_name).functions.functions) {
+         loader.GetFunction(duckdb::Identifier{source}).functions.functions) {
       set.AddFunction(function);
     }
     loader.RegisterFunction(set);

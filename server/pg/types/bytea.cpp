@@ -25,13 +25,8 @@
 
 #include <algorithm>
 #include <bit>
-#include <cstring>
 #include <duckdb/common/string_util.hpp>
-#include <duckdb/common/vector_operations/binary_executor.hpp>
-#include <duckdb/common/vector_operations/generic_executor.hpp>
-#include <duckdb/common/vector_operations/ternary_executor.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
-#include <duckdb/function/scalar/string_common.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -149,75 +144,6 @@ duckdb::BoundCastInfo BindByteaToText(duckdb::BindCastInput& input,
                                duckdb::make_uniq<ByteaOutCastData>(use_escape));
 }
 
-void SubstringFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                       duckdb::Vector& result) {
-  if (args.ColumnCount() == 3) {
-    duckdb::TernaryExecutor::Execute<duckdb::string_t, int64_t, int64_t,
-                                     duckdb::string_t>(
-      args.data[0], args.data[1], args.data[2], result, args.size(),
-      [&](duckdb::string_t bytes, int64_t offset, int64_t length) {
-        duckdb::PostgresSubstringBounds(offset, length);
-        return duckdb::SubstringASCII(result, bytes, offset, length);
-      });
-  } else {
-    duckdb::BinaryExecutor::Execute<duckdb::string_t, int64_t,
-                                    duckdb::string_t>(
-      args.data[0], args.data[1], result, args.size(),
-      [&](duckdb::string_t bytes, int64_t offset) {
-        return duckdb::SubstringASCII(
-          result, bytes, std::max<int64_t>(offset, 1),
-          duckdb::NumericLimits<uint32_t>::Maximum());
-      });
-  }
-  duckdb::StringVector::AddHeapReference(result, args.data[0]);
-}
-
-duckdb::string_t Overlay(duckdb::Vector& result, duckdb::string_t bytes,
-                         duckdb::string_t placing, int64_t start,
-                         int64_t count) {
-  const auto tail = duckdb::PostgresOverlayEnd(start, count);
-  const auto size = bytes.GetSize();
-  const auto head = std::min<uint64_t>(start - 1, size);
-  const auto rest = static_cast<size_t>(
-    std::clamp<int64_t>(tail - 1, 0, static_cast<int64_t>(size)));
-  auto target = duckdb::StringVector::EmptyString(
-    result, head + placing.GetSize() + size - rest);
-  auto* out = target.GetDataWriteable();
-  std::memcpy(out, bytes.GetData(), head);
-  std::memcpy(out + head, placing.GetData(), placing.GetSize());
-  std::memcpy(out + head + placing.GetSize(), bytes.GetData() + rest,
-              size - rest);
-  target.Finalize();
-  return target;
-}
-
-void OverlayFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                     duckdb::Vector& result) {
-  if (args.ColumnCount() == 4) {
-    duckdb::GenericExecutor::ExecuteQuaternary<
-      duckdb::PrimitiveType<duckdb::string_t>,
-      duckdb::PrimitiveType<duckdb::string_t>, duckdb::PrimitiveType<int64_t>,
-      duckdb::PrimitiveType<int64_t>, duckdb::PrimitiveType<duckdb::string_t>>(
-      args.data[0], args.data[1], args.data[2], args.data[3], result,
-      args.size(),
-      [&](duckdb::PrimitiveType<duckdb::string_t> bytes,
-          duckdb::PrimitiveType<duckdb::string_t> placing,
-          duckdb::PrimitiveType<int64_t> start,
-          duckdb::PrimitiveType<int64_t> count)
-        -> duckdb::PrimitiveType<duckdb::string_t> {
-        return {Overlay(result, bytes.val, placing.val, start.val, count.val)};
-      });
-    return;
-  }
-  duckdb::TernaryExecutor::Execute<duckdb::string_t, duckdb::string_t, int64_t,
-                                   duckdb::string_t>(
-    args.data[0], args.data[1], args.data[2], result, args.size(),
-    [&](duckdb::string_t bytes, duckdb::string_t placing, int64_t start) {
-      return Overlay(result, bytes, placing, start,
-                     static_cast<int64_t>(placing.GetSize()));
-    });
-}
-
 void BitCountFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                       duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
@@ -241,24 +167,9 @@ void RegisterCasts(duckdb::CastFunctionSet& casts) {
 }
 
 void RegisterFunctions(Functions& functions) {
-  const auto blob = duckdb::LogicalType::BLOB;
-  const auto bigint = duckdb::LogicalType::BIGINT;
-  for (const auto name : {"substring", "substr"}) {
-    for (auto arguments :
-         {duckdb::vector<duckdb::LogicalType>{blob, bigint},
-          duckdb::vector<duckdb::LogicalType>{blob, bigint, bigint}}) {
-      Add(functions, name,
-          Fallible({std::move(arguments), blob, SubstringFunction}));
-    }
-  }
-  for (auto arguments :
-       {duckdb::vector<duckdb::LogicalType>{blob, blob, bigint},
-        duckdb::vector<duckdb::LogicalType>{blob, blob, bigint, bigint}}) {
-    Add(functions, "overlay",
-        Fallible({std::move(arguments), blob, OverlayFunction}));
-  }
   Add(functions, "bit_count",
-      {{blob}, duckdb::LogicalType::BIGINT, BitCountFunction});
+      {{duckdb::LogicalType::BLOB}, duckdb::LogicalType::BIGINT,
+       BitCountFunction});
 }
 
 }  // namespace

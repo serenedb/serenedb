@@ -88,15 +88,12 @@ T Unwrap(simdjson::simdjson_result<T>&& result) {
 class JsonParser {
  public:
   void PrepareJson(std::string_view json) {
-    _input.resize(json.size() + simdjson::SIMDJSON_PADDING);
-    json.copy(_input.data(), json.size());
-    _input_size = json.size();
+    _padded_input = simdjson::padded_string{json};
   }
 
   simdjson::ondemand::document GetJsonDocument() {
     simdjson::ondemand::document doc;
-    auto ec =
-      _parser.iterate(_input.data(), _input_size, _input.size()).get(doc);
+    auto ec = _parser.iterate(_padded_input).get(doc);
     if (ec != simdjson::SUCCESS) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
@@ -215,8 +212,7 @@ class JsonParser {
   }
 
   simdjson::ondemand::parser _parser;
-  std::string _input;
-  size_t _input_size = 0;
+  simdjson::padded_string _padded_input;
 };
 
 // ---------------------------------------------------------------------------

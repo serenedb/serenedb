@@ -39,6 +39,7 @@
 #include <duckdb/function/scalar/string_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -277,7 +278,8 @@ void QuoteIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       if (!pg::RequiresQuotes(str)) {
         return input;
       }
-      return duckdb::StringVector::AddString(result, pg::QuoteIdentifier(str));
+      return duckdb::StringVector::AddString(
+        result, duckdb::KeywordHelper::WriteQuotedAndEscaped(str, '"'));
     });
   duckdb::StringVector::AddHeapReference(result, args.data[0]);
 }

@@ -24,7 +24,9 @@ Run as a script, it serves until interrupted and answers on the `__admin`
 bucket: GET /__admin/stats returns the counters as JSON, POST /__admin/reset
 clears them, PUT /__admin/latency?seconds=S sets the latency, and after
 PUT /__admin/log?enabled=1 each GET of an object is logged with its key, range
-and start and end times, which GET /__admin/log returns and clears.
+and start and end times, which GET /__admin/log returns and clears. While
+`writes` is a list, each single-request upload is appended to it with its key
+and start and end times.
 """
 
 from __future__ import annotations
@@ -156,6 +158,7 @@ class FakeS3:
         self.stalled = threading.Event()
         self.release = threading.Event()
         self.log: list[dict] | None = None
+        self.writes: list[dict] | None = None
         store = self
 
         class Handler(_Handler):
@@ -491,6 +494,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._xml(200, f'<CopyObjectResult xmlns="{NS}"><ETag>{escape(copy.etag)}</ETag></CopyObjectResult>')
             return
         self.fake.count("PUT")
+        began = time.monotonic()
         self._wait()
         matches, checksum = self._checksum(body)
         if not matches:
@@ -499,6 +503,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         obj = _Object(body)
         with self.fake.lock:
             self.fake.objects[(bucket, key)] = obj
+            if self.fake.writes is not None:
+                self.fake.writes.append({"key": key, "began": began,
+                                         "ended": time.monotonic()})
         headers = {"ETag": obj.etag}
         if checksum is not None:
             headers["x-amz-checksum-crc32c"] = _encode_crc32c(checksum)

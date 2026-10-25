@@ -1027,7 +1027,7 @@ def test_a_restart_opens_its_indexes_and_search_tables_at_once(
                     conn.execute(f"VACUUM (REFRESH_TABLE) notes{i}")
         finally:
             server.stop()
-        fake.latency = 0.2
+        fake.latency = 0.5
         fake.log = []
         again = _Server(datadir)
         try:
@@ -1053,6 +1053,45 @@ def test_a_restart_opens_its_indexes_and_search_tables_at_once(
     assert len(opens) == 2 * each, log
     assert max(entry["began"] for entry in opens.values()) < min(
         entry["ended"] for entry in opens.values()), opens
+
+
+def test_a_checkpoint_saves_its_indexes_at_once(tmp_path: Path) -> None:
+    each = 4
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           f"s3://bucket/saved-{tmp_path.name}")
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE TEXT SEARCH DICTIONARY words AS "
+                    "split_by_non_alpha(case := 'lower')")
+                for i in range(each):
+                    conn.execute(f"CREATE TABLE docs{i}(id INTEGER, body TEXT)")
+                    conn.execute(f"CREATE INDEX docs{i}_body ON docs{i} "
+                                 "USING inverted(body words) "
+                                 "WITH (refresh_interval = 0) TABLESPACE idx")
+                conn.execute("CHECKPOINT")
+                for i in range(each):
+                    conn.execute(f"INSERT INTO docs{i} VALUES ({i}, 'quick brown fox')")
+                fake.latency = 0.5
+                fake.writes = []
+                conn.execute("CHECKPOINT")
+                writes, fake.writes = fake.writes, None
+                fake.latency = 0
+                for i in range(each):
+                    assert conn.execute(
+                        f"SELECT id FROM docs{i}_body WHERE body @@ 'fox'"
+                    ).fetchall() == [(i,)]
+        finally:
+            server.stop()
+    saves: dict[str, dict] = {}
+    for entry in sorted(writes, key=lambda entry: entry["began"]):
+        saves.setdefault(entry["key"].rsplit("/", 1)[0], entry)
+    assert len(saves) == each, writes
+    assert max(entry["began"] for entry in saves.values()) < min(
+        entry["ended"] for entry in saves.values()), saves
 
 
 def test_restored_objects_are_read_by_the_etags_they_are_listed_with(

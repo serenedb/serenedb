@@ -28,6 +28,8 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parallel/task_executor.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_extension.hpp>
@@ -192,11 +194,18 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
                                 duckdb::CheckpointOptions) final {
     const auto iteration =
       db.GetStorageManager().GetBlockManager().GetCheckpointIteration() + 1;
-    std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves;
-    for (auto& storage : BoundStorages(db)) {
-      storage->PrepareCheckpoint(iteration);
-      saves.push_back(storage);
+    const auto storages = BoundStorages(db);
+    auto& scheduler = duckdb::TaskScheduler::GetScheduler(db.GetDatabase());
+    duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
+    for (const auto& storage : storages) {
+      executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+        executor,
+        [&storage, iteration] { storage->PrepareCheckpoint(iteration); },
+        "SearchPrepareCheckpoint"));
     }
+    executor.WorkOnTasks();
+    std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves{
+      storages.begin(), storages.end()};
     duckdb::lock_guard<duckdb::mutex> lock{_saves_mutex};
     if (saves.empty()) {
       _saves.erase(db.oid);
@@ -216,15 +225,23 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
         _saves.erase(it);
       }
     }
+    auto& scheduler = duckdb::TaskScheduler::GetScheduler(db.GetDatabase());
+    duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
     for (const auto& save : saves) {
-      if (const auto storage = save.lock()) {
-        storage->FinishCheckpoint();
+      if (auto storage = save.lock()) {
+        executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+          executor,
+          [storage = std::move(storage)] { storage->FinishCheckpoint(); },
+          "SearchFinishCheckpoint"));
       }
     }
     for (auto& table : catalog::SearchTableStorages(
            db.GetCatalog().Cast<duckdb::DuckCatalog>())) {
-      table->FinishCheckpoint();
+      executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+        executor, [table = std::move(table)] { table->FinishCheckpoint(); },
+        "SearchFinishCheckpoint"));
     }
+    executor.WorkOnTasks();
   }
 
   duckdb::optional_idx NeededWALGeneration(duckdb::AttachedDatabase& db) final {

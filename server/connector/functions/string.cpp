@@ -1170,16 +1170,6 @@ void ByteaTrimFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-template<bool Left, bool Right>
-void SpaceTrimFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                       duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
-    args.data[0], result, args.size(), [&](duckdb::string_t text) {
-      return duckdb::StringVector::AddString(
-        result, TrimBytes<Left, Right>(AsView(text), " "));
-    });
-}
-
 enum class LikeMatch : uint8_t {
   False,
   True,
@@ -1357,8 +1347,15 @@ void NormalizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                   ->Cast<NormalizeState>();
   const auto apply = [&](duckdb::string_t text,
                          std::string_view form) -> Result {
-    const auto normalized =
-      local.Normalize(AsView(text), NormalFormOptions(form));
+    const auto options = NormalFormOptions(form);
+    if (duckdb::IsAscii(text.GetData(), text.GetSize())) {
+      if constexpr (std::is_same_v<Result, bool>) {
+        return true;
+      } else {
+        return text;
+      }
+    }
+    const auto normalized = local.Normalize(AsView(text), options);
     if constexpr (std::is_same_v<Result, bool>) {
       return normalized == AsView(text);
     } else {
@@ -1376,6 +1373,9 @@ void NormalizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       [&](duckdb::string_t text, duckdb::string_t form) {
         return apply(text, AsView(form));
       });
+  }
+  if constexpr (std::is_same_v<Result, duckdb::string_t>) {
+    duckdb::StringVector::AddHeapReference(result, args.data[0]);
   }
 }
 
@@ -1872,13 +1872,9 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   const auto text = duckdb::LogicalType::VARCHAR;
   {
     duckdb::ScalarFunctionSet set{"btrim"};
-    set.AddFunction(duckdb::ScalarFunction{
-      set.name, {text}, text, SpaceTrimFunction<true, true>});
     for (const auto& function :
          loader.GetFunction(duckdb::Identifier{"trim"}).functions.functions) {
-      if (function->GetSignature().GetParameterCount() == 2) {
-        set.AddFunction(function);
-      }
+      set.AddFunction(function);
     }
     set.AddFunction(duckdb::ScalarFunction{
       set.name, {blob, blob}, blob, ByteaTrimFunction<true, true>});
@@ -1887,22 +1883,15 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
 
   struct Trim {
     std::string_view name;
-    duckdb::scalar_function_t text;
     duckdb::scalar_function_t bytea;
   };
-  for (const auto& [name, text_trim, bytea_trim] : {
-         Trim{"ltrim", SpaceTrimFunction<true, false>,
-              ByteaTrimFunction<true, false>},
-         Trim{"rtrim", SpaceTrimFunction<false, true>,
-              ByteaTrimFunction<false, true>},
-         Trim{"trim", SpaceTrimFunction<true, true>,
-              ByteaTrimFunction<true, true>},
+  for (const auto& [name, bytea_trim] : {
+         Trim{"ltrim", ByteaTrimFunction<true, false>},
+         Trim{"rtrim", ByteaTrimFunction<false, true>},
+         Trim{"trim", ByteaTrimFunction<true, true>},
        }) {
-    duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
-    set.AddFunction(duckdb::ScalarFunction{set.name, {text}, text, text_trim});
-    set.AddFunction(
-      duckdb::ScalarFunction{set.name, {blob, blob}, blob, bytea_trim});
-    loader.RegisterFunction(set);
+    loader.AddFunctionOverload(duckdb::ScalarFunction{
+      duckdb::Identifier{name}, {blob, blob}, blob, bytea_trim});
   }
 
   struct OperatorAlias {

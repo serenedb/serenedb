@@ -246,21 +246,21 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Feature             | Support State | Details                                                    |
 |---------------------|---------------|------------------------------------------------------------|
 | \|\|                | Yes           |                                                            |
-| btrim               | Yes           |                                                            |
+| btrim               | Yes           | Without characters to remove, also removes Unicode space separators such as the no-break space; PostgreSQL removes only spaces |
 | bit_length          | Yes           |                                                            |
 | char_length         | Yes           |                                                            |
 | is_normalized       | Yes           | The `IS [NOT] [form] NORMALIZED` syntax is not supported   |
 | lower               | Yes           |                                                            |
 | lpad                | Yes           |                                                            |
-| ltrim               | Yes           |                                                            |
+| ltrim               | Yes           | Same as `btrim`                                            |
 | normalize           | Yes           |                                                            |
 | octet_length        | Yes           |                                                            |
 | overlay             | Yes           |                                                            |
 | position            | Yes           |                                                            |
 | rpad                | Yes           |                                                            |
-| rtrim               | Yes           |                                                            |
+| rtrim               | Yes           | Same as `btrim`                                            |
 | substring           | Yes           | Currently not supporting regular expression arguments      |
-| trim                | Yes           |                                                            |
+| trim                | Yes           | Same as `btrim`                                            |
 | upper               | Yes           |                                                            |
 | ^@                  | Yes           |                                                            |
 | ascii               | Yes           |                                                            |

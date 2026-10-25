@@ -7,6 +7,7 @@ btrim	btrim	btrim	btrim
 xyz	trim	(empty)	abc
 
 
+onlyif postgres
 query
 SELECT length(btrim(chr(160) || ' x ' || chr(160))), btrim('éaxé', 'é');
 ----
@@ -14,12 +15,30 @@ length	btrim
 5	ax
 
 
+skipif postgres
+query
+SELECT length(btrim(chr(160) || ' x ' || chr(160))), btrim('éaxé', 'é');
+----
+length	btrim
+1	ax
+
+
+onlyif postgres
 query
 SELECT length(trim(chr(160) || ' x ' || chr(160))), length(ltrim(chr(160) || ' x')), length(rtrim('x ' || chr(160))),
        length(trim('  x  ')), length(ltrim('  x')), length(rtrim('x  '));
 ----
 length	length	length	length	length	length
 5	3	3	1	1	1
+
+
+skipif postgres
+query
+SELECT length(trim(chr(160) || ' x ' || chr(160))), length(ltrim(chr(160) || ' x')), length(rtrim('x ' || chr(160))),
+       length(trim('  x  ')), length(ltrim('  x')), length(rtrim('x  '));
+----
+length	length	length	length	length	length
+1	1	1	1	1	1
 
 
 query
@@ -36,13 +55,22 @@ btrim	btrim	btrim
 \\x345678	\\x	\\x01
 
 
-# ltrim, rtrim and trim remove spaces only, and work on bytea
+# ltrim, rtrim and trim, also on bytea
 
+onlyif postgres
 query
 SELECT length(ltrim(chr(160) || ' x ')), length(rtrim(' x ' || chr(12288))), length(trim(chr(160) || ' x ' || chr(160))), '[' || trim(BOTH FROM '  x  ') || ']';
 ----
 length	length	length	?column?
 4	4	5	[x]
+
+
+skipif postgres
+query
+SELECT length(ltrim(chr(160) || ' x ')), length(rtrim(' x ' || chr(12288))), length(trim(chr(160) || ' x ' || chr(160))), '[' || trim(BOTH FROM '  x  ') || ']';
+----
+length	length	length	?column?
+2	2	1	[x]
 
 
 query

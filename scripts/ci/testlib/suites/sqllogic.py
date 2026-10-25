@@ -196,11 +196,10 @@ def default_seconds(path, rel):
 
 
 def check_out_corpus(ctx):
-    corpus = sqllogic_dir(ctx) / "any" / "pg" / "sqlite"
-    if corpus.is_dir() and any(corpus.iterdir()):
-        return
     subprocess.run(["git", "-C", str(ctx.root), "submodule", "update", "--init", "--checkout",
                     "--depth=1", "tests/sqllogic/any/pg/sqlite"], check=True)
+    subprocess.run(["git", "-C", str(sqllogic_dir(ctx) / "any" / "pg" / "sqlite"), "checkout-index",
+                    "--all", "--quiet"], check=True)
 
 
 def engines(args):

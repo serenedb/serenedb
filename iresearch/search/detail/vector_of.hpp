@@ -69,7 +69,8 @@ RawRecipe RecipeOf(const Query& query) {
           .d = state.vector_column != nullptr
                  ? static_cast<uint32_t>(state.vector_column->ArraySize())
                  : state.d,
-          .metric = query.Metric()};
+          .metric = query.Metric(),
+          .rescore_width = state.rescore_width};
 }
 
 template<typename Gate, typename Query, typename Emit>

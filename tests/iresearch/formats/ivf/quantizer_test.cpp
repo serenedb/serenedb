@@ -1388,6 +1388,46 @@ TEST(pq_quantizer_test, tail_group_padding_is_zero) {
   }
 }
 
+TEST(pq_quantizer_test, subspace_errors_survive_the_stats_roundtrip) {
+  constexpr uint32_t d = 32;
+  constexpr uint32_t pq_m = 4;
+  constexpr size_t n = 512;
+  const auto pts = MakeSpread(d, n, 41);
+  const auto query = MakeSpread(d, 1, 43);
+  const std::vector<float> cen(d, 0.f);
+  for (const bool row_major : {false, true}) {
+    auto writer =
+      MakeQuantizerWriter({.kind = VectorQuantization::PQ, .pq_m = pq_m}, d,
+                          VectorMetric::L2Sqr, 0, row_major);
+    ASSERT_NE(writer, nullptr);
+    writer->Train(pts.data(), n);
+    writer->SetClusterCentroid(cen.data());
+    const bstring blob = SerializeStats(*writer);
+    const auto errors_of = [&](std::span<const byte_type> stats_blob) {
+      auto stats = MakeQuantizerStats(VectorQuantization::PQ, d, stats_blob,
+                                      VectorMetric::L2Sqr, row_major);
+      EXPECT_NE(stats, nullptr);
+      auto reader = MakeQuantizerReader(stats->MakeCodebook(query));
+      EXPECT_NE(reader, nullptr);
+      reader->StartCluster(cen.data());
+      std::vector<score_t> scores{-40.f, -30.f, -20.f};
+      std::vector<score_t> errors(scores.size(), -1.f);
+      reader->BlockErrors({}, scores, errors.data());
+      return errors;
+    };
+    for (const auto e : errors_of(blob)) {
+      EXPECT_TRUE(std::isfinite(e)) << "row_major " << row_major;
+      EXPECT_GT(e, 0.f) << "row_major " << row_major;
+    }
+    const std::span<const byte_type> without_errors{
+      blob.data(), blob.size() - pq_m * sizeof(float)};
+    for (const auto e : errors_of(without_errors)) {
+      EXPECT_EQ(e, std::numeric_limits<score_t>::infinity())
+        << "row_major " << row_major;
+    }
+  }
+}
+
 TEST(rabitq_quantizer_test, block_split_is_transparent_one_bit) {
   constexpr uint32_t d = 8;
   const auto pts = MakeSpread(d, 100, 23);
@@ -1933,6 +1973,91 @@ TEST_P(code_rekey_test, gathered_scores_are_chunking_invariant) {
   ASSERT_NE(pairs, 0U);
   EXPECT_LT(static_cast<double>(disagree) / static_cast<double>(pairs), 0.03)
     << disagree << " of " << pairs << " pairs ordered differently";
+}
+
+TEST_P(code_rekey_test, score_errors_track_the_estimate_error) {
+  const auto quant = GetParam().quant;
+  const auto nb_bits = GetParam().nb_bits;
+  constexpr uint32_t d = 128;
+  constexpr size_t n = 64;
+  constexpr size_t kQueries = 4;
+  const auto points = MakeSpread(d, n, 31);
+  const auto queries = MakeSpread(d, kQueries, 37);
+  const std::vector<float> centroid(d, 0.f);
+  std::vector<uint32_t> ids(n);
+  for (uint32_t i = 0; i < n; ++i) {
+    ids[i] = i;
+  }
+  for (const VectorMetric metric :
+       {VectorMetric::InnerProduct, VectorMetric::L2Sqr}) {
+    const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid,
+                              GetParam().half_bit, GetParam().query_bits);
+    double miss = 0;
+    double spread = 0;
+    for (size_t q = 0; q < kQueries; ++q) {
+      const std::span<const float> query{queries.data() + q * d, d};
+      auto reader = MakeKeyedReader(f, query, centroid.data());
+      std::vector<score_t> scores(n, 0.f);
+      std::vector<score_t> errors(n, -1.f);
+      reader->ComputeGathered(f.codes.data(), f.record_size, ids, kNoPrune,
+                              scores.data());
+      reader->ScoreErrors(f.codes.data(), f.record_size, ids, scores,
+                          errors.data());
+      for (size_t i = 0; i < n; ++i) {
+        ASSERT_TRUE(std::isfinite(errors[i]) && errors[i] >= 0.f)
+          << "metric " << static_cast<int>(metric) << " row " << i;
+        double exact = 0;
+        for (size_t j = 0; j < d; ++j) {
+          const double x = points[i * d + j];
+          exact += metric == VectorMetric::InnerProduct
+                     ? double{query[j]} * x
+                     : -(double{query[j]} - x) * (double{query[j]} - x);
+        }
+        miss += (exact - scores[i]) * (exact - scores[i]);
+        spread += double{errors[i]} * errors[i];
+      }
+    }
+    ASSERT_GT(spread, 0.0) << "metric " << static_cast<int>(metric);
+    const double ratio = std::sqrt(miss / spread);
+    EXPECT_GT(ratio, 0.2) << "metric " << static_cast<int>(metric);
+    EXPECT_LT(ratio, 5.0) << "metric " << static_cast<int>(metric);
+  }
+}
+
+TEST_P(code_rekey_test, block_errors_match_score_errors) {
+  const auto quant = GetParam().quant;
+  const auto nb_bits = GetParam().nb_bits;
+  constexpr uint32_t d = 128;
+  constexpr size_t n = 64;
+  const auto points = MakeSpread(d, n, 47);
+  const auto query = MakeSpread(d, 1, 53);
+  const std::vector<float> centroid(d, 0.f);
+  std::vector<uint32_t> ids(n);
+  for (uint32_t i = 0; i < n; ++i) {
+    ids[i] = i;
+  }
+  for (const VectorMetric metric :
+       {VectorMetric::InnerProduct, VectorMetric::L2Sqr}) {
+    const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid,
+                              GetParam().half_bit, GetParam().query_bits);
+    auto reader = MakeKeyedReader(f, query, centroid.data());
+    std::vector<score_t> by_id(n, 0.f);
+    reader->ComputeGathered(f.codes.data(), f.record_size, ids, kNoPrune,
+                            by_id.data());
+    auto by_block = by_id;
+    std::vector<score_t> id_errors(n, -1.f);
+    std::vector<score_t> block_errors(n, -1.f);
+    reader->ScoreErrors(f.codes.data(), f.record_size, ids, by_id,
+                        id_errors.data());
+    reader->BlockErrors({f.codes.data(), n * f.record_size}, by_block,
+                        block_errors.data());
+    for (size_t i = 0; i < n; ++i) {
+      EXPECT_EQ(by_id[i], by_block[i])
+        << "metric " << static_cast<int>(metric) << " row " << i;
+      EXPECT_EQ(id_errors[i], block_errors[i])
+        << "metric " << static_cast<int>(metric) << " row " << i;
+    }
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(

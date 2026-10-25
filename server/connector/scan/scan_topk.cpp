@@ -45,66 +45,142 @@ void SortByAddress(std::span<irs::ScoreDoc> hits) {
   });
 }
 
-bool BetterScore(const irs::ScoreDoc& l, const irs::ScoreDoc& r) noexcept {
-  if (l.score != r.score) {
-    return l.score > r.score;
+double RescoreCandidates(const VectorScorerOptions& vs, double k) noexcept {
+  if (vs.kind == irs::AnnKind::Hnsw) {
+    return std::max(vs.ef_search, vs.min_ef);
   }
-  return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
+  return k + std::max(static_cast<double>(vs.posting_size), k);
 }
 
-void RerankHits(ScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
-  SDB_ASSERT(g.vector_scorer != nullptr);
-  const auto& vs = *g.vector_scorer;
-  const std::span<const float> query{vs.query_vector};
-  const auto d = static_cast<uint32_t>(vs.query_vector.size());
-  size_t i = 0;
-  while (i < hits.size()) {
-    const uint32_t seg = hits[i].segment_idx;
-    size_t j = i + 1;
-    while (j < hits.size() && hits[j].segment_idx == seg) {
-      ++j;
+struct BetterScore {
+  bool operator()(const irs::ScoreDoc& l,
+                  const irs::ScoreDoc& r) const noexcept {
+    if (l.score != r.score) {
+      return l.score > r.score;
     }
-    const auto& sub = (*g.reader)[seg];
-    if (const auto* vec_col = sub.Column(vs.field_id); vec_col != nullptr) {
-      irs::RerankExactDistances(sub, *vec_col, d, query, vs.metric,
-                                hits.subspan(i, j - i));
-    }
-    i = j;
-  }
-}
-
-struct AnswerWorstFirst {
-  bool operator()(const irs::ScoreDoc& a, const irs::ScoreDoc& b) const {
-    return a.score > b.score;
+    return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
   }
 };
+
+irs::detail::RawVectorReader* SegmentRescorer(const ScanGlobalState& g,
+                                              TopKLocalState& l, uint32_t seg) {
+  SDB_ASSERT(g.vector_scorer != nullptr);
+  const auto& vs = *g.vector_scorer;
+  if (l.rescorers.size() <= seg) {
+    l.rescorers.resize(g.reader->size());
+  }
+  auto& reader = l.rescorers[seg];
+  if (!reader) {
+    const auto& sub = (*g.reader)[seg];
+    const auto* column = sub.Column(vs.field_id);
+    const auto* columns = sub.GetColReader();
+    if (!column || !columns) {
+      return nullptr;
+    }
+    reader = std::make_unique<irs::detail::RawVectorReader>(
+      *column, *columns, static_cast<uint32_t>(vs.query_vector.size()));
+    reader->SetQuery(vs.query_vector, vs.metric);
+  }
+  return reader.get();
+}
+
+void RescoreUnit(const ScanGlobalState& g, TopKLocalState& l,
+                 std::span<irs::ScoreDoc> hits) {
+  auto* reader = SegmentRescorer(g, l, hits.front().segment_idx);
+  if (!reader) {
+    return;
+  }
+  l.rescore_docs.resize(hits.size());
+  l.rescore_scores.resize(hits.size());
+  for (size_t i = 0; i < hits.size(); ++i) {
+    l.rescore_docs[i] = hits[i].doc;
+  }
+  reader->ComputeDistances(l.rescore_docs, l.rescore_scores);
+  for (size_t i = 0; i < hits.size(); ++i) {
+    hits[i].score = l.rescore_scores[i];
+  }
+}
+
+void PushBest(ScanGlobalState::TopKState& t,
+              std::span<const irs::ScoreDoc> hits) {
+  absl::MutexLock lock{&t.best_mutex};
+  for (const auto& hit : hits) {
+    if (t.best.size() < t.limit) {
+      t.best.push_back(hit);
+      absl::c_push_heap(t.best, BetterScore{});
+    } else if (BetterScore{}(hit, t.best.front())) {
+      absl::c_pop_heap(t.best, BetterScore{});
+      t.best.back() = hit;
+      absl::c_push_heap(t.best, BetterScore{});
+    }
+  }
+  if (t.best.size() == t.limit &&
+      t.best.front().score > t.rescore_bar.load(std::memory_order_relaxed)) {
+    t.rescore_bar.store(t.best.front().score, std::memory_order_release);
+  }
+}
+
+void RescoreWhileReachable(ScanGlobalState& g, TopKLocalState& l,
+                           std::span<irs::ScoreDoc> pool) {
+  auto& t = g.topk;
+  auto* reader = SegmentRescorer(g, l, pool.front().segment_idx);
+  if (!reader) {
+    PushBest(t, pool);
+    return;
+  }
+  const auto lower = [](const irs::ScoreDoc& a, const irs::ScoreDoc& b) {
+    return a.score < b.score;
+  };
+  absl::c_make_heap(pool, lower);
+  constexpr size_t kAhead = 2;
+  constexpr size_t kPushBatch = 8;
+  std::array<const irs::byte_type*, kAhead + 1> rows{};
+  std::array<irs::ScoreDoc, kPushBatch> pending;
+  size_t pending_size = 0;
+  size_t heap_size = pool.size();
+  for (size_t i = 0;; ++i) {
+    const auto bar = t.rescore_bar.load(std::memory_order_acquire);
+    while (heap_size != 0 && pool.size() - heap_size <= i + kAhead &&
+           pool.front().score >= bar) {
+      auto heap = pool.first(heap_size--);
+      absl::c_pop_heap(heap, lower);
+      rows[(pool.size() - 1 - heap_size) % rows.size()] =
+        reader->PrefetchRow(pool[heap_size].doc);
+    }
+    if (i == pool.size() - heap_size) {
+      break;
+    }
+    auto& hit = pool[pool.size() - 1 - i];
+    if (hit.score < bar) {
+      break;
+    }
+    hit.score = reader->ComputeDistance(hit.doc, rows[i % rows.size()]);
+    if (hit.score >= bar) {
+      pending[pending_size++] = hit;
+      if (pending_size == kPushBatch) {
+        PushBest(t, pending);
+        pending_size = 0;
+      }
+    }
+  }
+  if (pending_size != 0) {
+    PushBest(t, std::span{pending}.first(pending_size));
+  }
+}
 
 void FlushSegmentPool(ScanGlobalState& g, TopKLocalState& l) {
   if (!l.collector) {
     return;
   }
   auto& c = *l.collector;
-  const size_t accepted = c.AcceptedCount();
-  if (accepted != 0) {
-    auto pool = l.hit_slice.first(accepted);
-    SortByAddress(pool);
-    RerankHits(g, pool);
-    const size_t k = *g.top_k;
-    if (l.answer.size() < k) {
-      l.answer.resize(k);
-    }
-    for (const auto& hit : pool) {
-      if (l.answer_size < k) {
-        l.answer[l.answer_size++] = hit;
-        std::push_heap(l.answer.begin(), l.answer.begin() + l.answer_size,
-                       AnswerWorstFirst{});
-      } else if (hit.score > l.answer.front().score) {
-        std::pop_heap(l.answer.begin(), l.answer.begin() + k,
-                      AnswerWorstFirst{});
-        l.answer[k - 1] = hit;
-        std::push_heap(l.answer.begin(), l.answer.begin() + k,
-                       AnswerWorstFirst{});
-      }
+  auto pool = l.hit_slice.first(c.AcceptedCount());
+  if (!pool.empty()) {
+    if (g.has_lookup_filter) {
+      SortByAddress(pool);
+      RescoreUnit(g, l, pool);
+      l.rescored.insert(l.rescored.end(), pool.begin(), pool.end());
+    } else {
+      RescoreWhileReachable(g, l, pool);
     }
   }
   c.Restart(std::numeric_limits<irs::score_t>::lowest());
@@ -113,17 +189,14 @@ void FlushSegmentPool(ScanGlobalState& g, TopKLocalState& l) {
 void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
   const auto& unit = l.unit;
   if (!l.collector) {
-    l.per_segment_rescore =
-      g.topk.rerank_pool != 0 && !g.has_lookup_filter && g.vector_scorer &&
-      g.vector_scorer->quant != irs::VectorQuantization::None;
+    l.per_segment = g.topk.rescore;
     l.collector.emplace(
-      l.per_segment_rescore ? l.segment_kth_score : g.topk.global_kth_score,
+      l.per_segment ? l.segment_kth_score : g.topk.global_kth_score,
       l.hit_slice);
   }
   auto& collector = *l.collector;
   if (l.pool_seg != unit.seg) {
-    if (l.per_segment_rescore &&
-        l.pool_seg != std::numeric_limits<uint32_t>::max()) {
+    if (l.per_segment && l.pool_seg != std::numeric_limits<uint32_t>::max()) {
       FlushSegmentPool(g, l);
     }
     l.pool_seg = unit.seg;
@@ -156,23 +229,18 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
 
 void PublishHits(ScanGlobalState& g, TopKLocalState& l) {
   auto& t = g.topk;
-  if (l.per_segment_rescore) {
+  if (l.per_segment) {
     FlushSegmentPool(g, l);
-    std::copy_n(l.answer.begin(), l.answer_size, l.hit_slice.begin());
-    t.accepted[l.worker].store(static_cast<uint32_t>(l.answer_size),
-                               std::memory_order_release);
+    if (g.has_lookup_filter) {
+      t.candidates[l.worker] = std::move(l.rescored);
+    }
     return;
   }
   auto hits = l.collector ? l.hit_slice.first(l.collector->AcceptedCount())
                           : l.hit_slice.first(0);
-  if (t.rerank_pool != 0 && g.vector_scorer != nullptr &&
-      g.vector_scorer->quant != irs::VectorQuantization::None) {
-    SortByAddress(hits);
-    RerankHits(g, hits);
-  }
   if (!g.has_lookup_filter && hits.size() > t.limit) {
     std::nth_element(hits.begin(), hits.begin() + t.limit, hits.end(),
-                     BetterScore);
+                     BetterScore{});
     hits = hits.first(t.limit);
   }
   t.accepted[l.worker].store(static_cast<uint32_t>(hits.size()),
@@ -207,6 +275,28 @@ void PlanFetch(ScanGlobalState& g) {
 
 void Merge(ScanGlobalState& g) {
   auto& t = g.topk;
+  if (t.rescore && !g.has_lookup_filter) {
+    {
+      absl::MutexLock lock{&t.best_mutex};
+      t.answer.assign(t.best.begin(), t.best.end());
+    }
+    PlanFetch(g);
+    return;
+  }
+  if (t.rescore) {
+    t.hits.clear();
+    for (auto& rescored : t.candidates) {
+      t.hits.insert(t.hits.end(), rescored.begin(), rescored.end());
+      std::vector<irs::ScoreDoc>{}.swap(rescored);
+    }
+    absl::c_sort(t.hits, BetterScore{});
+    t.ranked = t.hits;
+    t.answer.assign(
+      t.hits.begin(),
+      t.hits.begin() + std::min<size_t>(t.hits.size(), t.verify_first));
+    PlanFetch(g);
+    return;
+  }
   size_t total = 0;
   for (uint32_t w = 0; w < g.workers; ++w) {
     const auto n = t.accepted[w].load(std::memory_order_acquire);
@@ -218,11 +308,11 @@ void Merge(ScanGlobalState& g) {
   std::span<irs::ScoreDoc> all{t.hits.data(), total};
   const auto want = static_cast<size_t>(t.limit);
   if (g.has_lookup_filter) {
-    absl::c_sort(all, BetterScore);
+    absl::c_sort(all, BetterScore{});
     t.ranked = all;
     all = all.first(std::min<size_t>(all.size(), t.verify_first));
   } else if (all.size() > want) {
-    std::nth_element(all.begin(), all.begin() + want, all.end(), BetterScore);
+    std::nth_element(all.begin(), all.begin() + want, all.end(), BetterScore{});
     all = all.first(want);
   }
   t.answer.assign(all.begin(), all.end());
@@ -451,7 +541,7 @@ std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, TopKLocalState& l,
     root->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
     ranked.resize(base + collector.AcceptedCount());
   }
-  absl::c_sort(ranked, BetterScore);
+  absl::c_sort(ranked, BetterScore{});
   return ranked;
 }
 
@@ -544,7 +634,7 @@ void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
   l.answer_order.resize(row_hits.size());
   std::iota(l.answer_order.begin(), l.answer_order.end(), 0);
   const auto better = [&](uint32_t a, uint32_t b) {
-    return BetterScore(row_hits[a], row_hits[b]);
+    return BetterScore{}(row_hits[a], row_hits[b]);
   };
   const auto want = static_cast<size_t>(t.limit);
   if (l.answer_order.size() > want) {
@@ -579,31 +669,26 @@ void EmitNext(TopKLocalState& l, duckdb::DataChunk& output) {
 
 }  // namespace
 
-void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
+void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& /*context*/) {
   auto& t = g.topk;
   t.limit = *g.top_k;
   t.offset = g.top_offset;
   t.shared_fetch = g.has_lookup_filter || t.limit > STANDARD_VECTOR_SIZE;
   const auto* vs = g.vector_scorer;
-  if (vs && !vs->exact &&
-      (vs->quant != irs::VectorQuantization::None || g.has_lookup_filter)) {
-    const auto k = static_cast<double>(*g.top_k);
-    bool chosen_here = false;
-    const auto factor = AnnOversample(context, *vs, chosen_here);
-    double pool = OversamplePool(factor, k);
+  const auto k = static_cast<double>(*g.top_k);
+  double pool = k;
+  if (vs && !vs->exact) {
+    t.rescore = vs->rescore_width > 0.f;
     if (g.has_lookup_filter) {
       constexpr double kLookupFilterOverfetch = 4.0;
-      const double reachable =
-        vs->kind == irs::AnnKind::Hnsw
-          ? static_cast<double>(vs->ef_search)
-          : (chosen_here ? k * kLookupFilterOverfetch : 0.0);
-      pool = std::max(pool, std::max(k, reachable));
+      pool = std::max(pool, vs->kind == irs::AnnKind::Hnsw
+                              ? static_cast<double>(vs->ef_search)
+                              : k * kLookupFilterOverfetch);
+    } else if (t.rescore) {
+      pool = std::max(pool, RescoreCandidates(*vs, k));
     }
-    t.rerank_pool = pool == 0 ? 0
-                              : ClampCandidates(std::max(pool, k), k,
-                                                g.reader->live_docs_count());
   }
-  t.pool = t.rerank_pool != 0 ? t.rerank_pool : static_cast<uint32_t>(*g.top_k);
+  t.pool = ClampCandidates(pool, k, g.reader->live_docs_count());
   if (vs && vs->exact && g.has_lookup_filter) {
     g.workers = 1;
     t.pool = static_cast<uint32_t>(
@@ -617,6 +702,9 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
   t.accepted = std::make_unique<std::atomic_uint32_t[]>(g.workers);
   for (uint32_t w = 0; w < g.workers; ++w) {
     t.accepted[w].store(0, std::memory_order_relaxed);
+  }
+  if (t.rescore && g.has_lookup_filter) {
+    t.candidates.resize(g.workers);
   }
 }
 

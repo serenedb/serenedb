@@ -35,6 +35,7 @@
 #include <iresearch/index/index_source.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
+#include <iresearch/search/detail/vector_slots.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
@@ -273,7 +274,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   struct TopKState {
     std::atomic<irs::score_t> global_kth_score{
       std::numeric_limits<irs::score_t>::lowest()};
-    uint32_t rerank_pool = 0;
+    bool rescore = false;
     uint32_t pool = 0;
     std::vector<irs::ScoreDoc> hits;
     std::unique_ptr<std::atomic_uint32_t[]> accepted;
@@ -287,6 +288,11 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
       uint32_t first;
       uint32_t count;
     };
+    std::vector<std::vector<irs::ScoreDoc>> candidates;
+    ABSL_CACHELINE_ALIGNED std::atomic<irs::score_t> rescore_bar{
+      std::numeric_limits<irs::score_t>::lowest()};
+    ABSL_CACHELINE_ALIGNED absl::Mutex best_mutex;
+    std::vector<irs::ScoreDoc> best ABSL_GUARDED_BY(best_mutex);
     std::vector<irs::ScoreDoc> answer;
     std::span<const irs::ScoreDoc> ranked;
     uint32_t verify_first = std::numeric_limits<uint32_t>::max();
@@ -378,11 +384,13 @@ struct StreamLocalState final : public ScanLocalState, FetchLocalState {
 
 struct TopKLocalState final : public ScanLocalState, FetchLocalState {
   std::span<irs::ScoreDoc> hit_slice;
-  bool per_segment_rescore = false;
+  bool per_segment = false;
   std::atomic<irs::score_t> segment_kth_score{
     std::numeric_limits<irs::score_t>::lowest()};
-  std::vector<irs::ScoreDoc> answer;
-  size_t answer_size = 0;
+  std::vector<irs::ScoreDoc> rescored;
+  std::vector<std::unique_ptr<irs::detail::RawVectorReader>> rescorers;
+  std::vector<irs::doc_id_t> rescore_docs;
+  std::vector<irs::score_t> rescore_scores;
   uint32_t pool_seg = std::numeric_limits<uint32_t>::max();
   irs::ColumnArgsFetcher score_fetcher;
   std::optional<irs::LoserScoreCollector> collector;

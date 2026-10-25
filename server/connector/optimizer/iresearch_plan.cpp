@@ -993,6 +993,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .centroids_id = ann_info->centroids_id,
       .postings_id = ann_info->postings_id,
       .quant = ann_info->quant.kind,
+      .nb_bits = ann_info->quant.nb_bits,
       .kind = ann_info->kind,
       .ef_construction = ann_info->ef_construction,
       .posting_size = ann_info->posting_size,

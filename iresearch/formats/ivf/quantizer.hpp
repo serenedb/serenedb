@@ -124,6 +124,13 @@ class QuantizerReader {
     return false;
   }
 
+  virtual void ScoreErrors(const byte_type* base, uint32_t record_size,
+                           std::span<const uint32_t> ids,
+                           std::span<score_t> scores, score_t* errors) = 0;
+
+  virtual void BlockErrors(std::span<const byte_type> block,
+                           std::span<score_t> scores, score_t* errors) = 0;
+
   virtual bool Decode(const byte_type* /*code*/, float* /*out*/) const {
     return false;
   }

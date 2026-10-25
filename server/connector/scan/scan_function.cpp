@@ -176,6 +176,7 @@ const VectorScorerOptions& PrepareVectorScorer(
   const VectorScorerOptions& planned) {
   auto& vs = state.owned_vector_scorer.emplace(planned);
   RefreshVectorKnobs(vs, context);
+  vs.rescore_all = state.has_lookup_filter;
   if (vs.query_expr) {
     vs.query_vector = EvaluateQueryVector(context, vs);
   }
@@ -183,12 +184,8 @@ const VectorScorerOptions& PrepareVectorScorer(
              "a vector search has a query vector to search for");
   if (state.top_k) {
     if (vs.kind == irs::AnnKind::Hnsw) {
-      bool chosen_here = false;
-      const auto factor = AnnOversample(context, vs, chosen_here);
       const auto k = static_cast<double>(*state.top_k);
-      const double share = SegmentBeamShare(k, state.total_segments);
-      const double seg_pool = OversamplePool(factor, share);
-      vs.min_ef = ClampCandidates(seg_pool > 0.0 ? seg_pool : share, k,
+      vs.min_ef = ClampCandidates(SegmentBeamShare(k, state.total_segments), k,
                                   state.reader->live_docs_count());
     }
     vs.top_k = static_cast<uint32_t>(*state.top_k);

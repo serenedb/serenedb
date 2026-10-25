@@ -514,6 +514,37 @@ class RaBitQuantizerReader final : public QuantizerReader {
     }
   }
 
+  void ScoreErrors(const byte_type* base, uint32_t record_size,
+                   std::span<const uint32_t> ids, std::span<score_t> /*scores*/,
+                   score_t* errors) final {
+    SDB_ASSERT(_lay.row_major);
+    const uint32_t aux_off = _lay.RowAuxOffset();
+    Errors(
+      [&](size_t i) {
+        return base + static_cast<size_t>(ids[i]) * record_size + aux_off;
+      },
+      ids.size(), errors);
+  }
+
+  void BlockErrors(std::span<const byte_type> block, std::span<score_t> scores,
+                   score_t* errors) final {
+    if (_lay.row_major) {
+      const uint32_t aux_off = _lay.RowAuxOffset();
+      const size_t stride = _lay.record_size;
+      Errors([&](size_t i) { return block.data() + i * stride + aux_off; },
+             scores.size(), errors);
+      return;
+    }
+    const size_t group = _lay.GroupBytes();
+    const size_t storage = _lay.storage;
+    Errors(
+      [&](size_t i) {
+        return block.data() + i / kFastScanBbs * group + _lay.AuxOffset() +
+               i % kFastScanBbs * storage;
+      },
+      scores.size(), errors);
+  }
+
   void ComputeBlock(std::span<const byte_type> block, score_t threshold,
                     score_t* out) final {
     const float mt = MetricThreshold(threshold);
@@ -541,6 +572,38 @@ class RaBitQuantizerReader final : public QuantizerReader {
   }
 
  private:
+  template<typename Aux>
+  void Errors(Aux aux_of, size_t n, score_t* errors) const {
+    constexpr double kSignDot = 0.79788456;
+    constexpr double kBoundSigmas = 1.9;
+    const double metric = M == VectorMetric::L2Sqr ? 2.0 : 1.0;
+    const double spread =
+      std::sqrt(std::max(1.0, static_cast<double>(_rd) - 1.0));
+    const double unit = metric * _qf.g_error / spread;
+    for (size_t i = 0; i < n; ++i) {
+      const auto* aux = aux_of(i);
+      const auto* fac =
+        reinterpret_cast<const faiss::rabitq_utils::SignBitFactors*>(aux);
+      const double dp = fac->dp_multiplier;
+      double deviation = 0.0;
+      if (_lay.ex_bits > 0) {
+        const auto* fe =
+          reinterpret_cast<const faiss::rabitq_utils::SignBitFactorsWithError*>(
+            aux);
+        deviation = std::ldexp(fe->f_error / (metric * kBoundSigmas) * spread,
+                               -static_cast<int>(_lay.ex_bits));
+      } else if (M == VectorMetric::L2Sqr && dp > 0.0) {
+        const double oc =
+          std::sqrt(std::max(0.0, double{fac->or_minus_c_l2sqr}));
+        const double dot = std::min(1.0, oc / dp);
+        deviation = dot > 0.0 ? oc * std::sqrt(1.0 / (dot * dot) - 1.0) : oc;
+      } else {
+        deviation = std::abs(dp) * std::sqrt(1.0 - kSignDot * kSignDot);
+      }
+      errors[i] = static_cast<score_t>(unit * deviation);
+    }
+  }
+
   float MetricThreshold(score_t threshold) const noexcept {
     return M == VectorMetric::L2Sqr ? -threshold : threshold;
   }

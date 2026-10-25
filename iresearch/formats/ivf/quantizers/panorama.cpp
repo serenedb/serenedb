@@ -276,6 +276,17 @@ class PanoramaQuantizerReader final : public QuantizerReader {
 
   void StartCluster(const float* /*centroid*/) final {}
 
+  void ScoreErrors(const byte_type* /*base*/, uint32_t /*record_size*/,
+                   std::span<const uint32_t> ids, std::span<score_t> /*scores*/,
+                   score_t* errors) final {
+    std::fill_n(errors, ids.size(), score_t{0});
+  }
+
+  void BlockErrors(std::span<const byte_type> /*block*/,
+                   std::span<score_t> scores, score_t* errors) final {
+    std::fill_n(errors, scores.size(), score_t{0});
+  }
+
   void ComputeBlock(std::span<const byte_type> block, score_t threshold,
                     score_t* out) final {
     SDB_ASSERT(block.size() % _record_size == 0);

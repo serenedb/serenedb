@@ -1,0 +1,143 @@
+control substitution on
+
+statement ok
+SET sdb_ann_rescore_width = 0.5;
+
+statement ok
+SET sdb_ann_rescore_width = 0;
+
+statement error
+SET sdb_ann_rescore_width = -0.5;
+----
+db error: ERROR: invalid value for parameter "sdb_ann_rescore_width": "-0.5"
+
+
+statement error
+SET sdb_ann_rescore_width = 'nan';
+----
+db error: ERROR: invalid value for parameter "sdb_ann_rescore_width": "nan"
+
+
+statement ok
+RESET sdb_ann_rescore_width;
+
+query
+SHOW sdb_ann_rescore_width;
+----
+sdb_ann_rescore_width
+-1
+
+statement ok
+CREATE TABLE rw (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX rw_hnsw ON rw
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8'));
+
+statement ok
+CREATE TABLE rwi (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX rwi_ivf ON rwi
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'));
+
+statement ok
+INSERT INTO rw
+  SELECT i, [100 + i * 0.04, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(10) t(i)
+  UNION ALL SELECT 100, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+  UNION ALL SELECT 101, [255, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8];
+
+statement ok
+INSERT INTO rwi
+  SELECT i, [100 + i * 0.04, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(10) t(i)
+  UNION ALL SELECT 100, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+  UNION ALL SELECT 101, [255, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8];
+
+statement ok
+VACUUM (REFRESH_TABLE) rw;
+
+statement ok
+VACUUM (REFRESH_TABLE) rwi;
+
+statement ok
+INSERT INTO rw
+  SELECT 200 + i, [i * 10, 1, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(30) t(i);
+
+statement ok
+INSERT INTO rwi
+  SELECT 200 + i, [i * 10, 1, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(30) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rw;
+
+statement ok
+VACUUM (REFRESH_TABLE) rwi;
+
+statement ok
+INSERT INTO rw
+  SELECT 300 + i, [i * 10 + 5, 2, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(30) t(i);
+
+statement ok
+INSERT INTO rwi
+  SELECT 300 + i, [i * 10 + 5, 2, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(30) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rw;
+
+statement ok
+VACUUM (REFRESH_TABLE) rwi;
+
+query
+SELECT pk FROM rw ORDER BY emb <-> [100.5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+9
+8
+7
+
+query
+SELECT pk, round((emb <-> [100.5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8])::DOUBLE, 4) AS d
+  FROM rw ORDER BY emb <-> [100.5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk	d
+9	0.14
+8	0.18
+7	0.22
+
+statement ok
+SET sdb_ivf_search_nprobe = 1000;
+
+query
+SELECT pk FROM rwi ORDER BY emb <-> [100.5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+9
+8
+7
+
+statement ok
+SET sdb_ann_rescore_width = 3;
+
+query
+SELECT pk FROM rw ORDER BY emb <-> [100.5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+9
+8
+7
+
+query
+SELECT pk FROM rwi ORDER BY emb <-> [100.5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+9
+8
+7
+
+statement ok
+RESET sdb_ann_rescore_width;
+
+statement ok
+RESET sdb_ivf_search_nprobe;

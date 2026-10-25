@@ -33,14 +33,20 @@ class VectorChain : public Root {
   VectorChain(ColumnArgsFetcher& fetcher, const SubReader& segment,
               const TermReader& field, const irs::detail::ScoreArgs& score,
               uint32_t k, irs::detail::TableFilter* table, size_t count,
-              Args&& args)
+              const VectorState& state, Args&& args)
     : _clusters{count, std::forward<Args>(args)},
       _fetcher{fetcher},
       _table{table},
       _boost{score.boost},
-      _k{k} {
+      _k{k},
+      _top_k{state.top_k},
+      _width{state.rescore_width} {
     _score = irs::detail::PrepareBlockScorer(score, segment, field.meta(),
                                              _provider, _block);
+    if (_width > 0.f) {
+      _clusters.EnableErrors(_width);
+      _lower.reserve(2 * size_t{_top_k});
+    }
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
@@ -51,20 +57,27 @@ class VectorChain : public Root {
         _table->Rewind();
       }
       for (;;) {
-        cluster.SetThreshold(Bar(collector));
+        cluster.SetThreshold(_width > 0.f ? _floor : Bar(collector));
         if (!cluster.NextRun()) {
           break;
         }
-        const auto docs = cluster.RunDocs();
+        auto docs = cluster.RunDocs();
         auto n = static_cast<uint32_t>(docs.size());
-        std::copy_n(cluster.RunScores().data(), n, _block);
+        if (_width > 0.f) {
+          n = Widen(docs, cluster.RunScores(), cluster.RunErrors());
+          docs = {_own, n};
+        } else {
+          std::copy_n(cluster.RunScores().data(), n, _block);
+        }
         _fetcher.Fetch(docs);
         _score.Score(_scores, static_cast<scores_size_t>(n));
         if (_table == nullptr) {
           collector.AddDocs(docs.data(), n, _scores);
           continue;
         }
-        std::copy_n(docs.data(), n, _own);
+        if (docs.data() != _own) {
+          std::copy_n(docs.data(), n, _own);
+        }
         n = _table->Narrow(_own, _scores, n);
         collector.AddDocs(_own, n, _scores);
       }
@@ -73,6 +86,32 @@ class VectorChain : public Root {
 
  private:
   static constexpr uint32_t kRun = Cluster::kRun;
+
+  uint32_t Widen(std::span<const doc_id_t> docs, std::span<const score_t> upper,
+                 std::span<const score_t> errors) {
+    const auto twice = 2.f * _width;
+    uint32_t kept = 0;
+    for (size_t i = 0; i < docs.size(); ++i) {
+      if (upper[i] < _floor) {
+        continue;
+      }
+      if (const auto lower = upper[i] - twice * errors[i]; lower > _floor) {
+        _lower.push_back(lower);
+      }
+      _own[kept] = docs[i];
+      _block[kept] = upper[i];
+      ++kept;
+    }
+    const size_t limit =
+      _floor == std::numeric_limits<score_t>::lowest() ? _top_k : 2 * _top_k;
+    if (_top_k != 0 && _lower.size() >= limit) {
+      const auto kth = _lower.begin() + (_top_k - 1);
+      absl::c_nth_element(_lower, kth, std::greater{});
+      _floor = *kth;
+      _lower.resize(_top_k);
+    }
+    return kept;
+  }
 
   score_t Bar(const LoserScoreCollector& collector) const noexcept {
     if (collector.AcceptedCount() < _k || _boost <= 0.f) {
@@ -91,6 +130,10 @@ class VectorChain : public Root {
   irs::detail::TableFilter* _table;
   score_t _boost;
   uint32_t _k;
+  uint32_t _top_k;
+  float _width;
+  score_t _floor = std::numeric_limits<score_t>::lowest();
+  std::vector<score_t> _lower;
 };
 
 }  // namespace
@@ -110,7 +153,8 @@ Root::ptr Family::Make(const KnnVectorQuery& query, const Context& ctx) {
       [&]<typename Cluster>(size_t count,
                             const irs::detail::ClusterFeed& feed) -> Root::ptr {
         return memory::make_managed<VectorChain<Cluster>>(
-          ctx.fetcher, segment, field, score, ctx.k, ctx.table, count, feed);
+          ctx.fetcher, segment, field, score, ctx.k, ctx.table, count,
+          query.State(), feed);
       });
   }
 

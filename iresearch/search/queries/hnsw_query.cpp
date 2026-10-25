@@ -506,6 +506,8 @@ HnswQuery::HnswQuery(const SubReader& segment,
     _d{static_cast<uint32_t>(opts.query.size())},
     _record_size{record_size},
     _ef{limits.ef},
+    _top_k{opts.top_k},
+    _rescore_width{opts.rescore_width},
     _threshold{limits.threshold},
     _max_results{limits.max_results},
     _boost{boost},
@@ -654,7 +656,48 @@ void HnswQuery::ScanColumn(HnswSearchScratch& s) const {
   HnswScanTopK(set, _data->graph, dist, _ef, s);
 }
 
-std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
+void HnswQuery::Widen(QuantizerReader& reader,
+                      HnswSearchScratch& scratch) const {
+  auto& nearest = scratch.nearest;
+  const size_t n = nearest.size();
+  if (n == 0) {
+    return;
+  }
+  auto& ids = scratch.batch;
+  auto& scores = scratch.scores;
+  ids.resize(n);
+  scores.resize(3 * n);
+  for (size_t i = 0; i < n; ++i) {
+    ids[i] = nearest[i].node;
+    scores[i] = nearest[i].score;
+  }
+  const std::span<score_t> estimates{scores.data(), n};
+  score_t* errors = scores.data() + n;
+  reader.ScoreErrors(_data->codes.data(), _record_size, ids, estimates, errors);
+  const auto z = _rescore_width;
+  auto floor = std::numeric_limits<score_t>::lowest();
+  if (_top_k != 0 && n > _top_k) {
+    const std::span<score_t> lower{scores.data() + 2 * n, n};
+    for (size_t i = 0; i < n; ++i) {
+      lower[i] = estimates[i] - z * errors[i];
+    }
+    const auto kth = lower.begin() + (_top_k - 1);
+    std::nth_element(lower.begin(), kth, lower.end(), std::greater{});
+    floor = *kth;
+  }
+  size_t kept = 0;
+  for (size_t i = 0; i < n; ++i) {
+    const auto upper = estimates[i] + z * errors[i];
+    if (upper < floor) {
+      continue;
+    }
+    nearest[kept++] = {.score = upper, .node = ids[i]};
+  }
+  nearest.resize(kept);
+}
+
+std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table,
+                                           bool widen) const {
   HnswSearchScratch scratch;
   if (table && !table->Foldable()) {
     table = nullptr;
@@ -672,6 +715,11 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
                    RunFiltered(dist, table, scratch);
                  } else {
                    HnswSearchTopK(_data->graph, dist, _ef, scratch);
+                 }
+                 if constexpr (requires { dist.qr; }) {
+                   if (widen && _ef != 0 && _rescore_width > 0.f) {
+                     Widen(*dist.qr, scratch);
+                   }
                  }
                });
   auto hits = CollectHits(scratch.nearest, _segment);

@@ -53,6 +53,81 @@ struct PqStatsHeader {
   uint32_t ksub;
 };
 
+std::vector<float> SubspaceErrors(const faiss::ProductQuantizer& pq,
+                                  const float* vecs, size_t n) {
+  std::vector<float> out(pq.M, 0.f);
+  if (n == 0) {
+    return out;
+  }
+  std::vector<uint8_t> codes(n * pq.code_size);
+  pq.compute_codes(vecs, codes.data(), n);
+  std::vector<float> decoded(n * pq.d);
+  pq.decode(codes.data(), decoded.data(), n);
+  std::vector<double> sum(pq.M, 0.0);
+  for (size_t i = 0; i < n; ++i) {
+    for (size_t m = 0; m < pq.M; ++m) {
+      for (size_t j = 0; j < pq.dsub; ++j) {
+        const size_t at = i * pq.d + m * pq.dsub + j;
+        const double e = double{vecs[at]} - decoded[at];
+        sum[m] += e * e;
+      }
+    }
+  }
+  for (size_t m = 0; m < pq.M; ++m) {
+    out[m] = static_cast<float>(sum[m] / static_cast<double>(n));
+  }
+  return out;
+}
+
+std::vector<float> ReadSubspaceErrors(std::span<const byte_type> stats,
+                                      size_t offset, size_t m) {
+  if (stats.size() < offset + m * sizeof(float)) {
+    return {};
+  }
+  std::vector<float> out(m);
+  std::memcpy(out.data(), stats.data() + offset, m * sizeof(float));
+  return out;
+}
+
+template<VectorMetric M>
+void PqScoreErrors(std::span<const float> sub_errors,
+                   std::span<const float> qnorm2, size_t d,
+                   std::span<const score_t> scores, score_t* errors) {
+  const size_t n = scores.size();
+  if (sub_errors.empty()) {
+    std::fill_n(errors, n, std::numeric_limits<score_t>::infinity());
+    return;
+  }
+  const size_t dsub = d / sub_errors.size();
+  double total = 0.0;
+  double weighted = 0.0;
+  for (size_t m = 0; m < sub_errors.size(); ++m) {
+    total += sub_errors[m];
+    weighted += double{qnorm2[m]} * sub_errors[m] / static_cast<double>(dsub);
+  }
+  if constexpr (M == VectorMetric::L2Sqr) {
+    const double per = 4.0 * total / static_cast<double>(d);
+    for (size_t i = 0; i < n; ++i) {
+      const double dist = std::max(0.0, -double{scores[i]});
+      errors[i] = static_cast<score_t>(std::sqrt(dist * per));
+    }
+  } else {
+    std::fill_n(errors, n, static_cast<score_t>(std::sqrt(weighted)));
+  }
+}
+
+std::vector<float> SubspaceNorms(std::span<const float> query, size_t m) {
+  std::vector<float> out(m, 0.f);
+  const size_t dsub = query.size() / m;
+  for (size_t s = 0; s < m; ++s) {
+    for (size_t j = 0; j < dsub; ++j) {
+      const float v = query[s * dsub + j];
+      out[s] += v * v;
+    }
+  }
+  return out;
+}
+
 template<VectorMetric M>
 class ProductQuantizerWriter final : public QuantizerWriter {
  public:
@@ -89,6 +164,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
       }
       _pq.train(ksub, padded.data());
     }
+    _errors = SubspaceErrors(_pq, vecs, n);
     _trained = true;
   }
 
@@ -138,10 +214,12 @@ class ProductQuantizerWriter final : public QuantizerWriter {
       return;
     }
     const auto cents = FloatSpan(_pq.centroids);
-    out.WriteU64(sizeof(PqStatsHeader) + cents.size());
+    const auto errors = FloatSpan(_errors);
+    out.WriteU64(sizeof(PqStatsHeader) + cents.size() + errors.size());
     WritePod(out, PqStatsHeader{static_cast<uint32_t>(_pq.M),
                                 static_cast<uint32_t>(_pq.ksub)});
     out.WriteData(cents.data(), cents.size());
+    out.WriteData(errors.data(), errors.size());
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -196,6 +274,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr,
                                     std::vector<float>> _dec;
   std::vector<uint8_t> _packed;
+  std::vector<float> _errors;
 };
 
 template<VectorMetric M>
@@ -216,6 +295,7 @@ class ProductQuantizerStats final : public QuantizerStats {
     SDB_ASSERT(stats.size() >= sizeof(PqStatsHeader) + want);
     std::memcpy(_pq.centroids.data(), stats.data() + sizeof(PqStatsHeader),
                 want);
+    _errors = ReadSubspaceErrors(stats, sizeof(PqStatsHeader) + want, _pq.M);
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -226,9 +306,11 @@ class ProductQuantizerStats final : public QuantizerStats {
     std::span<const float> query) const final;
 
   const faiss::ProductQuantizer& Pq() const noexcept { return _pq; }
+  std::span<const float> Errors() const noexcept { return _errors; }
 
  private:
   faiss::ProductQuantizer _pq;
+  std::vector<float> _errors;
 };
 
 template<VectorMetric M>
@@ -245,6 +327,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
     std::vector<float> ip_table(static_cast<size_t>(pq.M) * ksub);
     pq.compute_inner_prod_table(_query.data(), ip_table.data());
     _lut.Build(ip_table.data(), pq.M, ksub);
+    _sub_norms = SubspaceNorms(_query, pq.M);
     if constexpr (M == VectorMetric::L2Sqr) {
       _query_norm2 =
         duckdb::NormSquaredOp::Operation(_query.data(), _query.size());
@@ -254,6 +337,8 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
   std::unique_ptr<QuantizerReader> MakeReader() const final;
 
   const faiss::ProductQuantizer& Pq() const noexcept { return _stats->Pq(); }
+  const ProductQuantizerStats<M>& Stats() const noexcept { return *_stats; }
+  std::span<const float> SubNorms() const noexcept { return _sub_norms; }
   std::span<const float> Query() const noexcept { return _query; }
   const FastScanLut& Lut() const noexcept { return _lut; }
   float QueryNorm() const noexcept
@@ -265,6 +350,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
  private:
   std::shared_ptr<const ProductQuantizerStats<M>> _stats;
   std::vector<float> _query;
+  std::vector<float> _sub_norms;
   FastScanLut _lut;
   [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr, float>
     _query_norm2;
@@ -324,7 +410,28 @@ class ProductQuantizerReader final : public QuantizerReader {
     }
   }
 
+  void ScoreErrors(const byte_type* /*base*/, uint32_t /*record_size*/,
+                   std::span<const uint32_t> ids, std::span<score_t> scores,
+                   score_t* errors) final {
+    Errors(scores.first(ids.size()), errors);
+  }
+
+  void BlockErrors(std::span<const byte_type> /*block*/,
+                   std::span<score_t> scores, score_t* errors) final {
+    Errors(scores, errors);
+  }
+
  private:
+  void Errors(std::span<const score_t> scores, score_t* errors) const {
+    PqScoreErrors<VectorMetric::InnerProduct>(
+      _cb->Stats().Errors(), _cb->SubNorms(), _cb->Pq().d, scores, errors);
+    if constexpr (M == VectorMetric::L2Sqr) {
+      for (size_t i = 0; i < scores.size(); ++i) {
+        errors[i] *= 2.f;
+      }
+    }
+  }
+
   std::shared_ptr<const ProductQuantizerCodebook<M>> _cb;
   size_t _nsq;
   size_t _code_bytes;
@@ -619,6 +726,32 @@ void TrainSubspace(const float* x, size_t n, uint32_t dsub, uint32_t k,
   }
 }
 
+float SubspaceMse(const float* x, size_t n, uint32_t dsub, const float* cent) {
+  std::vector<float> cent_t(kPq8Ksub * dsub);
+  std::vector<float> cnorm(kPq8Ksub);
+  for (size_t c = 0; c < kPq8Ksub; ++c) {
+    float s = 0.f;
+    for (uint32_t j = 0; j < dsub; ++j) {
+      const float v = cent[c * dsub + j];
+      cent_t[j * kPq8Ksub + c] = v;
+      s += v * v;
+    }
+    cnorm[c] = s;
+  }
+  std::vector<float> dist(kPq8Ksub);
+  double sum = 0.0;
+  for (size_t i = 0; i < n; ++i) {
+    const float* xi = x + i * dsub;
+    const uint32_t c =
+      NearestCentroid(xi, dsub, cent_t.data(), cnorm.data(), dist.data());
+    for (uint32_t j = 0; j < dsub; ++j) {
+      const double e = double{xi[j]} - cent[size_t{c} * dsub + j];
+      sum += e * e;
+    }
+  }
+  return n == 0 ? 0.f : static_cast<float>(sum / static_cast<double>(n));
+}
+
 template<VectorMetric M>
 class ProductQuantizer8Writer final : public QuantizerWriter {
  public:
@@ -659,15 +792,18 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
       n = ksub;
     }
     const size_t dsub = _pq.dsub;
+    _errors.assign(_pq.M, 0.f);
     fanout(_pq.M, [&](size_t m) {
       std::vector<float> sub(n * dsub);
       for (size_t i = 0; i < n; ++i) {
         std::copy_n(vecs + i * _d + m * dsub, dsub, sub.data() + i * dsub);
       }
-      TrainSubspace(sub.data(), n, static_cast<uint32_t>(dsub),
-                    static_cast<uint32_t>(ksub),
-                    static_cast<uint32_t>(_pq.cp.niter), kIvfRotationSeed + m,
-                    _pq.centroids.data() + m * ksub * dsub);
+      float* cent = _pq.centroids.data() + m * ksub * dsub;
+      TrainSubspace(
+        sub.data(), n, static_cast<uint32_t>(dsub), static_cast<uint32_t>(ksub),
+        static_cast<uint32_t>(_pq.cp.niter), kIvfRotationSeed + m, cent);
+      _errors[m] =
+        SubspaceMse(sub.data(), n, static_cast<uint32_t>(dsub), cent);
     });
     PrepareEncode();
     _trained = true;
@@ -714,10 +850,12 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
       return;
     }
     const auto cents = FloatSpan(_pq.centroids);
-    out.WriteU64(sizeof(PqStatsHeader) + cents.size());
+    const auto errors = FloatSpan(_errors);
+    out.WriteU64(sizeof(PqStatsHeader) + cents.size() + errors.size());
     WritePod(out, PqStatsHeader{static_cast<uint32_t>(_pq.M),
                                 static_cast<uint32_t>(_pq.ksub)});
     out.WriteData(cents.data(), cents.size());
+    out.WriteData(errors.data(), errors.size());
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -808,6 +946,7 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
   std::vector<uint8_t> _order;
   std::vector<float> _dist;
   std::vector<uint8_t> _codes;
+  std::vector<float> _errors;
 };
 
 template<VectorMetric M>
@@ -848,6 +987,7 @@ class ProductQuantizer8Stats final : public QuantizerStats {
         _cent_h[i] = faiss::encode_fp16(_pq.centroids[i]);
       }
     }
+    _errors = ReadSubspaceErrors(stats, sizeof(PqStatsHeader) + want, _pq.M);
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -861,12 +1001,14 @@ class ProductQuantizer8Stats final : public QuantizerStats {
   const float* CentroidNorms() const noexcept { return _norms.data(); }
   const float* TransposedCentroids() const noexcept { return _cent_t.data(); }
   const uint16_t* HalfCentroids() const noexcept { return _cent_h.data(); }
+  std::span<const float> Errors() const noexcept { return _errors; }
 
  private:
   faiss::ProductQuantizer _pq;
   std::vector<float> _norms;
   std::vector<float> _cent_t;
   std::vector<uint16_t> _cent_h;
+  std::vector<float> _errors;
 };
 
 template<VectorMetric M>
@@ -882,6 +1024,7 @@ class ProductQuantizer8Codebook final : public QuantizerCodebook {
   void Rekey(std::span<const float> query) {
     const faiss::ProductQuantizer& pq = _stats->Pq();
     const size_t dsub = pq.dsub;
+    _sub_norms = SubspaceNorms(query, pq.M);
     if (Pq8Direct(dsub, pq.M)) {
       _query.assign(query.begin(), query.end());
       return;
@@ -932,11 +1075,13 @@ class ProductQuantizer8Codebook final : public QuantizerCodebook {
   const uint16_t* HalfCentroids() const noexcept {
     return _stats->HalfCentroids();
   }
+  std::span<const float> SubNorms() const noexcept { return _sub_norms; }
 
  private:
   std::shared_ptr<const ProductQuantizer8Stats<M>> _stats;
   std::vector<float> _lut;
   std::vector<float> _query;
+  std::vector<float> _sub_norms;
 };
 
 template<VectorMetric M>
@@ -980,6 +1125,19 @@ class ProductQuantizer8Reader final : public QuantizerReader {
           base + static_cast<size_t>(slice[k]) * record_size));
       }
     }
+  }
+
+  void ScoreErrors(const byte_type* /*base*/, uint32_t /*record_size*/,
+                   std::span<const uint32_t> ids, std::span<score_t> scores,
+                   score_t* errors) final {
+    PqScoreErrors<M>(_cur->StatsPtr()->Errors(), _cur->SubNorms(), _cur->Pq().d,
+                     scores.first(ids.size()), errors);
+  }
+
+  void BlockErrors(std::span<const byte_type> /*block*/,
+                   std::span<score_t> scores, score_t* errors) final {
+    PqScoreErrors<M>(_cur->StatsPtr()->Errors(), _cur->SubNorms(), _cur->Pq().d,
+                     scores, errors);
   }
 
   bool Decode(const byte_type* code, float* out) const final {

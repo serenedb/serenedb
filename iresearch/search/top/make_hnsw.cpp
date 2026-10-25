@@ -93,7 +93,7 @@ class HnswHits : public Root {
 Root::ptr Family::Make(const HnswQuery& query, const Context& ctx) {
   auto* const narrow =
     ctx.table && !ctx.table->Foldable() ? ctx.table : nullptr;
-  auto hits = query.RunSearch(ctx.table);
+  auto hits = query.RunSearch(ctx.table, true);
   if (hits.empty()) {
     return MakeEmpty();
   }

@@ -173,22 +173,32 @@ Success
 
 # DOCS_TEST: example_017
 
+# DOCS_TEST_RAW
+#| -- regular invocation
+#| CALL enable_logging(storage = 'file', storage_config = {'path': 'path/to/store/logs'});
+#|
+#| -- using shorthand for common path storage config param
+#| CALL enable_logging(storage = 'file', storage_path = 'path/to/store/logs');
+#|
+#| -- omitting `storage = 'file'`: a `path` in `storage_config` implies it
+#| CALL enable_logging(storage_config = {'path': 'path/to/store/logs'});
+
 # DOCS_TEST_BODY
 
 query
 -- regular invocation
-CALL enable_logging(storage = 'file', storage_config = {'path': 'path/to/store/logs'});
+CALL enable_logging(storage = 'file', storage_config = {'path': '${__TEST_DIR__}/path/to/store/logs'});
 ----
 Success
 
 query
 -- using shorthand for common path storage config param
-CALL enable_logging(storage = 'file', storage_path = 'path/to/store/logs');
+CALL enable_logging(storage = 'file', storage_path = '${__TEST_DIR__}/path/to/store/logs');
 ----
 Success
 
 query
 -- omitting `storage = 'file'`: a `path` in `storage_config` implies it
-CALL enable_logging(storage_config = {'path': 'path/to/store/logs'});
+CALL enable_logging(storage_config = {'path': '${__TEST_DIR__}/path/to/store/logs'});
 ----
 Success

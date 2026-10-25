@@ -24,7 +24,7 @@
 #include <iresearch/search/count/term_counts.hpp>
 #include <iresearch/search/detail/lazy_bitset.hpp>
 #include <iresearch/search/detail/resolve.hpp>
-#include <iresearch/search/docs/make.hpp>
+#include <iresearch/search/docs/family.hpp>
 #include <iresearch/search/queries/term_state.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -340,9 +340,9 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
 
 uint32_t TsDictLocalState::WalkLive(const irs::TermReader& reader,
                                     irs::TermIterator& it, bool count_all) {
-  auto postings = irs::docs::MakePosting(
-    irs::detail::PostingClause{irs::TermState{&reader, it.cookie()}}, *_seg,
-    {});
+  auto postings = irs::docs::Family::MakePosting(
+    irs::detail::PostingClause{irs::TermState{&reader, it.cookie()}}, *_seg, {},
+    irs::ScoreMergeType::Noop);
   SDB_ASSERT(postings);
   _col_verify.Rewind();
   auto& live = Live();

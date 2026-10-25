@@ -308,7 +308,7 @@ FROM range(0, 600000) r(i)
 statement ok
 CREATE TABLE dp (id BIGINT, ts TIMESTAMP, body TEXT)
 WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
-      row_group_size = 8192)
+      row_group_size = 8192, segment_memory_max = 4194304)
 
 
 statement ok

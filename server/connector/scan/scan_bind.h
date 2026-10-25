@@ -252,6 +252,10 @@ struct ScanBindData final : duckdb::FunctionData {
   bool IsMatchAll() const noexcept {
     return search.MatchAll() && !score.vector.has_value();
   }
+  bool ReadsEveryRow() const noexcept {
+    return IsMatchAll() && search.deferred.empty() &&
+           search.row_filters.empty() && !score.HasTopK() && !ts_dict.Active();
+  }
 
   using ColumnVisitor =
     std::function<void(ColumnId, const duckdb::LogicalType&)>;
@@ -286,16 +290,16 @@ duckdb::TableFunction BindSearchTableScan(
   duckdb::ClientContext& context, catalog::SearchTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
 
+bool LooksUpByPk(const ScanBindData& bind);
+
+duckdb::idx_t ScanColumnOfStorage(const ScanBindData& bind,
+                                  duckdb::idx_t storage_index);
+
 std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind);
 
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind);
 
 double SegmentBeamShare(double k, size_t segments) noexcept;
-
-double AnnOversample(duckdb::ClientContext& context,
-                     const VectorScorerOptions& vs, bool& chosen_here);
-
-double OversamplePool(double factor, double count) noexcept;
 
 uint32_t ClampCandidates(double pool, double k, uint64_t live) noexcept;
 

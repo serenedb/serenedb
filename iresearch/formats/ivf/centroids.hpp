@@ -71,7 +71,7 @@ struct CentroidsNode {
   struct Candidate {
     float dist;
     size_t id;
-    std::vector<float> centroid;
+    std::span<const float> centroid;
   };
 
   static std::vector<CentroidsNode> Deserialize(IndexInput& in, size_t level,
@@ -86,9 +86,10 @@ struct CentroidsNode {
 
   template<VectorMetric Metric>
   static void Search(std::span<const float> query, IndexInput& in,
-                     uint32_t beam, bool want_centroids, size_t level,
+                     uint32_t beam, size_t level,
                      std::span<const CentroidsNodeView> nodes,
                      size_t layer_base, size_t layer_total,
+                     std::vector<LayerBuffers>& layers,
                      std::vector<Candidate>& leaves) {
     SDB_ASSERT(!nodes.empty());
     const uint16_t d = query.size();
@@ -108,10 +109,7 @@ struct CentroidsNode {
         const bool is_leaf =
           level == 0 || node.child_offsets[i + 1] == node.child_offsets[i];
         if (is_leaf) {
-          auto& cand = leaves.emplace_back(dist, layer_base + node.base + i);
-          if (want_centroids) {
-            cand.centroid.assign(centroid.begin(), centroid.end());
-          }
+          leaves.emplace_back(dist, layer_base + node.base + i, centroid);
         } else {
           scored.push_back({dist, node.child_offsets[i],
                             node.child_offsets[i + 1] - node.child_offsets[i]});
@@ -132,12 +130,11 @@ struct CentroidsNode {
     if (level == 0 || starts.empty()) {
       return;
     }
-    LayerBuffers bufs;
     size_t n_total = 0;
-    auto next =
-      CentroidsNode::ReadLayer(in, level - 1, d, starts, sizes, bufs, n_total);
-    Search<Metric>(query, in, beam, want_centroids, level - 1, next,
-                   layer_base + layer_total, n_total, leaves);
+    auto next = CentroidsNode::ReadLayer(in, level - 1, d, starts, sizes,
+                                         layers.emplace_back(), n_total);
+    Search<Metric>(query, in, beam, level - 1, next, layer_base + layer_total,
+                   n_total, layers, leaves);
   }
 };
 

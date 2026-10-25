@@ -134,7 +134,7 @@ void WriteExportResponse(HttpResponseWriter& writer, std::string_view field,
     // An empty Export<Signal>ServiceResponse: no bytes on the wire, `{}` in
     // ProtoJSON.
     if (protobuf) {
-      writer.Fixed(HttpStatus::Ok, kProtobufContentType, {});
+      writer.Fixed(HttpStatus::Ok, kProtobufContentType, "");
     } else {
       writer.Json(HttpStatus::Ok, "{}");
     }

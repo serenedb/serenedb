@@ -1,0 +1,11 @@
+target_sources(
+    iresearch
+    PRIVATE
+        block_input.cpp
+        data_input.cpp
+        directory.cpp
+        file_output.cpp
+        mapped_input.cpp
+        memory_file.cpp
+        store_utils.cpp
+)

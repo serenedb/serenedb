@@ -80,4 +80,6 @@ class NGramSimilarityQuery : public QueryBuilderImpl<NGramSimilarityQuery> {
   score_t _boost;
 };
 
+extern template class QueryBuilderImpl<NGramSimilarityQuery>;
+
 }  // namespace irs

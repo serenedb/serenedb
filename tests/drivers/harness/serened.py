@@ -29,6 +29,36 @@ def free_port():
         s.close()
 
 
+def listens_on(pid, ports):
+    if not os.path.isdir("/proc/self/fd"):
+        return True
+    fd_dir = f"/proc/{pid}/fd"
+    try:
+        names = os.listdir(fd_dir)
+    except OSError:
+        return False
+    sockets = set()
+    for name in names:
+        try:
+            target = os.readlink(os.path.join(fd_dir, name))
+        except OSError:
+            continue
+        if target.startswith("socket:["):
+            sockets.add(target[len("socket:["):-1])
+    listening = set()
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(table) as fh:
+                next(fh, None)
+                for line in fh:
+                    fields = line.split()
+                    if fields[3] == "0A" and fields[9] in sockets:
+                        listening.add(int(fields[1].rsplit(":", 1)[1], 16))
+        except OSError:
+            continue
+    return set(ports) <= listening
+
+
 def _startup_packet(user, database):
     body = struct.pack("!I", PROTO_V3)
     for k, v in (("user", user), ("database", database)):
@@ -129,7 +159,7 @@ class Serened:
                     f"serened exited {rc} during startup; log tail:\n"
                     + (self.log.tail(0)[-2000:] if self.log else "(no log)")
                 )
-            if self.ready("127.0.0.1", self.port):
+            if self.ready("127.0.0.1", self.port) and listens_on(self.proc.pid, [self.port]):
                 return self
             time.sleep(0.3)
         raise RuntimeError(f"serened did not come up in {timeout}s on port {self.port}")

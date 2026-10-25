@@ -109,7 +109,7 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
 
   uint32_t DeclaredMinShouldMatch() const noexcept { return _declared_msm; }
 
-  score_t Absorbed() const noexcept;
+  score_t Absorbed(ColumnArgsFetcher& fetcher) const noexcept;
 
   ScoreMergeType MergeType() const noexcept { return _merge_type; }
 
@@ -134,6 +134,8 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
   score_t _boost;
   ScoreMergeType _merge_type;
 };
+
+extern template class QueryBuilderImpl<BooleanQuery>;
 
 class BooleanBuilder {
  public:

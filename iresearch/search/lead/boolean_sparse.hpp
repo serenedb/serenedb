@@ -27,6 +27,7 @@
 
 #include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/lead/concept.hpp"
+#include "iresearch/search/probe/concept.hpp"
 #include "iresearch/search/scorers/make_conjunction.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
@@ -46,8 +47,10 @@ class BooleanSparse {
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
   static constexpr bool kScored = std::is_same_v<Score, detail::Scored>;
   static constexpr bool kInherited = std::is_same_v<Score, detail::Inherited>;
+  static constexpr bool kDecides =
+    kOptional && probe::OptionalDecides<Optional>();
   static_assert(kProbes || kOptional || kExcludes);
-  static_assert(kScored || !kOptional);
+  static_assert(kScored || kDecides || !kOptional);
   static_assert(!kInherited || (!kProbes && !kOptional));
 
   template<typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
@@ -82,7 +85,9 @@ class BooleanSparse {
     if constexpr (kProbes) {
       _probes.FetchScoreArgs(slot);
     }
-    if constexpr (kOptional) {
+    if constexpr (kDecides) {
+      _optional.FetchScoreArgs(slot);
+    } else if constexpr (kOptional) {
       _optional.FetchScoreArgs(slot, _doc);
     }
   }
@@ -92,14 +97,10 @@ class BooleanSparse {
   {
     if constexpr (kInherited) {
       return _lead.PrepareScore();
+    } else if constexpr (kOptional && !kDecides) {
+      return _optional.PrepareScore(_score.inner, Required(), _score.absorbed);
     } else {
-      auto required = Required();
-      if constexpr (kOptional) {
-        return _optional.PrepareScore(_score.inner, std::move(required),
-                                      _score.absorbed);
-      } else {
-        return required;
-      }
+      return Required();
     }
   }
 
@@ -113,13 +114,18 @@ class BooleanSparse {
   ScoreFunction Required()
     requires kScored
   {
-    if constexpr (kProbes) {
+    if constexpr (kProbes || kDecides) {
       std::vector<ScoreFunction> scorers;
       detail::AppendScorer(scorers, _lead.PrepareScore());
-      _probes.CollectScorers(scorers);
+      if constexpr (kProbes) {
+        _probes.CollectScorers(scorers);
+      }
+      if constexpr (kDecides) {
+        detail::AppendScorer(scorers, _optional.PrepareScore());
+      }
       return detail::MakeConjunctionScore(
         _score.inner, std::move(scorers),
-        kOptional ? score_t{0} : _score.absorbed);
+        kOptional && !kDecides ? score_t{0} : _score.absorbed);
     } else {
       return _lead.PrepareScore();
     }
@@ -129,6 +135,13 @@ class BooleanSparse {
     while (!doc_limits::eof(doc)) {
       if constexpr (kProbes) {
         const auto probe = _probes.Probe(doc);
+        if (probe != doc) {
+          doc = _lead.Seek(probe);
+          continue;
+        }
+      }
+      if constexpr (kDecides) {
+        const auto probe = _optional.Probe(doc);
         if (probe != doc) {
           doc = _lead.Seek(probe);
           continue;

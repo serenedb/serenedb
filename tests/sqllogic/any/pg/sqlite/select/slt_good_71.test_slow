@@ -32570,13 +32570,12 @@ SELECT - 11 AS col2 FROM tab1, tab2, tab1 AS cor0
 27 values hashing to 7120875811e4d19a19b69cd34b6bc202
 
 skipif mysql # not compatible
-skipif postgres
 query I rowsort
 SELECT ALL - CAST ( - col1 + col1 AS REAL ) col1 FROM tab1
 ----
-0
-0
-0
+-0
+-0
+-0
 
 onlyif mysql # support for MySQL specific system types and syntax
 query I rowsort label-3925

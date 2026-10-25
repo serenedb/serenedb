@@ -42,12 +42,12 @@ namespace {
 
 static_assert(std::endian::native == std::endian::little);
 
-constexpr auto kMaxVal = static_cast<double>(uint64_t{1} << 32);
-constexpr auto kMaxVal2 = static_cast<double>(uint64_t{1} << 31);
+constexpr auto kMaxVal =
+  static_cast<double>(std::numeric_limits<uint32_t>::max());
 constexpr auto kMaxValPi = kMaxVal / M_PI;
-constexpr auto kMaxVal2Pi = kMaxVal2 / M_PI;
+constexpr auto kMaxVal2Pi = kMaxVal / (2 * M_PI);
 constexpr auto kPiMaxVal = M_PI / kMaxVal;
-constexpr auto k2PiMaxVal = M_PI / kMaxVal2;
+constexpr auto k2PiMaxVal = 2 * M_PI / kMaxVal;
 
 template<bool WriteBack>
 void ConvertLatLngToU32(

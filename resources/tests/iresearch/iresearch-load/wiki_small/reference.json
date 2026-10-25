@@ -16274,7 +16274,7 @@
   {
     "query": "\"the english rest*\"",
     "count": 204,
-    "top_100": 204,
+    "top_100": 200,
     "result_type": "Hash",
     "top_100_result": [
       "a09b0db121cc96cfcd7b5750144f08849f4944136e139740e098f173563fc0a5"
@@ -16298,7 +16298,7 @@
   {
     "query": "\"the 1-2 rest*\"",
     "count": 150321,
-    "top_100": 150321,
+    "top_100": 8671,
     "result_type": "Hash",
     "top_100_result": [
       "9ac448223e68fa86b54b8e51f61f138a275931345fe6358b55dfb726c34f79f6"
@@ -16310,7 +16310,7 @@
   {
     "query": "\"the english restoratio*\"",
     "count": 201,
-    "top_100": 201,
+    "top_100": 200,
     "result_type": "Hash",
     "top_100_result": [
       "a09b0db121cc96cfcd7b5750144f08849f4944136e139740e098f173563fc0a5"
@@ -16322,7 +16322,7 @@
   {
     "query": "\"freelance wor*\"",
     "count": 340,
-    "top_100": 340,
+    "top_100": 278,
     "result_type": "Hash",
     "top_100_result": [
       "1d82c1abebf7d5bcf1169022b6ee4dddd1d5247ecc5a7fb49c416c7c7d1042fa"
@@ -16358,7 +16358,7 @@
   {
     "query": "\"french 1-2 inst*\"",
     "count": 1118,
-    "top_100": 1118,
+    "top_100": 781,
     "result_type": "Hash",
     "top_100_result": [
       "57dfc2448c0c207d8658e987663beab6bf042ed6608f49986fd9827ebb01a94e"
@@ -16382,7 +16382,7 @@
   {
     "query": "\"color comb*\"",
     "count": 259,
-    "top_100": 259,
+    "top_100": 226,
     "result_type": "Hash",
     "top_100_result": [
       "cd6dbd6fe2f066639b2a3fb9a363e56ef5e0cfbb89f8186b1792782904b81ae8"
@@ -16406,7 +16406,7 @@
   {
     "query": "\"color 1-2 comb*\"",
     "count": 298,
-    "top_100": 298,
+    "top_100": 292,
     "result_type": "Hash",
     "top_100_result": [
       "442d76da0338b14a256484f7e5669c8000cc798c42419f4771c2e420720afad3"
@@ -16418,7 +16418,7 @@
   {
     "query": "\"color combination*\"",
     "count": 239,
-    "top_100": 239,
+    "top_100": 209,
     "result_type": "Hash",
     "top_100_result": [
       "5f263ca0a5ccae3fe6a4bece94b5d8906f78a8831c5c1de1b3b0f767f1f9d912"
@@ -16430,7 +16430,7 @@
   {
     "query": "\"italian tran*\"",
     "count": 406,
-    "top_100": 406,
+    "top_100": 306,
     "result_type": "Hash",
     "top_100_result": [
       "c53177c7447514f65e910ef71b88d9d9a9881060d53f15b5e806371d095ac7dd"
@@ -16454,7 +16454,7 @@
   {
     "query": "\"italian 1-2 tran*\"",
     "count": 587,
-    "top_100": 587,
+    "top_100": 456,
     "result_type": "Hash",
     "top_100_result": [
       "70d1a0fc3d2e090e3cf5b3499678c2e1fccc453ffc9c38c02007873b51ffc031"
@@ -16466,7 +16466,7 @@
   {
     "query": "\"italian translatio*\"",
     "count": 300,
-    "top_100": 300,
+    "top_100": 248,
     "result_type": "Hash",
     "top_100_result": [
       "b9cec090c360bc3e943912744f2df64413a54d9614f1f5077fbf4fe3e5f06a18"
@@ -16622,7 +16622,7 @@
   {
     "query": "\"body pain*\"",
     "count": 352,
-    "top_100": 352,
+    "top_100": 255,
     "result_type": "Hash",
     "top_100_result": [
       "374c6a9887f1a6279b4dd97df6e6a50c5c535db64b7b6e9c757fc2a10ba5072d"
@@ -16646,7 +16646,7 @@
   {
     "query": "\"body 1-2 pain*\"",
     "count": 466,
-    "top_100": 466,
+    "top_100": 374,
     "result_type": "Hash",
     "top_100_result": [
       "b15140a49655eae5ce664bf30e1330aded4eb761436bbb2a62dff674dffdcf30"
@@ -16658,7 +16658,7 @@
   {
     "query": "\"body paintin*\"",
     "count": 144,
-    "top_100": 144,
+    "top_100": 142,
     "result_type": "Hash",
     "top_100_result": [
       "a3708d20c64076afc60173a4325635b76f6e25db93496f07580d96492fba434b"
@@ -16682,7 +16682,7 @@
   {
     "query": "\"west palm beach flor*\"",
     "count": 566,
-    "top_100": 566,
+    "top_100": 322,
     "result_type": "Hash",
     "top_100_result": [
       "e57ff544c2bc90aa6b86631980d7a74b58b943cb97cda6d2609b6bb4dd0951a8"
@@ -16706,7 +16706,7 @@
   {
     "query": "\"west 1-2 flor*\"",
     "count": 1667,
-    "top_100": 1667,
+    "top_100": 894,
     "result_type": "Hash",
     "top_100_result": [
       "5cdc978accc536d8cc05dddc3d3117685027a0fcd3e28b3416a2e9bcbf6782c7"
@@ -16718,7 +16718,7 @@
   {
     "query": "\"west palm beach florid*\"",
     "count": 566,
-    "top_100": 566,
+    "top_100": 305,
     "result_type": "Hash",
     "top_100_result": [
       "e57ff544c2bc90aa6b86631980d7a74b58b943cb97cda6d2609b6bb4dd0951a8"
@@ -16730,7 +16730,7 @@
   {
     "query": "\"stone moun*\"",
     "count": 398,
-    "top_100": 398,
+    "top_100": 274,
     "result_type": "Hash",
     "top_100_result": [
       "2e17b4d50a7ee5e446f7e8180ef739cb2e00741bc815cf6d84741484e5d5f835"
@@ -16754,7 +16754,7 @@
   {
     "query": "\"stone 1-2 moun*\"",
     "count": 465,
-    "top_100": 465,
+    "top_100": 360,
     "result_type": "Hash",
     "top_100_result": [
       "8aee7970fb2cbe302596854cf897310f536fc2821f9fe19cb6ac99d6b54c10b1"
@@ -16766,7 +16766,7 @@
   {
     "query": "\"stone mountai*\"",
     "count": 343,
-    "top_100": 343,
+    "top_100": 253,
     "result_type": "Hash",
     "top_100_result": [
       "4dd99b9ce47d3423e2b48310651dee5fb4ae73d8e7448aeef73e82fb0b22350f"
@@ -16778,7 +16778,7 @@
   {
     "query": "\"san fran*\"",
     "count": 45521,
-    "top_100": 45521,
+    "top_100": 732,
     "result_type": "Hash",
     "top_100_result": [
       "7947ee45d4761f8335aa6f5998be512bac0a5d579ba833370f67307e4b0d2e59"
@@ -16802,7 +16802,7 @@
   {
     "query": "\"san 1-2 fran*\"",
     "count": 45584,
-    "top_100": 45584,
+    "top_100": 2909,
     "result_type": "Hash",
     "top_100_result": [
       "68b516fcc56b6e037e6f5f618cce90ce110e1250e2b06ef29c812fd4d527765f"
@@ -16814,7 +16814,7 @@
   {
     "query": "\"san francisc*\"",
     "count": 44914,
-    "top_100": 44914,
+    "top_100": 676,
     "result_type": "Hash",
     "top_100_result": [
       "6074f178cb96418527bc3ffd0b79a5cbcbaeb4bc66d6c93b4ef29318c3cfd890"
@@ -16838,7 +16838,7 @@
   {
     "query": "\"glass work*\"",
     "count": 546,
-    "top_100": 546,
+    "top_100": 381,
     "result_type": "Hash",
     "top_100_result": [
       "d36c82ba41a668efb2d26bf581939d8c427ad5182be9d2f0f85ed442fc35e9e7"
@@ -16850,7 +16850,7 @@
   {
     "query": "\"personal loa*\"",
     "count": 201,
-    "top_100": 201,
+    "top_100": 180,
     "result_type": "Hash",
     "top_100_result": [
       "f9a9e2a7bf9687aee49eb0ee0d9479ef3b674fa41571f4f04e78cfe408cf5e5b"
@@ -16886,7 +16886,7 @@
   {
     "query": "\"texas 1-2 legi*\"",
     "count": 757,
-    "top_100": 757,
+    "top_100": 542,
     "result_type": "Hash",
     "top_100_result": [
       "dcc8fafde7a21bd85d0194acb46345cdfb398938b6d3d31136d56dd321219c58"
@@ -17054,7 +17054,7 @@
   {
     "query": "\"interest onl*\"",
     "count": 198,
-    "top_100": 198,
+    "top_100": 195,
     "result_type": "Hash",
     "top_100_result": [
       "f11849fcc2e9d41ee720edb52cd7a4e9edb621f1bb112464701b956a616f357c"
@@ -17066,7 +17066,7 @@
   {
     "query": "\"army rese*\"",
     "count": 2398,
-    "top_100": 2398,
+    "top_100": 670,
     "result_type": "Hash",
     "top_100_result": [
       "041f677c9d8fee4187562d477f958aecf0921ca61664d87a0695446f4768f0c8"
@@ -17090,7 +17090,7 @@
   {
     "query": "\"army 1-2 rese*\"",
     "count": 2832,
-    "top_100": 2832,
+    "top_100": 1303,
     "result_type": "Hash",
     "top_100_result": [
       "ae1f82ab98962e718c23d6dfd80b1a2e21dd563308c1f26579b689a8096b7b87"
@@ -17102,7 +17102,7 @@
   {
     "query": "\"army reserv*\"",
     "count": 2214,
-    "top_100": 2214,
+    "top_100": 622,
     "result_type": "Hash",
     "top_100_result": [
       "385f59da5b557c594e40e82ab6c9d2bc1ec021391fb2af7d1f1e68e799468911"
@@ -17114,7 +17114,7 @@
   {
     "query": "\"chicken coo*\"",
     "count": 406,
-    "top_100": 406,
+    "top_100": 268,
     "result_type": "Hash",
     "top_100_result": [
       "e04b9c6e8ac299d477e8c5a189729dac81ed185e8662ec2983565f2977616eb9"
@@ -17150,7 +17150,7 @@
   {
     "query": "\"new 1-2 popu*\"",
     "count": 951,
-    "top_100": 951,
+    "top_100": 775,
     "result_type": "Hash",
     "top_100_result": [
       "db99693ef52f1e5d95af510616d6dbf6e024b9ce195d8a56e1423da082925eec"
@@ -17174,7 +17174,7 @@
   {
     "query": "\"most improved playe*\"",
     "count": 458,
-    "top_100": 458,
+    "top_100": 278,
     "result_type": "Hash",
     "top_100_result": [
       "e9abf7e1fdbbda02fc1f44c482b0fb440f72ca02378311890756bee648f72851"

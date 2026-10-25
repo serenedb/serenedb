@@ -46,6 +46,7 @@ class Snapshot:
         self.epoch = None
         self.orphan_files = []
         self.row_tokens = {}
+        self.row_errors = {}
         self.database_count = 1
         self.catalog_wal_bytes = None
         self.errors = []
@@ -62,6 +63,7 @@ def _rows(conn, sql, params=None):
 
 def read_row_tokens(conn, keys):
     out = {}
+    errors = {}
     for key in keys:
         if key[0] != ops.TABLE:
             continue
@@ -70,9 +72,9 @@ def read_row_tokens(conn, keys):
                 cur.execute(f"SELECT label FROM {key[1]}")
                 out[key] = frozenset(
                     r[0] for r in cur.fetchall() if r[0] is not None)
-        except Exception:
-            continue
-    return out
+        except Exception as exc:
+            errors[key] = f"{type(exc).__name__}: {exc}"
+    return out, errors
 
 
 def catalog_wal_size(datadir):
@@ -136,7 +138,7 @@ def take(conn, run_tag, datadir=None, row_keys=(), scan_artifacts=False):
 
     wanted = [k for k in row_keys if k in snap.pg_objects]
     if wanted:
-        snap.row_tokens = read_row_tokens(conn, wanted)
+        snap.row_tokens, snap.row_errors = read_row_tokens(conn, wanted)
 
     if datadir:
         # Artifact reclamation is deferred to a background pool after the commit

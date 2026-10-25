@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -31,6 +33,11 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/scalar/variant_utils.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/planner/expression/bound_comparison_expression.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
@@ -626,7 +633,7 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
        return g % 9 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                          : duckdb::Value{kWords[g % 5]};
      },
-     {"zstd", "uncompressed"}},
+     {"zstd", "uncompressed", "dict_fsst"}},
     {"varchar_unique",
      duckdb::LogicalType::VARCHAR,
      30000,
@@ -634,7 +641,7 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
        return duckdb::Value{"value_" + std::to_string(g) + "_" +
                             RandomText(g, 24)};
      },
-     {"zstd", "uncompressed"}},
+     {"zstd", "uncompressed", "dict_fsst"}},
     {"varchar_long",
      duckdb::LogicalType::VARCHAR,
      6000,
@@ -642,7 +649,7 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
        return g % 11 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                           : duckdb::Value{RandomText(g, 500 + g % 2000)};
      },
-     {"zstd", "uncompressed"}},
+     {"zstd", "uncompressed", "dict_fsst"}},
   };
   constexpr irs::field_id kId = 1;
   duckdb::Connection con{Db()};
@@ -682,6 +689,149 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
         }
       }
       EXPECT_GT(stats.crossing, 0u) << "of " << stats.windows << " windows";
+    }
+  }
+  con.Query("SET force_compression = 'auto'");
+}
+
+TEST_F(ColumnReaderTest, GatherFilterReleasesPassedBlocks) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 60000;
+  const std::string bound = "https://example.com/n";
+  const ValueOf value_of = [](uint64_t g) {
+    return duckdb::Value{
+      absl::StrCat("https://example.com/", RandomText(g % 5000, 40))};
+  };
+  duckdb::Connection con{Db()};
+  auto set = con.Query("SET force_compression = 'dict_fsst'");
+  ASSERT_FALSE(set->HasError()) << set->GetError();
+  irs::MemoryDirectory dir{};
+  WriteColumn(Db(), dir, kId, duckdb::LogicalType::VARCHAR, kRows, 4096,
+              value_of);
+  con.Query("SET force_compression = 'auto'");
+  irs::ColReader r{dir, "seg", Db()};
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  ASSERT_GT(col->DataBlocks().size(), 4u);
+
+  const duckdb::ExpressionFilter filter{
+    duckdb::BoundComparisonExpression::Create(
+      duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO,
+      duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        duckdb::LogicalType::VARCHAR, 0),
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(
+        duckdb::Value{bound}))};
+  auto filter_state =
+    duckdb::TableFilterState::Initialize(*con.context, filter);
+  auto state = col->InitScan(r.Ctx());
+  duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+  for (uint64_t anchor = 0; anchor < kRows; anchor += STANDARD_VECTOR_SIZE) {
+    const auto span = std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+    duckdb::Vector scratch{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    for (duckdb::idx_t i = 0; i < span; ++i) {
+      sel.set_index(i, i);
+    }
+    const auto approved =
+      col->GatherFilter(state, anchor, span, sel, span, filter, *filter_state,
+                        irs::NullCheckKind::None, scratch);
+    std::vector<uint64_t> want;
+    for (duckdb::idx_t i = 0; i < span; ++i) {
+      if (value_of(anchor + i).GetValue<std::string>() >= bound) {
+        want.push_back(i);
+      }
+    }
+    ASSERT_EQ(approved, want.size()) << "span at " << anchor;
+    for (duckdb::idx_t i = 0; i < approved; ++i) {
+      ASSERT_EQ(sel.get_index(i), want[i]) << "span at " << anchor;
+    }
+    ASSERT_LE(state.segments.size(), 2u) << "span at " << anchor;
+    ASSERT_LE(state.st.previous_states.size(), 1u) << "span at " << anchor;
+  }
+}
+
+TEST_F(ColumnReaderTest, NestedGathersMatchScan) {
+  duckdb::child_list_t<duckdb::LogicalType> fields;
+  fields.emplace_back("a", duckdb::LogicalType::BIGINT);
+  fields.emplace_back("b", duckdb::LogicalType::VARCHAR);
+  const auto stype = duckdb::LogicalType::STRUCT(fields);
+  const auto ltype = duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
+  const auto atype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::INTEGER, 3);
+  const std::vector<GatherCase> cases{
+    {"struct",
+     stype,
+     20000,
+     [stype](uint64_t g) {
+       if (g % 13 == 0) {
+         return duckdb::Value{stype};
+       }
+       return duckdb::Value::STRUCT(
+         stype, {g % 10 == 0 ? duckdb::Value{duckdb::LogicalType::BIGINT}
+                             : duckdb::Value::BIGINT(static_cast<int64_t>(g)),
+                 duckdb::Value{"value_" + std::to_string(g) + "_" +
+                               RandomText(g, 8)}});
+     },
+     {"uncompressed", "dict_fsst"}},
+    {"list",
+     ltype,
+     20000,
+     [](uint64_t g) {
+       if (g % 17 == 0) {
+         return duckdb::Value{
+           duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT)};
+       }
+       duckdb::vector<duckdb::Value> items;
+       for (uint64_t i = 0; i < g % 5; ++i) {
+         items.push_back(duckdb::Value::BIGINT(static_cast<int64_t>(g + i)));
+       }
+       return duckdb::Value::LIST(duckdb::LogicalType::BIGINT,
+                                  std::move(items));
+     },
+     {"uncompressed"}},
+    {"array",
+     atype,
+     20000,
+     [atype](uint64_t g) {
+       if (g % 19 == 0) {
+         return duckdb::Value{atype};
+       }
+       return duckdb::Value::ARRAY(
+         duckdb::LogicalType::INTEGER,
+         {duckdb::Value::INTEGER(static_cast<int32_t>(g)),
+          duckdb::Value::INTEGER(static_cast<int32_t>(g * 2)),
+          g % 7 == 0 ? duckdb::Value{duckdb::LogicalType::INTEGER}
+                     : duckdb::Value::INTEGER(static_cast<int32_t>(g * 3))});
+     },
+     {"uncompressed"}},
+  };
+  constexpr irs::field_id kId = 1;
+  duckdb::Connection con{Db()};
+  for (const auto& c : cases) {
+    std::vector<std::string> codecs{"auto"};
+    codecs.insert(codecs.end(), c.codecs.begin(), c.codecs.end());
+    for (const auto& codec : codecs) {
+      SCOPED_TRACE(c.name + " " + codec);
+      auto set = con.Query("SET force_compression = '" + codec + "'");
+      ASSERT_FALSE(set->HasError()) << set->GetError();
+      irs::MemoryDirectory dir{};
+      WriteColumn(Db(), dir, kId, c.type, c.rows, 4096, c.value_of);
+      irs::ColReader r{dir, "seg", Db()};
+      const auto* col = r.Column(kId);
+      ASSERT_NE(col, nullptr);
+      ASSERT_EQ(col->RowCount(), c.rows);
+      GatherStats stats;
+      for (const auto mode : {GatherMode::Dense, GatherMode::Scatter,
+                              GatherMode::ScatterAppend, GatherMode::Mixed}) {
+        for (const uint32_t per_mille : {1u, 10u, 50u, 200u, 1000u}) {
+          SCOPED_TRACE(testing::Message() << "mode " << static_cast<int>(mode)
+                                          << " per_mille " << per_mille);
+          CheckGathers(*col, r.Ctx(), c.value_of, mode, per_mille, stats);
+          if (HasFatalFailure()) {
+            con.Query("SET force_compression = 'auto'");
+            return;
+          }
+        }
+      }
     }
   }
   con.Query("SET force_compression = 'auto'");
@@ -1288,7 +1438,7 @@ TEST_F(ColumnReaderTest, GatherStructAcrossRowGroups) {
 }
 
 TEST_F(ColumnReaderTest, GatherStructDenseKeepsFieldsOnOneRow) {
-  constexpr uint64_t kRows = 8192;
+  constexpr uint64_t kRows = 12288;
   constexpr irs::field_id kT = 9;
   duckdb::child_list_t<duckdb::LogicalType> fields;
   fields.emplace_back("a", duckdb::LogicalType::BIGINT);
@@ -1362,6 +1512,8 @@ TEST_F(ColumnReaderTest, GatherStructDenseKeepsFieldsOnOneRow) {
       gather(2048, STANDARD_VECTOR_SIZE, 1);
       gather(4096, 1024, 2);
       gather(6144, STANDARD_VECTOR_SIZE, 1);
+      gather(8192, 20, 97);
+      gather(10240, 60, 33);
     }
   }
   con.Query("SET force_compression = 'auto'");

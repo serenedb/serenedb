@@ -24,6 +24,7 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -45,6 +46,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/await.hpp>
@@ -327,6 +329,15 @@ class HttpSession final
   // duck-side: the request loop. Parse -> body -> auth -> route -> handler.
   yaclib::Future<> SessionMain();
 
+  enum class ReadPhase : uint8_t {
+    Idle,
+    Request,
+    Handling,
+  };
+
+  void WaitReadDeadline();
+  void OnReadDeadline();
+
   void ReleaseConnection() {
     {
       absl::MutexLock lock{&_cancel_token->mu};
@@ -369,9 +380,11 @@ class HttpSession final
   message::Buffer _dechunk{kReadBlock, kWireChunkMax};
   message::Buffer _decoded{kReadBlock, kWireChunkMax};
 
-  // Read-deadline phase for RecvLoop: idle (between requests, generous
-  // keep-alive timeout) vs mid-request (strict header/body timeout).
-  std::atomic<bool> _idle{true};
+  std::atomic<ReadPhase> _read_phase{ReadPhase::Idle};
+  std::chrono::steady_clock::time_point _last_read;
+  std::chrono::steady_clock::time_point _busy_at;
+  size_t _written_seen = 0;
+  bool _peer_is_loopback = false;
   // Lazily created on first handler use; lives (and dies) on the session
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
@@ -432,19 +445,21 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   auto writer = this->SendWriter();
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
+    asio_ns::error_code peer_ec;
+    const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
+    _peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
     cpu = SessionMain();
     _handed_off = true;
     _task->Start();
 
     for (;;) {
-      _deadline.expires_after(_idle.load(std::memory_order_acquire)
-                                ? gHttpKeepAliveTimeout
-                                : gHttpBodyTimeout);
-      _deadline.async_wait([self](const asio_ns::error_code& ec) {
-        if (!ec) {
-          self->_socket.Close();
-        }
-      });
+      _last_read = std::chrono::steady_clock::now();
+      _deadline.expires_at(
+        _last_read +
+        (_read_phase.load(std::memory_order_acquire) == ReadPhase::Request
+           ? gHttpBodyTimeout
+           : gHttpKeepAliveTimeout));
+      WaitReadDeadline();
       auto [ec, n] =
         co_await _socket.ReadSome(_recv.Reserve(kReadBlock)).NoThrow();
       _deadline.cancel();
@@ -464,6 +479,39 @@ yaclib::Task<> HttpSession<Kind>::Run() {
 }
 
 template<SocketKind Kind>
+void HttpSession<Kind>::WaitReadDeadline() {
+  _deadline.async_wait(
+    [self = this->shared_from_this()](const asio_ns::error_code& ec) {
+      if (!ec) {
+        self->OnReadDeadline();
+      }
+    });
+}
+
+template<SocketKind Kind>
+void HttpSession<Kind>::OnReadDeadline() {
+  const auto now = std::chrono::steady_clock::now();
+  if (_deadline.expiry() > now) {
+    return;
+  }
+  const auto phase = _read_phase.load(std::memory_order_acquire);
+  const auto written = _send_written.load(std::memory_order_acquire);
+  const bool sent = std::exchange(_written_seen, written) != written;
+  if (sent || phase == ReadPhase::Handling || HasUnsentBytes()) {
+    _busy_at = now;
+  }
+  const auto at = phase == ReadPhase::Request
+                    ? _last_read + gHttpBodyTimeout
+                    : std::max(_last_read, _busy_at) + gHttpKeepAliveTimeout;
+  if (at <= now || SendBroken()) {
+    _socket.Close();
+    return;
+  }
+  _deadline.expires_at(at);
+  WaitReadDeadline();
+}
+
+template<SocketKind Kind>
 yaclib::Task<std::optional<H1Event>> HttpSession<Kind>::ReadHead() {
   for (;;) {
     // Observe the readable size ONCE and use it both to decide whether to
@@ -473,6 +521,7 @@ yaclib::Task<std::optional<H1Event>> HttpSession<Kind>::ReadHead() {
     // *more* than what just arrived and never reparse the buffered request.
     const size_t avail = _recv.ReadableSize();
     if (avail != 0) {
+      _read_phase.store(ReadPhase::Request, std::memory_order_release);
       const auto fed = _codec.ParseHead(_recv.Front());
       _recv.Consume(fed.consumed);
       if (fed.event == H1Event::Error || fed.event == H1Event::Head ||
@@ -483,11 +532,9 @@ yaclib::Task<std::optional<H1Event>> HttpSession<Kind>::ReadHead() {
         continue;
       }
     }
-    _idle.store(avail == 0, std::memory_order_release);
     if (!co_await AwaitMoreBytes(avail)) {
       co_return std::nullopt;
     }
-    _idle.store(false, std::memory_order_release);
   }
 }
 
@@ -584,7 +631,6 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       if (!event) {
         break;
       }
-      _idle.store(false, std::memory_order_release);
       if (*event == H1Event::Error) {
         http::HttpResponseWriter error_writer{_send, *this,
                                               /*keep_alive=*/false,
@@ -609,6 +655,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
         }
         break;
       }
+      _read_phase.store(ReadPhase::Handling, std::memory_order_release);
 
       const bool keep_alive = request.keep_alive;
       const bool head_only = request.method == HttpMethod::Head;
@@ -679,12 +726,8 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
         }
 
-        asio_ns::error_code peer_ec;
-        const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
-        const bool peer_is_loopback =
-          !peer_ec && peer_ep.address().is_loopback();
         auto auth = _auth.Authenticate(
-          request.Header(HttpHeader::Authorization), peer_is_loopback);
+          request.Header(HttpHeader::Authorization), _peer_is_loopback);
         _user = std::move(auth.context.user);
         if (auth.status != http::HttpStatus::None) {
           writer.Fixed(auth.status, http::kJsonContentType,
@@ -738,7 +781,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
         break;
       }
       _codec.Reset();
-      _idle.store(true, std::memory_order_release);
+      _read_phase.store(ReadPhase::Idle, std::memory_order_release);
     }
   } catch (const std::exception& e) {
     SDB_ERROR(HTTP, "http session terminated by exception: ",

@@ -34,6 +34,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/ann/root.hpp"
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
@@ -86,6 +87,7 @@ enum class QueryKind : uint32_t {
   Boolean,
   Phrase,
   DocsMask,
+  Ann,
 };
 
 class QueryBuilder : public memory::Managed {
@@ -151,6 +153,10 @@ class QueryBuilder : public memory::Managed {
   virtual hits::Root::ptr PlanScored(const hits::Context& ctx) const = 0;
 
   virtual top::Root::ptr PlanTop(const top::Context& ctx) const = 0;
+
+  virtual ann::Root::ptr PlanAnn(const ann::Context& /*ctx*/) const {
+    return {};
+  }
 
   virtual lead::Node::ptr PlanLead(const detail::ScoredCtx& ctx) const = 0;
 

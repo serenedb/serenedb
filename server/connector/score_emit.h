@@ -72,6 +72,7 @@ struct VectorScorerOptions {
   irs::field_id centroids_id = irs::field_limits::invalid();
   irs::field_id postings_id = irs::field_limits::invalid();
   irs::VectorQuantization quant = irs::VectorQuantization::None;
+  uint32_t nb_bits = 0;
   irs::AnnKind kind = irs::AnnKind::Ivf;
   uint32_t nprobe = 1;
   uint32_t min_search_fanout = 0;
@@ -81,6 +82,8 @@ struct VectorScorerOptions {
   uint32_t posting_size = 0;
   uint32_t min_ef = 0;
   uint32_t top_k = 0;
+  float rescore_width = 0.f;
+  bool rescore_all = false;
   irs::HnswFilterMode hnsw_filter_mode = irs::HnswFilterMode::Auto;
   irs::HnswColumnFilter hnsw_column_filter = irs::HnswColumnFilter::Auto;
   bool exact = false;

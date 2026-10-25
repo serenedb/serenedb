@@ -266,6 +266,13 @@ struct TurboQuantLayout {
     return GammaOffset() + (full ? kFastScanBbs * sizeof(float) : 0);
   }
   uint32_t GroupBytes() const noexcept { return kFastScanBbs * record_size; }
+  PayloadBlockSetting BlockSetting() const noexcept {
+    return {
+      .group_size = row_major ? 1U : uint32_t{kFastScanBbs},
+      .record_size = record_size,
+      .alignment = row_major ? 1U : uint32_t{alignof(float)},
+    };
+  }
 };
 
 TurboQuantLayout MakeTurboQuantLayout(uint32_t d, TurboQuantBits bits, bool l2,
@@ -604,8 +611,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
   }
 
   PayloadBlockSetting BlockSetting() const noexcept final {
-    return {.group_size = _lay.row_major ? 1U : uint32_t{kFastScanBbs},
-            .record_size = _lay.record_size};
+    return _lay.BlockSetting();
   }
 
   void Encode(IndexOutput& out, const float* vecs, size_t n) final {
@@ -1086,8 +1092,7 @@ class TurboQuantizerReader final : public QuantizerReader {
                  static_cast<float>(_lay.rd)} {}
 
   PayloadBlockSetting BlockSetting() const noexcept final {
-    return {.group_size = _lay.row_major ? 1U : uint32_t{kFastScanBbs},
-            .record_size = _lay.record_size};
+    return _lay.BlockSetting();
   }
 
   void StartCluster(const float* centroid) final {

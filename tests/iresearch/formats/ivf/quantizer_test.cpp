@@ -208,6 +208,7 @@ class ClusterScorer {
     const uint64_t offset = _base + index * _setting.record_size;
     const size_t bytes = count * size_t{_setting.record_size};
     if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
+      SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % _setting.alignment == 0);
       return {p, bytes};
     }
     _buf.resize(bytes);
@@ -307,11 +308,7 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
   uint64_t pay_start;
   {
     MemoryIndexOutput out{file};
-    out.WriteByte(0xAB);
-    out.WriteByte(0xCD);
-    out.WriteByte(0xEF);
     pay_start = out.Position();
-    ASSERT_NE(pay_start % alignof(float), 0);
     {
       PayloadStream stream{*writer};
       stream.Add(out, points.data(), kFirstBatch);

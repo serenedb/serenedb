@@ -29,7 +29,7 @@
 
 #include "break_test_utils.hpp"
 #include "gtest/gtest.h"
-#include "tests_config.hpp"
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -62,7 +62,7 @@ void ExpectBackendsMatch(Finder serial, Finder simd, std::string_view corpus) {
 }
 
 std::string LoadCorpus() {
-  std::ifstream in(IRS_TEST_RESOURCE_DIR "/unicode/SentenceBreakTest.txt");
+  std::ifstream in(TestEnv::resource("unicode/SentenceBreakTest.txt"));
   EXPECT_TRUE(in.is_open());
   std::string corpus;
   std::string line;
@@ -77,7 +77,7 @@ std::string LoadCorpus() {
 
 TEST(sentence_engine_test, sentence_break_test_conformance) {
   const auto cases = tests::LoadBreakTestCases(
-    IRS_TEST_RESOURCE_DIR "/unicode/SentenceBreakTest.txt");
+    TestEnv::resource("unicode/SentenceBreakTest.txt").c_str());
   ASSERT_GT(cases.size(), 400u);
   size_t failures = 0;
   for (const auto& c : cases) {

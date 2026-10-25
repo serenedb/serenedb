@@ -395,7 +395,7 @@ void NativeIndexSource::SelectFileKeys(duckdb::ClientContext& context,
     }
   }
   duckdb::SelectionVector sel;
-  auto approved = selected;
+  duckdb::idx_t approved = selected;
   duckdb::ColumnSegment::FilterSelection(
     sel, numbers, *_row_number->filter_state, selected, approved);
   for (duckdb::idx_t k = 0; k < approved; ++k) {

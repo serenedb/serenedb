@@ -85,7 +85,9 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     return {
       .group_size =
         _pano ? static_cast<uint32_t>(_pano->batch_size) : uint32_t{1},
-      .record_size = PanoramaRecordSize(_d, _pano ? PanoramaLevels(_d) : 0)};
+      .record_size = PanoramaRecordSize(_d, _pano ? PanoramaLevels(_d) : 0),
+      .alignment = alignof(float),
+    };
   }
 
   void Encode(IndexOutput& out, const float* vecs, size_t n) final {
@@ -265,7 +267,11 @@ class PanoramaQuantizerReader final : public QuantizerReader {
   }
 
   PayloadBlockSetting BlockSetting() const noexcept final {
-    return {.group_size = _group_size, .record_size = _record_size};
+    return {
+      .group_size = _group_size,
+      .record_size = _record_size,
+      .alignment = alignof(float),
+    };
   }
 
   void StartCluster(const float* /*centroid*/) final {}

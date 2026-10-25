@@ -40,7 +40,7 @@
 #include <string_view>
 #include <vector>
 
-#include "tests_config.hpp"
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -69,7 +69,7 @@ struct Case {
 };
 
 std::vector<Case> LoadCases(std::vector<bool>& part1_cps) {
-  std::ifstream in(IRS_TEST_RESOURCE_DIR "/unicode/NormalizationTest.txt");
+  std::ifstream in(TestEnv::resource("unicode/NormalizationTest.txt"));
   EXPECT_TRUE(in.is_open());
   std::vector<Case> cases;
   std::string line;

@@ -59,6 +59,9 @@ top::Root::ptr QueryBuilderImpl<Derived, Base>::PlanTop(
 template<typename Derived, typename Base>
 lead::Node::ptr QueryBuilderImpl<Derived, Base>::PlanLead(
   const detail::ScoredCtx& ctx) const {
+  if (!ctx.fetcher) {
+    return detail::Plan<lead::Family>(Self(), lead::Family::DocsContext{});
+  }
   if (!Base::Scores()) {
     if (auto node =
           detail::Plan<lead::Family>(Self(), lead::Family::DocsContext{})) {
@@ -71,6 +74,10 @@ lead::Node::ptr QueryBuilderImpl<Derived, Base>::PlanLead(
 template<typename Derived, typename Base>
 probe::Node::ptr QueryBuilderImpl<Derived, Base>::PlanProbe(
   const detail::ScoredCtx& ctx, uint64_t interrogations) const {
+  if (!ctx.fetcher) {
+    return detail::Plan<probe::Family>(
+      Self(), probe::Family::DocsContext{interrogations});
+  }
   if (!Base::Scores()) {
     if (auto node = detail::Plan<probe::Family>(
           Self(), probe::Family::DocsContext{interrogations})) {
@@ -84,6 +91,9 @@ probe::Node::ptr QueryBuilderImpl<Derived, Base>::PlanProbe(
 template<typename Derived, typename Base>
 fill::Node::ptr QueryBuilderImpl<Derived, Base>::PlanFill(
   const detail::ScoredCtx& ctx, ScoreMergeType merge) const {
+  if (!ctx.fetcher) {
+    return detail::Plan<fill::Family>(Self(), fill::Family::DocsContext{});
+  }
   if (!Base::Scores()) {
     if (auto node =
           detail::Plan<fill::Family>(Self(), fill::Family::DocsContext{})) {

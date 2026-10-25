@@ -240,17 +240,19 @@ def main(argv=None):
             quiesce.resume(pause_event)
 
     def after_recovery(fault_name):
+        def resync():
+            resynced = [w.state.resync_from(w.model) for w in workers]
+            print(f"[stress] resynced worker state after {fault_name}: "
+                  f"{resynced} live keys per worker")
+
         # Oracle first: it is what collapses each ambiguous key onto the state
         # reality settled on. Resyncing before that would throw away every key
         # the crash left ambiguous, even the ones that survived.
         found = run_oracle(workers, pause_event, dsn, run_tag, server.datadir,
                            oid_registry, f"after-crash:{fault_name}",
                            abort_if=lambda: dog.verdict != ALIVE,
-                           scan_artifacts=True)
+                           scan_artifacts=True, while_drained=resync)
         found.extend(workload_check(f"after-crash:{fault_name}"))
-        resynced = [w.state.resync_from(w.model) for w in workers]
-        print(f"[stress] resynced worker state after {fault_name}: "
-              f"{resynced} live keys per worker")
         for f in found:
             f["after_injected_crash"] = fault_name
         post_crash.extend(found)
@@ -542,7 +544,7 @@ def unrelated_ddl_probe(dsn, timeout=20.0):
 
 
 def run_oracle(workers, pause_event, dsn, run_tag, datadir, oid_registry, label,
-               abort_if=None, scan_artifacts=False):
+               abort_if=None, scan_artifacts=False, while_drained=None):
     drained, stuck = quiesce.drain(workers, pause_event, timeout=120.0,
                                    abort_if=abort_if)
     try:
@@ -567,7 +569,10 @@ def run_oracle(workers, pause_event, dsn, run_tag, datadir, oid_registry, label,
                 snap = snapshot_mod.take(conn, run_tag, datadir=datadir,
                                          row_keys=row_keys,
                                          scan_artifacts=scan_artifacts)
-                return oracle.run_all(models, snap, conn, oid_registry)
+                found = oracle.run_all(models, snap, conn, oid_registry)
+            if while_drained is not None:
+                while_drained()
+            return found
         except psycopg.OperationalError as exc:
             # The server can die between the drain and this snapshot -- an injected
             # crash or a real one -- and a refused or dropped connection here must

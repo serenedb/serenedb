@@ -163,7 +163,7 @@ struct FillLeaf {
     Run,
   };
 
-  const uint64_t* bitset;
+  const UnalignedWord* bitset;
   uint32_t words;
   doc_id_t max;
   Kind kind;
@@ -174,7 +174,7 @@ struct FillLeaf {
 };
 
 IRS_FORCE_INLINE inline uint32_t* MaterializeBitsetFrom(
-  uint32_t prev, const uint64_t* IRS_RESTRICT bitset, uint32_t first_word,
+  uint32_t prev, const UnalignedWord* IRS_RESTRICT bitset, uint32_t first_word,
   uint64_t first_mask, uint32_t words, uint32_t* IRS_RESTRICT out) {
   SDB_ASSERT(first_word < words);
   constexpr auto kBits = BitsRequired<uint64_t>();
@@ -204,8 +204,8 @@ IRS_FORCE_INLINE uint32_t MaskLeaf(FillLeaf leaf, uint32_t prev, uint32_t len,
       SetBitRange(mask, begin, end);
     }
   };
-  const auto bitset_at = [&](const uint64_t* IRS_RESTRICT src, uint32_t words,
-                             uint64_t last) IRS_FORCE_INLINE {
+  const auto bitset_at = [&](const UnalignedWord* IRS_RESTRICT src,
+                             uint32_t words, uint64_t last) IRS_FORCE_INLINE {
     if constexpr (Clear) {
       AndNotBitsetAt(mask, first, src, words, last);
     } else {
@@ -310,9 +310,9 @@ inline uint64_t HolesToBitset(const byte_type* in, uint32_t len,
            : HolesToBitset<false>(in, len, bitset);
 }
 
-IRS_FORCE_INLINE inline doc_id_t BitsetMax(uint32_t prev,
-                                           const uint64_t* IRS_RESTRICT bitset,
-                                           uint32_t words) noexcept {
+IRS_FORCE_INLINE inline doc_id_t BitsetMax(
+  uint32_t prev, const UnalignedWord* IRS_RESTRICT bitset,
+  uint32_t words) noexcept {
   SDB_ASSERT(words != 0);
   SDB_ASSERT(bitset[words - 1] != 0);
   return prev + words * BitsRequired<uint64_t>() -
@@ -327,7 +327,7 @@ IRS_FORCE_INLINE inline FillLeaf FillAt(uint32_t len, const byte_type* begin,
   const auto token = begin[0];
   if (block_codec::IsTokenBitset(token)) {
     const auto [bits, words] = block_codec::ParseBitset(begin);
-    const auto* const bitset = reinterpret_cast<const uint64_t*>(bits);
+    const auto* const bitset = reinterpret_cast<const UnalignedWord*>(bits);
     end = bits + words * sizeof(uint64_t);
     return {bitset, words, BitsetMax(prev, bitset, words),
             FillLeaf::Kind::Bitset};

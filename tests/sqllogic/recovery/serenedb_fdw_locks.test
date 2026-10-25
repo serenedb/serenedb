@@ -90,10 +90,10 @@ python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,f
 
 
 system ok
-rm -rf $__TEST_DIR__/sfl_linked && mkdir $__TEST_DIR__/sfl_linked && cp -al ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfl_linked/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfl_linked/catalog.wal
+rm -rf ${SDB_DATADIR}_linked && mkdir ${SDB_DATADIR}_linked && cp -al ${SDB_DATADIR}/engine_v1/5 ${SDB_DATADIR}_linked/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal ${SDB_DATADIR}_linked/catalog.wal
 
 statement error
-CREATE SERVER sfl_linked FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_linked/5');
+CREATE SERVER sfl_linked FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${SDB_DATADIR}_linked/5');
 ----
 db error: ERROR: Could not set lock on file "<slt:ignore>": Conflicting lock is held by another open of this file
 

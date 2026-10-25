@@ -209,11 +209,12 @@ float AutoRescoreWidth(irs::VectorQuantization quant,
     case irs::VectorQuantization::BF16:
       return 0.f;
     case irs::VectorQuantization::SQ8:
-    case irs::VectorQuantization::RaBitQ:
     case irs::VectorQuantization::TQ:
       return 2.f;
+    case irs::VectorQuantization::RaBitQ:
+      return nb_bits > 1 ? 3.f : 2.f;
     case irs::VectorQuantization::OSQ:
-      return nb_bits > 2 ? 5.f : 2.f;
+      return nb_bits > 2 ? 6.f : 2.f;
     case irs::VectorQuantization::BQ:
       return 3.f;
     case irs::VectorQuantization::USQ8:

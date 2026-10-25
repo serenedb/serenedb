@@ -70,8 +70,3 @@ if(SDB_EMBEDDED_DOCS)
     add_dependencies(serenedb-tests serened)
     sdb_embed_docs_index(serenedb-tests)
 endif()
-
-target_compile_definitions(
-    serenedb-tests
-    PRIVATE "SDB_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/resources\""
-)

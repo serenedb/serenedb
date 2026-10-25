@@ -270,7 +270,8 @@ Node::ptr MakeBoolean(const BooleanQuery& query, uint64_t interrogations,
                       const Scoring& scoring, const detail::ScoredCtx& ctx) {
   score_t absorbed = 0;
   if constexpr (detail::kScores<Scoring>) {
-    absorbed = query.Absorbed();
+    SDB_ASSERT(ctx.fetcher);
+    absorbed = query.Absorbed(*ctx.fetcher);
   }
   if (!query.Terms(Occur::MustNot).empty() ||
       !query.Queries(Occur::MustNot).empty()) {

@@ -821,9 +821,6 @@ struct FloatBinCore {
   using Value = T;
   static constexpr uint32_t kMaxBytes = sizeof(T);
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
-    if (v == 0) {  // postgres renders -0.0 as 0.0
-      v = 0;
-    }
     absl::big_endian::Store(dst, v);
     return sizeof(T);
   }

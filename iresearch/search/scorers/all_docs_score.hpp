@@ -52,6 +52,7 @@ inline ScoreFunction AllDocsScorer(const SubReader& segment,
                                    const ScoreArgs& args) {
   SDB_ASSERT(args.scorer != nullptr);
   SDB_ASSERT(args.stats != nullptr);
+  SDB_ASSERT(args.fetcher);
   return args.scorer->PrepareScorer({
     .segment = segment,
     .field = NoField(),

@@ -4181,7 +4181,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
         }
 
         // random direct access
-        {
+        if (!dynamic_cast<BufferedIndexInput*>(file.get())) {
           const byte_type* internal_buf = file->ReadVolatile(0, 1);
           ASSERT_NE(nullptr, internal_buf);
           ASSERT_EQ(1, file->Position());

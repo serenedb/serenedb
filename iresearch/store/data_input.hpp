@@ -168,10 +168,6 @@ class BufferedIndexInput : public IndexInput {
 
   const byte_type* ReadVolatile(uint64_t count) final;
   const byte_type* ReadVolatile(uint64_t offset, uint64_t count) final {
-    if (count <= _buf_size && offset + count <= Length()) {
-      Seek(offset);
-      return ReadVolatile(count);
-    }
     return nullptr;
   }
 

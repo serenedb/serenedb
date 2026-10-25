@@ -215,7 +215,7 @@ class PostingLeaf {
     return begin;
   }
 
-  IRS_FORCE_INLINE const uint64_t* StableBitset(
+  IRS_FORCE_INLINE const UnalignedWord* StableBitset(
     const block_io::FillLeaf& leaf) noexcept {
     if constexpr (InputType::kVolatileAlways) {
       return leaf.bitset;
@@ -227,7 +227,7 @@ class PostingLeaf {
                  _docs.size() * sizeof(doc_id_t) / sizeof(uint64_t));
       std::memcpy(_docs.begin(), leaf.bitset,
                   size_t{leaf.words} * sizeof(uint64_t));
-      return reinterpret_cast<const uint64_t*>(_docs.begin());
+      return reinterpret_cast<const UnalignedWord*>(_docs.begin());
     }
   }
 
@@ -506,7 +506,7 @@ class PostingLeaf {
 
   struct FillRead {
     block_io::FillLeaf leaf;
-    const uint64_t* bitset;
+    const UnalignedWord* bitset;
     uint32_t len;
   };
 

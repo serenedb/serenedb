@@ -221,6 +221,8 @@ class Worker(threading.Thread):
 
             self.status.cancel_pending = False
             self._apply(op, outcome)
+            if outcome.ambiguous:
+                self.state.note_ambiguous(op)
             if outcome is Outcome.COMMITTED:
                 self.state.note_created(op)
                 self.state.note_rows(op)

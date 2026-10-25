@@ -65,35 +65,45 @@ InvertedIndexStorage::InvertedIndexStorage(
   : _index_id{index_id},
     _db_id{db_id},
     _directory{std::move(directory)},
+    _in_memory{in_memory},
+    _read_only{read_only},
+    _is_new{is_new},
+    _segment_memory_max{options.segment_memory_max},
+    _segment_docs_max{options.segment_docs_max},
     _search{GetSearchEngine()},
     _durability{db_id, absl::StrCat("inverted index ", index_id)} {
   SetTasksSettings(options);
 
   SDB_ASSERT(index_id != 0);
 
-  _delete_log_open = is_new;
+  if (const auto& scorer_options = top_k_scorer) {
+    _topk_scorer = MakeScorer(*scorer_options);
+  }
+  if (is_new) {
+    Open();
+  }
+}
+
+void InvertedIndexStorage::Open() {
+  _delete_log_open = _is_new;
   irs::ResourceManagementOptions resource_manager;
   resource_manager.transactions = _writers_memory;
   resource_manager.readers = _readers_memory;
   resource_manager.compactions = _compactions_memory;
   resource_manager.file_descriptors = _file_descriptors_count;
-  auto opened = OpenStorageDirectory(*_directory, index_id, is_new, in_memory,
-                                     resource_manager);
+  auto opened = OpenStorageDirectory(*_directory, _index_id, _is_new,
+                                     _in_memory, resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 
-  if (const auto& scorer_options = top_k_scorer) {
-    _topk_scorer = MakeScorer(*scorer_options);
-  }
-
-  if (read_only) {
+  if (_read_only) {
     return;
   }
 
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
-  writer_options.segment_memory_max = options.segment_memory_max;
-  writer_options.segment_docs_max = options.segment_docs_max;
+  writer_options.segment_memory_max = _segment_memory_max;
+  writer_options.segment_docs_max = _segment_docs_max;
 #ifdef SDB_DEV
   // Dev safety net: a second IndexWriter opening the same index directory (a
   // lifecycle bug -- two storages/loops on one dir) fails to acquire the lock
@@ -116,7 +126,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   }
 
   auto [writer, stamp] = _durability.OpenWriter(
-    *_dir, Path(), opened.on_disk, is_new, std::move(writer_options),
+    *_dir, Path(), opened.on_disk, _is_new, std::move(writer_options),
     [this] { return GetFileManifest(); });
   _writer = std::move(writer);
 
@@ -170,6 +180,8 @@ InvertedIndexStorage::~InvertedIndexStorage() {
 void InvertedIndexStorage::ApplyOptions(
   const catalog::InvertedIndexSettings& options) {
   SetTasksSettings(options);
+  _segment_memory_max = options.segment_memory_max;
+  _segment_docs_max = options.segment_docs_max;
   if (!_writer) {
     return;
   }

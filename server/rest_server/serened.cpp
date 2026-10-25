@@ -54,6 +54,7 @@
 #include "server/utils/app_server.h"
 #include "server/utils/build.h"
 #include "server/utils/init.h"
+#include "server/utils/signals.h"
 #include "storage_engine/search_engine.h"
 
 ABSL_FLAG(bool, remap_executable, SDB_REMAP_EXECUTABLE,
@@ -87,6 +88,7 @@ void SetSanitizerThreadStackSize() {
 int RunServer(int argc, char** argv) {
   try {
     irs::CrashHandler::installCrashHandler();
+    signals::InstallShutdownHandlers();
 
     AppServer server;
 

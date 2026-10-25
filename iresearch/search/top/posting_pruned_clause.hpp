@@ -118,7 +118,7 @@ class PostingPrunedClause : public PrunedLeafBase<InputType, false> {
       if (leaf.IsBitset()) {
         std::memcpy(std::begin(_docs), leaf.bitset,
                     size_t{leaf.words} * sizeof(uint64_t));
-        bitset = reinterpret_cast<const uint64_t*>(std::begin(_docs));
+        bitset = reinterpret_cast<const UnalignedWord*>(std::begin(_docs));
       }
     }
     if constexpr (InputType::kVolatileAlways) {

@@ -38,9 +38,6 @@ inline constexpr size_t kFloatText = sizeof("-2.2250738585072014e-308") - 1;
 template<bool Precise, typename T>
 size_t WriteFloat(T value, int8_t extra_float_digits, char* buffer) {
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
-  if (value == 0) {
-    value = 0;
-  }
   if (char* end = utils::dtoa_literals<utils::kPgDtoaLiterals>(value, buffer)) {
     return static_cast<size_t>(end - buffer);
   }

@@ -61,9 +61,14 @@ namespace irs::detail {
 
 class VectorBlockReader {
  public:
-  VectorBlockReader(IndexInput::ptr&& in, uint32_t record_size) noexcept
-    : _in{std::move(in)}, _record_size{record_size} {
+  VectorBlockReader(IndexInput::ptr&& in,
+                    const PayloadBlockSetting& setting) noexcept
+    : _in{std::move(in)},
+      _record_size{setting.record_size},
+      _alignment{setting.alignment} {
     SDB_ASSERT(_in);
+    SDB_ASSERT(std::has_single_bit(_alignment));
+    SDB_ASSERT(_alignment <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
   }
 
   void Reset(uint64_t base_offset) noexcept { _base = base_offset; }
@@ -72,6 +77,7 @@ class VectorBlockReader {
     const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
     const size_t bytes = count * size_t{_record_size};
     if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
+      SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % _alignment == 0);
       return {p, bytes};
     }
     _buf.resize(bytes);
@@ -84,6 +90,7 @@ class VectorBlockReader {
   std::vector<byte_type> _buf;
   uint64_t _base = 0;
   uint32_t _record_size;
+  uint32_t _alignment;
 };
 
 struct RawRecipe {
@@ -206,6 +213,7 @@ class RawVectorReader {
         const uint64_t offset =
           meta.file_offset + (elem - window.begin) * sizeof(float);
         if (const auto* p = _read_ctx.TryReadStable(offset, bytes)) {
+          SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % alignof(float) == 0);
           return reinterpret_cast<const byte_type*>(p);
         }
         _buf.resize(bytes);

@@ -33,10 +33,12 @@ class VectorChain : public Root {
   VectorChain(ColumnArgsFetcher& fetcher, const SubReader& segment,
               const TermReader& field, const irs::detail::ScoreArgs& score,
               uint32_t k, irs::detail::TableFilter* table, size_t count,
-              const VectorState& state, Args&& args)
+              const VectorState& state, irs::detail::SharedFloor* shared,
+              Args&& args)
     : _clusters{count, std::forward<Args>(args)},
       _fetcher{fetcher},
       _table{table},
+      _shared{shared},
       _boost{score.boost},
       _k{k},
       _top_k{state.top_k},
@@ -44,8 +46,10 @@ class VectorChain : public Root {
     _score = irs::detail::PrepareBlockScorer(score, segment, field.meta(),
                                              _provider, _block);
     if (_width > 0.f) {
+      SDB_ASSERT(_shared);
+      SDB_ASSERT(_top_k != 0);
       _clusters.EnableErrors();
-      _lower.reserve(2 * size_t{_top_k});
+      _lower.reserve(size_t{_top_k} + kRun);
     }
   }
 
@@ -57,7 +61,7 @@ class VectorChain : public Root {
         _table->Rewind();
       }
       for (;;) {
-        cluster.SetThreshold(_width > 0.f ? _floor : Bar(collector));
+        cluster.SetThreshold(_width > 0.f ? _shared->Load() : Bar(collector));
         if (!cluster.NextRun()) {
           break;
         }
@@ -95,27 +99,48 @@ class VectorChain : public Root {
   uint32_t Widen(std::span<const doc_id_t> docs,
                  std::span<const score_t> scores,
                  std::span<const score_t> errors) {
+    const auto n = static_cast<uint32_t>(docs.size());
+    const auto floor = _shared->Load();
     uint32_t kept = 0;
-    for (size_t i = 0; i < docs.size(); ++i) {
-      const auto spread = _width * errors[i];
-      if (scores[i] + spread < _floor) {
+    uint32_t i = 0;
+#ifdef __AVX2__
+    const auto width = _mm256_set1_ps(_width);
+    const auto edge = _mm256_set1_ps(floor);
+    for (; i + 8 <= n; i += 8) {
+      const auto score = _mm256_loadu_ps(scores.data() + i);
+      const auto spread =
+        _mm256_mul_ps(width, _mm256_loadu_ps(errors.data() + i));
+      const auto mask = static_cast<uint32_t>(_mm256_movemask_ps(
+        _mm256_cmp_ps(_mm256_add_ps(score, spread), edge, _CMP_NLT_UQ)));
+      if (mask == 0) {
         continue;
       }
-      if (const auto lower = scores[i] - spread; lower > _floor) {
-        _lower.push_back(lower);
-      }
+      const auto control = LeftPackControl(mask);
+      const auto ids =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(docs.data() + i));
+      _mm256_storeu_si256(reinterpret_cast<__m256i*>(_own + kept),
+                          _mm256_permutevar8x32_epi32(ids, control));
+      _mm256_storeu_ps(_block + kept, _mm256_permutevar8x32_ps(score, control));
+      _mm256_storeu_ps(_spread + kept,
+                       _mm256_permutevar8x32_ps(spread, control));
+      kept += static_cast<uint32_t>(std::popcount(mask));
+    }
+#endif
+    for (; i < n; ++i) {
+      const auto spread = _width * errors[i];
       _own[kept] = docs[i];
       _block[kept] = scores[i];
       _spread[kept] = spread;
-      ++kept;
+      kept += static_cast<uint32_t>(!(scores[i] + spread < floor));
     }
-    const size_t limit =
-      _floor == std::numeric_limits<score_t>::lowest() ? _top_k : 2 * _top_k;
-    if (_top_k != 0 && _lower.size() >= limit) {
-      const auto kth = _lower.begin() + (_top_k - 1);
-      absl::c_nth_element(_lower, kth, std::greater{});
-      _floor = *kth;
-      _lower.resize(_top_k);
+    for (uint32_t j = 0; j < kept; ++j) {
+      if (const auto lower = _block[j] - _spread[j]; lower > floor) {
+        _lower.push_back(lower);
+      }
+    }
+    if (_lower.size() >= _top_k) {
+      _shared->Merge(_lower);
+      _lower.clear();
     }
     return kept;
   }
@@ -154,11 +179,11 @@ class VectorChain : public Root {
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
   irs::detail::TableFilter* _table;
+  irs::detail::SharedFloor* _shared;
   score_t _boost;
   uint32_t _k;
   uint32_t _top_k;
   float _width;
-  score_t _floor = std::numeric_limits<score_t>::lowest();
   std::vector<score_t> _lower;
 };
 
@@ -180,7 +205,7 @@ Root::ptr Family::Make(const KnnVectorQuery& query, const Context& ctx) {
                             const irs::detail::ClusterFeed& feed) -> Root::ptr {
         return memory::make_managed<VectorChain<Cluster>>(
           ctx.fetcher, segment, field, score, ctx.k, ctx.table, count,
-          query.State(), feed);
+          query.State(), ctx.floor, feed);
       });
   }
 

@@ -1200,15 +1200,20 @@ class TurboQuantizerReader final : public QuantizerReader {
       return;
     }
     const size_t group = _lay.GroupBytes();
-    Errors(
-      [&](size_t i) {
-        const auto* g = block.data() + i / kFastScanBbs * group;
-        const size_t lane = (i % kFastScanBbs) * sizeof(float);
-        return TurboQuantRowTerms{
-          .scale = LoadFloat(g + _lay.NormOffset() + lane),
-          .gamma = _lay.full ? LoadFloat(g + _lay.GammaOffset() + lane) : 0.f};
-      },
-      scores.size(), errors);
+    const size_t n = scores.size();
+    for (size_t first = 0; first < n; first += kFastScanBbs) {
+      const auto* norms =
+        block.data() + first / kFastScanBbs * group + _lay.NormOffset();
+      const auto* gammas = norms + kFastScanBbs * sizeof(float);
+      Errors(
+        [&](size_t i) {
+          const size_t lane = i * sizeof(float);
+          return TurboQuantRowTerms{
+            .scale = LoadFloat(norms + lane),
+            .gamma = _lay.full ? LoadFloat(gammas + lane) : 0.f};
+        },
+        std::min(n - first, kFastScanBbs), errors + first);
+    }
   }
 
   void ComputeBlock(std::span<const byte_type> block, score_t threshold,

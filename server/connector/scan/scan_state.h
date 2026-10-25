@@ -35,6 +35,7 @@
 #include <iresearch/index/index_source.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
+#include <iresearch/search/detail/shared_floor.hpp>
 #include <iresearch/search/detail/vector_slots.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -291,6 +292,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     std::vector<std::vector<irs::ScoreDoc>> candidates;
     ABSL_CACHELINE_ALIGNED std::atomic<irs::score_t> rescore_bar{
       std::numeric_limits<irs::score_t>::lowest()};
+    std::optional<irs::detail::SharedFloor> floor;
     ABSL_CACHELINE_ALIGNED absl::Mutex best_mutex;
     std::vector<irs::ScoreDoc> best ABSL_GUARDED_BY(best_mutex);
     std::vector<irs::ScoreDoc> answer;

@@ -109,7 +109,7 @@ Root::ptr Family::Make(const HnswQuery& query, const Context& ctx) {
   auto* const narrow =
     ctx.table && !ctx.table->Foldable() ? ctx.table : nullptr;
   std::vector<score_t> spreads;
-  auto hits = query.RunSearch(ctx.table, &spreads);
+  auto hits = query.RunSearch(ctx.table, &spreads, ctx.floor);
   if (hits.empty()) {
     return MakeEmpty();
   }

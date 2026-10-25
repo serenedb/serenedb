@@ -24,6 +24,7 @@
 
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/detail/shared_floor.hpp"
 #include "iresearch/search/scorers/root_window.hpp"
 #include "iresearch/utils/memory.hpp"
 
@@ -36,6 +37,7 @@ struct Context {
   bool prune = false;
   uint32_t k = 0;
   doc_id_t span = 0;
+  detail::SharedFloor* floor = nullptr;
 };
 
 inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {

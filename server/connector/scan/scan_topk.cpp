@@ -101,6 +101,11 @@ void RescoreUnit(const ScanGlobalState& g, TopKLocalState& l,
   }
 }
 
+irs::score_t RescoreBar(const ScanGlobalState::TopKState& t) noexcept {
+  const auto bar = t.rescore_bar.load(std::memory_order_acquire);
+  return t.floor ? std::max(bar, t.floor->Load()) : bar;
+}
+
 void PushBest(ScanGlobalState::TopKState& t,
               std::span<const irs::ScoreDoc> hits) {
   absl::MutexLock lock{&t.best_mutex};
@@ -128,6 +133,11 @@ void RescoreWhileReachable(ScanGlobalState& g, TopKLocalState& l,
     PushBest(t, pool);
     return;
   }
+  const auto reachable =
+    absl::c_partition(pool, [bar = RescoreBar(t)](const irs::ScoreDoc& hit) {
+      return hit.score >= bar;
+    });
+  pool = pool.first(static_cast<size_t>(reachable - pool.begin()));
   const auto lower = [](const irs::ScoreDoc& a, const irs::ScoreDoc& b) {
     return a.score < b.score;
   };
@@ -139,7 +149,7 @@ void RescoreWhileReachable(ScanGlobalState& g, TopKLocalState& l,
   size_t pending_size = 0;
   size_t heap_size = pool.size();
   for (size_t i = 0;; ++i) {
-    const auto bar = t.rescore_bar.load(std::memory_order_acquire);
+    const auto bar = RescoreBar(t);
     while (heap_size != 0 && pool.size() - heap_size <= i + kAhead &&
            pool.front().score >= bar) {
       auto heap = pool.first(heap_size--);
@@ -155,7 +165,7 @@ void RescoreWhileReachable(ScanGlobalState& g, TopKLocalState& l,
       break;
     }
     hit.score = reader->ComputeDistance(hit.doc, rows[i % rows.size()]);
-    if (hit.score >= bar) {
+    if (hit.score >= t.rescore_bar.load(std::memory_order_relaxed)) {
       pending[pending_size++] = hit;
       if (pending_size == kPushBatch) {
         PushBest(t, pending);
@@ -217,7 +227,8 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
        .table = table,
        .prune = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
        .k = static_cast<uint32_t>(l.hit_slice.size()),
-       .span = g.UnitSpan(unit)});
+       .span = g.UnitSpan(unit),
+       .floor = g.topk.floor ? &*g.topk.floor : nullptr});
     EnsurePlanned(plan != nullptr);
     l.root = std::move(plan);
     l.root_seg = unit.seg;
@@ -688,6 +699,9 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& /*context*/) {
                               : k * kLookupFilterOverfetch);
     } else if (t.rescore) {
       pool = std::max(pool, RescoreCandidates(*vs, k));
+    }
+    if (vs->rescore_width > 0.f && !vs->rescore_all && vs->top_k != 0) {
+      t.floor.emplace(vs->top_k);
     }
   }
   t.pool = ClampCandidates(pool, k, g.reader->live_docs_count());

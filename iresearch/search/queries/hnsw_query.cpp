@@ -687,7 +687,8 @@ void HnswQuery::ScanColumn(HnswSearchScratch& s) const {
 }
 
 void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
-                      std::vector<score_t>& spreads) const {
+                      std::vector<score_t>& spreads,
+                      detail::SharedFloor* shared) const {
   auto& nearest = scratch.nearest;
   const size_t n = nearest.size();
   if (n == 0) {
@@ -706,14 +707,20 @@ void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
   reader.ScoreErrors(_data->codes.data(), _record_size, ids, estimates, errors);
   const auto z = _rescore_width;
   auto floor = std::numeric_limits<score_t>::lowest();
+  const std::span<score_t> lower{scores.data() + 2 * n, n};
+  for (size_t i = 0; i < n; ++i) {
+    lower[i] = estimates[i] - z * errors[i];
+  }
+  size_t top = n;
   if (_top_k != 0 && n > _top_k) {
-    const std::span<score_t> lower{scores.data() + 2 * n, n};
-    for (size_t i = 0; i < n; ++i) {
-      lower[i] = estimates[i] - z * errors[i];
-    }
     const auto kth = lower.begin() + (_top_k - 1);
     std::nth_element(lower.begin(), kth, lower.end(), std::greater{});
     floor = *kth;
+    top = _top_k;
+  }
+  if (shared != nullptr) {
+    shared->Merge(lower.first(top));
+    floor = std::max(floor, shared->Load());
   }
   size_t kept = 0;
   spreads.clear();
@@ -728,8 +735,9 @@ void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
   nearest.resize(kept);
 }
 
-std::vector<ScoreDoc> HnswQuery::RunSearch(
-  detail::TableFilter* table, std::vector<score_t>* spreads) const {
+std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table,
+                                           std::vector<score_t>* spreads,
+                                           detail::SharedFloor* floor) const {
   HnswSearchScratch scratch;
   std::vector<score_t> widened;
   bool wide = false;
@@ -752,7 +760,7 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(
                  }
                  if constexpr (requires { dist.qr; }) {
                    if (spreads && _ef != 0 && _rescore_width > 0.f) {
-                     Widen(*dist.qr, scratch, widened);
+                     Widen(*dist.qr, scratch, widened, floor);
                      wide = true;
                    }
                  }

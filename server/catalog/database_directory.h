@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/base/thread_annotations.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -29,6 +28,7 @@
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/storage/storage_extension.hpp>
 #include <filesystem>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <optional>
 #include <span>
@@ -60,7 +60,7 @@ struct StorageSize {
 StorageSize StorageBytes(const std::string& directory);
 
 void RemoveUnowned(std::span<const StorageEntry> entries,
-                   const absl::flat_hash_set<duckdb::idx_t>& owned);
+                   const irs::containers::FlatHashSet<duckdb::idx_t>& owned);
 
 class TablespaceRoot final
   : public std::enable_shared_from_this<TablespaceRoot> {

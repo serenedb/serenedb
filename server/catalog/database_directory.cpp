@@ -126,7 +126,7 @@ std::string EngineDirOf(std::string_view location) {
 
 std::vector<StorageEntry> ListStorages(const std::string& root) {
   std::vector<StorageEntry> found;
-  absl::flat_hash_set<std::string> seen;
+  irs::containers::FlatHashSet<std::string> seen;
   StorageFileSystem().ListFiles(
     root, [&](const std::string& name, bool is_directory) {
       std::string_view entry = name;
@@ -164,7 +164,7 @@ StorageSize StorageBytes(const std::string& directory) {
 }
 
 void RemoveUnowned(std::span<const StorageEntry> entries,
-                   const absl::flat_hash_set<duckdb::idx_t>& owned) {
+                   const irs::containers::FlatHashSet<duckdb::idx_t>& owned) {
   for (const auto& entry : entries) {
     if (owned.contains(entry.oid)) {
       continue;

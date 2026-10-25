@@ -21,7 +21,6 @@
 #include "catalog/cluster.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -44,6 +43,7 @@
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <filesystem>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -315,7 +315,7 @@ void ClusterCatalog::DropTablespace(duckdb::CatalogTransaction transaction,
 bool ClusterCatalog::HoldsTablespaceObjects(
   const TablespaceCatalogEntry& tablespace) {
   bool placed = false;
-  absl::flat_hash_set<duckdb::idx_t> unattached;
+  irs::containers::FlatHashSet<duckdb::idx_t> unattached;
   GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
     .Scan([&](duckdb::CatalogEntry& entry) {
       placed = placed || entry.Cast<DatabaseCatalogEntry>().Tablespace() ==

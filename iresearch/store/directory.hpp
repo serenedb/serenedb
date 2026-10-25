@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
@@ -38,6 +36,8 @@
 
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/ref_counter.hpp"
 
 namespace irs {
@@ -77,7 +77,7 @@ class FileInfos {
 
  private:
   mutable absl::Mutex _mutex;
-  absl::flat_hash_map<std::string, FileInfo> _infos ABSL_GUARDED_BY(_mutex);
+  containers::FlatHashMap<std::string, FileInfo> _infos ABSL_GUARDED_BY(_mutex);
   bool _reuse ABSL_GUARDED_BY(_mutex) = false;
   bool _complete ABSL_GUARDED_BY(_mutex) = false;
 };
@@ -96,7 +96,7 @@ class FileTracker {
   void Clear() noexcept;
 
  private:
-  absl::flat_hash_set<std::string> _files;
+  containers::FlatHashSet<std::string> _files;
   uint64_t _files_size = 0;
 };
 
@@ -110,8 +110,9 @@ class RefTracker {
   void Clear();
 
  private:
-  using Refs = absl::flat_hash_set<IndexFileRefs::ref_t, IndexFileRefs::Hash,
-                                   IndexFileRefs::EqualTo>;
+  using Refs =
+    containers::FlatHashSet<IndexFileRefs::ref_t, IndexFileRefs::Hash,
+                            IndexFileRefs::EqualTo>;
 
   mutable absl::Mutex _mutex;
   Refs _tracked ABSL_GUARDED_BY(_mutex);

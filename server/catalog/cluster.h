@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/base/thread_annotations.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
@@ -33,6 +32,7 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -123,7 +123,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 
   absl::Mutex _tablespace_creation_mutex;
   absl::Mutex _tablespaces_mutex;
-  absl::flat_hash_map<duckdb::idx_t, KnownRoot> _tablespace_roots
+  irs::containers::FlatHashMap<duckdb::idx_t, KnownRoot> _tablespace_roots
     ABSL_GUARDED_BY(_tablespaces_mutex);
   std::mutex _log_mutex;
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;

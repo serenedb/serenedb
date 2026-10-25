@@ -24,7 +24,6 @@
 #include "index_writer.hpp"
 
 #include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 #include <fast_float/fast_float.h>
@@ -53,6 +52,7 @@
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/async.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -427,7 +427,7 @@ bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
 
 struct WriterRoots {
   absl::Mutex mutex;
-  absl::flat_hash_set<std::string> roots ABSL_GUARDED_BY(mutex);
+  containers::FlatHashSet<std::string> roots ABSL_GUARDED_BY(mutex);
 };
 
 WriterRoots& GetWriterRoots() {

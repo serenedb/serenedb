@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -134,8 +135,8 @@ class RefCounter : public util::Noncopyable {
 
  private:
   absl::Mutex _lock;
-  absl::flat_hash_set<ref_t, Hash, EqualTo> _refs ABSL_GUARDED_BY(_lock);
-  absl::flat_hash_set<Key, Hasher, Equal> _removing ABSL_GUARDED_BY(_lock);
+  containers::FlatHashSet<ref_t, Hash, EqualTo> _refs ABSL_GUARDED_BY(_lock);
+  containers::FlatHashSet<Key, Hasher, Equal> _removing ABSL_GUARDED_BY(_lock);
 };
 
 }  // namespace irs

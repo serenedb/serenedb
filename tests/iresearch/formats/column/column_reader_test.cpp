@@ -705,7 +705,8 @@ TEST_F(ColumnReaderTest, GatherFilterReleasesPassedBlocks) {
   duckdb::Connection con{Db()};
   auto set = con.Query("SET force_compression = 'dict_fsst'");
   ASSERT_FALSE(set->HasError()) << set->GetError();
-  irs::MemoryDirectory dir{};
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
   WriteColumn(Db(), dir, kId, duckdb::LogicalType::VARCHAR, kRows, 4096,
               value_of);
   con.Query("SET force_compression = 'auto'");
@@ -813,7 +814,8 @@ TEST_F(ColumnReaderTest, NestedGathersMatchScan) {
       SCOPED_TRACE(c.name + " " + codec);
       auto set = con.Query("SET force_compression = '" + codec + "'");
       ASSERT_FALSE(set->HasError()) << set->GetError();
-      irs::MemoryDirectory dir{};
+      irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                         irs::MemoryIndexRoot()};
       WriteColumn(Db(), dir, kId, c.type, c.rows, 4096, c.value_of);
       irs::ColReader r{dir, "seg", Db()};
       const auto* col = r.Column(kId);

@@ -95,7 +95,8 @@ TEST(directory_reader_test, term_ranges_span_segments) {
   constexpr irs::field_id kBoth = 7;
   constexpr irs::field_id kFirst = 8;
   constexpr irs::field_id kAbsent = 9;
-  irs::MemoryDirectory dir;
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
   auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                        irs::tests::DefaultWriterOptions());
   const auto add = [&](std::string_view both, std::string_view first) {

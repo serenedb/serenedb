@@ -19,7 +19,7 @@ Values of `money`, `xml`, the geometric types and the range types cast to `json`
 | Type                         | Support State | Details |
 |------------------------------|---------------|---------|
 | aclitem                      | 🟢            |         |
-| bit                          | 🟡            | A length is not enforced: `'1011'::bit(3)` stays `1011`. A bit string holds at least one bit: `B''` reads as `0`, and a `substring` without bits is an error. |
+| bit                          | 🟡            | A length is not enforced: `'1011'::bit(3)` stays `1011`. A bit string holds at least one bit: `B''` reads as `0`. |
 | bool                         | 🟢            | `boolean` |
 | box                          | 🟡            | The comparison operators such as `=` and `<` compare the corners one by one, where PostgreSQL compares areas, so `box '(1,1),(0,0)' = box '(2,2),(1,1)'` is false. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
 | bpchar                       | 🟡            | `character(n)`: trailing blanks count in comparisons and in `length()`, so `'a '::char(2) = 'a'::char(2)` is false. |

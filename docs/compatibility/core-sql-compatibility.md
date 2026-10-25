@@ -338,9 +338,9 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | bit_length    | Yes           |         |
 | length        | Yes           |         |
 | octet_length  | Yes           |         |
-| overlay       | Yes           |         |
-| position      | Yes           |         |
-| substring     | Partial       | A result without bits raises an error: a bit string holds at least one bit |
+| overlay       | No            |         |
+| position      | No            |         |
+| substring     | No            |         |
 | get_bit       | Yes           |         |
 | set_bit       | Yes           |         |
 
@@ -354,7 +354,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | regexp_like               | Yes           |                                                     |
 | regexp_match              | Yes           |                                                     |
 | regexp_matches            | Partial       |                                                     |
-| regexp_replace            | Yes           |                                                     |
+| regexp_replace            | Partial       | Currently not supporting replacing N'th match       |
 | regexp_split_to_array     | Yes           |                                                     |
 | regexp_split_to_table     | Yes           |                                                     |
 | regexp_substr             | Yes           |                                                     |

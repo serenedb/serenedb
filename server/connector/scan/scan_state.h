@@ -308,11 +308,11 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   struct AnnState {
     bool rescore = false;
     std::optional<irs::ann::SharedFloor> floor;
-    std::vector<std::vector<irs::ScoreDoc>> candidates;
     ABSL_CACHELINE_ALIGNED std::atomic<irs::score_t> rescore_bar{
       std::numeric_limits<irs::score_t>::lowest()};
     ABSL_CACHELINE_ALIGNED absl::Mutex best_mutex;
     std::vector<irs::ScoreDoc> best ABSL_GUARDED_BY(best_mutex);
+    std::vector<irs::ScoreDoc> rescored ABSL_GUARDED_BY(best_mutex);
   };
   AnnState ann;
 
@@ -416,6 +416,7 @@ struct AnnLocalState final : public RankedLocalState {
   std::optional<irs::ann::SharedFloor> segment_floor;
   std::optional<irs::ann::Collector> collector;
   uint32_t pool_seg = std::numeric_limits<uint32_t>::max();
+  std::vector<irs::ScoreDoc> pending;
   std::vector<irs::ScoreDoc> rescored;
   std::vector<std::unique_ptr<irs::detail::RawVectorReader>> rescorers;
   std::vector<irs::doc_id_t> rescore_docs;

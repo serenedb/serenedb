@@ -136,6 +136,44 @@ pk
 8
 7
 
+query
+SELECT pk FROM rw ORDER BY emb <-> [100.5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 14;
+----
+pk
+9
+8
+7
+6
+5
+4
+3
+2
+1
+0
+210
+310
+309
+211
+
+query
+SELECT pk FROM rwi ORDER BY emb <-> [100.5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 14;
+----
+pk
+9
+8
+7
+6
+5
+4
+3
+2
+1
+0
+210
+310
+309
+211
+
 statement ok
 RESET sdb_ann_rescore_width;
 

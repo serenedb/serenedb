@@ -24,6 +24,7 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
+#include <iterator>
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
@@ -101,11 +102,6 @@ void PushBest(ScanGlobalState& g, std::span<const irs::ScoreDoc> hits) {
 void RescoreWhileReachable(ScanGlobalState& g, AnnLocalState& l,
                            std::span<irs::ScoreDoc> pool) {
   auto& a = g.ann;
-  auto* reader = SegmentRescorer(g, l, pool.front().segment_idx);
-  if (!reader) {
-    PushBest(g, pool);
-    return;
-  }
   const auto reachable =
     absl::c_partition(pool, [bar = RescoreBar(a)](const irs::ScoreDoc& hit) {
       return hit.score >= bar;
@@ -118,7 +114,11 @@ void RescoreWhileReachable(ScanGlobalState& g, AnnLocalState& l,
   constexpr size_t kAhead = 8;
   constexpr size_t kNear = 2;
   constexpr size_t kPushBatch = 8;
-  std::array<const irs::byte_type*, kAhead + 1> rows{};
+  struct Row {
+    irs::detail::RawVectorReader* reader = nullptr;
+    const irs::byte_type* data = nullptr;
+  };
+  std::array<Row, kAhead + 1> rows;
   std::array<irs::ScoreDoc, kPushBatch> pending;
   size_t pending_size = 0;
   size_t heap_size = pool.size();
@@ -128,23 +128,29 @@ void RescoreWhileReachable(ScanGlobalState& g, AnnLocalState& l,
            pool.front().score >= bar) {
       auto heap = pool.first(heap_size--);
       absl::c_pop_heap(heap, lower);
-      rows[(pool.size() - 1 - heap_size) % rows.size()] =
-        reader->PrefetchRow<2>(pool[heap_size].doc);
+      const auto& next = pool[heap_size];
+      auto* reader = SegmentRescorer(g, l, next.segment_idx);
+      rows[(pool.size() - 1 - heap_size) % rows.size()] = {
+        .reader = reader,
+        .data = reader ? reader->PrefetchRow<2>(next.doc) : nullptr,
+      };
     }
     const auto popped = pool.size() - heap_size;
     if (i == popped) {
       break;
     }
     if (i + kNear < popped) {
-      if (const auto* row = rows[(i + kNear) % rows.size()]) {
-        reader->PromoteRow(row);
+      if (const auto& near = rows[(i + kNear) % rows.size()]; near.data) {
+        near.reader->PromoteRow(near.data);
       }
     }
     auto& hit = pool[pool.size() - 1 - i];
     if (hit.score < bar) {
       break;
     }
-    hit.score = reader->ComputeDistance(hit.doc, rows[i % rows.size()]);
+    if (const auto& row = rows[i % rows.size()]; row.reader) {
+      hit.score = row.reader->ComputeDistance(hit.doc, row.data);
+    }
     if (hit.score >= a.rescore_bar.load(std::memory_order_relaxed)) {
       pending[pending_size++] = hit;
       if (pending_size == kPushBatch) {
@@ -181,7 +187,10 @@ void FlushSegment(ScanGlobalState& g, AnnLocalState& l) {
       }
       l.segment_floor->Reset(g.score_static_floor);
     } else if (g.ann.rescore) {
-      RescoreWhileReachable(g, l, pool);
+      absl::c_copy_if(pool, std::back_inserter(l.pending),
+                      [bar = RescoreBar(g.ann)](const irs::ScoreDoc& hit) {
+                        return hit.score >= bar;
+                      });
     } else {
       PushBest(g, pool);
     }
@@ -219,8 +228,11 @@ void PublishHits(ScanGlobalState& g, AnnLocalState& l) {
   if (l.pool_seg != std::numeric_limits<uint32_t>::max()) {
     FlushSegment(g, l);
   }
-  if (g.has_lookup_filter) {
-    g.ann.candidates[l.worker] = std::move(l.rescored);
+  if (!g.has_lookup_filter) {
+    RescoreWhileReachable(g, l, l.pending);
+  } else if (!l.rescored.empty()) {
+    absl::MutexLock lock{&g.ann.best_mutex};
+    absl::c_copy(l.rescored, std::back_inserter(g.ann.rescored));
   }
 }
 
@@ -235,10 +247,9 @@ void Merge(ScanGlobalState& g) {
     PlanFetch(g);
     return;
   }
-  t.hits.clear();
-  for (auto& rescored : a.candidates) {
-    t.hits.insert(t.hits.end(), rescored.begin(), rescored.end());
-    std::vector<irs::ScoreDoc>{}.swap(rescored);
+  {
+    absl::MutexLock lock{&a.best_mutex};
+    t.hits = std::move(a.rescored);
   }
   absl::c_sort(t.hits, BetterScore{});
   t.ranked = t.hits;
@@ -385,9 +396,6 @@ void InitAnnGlobal(ScanGlobalState& g, duckdb::ClientContext& /*context*/) {
       std::numeric_limits<uint32_t>::max()));
   }
   a.floor.emplace(ranked, g.score_static_floor);
-  if (g.has_lookup_filter) {
-    a.candidates.resize(g.workers);
-  }
 }
 
 void InitAnnLocal(ScanGlobalState& g, AnnLocalState& l,

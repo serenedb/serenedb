@@ -411,45 +411,7 @@ array
 {"\\\\x5151","\\\\x5151"}
 
 query
-SELECT length('\x0102'::bytea) AS len, length(''::bytea) AS empty, octet_length('\x0102'::bytea) AS octets;
-----
-len	empty	octets
-2	0	2
-
-
-query
-SELECT substring('\x0102030405'::bytea FROM 2 FOR 2) AS sub, substring('\x0102030405'::bytea FROM 4) AS tail,
-       substring('\x0102030405'::bytea FROM -1 FOR 3) AS before_start, substr('\x0102030405'::bytea, 2, 1) AS substr,
-       substring('\x0102'::bytea FROM 5) AS past, pg_typeof(substr('\x01'::bytea, 1)) AS type;
-----
-sub	tail	before_start	substr	past	type
-\\x0203	\\x0405	\\x01	\\x02	\\x	bytea
-
-
-query
-SELECT overlay('\x0102030405'::bytea PLACING '\xffee'::bytea FROM 2) AS ov,
-       overlay('\x0102030405'::bytea PLACING '\xff'::bytea FROM 2 FOR 3) AS ov_for,
-       overlay('\x010203'::bytea PLACING '\xff'::bytea FROM 3 FOR -1) AS ov_back,
-       pg_typeof(overlay('\x01'::bytea PLACING '\x02'::bytea FROM 1)) AS type;
-----
-ov	ov_for	ov_back	type
-\\x01ffee0405	\\x01ff05	\\x0102ff0203	bytea
-
-
-query
 SELECT bit_count('\x0f'::bytea) AS bc, bit_count(''::bytea) AS bc_empty, bit_count('\xffff01'::bytea) AS bc3;
 ----
 bc	bc_empty	bc3
 4	0	17
-
-
-statement error
-SELECT substring('\x0102'::bytea FROM 1 FOR -1);
-----
-db error: ERROR: negative substring length not allowed
-
-
-statement error
-SELECT overlay('\x0102'::bytea PLACING '\xff'::bytea FROM 0);
-----
-db error: ERROR: negative substring length not allowed

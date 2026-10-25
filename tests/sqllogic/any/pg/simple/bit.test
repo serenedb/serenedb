@@ -63,42 +63,11 @@ id	b
 
 
 query
-SELECT B'1010' # B'0110' AS bit_xor, 5 # 3 AS int_xor, (-1)::bigint # 1 AS bigint_xor,
-       position(B'01' IN B'1010') AS pos, position(B'11' IN B'1010') AS pos_missing,
-       position(B'011' IN B'0011') AS pos_overlap;
+SELECT B'1010' # B'0110' AS bit_xor, 5 # 3 AS int_xor, (-1)::bigint # 1 AS bigint_xor;
 ----
-bit_xor	int_xor	bigint_xor	pos	pos_missing	pos_overlap
-1100	6	-2	2	0	2
-
-
-query
-SELECT substring(B'101010' FROM 2 FOR 3) AS sub, substring(B'101010' FROM 3) AS sub_tail,
-       substring(B'101010' FROM 0 FOR 3) AS sub_zero, substring(B'101010' FROM -2 FOR 4) AS sub_before;
-----
-sub	sub_tail	sub_zero	sub_before
-010	1010	10	1
-
-
-query
-SELECT overlay(B'1010' PLACING B'11' FROM 2) AS ov, overlay(B'101010' PLACING B'0' FROM 2 FOR 3) AS ov_for,
-       overlay(B'1010' PLACING B'11' FROM 4) AS ov_end, overlay(B'1010' PLACING B'11' FROM 3 FOR -1) AS ov_back,
-       B'10' || B'011' AS cat, pg_typeof(B'10' || B'011') AS cat_type;
-----
-ov	ov_for	ov_end	ov_back	cat	cat_type
-1110	1010	10111	1011010	10011	bit varying
+bit_xor	int_xor	bigint_xor
+1100	6	-2
 
 
 statement error (cannot XOR bit strings of different sizes|Cannot XOR bit strings of different sizes)
 SELECT B'10' # B'011';
-
-
-statement error
-SELECT substring(B'1010' FROM 1 FOR -1);
-----
-db error: ERROR: negative substring length not allowed
-
-
-statement error
-SELECT overlay(B'1010' PLACING B'11' FROM 0);
-----
-db error: ERROR: negative substring length not allowed

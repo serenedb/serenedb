@@ -1,5 +1,5 @@
 version: 2
 updates:
   - package-ecosystem: "npm"
-    directory: "/serene-ui"
+    directory: "/apps/serene-ui"
     open-pull-requests-limit: 0

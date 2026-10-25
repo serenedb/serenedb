@@ -1,11 +1,11 @@
 <picture align=left>
-    <source media="(prefers-color-scheme: dark)" srcset="../resources/images/serene-ui-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="../resources/images/serene-ui-light.svg">
-    <img alt="serenedb+sereneui" src="../resources/images/serene-ui-light.svg" />
+    <source media="(prefers-color-scheme: dark)" srcset="../../resources/images/serene-ui-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="../../resources/images/serene-ui-light.svg">
+    <img alt="serenedb+sereneui" src="../../resources/images/serene-ui-light.svg" />
 </picture>
 
 [![Star Us](https://img.shields.io/badge/Star%20Us-9865e8?style=for-the-badge&logo=github&logoColor=white)](https://github.com/serenedb/serenedb)
-[![Apache License 2.0](https://img.shields.io/badge/License-Apache%202.0-a2b9f4?style=for-the-badge)](LICENSE)
+[![Apache License 2.0](https://img.shields.io/badge/License-Apache%202.0-a2b9f4?style=for-the-badge)](../../LICENSE)
 [![Website](https://img.shields.io/website?up_message=VISIT&down_message=FIXING&color=fbe5f5&url=https%3A%2F%2Fwww.serenedb.com&style=for-the-badge)](https://www.serenedb.com)
 
 </div>
@@ -67,7 +67,7 @@ Open `http://localhost:6543` after the container starts.
 
 ```bash
 git clone https://github.com/serenedb/serenedb.git
-cd serenedb/serene-ui
+cd serenedb/apps/serene-ui
 docker compose up -d
 ```
 
@@ -75,7 +75,7 @@ docker compose up -d
 
 ```bash
 git clone https://github.com/serenedb/serenedb.git
-cd serenedb/serene-ui
+cd serenedb/apps/serene-ui
 npm install
 npm run dev
 ```

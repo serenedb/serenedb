@@ -38,6 +38,7 @@
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -1169,14 +1170,14 @@ std::vector<ProcCandidate> VisibleProcs(const Session& session,
 }
 
 std::vector<ProcCandidate> FindProcs(const Session& session,
+                                     const BuiltinFunctions& builtins,
                                      const NameList& names) {
   const auto object = Deconstruct(session, names);
-  const auto builtins = GetBuiltinFunctions(*session.context);
   if (object.schema.empty()) {
-    return VisibleProcs(session, *builtins, object.name);
+    return VisibleProcs(session, builtins, object.name);
   }
   std::vector<ProcCandidate> candidates;
-  CollectProcs(session, *builtins, object.schema, object.name, candidates);
+  CollectProcs(session, builtins, object.schema, object.name, candidates);
   return candidates;
 }
 
@@ -1247,7 +1248,8 @@ std::optional<uint64_t> ProcIn(const Session& session, std::string_view text,
   if (!names) {
     return std::nullopt;
   }
-  const auto candidates = FindProcs(session, *names);
+  const auto builtins = GetBuiltinFunctions(*session.context);
+  const auto candidates = FindProcs(session, *builtins, *names);
   if (candidates.empty()) {
     return Miss(soft_error, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
                                            ERR_MSG("function \"", text,
@@ -1359,7 +1361,10 @@ std::optional<uint64_t> ProcedureIn(const Session& session,
   if (!signature) {
     return std::nullopt;
   }
-  for (const auto& candidate : FindProcs(session, signature->names)) {
+  const auto builtins = GetBuiltinFunctions(*session.context);
+  const auto candidates = FindProcs(session, *builtins, signature->names);
+  SDB_PARK_ONCE_ON_FAILURE("pause_procedure_in_after_find");
+  for (const auto& candidate : candidates) {
     if (absl::c_equal(ArgTypes(candidate.args), signature->args)) {
       return candidate.oid;
     }

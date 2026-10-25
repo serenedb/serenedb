@@ -28,6 +28,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/filters/vector_exact_filter.hpp>
@@ -36,7 +37,6 @@
 #include <iresearch/search/hits/make.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
-#include <iresearch/search/top/make.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <limits>
 #include <map>
@@ -301,18 +301,17 @@ TEST_F(VectorSimilarityQueryTest, KnnScoresAreTheSameInHitsLeadAndTop) {
     }
   }
   {
-    SCOPED_TRACE("top");
-    auto top = query->PlanTop(
-      {.scorer = scorer, .fetcher = _fetcher, .prune = false, .k = _docs});
-    ASSERT_NE(nullptr, top);
-    std::vector<irs::ScoreDoc> hits(_docs);
-    std::atomic<irs::score_t> threshold{
-      std::numeric_limits<irs::score_t>::lowest()};
-    irs::LoserScoreCollector collector{threshold, hits};
-    top->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
-    ASSERT_EQ(_docs, collector.AcceptedCount());
-    for (size_t i = 0; i != collector.AcceptedCount(); ++i) {
-      EXPECT_FLOAT_EQ(lead.at(hits[i].doc), hits[i].score) << hits[i].doc;
+    SCOPED_TRACE("ann");
+    auto ann =
+      query->PlanAnn({.scorer = scorer, .fetcher = _fetcher, .k = _docs});
+    ASSERT_NE(nullptr, ann);
+    irs::ann::SharedFloor floor{_docs};
+    irs::ann::Collector collector{floor, _docs};
+    ann->Run(collector);
+    const auto hits = collector.Flush();
+    ASSERT_EQ(_docs, hits.size());
+    for (const auto& hit : hits) {
+      EXPECT_FLOAT_EQ(lead.at(hit.doc), hit.score) << hit.doc;
     }
   }
 }
@@ -436,15 +435,13 @@ TEST_F(VectorSimilarityQueryTest, ExactRadius) {
       EXPECT_EQ(-x * x, scores[i]);
     }
 
-    std::atomic<irs::score_t> threshold{
-      std::numeric_limits<irs::score_t>::lowest()};
-    std::vector<irs::ScoreDoc> top(_docs);
-    irs::LoserScoreCollector collector{threshold, top};
-    auto ranked = irs::top::MakeRoot(
+    irs::ann::SharedFloor floor{_docs};
+    irs::ann::Collector collector{floor, _docs};
+    auto ranked = irs::ann::MakeRoot(
       *query, {.scorer = scorer, .fetcher = _fetcher, .k = _docs});
     ASSERT_NE(nullptr, ranked);
-    ranked->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
-    EXPECT_EQ(want.size(), collector.AcceptedCount());
+    ranked->Run(collector);
+    EXPECT_EQ(want.size(), collector.Flush().size());
   }
 }
 

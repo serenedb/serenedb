@@ -46,6 +46,8 @@ class SlotsScore {
     requires(const Slots& slots) { slots.Freq(); };
   static constexpr bool kHasScale =
     requires(const Slots& slots) { slots.Scale(); };
+  static constexpr bool kHasSpread =
+    requires(const Slots& slots) { slots.Spread(); };
 
   SlotsScore(const SubReader& segment, const TermReader& field,
              const ScoreArgs& args)
@@ -62,6 +64,15 @@ class SlotsScore {
     if constexpr (kHasScale) {
       _scales[slot] = slots.Scale();
     }
+    if constexpr (kHasSpread) {
+      _spreads[slot] = slots.Spread() * _recipe.args.boost;
+    }
+  }
+
+  const score_t* Spreads() const noexcept
+    requires kHasSpread
+  {
+    return _spreads;
   }
 
   ScoreFunction Prepare() {
@@ -105,6 +116,8 @@ class SlotsScore {
 
   [[no_unique_address]] utils::Need<kHasFreq, uint32_t[kScoreBlock]> _freqs{};
   [[no_unique_address]] utils::Need<kHasScale, score_t[kScoreBlock]> _scales{};
+  [[no_unique_address]] utils::Need<kHasSpread, score_t[kScoreBlock]>
+    _spreads{};
   Provider _provider;
   LeafRecipe _recipe;
 };
@@ -136,6 +149,12 @@ class TwoPhaseBase {
     requires Scored
   {
     return _score.Prepare();
+  }
+
+  const score_t* Spreads() const noexcept
+    requires(Scored && SlotsScore<Slots>::kHasSpread)
+  {
+    return _score.Spreads();
   }
 
   void CollectScorers(std::vector<ScoreFunction>& out)

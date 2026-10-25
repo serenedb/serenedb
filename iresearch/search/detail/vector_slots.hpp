@@ -99,6 +99,7 @@ struct RawRecipe {
   std::span<const float> query;
   uint32_t d = 0;
   VectorMetric metric = VectorMetric::L2Sqr;
+  float rescore_width = 0.f;
 };
 
 class RawVectorReader {
@@ -152,31 +153,50 @@ class RawVectorReader {
     }
   }
 
- private:
-  void PrefetchRow(doc_id_t doc) noexcept {
+  score_t ComputeDistance(doc_id_t doc, const byte_type* row) {
+    SDB_ASSERT(_dist);
+    if (!row) {
+      size_t got = 0;
+      row = ReadSome(doc, 1, got);
+    }
+    return _dist(reinterpret_cast<const byte_type*>(_query.data()), row,
+                 static_cast<uint16_t>(_d));
+  }
+
+  template<int Locality = 3>
+  const byte_type* PrefetchRow(doc_id_t doc) noexcept {
     const auto* child = _column->Child();
     const uint64_t elem = (static_cast<uint64_t>(doc) - doc_limits::min()) * _d;
     const auto w = child->Locate(elem, _win);
     const auto& blocks = child->DataBlocks();
     if (w.block >= blocks.size()) {
-      return;
+      return nullptr;
     }
     const auto& m = blocks[w.block];
     const uint64_t span = static_cast<uint64_t>(_d) * sizeof(float);
     if (m.codec->type != duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
         elem < w.begin || elem + _d > w.end) {
-      return;
+      return nullptr;
     }
     const uint64_t off = m.file_offset + (elem - w.begin) * sizeof(float);
     const auto* q = _read_ctx.TryReadStable(off, span);
     if (!q) {
-      return;
+      return nullptr;
     }
     for (uint64_t o = 0; o < span; o += 64) {
-      __builtin_prefetch(reinterpret_cast<const char*>(q) + o, 0, 3);
+      __builtin_prefetch(reinterpret_cast<const char*>(q) + o, 0, Locality);
+    }
+    return reinterpret_cast<const byte_type*>(q);
+  }
+
+  void PromoteRow(const byte_type* row) const noexcept {
+    const uint64_t span = static_cast<uint64_t>(_d) * sizeof(float);
+    for (uint64_t o = 0; o < span; o += 64) {
+      __builtin_prefetch(reinterpret_cast<const char*>(row) + o, 0, 3);
     }
   }
 
+ private:
   const byte_type* ReadSome(doc_id_t first, size_t count, size_t& got) {
     const auto* child = _column->Child();
     SDB_ASSERT(child);
@@ -274,7 +294,7 @@ class VectorCluster {
     SDB_ASSERT(_quantizer);
     _setting = _quantizer->BlockSetting();
     SDB_ASSERT(_setting.group_size != 0);
-    _cache.resize(_setting.group_size);
+    _cache.resize(2 * size_t{_setting.group_size});
     SDB_ASSERT(_lane < std::max<uint32_t>(1, _setting.group_size));
     _end = _lane + _total;
     _records = static_cast<uint32_t>(_setting.RecordCount(_end));
@@ -286,8 +306,10 @@ class VectorCluster {
 
   void SetThreshold(score_t threshold) noexcept { _threshold = threshold; }
 
+  void EnableErrors() noexcept { _errors = true; }
+
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                score_t* IRS_RESTRICT window) {
+                score_t* IRS_RESTRICT window, score_t* IRS_RESTRICT errors) {
     SDB_ASSERT(min < max);
     for (;;) {
       for (; _pos != _len; ++_pos) {
@@ -302,6 +324,9 @@ class VectorCluster {
         SetBit(mask[offset / detail::kWindowBits],
                offset % detail::kWindowBits);
         window[offset] = _dist[_pos];
+        if (_errors) {
+          errors[offset] = _err[_pos];
+        }
       }
       if (!Refill()) {
         return doc_limits::eof();
@@ -325,23 +350,23 @@ class VectorCluster {
     return {_dist.data(), _len};
   }
 
+  std::span<const score_t> RunErrors() const noexcept {
+    return {_err.data(), _len};
+  }
+
  private:
   bool Refill() {
     for (;;) {
-      uint32_t len = 0;
-      while (len != kRun) {
-        const auto doc = _list.Next();
-        if (doc_limits::eof(doc)) {
-          break;
-        }
-        _docs[len++] = doc;
-      }
+      const auto doc = _base == 0 ? _list.Next() : _list.NextLeaf();
       _pos = 0;
       _len = 0;
-      if (len == 0) {
+      if (doc_limits::eof(doc)) {
         return false;
       }
-      ComputeRange(_base, len, _dist.data());
+      const auto leaf = _list.Leaf();
+      const auto len = static_cast<uint32_t>(leaf.size());
+      absl::c_copy(leaf, _docs.begin());
+      ComputeRange(_base, len, _dist.data(), _err.data());
       _base += len;
       if constexpr (Gate::kAll) {
         _len = len;
@@ -360,6 +385,9 @@ class VectorCluster {
       const auto distance = _dist[i];
       _docs[kept] = _docs[i];
       _dist[kept] = distance;
+      if (_errors) {
+        _err[kept] = _err[i];
+      }
       kept += static_cast<uint32_t>(Gate::Inside(distance, _threshold));
     }
     return kept;
@@ -369,45 +397,59 @@ class VectorCluster {
     return std::min(first + _setting.group_size, _records) - first;
   }
 
-  uint32_t ServeGroup(uint32_t lane, uint32_t len, score_t* out) {
+  void ScoreBlock(std::span<const byte_type> block, uint32_t records,
+                  score_t* out, score_t* err) {
+    _quantizer->ComputeBlock(block, _threshold, out);
+    if (_errors) {
+      _quantizer->BlockErrors(block, {out, records}, err);
+    }
+  }
+
+  uint32_t ServeGroup(uint32_t lane, uint32_t len, score_t* out, score_t* err) {
     if (lane < _cached_first || lane >= _cached_end) {
       const uint32_t gs = _setting.group_size;
       const uint32_t first = lane / gs * gs;
       const uint32_t records = GroupRecords(first);
-      _quantizer->ComputeBlock(_pay.Read(first, records), _threshold,
-                               _cache.data());
+      ScoreBlock(_pay.Read(first, records), records, _cache.data(),
+                 _cache.data() + gs);
       _cached_first = first;
       _cached_end = first + std::min<uint32_t>(records, _end - first);
     }
     const uint32_t take = std::min(len, _cached_end - lane);
-    std::copy_n(_cache.begin() + (lane - _cached_first), take, out);
+    const uint32_t from = lane - _cached_first;
+    std::copy_n(_cache.begin() + from, take, out);
+    if (_errors) {
+      std::copy_n(_cache.begin() + _setting.group_size + from, take, err);
+    }
     return take;
   }
 
-  void ComputeRange(uint32_t base, uint32_t len, score_t* out) {
+  void ComputeRange(uint32_t base, uint32_t len, score_t* out, score_t* err) {
     SDB_ASSERT(base + len <= _total);
     uint32_t lane = _lane + base;
     const uint32_t gs = _setting.group_size;
     if (lane % gs != 0) {
-      const uint32_t take = ServeGroup(lane, len, out);
+      const uint32_t take = ServeGroup(lane, len, out, err);
       lane += take;
       out += take;
+      err += take;
       len -= take;
     }
     if (const uint32_t full = len / gs * gs; full != 0) {
-      _quantizer->ComputeBlock(_pay.Read(lane, full), _threshold, out);
+      ScoreBlock(_pay.Read(lane, full), full, out, err);
       lane += full;
       out += full;
+      err += full;
       len -= full;
     }
     if (len == 0) {
       return;
     }
     if (const uint32_t records = GroupRecords(lane); records == len) {
-      _quantizer->ComputeBlock(_pay.Read(lane, records), _threshold, out);
+      ScoreBlock(_pay.Read(lane, records), records, out, err);
       return;
     }
-    ServeGroup(lane, len, out);
+    ServeGroup(lane, len, out, err);
   }
 
   std::unique_ptr<QuantizerReader> _quantizer;
@@ -415,9 +457,11 @@ class VectorCluster {
   detail::PostingLead<InputType> _list;
   std::array<doc_id_t, kRun> _docs;
   std::array<score_t, kRun> _dist;
+  std::array<score_t, kRun> _err;
   std::vector<score_t> _cache;
   PayloadBlockSetting _setting;
   score_t _threshold = std::numeric_limits<score_t>::lowest();
+  bool _errors = false;
   uint32_t _total;
   uint32_t _lane;
   uint32_t _end = 0;
@@ -453,9 +497,17 @@ class VectorClusters {
 
   score_t Distance() const noexcept { return _window[_doc - _min]; }
 
+  score_t Error() const noexcept { return _errors[_doc - _min]; }
+
   void SetThreshold(score_t threshold) noexcept {
     for (auto& cluster : _clusters) {
       cluster.SetThreshold(threshold);
+    }
+  }
+
+  void EnableErrors() {
+    for (auto& cluster : _clusters) {
+      cluster.EnableErrors();
     }
   }
 
@@ -494,7 +546,7 @@ class VectorClusters {
     for (size_t i = 0; i != _live; ++i) {
       const auto slot = _order[i];
       const auto next = _clusters[slot].Fill(_min, _min + detail::kWindowDocs,
-                                             _mask.data(), _window);
+                                             _mask.data(), _window, _errors);
       if (doc_limits::eof(next)) {
         continue;
       }
@@ -506,6 +558,7 @@ class VectorClusters {
 
   detail::Scratch _mask{};
   ABSL_CACHELINE_ALIGNED score_t _window[detail::kWindowDocs]{};
+  ABSL_CACHELINE_ALIGNED score_t _errors[detail::kWindowDocs]{};
   containers::Fixed<Cluster> _clusters;
   containers::Fixed<uint32_t> _order;
   size_t _live;
@@ -526,6 +579,10 @@ class VectorSlots {
       _raw{raw},
       _edge{edge} {
     _clusters.SetThreshold(edge);
+    if (!Rescore && raw.rescore_width > 0.f) {
+      _clusters.EnableErrors();
+      _width = raw.rescore_width;
+    }
   }
 
   VectorSlots(VectorSlots&&) = delete;
@@ -551,17 +608,24 @@ class VectorSlots {
       }
     } else {
       _distance = distance;
+      if (_width > 0.f) {
+        _spread = _width * _clusters.Error();
+      }
     }
     return true;
   }
 
   score_t Scale() const noexcept { return _distance; }
 
+  score_t Spread() const noexcept { return _spread; }
+
  private:
   VectorClusters<Cluster> _clusters;
   [[no_unique_address]] utils::Need<HasInner, probe::Erased> _inner;
   [[no_unique_address]] utils::Need<Rescore, RawVectorReader> _raw;
   score_t _distance = 0.f;
+  score_t _spread = 0.f;
+  float _width = 0.f;
   score_t _edge;
 };
 

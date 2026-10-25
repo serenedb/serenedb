@@ -41,7 +41,8 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
                    AnnExactCodes codes = {},
                    std::optional<score_t> threshold = {},
                    bool inclusive = false)
-    : QueryBuilderImpl{segment},
+    : QueryBuilderImpl{segment, static_cast<uint32_t>(segment.docs_count()),
+                       QueryKind::Ann},
       _column{&column},
       _columns{&columns},
       _inner{std::move(inner)},
@@ -58,6 +59,8 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
   VectorMetric Metric() const noexcept { return _metric; }
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }
   const AnnExactCodes& Codes() const noexcept { return _codes; }
+
+  ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
   std::optional<score_t> Threshold() const noexcept { return _threshold; }
   bool Inclusive() const noexcept { return _inclusive; }
 

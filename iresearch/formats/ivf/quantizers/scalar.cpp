@@ -479,6 +479,7 @@ class ScalarQuantizerReader final : public QuantizerReader {
     _dc->set_query(_cb->Query().data());
     PrepareFast(_cb->Query(), /*integer=*/true);
     _query = _cb->Query();
+    PrepareErrors();
   }
 
   PayloadBlockSetting BlockSetting() const noexcept final {
@@ -614,6 +615,22 @@ class ScalarQuantizerReader final : public QuantizerReader {
     return true;
   }
 
+  void ScoreErrors(const byte_type* base, uint32_t record_size,
+                   std::span<const uint32_t> ids, std::span<score_t> scores,
+                   score_t* errors) final {
+    Errors(
+      [&](size_t i) {
+        return base + static_cast<size_t>(ids[i]) * record_size;
+      },
+      scores.first(ids.size()), errors);
+  }
+
+  void BlockErrors(std::span<const byte_type> block, std::span<score_t> scores,
+                   score_t* errors) final {
+    const size_t cs = _cb->Sq().code_size;
+    Errors([&](size_t i) { return block.data() + i * cs; }, scores, errors);
+  }
+
   bool SetQuery(std::span<const float> query) final {
     SDB_ASSERT(_dc);
     SDB_ASSERT(query.size() == _cb->Sq().d);
@@ -622,10 +639,82 @@ class ScalarQuantizerReader final : public QuantizerReader {
     _own_query.assign(query.begin(), query.end());
     _query = _own_query;
     _level_bias.clear();
+    PrepareErrors();
     return true;
   }
 
  private:
+  template<typename Row>
+  void Errors(Row row, std::span<score_t> scores, score_t* errors) {
+    using QT = faiss::ScalarQuantizer::QuantizerType;
+    const auto& sq = _cb->Sq();
+    const size_t d = sq.d;
+    const size_t n = scores.size();
+    if (sq.qtype == QT::QT_fp16 || sq.qtype == QT::QT_bf16) {
+      const double unit = sq.qtype == QT::QT_fp16 ? 0x1p-11 : 0x1p-8;
+      _decoded.resize(d);
+      for (size_t i = 0; i < n; ++i) {
+        sq.decode(row(i), _decoded.data(), 1);
+        double var = 0;
+        for (size_t j = 0; j < d; ++j) {
+          const double x = _decoded[j];
+          const double w = M == VectorMetric::L2Sqr ? 2.0 * (_query[j] - x)
+                                                    : double{_query[j]};
+          var += w * w * x * x;
+        }
+        errors[i] = static_cast<score_t>(unit * std::sqrt(var / 3.0));
+      }
+      return;
+    }
+    if constexpr (M == VectorMetric::L2Sqr) {
+      for (size_t i = 0; i < n; ++i) {
+        errors[i] = std::sqrt(std::max(0.f, -scores[i]) * _error_unit);
+      }
+    } else {
+      std::fill_n(errors, n, _error_unit);
+    }
+  }
+
+  void PrepareErrors() {
+    using QT = faiss::ScalarQuantizer::QuantizerType;
+    const auto& sq = _cb->Sq();
+    if (sq.qtype == QT::QT_fp16 || sq.qtype == QT::QT_bf16) {
+      return;
+    }
+    const size_t d = sq.d;
+    const bool uniform =
+      sq.qtype == QT::QT_8bit_uniform || sq.qtype == QT::QT_4bit_uniform;
+    const bool wide =
+      sq.qtype == QT::QT_8bit || sq.qtype == QT::QT_8bit_uniform;
+    const double levels = wide ? 255.0 : 15.0;
+    const float* vdiff = sq.trained.data() + (uniform ? 1 : d);
+    double steps = 0;
+    double weighted = 0;
+    for (size_t j = 0; j < d; ++j) {
+      const double step = vdiff[uniform ? 0 : j] / levels;
+      steps += step * step;
+      weighted += double{_query[j]} * _query[j] * step * step;
+    }
+    if constexpr (M == VectorMetric::L2Sqr) {
+      _error_unit = static_cast<float>(steps / (3.0 * static_cast<double>(d)));
+      return;
+    }
+    double var = weighted / 12.0;
+    if (_fast && _weights.int_ip()) {
+      const double unit = uniform ? vdiff[0] / 255.0 : 1.0;
+      const double t = _weights.int_dot_scale / unit;
+      const double mid = _weights.int_sum_scale / unit;
+      double rounding = 0;
+      for (size_t j = 0; j < d; ++j) {
+        const double src = uniform ? double{_query[j]} : double{_weights.a[j]};
+        const double e = _weights.uq[j] * t + mid - src;
+        rounding += e * e;
+      }
+      var += unit * unit * (255.0 * 255.0 / 3.0) * rounding;
+    }
+    _error_unit = static_cast<float>(std::sqrt(var));
+  }
+
   void PrepareFast(std::span<const float> query, bool integer) {
     const auto qt = _cb->Sq().qtype;
     _fast = (qt == faiss::ScalarQuantizer::QT_8bit ||
@@ -643,6 +732,8 @@ class ScalarQuantizerReader final : public QuantizerReader {
   std::vector<float> _own_query;
   std::span<const float> _query;
   std::vector<float> _level_bias;
+  std::vector<float> _decoded;
+  float _error_unit = 0.f;
   bool _fast = false;
 };
 

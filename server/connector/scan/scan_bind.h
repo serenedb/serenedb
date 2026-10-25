@@ -301,11 +301,6 @@ std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind);
 
 double SegmentBeamShare(double k, size_t segments) noexcept;
 
-double AnnOversample(duckdb::ClientContext& context,
-                     const VectorScorerOptions& vs, bool& chosen_here);
-
-double OversamplePool(double factor, double count) noexcept;
-
 uint32_t ClampCandidates(double pool, double k, uint64_t live) noexcept;
 
 void RefreshVectorKnobs(VectorScorerOptions& vs,

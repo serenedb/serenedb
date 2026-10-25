@@ -445,11 +445,12 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     .child_offsets = std::span<const size_t>{_root.child_offsets},
     .base = 0,
     .size = _root.size};
+  std::vector<LayerBuffers> layers;
   std::vector<CentroidsNode::Candidate> leaves;
   irs::ResolveEnum<VectorMetric>(_head.metric, [&]<VectorMetric Metric>() {
-    CentroidsNode::Search<Metric>(
-      query, in, width, static_cast<bool>(out_centroids), _root.level,
-      std::span{&root_view, 1}, 0, _root.size, leaves);
+    CentroidsNode::Search<Metric>(query, in, width, _root.level,
+                                  std::span{&root_view, 1}, 0, _root.size,
+                                  layers, leaves);
     const auto k = std::min<size_t>(nprobe, leaves.size());
     const auto mid = leaves.begin() + k;
     const auto by_dist_desc = [](const CentroidsNode::Candidate& l,

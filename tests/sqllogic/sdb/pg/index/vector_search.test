@@ -1267,7 +1267,7 @@ SET sdb_ivf_search_nprobe = 256;
 
 
 statement ok
-SET sdb_ann_oversample = 4;
+SET sdb_ann_rescore_width = 100;
 
 
 query
@@ -1280,7 +1280,7 @@ id
 
 
 statement ok
-RESET sdb_ann_oversample;
+RESET sdb_ann_rescore_width;
 
 
 statement ok

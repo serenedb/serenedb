@@ -514,6 +514,46 @@ class RaBitQuantizerReader final : public QuantizerReader {
     }
   }
 
+  void ScoreErrors(const byte_type* base, uint32_t record_size,
+                   std::span<const uint32_t> ids, std::span<score_t> /*scores*/,
+                   score_t* errors) final {
+    SDB_ASSERT(_lay.row_major);
+    const uint32_t aux_off = _lay.RowAuxOffset();
+    Errors(
+      [&](size_t i) {
+        return base + static_cast<size_t>(ids[i]) * record_size + aux_off;
+      },
+      ids.size(), errors);
+  }
+
+  void BlockErrors(std::span<const byte_type> block, std::span<score_t> scores,
+                   score_t* errors) final {
+    if (_lay.row_major) {
+      const uint32_t aux_off = _lay.RowAuxOffset();
+      const size_t stride = _lay.record_size;
+      Errors([&](size_t i) { return block.data() + i * stride + aux_off; },
+             scores.size(), errors);
+      return;
+    }
+    const size_t group = _lay.GroupBytes();
+    const size_t storage = _lay.storage;
+    for (size_t first = 0; first < scores.size(); first += kFastScanBbs) {
+      const byte_type* aux =
+        block.data() + first / kFastScanBbs * group + _lay.AuxOffset();
+      const size_t n = std::min<size_t>(kFastScanBbs, scores.size() - first);
+      if (_lay.ex_bits > 0) {
+        Errors([&](size_t i) { return aux + i * storage; }, n, errors + first);
+      } else {
+        SDB_ASSERT(storage == sizeof(faiss::rabitq_utils::SignBitFactors));
+        Errors(
+          [&](size_t i) {
+            return aux + i * sizeof(faiss::rabitq_utils::SignBitFactors);
+          },
+          n, errors + first);
+      }
+    }
+  }
+
   void ComputeBlock(std::span<const byte_type> block, score_t threshold,
                     score_t* out) final {
     const float mt = MetricThreshold(threshold);
@@ -541,6 +581,41 @@ class RaBitQuantizerReader final : public QuantizerReader {
   }
 
  private:
+  template<typename Aux>
+  void Errors(Aux aux_of, size_t n, score_t* errors) const {
+    constexpr float kSignDot = 0.79788456f;
+    constexpr float kBoundSigmas = 1.9f;
+    constexpr float kMetric = M == VectorMetric::L2Sqr ? 2.f : 1.f;
+    if (_lay.ex_bits > 0) {
+      const float scale =
+        std::ldexp(_qf.g_error / kBoundSigmas, -static_cast<int>(_lay.ex_bits));
+      for (size_t i = 0; i < n; ++i) {
+        const auto* fe =
+          reinterpret_cast<const faiss::rabitq_utils::SignBitFactorsWithError*>(
+            aux_of(i));
+        errors[i] = scale * fe->f_error;
+      }
+      return;
+    }
+    const float unit = kMetric * _qf.g_error /
+                       std::sqrt(std::max(1.f, static_cast<float>(_rd) - 1.f));
+    const float sign = unit * std::sqrt(1.f - kSignDot * kSignDot);
+    for (size_t i = 0; i < n; ++i) {
+      faiss::rabitq_utils::SignBitFactors fac;
+      std::memcpy(&fac, aux_of(i), sizeof(fac));
+      const float dp = fac.dp_multiplier;
+      const float spread = sign * std::abs(dp);
+      if constexpr (M == VectorMetric::L2Sqr) {
+        const float oc2 = fac.or_minus_c_l2sqr;
+        const float dev =
+          oc2 > 0.f ? unit * std::sqrt(std::max(0.f, dp * dp - oc2)) : 0.f;
+        errors[i] = dp > 0.f ? dev : spread;
+      } else {
+        errors[i] = spread;
+      }
+    }
+  }
+
   float MetricThreshold(score_t threshold) const noexcept {
     return M == VectorMetric::L2Sqr ? -threshold : threshold;
   }

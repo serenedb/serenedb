@@ -69,7 +69,7 @@ class KnnVectorQuery : public QueryBuilderImpl<KnnVectorQuery>,
                  std::span<const float> query, VectorMetric metric,
                  score_t boost, QueryBuilder::ptr&& inner = nullptr)
     : QueryBuilderImpl{segment, ClampEstimate(state.estimation, segment),
-                       QueryKind::Other},
+                       QueryKind::Ann},
       VectorQueryBase{std::move(state), query, metric, std::move(inner)},
       _boost{boost} {}
 
@@ -78,6 +78,8 @@ class KnnVectorQuery : public QueryBuilderImpl<KnnVectorQuery>,
   score_t Boost() const noexcept final { return _boost; }
 
   void SetBoost(score_t value) noexcept final { _boost = value; }
+
+  ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
 
  private:
   score_t _boost;
@@ -93,7 +95,7 @@ class RangeVectorQuery : public QueryBuilderImpl<RangeVectorQuery>,
                    float radius, bool inclusive, score_t boost,
                    QueryBuilder::ptr&& inner = nullptr)
     : QueryBuilderImpl{segment, ClampEstimate(state.estimation, segment),
-                       QueryKind::Other},
+                       QueryKind::Ann},
       VectorQueryBase{std::move(state), query, metric, std::move(inner)},
       _radius{radius},
       _boost{boost},
@@ -110,6 +112,8 @@ class RangeVectorQuery : public QueryBuilderImpl<RangeVectorQuery>,
   score_t Boost() const noexcept final { return _boost; }
 
   void SetBoost(score_t value) noexcept final { _boost = value; }
+
+  ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
 
  private:
   float _radius;

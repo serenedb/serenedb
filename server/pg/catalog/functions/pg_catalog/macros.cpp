@@ -281,9 +281,10 @@ constexpr SystemMacro kMacros[] = {
    R"((arr, dim) AS array_length(arr, dim))"},
 
   // PG datetime functions missing from DuckDB
+  {"pg_catalog","clock_timestamp", R"(() AS now())"},
   // timeofday: wall clock as formatted text
   {"pg_catalog","timeofday",
-   R"(() AS strftime(clock_timestamp()::timestamp, '%a %b %d %H:%M:%S %Y UTC'))"},
+   R"(() AS strftime(now()::timestamp, '%a %b %d %H:%M:%S %Y UTC'))"},
 
   // PG math functions missing from DuckDB
 

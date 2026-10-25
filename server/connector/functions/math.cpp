@@ -32,6 +32,7 @@
 #include <duckdb/common/enums/date_part_specifier.hpp>
 #include <duckdb/common/operator/add.hpp>
 #include <duckdb/common/operator/comparison_operators.hpp>
+#include <duckdb/common/random_engine.hpp>
 #include <duckdb/common/types/date.hpp>
 #include <duckdb/common/types/decimal.hpp>
 #include <duckdb/common/types/hugeint.hpp>
@@ -63,7 +64,6 @@
 #include <utility>
 
 #include "connector/functions/duckdb_aliases.h"
-#include "connector/functions/random.h"
 #include "pg/types/float.h"
 
 namespace sdb::connector {
@@ -95,46 +95,59 @@ void DroundFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [](double x) -> double { return std::rint(x); });
 }
 
+struct RandomNormalLocalState : duckdb::FunctionLocalState {
+  explicit RandomNormalLocalState(uint64_t seed) : random_engine{0} {
+    random_engine.SetSeed(seed);
+  }
+
+  double Next(double mean, double stddev) {
+    const double u1 = 1.0 - random_engine.NextRandom();
+    const double u2 = random_engine.NextRandom();
+    return stddev * std::sqrt(-2.0 * std::log(u1)) *
+             std::sin(2.0 * std::numbers::pi * u2) +
+           mean;
+  }
+
+  duckdb::RandomEngine random_engine;
+};
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> RandomNormalInitLocalState(
+  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
+  duckdb::FunctionData*) {
+  auto& random_engine = duckdb::RandomEngine::Get(state.GetContext());
+  duckdb::lock_guard<duckdb::mutex> guard(random_engine.lock);
+  return duckdb::make_uniq<RandomNormalLocalState>(
+    random_engine.NextRandomInteger64());
+}
+
 void RandomNormalFunction(duckdb::DataChunk& args,
                           duckdb::ExpressionState& state,
                           duckdb::Vector& result) {
-  auto& random = duckdb::ExecuteFunctionState::GetFunctionState(state)
-                   ->Cast<RandomState>()
-                   .random;
-  std::optional<duckdb::VectorIterator<double>> means;
-  std::optional<duckdb::VectorIterator<double>> stddevs;
-  if (args.ColumnCount() > 0) {
-    means.emplace(args.data[0]);
-  }
-  if (args.ColumnCount() > 1) {
-    stddevs.emplace(args.data[1]);
-  }
+  auto& lstate = duckdb::ExecuteFunctionState::GetFunctionState(state)
+                   ->Cast<RandomNormalLocalState>();
   const auto count = args.size();
-  auto writer = duckdb::FlatVector::Writer<double>(result, count);
-  for (duckdb::idx_t row = 0; row < count; ++row) {
-    double mean = 0;
-    double stddev = 1;
-    if (means) {
-      const auto entry = (*means)[row];
-      if (!entry.IsValid()) {
-        writer.WriteNull();
-        continue;
+  std::array<duckdb::UnifiedVectorFormat, 2> params;
+  for (duckdb::idx_t p = 0; p < args.ColumnCount(); ++p) {
+    args.data[p].ToUnifiedFormat(params[p]);
+  }
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  auto out = duckdb::FlatVector::Writer<double>(result, count);
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    std::array<double, 2> value{0.0, 1.0};
+    bool valid = true;
+    for (duckdb::idx_t p = 0; p < args.ColumnCount(); ++p) {
+      const auto idx = params[p].sel->get_index(i);
+      if (!params[p].validity.RowIsValid(idx)) {
+        valid = false;
+        break;
       }
-      mean = entry.GetValue();
+      value[p] = duckdb::UnifiedVectorFormat::GetData<double>(params[p])[idx];
     }
-    if (stddevs) {
-      const auto entry = (*stddevs)[row];
-      if (!entry.IsValid()) {
-        writer.WriteNull();
-        continue;
-      }
-      stddev = entry.GetValue();
+    if (valid) {
+      out.WriteValue(lstate.Next(value[0], value[1]));
+    } else {
+      out.WriteNull();
     }
-    const auto u1 = 1.0 - random.NextRandom();
-    const auto u2 = random.NextRandom();
-    writer.WriteValue(stddev * std::sqrt(-2.0 * std::log(u1)) *
-                        std::sin(2.0 * std::numbers::pi * u2) +
-                      mean);
   }
 }
 
@@ -1335,20 +1348,17 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
   }
 
   {
-    duckdb::ScalarFunctionSet set{"random_normal"};
-    for (const auto arity : {0, 1, 2}) {
-      duckdb::ScalarFunction function{
-        set.name,
+    duckdb::ScalarFunctionSet random_normal_set("random_normal");
+    for (duckdb::idx_t arity = 0; arity <= 2; ++arity) {
+      duckdb::ScalarFunction func{
+        "random_normal",
         duckdb::vector<duckdb::LogicalType>(arity, duckdb::LogicalType::DOUBLE),
-        duckdb::LogicalType::DOUBLE,
-        RandomNormalFunction,
-        nullptr,
-        nullptr,
-        InitRandomState};
-      function.SetVolatile();
-      set.AddFunction(std::move(function));
+        duckdb::LogicalType::DOUBLE, RandomNormalFunction};
+      func.SetInitStateCallback(RandomNormalInitLocalState);
+      func.SetVolatile();
+      random_normal_set.AddFunction(func);
     }
-    loader.RegisterFunction(std::move(set));
+    loader.RegisterFunction(random_normal_set);
   }
 
   {
@@ -1375,9 +1385,9 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
     trim_scale.SetBindExpressionCallback(TrimScaleExpression);
     loader.RegisterFunction(trim_scale);
   }
-  for (const auto name : {"div", "numeric_div_trunc"}) {
+  {
     duckdb::ScalarFunction div_trunc{
-      name,
+      "numeric_div_trunc",
       {duckdb::LogicalTypeId::DECIMAL, duckdb::LogicalTypeId::DECIMAL},
       duckdb::LogicalType::DECIMAL(duckdb::Decimal::MAX_WIDTH_DECIMAL, 0),
       DivTruncFunction,

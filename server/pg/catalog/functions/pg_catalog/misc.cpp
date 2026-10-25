@@ -310,16 +310,6 @@ void PgColumnIsUpdatableFunction(duckdb::DataChunk& args,
     });
 }
 
-void ClockTimestampFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                            duckdb::Vector& result) {
-  auto writer =
-    duckdb::FlatVector::Writer<duckdb::timestamp_tz_t>(result, args.size());
-  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
-    writer.WriteValue(
-      duckdb::timestamp_tz_t{duckdb::Timestamp::GetCurrentTimestamp()});
-  }
-}
-
 void StatementTimestampFunction(duckdb::DataChunk& args,
                                 duckdb::ExpressionState& state,
                                 duckdb::Vector& result) {
@@ -1428,10 +1418,6 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     InitSession,
     {duckdb::ScalarFunction{
       {regclass, int2, boolean}, boolean, PgColumnIsUpdatableFunction}});
-  RegisterScalar(
-    loader, pg_catalog, "clock_timestamp", VOLATILE, nullptr,
-    {duckdb::ScalarFunction{
-      {}, duckdb::LogicalType::TIMESTAMP_TZ, ClockTimestampFunction}});
   RegisterScalar(
     loader, pg_catalog, "statement_timestamp", CONSISTENT_WITHIN_QUERY, nullptr,
     {duckdb::ScalarFunction{

@@ -915,7 +915,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "default) uses 2 for sq8 and 1-bit rabitq, 3 for tq and multi-bit "
         "rabitq, 4 for usq8, 5 for sq4, 6 for usq4 and osq at 4 or more bits, "
         "and 0 for fp16 and bf16, which answer from their codes; pq uses 2 on "
-        "an ivf index and 4 on an hnsw index, bq 1 and 3, and osq at 1 or 2 "
+        "an ivf index and 3 on an hnsw index, bq 1 and 3, and osq at 1 or 2 "
         "bits 3 and 2. "
         "Unquantized (quant = \'none\') indexes are never rescored.",
         [] { return duckdb::Value::DOUBLE(-1); },

@@ -1428,6 +1428,43 @@ TEST(pq_quantizer_test, subspace_errors_survive_the_stats_roundtrip) {
   }
 }
 
+TEST(pq_quantizer_test, l2_error_is_twice_the_inner_product_error) {
+  constexpr uint32_t d = 32;
+  constexpr uint32_t pq_m = 4;
+  constexpr size_t n = 512;
+  const auto pts = MakeSpread(d, n, 41);
+  const auto query = MakeSpread(d, 1, 43);
+  const std::vector<float> cen(d, 0.f);
+  for (const bool row_major : {false, true}) {
+    const auto errors_of = [&](VectorMetric metric) {
+      auto writer =
+        MakeQuantizerWriter({.kind = VectorQuantization::PQ, .pq_m = pq_m}, d,
+                            metric, 0, row_major);
+      EXPECT_NE(writer, nullptr);
+      writer->Train(pts.data(), n);
+      writer->SetClusterCentroid(cen.data());
+      const bstring blob = SerializeStats(*writer);
+      auto stats =
+        MakeQuantizerStats(VectorQuantization::PQ, d, blob, metric, row_major);
+      EXPECT_NE(stats, nullptr);
+      auto reader = MakeQuantizerReader(stats->MakeCodebook(query));
+      EXPECT_NE(reader, nullptr);
+      reader->StartCluster(cen.data());
+      std::vector<score_t> scores{-40.f, -30.f, -20.f};
+      std::vector<score_t> errors(scores.size(), -1.f);
+      reader->BlockErrors({}, scores, errors.data());
+      return errors;
+    };
+    const auto l2 = errors_of(VectorMetric::L2Sqr);
+    const auto ip = errors_of(VectorMetric::InnerProduct);
+    for (size_t i = 0; i < l2.size(); ++i) {
+      EXPECT_GT(ip[i], 0.f) << "row_major " << row_major;
+      EXPECT_EQ(l2[i], l2.front()) << "row_major " << row_major;
+      EXPECT_FLOAT_EQ(l2[i], 2.f * ip[i]) << "row_major " << row_major;
+    }
+  }
+}
+
 TEST(rabitq_quantizer_test, block_split_is_transparent_one_bit) {
   constexpr uint32_t d = 8;
   const auto pts = MakeSpread(d, 100, 23);

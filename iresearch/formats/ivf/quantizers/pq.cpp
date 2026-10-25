@@ -90,7 +90,6 @@ std::vector<float> ReadSubspaceErrors(std::span<const byte_type> stats,
 }
 
 struct PqErrorTerms {
-  float per = 0.f;
   float weighted = 0.f;
   bool known = false;
 };
@@ -102,7 +101,6 @@ PqErrorTerms MakePqErrorTerms(std::span<const float> sub_errors,
   }
   const size_t m = sub_errors.size();
   const size_t dsub = query.size() / m;
-  double total = 0.0;
   double weighted = 0.0;
   for (size_t s = 0; s < m; ++s) {
     double norm2 = 0.0;
@@ -110,30 +108,19 @@ PqErrorTerms MakePqErrorTerms(std::span<const float> sub_errors,
       const double v = query[s * dsub + j];
       norm2 += v * v;
     }
-    total += sub_errors[s];
     weighted += norm2 * sub_errors[s] / static_cast<double>(dsub);
   }
-  return {
-    .per = static_cast<float>(4.0 * total / static_cast<double>(query.size())),
-    .weighted = static_cast<float>(std::sqrt(weighted)),
-    .known = true};
+  return {.weighted = static_cast<float>(std::sqrt(weighted)), .known = true};
 }
 
 template<VectorMetric M>
-void PqScoreErrors(const PqErrorTerms& terms, std::span<const score_t> scores,
-                   score_t* errors) {
-  const size_t n = scores.size();
+void PqScoreErrors(const PqErrorTerms& terms, size_t n, score_t* errors) {
   if (!terms.known) {
     std::fill_n(errors, n, std::numeric_limits<score_t>::infinity());
     return;
   }
-  if constexpr (M == VectorMetric::L2Sqr) {
-    for (size_t i = 0; i < n; ++i) {
-      errors[i] = std::sqrt(std::max(0.f, -scores[i]) * terms.per);
-    }
-  } else {
-    std::fill_n(errors, n, terms.weighted);
-  }
+  constexpr float kMetric = M == VectorMetric::L2Sqr ? 2.f : 1.f;
+  std::fill_n(errors, n, kMetric * terms.weighted);
 }
 
 template<VectorMetric M>
@@ -418,27 +405,17 @@ class ProductQuantizerReader final : public QuantizerReader {
   }
 
   void ScoreErrors(const byte_type* /*base*/, uint32_t /*record_size*/,
-                   std::span<const uint32_t> ids, std::span<score_t> scores,
+                   std::span<const uint32_t> ids, std::span<score_t> /*scores*/,
                    score_t* errors) final {
-    Errors(scores.first(ids.size()), errors);
+    PqScoreErrors<M>(_cb->ErrorTerms(), ids.size(), errors);
   }
 
   void BlockErrors(std::span<const byte_type> /*block*/,
                    std::span<score_t> scores, score_t* errors) final {
-    Errors(scores, errors);
+    PqScoreErrors<M>(_cb->ErrorTerms(), scores.size(), errors);
   }
 
  private:
-  void Errors(std::span<const score_t> scores, score_t* errors) const {
-    PqScoreErrors<VectorMetric::InnerProduct>(_cb->ErrorTerms(), scores,
-                                              errors);
-    if constexpr (M == VectorMetric::L2Sqr) {
-      for (size_t i = 0; i < scores.size(); ++i) {
-        errors[i] *= 2.f;
-      }
-    }
-  }
-
   std::shared_ptr<const ProductQuantizerCodebook<M>> _cb;
   size_t _nsq;
   size_t _code_bytes;
@@ -1135,14 +1112,14 @@ class ProductQuantizer8Reader final : public QuantizerReader {
   }
 
   void ScoreErrors(const byte_type* /*base*/, uint32_t /*record_size*/,
-                   std::span<const uint32_t> ids, std::span<score_t> scores,
+                   std::span<const uint32_t> ids, std::span<score_t> /*scores*/,
                    score_t* errors) final {
-    PqScoreErrors<M>(_cur->ErrorTerms(), scores.first(ids.size()), errors);
+    PqScoreErrors<M>(_cur->ErrorTerms(), ids.size(), errors);
   }
 
   void BlockErrors(std::span<const byte_type> /*block*/,
                    std::span<score_t> scores, score_t* errors) final {
-    PqScoreErrors<M>(_cur->ErrorTerms(), scores, errors);
+    PqScoreErrors<M>(_cur->ErrorTerms(), scores.size(), errors);
   }
 
   bool Decode(const byte_type* code, float* out) const final {

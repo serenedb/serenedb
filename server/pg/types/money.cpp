@@ -321,7 +321,6 @@ void RegisterCasts(duckdb::CastFunctionSet& casts) {
                              IntegerToMoney<int32_t>, -1);
   casts.RegisterCastFunction(duckdb::LogicalType::BIGINT, money,
                              IntegerToMoney<int64_t>, -1);
-  RefuseOtherCasts(casts, money);
 }
 
 template<typename T>

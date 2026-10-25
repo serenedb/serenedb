@@ -102,7 +102,4 @@ void ReplaceTextInput(duckdb::CastFunctionSet& casts,
                       const duckdb::LogicalType& type,
                       duckdb::cast_function_t input);
 
-void RefuseOtherCasts(duckdb::CastFunctionSet& casts,
-                      const duckdb::LogicalType& type);
-
 }  // namespace sdb::pg

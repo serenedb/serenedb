@@ -466,10 +466,6 @@ void RegisterRange(duckdb::CastFunctionSet& casts, Functions& functions) {
     ranges::RegisterRangeType<Traits>(casts, functions);
   });
   ranges::RegisterMultiranges(casts, functions);
-  ranges::ForEachRangeKind([&]<typename Traits>(std::type_identity<Traits>) {
-    RefuseOtherCasts(casts, Traits::Type());
-    RefuseOtherCasts(casts, Traits::MultirangeType());
-  });
 }
 
 }  // namespace sdb::pg

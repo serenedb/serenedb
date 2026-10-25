@@ -32,11 +32,8 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 
-#include "pg/catalog/functions/pg_catalog/regproc.h"
-#include "pg/catalog/utils/session.h"
 #include "pg/types/geometric.h"
 #include "pg/types/logical.h"
-#include "pg/types/mapping.h"
 #include "pg/types/range.h"
 
 namespace sdb::pg {
@@ -100,12 +97,6 @@ duckdb::BoundCastInfo TextCast(duckdb::ClientContext& context,
 constexpr std::array kStringAliases = {&NAME, &CHARACTERDATA, &SQLIDENTIFIER,
                                        &YESORNO};
 
-bool IsStringType(const duckdb::LogicalType& type) {
-  return type == duckdb::LogicalType::VARCHAR ||
-         absl::c_any_of(kStringAliases,
-                        [&](auto string) { return string() == type; });
-}
-
 template<typename Cast, typename TextCost>
 void RegisterInputs(duckdb::CastFunctionSet& casts,
                     const duckdb::LogicalType& type, const Cast& cast,
@@ -120,41 +111,6 @@ void RegisterInputs(duckdb::CastFunctionSet& casts,
       casts.RegisterCastFunction(source, type, cast(), -1);
     }
   }
-}
-
-duckdb::BoundCastInfo CannotCast(duckdb::BindCastInput& input,
-                                 const duckdb::LogicalType& source,
-                                 const duckdb::LogicalType& target) {
-  const auto session = MakeSession(input.context.get());
-  const auto name = [&](const duckdb::LogicalType& type) {
-    return FormatTypeOut(session, CatalogTypeOid(type), std::nullopt);
-  };
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANNOT_COERCE),
-                  ERR_MSG("cannot cast type ", AsView(name(source)), " to ",
-                          AsView(name(target))));
-}
-
-duckdb::LogicalType CastKey(duckdb::LogicalTypeId id) {
-  const auto& any = duckdb::LogicalType::ANY;
-  if (id == duckdb::LogicalTypeId::STRUCT) {
-    return duckdb::LogicalType::STRUCT({{"any", any}});
-  }
-  if (id == duckdb::LogicalTypeId::TUPLE) {
-    return duckdb::LogicalType::TUPLE({any});
-  }
-  if (id == duckdb::LogicalTypeId::LIST) {
-    return duckdb::LogicalType::LIST(any);
-  }
-  if (id == duckdb::LogicalTypeId::MAP) {
-    return duckdb::LogicalType::MAP(any, any);
-  }
-  if (id == duckdb::LogicalTypeId::UNION) {
-    return duckdb::LogicalType::UNION({{"any", any}});
-  }
-  if (id == duckdb::LogicalTypeId::ARRAY) {
-    return duckdb::LogicalType::ARRAY(any, duckdb::optional_idx{});
-  }
-  return duckdb::LogicalType{id};
 }
 
 }  // namespace
@@ -298,27 +254,6 @@ void ReplaceTextInput(duckdb::CastFunctionSet& casts,
     [&](const duckdb::LogicalType& source) {
       return casts.ImplicitCastCost(nullptr, source, type);
     });
-}
-
-void RefuseOtherCasts(duckdb::CastFunctionSet& casts,
-                      const duckdb::LogicalType& type) {
-  const auto refuse = [&](const duckdb::LogicalType& other) {
-    if (other == type || IsStringType(other)) {
-      return;
-    }
-    if (!other.IsJSONType() && other != CastKey(type.id())) {
-      casts.RegisterCastFunction(type, other, CannotCast, -1);
-    }
-    casts.RegisterCastFunction(other, type, CannotCast, -1);
-  };
-  for (const auto& other : duckdb::LogicalType::AllTypes()) {
-    refuse(CastKey(other.id()));
-  }
-  for (const auto& mapping : PgTypeMappings()) {
-    if (const auto other = mapping.logical(); other.HasAlias()) {
-      refuse(other);
-    }
-  }
 }
 
 }  // namespace sdb::pg

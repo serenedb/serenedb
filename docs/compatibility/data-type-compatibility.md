@@ -14,6 +14,8 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 
 Values of `money`, `xml`, the geometric types and the range types cast to `json`, where PostgreSQL refuses the cast, and `to_json`, `json_build_object` and `COPY ... (FORMAT JSON)` write them in the form the cast gives: an amount as a number, such as `12.34`, an `xml` value as a string, a geometric value or a range as an object of its fields, such as `{"x":1.0,"y":2.0}` for `point '(1,2)'`, and a multirange as an array of such objects. PostgreSQL's `to_json` writes the text form of a `money`, geometric or range value instead, such as `"$12.34"` or `"(1,2)"`.
 
+These types also cast to and from the types their values are stored in, where PostgreSQL refuses the cast, and functions of those types take them: `money` is a `numeric(19,2)`, `xml` a `text`, and a geometric value or a range a record of its fields. So `1.5::float8::money` is `$1.50`, `'1'::money::float8` is `1`, `abs('1'::money)` is `1`, `1::xml` is `1` and `'[1,5)'::int4range::int8range` is `[1,5)`.
+
 ## Data Types
 
 | Type                         | Support State | Details |

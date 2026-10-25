@@ -881,7 +881,6 @@ void RegisterCasts(duckdb::CastFunctionSet& casts) {
   const auto xml = XML();
   RegisterTextInput(casts, xml, BindTextToXml);
   casts.RegisterCastFunction(xml, duckdb::LogicalType::JSON(), XmlToJson, -1);
-  RefuseOtherCasts(casts, xml);
 }
 
 void RegisterFunctions(Functions& functions) {

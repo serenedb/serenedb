@@ -2703,9 +2703,6 @@ void RegisterCasts(duckdb::CastFunctionSet& casts) {
   RegisterCast<&CircleCenter>(casts);
   RegisterCast<&CircleBox>(casts);
   RegisterCast<&CirclePolygon>(casts);
-  for (const auto& alias : kAliases) {
-    RefuseOtherCasts(casts, MakeType(alias.kind));
-  }
 }
 
 void RegisterPointFunctions(Functions& functions) {

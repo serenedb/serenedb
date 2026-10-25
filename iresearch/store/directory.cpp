@@ -95,7 +95,7 @@ StorageKind StorageKindOf(std::string_view location) {
   if (location.starts_with(duckdb::MemoryFileSystem::PREFIX)) {
     return StorageKind::Memory;
   }
-  if (duckdb::Path::FromString(std::string{location}).IsRemote()) {
+  if (duckdb::Path::FromString(location).IsRemote()) {
     return StorageKind::Remote;
   }
   return StorageKind::Local;

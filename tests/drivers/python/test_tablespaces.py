@@ -1029,10 +1029,12 @@ def test_a_restart_opens_its_indexes_and_search_tables_at_once(
             server.stop()
         fake.latency = 0.5
         fake.log = []
+        fake.lists = []
         again = _Server(datadir)
         try:
             assert again.wait_ready(), again.output()
             log, fake.log = fake.log, None
+            lists, fake.lists = fake.lists, None
             fake.latency = 0
             with again.connect() as conn:
                 for i in range(each):
@@ -1053,6 +1055,12 @@ def test_a_restart_opens_its_indexes_and_search_tables_at_once(
     assert len(opens) == 2 * each, log
     assert max(entry["began"] for entry in opens.values()) < min(
         entry["ended"] for entry in opens.values()), opens
+    swept = [entry for entry in lists
+             if len(parts := entry["prefix"].split("/")) == 4
+             and parts[1] == "engine_v1" and parts[2].isdigit()]
+    assert len(swept) == 1, lists
+    assert swept[0]["began"] < min(entry["began"] for entry in opens.values()), \
+        (swept, opens)
 
 
 def test_a_checkpoint_saves_its_indexes_at_once(tmp_path: Path) -> None:

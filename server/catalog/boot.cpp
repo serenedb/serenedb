@@ -36,6 +36,8 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parallel/task_executor.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/storage/storage_manager.hpp>
@@ -44,6 +46,7 @@
 #include <filesystem>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -135,18 +138,31 @@ void RemoveUnownedDatabases(ClusterCatalog& cluster) {
   }
 }
 
-void RemoveUnownedStorages(ClusterCatalog& cluster,
-                           duckdb::DatabaseManager& manager) {
-  const auto roots = TablespaceRoots(cluster);
+struct DatabaseStorages {
+  duckdb::reference<SereneDBCatalog> catalog;
+  std::vector<std::vector<StorageEntry>> listed;
+};
+
+std::vector<DatabaseStorages> StorageDirectories(
+  duckdb::DatabaseManager& manager, size_t roots) {
+  std::vector<DatabaseStorages> databases;
   for (const auto& db : manager.GetDatabases()) {
     auto& catalog = db->GetCatalog();
-    if (catalog.GetCatalogType() != SereneDBCatalog::kStorageType ||
-        catalog.InMemory()) {
-      continue;
+    if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType &&
+        !catalog.InMemory()) {
+      databases.push_back(
+        {.catalog = catalog.Cast<SereneDBCatalog>(),
+         .listed = std::vector<std::vector<StorageEntry>>(roots)});
     }
-    const auto owned = StorageOids(catalog.Cast<SereneDBCatalog>());
-    for (const auto& root : roots) {
-      RemoveUnowned(ListStoragesOrDie(root->DatabaseDir(db->oid)), owned);
+  }
+  return databases;
+}
+
+void RemoveUnownedStorages(std::span<const DatabaseStorages> databases) {
+  for (const auto& database : databases) {
+    const auto owned = StorageOids(database.catalog.get());
+    for (const auto& entries : database.listed) {
+      RemoveUnowned(entries, owned);
     }
   }
 }
@@ -357,8 +373,24 @@ void InitCatalog(std::string_view directory) {
       cluster.DropDatabase(cluster.GetCatalogTransaction(context), drop);
     });
   }
+  const auto roots = TablespaceRoots(cluster);
+  auto storages = StorageDirectories(manager, roots.size());
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(instance);
+  duckdb::TaskExecutor listings{scheduler, scheduler.AsyncPool()};
+  for (auto& database : storages) {
+    const auto oid = database.catalog.get().GetAttached().oid;
+    for (size_t i = 0; i < roots.size(); ++i) {
+      listings.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+        listings,
+        [&listed = database.listed[i], path = roots[i]->DatabaseDir(oid)] {
+          listed = ListStoragesOrDie(path);
+        },
+        "SweepStorages"));
+    }
+  }
   search::OpenPendingStorages();
-  RemoveUnownedStorages(cluster, manager);
+  listings.WorkOnTasks();
+  RemoveUnownedStorages(storages);
   for (const auto& db : manager.GetDatabases()) {
     if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType) {
       db->GetStorageManager().FinishLoad(context);

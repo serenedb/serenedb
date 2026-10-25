@@ -26,6 +26,7 @@ clears them, PUT /__admin/latency?seconds=S sets the latency, and after
 PUT /__admin/log?enabled=1 each GET of an object is logged with its key, range
 and start and end times, which GET /__admin/log returns and clears. While
 `writes` is a list, each single-request upload is appended to it with its key
+and start and end times, and while `lists` is, each listing with its prefix
 and start and end times.
 """
 
@@ -159,6 +160,7 @@ class FakeS3:
         self.release = threading.Event()
         self.log: list[dict] | None = None
         self.writes: list[dict] | None = None
+        self.lists: list[dict] | None = None
         store = self
 
         class Handler(_Handler):
@@ -390,8 +392,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return
         if not key and "list-type" in query:
             self.fake.count("LIST")
+            began = time.monotonic()
             self._wait()
             self._list(bucket, query)
+            with self.fake.lock:
+                if self.fake.lists is not None:
+                    self.fake.lists.append({"prefix": query.get("prefix", [""])[0],
+                                            "began": began, "ended": time.monotonic()})
             return
         self.fake.count("GET")
         began = time.monotonic()

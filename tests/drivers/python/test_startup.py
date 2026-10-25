@@ -173,6 +173,38 @@ def test_unknown_unix_socket_group(tmp_path: Path) -> None:
         server.stop()
 
 
+def test_cleartext_password_on_a_unix_socket(tmp_path: Path) -> None:
+    sockets = tmp_path / "s"
+    sockets.mkdir()
+    server = _Server(tmp_path / "data", f"postgres://{sockets}?port=5432")
+
+    def connect(**kwargs) -> psycopg.Connection:
+        return psycopg.connect(host=str(sockets), port=5432, dbname="postgres",
+                               **kwargs)
+
+    try:
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                admin = connect(user="postgres", autocommit=True)
+                break
+            except psycopg.OperationalError:
+                assert (server.proc.poll() is None
+                        and time.monotonic() < deadline), server.output()
+                time.sleep(0.2)
+        with admin:
+            admin.execute("CREATE ROLE cleartext_login LOGIN PASSWORD 'secret'")
+            admin.execute("SET hba = 'local all cleartext_login password'")
+        try:
+            with connect(user="cleartext_login", password="secret") as conn:
+                assert conn.execute("SELECT current_user").fetchone() == (
+                    "cleartext_login",)
+        except psycopg.OperationalError as error:
+            pytest.fail(f"{error}\n{server.output()}")
+    finally:
+        server.stop()
+
+
 def _qemu_x86_64() -> str | None:
     if platform.machine() != "x86_64":
         return None

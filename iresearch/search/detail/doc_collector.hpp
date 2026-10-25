@@ -31,6 +31,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/ann/family.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
@@ -70,6 +71,19 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
     auto& query = queries[seg_idx];
     collector.SetSegment(seg_idx++);
     if (!query) {
+      continue;
+    }
+    if (auto ann = ann::MakeRoot(*query, {
+                                           .scorer = scorer,
+                                           .fetcher = fetcher,
+                                           .k = static_cast<uint32_t>(k),
+                                         })) {
+      ann::SharedFloor floor{static_cast<uint32_t>(k)};
+      ann::Collector candidates{floor, static_cast<uint32_t>(k)};
+      ann->Run(candidates);
+      for (const auto& hit : candidates.Flush()) {
+        collector.Add(hit.score, hit.doc);
+      }
       continue;
     }
     auto plan = top::MakeRoot(*query, {

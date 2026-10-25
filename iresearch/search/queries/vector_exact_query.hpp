@@ -41,7 +41,8 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
                    AnnExactCodes codes = {},
                    std::optional<score_t> threshold = {},
                    bool inclusive = false)
-    : QueryBuilderImpl{segment},
+    : QueryBuilderImpl{segment, static_cast<uint32_t>(segment.docs_count()),
+                       QueryKind::Ann},
       _column{&column},
       _columns{&columns},
       _inner{std::move(inner)},

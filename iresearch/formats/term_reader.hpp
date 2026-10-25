@@ -40,7 +40,7 @@ namespace irs {
 struct FieldMeta;
 
 // The streams a posting list lives in. Handed to whatever decodes a term's
-// postings so it can duplicate what it needs; `pos` and `pay` are null for a
+// postings so it can copy the cursors it needs; `pos` and `pay` are null for a
 // field that stores neither.
 struct PostingsHandles {
   const IndexInput* doc = nullptr;
@@ -84,7 +84,7 @@ struct TermReader : public AttributeProvider {
   virtual SeekTermIterator::ptr iterator(
     const FuzzyConjunction& acceptor) const = 0;
 
-  virtual std::unique_ptr<IndexInput> ReopenPayload() const { return nullptr; }
+  virtual IndexInput ReopenPayload() const { return {}; }
 
   // Returns field metadata.
   virtual const FieldMeta& meta() const = 0;

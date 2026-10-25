@@ -87,7 +87,7 @@ class IdxReader final {
 
   std::span<const uint64_t> AnnEnds() const noexcept;
 
-  IndexInput::ptr ReopenIn() const;
+  IndexInput ReopenIn() const;
 
  private:
   struct Impl;

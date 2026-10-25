@@ -41,7 +41,6 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -73,7 +72,7 @@ class PruneLeafBase {
   class NoBoundSource final : public ScoreBoundSource {
    public:
     Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
-    void Read(DataInput& in, size_t size) final { in.Skip(size); }
+    void Read(IndexInput& in, size_t size) final { in.Skip(size); }
     void Set(uint32_t, uint32_t) noexcept final {}
   };
 
@@ -140,7 +139,7 @@ class PruneLeafBase {
       return true;
     }
 
-    _in = OpenDocInput(meta, doc_in);
+    _in = OpenDocInput<InputType>(meta, doc_in);
     auto& in = In();
     *(std::end(_docs) - 1) = doc_limits::invalid();
     _left_in_list = meta.docs_count;
@@ -228,9 +227,7 @@ class PruneLeafBase {
   static constexpr uint32_t kCachedBlocks = BlockIndex::kRun;
   static constexpr uint32_t kCachedRuns = 8;
 
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_in);
-  }
+  IRS_FORCE_INLINE InputType& In() const noexcept { return _in; }
 
   score_t BoundScore(BoundPair bound) {
     _bound_source->Set(bound.freq, bound.norm);
@@ -408,7 +405,7 @@ class PruneLeafBase {
   detail::EncBuf _enc;
   detail::FreqBuf _freqs;
   DocsBuf _docs;
-  IndexInput::ptr _in;
+  mutable InputType _in;
   ColumnArgsFetcher* _fetcher = nullptr;
   ScoreFunction _score;
   detail::LeafProvider _provider;

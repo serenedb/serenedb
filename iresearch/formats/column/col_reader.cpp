@@ -42,10 +42,10 @@
 namespace irs {
 namespace {
 
-IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
-                            bool present, duckdb::MappedFileAccess access) {
+IndexInput OpenColFile(const Directory& dir, std::string_view segment_name,
+                       bool present, duckdb::MappedFileAccess access) {
   if (!present) {
-    return nullptr;
+    return {};
   }
   return dir.Open(FileName(segment_name), access);
 }
@@ -158,14 +158,14 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
                           duckdb::MappedFileAccess::RANDOM)} {}
 
 ColReader::ColReader(duckdb::DatabaseInstance& db,
-                     std::string_view segment_name, IndexInput::ptr in)
+                     std::string_view segment_name, IndexInput in)
   : _db{&db}, _ctx{db, std::move(in)} {
   if (!_ctx.HasIn()) {
     return;
   }
-  auto fin = _ctx.In().Dup();
+  IndexInput fin{_ctx.In()};
   format_utils::ReadFooter(
-    *fin, FileName(segment_name),
+    fin, FileName(segment_name),
     [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
       footer.Set<duckdb::DatabaseInstance&>(db);
       footer.ReadOptionalList(

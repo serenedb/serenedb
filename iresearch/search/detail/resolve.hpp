@@ -23,7 +23,7 @@
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/store/store_utils.hpp"
+#include "iresearch/store/data_input.hpp"
 
 namespace irs::detail {
 
@@ -45,7 +45,7 @@ inline bool FreqOf(const TermReader& field) noexcept {
 
 template<typename F>
 auto ResolveInput(const IndexInput& in, F&& f) {
-  if (in.GetType() == DataInput::Type::BytesViewInput) {
+  if (in.Whole()) {
     return f.template operator()<BytesViewInput>();
   }
   return f.template operator()<IndexInput>();

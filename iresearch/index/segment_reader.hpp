@@ -65,7 +65,7 @@ class SegmentReader final : public SubReader {
 
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;
-  IndexInput::ptr ReopenAnn() const final;
+  IndexInput ReopenAnn() const final;
   const ColReader* GetColReader() const final;
 
   const std::shared_ptr<const SegmentReaderImpl>& GetImpl() const noexcept {

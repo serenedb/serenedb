@@ -159,7 +159,6 @@ add_library(
     ${CMAKE_SOURCE_DIR}/iresearch/index/docs_mask/chunks.cpp
     ${CMAKE_SOURCE_DIR}/iresearch/index/document_mask.cpp
     ${CMAKE_SOURCE_DIR}/iresearch/store/data_input.cpp
-    ${CMAKE_SOURCE_DIR}/iresearch/store/store_utils.cpp
     ${CMAKE_SOURCE_DIR}/iresearch/utils/cpu_features.cpp
     ${CMAKE_SOURCE_DIR}/iresearch/utils/crash_handler.cpp
     ${CMAKE_SOURCE_DIR}/iresearch/utils/file_utils_ext.cpp

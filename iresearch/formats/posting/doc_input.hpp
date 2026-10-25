@@ -30,7 +30,6 @@
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
@@ -54,14 +53,13 @@ void PrefetchDocExtents(const IndexInput& in, Metas&& metas) {
   }
 }
 
-inline IndexInput::ptr OpenDocInput(const PostingMeta& meta,
-                                    const IndexInput& doc_in) {
+template<typename InputType>
+InputType OpenDocInput(const PostingMeta& meta, const IndexInput& doc_in) {
   if (meta.inline_size != 0) {
-    return std::make_unique<BytesViewInput>(meta.Inline());
+    return InputType{meta.Inline()};
   }
-  auto in = doc_in.Dup();
-  SDB_ASSERT(in);
-  in->Seek(meta.doc_start);
+  InputType in{doc_in};
+  in.Seek(meta.doc_start);
   return in;
 }
 

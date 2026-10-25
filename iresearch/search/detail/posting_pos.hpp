@@ -31,7 +31,6 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -69,7 +68,7 @@ class PostingPos {
       _left_in_leaf = 1;
       _max_in_leaf = doc;
     } else {
-      _in = OpenDocInput(meta, doc_in);
+      _in = OpenDocInput<InputType>(meta, doc_in);
       auto& in = In();
       if (const auto extent = DocExtent(meta); extent != 0) {
         _hint.Arm(meta.doc_start, meta.doc_start + extent);
@@ -90,7 +89,7 @@ class PostingPos {
       .term_state = &meta,
       .enc_buf = Enc(),
     };
-    _pos.template Prepare<InputType>(state);
+    _pos.Prepare(state);
   }
 
   doc_id_t Value() const noexcept { return _doc; }
@@ -210,9 +209,7 @@ class PostingPos {
  private:
   IRS_FORCE_INLINE uint32_t* Enc() noexcept { return EncOf<InputType>(_enc); }
 
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_in);
-  }
+  IRS_FORCE_INLINE InputType& In() const noexcept { return _in; }
 
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
@@ -255,7 +252,7 @@ class PostingPos {
   [[no_unique_address]] NeedEnc<InputType> _enc;
   FreqBuf _freqs;
   DocsBuf _docs;
-  IndexInput::ptr _in;
+  mutable InputType _in;
   Position _pos;
   BlockCursor _cursor;
   GrowingHint _hint;

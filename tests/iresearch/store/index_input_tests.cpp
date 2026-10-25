@@ -19,8 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb/storage/block_cache/block_cache.hpp>
-#include <iresearch/store/block_input.hpp>
+#include <iresearch/store/data_input.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <memory>
 #include <vector>
 
 #include "tests_shared.hpp"
@@ -35,9 +36,9 @@ irs::byte_type ExpectedByte(uint64_t offset) {
   return static_cast<irs::byte_type>(offset * 31 + offset / kBlock * 7);
 }
 
-class BlockInputTest : public TestBase {};
+class IndexInputTest : public TestBase {};
 
-TEST_F(BlockInputTest, stable_reads_outlive_evictions) {
+TEST_F(IndexInputTest, stable_reads_outlive_evictions) {
   duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance(),
                            4 * kBlock};
   cache.SetSpill((test_dir() / "spill").string(), 0);
@@ -51,7 +52,7 @@ TEST_F(BlockInputTest, stable_reads_outlive_evictions) {
   cache.SetUnbackedSize(*file, kBlocks * kBlock);
 
   {
-    irs::BlockInput in{cache, file};
+    irs::IndexInput in{std::make_unique<irs::InputFile>(cache, file, nullptr)};
     std::vector<const irs::byte_type*> stable;
     for (uint64_t pass = 0; pass != 2; ++pass) {
       for (uint64_t block = 0; block != kBlocks; ++block) {

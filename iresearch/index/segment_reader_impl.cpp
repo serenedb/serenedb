@@ -133,9 +133,9 @@ const AnnIndex* SegmentReaderImpl::Ann(field_id field) const {
   return _data->idx_reader->Ann(field);
 }
 
-IndexInput::ptr SegmentReaderImpl::ReopenAnn() const {
+IndexInput SegmentReaderImpl::ReopenAnn() const {
   if (!_data || !_data->idx_reader) {
-    return nullptr;
+    return {};
   }
   return _data->idx_reader->ReopenIn();
 }

@@ -78,7 +78,7 @@ class SegmentReaderImpl final : public SubReader {
 
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;
-  IndexInput::ptr ReopenAnn() const final;
+  IndexInput ReopenAnn() const final;
   const ColReader* GetColReader() const final {
     return _data ? _data->col_reader.get() : nullptr;
   }

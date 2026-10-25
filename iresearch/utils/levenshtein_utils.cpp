@@ -388,7 +388,7 @@ void ParametricDescription::Write(DataOutput& out) const {
   out.WriteData(distances.data(), distances.size_bytes());
 }
 
-ParametricDescription ParametricDescription::Read(DataInput& in) {
+ParametricDescription ParametricDescription::Read(IndexInput& in) {
   const uint8_t max_distance = in.ReadByte();
 
   const size_t tcount = in.ReadV64();

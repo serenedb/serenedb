@@ -25,8 +25,8 @@
 
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -59,13 +59,11 @@ IRS_FORCE_INLINE inline void PrefetchStream(const byte_type* at) noexcept {
 }
 
 template<typename InputType>
-IRS_FORCE_INLINE BytesViewInput* View(InputType& in) noexcept {
+IRS_FORCE_INLINE InputType* View(InputType& in) noexcept {
   if constexpr (InputType::kVolatileAlways) {
     return &in;
-  } else if (in.GetType() == DataInput::Type::BytesViewInput) {
-    return static_cast<BytesViewInput*>(&in);
   } else {
-    return nullptr;
+    return in.Whole() ? &in : nullptr;
   }
 }
 

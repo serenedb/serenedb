@@ -163,7 +163,7 @@ class ClusterScorer {
     : _qr{MakeQuantizerReader(codebook)},
       _setting{_qr->BlockSetting()},
       _bytes{tests::Bytes(file)},
-      _in{std::make_unique<BytesViewInput>(_bytes)},
+      _in{_bytes},
       _base{pay_start},
       _lane0{lane0},
       _total{total},
@@ -210,18 +210,18 @@ class ClusterScorer {
   std::span<const byte_type> Read(size_t index, size_t count) {
     const uint64_t offset = _base + index * _setting.record_size;
     const size_t bytes = count * size_t{_setting.record_size};
-    if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
+    if (const byte_type* p = _in.ReadVolatile(offset, bytes)) {
       return {p, bytes};
     }
     _buf.resize(bytes);
-    _in->ReadData(offset, _buf.data(), bytes);
+    _in.ReadData(offset, _buf.data(), bytes);
     return _buf;
   }
 
   std::unique_ptr<QuantizerReader> _qr;
   PayloadBlockSetting _setting;
   bstring _bytes;
-  IndexInput::ptr _in;
+  BytesViewInput _in;
   std::vector<byte_type> _buf;
   uint64_t _base;
   size_t _lane0;

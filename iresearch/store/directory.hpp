@@ -128,9 +128,8 @@ class Directory {
 
   IndexOutput::ptr Create(std::string_view name) const;
   IndexOutput::ptr CreateWhole(std::string_view name) const;
-  IndexInput::ptr Open(std::string_view name,
-                       duckdb::MappedFileAccess access) const;
-  IndexInput::ptr ReadWhole(std::string_view name) const;
+  IndexInput Open(std::string_view name, duckdb::MappedFileAccess access) const;
+  IndexInput ReadWhole(std::string_view name) const;
   bool Has(std::string_view name) const;
   bool Remove(std::string_view name) const;
   void Rename(std::string_view src, std::string_view dst) const;
@@ -180,10 +179,11 @@ class Directory {
   IndexOutput::ptr Create(std::string_view name, bool cached) const;
   bool RemoveFile(std::string_view name) const;
   size_t RemoveFiles(std::span<const std::string> names) const;
-  IndexInput::ptr OpenMapped(const std::string& path,
-                             duckdb::MappedFileAccess access) const;
-  IndexInput::ptr OpenBlocks(const std::string& path, std::string_view name,
-                             duckdb::MappedFileAccess access) const;
+  std::unique_ptr<InputFile> OpenMapped(const std::string& path,
+                                        duckdb::MappedFileAccess access) const;
+  std::unique_ptr<InputFile> OpenBlocks(const std::string& path,
+                                        std::string_view name,
+                                        duckdb::MappedFileAccess access) const;
   duckdb::BlockCache& Cache() const;
   duckdb::MemoryFileSystem& MemoryFiles() const;
 

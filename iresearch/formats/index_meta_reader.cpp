@@ -68,7 +68,7 @@ uint64_t ReadFile(const Directory& dir, std::string_view filename,
 
   uint64_t cnt = 0;
   format_utils::ReadFooter(
-    *in, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
+    in, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
       const auto version =
         meta_in.ReadProperty<uint64_t>(kFieldStorageVersion, "storage_version");
       if (const auto error = duckdb::StorageVersionError(version);

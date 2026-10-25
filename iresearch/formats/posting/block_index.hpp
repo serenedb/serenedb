@@ -31,8 +31,8 @@
 
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -429,13 +429,12 @@ class BlockCursor {
     _pending = false;
     const auto blocks = BlockIndex::Blocks(_docs_count);
     const auto pad = BlockIndex::Pad(_offs + 1);
-    if (in.GetType() == DataInput::Type::BytesViewInput) {
-      const auto& view = static_cast<const BytesViewInput&>(in);
-      const auto* const p = view.At(_offs);
+    if (in.Whole()) {
+      const auto* const p = in.At(_offs);
       const auto flags = p[0];
       const auto extent = 1 + pad + BlockIndex::Bytes(blocks, _shape, flags);
-      if (extent > kPrefetchBytes && !view.Resident(_offs + extent - 1, 1)) {
-        view.Prefetch(_offs, extent);
+      if (extent > kPrefetchBytes && !in.Resident(_offs + extent - 1, 1)) {
+        in.Prefetch(_offs, extent);
       }
       const auto* const data = p + 1 + pad;
       if (reinterpret_cast<uintptr_t>(data) % sizeof(uint32_t) == 0)
@@ -444,14 +443,14 @@ class BlockCursor {
         return;
       }
     }
-    auto dup = in.Dup();
-    dup->Seek(_offs);
-    const auto flags = dup->ReadByte();
-    dup->Skip(pad);
+    IndexInput dup{in};
+    dup.Seek(_offs);
+    const auto flags = dup.ReadByte();
+    dup.Skip(pad);
     const auto bytes = BlockIndex::Bytes(blocks, _shape, flags);
     _owned = std::make_unique_for_overwrite<uint32_t[]>((bytes + 3) / 4);
     auto* const data = reinterpret_cast<byte_type*>(_owned.get());
-    dup->ReadData(data, bytes);
+    dup.ReadData(data, bytes);
     _index.Reset(data, blocks, _shape, flags);
   }
 

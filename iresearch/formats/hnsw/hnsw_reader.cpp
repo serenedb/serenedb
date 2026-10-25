@@ -70,15 +70,15 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
     if (!in) {
       return;
     }
-    in->Seek(_meta.offset);
-    IRS_IGNORE(ReadHeader(*in));
+    in.Seek(_meta.offset);
+    IRS_IGNORE(ReadHeader(in));
     auto data = std::make_shared<HnswData>();
-    data->graph = HnswGraph::Deserialize(*in);
+    data->graph = HnswGraph::Deserialize(in);
     const auto read_floats = [&](std::vector<float>& out, size_t count) {
       out.resize(count);
       if (count != 0) {
-        in->ReadData(reinterpret_cast<byte_type*>(out.data()),
-                     count * sizeof(float));
+        in.ReadData(reinterpret_cast<byte_type*>(out.data()),
+                    count * sizeof(float));
       }
     };
     const auto read_rotation = [&] {
@@ -96,11 +96,11 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
         read_floats(data->norms, static_cast<size_t>(_header.rows));
       }
     } else {
-      const auto stats_size = static_cast<size_t>(in->ReadI64());
+      const auto stats_size = static_cast<size_t>(in.ReadI64());
       bstring stats;
       stats.resize(stats_size);
       if (stats_size != 0) {
-        in->ReadData(stats.data(), stats_size);
+        in.ReadData(stats.data(), stats_size);
       }
       data->stats = MakeQuantizerStats(_header.quant, _header.d, stats,
                                        EffectiveQuantMetric(_header.metric),
@@ -114,7 +114,7 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
       data->codes.resize(static_cast<size_t>(_header.rows) *
                          _header.record_size);
       if (!data->codes.empty()) {
-        in->ReadData(data->codes.data(), data->codes.size());
+        in.ReadData(data->codes.data(), data->codes.size());
       }
       if (_header.rotated) {
         read_rotation();

@@ -106,7 +106,7 @@ inline bool PrepareVectorState(
   }
 
   auto codebook =
-    ReadQuantizerCodebook(ivf, *idx_in, opts.quant, d, opts.metric, query, use);
+    ReadQuantizerCodebook(ivf, idx_in, opts.quant, d, opts.metric, query, use);
   if (!codebook) {
     return false;
   }
@@ -114,7 +114,7 @@ inline bool PrepareVectorState(
 
   std::vector<uint32_t> fine_ids;
   std::vector<float> probed_centroids;
-  ivf.Search(query, *idx_in, nprobe, fine_ids,
+  ivf.Search(query, idx_in, nprobe, fine_ids,
              needs_centroids ? &probed_centroids : nullptr, beam);
   if (fine_ids.empty()) {
     return false;

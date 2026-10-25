@@ -76,9 +76,7 @@ class ColReader final {
   const NormColumnReader* NormColumn(field_id id) const noexcept;
   ReadContext& Ctx() noexcept { return _ctx; }
 
-  IndexInput::ptr ReopenIn() const {
-    return _ctx.HasIn() ? _ctx.In().Dup() : nullptr;
-  }
+  IndexInput ReopenIn() const { return _ctx.In(); }
   void PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
     if (_ctx.HasIn()) {
       _ctx.In().PrefetchExtents(extents);
@@ -88,7 +86,7 @@ class ColReader final {
 
  private:
   ColReader(duckdb::DatabaseInstance& db, std::string_view segment_name,
-            IndexInput::ptr in);
+            IndexInput in);
 
   duckdb::DatabaseInstance* _db;
   ReadContext _ctx;

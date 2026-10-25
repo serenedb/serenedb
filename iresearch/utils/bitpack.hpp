@@ -24,7 +24,7 @@
 
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/bit_packing.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/simd_utils.hpp"
 
@@ -51,19 +51,6 @@ inline constexpr uint32_t kAllEqual = 0U;
 // returns true if one can use run length encoding for the specified numberof
 // bits
 constexpr bool rl(const uint32_t bits) noexcept { return kAllEqual == bits; }
-
-// skip block of the specified size that was previously
-// written with the corresponding 'write_block' function
-IRS_FORCE_INLINE inline void skip_block32(DataInput& in, uint32_t size) {
-  SDB_ASSERT(size);
-
-  const uint32_t bits = in.ReadByte();
-  if (kAllEqual == bits) {
-    in.SkipV32();
-  } else {
-    in.Skip(packed::BytesRequired32(size, bits));
-  }
-}
 
 // writes block of 'size' 32 bit integers to a stream
 //   all values are equal -> RL encoding,
@@ -140,11 +127,9 @@ IRS_FORCE_INLINE uint32_t write_block64(PackFunc&& pack, DataOutput& out,
 // 'write_block32' function
 template<typename UnpackFunc, typename InputType>
 IRS_FORCE_INLINE void read_block32(UnpackFunc&& unpack, InputType& in,
-                                   uint32_t* IRS_RESTRICT encoded,
                                    uint32_t* IRS_RESTRICT decoded,
                                    uint32_t size) {
-  static_assert(std::is_base_of_v<DataInput, InputType>);
-  SDB_ASSERT(encoded);
+  static_assert(std::is_base_of_v<IndexInput, InputType>);
   SDB_ASSERT(decoded);
   SDB_ASSERT(size != 0);
 
@@ -155,17 +140,8 @@ IRS_FORCE_INLINE void read_block32(UnpackFunc&& unpack, InputType& in,
     return;
   }
 
-  const auto required = packed::BytesRequired32(size, bits);
-  const auto* buf = in.ReadVolatile(required);
-
-  if constexpr (std::is_same_v<BytesViewInput, InputType>) {
-    SDB_ASSERT(buf);
-    encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
-  } else if (buf) [[likely]] {
-    encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
-  } else {
-    in.ReadData(reinterpret_cast<byte_type*>(encoded), required);
-  }
+  const auto* encoded = reinterpret_cast<const uint32_t*>(
+    in.ReadVolatile(packed::BytesRequired32(size, bits)));
   unpack(decoded, encoded, bits);
 }
 

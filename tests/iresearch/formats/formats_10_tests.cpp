@@ -109,14 +109,14 @@ class Format10TestCase : public tests::FormatTestCase {
 
       auto in = dir->Open("attributes", duckdb::MappedFileAccess::NORMAL);
       ASSERT_FALSE(!in);
-      const auto tmp = irs::ReadString<std::string>(*in);
+      const auto tmp = irs::ReadString<std::string>(in);
 
       // prepare reader
       irs::PostingsReader reader;
       reader.prepare(state, field.index_features);
 
-      irs::bstring in_data(in->Length() - in->Position(), 0);
-      in->ReadData(&in_data[0], in_data.size());
+      irs::bstring in_data(in.Length() - in.Position(), 0);
+      in.ReadData(&in_data[0], in_data.size());
       const auto* begin = in_data.c_str();
 
       // read term attributes
@@ -342,8 +342,8 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     irs::PostingsReader reader;
     reader.prepare(state, field.index_features);
 
-    irs::bstring in_data(in->Length() - in->Position(), 0);
-    in->ReadData(&in_data[0], in_data.size());
+    irs::bstring in_data(in.Length() - in.Position(), 0);
+    in.ReadData(&in_data[0], in_data.size());
     const auto* begin = in_data.c_str();
 
     // read term0 attributes & postings
@@ -481,8 +481,8 @@ TEST_P(Format10TestCase, postings_read_write) {
     irs::PostingsReader reader;
     reader.prepare(state, field.index_features);
 
-    irs::bstring in_data(in->Length() - in->Position(), 0);
-    in->ReadData(&in_data[0], in_data.size());
+    irs::bstring in_data(in.Length() - in.Position(), 0);
+    in.ReadData(&in_data[0], in_data.size());
     const auto* begin = in_data.c_str();
 
     // cumulative attribute
@@ -988,13 +988,13 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
         auto in = dir->Open("attributes", duckdb::MappedFileAccess::NORMAL);
         ASSERT_FALSE(!in);
-        const auto tmp = irs::ReadString<std::string>(*in);
+        const auto tmp = irs::ReadString<std::string>(in);
 
         irs::PostingsReader reader;
         reader.prepare(state, field.index_features);
 
-        irs::bstring in_data(in->Length() - in->Position(), 0);
-        in->ReadData(&in_data[0], in_data.size());
+        irs::bstring in_data(in.Length() - in.Position(), 0);
+        in.ReadData(&in_data[0], in_data.size());
         const auto* begin = in_data.c_str();
 
         irs::PostingMeta read_meta;

@@ -82,7 +82,7 @@ class ImmutableByteFst : private util::Noncopyable {
                                        sizeof(byte_type) * _weights_size);
   }
 
-  static std::unique_ptr<ImmutableByteFst> Read(DataInput& in,
+  static std::unique_ptr<ImmutableByteFst> Read(IndexInput& in,
                                                 IResourceManager& rm);
 
   template<typename Stats>
@@ -123,7 +123,7 @@ class ImmutableByteFst : private util::Noncopyable {
 };
 
 inline std::unique_ptr<ImmutableByteFst> ImmutableByteFst::Read(
-  DataInput& in, IResourceManager& rm) {
+  IndexInput& in, IResourceManager& rm) {
   [[maybe_unused]] const uint64_t props = in.ReadI64();
   const size_t total_weight_size = in.ReadI64();
   const StateId nstates = in.ReadI32();

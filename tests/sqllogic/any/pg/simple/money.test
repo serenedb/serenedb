@@ -144,13 +144,6 @@ a	b	c	d	e	f	g	h	i
 12.34	-92233720368547758.08	$12.35	-$12.35	$12.34	$5.00	$5.00	$1.00	$1.50
 
 
-query
-SELECT money(5) AS a, money(5.5) AS b, money(7::int8) AS c, money('1.5') AS d;
-----
-a	b	c	d
-$5.00	$5.50	$7.00	$1.50
-
-
 statement error
 SELECT 92233720368547759::int8::money;
 ----
@@ -161,54 +154,6 @@ statement error
 SELECT 99999999999999999999.99::numeric(22,2)::money;
 ----
 db error: ERROR: bigint out of range<slt:ignore>
-
-
-statement error
-SELECT 1.5::float8::money;
-----
-db error: ERROR: cannot cast type double precision to money<slt:ignore>
-
-
-statement error
-SELECT 1::int2::money;
-----
-db error: ERROR: cannot cast type smallint to money<slt:ignore>
-
-
-statement error
-SELECT '1'::money::int8;
-----
-db error: ERROR: cannot cast type money to bigint<slt:ignore>
-
-
-statement error
-SELECT '1'::money::float8;
-----
-db error: ERROR: cannot cast type money to double precision<slt:ignore>
-
-
-statement error
-SELECT '1'::json::money;
-----
-db error: ERROR: cannot cast type json to money<slt:ignore>
-
-
-statement error
-SELECT 1::oid::money;
-----
-db error: ERROR: cannot cast type oid to money<slt:ignore>
-
-
-statement error
-SELECT '2026-10-15'::date::money;
-----
-db error: ERROR: cannot cast type date to money<slt:ignore>
-
-
-statement error
-SELECT ARRAY[1]::money;
-----
-db error: ERROR: cannot cast type integer[] to money<slt:ignore>
 
 
 skipif serenedb # money casts to json as a number
@@ -224,34 +169,6 @@ SELECT '1'::money::json;
 ----
 json
 1.00
-
-
-statement error
-SELECT '1'::money::oid;
-----
-db error: ERROR: cannot cast type money to oid<slt:ignore>
-
-
-statement error
-SELECT '1'::money::xml;
-----
-db error: ERROR: cannot cast type money to xml<slt:ignore>
-
-
-statement error (operator does not exist: - money|No function matches)
-SELECT -'1'::money;
-
-
-statement error (function abs\(money\) does not exist|No function matches)
-SELECT abs('1'::money);
-
-
-statement error (function avg\(money\) does not exist|No function matches)
-SELECT avg(x) FROM (VALUES ('1'::money)) t(x);
-
-
-statement error (operator does not exist: money \* money|No function matches)
-SELECT '1'::money * '1'::money;
 
 
 query

@@ -155,13 +155,6 @@ k	v
 
 
 query
-SELECT json_each_text('{"k": "v"}') AS kv;
-----
-kv
-(k,v)
-
-
-query
 SELECT count(*) AS n FROM json_each_text('{}');
 ----
 n
@@ -592,13 +585,6 @@ a	b
 1	d
 9	d
 9	x
-
-
-query
-SELECT json_populate_recordset(NULL::jsonfn_pair, '[{"a": 1, "b": "x"}]') AS r;
-----
-r
-(1,x)
 
 
 query

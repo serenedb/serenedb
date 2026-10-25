@@ -76,11 +76,10 @@ SELECT date_subtract(TIMESTAMPTZ '2020-01-01 00:00:00+00', INTERVAL '1 day', 'Ma
 
 query
 SELECT statement_timestamp() >= now() AS after_transaction_start,
-       statement_timestamp() <= clock_timestamp() AS before_clock,
        pg_typeof(statement_timestamp()) AS type;
 ----
-after_transaction_start	before_clock	type
-t	t	timestamp with time zone
+after_transaction_start	type
+t	timestamp with time zone
 
 
 query

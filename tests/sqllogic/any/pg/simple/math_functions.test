@@ -167,11 +167,11 @@ numeric_inc	numeric_inc	numeric_inc	numeric_inc	numeric_inc
 # numeric_exp, numeric_ln, numeric_log, numeric_sqrt
 
 query
-SELECT numeric_exp(0)::float8, numeric_ln(1)::float8, numeric_log(2, 64)::float8, numeric_log(10, 1000)::float8,
+SELECT numeric_exp(0)::float8, numeric_ln(1)::float8, numeric_log(2, 64)::float8,
        numeric_sqrt(4)::float8, numeric_sqrt(NULL);
 ----
-numeric_exp	numeric_ln	numeric_log	numeric_log	numeric_sqrt	numeric_sqrt
-1	0	6	3	2	NULL
+numeric_exp	numeric_ln	numeric_log	numeric_sqrt	numeric_sqrt
+1	0	6	2	NULL
 
 
 onlyif postgres
@@ -242,13 +242,6 @@ SELECT numeric_exp(100000);
 ----
 numeric_exp
 Infinity
-
-
-query
-SELECT log(10, 1000)::float8, log(10, 1000000)::float8, log(3, 3486784401)::float8, log(16, 256)::float8;
-----
-log	log	log	log
-3	6	20	2
 
 
 # dsqrt

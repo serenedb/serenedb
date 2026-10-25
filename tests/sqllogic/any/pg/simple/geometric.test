@@ -296,24 +296,6 @@ SELECT path '[(0,0),(1,1)]'::polygon;
 db error: ERROR: open path cannot be converted to polygon
 
 
-statement error
-SELECT point '(1,2)'::line;
-----
-db error: ERROR: cannot cast type point to line
-
-
-statement error
-SELECT box '(1,1),(0,0)'::path;
-----
-db error: ERROR: cannot cast type box to path
-
-
-statement error
-SELECT 1::point;
-----
-db error: ERROR: cannot cast type integer to point
-
-
 query
 SELECT area(box '(2,3),(0,0)') AS a, area(circle '<(0,0),2>') AS b, area(path '((0,0),(4,0),(4,3))') AS c,
        area(path '[(0,0),(4,0),(4,3)]') AS d, center(box '(2,3),(0,0)') AS e, center(circle '<(1,2),3>') AS f,

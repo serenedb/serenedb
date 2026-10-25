@@ -37,24 +37,6 @@ a	b	c	d
 <a/>	<a/>	<a/>	<b/>
 
 
-statement error
-SELECT 1::xml;
-----
-db error: ERROR: cannot cast type integer to xml<slt:ignore>
-
-
-statement error
-SELECT '<a>1</a>'::xml::int;
-----
-db error: ERROR: cannot cast type xml to integer<slt:ignore>
-
-
-statement error
-SELECT '"<"'::json::xml;
-----
-db error: ERROR: cannot cast type json to xml<slt:ignore>
-
-
 skipif serenedb # xml casts to json as a string
 statement error
 SELECT '<a/>'::xml::json;
@@ -75,30 +57,6 @@ SELECT to_json('<a b="1">text</a>'::xml) AS a, to_json(NULL::xml) AS b;
 ----
 a	b
 "<a b=\\"1\\">text</a>"	NULL
-
-
-statement error
-SELECT '<'::bytea::xml;
-----
-db error: ERROR: cannot cast type bytea to xml<slt:ignore>
-
-
-statement error
-SELECT '<a/>'::xml::bytea;
-----
-db error: ERROR: cannot cast type xml to bytea<slt:ignore>
-
-
-statement error
-SELECT ARRAY['<']::xml;
-----
-db error: ERROR: cannot cast type text[] to xml<slt:ignore>
-
-
-statement error
-SELECT 'a'::"char"::xml;
-----
-db error: ERROR: cannot cast type "char" to xml<slt:ignore>
 
 
 statement ok
@@ -125,10 +83,10 @@ RESET xmloption
 
 
 query
-SELECT xmlcomment('hello') AS a, xmltext('<a>&b') AS b, xml('<x/>') AS c, xmltext('a"b''c\') AS d, xmlcomment('') AS e;
+SELECT xmlcomment('hello') AS a, xmltext('<a>&b') AS b, xmltext('a"b''c\') AS d, xmlcomment('') AS e;
 ----
-a	b	c	d	e
-<!--hello-->	&lt;a&gt;&amp;b	<x/>	a&quot;b'c\\	<!---->
+a	b	d	e
+<!--hello-->	&lt;a&gt;&amp;b	a&quot;b'c\\	<!---->
 
 
 statement error

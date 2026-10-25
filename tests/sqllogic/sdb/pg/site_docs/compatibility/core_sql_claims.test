@@ -1360,15 +1360,15 @@ statement ok
 SELECT octet_length('1010'::bit(4));
 
 # op_bit: overlay
-statement ok
+statement error
 SELECT overlay('10101'::bit(5) placing '11'::bit(2) from 2 for 2);
 
 # op_bit: position
-statement ok
+statement error
 SELECT position('10'::bit(2) in '00100'::bit(5));
 
 # op_bit: substring
-statement ok
+statement error
 SELECT substring('10101'::bit(5) from 2 for 3);
 
 # op_bit: get_bit

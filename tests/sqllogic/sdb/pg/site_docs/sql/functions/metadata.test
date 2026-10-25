@@ -66,7 +66,7 @@ SELECT * FROM sdb_views;
 query
 SELECT column_name, data_type
 FROM sdb_columns()
-WHERE table_name = 'metadata_demo'
+WHERE database_name = current_database() AND table_name = 'metadata_demo'
 ORDER BY column_index;
 ----
 column_name	data_type
@@ -81,7 +81,7 @@ score	DOUBLE
 query
 SELECT table_name, constraint_type
 FROM sdb_constraints()
-WHERE table_name = 'metadata_demo'
+WHERE database_name = current_database() AND table_name = 'metadata_demo'
   AND constraint_type = 'CHECK';
 ----
 table_name	constraint_type
@@ -155,7 +155,7 @@ upper
 query
 SELECT index_name, table_name
 FROM sdb_indexes()
-WHERE index_name = 'demo_idx';
+WHERE database_name = current_database() AND index_name = 'demo_idx';
 ----
 index_name	table_name
 demo_idx	metadata_demo

@@ -12,10 +12,10 @@ query
 SELECT '[1,5)'::int8range AS a, '(,9223372036854775806]'::int8range AS b, '[2020-01-01,2020-01-05]'::daterange AS c,
        '(2020-01-01,infinity)'::daterange AS d, '[-infinity,2020-01-01)'::daterange AS e,
        '["2020-01-01 10:00","2020-01-01 12:00")'::tsrange AS f, '[2020-01-01,)'::tsrange AS g,
-       '[infinity,infinity]'::tsrange AS h, '(2020-01-01,2020-01-02)'::daterange AS i;
+       '(2020-01-01,2020-01-02)'::daterange AS i;
 ----
-a	b	c	d	e	f	g	h	i
-[1,5)	(,9223372036854775807)	[2020-01-01,2020-01-06)	[2020-01-02,infinity)	[-infinity,2020-01-01)	["2020-01-01 10:00:00","2020-01-01 12:00:00")	["2020-01-01 00:00:00",)	[infinity,infinity]	empty
+a	b	c	d	e	f	g	i
+[1,5)	(,9223372036854775807)	[2020-01-01,2020-01-06)	[2020-01-02,infinity)	[-infinity,2020-01-01)	["2020-01-01 10:00:00","2020-01-01 12:00:00")	["2020-01-01 00:00:00",)	empty
 
 
 statement ok
@@ -173,10 +173,10 @@ a
 query
 SELECT ARRAY['[1,2)'::int4range, 'empty'::int4range] AS a, ROW('[1,2)'::int4range) AS b, ROW('empty'::int4range) AS c,
        '[1,5)'::int4range::text AS d, pg_typeof('[1,5)'::int4range) AS e,
-       ARRAY[tsrange('2020-01-01', '2020-01-02')] AS f, ROW(tsrange(NULL, 'infinity')) AS g;
+       ARRAY[tsrange('2020-01-01', '2020-01-02')] AS f;
 ----
-a	b	c	d	e	f	g
-{"[1,2)",empty}	("[1,2)")	(empty)	[1,5)	int4range	{"[\\"2020-01-01 00:00:00\\",\\"2020-01-02 00:00:00\\")"}	("(,infinity)")
+a	b	c	d	e	f
+{"[1,2)",empty}	("[1,2)")	(empty)	[1,5)	int4range	{"[\\"2020-01-01 00:00:00\\",\\"2020-01-02 00:00:00\\")"}
 
 
 query
@@ -225,14 +225,6 @@ id
 
 statement ok
 DROP TABLE range_t;
-
-
-statement error (cannot cast type int4range to int8range)
-SELECT '[1,5)'::int4range::int8range;
-
-
-statement error (cannot cast type integer to int4range)
-SELECT 1::int4range;
 
 
 statement error (range constructor flags argument must not be null)

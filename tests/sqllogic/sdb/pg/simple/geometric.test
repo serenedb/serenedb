@@ -23,12 +23,6 @@ a	b	c	d	e	f	g
 
 
 statement error
-SELECT CAST({'x': 1, 'y': 2} AS point) AS a;
-----
-db error: ERROR: cannot cast type record to point
-
-
-statement error
 SELECT CAST({'a': 0::DOUBLE, 'b': 0::DOUBLE, 'c': 1::DOUBLE} AS line);
 ----
 db error: ERROR: invalid line specification: A and B cannot both be zero

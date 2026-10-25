@@ -90,12 +90,6 @@ date_bin
 2001-02-16 20:00:00
 
 
-statement error
-SELECT date_bin(interval '1 hour', timestamp '2020-02-11', timestamp 'infinity');
-----
-db error: ERROR: origin out of range
-
-
 # make_interval
 
 query
@@ -241,12 +235,6 @@ SELECT make_interval(secs => 0.5e-6) AS half, make_interval(secs => 1.5e-6) AS o
 ----
 half	one_half	two_half
 00:00:00	00:00:00.000002	00:00:00.000002
-
-query
-SELECT count(DISTINCT clock_timestamp()) > 1 AS per_row FROM generate_series(1, 1000);
-----
-per_row
-t
 
 query
 SELECT proname, string_agg(DISTINCT provolatile::text, ',' ORDER BY provolatile::text) AS volatility

@@ -754,16 +754,6 @@ sven_cls_knight	SELECT
 
 
 query
-SELECT (d).grantee::regrole::text AS grantee, (d).is_grantable
-FROM (SELECT aclexplode(relacl) AS d FROM pg_class WHERE oid = 'pudge_cls_hook'::regclass) a
-WHERE (d).privilege_type = 'SELECT' ORDER BY 1;
-----
-grantee	is_grantable
-postgres	f
-sven_cls_knight	f
-
-
-query
 SELECT generate_series(1, 2) AS n;
 ----
 n

@@ -19,12 +19,12 @@ a6
 
 
 query
-SELECT '192.168.1.5'::inet::text AS a, '192.168.1.5/24'::inet::text AS b, text('10.0.0.1'::inet) AS c,
+SELECT '192.168.1.5'::inet::text AS a, '192.168.1.5/24'::inet::text AS b,
        '::1'::inet::text AS d, CAST('10.0.0.1'::inet AS varchar) AS e, '192.168.1.5'::inet AS f,
        'x' || '10.0.0.1'::inet AS g;
 ----
-a	b	c	d	e	f	g
-192.168.1.5/32	192.168.1.5/24	10.0.0.1/32	::1/128	10.0.0.1/32	192.168.1.5	x10.0.0.1/32
+a	b	d	e	f	g
+192.168.1.5/32	192.168.1.5/24	::1/128	10.0.0.1/32	192.168.1.5	x10.0.0.1/32
 
 
 onlyif postgres

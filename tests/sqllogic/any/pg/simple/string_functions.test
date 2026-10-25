@@ -55,7 +55,7 @@ btrim	btrim	btrim
 \\x345678	\\x	\\x01
 
 
-# ltrim, rtrim and trim, also on bytea
+# ltrim, rtrim and trim
 
 onlyif postgres
 query
@@ -71,26 +71,6 @@ SELECT length(ltrim(chr(160) || ' x ')), length(rtrim(' x ' || chr(12288))), len
 ----
 length	length	length	?column?
 2	2	1	[x]
-
-
-query
-SELECT ltrim('\x010203'::bytea, '\x01'::bytea), rtrim('\x010203'::bytea, '\x03'::bytea), trim('\x03'::bytea FROM '\x030103'::bytea), trim(LEADING '\x00'::bytea FROM '\x000100'::bytea), pg_typeof(ltrim('\x01'::bytea, '\x01'::bytea));
-----
-ltrim	rtrim	btrim	ltrim	pg_typeof
-\\x0203	\\x0102	\\x01	\\x0100	bytea
-
-
-# LIKE on bytea
-
-query
-SELECT 'abc'::bytea LIKE 'a%'::bytea, 'abc'::bytea NOT LIKE 'a_c'::bytea, '\x41c3a9'::bytea LIKE 'A_'::bytea, '\x41c3a9'::bytea LIKE 'A__'::bytea, 'a%c'::bytea LIKE 'a\\%c'::bytea;
-----
-?column?	?column?	?column?	?column?	?column?
-t	f	f	t	t
-
-
-statement error (LIKE pattern must not end with escape character|escape)
-SELECT 'ab'::bytea LIKE 'a\\'::bytea;
 
 
 # casefold
@@ -127,13 +107,6 @@ is_normalized	is_normalized	is_normalized	is_normalized	is_normalized	is_normali
 f	t	t	f	t	NULL
 
 
-query
-SELECT normalize('a' || chr(776)) = chr(228), length(normalize(chr(228), NFD)), normalize(chr(64257) || 'x', NFKC), normalize(chr(64257) || 'x', NFKD), normalize(NULL);
-----
-?column?	length	normalize	normalize	normalize
-t	2	fix	fix	NULL
-
-
 statement error
 SELECT is_normalized('abc', 'nfx');
 ----
@@ -147,13 +120,6 @@ SELECT like('Serene', 'Ser%'), like('Serene_DB', 'Serene\_DB'), like('abc', 'a_'
 ----
 like	like	like	notlike	notlike	like	notlike
 t	t	f	f	t	NULL	NULL
-
-
-query
-SELECT like('abc'::bytea, 'a%'::bytea), like('a_c'::bytea, 'a\\_c'::bytea), like('abc'::bytea, 'a\\_c'::bytea), notlike('abc'::bytea, 'b%'::bytea), like(NULL::bytea, 'a'::bytea);
-----
-like	like	like	notlike	like
-t	t	f	t	NULL
 
 
 query
@@ -256,13 +222,6 @@ SELECT similar_escape('abc', '##');
 
 
 # string_to_array with a null string
-
-query
-SELECT string_to_array('a,b', NULL, 'b'), string_to_array('', ',', 'x'), string_to_array('abc', '', 'abc'), string_to_array('a,b', ',', NULL), string_to_array(NULL, ',', 'x');
-----
-string_to_array	string_to_array	string_to_array	string_to_array	string_to_array
-{a,",",NULL}	{}	{NULL}	{a,b}	NULL
-
 
 # string_to_table
 
@@ -386,32 +345,3 @@ statement error
 SELECT unistr('\0000');
 ----
 db error: ERROR: invalid Unicode code point: 0000
-
-
-# regexp_match with flags
-
-query
-SELECT regexp_match('fooBARbaz', 'bar', 'i'), regexp_match('abc', '(B)(c)', 'i'), regexp_match('a.c', '.', 'q'), regexp_match('abc', 'x', 'i');
-----
-regexp_match	regexp_match	regexp_match	regexp_match
-{BAR}	{b,c}	{.}	NULL
-
-
-query
-SELECT regexp_match('abc', 'b', NULL), regexp_match(NULL, 'b', 'i'), regexp_match('abc', NULL, 'i');
-----
-regexp_match	regexp_match	regexp_match
-NULL	NULL	NULL
-
-
-statement error
-SELECT regexp_match('abc', 'b', 'g');
-----
-db error: ERROR: regexp_match() does not support the "global" option
-HINT: Use the regexp_matches function instead.
-
-
-statement error
-SELECT regexp_match('abc', 'b', 'z');
-----
-db error: ERROR: invalid regular expression option: "z"

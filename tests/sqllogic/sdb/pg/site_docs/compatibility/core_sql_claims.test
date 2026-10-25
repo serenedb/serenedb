@@ -1244,7 +1244,7 @@ statement ok
 SELECT trim('\x03'::bytea from '\x010203'::bytea);
 
 # op_bytea: bit_count
-statement ok
+statement error
 SELECT bit_count('\x0102'::bytea);
 
 # op_bytea: crc32

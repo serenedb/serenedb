@@ -24,7 +24,6 @@
 #include <absl/strings/escaping.h>
 
 #include <algorithm>
-#include <bit>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -144,19 +143,6 @@ duckdb::BoundCastInfo BindByteaToText(duckdb::BindCastInput& input,
                                duckdb::make_uniq<ByteaOutCastData>(use_escape));
 }
 
-void BitCountFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                      duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
-    args.data[0], result, args.size(), [](duckdb::string_t bytes) {
-      int64_t count = 0;
-      for (const auto byte :
-           std::string_view{bytes.GetData(), bytes.GetSize()}) {
-        count += std::popcount(static_cast<uint8_t>(byte));
-      }
-      return count;
-    });
-}
-
 void RegisterCasts(duckdb::CastFunctionSet& casts) {
   casts.RegisterCastFunction(
     duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB,
@@ -164,13 +150,6 @@ void RegisterCasts(duckdb::CastFunctionSet& casts) {
   casts.RegisterCastFunction(duckdb::LogicalType::BLOB,
                              duckdb::LogicalType::VARCHAR, BindByteaToText,
                              100);
-}
-
-void RegisterFunctions(Functions& functions) {
-  Add(functions, "bit_count",
-      {{duckdb::LogicalType::BLOB},
-       duckdb::LogicalType::BIGINT,
-       BitCountFunction});
 }
 
 }  // namespace
@@ -217,9 +196,6 @@ void ByteaOutEscape(char* buf, std::string_view value) {
   }
 }
 
-void RegisterBytea(duckdb::CastFunctionSet& casts, Functions& functions) {
-  RegisterCasts(casts);
-  RegisterFunctions(functions);
-}
+void RegisterBytea(duckdb::CastFunctionSet& casts) { RegisterCasts(casts); }
 
 }  // namespace sdb::pg

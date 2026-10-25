@@ -305,7 +305,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | rtrim          | Yes           |                           |
 | substring      | Yes           |                           |
 | trim           | Yes           |                           |
-| bit_count      | Yes           |                           |
+| bit_count      | No            |                           |
 | crc32          | Yes           |                           |
 | crc32c         | Yes           |                           |
 | get_bit        | Yes           |                           |

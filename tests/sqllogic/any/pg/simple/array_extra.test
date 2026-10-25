@@ -151,8 +151,7 @@ u1	u2	l2	u_missing	l_missing	u_zero	u_empty	u_null
 
 query
 SELECT array_length(ARRAY[[1, 2, 3], [4, 5, 6]], 2) AS len2, array_length(ARRAY[1, 2, 3], 2) AS len_missing,
-       array_length(ARRAY[[1, 2, 3], [4, 5, 6]], 0) AS len0, cardinality(ARRAY[[1, 2, 3], [4, 5, 6]]) AS card,
-       cardinality('{}'::int[]) AS card_empty;
+       array_length(ARRAY[[1, 2, 3], [4, 5, 6]], 0) AS len0, cardinality('{}'::int[]) AS card_empty;
 ----
-len2	len_missing	len0	card	card_empty
-3	NULL	NULL	6	0
+len2	len_missing	len0	card_empty
+3	NULL	NULL	0

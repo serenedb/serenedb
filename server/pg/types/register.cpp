@@ -44,7 +44,7 @@ void RegisterTypes(duckdb::DatabaseInstance& db) {
   Functions functions;
   RegisterRegTypes(casts);
   RegisterPgLsn(casts, functions);
-  RegisterBytea(casts, functions);
+  RegisterBytea(casts);
   RegisterOid(casts);
   RegisterVectors(casts);
   RegisterTid(casts);

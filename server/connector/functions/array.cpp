@@ -164,58 +164,6 @@ void CheckPolymorphicType(const duckdb::LogicalType& type) {
   }
 }
 
-duckdb::unique_ptr<duckdb::FunctionData> CardinalityBind(
-  duckdb::BindScalarFunctionInput& input) {
-  const auto type = input.GetArguments()[0]->GetReturnType();
-  CheckPolymorphicType(type);
-  input.GetBoundFunction().GetArguments()[0] = type;
-  return duckdb::make_uniq<SimpleIntBindData>(CountListDepth(type));
-}
-
-void CardinalityFunction(duckdb::DataChunk& args,
-                         duckdb::ExpressionState& state,
-                         duckdb::Vector& result) {
-  const auto ndims = state.expr.Cast<duckdb::BoundFunctionExpression>()
-                       .BindInfo()
-                       ->Cast<SimpleIntBindData>()
-                       .ndims;
-  const auto count = args.size();
-  std::vector<duckdb::UnifiedVectorFormat> levels(ndims);
-  const auto* vector = &args.data[0];
-  auto size = count;
-  for (auto& level : levels) {
-    vector->ToUnifiedFormat(size, level);
-    size = duckdb::ListVector::GetListSize(*vector);
-    vector = &duckdb::ListVector::GetEntry(*vector);
-  }
-  const auto elements = [&](this const auto& self, size_t depth,
-                            duckdb::idx_t row) -> int64_t {
-    const auto& level = levels[depth];
-    const auto index = level.sel->get_index(row);
-    if (!level.validity.RowIsValid(index)) {
-      return 0;
-    }
-    const auto& entry = level.GetData<duckdb::list_entry_t>()[index];
-    if (depth + 1 == levels.size()) {
-      return static_cast<int64_t>(entry.length);
-    }
-    int64_t total = 0;
-    for (auto child = entry.offset; child < entry.offset + entry.length;
-         ++child) {
-      total += self(depth + 1, child);
-    }
-    return total;
-  };
-  auto writer = duckdb::FlatVector::Writer<int32_t>(result, count);
-  for (duckdb::idx_t row = 0; row < count; ++row) {
-    if (!levels[0].validity.RowIsValid(levels[0].sel->get_index(row))) {
-      writer.WriteNull();
-      continue;
-    }
-    writer.WriteValue(static_cast<int32_t>(elements(0, row)));
-  }
-}
-
 constexpr int64_t kMaxArraySize = 134217727;
 
 size_t BoundDimensionCount(duckdb::BindScalarFunctionInput& input) {
@@ -500,13 +448,6 @@ void RegisterPgArrayFunctions(duckdb::DatabaseInstance& db) {
     ArrayDimsBind,
   };
   loader.RegisterFunction(array_dims);
-
-  loader.AddFunctionOverload(
-    duckdb::ScalarFunction{"cardinality",
-                           {list_any},
-                           duckdb::LogicalType::INTEGER,
-                           CardinalityFunction,
-                           CardinalityBind});
 
   {
     const auto int_list =

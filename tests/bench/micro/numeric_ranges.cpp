@@ -179,7 +179,7 @@ void Write(irs::Directory& dir, const Terms& terms, Ladder ladder) {
     .doc_count = kRows,
   };
   irs::IdxWriter idx{dir, "segment"};
-  irs::term_dict::FieldWriter writer{false, irs::IResourceManager::gNoop};
+  irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
   writer.prepare(state);
   writer.write(TermsReader{terms, ladder});

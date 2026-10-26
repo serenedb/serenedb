@@ -742,8 +742,7 @@ TEST_P(Format10TestCase, ires336) {
       trms, field_meta, (terms.empty() ? irs::bytes_view{} : *terms.begin()),
       (terms.empty() ? irs::bytes_view{} : *terms.rbegin())};
     irs::IdxWriter idx{*dir, segment_name};
-    irs::term_dict::FieldWriter fw{/*compaction=*/true,
-                                   irs::IResourceManager::gNoop};
+    irs::term_dict::FieldWriter fw{/*compaction=*/true};
     fw.SetIdxWriter(idx);
     fw.prepare(flush_state);
     fw.write(term_reader);

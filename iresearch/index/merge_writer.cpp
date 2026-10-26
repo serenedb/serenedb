@@ -693,11 +693,10 @@ struct MergedNormProvider final : public NormProvider {
 bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  CompoundFieldIterator& field_itr,
                  const MergedNormIdMap& merged_norm_ids,
-                 const MergeWriter::FlushProgress& progress,
-                 IResourceManager& rm, IdxWriter& idx,
+                 const MergeWriter::FlushProgress& progress, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra) {
   auto field_writer =
-    std::make_unique<term_dict::FieldWriter>(/*compaction=*/true, rm);
+    std::make_unique<term_dict::FieldWriter>(/*compaction=*/true);
   field_writer->SetIdxWriter(idx);
   field_writer->prepare(flush_state);
 
@@ -895,8 +894,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   };
   if (segment.docs_count != 0 &&
       !WriteFields(state, segment, fields_itr, merged_norm_ids,
-                   progress_callback, _readers.get_allocator().Manager(), idx,
-                   cluster_readers)) {
+                   progress_callback, idx, cluster_readers)) {
     co_return false;
   }
 

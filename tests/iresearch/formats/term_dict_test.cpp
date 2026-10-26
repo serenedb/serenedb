@@ -371,8 +371,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       .index_features = irs::IndexFeatures::None,
     };
     irs::IdxWriter idx{dir(), kSegment};
-    irs::term_dict::FieldWriter writer{compaction,
-                                       irs::IResourceManager::gNoop};
+    irs::term_dict::FieldWriter writer{compaction};
     writer.SetIdxWriter(idx);
     writer.prepare(state);
     for (const auto& field : fields) {

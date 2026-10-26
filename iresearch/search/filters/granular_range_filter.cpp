@@ -25,6 +25,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/multiterm_collector.hpp"
+#include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 
 namespace irs {
@@ -50,24 +51,16 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
   }
   const bool has_min = rng.min_type != BoundType::Unbounded && !rng.min.empty();
   const bool has_max = rng.max_type != BoundType::Unbounded && !rng.max.empty();
-  bstring from;
-  if (has_min) {
-    from = rng.min;
-    if (rng.min_type == BoundType::Exclusive) {
-      from.push_back(0);
-    }
-  } else if (has_max) {
-    from.assign(1, rng.max.front());
-  }
-  bstring to;
-  if (has_max) {
-    to = rng.max;
-    if (rng.max_type == BoundType::Inclusive) {
-      to.push_back(0);
-    }
-  } else if (has_min && rng.min.front() != 0xFF) {
-    to.assign(1, rng.min.front() + 1);
-  }
+  const bytes_view type_tag = has_min   ? bytes_view{rng.min}.substr(0, 1)
+                              : has_max ? bytes_view{rng.max}.substr(0, 1)
+                                        : bytes_view{};
+  const bstring from = !has_min ? bstring{type_tag}
+                       : rng.min_type == BoundType::Exclusive
+                         ? AfterKey(rng.min)
+                         : rng.min;
+  const bstring to = !has_max ? UpperBoundOf(type_tag)
+                     : rng.max_type == BoundType::Inclusive ? AfterKey(rng.max)
+                                                            : rng.max;
   auto query = memory::make_tracked<MultiTermQuery>(
     ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
   MultiTermVisitor mtv{ctx, query->State(), *reader};

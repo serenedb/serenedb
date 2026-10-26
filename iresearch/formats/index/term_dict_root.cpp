@@ -27,7 +27,6 @@
 #include <bit>
 #include <cstring>
 #include <limits>
-#include <optional>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
@@ -87,6 +86,16 @@ IRS_FORCE_INLINE size_t CountNotAfter(const uint64_t* heads,
   return static_cast<size_t>(-(two[0] + two[1]));
 }
 
+bytes_view SharedPrefix(const Separators& separators) noexcept {
+  const size_t count = SeparatorCount(separators);
+  if (count == 0) {
+    return {};
+  }
+  const auto first = SeparatorAt(separators, 0);
+  return first.substr(
+    0, CommonPrefixLength(first, SeparatorAt(separators, count - 1)));
+}
+
 }  // namespace
 
 uint64_t HeadAt(bytes_view key, size_t skip) noexcept {
@@ -141,21 +150,16 @@ size_t SeparatorBytes(const Separators& separators) noexcept {
 }
 
 EytzingerRoot::EytzingerRoot(Separators separators)
-  : _separators{std::move(separators)} {
-  const size_t count = SeparatorCount(_separators);
+  : _separators{std::move(separators)},
+    _prefix{SharedPrefix(_separators)},
+    _count{SeparatorCount(_separators)} {
+  const size_t count = _count;
   constexpr size_t kLine = 64 / sizeof(Node);
-  _count = count;
-  _height = std::bit_width(count);
   _storage.resize(count + 1 + kLine);
   const auto misaligned =
     reinterpret_cast<uintptr_t>(_storage.data()) % 64 / sizeof(Node);
   auto* nodes = _storage.data() + (kLine - misaligned) % kLine;
   _nodes = nodes;
-  if (count != 0) {
-    const auto first = SeparatorAt(_separators, 0);
-    _prefix.assign(first.substr(
-      0, CommonPrefixLength(first, SeparatorAt(_separators, count - 1))));
-  }
   size_t next = 0;
   const auto fill = [&](this auto& self,
                         size_t k) -> std::pair<size_t, size_t> {
@@ -225,47 +229,10 @@ size_t EytzingerRoot::FindFrom(size_t from, bytes_view key) const noexcept {
   });
 }
 
-void EytzingerRoot::FindBatch(std::span<const bytes_view> keys,
-                              std::span<uint32_t> blocks) const noexcept {
-  constexpr size_t kLanes = 16;
-  for (size_t base = 0; base < keys.size(); base += kLanes) {
-    const size_t lanes = std::min(kLanes, keys.size() - base);
-    size_t k[kLanes];
-    std::optional<PaddedKey> padded[kLanes];
-    for (size_t i = 0; i != lanes; ++i) {
-      const auto outside = Outside(keys[base + i]);
-      k[i] = outside == kInside ? 1 : 0;
-      if (outside == kInside) {
-        padded[i].emplace(keys[base + i]);
-      } else {
-        blocks[base + i] = static_cast<uint32_t>(outside);
-      }
-    }
-    for (size_t level = 0; level != _height; ++level) {
-      for (size_t i = 0; i != lanes; ++i) {
-        if (k[i] != 0 && k[i] <= _count) {
-          __builtin_prefetch(_nodes + 4 * k[i]);
-          k[i] =
-            2 * k[i] +
-            (NotAfter(_nodes[k[i]], keys[base + i], padded[i]->Data()) ? 1 : 0);
-        }
-      }
-    }
-    for (size_t i = 0; i != lanes; ++i) {
-      if (k[i] != 0) {
-        blocks[base + i] = static_cast<uint32_t>(Resolve(k[i]));
-      }
-    }
-  }
-}
-
 TreeRoot::TreeRoot(Separators separators)
-  : _separators{std::move(separators)}, _count{SeparatorCount(_separators)} {
-  if (_count != 0) {
-    const auto first = SeparatorAt(_separators, 0);
-    _prefix.assign(first.substr(
-      0, CommonPrefixLength(first, SeparatorAt(_separators, _count - 1))));
-  }
+  : _separators{std::move(separators)},
+    _prefix{SharedPrefix(_separators)},
+    _count{SeparatorCount(_separators)} {
   std::vector<size_t> sizes{
     std::max<size_t>(1, (_count + kFanout - 1) / kFanout)};
   while (sizes.back() != 1) {
@@ -369,13 +336,6 @@ size_t TreeRoot::FindFrom(size_t from, bytes_view key) const noexcept {
     }
   }
   return Resolve(from, upper, located.head, key);
-}
-
-void TreeRoot::FindBatch(std::span<const bytes_view> keys,
-                         std::span<uint32_t> blocks) const noexcept {
-  for (size_t i = 0; i != keys.size(); ++i) {
-    blocks[i] = static_cast<uint32_t>(Find(keys[i]));
-  }
 }
 
 bool TreeRoot::NotAfter(size_t block, bytes_view key) const noexcept {
@@ -572,13 +532,6 @@ size_t ArtRoot::Find(bytes_view key) const noexcept {
   }
 }
 
-void ArtRoot::FindBatch(std::span<const bytes_view> keys,
-                        std::span<uint32_t> blocks) const noexcept {
-  for (size_t i = 0; i != keys.size(); ++i) {
-    blocks[i] = static_cast<uint32_t>(Find(keys[i]));
-  }
-}
-
 Root::Root(Separators separators, bool fixed) {
   const size_t count = SeparatorCount(separators);
   if (fixed) {
@@ -590,8 +543,7 @@ Root::Root(Separators separators, bool fixed) {
   }
   size_t ties = 0;
   if (count > 1) {
-    const size_t skip = CommonPrefixLength(SeparatorAt(separators, 0),
-                                           SeparatorAt(separators, count - 1));
+    const size_t skip = SharedPrefix(separators).size();
     uint64_t last = HeadAt(SeparatorAt(separators, 0), skip);
     for (size_t i = 1; i != count; ++i) {
       const uint64_t head = HeadAt(SeparatorAt(separators, i), skip);

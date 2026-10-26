@@ -175,7 +175,7 @@ void Write(Data& data) {
     .doc_count = data.keys.size(),
   };
   irs::IdxWriter idx{*data.dir, "segment"};
-  irs::term_dict::FieldWriter writer{false, irs::IResourceManager::gNoop};
+  irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
   writer.prepare(state);
   writer.write(KeysReader{data.keys});
@@ -249,23 +249,20 @@ size_t Reference(const Data& data, bytes_view key) {
 std::string Validate(const Data& data, const Candidate& candidate) {
   return std::visit(
     [&](const auto& root) -> std::string {
-      std::vector<uint32_t> blocks;
       const auto check = [&](const std::vector<bstring>& probes,
                              size_t batch) -> std::string {
         const auto views = Views(probes);
         for (size_t i = 0; i < views.size(); i += batch) {
           const auto chunk =
             std::span{views}.subspan(i, std::min(batch, views.size() - i));
-          blocks.resize(chunk.size());
-          root.FindBatch(chunk, blocks);
           const bool sorted = absl::c_is_sorted(chunk);
           size_t from = 0;
           for (size_t j = 0; j != chunk.size(); ++j) {
             const auto expected = Reference(data, chunk[j]);
             const auto found = root.Find(chunk[j]);
-            if (found != expected || blocks[j] != expected) {
-              return absl::StrCat("probe ", i + j, " gives ", found, "/",
-                                  blocks[j], ", expected ", expected);
+            if (found != expected) {
+              return absl::StrCat("probe ", i + j, " gives ", found,
+                                  ", expected ", expected);
             }
             if (sorted) {
               if (root.FindFrom(from, chunk[j]) != expected) {
@@ -414,28 +411,6 @@ void FindCold(benchmark::State& state, const std::string& base,
   }
   Report(state, prepared, views.size());
   state.counters["copies"] = static_cast<double>(copies);
-}
-
-void FindBatch(benchmark::State& state, const std::string& base,
-               std::string_view name, size_t kind, size_t size) {
-  const auto& prepared = Prepare(base, name);
-  if (Skip(state, prepared)) {
-    return;
-  }
-  const auto views = Views(prepared.data->batches[kind][size]);
-  const size_t batch = kBatchSizes[size];
-  std::vector<uint32_t> blocks(batch);
-  std::visit(
-    [&](const auto& root) {
-      for (auto _ : state) {
-        for (size_t i = 0; i + batch <= views.size(); i += batch) {
-          root.FindBatch(std::span{views}.subspan(i, batch), blocks);
-          benchmark::DoNotOptimize(blocks.data());
-        }
-      }
-    },
-    prepared.candidate);
-  Report(state, prepared, views.size() / batch * batch);
 }
 
 void FindFrom(benchmark::State& state, const std::string& base,
@@ -633,16 +608,6 @@ int Main(int argc, char** argv) {
       benchmark::RegisterBenchmark(
         absl::StrCat("find_from/", suffix),
         [base, name](benchmark::State& state) { FindFrom(state, base, name); });
-      for (size_t k = 0; k != std::size(kBatchKinds); ++k) {
-        for (size_t s = 0; s != std::size(kBatchSizes); ++s) {
-          benchmark::RegisterBenchmark(
-            absl::StrCat("find_batch_", kBatchKinds[k], "_", kBatchSizes[s],
-                         "/", suffix),
-            [base, name, k, s](benchmark::State& state) {
-              FindBatch(state, base, name, k, s);
-            });
-        }
-      }
     }
   }
   benchmark::Initialize(&argc, argv);

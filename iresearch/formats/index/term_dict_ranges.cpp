@@ -27,6 +27,7 @@
 #include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
 #include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 
 namespace irs::term_dict {
 namespace {
@@ -83,17 +84,10 @@ class RangeWalk {
     if (_from.empty()) {
       return 0;
     }
-    uint32_t lo = 0;
-    uint32_t n = _levels[level].count;
-    while (n != 0) {
-      const uint32_t half = n / 2;
-      if (Start(level, lo + half) <= _from_rest) {
-        lo += half + 1;
-        n -= half + 1;
-      } else {
-        n = half;
-      }
-    }
+    const auto lo = static_cast<uint32_t>(
+      PartitionIndex(0, _levels[level].count, [&](size_t i) {
+        return Start(level, static_cast<uint32_t>(i)) <= _from_rest;
+      }));
     return lo == 0 ? 0 : lo - 1;
   }
 

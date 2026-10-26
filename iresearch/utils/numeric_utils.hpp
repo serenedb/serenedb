@@ -256,7 +256,7 @@ struct NumericEncodeOf<double_t> {
 inline constexpr size_t kNumericTermMaxSize = 1 + sizeof(uint64_t);
 
 template<typename T>
-bytes_view EncodeNumericTerm(byte_type (&buf)[kNumericTermMaxSize], T value) {
+bytes_view EncodeNumericTerm(byte_type* buf, T value) {
   using Enc = typename NumericEncodeOf<T>::Traits;
   using U = typename Enc::type;
   return {buf, Encode<U, Enc>(NumericEncodeOf<T>::Integral(value), buf, 0)};

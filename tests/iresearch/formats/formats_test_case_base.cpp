@@ -724,8 +724,7 @@ TEST_P(FormatTestCase, fields_read_write) {
       (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.rbegin())};
 
     irs::IdxWriter idx{dir(), "segment_name"};
-    irs::term_dict::FieldWriter writer{/*compaction=*/false,
-                                       irs::IResourceManager::gNoop};
+    irs::term_dict::FieldWriter writer{/*compaction=*/false};
     writer.SetIdxWriter(idx);
     writer.prepare(state);
     writer.write(term_reader);

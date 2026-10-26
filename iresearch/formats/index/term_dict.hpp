@@ -81,17 +81,23 @@ class RecordOutput final : private RecordBytes, public BufferedOutput {
   void WriteDirect(const byte_type* b, size_t len) final;
 };
 
+constexpr uint64_t RecordGroups(uint64_t count) noexcept {
+  return (count + kRecordInterval - 1) / kRecordInterval;
+}
+
+struct VarColumns {
+  bstring headers;
+  bstring suffixes;
+  std::vector<std::array<uint16_t, 2>> restarts;
+};
+
 struct BlockBuilder {
   bstring keys;
   std::vector<uint32_t> ends;
-  bstring headers;
-  bstring suffixes;
   bstring records;
-  std::vector<std::array<uint16_t, 2>> restarts;
   std::vector<uint16_t> record_starts;
-  bstring coded_headers;
-  bstring coded_suffixes;
-  std::vector<std::array<uint16_t, 2>> coded_restarts;
+  VarColumns raw;
+  VarColumns coded;
   uint64_t size = 0;
   uint64_t coded_size = std::numeric_limits<uint64_t>::max();
   uint32_t width = 0;
@@ -154,7 +160,7 @@ class RangeWriter final {
 
 class FieldWriter final {
  public:
-  FieldWriter(bool compaction, IResourceManager& rm);
+  explicit FieldWriter(bool compaction) noexcept : _compaction{compaction} {}
 
   FieldWriter(const FieldWriter&) = delete;
   FieldWriter& operator=(const FieldWriter&) = delete;
@@ -169,11 +175,14 @@ class FieldWriter final {
   bytes_view EncodeSuffix(bytes_view suffix);
   void Add(bytes_view term, const PostingMeta& meta);
   bool Append(bytes_view term, const PostingMeta& meta);
+  bool AppendFixedKey(bytes_view term, uint64_t records);
+  bool AppendVarKey(bytes_view term, uint64_t records);
   void Seal();
   void Cut();
   void WriteBlock(bytes_view block);
   void EndField(field_id id, const FieldProperties& props,
                 uint64_t total_doc_freq, uint64_t total_term_freq);
+  void Reset() noexcept;
 
   PostingsWriter _pw;
   RecordOutput _record;
@@ -218,7 +227,7 @@ class TermReaderImpl final : public TermReader {
  public:
   TermReaderImpl(const FieldReader& owner, field_id id,
                  const TermDictMeta& meta, IndexInput& in);
-  ~TermReaderImpl();
+  ~TermReaderImpl() final;
 
   SeekTermIterator::ptr iterator() const final;
   SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
@@ -252,6 +261,12 @@ class TermReaderImpl final : public TermReader {
   bool Small() const noexcept { return _small != nullptr; }
   const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
   const Root& GetRoot() const noexcept { return _root; }
+  bytes_view BlockPrefix(size_t block) const noexcept {
+    const bytes_view lower = block == 0 ? min() : _root.Separator(block);
+    const bytes_view upper =
+      block + 1 == _blocks ? max() : _root.Separator(block + 1);
+    return lower.substr(0, CommonPrefixLength(lower, upper));
+  }
   const byte_type* Block(size_t block, BlockBuffer& buffer) const;
   uint64_t BlockOffset(size_t block) const noexcept {
     return uint64_t{_pages[block]} * kPage;
@@ -266,6 +281,7 @@ class TermReaderImpl final : public TermReader {
   void ReadInline(PostingMeta& meta, BlockBuffer& buffer) const;
 
  private:
+  uint64_t ReadDictionary(IndexInput& in, uint8_t flags);
   uint64_t ReadRanges(IndexInput& in);
   uint64_t MapInline(IndexInput& in);
 

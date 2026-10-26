@@ -427,7 +427,7 @@ class BlockPlan {
     const auto& root = _field->GetRoot();
     const uint64_t base = _field->BlockOffset(block);
     while (block < end && _field->BlockOffset(block) - base < budget) {
-      const auto prefix = Prefix(block);
+      const auto prefix = _field->BlockPrefix(block);
       if (Alive(prefix)) {
         Add(block++);
         continue;
@@ -442,14 +442,6 @@ class BlockPlan {
   }
 
  private:
-  bytes_view Prefix(uint32_t block) const noexcept {
-    const auto& root = _field->GetRoot();
-    const bytes_view lower = block == 0 ? _field->min() : root.Separator(block);
-    const bytes_view upper =
-      block + 1 == _field->Blocks() ? _field->max() : root.Separator(block + 1);
-    return lower.substr(0, CommonPrefixLength(lower, upper));
-  }
-
   bool Alive(bytes_view prefix) {
     size_t depth =
       std::min(_valid, CommonPrefixLength(bytes_view{_path}, prefix));
@@ -622,17 +614,10 @@ class AcceptorIterator : public SeekTermIterator {
   }
 
   bytes_view BlockPrefix(uint32_t block) noexcept {
-    if (block == _prefix_block) {
-      return _prefix;
+    if (block != _prefix_block) {
+      _prefix = _cursor.Field().BlockPrefix(block);
+      _prefix_block = block;
     }
-    const auto& field = _cursor.Field();
-    const bytes_view lower =
-      block == 0 ? field.min() : field.GetRoot().Separator(block);
-    const bytes_view upper = block + 1 == field.Blocks()
-                               ? field.max()
-                               : field.GetRoot().Separator(block + 1);
-    _prefix = lower.substr(0, CommonPrefixLength(lower, upper));
-    _prefix_block = block;
     return _prefix;
   }
 
@@ -693,31 +678,13 @@ class AcceptorIterator : public SeekTermIterator {
     return depth;
   }
 
-  bytes_view Target() const noexcept { return {_target.data(), _target_size}; }
-
-  byte_type* ResizeTarget(size_t size) {
-    if (_target.size() < size + kKeyPad) {
-      utils::StrResizeAmortized(_target, size + kKeyPad);
-    }
-    std::memset(_target.data() + size, 0, kKeyPad);
-    _target_size = size;
-    return _target.data();
-  }
-
-  void AssignTarget(bytes_view value) {
-    auto* target = ResizeTarget(value.size());
-    if (!value.empty()) {
-      std::memcpy(target, value.data(), value.size());
-    }
-  }
-
   bool NextTarget(bytes_view path, size_t& depth) {
-    SDB_ASSERT(path.data() != _target.data());
+    SDB_ASSERT(path.data() != _target.Data());
     for (;;) {
       const auto range = LiveRange(depth);
       const auto label = std::max<uint32_t>(path[depth] + 1, range.lo);
       if (label <= range.hi) {
-        auto* target = ResizeTarget(depth + 1);
+        auto* target = _target.Resize(depth + 1);
         std::memcpy(target, path.data(), depth);
         target[depth] = static_cast<byte_type>(label);
         return true;
@@ -739,7 +706,7 @@ class AcceptorIterator : public SeekTermIterator {
     if (field.size() == 0 || target > field.max()) {
       return false;
     }
-    AssignTarget(target);
+    _target.Assign(target);
     uint32_t block = 0;
     if (!field.Small() && target > field.min()) {
       block = static_cast<uint32_t>(field.GetRoot().Find(target));
@@ -759,9 +726,7 @@ class AcceptorIterator : public SeekTermIterator {
   }
 
   bool Hop(size_t depth) {
-    const auto target = Target();
-    if (InBlock(target) &&
-        _cursor.SeekAhead(Probe{target.data(), target.size()}, depth)) {
+    if (InBlock(_target.Key()) && _cursor.SeekAhead(_target.View(), depth)) {
       _filter.Restart();
       _check = true;
       _valid = std::min(depth, _cursor.Shared());
@@ -772,7 +737,7 @@ class AcceptorIterator : public SeekTermIterator {
 
   bool Jump(size_t valid) {
     const auto& field = _cursor.Field();
-    const auto target = Target();
+    const auto target = _target.Key();
     if (target > field.max()) {
       return false;
     }
@@ -791,14 +756,14 @@ class AcceptorIterator : public SeekTermIterator {
     _check = true;
     for (;;) {
       const auto prefix = BlockPrefix(block);
-      const size_t shared = CommonPrefixLength(Target(), prefix);
+      const size_t shared = CommonPrefixLength(_target.Key(), prefix);
       const size_t base = std::min(valid, shared);
       size_t depth = StepAlong(prefix, base);
       if (depth == prefix.size()) {
         if (_cursor.BlockIndex() != block) {
           _cursor.Load(block);
         }
-        if (_cursor.LowerBound(Probe{_target.data(), _target_size})) {
+        if (_cursor.LowerBound(_target.View())) {
           _valid = prefix.size();
           if (shared == prefix.size()) {
             _valid = std::min(std::max(valid, prefix.size()), _cursor.Shared());
@@ -815,8 +780,8 @@ class AcceptorIterator : public SeekTermIterator {
         return false;
       }
       valid = depth;
-      block =
-        static_cast<uint32_t>(field.GetRoot().FindFrom(block + 1, Target()));
+      block = static_cast<uint32_t>(
+        field.GetRoot().FindFrom(block + 1, _target.Key()));
     }
   }
 
@@ -830,7 +795,7 @@ class AcceptorIterator : public SeekTermIterator {
     const auto separator = field.GetRoot().Separator(next);
     const size_t valid =
       std::min(_valid, CommonPrefixLength(_cursor.Key(), separator));
-    AssignTarget(separator);
+    _target.Assign(separator);
     return Land(next, valid);
   }
 
@@ -909,8 +874,7 @@ class AcceptorIterator : public SeekTermIterator {
   containers::SmallVector<State, 64> _states;
   containers::SmallVector<Range, 64> _ranges;
   size_t _ranged = 0;
-  bstring _target;
-  size_t _target_size = 0;
+  PaddedKey _target;
   size_t _valid = 0;
   bool _check = true;
   bytes_view _prefix;

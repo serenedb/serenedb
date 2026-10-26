@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/string_utils.hpp"
 
 namespace irs::term_dict {
 
@@ -43,28 +44,42 @@ struct Probe {
 
 class PaddedKey {
  public:
-  explicit PaddedKey(bytes_view key) {
-    if (key.size() + kKeyPad <= sizeof(_inline)) {
+  PaddedKey() = default;
+  explicit PaddedKey(bytes_view key) { Assign(key); }
+  PaddedKey(const PaddedKey&) = delete;
+  PaddedKey& operator=(const PaddedKey&) = delete;
+
+  byte_type* Resize(size_t size) {
+    if (size + kKeyPad <= sizeof(_inline)) {
       _data = _inline;
     } else {
-      _heap.resize(key.size() + kKeyPad);
+      if (_heap.size() < size + kKeyPad) {
+        utils::StrResizeAmortized(_heap, size + kKeyPad);
+      }
       _data = _heap.data();
     }
+    std::memset(_data + size, 0, kKeyPad);
+    _size = size;
+    return _data;
+  }
+
+  Probe Assign(bytes_view key) {
+    auto* data = Resize(key.size());
     if (!key.empty()) {
-      std::memcpy(_data, key.data(), key.size());
+      std::memcpy(data, key.data(), key.size());
     }
-    std::memset(_data + key.size(), 0, kKeyPad);
-    _size = key.size();
+    return View();
   }
 
   const byte_type* Data() const noexcept { return _data; }
   Probe View() const noexcept { return {_data, _size}; }
+  bytes_view Key() const noexcept { return {_data, _size}; }
 
  private:
   byte_type _inline[256];
   bstring _heap;
-  byte_type* _data;
-  size_t _size;
+  byte_type* _data = _inline;
+  size_t _size = 0;
 };
 
 IRS_FORCE_INLINE inline size_t PaddedMismatch(const byte_type* lhs,
@@ -110,8 +125,6 @@ class EytzingerRoot {
   size_t Blocks() const noexcept { return SeparatorCount(_separators) + 1; }
   size_t Find(bytes_view key) const noexcept;
   size_t FindFrom(size_t from, bytes_view key) const noexcept;
-  void FindBatch(std::span<const bytes_view> keys,
-                 std::span<uint32_t> blocks) const noexcept;
   bool NotAfter(size_t block, bytes_view key) const noexcept {
     return Separator(block) <= key;
   }
@@ -133,7 +146,6 @@ class EytzingerRoot {
   const Node* _nodes = nullptr;
   bstring _prefix;
   size_t _count = 0;
-  size_t _height = 0;
 };
 
 class TreeRoot {
@@ -153,8 +165,6 @@ class TreeRoot {
   size_t Blocks() const noexcept { return _count + 1; }
   size_t Find(bytes_view key) const noexcept;
   size_t FindFrom(size_t from, bytes_view key) const noexcept;
-  void FindBatch(std::span<const bytes_view> keys,
-                 std::span<uint32_t> blocks) const noexcept;
   bool NotAfter(size_t block, bytes_view key) const noexcept;
   bytes_view Separator(size_t block) const noexcept {
     return SeparatorAt(_separators, block - 1);
@@ -202,8 +212,6 @@ class ArtRoot {
   size_t FindFrom(size_t from, bytes_view key) const noexcept {
     return std::max(from, Find(key));
   }
-  void FindBatch(std::span<const bytes_view> keys,
-                 std::span<uint32_t> blocks) const noexcept;
   bool NotAfter(size_t block, bytes_view key) const noexcept {
     return Separator(block) <= key;
   }

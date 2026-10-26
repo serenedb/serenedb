@@ -30,13 +30,14 @@ namespace irs {
 template<typename T, typename ValueAt>
 void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
                              ValueAt&& value_at) {
-  static_assert(numeric_utils::kNumericTermMaxSize <=
-                duckdb::string_t::INLINE_LENGTH);
+  using U = typename numeric_utils::NumericEncodeOf<T>::Traits::type;
+  constexpr auto kSize =
+    static_cast<uint32_t>(numeric_utils::EncodedSize<U>(0) + 1);
+  static_assert(kSize <= duckdb::string_t::INLINE_LENGTH);
   for (size_t i = 0; i < count; ++i) {
-    byte_type buf[numeric_utils::kNumericTermMaxSize];
-    const auto term = numeric_utils::EncodeNumericTerm<T>(buf, value_at(i));
-    out[i] = duckdb::string_t{reinterpret_cast<const char*>(term.data()),
-                              static_cast<uint32_t>(term.size())};
+    out[i] = duckdb::string_t{kSize};
+    numeric_utils::EncodeNumericTerm<T>(
+      reinterpret_cast<byte_type*>(out[i].GetDataWriteable()), value_at(i));
   }
 }
 

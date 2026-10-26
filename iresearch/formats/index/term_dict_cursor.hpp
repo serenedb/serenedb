@@ -31,6 +31,7 @@
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/string_utils.hpp"
@@ -109,8 +110,7 @@ inline BlockView Parse(const byte_type* p) {
     view.heads = p + kVarRestart * view.restarts;
     view.record_offsets = view.heads + kHeadBytes * view.restarts;
     view.headers =
-      view.record_offsets +
-      kRecordOffset * ((view.count + kRecordInterval - 1) / kRecordInterval);
+      view.record_offsets + kRecordOffset * RecordGroups(view.count);
     view.suffixes = view.headers + headers;
     view.records = view.suffixes + suffixes;
     return view;
@@ -258,13 +258,6 @@ inline bytes_view RestartKey(const BlockView& view, uint32_t restart) noexcept {
   return {view.suffixes + SuffixOffset(view, restart), header.len};
 }
 
-IRS_FORCE_INLINE inline bool KeyNotAfter(bytes_view key, Probe probe) noexcept {
-  const size_t n = std::min(key.size(), probe.size);
-  const size_t common = PaddedMismatch(key.data(), probe.data, n);
-  return common == n ? key.size() <= probe.size
-                     : key[common] < probe.data[common];
-}
-
 struct HeadCounts {
   uint32_t less;
   uint32_t not_after;
@@ -314,17 +307,11 @@ inline uint32_t RestartsNotAfter(const BlockView& view, Probe probe,
   }
   const auto counts = CountHeads(view.heads, from, view.restarts,
                                  absl::big_endian::Load32(probe.data + skip));
-  uint32_t lo = counts.less;
-  for (uint32_t n = counts.not_after - counts.less; n != 0;) {
-    const uint32_t half = n / 2;
-    if (KeyNotAfter(RestartKey(view, lo + half), probe)) {
-      lo += half + 1;
-      n -= half + 1;
-    } else {
-      n = half;
-    }
-  }
-  return lo;
+  return static_cast<uint32_t>(
+    PartitionIndex(counts.less, counts.not_after, [&](size_t restart) {
+      const auto key = RestartKey(view, static_cast<uint32_t>(restart));
+      return CompareRaw(key.data(), key.size(), probe).order != Order::Greater;
+    }));
 }
 
 IRS_FORCE_INLINE inline Order Locate(const byte_type* suffix, uint32_t size,
@@ -426,10 +413,8 @@ inline uint32_t FixedLowerBound(const BlockView& view, Probe probe) noexcept {
     });
   }
   return search([&](size_t i) {
-    const auto* key = view.keys + i * stride;
-    const size_t n = std::min<size_t>(stride, rest.size);
-    const size_t common = PaddedMismatch(key, rest.data, n);
-    return common == n ? stride < rest.size : key[common] < rest.data[common];
+    return CompareRaw(view.keys + i * stride, stride, rest).order ==
+           Order::Less;
   });
 }
 
@@ -437,7 +422,6 @@ struct PendingSuffix {
   const byte_type* data;
   uint32_t lcp;
   uint32_t size;
-  uint32_t need;
 };
 
 inline const byte_type* GroupStart(const BlockView& view,
@@ -445,13 +429,10 @@ inline const byte_type* GroupStart(const BlockView& view,
   return view.records + RecordOffset(view, group);
 }
 
-inline void DecodeRecords(const byte_type*& record, uint32_t from, uint32_t to,
+inline void DecodeRecords(const byte_type*& record, uint32_t count,
                           IndexFeatures features, PostingMeta& meta) noexcept {
-  for (uint32_t i = from;; ++i) {
+  for (; count != 0; --count) {
     record += PostingsReader::DecodeDetached(record, features, meta);
-    if (i == to) {
-      return;
-    }
   }
 }
 
@@ -512,13 +493,7 @@ class Cursor {
     _entry = entry;
     SDB_ASSERT(_entry < _view.count);
     const auto header = ReadHeader(_hp);
-    SDB_ASSERT(_pendings < _pending.size());
-    _pending[_pendings++] = {
-      .data = _sp,
-      .lcp = header.lcp,
-      .size = header.len,
-      .need = 0,
-    };
+    PushPending(_sp, header);
     _mat = std::min<size_t>(_mat, header.lcp);
     _sp += header.len;
     return header.lcp;
@@ -556,13 +531,7 @@ class Cursor {
     } else {
       for (const auto* sp_at = _sp; _hp != hp;) {
         const auto header = ReadHeader(_hp);
-        SDB_ASSERT(_pendings < _pending.size());
-        _pending[_pendings++] = {
-          .data = sp_at,
-          .lcp = header.lcp,
-          .size = header.len,
-          .need = 0,
-        };
+        PushPending(sp_at, header);
         sp_at += header.len;
       }
     }
@@ -576,17 +545,18 @@ class Cursor {
     if (_pendings == 0) {
       return;
     }
+    std::array<uint32_t, kRestartInterval> needs;
     uint32_t need = std::numeric_limits<uint32_t>::max();
     for (uint32_t i = _pendings; i-- != 0;) {
-      auto& pending = _pending[i];
-      pending.need = need > pending.lcp ? need - pending.lcp : 0;
-      need = std::min(need, pending.lcp);
+      const auto lcp = _pending[i].lcp;
+      needs[i] = need > lcp ? need - lcp : 0;
+      need = std::min(need, lcp);
     }
     for (uint32_t i = 0; i != _pendings; ++i) {
       const auto& pending = _pending[i];
-      if (pending.need != 0) {
+      if (needs[i] != 0) {
         _size = pending.lcp +
-                Expand({pending.data, pending.size}, pending.lcp, pending.need);
+                Expand({pending.data, pending.size}, pending.lcp, needs[i]);
       }
     }
     _mat = _size;
@@ -652,12 +622,6 @@ class Cursor {
     return true;
   }
 
-  bool LowerBound(bytes_view key) { return LowerBound(Pad(key)); }
-
-  bool SeekAhead(bytes_view key, size_t matched) {
-    return SeekAhead(Pad(key), matched);
-  }
-
   size_t Shared() const noexcept { return _shared; }
 
   SeekResult SeekGe(bytes_view key) {
@@ -672,7 +636,7 @@ class Cursor {
     if (block != _block || _entry == kNoEntry) {
       Load(block);
     }
-    if (!LowerBound(key)) {
+    if (!LowerBound(_probe.Assign(key))) {
       SDB_ASSERT(block + 1 < field.Blocks());
       Load(block + 1);
       Next();
@@ -689,12 +653,11 @@ class Cursor {
     const auto features = _field->meta().index_features;
     if (_record != kNoEntry && _record < _entry &&
         _record / kRecordInterval == _entry / kRecordInterval) {
-      DecodeRecords(_records, _record + 1, _entry, features, _meta);
+      DecodeRecords(_records, _entry - _record, features, _meta);
     } else {
-      const uint32_t group = _entry / kRecordInterval;
-      _records = GroupStart(_view, group);
+      _records = GroupStart(_view, _entry / kRecordInterval);
       _meta.clear();
-      DecodeRecords(_records, group * kRecordInterval, _entry, features, _meta);
+      DecodeRecords(_records, _entry % kRecordInterval + 1, features, _meta);
     }
     if (_meta.inline_size != 0) {
       InlineAhead(_field->InlineBegin() + _meta.inline_end - _meta.inline_size);
@@ -704,29 +667,6 @@ class Cursor {
     return _meta;
   }
 
- private:
-  Probe Pad(bytes_view key) {
-    if (_probe.size() < key.size() + kKeyPad) {
-      utils::StrResizeAmortized(_probe, key.size() + kKeyPad);
-    }
-    if (!key.empty()) {
-      std::memcpy(_probe.data(), key.data(), key.size());
-    }
-    std::memset(_probe.data() + key.size(), 0, kKeyPad);
-    return {_probe.data(), key.size()};
-  }
-
-  size_t Common(Probe probe) const noexcept {
-    return PaddedMismatch(_key.data(), probe.data, std::min(_size, probe.size));
-  }
-
-  bool Before(Probe probe, size_t common) const noexcept {
-    return common == std::min(_size, probe.size)
-             ? _size < probe.size
-             : _key[common] < probe.data[common];
-  }
-
- public:
   bool LowerBound(Probe probe) {
     if (_view.kind == BlockKind::FixedStride) {
       const auto entry = FixedLowerBound(_view, probe);
@@ -773,6 +713,25 @@ class Cursor {
   }
 
  private:
+  size_t Common(Probe probe) const noexcept {
+    return PaddedMismatch(_key.data(), probe.data, std::min(_size, probe.size));
+  }
+
+  bool Before(Probe probe, size_t common) const noexcept {
+    return common == std::min(_size, probe.size)
+             ? _size < probe.size
+             : _key[common] < probe.data[common];
+  }
+
+  void PushPending(const byte_type* data, Header header) noexcept {
+    SDB_ASSERT(_pendings < _pending.size());
+    _pending[_pendings++] = {
+      .data = data,
+      .lcp = header.lcp,
+      .size = header.len,
+    };
+  }
+
   void Group(uint32_t group) {
     _entry = group == 0 ? kNoEntry : group * kRestartInterval - 1;
     _restart = group * kRestartInterval;
@@ -942,7 +901,7 @@ class Cursor {
   const byte_type* _sp = nullptr;
   const byte_type* _records = nullptr;
   bstring _key;
-  bstring _probe;
+  PaddedKey _probe;
   PostingMeta _meta;
   std::array<PendingSuffix, kRestartInterval> _pending;
   uint32_t _pendings = 0;

@@ -773,14 +773,14 @@ std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
   constexpr auto kAsc = duckdb::OrderType::ASCENDING;
   constexpr auto kDesc = duckdb::OrderType::DESCENDING;
   constexpr AnnFunctionInfo kL2Info{L2Sqr, kAsc, false, SqrtNeg};
-  constexpr AnnFunctionInfo kL2SqrInfo{L2Sqr, kAsc, false, Negate};
-  constexpr AnnFunctionInfo kL1Info{L1, kAsc, false, Negate};
+  constexpr AnnFunctionInfo kL2SqrInfo{L2Sqr, kAsc, false, ClampNeg};
+  constexpr AnnFunctionInfo kL1Info{L1, kAsc, false, ClampNeg};
   constexpr AnnFunctionInfo kCosineInfo{Cosine, kAsc, false, OneMinus};
   constexpr AnnFunctionInfo kCosineSimilarityInfo{Cosine, kDesc, false,
                                                   Identity};
   constexpr AnnFunctionInfo kIPInfo{InnerProduct, kDesc, false, Identity};
   constexpr AnnFunctionInfo kNegativeIPInfo{InnerProduct, kAsc, false, Negate};
-  constexpr AnnFunctionInfo kL1NormInfo{L1, kAsc, true, Negate};
+  constexpr AnnFunctionInfo kL1NormInfo{L1, kAsc, true, ClampNeg};
   constexpr AnnFunctionInfo kL2NormInfo{L2Sqr, kAsc, true, SqrtNeg};
   static const irs::containers::FlatHashMap<std::string_view, AnnFunctionInfo>
     kFunctions{

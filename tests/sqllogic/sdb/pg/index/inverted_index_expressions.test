@@ -1251,6 +1251,67 @@ SELECT id FROM types_smoke_idx WHERE to_timestamp(a + 1) = to_timestamp(2);
 id
 1
 
+# The index answers an operand with a cast from the key with that cast, an
+# operand without one from the key as written, and leaves an operand that
+# matches no key to a filter.
+query
+EXPLAIN SELECT id FROM types_smoke_idx WHERE (a + 1)::TINYINT = 2::TINYINT;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: types_smoke_idx                       │
+│ Lookup: table                                │
+│ Index Filter:                                │
+│ ╭─ Term ───────────────────────────────────╮ │
+│ │ Field: CAST((a + 1) AS tinyint)(numeric) │ │
+│ │ Value: 2                                 │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Projections: id                              │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM types_smoke_idx WHERE DATE '2020-01-01' + (a + 1) = DATE '2020-01-04';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────────╮
+│ Index: types_smoke_idx                              │
+│ Lookup: table                                       │
+│ Index Filter:                                       │
+│ ╭─ Term ──────────────────────────────────────────╮ │
+│ │ Field:                                          │ │
+│ │ (CAST('2020-01-01' AS date) + (a + 1))(numeric) │ │
+│ │ Value: 18265                                    │ │
+│ ╰─────────────────────────────────────────────────╯ │
+│ Projections: id                                     │
+│ ~1 row                                              │
+╰─────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM types_smoke_idx WHERE a * a = 4;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────╮
+│ Projections: #1         │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ FILTER ───┴────────────╮
+│ Expression: (a * a) = 4 │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: types_smoke_idx  │
+│ Lookup: table           │
+│ Projections: a, id      │
+│ ~2 rows                 │
+╰─────────────────────────╯
+
+query
+SELECT id FROM types_smoke_idx WHERE a * a = 4;
+----
+id
+2
+
 
 # --- SQLNULL-typed indexed expression: every row's value is NULL by
 # construction. The writer must short-circuit to the null field instead

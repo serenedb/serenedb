@@ -64,6 +64,9 @@ uint32_t GetEnumSetting(duckdb::ClientContext& context, std::string_view name,
 duckdb::Value GetGlobalSetting(const duckdb::DBConfig& config,
                                std::string_view name);
 
+uint32_t GetMaxConnections() noexcept;
+void SetMaxConnections(duckdb::DBConfig& config, uint32_t value);
+
 struct VariableDescription {
   duckdb::LogicalTypeId type;
   std::string_view description;

@@ -47,7 +47,7 @@
 #include "network/pg/hba.h"
 #include "network/socket.h"
 #include "network/tls_context.h"
-#include "query/config_variable_names.h"
+#include "query/config.h"
 #include "server/utils/number_of_cores.h"
 
 ABSL_FLAG(
@@ -399,10 +399,10 @@ void Server::StartListeners() {
   SetupAuth();
   if (const auto max_connections = absl::GetFlag(FLAGS_max_connections);
       max_connections != 0) {
-    duckdb::DBConfig::GetConfig(irs::DuckDBEngine::Instance().instance())
-      .SetOptionByName(duckdb::Identifier{kMaxConnectionsSetting},
-                       duckdb::Value::UINTEGER(static_cast<uint32_t>(
-                         std::min<uint64_t>(max_connections, 0xFFFFFFFFull))));
+    SetMaxConnections(
+      duckdb::DBConfig::GetConfig(irs::DuckDBEngine::Instance().instance()),
+      static_cast<uint32_t>(
+        std::min<uint64_t>(max_connections, 0xFFFFFFFFull)));
   }
   for (const auto& spec : specs) {
     if (spec.protocol != network::ListenProtocol::Http) {

@@ -374,7 +374,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
 
   const irs::ReaderState state{.dir = &dir, .meta = &meta};
 
-  auto in = dir.open("attributes", irs::IOAdvice::NORMAL);
+  auto in = dir.open("attributes", irs::IOAdvice::RANDOM);
   EXPECT_FALSE(!in);
   [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(*in);
 

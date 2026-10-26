@@ -38,10 +38,10 @@ namespace sdb::connector {
 // distance kernels), so the emit is applied directly -- no negation here.
 enum class ScoreEmit : uint8_t {
   Identity,  // score        (cosine_similarity, inner_product)
-  SqrtNeg,   // sqrt(max(0, -score)) (l2_distance / `<->` / l2_norm)
+  SqrtNeg,   // sqrt(0 - score) (l2_distance / `<->` / l2_norm)
   OneMinus,  // 1 - score    (cosine_distance)
   Negate,    // -score       (negative_ip)
-  ClampNeg,
+  ZeroMinus,
 };
 
 // Maps one raw "larger = nearer" score to its user-facing value. Single source
@@ -53,13 +53,13 @@ inline float ApplyScoreEmit(ScoreEmit emit, float score) {
     case ScoreEmit::Identity:
       return score;
     case ScoreEmit::SqrtNeg:
-      return std::sqrt(std::max(0.0F, -score));
+      return std::sqrt(0.0F - score);
     case ScoreEmit::OneMinus:
       return 1.0F - score;
     case ScoreEmit::Negate:
       return -score;
-    case ScoreEmit::ClampNeg:
-      return std::max(0.0F, -score);
+    case ScoreEmit::ZeroMinus:
+      return 0.0F - score;
   }
   SDB_UNREACHABLE();
 }
@@ -109,7 +109,7 @@ struct VectorScorerOptions {
         return 1.0f - radius;
       case ScoreEmit::Negate:
         return -radius;
-      case ScoreEmit::ClampNeg:
+      case ScoreEmit::ZeroMinus:
         return radius;
     }
     SDB_UNREACHABLE();

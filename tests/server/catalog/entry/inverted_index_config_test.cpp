@@ -25,7 +25,7 @@
 namespace sdb::catalog {
 namespace {
 
-TEST(InvertedIndexConfigTest, StoresExpressionNeedsAStoredField) {
+TEST(InvertedIndexConfigTest, StoredExpressionNeedsAStoredField) {
   const auto keys = [] {
     return std::vector<InvertedIndexKey>{
       {{.field_id = 7,
@@ -34,12 +34,12 @@ TEST(InvertedIndexConfigTest, StoresExpressionNeedsAStoredField) {
        "lower(title)"}};
   };
   const InvertedIndexConfig unstored{keys(), {}};
-  EXPECT_FALSE(unstored.StoresExpression(7));
+  EXPECT_EQ("", unstored.StoredExpression(7));
   EXPECT_FALSE(unstored.StoresExpressions());
   InvertedIndexFields fields;
   fields.emplace(7, InvertedIndexField{{.store_values = true}});
   const InvertedIndexConfig stored{keys(), std::move(fields)};
-  EXPECT_TRUE(stored.StoresExpression(7));
+  EXPECT_EQ("lower(title)", stored.StoredExpression(7));
   EXPECT_TRUE(stored.StoresExpressions());
 }
 
@@ -86,8 +86,8 @@ TEST(InvertedIndexConfigTest, LookupsFollowKeyOrder) {
   EXPECT_EQ(&config.keys[4], expression.term);
   EXPECT_EQ(&config.keys[3], expression.stored);
   EXPECT_EQ(nullptr, config.FindExpressionKeys("f").term);
-  EXPECT_TRUE(config.StoresExpression(kStored));
-  EXPECT_FALSE(config.StoresExpression(kTerms));
+  EXPECT_EQ("e", config.StoredExpression(kStored));
+  EXPECT_EQ("", config.StoredExpression(kTerms));
   EXPECT_TRUE(config.StoresExpressions());
   const auto owner = config.LookupField(kNull);
   EXPECT_EQ(kColumn, owner.entry_field_id);

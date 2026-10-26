@@ -122,13 +122,13 @@ class IndexInput : public DataInput {
 
   virtual void Prefetch(uint64_t, uint64_t) const noexcept {}
 
+  virtual void Evict(uint64_t, uint64_t) const noexcept {}
+
   virtual bool Resident(uint64_t, uint64_t) const noexcept { return false; }
 
   virtual bool Warm(uint64_t, uint64_t) const noexcept { return false; }
 
   virtual void MarkWarm(uint64_t, uint64_t) const noexcept {}
-
-  virtual void Advise(IOAdvice) noexcept {}
 
   IndexInput& operator=(const IndexInput&) = delete;
 
@@ -136,6 +136,8 @@ class IndexInput : public DataInput {
   IndexInput() = default;
   IndexInput(const IndexInput&) = default;
 };
+
+void ReadOnce(IndexInput& in, byte_type* b, size_t count);
 
 class InputBuf final : public std::streambuf, util::Noncopyable {
  public:

@@ -173,7 +173,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   bool WritesField(const InvertedIndexKey& key) const noexcept {
     return FindKey(key.field_id) == &key;
   }
-  bool StoresExpression(irs::field_id field_id) const noexcept;
+  std::string_view StoredExpression(irs::field_id field_id) const noexcept;
   bool StoresExpressions() const noexcept { return _stores_expressions; }
   bool HasExpressionKeys() const noexcept { return !_expressions.empty(); }
 

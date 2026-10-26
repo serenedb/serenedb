@@ -22,4 +22,4 @@ Please do **not** open public GitHub issues for security vulnerabilities.
 
 ## SereneUI (JavaScript)
 
-The `serene-ui/` directory contains a local development UI tool built with Node.js. It is not part of the SereneDB server and is not deployed to production. Dependabot alerts for JS dependencies in this directory are suppressed -- these don't affect the database itself.
+The `apps/serene-ui/` directory contains a local development UI tool built with Node.js. It is not part of the SereneDB server and is not deployed to production. Routine Dependabot version-update pull requests for this workspace are disabled; this does not suppress security alerts or security-update pull requests.

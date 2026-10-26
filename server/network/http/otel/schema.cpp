@@ -49,14 +49,13 @@ class Creator {
  public:
   Creator(std::string_view database, duckdb::idx_t database_id,
           std::string_view schema = "public")
-    : _conn{connector::MakeSystemConnection(irs::StaticStrings::kDefaultUser,
-                                            pg::kRootUser, database,
-                                            database_id)
-              .conn},
+    : _system{connector::MakeSystemConnection(irs::StaticStrings::kDefaultUser,
+                                              pg::kRootUser, database,
+                                              database_id)},
       _schema{schema} {}
 
   bool Exists(std::string_view table) {
-    auto result = _conn->Query(
+    auto result = _system.conn->Query(
       absl::StrCat("SELECT 1 FROM pg_tables WHERE schemaname = ",
                    network::http::SqlLiteral(_schema),
                    " AND tablename = ", network::http::SqlLiteral(table)));
@@ -64,7 +63,7 @@ class Creator {
   }
 
   absl::Status Run(std::string_view sql) {
-    auto result = _conn->Query(sql);
+    auto result = _system.conn->Query(sql);
     if (result->HasError()) {
       return absl::FailedPreconditionError(result->GetError());
     }
@@ -125,7 +124,7 @@ class Creator {
                                   connector::kOtelSourceMetricsFunctions[i]));
     }
     for (const auto& insert : inserts) {
-      auto prepared = _conn->Prepare(insert);
+      auto prepared = _system.conn->Prepare(insert);
       if (prepared->HasError()) {
         return absl::FailedPreconditionError(
           prepared->GetErrorObject().RawMessage());
@@ -135,7 +134,7 @@ class Creator {
   }
 
  private:
-  std::unique_ptr<duckdb::Connection> _conn;
+  connector::SystemConnection _system;
   std::string _schema;
 };
 

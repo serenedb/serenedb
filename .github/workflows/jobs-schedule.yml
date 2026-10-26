@@ -1,8 +1,10 @@
 name: serenedb | nightly
 
-run-name: "serenedb | nightly [${{ inputs.PUBLISH && 'publish' || 'no publish' }}]"
+run-name: "serenedb | nightly [${{ (github.event_name == 'schedule' || inputs.PUBLISH) && 'publish' || 'no publish' }}]"
 
 on:
+  schedule:
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       PUBLISH:
@@ -17,7 +19,6 @@ on:
 permissions:
   statuses: write
   contents: write
-  actions: write
   pull-requests: read
 
 concurrency:
@@ -107,9 +108,9 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       RTA: required
-      PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUBLISH }}
-      CREATE_GITHUB_RELEASE: ${{ inputs.PUBLISH }}
-      DOCKER_EXTRA_TAGS: ${{ inputs.PUBLISH && 'nightly' || '' }}
+      PUSH_IMAGES_2_REGISTRY: ${{ github.event_name == 'schedule' || inputs.PUBLISH }}
+      CREATE_GITHUB_RELEASE: ${{ github.event_name == 'schedule' || inputs.PUBLISH }}
+      DOCKER_EXTRA_TAGS: ${{ (github.event_name == 'schedule' || inputs.PUBLISH) && 'nightly' || '' }}
     secrets: inherit
 
   selection:

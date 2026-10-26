@@ -298,6 +298,25 @@ void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept {
 #endif
 }
 
+void Evict(const void* addr, size_t size) noexcept {
+#ifndef _WIN32
+  const auto page = SystemPage();
+  const auto begin =
+    (reinterpret_cast<uintptr_t>(addr) + page - 1) & ~(page - 1);
+  const auto end = (reinterpret_cast<uintptr_t>(addr) + size) & ~(page - 1);
+  if (begin < end) {
+    ::madvise(reinterpret_cast<void*>(begin), end - begin, MADV_DONTNEED);
+  }
+#endif
+}
+
+void Evict(int fd, uint64_t offset, uint64_t size) noexcept {
+#ifdef __linux__
+  ::posix_fadvise(fd, static_cast<off_t>(offset), static_cast<off_t>(size),
+                  POSIX_FADV_DONTNEED);
+#endif
+}
+
 bool IsResident(const void* addr, size_t size) noexcept {
 #ifndef _WIN32
   if (size == 0) {
@@ -908,10 +927,6 @@ handle_t Open(const path_char_t* path, OpenMode mode, int advice) noexcept {
       return handle_t(nullptr);
   }
   DWORD dwFlags = FILE_ATTRIBUTE_NORMAL | (static_cast<DWORD>(advice));
-  // Implement Alignment and File Access Requirements from MSDN
-  // if ((mode & OpenMode::Direct) == OpenMode::Direct) {
-  //  dwFlags |= FILE_FLAG_NO_BUFFERING;
-  //}
   HANDLE hFile = INVALID_HANDLE_VALUE;
   int try_count = CREATE_FILE_TRIES;
   do {
@@ -933,22 +948,10 @@ handle_t Open(const path_char_t* path, OpenMode mode, int advice) noexcept {
   auto posix_mode = (((OpenMode::Read & mode) == OpenMode::Read)
                        ? O_RDONLY
                        : (O_CREAT | O_TRUNC | O_WRONLY));
-#ifndef __APPLE__
-  // Implement Alignment and File Access Requirements
-  // if ((mode & OpenMode::Direct) == OpenMode::Direct) {
-  //  posix_mode |= O_DIRECT;
-  //}
-#endif
   auto fd = ::open(path ? path : "/dev/null", posix_mode, S_IRUSR | S_IWUSR);
   if (fd < 0) {
     return handle_t(nullptr);
   }
-#ifdef __APPLE__
-  // Implement Alignment and File Access Requirements
-  // if ((mode & OpenMode::Direct) == OpenMode::Direct) {
-  //  fcntl(fd, F_NOCACHE, 1);
-  //}
-#endif
 #if !defined(__APPLE__) &&                             \
   ((defined(_XOPEN_SOURCE) && _XOPEN_SOURCE >= 600) || \
    (defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L))

@@ -211,7 +211,7 @@ struct RelationSpec {
     return info && info->IsStored();
   }
   bool StoresExpression(ColumnId field) const noexcept {
-    return inverted_config && inverted_config->StoresExpression(field);
+    return inverted_config && !inverted_config->StoredExpression(field).empty();
   }
   catalog::IndexTokenizers ResolveTokenizers(
     duckdb::ClientContext& context) const {

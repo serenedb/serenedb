@@ -20,6 +20,8 @@ services:
         build:
             context: .
             dockerfile: Dockerfile.test
+            args:
+                TEST_USER: "${DOCKER_USER:-1000:1000}"
         labels: *owner
         container_name: serene-ui
         ports:

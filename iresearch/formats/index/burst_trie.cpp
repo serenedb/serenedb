@@ -2766,9 +2766,20 @@ class FieldReader::Impl {
                          IndexInput& blocks_in) {
       blocks_in.Seek(meta.body_offset);
       LoadFromMeta(id, meta, blocks_in);
-      _fst = FST::Read(blocks_in, _owner->_resource_manager);
+      GrowingHint hint;
+      hint.Arm(blocks_in.Position(), blocks_in.Length());
+      _fst = FST::Read(blocks_in, _owner->_resource_manager,
+                       [&](uint64_t at, uint64_t need) {
+                         if (need == 0) {
+                           hint.Advance(blocks_in, at);
+                         } else {
+                           blocks_in.Prefetch(at, need);
+                         }
+                       });
       SDB_ASSERT(_fst);
       _body_offset = meta.body_offset;
+      blocks_in.Evict(meta.body_offset,
+                      blocks_in.Position() - meta.body_offset);
       MapInlineRegion(blocks_in);
       _body_end = InlineEnd();
     }
@@ -2964,7 +2975,6 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
       std::upper_bound(ends.begin(), ends.end(), field.BodyOffset());
     field.SetBlocksBegin(it == ends.begin() ? 0 : *std::prev(it));
   }
-  _terms_in->Advise(IOAdvice::RANDOM);
 }
 
 const TermReader* FieldReader::Impl::field(field_id id) const {

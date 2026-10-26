@@ -421,12 +421,14 @@ const InvertedIndexKey* InvertedIndexConfig::FindKey(
   return it == _field_keys.end() ? nullptr : &keys[it->second];
 }
 
-bool InvertedIndexConfig::StoresExpression(
+std::string_view InvertedIndexConfig::StoredExpression(
   irs::field_id field_id) const noexcept {
   const auto* key = FindKey(field_id);
   const auto* entry = FindEntry(field_id);
-  return key && !key->normalized_expression.empty() && entry &&
-         entry->IsStored();
+  if (!key || !entry || !entry->IsStored()) {
+    return {};
+  }
+  return key->normalized_expression;
 }
 
 const InvertedIndexField* InvertedIndexConfig::FindEntry(

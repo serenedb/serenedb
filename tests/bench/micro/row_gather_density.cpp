@@ -148,8 +148,8 @@ std::unique_ptr<Column> Build(const Shape& shape) {
     writer.Commit(c->windows * kWindow);
   }
   con.Query("SET force_compression = 'auto'");
-  c->reader =
-    std::make_unique<irs::ColReader>(c->dir, std::string{kSegName}, CsDb());
+  c->reader = std::make_unique<irs::ColReader>(
+    c->dir, std::string{kSegName}, CsDb(), irs::IOAdvice::SEQUENTIAL);
   c->col = c->reader->Column(kField);
   if (!c->col) {
     std::fprintf(stderr, "Build(%s): column missing\n", shape.name);

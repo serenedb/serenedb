@@ -486,6 +486,7 @@ bool PgWireSession<Kind>::SetupConnection() {
     static_cast<int32_t>(_cancel_key >> 32), _cancel);
   _client_state =
     &connector::SereneDBClientState::Register(*_conn->context, _connection_ctx);
+  _progress = sdb::pg::ProgressRegistration{_client_state->progress_source};
   _client_state->protocol_state = &_proto;
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
   client_config.get_result_collector = MakeWireCollector;

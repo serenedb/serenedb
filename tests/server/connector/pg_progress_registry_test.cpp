@@ -20,8 +20,11 @@
 
 #include <gtest/gtest.h>
 
+#include <duckdb.hpp>
 #include <memory>
 
+#include "connector/duckdb_client_state.h"
+#include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 
 namespace sdb::pg {
@@ -157,6 +160,22 @@ TEST(ProgressRegistryTest, DetachedSourceReportsNoDuckDBProgress) {
   EXPECT_EQ(snap->rows_processed, 0);
 
   ProgressRegistry::Instance().Unregister(source.get());
+}
+
+TEST(ProgressRegistryTest, ClosedConnectionLeavesTheRegistry) {
+  duckdb::DBConfig config;
+  connector::RegisterClientStateCallbacks(config);
+  duckdb::DuckDB db{nullptr, &config};
+  auto connection = std::make_unique<duckdb::Connection>(db);
+  const auto context = connection->context;
+  connector::SereneDBClientState::Register(
+    *context,
+    std::make_shared<ConnectionContext>(*context, "postgres", 10, "postgres", 5,
+                                        nullptr, 1006, nullptr));
+  ASSERT_TRUE(FindByPid(1006).has_value());
+
+  connection.reset();
+  EXPECT_FALSE(FindByPid(1006).has_value());
 }
 
 TEST(ProgressNamesTest, CommandIoTypePhase) {

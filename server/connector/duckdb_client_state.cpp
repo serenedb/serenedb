@@ -30,6 +30,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/planner/extension_callback.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
@@ -177,6 +178,16 @@ namespace {
 // TransactionPreCommit and before TransactionCommit/Rollback, with no
 // ClientContext parameter of their own.
 thread_local ConnectionContext* tls_committing_ctx = nullptr;
+
+class ClientStateCallbacks final : public duckdb::ExtensionCallback {
+ public:
+  void OnConnectionClosed(duckdb::ClientContext& context) final {
+    if (const auto state = context.registered_state->Get<SereneDBClientState>(
+          kSereneDBClientStateKey)) {
+      state->DetachProgress();
+    }
+  }
+};
 
 }  // namespace
 
@@ -380,6 +391,11 @@ SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
   SereneDBClientState::Register(context, system.ctx);
   SetDefaultSearchPath(context, database);
   return system;
+}
+
+void RegisterClientStateCallbacks(duckdb::DBConfig& config) {
+  duckdb::ExtensionCallback::Register(
+    config, duckdb::make_shared_ptr<ClientStateCallbacks>());
 }
 
 }  // namespace sdb::connector

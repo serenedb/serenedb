@@ -28,6 +28,7 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
+#include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/typed_terms.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -51,6 +52,7 @@ constexpr uint64_t kFsstMinMeanSuffix = 2;
 constexpr uint64_t kFsstMaxMeanSuffix = 16;
 constexpr uint64_t kFsstMinRatioPct = 115;
 constexpr byte_type kZeros[kPage]{};
+constexpr uint32_t kNoBlock = std::numeric_limits<uint32_t>::max();
 
 uint64_t VSize(uint64_t value) noexcept {
   return bytes_io<uint64_t, sizeof(uint64_t)>::vsize(value);
@@ -258,14 +260,11 @@ IndexInput& Reopened(BlockBuffer& buffer, const IndexInput& in) {
 }
 
 PostingMeta DecodeRecord(const TermReaderImpl& field, const BlockView& view,
-                         uint32_t entry, BlockBuffer& buffer) {
+                         uint32_t entry) {
   auto cursor = GroupStart(view, entry / kRecordInterval);
   PostingMeta meta;
   DecodeRecords(cursor, entry % kRecordInterval + 1,
                 field.meta().index_features, meta);
-  if (meta.inline_size != 0) {
-    field.ReadInline(meta, buffer);
-  }
   return meta;
 }
 
@@ -959,9 +958,13 @@ SeekTermIterator::ptr TermReaderImpl::IteratorUntil(bytes_view upper) const {
   return it;
 }
 
+bool TermReaderImpl::Excludes(bytes_view term) const noexcept {
+  return _terms == 0 || term < _min || _max < term ||
+         (_width != 0 && term.size() != _width);
+}
+
 PostingMeta TermReaderImpl::Lookup(bytes_view term) const {
-  if (_terms == 0 || term < _min || _max < term ||
-      (_width != 0 && term.size() != _width)) {
+  if (Excludes(term)) {
     return {};
   }
   const size_t block = _small ? 0 : GetRoot().Find(term);
@@ -973,7 +976,64 @@ PostingMeta TermReaderImpl::Lookup(bytes_view term) const {
   if (entry == kNoEntry) {
     return {};
   }
-  return DecodeRecord(*this, view, entry, buffer);
+  auto meta = DecodeRecord(*this, view, entry);
+  if (meta.inline_size != 0) {
+    ReadInline(meta, buffer);
+  }
+  return meta;
+}
+
+void TermReaderImpl::LookupBatch(std::span<const bytes_view> terms,
+                                 std::span<PostingMeta> out) const {
+  SDB_ASSERT(terms.size() == out.size());
+  std::vector<uint32_t> blocks(terms.size(), kNoBlock);
+  std::vector<std::pair<uint64_t, uint64_t>> ranges;
+  for (size_t i = 0; i != terms.size(); ++i) {
+    if (Excludes(terms[i])) {
+      continue;
+    }
+    blocks[i] = _small ? 0 : static_cast<uint32_t>(_root.Find(terms[i]));
+    if (!_small) {
+      ranges.emplace_back(BlockOffset(blocks[i]), BlockOffset(blocks[i] + 1));
+    }
+  }
+  if (ranges.size() > 1) {
+    PrefetchRanges(_owner->Input(), ranges);
+  }
+  ranges.clear();
+
+  BlockBuffer buffer;
+  BlockView view{};
+  uint32_t parsed = kNoBlock;
+  for (size_t i = 0; i != terms.size(); ++i) {
+    out[i] = {};
+    if (blocks[i] == kNoBlock) {
+      continue;
+    }
+    if (blocks[i] != parsed) {
+      parsed = blocks[i];
+      view = Parse(Block(parsed, buffer));
+    }
+    const PaddedKey padded{terms[i]};
+    const auto entry = Find(view, padded.View(), _fsst.get());
+    if (entry == kNoEntry) {
+      continue;
+    }
+    const auto& meta = out[i] = DecodeRecord(*this, view, entry);
+    if (meta.inline_size != 0 && !_inline) {
+      const uint64_t end = _inline_offset + meta.inline_end;
+      ranges.emplace_back(end - meta.inline_size, end);
+    }
+  }
+  if (ranges.size() > 1) {
+    PrefetchRanges(_owner->Input(), ranges);
+  }
+
+  for (auto& meta : out) {
+    if (meta.inline_size != 0) {
+      ReadInline(meta, buffer);
+    }
+  }
 }
 
 void TermReaderImpl::ReadDocs(bytes_view term, Acceptor acceptor) const {

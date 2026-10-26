@@ -96,6 +96,7 @@ struct ReadState {
   bool fail = false;
   std::vector<std::pair<uint64_t, uint64_t>> prefetched;
   std::vector<uint64_t> offsets;
+  std::vector<size_t> hinted;
 };
 
 void MaybeFail(const ReadState& state) {
@@ -129,6 +130,7 @@ class CountingInput final : public irs::IndexInput {
     MaybeFail(*_state);
     ++_state->reads;
     _state->offsets.push_back(offset);
+    _state->hinted.push_back(_state->prefetched.size());
     _impl->ReadData(offset, b, count);
   }
   int16_t ReadI16() final { return _impl->ReadI16(); }
@@ -180,6 +182,7 @@ class CountingDirectory final : public tests::DirectoryMock {
     return _state->prefetched;
   }
   std::vector<uint64_t>& Offsets() const noexcept { return _state->offsets; }
+  std::vector<size_t>& Hinted() const noexcept { return _state->hinted; }
   void FailReads(bool fail) noexcept { _state->fail = fail; }
 
  private:
@@ -242,6 +245,15 @@ std::vector<Entry> MakeEntries(std::vector<irs::bstring> keys) {
 
 irs::bstring Bytes(std::string_view str) {
   return irs::bstring{irs::ViewCast<irs::byte_type>(str)};
+}
+
+void AssertSameMeta(const irs::PostingMeta& expected,
+                    const irs::PostingMeta& actual) {
+  ASSERT_EQ(expected.docs_count, actual.docs_count);
+  ASSERT_EQ(expected.freq, actual.freq);
+  ASSERT_EQ(expected.doc_start, actual.doc_start);
+  ASSERT_EQ(expected.doc_delta, actual.doc_delta);
+  ASSERT_EQ(expected.Inline(), actual.Inline());
 }
 
 uint32_t KeyWidth(const std::vector<Entry>& entries) {
@@ -470,6 +482,13 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
     const auto less = [](const Entry& entry, irs::bytes_view key) {
       return irs::bytes_view{entry.key} < key;
     };
+    std::vector<irs::bytes_view> terms{probes.begin(), probes.end()};
+    std::vector<irs::PostingMeta> metas(terms.size());
+    reader.LookupBatch(terms, metas);
+    for (size_t i = 0; i != terms.size(); ++i) {
+      SCOPED_TRACE(testing::Message("batch probe ") << i);
+      AssertSameMeta(reader.Lookup(terms[i]), metas[i]);
+    }
     auto shared = reader.iterator();
     for (const auto& probe : probes) {
       SCOPED_TRACE(testing::Message("probe size ") << probe.size());
@@ -1286,6 +1305,47 @@ TEST_P(TermDictTest, walks_read_ahead) {
     covered = std::max(covered, end);
   }
   ASSERT_EQ(impl.BlocksEnd(), covered);
+}
+
+TEST_P(TermDictTest, batch_lookup_hints_before_reading) {
+  const Field fields[]{{.id = 2, .entries = MakeEntries(Words(400000, 5))}};
+  Write(fields);
+  CountingDirectory counting{dir()};
+  Open(counting);
+  const auto* reader = Get(2);
+  ASSERT_NE(nullptr, reader);
+  const auto& entries = fields[0].entries;
+  std::vector<irs::bytes_view> terms;
+  for (size_t i = 0; i < entries.size(); i += 101) {
+    terms.emplace_back(entries[i].key);
+  }
+  std::vector<irs::PostingMeta> metas(terms.size());
+  auto& prefetched = counting.Prefetched();
+  auto& offsets = counting.Offsets();
+  auto& hinted = counting.Hinted();
+  prefetched.clear();
+  offsets.clear();
+  hinted.clear();
+
+  reader->LookupBatch(terms, metas);
+  ASSERT_GT(absl::c_count_if(metas,
+                             [](const irs::PostingMeta& meta) {
+                               return meta.inline_size != 0;
+                             }),
+            1);
+  ASSERT_FALSE(offsets.empty());
+  for (size_t i = 0; i != offsets.size(); ++i) {
+    const auto offset = offsets[i];
+    ASSERT_TRUE(absl::c_any_of(std::span{prefetched}.first(hinted[i]),
+                               [&](const auto& range) {
+                                 return range.first <= offset &&
+                                        offset < range.second;
+                               }))
+      << offset;
+  }
+  for (size_t i = 0; i != terms.size(); ++i) {
+    AssertSameMeta(reader->Lookup(terms[i]), metas[i]);
+  }
 }
 
 TEST_P(TermDictTest, scans_read_ahead_to_their_bound) {

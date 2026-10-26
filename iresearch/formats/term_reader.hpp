@@ -76,6 +76,9 @@ struct TermReader : public AttributeProvider {
   // has nowhere to walk to afterwards.
   virtual PostingMeta Lookup(bytes_view term) const = 0;
 
+  virtual void LookupBatch(std::span<const bytes_view> terms,
+                           std::span<PostingMeta> out) const;
+
   virtual void VisitRange(bytes_view from, bytes_view to,
                           RangeVisitor visit) const;
 

@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
@@ -415,8 +416,15 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
         SDB_ASSERT(collector->Size() == run.size());
         collector->Field(ctx.thread).Collect(*reader);
       }
+      containers::Fixed<bytes_view> terms{
+        run.size(), [&](bytes_view& term, size_t i) { term = run[i].term; }};
+      containers::Fixed<PostingMeta> metas{run.size()};
+      reader->LookupBatch(terms, metas);
+      if (const auto* doc = reader->Handles().doc; doc && run.size() > 1) {
+        PrefetchDocExtents(*doc, metas);
+      }
       for (size_t i = 0; i != run.size(); ++i) {
-        const auto meta = reader->Lookup(run[i].term);
+        const auto& meta = metas[i];
         if (collector && meta.docs_count != 0) {
           collector->Term(ctx.thread, i).Collect(meta);
         }

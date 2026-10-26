@@ -361,11 +361,13 @@ void SearchTableTransaction::Stage(const irs::SourcePosition& position,
     if (w.shard->GetDatabaseId() != database) {
       continue;
     }
+    SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_written");
     uint64_t queries = 0;
     for (auto& trx : w.transactions) {
       trx->RegisterFlush();
       queries += trx->GetQueries();
     }
+    SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_registered");
     w.first_tick = w.shard->NextTick(queries) - queries;
     w.position = position;
     w.shard->MarkStaged(position);

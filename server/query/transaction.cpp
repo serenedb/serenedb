@@ -25,6 +25,7 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -193,6 +194,7 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
     if (entry.storage->GetDatabaseId() != database) {
       continue;
     }
+    SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_written");
     uint64_t queries = 0;
     for (auto& slot : entry.slots) {
       slot.writer.reset();
@@ -201,6 +203,7 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
         queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
       }
     }
+    SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_registered");
     entry.tick = entry.storage->NextTick(queries);
     entry.position = position;
   }

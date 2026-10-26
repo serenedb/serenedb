@@ -70,7 +70,7 @@ FROM pg_stat_database d, stat_before b
 WHERE d.datname = current_database();
 ----
 commits
-7
+8
 
 
 connection c_rubick_a database=rubick_stat_db

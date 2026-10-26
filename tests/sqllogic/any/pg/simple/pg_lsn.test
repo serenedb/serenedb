@@ -19,6 +19,13 @@ SELECT pg_lsn(-1::numeric);
 
 
 query
+SELECT '{0/1,FF/0}'::pg_lsn[] AS lsns;
+----
+lsns
+{0/1,FF/0}
+
+
+query
 SELECT pg_wal_lsn_diff('0/4D2', '0/1') AS forward, pg_wal_lsn_diff('0/1', '0/4D2') AS backward,
        pg_wal_lsn_diff('1/0', '0/0') AS high, pg_wal_lsn_diff('0/1'::pg_lsn, NULL) AS null_lsn,
        pg_typeof(pg_wal_lsn_diff('0/1', '0/0'))::text AS t;

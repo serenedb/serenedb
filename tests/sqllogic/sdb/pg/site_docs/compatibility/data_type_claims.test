@@ -419,7 +419,7 @@ statement ok
 SELECT NULL::"money" IS NULL;
 
 
-# name (🟢)
+# name (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'name' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -467,7 +467,7 @@ statement ok
 SELECT NULL::"numrange" IS NULL;
 
 
-# oid (🟢)
+# oid (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'oid' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -479,7 +479,7 @@ statement ok
 SELECT NULL::"oid" IS NULL;
 
 
-# oidvector (🟢)
+# oidvector (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'oidvector' AND typnamespace = 'pg_catalog'::regnamespace;
 ----

@@ -72,8 +72,6 @@
 #include "pg/types/mac.h"
 #include "pg/types/mapping.h"
 #include "pg/types/money.h"
-#include "pg/types/name.h"
-#include "pg/types/oid.h"
 #include "pg/types/pg_lsn.h"
 #include "pg/types/range.h"
 #include "pg/types/tid.h"
@@ -881,15 +879,6 @@ struct XmlIn {
   }
 };
 
-struct CharText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    char buffer[kCharText];
-    sink.Varchar({buffer, WriteChar(CharIn(data), buffer)});
-    return true;
-  }
-};
-
 struct CharBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
@@ -899,25 +888,6 @@ struct CharBin {
     char buffer[kCharText];
     sink.Varchar(
       {buffer, WriteChar(static_cast<uint8_t>(data.front()), buffer)});
-    return true;
-  }
-};
-
-struct NameText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    sink.Varchar(data.substr(0, ClipName(data)));
-    return true;
-  }
-};
-
-struct NameBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    if (data.size() >= kNameDataLen) {
-      return false;
-    }
-    sink.Varchar(data);
     return true;
   }
 };
@@ -2361,10 +2331,6 @@ DeserializationFunction<Sink> GetDeserialization(
         return SelectDecoder<ReadFixed<&TidRecv>,
                              ParseFixed<int64_t, &TryParseTid>, Sink>(binary);
       }
-      if (IsOid(type)) {
-        return SelectDecoder<LoadBin<int64_t, uint32_t>,
-                             ParseFixed<int64_t, &TryParseOid>, Sink>(binary);
-      }
       if (binary) {
         return IsOidLike(type)
                  ? &LoadBin<int64_t, uint32_t>::template Decode<Sink>
@@ -2429,10 +2395,7 @@ DeserializationFunction<Sink> GetDeserialization(
     case VARCHAR:
     case CHAR:
       if (IsChar(type)) {
-        return SelectDecoder<CharBin, CharText, Sink>(binary);
-      }
-      if (IsName(type)) {
-        return SelectDecoder<NameBin, NameText, Sink>(binary);
+        return SelectDecoder<CharBin, VarcharText, Sink>(binary);
       }
       if (IsXml(type)) {
         return SelectDecoder<XmlIn, XmlIn, Sink>(binary);

@@ -25,6 +25,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
+#include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -37,7 +38,6 @@
 
 #include "pg/types/cast.h"
 #include "pg/types/logical.h"
-#include "pg/types/oid.h"
 
 namespace sdb::pg {
 namespace {
@@ -51,7 +51,7 @@ std::optional<irs::pg::SqlErrorData> TryParseInt2At(std::string_view text,
       ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
       ERR_MSG("invalid input syntax for type smallint: \"", rest, "\""));
   };
-  const auto number = ParseNumber(text, pos, 10);
+  const auto number = ParseNumber(text, pos);
   if (number.end == pos) {
     return syntax_error();
   }
@@ -67,6 +67,26 @@ std::optional<irs::pg::SqlErrorData> TryParseInt2At(std::string_view text,
   const auto magnitude = static_cast<int32_t>(number.magnitude);
   value = static_cast<int16_t>(number.negative ? -magnitude : magnitude);
   pos = number.end;
+  return std::nullopt;
+}
+
+std::optional<irs::pg::SqlErrorData> TryParseOidAt(std::string_view text,
+                                                   size_t& pos,
+                                                   int64_t& value) {
+  auto end = pos;
+  while (end != text.size() &&
+         !absl::ascii_isspace(static_cast<unsigned char>(text[end]))) {
+    ++end;
+  }
+  const auto token = text.substr(pos, end - pos);
+  if (!duckdb::TryCast::Operation<duckdb::string_t, int64_t>(
+        duckdb::string_t{token.data(), static_cast<uint32_t>(token.size())},
+        value)) {
+    return SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+      ERR_MSG("invalid input syntax for type oid: \"", token, "\""));
+  }
+  pos = end;
   return std::nullopt;
 }
 

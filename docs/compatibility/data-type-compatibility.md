@@ -26,7 +26,7 @@ These types also cast to and from the types their values are stored in, where Po
 | box                          | 🟡            | The comparison operators such as `=` and `<` compare the corners one by one, where PostgreSQL compares areas, so `box '(1,1),(0,0)' = box '(2,2),(1,1)'` is false. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
 | bpchar                       | 🟡            | `character(n)`: trailing blanks count in comparisons and in `length()`, so `'a '::char(2) = 'a'::char(2)` is false. |
 | bytea                        | 🟢            |         |
-| char                         | 🟡            | Values above 127 compare by their text form, such as `\303`, so `'é'::"char" > 'z'::"char"` is false. |
+| char                         | 🟡            | Holds text of any length, as `text` does: `'abc'::"char"` stays `abc`, where PostgreSQL keeps the first byte, and casts to and from integers convert digits, so `65::"char"` is `65`, where PostgreSQL gives `A`. |
 | cid                          | 🟢            |         |
 | cidr                         | 🟡            | A column of this type cannot be a `PRIMARY KEY` or `UNIQUE` column, and only an [inverted index](../sql/indexes/inverted/index.md) indexes it. `min` and `max` of a `cidr` column return `cidr`, where PostgreSQL returns `inet`. |
 | circle                       | 🟡            | The comparison operators such as `=` and `<` compare the center and then the radius, where PostgreSQL compares areas, so `circle '<(0,0),1>' = circle '<(5,5),1>'` is false. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
@@ -54,12 +54,12 @@ These types also cast to and from the types their values are stored in, where Po
 | macaddr                      | 🟢            |         |
 | macaddr8                     | 🟢            |         |
 | money                        | 🟡            | Values read and print in the `C` locale's format, such as `$1,234.56`: there is no `lc_monetary` setting. A number compared or combined with `money`, as in `m = 5` or `COALESCE(m, 0)`, is read as an amount, where PostgreSQL raises an error. Parquet files hold an amount as a decimal number of dollars, such as `12.34`. |
-| name                         | 🟢            |         |
+| name                         | 🟡            | A value is not cut to 63 bytes: `length(repeat('x', 70)::name)` is `70`. |
 | numeric                      | 🟡            | Without a precision, `numeric` is `numeric(18,3)` and rounds to three fractional digits. The precision is at most 38, and `NaN` is not supported. |
 | nummultirange                | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits, as for `numrange`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | numrange                     | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits: `numrange(1.25, 2.5)` is `[1.250,2.500)`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
-| oid                          | 🟢            |         |
-| oidvector                    | 🟢            |         |
+| oid                          | 🟡            | Text input reads as a `bigint`: `'010'::oid` is `10`, where PostgreSQL reads octal and gives `8`, `'-1'::oid` stays `-1`, where PostgreSQL gives `4294967295`, and a value above `4294967295` is accepted. A number given for a `reg*` type, such as `'023'::regtype`, is decimal as well. |
+| oidvector                    | 🟡            | Elements read as `oid` text does. |
 | path                         | 🟡            | The comparison operators such as `=` and `<` compare whether the path is closed and then its points, where PostgreSQL compares the numbers of points, so `path '((0,0),(1,1))' = path '[(5,5),(6,6)]'` is false. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
 | pg_brin_bloom_summary        | 🔴            |         |
 | pg_brin_minmax_multi_summary | 🔴            |         |

@@ -175,7 +175,7 @@ std::optional<irs::pg::SqlErrorData> TextInput::Error(duckdb::string_t text) {
                         ERR_MSG(message));
 }
 
-ParsedNumber ParseNumber(std::string_view text, size_t start, int base) {
+ParsedNumber ParseNumber(std::string_view text, size_t start) {
   const auto* begin = text.data();
   const auto* end = begin + text.size();
   const auto* p = begin + start;
@@ -186,18 +186,8 @@ ParsedNumber ParseNumber(std::string_view text, size_t start, int base) {
   if (p != end && (*p == '+' || *p == '-')) {
     ++p;
   }
-  if (base == 0) {
-    if (end - p > 2 && p[0] == '0' && (p[1] == 'x' || p[1] == 'X') &&
-        absl::ascii_isxdigit(static_cast<unsigned char>(p[2]))) {
-      base = 16;
-      p += 2;
-    } else {
-      base = p != end && *p == '0' ? 8 : 10;
-    }
-  }
   uint64_t magnitude = 0;
-  const auto [digits_end, error] =
-    fast_float::from_chars(p, end, magnitude, base);
+  const auto [digits_end, error] = fast_float::from_chars(p, end, magnitude);
   if (error == std::errc::invalid_argument) {
     return {
       .magnitude = 0, .negative = false, .out_of_range = false, .end = start};

@@ -555,6 +555,38 @@ def test_char_oid18_param_roundtrip(conn):
     assert first_field(m) == b"A"
 
 
+@pytest.mark.parametrize(
+    "param, text",
+    [(b"A", b"A"), (b"\0", b""), (b"\xc3", b"\\303")],
+)
+def test_char_oid18_binary_param(conn, param, text):
+    conn.parse("", "select $1::text", oids=(18,))
+    conn.bind("", "", params=(param,), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == text
+
+
+@pytest.mark.parametrize(
+    "query, value",
+    [
+        ("select 'A'::\"char\"", b"A"),
+        ("select ''::\"char\"", b"\0"),
+        ("select '\\303'::\"char\"", b"\xc3"),
+    ],
+)
+def test_char_oid18_binary_result(conn, query, value):
+    conn.parse("", query)
+    conn.bind("", "", result_format=1)
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == value
+
+
 def test_parse_param_oid_unknown_is_inferred(conn):
     conn.parse("", "select $1::int4 + 1", oids=(705,))
     conn.bind("", "", params=(b"41",))

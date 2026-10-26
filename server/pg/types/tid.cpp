@@ -68,7 +68,7 @@ std::optional<irs::pg::SqlErrorData> TryParseTid(std::string_view text,
   if (found != coords.size()) {
     return error();
   }
-  const auto block = ParseNumber(text, coords[0], 10);
+  const auto block = ParseNumber(text, coords[0]);
   if (block.out_of_range || block.end == text.size() ||
       text[block.end] != ',') {
     return error();
@@ -81,7 +81,7 @@ std::optional<irs::pg::SqlErrorData> TryParseTid(std::string_view text,
         static_cast<uint64_t>(static_cast<int32_t>(block_number))) {
     return error();
   }
-  const auto offset = ParseNumber(text, coords[1], 10);
+  const auto offset = ParseNumber(text, coords[1]);
   if (offset.out_of_range || offset.end == text.size() ||
       text[offset.end] != ')' || (offset.negative && offset.magnitude != 0) ||
       offset.magnitude > std::numeric_limits<uint16_t>::max()) {

@@ -40,7 +40,7 @@ struct ParsedNumber {
   size_t end;
 };
 
-ParsedNumber ParseNumber(std::string_view text, size_t start, int base);
+ParsedNumber ParseNumber(std::string_view text, size_t start);
 
 struct InputState : duckdb::FunctionLocalState {
   std::optional<irs::pg::SqlErrorData> error;

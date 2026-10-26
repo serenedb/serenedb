@@ -1563,17 +1563,9 @@ bool IsNumericOid(std::string_view text) {
 
 std::optional<uint64_t> ParseOid(std::string_view text,
                                  irs::pg::SqlErrorData* soft_error) {
-  const int base = text.size() > 1 && text.front() == '0' ? 8 : 10;
   uint64_t oid = 0;
-  const auto* end = text.data() + text.size();
-  const auto [ptr, ec] = fast_float::from_chars(text.data(), end, oid, base);
-  if (ec != std::errc::result_out_of_range && ptr != end) {
-    return Miss(soft_error,
-                SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                               ERR_MSG("invalid input syntax for type oid: \"",
-                                       text, "\"")));
-  }
-  if (ec == std::errc::result_out_of_range ||
+  if (fast_float::from_chars(text.data(), text.data() + text.size(), oid).ec ==
+        std::errc::result_out_of_range ||
       oid > std::numeric_limits<uint32_t>::max()) {
     return Miss(soft_error,
                 SQL_ERROR_DATA(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),

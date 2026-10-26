@@ -188,7 +188,14 @@ class PostingsWriter final {
     _last_state.clear();
   }
 
-  void Encode(BufferedOutput& out, const PostingMeta& state);
+  void Encode(BufferedOutput& out, const PostingMeta& meta) {
+    EncodeRecord<false>(out, meta, 0);
+  }
+
+  void EncodeDetached(BufferedOutput& out, const PostingMeta& meta,
+                      uint64_t inline_at) {
+    EncodeRecord<true>(out, meta, inline_at);
+  }
 
   void EncodeAbsolute(BufferedOutput& out, const PostingMeta& meta) {
     const auto last = _last_state;
@@ -237,6 +244,9 @@ class PostingsWriter final {
     bool _has_vec{};
   };
 
+  template<bool Detached>
+  void EncodeRecord(BufferedOutput& out, const PostingMeta& meta,
+                    uint64_t inline_at);
   void AddBlock(const PostingMeta& meta, doc_id_t last);
   void BeginTerm(PostingMeta& meta);
   void EndTerm(PostingMeta& meta);
@@ -383,8 +393,9 @@ inline void PostingsWriter::Prepare(const FlushState& state) {
   _docs.reset(doc_limits::min() + state.doc_count);
 }
 
-inline void PostingsWriter::Encode(BufferedOutput& out,
-                                   const PostingMeta& meta) {
+template<bool Detached>
+void PostingsWriter::EncodeRecord(BufferedOutput& out, const PostingMeta& meta,
+                                  uint64_t inline_at) {
   SDB_ASSERT(!_features.HasVector() ||
              (!_features.HasPosition() && !_features.HasOffset()));
 
@@ -409,9 +420,17 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
   }
 
   const auto doc_start = _last_state.doc_start;
+  const auto inline_end = _last_state.inline_end;
   if (inlined) {
     out.WriteByte(meta.inline_size);
-    out.WriteData(meta.inline_data.data(), meta.inline_size);
+    if constexpr (Detached) {
+      SDB_ASSERT(inline_end == 0 || inline_end == inline_at);
+      if (inline_end == 0) {
+        out.WriteV64(inline_at);
+      }
+    } else {
+      out.WriteData(meta.inline_data.data(), meta.inline_size);
+    }
   } else if (!single) {
     out.WriteV64(meta.doc_start - doc_start);
   }
@@ -445,6 +464,8 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
   }
 
   _last_state = meta;
+  _last_state.inline_end =
+    Detached && inlined ? inline_at + meta.inline_size : inline_end;
   if (inlined || single) {
     _last_state.doc_start = doc_start;
   }

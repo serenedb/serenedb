@@ -22,13 +22,16 @@
 #include <re2/literal_finder.h>
 
 #include <array>
+#include <cstring>
 #include <limits>
 #include <span>
+#include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
 namespace {
@@ -51,21 +54,65 @@ class KeyFilter {
     } else if (infix.size() >= kMinInfix && infix.size() <= kMaxInfix) {
       _infix = infix;
       _finder = re2::LiteralFinder{ViewCast<char>(infix)};
+      BuildBytes();
       _kind = Kind::Infix;
     }
   }
 
   bool Active() const noexcept { return _kind != Kind::None; }
+  bool Infix() const noexcept { return _kind == Kind::Infix; }
 
   void Restart() noexcept { _lcp = 0; }
 
   void Share(size_t lcp) noexcept { _lcp = std::min(_lcp, lcp); }
 
-  bool Rejects(bytes_view key) {
+  IRS_FORCE_INLINE bool Rejects(Cursor& cursor) {
     if (_kind == Kind::Suffix) {
-      return !EndsWithRequired(key) && !Exempt(key);
+      return SuffixRejects(cursor.Key());
     }
-    return InfixRejects(key);
+    return InfixRejects(cursor);
+  }
+
+  IRS_FORCE_INLINE uint32_t SkipRejected(Cursor& cursor) {
+    const auto& view = cursor.View();
+    if (_kind != Kind::Infix || _checks != kInfixProbe ||
+        view.kind != BlockKind::Var) {
+      return std::numeric_limits<uint32_t>::max();
+    }
+    if (_hits_block != cursor.BlockIndex()) {
+      LoadHits(cursor);
+    }
+    const size_t m = _infix.size();
+    const auto* base = view.suffixes;
+    const auto* hits = _hits.data();
+    const size_t count = _hits.size();
+    size_t hit =
+      SeekHit(_hit, static_cast<uint32_t>(cursor.NextSuffix() - base));
+    uint32_t lcp;
+    if (view.coded) {
+      lcp = cursor.SkipWhile(
+        [&](const byte_type* data, uint32_t shared, uint32_t size) {
+          const auto from = static_cast<uint32_t>(data - base);
+          while (hit != count && hits[hit] <= from) {
+            ++hit;
+          }
+          const auto* p = data;
+          return (NextCode(p) & (Across(shared) | 1)) == 0 &&
+                 (hit == count || hits[hit] >= from + size);
+        });
+    } else {
+      lcp = cursor.SkipWhile(
+        [&](const byte_type* data, uint32_t shared, uint32_t size) {
+          const auto from = static_cast<uint32_t>(data - base);
+          while (hit != count && hits[hit] < from) {
+            ++hit;
+          }
+          return (_literals[data[0]] & Across(shared)) == 0 &&
+                 (size < m || hit == count || hits[hit] >= from + size - m + 1);
+        });
+    }
+    _hit = hit;
+    return lcp;
   }
 
  private:
@@ -79,7 +126,12 @@ class KeyFilter {
   static constexpr size_t kMinInfix = 3;
   static constexpr size_t kMaxInfix = 32;
   static constexpr uint32_t kInfixProbe = 256;
+  static constexpr size_t kHeads = 32;
   static constexpr size_t kNone = std::numeric_limits<size_t>::max();
+
+  IRS_NO_INLINE bool SuffixRejects(bytes_view key) const noexcept {
+    return !EndsWithRequired(key) && !Exempt(key);
+  }
 
   bool EndsWithRequired(bytes_view key) const noexcept {
     if (key.empty()) {
@@ -108,18 +160,197 @@ class KeyFilter {
                          : key == bytes_view{exempt.key};
   }
 
-  bool InfixRejects(bytes_view key) {
+  void BuildBytes() {
     const size_t m = _infix.size();
-    bool found = _end <= _lcp;
-    if (!found) {
-      const auto chars = ViewCast<char>(key);
-      const size_t from = _lcp >= m ? _lcp - m + 1 : 0;
-      const char* at = _finder.Find(ViewCast<char>(_infix), chars.data() + from,
-                                    chars.data() + chars.size());
-      found = at != nullptr;
-      _end = found ? static_cast<size_t>(at - chars.data()) + m : kNone;
+    std::array<uint8_t, kMaxInfix> fail{};
+    for (size_t i = 1, k = 0; i != m; ++i) {
+      while (k != 0 && _infix[i] != _infix[k]) {
+        k = fail[k - 1];
+      }
+      k += _infix[i] == _infix[k];
+      fail[i] = static_cast<uint8_t>(k);
     }
-    _lcp = key.size();
+    _bytes.resize(m * kLabels);
+    for (size_t state = 0; state != m; ++state) {
+      for (size_t label = 0; label != kLabels; ++label) {
+        uint8_t next = 0;
+        if (label == _infix[state]) {
+          next = static_cast<uint8_t>(state + 1);
+        } else if (state != 0) {
+          next = _bytes[fail[state - 1] * kLabels + label];
+        }
+        _bytes[state * kLabels + label] = next;
+      }
+    }
+    for (size_t label = 0; label != kLabels; ++label) {
+      const auto byte = static_cast<byte_type>(label);
+      _literals[label] = Pieces({&byte, 1});
+    }
+  }
+
+  void BuildCodes(const duckdb_fsst_decoder_t& decoder) {
+    for (size_t code = 0; code != FSST_ESC; ++code) {
+      byte_type symbol[sizeof(uint64_t)];
+      std::memcpy(symbol, &decoder.symbol[code], sizeof(symbol));
+      _codes[code] = Pieces({symbol, decoder.len[code]});
+    }
+    _coded = true;
+  }
+
+  uint64_t Pieces(bytes_view symbol) const noexcept {
+    const size_t m = _infix.size();
+    uint64_t pieces = symbol.find(_infix) != bytes_view::npos;
+    for (size_t k = 1; k != m; ++k) {
+      const auto rest = _infix.substr(k);
+      if (symbol.size() >= rest.size() ? symbol.starts_with(rest)
+                                       : rest.starts_with(symbol)) {
+        pieces |= uint64_t{1} << k;
+      }
+      if (symbol.ends_with(_infix.substr(0, k))) {
+        pieces |= uint64_t{1} << (kHeads + k);
+      }
+    }
+    return pieces;
+  }
+
+  uint64_t Across(size_t lcp) const noexcept {
+    return (uint64_t{2} << std::min(lcp, _infix.size() - 1)) - 2;
+  }
+
+  uint64_t NextCode(const byte_type*& p) const noexcept {
+    const size_t code = *p++;
+    if (code != FSST_ESC) [[likely]] {
+      return _codes[code];
+    }
+    return _literals[*p++];
+  }
+
+  IRS_NO_INLINE void LoadHits(const Cursor& cursor) {
+    const auto& view = cursor.View();
+    _hits.clear();
+    if (view.coded) {
+      if (!_coded) {
+        BuildCodes(*cursor.Field().Fsst());
+      }
+      for (uint32_t group = 0; group != view.restarts; ++group) {
+        const auto* hp = view.headers + HeaderOffset(view, group);
+        const auto* p =
+          view.suffixes + SuffixOffset(view, group) + ReadHeader(hp).len;
+        const auto* end = group + 1 == view.restarts
+                            ? view.records
+                            : view.suffixes + SuffixOffset(view, group + 1);
+        uint64_t heads = 0;
+        while (p < end) {
+          const uint64_t pieces = NextCode(p);
+          if ((pieces & (heads | 1)) != 0) {
+            _hits.push_back(static_cast<uint32_t>(p - 1 - view.suffixes));
+          }
+          heads = pieces >> kHeads;
+        }
+      }
+    } else {
+      const auto needle = ViewCast<char>(_infix);
+      const auto* begin = reinterpret_cast<const char*>(view.suffixes);
+      const auto* end = reinterpret_cast<const char*>(view.records);
+      for (const char* at = begin; (at = _finder.Find(needle, at, end)); ++at) {
+        _hits.push_back(static_cast<uint32_t>(at - begin));
+      }
+    }
+    _hits_block = cursor.BlockIndex();
+    _hit = 0;
+  }
+
+  IRS_FORCE_INLINE size_t SeekHit(size_t hit, uint32_t from) const {
+    if (hit != 0 && _hits[hit - 1] >= from) {
+      return absl::c_lower_bound(_hits, from) - _hits.begin();
+    }
+    while (hit != _hits.size() && _hits[hit] < from) {
+      ++hit;
+    }
+    return hit;
+  }
+
+  IRS_FORCE_INLINE bool HitIn(uint32_t from, uint32_t to) {
+    _hit = SeekHit(_hit, from);
+    return _hit != _hits.size() && _hits[_hit] < to;
+  }
+
+  IRS_NO_INLINE bool Confirm(Cursor& cursor) {
+    cursor.Materialize();
+    return Verify(cursor.Key());
+  }
+
+  bool Verify(bytes_view key) {
+    const size_t m = _infix.size();
+    const size_t from = _lcp >= m ? _lcp - m + 1 : 0;
+    _end = kNone;
+    uint8_t state = 0;
+    for (size_t i = from; i < key.size(); ++i) {
+      state = _bytes[state * kLabels + key[i]];
+      if (state == m) {
+        _end = i + 1;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  IRS_NO_INLINE bool RestartContains(Cursor& cursor) {
+    const auto& view = cursor.View();
+    if (_hits_block != cursor.BlockIndex()) {
+      LoadHits(cursor);
+    }
+    const size_t m = _infix.size();
+    const auto key = cursor.Key();
+    const auto from = static_cast<uint32_t>(
+      SuffixOffset(view, cursor.Entry() / kRestartInterval));
+    if (key.size() < m || !HitIn(from, from + key.size() - m + 1)) {
+      _end = kNone;
+      return false;
+    }
+    _end = _hits[_hit] - from + m;
+    return true;
+  }
+
+  IRS_FORCE_INLINE bool Contains(Cursor& cursor) {
+    const auto* suffix = cursor.Pending();
+    const auto& view = cursor.View();
+    if (!suffix) {
+      if (view.kind == BlockKind::Var && !view.coded &&
+          cursor.Entry() % kRestartInterval == 0) {
+        return RestartContains(cursor);
+      }
+      return Confirm(cursor);
+    }
+    if (_hits_block != cursor.BlockIndex()) [[unlikely]] {
+      LoadHits(cursor);
+    }
+    const size_t m = _infix.size();
+    const uint64_t across = Across(suffix->lcp);
+    const auto from = static_cast<uint32_t>(suffix->data - view.suffixes);
+    if (view.coded) {
+      const auto* p = suffix->data;
+      if ((NextCode(p) & (across | 1)) != 0 ||
+          HitIn(from + 1, from + suffix->size)) {
+        return Confirm(cursor);
+      }
+      _end = kNone;
+      return false;
+    }
+    if ((_literals[suffix->data[0]] & across) != 0) {
+      return Confirm(cursor);
+    }
+    if (suffix->size < m || !HitIn(from, from + suffix->size - m + 1)) {
+      _end = kNone;
+      return false;
+    }
+    _end = suffix->lcp + (_hits[_hit] - from) + m;
+    return true;
+  }
+
+  IRS_FORCE_INLINE bool InfixRejects(Cursor& cursor) {
+    const bool found = _end <= _lcp || Contains(cursor);
+    _lcp = kNone;
     if (_checks != kInfixProbe) {
       _rejects += !found;
       if (++_checks == kInfixProbe && _rejects * 2 < kInfixProbe) {
@@ -133,7 +364,14 @@ class KeyFilter {
   std::span<const RegexpAcceptor::ExemptKey> _exempt;
   std::array<uint8_t, kLabels + 1> _starts{};
   bytes_view _infix;
+  std::vector<uint8_t> _bytes;
+  std::array<uint64_t, kLabels> _literals{};
+  std::array<uint64_t, kLabels> _codes{};
   re2::LiteralFinder _finder;
+  std::vector<uint32_t> _hits;
+  size_t _hit = 0;
+  uint32_t _hits_block = kNoEntry;
+  bool _coded = false;
   size_t _lcp = 0;
   size_t _end = kNone;
   uint32_t _checks = 0;
@@ -151,6 +389,163 @@ KeyFilter MakeFilter(const A& a) {
 }
 
 template<typename A>
+bstring UpperBound(const A& a) {
+  constexpr size_t kMaxBound = 64;
+  bstring upper;
+  for (auto state = a.Start(); upper.size() != kMaxBound;) {
+    uint32_t lo = 1;
+    uint32_t hi = 0;
+    a.LiveRange(state, lo, hi);
+    if (lo > hi) {
+      break;
+    }
+    upper.push_back(static_cast<byte_type>(hi));
+    state = a.Step(state, static_cast<byte_type>(hi));
+    if (!A::Alive(state)) {
+      break;
+    }
+  }
+  while (!upper.empty() && upper.back() == 0xFF) {
+    upper.pop_back();
+  }
+  if (!upper.empty()) {
+    ++upper.back();
+  }
+  return upper;
+}
+
+template<typename A>
+class BlockPlan {
+ public:
+  using State = typename A::State;
+
+  BlockPlan(const TermReaderImpl& field, const A& a) : _field{&field}, _a{&a} {
+    _states.assign(1, a.Start());
+  }
+
+  void Run(uint32_t block, uint32_t end, uint64_t budget) {
+    const auto& root = _field->GetRoot();
+    const uint64_t base = _field->BlockOffset(block);
+    while (block < end && _field->BlockOffset(block) - base < budget) {
+      const auto prefix = Prefix(block);
+      if (Alive(prefix)) {
+        Add(block++);
+        continue;
+      }
+      if (!NextTarget(prefix)) {
+        break;
+      }
+      block = std::max(block + 1, static_cast<uint32_t>(root.FindFrom(
+                                    block + 1, bytes_view{_target})));
+    }
+    Flush();
+  }
+
+ private:
+  bytes_view Prefix(uint32_t block) const noexcept {
+    const auto& root = _field->GetRoot();
+    const bytes_view lower = block == 0 ? _field->min() : root.Separator(block);
+    const bytes_view upper =
+      block + 1 == _field->Blocks() ? _field->max() : root.Separator(block + 1);
+    return lower.substr(0, CommonPrefixLength(lower, upper));
+  }
+
+  bool Alive(bytes_view prefix) {
+    size_t depth =
+      std::min(_valid, CommonPrefixLength(bytes_view{_path}, prefix));
+    _path.assign(prefix);
+    if (_states.size() <= prefix.size()) {
+      _states.resize(prefix.size() + 1);
+    }
+    for (; depth != prefix.size(); ++depth) {
+      const auto next = _a->Step(_states[depth], prefix[depth]);
+      if (!A::Alive(next)) {
+        _valid = depth;
+        return false;
+      }
+      _states[depth + 1] = next;
+    }
+    _valid = depth;
+    return true;
+  }
+
+  bool NextTarget(bytes_view prefix) {
+    for (size_t depth = _valid;; --depth) {
+      uint32_t lo = 1;
+      uint32_t hi = 0;
+      _a->LiveRange(_states[depth], lo, hi);
+      const auto label = std::max<uint32_t>(prefix[depth] + 1, lo);
+      if (label <= hi) {
+        _target.assign(prefix.substr(0, depth));
+        _target.push_back(static_cast<byte_type>(label));
+        return true;
+      }
+      if (depth == 0) {
+        return false;
+      }
+    }
+  }
+
+  void Add(uint32_t block) {
+    if (block != _run_end) {
+      Flush();
+      _run_begin = block;
+    }
+    _run_end = block + 1;
+  }
+
+  void Flush() {
+    if (_run_begin == _run_end) {
+      return;
+    }
+    const uint64_t offset = _field->BlockOffset(_run_begin);
+    Hint(_field->Owner().Input(), offset,
+         _field->BlockOffset(_run_end) - offset);
+    _run_begin = _run_end;
+  }
+
+  const TermReaderImpl* _field;
+  const A* _a;
+  containers::SmallVector<State, 64> _states;
+  bstring _path;
+  bstring _target;
+  size_t _valid = 0;
+  uint32_t _run_begin = 0;
+  uint32_t _run_end = 0;
+};
+
+template<typename A>
+void Readahead(Cursor& cursor, const A& a) {
+  constexpr uint64_t kMaxPrefetch = uint64_t{256} << 20;
+  const auto& field = cursor.Field();
+  const auto& root = field.GetRoot();
+  const auto lower = a.LowerBound();
+  const auto upper = UpperBound(a);
+  const uint32_t begin =
+    lower > field.min() ? static_cast<uint32_t>(root.Find(lower)) : 0;
+  const uint32_t end = upper.empty() || bytes_view{upper} > field.max()
+                         ? field.Blocks()
+                         : static_cast<uint32_t>(root.Find(upper)) + 1;
+  if (begin >= end) {
+    cursor.ReadaheadUntil(0, false);
+    return;
+  }
+  const auto& in = field.Owner().Input();
+  const uint64_t offset = field.BlockOffset(begin);
+  const uint64_t range = field.BlockOffset(end) - offset;
+  const uint64_t size = std::min(range, kMaxPrefetch);
+  cursor.ReadaheadUntil(range <= kMaxPrefetch ? 0 : end, false);
+  if (in.Warm(offset, size)) {
+    return;
+  }
+  if (in.Resident(offset, size)) {
+    in.MarkWarm(offset, size);
+    return;
+  }
+  BlockPlan<A>{field, a}.Run(begin, end, kMaxPrefetch);
+}
+
+template<typename A>
 class AcceptorIterator : public SeekTermIterator {
  public:
   using State = typename A::State;
@@ -159,6 +554,9 @@ class AcceptorIterator : public SeekTermIterator {
     : _cursor{field}, _a{&a}, _filter{MakeFilter(a)} {
     if constexpr (A::kHasPayload) {
       _pay.value = {&_payload, sizeof(_payload)};
+    }
+    if (!field.Small()) {
+      Readahead(_cursor, a);
     }
   }
 
@@ -223,19 +621,67 @@ class AcceptorIterator : public SeekTermIterator {
     return false;
   }
 
-  bytes_view BlockPrefix(uint32_t block) const noexcept {
+  bytes_view BlockPrefix(uint32_t block) noexcept {
+    if (block == _prefix_block) {
+      return _prefix;
+    }
     const auto& field = _cursor.Field();
     const bytes_view lower =
       block == 0 ? field.min() : field.GetRoot().Separator(block);
     const bytes_view upper = block + 1 == field.Blocks()
                                ? field.max()
                                : field.GetRoot().Separator(block + 1);
-    return lower.substr(0, CommonPrefixLength(lower, upper));
+    _prefix = lower.substr(0, CommonPrefixLength(lower, upper));
+    _prefix_block = block;
+    return _prefix;
+  }
+
+  struct Range {
+    uint32_t lo;
+    uint32_t hi;
+  };
+
+  static constexpr uint32_t kUnranged = std::numeric_limits<uint32_t>::max();
+
+  Range LiveRange(size_t depth) {
+    if (depth >= _ranged) {
+      for (size_t i = _ranged; i <= depth; ++i) {
+        _ranges[i].hi = kUnranged;
+      }
+      _ranged = depth + 1;
+    }
+    auto& range = _ranges[depth];
+    if (range.hi == kUnranged) {
+      range.lo = 1;
+      range.hi = 0;
+      _a->LiveRange(_states[depth], range.lo, range.hi);
+    }
+    return range;
   }
 
   size_t StepAlong(bytes_view path, size_t depth) {
     if (_states.size() <= path.size()) {
       _states.resize(path.size() + 1);
+      _ranges.resize(path.size() + 1);
+    }
+    _ranged = std::min(_ranged, depth + 1);
+    if constexpr (A::kCheapRuns) {
+      while (depth != path.size()) {
+        const auto from = _states[depth];
+        State next{};
+        const size_t run =
+          _a->StepRun(from, path.data() + depth, path.size() - depth, next);
+        std::fill_n(_states.begin() + depth + 1, run, from);
+        depth += run;
+        if (depth == path.size()) {
+          break;
+        }
+        if (!A::Alive(next)) {
+          return depth;
+        }
+        _states[++depth] = next;
+      }
+      return depth;
     }
     for (; depth != path.size(); ++depth) {
       const auto next = _a->Step(_states[depth], path[depth]);
@@ -247,16 +693,33 @@ class AcceptorIterator : public SeekTermIterator {
     return depth;
   }
 
+  bytes_view Target() const noexcept { return {_target.data(), _target_size}; }
+
+  byte_type* ResizeTarget(size_t size) {
+    if (_target.size() < size + kKeyPad) {
+      utils::StrResizeAmortized(_target, size + kKeyPad);
+    }
+    std::memset(_target.data() + size, 0, kKeyPad);
+    _target_size = size;
+    return _target.data();
+  }
+
+  void AssignTarget(bytes_view value) {
+    auto* target = ResizeTarget(value.size());
+    if (!value.empty()) {
+      std::memcpy(target, value.data(), value.size());
+    }
+  }
+
   bool NextTarget(bytes_view path, size_t& depth) {
     SDB_ASSERT(path.data() != _target.data());
     for (;;) {
-      uint32_t lo = 1;
-      uint32_t hi = 0;
-      _a->LiveRange(_states[depth], lo, hi);
-      const auto label = std::max<uint32_t>(path[depth] + 1, lo);
-      if (label <= hi) {
-        _target.assign(path.substr(0, depth));
-        _target.push_back(static_cast<byte_type>(label));
+      const auto range = LiveRange(depth);
+      const auto label = std::max<uint32_t>(path[depth] + 1, range.lo);
+      if (label <= range.hi) {
+        auto* target = ResizeTarget(depth + 1);
+        std::memcpy(target, path.data(), depth);
+        target[depth] = static_cast<byte_type>(label);
         return true;
       }
       if (depth == 0) {
@@ -269,12 +732,14 @@ class AcceptorIterator : public SeekTermIterator {
   bool Seek(bytes_view target, size_t valid) {
     if (_states.empty()) {
       _states.assign(1, _a->Start());
+      _ranges.resize(1);
+      _ranged = 0;
     }
     const auto& field = _cursor.Field();
     if (field.size() == 0 || target > field.max()) {
       return false;
     }
-    _target.assign(target);
+    AssignTarget(target);
     uint32_t block = 0;
     if (!field.Small() && target > field.min()) {
       block = static_cast<uint32_t>(field.GetRoot().Find(target));
@@ -282,16 +747,40 @@ class AcceptorIterator : public SeekTermIterator {
     return Land(block, valid);
   }
 
+  bool InBlock(bytes_view target) {
+    const auto& field = _cursor.Field();
+    const auto block = _cursor.BlockIndex();
+    if (block != _bound_block) {
+      _last_block = block + 1 == field.Blocks();
+      _bound = _last_block ? field.max() : field.GetRoot().Separator(block + 1);
+      _bound_block = block;
+    }
+    return _last_block ? target <= _bound : target < _bound;
+  }
+
+  bool Hop(size_t depth) {
+    const auto target = Target();
+    if (InBlock(target) &&
+        _cursor.SeekAhead(Probe{target.data(), target.size()}, depth)) {
+      _filter.Restart();
+      _check = true;
+      _valid = std::min(depth, _cursor.Shared());
+      return true;
+    }
+    return Jump(depth);
+  }
+
   bool Jump(size_t valid) {
     const auto& field = _cursor.Field();
-    if (bytes_view{_target} > field.max()) {
+    const auto target = Target();
+    if (target > field.max()) {
       return false;
     }
     auto block = _cursor.BlockIndex();
     if (!field.Small() && block + 1 < field.Blocks() &&
-        field.GetRoot().Separator(block + 1) <= _target) {
+        field.GetRoot().NotAfter(block + 1, target)) {
       block =
-        static_cast<uint32_t>(field.GetRoot().FindFrom(block + 1, _target));
+        static_cast<uint32_t>(field.GetRoot().FindFrom(block + 1, target));
     }
     return Land(block, valid);
   }
@@ -299,21 +788,20 @@ class AcceptorIterator : public SeekTermIterator {
   bool Land(uint32_t block, size_t valid) {
     const auto& field = _cursor.Field();
     _filter.Restart();
+    _check = true;
     for (;;) {
       const auto prefix = BlockPrefix(block);
-      const size_t shared = CommonPrefixLength(bytes_view{_target}, prefix);
+      const size_t shared = CommonPrefixLength(Target(), prefix);
       const size_t base = std::min(valid, shared);
       size_t depth = StepAlong(prefix, base);
       if (depth == prefix.size()) {
         if (_cursor.BlockIndex() != block) {
           _cursor.Load(block);
         }
-        if (_cursor.LowerBound(_target)) {
+        if (_cursor.LowerBound(Probe{_target.data(), _target_size})) {
           _valid = prefix.size();
           if (shared == prefix.size()) {
-            _valid =
-              std::min(std::max(valid, prefix.size()),
-                       CommonPrefixLength(bytes_view{_target}, _cursor.Key()));
+            _valid = std::min(std::max(valid, prefix.size()), _cursor.Shared());
           }
           return true;
         }
@@ -328,24 +816,30 @@ class AcceptorIterator : public SeekTermIterator {
       }
       valid = depth;
       block =
-        static_cast<uint32_t>(field.GetRoot().FindFrom(block + 1, _target));
+        static_cast<uint32_t>(field.GetRoot().FindFrom(block + 1, Target()));
     }
   }
 
-  bool Advance() {
-    if (_cursor.AtBlockEnd()) {
-      const auto& field = _cursor.Field();
-      const auto next = _cursor.BlockIndex() + 1;
-      if (next >= field.Blocks()) {
-        return false;
-      }
-      const auto separator = field.GetRoot().Separator(next);
-      const size_t valid =
-        std::min(_valid, CommonPrefixLength(_cursor.Key(), separator));
-      _target.assign(separator);
-      return Land(next, valid);
+  IRS_NO_INLINE bool NextBlock() {
+    _cursor.Materialize();
+    const auto& field = _cursor.Field();
+    const auto next = _cursor.BlockIndex() + 1;
+    if (next >= field.Blocks()) {
+      return false;
     }
-    const size_t lcp = _cursor.Next();
+    const auto separator = field.GetRoot().Separator(next);
+    const size_t valid =
+      std::min(_valid, CommonPrefixLength(_cursor.Key(), separator));
+    AssignTarget(separator);
+    return Land(next, valid);
+  }
+
+  IRS_FORCE_INLINE bool Advance() {
+    if (_cursor.AtBlockEnd()) [[unlikely]] {
+      return NextBlock();
+    }
+    const size_t lcp = _filter.Infix() ? _cursor.Skip() : _cursor.Next();
+    _check = lcp <= _valid;
     _valid = std::min(_valid, lcp);
     _filter.Share(lcp);
     return true;
@@ -353,28 +847,34 @@ class AcceptorIterator : public SeekTermIterator {
 
   bool Settle() {
     for (;;) {
-      const auto key = _cursor.Key();
-      size_t depth = _valid;
-      if (depth != key.size()) {
-        depth = StepAlong(key.substr(0, depth + 1), depth);
-        if (depth == _valid) {
-          if (!NextTarget(key, depth) || !Jump(depth)) {
-            return End();
+      if (_check) {
+        _check = false;
+        if (const int label = _cursor.ByteAt(_valid); label >= 0) {
+          const auto range = LiveRange(_valid);
+          if (static_cast<uint32_t>(label) < range.lo ||
+              static_cast<uint32_t>(label) > range.hi) {
+            _cursor.Materialize();
+            size_t depth = _valid;
+            if (!NextTarget(_cursor.Key(), depth) || !Hop(depth)) {
+              return End();
+            }
+            continue;
           }
-          continue;
         }
-        _valid = depth;
       }
-      if (_filter.Active() && _filter.Rejects(key)) {
+      if (_filter.Active() && _filter.Rejects(_cursor)) {
+        _valid = std::min<size_t>(_valid, _filter.SkipRejected(_cursor));
         if (!Advance()) {
           return End();
         }
         continue;
       }
-      depth = StepAlong(key, _valid);
+      _cursor.Materialize();
+      const auto key = _cursor.Key();
+      size_t depth = StepAlong(key, _valid);
       _valid = depth;
       if (depth != key.size()) {
-        if (!NextTarget(key, depth) || !Jump(depth)) {
+        if (!NextTarget(key, depth) || !Hop(depth)) {
           return End();
         }
         continue;
@@ -407,8 +907,17 @@ class AcceptorIterator : public SeekTermIterator {
   const A* _a;
   KeyFilter _filter;
   containers::SmallVector<State, 64> _states;
+  containers::SmallVector<Range, 64> _ranges;
+  size_t _ranged = 0;
   bstring _target;
+  size_t _target_size = 0;
   size_t _valid = 0;
+  bool _check = true;
+  bytes_view _prefix;
+  uint32_t _prefix_block = kNoEntry;
+  bytes_view _bound;
+  uint32_t _bound_block = kNoEntry;
+  bool _last_block = false;
   TermAttr _term;
   PayAttr _pay;
   typename A::PayloadType _payload{};

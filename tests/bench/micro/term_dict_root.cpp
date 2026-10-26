@@ -32,6 +32,10 @@
 #include <iresearch/formats/index/term_dict_root.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/conjunction_acceptor.hpp>
+#include <iresearch/utils/levenshtein_acceptor.hpp>
+#include <iresearch/utils/levenshtein_default_pdp.hpp>
+#include <iresearch/utils/regexp_acceptor.hpp>
 #include <memory>
 #include <string>
 #include <variant>
@@ -118,29 +122,24 @@ class KeysReader final : public irs::BasicTermReader {
 };
 
 using Candidate =
-  std::variant<irs::term_dict::SortedRoot, irs::term_dict::SortedHeadsRoot,
-               irs::term_dict::EytzingerRoot, irs::term_dict::BTreeRoot,
-               irs::term_dict::RadixRoot>;
+  std::variant<irs::term_dict::EytzingerRoot, irs::term_dict::TreeRoot,
+               irs::term_dict::ArtRoot>;
 
 constexpr std::string_view kCandidates[] = {
-  "sorted", "sorted_heads", "eytzinger", "btree", "radix1", "radix2",
+  "eytzinger",
+  "tree",
+  "art",
 };
 
 Candidate MakeCandidate(std::string_view name,
                         const irs::term_dict::Separators& separators) {
-  if (name == "sorted") {
-    return irs::term_dict::SortedRoot{separators};
-  }
-  if (name == "sorted_heads") {
-    return irs::term_dict::SortedHeadsRoot{separators};
-  }
   if (name == "eytzinger") {
     return irs::term_dict::EytzingerRoot{separators};
   }
-  if (name == "btree") {
-    return irs::term_dict::BTreeRoot{separators};
+  if (name == "tree") {
+    return irs::term_dict::TreeRoot{separators};
   }
-  return irs::term_dict::RadixRoot{separators, name == "radix1" ? 1U : 2U};
+  return irs::term_dict::ArtRoot{separators};
 }
 
 struct Data {
@@ -148,6 +147,7 @@ struct Data {
   std::vector<bstring> keys;
   std::vector<bstring> hit;
   std::vector<bstring> miss;
+  std::vector<bstring> seek;
   std::vector<bstring> batches[std::size(kBatchKinds)][std::size(kBatchSizes)];
   std::vector<bytes_view> separators;
   irs::term_dict::Separators decoded;
@@ -224,6 +224,7 @@ const Data& Load(const std::string& base) {
   data->keys = ReadRecords(file("keys"));
   data->hit = ReadRecords(file("hit"));
   data->miss = ReadRecords(file("miss"));
+  data->seek = ReadRecords(file("seek"));
   for (size_t k = 0; k != std::size(kBatchKinds); ++k) {
     for (size_t s = 0; s != std::size(kBatchSizes); ++s) {
       data->batches[k][s] = ReadRecords(
@@ -338,9 +339,30 @@ void Report(benchmark::State& state, const Prepared& prepared, size_t probes) {
     [&](const auto& root) {
       state.counters["bytes"] = static_cast<double>(root.MemoryBytes());
       state.counters["blocks"] = static_cast<double>(root.Blocks());
+      if constexpr (std::is_same_v<std::decay_t<decltype(root)>,
+                                   irs::term_dict::ArtRoot>) {
+        const size_t count = root.Blocks() - 1;
+        state.counters["visits"] =
+          static_cast<double>(root.Visits()) /
+          static_cast<double>(std::max<size_t>(1, count));
+        state.counters["tree_height"] =
+          static_cast<double>(irs::term_dict::TreeRoot::Height(count));
+      }
     },
     prepared.candidate);
   state.counters["build_ms"] = prepared.build_ms;
+  const auto& separators = prepared.data->separators;
+  if (separators.size() > 1) {
+    const size_t skip =
+      irs::CommonPrefixLength(separators.front(), separators.back());
+    size_t ties = 0;
+    for (size_t i = 1; i != separators.size(); ++i) {
+      ties += irs::term_dict::HeadAt(separators[i - 1], skip) ==
+              irs::term_dict::HeadAt(separators[i], skip);
+    }
+    state.counters["head_ties"] =
+      static_cast<double>(ties) / static_cast<double>(separators.size());
+  }
   state.counters["ns_per_probe"] = benchmark::Counter(
     static_cast<double>(state.iterations() * probes),
     benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
@@ -463,6 +485,102 @@ void Lookup(benchmark::State& state, const std::string& base, bool hit) {
     benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
 }
 
+void Seek(benchmark::State& state, const std::string& base) {
+  const auto& data = Load(base);
+  if (!data.error.empty()) {
+    state.SkipWithError(data.error);
+    return;
+  }
+  const auto views = Views(data.seek);
+  auto it = data.field->iterator();
+  for (auto _ : state) {
+    size_t sum = 0;
+    for (const auto key : views) {
+      sum += static_cast<size_t>(it->seek_ge(key));
+    }
+    benchmark::DoNotOptimize(sum);
+  }
+  state.SetItemsProcessed(
+    static_cast<int64_t>(state.iterations() * views.size()));
+  state.counters["ns_per_probe"] = benchmark::Counter(
+    static_cast<double>(state.iterations() * views.size()),
+    benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+}
+
+void Fuzzy(benchmark::State& state, const std::string& base, uint8_t distance) {
+  constexpr size_t kTargets = 32;
+  const auto& data = Load(base);
+  if (!data.error.empty()) {
+    state.SkipWithError(data.error);
+    return;
+  }
+  std::vector<bstring> targets;
+  targets.emplace_back(
+    irs::ViewCast<irs::byte_type>(std::string_view{"election"}));
+  const size_t step = std::max<size_t>(1, data.keys.size() / (8 * kTargets));
+  for (size_t i = 0; i < data.keys.size() && targets.size() != kTargets;
+       i += step) {
+    const auto& key = data.keys[i];
+    if (key.size() >= 5 && key.size() <= 12 &&
+        absl::c_all_of(key,
+                       [](irs::byte_type b) { return b >= 'a' && b <= 'z'; })) {
+      targets.push_back(key);
+    }
+  }
+  const auto& description = irs::DefaultPDP(distance, false);
+  std::vector<std::shared_ptr<const irs::LevenshteinAcceptor>> fuzzy;
+  std::vector<std::shared_ptr<const irs::FuzzyConjunction>> dfas;
+  for (const auto& target : targets) {
+    fuzzy.push_back(std::make_shared<const irs::LevenshteinAcceptor>(
+      description, bytes_view{}, target));
+    dfas.push_back(irs::FuzzyConjunction::Make(fuzzy.back()));
+  }
+  size_t terms = 0;
+  for (auto _ : state) {
+    for (size_t i = 0; i != targets.size(); ++i) {
+      auto it = dfas[i] ? data.field->iterator(*dfas[i])
+                        : data.field->iterator(*fuzzy[i]);
+      while (it->next()) {
+        ++terms;
+      }
+    }
+  }
+  benchmark::DoNotOptimize(terms);
+  const auto walks = static_cast<double>(state.iterations() * targets.size());
+  state.counters["terms_per_walk"] = static_cast<double>(terms) / walks;
+  state.counters["us_per_walk"] = benchmark::Counter(
+    walks / 1e6, benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+}
+
+void Infix(benchmark::State& state, const std::string& base) {
+  const auto& data = Load(base);
+  if (!data.error.empty()) {
+    state.SkipWithError(data.error);
+    return;
+  }
+  std::vector<std::unique_ptr<const irs::RegexpAcceptor>> acceptors;
+  for (const std::string_view pattern :
+       {"%ild%", "%onp%", "%ion%", "%elect%"}) {
+    acceptors.push_back(std::make_unique<const irs::RegexpAcceptor>(
+      irs::RegexpAcceptor::WildcardTag{},
+      irs::ViewCast<irs::byte_type>(pattern)));
+  }
+  size_t terms = 0;
+  for (auto _ : state) {
+    for (const auto& acceptor : acceptors) {
+      auto it = data.field->iterator(*acceptor);
+      while (it->next()) {
+        ++terms;
+      }
+    }
+  }
+  benchmark::DoNotOptimize(terms);
+  const auto walks = static_cast<double>(state.iterations() * acceptors.size());
+  state.counters["terms_per_walk"] = static_cast<double>(terms) / walks;
+  state.counters["us_per_walk"] = benchmark::Counter(
+    walks / 1e6, benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+}
+
 std::vector<std::string> Bases() {
   std::vector<std::string> bases;
   const auto dir = KeysDir();
@@ -487,6 +605,18 @@ int Main(int argc, char** argv) {
     benchmark::RegisterBenchmark(
       absl::StrCat("lookup_miss/", base),
       [base](benchmark::State& state) { Lookup(state, base, false); });
+    benchmark::RegisterBenchmark(
+      absl::StrCat("seek/", base),
+      [base](benchmark::State& state) { Seek(state, base); });
+    for (const uint8_t distance : {1, 2}) {
+      benchmark::RegisterBenchmark(absl::StrCat("fuzzy", distance, "/", base),
+                                   [base, distance](benchmark::State& state) {
+                                     Fuzzy(state, base, distance);
+                                   });
+    }
+    benchmark::RegisterBenchmark(
+      absl::StrCat("infix/", base),
+      [base](benchmark::State& state) { Infix(state, base); });
     for (const auto name : kCandidates) {
       const auto suffix = absl::StrCat(base, "/", name);
       benchmark::RegisterBenchmark(absl::StrCat("find_hit/", suffix),

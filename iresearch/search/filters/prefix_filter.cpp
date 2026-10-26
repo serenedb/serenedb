@@ -44,7 +44,8 @@ namespace {
 class ByPrefixIterator : public WrappedTermIterator {
  public:
   ByPrefixIterator(const TermReader& reader, bytes_view prefix)
-    : WrappedTermIterator{reader.iterator()}, _prefix{prefix} {}
+    : WrappedTermIterator{reader.IteratorUntil(UpperBoundOf(prefix))},
+      _prefix{prefix} {}
 
   bool next() final {
     if (_started) {

@@ -40,6 +40,7 @@ struct PostingMeta {
     pos_extent = pay_extent = 0;
     pos_offset = 0;
     inline_size = 0;
+    inline_end = 0;
   }
 
   bytes_view Inline() const noexcept {
@@ -51,6 +52,7 @@ struct PostingMeta {
   uint64_t doc_start = 0;  // where this term's postings start in the .doc file
   uint64_t pos_start = 0;  // where this term's postings start in the .pos file
   uint64_t pay_start = 0;  // where this term's postings start in the .pay file
+  uint64_t inline_end = 0;
   uint32_t doc_delta = 0;
   uint32_t pos_extent = 0;
   uint32_t pay_extent = 0;

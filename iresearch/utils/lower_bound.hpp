@@ -24,6 +24,7 @@
 #include <immintrin.h>
 #endif
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -152,6 +153,35 @@ IRS_FORCE_INLINE It BranchlessPartitionPoint(It begin, size_t len,
     begin = IRS_UNPREDICTABLE(pred(begin[step])) ? begin + step : begin;
   }
   return begin + pred(*begin);
+}
+
+template<typename Pred>
+IRS_FORCE_INLINE size_t PartitionIndex(size_t lo, size_t hi, Pred&& pred) {
+  if (lo == hi) {
+    return lo;
+  }
+  size_t base = lo;
+  size_t len = hi - lo;
+  while (len > 1) {
+    const size_t half = len / 2;
+    base += IRS_UNPREDICTABLE(pred(base + half - 1)) ? half : 0;
+    len -= half;
+  }
+  return base + (pred(base) ? 1 : 0);
+}
+
+template<typename Pred>
+IRS_FORCE_INLINE size_t GallopIndex(size_t from, size_t hi, Pred&& pred) {
+  if (from >= hi || !pred(from)) {
+    return from;
+  }
+  size_t lo = from + 1;
+  size_t step = 1;
+  while (lo + step - 1 < hi && pred(lo + step - 1)) {
+    lo += step;
+    step *= 2;
+  }
+  return PartitionIndex(lo, std::min(lo + step - 1, hi), pred);
 }
 
 }  // namespace irs

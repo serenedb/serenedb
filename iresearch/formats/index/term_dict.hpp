@@ -47,6 +47,9 @@ namespace irs::term_dict {
 
 inline constexpr uint32_t kPage = 4096;
 inline constexpr uint32_t kRestartInterval = 16;
+inline constexpr uint32_t kRecordInterval = 8;
+inline constexpr uint32_t kHeadBytes = sizeof(uint32_t);
+inline constexpr uint32_t kRecordOffset = sizeof(uint16_t);
 inline constexpr uint32_t kMaxStride = 32;
 
 enum class BlockKind : uint8_t {
@@ -84,7 +87,8 @@ struct BlockBuilder {
   bstring headers;
   bstring suffixes;
   bstring records;
-  std::vector<std::array<uint16_t, 3>> restarts;
+  std::vector<std::array<uint16_t, 2>> restarts;
+  std::vector<uint16_t> record_starts;
   bstring coded_headers;
   bstring coded_suffixes;
   std::vector<std::array<uint16_t, 2>> coded_restarts;
@@ -92,6 +96,7 @@ struct BlockBuilder {
   uint64_t coded_size = std::numeric_limits<uint64_t>::max();
   uint32_t width = 0;
   uint32_t prefix = 0;
+  uint32_t head_skip = 0;
   BlockKind kind = BlockKind::Var;
 };
 
@@ -175,6 +180,7 @@ class FieldWriter final {
   BlockBuilder _block;
   RangeWriter _ranges;
   bstring _region;
+  bstring _inline;
   FsstEncoder _fsst;
   bstring _fsst_table;
   bstring _coded;
@@ -215,6 +221,7 @@ class TermReaderImpl final : public TermReader {
   ~TermReaderImpl();
 
   SeekTermIterator::ptr iterator() const final;
+  SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
   SeekTermIterator::ptr iterator(const RegexpAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const LevenshteinAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const RegexpConjunction& a) const final;
@@ -243,7 +250,6 @@ class TermReaderImpl final : public TermReader {
   const FieldReader& Owner() const noexcept { return *_owner; }
   uint32_t Blocks() const noexcept { return _blocks; }
   bool Small() const noexcept { return _small != nullptr; }
-  uint32_t RestartInterval() const noexcept { return _restart_interval; }
   const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
   const Root& GetRoot() const noexcept { return _root; }
   const byte_type* Block(size_t block, BlockBuffer& buffer) const;
@@ -255,9 +261,13 @@ class TermReaderImpl final : public TermReader {
   }
   std::span<const RangeLevel> RangeLevels() const noexcept { return _levels; }
   uint32_t RangePrefix() const noexcept { return _range_prefix; }
+  uint64_t InlineBegin() const noexcept { return _inline_offset; }
+  uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
+  void ReadInline(PostingMeta& meta, BlockBuffer& buffer) const;
 
  private:
   uint64_t ReadRanges(IndexInput& in);
+  uint64_t MapInline(IndexInput& in);
 
   const FieldReader* _owner;
   FieldMeta _meta;
@@ -269,7 +279,6 @@ class TermReaderImpl final : public TermReader {
   const byte_type* _small = nullptr;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
   uint32_t _blocks = 0;
-  uint32_t _restart_interval = kRestartInterval;
   uint32_t _width = 0;
   bool _has_score_bounds;
   FreqAttr _freq;
@@ -279,6 +288,10 @@ class TermReaderImpl final : public TermReader {
   bstring _ranges_copy;
   uint32_t _range_prefix = 0;
   uint64_t _root_bytes = 0;
+  bstring _inline_copy;
+  const byte_type* _inline = nullptr;
+  uint64_t _inline_offset = 0;
+  uint64_t _inline_size = 0;
 };
 
 class FieldReader final {

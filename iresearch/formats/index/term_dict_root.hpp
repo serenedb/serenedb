@@ -20,15 +20,66 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
+
+#include <algorithm>
+#include <bit>
 #include <cstdint>
+#include <cstring>
 #include <span>
+#include <variant>
 #include <vector>
 
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
 
-uint64_t Head(bytes_view key) noexcept;
+inline constexpr size_t kKeyPad = 2 * sizeof(uint64_t);
+
+struct Probe {
+  const byte_type* data;
+  size_t size;
+};
+
+class PaddedKey {
+ public:
+  explicit PaddedKey(bytes_view key) {
+    if (key.size() + kKeyPad <= sizeof(_inline)) {
+      _data = _inline;
+    } else {
+      _heap.resize(key.size() + kKeyPad);
+      _data = _heap.data();
+    }
+    if (!key.empty()) {
+      std::memcpy(_data, key.data(), key.size());
+    }
+    std::memset(_data + key.size(), 0, kKeyPad);
+    _size = key.size();
+  }
+
+  const byte_type* Data() const noexcept { return _data; }
+  Probe View() const noexcept { return {_data, _size}; }
+
+ private:
+  byte_type _inline[256];
+  bstring _heap;
+  byte_type* _data;
+  size_t _size;
+};
+
+IRS_FORCE_INLINE inline size_t PaddedMismatch(const byte_type* lhs,
+                                              const byte_type* rhs,
+                                              size_t size) noexcept {
+  for (size_t i = 0; i < size; i += sizeof(uint64_t)) {
+    const uint64_t diff = absl::little_endian::Load64(lhs + i) ^
+                          absl::little_endian::Load64(rhs + i);
+    if (diff != 0) {
+      return std::min(size, i + std::countr_zero(diff) / 8);
+    }
+  }
+  return size;
+}
+
 uint64_t HeadAt(bytes_view key, size_t skip) noexcept;
 
 struct Separators {
@@ -42,48 +93,6 @@ Separators MakeSeparators(std::span<const bytes_view> separators);
 size_t SeparatorCount(const Separators& separators) noexcept;
 bytes_view SeparatorAt(const Separators& separators, size_t i) noexcept;
 size_t SeparatorBytes(const Separators& separators) noexcept;
-
-class SortedRoot {
- public:
-  SortedRoot() = default;
-  explicit SortedRoot(Separators separators) noexcept
-    : _separators{std::move(separators)} {}
-
-  size_t Blocks() const noexcept { return SeparatorCount(_separators) + 1; }
-  size_t Find(bytes_view key) const noexcept;
-  size_t FindFrom(size_t from, bytes_view key) const noexcept;
-  void FindBatch(std::span<const bytes_view> keys,
-                 std::span<uint32_t> blocks) const noexcept;
-  bytes_view Separator(size_t block) const noexcept {
-    return SeparatorAt(_separators, block - 1);
-  }
-  size_t MemoryBytes() const noexcept { return SeparatorBytes(_separators); }
-
- private:
-  Separators _separators;
-};
-
-class SortedHeadsRoot {
- public:
-  SortedHeadsRoot() = default;
-  explicit SortedHeadsRoot(Separators separators);
-
-  size_t Blocks() const noexcept { return _heads.size() + 1; }
-  size_t Find(bytes_view key) const noexcept;
-  size_t FindFrom(size_t from, bytes_view key) const noexcept;
-  void FindBatch(std::span<const bytes_view> keys,
-                 std::span<uint32_t> blocks) const noexcept;
-  bytes_view Separator(size_t block) const noexcept {
-    return SeparatorAt(_separators, block - 1);
-  }
-  size_t MemoryBytes() const noexcept {
-    return SeparatorBytes(_separators) + _heads.capacity() * sizeof(uint64_t);
-  }
-
- private:
-  Separators _separators;
-  std::vector<uint64_t> _heads;
-};
 
 class EytzingerRoot {
  public:
@@ -103,6 +112,9 @@ class EytzingerRoot {
   size_t FindFrom(size_t from, bytes_view key) const noexcept;
   void FindBatch(std::span<const bytes_view> keys,
                  std::span<uint32_t> blocks) const noexcept;
+  bool NotAfter(size_t block, bytes_view key) const noexcept {
+    return Separator(block) <= key;
+  }
   bytes_view Separator(size_t block) const noexcept {
     return SeparatorAt(_separators, block - 1);
   }
@@ -124,63 +136,130 @@ class EytzingerRoot {
   size_t _height = 0;
 };
 
-class BTreeRoot {
+class TreeRoot {
  public:
-  static constexpr size_t kKeys = 8;
+  TreeRoot() = default;
+  explicit TreeRoot(Separators separators);
 
-  BTreeRoot() = default;
-  explicit BTreeRoot(Separators separators);
+  static size_t Height(size_t count) noexcept {
+    size_t nodes = std::max<size_t>(1, (count + kFanout - 1) / kFanout);
+    size_t height = 1;
+    for (; nodes != 1; ++height) {
+      nodes = (nodes + kFanout - 1) / kFanout;
+    }
+    return height;
+  }
 
-  size_t Blocks() const noexcept { return _heads.size() + 1; }
+  size_t Blocks() const noexcept { return _count + 1; }
   size_t Find(bytes_view key) const noexcept;
   size_t FindFrom(size_t from, bytes_view key) const noexcept;
   void FindBatch(std::span<const bytes_view> keys,
                  std::span<uint32_t> blocks) const noexcept;
+  bool NotAfter(size_t block, bytes_view key) const noexcept;
   bytes_view Separator(size_t block) const noexcept {
     return SeparatorAt(_separators, block - 1);
   }
   size_t MemoryBytes() const noexcept {
-    return SeparatorBytes(_separators) + _heads.capacity() * sizeof(uint64_t) +
-           _tree.capacity() * sizeof(uint64_t) +
-           _ranks.capacity() * sizeof(uint32_t);
+    return SeparatorBytes(_separators) + _nodes.capacity() * sizeof(Node) +
+           _levels.capacity() * sizeof(size_t) + _prefix.capacity();
   }
 
  private:
-  Separators _separators;
-  std::vector<uint64_t> _heads;
-  std::vector<uint64_t> _tree;
-  std::vector<uint32_t> _ranks;
-  size_t _nodes = 0;
-};
+  static constexpr size_t kFanout = 8;
 
-class RadixRoot {
- public:
-  RadixRoot() = default;
-  RadixRoot(Separators separators, uint32_t radix_bytes);
+  struct alignas(64) Node {
+    uint64_t heads[kFanout];
+  };
 
-  size_t Blocks() const noexcept { return _heads.size() + 1; }
-  size_t Find(bytes_view key) const noexcept;
-  size_t FindFrom(size_t from, bytes_view key) const noexcept;
-  void FindBatch(std::span<const bytes_view> keys,
-                 std::span<uint32_t> blocks) const noexcept;
-  bytes_view Separator(size_t block) const noexcept {
-    return SeparatorAt(_separators, block - 1);
-  }
-  size_t MemoryBytes() const noexcept {
-    return SeparatorBytes(_separators) + _heads.capacity() * sizeof(uint64_t) +
-           _table.capacity() * sizeof(uint32_t) + _prefix.capacity();
+  struct Located {
+    uint64_t head;
+    size_t outside;
+  };
+
+  Located Locate(bytes_view key) const noexcept;
+  size_t Descend(uint64_t head) const noexcept;
+  size_t Resolve(size_t from, size_t upper, uint64_t head,
+                 bytes_view key) const noexcept;
+  const uint64_t* Heads() const noexcept {
+    return reinterpret_cast<const uint64_t*>(_nodes.data() + _leaves);
   }
 
- private:
-  size_t Bucket(bytes_view key) const noexcept;
-
   Separators _separators;
-  std::vector<uint64_t> _heads;
-  std::vector<uint32_t> _table;
   bstring _prefix;
-  uint32_t _radix_bytes = 1;
+  std::vector<Node> _nodes;
+  std::vector<size_t> _levels;
+  size_t _leaves = 0;
+  size_t _count = 0;
 };
 
-using Root = SortedHeadsRoot;
+class ArtRoot {
+ public:
+  ArtRoot() = default;
+  explicit ArtRoot(Separators separators);
+
+  size_t Blocks() const noexcept { return SeparatorCount(_separators) + 1; }
+  size_t Find(bytes_view key) const noexcept;
+  size_t FindFrom(size_t from, bytes_view key) const noexcept {
+    return std::max(from, Find(key));
+  }
+  void FindBatch(std::span<const bytes_view> keys,
+                 std::span<uint32_t> blocks) const noexcept;
+  bool NotAfter(size_t block, bytes_view key) const noexcept {
+    return Separator(block) <= key;
+  }
+  bytes_view Separator(size_t block) const noexcept {
+    return SeparatorAt(_separators, block - 1);
+  }
+  size_t MemoryBytes() const noexcept {
+    return SeparatorBytes(_separators) + _words.capacity() * sizeof(uint64_t);
+  }
+  uint64_t Visits() const noexcept { return _visits; }
+
+ private:
+  size_t Leaf(const uint64_t* child, size_t depth,
+              bytes_view key) const noexcept;
+
+  Separators _separators;
+  std::vector<uint64_t> _words;
+  uint64_t _visits = 0;
+};
+
+class Root {
+  IRS_FORCE_INLINE decltype(auto) Visit(auto&& visitor) const noexcept {
+    if (const auto* tree = std::get_if<TreeRoot>(&_root)) [[likely]] {
+      return visitor(*tree);
+    }
+    if (const auto* art = std::get_if<ArtRoot>(&_root)) {
+      return visitor(*art);
+    }
+    return visitor(*std::get_if<EytzingerRoot>(&_root));
+  }
+
+ public:
+  Root() = default;
+  Root(Separators separators, bool fixed);
+
+  size_t Blocks() const noexcept {
+    return Visit([](const auto& root) { return root.Blocks(); });
+  }
+  size_t Find(bytes_view key) const noexcept {
+    return Visit([&](const auto& root) { return root.Find(key); });
+  }
+  size_t FindFrom(size_t from, bytes_view key) const noexcept {
+    return Visit([&](const auto& root) { return root.FindFrom(from, key); });
+  }
+  bool NotAfter(size_t block, bytes_view key) const noexcept {
+    return Visit([&](const auto& root) { return root.NotAfter(block, key); });
+  }
+  bytes_view Separator(size_t block) const noexcept {
+    return Visit([&](const auto& root) { return root.Separator(block); });
+  }
+  size_t MemoryBytes() const noexcept {
+    return Visit([](const auto& root) { return root.MemoryBytes(); });
+  }
+
+ private:
+  std::variant<TreeRoot, EytzingerRoot, ArtRoot> _root;
+};
 
 }  // namespace irs::term_dict

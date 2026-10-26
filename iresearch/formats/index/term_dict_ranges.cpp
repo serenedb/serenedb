@@ -113,8 +113,8 @@ class RangeWalk {
       const bool to_side = _to.empty() || (!last && next <= _to_rest);
       if (from_side && to_side) {
         PostingMeta meta;
-        const auto* record = range.records + Load32(range.offsets, i);
-        DecodeRecords(record, 0, 0, _field.meta().index_features, meta);
+        PostingsReader::decode(range.records + Load32(range.offsets, i),
+                               _field.meta().index_features, meta);
         _visit(Key(_lower, start), meta);
       } else if (level == 0) {
         const auto lower = from_side ? Key(_lower, start) : _from;

@@ -57,6 +57,10 @@ struct TermReader : public AttributeProvider {
   // Returns an iterator over terms for a field.
   virtual SeekTermIterator::ptr iterator() const = 0;
 
+  virtual SeekTermIterator::ptr IteratorUntil(bytes_view) const {
+    return iterator();
+  }
+
   // Feeds `acceptor` the documents containing `term`, stopping when it returns
   // false. Bounds-checks against the field's term range first, and answers a
   // df == 1 term straight from its record -- which is why a primary-key probe

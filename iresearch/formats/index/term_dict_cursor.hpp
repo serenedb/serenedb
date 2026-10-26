@@ -23,6 +23,7 @@
 #include <absl/base/internal/endian.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <limits>
 
@@ -38,8 +39,7 @@ namespace irs::term_dict {
 
 inline constexpr uint32_t kSlack = block_codec::kInSlack;
 inline constexpr uint32_t kNoEntry = std::numeric_limits<uint32_t>::max();
-inline constexpr uint32_t kVarRestart = 3 * sizeof(uint16_t);
-inline constexpr uint32_t kFixedRestart = sizeof(uint16_t);
+inline constexpr uint32_t kVarRestart = 2 * sizeof(uint16_t);
 
 enum class Position : uint8_t {
   Before,
@@ -54,7 +54,10 @@ struct BlockView {
   uint32_t restarts;
   uint32_t stride;
   uint32_t prefix;
+  uint32_t head_skip;
   const byte_type* table;
+  const byte_type* heads;
+  const byte_type* record_offsets;
   const byte_type* headers;
   const byte_type* suffixes;
   const byte_type* keys;
@@ -63,10 +66,8 @@ struct BlockView {
 
 inline uint32_t Restart(const BlockView& view, uint32_t restart,
                         uint32_t column) noexcept {
-  return absl::little_endian::Load16(
-    view.table +
-    (view.kind == BlockKind::Var ? kVarRestart : kFixedRestart) * restart +
-    sizeof(uint16_t) * column);
+  return absl::little_endian::Load16(view.table + kVarRestart * restart +
+                                     sizeof(uint16_t) * column);
 }
 
 inline uint32_t HeaderOffset(const BlockView& view, uint32_t restart) noexcept {
@@ -77,8 +78,9 @@ inline uint32_t SuffixOffset(const BlockView& view, uint32_t restart) noexcept {
   return Restart(view, restart, 1);
 }
 
-inline uint32_t RecordOffset(const BlockView& view, uint32_t restart) noexcept {
-  return Restart(view, restart, view.kind == BlockKind::Var ? 2 : 0);
+inline uint32_t RecordOffset(const BlockView& view, uint32_t group) noexcept {
+  return absl::little_endian::Load16(view.record_offsets +
+                                     kRecordOffset * group);
 }
 
 inline bytes_view Prefix(const BlockView& view) noexcept {
@@ -97,23 +99,32 @@ inline BlockView Parse(const byte_type* p) {
     view.kind = BlockKind::Var;
   }
   view.count = vread<uint32_t>(p);
-  view.restarts = vread<uint32_t>(p);
   if (view.kind == BlockKind::Var) {
+    view.restarts = vread<uint32_t>(p);
     const auto headers = vread<uint64_t>(p);
     const auto suffixes = vread<uint64_t>(p);
     vskip<uint64_t>(p);
+    view.head_skip = vread<uint32_t>(p);
     view.table = p;
-    view.headers = p + kVarRestart * view.restarts;
+    view.heads = p + kVarRestart * view.restarts;
+    view.record_offsets = view.heads + kHeadBytes * view.restarts;
+    view.headers =
+      view.record_offsets +
+      kRecordOffset * ((view.count + kRecordInterval - 1) / kRecordInterval);
     view.suffixes = view.headers + headers;
     view.records = view.suffixes + suffixes;
     return view;
   }
   if (view.kind == BlockKind::FixedStride) {
+    const auto groups = vread<uint32_t>(p);
     vskip<uint64_t>(p);
     view.stride = vread<uint32_t>(p);
     view.prefix = vread<uint32_t>(p);
     view.table = p + view.prefix;
-    view.keys = view.table + kFixedRestart * view.restarts;
+    view.restarts = groups;
+    view.record_offsets = view.table;
+    view.heads = view.record_offsets + kRecordOffset * groups;
+    view.keys = view.heads + kHeadBytes * groups;
     view.records = view.keys + uint64_t{view.count} * view.stride;
     return view;
   }
@@ -128,68 +139,116 @@ struct Header {
 };
 
 inline IRS_FORCE_INLINE Header ReadHeader(const byte_type*& p) noexcept {
-  const auto head = vread<uint64_t>(p);
+  const auto head = vread_short<uint64_t>(p);
   Header header{
     .lcp = static_cast<uint32_t>(head >> 5),
     .len = static_cast<uint32_t>(head & 31),
   };
-  if (header.len == 31) {
-    header.len += vread<uint32_t>(p);
+  if (header.len == 31) [[unlikely]] {
+    header.len += static_cast<uint32_t>(vread_short<uint64_t>(p));
   }
   return header;
 }
 
-inline void DecodeAppend(const duckdb_fsst_decoder_t& decoder, bytes_view codes,
-                         bstring& out) {
-  const size_t base = out.size();
-  utils::StrResizeAmortized(out, base + codes.size() * sizeof(uint64_t));
-  auto* p = out.data() + base;
+inline size_t DecodeInto(const duckdb_fsst_decoder_t& decoder, bytes_view codes,
+                         byte_type* out, size_t limit) noexcept {
   size_t pos = 0;
-  for (size_t i = 0; i != codes.size();) {
+  for (size_t i = 0; i != codes.size() && pos < limit;) {
     const size_t code = codes[i++];
     if (code != FSST_ESC) [[likely]] {
-      std::memcpy(p + pos, &decoder.symbol[code], sizeof(uint64_t));
+      std::memcpy(out + pos, &decoder.symbol[code], sizeof(uint64_t));
       pos += decoder.len[code];
     } else {
-      p[pos++] = codes[i++];
+      out[pos++] = codes[i++];
     }
   }
-  out.resize(base + pos);
+  return pos;
 }
+
+enum class Order : uint8_t {
+  Less,
+  Equal,
+  Greater,
+};
 
 struct Compared {
   size_t common;
-  bool ended;
-  bool greater;
+  Order order;
 };
 
-inline Compared CompareCoded(const duckdb_fsst_decoder_t& decoder,
-                             bytes_view codes, bytes_view rest) noexcept {
-  size_t common = 0;
-  for (size_t i = 0; i != codes.size();) {
-    byte_type symbol[sizeof(uint64_t)];
-    size_t n = 1;
-    const size_t code = codes[i++];
-    if (code != FSST_ESC) [[likely]] {
-      std::memcpy(symbol, &decoder.symbol[code], sizeof(uint64_t));
-      n = decoder.len[code];
-    } else {
-      symbol[0] = codes[i++];
-    }
-    for (size_t j = 0; j != n; ++j, ++common) {
-      if (common == rest.size()) {
-        return {.common = common, .ended = false, .greater = true};
-      }
-      if (symbol[j] != rest[common]) {
-        return {
-          .common = common,
-          .ended = false,
-          .greater = symbol[j] > rest[common],
-        };
-      }
-    }
+IRS_FORCE_INLINE inline Compared CompareRaw(const byte_type* suffix,
+                                            size_t size, Probe rest) noexcept {
+  const size_t n = std::min(size, rest.size);
+  const size_t common = PaddedMismatch(suffix, rest.data, n);
+  if (common != n) {
+    return {
+      .common = common,
+      .order =
+        suffix[common] < rest.data[common] ? Order::Less : Order::Greater,
+    };
   }
-  return {.common = common, .ended = true, .greater = false};
+  return {
+    .common = common,
+    .order = size == rest.size
+               ? Order::Equal
+               : (size < rest.size ? Order::Less : Order::Greater),
+  };
+}
+
+struct CodedCompared {
+  Compared compared;
+  size_t code;
+  size_t decoded;
+};
+
+template<bool Materialize>
+IRS_FORCE_INLINE CodedCompared
+CompareCoded(const duckdb_fsst_decoder_t& decoder, bytes_view codes, Probe rest,
+             byte_type* out) noexcept {
+  size_t pos = 0;
+  for (size_t i = 0; i != codes.size();) {
+    const size_t code = codes[i++];
+    uint64_t symbol;
+    size_t len;
+    if (code != FSST_ESC) [[likely]] {
+      symbol = absl::little_endian::Load64(
+        reinterpret_cast<const byte_type*>(&decoder.symbol[code]));
+      len = decoder.len[code];
+    } else {
+      symbol = codes[i++];
+      len = 1;
+    }
+    if constexpr (Materialize) {
+      absl::little_endian::Store64(out + pos, symbol);
+    }
+    const size_t left = rest.size - pos;
+    const uint64_t diff = symbol ^ absl::little_endian::Load64(rest.data + pos);
+    const size_t at = std::countr_zero(diff) / 8;
+    if (at < std::min(len, left)) {
+      const auto byte = static_cast<byte_type>(symbol >> (8 * at));
+      return {
+        .compared = {.common = pos + at,
+                     .order = byte < rest.data[pos + at] ? Order::Less
+                                                         : Order::Greater},
+        .code = i,
+        .decoded = pos + len,
+      };
+    }
+    if (len > left) {
+      return {
+        .compared = {.common = rest.size, .order = Order::Greater},
+        .code = i,
+        .decoded = pos + len,
+      };
+    }
+    pos += len;
+  }
+  return {
+    .compared = {.common = pos,
+                 .order = pos == rest.size ? Order::Equal : Order::Less},
+    .code = codes.size(),
+    .decoded = pos,
+  };
 }
 
 inline bytes_view RestartKey(const BlockView& view, uint32_t restart) noexcept {
@@ -199,13 +258,66 @@ inline bytes_view RestartKey(const BlockView& view, uint32_t restart) noexcept {
   return {view.suffixes + SuffixOffset(view, restart), header.len};
 }
 
-inline uint32_t RestartsNotAfter(const BlockView& view,
-                                 bytes_view key) noexcept {
-  uint32_t lo = 0;
-  uint32_t n = view.restarts;
-  while (n != 0) {
+IRS_FORCE_INLINE inline bool KeyNotAfter(bytes_view key, Probe probe) noexcept {
+  const size_t n = std::min(key.size(), probe.size);
+  const size_t common = PaddedMismatch(key.data(), probe.data, n);
+  return common == n ? key.size() <= probe.size
+                     : key[common] < probe.data[common];
+}
+
+struct HeadCounts {
+  uint32_t less;
+  uint32_t not_after;
+};
+
+IRS_FORCE_INLINE inline HeadCounts CountHeads(const byte_type* heads,
+                                              uint32_t from, uint32_t count,
+                                              uint32_t head) noexcept {
+  static_assert(std::endian::native == std::endian::little);
+  using U32x4 = uint32_t __attribute__((vector_size(16)));
+  using I16x4 = int16_t __attribute__((vector_size(8)));
+  constexpr uint32_t kLanes = 4;
+  uint32_t not_after = from;
+  for (uint32_t i = from; i < count; i += kLanes) {
+    U32x4 lanes;
+    std::memcpy(&lanes, heads + i * kHeadBytes, sizeof(lanes));
+    const auto bits =
+      std::bit_cast<uint64_t>(__builtin_convertvector(lanes <= head, I16x4));
+    const auto run = std::min<uint32_t>(
+      count - i, static_cast<uint32_t>(std::countr_one(bits)) / 16);
+    not_after = i + run;
+    if (run != kLanes) {
+      break;
+    }
+  }
+  uint32_t less = not_after;
+  while (less != from &&
+         absl::little_endian::Load32(heads + (less - 1) * kHeadBytes) == head) {
+    --less;
+  }
+  return {.less = less, .not_after = not_after};
+}
+
+inline uint32_t RestartsNotAfter(const BlockView& view, Probe probe,
+                                 uint32_t from = 0) noexcept {
+  const size_t skip = view.head_skip;
+  const auto* first = view.suffixes;
+  SDB_ASSERT(SuffixOffset(view, 0) == 0);
+  SDB_ASSERT(skip <= RestartKey(view, 0).size());
+  const size_t shared = std::min(skip, probe.size);
+  if (const size_t common = PaddedMismatch(first, probe.data, shared);
+      common != shared) {
+    return first[common] < probe.data[common] ? view.restarts : 0;
+  }
+  if (probe.size < skip) {
+    return 0;
+  }
+  const auto counts = CountHeads(view.heads, from, view.restarts,
+                                 absl::big_endian::Load32(probe.data + skip));
+  uint32_t lo = counts.less;
+  for (uint32_t n = counts.not_after - counts.less; n != 0;) {
     const uint32_t half = n / 2;
-    if (RestartKey(view, lo + half) <= key) {
+    if (KeyNotAfter(RestartKey(view, lo + half), probe)) {
       lo += half + 1;
       n -= half + 1;
     } else {
@@ -215,30 +327,118 @@ inline uint32_t RestartsNotAfter(const BlockView& view,
   return lo;
 }
 
-inline uint32_t FixedLowerBound(const BlockView& view,
-                                bytes_view key) noexcept {
-  const auto prefix = Prefix(view);
-  const size_t head = std::min(prefix.size(), key.size());
-  if (const int c = std::memcmp(key.data(), prefix.data(), head); c != 0) {
-    return c < 0 ? 0 : view.count;
+IRS_FORCE_INLINE inline Order Locate(const byte_type* suffix, uint32_t size,
+                                     uint32_t lcp, Probe probe,
+                                     const duckdb_fsst_decoder_t* fsst,
+                                     size_t& matched) noexcept {
+  if (lcp != matched) {
+    return lcp > matched ? Order::Less : Order::Greater;
   }
-  if (key.size() < prefix.size()) {
-    return 0;
+  const Probe rest{probe.data + matched, probe.size - matched};
+  const auto compared =
+    fsst ? CompareCoded<false>(*fsst, {suffix, size}, rest, nullptr).compared
+         : CompareRaw(suffix, size, rest);
+  matched += compared.common;
+  return compared.order;
+}
+
+struct Bound {
+  uint32_t entry;
+  bool equal;
+};
+
+inline Bound VarLowerBound(const BlockView& view, Probe probe,
+                           const duckdb_fsst_decoder_t* fsst) noexcept {
+  const uint32_t restarts = RestartsNotAfter(view, probe);
+  if (restarts == 0) {
+    return {.entry = 0, .equal = false};
   }
-  const bytes_view rest = key.substr(prefix.size());
-  uint32_t lo = 0;
-  uint32_t n = view.count;
-  while (n != 0) {
-    const uint32_t half = n / 2;
-    if (FixedKey(view, lo + half) < rest) {
-      lo += half + 1;
-      n -= half + 1;
-    } else {
-      n = half;
+  const uint32_t group = restarts - 1;
+  const uint32_t first = group * kRestartInterval;
+  const uint32_t end = std::min(first + kRestartInterval, view.count);
+  const auto* hp = view.headers + HeaderOffset(view, group);
+  const auto* sp = view.suffixes + SuffixOffset(view, group);
+  size_t matched = 0;
+  for (uint32_t entry = first; entry != end; ++entry) {
+    const auto header = ReadHeader(hp);
+    const auto* suffix = sp;
+    sp += header.len;
+    const auto order =
+      Locate(suffix, header.len, header.lcp, probe,
+             view.coded && entry != first ? fsst : nullptr, matched);
+    if (order != Order::Less) {
+      return {.entry = entry, .equal = order == Order::Equal};
     }
   }
-  return lo;
+  return {.entry = end, .equal = false};
 }
+
+inline uint32_t FixedLowerBound(const BlockView& view, Probe probe) noexcept {
+  const auto prefix = Prefix(view);
+  const size_t head = std::min(prefix.size(), probe.size);
+  if (const size_t common = PaddedMismatch(prefix.data(), probe.data, head);
+      common != head) {
+    return prefix[common] < probe.data[common] ? view.count : 0;
+  }
+  if (probe.size < prefix.size()) {
+    return 0;
+  }
+  const Probe rest{probe.data + prefix.size(), probe.size - prefix.size()};
+  const uint32_t stride = view.stride;
+  const bool longer = rest.size > stride;
+  const auto search = [&](auto&& less) {
+    const auto counts = CountHeads(view.heads, 0, view.restarts,
+                                   absl::big_endian::Load32(rest.data));
+    const auto groups = static_cast<uint32_t>(PartitionIndex(
+      counts.less, counts.not_after,
+      [&](size_t group) { return less(group * kRecordInterval); }));
+    if (groups == 0) {
+      return uint32_t{0};
+    }
+    const uint32_t from = (groups - 1) * kRecordInterval + 1;
+    const uint32_t to = std::min(groups * kRecordInterval, view.count);
+    return static_cast<uint32_t>(PartitionIndex(from, to, less));
+  };
+  if (stride == 0) {
+    return rest.size == 0 ? 0 : view.count;
+  }
+  if (stride <= sizeof(uint64_t)) {
+    const uint32_t shift = 8 * (sizeof(uint64_t) - stride);
+    const uint64_t value = absl::big_endian::Load64(rest.data) >> shift;
+    return search([&](size_t i) {
+      const uint64_t key =
+        absl::big_endian::Load64(view.keys + i * stride) >> shift;
+      return key < value || (longer && key == value);
+    });
+  }
+  if (stride <= 2 * sizeof(uint64_t)) {
+    const uint32_t shift = 8 * (2 * sizeof(uint64_t) - stride);
+    const uint64_t high = absl::big_endian::Load64(rest.data);
+    const uint64_t low =
+      absl::big_endian::Load64(rest.data + sizeof(uint64_t)) >> shift;
+    return search([&](size_t i) {
+      const auto* key = view.keys + i * stride;
+      const uint64_t key_high = absl::big_endian::Load64(key);
+      const uint64_t key_low =
+        absl::big_endian::Load64(key + sizeof(uint64_t)) >> shift;
+      return key_high < high || (key_high == high &&
+                                 (key_low < low || (longer && key_low == low)));
+    });
+  }
+  return search([&](size_t i) {
+    const auto* key = view.keys + i * stride;
+    const size_t n = std::min<size_t>(stride, rest.size);
+    const size_t common = PaddedMismatch(key, rest.data, n);
+    return common == n ? stride < rest.size : key[common] < rest.data[common];
+  });
+}
+
+struct PendingSuffix {
+  const byte_type* data;
+  uint32_t lcp;
+  uint32_t size;
+  uint32_t need;
+};
 
 inline const byte_type* GroupStart(const BlockView& view,
                                    uint32_t group) noexcept {
@@ -248,7 +448,7 @@ inline const byte_type* GroupStart(const BlockView& view,
 inline void DecodeRecords(const byte_type*& record, uint32_t from, uint32_t to,
                           IndexFeatures features, PostingMeta& meta) noexcept {
   for (uint32_t i = from;; ++i) {
-    record += PostingsReader::decode(record, features, meta);
+    record += PostingsReader::DecodeDetached(record, features, meta);
     if (i == to) {
       return;
     }
@@ -257,26 +457,162 @@ inline void DecodeRecords(const byte_type*& record, uint32_t from, uint32_t to,
 
 class Cursor {
  public:
-  explicit Cursor(const TermReaderImpl& field) noexcept : _field{&field} {}
+  explicit Cursor(const TermReaderImpl& field) noexcept
+    : _field{&field}, _end{field.Blocks()} {}
+
+  void ReadaheadUntil(uint32_t end, bool eager) noexcept {
+    _end = std::min(end, _field->Blocks());
+    _eager = eager;
+    _inline_ahead = 0;
+  }
 
   const TermReaderImpl& Field() const noexcept { return *_field; }
-  bytes_view Key() const noexcept { return _key; }
+  bytes_view Key() const noexcept {
+    SDB_ASSERT(_pendings == 0);
+    return {_key.data(), _size};
+  }
+  const PendingSuffix* Pending() const noexcept {
+    return _pendings == 0 ? nullptr : &_pending[_pendings - 1];
+  }
+  const BlockView& View() const noexcept { return _view; }
   uint32_t BlockIndex() const noexcept { return _block; }
+  uint32_t Entry() const noexcept { return _entry; }
+  const byte_type* NextSuffix() const noexcept { return _sp; }
   bool AtBlockEnd() const noexcept {
     return _entry != kNoEntry && _entry + 1 == _view.count;
   }
 
-  void Load(uint32_t block) {
-    if (!_field->Small()) {
-      if (!_hinted) {
-        _hint.Arm(_field->BlockOffset(block), _field->BlocksEnd());
-        _hinted = true;
+  int ByteAt(size_t depth) {
+    if (depth < _mat) {
+      return _key[depth];
+    }
+    if (const auto* last = Pending(); last && depth == last->lcp) {
+      const auto* data = last->data;
+      SDB_ASSERT(last->size != 0);
+      if (!_view.coded) {
+        return data[0];
       }
-      _hint.Advance(_field->Owner().Input(), _field->BlockOffset(block));
+      if (data[0] == FSST_ESC) {
+        return data[1];
+      }
+      return static_cast<byte_type>(_field->Fsst()->symbol[data[0]]);
+    }
+    Materialize();
+    return depth < _size ? _key[depth] : -1;
+  }
+
+  IRS_FORCE_INLINE uint32_t Skip() {
+    if (_view.kind != BlockKind::Var) {
+      return Next();
+    }
+    const auto entry = _entry == kNoEntry ? 0 : _entry + 1;
+    if (entry == _restart) {
+      return Next();
+    }
+    _entry = entry;
+    SDB_ASSERT(_entry < _view.count);
+    const auto header = ReadHeader(_hp);
+    SDB_ASSERT(_pendings < _pending.size());
+    _pending[_pendings++] = {
+      .data = _sp,
+      .lcp = header.lcp,
+      .size = header.len,
+      .need = 0,
+    };
+    _mat = std::min<size_t>(_mat, header.lcp);
+    _sp += header.len;
+    return header.lcp;
+  }
+
+  template<typename Reject>
+  IRS_FORCE_INLINE uint32_t SkipWhile(Reject&& reject) {
+    constexpr uint32_t kNone = std::numeric_limits<uint32_t>::max();
+    if (_view.kind != BlockKind::Var || _entry == kNoEntry) {
+      return kNone;
+    }
+    const uint32_t first = _entry + 1;
+    const uint32_t end = std::min(_restart, _view.count);
+    const auto* hp = _hp;
+    const auto* sp = _sp;
+    uint32_t entry = first;
+    uint32_t lcp = kNone;
+    for (; entry < end; ++entry) {
+      const auto* at = hp;
+      const auto header = ReadHeader(hp);
+      if (!reject(sp, header.lcp, header.len)) {
+        hp = at;
+        break;
+      }
+      lcp = std::min(lcp, header.lcp);
+      sp += header.len;
+    }
+    if (entry == first) {
+      return kNone;
+    }
+    _mat = std::min<size_t>(_mat, lcp);
+    if (entry == end) {
+      _size = _mat;
+      _pendings = 0;
+    } else {
+      for (const auto* sp_at = _sp; _hp != hp;) {
+        const auto header = ReadHeader(_hp);
+        SDB_ASSERT(_pendings < _pending.size());
+        _pending[_pendings++] = {
+          .data = sp_at,
+          .lcp = header.lcp,
+          .size = header.len,
+          .need = 0,
+        };
+        sp_at += header.len;
+      }
+    }
+    _entry = entry - 1;
+    _hp = hp;
+    _sp = sp;
+    return lcp;
+  }
+
+  void Materialize() {
+    if (_pendings == 0) {
+      return;
+    }
+    uint32_t need = std::numeric_limits<uint32_t>::max();
+    for (uint32_t i = _pendings; i-- != 0;) {
+      auto& pending = _pending[i];
+      pending.need = need > pending.lcp ? need - pending.lcp : 0;
+      need = std::min(need, pending.lcp);
+    }
+    for (uint32_t i = 0; i != _pendings; ++i) {
+      const auto& pending = _pending[i];
+      if (pending.need != 0) {
+        _size = pending.lcp +
+                Expand({pending.data, pending.size}, pending.lcp, pending.need);
+      }
+    }
+    _mat = _size;
+    _pendings = 0;
+  }
+
+  void Load(uint32_t block) {
+    _pendings = 0;
+    _size = _mat;
+    if (_block != kNoEntry && block == _block + 1) {
+      ReadAhead(block);
+    } else if (_block != kNoEntry && block > _block) {
+      _ahead = std::max(_ahead, block + 1);
+      _window = std::max(kFirstWindow, _window / 2);
+    } else {
+      _ahead = block + 1;
+      _window = _eager ? kLastWindow : kFirstWindow;
+      _issued = 0;
+      if (_eager) {
+        ReadAhead(block);
+      }
     }
     _block = kNoEntry;
     _entry = kNoEntry;
     _record = kNoEntry;
+    _restart = 0;
     _view = Parse(_field->Block(block, _buffer));
     SDB_ASSERT((_view.kind == BlockKind::FixedStride) ==
                (_field->KeyWidth() != 0));
@@ -288,24 +624,21 @@ class Cursor {
   uint32_t Next() {
     _entry = _entry == kNoEntry ? 0 : _entry + 1;
     SDB_ASSERT(_entry < _view.count);
-    if (_view.kind == BlockKind::Var) {
-      const auto header = ReadHeader(_hp);
-      const bytes_view suffix{_sp, header.len};
-      _sp += header.len;
-      if (_entry % _field->RestartInterval() == 0) {
-        const auto lcp = CommonPrefixLength(bytes_view{_key}, suffix);
-        _key.assign(suffix);
-        return static_cast<uint32_t>(lcp);
-      }
-      _key.resize(header.lcp);
-      if (_view.coded) {
-        DecodeAppend(*_field->Fsst(), suffix, _key);
-      } else {
-        _key.append(suffix);
-      }
-      return header.lcp;
+    if (_view.kind != BlockKind::Var) {
+      return SetFixed(_entry);
     }
-    return SetFixed(_entry);
+    const auto header = ReadHeader(_hp);
+    const bytes_view suffix{_sp, header.len};
+    _sp += header.len;
+    if (_entry == _restart) {
+      _restart += kRestartInterval;
+      return Restart(suffix);
+    }
+    Materialize();
+    _size = header.lcp +
+            Expand(suffix, header.lcp, std::numeric_limits<uint32_t>::max());
+    _mat = _size;
+    return header.lcp;
   }
 
   bool Advance() {
@@ -319,35 +652,13 @@ class Cursor {
     return true;
   }
 
-  bool LowerBound(bytes_view key) {
-    if (_view.kind == BlockKind::FixedStride) {
-      const auto entry = FixedLowerBound(_view, key);
-      if (entry == _view.count) {
-        return false;
-      }
-      _entry = entry;
-      SetFixed(entry);
-      return true;
-    }
-    const uint32_t interval = _field->RestartInterval();
-    const uint32_t restarts = RestartsNotAfter(_view, key);
-    const uint32_t group = restarts == 0 ? 0 : restarts - 1;
-    _entry = group == 0 ? kNoEntry : group * interval - 1;
-    _hp = _view.headers + HeaderOffset(_view, group);
-    _sp = _view.suffixes + SuffixOffset(_view, group);
-    const uint32_t end = std::min(group * interval + interval, _view.count);
-    for (uint32_t i = group * interval; i != end; ++i) {
-      Next();
-      if (bytes_view{_key} >= key) {
-        return true;
-      }
-    }
-    if (end == _view.count) {
-      return false;
-    }
-    Next();
-    return true;
+  bool LowerBound(bytes_view key) { return LowerBound(Pad(key)); }
+
+  bool SeekAhead(bytes_view key, size_t matched) {
+    return SeekAhead(Pad(key), matched);
   }
+
+  size_t Shared() const noexcept { return _shared; }
 
   SeekResult SeekGe(bytes_view key) {
     const auto& field = *_field;
@@ -367,42 +678,262 @@ class Cursor {
       Next();
       return SeekResult::NotFound;
     }
-    return bytes_view{_key} == key ? SeekResult::Found : SeekResult::NotFound;
+    return _shared == key.size() && _size == key.size() ? SeekResult::Found
+                                                        : SeekResult::NotFound;
   }
 
   const PostingMeta& Meta() {
     if (_record == _entry) {
       return _meta;
     }
-    const uint32_t interval = _field->RestartInterval();
     const auto features = _field->meta().index_features;
     if (_record != kNoEntry && _record < _entry &&
-        _record / interval == _entry / interval) {
+        _record / kRecordInterval == _entry / kRecordInterval) {
       DecodeRecords(_records, _record + 1, _entry, features, _meta);
     } else {
-      const uint32_t group = _entry / interval;
+      const uint32_t group = _entry / kRecordInterval;
       _records = GroupStart(_view, group);
       _meta.clear();
-      DecodeRecords(_records, group * interval, _entry, features, _meta);
+      DecodeRecords(_records, group * kRecordInterval, _entry, features, _meta);
+    }
+    if (_meta.inline_size != 0) {
+      InlineAhead(_field->InlineBegin() + _meta.inline_end - _meta.inline_size);
+      _field->ReadInline(_meta, _buffer);
     }
     _record = _entry;
     return _meta;
   }
 
  private:
+  Probe Pad(bytes_view key) {
+    if (_probe.size() < key.size() + kKeyPad) {
+      utils::StrResizeAmortized(_probe, key.size() + kKeyPad);
+    }
+    if (!key.empty()) {
+      std::memcpy(_probe.data(), key.data(), key.size());
+    }
+    std::memset(_probe.data() + key.size(), 0, kKeyPad);
+    return {_probe.data(), key.size()};
+  }
+
+  size_t Common(Probe probe) const noexcept {
+    return PaddedMismatch(_key.data(), probe.data, std::min(_size, probe.size));
+  }
+
+  bool Before(Probe probe, size_t common) const noexcept {
+    return common == std::min(_size, probe.size)
+             ? _size < probe.size
+             : _key[common] < probe.data[common];
+  }
+
+ public:
+  bool LowerBound(Probe probe) {
+    if (_view.kind == BlockKind::FixedStride) {
+      const auto entry = FixedLowerBound(_view, probe);
+      if (entry == _view.count) {
+        return false;
+      }
+      _entry = entry;
+      SetFixed(entry);
+      _shared = Common(probe);
+      return true;
+    }
+    if (_entry != kNoEntry && _pendings == 0) {
+      if (const size_t common = Common(probe); Before(probe, common)) {
+        return SeekAhead(probe, common);
+      }
+    }
+    const uint32_t restarts = RestartsNotAfter(_view, probe);
+    Group(restarts == 0 ? 0 : restarts - 1);
+    _shared = Common(probe);
+    if (restarts == 0 || !Before(probe, _shared)) {
+      return true;
+    }
+    return ScanTo(probe, _shared);
+  }
+
+  bool SeekAhead(Probe probe, size_t matched) {
+    if (_view.kind != BlockKind::Var) {
+      return LowerBound(probe);
+    }
+    SDB_ASSERT(_entry != kNoEntry);
+    SDB_ASSERT(_pendings == 0);
+    const uint32_t from = _entry / kRestartInterval + 1;
+    const uint32_t to = RestartsNotAfter(_view, probe, from);
+    SDB_ASSERT(to >= from);
+    if (to != from) {
+      Group(to - 1);
+      _shared = Common(probe);
+      if (!Before(probe, _shared)) {
+        return true;
+      }
+      matched = _shared;
+    }
+    return ScanTo(probe, matched);
+  }
+
+ private:
+  void Group(uint32_t group) {
+    _entry = group == 0 ? kNoEntry : group * kRestartInterval - 1;
+    _restart = group * kRestartInterval;
+    _hp = _view.headers + HeaderOffset(_view, group);
+    _sp = _view.suffixes + SuffixOffset(_view, group);
+    Next();
+  }
+
+  bool ScanTo(Probe probe, size_t matched) {
+    SDB_ASSERT(_pendings == 0);
+    const auto* fsst = _view.coded ? _field->Fsst() : nullptr;
+    const uint32_t end = std::min(_restart, _view.count);
+    const auto* hp = _hp;
+    const auto* sp = _sp;
+    for (uint32_t entry = _entry + 1; entry != end; ++entry) {
+      const auto header = ReadHeader(hp);
+      const auto* suffix = sp;
+      sp += header.len;
+      if (header.lcp > matched) {
+        continue;
+      }
+      _hp = hp;
+      _sp = sp;
+      _entry = entry;
+      if (header.lcp < matched) {
+        return Land(probe, header.lcp,
+                    Expand({suffix, header.len}, header.lcp,
+                           std::numeric_limits<uint32_t>::max()),
+                    header.lcp);
+      }
+      const Probe rest{probe.data + matched, probe.size - matched};
+      if (fsst) {
+        auto* out =
+          Reserve(header.lcp + size_t{header.len} * sizeof(uint64_t)) +
+          header.lcp;
+        const auto coded =
+          CompareCoded<true>(*fsst, {suffix, header.len}, rest, out);
+        matched += coded.compared.common;
+        if (coded.compared.order == Order::Less) {
+          continue;
+        }
+        size_t size = coded.decoded;
+        if (coded.code != header.len) {
+          size +=
+            DecodeInto(*fsst, {suffix + coded.code, header.len - coded.code},
+                       out + size, std::numeric_limits<uint32_t>::max());
+        }
+        return Land(probe, header.lcp, size, matched);
+      }
+      const auto compared = CompareRaw(suffix, header.len, rest);
+      matched += compared.common;
+      if (compared.order == Order::Less) {
+        continue;
+      }
+      std::memcpy(Reserve(header.lcp + header.len) + header.lcp, suffix,
+                  header.len);
+      return Land(probe, header.lcp, header.len, matched);
+    }
+    if (end == _view.count) {
+      _entry = kNoEntry;
+      return false;
+    }
+    _hp = hp;
+    _sp = sp;
+    _entry = end - 1;
+    Next();
+    _shared = Common(probe);
+    return true;
+  }
+
+  bool Land(Probe probe, size_t lcp, size_t size, size_t shared) {
+    std::memcpy(_key.data(), probe.data, lcp);
+    _size = lcp + size;
+    _mat = _size;
+    _shared = shared;
+    return true;
+  }
+
+  byte_type* Reserve(size_t size) {
+    if (_key.size() < size + kKeyPad) {
+      utils::StrResizeAmortized(_key, size + kKeyPad);
+    }
+    return _key.data();
+  }
+
+  uint32_t Restart(bytes_view key) {
+    const auto shared = static_cast<uint32_t>(PaddedMismatch(
+      _key.data(), key.data(), std::min<size_t>(_mat, key.size())));
+    _pendings = 0;
+    std::memcpy(Reserve(key.size()), key.data(), key.size());
+    _size = key.size();
+    _mat = _size;
+    return shared;
+  }
+
+  size_t Expand(bytes_view suffix, uint32_t lcp, uint32_t need) {
+    if (!_view.coded) {
+      const size_t size = std::min<size_t>(suffix.size(), need);
+      std::memcpy(Reserve(lcp + size) + lcp, suffix.data(), size);
+      return size;
+    }
+    auto* key = Reserve(lcp + suffix.size() * sizeof(uint64_t));
+    return DecodeInto(*_field->Fsst(), suffix, key + lcp, need);
+  }
+
   uint32_t SetFixed(uint32_t entry) {
     const bytes_view prefix = Prefix(_view);
     const bytes_view stride = FixedKey(_view, entry);
-    size_t lcp = CommonPrefixLength(bytes_view{_key}, prefix);
-    if (lcp == prefix.size()) {
-      lcp += CommonPrefixLength(bytes_view{_key}.substr(lcp), stride);
-      _key.resize(prefix.size());
-    } else {
-      _key.assign(prefix);
+    size_t lcp = CommonPrefixLength(Key(), prefix);
+    const bool same = lcp == prefix.size();
+    if (same) {
+      lcp += CommonPrefixLength(Key().substr(lcp), stride);
     }
-    _key.append(stride);
+    auto* key = Reserve(prefix.size() + stride.size());
+    if (!same) {
+      std::memcpy(key, prefix.data(), prefix.size());
+    }
+    std::memcpy(key + prefix.size(), stride.data(), stride.size());
+    _size = prefix.size() + stride.size();
+    _mat = _size;
     return static_cast<uint32_t>(lcp);
   }
+
+  void ReadAhead(uint32_t block) noexcept {
+    if (_ahead >= _end || block + 1 + _issued / 2 < _ahead) {
+      return;
+    }
+    const uint32_t from = std::max(block + 1, _ahead);
+    const uint32_t to = std::min(_end, from + _window);
+    if (from >= to) {
+      return;
+    }
+    const uint64_t offset = _field->BlockOffset(from);
+    Hint(_field->Owner().Input(), offset, _field->BlockOffset(to) - offset);
+    _ahead = to;
+    _issued = to - from;
+    _window = std::min(2 * _window, kLastWindow);
+  }
+
+  void InlineAhead(uint64_t at) noexcept {
+    if (at + _inline_issued / 2 < _inline_ahead) {
+      return;
+    }
+    if (_inline_ahead == 0) {
+      _inline_ahead = at - at % file_utils::kPage + file_utils::kPage;
+      return;
+    }
+    const uint64_t from = std::max(at, _inline_ahead);
+    const uint64_t to = std::min(_field->InlineEnd(), from + _inline_window);
+    if (from >= to) {
+      return;
+    }
+    Hint(_field->Owner().Input(), from, to - from);
+    _inline_ahead = to;
+    _inline_issued = to - from;
+    _inline_window = std::min(2 * _inline_window, file_utils::kMaxReadahead);
+  }
+
+  static constexpr uint32_t kFirstWindow = 4;
+  static constexpr uint32_t kLastWindow =
+    file_utils::kMaxReadahead / file_utils::kPage;
 
   const TermReaderImpl* _field;
   BlockBuffer _buffer;
@@ -411,12 +942,25 @@ class Cursor {
   const byte_type* _sp = nullptr;
   const byte_type* _records = nullptr;
   bstring _key;
+  bstring _probe;
   PostingMeta _meta;
-  GrowingHint _hint;
+  std::array<PendingSuffix, kRestartInterval> _pending;
+  uint32_t _pendings = 0;
+  size_t _size = 0;
+  size_t _mat = 0;
+  size_t _shared = 0;
   uint32_t _block = kNoEntry;
   uint32_t _entry = kNoEntry;
   uint32_t _record = kNoEntry;
-  bool _hinted = false;
+  uint32_t _restart = 0;
+  uint32_t _ahead = 0;
+  uint32_t _window = kFirstWindow;
+  uint32_t _issued = 0;
+  uint64_t _inline_ahead = std::numeric_limits<uint64_t>::max();
+  uint64_t _inline_issued = 0;
+  uint64_t _inline_window = file_utils::kPrefetchChunk;
+  uint32_t _end;
+  bool _eager = false;
 };
 
 }  // namespace irs::term_dict

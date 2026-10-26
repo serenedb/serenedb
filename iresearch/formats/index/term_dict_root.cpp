@@ -23,6 +23,7 @@
 #include <absl/base/internal/endian.h>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstring>
 #include <limits>
@@ -30,87 +31,67 @@
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 
 namespace irs::term_dict {
 namespace {
 
-template<typename NotAfter>
-IRS_FORCE_INLINE size_t UpperBound(size_t lo, size_t hi,
-                                   NotAfter&& not_after) noexcept {
-  if (lo == hi) {
-    return lo;
-  }
-  size_t base = lo;
-  size_t len = hi - lo;
-  while (len > 1) {
-    const size_t half = len / 2;
-    base += not_after(base + half - 1) ? half : 0;
-    len -= half;
-  }
-  return base + (not_after(base) ? 1 : 0);
-}
-
-template<typename NotAfter>
-IRS_FORCE_INLINE size_t Gallop(size_t from, size_t count,
-                               NotAfter&& not_after) noexcept {
-  if (from >= count || !not_after(from)) {
-    return from;
-  }
-  size_t lo = from + 1;
-  size_t step = 1;
-  while (lo + step - 1 < count && not_after(lo + step - 1)) {
-    lo += step;
-    step *= 2;
-  }
-  return UpperBound(lo, std::min(lo + step - 1, count), not_after);
-}
-
 constexpr size_t kInside = std::numeric_limits<size_t>::max();
+constexpr uint64_t kMaxHead = std::numeric_limits<uint64_t>::max();
 
-class PaddedKey {
- public:
-  explicit PaddedKey(bytes_view key) {
-    if (key.size() + sizeof(uint64_t) <= sizeof(_inline)) {
-      std::memcpy(_inline, key.data(), key.size());
-      std::memset(_inline + key.size(), 0, sizeof(uint64_t));
-      _data = _inline;
-    } else {
-      _heap.assign(key);
-      _heap.append(sizeof(uint64_t), byte_type{0});
-      _data = _heap.data();
-    }
-  }
+using U64x8 = uint64_t __attribute__((vector_size(64)));
+using I64x4 = int64_t __attribute__((vector_size(32)));
+using I64x2 = int64_t __attribute__((vector_size(16)));
+using U8x16 = uint8_t __attribute__((vector_size(16)));
 
-  const byte_type* Data() const noexcept { return _data; }
-
- private:
-  byte_type _inline[256];
-  bstring _heap;
-  const byte_type* _data;
+enum class ArtKind : uint8_t {
+  Node16 = 0,
+  Node48 = 1,
+  Node256 = 2,
 };
 
-IRS_FORCE_INLINE bool HeadNotAfter(uint64_t head, uint64_t key_head,
-                                   bytes_view separator,
-                                   bytes_view key) noexcept {
-  if (head != key_head) {
-    return head < key_head;
+constexpr size_t kArtHeader = 3;
+constexpr size_t kArtInline = sizeof(uint64_t);
+constexpr uint64_t kArtLongPath = 0xFF;
+constexpr uint32_t kArtLeaf = uint32_t{1} << 31;
+constexpr uint32_t kArtLongRest = kArtInline + 1;
+constexpr uint32_t kArtMissing = std::numeric_limits<uint32_t>::max();
+constexpr byte_type kArtAbsent = 0x80;
+
+IRS_FORCE_INLINE uint64_t LoadHead(const byte_type* p, size_t size) noexcept {
+  if (size >= sizeof(uint64_t)) {
+    return absl::big_endian::Load64(p);
   }
-  return separator <= key;
+  if (size >= sizeof(uint32_t)) {
+    return uint64_t{absl::big_endian::Load32(p)} << 32 |
+           uint64_t{absl::big_endian::Load32(p + size - sizeof(uint32_t))}
+             << (64 - 8 * size);
+  }
+  if (size >= sizeof(uint16_t)) {
+    return uint64_t{absl::big_endian::Load16(p)} << 48 |
+           uint64_t{absl::big_endian::Load16(p + size - sizeof(uint16_t))}
+             << (64 - 8 * size);
+  }
+  return size == 0 ? 0 : uint64_t{*p} << 56;
+}
+
+IRS_FORCE_INLINE size_t CountNotAfter(const uint64_t* heads,
+                                      uint64_t head) noexcept {
+  U64x8 lanes;
+  std::memcpy(&lanes, heads, sizeof(lanes));
+  const auto mask = lanes <= head;
+  const I64x4 four = __builtin_shufflevector(mask, mask, 0, 1, 2, 3) +
+                     __builtin_shufflevector(mask, mask, 4, 5, 6, 7);
+  const I64x2 two = __builtin_shufflevector(four, four, 0, 1) +
+                    __builtin_shufflevector(four, four, 2, 3);
+  return static_cast<size_t>(-(two[0] + two[1]));
 }
 
 }  // namespace
 
-uint64_t Head(bytes_view key) noexcept { return HeadAt(key, 0); }
-
 uint64_t HeadAt(bytes_view key, size_t skip) noexcept {
-  if (key.size() >= skip + sizeof(uint64_t)) {
-    return absl::big_endian::Load64(key.data() + skip);
-  }
-  uint64_t head = 0;
-  for (size_t i = skip; i < key.size(); ++i) {
-    head |= uint64_t{key[i]} << (8 * (sizeof(uint64_t) - 1 - (i - skip)));
-  }
-  return head;
+  return skip >= key.size() ? 0
+                            : LoadHead(key.data() + skip, key.size() - skip);
 }
 
 Separators DecodeSeparators(bytes_view encoded, size_t count) {
@@ -157,54 +138,6 @@ bytes_view SeparatorAt(const Separators& separators, size_t i) noexcept {
 size_t SeparatorBytes(const Separators& separators) noexcept {
   return separators.arena.capacity() +
          separators.offsets.capacity() * sizeof(uint32_t);
-}
-
-size_t SortedRoot::Find(bytes_view key) const noexcept {
-  return UpperBound(0, SeparatorCount(_separators), [&](size_t i) {
-    return SeparatorAt(_separators, i) <= key;
-  });
-}
-
-size_t SortedRoot::FindFrom(size_t from, bytes_view key) const noexcept {
-  return Gallop(from, SeparatorCount(_separators),
-                [&](size_t i) { return SeparatorAt(_separators, i) <= key; });
-}
-
-void SortedRoot::FindBatch(std::span<const bytes_view> keys,
-                           std::span<uint32_t> blocks) const noexcept {
-  for (size_t i = 0; i != keys.size(); ++i) {
-    blocks[i] = static_cast<uint32_t>(Find(keys[i]));
-  }
-}
-
-SortedHeadsRoot::SortedHeadsRoot(Separators separators)
-  : _separators{std::move(separators)} {
-  const size_t count = SeparatorCount(_separators);
-  _heads.reserve(count);
-  for (size_t i = 0; i != count; ++i) {
-    _heads.push_back(Head(SeparatorAt(_separators, i)));
-  }
-}
-
-size_t SortedHeadsRoot::Find(bytes_view key) const noexcept {
-  const auto head = Head(key);
-  return UpperBound(0, _heads.size(), [&](size_t i) {
-    return HeadNotAfter(_heads[i], head, SeparatorAt(_separators, i), key);
-  });
-}
-
-size_t SortedHeadsRoot::FindFrom(size_t from, bytes_view key) const noexcept {
-  const auto head = Head(key);
-  return Gallop(from, _heads.size(), [&](size_t i) {
-    return HeadNotAfter(_heads[i], head, SeparatorAt(_separators, i), key);
-  });
-}
-
-void SortedHeadsRoot::FindBatch(std::span<const bytes_view> keys,
-                                std::span<uint32_t> blocks) const noexcept {
-  for (size_t i = 0; i != keys.size(); ++i) {
-    blocks[i] = static_cast<uint32_t>(Find(keys[i]));
-  }
 }
 
 EytzingerRoot::EytzingerRoot(Separators separators)
@@ -287,8 +220,9 @@ size_t EytzingerRoot::Find(bytes_view key) const noexcept {
 }
 
 size_t EytzingerRoot::FindFrom(size_t from, bytes_view key) const noexcept {
-  return Gallop(from, SeparatorCount(_separators),
-                [&](size_t i) { return SeparatorAt(_separators, i) <= key; });
+  return GallopIndex(from, SeparatorCount(_separators), [&](size_t i) {
+    return SeparatorAt(_separators, i) <= key;
+  });
 }
 
 void EytzingerRoot::FindBatch(std::span<const bytes_view> keys,
@@ -325,133 +259,350 @@ void EytzingerRoot::FindBatch(std::span<const bytes_view> keys,
   }
 }
 
-BTreeRoot::BTreeRoot(Separators separators)
-  : _separators{std::move(separators)} {
-  const size_t count = SeparatorCount(_separators);
-  _heads.reserve(count);
-  for (size_t i = 0; i != count; ++i) {
-    _heads.push_back(Head(SeparatorAt(_separators, i)));
+TreeRoot::TreeRoot(Separators separators)
+  : _separators{std::move(separators)}, _count{SeparatorCount(_separators)} {
+  if (_count != 0) {
+    const auto first = SeparatorAt(_separators, 0);
+    _prefix.assign(first.substr(
+      0, CommonPrefixLength(first, SeparatorAt(_separators, _count - 1))));
   }
-  _nodes = (count + kKeys - 1) / kKeys;
-  _tree.assign(_nodes * kKeys, std::numeric_limits<uint64_t>::max());
-  _ranks.assign(_nodes * kKeys, static_cast<uint32_t>(count));
-  size_t next = 0;
-  const auto build = [&](this auto& self, size_t k) -> void {
-    if (k >= _nodes) {
-      return;
+  std::vector<size_t> sizes{
+    std::max<size_t>(1, (_count + kFanout - 1) / kFanout)};
+  while (sizes.back() != 1) {
+    sizes.push_back((sizes.back() + kFanout - 1) / kFanout);
+  }
+  const size_t height = sizes.size();
+  _levels.resize(height);
+  size_t total = 0;
+  for (size_t level = 0; level != height; ++level) {
+    _levels[level] = total;
+    total += sizes[height - 1 - level];
+  }
+  _leaves = _levels.back();
+  _nodes.resize(total + 1);
+  for (auto& node : _nodes) {
+    std::fill_n(node.heads, kFanout, kMaxHead);
+  }
+  auto* heads = reinterpret_cast<uint64_t*>(_nodes.data() + _leaves);
+  for (size_t i = 0; i != _count; ++i) {
+    heads[i] = HeadAt(SeparatorAt(_separators, i), _prefix.size());
+  }
+  for (size_t level = height - 1; level != 0; --level) {
+    const size_t children = sizes[height - 1 - level];
+    for (size_t child = 0; child != children; ++child) {
+      _nodes[_levels[level - 1] + child / kFanout].heads[child % kFanout] =
+        _nodes[_levels[level] + child].heads[0];
     }
-    for (size_t i = 0; i != kKeys; ++i) {
-      self(k * (kKeys + 1) + i + 1);
-      if (next < count) {
-        _tree[k * kKeys + i] = _heads[next];
-        _ranks[k * kKeys + i] = static_cast<uint32_t>(next);
-        ++next;
+  }
+}
+
+TreeRoot::Located TreeRoot::Locate(bytes_view key) const noexcept {
+  const size_t prefix = _prefix.size();
+  if (prefix != 0) {
+    const size_t shared = std::min(prefix, key.size());
+    if (const int c =
+          shared == 0 ? 0 : std::memcmp(key.data(), _prefix.data(), shared);
+        c != 0) {
+      return {.head = 0, .outside = c < 0 ? 0 : _count};
+    }
+    if (key.size() < prefix) {
+      return {.head = 0, .outside = 0};
+    }
+  }
+  return {
+    .head = LoadHead(key.data() + prefix, key.size() - prefix),
+    .outside = kInside,
+  };
+}
+
+size_t TreeRoot::Descend(uint64_t head) const noexcept {
+  SDB_ASSERT(head != kMaxHead);
+  size_t node = 0;
+  for (size_t level = 0; level + 1 != _levels.size(); ++level) {
+    const size_t count =
+      CountNotAfter(_nodes[_levels[level] + node].heads, head);
+    if (count == 0) {
+      return 0;
+    }
+    node = node * kFanout + count - 1;
+  }
+  return node * kFanout + CountNotAfter(_nodes[_leaves + node].heads, head);
+}
+
+size_t TreeRoot::Resolve(size_t from, size_t upper, uint64_t head,
+                         bytes_view key) const noexcept {
+  const auto* heads = Heads();
+  if (upper == from || heads[upper - 1] != head) {
+    return upper;
+  }
+  const size_t lower =
+    PartitionIndex(from, upper, [&](size_t i) { return heads[i] < head; });
+  return PartitionIndex(
+    lower, upper, [&](size_t i) { return SeparatorAt(_separators, i) <= key; });
+}
+
+size_t TreeRoot::Find(bytes_view key) const noexcept {
+  const auto located = Locate(key);
+  if (located.outside != kInside) {
+    return located.outside;
+  }
+  const size_t upper =
+    located.head == kMaxHead ? _count : Descend(located.head);
+  return Resolve(0, upper, located.head, key);
+}
+
+size_t TreeRoot::FindFrom(size_t from, bytes_view key) const noexcept {
+  if (from >= _count) {
+    return from;
+  }
+  const auto located = Locate(key);
+  if (located.outside != kInside) {
+    return std::max(from, located.outside);
+  }
+  size_t upper = _count;
+  if (located.head != kMaxHead) {
+    const auto* heads = Heads();
+    upper = from + CountNotAfter(heads + from, located.head);
+    if (upper == from + kFanout) {
+      upper = GallopIndex(upper, _count,
+                          [&](size_t i) { return heads[i] <= located.head; });
+    }
+  }
+  return Resolve(from, upper, located.head, key);
+}
+
+void TreeRoot::FindBatch(std::span<const bytes_view> keys,
+                         std::span<uint32_t> blocks) const noexcept {
+  for (size_t i = 0; i != keys.size(); ++i) {
+    blocks[i] = static_cast<uint32_t>(Find(keys[i]));
+  }
+}
+
+bool TreeRoot::NotAfter(size_t block, bytes_view key) const noexcept {
+  SDB_ASSERT(block != 0 && block <= _count);
+  const auto located = Locate(key);
+  if (located.outside != kInside) {
+    return located.outside != 0;
+  }
+  const uint64_t head = Heads()[block - 1];
+  if (head != located.head) {
+    return head < located.head;
+  }
+  return SeparatorAt(_separators, block - 1) <= key;
+}
+
+ArtRoot::ArtRoot(Separators separators) : _separators{std::move(separators)} {
+  const size_t count = SeparatorCount(_separators);
+  if (count < 2) {
+    return;
+  }
+  const auto build = [&](this auto& self, size_t lo, size_t hi, size_t from,
+                         size_t level) -> std::array<uint64_t, 2> {
+    if (hi - lo == 1) {
+      _visits += level;
+      const auto separator = SeparatorAt(_separators, lo);
+      const size_t rest = separator.size() - from;
+      return {
+        lo | uint64_t{kArtLeaf | std::min<uint32_t>(rest, kArtLongRest)} << 32,
+        LoadHead(separator.data() + from, std::min(rest, kArtInline)),
+      };
+    }
+    const auto first = SeparatorAt(_separators, lo);
+    const size_t depth =
+      CommonPrefixLength(first, SeparatorAt(_separators, hi - 1));
+    const bool terminal = first.size() == depth;
+    _visits += terminal ? level + 1 : 0;
+    std::array<uint32_t, 257> starts{};
+    std::array<byte_type, 256> labels{};
+    size_t fanout = 0;
+    for (size_t i = lo + terminal; i != hi; ++fanout) {
+      const byte_type label = SeparatorAt(_separators, i)[depth];
+      labels[fanout] = label;
+      starts[fanout] = static_cast<uint32_t>(i);
+      while (i != hi && SeparatorAt(_separators, i)[depth] == label) {
+        ++i;
       }
     }
-    self(k * (kKeys + 1) + kKeys + 1);
+    starts[fanout] = static_cast<uint32_t>(hi);
+    const auto kind = fanout <= 16   ? ArtKind::Node16
+                      : fanout <= 48 ? ArtKind::Node48
+                                     : ArtKind::Node256;
+    const size_t table = kind == ArtKind::Node16   ? 16 / sizeof(uint64_t)
+                         : kind == ArtKind::Node48 ? 256 / sizeof(uint64_t)
+                                                   : 0;
+    const size_t slots = kind == ArtKind::Node256 ? 256 : fanout;
+    const size_t at = _words.size();
+    const size_t children = at + kArtHeader + table;
+    _words.resize(children + 2 * slots);
+    const size_t path = depth - from;
+    _words[at] = lo | uint64_t{hi} << 32;
+    _words[at + 1] = depth | uint64_t{fanout} << 32 |
+                     uint64_t{static_cast<uint8_t>(kind)} << 48 |
+                     uint64_t{terminal} << 50 |
+                     (path <= kArtInline ? path : kArtLongPath) << 56;
+    _words[at + 2] =
+      path <= kArtInline ? LoadHead(first.data() + from, path) : 0;
+    auto* map = reinterpret_cast<byte_type*>(_words.data() + at + kArtHeader);
+    if (kind == ArtKind::Node16) {
+      std::memcpy(map, labels.data(), fanout);
+    } else if (kind == ArtKind::Node48) {
+      for (size_t label = 0, rank = 0; label != 256; ++label) {
+        const bool present = rank != fanout && labels[rank] == label;
+        map[label] = static_cast<byte_type>(present ? rank : rank | kArtAbsent);
+        rank += present;
+      }
+    }
+    for (size_t k = 0; k != fanout; ++k) {
+      const auto child = self(starts[k], starts[k + 1], depth + 1, level + 1);
+      const size_t slot = kind == ArtKind::Node256 ? labels[k] : k;
+      _words[children + 2 * slot] = child[0];
+      _words[children + 2 * slot + 1] = child[1];
+    }
+    if (kind == ArtKind::Node256) {
+      uint64_t next = hi;
+      for (size_t label = 256, rank = fanout; label-- != 0;) {
+        if (rank != 0 && labels[rank - 1] == label) {
+          next = starts[--rank];
+          continue;
+        }
+        _words[children + 2 * label] = next | uint64_t{kArtMissing} << 32;
+      }
+    }
+    return {lo | uint64_t{at} << 32, 0};
   };
-  build(0);
-  SDB_ASSERT(next == count);
+  build(0, count, 0, 0);
 }
 
-size_t BTreeRoot::Find(bytes_view key) const noexcept {
-  const auto head = Head(key);
-  size_t hi = _heads.size();
-  for (size_t k = 0; k < _nodes;) {
-    const uint64_t* node = _tree.data() + k * kKeys;
-    uint32_t i = 0;
-    for (size_t j = 0; j != kKeys; ++j) {
-      i += node[j] <= head ? 1 : 0;
-    }
-    if (i < kKeys) {
-      hi = _ranks[k * kKeys + i];
-    }
-    k = k * (kKeys + 1) + i + 1;
+IRS_FORCE_INLINE size_t ArtRoot::Leaf(const uint64_t* child, size_t depth,
+                                      bytes_view key) const noexcept {
+  const auto first = static_cast<uint32_t>(child[0]);
+  const auto rest = static_cast<uint32_t>(child[0] >> 32) & ~kArtLeaf;
+  const size_t from = depth + 1;
+  const size_t tail = key.size() - from;
+  const uint64_t head = LoadHead(key.data() + from, std::min(tail, kArtInline));
+  if (head != child[1]) {
+    return head > child[1] ? first + 1 : first;
   }
-  if (hi == 0 || _heads[hi - 1] != head) {
-    return hi;
+  if (rest != kArtLongRest) {
+    return rest <= tail ? first + 1 : first;
   }
-  const size_t lo =
-    std::lower_bound(_heads.begin(), _heads.begin() + hi, head) -
-    _heads.begin();
-  return UpperBound(
-    lo, hi, [&](size_t i) { return SeparatorAt(_separators, i) <= key; });
+  return SeparatorAt(_separators, first).substr(from) <= key.substr(from)
+           ? first + 1
+           : first;
 }
 
-size_t BTreeRoot::FindFrom(size_t from, bytes_view key) const noexcept {
-  const auto head = Head(key);
-  return Gallop(from, _heads.size(), [&](size_t i) {
-    return HeadNotAfter(_heads[i], head, SeparatorAt(_separators, i), key);
-  });
+size_t ArtRoot::Find(bytes_view key) const noexcept {
+  if (_words.empty()) {
+    const size_t count = SeparatorCount(_separators);
+    return count != 0 && SeparatorAt(_separators, 0) <= key ? 1 : 0;
+  }
+  const uint64_t* words = _words.data();
+  size_t at = 0;
+  size_t from = 0;
+  for (;;) {
+    const uint64_t* node = words + at;
+    const auto first = static_cast<uint32_t>(node[0]);
+    const auto end = static_cast<uint32_t>(node[0] >> 32);
+    const uint64_t meta = node[1];
+    const auto depth = static_cast<uint32_t>(meta);
+    if (from != depth) {
+      const size_t shared = std::min<size_t>(depth, key.size());
+      if (const uint64_t path = meta >> 56; path != kArtLongPath) {
+        const uint64_t head =
+          shared > from ? LoadHead(key.data() + from, shared - from) : 0;
+        if (head != node[2]) {
+          return head < node[2] ? first : end;
+        }
+      } else if (from < shared) {
+        const auto separator = SeparatorAt(_separators, first);
+        if (const int c = std::memcmp(key.data() + from,
+                                      separator.data() + from, shared - from);
+            c != 0) {
+          return c < 0 ? first : end;
+        }
+      }
+    }
+    if (key.size() <= depth) {
+      return key.size() < depth ? first : first + ((meta >> 50) & 1);
+    }
+    const byte_type label = key[depth];
+    const auto fanout = static_cast<uint32_t>(meta >> 32) & 0xFFFF;
+    const auto kind = static_cast<ArtKind>((meta >> 48) & 3);
+    const uint64_t* children = node + kArtHeader;
+    uint32_t slot;
+    if (kind == ArtKind::Node16) {
+      U8x16 labels;
+      std::memcpy(&labels, children, sizeof(labels));
+      const auto less = std::bit_cast<std::array<uint64_t, 2>>(labels < label);
+      const auto equal =
+        std::bit_cast<std::array<uint64_t, 2>>(labels == label);
+      const uint64_t low =
+        fanout >= 8 ? ~uint64_t{0} : (uint64_t{1} << (8 * fanout)) - 1;
+      const uint64_t high = fanout <= 8 ? 0
+                            : fanout == 16
+                              ? ~uint64_t{0}
+                              : (uint64_t{1} << (8 * (fanout - 8))) - 1;
+      slot = static_cast<uint32_t>(
+        (std::popcount(less[0] & low) + std::popcount(less[1] & high)) / 8);
+      children += 16 / sizeof(uint64_t);
+      if (((equal[0] & low) | (equal[1] & high)) == 0) {
+        return slot == fanout ? end : static_cast<uint32_t>(children[2 * slot]);
+      }
+    } else if (kind == ArtKind::Node48) {
+      const byte_type mapped =
+        reinterpret_cast<const byte_type*>(children)[label];
+      slot = mapped & ~kArtAbsent;
+      children += 256 / sizeof(uint64_t);
+      if ((mapped & kArtAbsent) != 0) {
+        return slot == fanout ? end : static_cast<uint32_t>(children[2 * slot]);
+      }
+    } else {
+      slot = label;
+    }
+    const uint64_t* child = children + 2 * slot;
+    const auto ref = static_cast<uint32_t>(child[0] >> 32);
+    if (ref >= kArtLeaf) {
+      if (ref == kArtMissing) {
+        return static_cast<uint32_t>(child[0]);
+      }
+      return Leaf(child, depth, key);
+    }
+    at = ref;
+    from = depth + 1;
+  }
 }
 
-void BTreeRoot::FindBatch(std::span<const bytes_view> keys,
-                          std::span<uint32_t> blocks) const noexcept {
+void ArtRoot::FindBatch(std::span<const bytes_view> keys,
+                        std::span<uint32_t> blocks) const noexcept {
   for (size_t i = 0; i != keys.size(); ++i) {
     blocks[i] = static_cast<uint32_t>(Find(keys[i]));
   }
 }
 
-RadixRoot::RadixRoot(Separators separators, uint32_t radix_bytes)
-  : _separators{std::move(separators)}, _radix_bytes{radix_bytes} {
-  SDB_ASSERT(radix_bytes == 1 || radix_bytes == 2);
-  const size_t count = SeparatorCount(_separators);
-  _heads.reserve(count);
-  for (size_t i = 0; i != count; ++i) {
-    _heads.push_back(Head(SeparatorAt(_separators, i)));
+Root::Root(Separators separators, bool fixed) {
+  const size_t count = SeparatorCount(separators);
+  if (fixed) {
+    ArtRoot art{separators};
+    if (2 * art.Visits() <= TreeRoot::Height(count) * count) {
+      _root.emplace<ArtRoot>(std::move(art));
+      return;
+    }
   }
-  if (count != 0) {
-    const auto first = SeparatorAt(_separators, 0);
-    const auto last = SeparatorAt(_separators, count - 1);
-    _prefix.assign(first.substr(0, CommonPrefixLength(first, last)));
+  size_t ties = 0;
+  if (count > 1) {
+    const size_t skip = CommonPrefixLength(SeparatorAt(separators, 0),
+                                           SeparatorAt(separators, count - 1));
+    uint64_t last = HeadAt(SeparatorAt(separators, 0), skip);
+    for (size_t i = 1; i != count; ++i) {
+      const uint64_t head = HeadAt(SeparatorAt(separators, i), skip);
+      ties += head == last ? 1 : 0;
+      last = head;
+    }
   }
-  const size_t buckets = size_t{1} << (8 * radix_bytes);
-  _table.assign(buckets + 1, static_cast<uint32_t>(count));
-  for (size_t i = count; i != 0; --i) {
-    _table[Bucket(SeparatorAt(_separators, i - 1))] =
-      static_cast<uint32_t>(i - 1);
-  }
-  for (size_t b = buckets; b != 0; --b) {
-    _table[b - 1] = std::min(_table[b - 1], _table[b]);
-  }
-}
-
-IRS_FORCE_INLINE size_t RadixRoot::Bucket(bytes_view key) const noexcept {
-  size_t bucket = 0;
-  for (size_t i = 0; i != _radix_bytes; ++i) {
-    const size_t at = _prefix.size() + i;
-    bucket = bucket << 8 | (at < key.size() ? key[at] : 0);
-  }
-  return bucket;
-}
-
-size_t RadixRoot::Find(bytes_view key) const noexcept {
-  const size_t prefix = _prefix.size();
-  const size_t shared = std::min(prefix, key.size());
-  if (const int c = std::memcmp(key.data(), _prefix.data(), shared); c != 0) {
-    return c < 0 ? 0 : _heads.size();
-  }
-  if (key.size() < prefix) {
-    return 0;
-  }
-  const size_t bucket = Bucket(key);
-  const auto head = Head(key);
-  return UpperBound(_table[bucket], _table[bucket + 1], [&](size_t i) {
-    return HeadNotAfter(_heads[i], head, SeparatorAt(_separators, i), key);
-  });
-}
-
-size_t RadixRoot::FindFrom(size_t from, bytes_view key) const noexcept {
-  const auto head = Head(key);
-  return Gallop(from, _heads.size(), [&](size_t i) {
-    return HeadNotAfter(_heads[i], head, SeparatorAt(_separators, i), key);
-  });
-}
-
-void RadixRoot::FindBatch(std::span<const bytes_view> keys,
-                          std::span<uint32_t> blocks) const noexcept {
-  for (size_t i = 0; i != keys.size(); ++i) {
-    blocks[i] = static_cast<uint32_t>(Find(keys[i]));
+  if (2 * ties > count) {
+    _root.emplace<EytzingerRoot>(std::move(separators));
+  } else {
+    _root.emplace<TreeRoot>(std::move(separators));
   }
 }
 

@@ -54,11 +54,24 @@ RangeKind Classify(const ByRangeOptions::range_type& rng) noexcept {
   return RangeKind::Range;
 }
 
+bstring RangeUpper(const ByRangeFilterOptions::range_type& range) {
+  switch (range.max_type) {
+    case BoundType::Unbounded:
+      return {};
+    case BoundType::Inclusive:
+      return AfterKey(range.max);
+    case BoundType::Exclusive:
+      return range.max;
+  }
+  return {};
+}
+
 class ByRangeIterator : public WrappedTermIterator {
  public:
   ByRangeIterator(const TermReader& reader,
                   const ByRangeFilterOptions::range_type& range)
-    : WrappedTermIterator{reader.iterator()}, _range{&range} {}
+    : WrappedTermIterator{reader.IteratorUntil(RangeUpper(range))},
+      _range{&range} {}
 
   bool next() final {
     bool res = false;

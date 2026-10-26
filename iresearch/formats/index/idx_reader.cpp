@@ -65,7 +65,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
     return;
   }
 
-  _impl->in = dir.open(filename, IOAdvice::SEQUENTIAL);
+  _impl->in = dir.open(filename, IOAdvice::RANDOM);
 
   format_utils::ReadFooter(
     *_impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {

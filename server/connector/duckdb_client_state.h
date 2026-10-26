@@ -67,12 +67,9 @@ class SereneDBClientState final : public duckdb::ClientContextState {
     std::shared_ptr<ConnectionContext> connection_ctx)
     : _connection_ctx{std::move(connection_ctx)} {}
 
-  ~SereneDBClientState() final {
-    if (progress_source) {
-      progress_source->Detach();
-      pg::ProgressRegistry::Instance().Unregister(progress_source.get());
-    }
-  }
+  ~SereneDBClientState() final { CloseProgressSource(); }
+
+  void CloseProgressSource();
 
   ConnectionContext& GetConnectionContext() const { return *_connection_ctx; }
 
@@ -148,6 +145,8 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
 
 void SetDefaultSearchPath(duckdb::ClientContext& context,
                           std::string_view database);
+
+void RegisterClientStateCallback(duckdb::DBConfig& config);
 
 struct SystemConnection {
   duckdb::unique_ptr<duckdb::Connection> conn;

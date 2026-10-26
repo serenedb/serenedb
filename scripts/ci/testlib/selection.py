@@ -14,7 +14,6 @@ import diff  # noqa: E402
 KEEP = 200
 CUTOFF = 25
 CHEAPEST = 3
-TEST_PREFIXES = ("tests/", "resources/tests/")
 
 
 def build_map(run, config, arch, work, expected):
@@ -48,10 +47,6 @@ def build_map(run, config, arch, work, expected):
     store.put(f"selection/{config}-{arch}.parquet", dest)
     store.put(f"selection/{day}/{config}-{arch}.parquet", dest)
     return stats
-
-
-def _is_test(path):
-    return path.startswith(TEST_PREFIXES) or (path.startswith("third_party/") and "/test/" in path)
 
 
 def covering_units(map_path, functions, work):
@@ -93,31 +88,27 @@ def report(units, base, changed, changed_units, map_path, spans, work, pr="", cu
     deleted = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", "--diff-filter=D",
                               merge_base, "HEAD"], capture_output=True, text=True,
                              check=True).stdout.splitlines()
-    everything = [f"{p} (deleted)" for p in deleted if not _is_test(p)]
-    tests = set()
+    everything = [f"{p} (deleted)" for p in deleted if not diff.is_test(p)]
     for path in changed:
         if any(other.startswith(path + "/") for other in changed):
             continue
-        if _is_test(path):
-            tests.add(path)
-        elif path.endswith(".md") and path.startswith("docs/"):
+        if path in files or diff.is_test(path) or (path.endswith(".md") and path.startswith("docs/")):
             continue
-        elif path not in files:
-            everything.append(path)
-    sources = sorted(p for p in files if p not in tests)
+        everything.append(path)
+    sources = sorted(files)
     covering = {}
     if sources and not everything:
         covering = covering_units(map_path, {s[2] for p in sources for s in spans.get(p, [])}, work)
+    known = {u.id.split("#", 1)[0] for u in units}
     for path in sources:
         for line in sorted(files[path]):
             hits = [r for f in innermost(spans.get(path, []), line) for r in covering.get(f, [])]
-            if not hits:
+            picks = {r["unit"] for r in hits if r["covering"] <= cutoff or r["rank"] <= CHEAPEST}
+            if not picks & known:
                 everything.append(f"{path}:{line}")
                 break
-            for r in hits:
-                if r["covering"] <= cutoff or r["rank"] <= CHEAPEST:
-                    selected[r["unit"]].add(f"{path}:{line}")
-    known = {u.id.split("#", 1)[0] for u in units}
+            for unit in picks & known:
+                selected[unit].add(f"{path}:{line}")
     picked = sorted(u for u in selected if u in known)
     chosen = set(picked)
     run = [u for u in units if u.id.split("#", 1)[0] in chosen]

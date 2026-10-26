@@ -10,6 +10,7 @@ from testlib.scheduler import BAD
 
 MARKER = "<!-- serenedb-ci-report -->"
 ORDER = ("perf", "dev", "asan", "tsan", "msan")
+COVERAGE_ROWS = 40
 
 
 def load(results_dir):
@@ -40,7 +41,26 @@ def _duration(seconds):
 def load_coverage(coverage_dir):
     if not coverage_dir:
         return []
-    return [p.read_text().strip() for p in sorted(Path(coverage_dir).glob("**/summary.txt"))]
+    found = []
+    for path in sorted(Path(coverage_dir).glob("**/summary.txt")):
+        details = path.with_name("coverage.json")
+        uncovered = json.loads(details.read_text())["uncovered"] if details.is_file() else []
+        found.append({"summary": path.read_text().strip(), "uncovered": uncovered})
+    return found
+
+
+def _code(text):
+    text = " ".join(text.split())[:80].replace("|", "\\|")
+    return f"`{text}`" if text and "`" not in text else text
+
+
+def uncovered_row(d):
+    what = {"line": "line", "function": "function never called",
+            "branch": f"branch never {d.get('direction')}",
+            "mcdc": f"MC/DC condition {d.get('condition')}"}[d["kind"]]
+    code = d.get("condition_source") if d["kind"] == "mcdc" else d.get("source")
+    tests = ", ".join(f"`{t}`" for t in d.get("tests", [])) or "none in the map"
+    return f"| `{d['file']}:{d['line']}` | {what} | {_code(code or '')} | {tests} |"
 
 
 def load_selection(selection_dir):
@@ -111,7 +131,17 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
             before = "" if any(job in (k[0], k[2]) for k in keys) else " before any test result"
             lines.append(f"- ❌ **{job}**: {result}{before}")
     if coverage:
-        lines += ["", "**Coverage of the change**", "", "```", *coverage, "```"]
+        lines += ["", "**Coverage of the change**", "", "```", *(c["summary"] for c in coverage), "```"]
+        uncovered = [d for c in coverage for d in c["uncovered"]]
+        if uncovered:
+            lines += ["", f"<details><summary>{len(uncovered)} uncovered, with the tests that run "
+                      "the code nearest to each: where a test for it goes</summary>", "",
+                      "| where | not covered | code | nearest tests |", "| --- | --- | --- | --- |",
+                      *(uncovered_row(d) for d in uncovered[:COVERAGE_ROWS])]
+            if len(uncovered) > COVERAGE_ROWS:
+                lines.append(f"\n... and {len(uncovered) - COVERAGE_ROWS} more in the "
+                             "`coverage-dev-linux-amd64` artifact")
+            lines += ["", "</details>"]
     if selection:
         lines += ["", f"**Test selection** (report only, every unit ran): {selection_line(selection)}"]
     if signatures:

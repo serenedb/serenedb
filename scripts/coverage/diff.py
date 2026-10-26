@@ -12,6 +12,11 @@ SOURCE = re.compile(r"\.(c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|tpp|inc)$")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
+def is_test(path):
+    return path.startswith(("tests/", "resources/tests/")) or (
+        path.startswith("third_party/") and ("/test/" in path or "/testing/" in path))
+
+
 def git(*args, cwd=ROOT):
     return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True,
                           check=True).stdout
@@ -233,18 +238,20 @@ def main():
     args.objects = args.objects or objects(args.build_dir)
     changed = changed_lines(args.base)
     sources = [p for p in changed if (ROOT / p).is_file()]
-    if args.html and sources:
-        html(args.profdata, args.objects, sources, out / "html")
+    reported = [p for p in sources if not is_test(p)]
+    if args.html and reported:
+        html(args.profdata, args.objects, reported, out / "html")
     summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0], "mcdc": [0, 0]}
     details = []
     uncovered_ranges = {}
     regions = {}
     if sources:
-        report = {normalize(k): v for k, v in parse_lcov(export("lcov", args.profdata, args.objects,
-                                                                  sources)).items()}
         regions = {normalize(k): v for k, v in parse_json(export("text", args.profdata,
                                                                   args.objects, sources)).items()}
-        for path in sorted(sources):
+    if reported:
+        report = {normalize(k): v for k, v in parse_lcov(export("lcov", args.profdata, args.objects,
+                                                                  reported)).items()}
+        for path in sorted(reported):
             data = report.get(path)
             if not data:
                 continue

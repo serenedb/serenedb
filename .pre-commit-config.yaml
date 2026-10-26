@@ -186,5 +186,5 @@ repos:
         language: python
         additional_dependencies: [pytest==9.1.1]
         entry: python3 -m pytest -q -p no:cacheprovider scripts/ci/tests
-        files: ^(scripts/(ci/(ci\.py|build_images\.sh|tests/)|check_submodule_pointers\.py)|\.github/workflows/simple\.yml)
+        files: ^(scripts/(ci/(ci\.py|report\.py|build_images\.sh|testlib/selection\.py|tests/)|coverage/diff\.py|check_submodule_pointers\.py)|\.github/workflows/simple\.yml)
         pass_filenames: false

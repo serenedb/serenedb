@@ -566,8 +566,8 @@ std::string NodeToXml(xmlNode* node) {
 }
 
 std::string NumberToXml(double value) {
-  char buffer[kFloatText];
-  return std::string{buffer, WriteFloatShortest(value, buffer)};
+  char buffer[utils::kNumberStrMaxLen];
+  return std::string{buffer, WriteFloat<true>(value, 1, buffer)};
 }
 
 struct XmlNamespace {

@@ -16,6 +16,8 @@ Values of `money`, `xml`, the geometric types and the range types cast to `json`
 
 These types also cast to and from the types their values are stored in, where PostgreSQL refuses the cast, and functions of those types take them: `money` is a `numeric(19,2)`, `xml` a `text`, and a geometric value or a range a record of its fields. So `1.5::float8::money` is `$1.50`, `'1'::money::float8` is `1`, `abs('1'::money)` is `1`, `1::xml` is `1` and `'[1,5)'::int4range::int8range` is `[1,5)`.
 
+The coordinates of the geometric types print as `float8` values do, so `point(1e15, 0.0001)` is `(1000000000000000,1e-04)` where PostgreSQL prints `(1e+15,0.0001)`.
+
 ## Data Types
 
 | Type                         | Support State | Details |

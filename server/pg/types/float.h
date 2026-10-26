@@ -32,8 +32,6 @@
 
 namespace sdb::pg {
 
-inline constexpr size_t kFloatText = sizeof("-2.2250738585072014e-308") - 1;
-
 template<bool Precise, typename T>
 size_t WriteFloat(T value, int8_t extra_float_digits, char* buffer) {
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
@@ -56,11 +54,6 @@ size_t WriteFloat(T value, int8_t extra_float_digits, char* buffer) {
     return static_cast<size_t>(result.ptr - buffer);
   }
 }
-
-size_t WriteFloatShortest(float value, char* buffer);
-size_t WriteFloatShortest(double value, char* buffer);
-size_t WriteFloatRounded(float value, int8_t extra_float_digits, char* buffer);
-size_t WriteFloatRounded(double value, int8_t extra_float_digits, char* buffer);
 
 [[noreturn]] void ThrowFloatOverflow();
 [[noreturn]] void ThrowFloatUnderflow();

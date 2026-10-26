@@ -2170,10 +2170,10 @@ class TextWriter {
   void Text(std::string_view text) { _write(text); }
 
   void Number(double value) {
-    char buffer[kFloatText];
+    char buffer[utils::kNumberStrMaxLen];
     _write({buffer, _extra_float_digits > 0
-                      ? WriteFloatShortest(value, buffer)
-                      : WriteFloatRounded(value, _extra_float_digits, buffer)});
+                      ? WriteFloat<true>(value, _extra_float_digits, buffer)
+                      : WriteFloat<false>(value, _extra_float_digits, buffer)});
   }
 
   void Pair(const Point& point) {

@@ -2064,8 +2064,6 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
       }
     }
   } else if constexpr (SizedCore<Core>) {
-    // Bounded text leaves (numerics/dates/uuid/bool) fit one reservation for
-    // the whole comma-joined run; NULL is the 4-byte literal.
     constexpr size_t kElem = (Core::kMaxBytes > 4 ? Core::kMaxBytes : 4) + 1;
     const auto quotes = QuotedCore<Core> ? 2 * ctx.quote_seq.size() : 0;
     ctx.writer->Write(count * (kElem + quotes), [&](uint8_t* out) {
@@ -2786,6 +2784,49 @@ void ThrowMessageTooLarge() {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
                   ERR_MSG("row exceeds maximum allowed message length (",
                           kMaxMessageSize, " bytes)"));
+}
+
+void ByteaOutHex(char* buf, std::string_view value) {
+  *buf++ = '\\';
+  *buf++ = 'x';
+
+  absl::BytesToHexStringInternal(
+    reinterpret_cast<const unsigned char*>(value.data()), buf, value.size());
+}
+
+size_t ByteaOutEscapeLength(std::string_view value) {
+  size_t backslash_cnt = 0;
+  size_t non_printable_cnt = 0;
+  for (size_t i = 0; i < value.size(); ++i) {
+    if (value[i] == '\\') {
+      ++backslash_cnt;
+    } else if (!absl::ascii_isprint(value[i])) {
+      ++non_printable_cnt;
+    }
+  }
+  return value.size() + backslash_cnt + non_printable_cnt * 3;
+}
+
+void ByteaOutEscape(char* buf, std::string_view value) {
+  for (const char* in = value.data(), *in_end = value.data() + value.size();
+       in != in_end; ++in) {
+    if (*in == '\\') {
+      *buf++ = '\\';
+      *buf++ = '\\';
+    } else if (!absl::ascii_isprint(*in)) {
+      // As octal
+      unsigned char c = *in;
+      buf[0] = '\\';
+      buf[3] = '0' + (c & 07);
+      c >>= 3;
+      buf[2] = '0' + (c & 07);
+      c >>= 3;
+      buf[1] = '0' + (c & 03);
+      buf += 4;
+    } else {
+      *buf++ = *in;
+    }
+  }
 }
 
 void FillContext(const Config& config, SerializationContext& context) {

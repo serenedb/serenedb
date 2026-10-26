@@ -20,9 +20,6 @@
 
 #include "pg/types/bytea.h"
 
-#include <absl/strings/ascii.h>
-#include <absl/strings/escaping.h>
-
 #include <algorithm>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
@@ -31,9 +28,11 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utf8proc_wrapper.hpp>
 
 #include "pg/deserialize.h"
+#include "pg/serialize.h"
 #include "pg/types/cast.h"
 
 namespace sdb::pg {
@@ -153,48 +152,6 @@ void RegisterCasts(duckdb::CastFunctionSet& casts) {
 }
 
 }  // namespace
-
-void ByteaOutHex(char* buf, std::string_view value) {
-  *buf++ = '\\';
-  *buf++ = 'x';
-
-  absl::BytesToHexStringInternal(
-    reinterpret_cast<const unsigned char*>(value.data()), buf, value.size());
-}
-
-size_t ByteaOutEscapeLength(std::string_view value) {
-  size_t backslash_cnt = 0;
-  size_t non_printable_cnt = 0;
-  for (size_t i = 0; i < value.size(); ++i) {
-    if (value[i] == '\\') {
-      ++backslash_cnt;
-    } else if (!absl::ascii_isprint(value[i])) {
-      ++non_printable_cnt;
-    }
-  }
-  return value.size() + backslash_cnt + non_printable_cnt * 3;
-}
-
-void ByteaOutEscape(char* buf, std::string_view value) {
-  for (const char* in = value.data(), *in_end = value.data() + value.size();
-       in != in_end; ++in) {
-    if (*in == '\\') {
-      *buf++ = '\\';
-      *buf++ = '\\';
-    } else if (!absl::ascii_isprint(*in)) {
-      unsigned char c = *in;
-      buf[0] = '\\';
-      buf[3] = '0' + (c & 07);
-      c >>= 3;
-      buf[2] = '0' + (c & 07);
-      c >>= 3;
-      buf[1] = '0' + (c & 03);
-      buf += 4;
-    } else {
-      *buf++ = *in;
-    }
-  }
-}
 
 void RegisterBytea(duckdb::CastFunctionSet& casts) { RegisterCasts(casts); }
 

@@ -20,15 +20,9 @@
 
 #pragma once
 
-#include <cstddef>
 #include <duckdb/function/cast/cast_function_set.hpp>
-#include <string_view>
 
 namespace sdb::pg {
-
-void ByteaOutHex(char* buf, std::string_view value);
-void ByteaOutEscape(char* buf, std::string_view value);
-size_t ByteaOutEscapeLength(std::string_view value);
 
 void RegisterBytea(duckdb::CastFunctionSet& casts);
 

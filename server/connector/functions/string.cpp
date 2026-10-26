@@ -50,7 +50,6 @@
 #include "connector/common.h"
 #include "pg/serialize.h"
 #include "pg/sql_utils.h"
-#include "pg/types/bytea.h"
 #include "pg/types/logical.h"
 
 namespace sdb::connector {
@@ -228,6 +227,7 @@ void SetBitFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
+// convert_from(bytea, encoding) -> text -- ported from PgConvertFrom
 void ConvertFromFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                          duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
@@ -243,6 +243,7 @@ void ConvertFromFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
+// convert_to(text, encoding) -> bytea -- ported from PgConvertTo
 void ConvertToFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                        duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
@@ -719,6 +720,7 @@ void LikeEscapeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
+// ---------------------------------------------------------------------------
 // UTF-8 helpers for regexp_instr (same as server/pg/functions/regexp.cpp)
 // ---------------------------------------------------------------------------
 
@@ -1323,6 +1325,7 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(std::move(info));
   }
 
+  // normalize(text [, form]) -> text
   {
     duckdb::ScalarFunctionSet normalize_set("normalize");
     normalize_set.AddFunction(
@@ -1418,12 +1421,14 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BLOB,
     SetBitFunction});
 
+  // convert_from(bytea, encoding) -> text
   loader.RegisterFunction(duckdb::ScalarFunction{
     "convert_from",
     {duckdb::LogicalType::BLOB, duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::VARCHAR,
     ConvertFromFunction});
 
+  // convert_to(text, encoding) -> bytea
   loader.RegisterFunction(duckdb::ScalarFunction{
     "convert_to",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
@@ -1467,6 +1472,7 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::VARCHAR,
     LikeEscapeFunction});
 
+  // regexp_match(text, pattern) -> text[]
   {
     duckdb::ScalarFunction func{
       "regexp_match",
@@ -1480,6 +1486,9 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(func);
   }
 
+  // regexp_count -- implemented as macro in default_functions.cpp
+
+  // regexp_instr(text, pattern) / regexp_instr(text, pattern, start, n)
   {
     duckdb::ScalarFunctionSet regexp_instr_set("regexp_instr");
     regexp_instr_set.AddFunction(duckdb::ScalarFunction{
@@ -1501,6 +1510,9 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       RegexpInitLocalState});
     loader.RegisterFunction(regexp_instr_set);
   }
+
+  // regexp_substr, regexp_count -- implemented as macros in
+  // default_functions.cpp
 
   // similar_to_escape -- lives in duckdb (src/function/scalar/string/like.cpp),
   // next to like_escape and to the parser rewrite that emits the call.

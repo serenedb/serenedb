@@ -573,6 +573,7 @@ def test_char_oid18_binary_param(conn, param, text):
     "query, value",
     [
         ("select 'A'::\"char\"", b"A"),
+        ("select 'abc'::\"char\"", b"a"),
         ("select ''::\"char\"", b"\0"),
         ("select '\\303'::\"char\"", b"\xc3"),
     ],

@@ -200,7 +200,8 @@ void Open(Data& data) {
   std::vector<bytes_view> separators;
   if (!impl.Small()) {
     for (size_t block = 1; block < impl.GetRoot().Blocks(); ++block) {
-      separators.push_back(impl.GetRoot().Separator(block));
+      separators.push_back(
+        impl.GetRoot().Separator(block).substr(impl.KeyPrefix().size()));
     }
   }
   data.decoded = irs::term_dict::MakeSeparators(separators);

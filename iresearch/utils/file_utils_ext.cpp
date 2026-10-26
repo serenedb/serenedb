@@ -280,6 +280,19 @@ void Prefetch(const void* addr, size_t size) noexcept {
 #endif
 }
 
+void Populate(const void* addr, size_t size) noexcept {
+#ifdef __linux__
+#ifndef MADV_POPULATE_READ
+#define MADV_POPULATE_READ 22
+#endif
+  if (size == 0) {
+    return;
+  }
+  const auto [aligned, total] = PageRange(addr, size);
+  ::madvise(reinterpret_cast<void*>(aligned), total, MADV_POPULATE_READ);
+#endif
+}
+
 void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept {
 #ifndef _WIN32
   for (uint64_t at = 0; at < size; at += kWillNeedChunk) {

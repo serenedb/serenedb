@@ -41,6 +41,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 
 namespace irs::term_dict {
@@ -104,6 +105,7 @@ struct BlockBuilder {
   uint32_t prefix = 0;
   uint32_t head_skip = 0;
   BlockKind kind = BlockKind::Var;
+  bool all_coded = true;
 };
 
 inline constexpr size_t kMaxRangeLevels = 8;
@@ -171,40 +173,60 @@ class FieldWriter final {
   void end();
 
  private:
-  void TrainFsst(const BasicTermReader& reader);
+  struct Entry {
+    field_id id;
+    TermDictMeta meta;
+  };
+
+  void SampleFsst(const BasicTermReader& reader);
+  void TrainFsst();
   bytes_view EncodeSuffix(bytes_view suffix);
   void Add(bytes_view term, const PostingMeta& meta);
-  bool Append(bytes_view term, const PostingMeta& meta);
-  bool AppendFixedKey(bytes_view term, uint64_t records);
-  bool AppendVarKey(bytes_view term, uint64_t records);
+  void Commit(bytes_view term, const PostingMeta& meta);
+  bool Append(bytes_view key, const PostingMeta& meta);
+  bool AppendFixedKey(bytes_view key, uint64_t records);
+  bool AppendVarKey(bytes_view key, uint64_t records);
+  void AppendVarColumns(uint32_t index, bytes_view key);
   void Seal();
   void Cut();
   void WriteBlock(bytes_view block);
   void EndField(field_id id, const FieldProperties& props,
-                uint64_t total_doc_freq, uint64_t total_term_freq);
+                uint64_t total_doc_freq, uint64_t total_term_freq,
+                uint64_t first_inline);
+  void ResetField() noexcept;
   void Reset() noexcept;
 
   PostingsWriter _pw;
   RecordOutput _record;
   BlockBuilder _block;
   RangeWriter _ranges;
-  bstring _region;
   bstring _inline;
   FsstEncoder _fsst;
   bstring _fsst_table;
+  bstring _samples;
+  std::vector<size_t> _sample_lengths;
   bstring _coded;
   bstring _page;
   bstring _directory;
   bstring _separators;
   bstring _separator;
   bstring _last;
+  bstring _fields;
+  std::vector<Entry> _entries;
+  bstring _key;
   bstring _min;
+  PostingMeta _single;
   IdxWriter* _idx = nullptr;
   IndexOutput* _out = nullptr;
   uint64_t _terms = 0;
   uint32_t _blocks = 0;
   uint32_t _width = 0;
-  bool _fsst_used = false;
+  uint32_t _ordinal = 0;
+  uint32_t _prefix_size = 0;
+  uint32_t _first_block = 0;
+  uint32_t _first_entry = 0;
+  uint32_t _first_record = 0;
+  bool _encode = true;
   const bool _compaction;
 };
 
@@ -225,8 +247,8 @@ struct RangeLevel {
 
 class TermReaderImpl final : public TermReader {
  public:
-  TermReaderImpl(const FieldReader& owner, field_id id,
-                 const TermDictMeta& meta, IndexInput& in);
+  TermReaderImpl(FieldReader& owner, field_id id, const TermDictMeta& meta,
+                 IndexInput& in, const Separators& separators);
   ~TermReaderImpl() final;
 
   SeekTermIterator::ptr iterator() const final;
@@ -249,8 +271,12 @@ class TermReaderImpl final : public TermReader {
   const FieldMeta& meta() const noexcept final { return _meta; }
   size_t size() const noexcept final { return _terms; }
   uint64_t docs_count() const noexcept final { return _docs; }
-  bytes_view min() const noexcept final { return _min; }
-  bytes_view max() const noexcept final { return _max; }
+  bytes_view min() const noexcept final {
+    return bytes_view{_min_key}.substr(_prefix_size);
+  }
+  bytes_view max() const noexcept final {
+    return bytes_view{_max_key}.substr(_prefix_size);
+  }
   uint32_t KeyWidth() const noexcept final { return _width; }
   void SampleTerms(
     uint64_t bytes,
@@ -260,62 +286,67 @@ class TermReaderImpl final : public TermReader {
 
   const FieldReader& Owner() const noexcept { return *_owner; }
   uint32_t Blocks() const noexcept { return _blocks; }
-  bool Small() const noexcept { return _small != nullptr; }
-  const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
+  bool Single() const noexcept { return _blocks == 0; }
+  const PostingMeta& SingleMeta() const noexcept { return _single; }
+  bool Small() const noexcept { return _blocks == 1; }
+  const duckdb_fsst_decoder_t* Fsst() const noexcept;
   const Root& GetRoot() const noexcept { return _root; }
+  bytes_view KeyPrefix() const noexcept {
+    return bytes_view{_min_key}.substr(0, _prefix_size);
+  }
+  bytes_view MinKey() const noexcept { return _min_key; }
+  bytes_view MaxKey() const noexcept { return _max_key; }
+  uint32_t FirstEntry() const noexcept { return _first_entry; }
+  uint32_t FirstRecord() const noexcept { return _first_record; }
+  uint32_t LastEntry() const noexcept { return _last_entry; }
   bytes_view BlockPrefix(size_t block) const noexcept {
-    const bytes_view lower = block == 0 ? min() : _root.Separator(block);
+    const bytes_view lower = block == 0 ? MinKey() : _root.Separator(block);
     const bytes_view upper =
-      block + 1 == _blocks ? max() : _root.Separator(block + 1);
+      block + 1 == _blocks ? MaxKey() : _root.Separator(block + 1);
     return lower.substr(0, CommonPrefixLength(lower, upper));
   }
   const byte_type* Block(size_t block, BlockBuffer& buffer) const;
-  uint64_t BlockOffset(size_t block) const noexcept {
-    return uint64_t{_pages[block]} * kPage;
-  }
-  uint64_t BlocksEnd() const noexcept {
-    return uint64_t{_pages[_blocks]} * kPage;
-  }
+  uint64_t BlockOffset(size_t block) const noexcept;
+  uint64_t BlocksEnd() const noexcept { return BlockOffset(_blocks); }
   std::span<const RangeLevel> RangeLevels() const noexcept { return _levels; }
   uint32_t RangePrefix() const noexcept { return _range_prefix; }
-  uint64_t InlineBegin() const noexcept { return _inline_offset; }
-  uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
+  uint64_t InlineBegin() const noexcept;
+  uint64_t InlineEnd() const noexcept;
   void ReadInline(PostingMeta& meta, BlockBuffer& buffer) const;
 
  private:
   bool Excludes(bytes_view term) const noexcept;
-  uint64_t ReadDictionary(IndexInput& in, uint8_t flags);
-  uint64_t ReadRanges(IndexInput& in);
-  uint64_t MapInline(IndexInput& in);
+  uint64_t ReadRanges(FieldReader& owner, IndexInput& in);
 
   const FieldReader* _owner;
   FieldMeta _meta;
   uint64_t _terms;
   uint64_t _docs;
-  bstring _min;
-  bstring _max;
-  bstring _small_copy;
+  bstring _min_key;
+  bstring _max_key;
+  PostingMeta _single;
+  bytes_view _small_inline;
+  uint64_t _inline_base = 0;
+  uint32_t _prefix_size = 0;
   const byte_type* _small = nullptr;
-  std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
   uint32_t _blocks = 0;
+  uint32_t _first_block = 0;
+  uint32_t _first_entry = 0;
+  uint32_t _first_record = 0;
+  uint32_t _last_entry = 0;
   uint32_t _width = 0;
   bool _has_score_bounds;
   FreqAttr _freq;
   Root _root;
-  std::vector<uint32_t> _pages;
   std::vector<RangeLevel> _levels;
-  bstring _ranges_copy;
   uint32_t _range_prefix = 0;
   uint64_t _root_bytes = 0;
-  bstring _inline_copy;
-  const byte_type* _inline = nullptr;
-  uint64_t _inline_offset = 0;
-  uint64_t _inline_size = 0;
 };
 
 class FieldReader final {
  public:
   explicit FieldReader(IResourceManager& rm) noexcept : _rm{&rm} {}
+  ~FieldReader();
 
   FieldReader(const FieldReader&) = delete;
   FieldReader& operator=(const FieldReader&) = delete;
@@ -331,8 +362,21 @@ class FieldReader final {
   const IndexInput& Input() const noexcept { return *_in; }
   const byte_type* Base() const noexcept { return _base; }
   IResourceManager& ResourceManager() const noexcept { return *_rm; }
+  const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
+  uint32_t BlockCount() const noexcept {
+    return _pages.empty() ? 0 : static_cast<uint32_t>(_pages.size() - 1);
+  }
+  uint64_t PageOffset(size_t block) const noexcept {
+    return uint64_t{_pages[block]} * kPage;
+  }
+  uint64_t InlineBegin() const noexcept { return _inline_offset; }
+  uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
+  const byte_type* Resident(uint32_t block, IndexInput& in);
+  bytes_view Load(IndexInput& in, uint64_t offset, uint64_t size, bool preload);
 
  private:
+  Separators ReadBody(IndexInput& in, uint64_t offset);
+
   std::deque<TermReaderImpl> _fields;
   containers::FlatHashMap<field_id, const TermReaderImpl*> _by_id;
   std::vector<field_id> _ids;
@@ -340,6 +384,29 @@ class FieldReader final {
   IndexInput::ptr _in;
   const byte_type* _base = nullptr;
   IResourceManager* _rm;
+  std::vector<uint32_t> _pages;
+  containers::NodeHashMap<uint64_t, bstring> _copies;
+  std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
+  uint64_t _inline_offset = 0;
+  uint64_t _inline_size = 0;
+  std::vector<std::pair<uint64_t, uint64_t>> _preload;
+  uint64_t _bytes = 0;
 };
+
+inline const duckdb_fsst_decoder_t* TermReaderImpl::Fsst() const noexcept {
+  return _owner->Fsst();
+}
+
+inline uint64_t TermReaderImpl::BlockOffset(size_t block) const noexcept {
+  return _owner->PageOffset(_first_block + block);
+}
+
+inline uint64_t TermReaderImpl::InlineBegin() const noexcept {
+  return _owner->InlineBegin();
+}
+
+inline uint64_t TermReaderImpl::InlineEnd() const noexcept {
+  return _owner->InlineEnd();
+}
 
 }  // namespace irs::term_dict

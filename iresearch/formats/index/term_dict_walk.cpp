@@ -68,7 +68,7 @@ class KeyFilter {
 
   IRS_FORCE_INLINE bool Rejects(Cursor& cursor) {
     if (_kind == Kind::Suffix) {
-      return SuffixRejects(cursor.Key());
+      return SuffixRejects(cursor.Term());
     }
     return InfixRejects(cursor);
   }
@@ -419,8 +419,9 @@ class BlockPlan {
  public:
   using State = typename A::State;
 
-  BlockPlan(const TermReaderImpl& field, const A& a) : _field{&field}, _a{&a} {
-    _states.assign(1, a.Start());
+  BlockPlan(const TermReaderImpl& field, const A& a)
+    : _field{&field}, _a{&a}, _k{field.KeyPrefix().size()}, _valid{_k} {
+    _states.assign(_k + 1, a.Start());
   }
 
   void Run(uint32_t block, uint32_t end, uint64_t budget) {
@@ -443,8 +444,8 @@ class BlockPlan {
 
  private:
   bool Alive(bytes_view prefix) {
-    size_t depth =
-      std::min(_valid, CommonPrefixLength(bytes_view{_path}, prefix));
+    size_t depth = std::max(
+      _k, std::min(_valid, CommonPrefixLength(bytes_view{_path}, prefix)));
     _path.assign(prefix);
     if (_states.size() <= prefix.size()) {
       _states.resize(prefix.size() + 1);
@@ -472,7 +473,7 @@ class BlockPlan {
         _target.push_back(static_cast<byte_type>(label));
         return true;
       }
-      if (depth == 0) {
+      if (depth == _k) {
         return false;
       }
     }
@@ -498,10 +499,11 @@ class BlockPlan {
 
   const TermReaderImpl* _field;
   const A* _a;
+  size_t _k;
   containers::SmallVector<State, 64> _states;
   bstring _path;
   bstring _target;
-  size_t _valid = 0;
+  size_t _valid;
   uint32_t _run_begin = 0;
   uint32_t _run_end = 0;
 };
@@ -513,11 +515,17 @@ void Readahead(Cursor& cursor, const A& a) {
   const auto& root = field.GetRoot();
   const auto lower = a.LowerBound();
   const auto upper = UpperBound(a);
-  const uint32_t begin =
-    lower > field.min() ? static_cast<uint32_t>(root.Find(lower)) : 0;
-  const uint32_t end = upper.empty() || bytes_view{upper} > field.max()
-                         ? field.Blocks()
-                         : static_cast<uint32_t>(root.Find(upper)) + 1;
+  PaddedKey key;
+  uint32_t begin = 0;
+  if (lower > field.min()) {
+    key.Assign(field.KeyPrefix(), lower);
+    begin = static_cast<uint32_t>(root.Find(key.Key()));
+  }
+  uint32_t end = field.Blocks();
+  if (!upper.empty() && bytes_view{upper} <= field.max()) {
+    key.Assign(field.KeyPrefix(), upper);
+    end = static_cast<uint32_t>(root.Find(key.Key())) + 1;
+  }
   if (begin >= end) {
     cursor.ReadaheadUntil(0, false);
     return;
@@ -543,7 +551,11 @@ class AcceptorIterator : public SeekTermIterator {
   using State = typename A::State;
 
   AcceptorIterator(const TermReaderImpl& field, const A& a)
-    : _cursor{field}, _a{&a}, _filter{MakeFilter(a)} {
+    : _cursor{field},
+      _a{&a},
+      _filter{MakeFilter(a)},
+      _k{field.KeyPrefix().size()},
+      _valid{_k} {
     if constexpr (A::kHasPayload) {
       _pay.value = {&_payload, sizeof(_payload)};
     }
@@ -568,7 +580,7 @@ class AcceptorIterator : public SeekTermIterator {
       case Position::After:
         return false;
       case Position::Before:
-        if (!Seek(_a->LowerBound(), 0)) {
+        if (!Seek(_a->LowerBound(), _k)) {
           return End();
         }
         break;
@@ -582,9 +594,9 @@ class AcceptorIterator : public SeekTermIterator {
   }
 
   SeekResult seek_ge(bytes_view target) final {
-    size_t valid = 0;
+    size_t valid = _k;
     if (_position == Position::At) {
-      valid = std::min(_valid, CommonPrefixLength(_cursor.Key(), target));
+      valid = std::min(_valid, _k + CommonPrefixLength(_cursor.Term(), target));
     }
     if (!Seek(target, valid) || !Settle()) {
       End();
@@ -689,7 +701,7 @@ class AcceptorIterator : public SeekTermIterator {
         target[depth] = static_cast<byte_type>(label);
         return true;
       }
-      if (depth == 0) {
+      if (depth == _k) {
         return false;
       }
       --depth;
@@ -698,18 +710,18 @@ class AcceptorIterator : public SeekTermIterator {
 
   bool Seek(bytes_view target, size_t valid) {
     if (_states.empty()) {
-      _states.assign(1, _a->Start());
-      _ranges.resize(1);
+      _states.assign(_k + 1, _a->Start());
+      _ranges.resize(_k + 1);
       _ranged = 0;
     }
     const auto& field = _cursor.Field();
     if (field.size() == 0 || target > field.max()) {
       return false;
     }
-    _target.Assign(target);
+    _target.Assign(field.KeyPrefix(), target);
     uint32_t block = 0;
     if (!field.Small() && target > field.min()) {
-      block = static_cast<uint32_t>(field.GetRoot().Find(target));
+      block = static_cast<uint32_t>(field.GetRoot().Find(_target.Key()));
     }
     return Land(block, valid);
   }
@@ -719,7 +731,8 @@ class AcceptorIterator : public SeekTermIterator {
     const auto block = _cursor.BlockIndex();
     if (block != _bound_block) {
       _last_block = block + 1 == field.Blocks();
-      _bound = _last_block ? field.max() : field.GetRoot().Separator(block + 1);
+      _bound =
+        _last_block ? field.MaxKey() : field.GetRoot().Separator(block + 1);
       _bound_block = block;
     }
     return _last_block ? target <= _bound : target < _bound;
@@ -738,7 +751,7 @@ class AcceptorIterator : public SeekTermIterator {
   bool Jump(size_t valid) {
     const auto& field = _cursor.Field();
     const auto target = _target.Key();
-    if (target > field.max()) {
+    if (target > field.MaxKey()) {
       return false;
     }
     auto block = _cursor.BlockIndex();
@@ -844,9 +857,9 @@ class AcceptorIterator : public SeekTermIterator {
         }
         continue;
       }
-      if (Accepts(key, _states[depth])) {
+      if (Accepts(key.substr(_k), _states[depth])) {
         _position = Position::At;
-        _term.value = key;
+        _term.value = key.substr(_k);
         return true;
       }
       if (!Advance()) {
@@ -871,11 +884,12 @@ class AcceptorIterator : public SeekTermIterator {
   mutable Cursor _cursor;
   const A* _a;
   KeyFilter _filter;
+  size_t _k;
   containers::SmallVector<State, 64> _states;
   containers::SmallVector<Range, 64> _ranges;
   size_t _ranged = 0;
   PaddedKey _target;
-  size_t _valid = 0;
+  size_t _valid;
   bool _check = true;
   bytes_view _prefix;
   uint32_t _prefix_block = kNoEntry;
@@ -891,21 +905,33 @@ class AcceptorIterator : public SeekTermIterator {
 }  // namespace
 
 SeekTermIterator::ptr TermReaderImpl::iterator(const RegexpAcceptor& a) const {
+  if (Single()) {
+    return SingleFor(*this, a);
+  }
   return memory::make_managed<AcceptorIterator<RegexpAcceptor>>(*this, a);
 }
 
 SeekTermIterator::ptr TermReaderImpl::iterator(
   const LevenshteinAcceptor& a) const {
+  if (Single()) {
+    return SingleFor(*this, a);
+  }
   return memory::make_managed<AcceptorIterator<LevenshteinAcceptor>>(*this, a);
 }
 
 SeekTermIterator::ptr TermReaderImpl::iterator(
   const RegexpConjunction& a) const {
+  if (Single()) {
+    return SingleFor(*this, a);
+  }
   return memory::make_managed<AcceptorIterator<RegexpConjunction>>(*this, a);
 }
 
 SeekTermIterator::ptr TermReaderImpl::iterator(
   const FuzzyConjunction& a) const {
+  if (Single()) {
+    return SingleFor(*this, a);
+  }
   return memory::make_managed<AcceptorIterator<FuzzyConjunction>>(*this, a);
 }
 

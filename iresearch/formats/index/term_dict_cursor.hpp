@@ -27,6 +27,7 @@
 #include <cstring>
 #include <limits>
 
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
@@ -436,6 +437,20 @@ inline void DecodeRecords(const byte_type*& record, uint32_t count,
   }
 }
 
+inline const byte_type* FieldRecords(const TermReaderImpl& field,
+                                     const BlockView& view, uint32_t block,
+                                     uint32_t entry, uint32_t& count) noexcept {
+  const uint32_t group = entry / kRecordInterval;
+  const uint32_t first = field.FirstEntry();
+  if (block == 0 && first > group * kRecordInterval) {
+    SDB_ASSERT(entry >= first);
+    count = entry - first + 1;
+    return view.records + field.FirstRecord();
+  }
+  count = entry % kRecordInterval + 1;
+  return GroupStart(view, group);
+}
+
 class Cursor {
  public:
   explicit Cursor(const TermReaderImpl& field) noexcept
@@ -452,6 +467,9 @@ class Cursor {
     SDB_ASSERT(_pendings == 0);
     return {_key.data(), _size};
   }
+  bytes_view Term() const noexcept {
+    return Key().substr(_field->KeyPrefix().size());
+  }
   const PendingSuffix* Pending() const noexcept {
     return _pendings == 0 ? nullptr : &_pending[_pendings - 1];
   }
@@ -460,7 +478,7 @@ class Cursor {
   uint32_t Entry() const noexcept { return _entry; }
   const byte_type* NextSuffix() const noexcept { return _sp; }
   bool AtBlockEnd() const noexcept {
-    return _entry != kNoEntry && _entry + 1 == _view.count;
+    return _entry != kNoEntry && _entry + 1 == _stop;
   }
 
   int ByteAt(size_t depth) {
@@ -506,7 +524,7 @@ class Cursor {
       return kNone;
     }
     const uint32_t first = _entry + 1;
-    const uint32_t end = std::min(_restart, _view.count);
+    const uint32_t end = std::min(_restart, _stop);
     const auto* hp = _hp;
     const auto* sp = _sp;
     uint32_t entry = first;
@@ -528,6 +546,7 @@ class Cursor {
     if (entry == end) {
       _size = _mat;
       _pendings = 0;
+      _partial = true;
     } else {
       for (const auto* sp_at = _sp; _hp != hp;) {
         const auto header = ReadHeader(_hp);
@@ -565,6 +584,7 @@ class Cursor {
 
   void Load(uint32_t block) {
     _pendings = 0;
+    _partial = false;
     _size = _mat;
     if (_block != kNoEntry && block == _block + 1) {
       ReadAhead(block);
@@ -584,14 +604,25 @@ class Cursor {
     _record = kNoEntry;
     _restart = 0;
     _view = Parse(_field->Block(block, _buffer));
-    SDB_ASSERT((_view.kind == BlockKind::FixedStride) ==
-               (_field->KeyWidth() != 0));
+    _stop =
+      block + 1 == _field->Blocks() ? _field->LastEntry() + 1 : _view.count;
     _block = block;
     _hp = _view.headers;
     _sp = _view.suffixes;
   }
 
+  void First() {
+    Load(0);
+    if (_field->FirstEntry() == 0) {
+      Next();
+      return;
+    }
+    LowerBound(_probe.Assign(_field->MinKey()));
+    SDB_ASSERT(_entry == _field->FirstEntry());
+  }
+
   uint32_t Next() {
+    _partial = false;
     _entry = _entry == kNoEntry ? 0 : _entry + 1;
     SDB_ASSERT(_entry < _view.count);
     if (_view.kind != BlockKind::Var) {
@@ -629,20 +660,21 @@ class Cursor {
     if (field.size() == 0 || key > field.max()) {
       return SeekResult::End;
     }
+    const auto probe = _probe.Assign(field.KeyPrefix(), key);
     uint32_t block = 0;
     if (!field.Small() && key > field.min()) {
-      block = static_cast<uint32_t>(field.GetRoot().Find(key));
+      block = static_cast<uint32_t>(field.GetRoot().Find(_probe.Key()));
     }
     if (block != _block || _entry == kNoEntry) {
       Load(block);
     }
-    if (!LowerBound(_probe.Assign(key))) {
+    if (!LowerBound(probe)) {
       SDB_ASSERT(block + 1 < field.Blocks());
       Load(block + 1);
       Next();
       return SeekResult::NotFound;
     }
-    return _shared == key.size() && _size == key.size() ? SeekResult::Found
+    return _shared == probe.size && _size == probe.size ? SeekResult::Found
                                                         : SeekResult::NotFound;
   }
 
@@ -655,12 +687,16 @@ class Cursor {
         _record / kRecordInterval == _entry / kRecordInterval) {
       DecodeRecords(_records, _entry - _record, features, _meta);
     } else {
-      _records = GroupStart(_view, _entry / kRecordInterval);
+      uint32_t count = 0;
+      _records = FieldRecords(*_field, _view, _block, _entry, count);
       _meta.clear();
-      DecodeRecords(_records, _entry % kRecordInterval + 1, features, _meta);
+      DecodeRecords(_records, count, features, _meta);
     }
     if (_meta.inline_size != 0) {
-      InlineAhead(_field->InlineBegin() + _meta.inline_end - _meta.inline_size);
+      if (!_field->Small()) {
+        InlineAhead(_field->InlineBegin() + _meta.inline_end -
+                    _meta.inline_size);
+      }
       _field->ReadInline(_meta, _buffer);
     }
     _record = _entry;
@@ -678,7 +714,7 @@ class Cursor {
       _shared = Common(probe);
       return true;
     }
-    if (_entry != kNoEntry && _pendings == 0) {
+    if (_entry != kNoEntry && _pendings == 0 && !_partial) {
       if (const size_t common = Common(probe); Before(probe, common)) {
         return SeekAhead(probe, common);
       }
@@ -803,6 +839,7 @@ class Cursor {
   }
 
   bool Land(Probe probe, size_t lcp, size_t size, size_t shared) {
+    _partial = false;
     std::memcpy(_key.data(), probe.data, lcp);
     _size = lcp + size;
     _mat = _size;
@@ -912,6 +949,8 @@ class Cursor {
   uint32_t _entry = kNoEntry;
   uint32_t _record = kNoEntry;
   uint32_t _restart = 0;
+  uint32_t _stop = 0;
+  bool _partial = false;
   uint32_t _ahead = 0;
   uint32_t _window = kFirstWindow;
   uint32_t _issued = 0;
@@ -921,5 +960,91 @@ class Cursor {
   uint32_t _end;
   bool _eager = false;
 };
+
+template<bool HasPayload>
+class SingleIterator : public SeekTermIterator {
+ public:
+  explicit SingleIterator(const TermReaderImpl& field,
+                          byte_type payload = 0) noexcept
+    : _field{&field}, _payload{payload} {
+    if constexpr (HasPayload) {
+      _pay.value = {&_payload, sizeof(_payload)};
+    }
+  }
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    if constexpr (HasPayload) {
+      if (type == irs::Type<PayAttr>::id()) {
+        return &_pay;
+      }
+    }
+    return type == irs::Type<TermAttr>::id() ? &_term : nullptr;
+  }
+
+  bytes_view value() const noexcept final { return _term.value; }
+
+  bool next() final {
+    if (_position != Position::Before) {
+      return End();
+    }
+    _position = Position::At;
+    _term.value = _field->min();
+    return true;
+  }
+
+  SeekResult seek_ge(bytes_view target) final {
+    const auto term = _field->min();
+    if (term < target) {
+      End();
+      return SeekResult::End;
+    }
+    _position = Position::At;
+    _term.value = term;
+    return term == target ? SeekResult::Found : SeekResult::NotFound;
+  }
+
+  bool seek(bytes_view target) final {
+    return seek_ge(target) == SeekResult::Found;
+  }
+
+  const PostingMeta& cookie() const final { return _field->SingleMeta(); }
+
+  TermPostings::ptr postings(IndexFeatures features) const final {
+    return ReusePostings(features, {});
+  }
+
+  TermPostings::ptr ReusePostings(IndexFeatures features,
+                                  TermPostings::ptr reuse) const final {
+    return _field->Owner().Postings().Postings(
+      _field->meta().index_features, features, _field->SingleMeta(),
+      _field->HasScoreBounds(), std::move(reuse));
+  }
+
+ private:
+  bool End() noexcept {
+    _position = Position::After;
+    _term.value = {};
+    return false;
+  }
+
+  const TermReaderImpl* _field;
+  TermAttr _term;
+  PayAttr _pay;
+  byte_type _payload;
+  Position _position = Position::Before;
+};
+
+template<typename A>
+SeekTermIterator::ptr SingleFor(const TermReaderImpl& field, const A& a) {
+  if constexpr (A::kHasPayload) {
+    typename A::PayloadType payload{};
+    if (a.Matches(field.min(), payload)) {
+      return memory::make_managed<SingleIterator<true>>(field, payload);
+    }
+  } else if (a.Matches(field.min())) {
+    return memory::make_managed<SingleIterator<false>>(field);
+  }
+  return SeekTermIterator::empty();
+}
 
 }  // namespace irs::term_dict

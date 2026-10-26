@@ -70,6 +70,8 @@ inline constexpr std::string_view kIdxFormatExt = "idx";
 inline constexpr duckdb::field_id_t kIdxFieldTermDict = 0;
 inline constexpr duckdb::field_id_t kIdxFieldIvf = 1;
 inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
+inline constexpr duckdb::field_id_t kIdxFieldTerms = 3;
+inline constexpr duckdb::field_id_t kIdxFieldTermsBody = 4;
 
 class IdxReader final {
  public:
@@ -84,6 +86,7 @@ class IdxReader final {
   const AnnIndex* Ann(field_id id) const noexcept;
 
   std::span<const std::pair<field_id, TermDictMeta>> TermDicts() const noexcept;
+  uint64_t TermsBody() const noexcept;
 
   std::span<const uint64_t> AnnEnds() const noexcept;
 

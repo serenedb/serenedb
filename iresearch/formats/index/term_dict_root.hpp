@@ -71,6 +71,15 @@ class PaddedKey {
     return View();
   }
 
+  Probe Assign(bytes_view prefix, bytes_view key) {
+    auto* data = Resize(prefix.size() + key.size());
+    std::memcpy(data, prefix.data(), prefix.size());
+    if (!key.empty()) {
+      std::memcpy(data + prefix.size(), key.data(), key.size());
+    }
+    return View();
+  }
+
   const byte_type* Data() const noexcept { return _data; }
   Probe View() const noexcept { return {_data, _size}; }
   bytes_view Key() const noexcept { return {_data, _size}; }

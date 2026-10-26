@@ -130,7 +130,7 @@ class RangeWalk {
       return false;
     }
     do {
-      const bytes_view key = _cursor.Key();
+      const bytes_view key = _cursor.Term();
       if (!upper.empty() && key >= upper) {
         return true;
       }
@@ -332,15 +332,19 @@ void RangeWriter::Clear() noexcept {
 
 void TermReaderImpl::VisitRange(bytes_view from, bytes_view to,
                                 RangeVisitor visit) const {
-  if (_terms == 0 || (!from.empty() && from > _max) ||
-      (!to.empty() && to <= _min)) {
+  if (_terms == 0 || (!from.empty() && from > max()) ||
+      (!to.empty() && to <= min())) {
     return;
   }
-  if (from <= _min) {
+  if (from <= min()) {
     from = {};
   }
-  if (!to.empty() && to > _max) {
+  if (!to.empty() && to > max()) {
     to = {};
+  }
+  if (Single()) {
+    visit(min(), _single);
+    return;
   }
   RangeWalk{*this, from, to, visit}.Run();
 }

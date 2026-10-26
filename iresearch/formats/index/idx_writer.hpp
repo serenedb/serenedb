@@ -50,6 +50,7 @@ class IdxWriter final {
   void AddHnsw(field_id id, HnswMeta meta);
 
   void AddTermDictEntry(field_id id, TermDictMeta meta);
+  void SetTermsBody(uint64_t offset) noexcept;
 
   void Commit();
   void Rollback() noexcept;

@@ -56,13 +56,14 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
     bool fold{false};
     std::vector<uint32_t> keep_marks;
   };
-  static ptr Make(Options opts);
+  static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   static constexpr std::string_view type_name() noexcept {
     return "normalize_tokens";
   }
 
-  explicit NormalizingTokenizer(Options options);
+  explicit NormalizingTokenizer(Options options,
+                                duckdb::SharedObjectCache& cache);
 
   TokenTraits Traits() const noexcept final {
     return {

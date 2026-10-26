@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "test_resources.hpp"
 #include "token_sink_utils.hpp"
 
 namespace {
@@ -51,7 +52,8 @@ namespace {
 
 void AssertBlockTerm(irs::analysis::NormalizingTokenizer::Options options,
                      std::string_view data, std::string_view expected) {
-  irs::analysis::NormalizingTokenizer stream(std::move(options));
+  irs::analysis::NormalizingTokenizer stream(std::move(options),
+                                             tests::Cache());
   size_t flushes = 0;
   const auto check = [&](irs::TokenBatch& batch, irs::DocRuns) {
     ++flushes;
@@ -76,7 +78,7 @@ TEST_F(NormalizingTokenizerTests, test_normalizing) {
   {
     OptionsT options;
     options.locale = duckdb::text::Locale::FromName("en");
-    irs::analysis::NormalizingTokenizer stream(options);
+    irs::analysis::NormalizingTokenizer stream(options, tests::Cache());
     ASSERT_EQ(irs::Type<irs::analysis::NormalizingTokenizer>::id(),
               stream.type());
     AssertBlockTerm(options, "rUnNiNg\xd0\x81", "rUnNiNg\xd0\x81");
@@ -110,7 +112,8 @@ TEST_F(NormalizingTokenizerTests, test_load) {
     auto stream = irs::analysis::NormalizingTokenizer::Make(
       irs::analysis::NormalizingTokenizer::Options{
         .locale = duckdb::text::Locale::FromName("en"),
-      });
+      },
+      tests::Cache());
 
     ASSERT_NE(nullptr, stream);
 
@@ -126,7 +129,8 @@ TEST_F(NormalizingTokenizerTests, test_load) {
       irs::analysis::NormalizingTokenizer::Options{
         .locale = duckdb::text::Locale::FromName("en"),
         .case_convert = irs::Case::Upper,
-      });
+      },
+      tests::Cache());
 
     ASSERT_NE(nullptr, stream);
 
@@ -142,7 +146,8 @@ TEST_F(NormalizingTokenizerTests, test_load) {
       irs::analysis::NormalizingTokenizer::Options{
         .locale = duckdb::text::Locale::FromName("en"),
         .case_convert = irs::Case::Lower,
-      });
+      },
+      tests::Cache());
 
     ASSERT_NE(nullptr, stream);
 
@@ -158,7 +163,8 @@ TEST_F(NormalizingTokenizerTests, test_load) {
       irs::analysis::NormalizingTokenizer::Options{
         .locale = duckdb::text::Locale::FromName("en"),
         .case_convert = irs::Case::None,
-      });
+      },
+      tests::Cache());
 
     ASSERT_NE(nullptr, stream);
 
@@ -177,7 +183,8 @@ TEST_F(NormalizingTokenizerTests, test_load) {
         .locale = duckdb::text::Locale::FromName("de_DE.UTF8"),
         .case_convert = irs::Case::Lower,
         .accent = false,
-      });
+      },
+      tests::Cache());
 
     ASSERT_NE(nullptr, stream);
 
@@ -206,7 +213,7 @@ TEST_F(NormalizingTokenizerTests, native_fills_match_pull) {
   options.locale = duckdb::text::Locale::FromName("en");
   options.case_convert = irs::Case::Lower;
   options.accent = false;
-  irs::analysis::NormalizingTokenizer stream(options);
+  irs::analysis::NormalizingTokenizer stream(options, tests::Cache());
 
   ASSERT_TRUE(stream.Traits().unique);
   ASSERT_FALSE(stream.Traits().keyword);
@@ -315,7 +322,7 @@ TEST_F(NormalizingTokenizerTests, column_suspension) {
   options.locale = duckdb::text::Locale::FromName("en");
   options.case_convert = irs::Case::Lower;
   options.accent = false;
-  irs::analysis::NormalizingTokenizer stream(options);
+  irs::analysis::NormalizingTokenizer stream(options, tests::Cache());
 
   const std::vector<std::string> inputs = {"RUnNiNg", "Caf\xc3\xa9"};
   std::vector<irs::bstring> normalized;
@@ -449,7 +456,7 @@ void AssertNormMatchesReference(
   const irs::analysis::NormalizingTokenizer::Options& opts,
   std::string_view value) {
   irs::analysis::NormalizingTokenizer stream{
-    irs::analysis::NormalizingTokenizer::Options{opts}};
+    irs::analysis::NormalizingTokenizer::Options{opts}, tests::Cache()};
   const auto tokens = tests::Analyze(stream, value);
   ASSERT_TRUE(tokens.has_value());
   ASSERT_EQ(1, tokens->size());
@@ -505,7 +512,7 @@ TEST(NormalizingTokenizerAsciiFastPath, turkish_locale_stays_unicode) {
     .accent = true};
   AssertNormMatchesReference(opts, "III");
   irs::analysis::NormalizingTokenizer stream{
-    irs::analysis::NormalizingTokenizer::Options{opts}};
+    irs::analysis::NormalizingTokenizer::Options{opts}, tests::Cache()};
   const auto tokens = tests::Analyze(stream, "III");
   ASSERT_TRUE(tokens.has_value());
   ASSERT_EQ(1, tokens->size());
@@ -533,7 +540,7 @@ TEST(NormalizingTokenizerAsciiFastPath, case_none_is_locale_safe) {
       SCOPED_TRACE(testing::Message()
                    << "locale=" << locale << " accent=" << accent);
       auto stream = irs::analysis::NormalizingTokenizer::Make(
-        irs::analysis::NormalizingTokenizer::Options{opts});
+        irs::analysis::NormalizingTokenizer::Options{opts}, tests::Cache());
       auto* norm =
         dynamic_cast<irs::analysis::NormalizingTokenizer*>(stream.get());
       ASSERT_NE(nullptr, norm);
@@ -547,7 +554,8 @@ TEST(NormalizingTokenizerAsciiFastPath, case_none_is_locale_safe) {
       .locale = duckdb::text::Locale::FromName("tr_TR"),
       .case_convert = cc,
       .accent = true};
-    auto stream = irs::analysis::NormalizingTokenizer::Make(std::move(opts));
+    auto stream = irs::analysis::NormalizingTokenizer::Make(std::move(opts),
+                                                            tests::Cache());
     auto* norm =
       dynamic_cast<irs::analysis::NormalizingTokenizer*>(stream.get());
     ASSERT_NE(nullptr, norm);
@@ -690,7 +698,8 @@ TEST(NormalizingTokenizerFold, turkic_locales_keep_dotless_i) {
     AssertBlockTerm(opts, "\xC7\xB0", "\xC7\xB0");
     AssertNormMatchesReference(opts,
                                "ISPARTA \xC4\xB0zmir \xC7\xB0 Stra\xC3\x9F");
-    auto stream = irs::analysis::NormalizingTokenizer::Make(OptionsT{opts});
+    auto stream =
+      irs::analysis::NormalizingTokenizer::Make(OptionsT{opts}, tests::Cache());
     auto* norm =
       dynamic_cast<irs::analysis::NormalizingTokenizer*>(stream.get());
     ASSERT_NE(nullptr, norm);
@@ -700,7 +709,7 @@ TEST(NormalizingTokenizerFold, turkic_locales_keep_dotless_i) {
   const OptionsT opts{.locale = duckdb::text::Locale::FromName("en"),
                       .fold = true};
   AssertBlockTerm(opts, "ISPARTA \xC4\xB0zmir", "isparta i\xCC\x87zmir");
-  irs::analysis::NormalizingTokenizer stream{OptionsT{opts}};
+  irs::analysis::NormalizingTokenizer stream{OptionsT{opts}, tests::Cache()};
   EXPECT_TRUE(stream.WantedBlockTraits().ascii);
   EXPECT_TRUE(stream.Traits().keeps_ascii);
 }

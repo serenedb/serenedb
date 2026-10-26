@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "break_test_utils.hpp"
+#include "test_resources.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -133,7 +134,7 @@ std::string Apply(const Transform& transform, std::string_view text) {
 }
 
 std::string Normalize(NormalizationForm form, std::string_view text) {
-  return Apply(Transform{{.form = form}}, text);
+  return Apply(Transform{{.form = form}, tests::Cache()}, text);
 }
 
 bool Contains(const std::vector<PropertyRange>& ranges, uint32_t c) {
@@ -775,7 +776,7 @@ TEST(UnicodeTransformTest, matches_reference_pipeline) {
   duckdb::text::TransformBuffer buffer;
   size_t failures = 0;
   for (const auto& options : AllTransformOptions()) {
-    const Transform transform{options};
+    const Transform transform{options, tests::Cache()};
     for (const auto c : code_points) {
       for (const auto& context : contexts) {
         text = context.empty() ? std::vector<uint32_t>{c} : context;
@@ -801,20 +802,21 @@ TEST(UnicodeTransformTest, matches_reference_pipeline) {
 }
 
 TEST(UnicodeTransformTest, final_sigma_sees_neighbours) {
-  const Transform lower{{.case_mapping = duckdb::text::CaseMapping::LOWER}};
+  const Transform lower{{.case_mapping = duckdb::text::CaseMapping::LOWER},
+                        tests::Cache()};
   EXPECT_EQ("οδος οδος.", Apply(lower, "ΟΔΟΣ ΟΔΟΣ."));
   EXPECT_EQ("σας", Apply(lower, "ΣΑΣ"));
   EXPECT_EQ("aς", Apply(lower, "AΣ"));
   EXPECT_EQ("a.ς.", Apply(lower, "A.Σ."));
   EXPECT_EQ("a.σb", Apply(lower, "A.Σb"));
   EXPECT_EQ("é'ς", Apply(lower, "É'Σ"));
-  const Transform nfkc_lower{
-    {.form = NormalizationForm::NFKC,
-     .case_mapping = duckdb::text::CaseMapping::LOWER}};
+  const Transform nfkc_lower{{.form = NormalizationForm::NFKC,
+                              .case_mapping = duckdb::text::CaseMapping::LOWER},
+                             tests::Cache()};
   EXPECT_EQ("h.ς", Apply(nfkc_lower, "\xCA\xB0.Σ"));
   EXPECT_EQ("σh", Apply(nfkc_lower, "Σ\xCA\xB0"));
   const Transform simple_lower{
-    {.case_mapping = duckdb::text::CaseMapping::SIMPLE_LOWER}};
+    {.case_mapping = duckdb::text::CaseMapping::SIMPLE_LOWER}, tests::Cache()};
   EXPECT_EQ("οδοσ οδοσ.", Apply(simple_lower, "ΟΔΟΣ ΟΔΟΣ."));
 }
 
@@ -823,7 +825,8 @@ TEST(UnicodeTransformTest, keep_marks_survive_stripping) {
   const Transform keep_breve{{.case_mapping = CaseMapping::SIMPLE_LOWER,
                               .strip_marks = true,
                               .strip_before_case = true,
-                              .keep_marks = {0x306}}};
+                              .keep_marks = {0x306}},
+                             tests::Cache()};
   EXPECT_EQ("йод", Apply(keep_breve, "Йод"));
   EXPECT_EQ("й", Apply(keep_breve, "и\xCC\x86"));
   EXPECT_EQ("елка", Apply(keep_breve, "Ёлка"));
@@ -832,10 +835,12 @@ TEST(UnicodeTransformTest, keep_marks_survive_stripping) {
 
   const Transform decomposed{{.form = NormalizationForm::NFD,
                               .strip_marks = true,
-                              .keep_marks = {0x306}}};
+                              .keep_marks = {0x306}},
+                             tests::Cache()};
   EXPECT_EQ("и\xCC\x86", Apply(decomposed, "й"));
 
-  const Transform wide_mark_only{{.strip_marks = true, .keep_marks = {0x20D0}}};
+  const Transform wide_mark_only{{.strip_marks = true, .keep_marks = {0x20D0}},
+                                 tests::Cache()};
   EXPECT_EQ(
     "a\xE2\x83\x90"
     "e",
@@ -844,14 +849,16 @@ TEST(UnicodeTransformTest, keep_marks_survive_stripping) {
   const Transform turkish_upper{{.case_mapping = CaseMapping::UPPER,
                                  .locale = CaseLocale::TURKISH,
                                  .strip_marks = true,
-                                 .keep_marks = {0x307}}};
+                                 .keep_marks = {0x307}},
+                                tests::Cache()};
   EXPECT_EQ("\xC4\xB0STANBUL", Apply(turkish_upper, "istanbul"));
   EXPECT_EQ("\xC4\xB0STANBUL", Apply(turkish_upper, "\xC4\xB0stanbul"));
 
   const Transform lithuanian_lower{{.case_mapping = CaseMapping::LOWER,
                                     .locale = CaseLocale::LITHUANIAN,
                                     .strip_marks = true,
-                                    .keep_marks = {0x307}}};
+                                    .keep_marks = {0x307}},
+                                   tests::Cache()};
   EXPECT_EQ(
     "i\xCC\x87"
     "a",
@@ -866,12 +873,32 @@ TEST(UnicodeTransformTest, keep_marks_survive_stripping) {
           "a"));
 }
 
+TEST(UnicodeTransformTest, keep_marks_tables_live_while_used) {
+  auto& cache = tests::Cache();
+  const TransformOptions options{
+    .case_mapping = duckdb::text::CaseMapping::SIMPLE_LOWER,
+    .strip_marks = true,
+    .strip_before_case = true,
+    .keep_marks = {0x306, 0x30A},
+  };
+  const auto before = cache.GetEntryCount();
+  {
+    const Transform first{options, cache};
+    EXPECT_EQ(before + 1, cache.GetEntryCount());
+    const Transform second{options, cache};
+    EXPECT_EQ(before + 1, cache.GetEntryCount());
+    EXPECT_EQ("йод", Apply(first, "Йод"));
+    EXPECT_EQ("йод", Apply(second, "Йод"));
+  }
+  EXPECT_EQ(before, cache.GetEntryCount());
+}
+
 TEST(UnicodeTransformTest, invalid_utf8_becomes_replacement) {
   std::vector<uint32_t> chars;
   duckdb::text::TransformBuffer buffer;
   size_t failures = 0;
   for (const auto& options : AllTransformOptions()) {
-    const Transform transform{options};
+    const Transform transform{options, tests::Cache()};
     for (const std::string_view bytes :
          {std::string_view{"\xC3"}, std::string_view{"A\xE2\x82"},
           std::string_view{"\xF0\x9F\x98"

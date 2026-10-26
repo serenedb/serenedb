@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/crc/crc32c.h>
 #include <absl/strings/ascii.h>
-#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 #include <fast_float/fast_float.h>
@@ -46,8 +45,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
-#include <span>
-#include <utf8proc.hpp>
 
 #include "connector/common.h"
 #include "pg/serialize.h"
@@ -1042,58 +1039,6 @@ void ShaFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-duckdb::utf8proc_option_t NormalFormOptions(std::string_view form) {
-  int options = 0;
-  if (absl::EqualsIgnoreCase(form, "NFC")) {
-    options = duckdb::UTF8PROC_COMPOSE;
-  } else if (absl::EqualsIgnoreCase(form, "NFD")) {
-    options = duckdb::UTF8PROC_DECOMPOSE;
-  } else if (absl::EqualsIgnoreCase(form, "NFKC")) {
-    options = duckdb::UTF8PROC_COMPOSE | duckdb::UTF8PROC_COMPAT;
-  } else if (absl::EqualsIgnoreCase(form, "NFKD")) {
-    options = duckdb::UTF8PROC_DECOMPOSE | duckdb::UTF8PROC_COMPAT;
-  } else {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("invalid normalization form: ", form));
-  }
-  return static_cast<duckdb::utf8proc_option_t>(options |
-                                                duckdb::UTF8PROC_STABLE);
-}
-
-struct NormalizeState final : duckdb::FunctionLocalState {
-  std::vector<utf8proc_int32_t> buffer;
-
-  std::string_view Normalize(std::string_view text,
-                             duckdb::utf8proc_option_t options) {
-    const auto* data = reinterpret_cast<const utf8proc_uint8_t*>(text.data());
-    const auto size = static_cast<utf8proc_ssize_t>(text.size());
-    auto length = duckdb::utf8proc_decompose(
-      data, size, buffer.data(), static_cast<utf8proc_ssize_t>(buffer.size()),
-      options);
-    if (length >= static_cast<utf8proc_ssize_t>(buffer.size())) {
-      buffer.resize(static_cast<size_t>(length) + 1);
-      length =
-        duckdb::utf8proc_decompose(data, size, buffer.data(), length, options);
-    }
-    if (length >= 0) {
-      length = duckdb::utf8proc_reencode(buffer.data(), length, options);
-    }
-    if (length < 0) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                      ERR_MSG("could not normalize string: ",
-                              duckdb::utf8proc_errmsg(length)));
-    }
-    return {reinterpret_cast<const char*>(buffer.data()),
-            static_cast<size_t>(length)};
-  }
-};
-
-duckdb::unique_ptr<duckdb::FunctionLocalState> NormalizeInitLocalState(
-  duckdb::ExpressionState&, const duckdb::BoundFunctionExpression&,
-  duckdb::FunctionData*) {
-  return duckdb::make_uniq<NormalizeState>();
-}
-
 void NormalizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                        duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
@@ -1101,29 +1046,6 @@ void NormalizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [&](duckdb::string_t input) -> duckdb::string_t {
       return duckdb::StringVector::AddString(result, input);
     });
-}
-
-void IsNormalizedFunction(duckdb::DataChunk& args,
-                          duckdb::ExpressionState& state,
-                          duckdb::Vector& result) {
-  auto& local = duckdb::ExecuteFunctionState::GetFunctionState(state)
-                  ->Cast<NormalizeState>();
-  const auto apply = [&](duckdb::string_t text, std::string_view form) {
-    const auto options = NormalFormOptions(form);
-    return duckdb::IsAscii(text.GetData(), text.GetSize()) ||
-           local.Normalize(AsView(text), options) == AsView(text);
-  };
-  if (args.ColumnCount() == 1) {
-    duckdb::UnaryExecutor::Execute<duckdb::string_t, bool>(
-      args.data[0], result, args.size(),
-      [&](duckdb::string_t text) { return apply(text, "NFC"); });
-  } else {
-    duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t, bool>(
-      args.data[0], args.data[1], result, args.size(),
-      [&](duckdb::string_t text, duckdb::string_t form) {
-        return apply(text, AsView(form));
-      });
-  }
 }
 
 bool IsIdentStart(unsigned char c) {
@@ -1427,20 +1349,6 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::VARCHAR,
       NormalizeFunction});
     loader.RegisterFunction(normalize_set);
-  }
-
-  {
-    duckdb::ScalarFunctionSet set{"is_normalized"};
-    for (const auto arity : {1, 2}) {
-      set.AddFunction(duckdb::ScalarFunction{
-        set.name,
-        duckdb::vector<duckdb::LogicalType>(arity,
-                                            duckdb::LogicalType::VARCHAR),
-        duckdb::LogicalType::BOOLEAN, IsNormalizedFunction, nullptr, nullptr,
-        NormalizeInitLocalState});
-    }
-    set.SetFallible();
-    loader.RegisterFunction(set);
   }
 
   // encode(bytea, text) -> text

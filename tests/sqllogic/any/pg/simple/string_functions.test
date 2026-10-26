@@ -98,21 +98,6 @@ crc32c	crc32c	crc32c	crc32c
 0	576848900	1545348227	NULL
 
 
-# is_normalized / normalize
-
-query
-SELECT is_normalized('a' || chr(776)), is_normalized(chr(228)), is_normalized('a' || chr(776), 'NFD'), is_normalized(chr(64257), 'nfkc'), is_normalized('', 'NFKD'), is_normalized(NULL);
-----
-is_normalized	is_normalized	is_normalized	is_normalized	is_normalized	is_normalized
-f	t	t	f	t	NULL
-
-
-statement error
-SELECT is_normalized('abc', 'nfx');
-----
-db error: ERROR: invalid normalization form: nfx
-
-
 # like / notlike
 
 query

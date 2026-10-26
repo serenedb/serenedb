@@ -1035,10 +1035,6 @@ SELECT bit_length('jose');
 statement ok
 SELECT char_length('jose');
 
-# op_text: is_normalized
-statement ok
-SELECT is_normalized('abc', 'NFKC');
-
 # op_text: lower
 statement ok
 SELECT lower('ABC');

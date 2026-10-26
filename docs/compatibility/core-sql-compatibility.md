@@ -249,11 +249,10 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | btrim               | Yes           | Without characters to remove, also removes Unicode space separators such as the no-break space; PostgreSQL removes only spaces |
 | bit_length          | Yes           |                                                            |
 | char_length         | Yes           |                                                            |
-| is_normalized       | Yes           | The `IS [NOT] [form] NORMALIZED` syntax is not supported   |
 | lower               | Yes           |                                                            |
 | lpad                | Yes           |                                                            |
 | ltrim               | Yes           | Same as `btrim`                                            |
-| normalize           | Yes           |                                                            |
+| normalize           | Partial       | Returns the text unchanged: no normalization form is applied |
 | octet_length        | Yes           |                                                            |
 | overlay             | Yes           |                                                            |
 | position            | Yes           |                                                            |

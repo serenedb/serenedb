@@ -154,6 +154,27 @@ struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   size_t uncommitted_min_slot = std::numeric_limits<size_t>::max();
 };
 
+void RefuseInWritingTransaction(duckdb::ClientContext& context,
+                                duckdb::DataTable& data,
+                                const duckdb::Identifier& name) {
+  const auto undo =
+    duckdb::DuckTransaction::Get(context, data.db).GetUndoProperties();
+  if (undo.has_updates || undo.has_deletes) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG("CREATE INDEX on \"", name.GetIdentifierName(),
+              "\" cannot run in a transaction that has updated or deleted "
+              "rows"));
+  }
+  if (GetSereneDBContext(context).HasSearchTableWrites()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG("CREATE INDEX on \"", name.GetIdentifierName(),
+              "\" cannot run in a transaction that has written to a search "
+              "table"));
+  }
+}
+
 }  // namespace
 
 SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
@@ -267,18 +288,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     if (auto node = _info->options.extract(kReindexIntervalSetting)) {
       reindex_interval = node.mapped().GetValue<uint32_t>();
     }
-    if (auto* table = DuckTableOrNull()) {
-      const auto undo =
-        duckdb::DuckTransaction::Get(context, table->GetStorage().db)
-          .GetUndoProperties();
-      if (undo.has_updates || undo.has_deletes) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-          ERR_MSG("CREATE INDEX on \"", _relation.name.GetIdentifierName(),
-                  "\" cannot run in a transaction that has updated or deleted "
-                  "rows"));
-      }
-    }
     auto entry = _schema_entry.CreateIndex(transaction, *_info, _relation);
     if (entry) {
       auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
@@ -309,9 +318,14 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         }
         state->search_backfill = std::move(backfill);
       } else {
+        auto* table = DuckTableOrNull();
+        if (table) {
+          RefuseInWritingTransaction(context, table->GetStorage(),
+                                     _relation.name);
+        }
         const auto published = PublishInvertedIndex(
           context, index_entry, _relation, _bound_expressions);
-        if (auto* table = DuckTableOrNull()) {
+        if (table) {
           WaitForWritersBeforeBuild(context, table->GetStorage(),
                                     state->progress);
         }

@@ -120,6 +120,10 @@ class Transaction : public Config {
     return *_search_txn;
   }
 
+  bool HasSearchTableWrites() const noexcept {
+    return _search_txn && !_search_txn->Empty();
+  }
+
   // Drops the pinned search reader for one shard, so the segments it
   // references stop being held. Refuses while the transaction's view has to
   // stay frozen -- REPEATABLE READ, or any uncommitted DML, whose rows are

@@ -87,3 +87,60 @@ SELECT count(*) AS n FROM obt_idx WHERE body @@ ts_phrase('w0');
 ----
 n
 100
+
+statement ok
+CREATE TABLE obt_st (id BIGINT, body VARCHAR) WITH (storage = 'search');
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO obt_st VALUES (1, 'a');
+
+statement error
+CREATE INDEX obt_idx2 ON obt USING inverted(id, body obt_words);
+----
+db error: ERROR: CREATE INDEX on "obt" cannot run in a transaction that has written to a search table
+
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM obt_log WHERE i = 2;
+
+statement ok
+CREATE INDEX IF NOT EXISTS obt_idx ON obt USING inverted(id, body obt_words);
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+query
+SELECT count(*) AS n FROM obt_st;
+----
+n
+0
+
+statement ok
+CREATE INDEX obt_idx3 ON obt USING inverted(id, body obt_words);
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) obt;
+
+query
+SELECT count(*) AS n FROM obt_idx3 WHERE body @@ ts_phrase('w0');
+----
+n
+100
+
+statement ok
+DROP TABLE obt_st;

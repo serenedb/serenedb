@@ -32,7 +32,7 @@ jobs:
     steps:
       - name: Post build triggers comment
         if: github.event_name == 'pull_request_target'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const body = [
@@ -79,7 +79,7 @@ jobs:
       - name: Get PR info
         id: pr-info
         if: github.event_name == 'issue_comment'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const { data: pr } = await github.rest.pulls.get({
@@ -99,7 +99,7 @@ jobs:
           PR_SHA: ${{ steps.pr-info.outputs.sha }}
           BASE_REF: ${{ steps.pr-info.outputs.base_ref }}
           IS_FORK: ${{ steps.pr-info.outputs.is_fork }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const comment = context.payload.comment;

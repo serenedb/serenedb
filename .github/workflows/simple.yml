@@ -19,7 +19,7 @@ jobs:
         clean: false
     - name: Every gitlink can be fetched
       run: python3 scripts/check_submodule_pointers.py --reachable
-    - uses: actions/setup-python@v6
+    - uses: actions/setup-python@v7
     # No floating v3 tag -- only specific versions published
     - uses: pre-commit/action@v3.0.1
       env:

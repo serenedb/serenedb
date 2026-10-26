@@ -205,7 +205,7 @@ jobs:
                   sparse-checkout-cone-mode: true
 
             - name: Setup Node.js
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@v7
               with:
                   node-version: 22
 
@@ -279,7 +279,7 @@ jobs:
                   sparse-checkout-cone-mode: true
 
             - name: Setup Node.js
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@v7
               with:
                   node-version: 22
 
@@ -350,7 +350,7 @@ jobs:
                   clean: true
 
             - name: Setup Node.js
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@v7
               with:
                   node-version: 22
 
@@ -440,7 +440,7 @@ jobs:
 
             - name: Create GitHub Release
               if: inputs.PUSH_RELEASE && !contains(needs.*.result, 'failure')
-              uses: softprops/action-gh-release@v2
+              uses: softprops/action-gh-release@v3
               with:
                   tag_name: v${{ inputs.VERSION }}-ui
                   name: SereneUI v${{ inputs.VERSION }}

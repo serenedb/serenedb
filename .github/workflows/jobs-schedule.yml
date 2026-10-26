@@ -161,7 +161,7 @@ jobs:
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
       - name: Fetch the results
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: results-*
           path: results

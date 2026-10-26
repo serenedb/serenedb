@@ -84,7 +84,7 @@ jobs:
           git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
 
       - name: Fetch the timing snapshot
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
           path: out

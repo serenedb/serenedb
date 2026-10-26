@@ -334,17 +334,17 @@ jobs:
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
       - name: Fetch the results
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: results-*
           path: results
       - name: Fetch the coverage
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: coverage-*
           path: coverage
       - name: Fetch the selection report
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: selection-*
           path: selection
@@ -384,7 +384,7 @@ jobs:
         run: ./scripts/send_notification.bash
       - name: Update PR commit status
         if: contains(inputs.BUILD_CONFIG, 'PR_SHA')
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
           JOB_STATUS: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}

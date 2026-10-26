@@ -45,6 +45,11 @@ on:
         type: boolean
         required: false
         default: false
+      PUSH_IMAGE:
+        description: "Push the Docker image by digest, for the release to join the architectures"
+        type: boolean
+        required: false
+        default: false
       SERENEDB_VERSION_PATCH:
         description: "Version patch number"
         type: string
@@ -65,8 +70,11 @@ on:
         description: "Whether packaging succeeded"
         value: ${{ jobs.package.outputs.packages_ok }}
       rta_ok:
-        description: "Whether deb + tarball RTA passed (true when RTA=off or both passed)"
+        description: "Whether the deb, tarball and Docker RTA passed (true when RTA=off or all passed)"
         value: ${{ jobs.package.outputs.rta_ok }}
+      image_digest:
+        description: "Digest of the pushed Docker image (empty unless PUSH_IMAGE)"
+        value: ${{ jobs.package.outputs.image_digest }}
 env:
   WORKSPACE: ${{ github.workspace }}
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
@@ -78,7 +86,8 @@ jobs:
     name: "package (${{ inputs.LOCATION }})"
     outputs:
       packages_ok: ${{ steps.package.outcome == 'success' }}
-      rta_ok: ${{ steps.deb_rta.outcome != 'failure' && steps.tarball_rta.outcome != 'failure' }}
+      rta_ok: ${{ steps.deb_rta.outcome != 'failure' && steps.tarball_rta.outcome != 'failure' && steps.docker_image.outcome == 'success' && steps.docker_rta.outcome != 'failure' }}
+      image_digest: ${{ steps.docker_image.outputs.image_digest }}
     runs-on:
       - ${{ inputs.LOCATION }}
     permissions:
@@ -184,6 +193,28 @@ jobs:
         if: inputs.RTA != 'off' && steps.package.outcome == 'success'
         continue-on-error: ${{ inputs.RTA == 'test' }}
         run: ./scripts/ci/steps/08-ci-tarball-rta.bash
+
+      - name: Docker image
+        id: docker_image
+        if: steps.package.outcome == 'success'
+        env:
+          PUSH_DIGEST: ${{ inputs.PUSH_IMAGE }}
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+        run: |
+          trap 'docker logout >/dev/null 2>&1 || true' EXIT
+          if [[ "$PUSH_DIGEST" == true ]]; then
+            echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          fi
+          ./packages/build_docker.bash
+
+      - name: Docker RTA
+        id: docker_rta
+        if: inputs.RTA != 'off' && steps.docker_image.outcome == 'success'
+        continue-on-error: ${{ inputs.RTA == 'test' }}
+        env:
+          DOCKER_TEST_IMAGE: ${{ steps.docker_image.outputs.image }}
+        run: ./scripts/ci/steps/08-ci-docker-rta.bash
 
       - name: Upload packages
         if: always() && inputs.UPLOAD_ARTIFACTS && steps.package.outcome == 'success'

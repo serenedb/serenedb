@@ -120,6 +120,7 @@ jobs:
       LOCATION: linux-amd64
       RTA: ${{ inputs.RTA }}
       UPLOAD_ARTIFACTS: true
+      PUSH_IMAGE: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
       SERENEDB_VERSION_PATCH: ${{ needs.resolve-version.outputs.patch }}
     secrets: inherit
 
@@ -131,6 +132,7 @@ jobs:
       LOCATION: linux-arm64
       RTA: ${{ inputs.RTA }}
       UPLOAD_ARTIFACTS: true
+      PUSH_IMAGE: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
       SERENEDB_VERSION_PATCH: ${{ needs.resolve-version.outputs.patch }}
     secrets: inherit
 
@@ -184,41 +186,50 @@ jobs:
         if: needs.build-arm64.outputs.packages_ok == 'true'
         run: python3 scripts/ci/ci.py download artifacts/packages-linux-arm64 "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" serenedb packages/linux-arm64/
 
-      - name: Prepare packages
-        id: prepare
+      - name: Check the architectures
+        id: check
+        env:
+          RTA: ${{ inputs.RTA }}
+          PUSH: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
+          WANT_AMD64: ${{ inputs.BUILD_AMD64 }}
+          WANT_ARM64: ${{ inputs.BUILD_ARM64 }}
+          AMD64_PACKAGES: ${{ needs.build-amd64.outputs.packages_ok }}
+          ARM64_PACKAGES: ${{ needs.build-arm64.outputs.packages_ok }}
+          AMD64_RTA: ${{ needs.build-amd64.outputs.rta_ok }}
+          ARM64_RTA: ${{ needs.build-arm64.outputs.rta_ok }}
+          AMD64_DIGEST: ${{ needs.build-amd64.outputs.image_digest }}
+          ARM64_DIGEST: ${{ needs.build-arm64.outputs.image_digest }}
         run: |
-          # Create install-{arch}.tar.gz symlinks for build_docker.bash
-          mkdir -p packages/tarball
-          for arch_dir in packages/linux-*; do
-            [ -d "$arch_dir" ] || continue
-            arch=$(basename "$arch_dir" | sed 's/linux-//')
-            tarball=$(find "$arch_dir" -maxdepth 1 -name "serenedb-*-linux-${arch}.tar.gz" | head -1)
-            if [ -n "$tarball" ]; then
-              ln -sf "$(realpath "$tarball")" "packages/tarball/install-${arch}.tar.gz"
+          ready=true
+          digests=()
+          for arch in AMD64 ARM64; do
+            want="WANT_$arch" packages="${arch}_PACKAGES" rta="${arch}_RTA" digest="${arch}_DIGEST"
+            [[ "${!want}" == true ]] || continue
+            if [[ "${!packages}" != true ]]; then
+              echo "::error::${arch,,} has no packages"
+              ready=false
+              continue
             fi
+            if [[ "$RTA" == required && "${!rta}" != true ]]; then
+              echo "::error::${arch,,} failed its RTA"
+              ready=false
+            fi
+            if [[ "$PUSH" == true && -z "${!digest}" ]]; then
+              echo "::error::${arch,,} pushed no image"
+              ready=false
+            fi
+            [[ -z "${!digest}" ]] || digests+=("${!digest}")
           done
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          echo "digests=${digests[*]}" >> "$GITHUB_OUTPUT"
 
-          HAS_TARBALLS=false
-          for f in packages/tarball/install-*.tar.gz; do
-            [ -e "$f" ] && HAS_TARBALLS=true
-          done
-          echo "has_tarballs=$HAS_TARBALLS" >> "$GITHUB_OUTPUT"
-
-          if [ -e packages/tarball/install-amd64.tar.gz ]; then
-            echo "test_arch=amd64" >> "$GITHUB_OUTPUT"
-          elif [ -e packages/tarball/install-arm64.tar.gz ]; then
-            echo "test_arch=arm64" >> "$GITHUB_OUTPUT"
-          fi
-
-          # Collect packages for GitHub release
+      - name: Prepare packages
+        run: |
           mkdir -p release-packages
           find packages/ -name "serenedb*.deb" -exec cp {} release-packages/ \;
           find packages/ -name "serenedb-*.tar.gz" -exec cp {} release-packages/ \;
-
-          echo "Available tarballs:"
-          ls -la packages/tarball/install-*.tar.gz 2>/dev/null || echo "  (none)"
           echo "Available release packages:"
-          ls -la release-packages/ 2>/dev/null || echo "  (none)"
+          ls -la release-packages/
 
       - name: Set up Helm
         uses: azure/setup-helm@v5
@@ -234,53 +245,19 @@ jobs:
           cp "$CHART" release-packages/
           echo "CHART_FILE=$(basename "$CHART")" >> "$GITHUB_ENV"
 
-      - name: Setup QEMU
-        if: steps.prepare.outputs.has_tarballs == 'true'
-        run: docker run --rm --label "serenedb.owner=$SDB_DOCKER_OWNER" --privileged tonistiigi/binfmt --install all
-
-      - name: Build Docker images
-        id: docker_build
-        if: steps.prepare.outputs.has_tarballs == 'true'
-        env:
-          DOCKER_REGISTRY: serenedb
-          DOCKER_TAG: ${{ env.DOCKER_TAG }}
-        run: ./packages/build_docker.bash
-
-      - name: Docker RTA
-        id: docker_rta
-        if: inputs.RTA != 'off' && steps.docker_build.outcome == 'success'
-        continue-on-error: ${{ inputs.RTA == 'test' }}
-        env:
-          DOCKER_TEST_IMAGE: serenedb/serenedb:${{ env.DOCKER_TAG }}-${{ steps.prepare.outputs.test_arch }}
-          WORKSPACE: ${{ github.workspace }}
-        run: BUILD_IMAGE="$(python3 scripts/ci/ci.py image)" ./scripts/ci/steps/08-ci-docker-rta.bash
-
-      - name: Push Docker images
-        if: >-
-          inputs.PUSH_IMAGES_2_REGISTRY &&
-          steps.docker_build.outcome == 'success' &&
-          (inputs.RTA != 'required' || (
-            steps.docker_rta.outcome == 'success' &&
-            !(needs.build-amd64.outputs.packages_ok == 'true' && needs.build-amd64.outputs.rta_ok != 'true') &&
-            !(needs.build-arm64.outputs.packages_ok == 'true' && needs.build-arm64.outputs.rta_ok != 'true')
-          ))
+      - name: Publish the image
+        if: inputs.PUSH_IMAGES_2_REGISTRY && steps.check.outputs.ready == 'true'
         env:
           DOCKER_REGISTRY: serenedb
           DOCKER_USERNAME: serenedb
           DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
           DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
           DOCKER_TAG: ${{ env.DOCKER_TAG }}
+          IMAGE_DIGESTS: ${{ steps.check.outputs.digests }}
         run: ./packages/push_docker.bash
 
       - name: Create GitHub Release
-        if: >-
-          inputs.CREATE_GITHUB_RELEASE &&
-          steps.prepare.outputs.has_tarballs == 'true' &&
-          (inputs.RTA != 'required' || (
-            steps.docker_rta.outcome == 'success' &&
-            !(needs.build-amd64.outputs.packages_ok == 'true' && needs.build-amd64.outputs.rta_ok != 'true') &&
-            !(needs.build-arm64.outputs.packages_ok == 'true' && needs.build-arm64.outputs.rta_ok != 'true')
-          ))
+        if: inputs.CREATE_GITHUB_RELEASE && steps.check.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           DOCKER_TAG: ${{ env.DOCKER_TAG }}

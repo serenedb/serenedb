@@ -7,11 +7,6 @@ on:
         description: "perf, dev, asan, tsan or msan (scripts/ci/config.sh)"
         type: string
         required: true
-      NAME:
-        description: "A second run of CONFIG in the same workflow (biglake): names its artifacts and results"
-        type: string
-        required: false
-        default: ""
       LOCATION:
         description: "Runner label"
         type: string
@@ -24,6 +19,11 @@ on:
         default: true
       TEST_ARGS:
         description: "Extra scripts/ci/test.py arguments (suite selection, budgets)"
+        type: string
+        required: false
+        default: ""
+      BIGLAKE_TEST_ARGS:
+        description: "scripts/ci/test.py arguments of the biglake check, run on this build beside its tests against the real BigLake catalog (needs the BIGLAKE_* secrets)"
         type: string
         required: false
         default: ""
@@ -50,10 +50,10 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       CONFIG: ${{ inputs.CONFIG }}
-      NAME: ${{ inputs.NAME }}
       LOCATION: ${{ inputs.LOCATION }}
       TESTS: ${{ inputs.TESTS }}
       TEST_ARGS: ${{ inputs.TEST_ARGS }}
+      BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit
@@ -64,11 +64,25 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       CONFIG: ${{ inputs.CONFIG }}
-      NAME: ${{ inputs.NAME }}
       LOCATION: ${{ inputs.LOCATION }}
       DIGEST: ${{ needs.build.outputs.digest }}
       SHARDS: ${{ needs.build.outputs.shards }}
       TEST_ARGS: ${{ inputs.TEST_ARGS }}
+      PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+    secrets: inherit
+
+  biglake:
+    needs: build
+    if: inputs.TESTS && inputs.BIGLAKE_TEST_ARGS != ''
+    uses: ./.github/workflows/test.yml
+    with:
+      CONFIG: ${{ inputs.CONFIG }}
+      NAME: biglake
+      LOCATION: ${{ inputs.LOCATION }}
+      DIGEST: ${{ needs.build.outputs.digest }}
+      SHARDS: ${{ needs.build.outputs.biglake_shards }}
+      TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit

@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       NAME:
-        description: "A second run of CONFIG in the same workflow (biglake): names its artifacts and results"
+        description: "A second test run on CONFIG's build (biglake): names its artifacts and results"
         type: string
         required: false
         default: ""
@@ -86,7 +86,7 @@ jobs:
       - name: Fetch the timing snapshot
         uses: actions/download-artifact@v7
         with:
-          name: timing-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}
+          name: timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
           path: out
 
       - name: Run the shard

@@ -115,6 +115,7 @@ jobs:
     with:
       CONFIG: dev
       TEST_ARGS: ${{ needs.prepare.outputs.test_args }} --changed origin/main --repeat 3
+      BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE && '--biglake --suite sqllogic --suite recovery --suite stress --stress-profile biglake-reindex-smoke' || '' }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit
@@ -234,18 +235,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  biglake:
-    needs: [prepare, dev]
-    if: inputs.BIGLAKE
-    uses: ./.github/workflows/config.yml
-    with:
-      CONFIG: dev
-      NAME: biglake
-      TEST_ARGS: --biglake --suite sqllogic --suite recovery --suite stress --stress-profile biglake-reindex-smoke
-      PR_SHA: ${{ inputs.PR_SHA }}
-      PR_NUMBER: ${{ inputs.PR_NUMBER }}
-    secrets: inherit
-
   bugfix:
     name: bugfix check
     needs: [prepare, image]
@@ -310,7 +299,7 @@ jobs:
 
   report:
     name: Report Status
-    needs: [prepare, image, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, coverage, biglake, bugfix, validate-pg]
+    needs: [prepare, image, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, coverage, bugfix, validate-pg]
     if: always()
     runs-on: ubuntu-latest
     steps:

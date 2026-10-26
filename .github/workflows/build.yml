@@ -7,11 +7,6 @@ on:
         description: "perf, dev, asan, tsan or msan (scripts/ci/config.sh)"
         type: string
         required: true
-      NAME:
-        description: "A second run of CONFIG in the same workflow (biglake): names its artifacts and results"
-        type: string
-        required: false
-        default: ""
       LOCATION:
         description: "Runner label"
         type: string
@@ -24,6 +19,11 @@ on:
         default: false
       TEST_ARGS:
         description: "Extra scripts/ci/test.py arguments (suite selection, budgets)"
+        type: string
+        required: false
+        default: ""
+      BIGLAKE_TEST_ARGS:
+        description: "scripts/ci/test.py arguments of the biglake check: also plan its shards"
         type: string
         required: false
         default: ""
@@ -44,6 +44,9 @@ on:
       shards:
         description: "The test shards, as JSON"
         value: ${{ jobs.build.outputs.shards }}
+      biglake_shards:
+        description: "The biglake check's shards, as JSON"
+        value: ${{ jobs.build.outputs.biglake_shards }}
 
 env:
   SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
@@ -61,6 +64,7 @@ jobs:
     outputs:
       digest: ${{ steps.build.outputs.digest }}
       shards: ${{ steps.plan.outputs.shards }}
+      biglake_shards: ${{ steps.plan.outputs.biglake_shards }}
     steps:
       - name: Reap containers left on this runner
         run: |
@@ -93,24 +97,35 @@ jobs:
       - name: Plan the test shards
         id: plan
         if: inputs.TESTS
+        env:
+          BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
         run: |
           set -f
           source scripts/ci/config.sh
           sdb_config "${{ inputs.CONFIG }}"
           python3 scripts/ci/ci.py timing --config "$CONFIG" --arch "$ARCH" --out out/timing.json
           bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "${{ steps.build.outputs.digest }}")
-          shards=$(docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
-            -v "$PWD:$PWD" -w "$PWD" -v "$bundle:$bundle" "$BUILD_IMAGE" \
-            python3 scripts/ci/ci.py shards --build-dir "$bundle" --config "$CONFIG" \
-              --timing out/timing.json --cpus "$(nproc)" -- ${{ inputs.TEST_ARGS }})
+          plan() {
+            docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+              -v "$PWD:$PWD" -w "$PWD" -v "$bundle:$bundle" "$BUILD_IMAGE" \
+              python3 scripts/ci/ci.py shards --build-dir "$bundle" --config "$CONFIG" \
+                --timing out/timing.json --cpus "$(nproc)" -- "$@"
+          }
+          shards=$(plan ${{ inputs.TEST_ARGS }})
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
           echo "shards: $shards"
+          if [[ -n "$BIGLAKE_TEST_ARGS" ]]; then
+            read -ra biglake_args <<< "$BIGLAKE_TEST_ARGS"
+            shards=$(plan "${biglake_args[@]}")
+            echo "biglake_shards=$shards" >> "$GITHUB_OUTPUT"
+            echo "biglake shards: $shards"
+          fi
 
       - name: Keep the timing snapshot for the shards
         if: inputs.TESTS
         uses: actions/upload-artifact@v7
         with:
-          name: timing-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}
+          name: timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
           path: out/timing.json
           retention-days: 3
 
@@ -118,7 +133,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: build-logs-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}
+          name: build-logs-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
           path: out/logs/
           retention-days: 14
 

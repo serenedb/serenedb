@@ -1531,6 +1531,30 @@ ArrayWrap ArrayWrapOf(const duckdb::LogicalType& struct_type) {
 }
 
 template<VarFormat Format>
+IRS_NO_INLINE void FillSerializers(SerializationContext& context,
+                                   const duckdb::LogicalType& struct_type,
+                                   RecordSerializers& cached) {
+  const auto& children = duckdb::StructType::GetChildTypes(struct_type);
+  cached.functions.reserve(children.size());
+  if constexpr (Format == VarFormat::Text) {
+    const bool saved = std::exchange(context.in_record, true);
+    for (const auto& [_, child_type] : children) {
+      cached.functions.push_back(
+        GetSerialization(child_type, VarFormat::Text, context));
+    }
+    context.in_record = saved;
+    cached.array_wrap = ArrayWrapOf(struct_type);
+  } else {
+    cached.oids.reserve(children.size());
+    for (const auto& [_, child_type] : children) {
+      cached.functions.push_back(
+        GetSerialization(child_type, VarFormat::Binary, context));
+      cached.oids.emplace_back(Type2Oid(child_type));
+    }
+  }
+}
+
+template<VarFormat Format>
 const RecordSerializers& GetSerializersCache(
   SerializationContext& context, const duckdb::LogicalType& struct_type) {
   // Lazy: only record-typed results pay for the cache; flat-typed queries
@@ -1539,28 +1563,10 @@ const RecordSerializers& GetSerializersCache(
     context.types_cache = std::make_unique<TypesSerializationCache>();
   }
   auto [it, inserted] = context.types_cache->try_emplace(&struct_type);
-  auto& cached = it->second;
   if (inserted) {
-    const auto& children = duckdb::StructType::GetChildTypes(struct_type);
-    cached.functions.reserve(children.size());
-    if constexpr (Format == VarFormat::Text) {
-      const bool saved = std::exchange(context.in_record, true);
-      for (const auto& [_, child_type] : children) {
-        cached.functions.push_back(
-          GetSerialization(child_type, VarFormat::Text, context));
-      }
-      context.in_record = saved;
-      cached.array_wrap = ArrayWrapOf(struct_type);
-    } else {
-      cached.oids.reserve(children.size());
-      for (const auto& [_, child_type] : children) {
-        cached.functions.push_back(
-          GetSerialization(child_type, VarFormat::Binary, context));
-        cached.oids.emplace_back(Type2Oid(child_type));
-      }
-    }
+    FillSerializers<Format>(context, struct_type, it->second);
   }
-  return cached;
+  return it->second;
 }
 
 template<WrapContext InContainer>

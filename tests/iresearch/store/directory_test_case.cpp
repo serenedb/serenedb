@@ -4478,39 +4478,6 @@ TEST_P(DirectoryTestCase, evict_keeps_contents) {
   EXPECT_EQ(0, std::memcmp(after.data(), data.data(), data.size()));
 }
 
-TEST_P(DirectoryTestCase, sequential_input_streams_past_its_buffer) {
-  std::vector<irs::byte_type> data(4 * 1024 * 1024 + 77);
-  for (size_t i = 0; i < data.size(); ++i) {
-    data[i] = static_cast<irs::byte_type>(i * 31 % 251);
-  }
-  {
-    auto out = _dir->create("sequential");
-    ASSERT_FALSE(!out);
-    out->WriteData(data.data(), data.size());
-  }
-
-  auto in = _dir->open("sequential", irs::IOAdvice::RANDOM);
-  ASSERT_FALSE(!in);
-  constexpr size_t kStart = 1000;
-  irs::SequentialInput seq{*in, kStart};
-  std::vector<irs::byte_type> read(data.size());
-  size_t pos = kStart;
-  for (const size_t piece : {1, 333333, 1500000, 2000000}) {
-    seq.ReadData(read.data() + pos, piece);
-    pos += piece;
-    ASSERT_EQ(pos, seq.Position());
-    auto dup = seq.Dup();
-    ASSERT_EQ(pos, dup->Position());
-    EXPECT_EQ(data[pos], dup->ReadByte());
-  }
-  while (!seq.IsEOF()) {
-    read[pos++] = seq.ReadByte();
-  }
-  ASSERT_EQ(data.size(), pos);
-  EXPECT_EQ(0, std::memcmp(read.data() + kStart, data.data() + kStart,
-                           data.size() - kStart));
-}
-
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(directory_test, DirectoryTestCase,

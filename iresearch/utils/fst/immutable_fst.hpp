@@ -83,7 +83,8 @@ class ImmutableByteFst : private util::Noncopyable {
   }
 
   static std::unique_ptr<ImmutableByteFst> Read(DataInput& in,
-                                                IResourceManager& rm);
+                                                IResourceManager& rm,
+                                                auto&& will_read);
 
   template<typename Stats>
   static bool Write(const VectorByteFst& fst, BufferedOutput& out,
@@ -122,8 +123,10 @@ class ImmutableByteFst : private util::Noncopyable {
   IResourceManager* _resource_manager{&IResourceManager::gNoop};
 };
 
-inline std::unique_ptr<ImmutableByteFst> ImmutableByteFst::Read(
-  DataInput& in, IResourceManager& rm) {
+std::unique_ptr<ImmutableByteFst> ImmutableByteFst::Read(DataInput& in,
+                                                         IResourceManager& rm,
+                                                         auto&& will_read) {
+  constexpr size_t kStatesPerNotice = 16;
   [[maybe_unused]] const uint64_t props = in.ReadI64();
   const size_t total_weight_size = in.ReadI64();
   const StateId nstates = in.ReadI32();
@@ -143,6 +146,9 @@ inline std::unique_ptr<ImmutableByteFst> ImmutableByteFst::Read(
   auto* arc = arcs.get();
   for (auto state = states.get(), end = state + nstates; state != end;
        ++state) {
+    if (static_cast<size_t>(state - states.get()) % kStatesPerNotice == 0) {
+      will_read(in.Position(), uint64_t{0});
+    }
     state->arcs = arc;
 
     size_t weight_size = in.ReadV64();
@@ -165,6 +171,7 @@ inline std::unique_ptr<ImmutableByteFst> ImmutableByteFst::Read(
     }
   }
 
+  will_read(in.Position(), uint64_t{total_weight_size});
   in.ReadData(weights.get(), total_weight_size);
 
   std::unique_ptr<ImmutableByteFst> fst{new ImmutableByteFst{}};

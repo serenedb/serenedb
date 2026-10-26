@@ -139,27 +139,4 @@ void BufferedIndexInput::Seek(uint64_t pos) {
   }
 }
 
-SequentialInput::SequentialInput(IndexInput& in, uint64_t start)
-  : _in{in},
-    _pos{start},
-    _buf{std::make_unique_for_overwrite<byte_type[]>(kBufferSize)} {
-  BufferedIndexInput::reset(_buf.get(), kBufferSize, start);
-}
-
-IndexInput::ptr SequentialInput::Dup() const {
-  return std::make_unique<SequentialInput>(_in, Position());
-}
-
-uint32_t SequentialInput::Checksum(uint64_t offset) const {
-  _in.Seek(Position());
-  return _in.Checksum(offset);
-}
-
-size_t SequentialInput::ReadInternal(byte_type* b, size_t count) {
-  _in.Prefetch(_pos, count + kBufferSize);
-  _in.ReadData(_pos, b, count);
-  _pos += count;
-  return count;
-}
-
 }  // namespace irs

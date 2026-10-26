@@ -2764,13 +2764,22 @@ class FieldReader::Impl {
 
     void PrepareFromMeta(field_id id, const TermDictMeta& meta,
                          IndexInput& blocks_in) {
-      SequentialInput body_in{blocks_in, meta.body_offset};
-      LoadFromMeta(id, meta, body_in);
-      _fst = FST::Read(body_in, _owner->_resource_manager);
+      blocks_in.Seek(meta.body_offset);
+      LoadFromMeta(id, meta, blocks_in);
+      GrowingHint hint;
+      hint.Arm(blocks_in.Position(), blocks_in.Length());
+      _fst = FST::Read(blocks_in, _owner->_resource_manager,
+                       [&](uint64_t at, uint64_t need) {
+                         if (need == 0) {
+                           hint.Advance(blocks_in, at);
+                         } else {
+                           blocks_in.Prefetch(at, need);
+                         }
+                       });
       SDB_ASSERT(_fst);
       _body_offset = meta.body_offset;
-      blocks_in.Evict(meta.body_offset, body_in.Position() - meta.body_offset);
-      blocks_in.Seek(body_in.Position());
+      blocks_in.Evict(meta.body_offset,
+                      blocks_in.Position() - meta.body_offset);
       MapInlineRegion(blocks_in);
       _body_end = InlineEnd();
     }

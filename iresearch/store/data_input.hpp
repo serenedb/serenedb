@@ -265,27 +265,4 @@ class BufferedIndexInput : public IndexInput {
   uint64_t _buf_size = 0;     // size of the buffer in bytes
 };
 
-class SequentialInput final : public BufferedIndexInput {
- public:
-  SequentialInput(IndexInput& in, uint64_t start);
-
-  uint64_t Length() const noexcept final { return _in.Length(); }
-  bool IsEOF() const noexcept final { return Position() >= Length(); }
-
-  ptr Dup() const final;
-  ptr Reopen() const final { return Dup(); }
-  uint32_t Checksum(uint64_t offset) const final;
-
- protected:
-  void SeekInternal(uint64_t pos) final { _pos = pos; }
-  size_t ReadInternal(byte_type* b, size_t count) final;
-
- private:
-  static constexpr size_t kBufferSize = size_t{1} << 20;
-
-  IndexInput& _in;
-  uint64_t _pos;
-  std::unique_ptr<byte_type[]> _buf;
-};
-
 }  // namespace irs

@@ -53,12 +53,18 @@ jobs:
               '- [ ] **Trigger Jobs**',
             ].join('\n');
 
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: body,
-            });
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 });
+            if (!comments.some(c => (c.body || '').startsWith('<!-- serenedb-ci-report -->'))) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number,
+                body: '<!-- serenedb-ci-report -->\n### CI results\n\nNo run yet: check **Trigger Jobs** in the comment below.',
+              });
+            }
+
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
 
             if (context.payload.action === 'labeled') {
               await github.rest.issues.removeLabel({
@@ -180,60 +186,19 @@ jobs:
             });
 
             const opts = [
-              everything && 'everything',
-              bugfix && 'bugfix check',
-              corpus && 'corpus',
-              allArch && 'all arch',
+              allArch && 'all architectures',
               biglake && 'biglake',
+              bugfix && 'bugfix',
+              corpus && 'corpus',
               duckdbSanitizers && 'duckdb sanitizers',
+              everything && 'everything',
               iresearchSanitizers && 'iresearch sanitizers',
             ].filter(Boolean);
             const optsStr = opts.length > 0 ? opts.join(', ') : 'default';
-            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-            const latestEntry = `**Latest:** ${optsStr} | [View Run](${runUrl}) | ${timestamp}`;
-
-            // Update the original comment: uncheck "Trigger Jobs" and update results
-            let updatedBody = body.replace('- [x] **Trigger Jobs**', '- [ ] **Trigger Jobs**');
-
-            // Results are stored as JSON in a hidden HTML comment for reliable parsing
-            const dataRe = /<!-- ci-data:(.*?) -->/;
-            const dataMatch = updatedBody.match(dataRe);
-            const history = dataMatch ? JSON.parse(dataMatch[1]) : [];
-            history.push({ opts: optsStr, url: runUrl, time: timestamp });
-
-            // Build visible output
-            const latest = history[history.length - 1];
-            let resultsBlock = `\n\n**Latest:** ${latest.opts} · [View Run](${latest.url}) · ${latest.time}`;
-
-            if (history.length > 1) {
-              const oldRuns = history.slice(0, -1).reverse().map(r =>
-                `| ${r.opts} | [View Run](${r.url}) | ${r.time} |`
-              );
-              resultsBlock += [
-                '',
-                '',
-                '<details><summary>Previous runs</summary>',
-                '',
-                '| Options | Link | Time |',
-                '|---------|------|------|',
-                ...oldRuns,
-                '',
-                '</details>',
-              ].join('\n');
-            }
-
-            // Replace or append results section
-            const sectionRe = /\n\n<!-- ci-data:.*? -->[\s\S]*$/;
-            const newData = `\n\n<!-- ci-data:${JSON.stringify(history)} -->${resultsBlock}`;
-            if (sectionRe.test(updatedBody)) {
-              updatedBody = updatedBody.replace(sectionRe, newData);
-            } else {
-              updatedBody += newData;
-            }
-
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: comment.id,
-              body: updatedBody,
-            });
+            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16) + ' UTC';
+            const latest = `\n\n<!-- ci-latest -->**Latest:** ${optsStr} · [View Run](${runUrl}) · ${timestamp}`;
+            const section = /\n\n<!-- ci-(data:.*?|latest) -->[\s\S]*$/;
+            const { data: current } = await github.rest.issues.getComment({ owner, repo, comment_id: comment.id });
+            let updatedBody = current.body.replace('- [x] **Trigger Jobs**', '- [ ] **Trigger Jobs**');
+            updatedBody = section.test(updatedBody) ? updatedBody.replace(section, latest) : updatedBody + latest;
+            await github.rest.issues.updateComment({ owner, repo, comment_id: comment.id, body: updatedBody });

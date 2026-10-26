@@ -2,15 +2,19 @@
 import argparse
 import json
 import os
+import re
 import subprocess
+import time
 from collections import defaultdict
 from pathlib import Path
 
 from testlib.scheduler import BAD
 
 MARKER = "<!-- serenedb-ci-report -->"
+HISTORY = re.compile(r"<!-- ci-history:(.*?) -->")
 ORDER = ("perf", "dev", "asan", "tsan", "msan")
 COVERAGE_ROWS = 40
+KEEP_RUNS = 30
 
 
 def load(results_dir):
@@ -80,7 +84,7 @@ def selection_line(sel):
             f"{share:.0f}% of the expected test time")
 
 
-def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
+def build_report(metas, rows, needs, run_url, coverage=(), selection=None, subject=""):
     by_config = defaultdict(lambda: defaultdict(int))
     longest = defaultdict(float)
     shards = defaultdict(int)
@@ -108,7 +112,7 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
             failures.append(r)
             if "Sanitizer" in (r.get("signature") or ""):
                 signatures[r["signature"]].add(f"{r['config']}/{r['arch']}")
-    lines = [MARKER, "### CI results", ""]
+    lines = ["### CI results" + (f" · {subject}" if subject else ""), ""]
     keys = sorted(set(by_config) | set(longest),
                   key=lambda k: (ORDER.index(k[0]) if k[0] in ORDER else 99, k[1], k[2]))
     red = set()
@@ -128,15 +132,20 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
             + (" (the shards planned different units, so some ran twice and others not at all)"
                if split else "")
             + f", longest {_duration(longest[key])}")
+    failed_jobs = False
     for job, info in sorted((needs or {}).items()):
         result = info.get("result")
         if result not in ("failure", "cancelled"):
             continue
+        failed_jobs = True
         mine = [k for k in keys if job in (k[0], k[2])]
         if not mine:
             lines.append(f"- ❌ **{job}**: {result} before any test result")
         elif not red.intersection(mine):
             lines.append(f"- ❌ **{job}**: {result} outside the tests")
+    counts = {s: sum(by_config[k][s] for k in keys) for s in BAD}
+    verdict = ("❌ " + (", ".join(f"{n} {s}" for s, n in counts.items() if n) or "failed")
+               if red or failed_jobs else "✅")
     if coverage:
         lines += ["", "**Coverage of the change**", "", "```", *(c["summary"] for c in coverage), "```"]
         uncovered = [d for c in coverage for d in c["uncovered"]]
@@ -172,6 +181,7 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
     lines += ["", f"[Run]({run_url}) · `gh run download {run_url.rsplit('/', 1)[-1]} -n report` "
               "for report.json"]
     summary = {
+        "verdict": verdict,
         "configs": {_label(k): dict(by_config[k]) for k in keys},
         "failures": failures,
         "sanitizer_signatures": {k: sorted(v) for k, v in signatures.items()},
@@ -181,14 +191,42 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
     return "\n".join(lines) + "\n", summary
 
 
-def post_comment(pr, body):
+def run_options(inputs):
+    opts = sorted(name.lower().replace("_", " ") for name, value in inputs.items()
+                  if value is True or value == "true")
+    if inputs.get("LOCATION") == "all":
+        opts.append("all architectures")
+    return ", ".join(opts) or "default"
+
+
+def updated_history(comment, entry):
+    found = HISTORY.search(comment or "")
+    history = json.loads(found.group(1)) if found else []
+    return ([h for h in history if h["run"] != entry["run"]] + [entry])[-KEEP_RUNS:]
+
+
+def render_comment(report_body, history):
+    lines = [MARKER, f"<!-- ci-history:{json.dumps(history, separators=(',', ':'))} -->",
+             report_body.rstrip()]
+    previous = history[:-1]
+    if previous:
+        lines += ["", f"<details><summary>Previous runs ({len(previous)})</summary>", "",
+                  "| run | commit | options | result | finished |", "| --- | --- | --- | --- | --- |",
+                  *(f"| [{h['run']}]({h['url']}) | `{h['sha']}` | {h['options']} | {h['verdict']} | "
+                    f"{h['time']} |" for h in reversed(previous)),
+                  "", "</details>"]
+    return "\n".join(lines) + "\n"
+
+
+def post_comment(pr, report_body, entry):
     repo = os.environ.get("GITHUB_REPOSITORY", "serenedb/serenedb")
     out = subprocess.run(["gh", "api", "--paginate", f"repos/{repo}/issues/{pr}/comments",
-                          "--jq", f'.[] | select(.body | startswith("{MARKER}")) | .id'],
-                         capture_output=True, text=True)
-    ids = [x for x in out.stdout.split() if x.strip()]
-    if ids:
-        subprocess.run(["gh", "api", "-X", "PATCH", f"repos/{repo}/issues/comments/{ids[0]}",
+                          "--jq", f'.[] | select(.body | startswith("{MARKER}")) | {{id, body}}'],
+                         capture_output=True, text=True, check=True)
+    found = [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
+    body = render_comment(report_body, updated_history(found[0]["body"] if found else "", entry))
+    if found:
+        subprocess.run(["gh", "api", "-X", "PATCH", f"repos/{repo}/issues/comments/{found[0]['id']}",
                         "-F", "body=@-"], input=body, text=True, check=True, capture_output=True)
     else:
         subprocess.run(["gh", "api", f"repos/{repo}/issues/{pr}/comments", "-F", "body=@-"],
@@ -204,8 +242,12 @@ def main():
     args = ap.parse_args()
     metas, rows = load(args.results)
     needs = json.loads(os.environ.get("NEEDS", "{}") or "{}")
-    body, summary = build_report(metas, rows, needs, os.environ.get("RUN_URL", ""),
-                                 load_coverage(args.coverage), load_selection(args.selection))
+    run_url = os.environ.get("RUN_URL", "")
+    sha = os.environ.get("REPORT_SHA", "")[:9]
+    options = run_options(json.loads(os.environ.get("REPORT_INPUTS", "{}") or "{}"))
+    body, summary = build_report(metas, rows, needs, run_url, load_coverage(args.coverage),
+                                 load_selection(args.selection),
+                                 " · ".join(s for s in (sha and f"`{sha}`", options) if s))
     Path(args.out).write_text(body)
     Path(args.out).with_suffix(".json").write_text(json.dumps(summary, indent=1))
     step = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -213,7 +255,9 @@ def main():
         with open(step, "a") as fh:
             fh.write(body)
     if os.environ.get("PR_NUMBER"):
-        post_comment(os.environ["PR_NUMBER"], body)
+        post_comment(os.environ["PR_NUMBER"], body, {
+            "run": run_url.rsplit("/", 1)[-1], "url": run_url, "sha": sha, "options": options,
+            "verdict": summary["verdict"], "time": time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())})
     print(body)
 
 

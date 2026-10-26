@@ -348,6 +348,8 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           PR_NUMBER: ${{ contains(inputs.BUILD_CONFIG, 'PR_SHA') && inputs.PR_NUMBER || '' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPORT_SHA: ${{ inputs.PR_SHA || github.sha }}
+          REPORT_INPUTS: ${{ toJSON(inputs) }}
         run: python3 scripts/ci/report.py --results results --coverage coverage --selection selection --out report.md
       - name: Upload the report
         if: always()

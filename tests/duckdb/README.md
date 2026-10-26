@@ -265,6 +265,8 @@ For each storage version in `INTEROP_STORAGE_VERSIONS` (`v1.0.0 v1.5.0`) and eac
 
 Each engine then opens its own copy of the file and runs [check.sql](interop/check.sql), the stage's `check_*.sql` and `use_*.sql`, a digest of every table and view, and `pragma_storage_info` of the compression tables. The two outputs must match byte for byte. The digest is the row count and the sum of `hash()` over the rows, because the engines print some values differently (a DOUBLE `0.0` is `0` in SereneDB). The copies are opened read-write with no checkpoint on shutdown: DuckDB 1.5 cannot open read-only a file whose log holds index data. `VANILLA_DUCKDB_TAG` (default `1.5.5`) picks the image, and `VANILLA_DUCKDB` a binary to use instead.
 
+The suite also checks the Quack protocol against a vanilla DuckDB whose `quack` extension speaks the version SereneDB does: `VANILLA_QUACK_DUCKDB_TAG` (default `2.0.0`) or `VANILLA_QUACK_DUCKDB`, whose `INSTALL quack` keeps the extension under `$BUILD_DIR/duckdb-<tag>/` too. `quack-vanilla-client` runs statements on a serened Quack listener through vanilla `quack_query`, and `quack-vanilla-server` attaches a vanilla `quack_serve` from `serened shell` to scan, query, create and insert there.
+
 The suite runs with every other suite when duckdb or a dependency they share changes, and alone when only `interop/` does.
 
 ### Changing the DuckDB on-disk format

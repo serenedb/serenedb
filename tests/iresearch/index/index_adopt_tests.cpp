@@ -19,10 +19,15 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
+#include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <duckdb/common/fault_points.hpp>
 #include <filesystem>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -35,6 +40,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "index/doc_generator.hpp"
@@ -119,6 +125,26 @@ class IndexAdoptTest : public TestBase {
     tests::StringField field{"name", value};
     field.id = kNameFieldId;
     return tests::InsertFields(trx.Insert(), &field, &field + 1);
+  }
+
+  static absl::flat_hash_map<std::string, size_t> LiveDocsByName(
+    const irs::DirectoryReader& reader) {
+    absl::flat_hash_map<std::string, size_t> counts;
+    for (const auto& segment : reader) {
+      const auto* field = segment.field(kNameFieldId);
+      if (!field) {
+        continue;
+      }
+      const auto masked = segment.MaskedDocs();
+      for (auto terms = field->iterator(); terms->next();) {
+        auto& count = counts[irs::ViewCast<char>(terms->value())];
+        field->ReadDocs(terms->value(), [&](irs::doc_id_t doc) {
+          count += !masked.Contains(doc);
+          return true;
+        });
+      }
+    }
+    return counts;
   }
 
   static irs::Filter::ptr ByName(std::string_view value) {
@@ -1511,4 +1537,91 @@ TEST_F(IndexAdoptTest, AbortBeforeReplaceLosesTheFilesToCleanup) {
                    ERRCODE_UNDEFINED_FILE);
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
     << "the original row must still be there";
+}
+
+#ifdef SDB_FAULT_INJECTION
+TEST_F(IndexAdoptTest, ACommitJoinsTheFlushItsPooledSegmentIsPinnedTo) {
+  constexpr std::string_view kSwitch = "pause_irs_commit_after_flush_switch";
+  {
+    auto seed = _writer->GetBatch();
+    ASSERT_TRUE(InsertDoc(seed, "seed"));
+    ASSERT_TRUE(seed.Commit(1));
+  }
+  auto pooled = _writer->GetBatch();
+  ASSERT_TRUE(InsertDoc(pooled, "commit"));
+  auto exclusive = _writer->GetBatch(/*exclusive_segment=*/true);
+  ASSERT_TRUE(InsertDoc(exclusive, "commit"));
+
+  ASSERT_TRUE(duckdb::FaultPoints::Arm(kSwitch));
+  std::thread refresh{[&] { EXPECT_TRUE(_writer->RefreshCommit()); }};
+  absl::Cleanup release = [&] {
+    duckdb::FaultPoints::Arm(absl::StrCat(kSwitch, ":release"));
+    refresh.join();
+    duckdb::FaultPoints::Clear();
+  };
+  while (!duckdb::FaultPoints::Disarm(absl::StrCat(kSwitch, ":parked"))) {
+    std::this_thread::yield();
+  }
+
+  irs::IndexWriter::Transaction* commit[] = {&pooled, &exclusive};
+  irs::IndexWriter::Transaction::RegisterFlush(commit);
+  ASSERT_TRUE(pooled.Commit(2));
+  ASSERT_TRUE(exclusive.Commit(2));
+  std::move(release).Invoke();
+
+  const auto counts = LiveDocsByName(_writer->GetSnapshot());
+  EXPECT_EQ(1, counts.at("seed"));
+  EXPECT_EQ(2, counts.at("commit"))
+    << "the refresh flushed one transaction of the commit without the other";
+}
+#endif
+
+TEST_F(IndexAdoptTest, RefreshesRacingCommitsNeverSplitOne) {
+  constexpr size_t kWriters = 4;
+  constexpr size_t kCommits = 300;
+  std::atomic<bool> writing{true};
+  std::atomic<size_t> split{0};
+  std::thread refresher{[&] {
+    while (writing.load(std::memory_order_relaxed)) {
+      _writer->RefreshCommit();
+      for (const auto& [name, count] : LiveDocsByName(_writer->GetSnapshot())) {
+        if (count != 2) {
+          split.fetch_add(1, std::memory_order_relaxed);
+        }
+      }
+    }
+  }};
+  std::vector<std::thread> writers;
+  for (size_t w = 0; w < kWriters; ++w) {
+    writers.emplace_back([&, w] {
+      for (size_t n = 0; n < kCommits; ++n) {
+        const auto name = absl::StrCat("w", w, "-", n);
+        auto pooled = _writer->GetBatch();
+        auto exclusive = _writer->GetBatch(/*exclusive_segment=*/true);
+        EXPECT_TRUE(InsertDoc(pooled, name));
+        if (n % 4 == 0) {
+          std::this_thread::sleep_for(std::chrono::microseconds{200});
+        }
+        EXPECT_TRUE(InsertDoc(exclusive, name));
+        irs::IndexWriter::Transaction* commit[] = {&pooled, &exclusive};
+        irs::IndexWriter::Transaction::RegisterFlush(commit);
+        const auto tick = _writer->NextTick(1);
+        EXPECT_TRUE(pooled.Commit(tick));
+        EXPECT_TRUE(exclusive.Commit(tick));
+      }
+    });
+  }
+  for (auto& writer : writers) {
+    writer.join();
+  }
+  writing.store(false, std::memory_order_relaxed);
+  refresher.join();
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  EXPECT_EQ(0, split.load()) << "a refresh published part of a commit";
+  const auto counts = LiveDocsByName(_writer->GetSnapshot());
+  EXPECT_EQ(kWriters * kCommits, counts.size());
+  for (const auto& [name, count] : counts) {
+    EXPECT_EQ(2, count) << name;
+  }
 }

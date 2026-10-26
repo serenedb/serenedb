@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/inlined_vector.h>
 
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
@@ -179,7 +180,7 @@ Transaction::SearchSlot& Transaction::EnsureIndexSlot(
   auto& result = entry.slots[slot];
   if (!result.transaction) {
     result.transaction = std::make_unique<irs::IndexWriter::Transaction>(
-      storage->GetTransaction());
+      storage->GetTransaction(/*exclusive_segment=*/slot != 0));
     result.transaction->SetFieldOptions(std::move(config));
   }
   if (!entry.storage) {
@@ -194,15 +195,17 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
     if (entry.storage->GetDatabaseId() != database) {
       continue;
     }
-    SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_written");
+    absl::InlinedVector<irs::IndexWriter::Transaction*, 16> transactions;
     uint64_t queries = 0;
     for (auto& slot : entry.slots) {
       slot.writer.reset();
       if (slot.transaction) {
-        slot.transaction->RegisterFlush();
+        transactions.push_back(&*slot.transaction);
         queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
       }
     }
+    SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_written");
+    irs::IndexWriter::Transaction::RegisterFlush(transactions);
     SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_registered");
     entry.tick = entry.storage->NextTick(queries);
     entry.position = position;

@@ -155,14 +155,6 @@ class Transaction : public Config {
     return it->second.slots;
   }
 
-  void RegisterIndexFlush(duckdb::idx_t index_id) noexcept {
-    for (auto& slot : IndexSlots(index_id)) {
-      if (slot.transaction) {
-        slot.transaction->RegisterFlush();
-      }
-    }
-  }
-
   const duckdb::Vector& FeedColumn(const void* database,
                                    duckdb::idx_t table_oid,
                                    duckdb::row_t first_row, duckdb::idx_t count,

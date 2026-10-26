@@ -303,6 +303,9 @@ class IndexWriter : private util::Noncopyable {
 
     void RegisterFlush() noexcept;
 
+    static void RegisterFlush(
+      std::span<Transaction* const> transactions) noexcept;
+
     bool Commit() noexcept {
       auto* segment = _active.Segment();
       if (segment == nullptr) {

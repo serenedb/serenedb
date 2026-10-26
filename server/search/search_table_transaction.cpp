@@ -20,6 +20,8 @@
 
 #include "search/search_table_transaction.h"
 
+#include <absl/container/inlined_vector.h>
+
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
@@ -361,12 +363,14 @@ void SearchTableTransaction::Stage(const irs::SourcePosition& position,
     if (w.shard->GetDatabaseId() != database) {
       continue;
     }
-    SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_written");
+    absl::InlinedVector<irs::IndexWriter::Transaction*, 16> transactions;
     uint64_t queries = 0;
     for (auto& trx : w.transactions) {
-      trx->RegisterFlush();
+      transactions.push_back(trx.get());
       queries += trx->GetQueries();
     }
+    SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_written");
+    irs::IndexWriter::Transaction::RegisterFlush(transactions);
     SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_registered");
     w.first_tick = w.shard->NextTick(queries) - queries;
     w.position = position;

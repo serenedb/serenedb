@@ -1654,6 +1654,7 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
         InitJsonPopulateRecordState};
       function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
       function.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+      function.GetSignature().SetRecordResult();
       set.AddFunction(std::move(function));
     }
     set.SetFallible();

@@ -560,14 +560,14 @@ void RegisterObjectAddressFunctions(duckdb::ExtensionLoader& loader) {
     loader, pg_catalog, "pg_describe_object", CONSISTENT_WITHIN_QUERY,
     InitSession,
     {duckdb::ScalarFunction{{oid, oid, int4}, text, PgDescribeObjectFunction}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_identify_object", CONSISTENT_WITHIN_QUERY,
-    InitSession,
-    {duckdb::ScalarFunction{
-      {oid, oid, int4},
-      duckdb::LogicalType::STRUCT(
-        {{"type", text}, {"schema", text}, {"name", text}, {"identity", text}}),
-      PgIdentifyObjectFunction}});
+  duckdb::ScalarFunction identify_object{
+    {oid, oid, int4},
+    duckdb::LogicalType::STRUCT(
+      {{"type", text}, {"schema", text}, {"name", text}, {"identity", text}}),
+    PgIdentifyObjectFunction};
+  identify_object.GetSignature().SetRecordResult();
+  RegisterScalar(loader, pg_catalog, "pg_identify_object",
+                 CONSISTENT_WITHIN_QUERY, InitSession, {identify_object});
   RegisterScalar(loader, pg_catalog, "pg_get_acl", CONSISTENT_WITHIN_QUERY,
                  InitSession,
                  {duckdb::ScalarFunction{{oid, oid, int4},

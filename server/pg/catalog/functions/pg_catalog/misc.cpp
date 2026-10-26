@@ -1534,6 +1534,7 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
                                           }),
                                           InputErrorInfoFunction};
   input_error_info.SetFallible();
+  input_error_info.GetSignature().SetRecordResult();
   RegisterScalar(loader, pg_catalog, "pg_input_error_info",
                  CONSISTENT_WITHIN_QUERY, InitInputCheck, {input_error_info});
 

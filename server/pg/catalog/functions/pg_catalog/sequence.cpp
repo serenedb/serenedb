@@ -266,12 +266,13 @@ void RegisterSequenceFunctions(duckdb::ExtensionLoader& loader) {
   lastval.SetFallible();
   RegisterScalar(loader, pg_catalog, "lastval", VOLATILE, InitSession,
                  {lastval});
-  RegisterScalar(
-    loader, pg_catalog, "pg_get_sequence_data", VOLATILE, InitSession,
-    {duckdb::ScalarFunction{{REGCLASS()},
-                            duckdb::LogicalType::STRUCT(
-                              {{"last_value", int8}, {"is_called", boolean}}),
-                            PgGetSequenceDataFunction}});
+  duckdb::ScalarFunction sequence_data{
+    {REGCLASS()},
+    duckdb::LogicalType::STRUCT({{"last_value", int8}, {"is_called", boolean}}),
+    PgGetSequenceDataFunction};
+  sequence_data.GetSignature().SetRecordResult();
+  RegisterScalar(loader, pg_catalog, "pg_get_sequence_data", VOLATILE,
+                 InitSession, {sequence_data});
   duckdb::ScalarFunction parameters{{OID()},
                                     duckdb::LogicalType::STRUCT({
                                       {"start_value", int8},
@@ -284,6 +285,7 @@ void RegisterSequenceFunctions(duckdb::ExtensionLoader& loader) {
                                     }),
                                     PgSequenceParametersFunction};
   parameters.SetFallible();
+  parameters.GetSignature().SetRecordResult();
   RegisterScalar(loader, pg_catalog, "pg_sequence_parameters",
                  CONSISTENT_WITHIN_QUERY, InitSession, {parameters});
 }

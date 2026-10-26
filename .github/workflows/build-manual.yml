@@ -6,13 +6,14 @@ on:
   workflow_dispatch:
     inputs:
       LOCATION:
-        description: 'linux-amd64 = arm64 builds without tests; all = arm64 tests too'
+        description: 'linux-amd64 = arm64 builds without tests; all = arm64 tests too; dev-only = the amd64 dev config alone, reported as "serenedb | dev only", never the merge check'
         type: choice
         required: true
         default: 'linux-amd64'
         options:
           - linux-amd64
           - all
+          - dev-only
       EVERYTHING:
         description: 'Ignore the diff and the coverage mapping: run everything'
         type: boolean
@@ -116,6 +117,7 @@ jobs:
 
   perf:
     needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only'
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: perf
@@ -137,6 +139,7 @@ jobs:
 
   asan:
     needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only'
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: asan
@@ -147,6 +150,7 @@ jobs:
 
   tsan:
     needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only'
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: tsan
@@ -157,6 +161,7 @@ jobs:
 
   msan:
     needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only'
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: msan
@@ -167,6 +172,7 @@ jobs:
 
   perf-arm64:
     needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only'
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: perf
@@ -179,6 +185,7 @@ jobs:
 
   dev-arm64:
     needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only'
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: dev
@@ -253,7 +260,7 @@ jobs:
   bugfix:
     name: bugfix check
     needs: [prepare, image]
-    if: inputs.BUGFIX
+    if: inputs.BUGFIX && inputs.LOCATION != 'dev-only'
     runs-on:
       - linux-amd64
     timeout-minutes: 240
@@ -303,7 +310,7 @@ jobs:
   validate-pg:
     name: validate pg
     needs: [prepare, image]
-    if: ${{ !cancelled() && (inputs.EVERYTHING || needs.prepare.outputs.pg == 'true') }}
+    if: ${{ !cancelled() && inputs.LOCATION != 'dev-only' && (inputs.EVERYTHING || needs.prepare.outputs.pg == 'true') }}
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
       LOCATION: linux-amd64

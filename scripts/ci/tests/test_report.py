@@ -55,6 +55,7 @@ def test_run_options_name_the_ticked_boxes():
                                "DUCKDB_SANITIZERS": "true", "PR_SHA": "abc"}) == (
         "duckdb sanitizers, everything, all architectures")
     assert report.run_options({"LOCATION": "linux-amd64", "BUGFIX": False}) == "default"
+    assert report.run_options({"LOCATION": "dev-only", "CORPUS": True}) == "corpus, dev only"
 
 
 def test_a_failed_job_is_listed_only_when_its_test_lines_do_not_show_it():

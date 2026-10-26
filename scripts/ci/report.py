@@ -194,8 +194,9 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None, subje
 def run_options(inputs):
     opts = sorted(name.lower().replace("_", " ") for name, value in inputs.items()
                   if value is True or value == "true")
-    if inputs.get("LOCATION") == "all":
-        opts.append("all architectures")
+    location = {"all": "all architectures", "dev-only": "dev only"}.get(inputs.get("LOCATION"))
+    if location:
+        opts.append(location)
     return ", ".join(opts) or "default"
 
 

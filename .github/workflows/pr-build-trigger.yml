@@ -41,6 +41,7 @@ jobs:
               '_Check **Trigger Jobs** to start. Optionally enable extra checks below._',
               '',
               '#### Extra (optional; every config runs the suites the diff selects, the sanitizers without DuckDB\'s and iresearch\'s)',
+              '- [ ] Dev only (the amd64 dev config alone; reports as "serenedb | dev only", which is not the merge check)',
               '- [ ] All architectures (arm64 tests too; arm64 always builds)',
               '- [ ] Ignore diff and coverage mapping, run everything',
               '- [ ] DuckDB sanitizers (the DuckDB suites the diff selects in asan, tsan and msan too)',
@@ -118,9 +119,10 @@ jobs:
             const biglake = isChecked('BigLake tests');
             const duckdbSanitizers = isChecked('DuckDB sanitizers');
             const iresearchSanitizers = isChecked('iresearch sanitizers');
+            const devOnly = isChecked('Dev only');
 
             const { owner, repo } = context.repo;
-            const statusContext = 'serenedb | build & test';
+            const statusContext = devOnly ? 'serenedb | dev only' : 'serenedb | build & test';
 
             await github.rest.repos.createCommitStatus({
               owner, repo, sha,
@@ -144,7 +146,7 @@ jobs:
               workflow_id: 'build-manual.yml',
               ref: dispatchRef,
               inputs: {
-                LOCATION: allArch ? 'all' : 'linux-amd64',
+                LOCATION: devOnly ? 'dev-only' : allArch ? 'all' : 'linux-amd64',
                 EVERYTHING: everything.toString(),
                 BUGFIX: bugfix.toString(),
                 CORPUS: corpus.toString(),
@@ -190,6 +192,7 @@ jobs:
               biglake && 'biglake',
               bugfix && 'bugfix',
               corpus && 'corpus',
+              devOnly && 'dev only',
               duckdbSanitizers && 'duckdb sanitizers',
               everything && 'everything',
               iresearchSanitizers && 'iresearch sanitizers',

@@ -1405,6 +1405,7 @@ TEST_P(TermDictTest, walks_read_ahead) {
     static_cast<const irs::term_dict::TermReaderImpl&>(*reader);
   ASSERT_GT(impl.Blocks(), 200);
   auto& prefetched = counting.Prefetched();
+  prefetched.clear();
 
   const auto& entries = fields[0].entries;
   for (size_t i = 0; i < entries.size(); i += 37) {

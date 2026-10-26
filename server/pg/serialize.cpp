@@ -1494,6 +1494,42 @@ bool RecordHasArrayTrigger(const duckdb::LogicalType& type,
   return NeedsQuotingIn<WrapContext::Array>(children[0].second, child, row);
 }
 
+ArrayWrap ArrayWrapOf(const duckdb::LogicalType& struct_type) {
+  const auto& children = duckdb::StructType::GetChildTypes(struct_type);
+  if (children.size() != 1) {
+    return children.empty() ? ArrayWrap::Never : ArrayWrap::Always;
+  }
+  const auto& type = children[0].second;
+  switch (type.id()) {
+    using enum duckdb::LogicalTypeId;
+    case BIGINT:
+      return IsTid(type) ? ArrayWrap::ByValue : ArrayWrap::Never;
+    case DECIMAL:
+      return IsMoney(type) ? ArrayWrap::ByValue : ArrayWrap::Never;
+    case DATE:
+    case BOOLEAN:
+    case TINYINT:
+    case SMALLINT:
+    case INTEGER:
+    case UTINYINT:
+    case USMALLINT:
+    case UINTEGER:
+    case UBIGINT:
+    case HUGEINT:
+    case UHUGEINT:
+    case FLOAT:
+    case DOUBLE:
+    case TIME:
+    case TIME_NS:
+    case TIME_TZ:
+    case UUID:
+    case BIT:
+      return ArrayWrap::Never;
+    default:
+      return ArrayWrap::ByValue;
+  }
+}
+
 template<VarFormat Format>
 const RecordSerializers& GetSerializersCache(
   SerializationContext& context, const duckdb::LogicalType& struct_type) {
@@ -1514,6 +1550,7 @@ const RecordSerializers& GetSerializersCache(
           GetSerialization(child_type, VarFormat::Text, context));
       }
       context.in_record = saved;
+      cached.array_wrap = ArrayWrapOf(struct_type);
     } else {
       cached.oids.reserve(children.size());
       for (const auto& [_, child_type] : children) {
@@ -1548,7 +1585,12 @@ struct RecordTextCore {
     };
 
     if constexpr (InContainer == WrapContext::Array) {
-      if (RecordHasArrayTrigger(vdata.logical_type, vdata, row)) {
+      SDB_ASSERT(cache.array_wrap == ArrayWrap::ByValue ||
+                 RecordHasArrayTrigger(vdata.logical_type, vdata, row) ==
+                   (cache.array_wrap == ArrayWrap::Always));
+      if (cache.array_wrap == ArrayWrap::Always ||
+          (cache.array_wrap == ArrayWrap::ByValue &&
+           RecordHasArrayTrigger(vdata.logical_type, vdata, row))) {
         WriteWrapped<WrapContext::Array>(context, emit_inside);
       } else {
         emit_inside();

@@ -61,9 +61,16 @@ using SerializationFunction = bool (*)(
   struct SerializationContext& context,
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row);
 
+enum class ArrayWrap : uint8_t {
+  ByValue,
+  Never,
+  Always,
+};
+
 struct RecordSerializers {
   std::vector<SerializationFunction> functions;
   std::vector<uint64_t> oids;  // populated for binary, empty for text
+  ArrayWrap array_wrap = ArrayWrap::ByValue;
 };
 
 using TypesSerializationCache =

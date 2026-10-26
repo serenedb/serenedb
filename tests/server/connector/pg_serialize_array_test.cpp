@@ -63,8 +63,7 @@ class PgSerializeArrayTest : public ::testing::Test {
 
   void SetUp() final {
     // flush_size=1 so every Commit(true) drains via the send callback into
-    // `_collected`. types_cache is only consulted by STRUCT serialization;
-    // initialize it for safety even though our test types don't need it.
+    // `_collected`.
     _buffer = std::make_unique<sdb::message::Buffer>(
       /*min_growth=*/64, /*max_growth=*/4096, /*flush_size=*/1,
       [this](sdb::message::SequenceView view) {
@@ -72,7 +71,7 @@ class PgSerializeArrayTest : public ::testing::Test {
           _collected.append(static_cast<const char*>(buf.data()), buf.size());
         }
       });
-    _ctx.types_cache = std::make_unique<sdb::pg::TypesSerializationCache>();
+    _ctx.caches = std::make_unique<sdb::pg::SerializationCaches>();
   }
 
   // Run one column serializer through a Writer (the wire layer's per-row unit)

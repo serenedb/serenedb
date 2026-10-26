@@ -1270,7 +1270,8 @@ template<RegKind Kind>
 struct RegTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx, RegOut(*ctx.session, Kind, static_cast<uint64_t>(oid)));
+    EmitEscaped(ctx,
+                RegOut(*ctx.caches->session, Kind, static_cast<uint64_t>(oid)));
   }
 };
 
@@ -1554,15 +1555,17 @@ IRS_NO_INLINE void FillSerializers(SerializationContext& context,
   }
 }
 
+IRS_FORCE_INLINE SerializationCaches& Caches(SerializationContext& context) {
+  if (!context.caches) {
+    context.caches = std::make_unique<SerializationCaches>();
+  }
+  return *context.caches;
+}
+
 template<VarFormat Format>
 const RecordSerializers& GetSerializersCache(
   SerializationContext& context, const duckdb::LogicalType& struct_type) {
-  // Lazy: only record-typed results pay for the cache; flat-typed queries
-  // (the overwhelming majority) skip a per-query map allocation.
-  if (!context.types_cache) {
-    context.types_cache = std::make_unique<TypesSerializationCache>();
-  }
-  auto [it, inserted] = context.types_cache->try_emplace(&struct_type);
+  auto [it, inserted] = Caches(context).types.try_emplace(&struct_type);
   if (inserted) {
     FillSerializers<Format>(context, struct_type, it->second);
   }
@@ -2409,8 +2412,12 @@ SerializationFunction SelectFieldSerializer(VarFormat format,
 }
 
 void AttachSession(VarFormat format, SerializationContext& context) {
-  if (format != VarFormat::Binary && !context.session) {
-    context.session =
+  if (format == VarFormat::Binary) {
+    return;
+  }
+  auto& caches = Caches(context);
+  if (!caches.session) {
+    caches.session =
       std::make_unique<const Session>(MakeSession(context.client));
   }
 }
@@ -2794,8 +2801,7 @@ void FillContext(const Config& config, SerializationContext& context) {
     context.zone_lut.reset();
   }
   context.client = &config.GetClientContext();
-  // types_cache stays lazy (GetSerializersCache); record results only.
-  context.types_cache.reset();
+  context.caches.reset();
 }
 
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,

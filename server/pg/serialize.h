@@ -76,12 +76,17 @@ struct RecordSerializers {
 using TypesSerializationCache =
   irs::containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>;
 
+struct SerializationCaches {
+  TypesSerializationCache types;
+  std::unique_ptr<const Session> session;
+};
+
 struct SerializationContext {
   message::Writer* writer = nullptr;
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
+  // The session a regclass / regnamespace rendering resolves through.
   duckdb::ClientContext* client = nullptr;
-  std::unique_ptr<const Session> session;
   std::string_view quote_seq = "\"";  // can be mixed with backslashes
   uint32_t backslash_count = 1;
   bool in_record = false;
@@ -96,7 +101,7 @@ struct SerializationContext {
   // Null means UTC (the default) and keeps the cheap ToString + "+00" path.
   duckdb::unique_ptr<duckdb::TimeZone> time_zone;
   duckdb::shared_ptr<const duckdb::ZoneLUT> zone_lut;
-  std::unique_ptr<TypesSerializationCache> types_cache;
+  std::unique_ptr<SerializationCaches> caches;
   std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded;
 };
 

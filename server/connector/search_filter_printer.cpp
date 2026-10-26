@@ -39,6 +39,7 @@
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/term_ranges_filter.hpp>
 #include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
@@ -449,6 +450,13 @@ struct FilterPrinter {
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Range"] =
         RangeValue(f.options().range, FieldKind(f.field_id()));
+      return node;
+    }
+    if (type == Type<ByTermRanges>::id()) {
+      const auto& f = downCast<const ByTermRanges>(filter);
+      ExplainNode node{"Term Ranges"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Ranges"] = absl::StrCat(f.options().ranges.size());
       return node;
     }
     if (type == Type<ByGranularRange>::id()) {

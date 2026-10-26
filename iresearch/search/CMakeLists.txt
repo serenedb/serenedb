@@ -38,6 +38,7 @@ target_sources(
         filters/range_rules.cpp
         filters/regexp_filter.cpp
         filters/term_filter.cpp
+        filters/term_ranges_filter.cpp
         filters/wildcard_filter.cpp
         filters/wildcard_ngram_filter.cpp
         hits/make.cpp

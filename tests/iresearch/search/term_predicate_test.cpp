@@ -31,6 +31,7 @@
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/term_ranges_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
@@ -158,6 +159,29 @@ TEST(term_predicate_test, by_range) {
     EXPECT_TRUE(Accepts(*pred, "b"));
     EXPECT_FALSE(Accepts(*pred, "ba"));
   }
+}
+
+TEST(term_predicate_test, by_term_ranges) {
+  irs::ByTermRanges f;
+  auto& ranges = f.mutable_options()->ranges;
+  ranges.emplace_back(irs::bstring{B("b")}, irs::bstring{B("d")});
+  ranges.emplace_back(irs::bstring{B("f")}, irs::bstring{B("f")});
+  ranges.emplace_back(irs::bstring{B("x")}, irs::bstring{B("xz")});
+
+  const auto pred = f.CompileTermPredicate();
+  ASSERT_NE(nullptr, pred);
+  EXPECT_TRUE(Accepts(*pred, "b"));
+  EXPECT_TRUE(Accepts(*pred, "c"));
+  EXPECT_TRUE(Accepts(*pred, "d"));
+  EXPECT_TRUE(Accepts(*pred, "f"));
+  EXPECT_TRUE(Accepts(*pred, "xy"));
+  EXPECT_FALSE(Accepts(*pred, ""));
+  EXPECT_FALSE(Accepts(*pred, "a"));
+  EXPECT_FALSE(Accepts(*pred, "da"));
+  EXPECT_FALSE(Accepts(*pred, "e"));
+  EXPECT_FALSE(Accepts(*pred, "fa"));
+  EXPECT_FALSE(Accepts(*pred, "xza"));
+  EXPECT_FALSE(Accepts(*pred, "y"));
 }
 
 TEST(term_predicate_test, automaton) {

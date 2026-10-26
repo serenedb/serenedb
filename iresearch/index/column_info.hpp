@@ -34,6 +34,11 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
+namespace curve {
+
+struct Options;
+
+}  // namespace curve
 
 enum class VectorMetric : uint8_t {
   L2Sqr = 0,
@@ -191,6 +196,7 @@ class IndexFieldOptions {
   virtual ColumnOptions GetColumnOptions(field_id id) const = 0;
   virtual field_id GetNormColumnId(field_id id) const = 0;
   virtual bool HasField(field_id) const { return true; }
+  virtual const curve::Options* TrimmedCurve(field_id) const { return nullptr; }
 
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --

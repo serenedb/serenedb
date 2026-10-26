@@ -12,6 +12,7 @@ target_sources(
         index_reader.cpp
         index_writer.cpp
         inverter/columnar_flush.cpp
+        inverter/curve_term_reader.cpp
         inverter/fields_inverter.cpp
         iterators.cpp
         merge_writer.cpp

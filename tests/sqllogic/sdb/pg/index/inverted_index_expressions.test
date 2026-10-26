@@ -1599,6 +1599,9 @@ QUERY PLAN
 │ ~5 rows                                  │
 ╰──────────────────────────────────────────╯
 
+statement ok
+VACUUM (COMPACT_TABLE) inc_e_read;
+
 query
 SELECT max(lower(title)) AS m, min(n + 1) AS lo FROM inc_e_read_idx;
 ----
@@ -1609,17 +1612,9 @@ query
 EXPLAIN SELECT max(lower(title)), min(n + 1) FROM inc_e_read_idx;
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ──────╮
-│ Aggregates: max(#0),       │
-│             min(#1)        │
-│ ~1 row                     │
-╰──────────────┬─────────────╯
-╭─ IRESEARCH_SCAN ───────────╮
-│ Index: inc_e_read_idx      │
-│ Projections: lower(title), │
-│              n + 1         │
-│ ~5 rows                    │
-╰────────────────────────────╯
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
 
 query
 SELECT id, row_number() OVER (PARTITION BY lower(title) ORDER BY n + 1) AS r FROM inc_e_read_idx ORDER BY id;

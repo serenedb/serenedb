@@ -1,0 +1,68 @@
+control substitution on
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE jbsr_out (job TEXT, quotient INT, crosses BOOLEAN);
+
+
+statement ok
+CREATE JOB jbsr_checkpointed AFTER 1 HOUR AS 'INSERT INTO jbsr_out SELECT ''checkpointed'', 7 / 2, box ''(1,1),(0,0)'' ?# box ''(2,2),(1,1)''';
+
+
+statement ok
+FORCE CHECKPOINT;
+
+
+statement ok
+CREATE JOB jbsr_logged AFTER 1 HOUR AS 'INSERT INTO jbsr_out SELECT ''logged'', 5 / 2, box ''(1,1),(0,0)'' ?# box ''(3,3),(2,2)''';
+
+
+statement ok
+CREATE JOB jbsr_inline AFTER 1 HOUR AS INSERT INTO jbsr_out SELECT 'inline', 9 / 2, box '(1,1),(0,0)' ?# box '(2,2),(1,1)';
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection r1
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT job_name FROM sdb_jobs() WHERE starts_with(job_name, 'jbsr_') ORDER BY job_name;
+----
+job_name
+jbsr_checkpointed
+jbsr_inline
+jbsr_logged
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_checkpointed;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_logged;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_inline;
+
+
+connection r1
+query
+SELECT job, quotient, crosses FROM jbsr_out ORDER BY job;
+----
+job	quotient	crosses
+checkpointed	3	t
+inline	4	t
+logged	2	f

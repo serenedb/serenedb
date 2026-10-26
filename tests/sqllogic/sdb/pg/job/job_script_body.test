@@ -111,6 +111,22 @@ DROP JOB IF EXISTS jsb_truncate_gone_scheduled;
 
 
 statement ok
+DROP JOB IF EXISTS jsb_settings_division;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_settings_quoted;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_settings_inline;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_settings;
+
+
+statement ok
 DROP TABLE IF EXISTS jsb_c;
 
 
@@ -790,3 +806,56 @@ DROP TABLE jsb_a;
 
 statement ok
 DROP TABLE jsb_b;
+
+
+statement ok
+CREATE TABLE jsb_settings (job TEXT, quotient INT, crosses BOOLEAN);
+
+
+statement ok
+CREATE JOB jsb_settings_division AFTER 1 HOUR AS $$INSERT INTO jsb_settings SELECT 'division', 7 / 2, false$$;
+
+
+statement ok
+CREATE JOB jsb_settings_quoted AFTER 1 HOUR AS $$INSERT INTO jsb_settings SELECT 'quoted', 5 / 2, box '(1,1),(0,0)' ?# box '(2,2),(1,1)'$$;
+
+
+statement ok
+CREATE JOB jsb_settings_inline AFTER 1 HOUR AS INSERT INTO jsb_settings SELECT 'inline', 9 / 2, box '(1,1),(0,0)' ?# box '(3,3),(2,2)';
+
+
+statement ok
+EXECUTE JOB jsb_settings_division;
+
+
+statement ok
+EXECUTE JOB jsb_settings_quoted;
+
+
+statement ok
+EXECUTE JOB jsb_settings_inline;
+
+
+query
+SELECT job, quotient, crosses FROM jsb_settings ORDER BY job;
+----
+job	quotient	crosses
+division	3	f
+inline	4	f
+quoted	2	t
+
+
+statement ok
+DROP JOB jsb_settings_division;
+
+
+statement ok
+DROP JOB jsb_settings_quoted;
+
+
+statement ok
+DROP JOB jsb_settings_inline;
+
+
+statement ok
+DROP TABLE jsb_settings;

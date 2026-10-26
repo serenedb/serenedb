@@ -98,7 +98,7 @@ A job runs **as its owner**, the role that created it, in a session of its own: 
 
 <SqlLogicTest id="sql/statements/create_job/index/example_005" />
 
-The job session's search path holds the job's schema alone, without `"$user"` and `public`, and the session reads **global** settings; session settings of the role that created the job do not apply. Built-in functions and the system catalogs stay reachable, but a job outside `public` must qualify the tables of other schemas, `public` included. A body that names a table it cannot find still creates the job, and fails when it runs:
+The job session's search path holds the job's schema alone, without `"$user"` and `public`, and the session reads **global** settings, which also decide how the stored body is parsed (`integer_division`, the `?` operators); session settings of the role that created the job do not apply. Built-in functions and the system catalogs stay reachable, but a job outside `public` must qualify the tables of other schemas, `public` included. A body that names a table it cannot find still creates the job, and fails when it runs:
 
 <SqlLogicTest id="sql/statements/create_job/index/example_010" />
 

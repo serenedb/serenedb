@@ -33,6 +33,7 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/operator/comparison_operators.hpp>
+#include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types/bit.hpp>
 #include <duckdb/common/types/cast_helpers.hpp>
 #include <duckdb/common/types/timestamp.hpp>
@@ -47,10 +48,13 @@
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_data.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
+#include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/planner_extension.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -476,6 +480,17 @@ void SystemUserFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                      : duckdb::Value{system_user},
                    duckdb::count_t(args.size()));
+}
+
+duckdb::GetSQLValueFunctionReturnType SystemUserValueFunction(
+  duckdb::PlannerExtensionInput&, const std::string& column_name,
+  duckdb::unique_ptr<duckdb::ParsedExpression>& result) {
+  if (duckdb::StringUtil::CIEquals(column_name, "system_user")) {
+    result = duckdb::make_uniq<duckdb::FunctionExpression>(
+      duckdb::Identifier{"system_user"},
+      duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>{});
+  }
+  return duckdb::GetSQLValueFunctionReturnType::CONTINUE_BINDING;
 }
 
 void PgBackendPidFunction(duckdb::DataChunk& args,
@@ -1634,6 +1649,10 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(loader, pg_catalog, "system_user", CONSISTENT_WITHIN_QUERY,
                  nullptr,
                  {duckdb::ScalarFunction{{}, text, SystemUserFunction}});
+  duckdb::PlannerExtension::Register(
+    duckdb::DBConfig::GetConfig(loader.GetDatabaseInstance()),
+    duckdb::PlannerExtension{.get_sql_value_function =
+                               &SystemUserValueFunction});
 }
 
 }  // namespace sdb::pg

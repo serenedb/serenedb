@@ -330,10 +330,8 @@ void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
 }
 
 void SereneDBClientState::CloseProgressSource() {
-  if (progress_source) {
-    progress_source->Detach();
-    pg::ProgressRegistry::Instance().Unregister(progress_source.get());
-  }
+  progress_source->Detach();
+  pg::ProgressRegistry::Instance().Unregister(progress_source.get());
 }
 
 void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {

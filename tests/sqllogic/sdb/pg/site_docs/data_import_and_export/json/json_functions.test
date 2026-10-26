@@ -686,20 +686,6 @@ key
 moons
 name
 
-# DOCS_TEST: example_054
-
-# DOCS_TEST_BODY
-
-query
-SELECT *
-FROM json_to_recordset('[{"name": "mercury", "moons": 0}, {"name": "earth", "moons": 1, "rings": false}]')
-    AS planet(name TEXT, moons INTEGER)
-ORDER BY moons;
-----
-name	moons
-mercury	0
-earth	1
-
 # DOCS_TEST: example_055
 
 # DOCS_TEST_BODY

@@ -273,17 +273,13 @@ These functions turn JSON objects into rows.
 
 | Function                                                  | Description                                                                                                                                                  |
 | :-------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `json_to_record(json)`                                    | One row from the top-level object, with the columns of a [column definition list](../../sql/query_syntax/from_and_join/index.md#column-definition-lists). |
-| `json_to_recordset(json)`                                 | One row per object of the top-level array, with the columns of a column definition list.                                                                    |
 | `json_populate_record(base, json[, use_json_as_text])`    | A value of the composite type of `base` built from the top-level object. Members missing from `json` take their values from `base`.                         |
 | `json_populate_recordset(base, json[, use_json_as_text])` | One row of the composite type of `base` per object of the top-level array, missing members taken from `base`.                                               |
 
 A column takes the member of the same name, matched case-sensitively; a missing member or a JSON `null` gives `NULL`. A JSON string is converted to the column type from its text without quotes and escapes, any other value from its JSON text, so a `TEXT` column takes a nested array or object as JSON text and a `JSON` column takes the value as JSON. An array column takes a JSON array, a composite column takes a JSON object, and either also takes a string in the type's text form. A value that does not convert to its column type is an error. `use_json_as_text` is accepted and has no effect.
 
-For a `NULL` input, `json_to_record` returns a row of `NULL` values and `json_populate_record` returns `base`; `json_to_recordset` and `json_populate_recordset` return no rows. `json_populate_record` and `json_populate_recordset` also work in the select list, where they return records.
+For a `NULL` input, `json_populate_record` returns `base` and `json_populate_recordset` returns no rows. Both also work in the select list, where they return records.
 
-Examples:
-
-<SqlLogicTest id="data_import_and_export/json/json_functions/example_054" />
+Example:
 
 <SqlLogicTest id="data_import_and_export/json/json_functions/example_055" />

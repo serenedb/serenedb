@@ -1097,12 +1097,6 @@ class RecordWriter {
   std::vector<DeferredField> _deferred;
 };
 
-enum class JsonRecordFunction : uint8_t {
-  ToRecord,
-  ToRecordset,
-  PopulateRecordset,
-};
-
 struct JsonRecordState final : duckdb::LocalTableFunctionState {
   JsonRecordState(duckdb::ClientContext& context, const RecordLayout& layout)
     : writer{context, layout}, width{layout.Fields().size()} {}
@@ -1134,48 +1128,37 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> InitJsonRecordState(
     context.client, input.bind_data->Cast<JsonRecordBindData>().layout);
 }
 
-template<JsonRecordFunction Function>
 void ParseRecords(simdjson::ondemand::document& doc, const RecordLayout& layout,
                   JsonRecordState& state) {
   const auto kind = KindOf(Unwrap(doc.type()));
-  if constexpr (Function == JsonRecordFunction::ToRecord) {
-    if (kind != JsonKind::Object) {
-      ThrowCompositeMismatch(kind);
+  if (kind == JsonKind::Object) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("cannot call json_populate_recordset on an object"));
+  }
+  if (kind != JsonKind::Array) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("cannot call json_populate_recordset on a scalar"));
+  }
+  for (auto element_result : Unwrap(doc.get_array())) {
+    auto element = Unwrap(std::move(element_result));
+    if (KindOf(Unwrap(element.type())) != JsonKind::Object) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG(
+          "argument of json_populate_recordset must be an array of objects"));
     }
-    layout.Scan(Unwrap(doc.get_object()), state.AddRecord());
-  } else {
-    constexpr std::string_view kName =
-      Function == JsonRecordFunction::ToRecordset ? "json_to_recordset"
-                                                  : "json_populate_recordset";
-    if (kind == JsonKind::Object) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("cannot call ", kName, " on an object"));
-    }
-    if (kind != JsonKind::Array) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("cannot call ", kName, " on a scalar"));
-    }
-    for (auto element_result : Unwrap(doc.get_array())) {
-      auto element = Unwrap(std::move(element_result));
-      if (KindOf(Unwrap(element.type())) != JsonKind::Object) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("argument of ", kName, " must be an array of objects"));
-      }
-      layout.Scan(Unwrap(element.get_object()), state.AddRecord());
-    }
+    layout.Scan(Unwrap(element.get_object()), state.AddRecord());
   }
 }
 
-template<JsonRecordFunction Function>
-duckdb::OperatorResultType JsonRecordFunctionImpl(
+duckdb::OperatorResultType JsonPopulateRecordsetFunction(
   duckdb::ExecutionContext&, duckdb::TableFunctionInput& data,
   duckdb::DataChunk& input, duckdb::DataChunk& output) {
-  constexpr bool kPopulate = Function == JsonRecordFunction::PopulateRecordset;
   auto& state = data.local_state->Cast<JsonRecordState>();
   const auto& layout = data.bind_data->Cast<JsonRecordBindData>().layout;
   duckdb::UnifiedVectorFormat json;
-  input.data[kPopulate ? 1 : 0].ToUnifiedFormat(json);
+  input.data[1].ToUnifiedFormat(json);
   const auto* jsons =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(json);
   state.writer.Reset();
@@ -1193,19 +1176,14 @@ duckdb::OperatorResultType JsonRecordFunctionImpl(
     state.fields.clear();
     state.records = 0;
     state.next_record = 0;
-    if constexpr (kPopulate) {
-      state.base = input.data[0].GetValue(row);
-    }
+    state.base = input.data[0].GetValue(row);
     const auto index = json.sel->get_index(row);
     if (!json.validity.RowIsValid(index)) {
-      if constexpr (Function == JsonRecordFunction::ToRecord) {
-        state.AddRecord();
-      }
       continue;
     }
     state.parser.PrepareJson(AsView(jsons[index]));
     auto doc = state.parser.GetJsonDocument();
-    ParseRecords<Function>(doc, layout, state);
+    ParseRecords(doc, layout, state);
   }
   if (count == 0) {
     output.SetChildCardinality(0);
@@ -1215,19 +1193,6 @@ duckdb::OperatorResultType JsonRecordFunctionImpl(
   state.writer.Flush(output.data, count);
   output.SetChildCardinality(count);
   return duckdb::OperatorResultType::HAVE_MORE_OUTPUT;
-}
-
-duckdb::unique_ptr<duckdb::FunctionData> JsonToRecordBind(
-  duckdb::ClientContext&, duckdb::TableFunctionBindInput& input,
-  duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::Identifier>& names) {
-  names = input.ref.column_name_alias;
-  return_types = input.ref.column_types;
-  duckdb::child_list_t<duckdb::LogicalType> columns;
-  for (size_t i = 0; i < names.size(); ++i) {
-    columns.emplace_back(names[i], return_types[i]);
-  }
-  return duckdb::make_uniq<JsonRecordBindData>(RecordLayout{columns});
 }
 
 const duckdb::LogicalType& RowType(const duckdb::LogicalType& type,
@@ -1253,16 +1218,17 @@ duckdb::unique_ptr<duckdb::FunctionData> JsonPopulateRecordsetBind(
   return duckdb::make_uniq<JsonRecordBindData>(RecordLayout{children});
 }
 
-template<JsonRecordFunction Function>
-duckdb::TableFunction MakeJsonRecordFunction(
-  std::string_view name, const duckdb::vector<duckdb::LogicalType>& arguments,
-  duckdb::table_function_bind_t bind,
-  duckdb::TableFunctionReturnType return_type) {
-  duckdb::TableFunction function{
-    duckdb::Identifier{name}, arguments, nullptr, bind, nullptr,
-    InitJsonRecordState};
-  function.in_out_function = JsonRecordFunctionImpl<Function>;
-  function.return_type = return_type;
+duckdb::TableFunction MakeJsonPopulateRecordsetFunction(
+  const duckdb::vector<duckdb::LogicalType>& arguments) {
+  duckdb::TableFunction function{duckdb::Identifier{"json_populate_recordset"},
+                                 arguments,
+                                 nullptr,
+                                 JsonPopulateRecordsetBind,
+                                 nullptr,
+                                 InitJsonRecordState};
+  function.in_out_function = JsonPopulateRecordsetFunction;
+  function.return_type =
+    duckdb::TableFunctionReturnType::TABLE_RETURNING_FUNCTION;
   return function;
 }
 
@@ -1622,22 +1588,13 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
   loader.RegisterFunction(MakeJsonSetFunction<JsonSetFunction::ObjectKeys>(
     "json_object_keys", SET_RETURNING_FUNCTION));
 
-  loader.RegisterFunction(MakeJsonRecordFunction<JsonRecordFunction::ToRecord>(
-    "json_to_record", {JSON}, JsonToRecordBind, RECORD_RETURNING_FUNCTION));
-  loader.RegisterFunction(
-    MakeJsonRecordFunction<JsonRecordFunction::ToRecordset>(
-      "json_to_recordset", {JSON}, JsonToRecordBind,
-      RECORD_RETURNING_FUNCTION));
   {
     duckdb::TableFunctionSet set{"json_populate_recordset"};
     for (const auto& arguments :
          {duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::ANY, JSON},
           duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::ANY, JSON,
                                               duckdb::LogicalType::BOOLEAN}}) {
-      set.AddFunction(
-        MakeJsonRecordFunction<JsonRecordFunction::PopulateRecordset>(
-          "json_populate_recordset", arguments, JsonPopulateRecordsetBind,
-          TABLE_RETURNING_FUNCTION));
+      set.AddFunction(MakeJsonPopulateRecordsetFunction(arguments));
     }
     loader.RegisterFunction(std::move(set));
   }

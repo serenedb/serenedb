@@ -242,7 +242,7 @@ statement ok
 SELECT * FROM generate_series(1,3);
 
 # queries: Column Definition Lists
-statement ok
+statement error
 SELECT * FROM json_to_record('{"a":1}') AS t(a int);
 
 # queries: Lateral Subqueries
@@ -2239,7 +2239,7 @@ statement error
 SELECT * FROM jsonb_populate_recordset(null::record, '[{"a":1}]'::jsonb);
 
 # op_json: json_to_record
-statement ok
+statement error
 SELECT * FROM json_to_record('{"a":1}'::json) AS x(a integer);
 
 # op_json: jsonb_to_record
@@ -2247,7 +2247,7 @@ statement error
 SELECT * FROM jsonb_to_record('{"a":1}'::jsonb) AS x(a int);
 
 # op_json: json_to_recordset
-statement ok
+statement error
 SELECT * FROM json_to_recordset('[{"a":1}]'::json) AS x(a int);
 
 # op_json: jsonb_to_recordset

@@ -111,7 +111,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Semijoins                  | Yes           |  |
 | Antijoins                  | Yes           |                |
 | Table Functions            | Yes           | |
-| Column Definition Lists    | Yes           | [Column definition lists](../sql/query_syntax/from_and_join/index.md#column-definition-lists) |
+| Column Definition Lists    | No            |                |
 | Lateral Subqueries         | Yes           |                |
 | User-Specified Aliases     | Yes           |                |
 | GROUP BY                   | Yes           |  |
@@ -609,9 +609,9 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | jsonb_populate_record | No |  |
 | json_populate_recordset | Yes |  |
 | jsonb_populate_recordset | No |  |
-| json_to_record | Yes |  |
+| json_to_record | No | Use `json_populate_record` |
 | jsonb_to_record | No |  |
-| json_to_recordset | Yes |  |
+| json_to_recordset | No | Use `json_populate_recordset` |
 | jsonb_to_recordset | No |  |
 | jsonb_set | No |  |
 | jsonb_set_lax | No |  |

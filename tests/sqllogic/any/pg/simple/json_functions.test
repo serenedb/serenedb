@@ -239,254 +239,86 @@ SELECT * FROM json_object_keys('null');
 db error: ERROR: cannot call json_object_keys on a scalar
 
 
-# json_to_record and column definition lists
+# JSON values converted to column types
+
+statement ok
+CREATE TYPE jsonfn_kinds AS (a int, b text, c text, d json, g boolean, h numeric(10,2), i int, j json, n text, missing text)
+
 
 query
-SELECT * FROM json_to_record('{"a": 1, "b": "x\u0041", "c": [1,  2], "d": {"e": "f"}, "g": true, "h": 1.5, "i": "2", "j": "q\u0041\"z", "n": null}') AS t(a int, b text, c text, d json, g boolean, h numeric(10,2), i int, j json, n text, missing text);
+SELECT * FROM json_populate_record(NULL::jsonfn_kinds, '{"a": 1, "b": "x\u0041", "c": [1,  2], "d": {"e": "f"}, "g": true, "h": 1.5, "i": "2", "j": "q\u0041\"z", "n": null}');
 ----
 a	b	c	d	g	h	i	j	n	missing
 1	xA	[1,  2]	{"e": "f"}	t	1.50	2	"qA\\"z"	NULL	NULL
 
 
-query
-SELECT * FROM json_to_record('{"a": 1, "b": "x"}') AS (a int, b text);
-----
-a	b
-1	x
-
-
-query
-SELECT t.b, t.a FROM json_to_record('{"a": 1, "b": "x"}') t(a int, b text);
-----
-b	a
-x	1
-
-
-query
-SELECT json_to_record.a FROM json_to_record('{"a": 5}') AS (a int);
-----
-a
-5
+statement ok
+DROP TYPE jsonfn_kinds
 
 
 statement ok
-CREATE VIEW jsonfn_view AS SELECT * FROM json_to_record('{"a": 6, "b": "v"}') AS t(a int, b text)
+CREATE TYPE jsonfn_upper AS ("A" int)
 
 
 query
-SELECT * FROM jsonfn_view;
-----
-a	b
-6	v
-
-
-onlyif serenedb
-query
-SELECT pg_get_viewdef('jsonfn_view');
-----
-pg_get_viewdef
-SELECT * FROM json_to_record('{"a": 6, "b": "v"}') AS t(a INTEGER, b text);
-
-
-statement ok
-DROP VIEW jsonfn_view
-
-
-query
-SELECT * FROM json_to_record('{"a": 1, "A": 2}') AS t(A int);
-----
-a
-1
-
-
-query
-SELECT * FROM json_to_record('{"a": 1, "A": 2}') AS t("A" int);
+SELECT * FROM json_populate_record(NULL::jsonfn_upper, '{"a": 1, "A": 2}');
 ----
 A
 2
 
 
 query
-SELECT * FROM json_to_record('{"a": [1, 2, null], "b": "{3,4}", "c": [], "d": [["x", "y"]]}') AS t(a int[], b int[], c int[], d text[][]);
+SELECT a FROM json_populate_record(NULL::jsonfn_pair, '{"a": 1, "A": 2}');
+----
+a
+1
+
+
+statement ok
+DROP TYPE jsonfn_upper
+
+
+statement ok
+CREATE TYPE jsonfn_arrays AS (a int[], b int[], c int[], d text[][])
+
+
+query
+SELECT * FROM json_populate_record(NULL::jsonfn_arrays, '{"a": [1, 2, null], "b": "{3,4}", "c": [], "d": [["x", "y"]]}');
 ----
 a	b	c	d
 {1,2,NULL}	{3,4}	{}	{{x,y}}
 
 
-query
-SELECT * FROM json_to_record('{"p": {"a": 1, "b": "x", "z": 0}, "q": "(2,y)"}') AS t(p jsonfn_pair, q jsonfn_pair);
-----
-p	q
-(1,x)	(2,y)
-
-
-query
-SELECT * FROM json_to_record(NULL) AS t(a int, b text);
-----
-a	b
-NULL	NULL
-
-
-query
-SELECT d.id, r.a FROM jsonfn_docs d, json_to_record(json_build_object('a', d.id)) AS r(a int) ORDER BY d.id;
-----
-id	a
-1	1
-2	2
-3	3
-4	4
-
-
-statement error (invalid input syntax for type integer: "abc"|Could not convert string 'abc' to INT32)
-SELECT * FROM json_to_record('{"a": "abc"}') AS t(a int);
-
-
 statement error
-SELECT * FROM json_to_record('{"a": 1}') AS t(a int[]);
+SELECT * FROM json_populate_record(NULL::jsonfn_arrays, '{"a": 1}');
 ----
 db error: ERROR: expected JSON array
 HINT: See the value of key "a".
 
 
+statement ok
+DROP TYPE jsonfn_arrays
+
+
+statement ok
+CREATE TYPE jsonfn_nested AS (p jsonfn_pair, q jsonfn_pair)
+
+
+query
+SELECT * FROM json_populate_record(NULL::jsonfn_nested, '{"p": {"a": 1, "b": "x", "z": 0}, "q": "(2,y)"}');
+----
+p	q
+(1,x)	(2,y)
+
+
 statement error
-SELECT * FROM json_to_record('{"p": [1]}') AS t(p jsonfn_pair);
+SELECT * FROM json_populate_record(NULL::jsonfn_nested, '{"p": [1]}');
 ----
 db error: ERROR: cannot call populate_composite on an array
 
 
-statement error
-SELECT * FROM json_to_record('[1]') AS t(a int);
-----
-db error: ERROR: cannot call populate_composite on an array
-
-
-statement error
-SELECT * FROM json_to_record('1') AS t(a int);
-----
-db error: ERROR: cannot call populate_composite on a scalar
-
-
-statement error
-SELECT * FROM json_to_record('{"a": 1}');
-----
-db error: ERROR: a column definition list is required for functions returning "record"
-
-
-statement error
-SELECT * FROM generate_series(1, 2) AS t(a int);
-----
-db error: ERROR: a column definition list is only allowed for functions returning "record"
-
-
-statement error
-SELECT * FROM upper('x') AS t(a text);
-----
-db error: ERROR: a column definition list is only allowed for functions returning "record"
-
-
 statement ok
-CREATE FUNCTION jsonfn_outs(OUT a int, OUT b text) RETURNS record LANGUAGE sql AS 'SELECT 1, ''x''::text'
-
-
-statement error
-SELECT * FROM jsonfn_outs() AS t(a int, b text);
-----
-db error: ERROR: a column definition list is redundant for a function with OUT parameters
-
-
-statement ok
-CREATE FUNCTION jsonfn_one() RETURNS int LANGUAGE sql AS 'SELECT 1'
-
-
-statement error
-SELECT * FROM jsonfn_one() AS t(a int);
-----
-db error: ERROR: a column definition list is only allowed for functions returning "record"
-
-
-statement error WITH ORDINALITY cannot be used with a column definition list
-SELECT * FROM json_to_record('{"a": 1}') WITH ORDINALITY AS t(a int);
-
-
-statement error
-SELECT * FROM json_to_record('{"a": 1}') AS t(a int, a text);
-----
-db error: ERROR: column name "a" specified more than once
-
-
-statement error
-SELECT * FROM json_to_record('{"a": 1}') AS t(a, b)(c int);
-----
-db error: ERROR: syntax error at or near "("
-
-
-statement error
-SELECT * FROM json_to_record('{"a": 1}') AS t AS (a int);
-----
-db error: ERROR: syntax error at or near "AS"
-
-
-# json_to_recordset
-
-query
-SELECT * FROM json_to_recordset('[{"a": 1, "b": "x"}, {"a": 2}, {"b": "y", "c": 3}]') AS t(a int, b text) ORDER BY a NULLS LAST;
-----
-a	b
-1	x
-2	NULL
-NULL	y
-
-
-query
-SELECT count(*) AS n FROM json_to_recordset('[]') AS t(a int);
-----
-n
-0
-
-
-query
-SELECT count(*) AS n FROM json_to_recordset(NULL) AS t(a int);
-----
-n
-0
-
-
-query
-SELECT d.id, r.a FROM jsonfn_docs d, json_to_recordset(json_build_array(json_build_object('a', d.id), json_build_object('a', d.id * 10))) AS r(a int) ORDER BY d.id, r.a;
-----
-id	a
-1	1
-1	10
-2	2
-2	20
-3	3
-3	30
-4	4
-4	40
-
-
-statement error
-SELECT * FROM json_to_recordset('{"a": 1}') AS t(a int);
-----
-db error: ERROR: cannot call json_to_recordset on an object
-
-
-statement error
-SELECT * FROM json_to_recordset('1') AS t(a int);
-----
-db error: ERROR: cannot call json_to_recordset on a scalar
-
-
-statement error
-SELECT * FROM json_to_recordset('[1]') AS t(a int);
-----
-db error: ERROR: argument of json_to_recordset must be an array of objects
-
-
-statement error
-SELECT * FROM json_to_recordset('[{"a": 1}]');
-----
-db error: ERROR: a column definition list is required for functions returning "record"
+DROP TYPE jsonfn_nested
 
 
 # json_populate_record
@@ -647,10 +479,6 @@ SELECT * FROM json_populate_recordset(NULL::jsonfn_pair, '[1]');
 db error: ERROR: argument of json_populate_recordset must be an array of objects
 
 
-statement ok
-DROP FUNCTION jsonfn_outs
-
-
 # json_object
 
 query
@@ -684,10 +512,6 @@ statement error
 SELECT json_object(ARRAY[['a','1','x'],['b','2','y']]);
 ----
 db error: ERROR: array must have two columns
-
-
-statement ok
-DROP FUNCTION jsonfn_one
 
 
 statement ok

@@ -67,6 +67,10 @@ We need to manually overwrite the collation:
 
 <SqlLogicTest id="sql/expressions/collations/index/example_014" />
 
+`COLLATE "default"`, also written `COLLATE pg_catalog.default`, takes away an expression's own collation, such as its column's: the comparison then uses the other side's collation, or `default_collation` when neither side has one.
+
+<SqlLogicTest id="sql/expressions/collations/index/example_018" />
+
 ## Locale Collations
 
 The collations we have seen so far are not region-dependent and do not follow any specific regional rules. SereneDB also includes region- and language-specific collations. These follow the ordering and comparison rules of a specific language or region: the Unicode Collation Algorithm with the tailorings of the [CLDR](https://cldr.unicode.org/) locale data, the rules [ICU](https://icu.unicode.org/) implements. SereneDB carries its own implementation and the data it is generated from, not the ICU library.

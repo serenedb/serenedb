@@ -2889,9 +2889,8 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
       database = UserName();
     }
 
-    if (const auto max_conn = MaxConnections(_max_conn);
-        max_conn != 0 && _active &&
-        _active->load(std::memory_order_relaxed) > max_conn) {
+    if (_max_conn != 0 && _active &&
+        _active->load(std::memory_order_relaxed) > _max_conn) {
       WriteFatalResponse(this->_send,
                          SQL_ERROR_DATA(ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
                                         ERR_MSG("too many connections")));

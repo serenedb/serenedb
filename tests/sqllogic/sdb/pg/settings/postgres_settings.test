@@ -14,15 +14,6 @@ db error: ERROR: unrecognized configuration parameter "shared_buffers"<slt:ignor
 
 
 query
-SELECT name, setting, context, min_val, max_val
-FROM pg_settings
-WHERE name = 'max_connections'
-----
-name	setting	context	min_val	max_val
-max_connections	0	user	NULL	NULL
-
-
-query
 SELECT name, enumvals
 FROM pg_settings
 WHERE name IN ('transaction_isolation', 'default_transaction_isolation')

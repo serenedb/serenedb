@@ -28,7 +28,6 @@
 #include <absl/strings/str_split.h>
 #include <fast_float/fast_float.h>
 
-#include <atomic>
 #include <cmath>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
@@ -69,19 +68,7 @@ constexpr std::pair<std::string_view, double> kTimeUnits[] = {
   {"min", 60000}, {"h", 3600000}, {"d", 86400000},
 };
 
-constinit std::atomic<uint32_t> gMaxConnections{0};
-
 }  // namespace
-
-uint32_t GetMaxConnections() noexcept {
-  return gMaxConnections.load(std::memory_order_relaxed);
-}
-
-void SetMaxConnections(duckdb::DBConfig& config, uint32_t value) {
-  config.SetOptionByName(duckdb::Identifier{kMaxConnectionsSetting},
-                         duckdb::Value::UINTEGER(value));
-  gMaxConnections.store(value, std::memory_order_relaxed);
-}
 
 int64_t ParseDurationMillis(std::string_view name, std::string_view text,
                             double unitless_ms) {
@@ -1542,26 +1529,6 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the time zone for displaying and interpreting time stamps.",
         [] { return duckdb::Value{"Etc/UTC"}; },
-      },
-    },
-    {
-      kMaxConnectionsSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Sets the maximum number of concurrent client connections across all "
-        "listeners, checked when a connection is accepted; 0 means no limit. "
-        "A listener's ?max_connections= overrides it. Server-wide, superuser "
-        "only.",
-        [] { return duckdb::Value::UINTEGER(0); },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
-          RequireSuperuser(ctx, kMaxConnectionsSetting,
-                           "Only roles with the SUPERUSER attribute may change "
-                           "the connection limit.");
-          gMaxConnections.store(value.GetValue<uint32_t>(),
-                                std::memory_order_relaxed);
-        },
-        nullptr,
-        duckdb::SetScope::GLOBAL,
       },
     },
     {

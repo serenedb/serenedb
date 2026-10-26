@@ -247,7 +247,6 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `IntervalStyle` | Sets the display format for interval values. | `VARCHAR` | `SESSION` | `postgres` |
 | `is_superuser` | Shows whether the current session's user is a superuser. | `BOOLEAN` | `SESSION` | `on` |
 | `lock_configuration` | Whether or not configurations can be altered | `BOOLEAN` | `GLOBAL` | `false` |
-| `max_connections` | The maximum number of concurrent client connections across all listeners, checked when a connection is accepted; 0 means no limit. `--max_connections` sets it at startup, and a listener's `?max_connections=` overrides it. Server-wide, superuser only. | `UINTEGER` | `GLOBAL` | `0` |
 | `max_execution_time` | The maximum execution time per query in milliseconds (0 = no limit). | `BIGINT` | `SESSION` | `0` |
 | `max_identifier_length` | Shows the maximum identifier length. SereneDB keeps longer identifiers in full. Read-only. | `INTEGER` | `SESSION` | `63` |
 | `max_index_keys` | Shows the maximum number of index keys. Clients read it as the bound of index and constraint key arrays, such as `pg_index.indkey` and `pg_constraint.conkey`. Read-only. | `INTEGER` | `SESSION` | `32` |

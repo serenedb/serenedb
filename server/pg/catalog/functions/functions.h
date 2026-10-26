@@ -29,6 +29,8 @@
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/parsed_expression.hpp>
+#include <duckdb/planner/planner_extension.hpp>
 #include <span>
 #include <string>
 #include <string_view>
@@ -134,5 +136,9 @@ void RegisterSubscriptionFunctions(duckdb::ExtensionLoader& loader);
 void RegisterInformationSchemaFunctions(duckdb::ExtensionLoader& loader);
 
 void RegisterFunctions(duckdb::DatabaseInstance& db);
+
+duckdb::GetSQLValueFunctionReturnType SystemUserValueFunction(
+  duckdb::PlannerExtensionInput& input, const std::string& column_name,
+  duckdb::unique_ptr<duckdb::ParsedExpression>& result);
 
 }  // namespace sdb::pg

@@ -48,7 +48,6 @@
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_data.hpp>
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/qualified_name.hpp>
@@ -480,17 +479,6 @@ void SystemUserFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                      : duckdb::Value{system_user},
                    duckdb::count_t(args.size()));
-}
-
-duckdb::GetSQLValueFunctionReturnType SystemUserValueFunction(
-  duckdb::PlannerExtensionInput&, const std::string& column_name,
-  duckdb::unique_ptr<duckdb::ParsedExpression>& result) {
-  if (duckdb::StringUtil::CIEquals(column_name, "system_user")) {
-    result = duckdb::make_uniq<duckdb::FunctionExpression>(
-      duckdb::Identifier{"system_user"},
-      duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>{});
-  }
-  return duckdb::GetSQLValueFunctionReturnType::CONTINUE_BINDING;
 }
 
 void PgBackendPidFunction(duckdb::DataChunk& args,
@@ -1649,10 +1637,17 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(loader, pg_catalog, "system_user", CONSISTENT_WITHIN_QUERY,
                  nullptr,
                  {duckdb::ScalarFunction{{}, text, SystemUserFunction}});
-  duckdb::PlannerExtension::Register(
-    duckdb::DBConfig::GetConfig(loader.GetDatabaseInstance()),
-    duckdb::PlannerExtension{.get_sql_value_function =
-                               &SystemUserValueFunction});
+}
+
+duckdb::GetSQLValueFunctionReturnType SystemUserValueFunction(
+  duckdb::PlannerExtensionInput&, const std::string& column_name,
+  duckdb::unique_ptr<duckdb::ParsedExpression>& result) {
+  if (duckdb::StringUtil::CIEquals(column_name, "system_user")) {
+    result = duckdb::make_uniq<duckdb::FunctionExpression>(
+      duckdb::Identifier{"system_user"},
+      duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>{});
+  }
+  return duckdb::GetSQLValueFunctionReturnType::CONTINUE_BINDING;
 }
 
 }  // namespace sdb::pg

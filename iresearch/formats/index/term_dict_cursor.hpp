@@ -902,7 +902,8 @@ class Cursor {
       return;
     }
     const uint64_t offset = _field->BlockOffset(from);
-    Hint(_field->Owner().Input(), offset, _field->BlockOffset(to) - offset);
+    Hint(_field->Owner().Input(), offset, _field->BlockOffset(to) - offset,
+         _issued == 0);
     _ahead = to;
     _issued = to - from;
     _window = std::min(2 * _window, kLastWindow);
@@ -921,7 +922,7 @@ class Cursor {
     if (from >= to) {
       return;
     }
-    Hint(_field->Owner().Input(), from, to - from);
+    Hint(_field->Owner().Input(), from, to - from, _inline_issued == 0);
     _inline_ahead = to;
     _inline_issued = to - from;
     _inline_window = std::min(2 * _inline_window, file_utils::kMaxReadahead);

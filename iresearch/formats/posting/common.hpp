@@ -95,10 +95,32 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
 }
 
 inline constexpr uint64_t kMaxPrefetch = uint64_t{16} << 20;
+inline constexpr uint64_t kWarmProbes = 4;
 
 template<typename Input>
-void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
-  if (in.Warm(offset, size)) {
+bool StillWarm(const Input& in, uint64_t offset, uint64_t size,
+               bool probe) noexcept {
+  if (!in.Warm(offset, size)) {
+    return false;
+  }
+  if (!probe && size <= file_utils::kPrefetchChunk) {
+    return true;
+  }
+  const auto probes = std::min<uint64_t>(
+    kWarmProbes, (size + file_utils::kPage - 1) / file_utils::kPage);
+  for (uint64_t i = 0; i != probes; ++i) {
+    if (!in.Resident(offset + size * i / probes, 1)) {
+      file_utils::InvalidateResidency();
+      return false;
+    }
+  }
+  return true;
+}
+
+template<typename Input>
+void Hint(const Input& in, uint64_t offset, uint64_t size,
+          bool probe) noexcept {
+  if (StillWarm(in, offset, size, probe)) {
     file_utils::PollResidency();
     return;
   }
@@ -131,7 +153,7 @@ inline uint64_t PayExtent(const PostingMeta& meta) noexcept {
 template<typename Input>
 void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
   if (const auto extent = DocExtent(meta); extent > file_utils::kPage) {
-    Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch));
+    Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch), false);
   }
 }
 
@@ -150,7 +172,7 @@ void PrefetchRanges(const Input& in,
   uint64_t budget = kMaxPrefetch;
   for (size_t i = 0; i != n && budget != 0; ++i) {
     const auto size = std::min(ranges[i].second - ranges[i].first, budget);
-    Hint(in, ranges[i].first, size);
+    Hint(in, ranges[i].first, size, i < kWarmProbes);
     budget -= size;
   }
 }
@@ -189,7 +211,7 @@ class GrowingHint {
       return;
     }
     const auto len = std::min(_window, _stop - from);
-    Hint(in, from, len);
+    Hint(in, from, len, true);
     _end = from + len;
     _window = std::min(2 * _window, kLast);
   }

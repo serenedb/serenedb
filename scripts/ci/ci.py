@@ -340,7 +340,7 @@ def cmd_select_suites(args):
         if args.re2:
             out += ["--suite", "re2"]
         suites = [s for s in args.duckdb_suites.split(",") if s]
-        if suites:
+        if suites and not args.no_duckdb:
             out += ["--suite", "duckdb"]
             for s in suites:
                 out += ["--duckdb-suite", s]
@@ -565,6 +565,8 @@ def main(argv):
     p.add_argument("--iresearch", action="store_true")
     p.add_argument("--re2", action="store_true")
     p.add_argument("--duckdb-suites", default="", help="comma-separated DuckDB suites")
+    p.add_argument("--no-duckdb", action="store_true",
+                   help="leave out DuckDB's suites the diff opens (sqlsmith still follows core)")
     p.set_defaults(fn=cmd_select_suites)
     p = sub.add_parser("coverage-report", help="report the coverage of a change from a run's "
                                                "profiles, with the nearest units and the selection")

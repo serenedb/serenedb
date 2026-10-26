@@ -29,6 +29,14 @@ on:
         description: 'Also run sqllogic + recovery + stress against the real BigLake catalog in dev (needs the BIGLAKE_* secrets)'
         type: boolean
         default: false
+      DUCKDB_SANITIZERS:
+        description: "Also run the DuckDB suites the diff opens in asan, tsan and msan (they always run in dev)"
+        type: boolean
+        default: false
+      IRESEARCH_SANITIZERS:
+        description: 'Also run the iresearch tests the diff opens in asan, tsan and msan (they always run in dev)'
+        type: boolean
+        default: false
       PR_SHA:
         description: 'Exact commit SHA to build (fork PR support; empty = ref)'
         type: string
@@ -64,6 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       test_args: ${{ steps.select.outputs.test_args }}
+      sanitizer_test_args: ${{ steps.select.outputs.sanitizer_test_args }}
       pg: ${{ steps.classify.outputs.pg }}
     steps:
       - uses: actions/checkout@v7
@@ -84,13 +93,19 @@ jobs:
           RE2: ${{ steps.classify.outputs.re2 }}
           DUCKDB_SUITES: ${{ steps.classify.outputs.duckdb_suites }}
           CORPUS: ${{ inputs.CORPUS }}
+          DUCKDB_SANITIZERS: ${{ inputs.DUCKDB_SANITIZERS }}
+          IRESEARCH_SANITIZERS: ${{ inputs.IRESEARCH_SANITIZERS }}
         run: |
           args=(--duckdb-suites "$DUCKDB_SUITES")
           [[ "$EVERYTHING" != true ]] || args+=(--everything)
           [[ "$CORPUS" != true ]] || args+=(--corpus)
-          [[ "$IRESEARCH" != true ]] || args+=(--iresearch)
           [[ "$RE2" != true ]] || args+=(--re2)
+          sanitizer=("${args[@]}")
+          [[ "$IRESEARCH" != true ]] || args+=(--iresearch)
+          [[ "$IRESEARCH" != true || "$IRESEARCH_SANITIZERS" != true ]] || sanitizer+=(--iresearch)
+          [[ "$DUCKDB_SANITIZERS" == true ]] || sanitizer+=(--no-duckdb)
           echo "test_args=$(python3 scripts/ci/ci.py select-suites "${args[@]}")" >> "$GITHUB_OUTPUT"
+          echo "sanitizer_test_args=$(python3 scripts/ci/ci.py select-suites "${sanitizer[@]}")" >> "$GITHUB_OUTPUT"
 
   image:
     needs: prepare
@@ -125,7 +140,7 @@ jobs:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: asan
-      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+      TEST_ARGS: ${{ needs.prepare.outputs.sanitizer_test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit
@@ -135,7 +150,7 @@ jobs:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: tsan
-      TEST_ARGS: ${{ needs.prepare.outputs.test_args }} --changed origin/main --repeat 3
+      TEST_ARGS: ${{ needs.prepare.outputs.sanitizer_test_args }} --changed origin/main --repeat 3
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit
@@ -145,7 +160,7 @@ jobs:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: msan
-      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+      TEST_ARGS: ${{ needs.prepare.outputs.sanitizer_test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit

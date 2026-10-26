@@ -856,6 +856,7 @@ bool InvertedStoreIndex::AppendLocal(
   } catch (const std::exception& e) {
     error = duckdb::ErrorData{e};
   }
+  SDB_PARK_ONCE_ON_FAILURE("inverted_local_rows_fed");
   return true;
 }
 

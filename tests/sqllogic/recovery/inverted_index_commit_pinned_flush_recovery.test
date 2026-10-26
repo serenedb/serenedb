@@ -26,7 +26,7 @@ INSERT INTO pinned_rows SELECT i, 'm' || (i % 7) FROM range(100) t(i);
 
 
 statement ok
-SET sdb_faults = 'inverted_stage_slots_written';
+SET sdb_faults = 'inverted_local_rows_fed';
 
 
 connection writer
@@ -41,7 +41,7 @@ INSERT INTO pinned_rows SELECT i, 'm' || (i % 7) FROM range(100, 40100) t(i);
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-inverted_stage_slots_written:parked';
+SET sdb_faults = '-inverted_local_rows_fed:parked';
 
 
 connection default
@@ -61,7 +61,7 @@ SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
 
 connection default
 statement ok
-SET sdb_faults = 'inverted_stage_slots_written:release';
+SET sdb_faults = 'inverted_local_rows_fed:release';
 
 
 wait

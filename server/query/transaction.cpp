@@ -204,7 +204,6 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
         queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
       }
     }
-    SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_written");
     irs::IndexWriter::Transaction::RegisterFlush(transactions);
     SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_registered");
     entry.tick = entry.storage->NextTick(queries);

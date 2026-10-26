@@ -111,12 +111,15 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
     lines = [MARKER, "### CI results", ""]
     keys = sorted(set(by_config) | set(longest),
                   key=lambda k: (ORDER.index(k[0]) if k[0] in ORDER else 99, k[1], k[2]))
+    red = set()
     for key in keys:
         c = by_config[key]
         bad = sum(c[s] for s in BAD)
         missing = planned[key] - shards[key]
         split = len(plans[key]) > 1
-        mark = "❌" if bad or missing or split else "✅"
+        if bad or missing or split:
+            red.add(key)
+        mark = "❌" if key in red else "✅"
         lines.append(
             f"- {mark} **{_label(key)}**: {c['passed']} passed, {c['failed']} failed, "
             f"{c['flaky']} flaky, {c['stuck']} stuck, {c['crashed']} crashed, {c['skipped']} skipped; "
@@ -127,9 +130,13 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
             + f", longest {_duration(longest[key])}")
     for job, info in sorted((needs or {}).items()):
         result = info.get("result")
-        if result in ("failure", "cancelled"):
-            before = "" if any(job in (k[0], k[2]) for k in keys) else " before any test result"
-            lines.append(f"- ❌ **{job}**: {result}{before}")
+        if result not in ("failure", "cancelled"):
+            continue
+        mine = [k for k in keys if job in (k[0], k[2])]
+        if not mine:
+            lines.append(f"- ❌ **{job}**: {result} before any test result")
+        elif not red.intersection(mine):
+            lines.append(f"- ❌ **{job}**: {result} outside the tests")
     if coverage:
         lines += ["", "**Coverage of the change**", "", "```", *(c["summary"] for c in coverage), "```"]
         uncovered = [d for c in coverage for d in c["uncovered"]]

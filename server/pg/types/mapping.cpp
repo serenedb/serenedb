@@ -197,6 +197,7 @@ const BuiltinType* FindAliasedType(const duckdb::LogicalType& type,
 PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
                       bool wire) {
   int32_t typmod = -1;
+  const bool aliased = !type.GetTypeInfo().alias.empty();
   const auto make = [&](BuiltinRef builtin) -> PgTypeInfo {
     if (!in_array) {
       return wire ? PgTypeInfo{builtin.wire, builtin.wire_len, typmod}
@@ -218,71 +219,75 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
     case USMALLINT:
       return make(kInt4);
     case INTEGER:
-      if (IsCardinalNumber(type)) {
+      if (aliased && IsCardinalNumber(type)) {
         return make(kCardinalNumber);
       }
       return make(kInt4);
     case UINTEGER:
       return make(kInt8);
     case BIGINT:
-      if (IsOid(type)) {
-        return make(kOid);
-      }
-      if (IsXid(type)) {
-        return make(kXid);
-      }
-      if (IsCid(type)) {
-        return make(kCid);
-      }
-      if (IsTid(type)) {
-        return make(kTid);
-      }
-      if (IsXid8(type)) {
-        return make(kXid8);
-      }
-      if (IsRegproc(type)) {
-        return make(kRegproc);
-      }
-      if (IsRegprocedure(type)) {
-        return make(kRegprocedure);
-      }
-      if (IsRegoper(type)) {
-        return make(kRegoper);
-      }
-      if (IsRegoperator(type)) {
-        return make(kRegoperator);
-      }
-      if (IsRegclass(type)) {
-        return make(kRegclass);
-      }
-      if (IsRegtype(type)) {
-        return make(kRegtype);
-      }
-      if (IsRegrole(type)) {
-        return make(kRegrole);
-      }
-      if (IsRegnamespace(type)) {
-        return make(kRegnamespace);
-      }
-      if (IsRegconfig(type)) {
-        return make(kRegconfig);
-      }
-      if (IsRegdictionary(type)) {
-        return make(kRegdictionary);
-      }
-      if (IsRegcollation(type)) {
-        return make(kRegcollation);
+      if (aliased) {
+        if (IsOid(type)) {
+          return make(kOid);
+        }
+        if (IsXid(type)) {
+          return make(kXid);
+        }
+        if (IsCid(type)) {
+          return make(kCid);
+        }
+        if (IsTid(type)) {
+          return make(kTid);
+        }
+        if (IsXid8(type)) {
+          return make(kXid8);
+        }
+        if (IsRegproc(type)) {
+          return make(kRegproc);
+        }
+        if (IsRegprocedure(type)) {
+          return make(kRegprocedure);
+        }
+        if (IsRegoper(type)) {
+          return make(kRegoper);
+        }
+        if (IsRegoperator(type)) {
+          return make(kRegoperator);
+        }
+        if (IsRegclass(type)) {
+          return make(kRegclass);
+        }
+        if (IsRegtype(type)) {
+          return make(kRegtype);
+        }
+        if (IsRegrole(type)) {
+          return make(kRegrole);
+        }
+        if (IsRegnamespace(type)) {
+          return make(kRegnamespace);
+        }
+        if (IsRegconfig(type)) {
+          return make(kRegconfig);
+        }
+        if (IsRegdictionary(type)) {
+          return make(kRegdictionary);
+        }
+        if (IsRegcollation(type)) {
+          return make(kRegcollation);
+        }
       }
       return make(kInt8);
     case UBIGINT:
-      if (IsPgLsn(type)) {
-        return make(kPgLsn);
-      }
-      if (IsMacaddr(type)) {
-        return make(kMacaddr);
-      }
-      if (IsMacaddr8(type)) {
-        return make(kMacaddr8);
+      if (aliased) {
+        if (IsPgLsn(type)) {
+          return make(kPgLsn);
+        }
+        if (IsMacaddr(type)) {
+          return make(kMacaddr);
+        }
+        if (IsMacaddr8(type)) {
+          return make(kMacaddr8);
+        }
       }
       return make(kNumeric);
     case HUGEINT:
@@ -290,7 +295,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
     case BIGNUM:
       return make(kNumeric);
     case DECIMAL:
-      if (IsMoney(type)) {
+      if (aliased && IsMoney(type)) {
         return make(kMoney);
       }
       typmod = NumericTypmod(duckdb::DecimalType::GetWidth(type),
@@ -307,7 +312,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
     case TIMESTAMP_NS:
       return make(kTimestamp);
     case TIMESTAMP_TZ:
-      if (IsTimeStamp(type)) {
+      if (aliased && IsTimeStamp(type)) {
         return make(kTimeStamp);
       }
       return make(kTimestamptz);
@@ -330,7 +335,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
     case UUID:
       return make(kUuid);
     case VARCHAR:
-      if (!type.HasAlias()) {
+      if (!aliased) {
         return make(kText);
       }
       if (type.IsJSONType()) {

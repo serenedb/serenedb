@@ -2814,47 +2814,50 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       return SelectFieldSerializer<IntTextCore<int32_t>, IntTextCore<int32_t>,
                                    IntBinCore<int32_t>>(format, context);
     case BIGINT: {
-      if (IsRegtype(type)) {
-        return MakeRegSerializer<RegKind::Type>(format, context);
-      }
-      if (IsRegclass(type)) {
-        return MakeRegSerializer<RegKind::Class>(format, context);
-      }
-      if (IsRegnamespace(type)) {
-        return MakeRegSerializer<RegKind::Namespace>(format, context);
-      }
-      if (IsRegproc(type)) {
-        return MakeRegSerializer<RegKind::Proc>(format, context);
-      }
-      if (IsRegprocedure(type)) {
-        return MakeRegSerializer<RegKind::Procedure>(format, context);
-      }
-      if (IsRegoper(type)) {
-        return MakeRegSerializer<RegKind::Oper>(format, context);
-      }
-      if (IsRegoperator(type)) {
-        return MakeRegSerializer<RegKind::Operator>(format, context);
-      }
-      if (IsRegrole(type)) {
-        return MakeRegSerializer<RegKind::Role>(format, context);
-      }
-      if (IsRegconfig(type)) {
-        return MakeRegSerializer<RegKind::Config>(format, context);
-      }
-      if (IsRegdictionary(type)) {
-        return MakeRegSerializer<RegKind::Dictionary>(format, context);
-      }
-      if (IsRegcollation(type)) {
-        return MakeRegSerializer<RegKind::Collation>(format, context);
-      }
-      if (IsTid(type)) {
-        return SelectFieldSerializer<TidTextCore<WrapContext::None>,
-                                     TidTextCore<WrapContext::Record>,
-                                     TidBinCore>(format, context);
-      }
-      if (IsOidLike(type)) {
-        return SelectFieldSerializer<IntTextCore<int64_t>, IntTextCore<int64_t>,
-                                     OidBinCore>(format, context);
+      if (!type.GetTypeInfo().alias.empty()) {
+        if (IsRegtype(type)) {
+          return MakeRegSerializer<RegKind::Type>(format, context);
+        }
+        if (IsRegclass(type)) {
+          return MakeRegSerializer<RegKind::Class>(format, context);
+        }
+        if (IsRegnamespace(type)) {
+          return MakeRegSerializer<RegKind::Namespace>(format, context);
+        }
+        if (IsRegproc(type)) {
+          return MakeRegSerializer<RegKind::Proc>(format, context);
+        }
+        if (IsRegprocedure(type)) {
+          return MakeRegSerializer<RegKind::Procedure>(format, context);
+        }
+        if (IsRegoper(type)) {
+          return MakeRegSerializer<RegKind::Oper>(format, context);
+        }
+        if (IsRegoperator(type)) {
+          return MakeRegSerializer<RegKind::Operator>(format, context);
+        }
+        if (IsRegrole(type)) {
+          return MakeRegSerializer<RegKind::Role>(format, context);
+        }
+        if (IsRegconfig(type)) {
+          return MakeRegSerializer<RegKind::Config>(format, context);
+        }
+        if (IsRegdictionary(type)) {
+          return MakeRegSerializer<RegKind::Dictionary>(format, context);
+        }
+        if (IsRegcollation(type)) {
+          return MakeRegSerializer<RegKind::Collation>(format, context);
+        }
+        if (IsTid(type)) {
+          return SelectFieldSerializer<TidTextCore<WrapContext::None>,
+                                       TidTextCore<WrapContext::Record>,
+                                       TidBinCore>(format, context);
+        }
+        if (IsOidLike(type)) {
+          return SelectFieldSerializer<IntTextCore<int64_t>,
+                                       IntTextCore<int64_t>, OidBinCore>(
+            format, context);
+        }
       }
       return SelectFieldSerializer<IntTextCore<int64_t>, IntTextCore<int64_t>,
                                    IntBinCore<int64_t>>(format, context);
@@ -2872,17 +2875,19 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                    IntBinCore<uint32_t, int64_t>>(format,
                                                                   context);
     case UBIGINT:
-      if (IsPgLsn(type)) {
-        return SelectFieldSerializer<LsnTextCore, LsnTextCore,
-                                     IntBinCore<uint64_t>>(format, context);
-      }
-      if (IsMacaddr(type)) {
-        return SelectFieldSerializer<MacTextCore<false>, MacTextCore<false>,
-                                     MacBinCore<false>>(format, context);
-      }
-      if (IsMacaddr8(type)) {
-        return SelectFieldSerializer<MacTextCore<true>, MacTextCore<true>,
-                                     MacBinCore<true>>(format, context);
+      if (!type.GetTypeInfo().alias.empty()) {
+        if (IsPgLsn(type)) {
+          return SelectFieldSerializer<LsnTextCore, LsnTextCore,
+                                       IntBinCore<uint64_t>>(format, context);
+        }
+        if (IsMacaddr(type)) {
+          return SelectFieldSerializer<MacTextCore<false>, MacTextCore<false>,
+                                       MacBinCore<false>>(format, context);
+        }
+        if (IsMacaddr8(type)) {
+          return SelectFieldSerializer<MacTextCore<true>, MacTextCore<true>,
+                                       MacBinCore<true>>(format, context);
+        }
       }
       return SelectFieldSerializer<IntTextCore<uint64_t>, IntTextCore<uint64_t>,
                                    UbigintBinCore>(format, context);
@@ -2939,20 +2944,22 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       }
     case CHAR:
     case VARCHAR:
-      if (type.IsJSONType()) {
-        return SelectFieldSerializer<JsonTextCore<WrapContext::None>,
-                                     JsonTextCore<WrapContext::Record>,
-                                     JsonBinCore>(format, context);
-      }
-      if (IsChar(type)) {
-        return SelectFieldSerializer<VarcharTextCore<WrapContext::None>,
-                                     VarcharTextCore<WrapContext::Record>,
-                                     CharBinCore>(format, context);
-      }
-      if (IsXml(type)) {
-        return SelectFieldSerializer<XmlTextCore<WrapContext::None>,
-                                     XmlTextCore<WrapContext::Record>,
-                                     XmlBinCore>(format, context);
+      if (!type.GetTypeInfo().alias.empty()) {
+        if (type.IsJSONType()) {
+          return SelectFieldSerializer<JsonTextCore<WrapContext::None>,
+                                       JsonTextCore<WrapContext::Record>,
+                                       JsonBinCore>(format, context);
+        }
+        if (IsChar(type)) {
+          return SelectFieldSerializer<VarcharTextCore<WrapContext::None>,
+                                       VarcharTextCore<WrapContext::Record>,
+                                       CharBinCore>(format, context);
+        }
+        if (IsXml(type)) {
+          return SelectFieldSerializer<XmlTextCore<WrapContext::None>,
+                                       XmlTextCore<WrapContext::Record>,
+                                       XmlBinCore>(format, context);
+        }
       }
       return SelectFieldSerializer<VarcharTextCore<WrapContext::None>,
                                    VarcharTextCore<WrapContext::Record>,

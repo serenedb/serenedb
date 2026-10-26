@@ -98,7 +98,8 @@ struct PgTypeInfo {
   int16_t typlen;
   int32_t typmod;
 };
-PgTypeInfo Logical2Pg(const duckdb::LogicalType& type);
+PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array = false,
+                      bool wire = true);
 uint32_t Type2Oid(const duckdb::LogicalType& type);
 uint32_t CatalogTypeOid(const duckdb::LogicalType& type);
 duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context);

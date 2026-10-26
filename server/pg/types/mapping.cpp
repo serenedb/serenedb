@@ -194,6 +194,8 @@ const BuiltinType* FindAliasedType(const duckdb::LogicalType& type,
   return nullptr;
 }
 
+}  // namespace
+
 PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
                       bool wire) {
   int32_t typmod = -1;
@@ -445,12 +447,6 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
     case LAMBDA:
       return {kUnknown, -1, -1};
   }
-}
-
-}  // namespace
-
-PgTypeInfo Logical2Pg(const duckdb::LogicalType& type) {
-  return Logical2Pg(type, false, true);
 }
 
 uint32_t Type2Oid(const duckdb::LogicalType& type) {

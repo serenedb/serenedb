@@ -194,19 +194,23 @@ const BuiltinType* FindAliasedType(const duckdb::LogicalType& type,
   return nullptr;
 }
 
-}  // namespace
-
-PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
-                      bool wire) {
+IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
+                                    bool in_array, bool wire) {
   int32_t typmod = -1;
-  const bool aliased = !type.GetTypeInfo().alias.empty();
+  const auto aliased = [&]() IRS_FORCE_INLINE {
+    return !type.GetTypeInfo().alias.empty();
+  };
+  const auto element = [&](const duckdb::LogicalType& child) {
+    return wire ? Logical2Pg(child, true) : CatalogLogical2Pg(child, true);
+  };
+  const bool domain_oid = !wire || in_array;
   const auto make = [&](BuiltinRef builtin) IRS_FORCE_INLINE -> PgTypeInfo {
     if (!in_array) {
       return wire ? PgTypeInfo{builtin.wire, builtin.wire_len, typmod}
                   : PgTypeInfo{builtin.oid, builtin.len, typmod};
     }
     if (builtin.array == 0) {
-      return Logical2Pg(duckdb::LogicalType{type.id()}, true, wire);
+      return element(duckdb::LogicalType{type.id()});
     }
     return {builtin.array, -1, typmod};
   };
@@ -221,14 +225,14 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
     case USMALLINT:
       return make(kInt4);
     case INTEGER:
-      if (aliased && IsCardinalNumber(type)) {
+      if (domain_oid && aliased() && IsCardinalNumber(type)) {
         return make(kCardinalNumber);
       }
       return make(kInt4);
     case UINTEGER:
       return make(kInt8);
     case BIGINT:
-      if (aliased) {
+      if (aliased()) {
         if (IsOid(type)) {
           return make(kOid);
         }
@@ -280,7 +284,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
       }
       return make(kInt8);
     case UBIGINT:
-      if (aliased) {
+      if (aliased()) {
         if (IsPgLsn(type)) {
           return make(kPgLsn);
         }
@@ -297,7 +301,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
     case BIGNUM:
       return make(kNumeric);
     case DECIMAL:
-      if (aliased && IsMoney(type)) {
+      if (aliased() && IsMoney(type)) {
         return make(kMoney);
       }
       typmod = NumericTypmod(duckdb::DecimalType::GetWidth(type),
@@ -314,7 +318,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
     case TIMESTAMP_NS:
       return make(kTimestamp);
     case TIMESTAMP_TZ:
-      if (aliased && IsTimeStamp(type)) {
+      if (domain_oid && aliased() && IsTimeStamp(type)) {
         return make(kTimeStamp);
       }
       return make(kTimestamptz);
@@ -337,7 +341,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
     case UUID:
       return make(kUuid);
     case VARCHAR:
-      if (!aliased) {
+      if (!aliased()) {
         return make(kText);
       }
       if (type.IsJSONType()) {
@@ -422,9 +426,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
             type, [](const BuiltinType& row) { return row.type == 'm'; })) {
         return make(*row);
       }
-      return Logical2Pg(duckdb::ListType::GetChildType(type), true, wire);
+      return element(duckdb::ListType::GetChildType(type));
     case ARRAY:
-      return Logical2Pg(duckdb::ArrayType::GetChildType(type), true, wire);
+      return element(duckdb::ArrayType::GetChildType(type));
     case GEOMETRY:
       return make(kGeometry);
     case VARIANT:
@@ -449,12 +453,22 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
   }
 }
 
+}  // namespace
+
+PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
+  return MapType(type, in_array, true);
+}
+
+PgTypeInfo CatalogLogical2Pg(const duckdb::LogicalType& type, bool in_array) {
+  return MapType(type, in_array, false);
+}
+
 uint32_t Type2Oid(const duckdb::LogicalType& type) {
   return Logical2Pg(type).oid;
 }
 
 uint32_t CatalogTypeOid(const duckdb::LogicalType& type) {
-  return Logical2Pg(type, false, false).oid;
+  return CatalogLogical2Pg(type).oid;
 }
 
 duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {
@@ -514,7 +528,7 @@ duckdb::LogicalType BuiltinLogicalType(const BuiltinType& type) {
 }
 
 ColumnType DescribeColumnType(const duckdb::LogicalType& type) {
-  const auto info = Logical2Pg(type, false, false);
+  const auto info = CatalogLogical2Pg(type);
   int16_t ndims = 0;
   const auto* element = &type;
   while (element->id() != TypeId::MAP && IsArrayDimension(*element)) {

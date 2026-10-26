@@ -198,7 +198,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
                       bool wire) {
   int32_t typmod = -1;
   const bool aliased = !type.GetTypeInfo().alias.empty();
-  const auto make = [&](BuiltinRef builtin) -> PgTypeInfo {
+  const auto make = [&](BuiltinRef builtin) IRS_FORCE_INLINE -> PgTypeInfo {
     if (!in_array) {
       return wire ? PgTypeInfo{builtin.wire, builtin.wire_len, typmod}
                   : PgTypeInfo{builtin.oid, builtin.len, typmod};
@@ -351,7 +351,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
         return make(kChar);
       }
       if (IsAclitem(type)) {
-        return make(kAclitem);
+        return wire ? make(kText) : make(kAclitem);
       }
       if (IsXml(type)) {
         return make(kXml);
@@ -450,14 +450,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
 }  // namespace
 
 PgTypeInfo Logical2Pg(const duckdb::LogicalType& type) {
-  const auto info = Logical2Pg(type, false, true);
-  if (info.oid == kAclitem) {
-    return {kText, -1, -1};
-  }
-  if (info.oid == kAclitemArray) {
-    return {kTextArray, -1, -1};
-  }
-  return info;
+  return Logical2Pg(type, false, true);
 }
 
 uint32_t Type2Oid(const duckdb::LogicalType& type) {

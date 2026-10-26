@@ -144,7 +144,8 @@ void SegmentWriter::flush(IndexSegment& segment,
   }
 
   if (state.doc_count != 0) {
-    _col_reader = std::make_unique<ColReader>(_dir, _seg_name, _db);
+    _col_reader =
+      std::make_unique<ColReader>(_dir, _seg_name, _db, IOAdvice::SEQUENTIAL);
     _field_writer->SetIdxWriter(idx);
     std::optional<ReadContext> ivf_ctx;
     const auto cluster_readers =

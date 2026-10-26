@@ -22,7 +22,6 @@
 
 #include <duckdb.hpp>
 #include <duckdb/main/client_context_state.hpp>
-#include <duckdb/main/config.hpp>
 #include <memory>
 #include <string_view>
 #include <vector>
@@ -67,15 +66,6 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   explicit SereneDBClientState(
     std::shared_ptr<ConnectionContext> connection_ctx)
     : _connection_ctx{std::move(connection_ctx)} {}
-
-  ~SereneDBClientState() final { DetachProgress(); }
-
-  void DetachProgress() noexcept {
-    if (progress_source) {
-      progress_source->Detach();
-      pg::ProgressRegistry::Instance().Unregister(progress_source.get());
-    }
-  }
 
   ConnectionContext& GetConnectionContext() const { return *_connection_ctx; }
 
@@ -155,12 +145,11 @@ void SetDefaultSearchPath(duckdb::ClientContext& context,
 struct SystemConnection {
   duckdb::unique_ptr<duckdb::Connection> conn;
   std::shared_ptr<ConnectionContext> ctx;
+  pg::ProgressRegistration progress;
 };
 
 SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
                                       std::string_view database,
                                       duckdb::idx_t database_id);
-
-void RegisterClientStateCallbacks(duckdb::DBConfig& config);
 
 }  // namespace sdb::connector

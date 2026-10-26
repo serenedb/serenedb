@@ -53,6 +53,7 @@
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -125,6 +126,11 @@ class RawVectorReader {
                         std::span<score_t> out) {
     SDB_ASSERT(_dist);
     SDB_ASSERT(out.size() >= docs.size());
+    for (size_t i = 0; docs.size() > 1 && i < docs.size();) {
+      const size_t run = ConsecutiveRunLength(docs, i);
+      HintRun(docs[i], run);
+      i += run;
+    }
     const auto* q = reinterpret_cast<const byte_type*>(_query.data());
     const auto d = static_cast<uint16_t>(_d);
     for (size_t i = 0; i < docs.size();) {
@@ -197,6 +203,30 @@ class RawVectorReader {
   }
 
  private:
+  void HintRun(doc_id_t first, size_t count) noexcept {
+    if (!_read_ctx.HasIn()) {
+      return;
+    }
+    const auto* child = _column->Child();
+    const uint64_t elem =
+      (static_cast<uint64_t>(first) - doc_limits::min()) * _d;
+    const auto w = child->Locate(elem, _win);
+    const auto& blocks = child->DataBlocks();
+    if (w.block >= blocks.size()) {
+      return;
+    }
+    const auto& m = blocks[w.block];
+    const uint64_t end =
+      std::min<uint64_t>(elem + static_cast<uint64_t>(count) * _d, w.end);
+    if (m.codec->type != duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
+        elem < w.begin || end <= elem) {
+      return;
+    }
+    file_utils::Hint(_read_ctx.In(),
+                     m.file_offset + (elem - w.begin) * sizeof(float),
+                     (end - elem) * sizeof(float));
+  }
+
   const byte_type* ReadSome(doc_id_t first, size_t count, size_t& got) {
     const auto* child = _column->Child();
     SDB_ASSERT(child);

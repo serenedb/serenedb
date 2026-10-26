@@ -81,6 +81,7 @@ Footer ReadFooterImpl(IndexInput& in, std::string_view name,
               footer_len, " bytes"));
   }
   Footer footer{.data_len = trailer_offset - footer_len};
+  in.Prefetch(footer.data_len, footer_len);
   bstring footer_buf;
   const auto* footer_data = in.ReadStable(footer.data_len, footer_len);
   if (!footer_data) {
@@ -115,6 +116,7 @@ Footer ReadFooterImpl(IndexInput& in, std::string_view name,
                             duckdb::ErrorData{e}.RawMessage(),
                             "; it was written by a newer release of SereneDB"));
   }
+  in.Evict(footer.data_len, footer_len);
   return footer;
 }
 

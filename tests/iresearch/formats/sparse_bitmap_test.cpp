@@ -220,7 +220,7 @@ void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   constexpr std::string_view kName = "tmp_next";
   WriteRanges(db, dir, kName, ranges);
 
-  irs::ColReader r{dir, kName, db};
+  irs::ColReader r{dir, kName, db, irs::IOAdvice::SEQUENTIAL};
   ASSERT_TRUE(r.HasColumn(1));
   // An id that was never written must report HasColumn=false and
   // Column()=nullptr. Legacy `read_write_empty` covered the empty-
@@ -324,7 +324,7 @@ void TestRwSeek(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   constexpr std::string_view kName = "tmp_seek";
   WriteRanges(db, dir, kName, ranges);
 
-  irs::ColReader r{dir, kName, db};
+  irs::ColReader r{dir, kName, db, irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), LastRowExclusive(ranges));
@@ -387,7 +387,7 @@ void TestRwSeekNext(duckdb::DatabaseInstance& db,
   constexpr std::string_view kName = "tmp_seek_next";
   WriteRanges(db, dir, kName, ranges);
 
-  irs::ColReader r{dir, kName, db};
+  irs::ColReader r{dir, kName, db, irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
 
@@ -534,7 +534,7 @@ void TestRwSeekRandom(duckdb::DatabaseInstance& db,
   constexpr std::string_view kName = "tmp_seek_rand";
   WriteRanges(db, dir, kName, ranges);
 
-  irs::ColReader r{dir, kName, db};
+  irs::ColReader r{dir, kName, db, irs::IOAdvice::SEQUENTIAL};
   // HasColumn / Column on an *unused* id must report false / nullptr.
   // Legacy `read_write_empty` covered that for an empty column; the
   // stronger invariant is "any id we did not write returns false".
@@ -648,7 +648,7 @@ TEST_P(SparseBitmapTestCase, read_write_empty) {
     // still commits with a valid .col file.
     w.Commit(/*target_row=*/0);
   }
-  irs::ColReader r{dir, kName, Db()};
+  irs::ColReader r{dir, kName, Db(), irs::IOAdvice::SEQUENTIAL};
   EXPECT_FALSE(r.HasColumn(1));
   EXPECT_EQ(r.Column(1), nullptr);
   // HasColumn(unused_id) == false on a column-less segment is the
@@ -665,7 +665,7 @@ TEST_P(SparseBitmapTestCase, read_write_empty) {
     irs::tests::OpenBlobColumn(w, /*id=*/1);
     w.Commit(/*target_row=*/0);
   }
-  irs::ColReader r2{dir, kName2, Db()};
+  irs::ColReader r2{dir, kName2, Db(), irs::IOAdvice::SEQUENTIAL};
   ASSERT_TRUE(r2.HasColumn(1));
   // Other ids on a segment that has id=1 must still report false.
   EXPECT_FALSE(r2.HasColumn(2));
@@ -810,7 +810,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
       static_cast<uint64_t>(valid_docs.back()) + 1 - irs::doc_limits::min();
     w.Commit(target_row);
   }
-  irs::ColReader r{dir, kName, Db()};
+  irs::ColReader r{dir, kName, Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
   // Stored rows are all-valid (nulls are implicit in the sparse doc-id
@@ -1089,7 +1089,7 @@ TEST_P(SparseBitmapTestCase, insert_erase) {
     w.Commit(static_cast<uint64_t>(kSurvivingDoc) + 1 - irs::doc_limits::min());
   }
 
-  irs::ColReader r{dir, kName, Db()};
+  irs::ColReader r{dir, kName, Db(), irs::IOAdvice::SEQUENTIAL};
   ASSERT_TRUE(r.HasColumn(1));
   EXPECT_FALSE(r.HasColumn(2));  // unused id -> false.
   EXPECT_EQ(r.Column(2), nullptr);

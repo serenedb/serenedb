@@ -49,11 +49,9 @@
 #endif
 #endif
 
-#define IR_MADVICE_NORMAL MADV_NORMAL
 #define IR_MADVICE_SEQUENTIAL MADV_SEQUENTIAL
 #define IR_MADVICE_RANDOM MADV_RANDOM
 #define IR_MADVICE_WILLNEED MADV_WILLNEED
-#define IR_MADVICE_DONTNEED MADV_DONTNEED
 
 namespace irs::mmap_utils {
 
@@ -80,15 +78,12 @@ class MMapHandle : private util::Noncopyable {
     return _residency;
   }
 
-  void dontneed(bool value) noexcept { _dontneed = value; }
-
  private:
   void init() noexcept;
 
-  void* _addr;     // the beginning of mmapped region
-  size_t _size;    // file size
-  ptrdiff_t _fd;   // file descriptor
-  bool _dontneed;  // request to free pages on close
+  void* _addr;    // the beginning of mmapped region
+  size_t _size;   // file size
+  ptrdiff_t _fd;  // file descriptor
   IResourceManager& _rm;
   file_utils::ResidencyMap _residency;
 };

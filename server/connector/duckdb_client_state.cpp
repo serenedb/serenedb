@@ -30,7 +30,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/planner/extension_callback.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
@@ -69,8 +68,7 @@ SereneDBClientState& SereneDBClientState::Register(
   source->database = registered._connection_ctx->GetDatabase();
   source->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
   source->ctx = &client_ctx;
-  registered.progress_source = source;
-  pg::ProgressRegistry::Instance().Register(std::move(source));
+  registered.progress_source = std::move(source);
   client_ctx.registered_state->Insert(kSereneDBClientStateKey,
                                       std::move(state));
   client_ctx.warning_handler = [](duckdb::ClientContext& ctx,
@@ -178,16 +176,6 @@ namespace {
 // TransactionPreCommit and before TransactionCommit/Rollback, with no
 // ClientContext parameter of their own.
 thread_local ConnectionContext* tls_committing_ctx = nullptr;
-
-class ClientStateCallbacks final : public duckdb::ExtensionCallback {
- public:
-  void OnConnectionClosed(duckdb::ClientContext& context) final {
-    if (const auto state = context.registered_state->Get<SereneDBClientState>(
-          kSereneDBClientStateKey)) {
-      state->DetachProgress();
-    }
-  }
-};
 
 }  // namespace
 
@@ -388,14 +376,10 @@ SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
   auto& context = *system.conn->context;
   system.ctx = std::make_shared<ConnectionContext>(
     context, user, role, database, database_id, nullptr, 0, nullptr);
-  SereneDBClientState::Register(context, system.ctx);
+  system.progress = pg::ProgressRegistration{
+    SereneDBClientState::Register(context, system.ctx).progress_source};
   SetDefaultSearchPath(context, database);
   return system;
-}
-
-void RegisterClientStateCallbacks(duckdb::DBConfig& config) {
-  duckdb::ExtensionCallback::Register(
-    config, duckdb::make_shared_ptr<ClientStateCallbacks>());
 }
 
 }  // namespace sdb::connector

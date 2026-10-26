@@ -9,13 +9,12 @@ from __future__ import annotations
 import http.client
 import json
 import os
-import socket
 import subprocess
-import time
 from pathlib import Path
 
 import psycopg
 import pytest
+from serened import Serened, reserve_port  # type: ignore[import-untyped]
 
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
@@ -28,46 +27,22 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _connect(port: int, deadline: float) -> psycopg.Connection:
-    while True:
-        try:
-            return psycopg.connect(
-                host="127.0.0.1", port=port, user="postgres", dbname="postgres",
-                autocommit=True,
-            )
-        except psycopg.OperationalError:
-            if time.monotonic() > deadline:
-                raise
-            time.sleep(0.2)
-
-
-def _break_schema(datadir: Path, statement: str) -> None:
-    port = _free_port()
-    server = subprocess.Popen(
-        [SERENED_BIN, str(datadir), f"--listen=postgres://127.0.0.1:{port}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+def _break_schema(tmp_path: Path, statement: str) -> None:
+    server = _Server(tmp_path)
     try:
-        with _connect(port, time.monotonic() + 60) as conn:
-            conn.execute(statement)
+        server.pg.execute(statement)
     finally:
-        server.terminate()
-        server.wait(timeout=60)
+        server.close()
 
 
-def _start_otel(datadir: Path) -> subprocess.CompletedProcess:
-    listen = (f"postgres://127.0.0.1:{_free_port()},"
-              f"http://127.0.0.1:{_free_port()}?api=otel")
-    return subprocess.run(
-        [SERENED_BIN, str(datadir), f"--listen={listen}"],
-        capture_output=True, text=True, timeout=60,
-    )
+def _start_otel(tmp_path: Path) -> subprocess.CompletedProcess:
+    with reserve_port() as pg_sock, reserve_port() as http_sock:
+        listen = (f"postgres://127.0.0.1:{pg_sock.getsockname()[1]},"
+                  f"http://127.0.0.1:{http_sock.getsockname()[1]}?api=otel")
+        return subprocess.run(
+            [SERENED_BIN, str(tmp_path / "data"), f"--listen={listen}"],
+            capture_output=True, text=True, timeout=60,
+        )
 
 
 def test_mistyped_column_refuses_startup(tmp_path: Path) -> None:
@@ -89,15 +64,13 @@ FIXTURES = (
 
 
 class _Server:
-    def __init__(self, datadir: Path, params: str):
-        self.pg_port, self.http_port = _free_port(), _free_port()
-        listen = (f"postgres://127.0.0.1:{self.pg_port},"
-                  f"http://127.0.0.1:{self.http_port}?{params}")
-        self.proc = subprocess.Popen(
-            [SERENED_BIN, str(datadir), f"--listen={listen}"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        self.pg = _connect(self.pg_port, time.monotonic() + 60)
+    def __init__(self, tmp_path: Path, params: str | None = None):
+        self.serened = Serened(SERENED_BIN, datadir=str(tmp_path / "data"),
+                               log_path=str(tmp_path / "serened.log"),
+                               http=params)
+        self.serened.start()
+        self.http_port = self.serened.http_port
+        self.pg = psycopg.connect(self.serened.dsn(), autocommit=True)
 
     def post(self, path: str, body: bytes, content_type: str) -> int:
         conn = http.client.HTTPConnection("127.0.0.1", self.http_port,
@@ -119,8 +92,9 @@ class _Server:
 
     def close(self) -> None:
         self.pg.close()
-        self.proc.terminate()
-        self.proc.wait(timeout=60)
+        stopped = self.serened.graceful_stop(timeout=60)
+        self.serened.stop()
+        assert stopped is not None, self.serened.log.tail(0)[-2000:]
 
 
 def test_schema_param_places_the_tables(tmp_path: Path) -> None:

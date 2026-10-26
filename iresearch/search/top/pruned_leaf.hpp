@@ -142,6 +142,7 @@ class PrunedLeafBase {
 
     _in = OpenDocInput(meta, doc_in);
     auto& in = In();
+    *(std::end(_docs) - 1) = doc_limits::invalid();
     _left_in_list = meta.docs_count;
     if (const auto extent = DocExtent(meta); extent != 0) {
       _hint.Arm(meta.doc_start, meta.doc_start + extent);

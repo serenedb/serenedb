@@ -3,7 +3,7 @@ set -euo pipefail
 
 COMPOSE_FILE="docker-compose.test-docker.yaml"
 MAX_ATTEMPTS=30
-DOCKER_USER="${DOCKER_USER:-$(id -u):$(id -g)}"
+export DOCKER_USER="${DOCKER_USER:-$(id -u):$(id -g)}"
 
 cleanup() {
 	echo "🧹 Tearing down..."

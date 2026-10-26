@@ -53,42 +53,22 @@ std::span<ByteExtent> CoalesceExtents(std::span<ByteExtent> extents,
 }
 
 InputFile::InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping)
-  : _length{mapping->Size()},
-    _mapping{std::move(mapping)},
-    _tail_start{_length} {
+  : _length{mapping->Size()}, _mapping{std::move(mapping)} {
   if (_length != 0) {
     _bytes = {_mapping->GetData(0, _length), _length};
     _residency.Reset(math::DivCeil64(_length, file_utils::kPage));
   }
 }
 
-InputFile::InputFile(std::string path, std::unique_ptr<byte_type[]> bytes,
-                     uint64_t size) noexcept
-  : _bytes{bytes.get(), size},
-    _length{size},
-    _owned{std::move(bytes)},
-    _path{std::move(path)},
-    _tail_start{size} {}
-
 InputFile::InputFile(duckdb::BlockCache& cache,
-                     duckdb::shared_ptr<duckdb::BlockCacheFile> blocks,
-                     std::shared_ptr<const bstring> tail) noexcept
-  : _length{blocks->GetSize()},
-    _cache{&cache},
-    _blocks{std::move(blocks)},
-    _tail{std::move(tail)},
-    _tail_start{_tail ? _length - _tail->size() : _length} {
-  SDB_ASSERT(!_tail || _tail->size() <= _length);
-}
+                     duckdb::shared_ptr<duckdb::BlockCacheFile> blocks) noexcept
+  : _length{blocks->GetSize()}, _cache{&cache}, _blocks{std::move(blocks)} {}
 
 const std::string& InputFile::Path() const noexcept {
   if (_mapping) {
     return _mapping->GetPath();
   }
-  if (_blocks) {
-    return _blocks->GetPath();
-  }
-  return _path;
+  return _blocks->GetPath();
 }
 
 bytes_view InputFile::Window(uint64_t offset, uint64_t count) const noexcept {
@@ -105,11 +85,8 @@ uint64_t InputFile::LastPage(uint64_t offset, uint64_t count) const noexcept {
 
 void InputFile::Prefetch(uint64_t offset, uint64_t count) const noexcept {
   if (_blocks) {
-    if (offset >= _tail_start) {
-      return;
-    }
     try {
-      _cache->Prefetch(_blocks, offset, std::min(count, _tail_start - offset));
+      _cache->Prefetch(_blocks, offset, count);
     } catch (...) {
     }
     return;
@@ -133,9 +110,7 @@ void InputFile::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
 
 bool InputFile::Warm(uint64_t offset, uint64_t count) const noexcept {
   if (_blocks) {
-    return offset >= _tail_start ||
-           _cache->IsCached(*_blocks, offset,
-                            std::min(count, _tail_start - offset));
+    return _cache->IsCached(*_blocks, offset, count);
   }
   if (!_mapping || count == 0 || offset >= _length) {
     return false;
@@ -233,14 +208,6 @@ bool IndexInput::Refill(bool ahead) {
     return false;
   }
   const auto& file = *_file;
-  if (position >= file.TailStart()) {
-    ReleasePin();
-    _start = file.TailStart();
-    _begin = file.Tail();
-    _end = _begin + (_length - _start);
-    _pos = _begin + (position - _start);
-    return true;
-  }
   const auto block = position / duckdb::BlockCache::BLOCK_SIZE;
   const auto& blocks = file.Blocks();
   auto& state = State();
@@ -253,8 +220,7 @@ bool IndexInput::Refill(bool ahead) {
       return _pos != _end;
     }
   }
-  auto pin = file.Cache().PinInOrder(blocks, block, state.read_ahead,
-                                     file.TailStart(), ahead);
+  auto pin = file.Cache().PinInOrder(blocks, block, state.read_ahead, ahead);
   ReleasePin();
   state.pin = std::move(pin);
   Window(block, state.pin.Ptr(), state.pin.Size(), position);

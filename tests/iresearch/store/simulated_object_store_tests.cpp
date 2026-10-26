@@ -223,7 +223,8 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
 
   store.ResetRequests();
   const auto whole = files.ReadWhole("segment");
-  EXPECT_EQ(400000, whole->Length());
+  EXPECT_EQ(400000, whole.size());
+  EXPECT_EQ(0, store.Requests().head);
   EXPECT_EQ(1, store.Requests().get);
 
   files.Rename("segment", "renamed");
@@ -239,93 +240,15 @@ TEST(SimulatedObjectStoreTest, for_each_rethrows_what_a_visit_threw) {
   tests::ObjectStore();
   irs::Directory files{irs::DuckDBEngine::Instance().instance(), Root()};
   ASSERT_EQ(irs::StorageKind::Remote, files.Kind());
-  ASSERT_SQL_ERROR(files.ForEach(4,
-                                 [](size_t i) {
-                                   if (i == 2) {
-                                     THROW_SQL_ERROR(
-                                       ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                                       ERR_MSG("segment ", i, " is corrupt"));
-                                   }
-                                 }),
+  ASSERT_SQL_ERROR(irs::ForEach(files, 4,
+                                [](size_t i) {
+                                  if (i == 2) {
+                                    THROW_SQL_ERROR(
+                                      ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                                      ERR_MSG("segment ", i, " is corrupt"));
+                                  }
+                                }),
                    ERRCODE_DATA_CORRUPTED);
-}
-
-TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
-  auto& store = tests::ObjectStore();
-  auto& db = irs::DuckDBEngine::Instance().instance();
-  const auto root = Root();
-  irs::Directory files{db, root};
-  {
-    auto out = files.Create("data");
-    for (uint32_t i = 0; i != 100000; ++i) {
-      out->WriteU32(i);
-    }
-    irs::format_utils::WriteFooter(*out);
-    out->Close();
-  }
-
-  store.ResetRequests();
-  ASSERT_TRUE(files.Has("data"));
-  const auto in_file = files.Open("data", duckdb::MappedFileAccess::NORMAL);
-  irs::IndexInput in{*in_file};
-  EXPECT_EQ(400000, irs::format_utils::ReadFooter(in, "data").data_len);
-  in.Seek(399996);
-  EXPECT_EQ(99999, static_cast<uint32_t>(in.ReadI32()));
-  in.Seek(0);
-  EXPECT_EQ(0, static_cast<uint32_t>(in.ReadI32()));
-  EXPECT_EQ(0, store.Requests().head);
-  EXPECT_EQ(0, store.Requests().get);
-
-  duckdb::BlockCache::Get(db).Clear();
-  const auto uncached_file =
-    files.Open("data", duckdb::MappedFileAccess::NORMAL);
-  irs::IndexInput uncached{*uncached_file};
-  EXPECT_EQ(400000, irs::format_utils::ReadFooter(uncached, "data").data_len);
-  EXPECT_EQ(0, store.Requests().get);
-  uncached.Seek(399996);
-  EXPECT_EQ(99999, static_cast<uint32_t>(uncached.ReadI32()));
-  uncached.Seek(0);
-  EXPECT_EQ(0, static_cast<uint32_t>(uncached.ReadI32()));
-  EXPECT_EQ(2, store.Requests().get);
-
-  store.ResetRequests();
-  const auto whole_file = files.ReadWhole("data");
-  irs::IndexInput whole{*whole_file};
-  EXPECT_EQ(400000, irs::format_utils::ReadFooter(whole, "data").data_len);
-  EXPECT_EQ(0, store.Requests().head);
-  EXPECT_EQ(1, store.Requests().get);
-
-  std::array<irs::byte_type, 16> expected{};
-  std::array<irs::byte_type, 16> actual{};
-  whole.ReadData(399992, expected.data(), expected.size());
-  in.ReadData(399992, actual.data(), actual.size());
-  EXPECT_EQ(expected, actual);
-  whole.Seek(0);
-  in.Seek(0);
-  EXPECT_EQ(whole.Checksum(whole.Length()), in.Checksum(in.Length()));
-
-  irs::Directory restarted{db, root};
-  store.ResetRequests();
-  ASSERT_TRUE(restarted.Has("data"));
-  const auto cold_file =
-    restarted.Open("data", duckdb::MappedFileAccess::NORMAL);
-  irs::IndexInput cold{*cold_file};
-  EXPECT_EQ(400000, irs::format_utils::ReadFooter(cold, "data").data_len);
-  EXPECT_EQ(2, store.Requests().head);
-
-  store.ResetRequests();
-  const auto cold_whole_file = restarted.ReadWhole("data");
-  irs::IndexInput cold_whole{*cold_whole_file};
-  EXPECT_EQ(400000, irs::format_utils::ReadFooter(cold_whole, "data").data_len);
-  EXPECT_EQ(0, store.Requests().head);
-  EXPECT_EQ(1, store.Requests().get);
-
-  files.Rename("data", "renamed");
-  store.ResetRequests();
-  ASSERT_TRUE(files.Has("renamed"));
-  EXPECT_EQ(0, store.Requests().head);
-  ASSERT_TRUE(files.Remove("renamed"));
-  EXPECT_FALSE(files.Has("renamed"));
 }
 
 TEST(SimulatedObjectStoreTest, injected_failures) {

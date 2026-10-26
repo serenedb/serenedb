@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <array>
 #include <ctime>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
@@ -197,8 +198,9 @@ bool OfKind(const Object& object, std::string_view kind) {
 }
 
 irs::Directory LoadIndex(duckdb::DatabaseInstance& db,
+                         duckdb::MemoryFileSystem& fs,
                          std::span<const IndexFile> files) {
-  auto dir = irs::Directory::PrivateMemory(db);
+  irs::Directory dir{db, fs, irs::MemoryIndexRoot()};
   for (const auto& file : files) {
     auto out = dir.Create(file.name);
     out->WriteData(file.bytes.data(), file.bytes.size());
@@ -210,7 +212,7 @@ irs::Directory LoadIndex(duckdb::DatabaseInstance& db,
 class EmbeddedIndex {
  public:
   EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
-    : _dir{LoadIndex(db, files)},
+    : _dir{LoadIndex(db, _fs, files)},
       _reader{_dir, Options(db), [](duckdb::BinaryDeserializer& payload) {
                 search::IndexStamp::Read(payload);
               }} {}
@@ -224,6 +226,7 @@ class EmbeddedIndex {
     return options;
   }
 
+  duckdb::MemoryFileSystem _fs;
   irs::Directory _dir;
   irs::DirectoryReader _reader;
 };

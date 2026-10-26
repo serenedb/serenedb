@@ -50,6 +50,9 @@ class HookFileSystem : public duckdb::FileSystem {
     const duckdb::OpenFileInfo& path, duckdb::FileOpenFlags flags,
     const duckdb::MMapOptions& options,
     duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) override;
+  duckdb::shared_ptr<duckdb::BlockCacheFile> GetBlockFile(
+    const std::string& path) override;
+  void Compact(const std::string& path) override;
 
   void Read(duckdb::FileHandle& handle, void* buffer, int64_t nr_bytes,
             duckdb::idx_t location) override;

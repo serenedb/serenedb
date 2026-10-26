@@ -37,11 +37,6 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
 class ColumnReader;
@@ -58,10 +53,8 @@ inline std::string FileName(std::string_view segment_name) {
 
 class ColReader final {
  public:
-  ColReader(const Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db);
-  ColReader(const Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db, bool present);
+  ColReader(const Directory& dir, std::string_view segment_name, bool present,
+            duckdb::MappedFileAccess access);
   ~ColReader();
 
   ColReader(const ColReader&) = delete;

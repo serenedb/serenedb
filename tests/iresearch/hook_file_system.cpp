@@ -81,6 +81,13 @@ duckdb::unique_ptr<duckdb::MemoryMappedFile> HookFileSystem::MemoryMapFile(
   return _inner.MemoryMapFile(path, flags, options, opener);
 }
 
+duckdb::shared_ptr<duckdb::BlockCacheFile> HookFileSystem::GetBlockFile(
+  const std::string& path) {
+  return _inner.GetBlockFile(path);
+}
+
+void HookFileSystem::Compact(const std::string& path) { _inner.Compact(path); }
+
 void HookFileSystem::Read(duckdb::FileHandle& handle, void* buffer,
                           int64_t nr_bytes, duckdb::idx_t location) {
   Inner(handle).Read(buffer, nr_bytes, location);

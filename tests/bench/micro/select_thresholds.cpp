@@ -92,7 +92,9 @@ constexpr Shape kShapes[] = {
 
 // One opened block of ~W rows plus everything keeping it alive.
 struct Blk {
-  irs::Directory dir{irs::Directory::PrivateMemory(CsDb())};
+  std::unique_ptr<duckdb::MemoryFileSystem> fs =
+    std::make_unique<duckdb::MemoryFileSystem>();
+  irs::Directory dir{CsDb(), *fs, irs::MemoryIndexRoot()};
   std::unique_ptr<irs::ColReader> reader;
   std::unique_ptr<irs::ReadContext> ctx;
   std::unique_ptr<duckdb::ColumnSegment> block;
@@ -127,8 +129,8 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
     }
     writer.Commit(w);
   }
-  blk->reader =
-    std::make_unique<irs::ColReader>(blk->dir, std::string{kSegName}, CsDb());
+  blk->reader = std::make_unique<irs::ColReader>(
+    blk->dir, kSegName, true, duckdb::MappedFileAccess::SEQUENTIAL);
   const auto* col = blk->reader->Column(kField);
   if (col == nullptr) {
     std::fprintf(stderr, "BuildBlk(%s): column missing\n", shape.name);

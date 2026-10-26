@@ -218,7 +218,7 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
           _writer->Compact(policy);
         }
 
-        _dir.RemoveAllUnreferenced();
+        irs::RemoveAllUnreferenced(_dir);
       }
     });
   }
@@ -255,7 +255,7 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
     std::fflush(stdout);
     Settle();
   } else if (_opts.compaction_threads) {
-    _dir.RemoveAllUnreferenced();
+    irs::RemoveAllUnreferenced(_dir);
   }
 }
 
@@ -263,7 +263,7 @@ void IndexBuilder::CompactAll() {
   _writer->Compact(
     irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
   _writer->RefreshCommit();
-  _dir.RemoveAllUnreferenced();
+  irs::RemoveAllUnreferenced(_dir);
 }
 
 void IndexBuilder::Settle() {
@@ -278,7 +278,7 @@ void IndexBuilder::Settle() {
     }
     segments = left;
   }
-  _dir.RemoveAllUnreferenced();
+  irs::RemoveAllUnreferenced(_dir);
 }
 
 bool TextField::Write(irs::DataOutput& out) const {

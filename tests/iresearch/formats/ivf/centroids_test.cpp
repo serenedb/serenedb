@@ -478,7 +478,7 @@ TEST(centroids_builder_test, create_small_dataset_builds_no_centroids) {
   Directory dir{DuckDBEngine::Instance().instance(), MemoryIndexRoot()};
   WriteVectorColumn(dir, *db.instance, kVec, d, data);
 
-  ColReader r{dir, "seg", *db.instance};
+  ColReader r{dir, "seg", true, duckdb::MappedFileAccess::SEQUENTIAL};
   const auto* col = r.Column(kVec);
   ASSERT_NE(col, nullptr);
 
@@ -500,7 +500,7 @@ TEST(centroids_builder_test,
   Directory dir{DuckDBEngine::Instance().instance(), MemoryIndexRoot()};
   WriteVectorColumn(dir, *db.instance, kVec, d, data);
 
-  ColReader r{dir, "seg", *db.instance};
+  ColReader r{dir, "seg", true, duckdb::MappedFileAccess::SEQUENTIAL};
   const auto* col = r.Column(kVec);
   ASSERT_NE(col, nullptr);
 

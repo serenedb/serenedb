@@ -57,7 +57,6 @@ void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
   const auto size = footer.GetPosition();
   SDB_ENSURE(size <= std::numeric_limits<uint32_t>::max(), "footer of ", size,
              " bytes does not fit its 32-bit length");
-  out.BeginTail();
   out.WriteData(footer.GetData(), size);
   out.WriteU32(out.Checksum());
   out.WriteU32(static_cast<uint32_t>(size));

@@ -22,16 +22,13 @@
 
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
 
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/crc.hpp"
-#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
@@ -42,33 +39,25 @@ struct PendingUploads {
 
 PendingUploads CurrentUploads() noexcept;
 
-struct RemoteUpload {
-  FileInfos& infos;
-  duckdb::BlockCache* cache;
-  std::string_view name;
-};
-
 class FileOutput final : public IndexOutput {
  public:
-  static constexpr size_t kMaxTail = 16 << 10;
-
   static ptr Open(duckdb::FileSystem& fs, const std::string& path,
-                  FileTracker* tracker, const RemoteUpload* remote);
+                  const Directory::Observers& observers, bool remote,
+                  duckdb::BlockCache* cache);
 
   ~FileOutput() final;
 
  private:
-  FileOutput(std::unique_ptr<duckdb::FileHandle> handle, FileTracker* tracker,
-             const RemoteUpload* remote);
+  FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
+             const Directory::Observers& observers, bool remote,
+             duckdb::BlockCache* cache);
 
   void Flush() final;
   uint32_t Checksum() final;
-  void BeginTail() final;
   void CloseImpl() final;
   void Release() noexcept;
   void WriteDirect(const byte_type* b, size_t len) final;
   void WriteHandle(const byte_type* b, size_t len);
-  void KeepTail(const byte_type* b, size_t len);
   void CacheBytes(const byte_type* b, size_t len) noexcept;
   void FinishCache(bool published) noexcept;
 
@@ -78,11 +67,8 @@ class FileOutput final : public IndexOutput {
   std::unique_ptr<duckdb::FileHandle> _handle;
   Crc32c _crc;
   uint64_t _unhinted = 0;
-  FileTracker* _tracker = nullptr;
-  FileInfos* _infos = nullptr;
-  std::string _name;
-  uint64_t _tail_start = std::numeric_limits<uint64_t>::max();
-  bstring _tail;
+  Directory::Observers _observers;
+  bool _remote;
   std::optional<duckdb::BlockCacheAppender> _cached;
 };
 

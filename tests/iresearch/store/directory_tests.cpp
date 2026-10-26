@@ -37,6 +37,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/async_utils.hpp>
 #include <iresearch/utils/crc.hpp>
@@ -4438,8 +4439,10 @@ TEST_P(DirectoryTestCase, read_whole) {
     out->Close();
   }
 
-  const auto in_file = _dir->ReadWhole("file");
-  irs::IndexInput in{*in_file};
+  const auto bytes = _dir->ReadWhole("file");
+  EXPECT_EQ((irs::bytes_view{data.data(), data.size()}),
+            irs::bytes_view{bytes});
+  irs::IndexInput in{bytes};
   ASSERT_FALSE(!in);
   EXPECT_TRUE(in.Whole());
   ASSERT_EQ(kSize, in.Length());
@@ -4536,7 +4539,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced) {
 
   // test clean before initializing directory
   {
-    ASSERT_EQ(0, dir.RemoveUnreferenced());
+    ASSERT_EQ(0, irs::RemoveUnreferenced(dir));
   }
 
   // add a more dummy files
@@ -4592,7 +4595,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced) {
     auto list_files = [&files](std::string_view name) {
       files.emplace_back(std::move(name));
     };
-    ASSERT_EQ(0, dir.RemoveUnreferenced());
+    ASSERT_EQ(0, irs::RemoveUnreferenced(dir));
     dir.Visit(list_files);
 
     for (auto& file : files) {
@@ -4612,7 +4615,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced) {
       files.emplace_back(std::move(name));
     };
     ref2.reset();
-    ASSERT_EQ(1, dir.RemoveUnreferenced());
+    ASSERT_EQ(1, irs::RemoveUnreferenced(dir));
     dir.Visit(list_files);
 
     for (auto& file : files) {
@@ -4631,7 +4634,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced) {
       files.emplace_back(std::move(name));
     };
     ref1.reset();
-    ASSERT_EQ(1, dir.RemoveUnreferenced());
+    ASSERT_EQ(1, irs::RemoveUnreferenced(dir));
     dir.Visit(list_files);
 
     for (auto& file : files) {
@@ -4682,7 +4685,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced_current_segment) {
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    dir.RemoveUnreferenced();
+    irs::RemoveUnreferenced(dir);
     files.clear();
     dir.Visit(list_files);
     ASSERT_FALSE(files.empty());
@@ -4733,7 +4736,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced_current_segment) {
     };
     std::unordered_set<std::string> current_files(file_set);
     auto reader = irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()};
-    dir.RemoveUnreferenced();
+    irs::RemoveUnreferenced(dir);
     dir.Visit(list_files);
     ASSERT_FALSE(files.empty());
 
@@ -4751,7 +4754,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced_current_segment) {
     auto list_files = [&files](std::string_view name) {
       files.emplace_back(std::move(name));
     };
-    dir.RemoveUnreferenced();
+    irs::RemoveUnreferenced(dir);
     dir.Visit(list_files);
     ASSERT_TRUE(files.empty());  // current segment should have been removed too
   }
@@ -4762,11 +4765,11 @@ TEST_P(DirectoryTestCase, reference) {
   auto out = dir.Create("abc");
   ASSERT_FALSE(!out);
   out->Close();
-  const auto ref = dir.Reference("abc");
+  const auto ref = irs::Reference(dir, "abc");
   ASSERT_NE(nullptr, ref);
   EXPECT_EQ("abc", *ref);
   EXPECT_EQ(ref, dir.Refs().add("abc"));
-  EXPECT_EQ(nullptr, dir.Reference("def"));
+  EXPECT_EQ(nullptr, irs::Reference(dir, "def"));
 }
 
 TEST_P(DirectoryTestCase, ref_tracker) {
@@ -4775,7 +4778,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
   // a tracking copy shares the refs
   {
     irs::RefTracker tracker;
-    auto track_dir = dir.Tracking(tracker);
+    auto track_dir = dir.Observed(tracker);
 
     ASSERT_EQ(&dir.Refs(), &track_dir.Refs());
   }
@@ -4783,7 +4786,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
   // test open
   {
     irs::RefTracker tracker;
-    auto track_dir = dir.Tracking(tracker);
+    auto track_dir = dir.Observed(tracker);
     const std::string_view file{"abc"};
     auto file1 = dir.Create(file);
 
@@ -4809,7 +4812,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
   // files created through the tracking copy are tracked
   {
     irs::RefTracker tracker;
-    auto track_dir = dir.Tracking(tracker);
+    auto track_dir = dir.Observed(tracker);
     auto file1 = track_dir.Create("abc");
     ASSERT_FALSE(!file1);
     auto file2 = track_dir.Create("def");
@@ -4821,7 +4824,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
   // opening a file does not track it
   {
     irs::RefTracker tracker;
-    auto track_dir = dir.Tracking(tracker);
+    auto track_dir = dir.Observed(tracker);
     auto file1 = dir.Create("abc");
     ASSERT_FALSE(!file1);
     file1->Close();
@@ -4833,7 +4836,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
 
   {
     irs::RefTracker tracker;
-    auto track_dir = dir.Tracking(tracker);
+    auto track_dir = dir.Observed(tracker);
     auto file1 = track_dir.Create("abc");
     ASSERT_FALSE(!file1);
     auto file2 = track_dir.Create("def");
@@ -4849,7 +4852,7 @@ TEST_P(DirectoryTestCase, file_tracker) {
   // a tracking copy shares the root and the refs
   {
     irs::FileTracker tracker;
-    auto track_dir = dir.Tracking(tracker);
+    auto track_dir = dir.Observed(tracker);
 
     ASSERT_EQ(dir.Root(), track_dir.Root());
     ASSERT_EQ(&dir.Refs(), &track_dir.Refs());
@@ -4858,7 +4861,7 @@ TEST_P(DirectoryTestCase, file_tracker) {
   // test create
   {
     irs::FileTracker tracker;
-    auto track_dir = dir.Tracking(tracker);
+    auto track_dir = dir.Observed(tracker);
     const std::string_view file{"abc"};
     {
       auto file1 = track_dir.Create(file);
@@ -5058,7 +5061,8 @@ TEST(DirectoryTest, memory_segments_without_memory_to_compact_stay_in_blocks) {
 
 TEST(DirectoryTest, private_memory) {
   auto& db = irs::DuckDBEngine::Instance().instance();
-  const auto files = irs::Directory::PrivateMemory(db);
+  duckdb::MemoryFileSystem fs;
+  const irs::Directory files{db, fs, irs::MemoryIndexRoot()};
   ASSERT_EQ(irs::StorageKind::Memory, files.Kind());
 
   constexpr std::string_view kData = "private memory bytes";
@@ -5108,8 +5112,9 @@ TEST(DirectoryTest, private_memory) {
 }
 
 TEST(DirectoryTest, private_memory_open_missing_file) {
-  const auto files =
-    irs::Directory::PrivateMemory(irs::DuckDBEngine::Instance().instance());
+  duckdb::MemoryFileSystem fs;
+  const irs::Directory files{irs::DuckDBEngine::Instance().instance(), fs,
+                             irs::MemoryIndexRoot()};
   ASSERT_THROW(files.Open("missing", duckdb::MappedFileAccess::NORMAL),
                duckdb::IOException);
   ASSERT_THROW(files.ReadWhole("missing"), duckdb::IOException);
@@ -5117,8 +5122,10 @@ TEST(DirectoryTest, private_memory_open_missing_file) {
 
 TEST(DirectoryTest, private_memory_roots_are_separate) {
   auto& db = irs::DuckDBEngine::Instance().instance();
-  const auto lhs = irs::Directory::PrivateMemory(db);
-  const auto rhs = irs::Directory::PrivateMemory(db);
+  duckdb::MemoryFileSystem lhs_fs;
+  duckdb::MemoryFileSystem rhs_fs;
+  const irs::Directory lhs{db, lhs_fs, irs::MemoryIndexRoot()};
+  const irs::Directory rhs{db, rhs_fs, irs::MemoryIndexRoot()};
   const auto write = [](const irs::Directory& files, std::string_view name,
                         uint32_t value) {
     auto out = files.Create(name);
@@ -5151,10 +5158,11 @@ TEST(DirectoryTest, private_memory_roots_are_separate) {
 }
 
 TEST(DirectoryTest, private_memory_reader_outlives_files) {
+  duckdb::MemoryFileSystem fs;
   irs::DirectoryReader reader;
   {
-    const auto files =
-      irs::Directory::PrivateMemory(irs::DuckDBEngine::Instance().instance());
+    const irs::Directory files{irs::DuckDBEngine::Instance().instance(), fs,
+                               irs::MemoryIndexRoot()};
     WriteOneDocument(files);
     reader = irs::DirectoryReader{files, irs::tests::DefaultReaderOptions()};
   }
@@ -5182,7 +5190,7 @@ TEST_F(DirectoryHookTest, ref_tracker_failures) {
   {
     irs::RefTracker tracker;
 
-    ASSERT_THROW(hooked.Tracking(tracker).Create("abc"), duckdb::IOException);
+    ASSERT_THROW(hooked.Observed(tracker).Create("abc"), duckdb::IOException);
 
     ASSERT_TRUE(tracker.GetRefs().empty());
   }
@@ -5212,15 +5220,15 @@ TEST_F(DirectoryHookTest, remove_failures) {
 
   hooked.Refs().add("abc");
   hooked.Refs().add("def");
-  ASSERT_THROW(hooked.RemoveUnreferenced(), duckdb::IOException);
+  ASSERT_THROW(irs::RemoveUnreferenced(hooked), duckdb::IOException);
   ASSERT_TRUE(local->Has("abc"));
   ASSERT_TRUE(local->Has("def"));
 
   fs.fail = false;
-  EXPECT_EQ(2, hooked.RemoveUnreferenced());
+  EXPECT_EQ(2, irs::RemoveUnreferenced(hooked));
   EXPECT_FALSE(local->Has("abc"));
   EXPECT_FALSE(local->Has("def"));
-  EXPECT_EQ(0, hooked.RemoveUnreferenced());
+  EXPECT_EQ(0, irs::RemoveUnreferenced(hooked));
 }
 
 TEST_F(DirectoryHookTest, abandoned_output_is_not_published) {
@@ -5248,87 +5256,12 @@ TEST_F(DirectoryHookTest, failed_object_removal_is_retried) {
     GTEST_SKIP() << "built without fault injection";
   }
   absl::Cleanup clear = [] { irs::ClearFailurePointsDebugging(); };
-  EXPECT_THROW(store->RemoveUnreferenced(), duckdb::IOException);
+  EXPECT_THROW(irs::RemoveUnreferenced(*store), duckdb::IOException);
   irs::ClearFailurePointsDebugging();
   ASSERT_TRUE(store->Has("abc"));
 
-  EXPECT_EQ(1, store->RemoveUnreferenced());
+  EXPECT_EQ(1, irs::RemoveUnreferenced(*store));
   EXPECT_FALSE(store->Has("abc"));
-}
-
-std::vector<std::string> VisitedNames(const irs::Directory& files) {
-  std::vector<std::string> names;
-  files.Visit([&](std::string_view name) { names.emplace_back(name); });
-  absl::c_sort(names);
-  return names;
-}
-
-TEST_F(DirectoryHookTest, object_store_listing_is_reused_while_enabled) {
-  auto store = ::tests::ObjectStoreDirectory(this);
-  ASSERT_NE(nullptr, store);
-  auto& objects = ::tests::ObjectStore();
-  objects.Publish(store->Path("left"), "left behind");
-  store->ReuseListings(true);
-  objects.ResetRequests();
-
-  EXPECT_EQ((std::vector<std::string>{"left"}), VisitedNames(*store));
-  store->Create("written")->Close();
-  EXPECT_EQ((std::vector<std::string>{"left", "written"}),
-            VisitedNames(*store));
-  ASSERT_TRUE(store->Remove("left"));
-  store->Rename("written", "renamed");
-  EXPECT_EQ((std::vector<std::string>{"renamed"}), VisitedNames(*store));
-  EXPECT_EQ(1, objects.Requests().list);
-
-  store->ReuseListings(false);
-  objects.Publish(store->Path("published"), "by another writer");
-  EXPECT_EQ((std::vector<std::string>{"published", "renamed"}),
-            VisitedNames(*store));
-  EXPECT_EQ((std::vector<std::string>{"published", "renamed"}),
-            VisitedNames(*store));
-  EXPECT_EQ(3, objects.Requests().list);
-}
-
-TEST_F(DirectoryHookTest, object_store_lists_again_after_a_failed_change) {
-  if (!irs::AddFailurePointDebugging("object_store_delete_fails")) {
-    GTEST_SKIP() << "built without fault injection";
-  }
-  irs::ClearFailurePointsDebugging();
-  auto store = ::tests::ObjectStoreDirectory(this);
-  ASSERT_NE(nullptr, store);
-  auto& objects = ::tests::ObjectStore();
-  store->ReuseListings(true);
-  store->Create("abc")->Close();
-  const auto listings = [&] {
-    objects.ResetRequests();
-    VisitedNames(*store);
-    return objects.Requests().list;
-  };
-  const auto fail = [](std::string_view point, auto&& change) {
-    ASSERT_TRUE(irs::AddFailurePointDebugging(point));
-    absl::Cleanup clear = [] { irs::ClearFailurePointsDebugging(); };
-    EXPECT_THROW(change(), duckdb::IOException);
-  };
-  EXPECT_EQ(1, listings());
-  EXPECT_EQ(0, listings());
-
-  fail("object_store_delete_fails", [&] { store->Remove("abc"); });
-  EXPECT_EQ(1, listings());
-  EXPECT_EQ(0, listings());
-
-  fail("object_store_delete_fails", [&] { store->Rename("abc", "def"); });
-  EXPECT_EQ((std::vector<std::string>{"abc", "def"}), VisitedNames(*store));
-  EXPECT_EQ(0, listings());
-
-  fail("object_store_put_fails", [&] { store->Create("ghi")->Close(); });
-  EXPECT_EQ(1, listings());
-
-  store->Refs().add("abc");
-  store->Refs().add("def");
-  fail("object_store_delete_fails", [&] { store->RemoveUnreferenced(); });
-  EXPECT_EQ(1, listings());
-  EXPECT_EQ(2, store->RemoveUnreferenced());
-  EXPECT_TRUE(VisitedNames(*store).empty());
 }
 
 }  // namespace

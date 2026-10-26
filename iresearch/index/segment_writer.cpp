@@ -91,7 +91,7 @@ bool SegmentWriter::remove(doc_id_t doc_id) noexcept {
 
 SegmentWriter::SegmentWriter(ConstructToken, const Directory& dir,
                              const SegmentWriterOptions& options) noexcept
-  : _dir{dir.Tracking(_tracker)},
+  : _dir{dir.Observed(_tracker)},
     _scorer{options.scorer},
     _docs_context{options.resource_manager},
     _fields{InverterMemory{
@@ -144,7 +144,9 @@ void SegmentWriter::flush(IndexSegment& segment,
   }
 
   if (state.doc_count != 0) {
-    _col_reader = std::make_unique<ColReader>(_dir, _seg_name, _db);
+    _col_reader = std::make_unique<ColReader>(
+      _dir, _seg_name, _tracker.Contains(FileName(_seg_name)),
+      duckdb::MappedFileAccess::SEQUENTIAL);
     _field_writer->SetIdxWriter(idx);
     std::optional<ReadContext> ivf_ctx;
     const auto cluster_readers =

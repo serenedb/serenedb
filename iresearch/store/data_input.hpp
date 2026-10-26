@@ -48,11 +48,8 @@ std::span<ByteExtent> CoalesceExtents(std::span<ByteExtent> extents,
 class InputFile {
  public:
   explicit InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping);
-  InputFile(std::string path, std::unique_ptr<byte_type[]> bytes,
-            uint64_t size) noexcept;
   InputFile(duckdb::BlockCache& cache,
-            duckdb::shared_ptr<duckdb::BlockCacheFile> blocks,
-            std::shared_ptr<const bstring> tail) noexcept;
+            duckdb::shared_ptr<duckdb::BlockCacheFile> blocks) noexcept;
   InputFile(const InputFile&) = delete;
   InputFile& operator=(const InputFile&) = delete;
 
@@ -65,8 +62,6 @@ class InputFile {
   const duckdb::shared_ptr<duckdb::BlockCacheFile>& Blocks() const noexcept {
     return _blocks;
   }
-  uint64_t TailStart() const noexcept { return _tail_start; }
-  const byte_type* Tail() const noexcept { return _tail->data(); }
 
   void Prefetch(uint64_t offset, uint64_t count) const noexcept;
   void PrefetchExtents(std::span<ByteExtent> extents) const noexcept;
@@ -82,13 +77,9 @@ class InputFile {
   bytes_view _bytes;
   uint64_t _length;
   std::unique_ptr<duckdb::MemoryMappedFile> _mapping;
-  std::unique_ptr<byte_type[]> _owned;
-  std::string _path;
   file_utils::ResidencyMap _residency;
   duckdb::BlockCache* _cache = nullptr;
   duckdb::shared_ptr<duckdb::BlockCacheFile> _blocks;
-  std::shared_ptr<const bstring> _tail;
-  uint64_t _tail_start;
 };
 
 class IndexInput {

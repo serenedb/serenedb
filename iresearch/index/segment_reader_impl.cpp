@@ -159,12 +159,11 @@ lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
                                          const SegmentMeta& meta,
                                          const IndexReaderOptions& options) {
-  SDB_ASSERT(options.db);
   const auto present = [&](std::string_view ext) {
     return absl::c_linear_search(meta.files, irs::FileName(meta.name, ext));
   };
-  col_reader = std::make_unique<ColReader>(dir, meta.name, *options.db,
-                                           present(kFormatExt));
+  col_reader = std::make_unique<ColReader>(dir, meta.name, present(kFormatExt),
+                                           duckdb::MappedFileAccess::RANDOM);
   idx_reader = std::make_unique<IdxReader>(
     dir, meta.name, present(kIdxFormatExt), options.hnsw_bases);
 }

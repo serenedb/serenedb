@@ -52,6 +52,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -787,7 +788,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
 
   const auto& progress_callback = progress ? progress : kProgressNoop;
   FileTracker tracker;
-  const auto track_dir = _dir.Tracking(tracker);
+  const auto track_dir = _dir.Observed(tracker);
 
   FieldMetaMapT field_meta_map;
   CompoundFieldIterator fields_itr{_readers.size(), progress_callback,
@@ -838,7 +839,9 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   }
   auto ann_writers = col_writer->TakeAnnWriters();
   if (segment.docs_count != 0) {
-    col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);
+    col_reader = std::make_unique<ColReader>(
+      track_dir, segment.name, tracker.Contains(FileName(segment.name)),
+      duckdb::MappedFileAccess::SEQUENTIAL);
     norm_provider.reader = col_reader.get();
   }
   std::optional<ReadContext> ivf_ctx;

@@ -44,29 +44,29 @@ PendingUploads CurrentUploads() noexcept {
 }
 
 IndexOutput::ptr FileOutput::Open(duckdb::FileSystem& fs,
-                                  const std::string& path, FileTracker* tracker,
-                                  const RemoteUpload* remote) {
+                                  const std::string& path,
+                                  const Directory::Observers& observers,
+                                  bool remote, duckdb::BlockCache* cache) {
   auto handle =
     fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
                         duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-  return ptr{new FileOutput{std::move(handle), tracker, remote}};
+  return ptr{new FileOutput{std::move(handle), observers, remote, cache}};
 }
 
 FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
-                       FileTracker* tracker, const RemoteUpload* remote)
+                       const Directory::Observers& observers, bool remote,
+                       duckdb::BlockCache* cache)
   : IndexOutput{_buf, std::end(_buf)},
     _handle{std::move(handle)},
-    _tracker{tracker} {
+    _observers{observers},
+    _remote{remote} {
   SDB_ASSERT(_handle);
-  if (!remote) {
+  if (!_remote) {
     return;
   }
-  _infos = &remote->infos;
-  _name = remote->name;
   gUploadingFiles.fetch_add(1, std::memory_order_relaxed);
-  if (remote->cache && remote->cache->IsEnabled()) {
-    _cached.emplace(*remote->cache,
-                    remote->cache->CreateWrittenFile(_handle->GetPath()));
+  if (cache && cache->IsEnabled()) {
+    _cached.emplace(*cache, cache->CreateWrittenFile(_handle->GetPath()));
   }
 }
 
@@ -95,19 +95,12 @@ uint32_t FileOutput::Checksum() {
   return std::exchange(_crc, Crc32c{}).checksum();
 }
 
-void FileOutput::BeginTail() {
-  if (_infos) {
-    _tail.clear();
-    _tail_start = Position();
-  }
-}
-
 void FileOutput::Release() noexcept {
   if (_cached) {
     FinishCache(false);
   }
   _handle.reset();
-  if (_infos) {
+  if (_remote) {
     gUploadingFiles.fetch_sub(1, std::memory_order_relaxed);
     gUploadingBytes.fetch_sub(_offset, std::memory_order_relaxed);
   }
@@ -118,27 +111,13 @@ void FileOutput::Release() noexcept {
 void FileOutput::CloseImpl() {
   const auto size = Position();
   absl::Cleanup release = [&] noexcept { Release(); };
-  absl::Cleanup unknown = [&] {
-    if (_infos) {
-      _infos->MarkIncomplete();
-    }
-  };
   Flush();
   _handle->Close();
   if (_cached) {
     FinishCache(true);
   }
-  if (_infos) {
-    _infos->Written(
-      _name, {.size = size,
-              .tail = _tail.empty()
-                        ? nullptr
-                        : std::make_shared<const bstring>(std::move(_tail)),
-              .etag = _handle->file_system.GetVersionTag(*_handle)});
-  }
-  std::move(unknown).Cancel();
-  if (_tracker) {
-    _tracker->AddBytes(size);
+  for (auto* observer : _observers) {
+    observer->Written(size);
   }
 }
 
@@ -180,13 +159,10 @@ void FileOutput::WriteHandle(const byte_type* b, size_t len) {
   _handle->Write(duckdb::QueryContext{}, const_cast<byte_type*>(b), len,
                  _offset);
   _crc.process_bytes(b, len);
-  if (_offset + len > _tail_start) [[unlikely]] {
-    KeepTail(b, len);
-  }
   if (_cached) {
     CacheBytes(b, len);
   }
-  if (_infos) {
+  if (_remote) {
     gUploadingBytes.fetch_add(len, std::memory_order_relaxed);
   }
   _offset += len;
@@ -213,17 +189,6 @@ void FileOutput::FinishCache(bool published) noexcept {
   } catch (...) {
   }
   _cached.reset();
-}
-
-void FileOutput::KeepTail(const byte_type* b, size_t len) {
-  const auto skip =
-    _tail_start > _offset ? static_cast<size_t>(_tail_start - _offset) : 0;
-  if (_tail.size() + len - skip > kMaxTail) {
-    _tail_start = std::numeric_limits<uint64_t>::max();
-    bstring{}.swap(_tail);
-    return;
-  }
-  _tail.append(b + skip, len - skip);
 }
 
 }  // namespace irs

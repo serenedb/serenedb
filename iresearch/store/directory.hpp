@@ -20,25 +20,22 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
 #include <absl/functional/function_ref.h>
-#include <absl/synchronization/mutex.h>
 
-#include <duckdb/common/memory_file_system.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/ref_counter.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
@@ -52,110 +49,48 @@ StorageKind StorageKindOf(std::string_view location);
 
 using IndexFileRefs = RefCounter<std::string>;
 
-using FileRefs = std::vector<IndexFileRefs::ref_t>;
-
-struct FileInfo {
-  uint64_t size = 0;
-  std::shared_ptr<const bstring> tail;
-  std::string etag;
-};
-
-class FileInfos {
- public:
-  void Written(std::string_view name, FileInfo info);
-  void Listed(std::string_view name, uint64_t size, std::string etag);
-  void Persisted(std::string_view name, FileInfo info);
-  std::optional<FileInfo> Find(std::string_view name) const;
-  bool Contains(std::string_view name) const;
-  bool Forget(std::string_view name);
-  void Rename(std::string_view src, std::string_view dst);
-
-  void ReuseListings(bool reuse);
-  void MarkComplete();
-  void MarkIncomplete();
-  std::optional<std::vector<std::string>> Names() const;
-
- private:
-  mutable absl::Mutex _mutex;
-  containers::FlatHashMap<std::string, FileInfo> _infos ABSL_GUARDED_BY(_mutex);
-  bool _reuse ABSL_GUARDED_BY(_mutex) = false;
-  bool _complete ABSL_GUARDED_BY(_mutex) = false;
-};
-
-struct TrackedFiles {
-  std::vector<std::string> files;
-  uint64_t bytes = 0;
-};
-
-class FileTracker {
- public:
-  void Add(std::string_view name) { _files.emplace(name); }
-  void AddBytes(uint64_t size) noexcept { _files_size += size; }
-
-  TrackedFiles Flush();
-  void Clear() noexcept;
-
- private:
-  containers::FlatHashSet<std::string> _files;
-  uint64_t _files_size = 0;
-};
-
-class RefTracker {
- public:
-  void Keep(IndexFileRefs::ref_t ref);
-  void Forget(std::string_view name);
-  void Replace(std::string_view src, IndexFileRefs::ref_t dst);
-
-  std::vector<IndexFileRefs::ref_t> GetRefs() const;
-  void Clear();
-
- private:
-  using Refs =
-    containers::FlatHashSet<IndexFileRefs::ref_t, IndexFileRefs::Hash,
-                            IndexFileRefs::EqualTo>;
-
-  mutable absl::Mutex _mutex;
-  Refs _tracked ABSL_GUARDED_BY(_mutex);
-};
-
 class Directory {
  public:
+  class Observer {
+   public:
+    virtual void Created(const Directory& dir, std::string_view name) = 0;
+    virtual void Written(uint64_t bytes) = 0;
+    virtual void Removed(const Directory& dir, std::string_view name) = 0;
+    virtual void Renamed(const Directory& dir, std::string_view src,
+                         std::string_view dst) = 0;
+
+   protected:
+    ~Observer() = default;
+  };
+
+  using Observers = absl::InlinedVector<Observer*, 2>;
+
   Directory(duckdb::DatabaseInstance& db, std::string_view root);
   Directory(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
             std::string_view root);
-
-  static Directory PrivateMemory(duckdb::DatabaseInstance& db);
 
   IndexOutput::ptr Create(std::string_view name) const;
   IndexOutput::ptr CreateWhole(std::string_view name) const;
   std::unique_ptr<InputFile> Open(std::string_view name,
                                   duckdb::MappedFileAccess access) const;
-  std::unique_ptr<InputFile> ReadWhole(std::string_view name) const;
+  bstring ReadWhole(std::string_view name) const;
   bool Has(std::string_view name) const;
   bool Remove(std::string_view name) const;
+  size_t Remove(std::span<const std::string> names) const;
   void Rename(std::string_view src, std::string_view dst) const;
   void Sync(std::span<const std::string_view> names) const;
   void SyncDirectory() const;
   void Compact(std::string_view name) const;
   void Visit(absl::FunctionRef<void(std::string_view)> visitor) const;
-  void ForEach(size_t count, absl::FunctionRef<void(size_t)> visit) const;
 
-  std::optional<FileInfo> Info(std::string_view name) const;
-  void Remember(std::string_view name, FileInfo info) const;
-  void ReuseListings(bool reuse) const { _state->infos.ReuseListings(reuse); }
-
-  IndexFileRefs::ref_t Reference(std::string_view name) const;
-  size_t RemoveUnreferenced() const;
-  void RemoveAllUnreferenced() const;
-
+  duckdb::DatabaseInstance& Db() const noexcept { return _state->db; }
   StorageKind Kind() const noexcept { return _state->kind; }
   const std::string& Root() const noexcept { return _state->root; }
   std::string Path(std::string_view name) const;
   IndexFileRefs& Refs() const noexcept { return _state->refs; }
 
-  Directory Tracking(FileTracker& tracker) const noexcept;
-  Directory Tracking(RefTracker& tracker) const noexcept;
-  Directory Untracked() const noexcept;
+  Directory Observed(Observer& observer) const;
+  Directory Unobserved() const;
 
  private:
   struct State {
@@ -165,33 +100,21 @@ class Directory {
     duckdb::FileSystem& fs;
     std::string root;
     StorageKind kind;
-    std::unique_ptr<duckdb::MemoryFileSystem> heap;
     IndexFileRefs refs;
-    FileInfos infos;
   };
 
-  explicit Directory(std::shared_ptr<State> state) noexcept
-    : _state{std::move(state)} {}
-
-  bool InBlocks() const noexcept {
-    return Kind() == StorageKind::Remote ||
-           (Kind() == StorageKind::Memory && !_state->heap);
-  }
   IndexOutput::ptr Create(std::string_view name, bool cached) const;
-  bool RemoveFile(std::string_view name) const;
-  size_t RemoveFiles(std::span<const std::string> names) const;
   std::unique_ptr<InputFile> OpenMapped(const std::string& path,
                                         duckdb::MappedFileAccess access) const;
-  std::unique_ptr<InputFile> OpenBlocks(const std::string& path,
-                                        std::string_view name,
-                                        duckdb::MappedFileAccess access) const;
+  std::unique_ptr<InputFile> OpenBlocks(const std::string& path) const;
   duckdb::BlockCache& Cache() const;
-  duckdb::MemoryFileSystem& MemoryFiles() const;
 
   std::shared_ptr<State> _state;
-  FileTracker* _tracker = nullptr;
-  RefTracker* _ref_tracker = nullptr;
+  Observers _observers;
 };
+
+void ForEach(const Directory& dir, size_t count,
+             absl::FunctionRef<void(size_t)> visit);
 
 std::string MemoryIndexRoot();
 

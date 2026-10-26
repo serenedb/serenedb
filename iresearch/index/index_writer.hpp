@@ -63,6 +63,7 @@ class DatabaseInstance;
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/common/memory_file_system.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/directory.hpp>
@@ -67,6 +68,7 @@ class MemoryIndex {
 
  private:
   duckdb::DatabaseInstance* _db;
+  duckdb::MemoryFileSystem _fs;
   irs::Directory _dir;
 };
 

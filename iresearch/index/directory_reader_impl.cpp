@@ -134,7 +134,7 @@ IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
     if (!filename) {
       return nullptr;
     }
-    ref = dir.Reference(*filename);
+    ref = Reference(dir, *filename);
   }
 
   SDB_ASSERT(ref);
@@ -158,7 +158,7 @@ DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, const Directory& dir,
                                          ReadersType&& readers)
   : CompositeReaderImpl{std::move(readers), init.live_docs_count,
                         init.docs_count},
-    _dir{dir.Untracked()},
+    _dir{dir.Unobserved()},
     _file_refs{std::move(init.file_refs)},
     _meta{std::move(meta)},
     _opts{opts},
@@ -220,7 +220,7 @@ std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
     }
   }
 
-  dir.ForEach(fresh.size(), [&](size_t i) {
+  ForEach(dir, fresh.size(), [&](size_t i) {
     readers[fresh[i]] = SegmentReader{
       SegmentReaderImpl::Open(dir, segments[fresh[i]].meta, opts)};
   });

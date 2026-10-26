@@ -32,29 +32,10 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory.hpp"
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/string_utils.hpp"
 
 namespace irs::segment_meta {
 namespace {
-
-std::vector<FileInfo> FileInfosOf(const Directory& dir,
-                                  const std::vector<std::string>& files) {
-  std::vector<FileInfo> infos;
-  if (dir.Kind() != StorageKind::Remote) {
-    return infos;
-  }
-  SDB_IF_FAILURE("segment_meta_without_file_info") { return infos; }
-  infos.reserve(files.size());
-  for (const auto& file : files) {
-    auto info = dir.Info(file);
-    if (!info) {
-      return {};
-    }
-    infos.push_back(std::move(*info));
-  }
-  return infos;
-}
 
 void WriteDocumentMask(IndexOutput& out, const DocumentMask& mask,
                        uint64_t size) {
@@ -85,8 +66,6 @@ void Write(const Directory& dir, std::string& meta_file, SegmentMeta& meta) {
   const bool has_mask = docs_mask && !docs_mask->Empty();
   const uint64_t mask_size = has_mask ? docs_mask->FrozenSize() : 0;
 
-  const auto infos = FileInfosOf(dir, meta.files);
-
   meta_file = FileName(meta);
   auto out = dir.CreateWhole(meta_file);
 
@@ -104,26 +83,6 @@ void Write(const Directory& dir, std::string& meta_file, SegmentMeta& meta) {
                                      meta.docs_count);
     meta_out.WriteProperty<uint64_t>(kFieldByteSize, "byte_size",
                                      size_without_mask);
-    if (infos.empty()) {
-      return;
-    }
-    meta_out.WriteList(
-      kFieldFileInfos, "file_infos", infos.size(),
-      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-        list.WriteObject([&](duckdb::BinarySerializer& obj) {
-          const auto& info = infos[i];
-          const uint64_t tail_size = info.tail ? info.tail->size() : 0;
-          obj.WriteProperty<uint64_t>(kFileInfoFieldSize, "size", info.size);
-          obj.WritePropertyWithDefault<uint64_t>(kFileInfoFieldTailSize,
-                                                 "tail_size", tail_size, 0);
-          if (tail_size != 0) {
-            obj.WriteProperty(kFileInfoFieldTail, "tail", info.tail->data(),
-                              tail_size);
-          }
-          obj.WritePropertyWithDefault<std::string>(kFileInfoFieldETag, "etag",
-                                                    info.etag, "");
-        });
-      });
   });
   out->Close();
 

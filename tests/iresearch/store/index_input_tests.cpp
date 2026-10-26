@@ -51,7 +51,7 @@ TEST_F(IndexInputTest, stable_reads_outlive_evictions) {
   cache.SetUnbackedSize(*file, kBlocks * kBlock);
 
   {
-    const irs::InputFile blocks{cache, file, nullptr};
+    const irs::InputFile blocks{cache, file};
     irs::IndexInput in{blocks};
     std::vector<const irs::byte_type*> stable;
     for (uint64_t pass = 0; pass != 2; ++pass) {
@@ -88,7 +88,7 @@ TEST_F(IndexInputTest, volatile_reads_across_blocks_keep_alignment) {
   cache.SetUnbackedSize(*file, 2 * kBlock);
 
   constexpr uint64_t kAlign = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
-  const irs::InputFile blocks{cache, file, nullptr};
+  const irs::InputFile blocks{cache, file};
   irs::IndexInput in{blocks};
   for (const uint64_t count : {kAlign + 4, 4 * kAlign}) {
     const auto offset = kBlock - kAlign;

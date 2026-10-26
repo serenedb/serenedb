@@ -623,7 +623,7 @@ TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
   _writer->AdoptSegment(adopt.front(), /*tick=*/7);
 
   // Before the commit that publishes it.
-  _dir->RemoveAllUnreferenced();
+  irs::RemoveAllUnreferenced(*_dir);
   EXPECT_TRUE(Exists(adopt.front()))
     << adopt.front() << " (meta file) was reclaimed before publish";
   for (const auto& file : data_files) {
@@ -674,7 +674,7 @@ TEST_F(IndexAdoptTest, AbortLeavesFlushedFilesUnreferenced) {
   }
   ASSERT_FALSE(files.empty());
 
-  _dir->RemoveAllUnreferenced();
+  irs::RemoveAllUnreferenced(*_dir);
   for (const auto& file : files) {
     EXPECT_FALSE(Exists(file)) << file << " is still pinned after Abort";
   }
@@ -1496,7 +1496,7 @@ TEST_F(IndexAdoptTest, ReplaceBeforeAbortSurvivesCleanup) {
   // The order the build uses: reference through adoption, then abort.
   Replace(*_writer, sources, replacement);
   build.Abort();
-  _dir->RemoveAllUnreferenced();
+  irs::RemoveAllUnreferenced(*_dir);
 
   for (const auto& file : files) {
     EXPECT_TRUE(Exists(file)) << file << " was reclaimed before the commit";
@@ -1524,7 +1524,7 @@ TEST_F(IndexAdoptTest, AbortBeforeReplaceLosesTheFilesToCleanup) {
   // The wrong order, kept as documentation of the hazard rather than as a
   // contract: after Abort nothing references the flushed files.
   build.Abort();
-  _dir->RemoveAllUnreferenced();
+  irs::RemoveAllUnreferenced(*_dir);
 
   bool any_gone = false;
   for (const auto& file : files) {

@@ -2153,8 +2153,8 @@ TEST_F(index_death_test_formats_15, fails_in_compact_with_removals) {
 
     fs.RegisterFailure(FailingFileSystem::Failure::REMOVE, "_3.col");
     fs.RegisterFailure(FailingFileSystem::Failure::REMOVE, "_5.col");
-    ASSERT_SQL_ERROR(dir.RemoveUnreferenced(), ERRCODE_IO_ERROR);
-    dir.RemoveUnreferenced();
+    ASSERT_SQL_ERROR(irs::RemoveUnreferenced(dir), ERRCODE_IO_ERROR);
+    irs::RemoveUnreferenced(dir);
     ASSERT_FALSE(writer->RefreshCommit());  // nothing changed
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
@@ -2186,107 +2186,6 @@ TEST_F(index_death_test_formats_15, fails_in_compact_with_removals) {
                      values, docs_itr->Value()));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));
-    ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-  }
-}
-
-TEST_F(index_death_test_formats_15, fails_in_exists) {
-  // Reader::Reader probes `dir.Has(filename)` before opening the
-  // `.col`. Force the EXISTS failure on consecutive `.col` files to
-  // exercise that path. After failures clear, commits and a
-  // compaction must still succeed.
-  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
-                              &tests::PayloadedJsonFieldFactory);
-
-  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
-                                              irs::IndexFeatures::Pos |
-                                              irs::IndexFeatures::Offs;
-
-  const auto* doc1 = gen.next();
-  const auto* doc2 = gen.next();
-  const auto* doc3 = gen.next();
-  const auto* doc4 = gen.next();
-
-  {
-    FailingFileSystem fs;
-    const auto dir = LocalFiles(fs);
-
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    // Will force errors during commit / reader open because of the
-    // segment reader's columnstore probe.
-    fs.RegisterFailure(FailingFileSystem::Failure::EXISTS, "_1.col");
-    fs.RegisterFailure(FailingFileSystem::Failure::EXISTS, "_2.col");
-
-    while (!fs.NoFailures()) {
-      ASSERT_TRUE(InsertWithName(*writer, *doc1));
-      ASSERT_SQL_ERROR(writer->RefreshCommit(), ERRCODE_IO_ERROR);
-      ASSERT_SQL_ERROR(
-        (irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
-        ERRCODE_UNDEFINED_FILE);
-    }
-
-    ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->RefreshCommit());
-    tests::AssertSnapshotEquality(
-      writer->GetSnapshot(),
-      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
-
-    ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    ASSERT_TRUE(InsertWithName(*writer, *doc4));
-    ASSERT_TRUE(writer->RefreshCommit());
-    tests::AssertSnapshotEquality(
-      writer->GetSnapshot(),
-      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
-
-    const irs::index_utils::CompactionCount compact_all;
-
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
-    ASSERT_TRUE(writer->RefreshCommit());
-    tests::AssertSnapshotEquality(
-      writer->GetSnapshot(),
-      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
-
-    ASSERT_TRUE(fs.NoFailures());
-
-    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-    ASSERT_TRUE(reader);
-    ASSERT_EQ(1, reader->size());
-    ASSERT_EQ(4, reader->docs_count());
-    ASSERT_EQ(4, reader->live_docs_count());
-
-    tests::index_t expected_index;
-    expected_index.emplace_back();
-    expected_index.back().insert(*doc1);
-    expected_index.back().insert(*doc2);
-    expected_index.back().insert(*doc3);
-    expected_index.back().insert(*doc4);
-    tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
-
-    auto& segment = reader[0];
-    const auto* column = segment.Column(kNameId);
-    ASSERT_NE(nullptr, column);
-    irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field(kSameId);
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator();
-    ASSERT_TRUE(term_itr->next());
-    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
     ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
   }
@@ -2375,7 +2274,7 @@ TEST_F(index_death_test_formats_15, fails_in_exists_on_compaction) {
     // probe exists on the input segment `.col` files.
     ASSERT_EQ(num_failures_before, fs.NumFailures());
 
-    dir.RemoveUnreferenced();
+    irs::RemoveUnreferenced(dir);
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),

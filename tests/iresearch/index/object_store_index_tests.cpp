@@ -37,7 +37,6 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/queries/posting_heads.hpp>
 #include <iresearch/store/directory.hpp>
-#include <iresearch/store/file_output.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <string>
@@ -78,18 +77,6 @@ void WriteSegments(const irs::Directory& dir, size_t segments) {
   }
 }
 
-void RemoveName(const irs::Directory& dir, std::string_view name) {
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmAppend,
-                                       irs::tests::DefaultWriterOptions());
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = tests::FieldIdFor("name");
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(name);
-  auto ctx = writer->GetBatch();
-  ctx.Remove(irs::Filter::ptr{std::move(filter)});
-  ASSERT_TRUE(ctx.Commit());
-  ASSERT_TRUE(writer->RefreshCommit());
-}
-
 irs::ObjectStoreRequests Open(const std::string& root, uint64_t live_docs) {
   auto& store = tests::ObjectStore();
   const irs::Directory restarted{Db(), root};
@@ -100,17 +87,6 @@ irs::ObjectStoreRequests Open(const std::string& root, uint64_t live_docs) {
   const auto requests = store.Requests();
   EXPECT_EQ(live_docs, reader.live_docs_count());
   return requests;
-}
-
-TEST(ObjectStoreIndexTest, segments_open_without_head_requests) {
-  tests::ObjectStore();
-  const auto root = Root();
-  WriteSegments(irs::Directory{Db(), root}, 3);
-
-  const auto requests = Open(root, 3);
-  EXPECT_EQ(0, requests.head);
-  EXPECT_EQ(1, requests.list);
-  EXPECT_EQ(1 + 3 + 3, requests.get);
 }
 
 TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
@@ -147,34 +123,6 @@ TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
   EXPECT_EQ(3, store.Requests().get);
 }
 
-TEST(ObjectStoreIndexTest, rewritten_segment_metas_keep_file_infos) {
-  tests::ObjectStore();
-  const auto root = Root();
-  WriteSegments(irs::Directory{Db(), root}, 2);
-  RemoveName(irs::Directory{Db(), root}, "A");
-
-  const auto requests = Open(root, 1);
-  EXPECT_EQ(0, requests.head);
-}
-
-TEST(ObjectStoreIndexTest, segments_without_file_infos_open) {
-  tests::ObjectStore();
-  if (!irs::AddFailurePointDebugging("segment_meta_without_file_info")) {
-    GTEST_SKIP() << "built without fault injection";
-  }
-  absl::Cleanup clear = [] { irs::ClearFailurePointsDebugging(); };
-  const auto root = Root();
-  WriteSegments(irs::Directory{Db(), root}, 3);
-  irs::ClearFailurePointsDebugging();
-
-  const auto old = Open(root, 3);
-  EXPECT_EQ(0, old.head);
-  EXPECT_LT(1 + 3 + 3, old.get);
-
-  RemoveName(irs::Directory{Db(), root}, "B");
-  EXPECT_LT(1 + 3 + 3, Open(root, 2).get);
-}
-
 TEST(ObjectStoreIndexTest, segments_open_in_parallel) {
   auto& store = tests::ObjectStore();
   const auto root = Root();
@@ -184,10 +132,7 @@ TEST(ObjectStoreIndexTest, segments_open_in_parallel) {
     store.SetLatency(std::chrono::microseconds{0});
   };
 
-  const auto requests = Open(root, 4);
-  EXPECT_EQ(0, requests.head);
-  EXPECT_EQ(1 + 4 + 4, requests.get);
-  EXPECT_LT(1, requests.max_in_flight);
+  EXPECT_LT(1, Open(root, 4).max_in_flight);
 }
 
 TEST(ObjectStoreIndexTest, writer_opens_segments_in_parallel) {
@@ -385,7 +330,7 @@ TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
     }
     writer.Commit(0);
   }
-  const irs::ColReader reader{dir, "seg", Db()};
+  const irs::ColReader reader = irs::tests::OpenColReader(dir, "seg");
   const auto* plain = reader.Column(kPlain);
   ASSERT_NE(nullptr, plain);
   ASSERT_TRUE(plain->HasValidity());
@@ -473,7 +418,7 @@ TEST(ObjectStoreIndexTest, collected_variant_blocks_serve_gathers) {
     }
     writer.Commit(0);
   }
-  const irs::ColReader reader{dir, "seg", Db()};
+  const irs::ColReader reader = irs::tests::OpenColReader(dir, "seg");
   const auto* column = reader.Column(kVariant);
   ASSERT_NE(nullptr, column);
 
@@ -514,33 +459,6 @@ TEST(ObjectStoreIndexTest, reads_past_the_end_are_refused) {
   in.Seek(2);
   irs::byte_type buf[8];
   EXPECT_THROW(in.ReadData(buf, sizeof(buf)), irs::SqlException);
-}
-
-TEST(ObjectStoreIndexTest, a_tail_is_kept_up_to_its_limit) {
-  tests::ObjectStore();
-  const irs::Directory dir{Db(), Root()};
-  const auto write = [&](std::string_view name, size_t tail) {
-    auto out = dir.Create(name);
-    const irs::bstring head(100, irs::byte_type{1});
-    out->WriteData(head.data(), head.size());
-    out->BeginTail();
-    const irs::bstring bytes(tail, irs::byte_type{2});
-    out->WriteData(bytes.data(), bytes.size());
-    out->Close();
-  };
-  write("small", 1000);
-  write("large", irs::FileOutput::kMaxTail + 1);
-
-  const auto small = dir.Info("small");
-  ASSERT_TRUE(small);
-  EXPECT_EQ(1100, small->size);
-  ASSERT_NE(nullptr, small->tail);
-  EXPECT_EQ(irs::bstring(1000, irs::byte_type{2}), *small->tail);
-
-  const auto large = dir.Info("large");
-  ASSERT_TRUE(large);
-  EXPECT_EQ(100 + irs::FileOutput::kMaxTail + 1, large->size);
-  EXPECT_EQ(nullptr, large->tail);
 }
 
 TEST(ObjectStoreIndexTest, a_listing_skips_nested_objects) {

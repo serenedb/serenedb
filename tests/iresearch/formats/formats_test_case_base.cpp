@@ -153,7 +153,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -165,7 +165,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -176,7 +176,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -188,7 +188,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -200,7 +200,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -212,7 +212,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
   }
@@ -241,7 +241,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -254,7 +254,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -265,7 +265,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -295,7 +295,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
@@ -307,7 +307,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
@@ -319,7 +319,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
@@ -331,14 +331,14 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
     // close reader (remove old meta + old doc_mask + first segment)
     {
       reader = {};
-      dir->RemoveUnreferenced();  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
   }
@@ -1272,7 +1272,7 @@ void RoundTrip(std::string_view segment_name, uint64_t row_count,
     populate(w);
     w.Commit(row_count);
   }
-  irs::ColReader r{dir, segment_name, db};
+  irs::ColReader r = irs::tests::OpenColReader(dir, segment_name);
   verify(r);
 }
 
@@ -1481,7 +1481,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
   // Read segment _1 ------------------------------------------------------
   {
-    irs::ColReader r{dir, "_1", db};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "_1");
     ASSERT_EQ(r.Columns().size(), 6u);
     // Try to get an invalid column id (`field_limits::invalid()`).
     EXPECT_EQ(r.Column(irs::field_limits::invalid()), nullptr);
@@ -1646,7 +1646,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
   // Read segment _2 ------------------------------------------------------
   {
-    irs::ColReader r{dir, "_2", db};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "_2");
     ASSERT_EQ(r.Columns().size(), 3u);
 
     EXPECT_EQ(r.Column(irs::field_limits::invalid()), nullptr);
@@ -1693,7 +1693,7 @@ TEST_P(FormatTestCase, columns_rw) {
   // Segment _1 -- new sub-scenarios (multi-column independence,
   // random-order point access, boundary docs, wrong-column-id sweep).
   {
-    irs::ColReader r{dir, "_1", db};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "_1");
     const auto* col_f0 = r.Column(kF0);
     const auto* col_f2 = r.Column(kF2);
     ASSERT_NE(col_f0, nullptr);
@@ -1801,7 +1801,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     w.Commit(kRowCount);
   }
 
-  irs::ColReader r{dir, "columns_rw_typed", db};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "columns_rw_typed");
   ASSERT_TRUE(r.HasColumn(kIntId));
   ASSERT_TRUE(r.HasColumn(kStrId));
   EXPECT_FALSE(r.HasColumn(0));  // wrong column id
@@ -1992,7 +1992,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     w.Commit(kRgRowCount);
   }
   {
-    irs::ColReader rr{dir, "columns_rw_typed_rg", db};
+    irs::ColReader rr = irs::tests::OpenColReader(dir, "columns_rw_typed_rg");
     const auto* col_int = rr.Column(kRgIntId);
     const auto* col_str = rr.Column(kRgStrId);
     ASSERT_NE(col_int, nullptr);
@@ -2191,7 +2191,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "columns_rw_bit_mask_rg", db};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "columns_rw_bit_mask_rg");
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
@@ -2359,7 +2359,8 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "columns_rw_dense_mask_rg", db};
+    irs::ColReader r =
+      irs::tests::OpenColReader(dir, "columns_rw_dense_mask_rg");
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
@@ -2559,7 +2560,8 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "columns_rw_big_document_rg", db};
+    irs::ColReader r =
+      irs::tests::OpenColReader(dir, "columns_rw_big_document_rg");
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
@@ -2649,7 +2651,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   for (size_t s = 0; s < segs.size(); ++s) {
     const auto& seg = segs[s];
     const uint64_t prefix = s == 0 ? 0 : s == 1 ? 1000 : 2000;
-    irs::ColReader r{dir, seg.name, db};
+    irs::ColReader r = irs::tests::OpenColReader(dir, seg.name);
     ASSERT_TRUE(r.HasColumn(kIdCol)) << "seg=" << seg.name;
     ASSERT_TRUE(r.HasColumn(kNameCol)) << "seg=" << seg.name;
     // Wrong-column-id negative lookups (sweep).
@@ -2751,7 +2753,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, kBigSeg, db};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kBigSeg);
     const auto* id_col = r.Column(kIdCol);
     const auto* name_col = r.Column(kNameCol);
     ASSERT_NE(id_col, nullptr);
@@ -2949,7 +2951,8 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "same_col_empty_repeat_rg", db};
+    irs::ColReader r =
+      irs::tests::OpenColReader(dir, "same_col_empty_repeat_rg");
     const auto* id_col = r.Column(kBigIdCol);
     const auto* name_col = r.Column(kBigNameCol);
     ASSERT_NE(id_col, nullptr);
@@ -3133,7 +3136,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "sparse_dense_block_rg", db};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "sparse_dense_block_rg");
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
@@ -3384,7 +3387,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "border_case_rg", db};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "border_case_rg");
     const auto* dense_col = r.Column(kBigDenseId);
     const auto* sparse_col = r.Column(kBigSparseId);
     ASSERT_NE(dense_col, nullptr);
@@ -3572,7 +3575,7 @@ TEST_P(FormatTestCase, columns_issue700) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "issue700_rg", db};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "issue700_rg");
     const auto* col = r.Column(kBigColId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);

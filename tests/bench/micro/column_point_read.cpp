@@ -247,8 +247,8 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
     }
     w.Commit(rows);
   }
-  seg->reader =
-    std::make_unique<irs::ColReader>(dir, std::string{kSeg}, CsDb());
+  seg->reader = std::make_unique<irs::ColReader>(
+    dir, kSeg, true, duckdb::MappedFileAccess::SEQUENTIAL);
   seg->col = seg->reader->Column(kField);
   if (!seg->col) {
     std::fprintf(stderr, "BuildSeg: column missing\n");

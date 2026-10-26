@@ -53,6 +53,7 @@
 #include <string_view>
 #include <vector>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "gtest/gtest.h"
 
 namespace {
@@ -146,7 +147,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripMultiColumnMultiRowGroup) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* ca = r.Column(kA);
   const auto* cb = r.Column(kB);
   ASSERT_NE(ca, nullptr);
@@ -202,7 +203,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripVarcharOverflow) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cs = r.Column(kS);
   ASSERT_NE(cs, nullptr);
   ASSERT_EQ(cs->RowCount(), kRows);
@@ -274,7 +275,7 @@ TEST_F(ColumnReaderTest, DictFsstValidityAbsorbed) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cs = r.Column(kS);
   ASSERT_NE(cs, nullptr);
   // dict_fsst self-carries nulls -> validity absorbed to EMPTY; NullsInData()
@@ -333,7 +334,7 @@ TEST_F(ColumnReaderTest, AllNullColumnMergedStatsHasNoNullFalse) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cs = r.Column(kA);
   ASSERT_NE(cs, nullptr);
   const auto& stats = cs->MergedStatistics();
@@ -378,7 +379,7 @@ TEST_F(ColumnReaderTest, DictFsstReusedBatchAcrossChunks) {
     }
     w.Commit(0);
   }
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cs = r.Column(kS);
   ASSERT_NE(cs, nullptr);
   ASSERT_TRUE(cs->NullsInData());
@@ -446,7 +447,7 @@ TEST_F(ColumnReaderTest, GatherSparseAndDenseAcrossRowGroups) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cs = r.Column(kA);
   ASSERT_NE(cs, nullptr);
 
@@ -663,7 +664,7 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
       irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
                          irs::MemoryIndexRoot()};
       WriteColumn(Db(), dir, kId, c.type, c.rows, 4096, c.value_of);
-      irs::ColReader r{dir, "seg", Db()};
+      irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
       const auto* col = r.Column(kId);
       ASSERT_NE(col, nullptr);
       ASSERT_EQ(col->RowCount(), c.rows);
@@ -710,7 +711,7 @@ TEST_F(ColumnReaderTest, GatherFilterReleasesPassedBlocks) {
   WriteColumn(Db(), dir, kId, duckdb::LogicalType::VARCHAR, kRows, 4096,
               value_of);
   con.Query("SET force_compression = 'auto'");
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* col = r.Column(kId);
   ASSERT_NE(col, nullptr);
   ASSERT_GT(col->DataBlocks().size(), 4u);
@@ -817,7 +818,7 @@ TEST_F(ColumnReaderTest, NestedGathersMatchScan) {
       irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
                          irs::MemoryIndexRoot()};
       WriteColumn(Db(), dir, kId, c.type, c.rows, 4096, c.value_of);
-      irs::ColReader r{dir, "seg", Db()};
+      irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
       const auto* col = r.Column(kId);
       ASSERT_NE(col, nullptr);
       ASSERT_EQ(col->RowCount(), c.rows);
@@ -895,7 +896,7 @@ TEST_F(ColumnReaderTest, PointFetchRow) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* ca = r.Column(kA);
   const auto* cs = r.Column(kS);
   ASSERT_NE(ca, nullptr);
@@ -963,7 +964,7 @@ void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", db};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr) << c.name;
   std::string codecs;
@@ -1233,7 +1234,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripStruct) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* ct = r.Column(kT);
   ASSERT_NE(ct, nullptr);
   ASSERT_EQ(ct->RowCount(), kRows);
@@ -1322,7 +1323,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripTuple) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* ct = r.Column(kT);
   ASSERT_NE(ct, nullptr);
   ASSERT_EQ(ct->RowCount(), kRows);
@@ -1412,7 +1413,7 @@ TEST_F(ColumnReaderTest, GatherStructAcrossRowGroups) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* ct = r.Column(kT);
   ASSERT_NE(ct, nullptr);
 
@@ -1483,7 +1484,7 @@ TEST_F(ColumnReaderTest, GatherStructDenseKeepsFieldsOnOneRow) {
         }
         w.Commit(0);
       }
-      irs::ColReader r{dir, "seg", Db()};
+      irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
       const auto* ct = r.Column(kT);
       ASSERT_NE(ct, nullptr);
       auto state = ct->InitScan(r.Ctx());
@@ -1558,7 +1559,7 @@ TEST_F(ColumnReaderTest, ScanStructAfterNullBlockKeepsFieldsOnOneRow) {
     }
     w.Commit(0);
   }
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* ct = r.Column(kT);
   ASSERT_NE(ct, nullptr);
   auto state = ct->InitScan(r.Ctx());
@@ -1634,7 +1635,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripArray) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* ca = r.Column(kArr);
   ASSERT_NE(ca, nullptr);
   ASSERT_EQ(ca->RowCount(), kRows);
@@ -1716,7 +1717,7 @@ TEST_F(ColumnReaderTest, GatherArrayAcrossRowGroups) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* ca = r.Column(kArr);
   ASSERT_NE(ca, nullptr);
   Rows rows{{3, 4, 5, 100, 101, 4096, 4097, 8000, 9000, 9999}};
@@ -1792,7 +1793,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripList) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cl = r.Column(kL);
   ASSERT_NE(cl, nullptr);
   ASSERT_EQ(cl->RowCount(), kRows);
@@ -1872,7 +1873,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripNestedList) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cl = r.Column(kL);
   ASSERT_NE(cl, nullptr);
   ASSERT_EQ(cl->RowCount(), kRows);
@@ -1938,7 +1939,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripNestedArray) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cl = r.Column(kL);
   ASSERT_NE(cl, nullptr);
   ASSERT_EQ(cl->RowCount(), kRows);
@@ -2017,7 +2018,7 @@ TEST_F(ColumnReaderTest, ListGatherSparse) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "lseg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "lseg");
   const auto* cl = r.Column(kL);
   ASSERT_NE(cl, nullptr);
   ASSERT_EQ(cl->RowCount(), kRows);
@@ -2124,7 +2125,7 @@ TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
                      expected);
   ASSERT_EQ(expected.size(), 200u);
 
-  irs::ColReader r{dir, "vseg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "vseg");
   const auto* col = r.Column(30);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->Type().id(), duckdb::LogicalTypeId::VARIANT);
@@ -2144,7 +2145,7 @@ TEST_F(ColumnReaderTest, VariantRoundTripShredded) {
                      /*rg_size=*/256, expected);
   ASSERT_EQ(expected.size(), 500u);
 
-  irs::ColReader r{dir, "vseg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "vseg");
   const auto* col = r.Column(31);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RowCount(), 500u);
@@ -2166,7 +2167,7 @@ TEST_F(ColumnReaderTest, VariantNullAndLeftover) {
   ASSERT_EQ(expected.size(), 500u);
   ASSERT_TRUE(expected[0].IsNull());
 
-  irs::ColReader r{dir, "vseg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "vseg");
   const auto* col = r.Column(32);
   ASSERT_NE(col, nullptr);
   ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
@@ -2187,7 +2188,7 @@ TEST_F(ColumnReaderTest, VariantGatherSparse) {
     /*rg_size=*/128, expected);
   ASSERT_EQ(expected.size(), 600u);
 
-  irs::ColReader r{dir, "vseg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "vseg");
   const auto* col = r.Column(33);
   ASSERT_NE(col, nullptr);
 
@@ -2234,7 +2235,7 @@ TEST_F(ColumnReaderTest, VariantGathersReleaseBlocks) {
                      /*rg_size=*/8192, expected);
   ASSERT_EQ(expected.size(), 20000u);
 
-  irs::ColReader r{dir, "vseg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "vseg");
   const auto* col = r.Column(35);
   ASSERT_NE(col, nullptr);
 
@@ -2268,7 +2269,7 @@ TEST_F(ColumnReaderTest, VariantGatherDenseThenAppend) {
                      expected);
   ASSERT_EQ(expected.size(), 4000u);
 
-  irs::ColReader r{dir, "vseg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "vseg");
   const auto* col = r.Column(36);
   ASSERT_NE(col, nullptr);
 
@@ -2327,7 +2328,7 @@ TEST_F(ColumnReaderTest, HyperLogLogDistinctCount) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* ca = r.Column(kA);
   ASSERT_NE(ca, nullptr);
   const auto* hll = ca->HyperLogLog();
@@ -2364,7 +2365,7 @@ TEST_F(ColumnReaderTest, NormColumnRoundTrip) {
     w.Commit(kDocs);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* nr = r.NormColumn(kN);
   ASSERT_NE(nr, nullptr);
   ASSERT_EQ(nr->RowCount(), kDocs);
@@ -2419,7 +2420,7 @@ TEST_F(ColumnReaderTest, BlobPointReaderFetch) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cb = r.Column(kB);
   ASSERT_NE(cb, nullptr);
   irs::ColumnReader::BlobPointReader pr{r, *cb};
@@ -2474,7 +2475,7 @@ TEST_F(ColumnReaderTest, ReproSparseTinyPointRead) {
     append_blob(cw, 3, "abcde", true);
     w.Commit(4);
   }
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cb = r.Column(kB);
   ASSERT_NE(cb, nullptr);
   EXPECT_EQ(cb->RowCount(), 4u);
@@ -2531,7 +2532,7 @@ TEST_F(ColumnReaderTest, ReproMultiRowSparseAppend) {
     }
     w.Commit(4);
   }
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cval = r.Column(kVal);
   const auto* cpk = r.Column(kPk);
   ASSERT_NE(cval, nullptr);
@@ -2594,7 +2595,7 @@ TEST_F(ColumnReaderTest, ReproDensePkWithSparseSibling) {
     }
     w.Commit(4);
   }
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cpk = r.Column(kPk);
   ASSERT_NE(cpk, nullptr);
   for (size_t i = 0; i < pks.size(); ++i) {
@@ -2652,7 +2653,7 @@ TEST_F(ColumnReaderTest, ReproShortPkPointRead) {
     }
     w.Commit(kRows);
   }
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cb = r.Column(kB);
   ASSERT_NE(cb, nullptr);
   // Scattered point reads, a fresh reader per backward jump (the
@@ -2686,7 +2687,7 @@ TEST_F(ColumnReaderTest, ReproEmptyColumnsAroundData) {
     cw1.Append(/*start_row=*/41, v, 1);
     w.Commit(42);
   }
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   EXPECT_TRUE(r.HasColumn(0));
   EXPECT_TRUE(r.HasColumn(1));
   EXPECT_TRUE(r.HasColumn(2));
@@ -2754,7 +2755,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripStructAllNullRowGroup) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* ct = r.Column(kT);
   ASSERT_NE(ct, nullptr);
   ASSERT_EQ(ct->RowCount(), kRows);
@@ -2836,7 +2837,7 @@ TEST_F(ColumnReaderTest, VariantExtractPath) {
                      "SELECT " + obj + " FROM range(500) t(i)",
                      /*rg_size=*/128, ignored);
 
-  irs::ColReader r{dir, "vseg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "vseg");
   const auto* col = r.Column(34);
   ASSERT_NE(col, nullptr);
 
@@ -2870,7 +2871,7 @@ TEST_F(ColumnReaderTest, VariantExtractPathMixedShredding) {
                      "SELECT " + obj + " FROM range(500) t(i)",
                      /*rg_size=*/128, ignored);
 
-  irs::ColReader r{dir, "vseg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "vseg");
   const auto* base = r.Column(34);
   ASSERT_NE(base, nullptr);
   ASSERT_EQ(base->Type().id(), duckdb::LogicalTypeId::VARIANT);
@@ -2951,7 +2952,7 @@ TEST_F(ColumnReaderTest, VariantGatherKeepsLeafOfPassedRowGroup) {
     "SELECT {'s': repeat('x', 24) || i::VARCHAR}::VARIANT FROM range(500) t(i)",
     /*rg_size=*/128, ignored);
 
-  irs::ColReader r{dir, "vseg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "vseg");
   const auto* base = r.Column(34);
   ASSERT_NE(base, nullptr);
   const auto& col = static_cast<const irs::VariantColumnReader&>(*base);
@@ -2990,7 +2991,7 @@ TEST_F(ColumnReaderTest, VariantLeavesBeforeARowAreReleased) {
     "SELECT {'s': repeat('x', 24) || i::VARCHAR}::VARIANT FROM range(500) t(i)",
     /*rg_size=*/128, ignored);
 
-  irs::ColReader r{dir, "vseg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "vseg");
   const auto* base = r.Column(36);
   ASSERT_NE(base, nullptr);
   const auto& col = static_cast<const irs::VariantColumnReader&>(*base);
@@ -3065,7 +3066,7 @@ TEST_F(ColumnReaderTest, SparseAppendNullPadding) {
     w.Commit(kTotal);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* ca = r.Column(kA);
   ASSERT_NE(ca, nullptr);
   ASSERT_EQ(ca->RowCount(), kTotal);
@@ -3105,7 +3106,7 @@ TEST_F(ColumnReaderTest, DictFsstShortRepeatedStrings) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cs = r.Column(kS);
   ASSERT_NE(cs, nullptr);
   // Scan.
@@ -3159,7 +3160,7 @@ TEST_F(ColumnReaderTest, SparseDictFsstTinyRepro) {
     w.Commit(4);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cs = r.Column(kS);
   ASSERT_NE(cs, nullptr);
   ASSERT_EQ(cs->RowCount(), 4u);
@@ -3214,7 +3215,7 @@ TEST_F(ColumnReaderTest, ScanCountDictFsstNulls) {
     w.Commit(4);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cs = r.Column(kS);
   ASSERT_NE(cs, nullptr);
   ASSERT_TRUE(cs->NullsInData());
@@ -3262,7 +3263,7 @@ TEST_F(ColumnReaderTest, SparseGarbageNullAppendRepro) {
     w.Commit(4);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cs = r.Column(kS);
   ASSERT_NE(cs, nullptr);
   irs::ColumnReader::BlobPointReader p0{r, *cs};
@@ -3312,7 +3313,7 @@ TEST_F(ColumnReaderTest, TwoColumnSparsePrefixRepro) {
     w.Commit(4);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* pc = r.Column(kPrefix);
   ASSERT_NE(pc, nullptr);
   irs::ColumnReader::BlobPointReader p0{r, *pc};
@@ -3368,7 +3369,7 @@ TEST_F(ColumnReaderTest, SparsePrefixEngineDbRepro) {
     w.Commit(4);
   }
 
-  irs::ColReader r{dir, "seg", edb};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* pc = r.Column(kPrefix);
   ASSERT_NE(pc, nullptr);
   irs::ColumnReader::BlobPointReader p0{r, *pc};
@@ -3429,7 +3430,7 @@ TEST_F(ColumnReaderTest, VectorColumnAutoPicksFloatCodec) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cv = r.Column(kV);
   ASSERT_NE(cv, nullptr);
   ASSERT_EQ(cv->RowCount(), kRows);
@@ -3492,7 +3493,7 @@ TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* cv = r.Column(kV);
   ASSERT_NE(cv, nullptr);
   ASSERT_EQ(cv->RowCount(), kRows);

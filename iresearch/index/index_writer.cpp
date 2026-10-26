@@ -1075,7 +1075,7 @@ void IndexWriter::FlushContext::FlushPending() {
 IndexWriter::SegmentContext::SegmentContext(
   const Directory& dir, segment_meta_generator_t&& meta_generator,
   const SegmentWriterOptions& options)
-  : dir{dir.Tracking(refs)},
+  : dir{dir.Observed(refs)},
     queries{{options.resource_manager}},
     flushed{{options.resource_manager}},
     meta_generator{std::move(meta_generator)},
@@ -1361,7 +1361,7 @@ IndexWriter::ptr IndexWriter::Make(const Directory& dir, OpenMode mode,
     const auto& segments = meta.index_meta.segments;
 
     std::vector<SegmentReader> readers(segments.size());
-    dir.ForEach(segments.size(), [&](size_t i) {
+    ForEach(dir, segments.size(), [&](size_t i) {
       // Segment reader holds refs to all segment files
       readers[i] =
         SegmentReader{SegmentReaderImpl::Open(dir, segments[i].meta, opts)};
@@ -1387,7 +1387,7 @@ IndexWriter::ptr IndexWriter::Make(const Directory& dir, OpenMode mode,
   }
   if (options.cleanup_on_open) {
     try {
-      dir.RemoveAllUnreferenced();
+      RemoveAllUnreferenced(dir);
     } catch (const std::exception& e) {
       SDB_WARN(IRESEARCH, "Failed to remove the unreferenced files of '",
                dir.Root(), "': ", duckdb::ErrorData{e}.RawMessage());
@@ -1551,7 +1551,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   compaction_segment.meta.name = FileName(NextSegmentId());
 
   RefTracker tracker;
-  const auto dir = _dir.Tracking(tracker);
+  const auto dir = _dir.Observed(tracker);
 
   MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
   merger.Reset(candidates.begin(), candidates.end());
@@ -1710,7 +1710,7 @@ void IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick,
     return;  // Nothing to adopt
   }
 
-  auto meta_ref = _dir.Reference(segment.filename);
+  auto meta_ref = Reference(_dir, segment.filename);
   if (!meta_ref) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
                     ERR_MSG("cannot adopt segment meta '", segment.filename,
@@ -1780,14 +1780,14 @@ void IndexWriter::ReplaceSegments(
   };
   const auto snapshot = GetSnapshotImpl();
   std::vector<Adopted> adopted(adopted_metas.size());
-  _dir.ForEach(adopted_metas.size(), [&](size_t i) {
+  ForEach(_dir, adopted_metas.size(), [&](size_t i) {
     auto& entry = adopted[i];
     entry.segment.filename = adopted_metas[i];
     segment_meta::Read(_dir, entry.segment.meta, adopted_metas[i]);
     if (entry.segment.meta.live_docs_count == 0) {
       return;  // nothing to adopt; the sources are still replaced
     }
-    auto meta_ref = _dir.Reference(entry.segment.filename);
+    auto meta_ref = Reference(_dir, entry.segment.filename);
     if (!meta_ref) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
                       ERR_MSG("cannot replace with segment meta '",
@@ -2001,7 +2001,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   const auto& progress =
     (info.progress != nullptr ? info.progress : kNoProgress);
 
-  const auto dir = _dir.Tracking(ctx->refs);
+  const auto dir = _dir.Observed(ctx->refs);
   const auto& committed_reader = *_committed_reader;
   const auto queries = CollectQueries(ctx->segments);
 
@@ -2107,7 +2107,7 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
   SDB_ASSERT(!_pending_state.Valid());
   SDB_ASSERT(context.ctx);
 
-  const auto dir = _dir.Tracking(context.ctx->refs);
+  const auto dir = _dir.Observed(context.ctx->refs);
 
   std::string index_meta_file;
   DirectoryMeta to_commit{.index_meta = std::move(context.meta)};

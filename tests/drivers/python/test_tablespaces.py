@@ -950,7 +950,7 @@ def test_a_partitioned_copy_to_s3_checks_its_target_with_one_listing(tmp_path: P
 
 
 @pytest.mark.parametrize("kind", ["s3", "azure"])
-def test_a_restart_lists_each_directory_once(tmp_path: Path, kind: str) -> None:
+def test_a_restart_lists_each_directory_one_level_deep(tmp_path: Path, kind: str) -> None:
     prefix = f"listed-{tmp_path.name}"
     datadir = tmp_path / "data"
     with FakeS3() if kind == "s3" else FakeAzure() as fake:
@@ -991,7 +991,7 @@ def test_a_restart_lists_each_directory_once(tmp_path: Path, kind: str) -> None:
             assert _matches(again) == [1]
             assert _eventually(lambda: orphan not in keys(bucket, f"{index}/")), \
                 keys(bucket, f"{index}/")
-            assert fake.requests["LIST"] - listings == 3, fake.requests
+            assert fake.requests["LIST"] - listings == 5, fake.requests
             objects = len(keys(bucket, f"{prefix}/"))
             page = 1000 if kind == "s3" else 5000
             listings = fake.requests["LIST"]
@@ -1065,12 +1065,6 @@ def test_a_restart_opens_its_indexes_and_search_tables_at_once(
     assert len(swept) == 1, trace
     assert swept[0]["began"] < min(entry["began"] for entry in opens.values()), \
         (swept, opens)
-    for directory in opens:
-        marker = next(entry for entry in trace if entry["method"] == "HEAD"
-                      and entry["key"] == f"{directory}.storage")
-        listed = listings[f"{directory}/"]
-        assert max(marker["began"], listed["began"]) < min(
-            marker["ended"], listed["ended"]), (marker, listed)
 
 
 def test_a_checkpoint_saves_its_indexes_at_once(tmp_path: Path) -> None:

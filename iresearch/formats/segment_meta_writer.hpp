@@ -39,12 +39,6 @@ inline constexpr std::string_view kExt = "sm";
 inline constexpr duckdb::field_id_t kFieldFiles = 1;
 inline constexpr duckdb::field_id_t kFieldDocsCount = 2;
 inline constexpr duckdb::field_id_t kFieldByteSize = 3;
-inline constexpr duckdb::field_id_t kFieldFileInfos = 4;
-
-inline constexpr duckdb::field_id_t kFileInfoFieldSize = 0;
-inline constexpr duckdb::field_id_t kFileInfoFieldTailSize = 1;
-inline constexpr duckdb::field_id_t kFileInfoFieldTail = 2;
-inline constexpr duckdb::field_id_t kFileInfoFieldETag = 3;
 
 std::string FileName(const SegmentMeta& meta);
 

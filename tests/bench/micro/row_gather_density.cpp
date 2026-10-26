@@ -115,7 +115,9 @@ std::string Key(uint64_t i) {
 }
 
 struct Column {
-  irs::Directory dir{irs::Directory::PrivateMemory(CsDb())};
+  std::unique_ptr<duckdb::MemoryFileSystem> fs =
+    std::make_unique<duckdb::MemoryFileSystem>();
+  irs::Directory dir{CsDb(), *fs, irs::MemoryIndexRoot()};
   std::unique_ptr<irs::ColReader> reader;
   std::unique_ptr<irs::ReadContext> ctx;
   const irs::ColumnReader* col = nullptr;
@@ -148,8 +150,8 @@ std::unique_ptr<Column> Build(const Shape& shape) {
     writer.Commit(c->windows * kWindow);
   }
   con.Query("SET force_compression = 'auto'");
-  c->reader =
-    std::make_unique<irs::ColReader>(c->dir, std::string{kSegName}, CsDb());
+  c->reader = std::make_unique<irs::ColReader>(
+    c->dir, kSegName, true, duckdb::MappedFileAccess::SEQUENTIAL);
   c->col = c->reader->Column(kField);
   if (!c->col) {
     std::fprintf(stderr, "Build(%s): column missing\n", shape.name);

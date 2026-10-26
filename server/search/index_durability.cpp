@@ -28,13 +28,12 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/valid_checker.hpp>
-#include <duckdb/parallel/task_executor.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/index/index_meta.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -116,19 +115,7 @@ IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
 
 bool IndexDurability::Locate(const catalog::StorageDirectory& parent,
                              duckdb::idx_t oid) {
-  if (_files.Kind() != irs::StorageKind::Remote) {
-    _absent = !parent.OpenStorage(oid);
-    return !_absent;
-  }
-  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
-    irs::DuckDBEngine::Instance().instance());
-  duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
-  executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
-    executor, [&] { _absent = !parent.OpenStorage(oid); },
-    "SearchLocateStorage"));
-  _files.ReuseListings(true);
-  _files.Visit([](std::string_view) {});
-  executor.WorkOnTasks();
+  _absent = !parent.OpenStorage(oid);
   return !_absent;
 }
 
@@ -151,7 +138,6 @@ IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,
     writer->RefreshCommit();
     return {std::move(writer), std::move(stamp)};
   }
-  _files.ReuseListings(true);
   ResolvePendingSave();
   auto writer = irs::IndexWriter::Make(
     _files, irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate,
@@ -478,11 +464,10 @@ absl::Status IndexDurability::Cleanup() {
   try {
     SyncDirectory();
     if (_swept.load(std::memory_order_relaxed)) {
-      _files.RemoveUnreferenced();
+      irs::RemoveUnreferenced(_files);
     } else {
-      _files.RemoveAllUnreferenced();
+      irs::RemoveAllUnreferenced(_files);
       _swept.store(true, std::memory_order_relaxed);
-      _files.ReuseListings(false);
     }
   } catch (const std::exception& e) {
     return absl::InternalError(

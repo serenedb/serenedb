@@ -184,8 +184,6 @@ class IndexOutput : public BufferedOutput {
   // TODO(mbkkt) maybe int64_t?
   virtual uint32_t Checksum() = 0;
 
-  virtual void BeginTail() {}
-
   // Flush and close output
   void Close() {
     if (std::exchange(_closed, true)) {

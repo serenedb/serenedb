@@ -89,6 +89,8 @@ std::unique_ptr<ColWriter> MakeCsWriter(const Directory& dir,
 std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
                                         std::string_view segment_name);
 
+ColReader OpenColReader(const Directory& dir, std::string_view segment_name);
+
 // Open a BLOB column on the given writer; convenience wrapper around
 // Writer::OpenColumn(id, BLOB, ...). Most legacy tests stored bytes per
 // doc -- BLOB matches that shape exactly.

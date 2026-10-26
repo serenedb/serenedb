@@ -22,7 +22,6 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/btree_map.h>
-#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -82,19 +81,6 @@ class ObjectHandle final : public duckdb::FileHandle {
   uint64_t version = 0;
   bool writing = false;
 };
-
-bool KnowsObject(const duckdb::ExtendedOpenFileInfo& info, duckdb::idx_t& size,
-                 uint64_t& version) {
-  std::string etag;
-  if (!info.TryGetOption("file_size", size) ||
-      !info.TryGetOption("etag", etag)) {
-    return false;
-  }
-  if (etag.empty() || !absl::SimpleAtoi(etag, &version)) {
-    version = 0;
-  }
-  return true;
-}
 
 }  // namespace
 
@@ -210,14 +196,6 @@ duckdb::unique_ptr<duckdb::FileHandle> SimulatedObjectStore::OpenFileExtended(
   }
   bool download = false;
   if (file.extended_info) {
-    duckdb::idx_t size = 0;
-    uint64_t version = 0;
-    if (KnowsObject(*file.extended_info, size, version)) {
-      auto handle = duckdb::make_uniq<ObjectHandle>(*this, path, flags, nullptr,
-                                                    size, false);
-      handle->version = version;
-      return handle;
-    }
     file.extended_info->TryGetOption("force_full_download", download);
   }
   if (download) {

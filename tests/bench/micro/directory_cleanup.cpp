@@ -28,6 +28,7 @@
 #include <duckdb/common/local_file_system.hpp>
 #include <filesystem>
 #include <iresearch/store/directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/async_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 
@@ -54,7 +55,7 @@ void BmCreateWhileCleaning(benchmark::State& state) {
   const irs::Directory dir{irs::DuckDBEngine::Instance().instance(), fs,
                            root.string()};
   irs::RefTracker tracker;
-  const auto tracked = dir.Tracking(tracker);
+  const auto tracked = dir.Observed(tracker);
   irs::async_utils::ThreadPool<> cleaner{1};
   uint64_t round = 0;
   for (auto _ : state) {
@@ -67,7 +68,7 @@ void BmCreateWhileCleaning(benchmark::State& state) {
     absl::Notification cleaned;
     cleaner.run([&] {
       started.Notify();
-      dir.RemoveUnreferenced();
+      irs::RemoveUnreferenced(dir);
       cleaned.Notify();
     });
     started.WaitForNotification();

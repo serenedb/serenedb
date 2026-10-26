@@ -32,6 +32,7 @@
 #include "iresearch/index/inverter/fields_inverter.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

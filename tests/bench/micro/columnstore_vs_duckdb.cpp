@@ -94,7 +94,9 @@ duckdb::DatabaseInstance& CsDb() {
 }
 
 struct Seg {
-  irs::Directory dir{irs::Directory::PrivateMemory(CsDb())};
+  std::unique_ptr<duckdb::MemoryFileSystem> fs =
+    std::make_unique<duckdb::MemoryFileSystem>();
+  irs::Directory dir{CsDb(), *fs, irs::MemoryIndexRoot()};
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
   uint64_t rows = 0;
@@ -148,8 +150,8 @@ std::unique_ptr<Seg> BuildSeg(Shape shape, bool nullable) {
     }
     w.Commit(seg->rows);
   }
-  seg->reader =
-    std::make_unique<irs::ColReader>(seg->dir, std::string{kSeg}, CsDb());
+  seg->reader = std::make_unique<irs::ColReader>(
+    seg->dir, kSeg, true, duckdb::MappedFileAccess::SEQUENTIAL);
   seg->col = seg->reader->Column(kField);
   if (seg->col == nullptr) {
     std::fprintf(stderr, "BuildSeg: column missing\n");
@@ -262,7 +264,8 @@ void IrsWriteSeal(benchmark::State& state, Shape shape, bool nullable) {
   const auto type = TypeOf(shape);
   const uint64_t n = Rows();
   for (auto _ : state) {
-    irs::Directory dir{irs::Directory::PrivateMemory(CsDb())};
+    duckdb::MemoryFileSystem fs;
+    irs::Directory dir{CsDb(), fs, irs::MemoryIndexRoot()};
     irs::ColWriter w{dir, kSeg, CsDb()};
     auto& cw = w.OpenColumn(kField, type);
     uint64_t pos = 0;

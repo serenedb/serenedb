@@ -148,16 +148,9 @@ NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
 }  // namespace
 
 ColReader::ColReader(const Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db)
-  : ColReader{db, segment_name,
-              OpenColFile(dir, segment_name, dir.Has(FileName(segment_name)),
-                          duckdb::MappedFileAccess::SEQUENTIAL)} {}
-
-ColReader::ColReader(const Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db, bool present)
-  : ColReader{db, segment_name,
-              OpenColFile(dir, segment_name, present,
-                          duckdb::MappedFileAccess::RANDOM)} {}
+                     bool present, duckdb::MappedFileAccess access)
+  : ColReader{dir.Db(), segment_name,
+              OpenColFile(dir, segment_name, present, access)} {}
 
 ColReader::ColReader(duckdb::DatabaseInstance& db,
                      std::string_view segment_name,

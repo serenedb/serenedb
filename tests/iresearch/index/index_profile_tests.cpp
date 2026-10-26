@@ -392,7 +392,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     thread_pool.run([cleanup_interval, directory, &working]() -> void {
       while (working.load()) {
-        directory->RemoveUnreferenced();
+        irs::RemoveUnreferenced(*directory);
         std::this_thread::sleep_for(
           std::chrono::milliseconds(cleanup_interval));
       }

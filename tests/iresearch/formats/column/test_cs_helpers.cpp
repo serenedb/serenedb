@@ -51,8 +51,13 @@ std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
   if (!dir.Has(filename)) {
     return nullptr;
   }
-  return std::make_unique<ColReader>(
-    dir, segment_name, ::irs::DuckDBEngine::Instance().instance());
+  return std::make_unique<ColReader>(dir, segment_name, true,
+                                     duckdb::MappedFileAccess::SEQUENTIAL);
+}
+
+ColReader OpenColReader(const Directory& dir, std::string_view segment_name) {
+  return ColReader{dir, segment_name, dir.Has(FileName(segment_name)),
+                   duckdb::MappedFileAccess::SEQUENTIAL};
 }
 
 ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id) {

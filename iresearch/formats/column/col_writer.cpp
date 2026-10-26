@@ -309,7 +309,7 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
   if (!_committed || _ann_writers.empty()) {
     co_return true;
   }
-  ColReader reader{*_dir, _segment_name, *_db};
+  ColReader reader{*_dir, _segment_name, *_db, IOAdvice::SEQUENTIAL};
   for (auto& entry : _ann_writers) {
     if (!progress()) {
       co_return false;

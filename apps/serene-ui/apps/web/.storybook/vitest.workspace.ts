@@ -89,6 +89,10 @@ export default defineConfig({
         browser: {
             enabled: true,
             headless: true,
+            api: {
+                host: "127.0.0.1",
+                allowWrite: true,
+            },
             provider: playwright({
                 contextOptions: {
                     deviceScaleFactor: 1,

@@ -62,37 +62,30 @@ on:
                 description: "Run SereneUI screenshot tests"
                 required: true
                 type: boolean
-                default: true
             BUILD_IMAGE:
                 description: "Build SereneUI Docker image"
                 required: true
                 type: boolean
-                default: false
             PUSH_IMAGE_TO_REGISTRY:
                 description: "Push SereneUI image to Registry"
                 required: true
                 type: boolean
-                default: false
             BUILD_LINUX_APP:
                 description: "Build SereneUI Linux desktop app"
                 required: true
                 type: boolean
-                default: false
             BUILD_WINDOWS_APP:
                 description: "Build SereneUI Windows desktop app"
                 required: true
                 type: boolean
-                default: false
             BUILD_MACOS_APP:
                 description: "Build SereneUI macOS desktop app"
                 required: true
                 type: boolean
-                default: false
             PUSH_RELEASE:
                 description: "Publish a GitHub Release"
                 required: true
                 type: boolean
-                default: false
         secrets:
             TG_TOKEN:
                 required: true
@@ -120,7 +113,7 @@ jobs:
         timeout-minutes: 60
         defaults:
             run:
-                working-directory: ./serene-ui
+                working-directory: ./apps/serene-ui
         env:
             WORKSPACE: ${{ github.workspace }}
             PUSH_IMAGE_TO_REGISTRY: ${{ inputs.PUSH_IMAGE_TO_REGISTRY }}
@@ -159,13 +152,13 @@ jobs:
                   ./scripts/run_tests_docker.sh 2>&1 | tee -a logs/run.log
 
             - name: Upload test artifacts
-              if: inputs.RUN_TESTS
+              if: inputs.RUN_TESTS && !cancelled()
               uses: actions/upload-artifact@v7
               with:
                   name: serene-ui-test-artifacts-docker
                   path: |
-                      serene-ui/screenshots/diff/**/*
-                      serene-ui/logs/**/*
+                      apps/serene-ui/apps/web/screenshots/diffs/**/*
+                      apps/serene-ui/logs/**/*
                   if-no-files-found: ignore
                   retention-days: 30
 
@@ -194,7 +187,7 @@ jobs:
         timeout-minutes: 30
         defaults:
             run:
-                working-directory: ./serene-ui
+                working-directory: ./apps/serene-ui
         steps:
             - name: Resolve branch
               working-directory: ${{ github.workspace }}
@@ -207,7 +200,7 @@ jobs:
                   fetch-depth: 1
                   submodules: false
                   clean: false
-                  sparse-checkout: serene-ui
+                  sparse-checkout: apps/serene-ui
                   sparse-checkout-cone-mode: true
 
             - name: Setup Node.js
@@ -237,14 +230,14 @@ jobs:
               with:
                   name: serene-ui-test-artifacts-linux
                   path: |
-                      serene-ui/screenshots/diff/**/*
-                      serene-ui/logs/**/*
+                      apps/serene-ui/apps/web/screenshots/diffs/**/*
+                      apps/serene-ui/logs/**/*
                   if-no-files-found: ignore
                   retention-days: 30
 
             - name: Build Electron distributables
               if: inputs.BUILD_LINUX_APP
-              working-directory: ./serene-ui/apps/electron
+              working-directory: ./apps/serene-ui/apps/electron
               run: |
                   npm run package:prod
                   npm run make:prod
@@ -254,7 +247,7 @@ jobs:
               uses: actions/upload-artifact@v7
               with:
                   name: serene-ui-linux
-                  path: serene-ui/apps/electron/out/make/**/*
+                  path: apps/serene-ui/apps/electron/out/make/**/*
                   if-no-files-found: error
                   retention-days: 30
 
@@ -268,7 +261,7 @@ jobs:
         defaults:
             run:
                 shell: bash
-                working-directory: ./serene-ui
+                working-directory: ./apps/serene-ui
         steps:
             - name: Resolve branch
               working-directory: ${{ github.workspace }}
@@ -281,7 +274,7 @@ jobs:
                   fetch-depth: 1
                   submodules: false
                   clean: false
-                  sparse-checkout: serene-ui
+                  sparse-checkout: apps/serene-ui
                   sparse-checkout-cone-mode: true
 
             - name: Setup Node.js
@@ -311,14 +304,14 @@ jobs:
               with:
                   name: serene-ui-test-artifacts-windows
                   path: |
-                      serene-ui/screenshots/diff/**/*
-                      serene-ui/logs/**/*
+                      apps/serene-ui/apps/web/screenshots/diffs/**/*
+                      apps/serene-ui/logs/**/*
                   if-no-files-found: ignore
                   retention-days: 30
 
             - name: Build Electron distributables
               if: inputs.BUILD_WINDOWS_APP
-              working-directory: ./serene-ui/apps/electron
+              working-directory: ./apps/serene-ui/apps/electron
               run: |
                   npm run package:prod
                   npm run make:prod
@@ -328,20 +321,20 @@ jobs:
               uses: actions/upload-artifact@v7
               with:
                   name: serene-ui-windows
-                  path: serene-ui/apps/electron/out/make/**/*
+                  path: apps/serene-ui/apps/electron/out/make/**/*
                   if-no-files-found: error
                   retention-days: 30
 
     build-macos-app:
         name: Build macOS App
         if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
-        runs-on: macOS
+        runs-on: macos-latest
         permissions:
             contents: read
         timeout-minutes: 240
         defaults:
             run:
-                working-directory: ./serene-ui
+                working-directory: ./apps/serene-ui
         steps:
             - name: Resolve branch
               working-directory: ${{ github.workspace }}
@@ -382,14 +375,14 @@ jobs:
               with:
                   name: serene-ui-test-artifacts-macos
                   path: |
-                      serene-ui/screenshots/diff/**/*
-                      serene-ui/logs/**/*
+                      apps/serene-ui/apps/web/screenshots/diffs/**/*
+                      apps/serene-ui/logs/**/*
                   if-no-files-found: ignore
                   retention-days: 30
 
             - name: Build Electron distributables
               if: inputs.BUILD_MACOS_APP
-              working-directory: ./serene-ui/apps/electron
+              working-directory: ./apps/serene-ui/apps/electron
               env:
                   APPLE_ID: ${{ secrets.APPLE_ID }}
                   APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
@@ -403,7 +396,7 @@ jobs:
               uses: actions/upload-artifact@v7
               with:
                   name: serene-ui-macos
-                  path: serene-ui/apps/electron/out/make/**/*
+                  path: apps/serene-ui/apps/electron/out/make/**/*
                   if-no-files-found: error
                   retention-days: 30
 

@@ -25,6 +25,7 @@
 
 #include <fcntl.h>  // open/_wopen
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <filesystem>
@@ -57,8 +58,6 @@
 #define IR_FADVICE_NORMAL 0
 #define IR_FADVICE_SEQUENTIAL FILE_FLAG_SEQUENTIAL_SCAN
 #define IR_FADVICE_RANDOM FILE_FLAG_RANDOM_ACCESS
-#define IR_FADVICE_DONTNEED 0
-#define IR_FADVICE_NOREUSE 0
 #else
 #include <sys/types.h>  // for blksize_t
 #include <unistd.h>     // close
@@ -77,14 +76,10 @@
 #define IR_FADVICE_NORMAL POSIX_FADV_NORMAL
 #define IR_FADVICE_SEQUENTIAL POSIX_FADV_SEQUENTIAL
 #define IR_FADVICE_RANDOM POSIX_FADV_RANDOM
-#define IR_FADVICE_DONTNEED POSIX_FADV_DONTNEED
-#define IR_FADVICE_NOREUSE POSIX_FADV_NOREUSE
 #else
 #define IR_FADVICE_NORMAL 0
 #define IR_FADVICE_SEQUENTIAL 0
 #define IR_FADVICE_RANDOM 0
-#define IR_FADVICE_DONTNEED 0
-#define IR_FADVICE_NOREUSE 0
 #endif
 #endif
 
@@ -137,7 +132,6 @@ enum class OpenMode : uint16_t {
   Invalid = 0,
   Read = 1,
   Write = 2,
-  Direct = 4,
 };
 
 ENABLE_BITMASK_ENUM(OpenMode);
@@ -167,6 +161,8 @@ inline constexpr size_t kPrefetchChunk = 128 * 1024;
 void Prefetch(const void* addr, size_t size) noexcept;
 void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept;
 void Populate(const void* addr, size_t size) noexcept;
+void Evict(const void* addr, size_t size) noexcept;
+void Evict(int fd, uint64_t offset, uint64_t size) noexcept;
 bool IsResident(const void* addr, size_t size) noexcept;
 size_t Residency(const void* addr, size_t size,
                  std::span<unsigned char> pages) noexcept;
@@ -174,6 +170,41 @@ uint32_t ResidencyEpoch() noexcept;
 void InvalidateResidency() noexcept;
 void SyncResidency() noexcept;
 void PollResidency() noexcept;
+
+inline constexpr uint64_t kWarmProbes = 4;
+
+template<typename Input>
+bool StillWarm(const Input& in, uint64_t offset, uint64_t size,
+               bool probe) noexcept {
+  if (!in.Warm(offset, size)) {
+    return false;
+  }
+  if (!probe && size <= kPrefetchChunk) {
+    return true;
+  }
+  const auto probes =
+    std::min<uint64_t>(kWarmProbes, (size + kPage - 1) / kPage);
+  for (uint64_t i = 0; i != probes; ++i) {
+    if (!in.Resident(offset + size * i / probes, 1)) {
+      InvalidateResidency();
+      return false;
+    }
+  }
+  return true;
+}
+
+template<typename Input>
+void Hint(const Input& in, uint64_t offset, uint64_t size,
+          bool probe) noexcept {
+  if (StillWarm(in, offset, size, probe)) {
+    PollResidency();
+    return;
+  }
+  if (size <= kPrefetchChunk || !in.Resident(offset, size)) {
+    in.Prefetch(offset, size);
+  }
+  in.MarkWarm(offset, size);
+}
 
 class ResidencyMap {
  public:

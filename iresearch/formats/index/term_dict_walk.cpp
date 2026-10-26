@@ -492,8 +492,9 @@ class BlockPlan {
       return;
     }
     const uint64_t offset = _field->BlockOffset(_run_begin);
-    Hint(_field->Owner().Input(), offset,
-         _field->BlockOffset(_run_end) - offset, _flushed++ < kWarmProbes);
+    file_utils::Hint(_field->Owner().Input(), offset,
+                     _field->BlockOffset(_run_end) - offset,
+                     _flushed++ < file_utils::kWarmProbes);
     _run_begin = _run_end;
   }
 
@@ -536,7 +537,7 @@ void Readahead(Cursor& cursor, const A& a) {
   const uint64_t range = field.BlockOffset(end) - offset;
   const uint64_t size = std::min(range, kMaxPrefetch);
   cursor.ReadaheadUntil(range <= kMaxPrefetch ? 0 : end, false);
-  if (StillWarm(in, offset, size, true)) {
+  if (file_utils::StillWarm(in, offset, size, true)) {
     return;
   }
   if (in.Resident(offset, size)) {

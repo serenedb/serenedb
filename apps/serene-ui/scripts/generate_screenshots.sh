@@ -3,6 +3,7 @@ set -e
 set -o pipefail
 
 COMPOSE_FILE="docker-compose.test-docker.yaml"
+export DOCKER_USER="${DOCKER_USER:-$(id -u):$(id -g)}"
 
 cleanup() {
 	echo "Stopping serene-ui Docker container..."

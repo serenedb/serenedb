@@ -29,6 +29,13 @@ def free_port():
         s.close()
 
 
+def reserve_port():
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("", 0))
+    return sock
+
+
 def listens_on(pid, ports):
     if not os.path.isdir("/proc/self/fd"):
         return True
@@ -107,11 +114,17 @@ class ServerLog:
 
 
 class Serened:
-    def __init__(self, binary, port=None, datadir=None, datadir_root=None,
+    def __init__(self, binary, datadir=None, datadir_root=None,
                  extra_args=(), log_path=None, ready=None, env=None,
-                 prefix="serened-", auth_timeout="600s"):
+                 prefix="serened-", auth_timeout="600s", host="127.0.0.1",
+                 http=None):
         self.binary = str(binary)
-        self.port = port or free_port()
+        self.host = host
+        self.http = http
+        self.reserved = [reserve_port() for _ in range(2 if http else 1)]
+        self.ports = [sock.getsockname()[1] for sock in self.reserved]
+        self.port = self.ports[0]
+        self.http_port = self.ports[1] if http else None
         self.owns_datadir = datadir is None
         self.datadir = datadir or tempfile.mkdtemp(prefix=prefix, dir=datadir_root)
         self.extra_args = list(extra_args)
@@ -130,8 +143,10 @@ class Serened:
                 f"connect_timeout={connect_timeout}")
 
     def argv(self):
-        return [self.binary, self.datadir,
-                f"--listen=postgres://0.0.0.0:{self.port}",
+        listen = f"postgres://{self.host}:{self.port}"
+        if self.http:
+            listen += f",http://{self.host}:{self.http_port}?{self.http}"
+        return [self.binary, self.datadir, f"--listen={listen}",
                 f"--auth_timeout={self.auth_timeout}"] + self.extra_args
 
     def start(self, timeout=DEFAULT_START_TIMEOUT):
@@ -159,10 +174,14 @@ class Serened:
                     f"serened exited {rc} during startup; log tail:\n"
                     + (self.log.tail(0)[-2000:] if self.log else "(no log)")
                 )
-            if self.ready("127.0.0.1", self.port) and listens_on(self.proc.pid, [self.port]):
+            if self.ready("127.0.0.1", self.port) and listens_on(self.proc.pid, self.ports):
                 return self
             time.sleep(0.3)
-        raise RuntimeError(f"serened did not come up in {timeout}s on port {self.port}")
+        self.kill()
+        raise RuntimeError(
+            f"serened did not come up in {timeout}s on port {self.port}; log tail:\n"
+            + (self.log.tail(0)[-2000:] if self.log else "(no log)")
+        )
 
     def running(self):
         return self.proc is not None and self.proc.poll() is None
@@ -205,6 +224,8 @@ class Serened:
 
     def stop(self, keep_datadir=False):
         self.kill()
+        for sock in self.reserved:
+            sock.close()
         if self._log_fh:
             try:
                 self._log_fh.close()

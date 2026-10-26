@@ -1328,11 +1328,11 @@ void FieldReader::prepare(const ReaderState& state) {
     while (++i != _preload.size() && _preload[i].first <= end) {
       end = std::max(end, _preload[i].second);
     }
+    file_utils::Prefetch(_base + begin, end - begin);
     file_utils::Populate(_base + begin, end - begin);
   }
   _preload.clear();
   _preload.shrink_to_fit();
-  _in->Advise(IOAdvice::RANDOM);
 }
 
 const TermReader* FieldReader::field(field_id id) const {

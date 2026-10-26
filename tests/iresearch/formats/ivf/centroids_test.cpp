@@ -469,7 +469,7 @@ TEST(centroids_builder_test, create_small_dataset_builds_no_centroids) {
   MemoryDirectory dir;
   WriteVectorColumn(dir, *db.instance, kVec, d, data);
 
-  ColReader r{dir, "seg", *db.instance};
+  ColReader r{dir, "seg", *db.instance, irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(kVec);
   ASSERT_NE(col, nullptr);
 
@@ -491,7 +491,7 @@ TEST(centroids_builder_test,
   MemoryDirectory dir;
   WriteVectorColumn(dir, *db.instance, kVec, d, data);
 
-  ColReader r{dir, "seg", *db.instance};
+  ColReader r{dir, "seg", *db.instance, irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(kVec);
   ASSERT_NE(col, nullptr);
 

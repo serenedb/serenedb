@@ -52,8 +52,9 @@ std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
   if (!dir.exists(exists, filename) || !exists) {
     return nullptr;
   }
-  return std::make_unique<ColReader>(
-    dir, segment_name, ::irs::DuckDBEngine::Instance().instance());
+  return std::make_unique<ColReader>(dir, segment_name,
+                                     ::irs::DuckDBEngine::Instance().instance(),
+                                     IOAdvice::SEQUENTIAL);
 }
 
 ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id) {

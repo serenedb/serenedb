@@ -2295,7 +2295,7 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
     info = (*ctx.expr_getter)(*unwrapped.expr);
     if (info) {
       matched_unwrapped = true;
-    } else {
+    } else if (unwrapped.expr != &expr) {
       info = (*ctx.expr_getter)(expr);
     }
   }

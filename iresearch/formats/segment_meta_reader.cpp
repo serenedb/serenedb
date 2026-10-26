@@ -51,7 +51,7 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
 
   std::string name{segment_name};
 
-  auto in = dir.open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
+  auto in = dir.open(filename, IOAdvice::RANDOM);
 
   std::vector<std::string> files;
   bool has_files = false;

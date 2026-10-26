@@ -88,12 +88,12 @@ def _recvn(s: socket.socket, n: int) -> bytes:
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "harness"))
 
-from serened import Serened as _Serened, free_port  # noqa: E402
+from serened import Serened as _Serened  # noqa: E402
 
 
-def Serened(binary: str, port: int) -> _Serened:
+def Serened(binary: str) -> _Serened:
     return _Serened(
-        binary, port=port, prefix="hba_mask_",
+        binary, host="0.0.0.0", prefix="hba_mask_",
         ready=lambda host, p: probe(host, p, "127.0.0.1") != BROKEN,
     )
 
@@ -337,8 +337,8 @@ def set_hba(port: int, ruleset: str):
 
 
 def run(binary: str) -> int:
-    port = free_port()
-    srv = Serened(binary, port)
+    srv = Serened(binary)
+    port = srv.port
     failures = []
     try:
         srv.start()

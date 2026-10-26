@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iresearch/store/memory_directory.hpp>
@@ -110,11 +111,11 @@ TEST_P(DirectoryTestCase, rename) {
   }
 
   {
-    auto stream0 = _dir->open("foo1", irs::IOAdvice::NORMAL);
+    auto stream0 = _dir->open("foo1", irs::IOAdvice::RANDOM);
     ASSERT_NE(nullptr, stream0);
     ASSERT_EQ(1, stream0->Length());
     ASSERT_EQ(0, stream0->ReadByte());
-    auto stream1 = _dir->open("bar1", irs::IOAdvice::NORMAL);
+    auto stream1 = _dir->open("bar1", irs::IOAdvice::RANDOM);
     ASSERT_NE(nullptr, stream1);
     ASSERT_EQ(4, stream1->Length());
     ASSERT_EQ(2, stream1->ReadI32());
@@ -143,7 +144,7 @@ TEST_P(DirectoryTestCase, rename) {
   }
 
   {
-    auto stream1 = _dir->open("foo1", irs::IOAdvice::NORMAL);
+    auto stream1 = _dir->open("foo1", irs::IOAdvice::RANDOM);
     ASSERT_NE(nullptr, stream1);
     ASSERT_EQ(4, stream1->Length());
     ASSERT_EQ(2, stream1->ReadI32());
@@ -257,10 +258,10 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
 
   // read data
   {
-    auto in0 = _dir->open("test", irs::IOAdvice::NORMAL);
+    auto in0 = _dir->open("test", irs::IOAdvice::RANDOM);
     ASSERT_FALSE(!in0);
     ASSERT_FALSE(in0->IsEOF());
-    auto in1 = _dir->open("test", irs::IOAdvice::NORMAL);
+    auto in1 = _dir->open("test", irs::IOAdvice::RANDOM);
     ASSERT_FALSE(!in1);
     ASSERT_FALSE(in1->IsEOF());
     ASSERT_EQ(0, in0->ReadV32());
@@ -291,7 +292,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
 
   // read data using dup
   {
-    auto in0 = _dir->open("test", irs::IOAdvice::NORMAL);
+    auto in0 = _dir->open("test", irs::IOAdvice::RANDOM);
     ASSERT_FALSE(!in0);
     auto in1 = in0->Dup();
     ASSERT_FALSE(!in1);
@@ -325,7 +326,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
 
   // read data using reopen
   {
-    auto in0 = _dir->open("test", irs::IOAdvice::NORMAL);
+    auto in0 = _dir->open("test", irs::IOAdvice::RANDOM);
     ASSERT_FALSE(!in0);
     auto in1 = in0->Reopen();
     ASSERT_FALSE(!in1);
@@ -368,7 +369,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
       }
     }
 
-    auto in = _dir->open("test_async", irs::IOAdvice::NORMAL);
+    auto in = _dir->open("test_async", irs::IOAdvice::RANDOM);
     std::mutex in_mtx;
     std::mutex mutex;
     irs::async_utils::ThreadPool<> pool(16);
@@ -543,7 +544,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
 
     // read strings
     {
-      auto in = _dir->open("test", irs::IOAdvice::NORMAL);
+      auto in = _dir->open("test", irs::IOAdvice::RANDOM);
       ASSERT_FALSE(!in);
       ASSERT_FALSE(in->IsEOF());
       EXPECT_EQ(strings.size(), in->ReadV32());
@@ -2077,7 +2078,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
 
     // read strings
     {
-      auto in = _dir->open("test", irs::IOAdvice::NORMAL);
+      auto in = _dir->open("test", irs::IOAdvice::RANDOM);
       ASSERT_FALSE(!in);
       ASSERT_FALSE(in->IsEOF());
       EXPECT_EQ(strings.size(), in->ReadV32());
@@ -3710,7 +3711,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
 
     // read strings
     {
-      auto in = _dir->open("test", irs::IOAdvice::NORMAL);
+      auto in = _dir->open("test", irs::IOAdvice::RANDOM);
       ASSERT_FALSE(!in);
       ASSERT_FALSE(in->IsEOF());
       EXPECT_EQ(strings.size(), in->ReadV32());
@@ -3909,7 +3910,7 @@ TEST_P(DirectoryTestCase, smoke_index_io) {
 
   // read from file
   {
-    auto in = _dir->open(name, irs::IOAdvice::NORMAL);
+    auto in = _dir->open(name, irs::IOAdvice::RANDOM);
     ASSERT_FALSE(!in);
     EXPECT_FALSE(in->IsEOF());
 
@@ -4098,7 +4099,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
     EXPECT_TRUE(dir.length(length, name));
     EXPECT_EQ(expected_length, length);
 
-    auto file = dir.open(name, irs::IOAdvice::NORMAL);
+    auto file = dir.open(name, irs::IOAdvice::RANDOM);
     ASSERT_FALSE(!file);
     EXPECT_FALSE(file->IsEOF());
     EXPECT_EQ(0, file->Position());
@@ -4296,7 +4297,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
 
   // Try to open non existing input
   try {
-    dir.open("invalid_file_name", irs::IOAdvice::NORMAL);
+    dir.open("invalid_file_name", irs::IOAdvice::RANDOM);
     FAIL() << "opening a missing file must throw";
   } catch (const irs::SqlException& e) {
     EXPECT_EQ(e.error().errcode, ERRCODE_UNDEFINED_FILE);
@@ -4326,7 +4327,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
     }
 
     {
-      auto in = dir.open("empty_file", irs::IOAdvice::NORMAL);
+      auto in = dir.open("empty_file", irs::IOAdvice::RANDOM);
       ASSERT_FALSE(!in);
       ASSERT_TRUE(in->IsEOF());
 
@@ -4361,7 +4362,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
     // read from file
     {
       byte_type buf[1024 + 691]{};  // 1024 + 691 from above
-      auto in = dir.open("nonempty_file", irs::IOAdvice::NORMAL);
+      auto in = dir.open("nonempty_file", irs::IOAdvice::RANDOM);
       ASSERT_FALSE(in->IsEOF());
       ASSERT_FALSE(!in);
       in->ReadData(buf, sizeof buf);
@@ -4426,6 +4427,55 @@ TEST_P(DirectoryTestCase, checksum_covers_bytes_since_previous_call) {
   EXPECT_EQ(footer_crc.checksum(), out->Checksum());
 
   EXPECT_EQ(irs::Crc32c{}.checksum(), out->Checksum());
+}
+
+TEST_P(DirectoryTestCase, read_once_reads_range_and_advances) {
+  std::vector<irs::byte_type> data(3 * 1024 * 1024 + 123);
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<irs::byte_type>(i * 31 % 251);
+  }
+  {
+    auto out = _dir->create("read_once");
+    ASSERT_FALSE(!out);
+    out->WriteData(data.data(), data.size());
+  }
+
+  auto in = _dir->open("read_once", irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  constexpr size_t kOffset = 4097;
+  std::vector<irs::byte_type> read(data.size() - kOffset - 1);
+  in->Seek(kOffset);
+  irs::ReadOnce(*in, read.data(), read.size());
+  ASSERT_EQ(kOffset + read.size(), in->Position());
+  EXPECT_EQ(0, std::memcmp(read.data(), data.data() + kOffset, read.size()));
+  EXPECT_EQ(data.back(), in->ReadByte());
+  EXPECT_TRUE(in->IsEOF());
+}
+
+TEST_P(DirectoryTestCase, evict_keeps_contents) {
+  std::vector<irs::byte_type> data(1024 * 1024 + 321);
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<irs::byte_type>(i * 31 % 251);
+  }
+  {
+    auto out = _dir->create("evict");
+    ASSERT_FALSE(!out);
+    out->WriteData(data.data(), data.size());
+  }
+
+  auto in = _dir->open("evict", irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  const auto* stable = in->ReadStable(0, data.size());
+  std::vector<irs::byte_type> before(data.size());
+  in->ReadData(0, before.data(), before.size());
+  ASSERT_EQ(0, std::memcmp(before.data(), data.data(), data.size()));
+  in->Evict(1000, data.size() - 2000);
+  if (stable) {
+    EXPECT_EQ(0, std::memcmp(stable, data.data(), data.size()));
+  }
+  std::vector<irs::byte_type> after(data.size());
+  in->ReadData(0, after.data(), after.size());
+  EXPECT_EQ(0, std::memcmp(after.data(), data.data(), data.size()));
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

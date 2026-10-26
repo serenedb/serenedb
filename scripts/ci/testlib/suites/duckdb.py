@@ -9,6 +9,7 @@ import urllib.request
 from pathlib import Path
 
 import services
+from serened import reserve_port
 
 from .. import reports
 from ..scheduler import CRASHED, FAILED, PASSED, SKIPPED, STUCK, Fixture, Outcome, Unit
@@ -588,15 +589,23 @@ class S3Fixture(_DockerFixture):
 
 class HttpFixture(_DockerFixture):
     name = "duckdb:http"
+    reserved = None
+
+    def stop(self):
+        super().stop()
+        if self.reserved is not None:
+            self.reserved.close()
 
     def start(self, ctx):
         root = ctx.out_dir / "services" / "http-server"
         shutil.rmtree(root, ignore_errors=True)
         root.mkdir(parents=True)
-        port = services.free_port()
+        self.reserved = reserve_port()
+        port = self.reserved.getsockname()[1]
+        log = open(root.parent / "http-server.log", "ab")
         self.procs.append(subprocess.Popen(
             ["python3", "-m", "http.server", "--bind", "127.0.0.1", "--directory", str(root), str(port)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            stdout=log, stderr=subprocess.STDOUT))
         url = f"http://127.0.0.1:{port}"
         services.wait_for("python http server", lambda: _http_ok(url), 30, 0.2)
         self._env = {"PYTHON_HTTP_SERVER_DIR": str(root), "PYTHON_HTTP_SERVER_URL": url}

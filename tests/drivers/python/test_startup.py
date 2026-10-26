@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-import socket
 import subprocess
 import tempfile
 import time
@@ -12,7 +11,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
-from serened import listens_on  # type: ignore[import-untyped]
+from serened import listens_on, reserve_port  # type: ignore[import-untyped]
 
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
@@ -25,15 +24,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
 class _Server:
     def __init__(self, datadir: Path, listen: str | None = None) -> None:
-        self.port = _free_port()
+        self.reserved = reserve_port()
+        self.port = self.reserved.getsockname()[1]
         if listen is None:
             listen = f"postgres://127.0.0.1:{self.port}"
         self.log = datadir.parent / f"serened-{self.port}.log"
@@ -61,6 +55,7 @@ class _Server:
         if self.proc.poll() is None:
             self.proc.terminate()
             self.proc.wait(timeout=60)
+        self.reserved.close()
 
     def output(self) -> str:
         return self.log.read_text()

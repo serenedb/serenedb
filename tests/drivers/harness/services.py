@@ -112,15 +112,6 @@ def tcp_open(host, port, timeout=2.0):
         return False
 
 
-def free_port():
-    s = socket.socket()
-    try:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-    finally:
-        s.close()
-
-
 _wait = wait_for
 
 

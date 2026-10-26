@@ -5,7 +5,7 @@ import threading
 import time
 from pathlib import Path
 
-from serened import free_port, listens_on, pg_startup_reachable
+from serened import listens_on, pg_startup_reachable, reserve_port
 
 from . import proc, reports
 from .scheduler import CRASHED, FAILED, STUCK, Fixture, Result
@@ -29,6 +29,7 @@ class Server:
         self.port = None
         self.ssl_port = None
         self.http_port = None
+        self.reserved = []
         self.proc = None
         self.generation = 0
         self.datadir = None
@@ -67,20 +68,26 @@ class Server:
             self.datadir.mkdir()
             if self.hba is not None:
                 (self.datadir / "pg_hba.conf").write_text(self.hba)
-        for _ in range(10):
-            self.port = free_port()
-            self.ssl_port = free_port() if self.listen_ssl else None
-            self.http_port = free_port() if self.http_apis else None
-            self.log = self.home / f"log.{self.generation}.txt"
-            self.proc = proc.spawn(self.argv(), env=self.env(), cwd=self.ctx.root,
-                                   log_path=self.log)
-            if self._wait_ready():
-                return self
-            if self.proc.poll() is not None and "Address already in use" in reports.tail(self.log):
-                continue
-            break
+        self._release_ports()
+        self.port = self._reserve_port()
+        self.ssl_port = self._reserve_port() if self.listen_ssl else None
+        self.http_port = self._reserve_port() if self.http_apis else None
+        self.log = self.home / f"log.{self.generation}.txt"
+        self.proc = proc.spawn(self.argv(), env=self.env(), cwd=self.ctx.root, log_path=self.log)
+        if self._wait_ready():
+            return self
         raise RuntimeError(f"serened did not start (exit {self.proc.poll()}); log tail:\n"
                            + reports.tail(self.log, 3000))
+
+    def _reserve_port(self):
+        sock = reserve_port()
+        self.reserved.append(sock)
+        return sock.getsockname()[1]
+
+    def _release_ports(self):
+        for sock in self.reserved:
+            sock.close()
+        self.reserved = []
 
     def _wait_ready(self):
         deadline = time.monotonic() + START_TIMEOUT
@@ -114,8 +121,10 @@ class Server:
                 stacks = proc.dump_all_stacks([self.proc.pid], self.home, prefix="stop-stacks")
                 proc.kill_session(self.proc.pid)
                 self.proc.wait()
+                self._release_ports()
                 return ("stuck", stacks)
         proc.kill_session(self.proc.pid)
+        self._release_ports()
         return ("exit", self.proc.returncode)
 
     def crash_signature(self):
@@ -249,7 +258,6 @@ class RestartingServer:
         self._stopping = threading.Event()
         self._thread = None
         self._ready = threading.Event()
-        self.error = None
 
     def start(self):
         self.server.start(fresh=True)
@@ -264,24 +272,16 @@ class RestartingServer:
             self.exits.append(rc)
             if self._stopping.is_set():
                 return
-            port = s.port
             s.generation += 1
             s.log = s.home / f"log.{s.generation}.txt"
             for _ in range(600):
                 if self._stopping.is_set():
                     return
                 s.proc = proc.spawn(s.argv(), env=s.env(), cwd=s.ctx.root, log_path=s.log)
-                if s._wait_ready():
+                if s._wait_ready() or s.proc.poll() is None:
                     break
-                if s.proc.poll() is None:
-                    break
-                if "Address already in use" not in reports.tail(s.log):
-                    self.exits.append(s.proc.returncode)
-                    time.sleep(0.5)
-                    continue
+                self.exits.append(s.proc.returncode)
                 time.sleep(0.5)
-            if s.port != port:
-                self.error = "restarted on a different port"
 
     @property
     def port(self):

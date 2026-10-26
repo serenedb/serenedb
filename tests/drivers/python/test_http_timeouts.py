@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
-from serened import Serened, free_port
+from serened import Serened
 
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
@@ -25,15 +25,12 @@ AUTH = "Basic " + base64.b64encode(b"postgres:").decode()
 
 @pytest.fixture()
 def http_port(tmp_path):
-    port = free_port()
-    http_port = free_port()
-    listen = f"postgres://127.0.0.1:{port},http://127.0.0.1:{http_port}?api=test"
-    with Serened(SERENED_BIN, port=port, datadir_root=str(tmp_path),
-                 log_path=str(tmp_path / "serened.log"),
-                 extra_args=[f"--listen={listen}", "--http_body_timeout=1s",
+    with Serened(SERENED_BIN, datadir_root=str(tmp_path),
+                 log_path=str(tmp_path / "serened.log"), http="api=test",
+                 extra_args=["--http_body_timeout=1s",
                              "--idle_session_timeout=1s"]) as server:
         server.start()
-        yield http_port
+        yield server.http_port
 
 
 def test_a_response_read_slower_than_the_timeouts_arrives_whole(http_port):

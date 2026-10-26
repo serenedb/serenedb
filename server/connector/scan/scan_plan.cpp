@@ -152,8 +152,8 @@ duckdb::unique_ptr<duckdb::Expression> WrapScoreEmit(
     case ScoreEmit::Negate:
       exec = EmitScoreFilterExec<ScoreEmit::Negate>;
       break;
-    case ScoreEmit::ClampNeg:
-      exec = EmitScoreFilterExec<ScoreEmit::ClampNeg>;
+    case ScoreEmit::ZeroMinus:
+      exec = EmitScoreFilterExec<ScoreEmit::ZeroMinus>;
       break;
     case ScoreEmit::Identity:
       return score_ref;

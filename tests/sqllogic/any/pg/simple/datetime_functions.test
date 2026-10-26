@@ -430,6 +430,12 @@ statement error (function pg_catalog\.overlaps\(integer, integer, integer, integ
 SELECT (1, 2) OVERLAPS (3, 4);
 
 
+statement error
+SELECT (DATE '2020-01-01', DATE '2020-01-10') OVERLAPS (DATE '2020-01-05', DATE '2020-01-15') OVERLAPS (DATE '2020-01-11', DATE '2020-01-12');
+----
+db error: ERROR: syntax error at or near "OVERLAPS"
+
+
 # timestamp and timestamptz
 
 query

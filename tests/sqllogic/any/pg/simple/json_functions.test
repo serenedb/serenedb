@@ -414,6 +414,18 @@ SELECT * FROM json_to_record('{"a": 1}') AS t(a int, a text);
 db error: ERROR: column name "a" specified more than once
 
 
+statement error
+SELECT * FROM json_to_record('{"a": 1}') AS t(a, b)(c int);
+----
+db error: ERROR: syntax error at or near "("
+
+
+statement error
+SELECT * FROM json_to_record('{"a": 1}') AS t AS (a int);
+----
+db error: ERROR: syntax error at or near "AS"
+
+
 # json_to_recordset
 
 query

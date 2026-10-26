@@ -34,11 +34,15 @@ namespace irs {
 
 void ReadOnce(IndexInput& in, byte_type* b, size_t count) {
   constexpr uint64_t kChunk = uint64_t{64} << 20;
+  constexpr uint64_t kAhead = 2 * kChunk;
   const auto start = in.Position();
-  in.Prefetch(start, std::min<uint64_t>(count, kChunk));
+  in.Prefetch(start, std::min<uint64_t>(count, kAhead));
   for (uint64_t done = 0; done < count;) {
     const auto n = std::min<uint64_t>(count - done, kChunk);
-    in.Prefetch(start + done + n, std::min<uint64_t>(count - done - n, kChunk));
+    if (done + kAhead < count) {
+      in.Prefetch(start + done + kAhead,
+                  std::min<uint64_t>(count - done - kAhead, kChunk));
+    }
     in.ReadData(start + done, b + done, n);
     in.Evict(start + done, n);
     done += n;

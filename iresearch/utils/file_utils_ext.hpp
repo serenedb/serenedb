@@ -160,7 +160,6 @@ inline constexpr size_t kPrefetchChunk = 128 * 1024;
 
 void Prefetch(const void* addr, size_t size) noexcept;
 void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept;
-void Populate(const void* addr, size_t size) noexcept;
 void Evict(const void* addr, size_t size) noexcept;
 void Evict(int fd, uint64_t offset, uint64_t size) noexcept;
 bool IsResident(const void* addr, size_t size) noexcept;

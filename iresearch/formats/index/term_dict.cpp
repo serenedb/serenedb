@@ -692,11 +692,17 @@ void FieldWriter::WriteBlock(bytes_view block) {
   const uint64_t position = _out->Position();
   const uint64_t pad = (kPage - position % kPage) % kPage;
   _out->WriteData(kZeros, pad);
-  BytesOutput directory{_directory};
   if (_blocks == 0) {
-    directory.WriteV64((position + pad) / kPage);
+    _first_page = (position + pad) / kPage;
   }
-  directory.WriteV32(static_cast<uint32_t>((block.size() + kPage - 1) / kPage));
+  const auto pages = static_cast<uint32_t>((block.size() + kPage - 1) / kPage);
+  if (pages != 1) {
+    BytesOutput directory{_directory};
+    directory.WriteV32(_blocks - _last_span);
+    directory.WriteV32(pages - 1);
+    _last_span = _blocks;
+    ++_spans;
+  }
   _out->WriteData(block.data(), block.size());
   ++_blocks;
 }
@@ -743,8 +749,9 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
     if (props.ranges) {
       bstring region;
       _ranges.Write(region, CommonPrefixLength(bytes_view{_min}, max));
+      out.WriteV64(_range_regions.size());
       out.WriteV64(region.size());
-      out.WriteData(region.data(), region.size());
+      _range_regions.append(region);
     }
   }
 
@@ -785,8 +792,12 @@ void FieldWriter::Reset() noexcept {
   _separator.clear();
   _last.clear();
   _fields.clear();
+  _range_regions.clear();
   _entries.clear();
+  _first_page = 0;
   _blocks = 0;
+  _spans = 0;
+  _last_span = 0;
   _ordinal = 0;
 }
 
@@ -798,19 +809,26 @@ void FieldWriter::end() {
     const uint64_t body = out.Position();
     out.WriteV32(kRestartInterval);
     out.WriteV32(_blocks);
-    out.WriteData(_directory.data(), _directory.size());
+    if (_blocks != 0) {
+      out.WriteV64(_first_page);
+      out.WriteV32(_spans);
+      out.WriteData(_directory.data(), _directory.size());
+    }
     out.WriteV64(_separators.size());
     out.WriteData(_separators.data(), _separators.size());
     WriteStr(out, bytes_view{_fsst_table});
     out.WriteV64(_inline.size());
-    out.WriteData(_inline.data(), _inline.size());
+    out.WriteV64(_range_regions.size());
     const uint64_t fields = out.Position();
     out.WriteData(_fields.data(), _fields.size());
+    const uint64_t head = out.Position() - body;
+    out.WriteData(_inline.data(), _inline.size());
+    out.WriteData(_range_regions.data(), _range_regions.size());
     for (auto& entry : _entries) {
       entry.meta.body_offset += fields;
       _idx->AddTermDictEntry(entry.id, entry.meta);
     }
-    _idx->SetTermsBody(body);
+    _idx->SetTermsBody(body, head);
   }
   Reset();
   _idx = nullptr;
@@ -899,10 +917,10 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, field_id id,
       bytes += ReadRanges(owner, in);
     }
     if (_blocks == 1) {
-      _small = owner.Resident(_first_block, in);
+      _small = owner.CopyBlock(_first_block, in.Length());
       if (inline_size != 0) {
         _small_inline =
-          owner.Load(in, owner.InlineBegin() + _inline_base, inline_size, true);
+          owner.Copy(owner.InlineBegin() + _inline_base, inline_size);
       }
     }
   }
@@ -918,13 +936,13 @@ uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in) {
       ERR_CODE(ERRCODE_INDEX_CORRUPTED),
       ERR_MSG("term dictionary: bad range levels of field ", _meta.id));
   };
+  const auto offset = in.ReadV64();
   const auto size = in.ReadV64();
-  const auto offset = in.Position();
-  if (size == 0 || size > in.Length() - offset) {
+  if (size == 0 || offset > owner.RangesSize() ||
+      size > owner.RangesSize() - offset) {
     corrupted();
   }
-  const auto* p = owner.Load(in, offset, size, false).data();
-  in.Seek(offset + size);
+  const auto* p = owner.Load(in, owner.RangesBegin() + offset, size).data();
   const auto* const end = p + size;
   const auto height = vread<uint32_t>(p);
   if (height == 0) {
@@ -1218,19 +1236,8 @@ uint64_t FieldReader::CountMappedMemory() const {
   return bytes;
 }
 
-const byte_type* FieldReader::Resident(uint32_t block, IndexInput& in) {
-  const uint64_t offset = PageOffset(block);
-  return Load(in, offset, std::min(PageOffset(block + 1), in.Length()) - offset,
-              true)
-    .data();
-}
-
-bytes_view FieldReader::Load(IndexInput& in, uint64_t offset, uint64_t size,
-                             bool preload) {
+bytes_view FieldReader::Load(IndexInput& in, uint64_t offset, uint64_t size) {
   if (_base) {
-    if (preload) {
-      _preload.emplace_back(offset, offset + size);
-    }
     return {_base + offset, size};
   }
   const auto [it, inserted] = _copies.try_emplace(offset);
@@ -1245,21 +1252,85 @@ bytes_view FieldReader::Load(IndexInput& in, uint64_t offset, uint64_t size,
   return copy;
 }
 
-Separators FieldReader::ReadBody(IndexInput& in, uint64_t offset) {
+bytes_view FieldReader::Copy(uint64_t offset, uint64_t size) {
+  const auto [it, inserted] = _copies.try_emplace(offset);
+  auto& copy = it->second;
+  if (inserted) {
+    _rm->Increase(size);
+    _bytes += size;
+    copy.resize(size);
+    _pending.push_back({.offset = offset, .size = size, .data = copy.data()});
+  }
+  SDB_ASSERT(copy.size() == size);
+  return copy;
+}
+
+const byte_type* FieldReader::CopyBlock(uint32_t block, uint64_t length) {
+  const uint64_t offset = PageOffset(block);
+  return Copy(offset, std::min(PageOffset(block + 1), length) - offset).data();
+}
+
+void FieldReader::FillCopies() {
+  absl::c_sort(_pending, [](const PendingCopy& lhs, const PendingCopy& rhs) {
+    return lhs.offset < rhs.offset;
+  });
+  for (size_t i = 0; i != _pending.size();) {
+    const uint64_t begin = _pending[i].offset;
+    uint64_t end = begin + _pending[i].size;
+    while (++i != _pending.size() && _pending[i].offset <= end) {
+      end = std::max(end, _pending[i].offset + _pending[i].size);
+    }
+    _in->Prefetch(begin, end - begin);
+  }
+  for (const auto& copy : _pending) {
+    _in->ReadData(copy.offset, copy.data, copy.size);
+  }
+  _pending.clear();
+  _pending.shrink_to_fit();
+}
+
+Separators FieldReader::ReadBody(IndexInput& in, uint64_t offset,
+                                 uint64_t head) {
   const auto corrupted = [](std::string_view what) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
                     ERR_MSG("term dictionary: bad ", what));
   };
+  if (head == 0 || offset > in.Length() || head > in.Length() - offset) {
+    corrupted("head extent");
+  }
   in.Seek(offset);
   if (in.ReadV32() != kRestartInterval) {
     corrupted("restart interval");
   }
   const auto blocks = in.ReadV32();
+  _block_count = blocks;
   if (blocks != 0) {
-    _pages.reserve(blocks + 1);
-    _pages.push_back(static_cast<uint32_t>(in.ReadV64()));
-    for (uint32_t i = 0; i != blocks; ++i) {
-      _pages.push_back(_pages.back() + in.ReadV32());
+    _first_page = in.ReadV64();
+    const auto spans = in.ReadV32();
+    if (spans > blocks) {
+      corrupted("block directory");
+    }
+    _spans.reserve(spans);
+    uint64_t block = 0;
+    uint64_t extra = 0;
+    for (uint32_t i = 0; i != spans; ++i) {
+      const auto delta = in.ReadV32();
+      if (i != 0 && delta == 0) {
+        corrupted("block directory");
+      }
+      block += delta;
+      extra += in.ReadV32();
+      if (block >= blocks || extra > std::numeric_limits<uint32_t>::max()) {
+        corrupted("block directory");
+      }
+      _spans.push_back({
+        .block = static_cast<uint32_t>(block),
+        .extra = static_cast<uint32_t>(extra),
+      });
+    }
+    if (_first_page > offset / kPage ||
+        PageOffset(blocks - 1) >= offset) {
+      corrupted("block directory");
     }
   }
   const auto size = in.ReadV64();
@@ -1278,11 +1349,14 @@ Separators FieldReader::ReadBody(IndexInput& in, uint64_t offset) {
     _fsst = std::move(decoder);
   }
   _inline_size = in.ReadV64();
-  _inline_offset = in.Position();
-  if (_inline_size > in.Length() - _inline_offset) {
+  _ranges_size = in.ReadV64();
+  _inline_offset = offset + head;
+  if (in.Position() > _inline_offset ||
+      _inline_size > in.Length() - _inline_offset ||
+      _ranges_size > in.Length() - _inline_offset - _inline_size) {
     corrupted("inline postings");
   }
-  _bytes = _pages.capacity() * sizeof(uint32_t) +
+  _bytes = _spans.capacity() * sizeof(SpanningBlock) +
            (_fsst ? sizeof(duckdb_fsst_decoder_t) : 0);
   if (_bytes != 0) {
     _rm->Increase(_bytes);
@@ -1307,9 +1381,12 @@ void FieldReader::prepare(const ReaderState& state) {
   _pr.prepare(state, features);
 
   _base = _in->ReadStable(0, _in->Length());
+  const uint64_t body = state.idx->TermsBody();
+  const uint64_t head = state.idx->TermsHead();
   Separators separators;
   if (!entries.empty()) {
-    separators = ReadBody(*_in, state.idx->TermsBody());
+    _in->Prefetch(body, head);
+    separators = ReadBody(*_in, body, head);
   }
   _ids.reserve(entries.size());
   _by_id.reserve(entries.size());
@@ -1321,18 +1398,10 @@ void FieldReader::prepare(const ReaderState& state) {
   }
   SDB_ENSURE(absl::c_is_sorted(_ids),
              "term dictionary: fields are not sorted by id");
-  absl::c_sort(_preload);
-  for (size_t i = 0; i != _preload.size();) {
-    const uint64_t begin = _preload[i].first;
-    uint64_t end = _preload[i].second;
-    while (++i != _preload.size() && _preload[i].first <= end) {
-      end = std::max(end, _preload[i].second);
-    }
-    file_utils::Prefetch(_base + begin, end - begin);
-    file_utils::Populate(_base + begin, end - begin);
+  FillCopies();
+  if (!entries.empty()) {
+    _in->Evict(body, head);
   }
-  _preload.clear();
-  _preload.shrink_to_fit();
 }
 
 const TermReader* FieldReader::field(field_id id) const {

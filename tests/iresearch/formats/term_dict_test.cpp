@@ -95,6 +95,7 @@ struct ReadState {
   size_t reads = 0;
   bool fail = false;
   std::vector<std::pair<uint64_t, uint64_t>> prefetched;
+  std::vector<std::pair<uint64_t, uint64_t>> evicted;
   std::vector<uint64_t> offsets;
   std::vector<size_t> hinted;
   uint32_t warm_epoch = 0;
@@ -161,6 +162,9 @@ class CountingInput final : public irs::IndexInput {
   void Prefetch(uint64_t offset, uint64_t count) const noexcept final {
     _state->prefetched.emplace_back(offset, offset + count);
   }
+  void Evict(uint64_t offset, uint64_t count) const noexcept final {
+    _state->evicted.emplace_back(offset, offset + count);
+  }
   bool Resident(uint64_t, uint64_t) const noexcept final {
     return _state->resident;
   }
@@ -190,6 +194,9 @@ class CountingDirectory final : public tests::DirectoryMock {
   size_t Reads() const noexcept { return _state->reads; }
   std::vector<std::pair<uint64_t, uint64_t>>& Prefetched() const noexcept {
     return _state->prefetched;
+  }
+  std::vector<std::pair<uint64_t, uint64_t>>& Evicted() const noexcept {
+    return _state->evicted;
   }
   std::vector<uint64_t>& Offsets() const noexcept { return _state->offsets; }
   std::vector<size_t>& Hinted() const noexcept { return _state->hinted; }
@@ -1227,6 +1234,62 @@ TEST_P(TermDictTest, fields_small_empty_and_large) {
     const auto* reader = Get(field.id);
     ASSERT_NE(nullptr, reader);
     AssertField(*reader, field.entries);
+  }
+}
+
+TEST_P(TermDictTest, small_fields_are_copied_at_open) {
+  const Field fields[]{
+    {.id = 1, .entries = MakeEntries({Bytes("x"), Bytes("y"), Bytes("z")})},
+    {.id = 2, .entries = MakeEntries(Words(20000, 5))},
+    {.id = 3, .entries = MakeEntries({Bytes("false"), Bytes("true")})},
+  };
+  Write(fields);
+  if (!_reader->Base()) {
+    GTEST_SKIP() << "only a mapped input reads blocks in place";
+  }
+  const auto* begin = _reader->Base();
+  const auto* end = begin + _reader->Input().Length();
+  for (const auto& field : fields) {
+    SCOPED_TRACE(testing::Message("field ") << field.id);
+    const auto& impl =
+      static_cast<const irs::term_dict::TermReaderImpl&>(*Get(field.id));
+    ASSERT_EQ(field.id != 2, impl.Small());
+    irs::term_dict::BlockBuffer buffer;
+    const auto* block = impl.Block(0, buffer);
+    ASSERT_EQ(impl.Small(), block < begin || end <= block);
+    AssertField(impl, field.entries);
+  }
+}
+
+TEST_P(TermDictTest, open_reads_the_head_once_and_evicts_it) {
+  std::vector<std::pair<int64_t, irs::doc_id_t>> values;
+  for (irs::doc_id_t doc = 1; doc <= 50000; ++doc) {
+    values.emplace_back(int64_t{doc} * 7, doc);
+  }
+  auto keys = Words(20000, 13);
+  keys.emplace_back(irs::bstring(9000, irs::byte_type{'q'}));
+  const Field fields[]{
+    {.id = 1, .entries = MakeEntries(std::move(keys))},
+    {.id = 2, .entries = NumericEntries(std::move(values)), .ranges = true},
+    {.id = 3, .entries = MakeEntries({Bytes("false"), Bytes("true")})},
+    {.id = 4, .entries = MakeEntries({Bytes("only")})},
+  };
+  Write(fields);
+  CountingDirectory counting{dir()};
+  Open(counting);
+  const uint64_t body = _idx->TermsBody();
+  const uint64_t head = _idx->TermsHead();
+  ASSERT_NE(0, head);
+  const std::pair<uint64_t, uint64_t> extent{body, body + head};
+  ASSERT_EQ(1, absl::c_count(counting.Prefetched(), extent));
+  ASSERT_EQ(1, absl::c_count(counting.Evicted(), extent));
+  const auto& ranged =
+    static_cast<const irs::term_dict::TermReaderImpl&>(*Get(2));
+  ASSERT_FALSE(ranged.RangeLevels().empty());
+  ASSERT_LE(body + head, ranged.Owner().RangesBegin());
+  for (const auto& field : fields) {
+    SCOPED_TRACE(testing::Message("field ") << field.id);
+    AssertField(*Get(field.id), field.entries);
   }
 }
 

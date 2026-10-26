@@ -20,11 +20,13 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <fsst.h>
 
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <span>
@@ -212,6 +214,7 @@ class FieldWriter final {
   bstring _separator;
   bstring _last;
   bstring _fields;
+  bstring _range_regions;
   std::vector<Entry> _entries;
   bstring _key;
   bstring _min;
@@ -219,7 +222,10 @@ class FieldWriter final {
   IdxWriter* _idx = nullptr;
   IndexOutput* _out = nullptr;
   uint64_t _terms = 0;
+  uint64_t _first_page = 0;
   uint32_t _blocks = 0;
+  uint32_t _spans = 0;
+  uint32_t _last_span = 0;
   uint32_t _width = 0;
   uint32_t _ordinal = 0;
   uint32_t _prefix_size = 0;
@@ -363,19 +369,42 @@ class FieldReader final {
   const byte_type* Base() const noexcept { return _base; }
   IResourceManager& ResourceManager() const noexcept { return *_rm; }
   const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
-  uint32_t BlockCount() const noexcept {
-    return _pages.empty() ? 0 : static_cast<uint32_t>(_pages.size() - 1);
-  }
+  uint32_t BlockCount() const noexcept { return _block_count; }
   uint64_t PageOffset(size_t block) const noexcept {
-    return uint64_t{_pages[block]} * kPage;
+    uint64_t page = _first_page + block;
+    if (!_spans.empty()) [[unlikely]] {
+      const auto it = absl::c_lower_bound(
+        _spans, block, [](const SpanningBlock& span, size_t b) noexcept {
+          return span.block < b;
+        });
+      if (it != _spans.begin()) {
+        page += std::prev(it)->extra;
+      }
+    }
+    return page * kPage;
   }
   uint64_t InlineBegin() const noexcept { return _inline_offset; }
   uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
-  const byte_type* Resident(uint32_t block, IndexInput& in);
-  bytes_view Load(IndexInput& in, uint64_t offset, uint64_t size, bool preload);
+  uint64_t RangesBegin() const noexcept { return InlineEnd(); }
+  uint64_t RangesSize() const noexcept { return _ranges_size; }
+  bytes_view Load(IndexInput& in, uint64_t offset, uint64_t size);
+  bytes_view Copy(uint64_t offset, uint64_t size);
+  const byte_type* CopyBlock(uint32_t block, uint64_t length);
 
  private:
-  Separators ReadBody(IndexInput& in, uint64_t offset);
+  struct PendingCopy {
+    uint64_t offset;
+    uint64_t size;
+    byte_type* data;
+  };
+
+  struct SpanningBlock {
+    uint32_t block;
+    uint32_t extra;
+  };
+
+  Separators ReadBody(IndexInput& in, uint64_t offset, uint64_t head);
+  void FillCopies();
 
   std::deque<TermReaderImpl> _fields;
   containers::FlatHashMap<field_id, const TermReaderImpl*> _by_id;
@@ -384,12 +413,15 @@ class FieldReader final {
   IndexInput::ptr _in;
   const byte_type* _base = nullptr;
   IResourceManager* _rm;
-  std::vector<uint32_t> _pages;
+  std::vector<SpanningBlock> _spans;
   containers::NodeHashMap<uint64_t, bstring> _copies;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
+  uint64_t _first_page = 0;
   uint64_t _inline_offset = 0;
   uint64_t _inline_size = 0;
-  std::vector<std::pair<uint64_t, uint64_t>> _preload;
+  uint64_t _ranges_size = 0;
+  uint32_t _block_count = 0;
+  std::vector<PendingCopy> _pending;
   uint64_t _bytes = 0;
 };
 

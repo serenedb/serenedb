@@ -58,6 +58,7 @@ struct IdxWriter::Impl {
   std::vector<HnswEntry> hnsw_entries;
   std::vector<TermDictEntry> term_dict_entries;
   uint64_t terms_body = 0;
+  uint64_t terms_head = 0;
 };
 
 IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name)
@@ -98,8 +99,9 @@ void IdxWriter::AddTermDictEntry(field_id id, TermDictMeta meta) {
     TermDictEntry{.id = id, .meta = std::move(meta)});
 }
 
-void IdxWriter::SetTermsBody(uint64_t offset) noexcept {
+void IdxWriter::SetTermsBody(uint64_t offset, uint64_t head) noexcept {
   _impl->terms_body = offset;
+  _impl->terms_head = head;
 }
 
 bool IdxWriter::Empty() const noexcept {
@@ -167,6 +169,8 @@ void IdxWriter::Commit() {
         });
       footer.WriteProperty<uint64_t>(kIdxFieldTermsBody, "terms_body",
                                      _impl->terms_body);
+      footer.WriteProperty<uint64_t>(kIdxFieldTermsHead, "terms_head",
+                                     _impl->terms_head);
     }
   });
   _impl->out.reset();
@@ -178,6 +182,7 @@ void IdxWriter::Rollback() noexcept {
   _impl->hnsw_entries.clear();
   _impl->term_dict_entries.clear();
   _impl->terms_body = 0;
+  _impl->terms_head = 0;
 }
 
 }  // namespace irs

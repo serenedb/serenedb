@@ -50,6 +50,7 @@ struct IdxReader::Impl {
   std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
   std::vector<uint64_t> ann_ends;
   uint64_t terms_body = 0;
+  uint64_t terms_head = 0;
 };
 
 IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
@@ -153,6 +154,8 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
         });
       _impl->terms_body = footer.ReadPropertyWithExplicitDefault<uint64_t>(
         kIdxFieldTermsBody, "terms_body", 0);
+      _impl->terms_head = footer.ReadPropertyWithExplicitDefault<uint64_t>(
+        kIdxFieldTermsHead, "terms_head", 0);
     });
 }
 
@@ -175,6 +178,8 @@ std::span<const std::pair<field_id, TermDictMeta>> IdxReader::TermDicts()
 }
 
 uint64_t IdxReader::TermsBody() const noexcept { return _impl->terms_body; }
+
+uint64_t IdxReader::TermsHead() const noexcept { return _impl->terms_head; }
 
 std::span<const uint64_t> IdxReader::AnnEnds() const noexcept {
   return _impl->ann_ends;

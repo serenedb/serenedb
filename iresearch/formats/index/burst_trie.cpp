@@ -2769,6 +2769,7 @@ class FieldReader::Impl {
       _fst = FST::Read(body_in, _owner->_resource_manager);
       SDB_ASSERT(_fst);
       _body_offset = meta.body_offset;
+      blocks_in.Evict(meta.body_offset, body_in.Position() - meta.body_offset);
       blocks_in.Seek(body_in.Position());
       MapInlineRegion(blocks_in);
       _body_end = InlineEnd();

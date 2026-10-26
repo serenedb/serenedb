@@ -145,6 +145,16 @@ class MMapIndexInput final : public BytesViewInput {
                          std::min<uint64_t>(count, _handle->size() - offset));
   }
 
+  void Evict(uint64_t offset, uint64_t count) const noexcept final {
+    if (!_handle || offset >= _handle->size()) {
+      return;
+    }
+    count = std::min<uint64_t>(count, _handle->size() - offset);
+    file_utils::Evict(static_cast<const byte_type*>(_handle->addr()) + offset,
+                      count);
+    file_utils::Evict(static_cast<int>(_handle->fd()), offset, count);
+  }
+
   void ReadOnce(byte_type* b, size_t count) final {
     const auto at = Position();
     if (!_handle ||

@@ -4452,6 +4452,32 @@ TEST_P(DirectoryTestCase, read_once_reads_range_and_advances) {
   EXPECT_TRUE(in->IsEOF());
 }
 
+TEST_P(DirectoryTestCase, evict_keeps_contents) {
+  std::vector<irs::byte_type> data(1024 * 1024 + 321);
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<irs::byte_type>(i * 31 % 251);
+  }
+  {
+    auto out = _dir->create("evict");
+    ASSERT_FALSE(!out);
+    out->WriteData(data.data(), data.size());
+  }
+
+  auto in = _dir->open("evict", irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  const auto* stable = in->ReadStable(0, data.size());
+  std::vector<irs::byte_type> before(data.size());
+  in->ReadData(0, before.data(), before.size());
+  ASSERT_EQ(0, std::memcmp(before.data(), data.data(), data.size()));
+  in->Evict(1000, data.size() - 2000);
+  if (stable) {
+    EXPECT_EQ(0, std::memcmp(stable, data.data(), data.size()));
+  }
+  std::vector<irs::byte_type> after(data.size());
+  in->ReadData(0, after.data(), after.size());
+  EXPECT_EQ(0, std::memcmp(after.data(), data.data(), data.size()));
+}
+
 TEST_P(DirectoryTestCase, sequential_input_streams_past_its_buffer) {
   std::vector<irs::byte_type> data(4 * 1024 * 1024 + 77);
   for (size_t i = 0; i < data.size(); ++i) {

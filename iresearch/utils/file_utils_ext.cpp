@@ -298,6 +298,25 @@ void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept {
 #endif
 }
 
+void Evict(const void* addr, size_t size) noexcept {
+#ifndef _WIN32
+  const auto page = SystemPage();
+  const auto begin =
+    (reinterpret_cast<uintptr_t>(addr) + page - 1) & ~(page - 1);
+  const auto end = (reinterpret_cast<uintptr_t>(addr) + size) & ~(page - 1);
+  if (begin < end) {
+    ::madvise(reinterpret_cast<void*>(begin), end - begin, MADV_DONTNEED);
+  }
+#endif
+}
+
+void Evict(int fd, uint64_t offset, uint64_t size) noexcept {
+#ifdef __linux__
+  ::posix_fadvise(fd, static_cast<off_t>(offset), static_cast<off_t>(size),
+                  POSIX_FADV_DONTNEED);
+#endif
+}
+
 bool ReadOnce(int fd, uint64_t offset, void* dst, uint64_t size) noexcept {
 #ifdef __linux__
   constexpr uint64_t kChunk = uint64_t{64} << 20;
@@ -324,8 +343,7 @@ bool ReadOnce(int fd, uint64_t offset, void* dst, uint64_t size) noexcept {
       }
       pos += static_cast<uint64_t>(n);
     }
-    ::posix_fadvise(fd, static_cast<off_t>(at),
-                    static_cast<off_t>(chunk_end - at), POSIX_FADV_DONTNEED);
+    Evict(fd, at, chunk_end - at);
     at = chunk_end;
   }
   return true;

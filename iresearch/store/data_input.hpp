@@ -124,6 +124,8 @@ class IndexInput : public DataInput {
 
   virtual void Prefetch(uint64_t, uint64_t) const noexcept {}
 
+  virtual void Evict(uint64_t, uint64_t) const noexcept {}
+
   virtual bool Resident(uint64_t, uint64_t) const noexcept { return false; }
 
   virtual bool Warm(uint64_t, uint64_t) const noexcept { return false; }

@@ -81,11 +81,14 @@ Footer ReadFooterImpl(IndexInput& in, std::string_view name,
               footer_len, " bytes"));
   }
   Footer footer{.data_len = trailer_offset - footer_len};
+  in.Prefetch(footer.data_len, footer_len);
   bstring footer_buf;
-  footer_buf.resize(footer_len);
-  in.Seek(footer.data_len);
-  in.ReadOnce(footer_buf.data(), footer_len);
-  const auto* footer_data = footer_buf.data();
+  const auto* footer_data = in.ReadStable(footer.data_len, footer_len);
+  if (!footer_data) {
+    footer_buf.resize(footer_len);
+    in.ReadData(footer.data_len, footer_buf.data(), footer_len);
+    footer_data = footer_buf.data();
+  }
   Crc32c footer_actual_crc32c;
   footer_actual_crc32c.process_bytes(footer_data, footer_len);
   if (footer_actual_crc32c.checksum() != footer_expected_crc32c) {
@@ -113,6 +116,7 @@ Footer ReadFooterImpl(IndexInput& in, std::string_view name,
                             duckdb::ErrorData{e}.RawMessage(),
                             "; it was written by a newer release of SereneDB"));
   }
+  in.Evict(footer.data_len, footer_len);
   return footer;
 }
 

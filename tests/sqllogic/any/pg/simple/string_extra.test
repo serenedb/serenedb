@@ -605,6 +605,13 @@ quote_ident
 
 
 query
+SELECT quote_ident('user') AS a, quote_ident('current_role') AS b;
+----
+a	b
+"user"	"current_role"
+
+
+query
 SELECT quote_ident('normal_ident');
 ----
 quote_ident

@@ -17,7 +17,7 @@ CANCEL_ROUND_FILES = 32
 CANCEL_FILE_SECONDS = 0.5
 CANCEL_STOP_SECONDS = 120.0
 ACTIVE_QUERIES = ("SELECT count(*) FROM pg_stat_activity "
-                  "WHERE state = 'active' AND pid <> pg_backend_pid()")
+                  "WHERE state = 'active' AND pid NOT IN (0, pg_backend_pid())")
 
 
 def _psql(server, sql, timeout=60):

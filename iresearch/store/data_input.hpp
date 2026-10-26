@@ -108,8 +108,6 @@ class IndexInput : public DataInput {
   using DataInput::ReadData;
   virtual void ReadData(uint64_t offset, byte_type* b, size_t count) = 0;
 
-  virtual void ReadOnce(byte_type* b, size_t count) { ReadData(b, count); }
-
   // TODO(mbkkt) now they're both implemented the same they,
   // also it doesn't look like all users aware. Maybe we should remove dup?
   virtual ptr Dup() const = 0;     // thread-unsafe fd copy (offset preserved)
@@ -138,6 +136,8 @@ class IndexInput : public DataInput {
   IndexInput() = default;
   IndexInput(const IndexInput&) = default;
 };
+
+void ReadOnce(IndexInput& in, byte_type* b, size_t count);
 
 class InputBuf final : public std::streambuf, util::Noncopyable {
  public:

@@ -155,16 +155,6 @@ class MMapIndexInput final : public BytesViewInput {
     file_utils::Evict(static_cast<int>(_handle->fd()), offset, count);
   }
 
-  void ReadOnce(byte_type* b, size_t count) final {
-    const auto at = Position();
-    if (!_handle ||
-        !file_utils::ReadOnce(static_cast<int>(_handle->fd()), at, b, count)) {
-      ReadData(b, count);
-      return;
-    }
-    Seek(at + count);
-  }
-
   bool Warm(uint64_t offset, uint64_t count) const noexcept final {
     if (!_handle || count == 0 || offset >= _handle->size()) {
       return false;

@@ -4445,7 +4445,7 @@ TEST_P(DirectoryTestCase, read_once_reads_range_and_advances) {
   constexpr size_t kOffset = 4097;
   std::vector<irs::byte_type> read(data.size() - kOffset - 1);
   in->Seek(kOffset);
-  in->ReadOnce(read.data(), read.size());
+  irs::ReadOnce(*in, read.data(), read.size());
   ASSERT_EQ(kOffset + read.size(), in->Position());
   EXPECT_EQ(0, std::memcmp(read.data(), data.data() + kOffset, read.size()));
   EXPECT_EQ(data.back(), in->ReadByte());

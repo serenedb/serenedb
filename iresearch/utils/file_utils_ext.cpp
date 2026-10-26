@@ -317,41 +317,6 @@ void Evict(int fd, uint64_t offset, uint64_t size) noexcept {
 #endif
 }
 
-bool ReadOnce(int fd, uint64_t offset, void* dst, uint64_t size) noexcept {
-#ifdef __linux__
-  constexpr uint64_t kChunk = uint64_t{64} << 20;
-  auto* out = static_cast<uint8_t*>(dst);
-  const uint64_t end = offset + size;
-  ::posix_fadvise(fd, static_cast<off_t>(offset),
-                  static_cast<off_t>(std::min(size, kChunk)),
-                  POSIX_FADV_WILLNEED);
-  for (uint64_t at = offset; at < end;) {
-    const uint64_t chunk_end = std::min(end, at + kChunk);
-    if (chunk_end < end) {
-      ::posix_fadvise(fd, static_cast<off_t>(chunk_end),
-                      static_cast<off_t>(std::min(end - chunk_end, kChunk)),
-                      POSIX_FADV_WILLNEED);
-    }
-    for (uint64_t pos = at; pos < chunk_end;) {
-      const auto n = ::pread(fd, out + (pos - offset), chunk_end - pos,
-                             static_cast<off_t>(pos));
-      if (n < 0 && errno == EINTR) {
-        continue;
-      }
-      if (n <= 0) {
-        return false;
-      }
-      pos += static_cast<uint64_t>(n);
-    }
-    Evict(fd, at, chunk_end - at);
-    at = chunk_end;
-  }
-  return true;
-#else
-  return false;
-#endif
-}
-
 bool IsResident(const void* addr, size_t size) noexcept {
 #ifndef _WIN32
   if (size == 0) {

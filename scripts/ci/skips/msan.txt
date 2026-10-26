@@ -6,6 +6,7 @@ duckdb:core:test/sql/aggregate/aggregates/test_approx_quantile.test	issue	tempor
 duckdb:core:test/sql/aggregate/distinct/issue21002.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/aggregate/external/external_repartition_radix_grow.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/aggregate/external/simple_external_aggregate.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:core:test/sql/aggregate/group/test_group_by_partition_generations.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/copy/csv/code_cov/csv_disk_reload.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/copy/parquet/batched_write/lineitem_memory_usage.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/index/art/storage/test_art_mem_limit.test	issue	temporary files hold buffer bytes nothing wrote (#1883)

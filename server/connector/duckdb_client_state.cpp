@@ -30,7 +30,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/planner/extension_callback.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
@@ -69,8 +68,7 @@ SereneDBClientState& SereneDBClientState::Register(
   source->database = registered._connection_ctx->GetDatabase();
   source->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
   source->ctx = &client_ctx;
-  registered.progress_source = source;
-  pg::ProgressRegistry::Instance().Register(std::move(source));
+  registered.progress_source = std::move(source);
   client_ctx.registered_state->Insert(kSereneDBClientStateKey,
                                       std::move(state));
   client_ctx.warning_handler = [](duckdb::ClientContext& ctx,
@@ -329,11 +327,6 @@ void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
   }
 }
 
-void SereneDBClientState::CloseProgressSource() {
-  progress_source->Detach();
-  pg::ProgressRegistry::Instance().Unregister(progress_source.get());
-}
-
 void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
@@ -363,25 +356,6 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
   return *ctx;
 }
 
-namespace {
-
-class ClientStateCallback final : public duckdb::ExtensionCallback {
- public:
-  void OnConnectionClosed(duckdb::ClientContext& context) final {
-    if (auto state = context.registered_state->Get<SereneDBClientState>(
-          kSereneDBClientStateKey)) {
-      state->CloseProgressSource();
-    }
-  }
-};
-
-}  // namespace
-
-void RegisterClientStateCallback(duckdb::DBConfig& config) {
-  duckdb::ExtensionCallback::Register(
-    config, duckdb::make_shared_ptr<ClientStateCallback>());
-}
-
 void SetDefaultSearchPath(duckdb::ClientContext& context,
                           std::string_view database) {
   const duckdb::Identifier catalog{database};
@@ -402,7 +376,8 @@ SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
   auto& context = *system.conn->context;
   system.ctx = std::make_shared<ConnectionContext>(
     context, user, role, database, database_id, nullptr, 0, nullptr);
-  SereneDBClientState::Register(context, system.ctx);
+  system.progress = pg::ProgressRegistration{
+    SereneDBClientState::Register(context, system.ctx).progress_source};
   SetDefaultSearchPath(context, database);
   return system;
 }

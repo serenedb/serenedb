@@ -281,12 +281,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       if (const auto& store = index_entry.SearchStore()) {
         state->build_claim =
           store->BeginIndexBuild(index_entry.oid, index_entry.Config());
-        if (!state->build_claim.Claimed()) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
-                          ERR_MSG("an index build is already running on "
-                                  "search table ",
-                                  _relation.oid));
-        }
         SearchBackfillTarget backfill;
         backfill.shard = store;
         backfill.catalog = &_relation.ParentCatalog();

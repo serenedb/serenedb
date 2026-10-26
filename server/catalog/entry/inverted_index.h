@@ -59,7 +59,6 @@ namespace sdb::search {
 
 class InvertedIndexStorage;
 class SearchTable;
-struct RetiredIndex;
 
 }  // namespace sdb::search
 namespace sdb::catalog {
@@ -263,6 +262,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
                      duckdb::SchemaCatalogEntry& schema,
                      duckdb::CreateIndexInfo& info,
                      duckdb::optional_ptr<duckdb::TableCatalogEntry> table);
+  ~InvertedIndexEntry() final;
 
   void SetConfig(std::shared_ptr<const InvertedIndexConfig> config) {
     _config = std::move(config);
@@ -328,9 +328,9 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   std::shared_ptr<search::InvertedIndexStorage> _storage;
   std::shared_ptr<search::SearchTable> _search_table;
-  std::shared_ptr<const search::RetiredIndex> _retired;
   std::shared_ptr<const InvertedIndexConfig> _config;
   duckdb::Identifier _relation_name;
+  bool _retired = false;
 };
 
 std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(

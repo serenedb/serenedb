@@ -26,7 +26,6 @@
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <memory>
 #include <optional>
-#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -47,7 +46,6 @@ struct SearchTableDeleteState final : duckdb::GlobalSinkState {
   std::optional<duckdb::RowIdDeduplicator> deleted_rows;
   duckdb::idx_t delete_count = 0;
   std::shared_ptr<search::SearchTable> search_table;
-  std::shared_lock<std::shared_mutex> table_lock;
   // RETURNING only: the rows this statement removed.
   std::optional<duckdb::ColumnDataCollection> returned;
 };
@@ -90,7 +88,6 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto& conn_ctx = GetSereneDBContext(context);
   auto state = duckdb::make_uniq<SearchTableDeleteState>();
   state->search_table = _table->Storage();
-  state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
   conn_ctx.SearchTxn().RegisterWriter(state->search_table, *_table);
 
   state->pk_columns = _pk_columns;
@@ -178,16 +175,6 @@ duckdb::SourceResultType SereneDBSearchDelete::GetDataInternal(
   chunk.SetCardinality(1);
   chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.delete_count));
   return duckdb::SourceResultType::FINISHED;
-}
-
-duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
-  duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
-  duckdb::OperatorSinkFinalizeInput& input) const {
-  auto& state = input.global_state.Cast<SearchTableDeleteState>();
-  if (state.table_lock.owns_lock()) {
-    state.table_lock.unlock();
-  }
-  return duckdb::SinkFinalizeType::READY;
 }
 
 }  // namespace sdb::connector

@@ -758,7 +758,14 @@ void InvertedIndexEntry::OnDrop() {
     _storage->MarkDropped();
   }
   if (_search_table) {
-    _retired = _search_table->RemoveIndexConfig(oid);
+    _retired = true;
+    _search_table->RemoveIndexConfig(oid);
+  }
+}
+
+InvertedIndexEntry::~InvertedIndexEntry() {
+  if (_retired) {
+    _search_table->ReleaseRetiredConfig(oid);
   }
 }
 

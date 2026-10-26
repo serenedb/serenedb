@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/base/thread_annotations.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
@@ -28,6 +29,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <duckdb/common/constants.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/parser/column_list.hpp>
 #include <filesystem>
@@ -40,9 +42,7 @@
 #include <iresearch/utils/async.hpp>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <optional>
-#include <shared_mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -67,10 +67,6 @@ class DataChunk;
 
 }  // namespace duckdb
 namespace sdb::search {
-
-struct RetiredIndex {
-  std::shared_ptr<const catalog::InvertedIndexConfig> config;
-};
 
 class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                           public MaintainedStore {
@@ -102,12 +98,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void MergeIndexConfig(
     duckdb::idx_t index_oid,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);
-  [[nodiscard]] std::shared_ptr<const RetiredIndex> RemoveIndexConfig(
-    duckdb::idx_t index_oid);
+  void RemoveIndexConfig(duckdb::idx_t index_oid);
+  void ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept;
 
   duckdb::idx_t GetTableId() const noexcept { return _table_id; }
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
-  auto& GetTableLock() noexcept { return _table_lock; }
 
   void MarkDropped() noexcept {
     if (_writer) {
@@ -206,9 +201,13 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void ReleaseTruncate() noexcept { _writers.ReleaseTruncate(); }
   void DrainPriorWriters(absl::FunctionRef<bool()> cancelled);
 
+  static constexpr duckdb::transaction_t kNoLayoutOwner =
+    std::numeric_limits<duckdb::transaction_t>::max();
+
   void ClaimLayout(duckdb::ClientContext& context, std::string_view name);
-  [[nodiscard]] bool AcquireLayout(const void* owner, std::string_view name);
-  void ReleaseLayout(const void* owner) noexcept;
+  [[nodiscard]] bool AcquireLayout(duckdb::transaction_t owner,
+                                   std::string_view name);
+  void ReleaseLayout(duckdb::transaction_t owner) noexcept;
 
   class [[nodiscard]] BuildClaim {
    public:
@@ -222,7 +221,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     }
     ~BuildClaim() { Release(/*finished=*/false); }
 
-    bool Claimed() const noexcept { return _table != nullptr; }
     void Finish() noexcept;
 
    private:
@@ -245,9 +243,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     duckdb::idx_t index_oid,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);
 
-  bool BuildInFlight() const noexcept {
-    return _build_in_flight.load(std::memory_order_acquire);
-  }
+  bool BuildInFlight() const;
 
   bool IsDeleteLogOpen() const noexcept {
     return _delete_log_open.load(std::memory_order_acquire);
@@ -294,6 +290,15 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     duckdb::idx_t oid;
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
   };
+  struct Layout {
+    duckdb::transaction_t owner = kNoLayoutOwner;
+    std::vector<IndexConfig> configs;
+    std::vector<IndexConfig> retired;
+    std::optional<duckdb::idx_t> building_index;
+    bool retired_released = false;
+    std::shared_ptr<const catalog::InvertedIndexConfig> config;
+    std::shared_ptr<const catalog::InvertedIndexConfig> scan_config;
+  };
   struct ReplaySession;
 
   void OpenWriter();
@@ -301,12 +306,13 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   irs::IndexReaderOptions ReaderOptions() const;
   std::shared_ptr<const catalog::InvertedIndexConfig> MergeConfigs(
     std::span<const IndexConfig> configs,
-    std::optional<duckdb::idx_t> skip) const;
+    std::optional<duckdb::idx_t> skip) const
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_layout_mutex);
   template<typename Configs>
   void RebuildConfig(Configs&& configs,
-                     std::optional<duckdb::idx_t> building_index);
-  void PublishConfig(
-    std::shared_ptr<const catalog::InvertedIndexConfig> config) noexcept;
+                     std::optional<duckdb::idx_t> building_index)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_layout_mutex);
+  bool IsCurrentConfig(const irs::IndexFieldOptions* options) const;
   void FinishIndexBuild(duckdb::idx_t index_oid) noexcept;
   void AbortIndexBuild(duckdb::idx_t index_oid) noexcept;
   ReplaySession* BeginReplay(duckdb::AttachedDatabase& db);
@@ -323,13 +329,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   catalog::CompressionByColumn _compression;
   irs::containers::FlatHashSet<irs::field_id> _table_columns;
   std::atomic<bool> _dropped{false};
-  mutable std::shared_mutex _table_lock;
-  std::vector<IndexConfig> _configs;
-  std::vector<std::weak_ptr<const RetiredIndex>> _retired;
-  std::shared_ptr<const catalog::InvertedIndexConfig> _config;
-  std::atomic<const irs::IndexFieldOptions*> _live_config{nullptr};
-  std::shared_ptr<const catalog::InvertedIndexConfig> _scan_config;
-  std::optional<duckdb::idx_t> _building_index;
+  mutable absl::Mutex _layout_mutex;
+  Layout _layout ABSL_GUARDED_BY(_layout_mutex);
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   irs::DirectoryReader _reader;
@@ -339,9 +340,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   std::unique_ptr<ReplaySession> _replay;
 
   WriterGenerations _writers;
-  std::atomic<bool> _build_in_flight{false};
-  absl::Mutex _layout_mutex;
-  const void* _layout_owner ABSL_GUARDED_BY(_layout_mutex) = nullptr;
 
   // Delete log. The open flag is atomic so the commit path can skip the mutex
   // entirely when no build is running, which is the normal case.

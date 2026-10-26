@@ -88,6 +88,8 @@ Switch a column from verbatim matching to a lowercasing dictionary:
 
 The indexes of a search table share its storage. A transaction that creates, replaces or drops an index of a search table, or alters or drops the table, holds the table until it commits or rolls back. Meanwhile any such change from another transaction fails with `search table "<name>" is being changed by another transaction`; retry it once the first transaction ends. Reads and writes of the table are not affected, and one transaction can make any number of these changes.
 
+Writes to a search table never wait for an index change. `CREATE INDEX` and `CREATE OR REPLACE INDEX` on a search table wait for the transactions that wrote to the table before the statement started to commit or roll back, so that their rows are indexed too; cancelling the statement ends the wait.
+
 An inverted index on a regular table or a view has storage of its own, so transactions can create, replace or drop different indexes of the same table or view at the same time.
 
 ## Examples

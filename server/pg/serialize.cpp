@@ -1495,8 +1495,8 @@ bool RecordHasArrayTrigger(const duckdb::LogicalType& type,
   return NeedsQuotingIn<WrapContext::Array>(children[0].second, child, row);
 }
 
-ArrayWrap ArrayWrapOf(const duckdb::LogicalType& struct_type) {
-  const auto& children = duckdb::StructType::GetChildTypes(struct_type);
+ArrayWrap ArrayWrapOf(
+  const duckdb::child_list_t<duckdb::LogicalType>& children) {
   if (children.size() != 1) {
     return children.empty() ? ArrayWrap::Never : ArrayWrap::Always;
   }
@@ -1544,7 +1544,7 @@ IRS_NO_INLINE void FillSerializers(SerializationContext& context,
         GetSerialization(child_type, VarFormat::Text, context));
     }
     context.in_record = saved;
-    cached.array_wrap = ArrayWrapOf(struct_type);
+    cached.array_wrap = ArrayWrapOf(children);
   } else {
     cached.oids.reserve(children.size());
     for (const auto& [_, child_type] : children) {

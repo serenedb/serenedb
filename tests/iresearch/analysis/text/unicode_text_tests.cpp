@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <gtest/gtest.h>
 
@@ -667,7 +668,7 @@ std::vector<uint32_t> ReferenceTransform(const TransformOptions& options,
     normalize(canonical ? NormalizationForm::NFD : NormalizationForm::NFKD);
     std::erase_if(text, [&](uint32_t c) {
       return Normalizer::IsNonspacingMark(c) &&
-             !std::ranges::contains(options.keep_marks, c);
+             !absl::c_linear_search(options.keep_marks, c);
     });
     if (composes) {
       normalize(renormalize);
@@ -726,12 +727,23 @@ std::vector<TransformOptions> AllTransformOptions() {
                        .strip_before_case = before});
       }
     }
-    const std::vector<uint32_t> keep{0x306, 0x308, 0x20D0};
+    const std::vector<uint32_t> keep{0x306, 0x307, 0x308, 0x20D0};
     all.push_back({.form = form, .strip_marks = true, .keep_marks = keep});
     for (const bool before : {false, true}) {
+      for (const auto mapping : {CaseMapping::LOWER, CaseMapping::UPPER}) {
+        for (const auto locale :
+             {CaseLocale::ROOT, CaseLocale::TURKISH, CaseLocale::LITHUANIAN,
+              CaseLocale::GREEK, CaseLocale::ARMENIAN}) {
+          all.push_back({.form = form,
+                         .case_mapping = mapping,
+                         .locale = locale,
+                         .strip_marks = true,
+                         .strip_before_case = before,
+                         .keep_marks = keep});
+        }
+      }
       for (const auto mapping :
-           {CaseMapping::LOWER, CaseMapping::UPPER, CaseMapping::FOLD,
-            CaseMapping::SIMPLE_LOWER}) {
+           {CaseMapping::FOLD, CaseMapping::SIMPLE_LOWER}) {
         all.push_back({.form = form,
                        .case_mapping = mapping,
                        .strip_marks = true,
@@ -823,11 +835,35 @@ TEST(UnicodeTransformTest, keep_marks_survive_stripping) {
                               .keep_marks = {0x306}}};
   EXPECT_EQ("и\xCC\x86", Apply(decomposed, "й"));
 
-  const Transform not_marks{{.strip_marks = true, .keep_marks = {'a', 0x439}}};
-  EXPECT_EQ("и", Apply(not_marks, "й"));
+  const Transform wide_mark_only{{.strip_marks = true, .keep_marks = {0x20D0}}};
+  EXPECT_EQ(
+    "a\xE2\x83\x90"
+    "e",
+    Apply(wide_mark_only, "a\xE2\x83\x90\xC3\xA9"));
 
-  const Transform no_strip{{.keep_marks = {0x306}}};
-  EXPECT_EQ("Йё", Apply(no_strip, "Йё"));
+  const Transform turkish_upper{{.case_mapping = CaseMapping::UPPER,
+                                 .locale = CaseLocale::TURKISH,
+                                 .strip_marks = true,
+                                 .keep_marks = {0x307}}};
+  EXPECT_EQ("\xC4\xB0STANBUL", Apply(turkish_upper, "istanbul"));
+  EXPECT_EQ("\xC4\xB0STANBUL", Apply(turkish_upper, "\xC4\xB0stanbul"));
+
+  const Transform lithuanian_lower{{.case_mapping = CaseMapping::LOWER,
+                                    .locale = CaseLocale::LITHUANIAN,
+                                    .strip_marks = true,
+                                    .keep_marks = {0x307}}};
+  EXPECT_EQ(
+    "i\xCC\x87"
+    "a",
+    Apply(lithuanian_lower,
+          "\xC3\x8C"
+          "a"));
+  EXPECT_EQ(
+    "i\xCC\x87"
+    "a",
+    Apply(lithuanian_lower,
+          "I\xCC\x80"
+          "a"));
 }
 
 TEST(UnicodeTransformTest, invalid_utf8_becomes_replacement) {

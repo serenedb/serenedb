@@ -24,6 +24,7 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
+#include <fast_float/fast_float.h>
 
 #include <duckdb/main/database.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
@@ -60,7 +61,6 @@
 #include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/snowball_stemmer.hpp>
-#include <charconv>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <optional>
@@ -98,7 +98,7 @@ uint32_t ParseKeepMark(std::string_view item) {
   if (item.size() > 2 && (item[0] == 'U' || item[0] == 'u') && item[1] == '+') {
     const auto* begin = item.data() + 2;
     const auto* end = item.data() + item.size();
-    const auto [ptr, ec] = std::from_chars(begin, end, mark, 16);
+    const auto [ptr, ec] = fast_float::from_chars(begin, end, mark, 16);
     if (ec != std::errc{} || ptr != end) {
       mark = 0;
     }
@@ -356,6 +356,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
         [&](std::string_view item) {
           opts.keep_marks.push_back(ParseKeepMark(item));
         });
+      absl::c_sort(opts.keep_marks);
+      opts.keep_marks.erase(std::ranges::unique(opts.keep_marks).begin(),
+                            opts.keep_marks.end());
     }
     return opts;
   }

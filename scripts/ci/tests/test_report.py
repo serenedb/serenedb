@@ -42,6 +42,14 @@ def test_a_rerun_of_the_same_run_replaces_its_entry():
     assert [h["verdict"] for h in again] == ["✅"]
 
 
+def test_the_history_keeps_the_newest_runs():
+    comment = ""
+    for run in range(report.KEEP_RUNS + 1):
+        comment = report.render_comment("report\n", report.updated_history(comment, entry(str(run), "✅")))
+    kept = report.updated_history(comment, entry("next", "✅"))
+    assert [h["run"] for h in kept] == [str(r) for r in range(2, report.KEEP_RUNS + 1)] + ["next"]
+
+
 def test_run_options_name_the_ticked_boxes():
     assert report.run_options({"LOCATION": "all", "EVERYTHING": True, "CORPUS": False,
                                "DUCKDB_SANITIZERS": "true", "PR_SHA": "abc"}) == (

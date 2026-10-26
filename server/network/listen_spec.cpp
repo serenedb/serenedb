@@ -32,8 +32,6 @@
 #include <iresearch/utils/string_utils.hpp>
 #include <set>
 
-#include "query/config.h"
-
 namespace sdb::network {
 namespace {
 
@@ -362,13 +360,6 @@ std::vector<ListenSpec> ParseListenSpecs(
     SDB_FATAL(GENERAL, "no listeners configured");
   }
   return out;
-}
-
-uint32_t MaxConnections(uint32_t listener) {
-  if (listener != kMaxConnectionsFromSetting) {
-    return listener;
-  }
-  return GetMaxConnections();
 }
 
 }  // namespace sdb::network

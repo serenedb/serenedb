@@ -90,6 +90,7 @@ class Server final {
   std::string _cors_origins;
   std::uint32_t _io_threads = 0;
   std::uint32_t _max_message = 0;
+  std::uint32_t _max_connections = 0;
   std::chrono::milliseconds _auth_timeout{0};
 
   // Declared before the per-listener deps + pool/acceptors so they outlive the

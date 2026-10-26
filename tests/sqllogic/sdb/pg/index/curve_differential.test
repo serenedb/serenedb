@@ -1,0 +1,164 @@
+control substitution on
+
+statement ok
+CREATE TABLE curve_fuzz_points(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE, z DOUBLE);
+
+statement ok
+INSERT INTO curve_fuzz_points SELECT i,
+ CASE WHEN i % 211 = 0 THEN (i % 2 * 2 - 1) * 9223372036854775807 ELSE (i * 7919) % 2001 - 1000 END,
+ CASE WHEN i % 101 = 0 THEN NULL
+      WHEN i % 307 = 0 THEN 'nan'::DOUBLE
+      WHEN i % 311 = 0 THEN (i % 2 * 2 - 1) * 'inf'::DOUBLE
+      WHEN i % 313 = 0 THEN -0.0
+      ELSE ((i * 104729) % 20011 - 10000) / 7.0 END,
+ CASE WHEN i % 50 = 0 THEN ((i * 7919) % 2001 - 1000)::DOUBLE ELSE ((i * 15485863) % 30011 - 15000) / 3.0 END
+FROM range(10000) t(i);
+
+statement ok
+CREATE INDEX curve_fuzz_points_default ON curve_fuzz_points USING inverted(id, (curve(ROW(x, y, z)))) INCLUDE (x, y, z);
+
+statement ok
+CREATE INDEX curve_fuzz_points_fine ON curve_fuzz_points USING inverted(id, (curve(ROW(x, y, z), level_step := 1, max_cells := 8))) INCLUDE (x, y, z);
+
+statement ok
+CREATE INDEX curve_fuzz_points_coarse ON curve_fuzz_points USING inverted(id, (curve(ROW(x, y, z), kind := 'hilbert', level_step := 5, max_level := 48, max_cells := 512))) INCLUDE (x, y, z);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_fuzz_points;
+
+statement ok
+CREATE MACRO curve_fuzz_scale(k) AS CASE WHEN k % 4 = 3 THEN 12 ELSE 1 END;
+
+statement ok
+CREATE MACRO curve_fuzz_lo(k) AS ROW(
+ CASE WHEN k % 17 = 0 THEN -9223372036854775807 ELSE (k::BIGINT * 7919) % 2001 - 1000 - (k % 5) * 37 * curve_fuzz_scale(k) END,
+ CASE WHEN k % 19 = 0 THEN '-inf'::DOUBLE ELSE ((k::BIGINT * 104729) % 20011 - 10000) / 7.0 - (k % 7) * 41.0 * curve_fuzz_scale(k) END,
+ ((k::BIGINT * 15485863) % 30011 - 15000) / 3.0 - (k % 3) * 900.0 * curve_fuzz_scale(k));
+
+statement ok
+CREATE MACRO curve_fuzz_hi(k) AS ROW(
+ CASE WHEN k % 17 = 0 THEN 9223372036854775807 WHEN k % 11 = 0 THEN -1001 ELSE (k::BIGINT * 7919) % 2001 - 1000 + (k % 5) * 37 * curve_fuzz_scale(k) END,
+ CASE WHEN k % 19 = 0 THEN 'nan'::DOUBLE WHEN k % 13 = 0 THEN 'inf'::DOUBLE ELSE ((k::BIGINT * 104729) % 20011 - 10000) / 7.0 + (k % 7) * 41.0 * curve_fuzz_scale(k) END,
+ ((k::BIGINT * 15485863) % 30011 - 15000) / 3.0 + (k % 3) * 900.0 * curve_fuzz_scale(k));
+
+statement ok
+SET VARIABLE curve_fuzz_lows = (SELECT list(curve_fuzz_lo(k) ORDER BY k) FROM range(1, 129) r(k));
+
+statement ok
+SET VARIABLE curve_fuzz_highs = (SELECT list(curve_fuzz_hi(k) ORDER BY k) FROM range(1, 129) r(k));
+
+statement ok
+CREATE MACRO curve_fuzz_box(k) AS ts_between(getvariable('curve_fuzz_lows')[k], getvariable('curve_fuzz_highs')[k], true, true);
+
+statement ok
+CREATE MACRO curve_fuzz_contains(px, py, pz, k) AS
+ px BETWEEN getvariable('curve_fuzz_lows')[k][1] AND getvariable('curve_fuzz_highs')[k][1]
+ AND py BETWEEN getvariable('curve_fuzz_lows')[k][2] AND getvariable('curve_fuzz_highs')[k][2]
+ AND pz BETWEEN getvariable('curve_fuzz_lows')[k][3] AND getvariable('curve_fuzz_highs')[k][3];
+
+statement ok
+CREATE MACRO curve_fuzz_index(c, k) AS TABLE
+ SELECT k AS box, id FROM curve_fuzz_points_default WHERE c = 0 AND curve(ROW(x, y, z)) @@ curve_fuzz_box(k)
+ UNION ALL SELECT k, id FROM curve_fuzz_points_fine WHERE c = 1
+   AND curve(ROW(x, y, z), level_step := 1, max_cells := 8) @@ curve_fuzz_box(k)
+ UNION ALL SELECT k, id FROM curve_fuzz_points_coarse WHERE c = 2
+   AND curve(ROW(x, y, z), kind := 'hilbert', level_step := 5, max_level := 48, max_cells := 512) @@ curve_fuzz_box(k);
+
+statement ok
+CREATE MACRO curve_fuzz_scan(k) AS TABLE
+ SELECT k AS box, id FROM curve_fuzz_points WHERE curve_fuzz_contains(x, y, z, k);
+
+statement ok
+CREATE MACRO curve_fuzz_index8(c, b) AS TABLE
+ FROM curve_fuzz_index(c, b) UNION ALL FROM curve_fuzz_index(c, b + 1) UNION ALL FROM curve_fuzz_index(c, b + 2) UNION ALL FROM curve_fuzz_index(c, b + 3)
+ UNION ALL FROM curve_fuzz_index(c, b + 4) UNION ALL FROM curve_fuzz_index(c, b + 5) UNION ALL FROM curve_fuzz_index(c, b + 6) UNION ALL FROM curve_fuzz_index(c, b + 7);
+
+statement ok
+CREATE MACRO curve_fuzz_scan8(b) AS TABLE
+ FROM curve_fuzz_scan(b) UNION ALL FROM curve_fuzz_scan(b + 1) UNION ALL FROM curve_fuzz_scan(b + 2) UNION ALL FROM curve_fuzz_scan(b + 3)
+ UNION ALL FROM curve_fuzz_scan(b + 4) UNION ALL FROM curve_fuzz_scan(b + 5) UNION ALL FROM curve_fuzz_scan(b + 6) UNION ALL FROM curve_fuzz_scan(b + 7);
+
+statement ok
+CREATE MACRO curve_fuzz_index64(c, b) AS TABLE
+ FROM curve_fuzz_index8(c, b) UNION ALL FROM curve_fuzz_index8(c, b + 8) UNION ALL FROM curve_fuzz_index8(c, b + 16) UNION ALL FROM curve_fuzz_index8(c, b + 24)
+ UNION ALL FROM curve_fuzz_index8(c, b + 32) UNION ALL FROM curve_fuzz_index8(c, b + 40) UNION ALL FROM curve_fuzz_index8(c, b + 48) UNION ALL FROM curve_fuzz_index8(c, b + 56);
+
+statement ok
+CREATE MACRO curve_fuzz_scan64(b) AS TABLE
+ FROM curve_fuzz_scan8(b) UNION ALL FROM curve_fuzz_scan8(b + 8) UNION ALL FROM curve_fuzz_scan8(b + 16) UNION ALL FROM curve_fuzz_scan8(b + 24)
+ UNION ALL FROM curve_fuzz_scan8(b + 32) UNION ALL FROM curve_fuzz_scan8(b + 40) UNION ALL FROM curve_fuzz_scan8(b + 48) UNION ALL FROM curve_fuzz_scan8(b + 56);
+
+statement ok
+CREATE MACRO curve_fuzz_compare(c) AS TABLE
+ SELECT count(*) FILTER (WHERE i.id IS NULL OR s.id IS NULL) AS mismatches, count(s.id) AS matched
+ FROM (FROM curve_fuzz_index64(c, 1) UNION ALL FROM curve_fuzz_index64(c, 65)) i
+ FULL JOIN (FROM curve_fuzz_scan64(1) UNION ALL FROM curve_fuzz_scan64(65)) s ON i.box = s.box AND i.id = s.id;
+
+query
+FROM curve_fuzz_compare(0);
+----
+mismatches	matched
+0	74429
+
+query
+FROM curve_fuzz_compare(1);
+----
+mismatches	matched
+0	74429
+
+query
+FROM curve_fuzz_compare(2);
+----
+mismatches	matched
+0	74429
+
+statement ok
+SET enable_profiling = 'json';
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_differential_default.json';
+
+statement ok
+SELECT count(*) FROM curve_fuzz_index64(0, 1);
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_differential_fine.json';
+
+statement ok
+SELECT count(*) FROM curve_fuzz_index64(1, 1);
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_differential_coarse.json';
+
+statement ok
+SELECT count(*) FROM curve_fuzz_index64(2, 1);
+
+statement ok
+RESET enable_profiling;
+
+query
+SELECT sum(CAST(j.atom AS BIGINT)) < 64 * 10000 / 2 AS pruned
+FROM read_text('${__TEST_DIR__}/curve_differential_default.json') f, json_tree(f.content) j
+WHERE j.key = 'rows_scanned';
+----
+pruned
+t
+
+query
+SELECT sum(CAST(j.atom AS BIGINT)) < 64 * 10000 / 2 AS pruned
+FROM read_text('${__TEST_DIR__}/curve_differential_fine.json') f, json_tree(f.content) j
+WHERE j.key = 'rows_scanned';
+----
+pruned
+t
+
+query
+SELECT sum(CAST(j.atom AS BIGINT)) < 64 * 10000 / 2 AS pruned
+FROM read_text('${__TEST_DIR__}/curve_differential_coarse.json') f, json_tree(f.content) j
+WHERE j.key = 'rows_scanned';
+----
+pruned
+t
+
+statement ok
+DROP TABLE curve_fuzz_points CASCADE;

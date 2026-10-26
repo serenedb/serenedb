@@ -192,6 +192,7 @@ add_executable(
     utils/regexp_ngram_test.cpp
     utils/regexp_utils_test.cpp
     utils/simd_utils_test.cpp
+    utils/space_filling_curve_test.cpp
     utils/std_test.cpp
     utils/string_tests.cpp
     utils/thread_pool_test.cpp

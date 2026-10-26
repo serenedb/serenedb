@@ -1440,7 +1440,7 @@ statement error
 CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
     id, (a + b) verbatim_dict (compression='zstd'));
 ----
-db error: ERROR: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, ivf, hnsw)
+db error: ERROR: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, ivf, hnsw, cartesian)
 
 
 # --- A stored expression is read back by scans: projections and filters use the stored value, not its columns.

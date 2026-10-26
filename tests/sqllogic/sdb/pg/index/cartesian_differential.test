@@ -1,0 +1,231 @@
+control substitution on
+
+statement ok
+CREATE MACRO cartesian_fuzz_unit(i) AS CASE WHEN i % 23 = 0 THEN 0.000001 ELSE 1 END;
+
+statement ok
+CREATE MACRO cartesian_fuzz_x(i) AS ((i::BIGINT * 7919) % 601 - 300) * cartesian_fuzz_unit(i);
+
+statement ok
+CREATE MACRO cartesian_fuzz_y(i) AS ((i::BIGINT * 104729) % 607 - 300) * cartesian_fuzz_unit(i);
+
+statement ok
+CREATE MACRO cartesian_fuzz_r(i) AS (1 + (i * 31) % 40) * cartesian_fuzz_unit(i);
+
+statement ok
+CREATE MACRO cartesian_fuzz_geometry(i) AS CASE i % 7
+ WHEN 0 THEN ST_Point(cartesian_fuzz_x(i), cartesian_fuzz_y(i))
+ WHEN 1 THEN ST_MakeLine(ST_Point(cartesian_fuzz_x(i), cartesian_fuzz_y(i)), ST_Point(cartesian_fuzz_x(i) + cartesian_fuzz_r(i) * 3, cartesian_fuzz_y(i) - cartesian_fuzz_r(i)))
+ WHEN 2 THEN ST_Buffer(ST_Point(cartesian_fuzz_x(i), cartesian_fuzz_y(i)), cartesian_fuzz_r(i), 4)
+ WHEN 3 THEN ST_Difference(ST_Buffer(ST_Point(cartesian_fuzz_x(i), cartesian_fuzz_y(i)), cartesian_fuzz_r(i), 4), ST_Buffer(ST_Point(cartesian_fuzz_x(i), cartesian_fuzz_y(i)), cartesian_fuzz_r(i) / 3, 4))
+ WHEN 4 THEN ST_Collect([ST_Buffer(ST_Point(cartesian_fuzz_x(i), cartesian_fuzz_y(i)), cartesian_fuzz_r(i) / 2, 2), ST_Buffer(ST_Point(cartesian_fuzz_x(i) + cartesian_fuzz_r(i) * 4, cartesian_fuzz_y(i)), cartesian_fuzz_r(i) / 2, 2)])
+ WHEN 5 THEN ST_MakeEnvelope(cartesian_fuzz_x(i), cartesian_fuzz_y(i), cartesian_fuzz_x(i) + cartesian_fuzz_r(i) * 5, cartesian_fuzz_y(i) + cartesian_fuzz_r(i))
+ ELSE ST_Collect([ST_MakeLine(ST_Point(cartesian_fuzz_x(i), cartesian_fuzz_y(i)), ST_Point(cartesian_fuzz_x(i), cartesian_fuzz_y(i) + cartesian_fuzz_r(i))), ST_MakeLine(ST_Point(cartesian_fuzz_x(i) - cartesian_fuzz_r(i), cartesian_fuzz_y(i) + cartesian_fuzz_r(i)), ST_Point(cartesian_fuzz_x(i) + cartesian_fuzz_r(i), cartesian_fuzz_y(i) + cartesian_fuzz_r(i)))])
+END::GEOMETRY('SDB:CARTESIAN');
+
+statement ok
+CREATE MACRO cartesian_fuzz_collection(i) AS (CASE i % 2
+ WHEN 0 THEN ST_Collect([ST_Point(cartesian_fuzz_x(i), cartesian_fuzz_y(i)), ST_MakeLine(ST_Point(cartesian_fuzz_x(i) - cartesian_fuzz_r(i), cartesian_fuzz_y(i)), ST_Point(cartesian_fuzz_x(i) + cartesian_fuzz_r(i), cartesian_fuzz_y(i)))])
+ ELSE ST_Collect([ST_Buffer(ST_Point(cartesian_fuzz_x(i), cartesian_fuzz_y(i)), cartesian_fuzz_r(i), 2), ST_Point(cartesian_fuzz_x(i) + cartesian_fuzz_r(i) * 3, cartesian_fuzz_y(i))])
+END)::GEOMETRY('SDB:CARTESIAN');
+
+statement ok
+CREATE TABLE cartesian_fuzz_shapes(id INTEGER PRIMARY KEY, g GEOMETRY('SDB:CARTESIAN'));
+
+statement ok
+INSERT INTO cartesian_fuzz_shapes SELECT i, cartesian_fuzz_geometry(i) FROM range(1000) t(i);
+
+statement ok
+INSERT INTO cartesian_fuzz_shapes VALUES
+ (1000, NULL),
+ (1001, 'POINT EMPTY'),
+ (1002, 'POLYGON((0 0,20 20,0 20,20 0,0 0))'),
+ (1003, 'POLYGON((-100000 -100000,-100000 100000,100000 100000,100000 -100000,-100000 -100000))'),
+ (1004, 'LINESTRING(5 5,5 5)');
+
+statement ok
+CREATE TABLE cartesian_fuzz_collections(id INTEGER PRIMARY KEY, g GEOMETRY('SDB:CARTESIAN'));
+
+statement ok
+INSERT INTO cartesian_fuzz_collections SELECT i, cartesian_fuzz_collection(i) FROM range(500) t(i);
+
+statement ok
+CREATE INDEX cartesian_fuzz_default ON cartesian_fuzz_shapes USING inverted(id, g cartesian());
+
+statement ok
+CREATE INDEX cartesian_fuzz_one ON cartesian_fuzz_shapes USING inverted(id, g cartesian(max_cells=1, shape_cells=1));
+
+statement ok
+CREATE INDEX cartesian_fuzz_fine ON cartesian_fuzz_shapes USING inverted(id, g cartesian(kind='hilbert', max_cells=1024, shape_cells=1024));
+
+statement ok
+CREATE INDEX cartesian_fuzz_mixed ON cartesian_fuzz_collections USING inverted(id, g cartesian());
+
+statement ok
+VACUUM (REFRESH_TABLE) cartesian_fuzz_shapes;
+
+statement ok
+VACUUM (REFRESH_TABLE) cartesian_fuzz_collections;
+
+statement ok
+CREATE MACRO cartesian_fuzz_query(k) AS (CASE k % 7
+ WHEN 0 THEN ST_Point((k * 37) % 601 - 300, (k * 53) % 607 - 300)
+ WHEN 1 THEN ST_MakeLine(ST_Point((k * 37) % 601 - 300, (k * 53) % 607 - 300), ST_Point((k * 37) % 601 - 300 + 7 * (1 + k % 40), (k * 53) % 607 - 300 + 2 * (1 + k % 40)))
+ WHEN 2 THEN ST_Buffer(ST_Point((k * 37) % 601 - 300, (k * 53) % 607 - 300), 2 * (1 + k % 40), 2)
+ WHEN 3 THEN ST_MakeEnvelope((k * 37) % 601 - 300, (k * 53) % 607 - 300, (k * 37) % 601 - 300 + 4 * (1 + k % 40), (k * 53) % 607 - 300 + 3 * (1 + k % 40))
+ WHEN 4 THEN ST_Buffer(ST_Point(((k * 37) % 601 - 300) * 0.000001, ((k * 53) % 607 - 300) * 0.000001), (1 + k % 40) * 0.000003, 2)
+ WHEN 5 THEN ST_MakeEnvelope(cartesian_fuzz_x(k * 7 + 5) + cartesian_fuzz_r(k * 7 + 5) * 5, cartesian_fuzz_y(k * 7 + 5), cartesian_fuzz_x(k * 7 + 5) + cartesian_fuzz_r(k * 7 + 5) * 6, cartesian_fuzz_y(k * 7 + 5) + cartesian_fuzz_r(k * 7 + 5))
+ ELSE ST_Buffer(ST_Point(cartesian_fuzz_x(k * 7 + 2), cartesian_fuzz_y(k * 7 + 2)), cartesian_fuzz_r(k * 7 + 2), 4)
+END)::GEOMETRY('SDB:CARTESIAN');
+
+statement ok
+SET VARIABLE cartesian_fuzz_queries = (SELECT list(cartesian_fuzz_query(k) ORDER BY k) FROM range(1, 65) r(k));
+
+statement ok
+CREATE MACRO cartesian_fuzz_q(k) AS getvariable('cartesian_fuzz_queries')[k];
+
+statement ok
+CREATE MACRO cartesian_fuzz_predicate(p, g, q) AS CASE p
+ WHEN 0 THEN ST_Intersects(g, q)
+ WHEN 1 THEN ST_Intersects(q, g)
+ WHEN 2 THEN ST_Contains(g, q)
+ WHEN 3 THEN ST_Contains(q, g)
+ WHEN 4 THEN ST_Touches(g, q)
+ ELSE ST_Overlaps(g, q) END;
+
+statement ok
+CREATE MACRO cartesian_fuzz_index(p, k) AS TABLE
+ SELECT k AS query, id FROM cartesian_fuzz_default WHERE cartesian_fuzz_predicate(p, g, cartesian_fuzz_q(k));
+
+statement ok
+CREATE MACRO cartesian_fuzz_scan(p, k) AS TABLE
+ SELECT k AS query, id FROM cartesian_fuzz_shapes WHERE cartesian_fuzz_predicate(p, g, cartesian_fuzz_q(k));
+
+statement ok
+CREATE MACRO cartesian_fuzz_config(c, k) AS TABLE
+ SELECT k AS query, id FROM cartesian_fuzz_one WHERE c = 1 AND ST_Intersects(g, cartesian_fuzz_q(k))
+ UNION ALL SELECT k, id FROM cartesian_fuzz_fine WHERE c = 2 AND ST_Intersects(g, cartesian_fuzz_q(k))
+ UNION ALL SELECT k, id FROM cartesian_fuzz_mixed WHERE c = 3 AND ST_Intersects(g, cartesian_fuzz_q(k));
+
+statement ok
+CREATE MACRO cartesian_fuzz_config_scan(c, k) AS TABLE
+ SELECT k AS query, id FROM cartesian_fuzz_shapes WHERE c < 3 AND ST_Intersects(g, cartesian_fuzz_q(k))
+ UNION ALL SELECT k, id FROM cartesian_fuzz_collections WHERE c = 3 AND ST_Intersects(g, cartesian_fuzz_q(k));
+
+statement ok
+CREATE MACRO cartesian_fuzz_index8(p, b) AS TABLE
+ FROM cartesian_fuzz_index(p, b) UNION ALL FROM cartesian_fuzz_index(p, b + 1) UNION ALL FROM cartesian_fuzz_index(p, b + 2) UNION ALL FROM cartesian_fuzz_index(p, b + 3)
+ UNION ALL FROM cartesian_fuzz_index(p, b + 4) UNION ALL FROM cartesian_fuzz_index(p, b + 5) UNION ALL FROM cartesian_fuzz_index(p, b + 6) UNION ALL FROM cartesian_fuzz_index(p, b + 7);
+
+statement ok
+CREATE MACRO cartesian_fuzz_scan8(p, b) AS TABLE
+ FROM cartesian_fuzz_scan(p, b) UNION ALL FROM cartesian_fuzz_scan(p, b + 1) UNION ALL FROM cartesian_fuzz_scan(p, b + 2) UNION ALL FROM cartesian_fuzz_scan(p, b + 3)
+ UNION ALL FROM cartesian_fuzz_scan(p, b + 4) UNION ALL FROM cartesian_fuzz_scan(p, b + 5) UNION ALL FROM cartesian_fuzz_scan(p, b + 6) UNION ALL FROM cartesian_fuzz_scan(p, b + 7);
+
+statement ok
+CREATE MACRO cartesian_fuzz_config8(c, b) AS TABLE
+ FROM cartesian_fuzz_config(c, b) UNION ALL FROM cartesian_fuzz_config(c, b + 1) UNION ALL FROM cartesian_fuzz_config(c, b + 2) UNION ALL FROM cartesian_fuzz_config(c, b + 3)
+ UNION ALL FROM cartesian_fuzz_config(c, b + 4) UNION ALL FROM cartesian_fuzz_config(c, b + 5) UNION ALL FROM cartesian_fuzz_config(c, b + 6) UNION ALL FROM cartesian_fuzz_config(c, b + 7);
+
+statement ok
+CREATE MACRO cartesian_fuzz_config_scan8(c, b) AS TABLE
+ FROM cartesian_fuzz_config_scan(c, b) UNION ALL FROM cartesian_fuzz_config_scan(c, b + 1) UNION ALL FROM cartesian_fuzz_config_scan(c, b + 2) UNION ALL FROM cartesian_fuzz_config_scan(c, b + 3)
+ UNION ALL FROM cartesian_fuzz_config_scan(c, b + 4) UNION ALL FROM cartesian_fuzz_config_scan(c, b + 5) UNION ALL FROM cartesian_fuzz_config_scan(c, b + 6) UNION ALL FROM cartesian_fuzz_config_scan(c, b + 7);
+
+statement ok
+CREATE MACRO cartesian_fuzz_compare(p) AS TABLE
+ SELECT count(*) FILTER (WHERE i.id IS NULL OR s.id IS NULL) AS mismatches, count(s.id) AS matched
+ FROM (FROM cartesian_fuzz_index8(p, 1) UNION ALL FROM cartesian_fuzz_index8(p, 9) UNION ALL FROM cartesian_fuzz_index8(p, 17) UNION ALL FROM cartesian_fuzz_index8(p, 25)
+  UNION ALL FROM cartesian_fuzz_index8(p, 33) UNION ALL FROM cartesian_fuzz_index8(p, 41) UNION ALL FROM cartesian_fuzz_index8(p, 49) UNION ALL FROM cartesian_fuzz_index8(p, 57)) i
+ FULL JOIN (FROM cartesian_fuzz_scan8(p, 1) UNION ALL FROM cartesian_fuzz_scan8(p, 9) UNION ALL FROM cartesian_fuzz_scan8(p, 17) UNION ALL FROM cartesian_fuzz_scan8(p, 25)
+  UNION ALL FROM cartesian_fuzz_scan8(p, 33) UNION ALL FROM cartesian_fuzz_scan8(p, 41) UNION ALL FROM cartesian_fuzz_scan8(p, 49) UNION ALL FROM cartesian_fuzz_scan8(p, 57)) s
+ ON i.query = s.query AND i.id = s.id;
+
+statement ok
+CREATE MACRO cartesian_fuzz_config_compare(c) AS TABLE
+ SELECT count(*) FILTER (WHERE i.id IS NULL OR s.id IS NULL) AS mismatches, count(s.id) AS matched
+ FROM (FROM cartesian_fuzz_config8(c, 1) UNION ALL FROM cartesian_fuzz_config8(c, 9) UNION ALL FROM cartesian_fuzz_config8(c, 17) UNION ALL FROM cartesian_fuzz_config8(c, 25)
+  UNION ALL FROM cartesian_fuzz_config8(c, 33) UNION ALL FROM cartesian_fuzz_config8(c, 41) UNION ALL FROM cartesian_fuzz_config8(c, 49) UNION ALL FROM cartesian_fuzz_config8(c, 57)) i
+ FULL JOIN (FROM cartesian_fuzz_config_scan8(c, 1) UNION ALL FROM cartesian_fuzz_config_scan8(c, 9) UNION ALL FROM cartesian_fuzz_config_scan8(c, 17) UNION ALL FROM cartesian_fuzz_config_scan8(c, 25)
+  UNION ALL FROM cartesian_fuzz_config_scan8(c, 33) UNION ALL FROM cartesian_fuzz_config_scan8(c, 41) UNION ALL FROM cartesian_fuzz_config_scan8(c, 49) UNION ALL FROM cartesian_fuzz_config_scan8(c, 57)) s
+ ON i.query = s.query AND i.id = s.id;
+
+query
+FROM cartesian_fuzz_compare(0);
+----
+mismatches	matched
+0	932
+
+query
+FROM cartesian_fuzz_compare(1);
+----
+mismatches	matched
+0	932
+
+query
+FROM cartesian_fuzz_compare(2);
+----
+mismatches	matched
+0	136
+
+query
+FROM cartesian_fuzz_compare(3);
+----
+mismatches	matched
+0	181
+
+query
+FROM cartesian_fuzz_compare(4);
+----
+mismatches	matched
+0	25
+
+query
+FROM cartesian_fuzz_compare(5);
+----
+mismatches	matched
+0	387
+
+query
+FROM cartesian_fuzz_config_compare(1);
+----
+mismatches	matched
+0	932
+
+query
+FROM cartesian_fuzz_config_compare(2);
+----
+mismatches	matched
+0	932
+
+query
+FROM cartesian_fuzz_config_compare(3);
+----
+mismatches	matched
+0	401
+
+statement ok
+SET enable_profiling = 'json';
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/cartesian_differential.json';
+
+statement ok
+SELECT count(*) FROM (FROM cartesian_fuzz_index8(0, 1) UNION ALL FROM cartesian_fuzz_index8(0, 9));
+
+statement ok
+RESET enable_profiling;
+
+query
+SELECT sum(CAST(j.atom AS BIGINT)) < 16 * 1005 / 10 AS pruned
+FROM read_text('${__TEST_DIR__}/cartesian_differential.json') f, json_tree(f.content) j
+WHERE j.key = 'rows_scanned';
+----
+pruned
+t
+
+statement ok
+DROP TABLE cartesian_fuzz_shapes CASCADE;
+
+statement ok
+DROP TABLE cartesian_fuzz_collections CASCADE;

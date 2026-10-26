@@ -59,6 +59,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
 #include "connector/column_id.h"
+#include "connector/curve_index.h"
 #include "connector/geo_validate.h"
 #include "connector/index_expression.hpp"
 #include "connector/pg_logical_types.h"
@@ -152,10 +153,11 @@ std::string DescribeQuantBits() {
     "' with nb_bits up to 4, default 4, otherwise equal to nb_bits), ");
 }
 
-constexpr std::array<std::string_view, 3> kKnownOpclassTypes{
+constexpr std::array<std::string_view, 4> kKnownOpclassTypes{
   catalog::kIncludedKind,
   catalog::kIVFKind,
   catalog::kHNSWKind,
+  catalog::kCartesianKind,
 };
 
 template<typename T>
@@ -738,6 +740,85 @@ void ApplyHNSWOpclass(
   FinishAnnOpclass(cfg, compression, entry);
 }
 
+uint32_t ParseCartesianLimitOption(std::string_view owner_label,
+                                   std::string_view key, const duckdb::Value& v,
+                                   uint32_t min, uint32_t max) {
+  if (!v.IsNull()) {
+    const auto n =
+      GetIndexIntOption(catalog::kCartesianKind, owner_label, key, v);
+    if (n >= min && n <= max) {
+      return n;
+    }
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("Column '", owner_label, "': ", catalog::kCartesianKind,
+            " option '", key, "' must be between ", min, " and ", max, ", got ",
+            v.ToString()));
+}
+
+void ApplyCartesianOpclass(
+  std::string_view owner_label,
+  const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
+  catalog::InvertedIndexField& entry) {
+  constexpr std::string_view kKindField = "kind";
+  constexpr std::string_view kMaxLevelField = "max_level";
+  constexpr std::string_view kMaxCellsField = "max_cells";
+  constexpr std::string_view kShapeCellsField = "shape_cells";
+  constexpr std::string_view kMorton = "morton";
+  constexpr std::string_view kHilbert = "hilbert";
+  const auto kind = catalog::kCartesianKind;
+  irs::curve::Options options{.dimensions = 2, .cartesian = true};
+  for (const auto& [key, raw_val] : opts) {
+    if (key == kMaxLevelField) {
+      options.max_level = ParseCartesianLimitOption(owner_label, key, raw_val,
+                                                    0, irs::curve::kMaxLevel);
+    } else if (key == kMaxCellsField) {
+      options.max_cells = ParseCartesianLimitOption(owner_label, key, raw_val,
+                                                    1, irs::curve::kMaxCells);
+    } else if (key == kShapeCellsField) {
+      options.shape_cells = ParseCartesianLimitOption(owner_label, key, raw_val,
+                                                      1, irs::curve::kMaxCells);
+    } else if (key == kKindField) {
+      auto curve = GetIndexStringOption(kind, owner_label, key, raw_val);
+      absl::AsciiStrToLower(&curve);
+      if (curve != kMorton && curve != kHilbert) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("Column '", owner_label, "': ", kind,
+                                " option '", key, "' must be one of: ", kMorton,
+                                " ", kHilbert, ", got '", curve, "'"));
+      }
+      options.hilbert = curve == kHilbert;
+    } else {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG(
+          "Column '", owner_label, "': unknown ", kind, " option '", key,
+          "'. Accepted options: kind (string: ", kMorton, "|", kHilbert,
+          ", default ", kMorton, "), max_level (int 0-", irs::curve::kMaxLevel,
+          ", default ", irs::curve::Options{}.max_level, "), max_cells (int 1-",
+          irs::curve::kMaxCells, ", default ", irs::curve::Options{}.max_cells,
+          "), shape_cells (int 1-", irs::curve::kMaxCells, ", default ",
+          irs::curve::Options{}.shape_cells, ")"));
+    }
+  }
+  entry.curve = options;
+  entry.whole_value = true;
+  entry.store_values = true;
+}
+
+void ValidateCartesianKey(std::string_view label,
+                          const duckdb::LogicalType& type) {
+  if (type.id() != duckdb::LogicalTypeId::GEOMETRY) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+      ERR_MSG("Column '", label,
+              "': cartesian opclass requires GEOMETRY('SDB:CARTESIAN'), got ",
+              type.ToString()));
+  }
+  ValidateGeometryCartesian(type, absl::StrCat("Column '", label, "'"));
+}
+
 [[noreturn]] void ThrowUnknownBuiltinOpclass(std::string_view opclass,
                                              std::string_view owner_label,
                                              std::string_view schema_name) {
@@ -1012,6 +1093,10 @@ void ValidateInvertedIndexKey(std::string_view label,
     ValidateVectorKey(label, type, opclass.name);
     return;
   }
+  if (opclass.IsBuiltin(catalog::kCartesianKind)) {
+    ValidateCartesianKey(label, type);
+    return;
+  }
   if (opclass.IsBuiltin(catalog::kIncludedKind)) {
     ValidateIncludedKey(label, type);
     return;
@@ -1071,6 +1156,10 @@ void ApplyOpclassToEntry(
   if (opclass.name.empty()) {
     return;
   }
+  if (opclass.IsBuiltin(catalog::kCartesianKind)) {
+    ApplyCartesianOpclass(label, *opclass.options, entry);
+    return;
+  }
   if (opclass.IsBuiltin(catalog::kIVFKind)) {
     ApplyIVFOpclass(context, label, value_type, opclass.options, entry);
     return;
@@ -1087,6 +1176,7 @@ void ApplyOpclassToEntry(
   if (!dict) {
     if (opclass.name == catalog::kIVFKind ||
         opclass.name == catalog::kHNSWKind ||
+        opclass.name == catalog::kCartesianKind ||
         opclass.name == catalog::kIncludedKind) {
       ThrowUnknownBuiltinOpclass(opclass.name, label, schema_name);
     }
@@ -1274,6 +1364,13 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
       record.field_id = it->second;
     }
 
+    const auto* curve = bare_column ? nullptr : TryGetCurveSpec(*exprs[i]);
+    if (curve && !opclass.name.empty()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("Expression '", label,
+                              "' is a curve() key and takes no opclass"));
+    }
+
     ValidateInvertedIndexKey(label, value_type, opclass);
 
     // A built-in is only a built-in in the parenthesised form, so a bare name
@@ -1311,6 +1408,10 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
     ApplyOpclassToEntry(context,
                         entry.ParentSchema(context).name.GetIdentifierName(),
                         label, value_type, opclass, dict, next_id, field);
+    if (curve) {
+      field.curve = curve->options;
+      field.whole_value = true;
+    }
     if (auto& ivf = field.column_options.ann_info) {
       ivf->centroids_id = record.field_id;
       ivf->postings_id = record.field_id;

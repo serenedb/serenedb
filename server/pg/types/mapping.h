@@ -124,6 +124,14 @@ std::span<const PgTypeMapping> PgTypeMappings();
 duckdb::LogicalType BuiltinLogicalType(const BuiltinType& type);
 ColumnType DescribeColumnType(const duckdb::LogicalType& type);
 
-bool IsArrayDimension(const duckdb::LogicalType& type);
+bool IsAliasedListDimension(const duckdb::LogicalType& type);
+
+inline bool IsArrayDimension(const duckdb::LogicalType& type) {
+  const auto id = type.id();
+  if (id == duckdb::LogicalTypeId::LIST) {
+    return type.GetTypeInfo().alias.empty() || IsAliasedListDimension(type);
+  }
+  return id == duckdb::LogicalTypeId::ARRAY || id == duckdb::LogicalTypeId::MAP;
+}
 
 }  // namespace sdb::pg

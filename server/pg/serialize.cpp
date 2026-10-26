@@ -2016,8 +2016,7 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
     // Bounded text leaves (numerics/dates/uuid/bool) fit one reservation for
     // the whole comma-joined run; NULL is the 4-byte literal.
     constexpr size_t kElem = (Core::kMaxBytes > 4 ? Core::kMaxBytes : 4) + 1;
-    const auto quote = ctx.quote_seq;
-    const auto quotes = QuotedCore<Core> ? 2 * quote.size() : 0;
+    const auto quotes = QuotedCore<Core> ? 2 * ctx.quote_seq.size() : 0;
     ctx.writer->Write(count * (kElem + quotes), [&](uint8_t* out) {
       uint8_t* p = out;
       for (duckdb::idx_t i = 0; i < count; ++i) {
@@ -2030,11 +2029,11 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
           p += 4;
           has_null = true;
         } else if (ItemNeedsQuoting<Core>(cv, idx)) {
-          std::memcpy(p, quote.data(), quote.size());
-          p += quote.size();
+          std::memcpy(p, ctx.quote_seq.data(), ctx.quote_seq.size());
+          p += ctx.quote_seq.size();
           p += RenderSized<Core>(p, ctx, cv, idx);
-          std::memcpy(p, quote.data(), quote.size());
-          p += quote.size();
+          std::memcpy(p, ctx.quote_seq.data(), ctx.quote_seq.size());
+          p += ctx.quote_seq.size();
         } else {
           p += RenderSized<Core>(p, ctx, cv, idx);
         }
@@ -2162,6 +2161,32 @@ struct VectorArrayCore {
 };
 
 template<typename Core>
+constexpr bool kListValued = false;
+
+template<typename Core, uint64_t ElementOID, VarFormat Format,
+         WrapContext InContainer>
+constexpr bool
+  kListValued<VectorArrayCore<Core, ElementOID, Format, InContainer>> = true;
+
+template<WrapContext InContainer>
+constexpr bool kListValued<MultirangeTextCore<InContainer>> = true;
+
+template<>
+constexpr bool kListValued<MultirangeBinCore> = true;
+
+template<typename Core>
+IRS_FORCE_INLINE bool IsDimensionOf(const duckdb::LogicalType& type) {
+  if constexpr (kListValued<Core>) {
+    return IsArrayDimension(type);
+  } else {
+    const auto id = type.id();
+    return id == duckdb::LogicalTypeId::ARRAY ||
+           id == duckdb::LogicalTypeId::LIST ||
+           id == duckdb::LogicalTypeId::MAP;
+  }
+}
+
+template<typename Core>
 void FlattenArray(SerializationContext& context, const RUVF& vdata,
                   duckdb::idx_t source_row, uint64_t& leaf_oid, bool& has_null,
                   uint8_t* dim_sizes_data, int32_t depth) {
@@ -2173,7 +2198,7 @@ void FlattenArray(SerializationContext& context, const RUVF& vdata,
   if (array_size == 0) {
     const auto* leaf = &child_vdata.logical_type;
     int32_t deeper = depth + 1;
-    while (IsArrayDimension(*leaf)) {
+    while (IsDimensionOf<Core>(*leaf)) {
       absl::big_endian::Store32(dim_sizes_data + deeper * 8, 0);
       absl::big_endian::Store32(dim_sizes_data + deeper * 8 + 4, 1);
       ++deeper;
@@ -2184,7 +2209,7 @@ void FlattenArray(SerializationContext& context, const RUVF& vdata,
     leaf_oid = Type2Oid(*leaf);
     return;
   }
-  if (!IsArrayDimension(child_vdata.logical_type)) {
+  if (!IsDimensionOf<Core>(child_vdata.logical_type)) {
     leaf_oid = Type2Oid(child_vdata.logical_type);
     has_null |= EmitArrayElems<Core, VarFormat::Binary>(
       context, child_vdata, array_offset, array_size);
@@ -2222,7 +2247,7 @@ struct MultiDimArrayCore {
   IRS_FORCE_INLINE static void Render(SerializationContext& context,
                                       const RUVF& vdata, duckdb::idx_t row) {
     if constexpr (Format == VarFormat::Text) {
-      if (!IsArrayDimension(vdata.logical_type)) {
+      if (!IsDimensionOf<Core>(vdata.logical_type)) {
         // `row` is already the resolved source row.
         if (!vdata.unified.validity.RowIsValid(row)) {
           context.writer->Write("NULL");
@@ -2280,7 +2305,7 @@ struct MultiDimArrayCore {
       // Walk the type to find the leaf OID and count ndim.
       const auto* t = &vdata.logical_type;
       int32_t ndim = 0;
-      while (IsArrayDimension(*t)) {
+      while (IsDimensionOf<Core>(*t)) {
         ++ndim;
         t = t->id() == duckdb::LogicalTypeId::ARRAY
               ? &duckdb::ArrayType::GetChildType(*t)

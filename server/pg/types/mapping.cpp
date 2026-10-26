@@ -559,13 +559,8 @@ ColumnType DescribeColumnType(const duckdb::LogicalType& type) {
   return result;
 }
 
-bool IsArrayDimension(const duckdb::LogicalType& type) {
-  const auto id = type.id();
-  if (id == TypeId::LIST) {
-    return !type.HasAlias() ||
-           (!IsInt2vector(type) && !IsOidvector(type) && !IsMultirange(type));
-  }
-  return id == TypeId::ARRAY || id == TypeId::MAP;
+bool IsAliasedListDimension(const duckdb::LogicalType& type) {
+  return !IsInt2vector(type) && !IsOidvector(type) && !IsMultirange(type);
 }
 
 }  // namespace sdb::pg

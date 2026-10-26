@@ -55,8 +55,4 @@ size_t WriteFloat(T value, int8_t extra_float_digits, char* buffer) {
   }
 }
 
-[[noreturn]] void ThrowFloatOverflow();
-[[noreturn]] void ThrowFloatUnderflow();
-[[noreturn]] void ThrowDivisionByZero();
-
 }  // namespace sdb::pg

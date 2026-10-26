@@ -95,7 +95,8 @@ constexpr int32_t kCirclePolygonPoints = 12;
 double Add(double left, double right) {
   const auto result = left + right;
   if (std::isinf(result) && !std::isinf(left) && !std::isinf(right)) {
-    ThrowFloatOverflow();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("value out of range: overflow"));
   }
   return result;
 }
@@ -103,7 +104,8 @@ double Add(double left, double right) {
 double Sub(double left, double right) {
   const auto result = left - right;
   if (std::isinf(result) && !std::isinf(left) && !std::isinf(right)) {
-    ThrowFloatOverflow();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("value out of range: overflow"));
   }
   return result;
 }
@@ -111,24 +113,29 @@ double Sub(double left, double right) {
 double Mul(double left, double right) {
   const auto result = left * right;
   if (std::isinf(result) && !std::isinf(left) && !std::isinf(right)) {
-    ThrowFloatOverflow();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("value out of range: overflow"));
   }
   if (result == 0.0 && left != 0.0 && right != 0.0) {
-    ThrowFloatUnderflow();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("value out of range: underflow"));
   }
   return result;
 }
 
 double Div(double left, double right) {
   if (right == 0.0 && !std::isnan(left)) {
-    ThrowDivisionByZero();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                    ERR_MSG("division by zero"));
   }
   const auto result = left / right;
   if (std::isinf(result) && !std::isinf(left)) {
-    ThrowFloatOverflow();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("value out of range: overflow"));
   }
   if (result == 0.0 && left != 0.0 && !std::isinf(right)) {
-    ThrowFloatUnderflow();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("value out of range: underflow"));
   }
   return result;
 }
@@ -172,10 +179,12 @@ double Hypot(double x, double y) {
   const auto ratio = y / x;
   const auto result = x * std::sqrt(1.0 + ratio * ratio);
   if (std::isinf(result)) {
-    ThrowFloatOverflow();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("value out of range: overflow"));
   }
   if (result == 0.0) {
-    ThrowFloatUnderflow();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("value out of range: underflow"));
   }
   return result;
 }

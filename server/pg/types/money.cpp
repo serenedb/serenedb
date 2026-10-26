@@ -39,7 +39,6 @@
 #include <string>
 
 #include "pg/types/cast.h"
-#include "pg/types/float.h"
 #include "pg/types/function.h"
 #include "pg/types/logical.h"
 
@@ -109,7 +108,8 @@ duckdb::hugeint_t MultiplyMoney(duckdb::hugeint_t money, T factor) {
 template<typename T>
 duckdb::hugeint_t DivideMoney(duckdb::hugeint_t money, T divisor) {
   if (divisor == 0) {
-    ThrowDivisionByZero();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                    ERR_MSG("division by zero"));
   }
   const auto cents = MoneyCents(money);
   if constexpr (std::is_floating_point_v<T>) {
@@ -126,7 +126,8 @@ duckdb::hugeint_t DivideMoney(duckdb::hugeint_t money, T divisor) {
 
 double MoneyRatio(duckdb::hugeint_t dividend, duckdb::hugeint_t divisor) {
   if (divisor == 0) {
-    ThrowDivisionByZero();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                    ERR_MSG("division by zero"));
   }
   return static_cast<double>(MoneyCents(dividend)) /
          static_cast<double>(MoneyCents(divisor));

@@ -64,12 +64,9 @@
 #include <utility>
 
 #include "connector/functions/duckdb_aliases.h"
-#include "pg/types/float.h"
 
 namespace sdb::connector {
 namespace {
-
-using pg::ThrowDivisionByZero;
 
 constexpr uint8_t kNumericWidth = 18;
 constexpr uint8_t kNumericScale = 3;
@@ -646,7 +643,8 @@ void DivTruncFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::hugeint_t dividend, duckdb::hugeint_t divisor) {
       if (divisor == duckdb::hugeint_t{0}) {
-        ThrowDivisionByZero();
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                        ERR_MSG("division by zero"));
       }
       const Int256 quotient = ToInt256(dividend) * dividend_factor /
                               (ToInt256(divisor) * divisor_factor);

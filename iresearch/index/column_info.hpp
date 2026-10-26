@@ -191,6 +191,7 @@ class IndexFieldOptions {
   virtual ColumnOptions GetColumnOptions(field_id id) const = 0;
   virtual field_id GetNormColumnId(field_id id) const = 0;
   virtual bool HasField(field_id) const { return true; }
+  virtual bool TrimsCurveTerms(field_id) const { return false; }
 
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --

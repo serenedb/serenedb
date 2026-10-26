@@ -436,6 +436,20 @@ void DecodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
+// normalize(text [, form]) -> text: Unicode normalization
+// TODO: call ICU nfc_normalize when available
+void NormalizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                       duckdb::Vector& result) {
+  // Both 1-arg and 2-arg forms just do NFC (the only form we support for now).
+  // The 2-arg form accepts the form name but currently ignores it since
+  // the implementation only does identity for ASCII / NFC passthrough.
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
+    args.data[0], result, args.size(),
+    [&](duckdb::string_t input) -> duckdb::string_t {
+      return duckdb::StringVector::AddString(result, input);
+    });
+}
+
 // PG format() accepts varargs of any type and stringifies each one via its
 // standard text output. Coerce non-VARCHAR varargs to VARCHAR at bind time so
 // the executor body can read every input as `string_t` unconditionally.
@@ -1037,15 +1051,6 @@ void ShaFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
       return duckdb::StringVector::AddStringOrBlob(
         result, reinterpret_cast<const char*>(digest.data()), size);
-    });
-}
-
-void NormalizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                       duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
-    args.data[0], result, args.size(),
-    [&](duckdb::string_t input) -> duckdb::string_t {
-      return duckdb::StringVector::AddString(result, input);
     });
 }
 

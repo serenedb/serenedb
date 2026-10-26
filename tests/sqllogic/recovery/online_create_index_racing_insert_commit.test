@@ -1,0 +1,102 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE race_docs (id BIGINT, msg TEXT);
+
+
+statement ok
+CREATE INDEX race_docs_id ON race_docs USING inverted (id)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO race_docs SELECT i, 'm' || (i % 7) FROM range(1000) t(i);
+
+
+statement ok
+SET sdb_faults = 'inverted_feed_prepared';
+
+
+connection writer
+statement async ok
+INSERT INTO race_docs SELECT i, 'late' FROM range(1000, 1100) t(i);
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-inverted_feed_prepared:parked';
+
+
+connection creator
+statement async ok
+CREATE INDEX race_docs_msg ON race_docs USING inverted (msg)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT phase FROM pg_stat_progress_create_index
+WHERE relid = 'race_docs'::regclass;
+----
+phase
+waiting for writers before build
+
+
+connection default
+statement ok
+SET sdb_faults = 'inverted_feed_prepared:release';
+
+
+wait
+
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) race_docs;
+
+
+connection default
+query
+SELECT (SELECT count(*) FROM race_docs_msg) AS total,
+       (SELECT count(*) FROM race_docs_msg WHERE msg @@ 'late') AS late,
+       (SELECT count(*) FROM race_docs_id WHERE id >= 1000) AS late_ids;
+----
+total	late	late_ids
+1100	100	100
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM race_docs;
+----
+n
+1100
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) race_docs;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM race_docs_msg) AS total,
+       (SELECT count(*) FROM race_docs_msg WHERE msg @@ 'late') AS late,
+       (SELECT count(*) FROM race_docs_id WHERE id >= 1000) AS late_ids;
+----
+total	late	late_ids
+1100	100	100

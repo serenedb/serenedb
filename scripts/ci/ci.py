@@ -196,9 +196,13 @@ def cmd_upload(args):
 def cmd_download(args):
     dest = Path(args.dest)
     dest.mkdir(parents=True, exist_ok=True)
-    for key in store.run_files(args.kind, args.run, args.prefix):
+    keys = store.run_files(args.kind, args.run, args.prefix)
+    if not keys:
+        sys.exit(f"the store has no {args.kind} files of run {args.run} starting with {args.prefix!r}")
+    for key in keys:
         name = key.rsplit("/", 1)[1]
-        store.get(key, dest / name)
+        if not store.get(key, dest / name):
+            sys.exit(f"{key} left the store while it was downloaded")
         print(name)
 
 

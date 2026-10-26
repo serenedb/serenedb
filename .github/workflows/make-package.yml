@@ -71,6 +71,7 @@ env:
   WORKSPACE: ${{ github.workspace }}
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
   CARGO_HOME_CACHE: /mnt/data/.cargo-home-sqllogic
+  SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
 
 jobs:
   package:
@@ -186,14 +187,13 @@ jobs:
 
       - name: Upload packages
         if: always() && inputs.UPLOAD_ARTIFACTS && steps.package.outcome == 'success'
-        uses: actions/upload-artifact@v7
-        with:
-          name: packages-${{ inputs.LOCATION }}
-          path: |
-            serenedb-*.tar.gz
-            serenedb*.deb
-          if-no-files-found: ignore
-          retention-days: 1
+        env:
+          LOCATION: ${{ inputs.LOCATION }}
+        run: |
+          for f in serenedb-*.tar.gz serenedb*.deb; do
+            [[ -e "$f" ]] || continue
+            python3 scripts/ci/ci.py upload "$f" "artifacts/packages-${LOCATION}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/$f"
+          done
 
       - name: Upload build logs
         if: always()

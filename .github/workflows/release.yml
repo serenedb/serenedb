@@ -145,7 +145,8 @@ jobs:
       - linux-amd64
     permissions:
       contents: write
-      actions: write
+    env:
+      SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
 
     steps:
       - name: Reap containers left on this runner
@@ -178,17 +179,11 @@ jobs:
 
       - name: Download amd64 packages
         if: needs.build-amd64.outputs.packages_ok == 'true'
-        uses: actions/download-artifact@v8
-        with:
-          name: packages-linux-amd64
-          path: packages/linux-amd64/
+        run: python3 scripts/ci/ci.py download artifacts/packages-linux-amd64 "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" serenedb packages/linux-amd64/
 
       - name: Download arm64 packages
         if: needs.build-arm64.outputs.packages_ok == 'true'
-        uses: actions/download-artifact@v8
-        with:
-          name: packages-linux-arm64
-          path: packages/linux-arm64/
+        run: python3 scripts/ci/ci.py download artifacts/packages-linux-arm64 "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" serenedb packages/linux-arm64/
 
       - name: Prepare packages
         id: prepare
@@ -328,20 +323,6 @@ jobs:
             --title "${TITLE}" \
             --notes "${BODY}" \
             "${ASSETS[@]}"
-
-      - name: Delete package artifacts
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for name in packages-linux-amd64 packages-linux-arm64; do
-            ARTIFACT_ID=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
-              --jq ".artifacts[] | select(.name == \"${name}\") | .id" 2>/dev/null || true)
-            if [[ -n "$ARTIFACT_ID" ]]; then
-              gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}" || true
-              echo "Deleted artifact: ${name}"
-            fi
-          done
 
       - name: Send notification
         if: always() && !cancelled()

@@ -17,7 +17,7 @@ CREATE DATABASE rubick_stat_db;
 connection c_rubick_a database=rubick_stat_db
 statement ok
 CREATE TABLE stat_before AS
-SELECT xact_commit, xact_rollback, sessions, session_time, active_time, idle_in_transaction_time
+SELECT xact_commit, xact_rollback, sessions, session_time
 FROM pg_stat_database WHERE datname = current_database();
 
 
@@ -77,15 +77,12 @@ connection c_rubick_a database=rubick_stat_db
 query
 SELECT d.xact_rollback - b.xact_rollback AS rollbacks,
        d.sessions - b.sessions AS new_sessions,
-       d.session_time > b.session_time AS session_time_grew,
-       d.active_time > b.active_time AS active_time_grew,
-       d.idle_in_transaction_time > b.idle_in_transaction_time AS idle_in_transaction_grew,
-       d.session_time >= d.active_time + d.idle_in_transaction_time AS session_covers_states
+       d.session_time > b.session_time AS session_time_grew
 FROM pg_stat_database d, stat_before b
 WHERE d.datname = current_database();
 ----
-rollbacks	new_sessions	session_time_grew	active_time_grew	idle_in_transaction_grew	session_covers_states
-1	1	t	t	t	t
+rollbacks	new_sessions	session_time_grew
+1	1	t
 
 
 connection c_rubick_a database=rubick_stat_db

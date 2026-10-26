@@ -900,7 +900,6 @@ void PgWireSession<Kind>::CommitAndReportReady() {
   // keeps (and a set-then-reverted SET LOCAL nets to no message).
   ReportChangedParameters();
   const auto status = _txn_state->StatusByte();
-  _client_state->progress_source->in_transaction_block = status != 'I';
   WriteReadyForQuery(this->_send, status);
   this->KickSend();
 }

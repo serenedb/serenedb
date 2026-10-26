@@ -848,7 +848,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_wal_lsn_diff                    | Yes           | Also `pg_lsn(numeric)` |
 | pg_restore_relation_stats          | Partial       | Also `pg_restore_attribute_stats`; accept the arguments `pg_dump --statistics` writes and return `false`: imported statistics are not kept |
 | pg_clear_relation_stats            | Yes           | Also `pg_clear_attribute_stats`; there are no imported statistics to clear |
-| pg_stat_get_*                      | Partial       | `pg_stat_get_live_tuples` returns the table's row count and `pg_stat_get_db_numbackends` the database's sessions. `pg_stat_get_db_xact_commit`, `pg_stat_get_db_xact_rollback`, `pg_stat_get_db_sessions`, `pg_stat_get_db_session_time`, `pg_stat_get_db_active_time` and `pg_stat_get_db_idle_in_transaction_time` count from server start. Other counters and durations, function statistics included, are `0`, and timestamps `NULL` |
+| pg_stat_get_*                      | Partial       | `pg_stat_get_live_tuples` returns the table's row count and `pg_stat_get_db_numbackends` the database's sessions. `pg_stat_get_db_xact_commit`, `pg_stat_get_db_xact_rollback`, `pg_stat_get_db_sessions` and `pg_stat_get_db_session_time` count from server start. Other counters and durations, function statistics included, are `0`, and timestamps `NULL` |
 
 ## Behavioral Differences from PostgreSQL
 

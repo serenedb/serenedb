@@ -147,12 +147,8 @@ struct ProgressSource {
   duckdb::ClientContext* ctx{nullptr};
 
   std::atomic<int64_t> query_start_us{0};
-  std::atomic<int64_t> state_change_us{0};
-  std::atomic<int64_t> active_time_us{0};
-  std::atomic<int64_t> idle_in_transaction_time_us{0};
   std::atomic<int64_t> xact_commit{0};
   std::atomic<int64_t> xact_rollback{0};
-  bool in_transaction_block{false};
   ProgressMetrics metrics;
 
   void BeginQuery(std::string query_text);
@@ -165,8 +161,6 @@ struct DatabaseStats {
   int64_t xact_rollback{0};
   int64_t sessions{0};
   int64_t session_time_us{0};
-  int64_t active_time_us{0};
-  int64_t idle_in_transaction_time_us{0};
 };
 
 struct ProgressSnapshot {

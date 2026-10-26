@@ -133,24 +133,14 @@ void ProgressSource::BeginQuery(std::string query_text) {
     absl::MutexLock lock{&mu};
     query = std::move(query_text);
   }
-  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
-  if (const auto idle =
-        now - state_change_us.exchange(now, std::memory_order_relaxed);
-      in_transaction_block && idle > 0) {
-    idle_in_transaction_time_us.fetch_add(idle, std::memory_order_relaxed);
-  }
-  query_start_us.store(now, std::memory_order_relaxed);
+  query_start_us.store(duckdb::Timestamp::GetCurrentTimestamp().value,
+                       std::memory_order_relaxed);
 }
 
 void ProgressSource::EndQuery() {
   // PG keeps the last statement's text visible with state=idle; only the
   // start timestamp is cleared.
-  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
-  if (const auto start = query_start_us.exchange(0, std::memory_order_relaxed);
-      start != 0 && now > start) {
-    active_time_us.fetch_add(now - start, std::memory_order_relaxed);
-  }
-  state_change_us.store(now, std::memory_order_relaxed);
+  query_start_us.store(0, std::memory_order_relaxed);
 }
 
 namespace {
@@ -165,9 +155,6 @@ void AddSessionStats(DatabaseStats& stats, const ProgressSource& source,
   ++stats.sessions;
   stats.session_time_us +=
     std::max<int64_t>(until_us - source.backend_start_us, 0);
-  stats.active_time_us += source.active_time_us.load(std::memory_order_relaxed);
-  stats.idle_in_transaction_time_us +=
-    source.idle_in_transaction_time_us.load(std::memory_order_relaxed);
 }
 
 }  // namespace
@@ -190,6 +177,7 @@ void ProgressRegistry::Unregister(const ProgressSource* source) {
 }
 
 DatabaseStats ProgressRegistry::GetDatabaseStats(int64_t datid) const {
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
   absl::MutexLock lock{&_mu};
   DatabaseStats stats;
   if (const auto it = _ended_stats.find(datid); it != _ended_stats.end()) {
@@ -197,8 +185,7 @@ DatabaseStats ProgressRegistry::GetDatabaseStats(int64_t datid) const {
   }
   for (const auto& [_, source] : _sources) {
     if (source->datid == datid) {
-      AddSessionStats(stats, *source,
-                      source->state_change_us.load(std::memory_order_relaxed));
+      AddSessionStats(stats, *source, now);
     }
   }
   return stats;

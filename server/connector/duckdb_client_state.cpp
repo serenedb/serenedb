@@ -68,8 +68,6 @@ SereneDBClientState& SereneDBClientState::Register(
   source->database = registered._connection_ctx->GetDatabase();
   source->client_backend = client_backend;
   source->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
-  source->state_change_us.store(source->backend_start_us,
-                                std::memory_order_relaxed);
   source->ctx = &client_ctx;
   registered.progress_source = source;
   pg::ProgressRegistry::Instance().Register(std::move(source));

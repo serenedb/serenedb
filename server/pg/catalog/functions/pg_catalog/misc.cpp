@@ -1427,14 +1427,6 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
            .name = "pg_stat_get_db_session_time",
            .type = float8,
            .function = DatabaseMillisFunction<&DatabaseStats::session_time_us>},
-         StatScalar{
-           .name = "pg_stat_get_db_active_time",
-           .type = float8,
-           .function = DatabaseMillisFunction<&DatabaseStats::active_time_us>},
-         StatScalar{.name = "pg_stat_get_db_idle_in_transaction_time",
-                    .type = float8,
-                    .function = DatabaseMillisFunction<
-                      &DatabaseStats::idle_in_transaction_time_us>},
        }) {
     RegisterScalar(loader, pg_catalog, name, CONSISTENT_WITHIN_QUERY, nullptr,
                    {duckdb::ScalarFunction{{oid}, type, function}});

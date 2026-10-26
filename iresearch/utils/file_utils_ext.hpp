@@ -137,7 +137,6 @@ enum class OpenMode : uint16_t {
   Invalid = 0,
   Read = 1,
   Write = 2,
-  Direct = 4,
 };
 
 ENABLE_BITMASK_ENUM(OpenMode);
@@ -166,6 +165,7 @@ inline constexpr size_t kPrefetchChunk = 128 * 1024;
 
 void Prefetch(const void* addr, size_t size) noexcept;
 void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept;
+bool ReadOnce(int fd, uint64_t offset, void* dst, uint64_t size) noexcept;
 bool IsResident(const void* addr, size_t size) noexcept;
 size_t Residency(const void* addr, size_t size,
                  std::span<unsigned char> pages) noexcept;
@@ -173,6 +173,18 @@ uint32_t ResidencyEpoch() noexcept;
 void InvalidateResidency() noexcept;
 void SyncResidency() noexcept;
 void PollResidency() noexcept;
+
+template<typename Input>
+void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
+  if (in.Warm(offset, size)) {
+    PollResidency();
+    return;
+  }
+  if (size <= kPrefetchChunk || !in.Resident(offset, size)) {
+    in.Prefetch(offset, size);
+  }
+  in.MarkWarm(offset, size);
+}
 
 class ResidencyMap {
  public:

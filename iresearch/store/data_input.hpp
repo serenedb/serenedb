@@ -108,6 +108,8 @@ class IndexInput : public DataInput {
   using DataInput::ReadData;
   virtual void ReadData(uint64_t offset, byte_type* b, size_t count) = 0;
 
+  virtual void ReadOnce(byte_type* b, size_t count) { ReadData(b, count); }
+
   // TODO(mbkkt) now they're both implemented the same they,
   // also it doesn't look like all users aware. Maybe we should remove dup?
   virtual ptr Dup() const = 0;     // thread-unsafe fd copy (offset preserved)
@@ -127,8 +129,6 @@ class IndexInput : public DataInput {
   virtual bool Warm(uint64_t, uint64_t) const noexcept { return false; }
 
   virtual void MarkWarm(uint64_t, uint64_t) const noexcept {}
-
-  virtual void Advise(IOAdvice) noexcept {}
 
   IndexInput& operator=(const IndexInput&) = delete;
 
@@ -261,6 +261,29 @@ class BufferedIndexInput : public IndexInput {
   byte_type* _end = _buf;     // end of the valid bytes in the buffer
   uint64_t _start = 0;        // position of the buffer in file
   uint64_t _buf_size = 0;     // size of the buffer in bytes
+};
+
+class SequentialInput final : public BufferedIndexInput {
+ public:
+  SequentialInput(IndexInput& in, uint64_t start);
+
+  uint64_t Length() const noexcept final { return _in.Length(); }
+  bool IsEOF() const noexcept final { return Position() >= Length(); }
+
+  ptr Dup() const final;
+  ptr Reopen() const final { return Dup(); }
+  uint32_t Checksum(uint64_t offset) const final;
+
+ protected:
+  void SeekInternal(uint64_t pos) final { _pos = pos; }
+  size_t ReadInternal(byte_type* b, size_t count) final;
+
+ private:
+  static constexpr size_t kBufferSize = size_t{1} << 20;
+
+  IndexInput& _in;
+  uint64_t _pos;
+  std::unique_ptr<byte_type[]> _buf;
 };
 
 }  // namespace irs

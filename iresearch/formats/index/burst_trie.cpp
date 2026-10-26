@@ -2764,11 +2764,12 @@ class FieldReader::Impl {
 
     void PrepareFromMeta(field_id id, const TermDictMeta& meta,
                          IndexInput& blocks_in) {
-      blocks_in.Seek(meta.body_offset);
-      LoadFromMeta(id, meta, blocks_in);
-      _fst = FST::Read(blocks_in, _owner->_resource_manager);
+      SequentialInput body_in{blocks_in, meta.body_offset};
+      LoadFromMeta(id, meta, body_in);
+      _fst = FST::Read(body_in, _owner->_resource_manager);
       SDB_ASSERT(_fst);
       _body_offset = meta.body_offset;
+      blocks_in.Seek(body_in.Position());
       MapInlineRegion(blocks_in);
       _body_end = InlineEnd();
     }
@@ -2964,7 +2965,6 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
       std::upper_bound(ends.begin(), ends.end(), field.BodyOffset());
     field.SetBlocksBegin(it == ends.begin() ? 0 : *std::prev(it));
   }
-  _terms_in->Advise(IOAdvice::RANDOM);
 }
 
 const TermReader* FieldReader::Impl::field(field_id id) const {

@@ -361,12 +361,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   duckdb::QuackStorageExtensionInfo::GetState(db).scheduler =
     [](duckdb::milliseconds delay, std::function<void()> task) {
       if (auto* scheduler = BackgroundScheduler::gInstance) {
-        const auto delay_us =
-          std::chrono::duration_cast<std::chrono::microseconds>(delay).count();
-        scheduler->RunAt(
-          duckdb::timestamp_t{duckdb::Timestamp::GetCurrentTimestamp().value +
-                              delay_us},
-          std::move(task));
+        scheduler->RunAfter(delay, std::move(task));
       }
     };
 

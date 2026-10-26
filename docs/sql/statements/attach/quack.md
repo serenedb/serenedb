@@ -18,6 +18,8 @@ The attached database lists the server's schemas and the tables and views in the
 
 Attaching a Quack server and `quack_query` require superuser: they log in to another server with the credential given, and a server trusts its own superuser on a local connection.
 
+An attached database belongs to the whole server, not to the session that attached it. Every role on this server can query and change it, and on the other server its statements run as the role of the `TOKEN`. Attach with a role that has no more privileges there than every local user may have.
+
 A server cannot attach or query its own Quack listener, under any of its addresses or host names: that fails with `... is a Quack listener of this server, which cannot connect to itself`.
 
 ## Address
@@ -25,6 +27,14 @@ A server cannot attach or query its own Quack listener, under any of its address
 The path is `quack:host` or `quack:host:port`; an IPv6 host goes in brackets, as in `quack:[::1]:9494`. Without a port the address means port 9494.
 
 The connection uses HTTPS unless the host is `localhost`, `127.0.0.1` or `::1`. `DISABLE_SSL true` connects over plain HTTP to any host, and `DISABLE_SSL false` uses HTTPS for a local one too.
+
+A server certificate that no authority the system trusts signed, such as a self-signed one, is trusted once `ca_cert_file` names the certificate that signed it:
+
+```sql
+SET ca_cert_file = '/etc/serenedb/quack-ca.pem';
+
+ATTACH 'quack:10.0.0.5:9494' AS remote (TOKEN 'alice:secret');
+```
 
 ## Options
 
@@ -62,6 +72,7 @@ ATTACH 'quack:10.0.0.5:9494' AS remote;
 - `CREATE TABLE`, `DROP` and `ALTER` on the attached database run on the server.
 - `UPDATE` and `DELETE` run on the server when the whole statement reads only the attached database.
 - `statement_timeout` covers the time a query waits for the server. A query that fails, is cancelled or runs out of time stops on the server too.
+- Without `statement_timeout`, a statement sent to a SereneDB server fails after `quack_default_statement_timeout`, one hour by default, with `canceling statement due to statement timeout`, so a server that stops answering cannot hold the query forever. `SET quack_default_statement_timeout = 0` lifts the limit.
 
 The attached database reads the server's table list at `ATTACH`. A table that another client creates on the server afterwards is visible once `quack_clear_cache()` reloads the lists of every attached quack database:
 
@@ -81,5 +92,6 @@ It takes the `token`, `disable_ssl`, `client_id` and `heartbeat_timeout` options
 ## Limitations
 
 - `UPDATE` and `DELETE` that read local tables fail with `PlanUpdate not implemented yet` and `PlanDelete not implemented yet`.
+- A query that reads two tables of the attached database and local tables too, or an `INSERT` into the attached database that reads from it and from local tables, fails with `Multiple streaming scans or streaming scans + CTAS / insert in the same query are not currently supported`. A query that reads only the attached database runs on the server and is not affected.
 - `quack_query` takes one SQL command, as a prepared statement does. A SereneDB server refuses several with `cannot insert multiple commands into a prepared statement`.
 - On a server other than SereneDB, a statement that runs on the server as a whole, and `quack_query`, run there already when they are prepared, explained or described, to learn their result columns, and the first `EXECUTE` returns the rows of that run. So `PREPARE p AS DELETE FROM remote.main.t WHERE ...` deletes the rows at `PREPARE`. On a SereneDB server they run once per execution.

@@ -96,8 +96,14 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
 
 void BackgroundScheduler::RunAt(duckdb::timestamp_t at,
                                 std::function<void()> task) {
-  const std::chrono::microseconds delay{
-    at.value - duckdb::Timestamp::GetCurrentTimestamp().value};
+  RunAfter(
+    std::chrono::microseconds{at.value -
+                              duckdb::Timestamp::GetCurrentTimestamp().value},
+    std::move(task));
+}
+
+void BackgroundScheduler::RunAfter(clock::duration delay,
+                                   std::function<void()> task) {
   Delay(delay).Detach(*_executor, [this, task = std::move(task)] {
     if (!IsStopping()) {
       task();

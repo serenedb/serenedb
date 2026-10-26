@@ -389,6 +389,60 @@ def test_statement_timeout(servers, path: str) -> None:
             "SELECT count(*) FROM b.public.t").fetchone() == (3,)
 
 
+def _quiet_on_b(conn_b: psycopg.Connection) -> None:
+    stopped_by = time.monotonic() + 5
+    while conn_b.execute("SELECT count(*) FROM quack_active_connections() "
+                         "WHERE state = 'active'").fetchone()[0]:
+        assert time.monotonic() < stopped_by, "the statement goes on on B"
+        time.sleep(0.1)
+
+
+def test_default_statement_timeout(servers) -> None:
+    _, conn_b, _, pg_a = servers
+    with _connect(pg_a, time.monotonic() + 10) as conn:
+        conn.execute("SET quack_default_statement_timeout = 1000")
+        started = time.monotonic()
+        with pytest.raises(psycopg.errors.QueryCanceled, match="statement timeout"):
+            conn.execute("SELECT * FROM b.query('SELECT pg_sleep(5) IS NULL')")
+        assert time.monotonic() - started < 4
+        _quiet_on_b(conn_b)
+        conn.execute("SET statement_timeout = '10s'")
+        assert conn.execute(
+            "SELECT * FROM b.query('SELECT pg_sleep(2) IS NULL')").fetchone() == (True,)
+
+
+def test_insert_timeout(servers) -> None:
+    conn_a, conn_b, _, pg_a = servers
+    conn_b.execute("CREATE TABLE timed_sink (x INT)")
+    _refresh(conn_a)
+    with _connect(pg_a, time.monotonic() + 10) as conn:
+        conn.execute("SET statement_timeout = '1s'")
+        with pytest.raises(psycopg.errors.QueryCanceled):
+            conn.execute("INSERT INTO b.public.timed_sink SELECT x "
+                         "FROM range(3) r(x) WHERE pg_sleep(1) IS NULL")
+        _quiet_on_b(conn_b)
+        conn.execute("RESET statement_timeout")
+        conn.execute("INSERT INTO b.public.timed_sink VALUES (7)")
+    assert conn_b.execute("SELECT * FROM timed_sink").fetchall() == [(7,)]
+
+
+def test_ddl_timeout(servers) -> None:
+    conn_a, conn_b, _, pg_a = servers
+    with _connect(pg_a, time.monotonic() + 10) as conn:
+        conn.execute("SET statement_timeout = '1s'")
+        with pytest.raises(psycopg.errors.QueryCanceled):
+            conn.execute("SELECT * FROM b.query("
+                         "'CREATE TABLE pushed_timed AS SELECT pg_sleep(3) AS s')")
+        with pytest.raises(psycopg.errors.QueryCanceled):
+            conn.execute("CREATE TABLE b.public.ctas_timed AS SELECT x "
+                         "FROM range(3) r(x) WHERE pg_sleep(1) IS NULL")
+        _quiet_on_b(conn_b)
+    time.sleep(3)
+    assert conn_b.execute(
+        "SELECT count(*) FROM information_schema.tables "
+        "WHERE table_name IN ('pushed_timed', 'ctas_timed')").fetchone() == (0,)
+
+
 def test_timeout_ends_with_its_statement(servers) -> None:
     _, _, _, pg_a = servers
     with _connect(pg_a, time.monotonic() + 10) as conn:
@@ -414,6 +468,75 @@ def test_lost_session_reconnects(servers) -> None:
             conn.execute("SELECT count(*) FROM b.public.t")
         assert conn.execute(
             "SELECT count(*) FROM b.public.t").fetchone() == (3,)
+
+
+def test_prepared_scan_after_lost_session(servers) -> None:
+    _, conn_b, quack_b, pg_a = servers
+
+    def lose(tag: str) -> None:
+        assert conn_b.execute(
+            "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity "
+            f"WHERE query LIKE '%{tag}%' AND pid <> pg_backend_pid()"
+        ).fetchone() == (1,)
+
+    with _connect(pg_a, time.monotonic() + 10) as conn:
+        conn.execute("PREPARE attached AS SELECT count(*) FROM b.public.t")
+        conn.execute("PREPARE own AS " + _remote(quack_b, "SELECT 44 AS own_lost"))
+        assert conn.execute("EXECUTE attached").fetchone() == (3,)
+        assert conn.execute("EXECUTE own").fetchone() == (44,)
+        conn.execute("SELECT * FROM b.query('SELECT 43 AS attached_lost')")
+        lose("43 AS attached_lost")
+        lose("44 AS own_lost")
+        for name, row in (("attached", (3,)), ("own", (44,))):
+            with pytest.raises(psycopg.Error, match="Invalid connection id"):
+                conn.execute(f"EXECUTE {name}")
+            assert conn.execute(f"EXECUTE {name}").fetchone() == row
+            assert conn.execute(f"EXECUTE {name}").fetchone() == row
+
+
+def test_heartbeat_follows_the_granted_lease(servers) -> None:
+    conn_a, conn_b, quack_b, pg_a = servers
+    conn_b.execute("SET quack_max_heartbeat_timeout = 3")
+    try:
+        conn_a.execute(f"ATTACH 'quack:127.0.0.1:{quack_b}' AS capped "
+                       "(TOKEN 'postgres:', HEARTBEAT_TIMEOUT 30)")
+        try:
+            with _connect(pg_a, time.monotonic() + 10) as conn:
+                (session,) = conn.execute(
+                    "SELECT quack_connection_id('capped')").fetchone()
+                time.sleep(7)
+                assert conn.execute(
+                    "SELECT count(*) FROM capped.public.t").fetchone() == (3,)
+                assert conn.execute(
+                    "SELECT quack_connection_id('capped')").fetchone() == (session,)
+        finally:
+            conn_a.execute("DETACH capped")
+    finally:
+        conn_b.execute("RESET quack_max_heartbeat_timeout")
+
+
+def test_server_settings_need_superuser(servers) -> None:
+    _, conn_b, _, _ = servers
+    with psycopg.connect(host="127.0.0.1", port=conn_b.info.port, user="alice",
+                         password="secret", dbname="postgres",
+                         autocommit=True) as alice:
+        for setting in ("quack_max_sessions = 1",
+                        "quack_max_heartbeat_timeout = 1",
+                        "quack_result_ttl = 1",
+                        "quack_cache_max_rows = 0",
+                        "quack_server_stream_buffer_bytes = 0",
+                        "quack_enable_reconnects = true",
+                        "quack_prepare_inline_rows = 1",
+                        "quack_default_client_id = 'abcd'"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege,
+                               match="must be superuser"):
+                alice.execute(f"SET {setting}")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege,
+                           match="must be superuser"):
+            alice.execute("RESET quack_max_sessions")
+        alice.execute("SET quack_default_statement_timeout = 5000")
+    assert conn_b.execute(
+        "SELECT current_setting('quack_max_sessions')").fetchone() == ("0",)
 
 
 def test_session_limit(servers) -> None:

@@ -247,6 +247,7 @@ quack_debug_fetch_delay_ms	0	DEBUG SETTING: max random delay in ms before a FETC
 quack_debug_send_delay_ms	0	DEBUG SETTING: max random delay in ms before a SEND_DATA request goes out, stressing out-of-order batch arrival on the server
 quack_default_client_id	<slt:ignore>	client_id used when ATTACH / quack_query omit one; precomputed at load from $QUACK_CLIENT_ID (empty opts out) or a random per-instance id. Set to '' to opt out.
 quack_default_heartbeat_timeout	60	Heartbeat lease timeout in seconds requested by clients when ATTACH / quack_query omit heartbeat_timeout
+quack_default_statement_timeout	3600000	Milliseconds a statement without statement_timeout may wait for a SereneDB Quack server before it fails, so a server that is gone cannot hold it (0 = no limit)
 quack_enable_reconnects	off	Enable reconnect support (clients acknowledge results, the server caches the last result until acknowledged)
 quack_fetch_read_ahead	0	FETCH requests kept in flight ahead of the scan (0 = number of async threads)
 quack_loaded_at_us	<slt:ignore>	Epoch microseconds at extension load
@@ -616,6 +617,7 @@ quack_debug_fetch_delay_ms	0	DEBUG SETTING: max random delay in ms before a FETC
 quack_debug_send_delay_ms	0	DEBUG SETTING: max random delay in ms before a SEND_DATA request goes out, stressing out-of-order batch arrival on the server
 quack_default_client_id	<slt:ignore>	client_id used when ATTACH / quack_query omit one; precomputed at load from $QUACK_CLIENT_ID (empty opts out) or a random per-instance id. Set to '' to opt out.
 quack_default_heartbeat_timeout	60	Heartbeat lease timeout in seconds requested by clients when ATTACH / quack_query omit heartbeat_timeout
+quack_default_statement_timeout	3600000	Milliseconds a statement without statement_timeout may wait for a SereneDB Quack server before it fails, so a server that is gone cannot hold it (0 = no limit)
 quack_enable_reconnects	off	Enable reconnect support (clients acknowledge results, the server caches the last result until acknowledged)
 quack_fetch_read_ahead	0	FETCH requests kept in flight ahead of the scan (0 = number of async threads)
 quack_loaded_at_us	<slt:ignore>	Epoch microseconds at extension load

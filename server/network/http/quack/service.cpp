@@ -166,9 +166,9 @@ constexpr size_t kWriteSlice = size_t{1} << 20;
 constexpr auto kReapInterval = std::chrono::seconds{1};
 constexpr auto kPrepareWait = std::chrono::milliseconds{100};
 #ifdef SDB_DEV
-constexpr int kInlineSliceBudget = 0;
+constexpr uint32_t kInlineSliceBudget = 0;
 #else
-constexpr int kInlineSliceBudget = 8;
+constexpr uint32_t kInlineSliceBudget = 8;
 #endif
 
 class Session final : public TransportBase,
@@ -270,7 +270,7 @@ class Session final : public TransportBase,
       if (closed) {
         continue;
       }
-      int inline_slices = 0;
+      uint32_t inline_slices = 0;
       for (;;) {
         const auto state = runner->Step(wake);
         if (state == duckdb::QuackRunState::FINISHED) {
@@ -368,16 +368,16 @@ Service::Service(const CredentialProvider* credentials,
     _core{irs::DuckDBEngine::Instance().instance(), std::move(server_id)} {
   duckdb::QuackStorageExtensionInfo::GetState(
     irs::DuckDBEngine::Instance().instance())
-    .serves = [endpoints = std::move(endpoints)](const std::string& host,
-                                                 uint16_t port) {
-    return Serves(endpoints, host, port);
-  };
+    .SetServes([endpoints = std::move(endpoints)](const std::string& host,
+                                                  uint16_t port) {
+      return Serves(endpoints, host, port);
+    });
 }
 
 Service::~Service() {
   duckdb::QuackStorageExtensionInfo::GetState(
     irs::DuckDBEngine::Instance().instance())
-    .serves = nullptr;
+    .SetServes(nullptr);
 }
 
 void Service::Start() { _tasks.Consume(Reap()); }
@@ -403,7 +403,8 @@ yaclib::Task<> Service::Handle(RequestContext& context,
                                const HttpRequest& request,
                                HttpResponseWriter& writer) {
   BodyReader body{request.body};
-  duckdb::QuackRequest quack_request{body};
+  duckdb::QuackRequest quack_request{
+    body, !request.Header(duckdb::QUACK_SERENEDB_HEADER).empty()};
   Host host{*this, context};
   const auto& task = context.Resumer();
   const duckdb::QuackWaker waker = [task] { task->RequestRun(); };

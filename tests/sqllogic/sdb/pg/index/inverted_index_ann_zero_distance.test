@@ -79,3 +79,88 @@ SELECT [0, 1, 0, 0]::FLOAT[4] <#> [1, 0, 0, 0]::FLOAT[4] AS d;
 ----
 d
 -0
+
+query
+SELECT pk, emb <+> [1, 2, 3, 4]::FLOAT[4] AS d FROM zl1_idx
+WHERE emb <+> [1, 2, 3, 4]::FLOAT[4] <= 9 ORDER BY emb <+> [1, 2, 3, 4]::FLOAT[4] LIMIT 4;
+----
+pk	d
+1	0
+4	9
+
+query
+EXPLAIN SELECT pk, emb <+> [1, 2, 3, 4]::FLOAT[4] AS d FROM zl1_idx
+WHERE emb <+> [1, 2, 3, 4]::FLOAT[4] <= 9 ORDER BY emb <+> [1, 2, 3, 4]::FLOAT[4] LIMIT 4;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: zl1_idx                         │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Vector Range ─╮                     │
+│ │ Field: emb     │                     │
+│ │ Metric: l1     │                     │
+│ │ Radius: <= 9   │                     │
+│ ╰────────────────╯                     │
+│ Top: 4                                 │
+│ Projections: pk,                       │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
+
+query
+SELECT pk, emb <+> [1, 2, 3, 4]::FLOAT[4] AS d FROM zl1_idx
+WHERE emb <+> [1, 2, 3, 4]::FLOAT[4] > 9 ORDER BY emb <+> [1, 2, 3, 4]::FLOAT[4] LIMIT 4;
+----
+pk	d
+3	10
+2	16
+
+query
+EXPLAIN SELECT pk, emb <+> [1, 2, 3, 4]::FLOAT[4] AS d FROM zl1_idx
+WHERE emb <+> [1, 2, 3, 4]::FLOAT[4] > 9 ORDER BY emb <+> [1, 2, 3, 4]::FLOAT[4] LIMIT 4;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: zl1_idx                         │
+│ Lookup: table                          │
+│ Score: l1_distance(emb, FLOAT[4])      │
+│ Top: 4                                 │
+│ Projections: pk,                       │
+│              sdb_inverted_index_score  │
+│ Column Filter:                         │
+│ sdb_inverted_index_score > 9           │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT pk, l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) AS d FROM zl2_idx
+WHERE l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) <= 27
+ORDER BY l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) LIMIT 4;
+----
+pk	d
+1	0
+4	27
+
+query
+SELECT pk, l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) AS d FROM zl2_idx
+WHERE l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) > 27
+ORDER BY l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) LIMIT 4;
+----
+pk	d
+3	30
+2	64
+
+query
+SELECT pk, l1_norm(emb) AS d FROM zl1_idx WHERE l1_norm(emb) <= 1 ORDER BY l1_norm(emb) LIMIT 4;
+----
+pk	d
+3	0
+4	1
+
+query
+SELECT pk, l1_norm(emb) AS d FROM zl1_idx WHERE l1_norm(emb) > 1 ORDER BY l1_norm(emb) LIMIT 4;
+----
+pk	d
+1	10
+2	26

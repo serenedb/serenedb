@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/hits/family.hpp"
 #include "iresearch/search/hits/make.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
@@ -84,7 +85,7 @@ class HnswHits : public Root {
 
 }  // namespace
 
-Root::ptr Make(const HnswQuery& query, const Context& ctx) {
+Root::ptr Family::Make(const HnswQuery& query, const Context& ctx) {
   const auto record = query.Stats(ScoredOf(ctx));
   const irs::detail::ScoreArgs args{.scorer = record.scorer,
                                     .stats = record.stats,

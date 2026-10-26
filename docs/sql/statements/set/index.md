@@ -88,7 +88,7 @@ Configuration options can have different scopes:
 -   `SESSION`: Configuration value is used (or reset) only for the current session attached to a SereneDB instance.
 -   `LOCAL`: Configuration value is used only until the current transaction ends, then the session value returns. `SET LOCAL` outside a transaction block is an error.
 
-When not specified, the default scope for the configuration option is used. The `sdb_` search settings and `integer_division` default to the session. Engine options such as `default_null_order`, `preserve_insertion_order` and `enable_progress_bar` default to `GLOBAL`, so a plain `SET` changes them for every session on the server; write `SET SESSION` to keep the change to your own. A few options, such as `memory_limit`, exist only globally: `SET SESSION` and `SET LOCAL` refuse them with `option "<name>" cannot be set locally`. `threads` and `async_threads` take all three scopes, see [Threads](#threads) and [Async threads](#async-threads).
+When not specified, the default scope for the configuration option is used; the Scope column of the [Configuration Reference](../../../configuration/overview.md#configuration-reference) gives it for each option. The `sdb_` search settings and `integer_division` default to the session. Engine options such as `default_null_order` and `preserve_insertion_order` default to `GLOBAL`, so a plain `SET` changes them for every session on the server; write `SET SESSION` to keep the change to your own. A few options, such as `memory_limit`, exist only globally: `SET SESSION` and `SET LOCAL` refuse them with `option "<name>" cannot be set locally`. `threads` and `async_threads` take all three scopes, see [Threads](#threads) and [Async threads](#async-threads).
 
 ## Configuration
 

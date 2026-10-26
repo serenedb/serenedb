@@ -132,6 +132,12 @@ duckdb::optional_ptr<SereneDBCatalog> DefaultSereneDBCatalog(
   return catalog->Cast<SereneDBCatalog>();
 }
 
+bool IsSereneDB(duckdb::Catalog& catalog) {
+  const auto type = catalog.GetCatalogType();
+  return type == SereneDBCatalog::kStorageType ||
+         type == SereneDBCatalog::kReadOnlyStorageType;
+}
+
 duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::BoundCreateTableInfo& info) {
@@ -475,10 +481,12 @@ void SereneDBCatalog::FinalizeLoad(
   auto& storage = GetAttached().GetStorageManager();
   duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path, oid);
   for (auto& table : SearchTableStorages(*this)) {
+    table->Open();
     table->OpenReader();
   }
   for (auto& index : InvertedIndexEntries(*this)) {
     if (const auto& index_storage = index.get().Storage()) {
+      index_storage->Open();
       index_storage->OpenReader();
     }
   }

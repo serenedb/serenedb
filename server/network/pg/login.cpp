@@ -56,8 +56,7 @@ hba::Decision DecideLogin(const LoginPeer& peer, std::string_view user,
         })) {
       return false;
     }
-    const auto closure = auth::ClosureFor(nullptr, member_oid);
-    return absl::c_binary_search(closure->closure, group_oid);
+    return auth::ClosureFor(nullptr, member_oid)->IsMember(group_oid);
   };
 
   hba::ClientInfo client;

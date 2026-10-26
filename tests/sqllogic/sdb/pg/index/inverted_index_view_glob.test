@@ -481,7 +481,7 @@ id	body
 8	pudge theta
 
 
-# Bare scan also materialises through ViewFileGlobIndexSource.
+# Bare scan also materialises through NativeIndexSource.
 query
 SELECT id, body FROM json_glob_idx ORDER BY id;
 ----

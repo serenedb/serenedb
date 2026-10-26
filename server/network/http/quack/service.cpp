@@ -202,6 +202,7 @@ class Session final : public TransportBase,
     {
       absl::MutexLock lock{&_cancel_token->mu};
       _cancel_token->ctx = _conn->context.get();
+      _cancel_token->role = _ctx->GetLoginRoleId();
       _cancel_token->session = shared_from_this();
     }
     _service.Tasks().Consume(Drive());

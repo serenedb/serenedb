@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 
-#include <duckdb/common/type_visitor.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/optimizer/column_lifetime_analyzer.hpp>
 #include <duckdb/optimizer/optimizer.hpp>
@@ -72,7 +71,6 @@
 #include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/optimizer/ts_dict_plan.hpp"
-#include "connector/pg_logical_types.h"
 #include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
@@ -605,14 +603,6 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     return index_field(ColumnIdByName(bind_data, name));
   };
 
-  const connector::StoredExpressionOf stored_expression =
-    [&](connector::ColumnId col_id) -> std::string_view {
-    if (!bind_data.relation.StoresExpression(col_id)) {
-      return {};
-    }
-    return config.FindKey(col_id)->normalized_expression;
-  };
-
   connector::ColumnGetter getter =
     [&](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<connector::SearchColumnInfo> {
@@ -632,7 +622,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       return std::nullopt;
     }
     const auto keys = config.FindExpressionKeys(connector::NormalizedExpression(
-      expr, bind_data.RelationId(), projected_ids, context, stored_expression));
+      expr, bind_data.RelationId(), projected_ids, context, &config));
     return finish_info(
       ExpressionColumnInfo(
         config, dicts, keys.term,
@@ -995,6 +985,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .centroids_id = ann_info->centroids_id,
       .postings_id = ann_info->postings_id,
       .quant = ann_info->quant.kind,
+      .nb_bits = ann_info->quant.nb_bits,
       .kind = ann_info->kind,
       .ef_construction = ann_info->ef_construction,
       .posting_size = ann_info->posting_size,
@@ -1157,48 +1148,13 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   return out;
 }
 
-bool DependsOnSession(const duckdb::LogicalType& type) {
-  return duckdb::TypeVisitor::Contains(type, [](const duckdb::LogicalType& t) {
-    return t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
-           t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ_NS ||
-           t.id() == duckdb::LogicalTypeId::TIME_TZ ||
-           t.id() == duckdb::LogicalTypeId::VARIANT || pg::IsRegLike(t);
-  });
-}
-
-bool ComputedFromRowAlone(const duckdb::Expression& expr) {
-  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
-    const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
-    if (DependsOnSession(func.GetReturnType()) ||
-        absl::c_any_of(func.GetChildren(), [](const auto& arg) {
-          return DependsOnSession(arg->GetReturnType());
-        })) {
-      return false;
-    }
-    if (duckdb::BoundCastExpression::IsCast(func) &&
-        duckdb::TypeVisitor::Contains(
-          duckdb::BoundCastExpression::SourceType(func),
-          duckdb::LogicalTypeId::BLOB) &&
-        duckdb::TypeVisitor::Contains(func.GetReturnType(),
-                                      duckdb::LogicalTypeId::VARCHAR)) {
-      return false;
-    }
-  }
-  bool alone = true;
-  duckdb::ExpressionIterator::EnumerateChildren(
-    expr, [&](const duckdb::Expression& child) {
-      alone = alone && ComputedFromRowAlone(child);
-    });
-  return alone;
-}
-
 bool PushdownStoredExpression(duckdb::unique_ptr<duckdb::Expression>& expr,
                               duckdb::LogicalOperator& root,
                               const duckdb::LogicalOperator& op,
                               duckdb::ClientContext& context) {
   if (expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF ||
       expr->IsFoldable() || !expr->IsConsistent() || expr->HasParameter() ||
-      !ComputedFromRowAlone(*expr)) {
+      !connector::ComputedFromRowAlone(*expr)) {
     return false;
   }
   const auto table_index = SingleReferencedTableIndex(*expr);

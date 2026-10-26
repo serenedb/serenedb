@@ -13,7 +13,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 ## Connect
 
 ```sh
-psql -h localhost -p 7890
+psql -h localhost -p 7890 -U postgres
 ```
 
 ## Useful commands

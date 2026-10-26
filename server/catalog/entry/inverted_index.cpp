@@ -61,6 +61,7 @@
 #include "connector/duckdb_reindex_function.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
+#include "connector/term_dict.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -288,6 +289,10 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
            : irs::field_limits::invalid();
 }
 
+bool InvertedIndexConfig::HasField(irs::field_id id) const {
+  return id == connector::term_dict::kPKFieldId || LookupField(id).entry;
+}
+
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
                                  duckdb::Catalog& catalog,
                                  const InvertedIndexConfig& config)
@@ -416,12 +421,14 @@ const InvertedIndexKey* InvertedIndexConfig::FindKey(
   return it == _field_keys.end() ? nullptr : &keys[it->second];
 }
 
-bool InvertedIndexConfig::StoresExpression(
+std::string_view InvertedIndexConfig::StoredExpression(
   irs::field_id field_id) const noexcept {
   const auto* key = FindKey(field_id);
   const auto* entry = FindEntry(field_id);
-  return key && !key->normalized_expression.empty() && entry &&
-         entry->IsStored();
+  if (!key || !entry || !entry->IsStored()) {
+    return {};
+  }
+  return key->normalized_expression;
 }
 
 const InvertedIndexField* InvertedIndexConfig::FindEntry(

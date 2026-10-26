@@ -197,6 +197,7 @@ void CheckDocs(const std::vector<irs::doc_id_t>& docs, irs::doc_id_t prev,
   const auto len = static_cast<uint32_t>(docs.size());
   const bool full = len == bc::kBlock;
   Buffer encoded;
+  encoded.fill(0xEF);
   const auto size =
     full
       ? Codec::EncodeDeltaBlock(docs.data(), prev, encoded.data(), options)
@@ -229,6 +230,7 @@ void CheckValues(const std::vector<uint32_t>& values,
   const auto len = static_cast<uint32_t>(values.size());
   const bool full = len == bc::kBlock;
   Buffer encoded;
+  encoded.fill(0xEF);
   const auto size =
     full ? Codec::EncodeValuesBlock(values.data(), encoded.data(), options)
          : Codec::EncodeValuesTail(values.data(), len, encoded.data(), options);
@@ -377,6 +379,7 @@ TEST(BlockCodecTest, ValuesRoundTrip) {
 TEST(BlockCodecTest, ChosenEncodings) {
   constexpr uint32_t kN = bc::kBlock;
   Buffer encoded;
+  encoded.fill(0xEF);
   std::vector<irs::doc_id_t> docs(kN);
   for (uint32_t i = 0; i != kN; ++i) {
     docs[i] = 10 + i;
@@ -486,6 +489,7 @@ TEST(BlockIoTest, HolesBecomeBitset) {
       }
       const bc::EncodeOptions options{.narrow_highs = narrow};
       Buffer encoded;
+      encoded.fill(0xEF);
       const auto size = len == kN
                           ? io::Codec::EncodeDeltaBlock(docs.data(), kPrev,
                                                         encoded.data(), options)

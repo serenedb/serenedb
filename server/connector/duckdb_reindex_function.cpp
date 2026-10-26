@@ -974,7 +974,7 @@ std::optional<Source> ResolveSource(duckdb::ClientContext& context,
     }
   }
   src.fast_path = std::move(*fp);
-  src.bind = BindFastPathSource(context, src.fast_path);
+  src.bind = std::move(BindFastPathSource(context, src.fast_path)->bind_data);
   if (!src.bind) {
     return std::nullopt;
   }
@@ -1084,11 +1084,7 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
-  if (target.index->catalog.GetAttached().IsReadOnly()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                    ERR_MSG("cannot REINDEX \"", name,
-                            "\": its database is attached read-only"));
-  }
+  catalog::ThrowIfReadOnly(target.index->catalog, "REINDEX");
   pg::ProgressMetrics* progress = nullptr;
   if (auto client_state = context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey);

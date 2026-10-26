@@ -549,7 +549,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Fault injection control. SET sdb_faults = 'name' to add a failure "
         "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
-        "clear all. Superuser only: the failure-point registry is "
+        "clear all and release parked threads. Superuser only: the "
+        "failure-point registry is "
         "process-global, so an armed point fires for every session.",
         [] { return duckdb::Value{""}; },
         [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
@@ -897,34 +898,33 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_ann_oversample",
+      "sdb_ann_rescore_width",
       {
         LogicalTypeId::DOUBLE,
-        "Oversample for a quantized vector-similarity query, HNSW and IVF "
-        "alike: the search runs on quantized codes and ceil(sdb_ann_oversample "
-        "* k) of each segment\'s candidates are read back at full precision, "
-        "re-ordered, and only then compared against other segments -- a "
-        "quantized score is an estimate and two segments\' estimates are not "
-        "comparable, because each trains its own quantizer. Where the search "
-        "can return fewer candidates than the pool asks for, it is widened to "
-        "hold it: for HNSW that means the beam, since a beam of a hundred "
-        "cannot hand four hundred to the rescorer. 0 disables the rescore: "
-        "the query answers from the codes, which is faster and caps recall at "
-        "whatever the codes can tell apart -- well below 1 for a 4-bit or "
-        "binary quantizer, and worse still across many segments. -1 (the "
-        "default) rescores every quantized index at 1. Fractional "
-        "values are allowed, but a factor between 0 and 1 is rejected because "
-        "the pool must cover k. Unquantized (quant = \'none\') indexes never "
-        "rerank, regardless of this setting, and a query whose pool exists to "
-        "survive a lookup filter keeps that pool either way.",
+        "Rescore width z for a quantized vector-similarity query, HNSW and "
+        "IVF alike: the search runs on quantized codes, and a candidate from "
+        "any segment is read back at full precision while its code score plus "
+        "z times the code's estimated error could still beat the k-th best "
+        "full-precision score found so far, so a segment holding many of the "
+        "nearest neighbours gets more of them rescored and a segment holding "
+        "none gets none. A larger z rescores more and misses fewer: a "
+        "neighbour sitting exactly at the k-th score is missed with the "
+        "probability that a normal error exceeds z standard deviations. 0 "
+        "disables the rescore: the query answers from the codes, which is "
+        "faster and caps recall at whatever the codes can tell apart. -1 (the "
+        "default) uses 2 for sq8 and 1-bit rabitq, 3 for tq and multi-bit "
+        "rabitq, 4 for usq8, 5 for sq4, 6 for usq4, 7 for osq at 4 or more "
+        "bits, and 0 for fp16 and bf16, which answer from their codes; pq uses "
+        "2 on an ivf index and 3 on an hnsw index, bq 1 and 3, and osq at 1 or "
+        "2 bits 3 and 2. "
+        "Unquantized (quant = \'none\') indexes are never rescored.",
         [] { return duckdb::Value::DOUBLE(-1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<double>();
-          if (!std::isfinite(n) || n < -1.0 || (n > 0.0 && n < 1.0) ||
-              (n < 0.0 && n != -1.0)) {
+          if (!std::isfinite(n) || (n < 0.0 && n != -1.0)) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
-                                    "\"sdb_ann_oversample\": \"",
+                                    "\"sdb_ann_rescore_width\": \"",
                                     value.ToString(), "\""));
           }
         },
@@ -1010,6 +1010,17 @@ constexpr std::pair<std::string_view, VariableDescription>
         "When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC "
         "LIMIT k` into the inverted-index scan, so block-max score pruning "
         "never engages. Default: false (optimization on).",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_lookup_join_source_hop",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, a LOOKUP_JOIN over an inverted index that returns only "
+        "source columns reads the row keys from the index in one LOOKUP_JOIN "
+        "and the source columns in a second one. Default: false.",
         [] { return duckdb::Value::BOOLEAN(false); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },

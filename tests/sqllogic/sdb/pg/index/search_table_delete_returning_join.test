@@ -1,0 +1,296 @@
+statement ok
+CREATE TABLE rj (a BIGINT, b BIGINT, c BIGINT, t TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+CREATE TABLE rj_plain (a BIGINT, b BIGINT, c BIGINT, t TEXT);
+
+statement ok
+INSERT INTO rj SELECT i, i * 10, i * 100, 't' || i FROM generate_series(0, 99) g(i);
+
+statement ok
+INSERT INTO rj_plain SELECT i, i * 10, i * 100, 't' || i FROM generate_series(0, 99) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rj;
+
+statement ok
+CREATE TABLE rk (k TEXT PRIMARY KEY, n INT, x BIGINT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+CREATE TABLE rk_plain (k TEXT PRIMARY KEY, n INT, x BIGINT);
+
+statement ok
+INSERT INTO rk SELECT 'k' || i, i, i * 7 FROM generate_series(0, 19) g(i);
+
+statement ok
+INSERT INTO rk_plain SELECT 'k' || i, i, i * 7 FROM generate_series(0, 19) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rk;
+
+statement ok
+CREATE TABLE rj_small (id BIGINT);
+
+statement ok
+INSERT INTO rj_small SELECT i FROM generate_series(0, 9, 3) g(i), generate_series(1, 3) r(j);
+
+statement ok
+CREATE TABLE rj_big (id BIGINT);
+
+statement ok
+INSERT INTO rj_big SELECT i % 100 FROM generate_series(0, 99999) g(i);
+
+statement ok
+BEGIN;
+
+query ???? rowsort
+DELETE FROM rj USING rj_small WHERE rj.b = rj_small.id * 10 RETURNING a, b, c, t;
+----
+a	b	c	t
+0	0	0	t0
+3	30	300	t3
+6	60	600	t6
+9	90	900	t9
+
+query ???? rowsort
+DELETE FROM rj_plain USING rj_small WHERE rj_plain.b = rj_small.id * 10 RETURNING a, b, c, t;
+----
+a	b	c	t
+0	0	0	t0
+3	30	300	t3
+6	60	600	t6
+9	90	900	t9
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+query ???? rowsort
+DELETE FROM rj USING rj_big WHERE rj.a = rj_big.id AND rj.a < 4 RETURNING *;
+----
+a	b	c	t
+0	0	0	t0
+1	10	100	t1
+2	20	200	t2
+3	30	300	t3
+
+query ???? rowsort
+DELETE FROM rj_plain USING rj_big WHERE rj_plain.a = rj_big.id AND rj_plain.a < 4 RETURNING *;
+----
+a	b	c	t
+0	0	0	t0
+1	10	100	t1
+2	20	200	t2
+3	30	300	t3
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+query ?? rowsort
+DELETE FROM rj USING rj_small WHERE rj.c = rj_small.id * 100 RETURNING t, a;
+----
+t	a
+t0	0
+t3	3
+t6	6
+t9	9
+
+query ?? rowsort
+DELETE FROM rj_plain USING rj_small WHERE rj_plain.c = rj_small.id * 100 RETURNING t, a;
+----
+t	a
+t0	0
+t3	3
+t6	6
+t9	9
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+query ??? rowsort
+DELETE FROM rj USING rj_big WHERE rj.b = rj_big.id * 10 AND rj.a BETWEEN 10 AND 12 RETURNING c - b AS d, b, b AS b2;
+----
+d	b	b2
+1080	120	120
+900	100	100
+990	110	110
+
+query ??? rowsort
+DELETE FROM rj_plain USING rj_big WHERE rj_plain.b = rj_big.id * 10 AND rj_plain.a BETWEEN 10 AND 12 RETURNING c - b AS d, b, b AS b2;
+----
+d	b	b2
+1080	120	120
+900	100	100
+990	110	110
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+query ??? rowsort
+DELETE FROM rk USING rj_small WHERE rk.n = rj_small.id RETURNING k, n, x;
+----
+k	n	x
+k0	0	0
+k3	3	21
+k6	6	42
+k9	9	63
+
+query ??? rowsort
+DELETE FROM rk_plain USING rj_small WHERE rk_plain.n = rj_small.id RETURNING k, n, x;
+----
+k	n	x
+k0	0	0
+k3	3	21
+k6	6	42
+k9	9	63
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+query ??? rowsort
+DELETE FROM rk USING rj_big WHERE rk.n = rj_big.id AND rk.n < 3 RETURNING *;
+----
+k	n	x
+k0	0	0
+k1	1	7
+k2	2	14
+
+query ??? rowsort
+DELETE FROM rk_plain USING rj_big WHERE rk_plain.n = rj_big.id AND rk_plain.n < 3 RETURNING *;
+----
+k	n	x
+k0	0	0
+k1	1	7
+k2	2	14
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+query ?? rowsort
+DELETE FROM rj WHERE a IN (SELECT id + 1 FROM rj_small) RETURNING b, a;
+----
+b	a
+10	1
+100	10
+40	4
+70	7
+
+query ?? rowsort
+DELETE FROM rj_plain WHERE a IN (SELECT id + 1 FROM rj_small) RETURNING b, a;
+----
+b	a
+10	1
+100	10
+40	4
+70	7
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+query ?? rowsort
+DELETE FROM rj WHERE EXISTS (SELECT 1 FROM rj_small WHERE rj_small.id = rj.a - 2) RETURNING c, t;
+----
+c	t
+1100	t11
+200	t2
+500	t5
+800	t8
+
+query ?? rowsort
+DELETE FROM rj_plain WHERE EXISTS (SELECT 1 FROM rj_small WHERE rj_small.id = rj_plain.a - 2) RETURNING c, t;
+----
+c	t
+1100	t11
+200	t2
+500	t5
+800	t8
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+query ?? rowsort
+DELETE FROM rj USING rj AS o WHERE rj.a = o.a + 50 AND o.a < 3 RETURNING rj.a, rj.t;
+----
+a	t
+50	t50
+51	t51
+52	t52
+
+query ?? rowsort
+DELETE FROM rj_plain USING rj_plain AS o WHERE rj_plain.a = o.a + 50 AND o.a < 3 RETURNING rj_plain.a, rj_plain.t;
+----
+a	t
+50	t50
+51	t51
+52	t52
+
+statement ok
+ROLLBACK;
+
+query ? rowsort
+DELETE FROM rj USING rj_small WHERE rj.a = rj_small.id + 20 RETURNING a;
+----
+a
+20
+23
+26
+29
+
+query ? rowsort
+DELETE FROM rj_plain USING rj_small WHERE rj_plain.a = rj_small.id + 20 RETURNING a;
+----
+a
+20
+23
+26
+29
+
+statement ok
+VACUUM (REFRESH_TABLE) rj;
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM rj EXCEPT ALL SELECT * FROM rj_plain)) + (SELECT count(*) FROM (SELECT * FROM rj_plain EXCEPT ALL SELECT * FROM rj)) AS diff, (SELECT count(*) FROM rj) AS n;
+----
+diff	n
+0	96
+
+statement ok
+DROP TABLE rj;
+
+statement ok
+DROP TABLE rj_plain;
+
+statement ok
+DROP TABLE rk;
+
+statement ok
+DROP TABLE rk_plain;
+
+statement ok
+DROP TABLE rj_small;
+
+statement ok
+DROP TABLE rj_big;

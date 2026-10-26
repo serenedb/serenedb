@@ -27,7 +27,6 @@
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/hits/root.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -40,14 +39,6 @@ class All : public Root {
     : _end{doc_limits::min() + count},
       _score{ScoreFunction::Constant(score)},
       _fetcher{fetcher} {}
-
-  void Prepare(const SubReader& segment, const detail::ScoreArgs& args) {
-    if (detail::AllDocsConstant(args)) {
-      _score = ScoreFunction::Constant(AllDocsScore(segment, args));
-      return;
-    }
-    _score = detail::AllDocsScorer(segment, args);
-  }
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out,
                score_t* IRS_RESTRICT scores) final {

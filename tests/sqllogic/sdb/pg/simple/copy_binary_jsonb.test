@@ -1,0 +1,22 @@
+control substitution on
+
+statement ok
+CREATE TABLE copy_binary_jsonb (a JSON);
+
+system ok
+printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\000\000\011\001{"a": 1}\000\001\000\000\000\010{"b": 2}\377\377' > $__TEST_DIR__/copy_binary_jsonb.bin
+
+statement ok
+COPY copy_binary_jsonb FROM '${__TEST_DIR__}/copy_binary_jsonb.bin' (FORMAT binary);
+
+query
+SELECT a::TEXT AS a
+FROM copy_binary_jsonb
+ORDER BY a;
+----
+a
+{"a": 1}
+{"b": 2}
+
+statement ok
+DROP TABLE copy_binary_jsonb;

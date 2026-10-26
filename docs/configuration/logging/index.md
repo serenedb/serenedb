@@ -11,8 +11,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB implements a logging mechanism that provides users with detailed information about events such as query execution,
-performance metrics and system events.
+SereneDB implements a logging mechanism that provides users with detailed information about events such as query execution, performance metrics and system events.
 
 ## Basics
 
@@ -34,11 +33,14 @@ To clear the current log, run
 
 SereneDB supports different logging levels that control the verbosity of the logs:
 
-* `ERROR`: Only logs error messages
-* `WARN`: Logs warnings and errors
+* `FATAL`: Only logs fatal errors
+* `ERROR`: Logs errors
+* `WARNING`: Logs warnings and errors
 * `INFO`: Logs general information, warnings and errors (default)
 * `DEBUG`: Logs detailed debugging information
 * `TRACE`: Logs very detailed tracing information
+
+Each level also logs the levels above it in this list. Level names are case-insensitive.
 
 The log level can be set using:
 
@@ -61,8 +63,7 @@ To log only messages of a specific type:
 
 <SqlLogicTest id="configuration/logging/index/example_005" />
 
-The above function will automatically set the correct log level and will add the `HTTP` type to the `enabled_log_types` settings. This ensures
-only log messages of the 'HTTP' type will be written to the log.
+The above function will automatically set the correct log level and will add the `HTTP` type to the `enabled_log_types` settings. This ensures only log messages of the `HTTP` type will be written to the log.
 
 To enable multiple log types, simply pass:
 
@@ -92,7 +93,7 @@ This is a (non-exhaustive) list of the available log types in SereneDB.
 
 ### SereneDB Server Log Types
 
-Beyond the core types above, the SereneDB server (`serened`) emits its own log types from its subsystems. These types are not accepted as a filter argument to `enable_logging` (which only recognizes the core types listed earlier). Instead, enable logging without a type filter and select the subsystem you are interested in through the `type` column of `sdb_logs` — for example `SELECT * FROM sdb_logs WHERE type = 'Search'` to see only search-engine activity.
+Beyond the core types above, the SereneDB server (`serened`) emits its own log types from its subsystems. These types are not accepted as a filter argument to `enable_logging`, which only recognizes the core types. Instead, enable logging without a type filter and select the subsystem you are interested in through the `type` column of `sdb_logs`, for example `SELECT * FROM sdb_logs WHERE type = 'Search'` to see only search-engine activity.
 
 | Log Type    | Description                                                                                  |
 |-------------|----------------------------------------------------------------------------------------------|
@@ -100,20 +101,18 @@ Beyond the core types above, the SereneDB server (`serened`) emits its own log t
 | `Search`    | Inverted-index (search engine) activity: background refresh and compaction, index maintenance |
 | `Replication` | Logical replication: the apply workers of [subscriptions](../../sql/statements/create_subscription/index.md) |
 | `IResearch` | Low-level events from the underlying [IResearch](https://github.com/serenedb/serenedb/tree/main/iresearch) engine |
-| `Storage`   | Storage-engine events                                                                        |
-| `SSL`       | TLS/SSL configuration and connection events                                                  |
-| `HTTP`      | HTTP traffic (shared with the core `HTTP` type above)                                        |
+| `HTTP`      | Errors of the server's own HTTP endpoints, such as a request handler that failed; not HTTP traffic. The name is shared with the core `HTTP` type above |
 
 Server log messages that are not assigned a type fall into the default (empty) type, so they appear in `sdb_logs` with an empty `type` and are always shown when logging is enabled without a type filter.
 
 ## Log Storages
 
-By default, SereneDB logs to `stdout`. The `--log_storage` option of `serened` picks the log storage at start (`--log_path` gives the path of `file`), and `enable_logging(storage = ...)` switches it at runtime. SereneDB supports the following log storages:
+By default, SereneDB logs to `stdout`. The `--log_storage` option of `serened` picks the log storage at start (`--log_path` gives the path of `file`) and `--log_level` its level, and `enable_logging(storage = ...)` switches the storage at runtime. SereneDB supports the following log storages:
 
 | Log Storage | Description                                               |
 |-------------|-----------------------------------------------------------|
 | `memory`    | Log to an in-memory buffer                                |
-| `stdout`    | (default) Log to the stdout of the current process (in CSV format) |
+| `stdout`    | (default) Log to the stdout of the `serened` process, tab-separated |
 | `file`      | Log to (a) csv file(s)                                    |
 
 
@@ -137,8 +136,7 @@ or using the equivalent shorthand:
 
 SereneDB's log storages can log in two ways: normalized vs. denormalized.
 
-In denormalized logging, the log context information is appended directly to each log entry, while in normalized logging
-the log entries are stored separately with context_ids referencing the context information.
+In denormalized logging, the log context information is appended directly to each log entry, while in normalized logging the log entries are stored separately with context_ids referencing the context information.
 
 | Log Storage | Normalized   |
 |-------------|--------------|
@@ -146,22 +144,15 @@ the log entries are stored separately with context_ids referencing the context i
 | `file`      | configurable |
 | `stdout`    | no           |
 
-For file storage, you can switch between normalized and denormalized by providing a path ending in .csv (for normalized)
-or without .csv (for denormalized). For file logging, denormalized is generally recommended since this increases performance 
-and reduces the total size of the logs. To configure normalization of `file` log storage:
+For file storage, a path ending in `.csv` writes one denormalized file at that path, and any other path names a directory that receives the normalized `duckdb_log_contexts.csv` and `duckdb_log_entries.csv`. Normalized logging writes each context once instead of on every entry, so its files are smaller. To configure normalization of `file` log storage:
 
 <SqlLogicTest id="configuration/logging/index/example_012" />
 
-Note that the difference between normalized and denormalized is typically hidden from users through the 'sdb_logs' function,
-which automatically joins normalized tables into a single unified result. To illustrate, both configurations above will be
-queryable using `FROM sdb_logs;` and will produce identical results.
+Note that the difference between normalized and denormalized is typically hidden from users through `sdb_logs`, which automatically joins normalized tables into a single unified result. To illustrate, both configurations above will be queryable using `FROM sdb_logs;` and will produce identical results.
 
 ### Buffer Size
 
-The log storage in SereneDB implements a buffering mechanism to optimize logging performance. This implementation
-introduces a potential delay between message logging and storage writing. This delay can obscure the actual message writing time,
-which is particularly problematic when debugging crashes, as messages generated immediately before a crash might not be
-written. To address this, the buffer size can be configured as follows:
+Log storages buffer messages before they write them, so a message reaches the storage some time after it is logged, and the messages logged just before a crash may never be written. The buffer size can be configured as follows:
 
 <SqlLogicTest id="configuration/logging/index/example_013" />
 
@@ -173,18 +164,15 @@ Note that the default buffer size is different for different log storages:
 
 | Log Storage | Default buffer size           |
 |-------------|-------------------------------|
-| `memory`    | `STANDARD_VECTOR_SIZE` (2048) |
-| `file`      | `STANDARD_VECTOR_SIZE` (2048) |
-| `stdout`    | Disabled (0)                  |
+| `memory`    | `2048`                        |
+| `file`      | `2048`                        |
+| `stdout`    | `1` (no buffering)            |
 
-So for example, if you want to increase your `stdout` logging performance, simply enable buffering to greatly (>10x) speed up 
-your logging:
+A buffer size of `0` or `1` writes every message as soon as it is logged. To make `stdout` logging faster, enable buffering:
 
 <SqlLogicTest id="configuration/logging/index/example_015" />
 
-Or imagine you are debugging a crash in SereneDB and you want to use the `file` logger to understand what's going on:
-Simply disable the
-buffering using:
+To keep the messages logged just before a crash, disable the buffering of the `file` storage:
 
 <SqlLogicTest id="configuration/logging/index/example_016" />
 

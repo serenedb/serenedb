@@ -24,6 +24,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
+#include "iresearch/search/fill/family.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make.hpp"
 
@@ -33,7 +34,7 @@ Node::ptr MakeAllDocs(const SubReader& segment) {
   return memory::make_managed<Impl<AllDocs>>(segment);
 }
 
-Node::ptr MakeLiveDocs(const SubReader& segment) {
+Node::ptr Family::MakeLiveDocs(const SubReader& segment) {
   return ResolveDocsMask(segment,
                          [&]<DocsMaskType Mask>(Mask docs_mask) -> Node::ptr {
                            return memory::make_managed<Impl<LiveDocs<Mask>>>(

@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -104,6 +105,34 @@ inline IRS_FORCE_INLINE void Clear(uint64_t* IRS_RESTRICT dst,
   }
 }
 
+inline void ClearScored(uint64_t* IRS_RESTRICT words,
+                        score_t* IRS_RESTRICT window) noexcept {
+  for (uint32_t w = 0; w != kWindowWords; ++w) {
+    auto word = words[w];
+    words[w] = 0;
+    const auto base = w * kWindowBits;
+    while (word != 0) {
+      window[base + std::countr_zero(word)] = 0;
+      word = PopBit(word);
+    }
+  }
+}
+
+inline doc_id_t FindSet(const uint64_t* IRS_RESTRICT mask,
+                        doc_id_t offset) noexcept {
+  auto word = offset / kWindowBits;
+  auto bits = mask[word] & (~uint64_t{0} << (offset % kWindowBits));
+  for (;;) {
+    if (bits != 0) {
+      return static_cast<doc_id_t>(word * kWindowBits + std::countr_zero(bits));
+    }
+    if (++word == kWindowWords) {
+      return kWindowDocs;
+    }
+    bits = mask[word];
+  }
+}
+
 inline IRS_FORCE_INLINE uint32_t Cardinality(const uint64_t* IRS_RESTRICT src,
                                              size_t words) noexcept {
   uint32_t card = 0;
@@ -147,7 +176,7 @@ inline IRS_FORCE_INLINE uint32_t FoldAndNot(uint64_t* IRS_RESTRICT dst,
   return card;
 }
 
-inline IRS_FORCE_INLINE uint64_t WordAt(const uint64_t* IRS_RESTRICT src,
+inline IRS_FORCE_INLINE uint64_t WordAt(const UnalignedWord* IRS_RESTRICT src,
                                         uint32_t count, int64_t at) noexcept {
   const int64_t idx = at >> 6;
   const auto shift = static_cast<uint32_t>(at & 63);
@@ -204,7 +233,7 @@ struct AndCursor {
   }
 
   IRS_FORCE_INLINE void And(uint64_t lo, uint64_t hi, int64_t delta,
-                            const uint64_t* IRS_RESTRICT src,
+                            const UnalignedWord* IRS_RESTRICT src,
                             uint32_t count) noexcept {
     Reach(lo);
     words[at] &= keep | (~uint64_t{0} << (lo % kWindowBits));

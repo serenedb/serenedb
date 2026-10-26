@@ -7465,6 +7465,9 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
 }
 
 TEST_P(IndexTestCase, segment_compact_pending_commit) {
+#ifdef ABSL_HAVE_THREAD_SANITIZER
+  GTEST_SKIP() << "lock-order inversion, serenedb/serenedb#1859";
+#endif
   std::vector<size_t> expected_compacting_segments;
   auto check_compacting_segments =
     [&expected_compacting_segments](
@@ -11245,7 +11248,7 @@ struct NoNormsEmptyTokenizer final
 TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
   struct EmptyField {
     irs::field_id Id() const { return kTestFieldId; }
-    std::string_view Name() const { return "test"; };
+    std::string_view Name() const { return "test"; }
     irs::IndexFeatures GetIndexFeatures() const {
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
              irs::IndexFeatures::Norm;

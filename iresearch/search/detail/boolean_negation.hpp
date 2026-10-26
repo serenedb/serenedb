@@ -1,0 +1,49 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <cstdint>
+#include <span>
+
+#include "iresearch/search/detail/boolean_planner.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
+
+namespace irs::detail::builder {
+
+template<typename Family, typename Ctx>
+Result<Family> MakeNegation(std::span<const PostingClause> excludes,
+                            std::span<const QueryBuilder::ptr> exclude_filters,
+                            const SubReader& segment, uint64_t candidates,
+                            const Ctx& ctx) {
+  if constexpr (requires { Family::MakeLiveDocs(segment); }) {
+    if (OnlyMask(excludes, exclude_filters)) {
+      return Family::MakeLiveDocs(segment);
+    }
+  }
+  if constexpr (Family::kSparseNegation) {
+    return MakeSparseNegation<Family>(excludes, exclude_filters, segment,
+                                      candidates, ctx);
+  } else {
+    return MakeWindowNegation<Family>(excludes, exclude_filters, segment, ctx);
+  }
+}
+
+}  // namespace irs::detail::builder

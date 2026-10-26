@@ -59765,6 +59765,7 @@ SELECT DISTINCT + 9 DIV - ( ( + 71 ) ) * + COALESCE ( - 83, 56 * ( + COALESCE ( 
 0
 
 skipif mysql # not compatible
+skipif serenedb # avg(integer) is double precision, not numeric: serenedb/serenedb#1435
 query I rowsort label-6533
 SELECT DISTINCT + 9 / - ( ( + 71 ) ) * + COALESCE ( - 83, 56 * ( + COALESCE ( - 84, 26 * 92, - - 4 ) ) - - + COUNT ( * ), + COALESCE ( - 24, - COALESCE ( + - CAST ( 21 AS INTEGER ), - - 1 * AVG ( 59 ) + - COUNT ( * ) * - 29 - - 66 ) + + - 44 + + - 69 * 1, COUNT ( * ) * - COUNT ( * ) ) / 23 * - 40 + + 38 )
 ----

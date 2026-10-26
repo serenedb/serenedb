@@ -1,0 +1,46 @@
+target_sources(
+    iresearch
+    PRIVATE
+        application_exit.cpp
+        async_utils.cpp
+        attributes.cpp
+        bit_packing.cpp
+        conjunction_acceptor.cpp
+        cpu_features.cpp
+        crash_handler.cpp
+        debugging.cpp
+        directory_utils.cpp
+        duckdb_engine.cpp
+        file_utils_ext.cpp
+        index_utils.cpp
+        levenshtein_default_pdp.cpp
+        levenshtein_utils.cpp
+        log.cpp
+        log_flags.cpp
+        mmap_utils.cpp
+        network_utils.cpp
+        numeric_utils.cpp
+        regexp_acceptor.cpp
+        regexp_ngram.cpp
+        regexp_utils.cpp
+        remap_executable.cpp
+        string_utils.cpp
+        timer_utils.cpp
+        wildcard_utils.cpp
+)
+
+if(IRESEARCH_BENCH)
+    return()
+endif()
+
+target_sources(
+    iresearch
+    PRIVATE
+        geo/coding.cpp
+        geo/geo_json.cpp
+        geo/s2/multi_point_region.cpp
+        geo/s2/multi_polyline_region.cpp
+        geo/shape_container.cpp
+        geo/wkb.cpp
+        snowball_stemmer.cpp
+)

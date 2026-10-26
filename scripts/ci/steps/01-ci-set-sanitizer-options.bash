@@ -55,6 +55,6 @@ if [[ "$SANITIZERS" =~ "Thread" ]]; then
 fi
 
 # Code Coverage
-if [[ "$USE_COVERAGE" == "SourceBased" || "$USE_COVERAGE" == "SourceBasedMCDC" ]]; then
-	echo "LLVM_PROFILE_FILE=/serenedb/out/coverage/profiles/sdb.%m.%p.profraw" >>san_options.env
+if [[ "${SDB_COVERAGE:-Off}" == On ]]; then
+	echo "LLVM_PROFILE_FILE=/serenedb/out/coverage/profiles/%4m.profraw" >>san_options.env
 fi

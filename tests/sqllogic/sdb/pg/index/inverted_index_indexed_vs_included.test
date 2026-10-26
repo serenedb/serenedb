@@ -70,10 +70,6 @@ query
 EXPLAIN SELECT pk, body FROM m_idx WHERE body @@ ts_phrase('alpha');
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────╮
-│ Projections: pk, body   │
-│ ~1 row                  │
-╰────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: m_idx            │
 │ Lookup: table           │
@@ -82,7 +78,7 @@ QUERY PLAN
 │ │ Field: body(string) │ │
 │ │ Value: alpha        │ │
 │ ╰─────────────────────╯ │
-│ Projections: body, pk   │
+│ Projections: pk, body   │
 │ ~1 row                  │
 ╰─────────────────────────╯
 
@@ -99,10 +95,6 @@ query
 EXPLAIN SELECT pk, tag FROM m_idx WHERE tag = 100;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────╮
-│ Projections: pk, tag    │
-│ ~1 row                  │
-╰────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: m_idx            │
 │ Lookup: table           │
@@ -111,7 +103,7 @@ QUERY PLAN
 │ │ Field: tag(numeric) │ │
 │ │ Value: 100          │ │
 │ ╰─────────────────────╯ │
-│ Projections: tag, pk    │
+│ Projections: pk, tag    │
 │ ~1 row                  │
 ╰─────────────────────────╯
 
@@ -156,10 +148,6 @@ EXPLAIN SELECT pk, note FROM m_idx
 WHERE body @@ ts_phrase('cat') AND note IS NULL;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────╮
-│ Projections: pk, note       │
-│ ~1 row                      │
-╰──────────────┬──────────────╯
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: m_idx                │
 │ Lookup: table               │
@@ -169,8 +157,8 @@ QUERY PLAN
 │ │ Value: cat          │     │
 │ ╰─────────────────────╯     │
 │ Column Filter: note IS NULL │
-│ Projections: note (i),      │
-│              pk (l)         │
+│ Projections: pk (l),        │
+│              note (i)       │
 │ ~1 row                      │
 ╰─────────────────────────────╯
 
@@ -193,13 +181,6 @@ EXPLAIN SELECT pk, body, tag, note, extra, dual FROM m_idx
 WHERE body @@ ts_phrase('alpha');
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────╮
-│ Projections: pk, body,  │
-│              tag, note, │
-│              extra,     │
-│              dual       │
-│ ~1 row                  │
-╰────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: m_idx            │
 │ Lookup: table           │
@@ -208,8 +189,8 @@ QUERY PLAN
 │ │ Field: body(string) │ │
 │ │ Value: alpha        │ │
 │ ╰─────────────────────╯ │
-│ Projections: body (l),  │
-│              pk (l),    │
+│ Projections: pk (l),    │
+│              body (l),  │
 │              tag (l),   │
 │              note (i),  │
 │              extra (i), │
@@ -234,10 +215,6 @@ query
 EXPLAIN SELECT pk, dual FROM m_idx WHERE dual @@ ts_phrase('red');
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────╮
-│ Projections: pk, dual   │
-│ ~1 row                  │
-╰────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: m_idx            │
 │ Lookup: table           │
@@ -246,8 +223,8 @@ QUERY PLAN
 │ │ Field: dual(string) │ │
 │ │ Value: red          │ │
 │ ╰─────────────────────╯ │
-│ Projections: dual (i),  │
-│              pk (l)     │
+│ Projections: pk (l),    │
+│              dual (i)   │
 │ ~1 row                  │
 ╰─────────────────────────╯
 
@@ -268,10 +245,6 @@ query
 EXPLAIN SELECT pk, dual FROM m_idx WHERE dual IS NULL;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────╮
-│ Projections: pk, dual  │
-│ ~1 row                 │
-╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: m_idx           │
 │ Lookup: table          │
@@ -280,8 +253,8 @@ QUERY PLAN
 │ │ Field: dual(null) │  │
 │ │ Value:            │  │
 │ ╰───────────────────╯  │
-│ Projections: dual (i), │
-│              pk (l)    │
+│ Projections: pk (l),   │
+│              dual (i)  │
 │ ~1 row                 │
 ╰────────────────────────╯
 

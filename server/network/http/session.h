@@ -24,6 +24,7 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -45,6 +46,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/await.hpp>
@@ -183,6 +185,7 @@ class HttpSession final
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
+        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
       _conn_user = _user;
     }
@@ -310,7 +313,15 @@ class HttpSession final
   yaclib::Task<bool> Negotiate();
   // duck-side: the request loop. Parse -> body -> auth -> route -> handler.
   yaclib::Future<> SessionMain();
-  void ArmReadDeadline();
+
+  enum class ReadPhase : uint8_t {
+    Idle,
+    Request,
+    Handling,
+  };
+
+  void WaitReadDeadline();
+  void OnReadDeadline();
 
   void ReleaseConnection() {
     {
@@ -354,17 +365,11 @@ class HttpSession final
   message::Buffer _dechunk{kReadBlock, kWireChunkMax};
   message::Buffer _decoded{kReadBlock, kWireChunkMax};
 
-  // Read-deadline phase for RecvLoop: idle (between requests, generous
-  // keep-alive timeout), mid-request (strict header/body timeout), or
-  // handling a request that is fully read (the client waits for the
-  // response, and is cut only when a pending response stops moving).
-  enum class ReadPhase : uint8_t {
-    Idle,
-    Request,
-    Handling,
-  };
   std::atomic<ReadPhase> _read_phase{ReadPhase::Idle};
-  std::optional<size_t> _stalled_at;
+  std::chrono::steady_clock::time_point _last_read;
+  std::chrono::steady_clock::time_point _busy_at;
+  size_t _written_seen = 0;
+  pg::LoginPeer _peer;
   // Lazily created on first handler use; lives (and dies) on the session
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
@@ -374,7 +379,6 @@ class HttpSession final
   std::array<PreparedCache, kPreparedSlots> _prepared;
   std::string _user;
   std::string _conn_user;
-  pg::LoginPeer _peer;
 };
 
 template<SocketKind Kind>
@@ -426,12 +430,23 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   auto writer = this->SendWriter();
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
+    asio_ns::error_code peer_ec;
+    const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
+    _peer = {.address = peer_ec ? asio_ns::ip::address{}
+                                : pg::NormalizePeerAddress(peer_ep.address()),
+             .is_ssl = _socket.IsTls()};
     cpu = SessionMain();
     _handed_off = true;
     _task->Start();
 
     for (;;) {
-      ArmReadDeadline();
+      _last_read = std::chrono::steady_clock::now();
+      _deadline.expires_at(
+        _last_read +
+        (_read_phase.load(std::memory_order_acquire) == ReadPhase::Request
+           ? gHttpBodyTimeout
+           : gHttpKeepAliveTimeout));
+      WaitReadDeadline();
       auto [ec, n] =
         co_await _socket.ReadSome(_recv.Reserve(kReadBlock)).NoThrow();
       _deadline.cancel();
@@ -451,32 +466,36 @@ yaclib::Task<> HttpSession<Kind>::Run() {
 }
 
 template<SocketKind Kind>
-void HttpSession<Kind>::ArmReadDeadline() {
-  _deadline.expires_after(_read_phase.load(std::memory_order_acquire) ==
-                              ReadPhase::Request
-                            ? gHttpBodyTimeout
-                            : gHttpKeepAliveTimeout);
-  _deadline.async_wait([self = this->shared_from_this()](
-                         const asio_ns::error_code& ec) {
-    if (ec) {
-      return;
-    }
-    if (self->_read_phase.load(std::memory_order_acquire) ==
-        ReadPhase::Handling) {
-      const auto written = self->_send_written.load(std::memory_order_acquire);
-      if (!self->HasUnsentBytes()) {
-        self->_stalled_at.reset();
-      } else if (self->_stalled_at != written) {
-        self->_stalled_at = written;
-      } else {
-        self->_socket.Close();
-        return;
+void HttpSession<Kind>::WaitReadDeadline() {
+  _deadline.async_wait(
+    [self = this->shared_from_this()](const asio_ns::error_code& ec) {
+      if (!ec) {
+        self->OnReadDeadline();
       }
-      self->ArmReadDeadline();
-      return;
-    }
-    self->_socket.Close();
-  });
+    });
+}
+
+template<SocketKind Kind>
+void HttpSession<Kind>::OnReadDeadline() {
+  const auto now = std::chrono::steady_clock::now();
+  if (_deadline.expiry() > now) {
+    return;
+  }
+  const auto phase = _read_phase.load(std::memory_order_acquire);
+  const auto written = _send_written.load(std::memory_order_acquire);
+  const bool sent = std::exchange(_written_seen, written) != written;
+  if (sent || phase == ReadPhase::Handling || HasUnsentBytes()) {
+    _busy_at = now;
+  }
+  const auto at = phase == ReadPhase::Request
+                    ? _last_read + gHttpBodyTimeout
+                    : std::max(_last_read, _busy_at) + gHttpKeepAliveTimeout;
+  if (at <= now || SendBroken()) {
+    _socket.Close();
+    return;
+  }
+  _deadline.expires_at(at);
+  WaitReadDeadline();
 }
 
 template<SocketKind Kind>
@@ -489,6 +508,7 @@ yaclib::Task<std::optional<H1Event>> HttpSession<Kind>::ReadHead() {
     // *more* than what just arrived and never reparse the buffered request.
     const size_t avail = _recv.ReadableSize();
     if (avail != 0) {
+      _read_phase.store(ReadPhase::Request, std::memory_order_release);
       const auto fed = _codec.ParseHead(_recv.Front());
       _recv.Consume(fed.consumed);
       if (fed.event == H1Event::Error || fed.event == H1Event::Head ||
@@ -499,12 +519,9 @@ yaclib::Task<std::optional<H1Event>> HttpSession<Kind>::ReadHead() {
         continue;
       }
     }
-    _read_phase.store(avail == 0 ? ReadPhase::Idle : ReadPhase::Request,
-                      std::memory_order_release);
     if (!co_await AwaitMoreBytes(avail)) {
       co_return std::nullopt;
     }
-    _read_phase.store(ReadPhase::Request, std::memory_order_release);
   }
 }
 
@@ -601,7 +618,6 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       if (!event) {
         break;
       }
-      _read_phase.store(ReadPhase::Request, std::memory_order_release);
       if (*event == H1Event::Error) {
         http::HttpResponseWriter error_writer{_send, *this,
                                               /*keep_alive=*/false,
@@ -697,12 +713,6 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
         }
 
-        asio_ns::error_code peer_ec;
-        const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
-        _peer = {.address = peer_ec
-                              ? asio_ns::ip::address{}
-                              : pg::NormalizePeerAddress(peer_ep.address()),
-                 .is_ssl = _socket.IsTls()};
         HttpHandler* handler = _router.Match(request);
         http::AuthResult auth;
         if (!handler || !handler->AuthenticatesItself()) {

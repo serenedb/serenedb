@@ -52,6 +52,8 @@ struct VectorState {
 
   VectorQuantization quant = VectorQuantization::None;
   uint32_t d = 0;
+  uint32_t top_k = 0;
+  float rescore_width = 0.f;
   ManagedVector<uint64_t> pay_starts;
   ManagedVector<uint32_t> pay_lanes;
   ManagedVector<uint32_t> cluster_counts;

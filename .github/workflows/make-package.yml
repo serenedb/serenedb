@@ -97,19 +97,19 @@ jobs:
         run: |
           # Hardcoded release configuration
           echo "BUILDMODE=Release" >> $GITHUB_ENV
-          echo "USE_DEBUG_INFO=NONE" >> $GITHUB_ENV
+          echo "SDB_DEBUG_INFO=STACK" >> $GITHUB_ENV
           echo "SDB_DEV=Off" >> $GITHUB_ENV
           echo "SDB_GTEST=Off" >> $GITHUB_ENV
           echo "SDB_FAULT_INJECTION=Off" >> $GITHUB_ENV
-          echo "USE_IPO=On" >> $GITHUB_ENV
-          echo "USE_COVERAGE=" >> $GITHUB_ENV
+          echo "SDB_LTO=On" >> $GITHUB_ENV
+          echo "SDB_COVERAGE=Off" >> $GITHUB_ENV
           echo "SANITIZERS=" >> $GITHUB_ENV
           echo "SDB_ALLOC=JE" >> $GITHUB_ENV
-          echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
+          echo "SDB_VTUNE=Off" >> $GITHUB_ENV
           echo "DEB_TAR_PACKAGES=true" >> $GITHUB_ENV
           echo "STRIP_TARBALL=true" >> $GITHUB_ENV
-          echo "DEBUG_SYMBOLS=false" >> $GITHUB_ENV
-          echo "STATIC_EXECUTABLES=On" >> $GITHUB_ENV
+          echo "DEBUG_SYMBOLS=true" >> $GITHUB_ENV
+          echo "SDB_STATIC=On" >> $GITHUB_ENV
 
           # Version
           PATCH="${{ inputs.SERENEDB_VERSION_PATCH }}"
@@ -151,12 +151,12 @@ jobs:
             --env-file ./docker.env \
             -e SDB_GTEST=Off \
             -e BUILDMODE=Release \
-            -e USE_DEBUG_INFO=NONE \
+            -e SDB_DEBUG_INFO=STACK \
             -e SDB_DEV=Off \
             -e SDB_FAULT_INJECTION=Off \
-            -e USE_IPO=On \
-            -e USE_COVERAGE= \
-            -e ENSURE_VTUNE_SYMBOLS=Off \
+            -e SDB_LTO=On \
+            -e SDB_COVERAGE=Off \
+            -e SDB_VTUNE=Off \
             -e BUILD_DIR=build \
             -e EXTRA_CMAKE_FLAGS="-DCMAKE_INSTALL_PREFIX=/usr${EXTRA_FLAGS:+ $EXTRA_FLAGS}" \
             -v "${WORKSPACE}:/serenedb" \

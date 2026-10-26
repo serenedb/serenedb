@@ -32,6 +32,7 @@
 
 #include <array>
 #include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
+#include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types/blob.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
@@ -1056,11 +1057,6 @@ bool IsIdentContinuation(unsigned char c) {
   return absl::ascii_isdigit(c) || c == '$' || IsIdentStart(c);
 }
 
-bool IsScannerSpace(char c) {
-  return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' ||
-         c == '\f';
-}
-
 [[noreturn]] void ThrowInvalidIdentifier(std::string_view text,
                                          std::string_view detail) {
   if (detail.empty()) {
@@ -1080,13 +1076,11 @@ size_t ParseIdent(std::string_view text, bool strict,
     if (count == parts.size()) {
       parts.emplace_back();
     }
-    auto& part = parts[count++];
-    part.clear();
-    return part;
+    return parts[count++];
   };
   size_t pos = 0;
   const auto skip_spaces = [&] {
-    while (pos < text.size() && IsScannerSpace(text[pos])) {
+    while (pos < text.size() && absl::ascii_isspace(text[pos])) {
       ++pos;
     }
   };
@@ -1096,30 +1090,19 @@ size_t ParseIdent(std::string_view text, bool strict,
     const auto c = pos < text.size() ? text[pos] : '\0';
     if (c == '"') {
       auto& part = next_part();
-      ++pos;
-      while (true) {
-        const auto quote = text.find('"', pos);
-        if (quote == std::string_view::npos) {
-          ThrowInvalidIdentifier(text, "String has unclosed double quotes.");
-        }
-        part.append(text.substr(pos, quote - pos));
-        pos = quote + 1;
-        if (pos == text.size() || text[pos] != '"') {
-          break;
-        }
-        part.push_back('"');
-        ++pos;
+      if (!duckdb::StringUtil::TryParseQuotedString(text, pos, part)) {
+        ThrowInvalidIdentifier(text, "String has unclosed double quotes.");
       }
       if (part.empty()) {
         ThrowInvalidIdentifier(text, "Quoted identifier must not be empty.");
       }
     } else if (IsIdentStart(static_cast<unsigned char>(c))) {
-      auto& part = next_part();
-      for (; pos < text.size() &&
-             IsIdentContinuation(static_cast<unsigned char>(text[pos]));
-           ++pos) {
-        part.push_back(absl::ascii_tolower(text[pos]));
+      const auto start = pos;
+      while (pos < text.size() &&
+             IsIdentContinuation(static_cast<unsigned char>(text[pos]))) {
+        ++pos;
       }
+      next_part() = absl::AsciiStrToLower(text.substr(start, pos - start));
     } else if (c == '.') {
       ThrowInvalidIdentifier(text, "No valid identifier before \".\".");
     } else if (after_dot) {
@@ -1173,20 +1156,19 @@ void ParseIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   }
 }
 
-bool IsHexDigits(std::string_view text, size_t pos, size_t count) {
-  return pos + count <= text.size() &&
-         absl::c_all_of(text.substr(pos, count),
-                        [](char c) { return absl::ascii_isxdigit(c); });
-}
-
-uint32_t HexValue(std::string_view digits) {
-  uint32_t value = 0;
-  for (const auto c : digits) {
-    value =
-      value * 16 +
-      (absl::ascii_isdigit(c) ? c - '0' : absl::ascii_tolower(c) - 'a' + 10);
+std::optional<uint32_t> UnicodeEscape(std::string_view escape,
+                                      std::string_view tag, size_t digits) {
+  if (!escape.starts_with(tag) || escape.size() < tag.size() + digits) {
+    return std::nullopt;
   }
-  return value;
+  const auto* begin = escape.data() + tag.size();
+  uint32_t code = 0;
+  const auto [end, error] =
+    fast_float::from_chars(begin, begin + digits, code, 16);
+  if (error != std::errc{} || end != begin + digits) {
+    return std::nullopt;
+  }
+  return code;
 }
 
 [[noreturn]] void ThrowInvalidSurrogatePair() {
@@ -1228,24 +1210,24 @@ void Unistr(std::string_view text, std::string& out) {
       out.push_back(text[pos++]);
       continue;
     }
-    const auto next = pos + 1 < text.size() ? text[pos + 1] : '\0';
-    if (next == '\\') {
+    const auto escape = text.substr(pos + 1);
+    if (escape.starts_with('\\')) {
       if (pair_first) {
         ThrowInvalidSurrogatePair();
       }
       out.push_back('\\');
       pos += 2;
-    } else if (IsHexDigits(text, pos + 1, 4)) {
-      append(HexValue(text.substr(pos + 1, 4)));
+    } else if (const auto code = UnicodeEscape(escape, "", 4)) {
+      append(*code);
       pos += 5;
-    } else if (next == 'u' && IsHexDigits(text, pos + 2, 4)) {
-      append(HexValue(text.substr(pos + 2, 4)));
+    } else if (const auto code = UnicodeEscape(escape, "u", 4)) {
+      append(*code);
       pos += 6;
-    } else if (next == '+' && IsHexDigits(text, pos + 2, 6)) {
-      append(HexValue(text.substr(pos + 2, 6)));
+    } else if (const auto code = UnicodeEscape(escape, "+", 6)) {
+      append(*code);
       pos += 8;
-    } else if (next == 'U' && IsHexDigits(text, pos + 2, 8)) {
-      append(HexValue(text.substr(pos + 2, 8)));
+    } else if (const auto code = UnicodeEscape(escape, "U", 8)) {
+      append(*code);
       pos += 10;
     } else {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),

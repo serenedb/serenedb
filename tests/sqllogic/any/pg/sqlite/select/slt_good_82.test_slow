@@ -23100,13 +23100,12 @@ SELECT - 98 / + 84 + col2 + col1 * ( cor0.col1 * col1 ) AS col2 FROM tab0 AS cor
 912673
 
 skipif mysql # not compatible
-skipif postgres
 query I rowsort
 SELECT - CAST ( - col1 + col1 AS REAL ) * + col0 AS col0 FROM tab1
 ----
-0
-0
-0
+-0
+-0
+-0
 
 query I rowsort
 SELECT + col2 * col2 + - col2 FROM tab1 cor0

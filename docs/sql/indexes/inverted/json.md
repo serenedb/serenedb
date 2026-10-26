@@ -69,7 +69,7 @@ Cast an array sub-field to a typed array (`::VARCHAR[]`) and it is indexed **ele
 
 ## Assigning a tokenizer per sub-field
 
-Each extraction takes its **own** [dictionary](./text-analysis.md) in the opclass position, so different sub-fields can be analyzed differently in the same index — a stemming dictionary on a description, lower-casing on a title, and a verbatim (no-dictionary) identifier — while numeric and temporal sub-fields get range matching automatically:
+Each extraction takes its **own** [dictionary](./text-analysis.md) in the opclass position, so different sub-fields can be analyzed differently in the same index — a stemming dictionary on a description, lower-casing on a title, and a verbatim (no-dictionary) identifier — while numeric and temporal sub-fields get range matching automatically. Here `'fails'` finds both `failing` and `failed` in the stemmed descriptions, and the `sku` matches only as a whole value:
 
 <SqlLogicTest id="sql/indexes/inverted/json/example_002" />
 
@@ -81,7 +81,7 @@ To keep a `VARIANT` only for *retrieval*, `INCLUDE` the column so it is returned
 
 ## Indexing raw JSON text
 
-When the column must stay `JSON`, index a [JSON extraction expression](../../../data_import_and_export/json/overview.md) such as `doc ->> 'host'` with a dictionary, and repeat the same extraction in the query. This works, but every match re-parses the JSON text and pays the [whitespace/round-trip pitfalls](../../../data_import_and_export/json/caveats.md) that `VARIANT` avoids:
+When the column must stay `JSON`, index a [JSON extraction expression](../../../data_import_and_export/json/overview.md) such as `doc ->> 'host'`, and repeat the same extraction in the query. This works, but every match re-parses the JSON text and pays the [whitespace/round-trip pitfalls](../../../data_import_and_export/json/caveats.md) that `VARIANT` avoids. Without a dictionary, as below, the extracted value is indexed verbatim and matches only as a whole; give the expression a dictionary to search the words in it:
 
 <SqlLogicTest id="sql/indexes/inverted/json/example_004" />
 

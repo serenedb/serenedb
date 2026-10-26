@@ -1166,11 +1166,10 @@ SELECT ALL + 70 col0 FROM tab2
 70
 
 skipif mysql # not compatible
-skipif postgres
 query I rowsort
 SELECT ALL - CAST ( 0 AS REAL ) / + cor0.col0 AS col1 FROM tab0, tab2 AS cor0, tab0 AS cor1
 ----
-27 values hashing to e2568b01dd411b5a206068697d0ed0d2
+27 values hashing to 7d014c2a23a2e6df725b275202c8e838
 
 query I rowsort
 SELECT col0 * col0 - - col0 col0 FROM tab0

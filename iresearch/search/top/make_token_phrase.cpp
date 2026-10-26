@@ -27,7 +27,7 @@
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/token_phrase_of.hpp"
 #include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/lead/two_phase_scored.hpp"
+#include "iresearch/search/lead/two_phase.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -143,55 +143,33 @@ bool FreqBoundedByAnchor(const TokenPhraseQuery& query) {
          !query.ExplicitPos();
 }
 
-Root::ptr MakePruned(const TokenPhraseQuery& query, const Context& ctx,
-                     const irs::detail::ScoreArgs& args) {
+}  // namespace
+
+Root::ptr MakeTokenPhrasePruned(const TokenPhraseQuery& query,
+                                const Context& ctx) {
   const auto* anchor = query.Anchor();
   const auto& field = query.Reader();
-  if (!ctx.prune || !anchor || anchor->docs_count <= doc_limits::kBlockSize ||
-      !irs::detail::BoundsOf(field) || !HasScoreBounds(args.scorer) ||
-      !FreqBoundedByAnchor(query)) {
+  if (!anchor || anchor->docs_count <= doc_limits::kBlockSize ||
+      !irs::detail::BoundsOf(field) || !FreqBoundedByAnchor(query)) {
+    return {};
+  }
+  const auto record = query.Stats(ScoredOf(ctx));
+  if (!record.stats || !HasScoreBounds(record.scorer)) {
     return {};
   }
   auto approx = query.Approx().PlanLead({});
   if (!approx) {
     return {};
   }
+  const irs::detail::ScoreArgs args{.scorer = record.scorer,
+                                    .stats = record.stats,
+                                    .fetcher = &ctx.fetcher,
+                                    .boost = query.Boost()};
   return irs::detail::ResolveInput(*irs::detail::DocOf(field),
                                    [&]<typename Input> -> Root::ptr {
                                      return MakeShape<PrunedTokenPhrase, Input>(
                                        ctx, query, std::move(approx), args);
                                    });
-}
-
-}  // namespace
-
-Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx) {
-  const auto record = query.Stats(ScoredOf(ctx));
-  const irs::detail::ScoreArgs args{.scorer = record.scorer,
-                                    .stats = record.stats,
-                                    .fetcher = &ctx.fetcher,
-                                    .boost = query.Boost()};
-  if (const auto value =
-        irs::detail::ConstantOf(query.Segment(), query.Reader(), args)) {
-    if (ctx.table) {
-      return irs::detail::MakeTokenPhrase<FilteredConstantWalk, Root::ptr>(
-        query, 0, ctx.table, *value);
-    }
-    return irs::detail::MakeTokenPhrase<PlainConstantWalk, Root::ptr>(
-      query, 0, utils::Empty{}, *value);
-  }
-  if (auto pruned = MakePruned(query, ctx, args)) {
-    return pruned;
-  }
-  if (ctx.table) {
-    return irs::detail::MakeTokenPhrase<FilteredWalk, Root::ptr, true,
-                                        lead::TwoPhaseScored>(
-      query, 0, ctx.table, ctx.fetcher, query.Segment(), query.Reader(), args);
-  }
-  return irs::detail::MakeTokenPhrase<PlainWalk, Root::ptr, true,
-                                      lead::TwoPhaseScored>(
-    query, 0, utils::Empty{}, ctx.fetcher, query.Segment(), query.Reader(),
-    args);
 }
 
 }  // namespace irs::top

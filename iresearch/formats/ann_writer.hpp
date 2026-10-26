@@ -20,18 +20,23 @@
 
 #pragma once
 
+#include <memory>
+#include <optional>
 #include <span>
+#include <vector>
 #include <yaclib/coro/task.hpp>
 
 #include "iresearch/formats/ann_build_env.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
+struct BasicTermReader;
+class ColReader;
 class ColumnReader;
 class IdxWriter;
-class ReadContext;
 struct MergeSource;
 
 class AnnWriter {
@@ -53,8 +58,32 @@ class AnnWriter {
 
   virtual void Flush() = 0;
 
+  virtual const BasicTermReader* ClusterReader(ReadContext&, const ColReader&) {
+    return nullptr;
+  }
+
  protected:
   IdxWriter* _idx = nullptr;
 };
+
+inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
+  std::span<const std::unique_ptr<AnnWriter>> writers, ColReader* col_reader,
+  std::optional<ReadContext>& ctx) {
+  std::vector<const BasicTermReader*> out;
+  if (col_reader == nullptr || writers.empty()) {
+    return out;
+  }
+  ctx.emplace(*col_reader);
+  out.reserve(writers.size());
+  for (const auto& w : writers) {
+    if (!w) {
+      continue;
+    }
+    if (const auto* r = w->ClusterReader(ctx.value(), *col_reader)) {
+      out.push_back(r);
+    }
+  }
+  return out;
+}
 
 }  // namespace irs

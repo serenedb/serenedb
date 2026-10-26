@@ -1,29 +1,4 @@
-add_compile_warnings_flags()
-
-################################################################################
-## serened executable
-################################################################################
-
-add_executable(serened rest_server/serened.cpp)
-target_compile_definitions(
-    serened
-    PRIVATE
-        SDB_REMAP_EXECUTABLE_DEFAULT=$<IF:$<CONFIG:Release,MinSizeRel>,true,false>
-)
-
-target_link_libraries(serened serene_docs_shell)
-sdb_link_duckdb_extensions(serened)
-
-################################################################################
-## installation
-################################################################################
-
-install(TARGETS serened RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
-install_config(serened "${CMAKE_SOURCE_DIR}/etc/serenedb")
-
-################################################################################
-## libraries
-################################################################################
+add_subdirectory(utils)
 
 add_library(sereneserver STATIC)
 
@@ -31,7 +6,7 @@ target_link_libraries(
     sereneserver
     PUBLIC
         boost_boost
-        iresearch-static
+        iresearch
         s2 # needed for some includes in geo analyzers
         serene
         llhttp
@@ -45,14 +20,7 @@ target_link_libraries(
         snappy
 )
 
-target_include_directories(
-    sereneserver
-    PUBLIC
-        ${CMAKE_SOURCE_DIR}/server
-        # ICU extension helpers for session-zone TIMESTAMPTZ text I/O.
-        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/include
-        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/datetime/include
-)
+target_include_directories(sereneserver PUBLIC ${CMAKE_SOURCE_DIR}/server)
 
 add_subdirectory(auth)
 add_subdirectory(catalog)
@@ -68,12 +36,30 @@ add_subdirectory(scheduler)
 add_subdirectory(storage_engine)
 add_subdirectory(search)
 
+add_executable(serened rest_server/serened.cpp)
+target_compile_definitions(
+    serened
+    PRIVATE
+        SDB_REMAP_EXECUTABLE=$<IF:$<BOOL:${SDB_REMAP_EXECUTABLE}>,true,false>
+)
+target_link_libraries(serened PRIVATE serene_docs_shell)
+sdb_link_duckdb_extensions(serened)
 if(SDB_EMBEDDED_DOCS)
     target_link_libraries(
         serened
-        serene_docs_builder
-        serene_docs_bootstrap
-        serene_docs_index
+        PRIVATE serene_docs_builder serene_docs_bootstrap serene_docs_index
     )
     sdb_build_docs_index(serened)
 endif()
+
+install(TARGETS serened RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
+configure_file(
+    ${CMAKE_SOURCE_DIR}/etc/serenedb/serened.conf.in
+    ${CMAKE_BINARY_DIR}/etc/serenedb/serened.conf
+    NEWLINE_STYLE UNIX
+    @ONLY
+)
+install(
+    FILES ${CMAKE_BINARY_DIR}/etc/serenedb/serened.conf
+    DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/serenedb
+)

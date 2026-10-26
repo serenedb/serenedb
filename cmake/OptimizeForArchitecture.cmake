@@ -1,13 +1,12 @@
-# CMAKE_TARGET_ARCHITECTURES -- for backward compatibility
 # https://learn.microsoft.com/en-us/windows/win32/winprog64/wow64-implementation-details
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(amd64.*|AMD64.*|x86_64.*)")
     set(ARCH_AMD64 1)
-    set(CMAKE_TARGET_ARCHITECTURES "x86_64")
+    set(SDB_ARCH_DEFAULT haswell)
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64.*|ARM64.*|aarch64.*|AARCH64.*)")
     # armv8.*|ARMV8.* is 32 bit builded aarch64, we don't need to support it now
     # also even if we want to support it, it's more like armv7 with extensions not aarch64
     set(ARCH_AARCH64 1)
-    set(CMAKE_TARGET_ARCHITECTURES "aarch64")
+    set(SDB_ARCH_DEFAULT graviton1)
     # elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "^(powerpc64le.*|ppc64le.*|PPC64LE.*)")
     # elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "^(s390x.*|S390X.*)")
     # elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "riscv64")
@@ -58,90 +57,38 @@ set(AMD64_V4
     -mavx512vbmi2
 )
 
-macro(sandybridge)
-    message("Optimize for sandybridge")
-    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
-    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V2})
-endmacro()
-
-macro(haswell)
-    message("Optimize for haswell")
-    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
-    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V2})
-    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V3})
-endmacro()
-
-macro(icelake)
-    message("Optimize for icelake")
-    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
-    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V2})
-    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V3})
-    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V4})
-endmacro()
+set(SDB_ARCH_FLAGS_sandybridge ${AMD64_V1} ${AMD64_V2})
+set(SDB_ARCH_FLAGS_haswell ${SDB_ARCH_FLAGS_sandybridge} ${AMD64_V3})
+set(SDB_ARCH_FLAGS_icelake ${SDB_ARCH_FLAGS_haswell} ${AMD64_V4})
 
 # Simplified for servers we need to support only AWS Graviton, Ampere Altra, Apple M1
 # https://github.com/aws/aws-graviton-getting-started
 # https://gcc.gnu.org/onlinedocs/gcc/AArch64-Options.html#AArch64-Options
-macro(graviton1)
-    message("Optimize for graviton1")
-    set(AARCH64_MARCH "armv8-a+crc+crypto")
-    # little-endian enabled by default, but only if target is not something like aarch64_be
-    # so force to generate little-endian code, because it's simpler and less error-prone
-    # "fp simd" are included to armv8-a
-    list(
-        APPEND ARCHITECTURE_OPTIMIZATIONS
-        -mlittle-endian
-        -march=${AARCH64_MARCH}
-    )
-endmacro()
-
-macro(graviton2)
-    message("Optimize for graviton2")
-    set(AARCH64_MARCH "armv8.2-a+fp16+rcpc+dotprod+crypto")
-    list(
-        APPEND ARCHITECTURE_OPTIMIZATIONS
-        -mlittle-endian
-        -march=${AARCH64_MARCH}
-    )
-endmacro()
-
-macro(graviton3)
-    message("Optimize for graviton3")
-    set(AARCH64_MARCH "armv8.4-a+sve+rng+bf16+int8+crypto")
-    list(
-        APPEND ARCHITECTURE_OPTIMIZATIONS
-        -mlittle-endian
-        -march=${AARCH64_MARCH}
-    )
-endmacro()
-
-if(NOT TARGET_ARCHITECTURE OR TARGET_ARCHITECTURE STREQUAL "auto")
-    # It's our default mode. empty and auto
-    # TODO(mbkkt) iresearch now probably doesn't work without any host specific options, should be fixed?
-    if(ARCH_AMD64)
-        haswell()
-    elseif(ARCH_AARCH64)
-        graviton1()
-    endif()
-elseif(TARGET_ARCHITECTURE STREQUAL "icelake")
-    if(ARCH_AMD64)
-        icelake()
-    elseif(ARCH_AARCH64)
-        graviton3()
-    endif()
-elseif(TARGET_ARCHITECTURE STREQUAL "native")
-    # Mostly for fun :)
-    message("Optimize for native")
-    list(APPEND ARCHITECTURE_OPTIMIZATIONS -march=native)
-else()
-    message(WARNING "${TARGET_ARCHITECTURE} is not supported")
-endif()
-
-list(APPEND ARCHITECTURE_OPTIMIZATIONS -falign-functions=64 -falign-loops=64)
-
-string(
-    REPLACE ";"
-    " "
-    ARCHITECTURE_OPTIMIZATIONS
-    "${ARCHITECTURE_OPTIMIZATIONS}"
+# little-endian enabled by default, but only if target is not something like aarch64_be
+# so force to generate little-endian code, because it's simpler and less error-prone
+# "fp simd" are included to armv8-a
+set(SDB_ARCH_FLAGS_graviton1 -mlittle-endian -march=armv8-a+crc+crypto)
+set(SDB_ARCH_FLAGS_graviton2
+    -mlittle-endian
+    -march=armv8.2-a+fp16+rcpc+dotprod+crypto
 )
+set(SDB_ARCH_FLAGS_graviton3
+    -mlittle-endian
+    -march=armv8.4-a+sve+rng+bf16+int8+crypto
+)
+
+set(SDB_ARCH_FLAGS_native -march=native)
+
+if(SDB_ARCH STREQUAL "")
+    set(SDB_ARCH_SELECTED "${SDB_ARCH_DEFAULT}")
+else()
+    set(SDB_ARCH_SELECTED "${SDB_ARCH}")
+endif()
+if(
+    NOT SDB_ARCH_SELECTED STREQUAL ""
+    AND NOT DEFINED SDB_ARCH_FLAGS_${SDB_ARCH_SELECTED}
+)
+    message(FATAL_ERROR "SDB_ARCH=${SDB_ARCH} is not supported")
+endif()
+message(STATUS "Optimize for ${SDB_ARCH_SELECTED}")
+string(JOIN " " SDB_ARCH_FLAGS ${SDB_ARCH_FLAGS_${SDB_ARCH_SELECTED}})

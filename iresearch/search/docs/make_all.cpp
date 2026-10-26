@@ -20,17 +20,15 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/docs/all.hpp"
+#include "iresearch/search/docs/family.hpp"
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 
 namespace irs::docs {
 
-Root::ptr MakeAll(doc_id_t docs_count, const Context&) {
-  return memory::make_managed<All>(docs_count);
-}
-
-Root::ptr Make(const AllQuery& query, const Context& ctx) {
-  return MakeAll(static_cast<doc_id_t>(query.Segment().docs_count()), ctx);
+Root::ptr Family::MakeAll(const SubReader& segment, const Context&,
+                          ScoreMergeType, score_t) {
+  return memory::make_managed<All>(static_cast<doc_id_t>(segment.docs_count()));
 }
 
 }  // namespace irs::docs

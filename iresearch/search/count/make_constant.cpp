@@ -20,6 +20,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/count/constant.hpp"
+#include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
 #include "iresearch/search/detail/posting_batch.hpp"
@@ -247,29 +248,23 @@ Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs) {
   return memory::make_managed<Sum>(std::move(lhs), std::move(rhs));
 }
 
-Root::ptr MakeTerm(const detail::PostingClause& posting, const SubReader&,
-                   const Context& ctx) {
+Root::ptr Family::MakePosting(const detail::PostingClause& posting,
+                              const SubReader&, const Context& ctx,
+                              ScoreMergeType) {
   if (ctx.table == nullptr) {
     return memory::make_managed<TermCount>(posting, ctx);
   }
   return MakeTermWalk(posting, ctx);
 }
 
-Root::ptr MakeAll(const SubReader& segment, const Context& ctx) {
+Root::ptr Family::MakeAll(const SubReader& segment, const Context& ctx,
+                          ScoreMergeType, score_t) {
   if (ctx.table == nullptr &&
       segment.live_docs_count() == segment.docs_count()) {
     return memory::make_managed<AllCount>(
       static_cast<doc_id_t>(segment.docs_count()));
   }
   return MakeShape<Walk, lead::AllDocs>(ctx, segment);
-}
-
-Root::ptr Make(const TermQuery& query, const Context& ctx) {
-  return MakeTerm(detail::PostingClause{query.State()}, query.Segment(), ctx);
-}
-
-Root::ptr Make(const AllQuery& query, const Context& ctx) {
-  return MakeAll(query.Segment(), ctx);
 }
 
 }  // namespace irs::count

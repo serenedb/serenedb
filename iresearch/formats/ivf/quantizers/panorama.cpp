@@ -28,6 +28,7 @@
 
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/formats/ivf/quantizers/common.hpp"
+#include "iresearch/index/vector_distance.hpp"
 #include "iresearch/utils/misc.hpp"
 
 namespace irs::quantizers {
@@ -84,7 +85,9 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     return {
       .group_size =
         _pano ? static_cast<uint32_t>(_pano->batch_size) : uint32_t{1},
-      .record_size = PanoramaRecordSize(_d, _pano ? PanoramaLevels(_d) : 0)};
+      .record_size = PanoramaRecordSize(_d, _pano ? PanoramaLevels(_d) : 0),
+      .alignment = alignof(float),
+    };
   }
 
   void Encode(IndexOutput& out, const float* vecs, size_t n) final {
@@ -264,10 +267,25 @@ class PanoramaQuantizerReader final : public QuantizerReader {
   }
 
   PayloadBlockSetting BlockSetting() const noexcept final {
-    return {.group_size = _group_size, .record_size = _record_size};
+    return {
+      .group_size = _group_size,
+      .record_size = _record_size,
+      .alignment = alignof(float),
+    };
   }
 
   void StartCluster(const float* /*centroid*/) final {}
+
+  void ScoreErrors(const byte_type* /*base*/, uint32_t /*record_size*/,
+                   std::span<const uint32_t> ids, std::span<score_t> /*scores*/,
+                   score_t* errors) final {
+    std::fill_n(errors, ids.size(), score_t{0});
+  }
+
+  void BlockErrors(std::span<const byte_type> /*block*/,
+                   std::span<score_t> scores, score_t* errors) final {
+    std::fill_n(errors, scores.size(), score_t{0});
+  }
 
   void ComputeBlock(std::span<const byte_type> block, score_t threshold,
                     score_t* out) final {

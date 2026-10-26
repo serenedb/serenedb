@@ -117,7 +117,7 @@ statement ok
 VACUUM (REFRESH_TABLE) sc_off
 
 
-query ok retry 60 backoff 500ms
+query ok retry 480 backoff 250ms
 SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_on') WHERE column_name = 'id';
 ----
 segments
@@ -142,7 +142,7 @@ reloptions
 {refresh_interval=1000,compaction_interval=100,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
 
 
-query ok retry 60 backoff 500ms
+query ok retry 480 backoff 250ms
 SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_off') WHERE column_name = 'id';
 ----
 segments

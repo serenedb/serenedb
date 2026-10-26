@@ -1,0 +1,94 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY dic_norms AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+statement ok
+CREATE TABLE notes (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX notes_body_idx ON notes USING inverted (body dic_norms);
+
+statement ok
+INSERT INTO notes VALUES (1, 'the quick brown fox'), (2, 'lazy dog jumps');
+
+statement ok
+VACUUM (REFRESH_TABLE) notes;
+
+statement ok
+INSERT INTO notes VALUES (3, 'fox runs fast'), (4, 'a dog sleeps');
+
+statement ok
+VACUUM (REFRESH_TABLE) notes;
+
+statement ok
+DROP INDEX notes_body_idx;
+
+statement ok
+VACUUM (COMPACT_TABLE) notes;
+
+query
+SELECT id, body FROM notes ORDER BY id;
+----
+id	body
+1	the quick brown fox
+2	lazy dog jumps
+3	fox runs fast
+4	a dog sleeps
+
+statement ok
+CREATE INDEX notes_body_idx ON notes USING inverted (body dic_norms);
+
+query
+SELECT id FROM notes_body_idx WHERE body @@ 'fox' ORDER BY id;
+----
+id
+1
+3
+
+statement ok
+INSERT INTO notes VALUES (5, 'the fox again');
+
+statement ok
+VACUUM (REFRESH_TABLE) notes;
+
+statement ok
+VACUUM (COMPACT_TABLE) notes;
+
+query
+SELECT id FROM notes_body_idx WHERE body @@ 'fox' ORDER BY id;
+----
+id
+1
+3
+5
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dic_plain AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+DROP INDEX notes_body_idx;
+
+statement ok
+CREATE INDEX notes_body_idx ON notes USING inverted (body dic_plain);
+
+statement ok
+INSERT INTO notes VALUES (6, 'one more fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) notes;
+
+statement ok
+VACUUM (COMPACT_TABLE) notes;
+
+query
+SELECT id FROM notes_body_idx WHERE body @@ 'fox' ORDER BY id;
+----
+id
+1
+3
+5
+6

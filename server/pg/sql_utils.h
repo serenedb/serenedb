@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
@@ -31,6 +32,7 @@
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <duckdb/parser/qualified_name.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <string>
 #include <string_view>
@@ -85,6 +87,35 @@ KeyIndex FindKeyIndex(duckdb::ClientContext& context, duckdb::Catalog& database,
 KeyIndex FindKeyIndex(duckdb::ClientContext& context,
                       duckdb::SchemaCatalogEntry& schema,
                       std::string_view name);
+
+struct Relation {
+  duckdb::CatalogEntry* entry = nullptr;
+  KeyIndex key;
+
+  explicit operator bool() const noexcept { return entry || key.table; }
+};
+
+struct IndexColumn {
+  std::string name;
+  const duckdb::ParsedExpression* expression = nullptr;
+  duckdb::idx_t position = 0;
+  int16_t attnum = 0;
+};
+
+struct IndexColumns {
+  std::vector<IndexColumn> columns;
+  size_t keys = 0;
+};
+
+IndexColumns ColumnsOfIndex(const duckdb::IndexCatalogEntry& index,
+                            const duckdb::TableCatalogEntry* table);
+
+IndexColumns ColumnsOfIndex(const KeyIndex& key);
+
+Relation RelationByName(duckdb::ClientContext& context,
+                        const duckdb::QualifiedName& name);
+
+Relation RelationByOid(duckdb::ClientContext& context, duckdb::idx_t oid);
 
 std::string MacroBody(const duckdb::MacroFunction& macro);
 

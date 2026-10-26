@@ -27,12 +27,15 @@
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/boolean_rules.hpp"
 #include "iresearch/search/filters/deferral.hpp"
-#include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/filters/levenshtein_prefix_rules.hpp"
 #include "iresearch/search/filters/lowering_rules.hpp"
 #include "iresearch/search/filters/range_rules.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/utils/down_cast.hpp"
+
+#ifndef IRESEARCH_NO_GEO
+#include "iresearch/search/filters/geo_filter.hpp"
+#endif
 
 namespace irs {
 namespace {
@@ -88,6 +91,7 @@ void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
   });
 }
 
+#ifndef IRESEARCH_NO_GEO
 template<typename GeoType>
 void PlanOnce(Filter& filter) {
   auto& options = *utils::downCast<GeoType>(filter).mutable_options();
@@ -104,6 +108,7 @@ void PlanGeoFilters(Filter::ptr& root) {
     }
   });
 }
+#endif
 
 }  // namespace
 
@@ -183,7 +188,9 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
   optimizer::ApplyDeferral(root, ctx);
   optimizer::LowerAutomatons(root, ctx);
   optimizer::FuseConjunctions(root, ctx);
+#ifndef IRESEARCH_NO_GEO
   PlanGeoFilters(root);
+#endif
 #ifdef SDB_DEV
   AssertNoTermChild(root);
   AssertDeferredAlive(root, ctx);

@@ -1,0 +1,23 @@
+statement error
+SELECT 'NaN'::NUMERIC(10, 2);
+----
+db error: ERROR: Could not convert string "NaN" to DECIMAL(10,2)
+
+
+statement error
+SELECT ' nan '::NUMERIC;
+----
+db error: ERROR: Could not convert string " nan " to DECIMAL(18,3)
+
+
+statement error
+SELECT 'NaN'::FLOAT8::NUMERIC(10, 2);
+----
+db error: ERROR: Could not cast value nan to DECIMAL(10,2)
+
+
+query
+SELECT TRY_CAST('NaN' AS NUMERIC(10, 2)) AS n;
+----
+n
+NULL

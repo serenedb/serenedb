@@ -24,13 +24,21 @@ Delete all rows in the table `tbl`:
 
 ### `USING` Clause
 
-The `USING` clause allows deleting based on the content of other tables or subqueries.
+The `USING` clause allows deleting based on the content of other tables or subqueries. A row that several rows of the `USING` clause match is deleted, counted and returned by `RETURNING` once.
 
 ### `RETURNING` Clause
 
 The `RETURNING` clause allows returning the deleted values. It uses the same syntax as the `SELECT` clause except the `DISTINCT` modifier is not supported.
 
 <SqlLogicTest id="sql/statements/delete/index/example_003" />
+
+### Retention
+
+A [job](../create_job/index.md) that deletes rows older than a cutoff keeps a table to a retention period:
+
+<SqlLogicTest id="sql/statements/delete/index/example_007" />
+
+On a search table, the log space of a delete grows with the number of stretches of consecutive rows it removes, not with the number of rows: the oldest rows of a table filled in time order are one stretch, however many rows go. Rows deleted one by one from among rows that stay are a stretch each. Finding the rows to delete still reads each of them.
 
 ## Syntax
 

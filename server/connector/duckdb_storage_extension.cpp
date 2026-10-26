@@ -198,6 +198,7 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
 
   void OnCheckpointEnd(duckdb::AttachedDatabase& db,
                        duckdb::CheckpointOptions) final {
+    SDB_PARK_ONCE_ON_FAILURE("pause_checkpoint_before_index_finish");
     std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves;
     {
       duckdb::lock_guard<duckdb::mutex> lock{_saves_mutex};

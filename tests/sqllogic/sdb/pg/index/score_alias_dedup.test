@@ -10,6 +10,9 @@ hash-threshold 100
 # score top-k (the scan would return top-k by score and starve the real sort).
 
 statement ok
+SET disabled_optimizers = 'late_materialization';
+
+statement ok
 CREATE TABLE vedernikoff (kostya INTEGER PRIMARY KEY, abramov VARCHAR);
 
 

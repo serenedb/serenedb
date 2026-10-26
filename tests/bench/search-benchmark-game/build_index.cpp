@@ -32,7 +32,7 @@
 #include "index_builder.h"
 #include "insert_field.hpp"
 
-static int Main(int argc, const char* argv[]) {
+int main(int argc, const char* argv[]) {
   size_t threads = 1;
   if (argc > 1 && (!absl::SimpleAtoi(argv[1], &threads) || threads == 0)) {
     absl::FPrintF(stderr, "usage: %s [indexer threads] < corpus\n", argv[0]);
@@ -69,14 +69,14 @@ static int Main(int argc, const char* argv[]) {
 
     SCOPED_TIMER("Total indexing time");
 
-    struct IndexAllFields : bench::IBatchHandler {
+    struct IndexText : bench::IBatchHandler {
       bench::Document doc;
       void operator()(const bench::Batch& batch,
                       irs::IndexWriter::Transaction& ctx) override {
         for (const auto& item : batch.Docs()) {
           doc.Fill(item);
           auto trx = ctx.Insert();
-          tests::InsertFields(trx, doc.fields.begin(), doc.fields.end());
+          tests::InsertField(trx, doc.fields[1]);
         }
       }
     };
@@ -95,7 +95,7 @@ static int Main(int argc, const char* argv[]) {
     bench::IndexBuilder builder{"idx", builder_options, config};
     bench::LineSource input{STDIN_FILENO};
     builder.IndexFrom(input, [] -> std::unique_ptr<bench::IBatchHandler> {
-      return std::make_unique<IndexAllFields>();
+      return std::make_unique<IndexText>();
     });
 
     absl::PrintF("Number of documents: %d\n", builder.GetReader().docs_count());
@@ -107,6 +107,3 @@ static int Main(int argc, const char* argv[]) {
   irs::DuckDBEngine::Instance().Shutdown();
   return exit_code;
 }
-
-[[maybe_unused]] static const bool kMain =
-  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

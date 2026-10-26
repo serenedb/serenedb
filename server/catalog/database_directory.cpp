@@ -20,6 +20,7 @@
 
 #include "catalog/database_directory.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -27,11 +28,13 @@
 #include <cerrno>
 #include <cstring>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include "scheduler/background_scheduler.h"
 #include "server/utils/lifecycle.h"
@@ -52,11 +55,7 @@ void CreateDirectory(const std::filesystem::path& path) {
 
 void RemoveTree(const std::filesystem::path& path) {
   duckdb::TaskScheduler::BlockingScope blocking;
-  std::error_code ec;
-  std::filesystem::remove_all(path, ec);
-  if (ec) {
-    SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
-  }
+  RemoveDirectory(path);
 }
 
 template<typename Removal>
@@ -81,6 +80,27 @@ void SyncDirectory(const std::filesystem::path& directory) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                     ERR_MSG("could not fsync directory \"", directory.string(),
                             "\": ", std::strerror(error)));
+  }
+}
+
+void RemoveDirectory(const std::filesystem::path& path) {
+  std::error_code ec;
+  SDB_IF_FAILURE("pause_removal_midway") {
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry :
+         std::filesystem::recursive_directory_iterator{path, ec}) {
+      if (entry.is_regular_file()) {
+        files.push_back(entry.path());
+      }
+    }
+    if (!files.empty()) {
+      std::filesystem::remove(*absl::c_min_element(files));
+    }
+    SDB_PARK_ONCE_ON_FAILURE("pause_removal_midway");
+  }
+  std::filesystem::remove_all(path, ec);
+  if (ec) {
+    SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
   }
 }
 

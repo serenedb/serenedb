@@ -73,10 +73,6 @@ query
 EXPLAIN SELECT pk, notes FROM src_inc_only_idx WHERE notes @@ ts_phrase('one');
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────╮
-│ Projections: pk, notes   │
-│ ~1 row                   │
-╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: src_inc_only_idx  │
 │ Lookup: table            │
@@ -85,8 +81,8 @@ QUERY PLAN
 │ │ Field: notes(string) │ │
 │ │ Value: one           │ │
 │ ╰──────────────────────╯ │
-│ Projections: notes (l),  │
-│              pk (i)      │
+│ Projections: pk (i),     │
+│              notes (l)   │
 │ ~1 row                   │
 ╰──────────────────────────╯
 

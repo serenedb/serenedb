@@ -134,7 +134,8 @@ class FamilyIndex {
     return ScoresBy(sort::FrequencyScore{}, filter);
   }
 
-  Families Run(const irs::Filter& filter) const {
+  Families Run(const irs::Filter& filter,
+               const irs::Scorer& scorer = irs::BM25{}) const {
     Families out;
     {
       PreparedFilter prepared{filter, *_reader};
@@ -174,7 +175,6 @@ class FamilyIndex {
       }
     }
 
-    irs::BM25 scorer;
     MaxMemoryCounter counter;
     PreparedFilter prepared{filter, *_reader, &scorer, counter};
     for (size_t i = 0; i != prepared.size(); ++i) {

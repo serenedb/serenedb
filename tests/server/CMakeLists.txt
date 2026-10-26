@@ -38,6 +38,7 @@ add_executable(
     pointer_union_test.cpp
     query_prepared_cache_test.cpp
     scorer_bounds_test.cpp
+    search_table_changes_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
     storage_version_test.cpp
@@ -60,17 +61,12 @@ add_executable(
 
 target_link_libraries(
     serenedb-tests
-    PUBLIC sereneserver gtest serene_docs_corpus
+    PRIVATE sereneserver gtest serene_docs_corpus
 )
-sdb_link_duckdb_extensions(serenedb-tests PUBLIC)
+sdb_link_duckdb_extensions(serenedb-tests)
 
 if(SDB_EMBEDDED_DOCS)
-    target_link_libraries(serenedb-tests PUBLIC serene_docs_index)
+    target_link_libraries(serenedb-tests PRIVATE serene_docs_index)
     add_dependencies(serenedb-tests serened)
     sdb_embed_docs_index(serenedb-tests)
 endif()
-
-target_compile_definitions(
-    serenedb-tests
-    PRIVATE "SDB_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/resources\""
-)

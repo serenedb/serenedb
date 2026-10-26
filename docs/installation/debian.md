@@ -18,7 +18,7 @@ Download the latest `.deb` for your architecture from [GitHub Releases](https://
 sudo apt install ./serenedb_*.deb
 ```
 
-Using `apt install` (rather than `dpkg -i`) pulls in the required `postgresql-client` and `tzdata` packages automatically.
+Using `apt install` (rather than `dpkg -i`) pulls in the required `postgresql-client` package automatically.
 
 ## Start the service
 

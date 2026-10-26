@@ -6,39 +6,9 @@
 # LICENSE file in the root directory of this source tree.
 #
 
-cmake_minimum_required(VERSION 3.10.0)
-project(fasttext)
-
-# The version number.
-set (fasttext_VERSION_MAJOR 0)
-set (fasttext_VERSION_MINOR 1)
-
-include_directories(src)
-
-if (NOT MSVC)
-  find_package(Threads REQUIRED)
-  link_libraries(Threads::Threads)
-
-  add_compile_options(-funroll-loops)
-endif()
-
-set(HEADER_FILES
-    src/args.h
-    src/autotune.h
-    src/densematrix.h
-    src/dictionary.h
-    src/fasttext.h
-    src/loss.h
-    src/matrix.h
-    src/meter.h
-    src/model.h
-    src/productquantizer.h
-    src/quantmatrix.h
-    src/real.h
-    src/utils.h
-    src/vector.h)
-
-set(SOURCE_FILES
+add_library(
+    fasttext-static
+    STATIC
     src/args.cc
     src/autotune.cc
     src/densematrix.cc
@@ -51,15 +21,10 @@ set(SOURCE_FILES
     src/productquantizer.cc
     src/quantmatrix.cc
     src/utils.cc
-    src/vector.cc)
-
-
-if (NOT MSVC)
-  include(GNUInstallDirs)
-  configure_file("fasttext.pc.in" "fasttext.pc" @ONLY)
-  install(FILES "${CMAKE_BINARY_DIR}/fasttext.pc" DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
-endif()
-
-add_library(fasttext-static STATIC ${SOURCE_FILES} ${HEADER_FILES})
-set_target_properties(fasttext-static PROPERTIES OUTPUT_NAME fasttext)
-set_target_properties(fasttext-static PROPERTIES INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    src/vector.cc
+)
+target_include_directories(
+    fasttext-static
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_options(fasttext-static PRIVATE -funroll-loops)

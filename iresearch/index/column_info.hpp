@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include <core_functions/array_kernels.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <functional>
@@ -42,26 +41,6 @@ enum class VectorMetric : uint8_t {
   Cosine,
   L1,
 };
-
-template<VectorMetric Metric>
-float ComputeDistance(const float* l, const float* r, uint16_t d) {
-  if constexpr (Metric == VectorMetric::L2Sqr) {
-    return -duckdb::DistanceSquaredOp::Operation(l, r, d);
-  } else if constexpr (Metric == VectorMetric::L1) {
-    return -duckdb::L1DistanceOp::Operation(l, r, d);
-  } else if constexpr (Metric == VectorMetric::InnerProduct) {
-    return duckdb::InnerProductOp::Operation(l, r, d);
-  } else if constexpr (Metric == VectorMetric::Cosine) {
-    return duckdb::CosineSimilarityOp::Operation(l, r, d);
-  }
-  SDB_UNREACHABLE();
-}
-
-template<VectorMetric Metric>
-float ComputeDistance(const byte_type* l, const byte_type* r, uint16_t d) {
-  return ComputeDistance<Metric>(reinterpret_cast<const float*>(l),
-                                 reinterpret_cast<const float*>(r), d);
-}
 
 enum class VectorQuantization : uint8_t {
   None = 0,
@@ -211,6 +190,7 @@ class IndexFieldOptions {
   virtual ~IndexFieldOptions() = default;
   virtual ColumnOptions GetColumnOptions(field_id id) const = 0;
   virtual field_id GetNormColumnId(field_id id) const = 0;
+  virtual bool HasField(field_id) const { return true; }
 
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --

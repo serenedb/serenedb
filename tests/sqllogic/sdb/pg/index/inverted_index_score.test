@@ -6,7 +6,7 @@ hash-threshold 100
 # scores are computed from.
 
 statement ok
-SET disabled_optimizers = 'compressed_materialization';
+SET disabled_optimizers = 'compressed_materialization,late_materialization';
 
 
 statement ok

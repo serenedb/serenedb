@@ -111,20 +111,15 @@ std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
 void RemoveUnowned(const std::filesystem::path& directory,
                    const absl::flat_hash_set<duckdb::idx_t>& owned) {
   for (const auto& [oid, path] : OidDirectories(directory)) {
-    if (owned.contains(oid)) {
-      continue;
-    }
-    std::error_code ec;
-    std::filesystem::remove_all(path, ec);
-    if (ec) {
-      SDB_WARN(STARTUP, "could not remove '", path.string(),
-               "': ", ec.message());
+    if (!owned.contains(oid)) {
+      RemoveDirectory(path);
     }
   }
 }
 
 template<typename Storage>
-void RequirePresent(const Storage& storage, const duckdb::CatalogEntry& entry) {
+void OpenLive(Storage& storage, const duckdb::CatalogEntry& entry) {
+  storage.Open();
   if (storage.Absent()) {
     SDB_FATAL(STARTUP, "the directory '", storage.Path().string(), "' of ",
               entry.name.GetIdentifierName(), " (oid ", entry.oid,
@@ -132,7 +127,7 @@ void RequirePresent(const Storage& storage, const duckdb::CatalogEntry& entry) {
   }
 }
 
-absl::flat_hash_set<duckdb::idx_t> StorageOids(SereneDBCatalog& catalog) {
+absl::flat_hash_set<duckdb::idx_t> OpenStorages(SereneDBCatalog& catalog) {
   std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
   catalog.ScanSchemas(
     [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
@@ -141,7 +136,7 @@ absl::flat_hash_set<duckdb::idx_t> StorageOids(SereneDBCatalog& catalog) {
     schema.get().Scan(
       duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
         if (const auto* table = dynamic_cast<SearchTableEntry*>(&entry)) {
-          RequirePresent(*table->Storage(), entry);
+          OpenLive(*table->Storage(), entry);
           oids.insert(entry.oid);
         }
       });
@@ -149,7 +144,7 @@ absl::flat_hash_set<duckdb::idx_t> StorageOids(SereneDBCatalog& catalog) {
       duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
         const auto* index = dynamic_cast<InvertedIndexEntry*>(&entry);
         if (index && index->Storage()) {
-          RequirePresent(*index->Storage(), entry);
+          OpenLive(*index->Storage(), entry);
           oids.insert(entry.oid);
         }
       });
@@ -166,14 +161,16 @@ void RemoveUnownedDatabases(const DataDirectory& layout,
   RemoveUnowned(layout.EngineDir(), databases);
 }
 
-void RemoveUnownedStorages(const DataDirectory& layout,
-                           duckdb::DatabaseManager& manager) {
+void OpenStorages(const DataDirectory& layout,
+                  duckdb::DatabaseManager& manager) {
   for (const auto& db : manager.GetDatabases()) {
     auto& catalog = db->GetCatalog();
-    if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType &&
-        !catalog.InMemory()) {
-      RemoveUnowned(layout.DatabaseDir(db->oid),
-                    StorageOids(catalog.Cast<SereneDBCatalog>()));
+    if (catalog.GetCatalogType() != SereneDBCatalog::kStorageType) {
+      continue;
+    }
+    const auto live = OpenStorages(catalog.Cast<SereneDBCatalog>());
+    if (!catalog.InMemory()) {
+      RemoveUnowned(layout.DatabaseDir(db->oid), live);
     }
   }
 }
@@ -398,7 +395,7 @@ void InitCatalog(std::string_view directory) {
       cluster.DropDatabase(cluster.GetCatalogTransaction(context), drop);
     });
   }
-  RemoveUnownedStorages(layout, manager);
+  OpenStorages(layout, manager);
   for (const auto& db : manager.GetDatabases()) {
     if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType) {
       db->GetStorageManager().FinishLoad(context);

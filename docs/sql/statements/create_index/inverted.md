@@ -84,6 +84,12 @@ Switch a column from verbatim matching to a lowercasing dictionary:
 
 <SqlLogicTest id="sql/statements/create_index/inverted/example_001" />
 
+## Concurrent changes
+
+The indexes of a search table share its storage. A transaction that creates, replaces or drops an index of a search table, or alters or drops the table, holds the table until it commits or rolls back. Meanwhile any such change from another transaction fails with `search table "<name>" is being changed by another transaction`; retry it once the first transaction ends. Reads and writes of the table are not affected, and one transaction can make any number of these changes.
+
+An inverted index on a regular table or a view has storage of its own, so transactions can create, replace or drop different indexes of the same table or view at the same time.
+
 ## Examples
 
 Create a dictionary, index two text columns with it, then query the index:

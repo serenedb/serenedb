@@ -54,8 +54,10 @@
 #include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
+#include "pg/connection_context.h"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
@@ -388,6 +390,36 @@ void SearchTable::MergeIndexConfig(
   auto configs = _configs;
   configs.emplace_back(index_oid, std::move(config));
   RebuildConfig(std::move(configs), _building_index);
+}
+
+void SearchTable::ClaimLayout(duckdb::ClientContext& context,
+                              std::string_view name) {
+  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
+    connection->ClaimSearchLayout(shared_from_this(), name);
+  }
+}
+
+bool SearchTable::AcquireLayout(const void* owner, std::string_view name) {
+  absl::MutexLock lock{&_layout_mutex};
+  if (_layout_owner == owner) {
+    return false;
+  }
+  if (_layout_owner) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                    ERR_MSG("search table \"", name,
+                            "\" is being changed by another transaction"),
+                    ERR_HINT("Retry once that transaction commits or rolls "
+                             "back."));
+  }
+  _layout_owner = owner;
+  return true;
+}
+
+void SearchTable::ReleaseLayout(const void* owner) noexcept {
+  absl::MutexLock lock{&_layout_mutex};
+  if (_layout_owner == owner) {
+    _layout_owner = nullptr;
+  }
 }
 
 SearchTable::BuildClaim SearchTable::BeginIndexBuild(

@@ -435,6 +435,12 @@ SearchTableEntry::GeneratedPkSequence(duckdb::ClientContext& context) const {
   return entry ? &entry->Cast<duckdb::SequenceCatalogEntry>() : nullptr;
 }
 
+void SearchTableEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {
+  if (transaction.HasContext()) {
+    _storage->ClaimLayout(transaction.GetContext(), name.GetIdentifierName());
+  }
+}
+
 void SearchTableEntry::OnDrop() { _storage->MarkDropped(); }
 
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
@@ -603,6 +609,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
   if (info.type != duckdb::AlterType::ALTER_TABLE) {
     return duckdb::TableCatalogEntry::AlterEntry(context, info);
   }
+  _storage->ClaimLayout(context, name.GetIdentifierName());
   auto& alter = info.Cast<duckdb::AlterTableInfo>();
   switch (alter.alter_table_type) {
     case duckdb::AlterTableType::RENAME_TABLE:

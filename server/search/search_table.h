@@ -206,6 +206,10 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void ReleaseTruncate() noexcept { _writers.ReleaseTruncate(); }
   void DrainPriorWriters(absl::FunctionRef<bool()> cancelled);
 
+  void ClaimLayout(duckdb::ClientContext& context, std::string_view name);
+  [[nodiscard]] bool AcquireLayout(const void* owner, std::string_view name);
+  void ReleaseLayout(const void* owner) noexcept;
+
   class [[nodiscard]] BuildClaim {
    public:
     BuildClaim() noexcept = default;
@@ -336,6 +340,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   WriterGenerations _writers;
   std::atomic<bool> _build_in_flight{false};
+  absl::Mutex _layout_mutex;
+  const void* _layout_owner ABSL_GUARDED_BY(_layout_mutex) = nullptr;
 
   // Delete log. The open flag is atomic so the commit path can skip the mutex
   // entirely when no build is running, which is the normal case.

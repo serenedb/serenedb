@@ -1,0 +1,150 @@
+# The columns of a dropped index stay in a search table while a transaction
+# that can still see the index runs, and a compaction removes them once none
+# can: the table then is as large as a twin that never had the index.
+
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE MACRO sdc_ratio() AS (
+  (SELECT value FROM sdb_metrics WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sdc') AND metric = 'index_size')::DOUBLE
+  / (SELECT value FROM sdb_metrics WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sdc_twin') AND metric = 'index_size'));
+
+statement ok
+CREATE TABLE sdc (id INT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE TABLE sdc_twin (id INT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX sdc_idx ON sdc USING inverted ((body || '-') included());
+
+statement ok
+INSERT INTO sdc SELECT i, md5(i::TEXT) || md5((i + 1)::TEXT) || md5((i + 2)::TEXT) FROM generate_series(1, 2000) s(i);
+
+statement ok
+INSERT INTO sdc_twin SELECT i, md5(i::TEXT) || md5((i + 1)::TEXT) || md5((i + 2)::TEXT) FROM generate_series(1, 2000) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sdc;
+
+statement ok
+VACUUM (REFRESH_TABLE) sdc_twin;
+
+query
+SELECT sdc_ratio() > 1.3 AS indexed_larger;
+----
+indexed_larger
+t
+
+connection reader
+statement ok
+BEGIN;
+
+connection reader
+query
+SELECT count(*) AS n FROM sdc_twin;
+----
+n
+2000
+
+statement ok
+DROP INDEX sdc_idx;
+
+statement ok
+INSERT INTO sdc SELECT i, md5(i::TEXT) FROM generate_series(2001, 2100) s(i);
+
+statement ok
+INSERT INTO sdc_twin SELECT i, md5(i::TEXT) FROM generate_series(2001, 2100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sdc;
+
+statement ok
+VACUUM (REFRESH_TABLE) sdc_twin;
+
+statement ok
+VACUUM (COMPACT_TABLE) sdc;
+
+statement ok
+VACUUM (COMPACT_TABLE) sdc_twin;
+
+query
+SELECT sdc_ratio() > 1.3 AS kept_for_reader;
+----
+kept_for_reader
+t
+
+connection reader
+statement ok
+COMMIT;
+
+statement ok
+INSERT INTO sdc SELECT i, md5(i::TEXT) FROM generate_series(3001, 3010) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sdc;
+
+statement ok
+VACUUM (COMPACT_TABLE) sdc;
+
+query
+SELECT sdc_ratio() < 1.1 AS released;
+----
+released
+t
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+INSERT INTO sdc SELECT i, md5(i::TEXT) FROM generate_series(2101, 2200) s(i);
+
+connection after_restart
+statement ok
+INSERT INTO sdc_twin SELECT i, md5(i::TEXT) FROM generate_series(2101, 2200) s(i);
+
+connection after_restart
+statement ok
+VACUUM (REFRESH_TABLE) sdc;
+
+connection after_restart
+statement ok
+VACUUM (REFRESH_TABLE) sdc_twin;
+
+connection after_restart
+statement ok
+VACUUM (COMPACT_TABLE) sdc;
+
+connection after_restart
+statement ok
+VACUUM (COMPACT_TABLE) sdc_twin;
+
+connection after_restart
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sdc') WHERE column_name = 'id';
+----
+segments
+1
+
+connection after_restart
+query
+SELECT sdc_ratio() < 1.1 AS twin_sized;
+----
+twin_sized
+t
+
+connection after_restart
+query
+SELECT count(*) AS n, count(DISTINCT body) AS bodies FROM sdc;
+----
+n	bodies
+2210	2210

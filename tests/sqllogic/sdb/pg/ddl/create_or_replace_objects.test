@@ -3192,7 +3192,8 @@ connection s2
 statement error
 CREATE OR REPLACE INDEX coro_ixs_inv ON coro_ixs USING inverted (id);
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coro_ixs_inv"
+db error: ERROR: search table "coro_ixs" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s1

@@ -145,7 +145,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
                         row_group_size, opts.compression, false);
     if (field_options) {
-      field_options->ForEachAnn(field_id_v, [&](const AnnInfo& info) {
+      field_options->ForEachMergedAnn(field_id_v, [&](const AnnInfo& info) {
         output.AttachAnn(field_id_v, info).SetMergeSources(sources);
       });
     }

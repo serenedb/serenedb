@@ -79,6 +79,7 @@
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_backfill.h"
 #include "connector/view_fast_path.h"
+#include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 #include "pg/sql_utils.h"
@@ -242,6 +243,12 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     pk_type.id() == duckdb::LogicalTypeId::STRUCT && pk_type != pg::CTID()
       ? PkShape::Struct
       : PkShape::Single;
+  if (const auto* search_table =
+        dynamic_cast<const catalog::SearchTableEntry*>(&_relation);
+      search_table && !IndexNameTaken(context, *_info, _relation)) {
+    search_table->Storage()->ClaimLayout(
+      context, search_table->name.GetIdentifierName());
+  }
   if (IsReindexPass()) {
     // The pass carries the index's name, resolved in the schema the statement
     // is qualified with -- the same pair every other lookup in this operator

@@ -35,6 +35,7 @@
 #include "connector/duckdb_sink_writer_base.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 #include "search/search_table_transaction.h"
 
 namespace sdb::query {
@@ -76,6 +77,9 @@ class Transaction : public Config {
   void DeferToCommit(absl::AnyInvocable<void()> action) {
     _on_commit.push_back(std::move(action));
   }
+
+  void ClaimSearchLayout(std::shared_ptr<search::SearchTable> table,
+                         std::string_view name);
 
   void AddCreatedIndex(duckdb::idx_t database,
                        std::shared_ptr<search::InvertedIndexStorage> storage) {
@@ -199,6 +203,7 @@ class Transaction : public Config {
   std::vector<
     std::pair<duckdb::idx_t, std::shared_ptr<search::InvertedIndexStorage>>>
     _created_indexes;
+  std::vector<std::shared_ptr<search::SearchTable>> _layout_claims;
   uint64_t _num_log_data_markers = 0;
   bool _had_query_in_transaction = false;
   // Set once a statement has performed uncommitted DML; pins all three views

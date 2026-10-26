@@ -160,6 +160,9 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   void ForEachAnn(
     irs::field_id column,
     absl::FunctionRef<void(const irs::AnnInfo&)> visit) const final;
+  void ForEachMergedAnn(
+    irs::field_id column,
+    absl::FunctionRef<void(const irs::AnnInfo&)> visit) const final;
   const irs::AnnInfo* FindAnn(irs::field_id column,
                               irs::VectorMetric metric) const noexcept;
 
@@ -284,6 +287,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
 
+  void BeforeDrop(duckdb::CatalogTransaction transaction) final;
   void OnDrop() final;
 
   void CreateReindexJob(duckdb::CatalogTransaction transaction,

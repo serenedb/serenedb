@@ -301,11 +301,20 @@ bool InvertedIndexConfig::HasColumn(irs::field_id id) const {
 void InvertedIndexConfig::ForEachAnn(
   irs::field_id column,
   absl::FunctionRef<void(const irs::AnnInfo&)> visit) const {
-  for (const auto* anns : {&_anns, &retained_anns}) {
-    for (const auto& ann : *anns) {
-      if (ann.column_id == column) {
-        visit(ann);
-      }
+  for (const auto& ann : _anns) {
+    if (ann.column_id == column) {
+      visit(ann);
+    }
+  }
+}
+
+void InvertedIndexConfig::ForEachMergedAnn(
+  irs::field_id column,
+  absl::FunctionRef<void(const irs::AnnInfo&)> visit) const {
+  ForEachAnn(column, visit);
+  for (const auto& ann : retained_anns) {
+    if (ann.column_id == column) {
+      visit(ann);
     }
   }
 }
@@ -725,6 +734,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
   result->_search_table = _search_table;
   result->_config = _config;
   return std::move(result);
+}
+
+void InvertedIndexEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {
+  if (_search_table && transaction.HasContext()) {
+    _search_table->ClaimLayout(transaction.GetContext(),
+                               GetTableName().GetIdentifierName());
+  }
 }
 
 void InvertedIndexEntry::OnDrop() {

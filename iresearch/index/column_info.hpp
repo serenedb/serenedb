@@ -203,6 +203,10 @@ class IndexFieldOptions {
       visit(*opts.ann_info);
     }
   }
+  virtual void ForEachMergedAnn(
+    field_id column, absl::FunctionRef<void(const AnnInfo&)> visit) const {
+    ForEachAnn(column, visit);
+  }
 
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --

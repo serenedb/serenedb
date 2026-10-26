@@ -20,7 +20,7 @@ statement ok
 SET sdb_hnsw_ef_search = 2000;
 
 statement ok
-SET sdb_ann_oversample = 8;
+SET sdb_ann_rescore_width = 100;
 
 # --- IVF: sq8 -> pq ---
 
@@ -51,12 +51,12 @@ statement ok
 VACUUM (REFRESH_TABLE) rq_ivf;
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_ivf ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 statement ok
 CREATE OR REPLACE INDEX rq_ivf_idx ON rq_ivf
@@ -76,20 +76,20 @@ QUERY PLAN
 ╰────────────────────────────────────╯
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_ivf ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_ivf ORDER BY emb <-> rq_vec(2500.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(2500.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(2500.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 statement ok
 VACUUM (COMPACT_TABLE) rq_ivf;
@@ -102,12 +102,12 @@ segments
 1
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_ivf ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 # --- HNSW: sq8 -> pq ---
 
@@ -138,12 +138,12 @@ statement ok
 VACUUM (REFRESH_TABLE) rq_hnsw;
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_hnsw ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 statement ok
 CREATE OR REPLACE INDEX rq_hnsw_idx ON rq_hnsw
@@ -163,20 +163,20 @@ QUERY PLAN
 ╰────────────────────────────────────╯
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_hnsw ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_hnsw ORDER BY emb <-> rq_vec(2500.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(2500.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(2500.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 statement ok
 VACUUM (COMPACT_TABLE) rq_hnsw;
@@ -189,12 +189,12 @@ segments
 1
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_hnsw ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 # --- IVF: DROP INDEX and CREATE INDEX in one transaction ---
 
@@ -232,12 +232,12 @@ statement ok
 COMMIT;
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_tx ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 # --- Two IVF indexes on one column, each with its own quantization ---
 
@@ -266,39 +266,39 @@ CREATE INDEX rq_two_pq ON rq_two
   USING inverted(id, emb ivf (metric = 'l2', quant = 'pq', pq_m = 8));
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_two_sq8 ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_two_pq ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 statement ok
 VACUUM (COMPACT_TABLE) rq_two;
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_two_pq ORDER BY emb <-> rq_vec(2500.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(2500.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(2500.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_two_sq8 ORDER BY emb <-> rq_vec(2500.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(2500.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(2500.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 # --- A transaction that still sees the replaced index reads it after a merge ---
 
@@ -355,7 +355,7 @@ SET sdb_hnsw_ef_search = 2000;
 
 connection reader
 statement ok
-SET sdb_ann_oversample = 8;
+SET sdb_ann_rescore_width = 100;
 
 connection reader
 statement ok
@@ -367,6 +367,29 @@ SELECT count(*) AS n FROM rq_snap_other;
 ----
 n
 0
+
+connection pinned
+statement ok
+SET sdb_ivf_search_nprobe = 1000;
+
+connection pinned
+statement ok
+SET sdb_hnsw_ef_search = 2000;
+
+connection pinned
+statement ok
+SET sdb_ann_rescore_width = 100;
+
+connection pinned
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+connection pinned
+query
+SELECT (SELECT count(*) FROM rq_snap_ivf) AS ivf, (SELECT count(*) FROM rq_snap_hnsw) AS hnsw;
+----
+ivf	hnsw
+3000	3000
 
 connection writer
 statement ok
@@ -397,38 +420,60 @@ ivf	hnsw
 
 connection reader
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_snap_ivf_idx ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 connection reader
 query
-SELECT count(*) FROM (
+SELECT count(*) AS hits FROM (
   (SELECT id FROM rq_snap_hnsw_idx ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
 
 connection reader
 statement ok
 COMMIT;
 
+connection pinned
 query
-SELECT count(*) FROM (
-  (SELECT id FROM rq_snap_ivf_idx ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM rq_snap_ivf ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
+
+connection pinned
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM rq_snap_hnsw ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+----
+hits
+10
+
+connection pinned
+statement ok
+COMMIT;
 
 query
-SELECT count(*) FROM (
-  (SELECT id FROM rq_snap_hnsw_idx ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
-  EXCEPT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM rq_snap_ivf_idx ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
 ----
-count
-0
+hits
+10
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM rq_snap_hnsw_idx ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)
+  INTERSECT (SELECT id FROM rq_ref ORDER BY emb <-> rq_vec(1234.5) LIMIT 10)) t;
+----
+hits
+10

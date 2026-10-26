@@ -1,0 +1,595 @@
+control substitution on
+
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sag_kw AS keyword()
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sag_en AS split_text(case := 'lower')
+
+statement ok
+CREATE TABLE sag (id INTEGER PRIMARY KEY, n BIGINT, d DATE, cat VARCHAR, body VARCHAR, s VARCHAR)
+
+statement ok
+CREATE INDEX sag_idx ON sag USING inverted(cat sag_kw, body sag_en, s) INCLUDE (n, d)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO sag SELECT i, i * 3 - 50, DATE '2024-01-01' + i, 'category-shared-prefix-' || (i % 7),
+    CASE WHEN i % 2 = 0 THEN 'quick fox' ELSE 'lazy dog' END, 'v' || i
+  FROM generate_series(1, 100) g(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) sag
+
+statement ok
+INSERT INTO sag SELECT i, i * 3 - 50, DATE '2024-01-01' + i, 'category-shared-prefix-' || (i % 7),
+    'slow cat', NULL
+  FROM generate_series(101, 150) g(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) sag
+
+query
+EXPLAIN SELECT count(*) FROM sag_idx
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+EXPLAIN SELECT count(*), min(n), max(n), min(d), max(d), min(cat), max(cat), min(s), max(s) FROM sag_idx
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT count(*), min(n), max(n), min(d), max(d), min(cat), max(cat), min(s), max(s) FROM sag_idx
+----
+count	min	max	min	max	min	max	min	max
+150	-47	400	2024-01-02	2024-05-30	category-shared-prefix-0	category-shared-prefix-6	v1	v99
+
+query
+SELECT count(*), min(n), max(n), min(d), max(d), min(cat), max(cat), min(s), max(s) FROM sag
+----
+count	min	max	min	max	min	max	min	max
+150	-47	400	2024-01-02	2024-05-30	category-shared-prefix-0	category-shared-prefix-6	v1	v99
+
+query
+EXPLAIN SELECT min(cat), max(cat) FROM sag_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────╮
+│ Aggregates: min(#0), max(#0)             │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: sag_idx                           │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~2 rows                                  │
+╰──────────────────────────────────────────╯
+
+query
+SELECT min(cat), max(cat) FROM sag_idx
+----
+min	max
+category-shared-prefix-0	category-shared-prefix-6
+
+query
+EXPLAIN SELECT count(*), min(body) FROM sag_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star(), │
+│             min(#0)       │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: sag_idx            │
+│ Lookup: table             │
+│ Projections: body         │
+│ ~150 rows                 │
+╰───────────────────────────╯
+
+query
+SELECT count(*), min(body) FROM sag_idx
+----
+count	min
+150	lazy dog
+
+query
+EXPLAIN SELECT count(*) FROM sag_idx WHERE body @@ 'fox'
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: sag_idx           │
+│ Index Filter:            │
+│ ╭─ Term ──────────────╮  │
+│ │ Field: body(string) │  │
+│ │ Value: fox          │  │
+│ ╰─────────────────────╯  │
+│ Output: row-count only   │
+│ ~30 rows                 │
+╰──────────────────────────╯
+
+query
+SELECT count(*) FROM sag_idx WHERE body @@ 'fox'
+----
+count
+50
+
+query
+EXPLAIN SELECT count(*) FROM sag_idx WHERE n >= -100
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT count(*) FROM sag_idx WHERE n >= -100
+----
+count
+150
+
+query
+EXPLAIN SELECT count(*) FROM sag_idx WHERE n > 1000
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ EMPTY_RESULT ───────────╮
+╰──────────────────────────╯
+
+query
+SELECT count(*) FROM sag_idx WHERE n > 1000
+----
+count
+0
+
+query
+SELECT id, n FROM sag_idx ORDER BY n LIMIT 2 OFFSET 150
+----
+id	n
+
+query
+SELECT id, n FROM sag_idx ORDER BY n LIMIT 2 OFFSET 149
+----
+id	n
+150	400
+
+statement ok
+PREPARE sag_p AS SELECT count(*), max(n) FROM sag_idx
+
+query
+EXECUTE sag_p
+----
+count	max
+150	400
+
+statement ok
+INSERT INTO sag VALUES (151, 403, DATE '2024-06-01', 'category-shared-prefix-9', 'slow cat', 'v151')
+
+statement ok
+VACUUM (REFRESH_TABLE) sag
+
+query
+EXECUTE sag_p
+----
+count	max
+151	403
+
+query
+EXPLAIN SELECT count(*), max(cat), max(s), max(d) FROM sag_idx
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT count(*), max(cat), max(s), max(d) FROM sag_idx
+----
+count	max	max	max
+151	category-shared-prefix-9	v99	2024-06-01
+
+statement ok
+DELETE FROM sag WHERE id IN (1, 77, 151)
+
+statement ok
+VACUUM (REFRESH_TABLE) sag
+
+query
+EXPLAIN SELECT count(*) FROM sag_idx
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT count(*), count(id) FROM sag_idx
+----
+count	count
+148	148
+
+query
+EXPLAIN SELECT count(*), min(n), max(n) FROM sag_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star(), │
+│             min(#0),      │
+│             max(#0)       │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: sag_idx            │
+│ Projections: n            │
+│ ~148 rows                 │
+╰───────────────────────────╯
+
+query
+SELECT count(*), min(n), max(n), min(cat), max(cat) FROM sag_idx
+----
+count	min	max	min	max
+148	-44	400	category-shared-prefix-0	category-shared-prefix-6
+
+query
+EXECUTE sag_p
+----
+count	max
+148	400
+
+query
+EXPLAIN SELECT count(*) FROM sag_idx WHERE n >= -100
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT count(*) FROM sag_idx WHERE n >= -100
+----
+count
+148
+
+statement ok
+DEALLOCATE sag_p
+
+statement ok
+CREATE TABLE sag_st (id BIGINT PRIMARY KEY, n BIGINT, cat VARCHAR, body TEXT)
+    WITH (storage = 'search', compaction_interval = 0)
+
+statement ok
+INSERT INTO sag_st SELECT i, i * 2, 'category-shared-prefix-' || (i % 5), 'w' || i
+  FROM generate_series(1, 60) g(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) sag_st
+
+statement ok
+INSERT INTO sag_st SELECT i, i * 2, 'category-shared-prefix-' || (i % 5), 'w' || i
+  FROM generate_series(61, 100) g(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) sag_st
+
+query
+EXPLAIN SELECT count(*), min(n), max(n), min(body), max(body) FROM sag_st
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT count(*), min(n), max(n), min(body), max(body) FROM sag_st
+----
+count	min	max	min	max
+100	2	200	w1	w99
+
+query
+SELECT count(id), min(n + 1) - 1, max(n + 1) - 1, min(body || ''), max(body || '') FROM sag_st
+----
+count	?column?	?column?	min	max
+100	2	200	w1	w99
+
+query
+EXPLAIN SELECT count(*), min(cat) FROM sag_st
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star(), │
+│             min(#0)       │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: sag_st             │
+│ Lookup: search            │
+│ Projections: cat          │
+│ ~100 rows                 │
+╰───────────────────────────╯
+
+query
+SELECT count(*), min(cat) FROM sag_st
+----
+count	min
+100	category-shared-prefix-0
+
+query
+EXPLAIN SELECT count(*) FROM sag_st WHERE n BETWEEN 0 AND 1000
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT count(*) FROM sag_st WHERE n BETWEEN 0 AND 1000
+----
+count
+100
+
+query
+SELECT id FROM sag_st ORDER BY n LIMIT 3 OFFSET 100
+----
+id
+
+query
+SELECT id FROM sag_st ORDER BY n LIMIT 3 OFFSET 98
+----
+id
+99
+100
+
+query
+SELECT id FROM sag_st ORDER BY n DESC LIMIT 2 OFFSET 99
+----
+id
+1
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO sag_st VALUES (1000, 5000, 'zz', 'zz')
+
+query
+SELECT count(*) = count(id), max(n) = max(n + 1) - 1 FROM sag_st
+----
+?column?	?column?
+t	t
+
+statement ok
+ROLLBACK
+
+statement ok
+DELETE FROM sag_st WHERE id IN (1, 100)
+
+statement ok
+VACUUM (REFRESH_TABLE) sag_st
+
+query
+EXPLAIN SELECT count(*) FROM sag_st
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+EXPLAIN SELECT count(*), min(n), max(n) FROM sag_st
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star(), │
+│             min(#0),      │
+│             max(#0)       │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: sag_st             │
+│ Lookup: search            │
+│ Projections: n            │
+│ ~98 rows                  │
+╰───────────────────────────╯
+
+query
+SELECT count(*), count(id), min(n), max(n) FROM sag_st
+----
+count	count	min	max
+98	98	4	198
+
+statement count 40
+COPY (SELECT i AS id, i * 5 AS n, 'category-shared-prefix-' || (i % 3) AS cat, 'quick fox' AS body
+      FROM generate_series(1, 40) g(i))
+TO '${__TEST_DIR__}/sag_a.parquet' (FORMAT PARQUET)
+
+statement count 30
+COPY (SELECT i AS id, i * 5 AS n, 'category-shared-prefix-' || (i % 3) AS cat, 'lazy dog' AS body
+      FROM generate_series(41, 70) g(i))
+TO '${__TEST_DIR__}/sag_b.parquet' (FORMAT PARQUET)
+
+statement ok
+CREATE VIEW sag_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/sag_*.parquet')
+
+statement ok
+CREATE INDEX sag_v_idx ON sag_v USING inverted(cat sag_kw, body sag_en) INCLUDE (n)
+
+query
+EXPLAIN SELECT count(*), min(n), max(n), min(cat), max(cat) FROM sag_v_idx
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT count(*), min(n), max(n), min(cat), max(cat) FROM sag_v_idx
+----
+count	min	max	min	max
+70	5	350	category-shared-prefix-0	category-shared-prefix-2
+
+query
+EXPLAIN SELECT count(*), min(id) FROM sag_v_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star(), │
+│             min(#0)       │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: sag_v_idx          │
+│ Lookup: glob parquet      │
+│ Projections: id           │
+│ ~70 rows                  │
+╰───────────────────────────╯
+
+query
+SELECT count(*), min(id) FROM sag_v_idx
+----
+count	min
+70	1
+
+query
+EXPLAIN SELECT count(*) FROM sag_v_idx WHERE body @@ 'fox'
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: sag_v_idx         │
+│ Index Filter:            │
+│ ╭─ Term ──────────────╮  │
+│ │ Field: body(string) │  │
+│ │ Value: fox          │  │
+│ ╰─────────────────────╯  │
+│ Output: row-count only   │
+│ ~14 rows                 │
+╰──────────────────────────╯
+
+query
+SELECT count(*) FROM sag_v_idx WHERE body @@ 'fox'
+----
+count
+40
+
+query
+SELECT id FROM sag_v_idx ORDER BY n DESC LIMIT 2 OFFSET 68
+----
+id
+2
+1
+
+statement ok
+CREATE TABLE sag_g (a INT, g INT GENERATED ALWAYS AS (a * 10) VIRTUAL, b INT, c TEXT)
+
+statement ok
+CREATE INDEX sag_g_idx ON sag_g USING inverted(c sag_kw) INCLUDE (a, b)
+
+statement ok
+INSERT INTO sag_g (a, b, c) SELECT i, 1000 - i, 'k' || i FROM generate_series(1, 50) g(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) sag_g
+
+query
+EXPLAIN SELECT count(*), min(a), max(a), min(b), max(b), min(c), max(c) FROM sag_g_idx
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT count(*), min(a), max(a), min(b), max(b), min(c), max(c) FROM sag_g_idx
+----
+count	min	max	min	max	min	max
+50	1	50	950	999	k1	k9
+
+query
+SELECT a, b FROM sag_g_idx ORDER BY b LIMIT 3
+----
+a	b
+50	950
+49	951
+48	952
+
+query
+SELECT a, b FROM sag_g_idx ORDER BY b LIMIT 3 OFFSET 50
+----
+a	b
+
+statement ok
+CREATE TABLE sag_nul (id BIGINT PRIMARY KEY, n BIGINT) WITH (storage = 'search', compaction_interval = 0)
+
+statement ok
+INSERT INTO sag_nul SELECT i, NULL FROM generate_series(1, 100) g(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) sag_nul
+
+query
+EXPLAIN SELECT n FROM sag_nul ORDER BY n NULLS FIRST LIMIT 3 OFFSET 100
+----
+QUERY PLAN
+╭─ TOP_N ──────────╮
+│ Top: 3           │
+│ Order By: n ASC  │
+│ ~3 rows          │
+╰─────────┬────────╯
+╭─ IRESEARCH_SCAN ─╮
+│ Index: sag_nul   │
+│ Lookup: search   │
+│ Index Filter:    │
+│ ╭─ Empty ─╮      │
+│ ╰─────────╯      │
+│ Projections: n   │
+│ ~100 rows        │
+╰──────────────────╯
+
+query
+SELECT n FROM sag_nul ORDER BY n NULLS FIRST LIMIT 3 OFFSET 100
+----
+n
+
+query
+SELECT count(*) FROM (SELECT id, n FROM sag_nul ORDER BY n NULLS FIRST LIMIT 3 OFFSET 99)
+----
+count
+1
+
+statement ok
+DROP TABLE sag_nul
+
+statement ok
+DROP TABLE sag_g
+
+statement ok
+DROP VIEW sag_v
+
+statement ok
+DROP TABLE sag_st
+
+statement ok
+DROP TABLE sag

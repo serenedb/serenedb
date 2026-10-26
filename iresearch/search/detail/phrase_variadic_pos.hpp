@@ -178,15 +178,9 @@ class PhraseVariadicPos {
     std::make_heap(_heap.begin(), _heap.end(), Greater);
   }
 
-  uint32_t Estimate() const noexcept {
-    uint32_t estimate = 0;
-    for (uint32_t i = 0; i != _count; ++i) {
-      estimate += _begin[i].Estimate();
-    }
-    return estimate;
-  }
-
   Position& Positions() noexcept { return _positions; }
+
+  Leaf* Single() noexcept { return _count == 1 ? _begin : nullptr; }
 
   doc_id_t Next() {
     if (_count == 1) [[likely]] {

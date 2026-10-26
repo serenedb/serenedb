@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <bit>
 #include <cstring>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -650,6 +651,13 @@ inline void PostingsWriter::BeginField(const FieldProperties& meta) {
       FlushTailPay();
     }
     FlushGroups();
+  }
+  if (_term_pay) {
+    const uint64_t alignment = _term_pay->Alignment();
+    SDB_ASSERT(std::has_single_bit(alignment));
+    for (auto pad = -_pay_out->Position() & (alignment - 1); pad != 0; --pad) {
+      _pay_out->WriteByte(0);
+    }
   }
 }
 

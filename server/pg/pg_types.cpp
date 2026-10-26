@@ -31,7 +31,6 @@
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
-#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/down_cast.hpp>
@@ -312,6 +311,7 @@ duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {
     SDB_OID2TYPE(kXid, XID())
     SDB_OID2TYPE(kCid, CID())
     SDB_OID2TYPE(kJson, LogicalType::JSON())
+    SDB_OID2TYPE(kJsonb, LogicalType::JSON())
     SDB_OID2TYPE(kXid8, XID8())
     SDB_OID2TYPE(kFloat4, LogicalType::FLOAT)
     SDB_OID2TYPE(kFloat8, LogicalType::DOUBLE)
@@ -644,77 +644,31 @@ uint64_t RegtypeIn(std::string_view name) {
 }
 
 std::string RegclassOut(duckdb::ClientContext* context, uint64_t oid) {
-  // Tables and views share one duckdb set, so three by-id walks answer for
-  // every relation kind.
-  if (auto database = SessionDatabase(context)) {
-    for (const auto type :
-         {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::SEQUENCE_ENTRY,
-          duckdb::CatalogType::INDEX_ENTRY}) {
-      if (auto entry = database->FindEntryById(context, type, oid)) {
-        return RelationName(*context,
-                            entry->ParentSchemaName().GetIdentifierName(),
-                            entry->name.GetIdentifierName(), oid);
-      }
-    }
-    if (const auto key = FindKeyIndex(*context, *database, oid); key.table) {
-      return RelationName(*context,
-                          key.table->ParentSchemaName().GetIdentifierName(),
-                          ConstraintName(*key.table, *key.constraint), oid);
-    }
+  if (!SessionDatabase(context)) {
+    const auto system = FindSystemRelation(oid);
+    return system.name.empty() ? absl::StrCat(oid) : std::string{system.name};
   }
-  std::string result;
-  VisitSystemTables([&](const VirtualTable& table, Oid) {
-    if (table.Id() == oid) {
-      result = table.GetName();
-    }
-  });
-  if (!result.empty()) {
-    return result;
+  const auto relation = RelationByOid(*context, oid);
+  if (relation.entry) {
+    return RelationName(*context,
+                        relation.entry->ParentSchemaName().GetIdentifierName(),
+                        relation.entry->name.GetIdentifierName(), oid);
+  }
+  if (relation.key.table) {
+    return RelationName(
+      *context, relation.key.table->ParentSchemaName().GetIdentifierName(),
+      ConstraintName(*relation.key.table, *relation.key.constraint), oid);
   }
   return absl::StrCat(oid);
 }
 
 uint64_t ResolveRelation(duckdb::ClientContext& context,
                          const duckdb::QualifiedName& name) {
-  // Every half of the relation namespace, in the order postgres resolves them
-  // -- a table and a view share duckdb's set, so the first lookup covers both.
-  for (const auto type :
-       {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::SEQUENCE_ENTRY,
-        duckdb::CatalogType::INDEX_ENTRY}) {
-    if (auto entry = duckdb::Catalog::GetEntry(
-          context, duckdb::EntryLookupInfo{type, name},
-          duckdb::OnEntryNotFound::RETURN_NULL)) {
-      return entry->oid;
-    }
+  const auto relation = RelationByName(context, name);
+  if (relation.entry) {
+    return relation.entry->oid;
   }
-  if (auto database = SessionDatabase(&context)) {
-    const auto key_index = [&](const duckdb::Identifier& schema_name) {
-      auto schema = database->GetSchema(context, schema_name,
-                                        duckdb::OnEntryNotFound::RETURN_NULL);
-      if (!schema) {
-        return kInvalidOid;
-      }
-      const auto key =
-        FindKeyIndex(context, *schema, name.Name().GetIdentifierName());
-      return key.table ? key.constraint->index_oid : kInvalidOid;
-    };
-    if (!name.Schema().empty()) {
-      if (const auto oid = key_index(name.Schema()); oid != kInvalidOid) {
-        return oid;
-      }
-    } else {
-      for (const auto& path :
-           duckdb::ClientData::Get(context).catalog_search_path->Get()) {
-        if (const auto oid = key_index(path.GetSchema()); oid != kInvalidOid) {
-          return oid;
-        }
-      }
-    }
-  }
-  if (auto* system_table = GetTable(name.Name().GetIdentifierName())) {
-    return system_table->Id();
-  }
-  return kInvalidOid;
+  return relation.key.table ? relation.key.constraint->index_oid : kInvalidOid;
 }
 
 std::string RelationName(duckdb::ClientContext& context,

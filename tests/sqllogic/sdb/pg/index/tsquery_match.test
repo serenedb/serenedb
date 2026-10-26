@@ -2921,3 +2921,71 @@ SELECT a FROM tsq_idx WHERE b @@ 'quick'::slop(1);
 
 query error ::slop\(N\) is only valid on a phrase
 SELECT a FROM tsq_idx WHERE b @@ ts_any(['quick'::slop(1), 'turtle']);
+
+
+# In a to_tsquery wildcard term only ? and * are wildcards: %, _ and an
+# escaped backslash before them are ordinary characters.
+statement ok
+CREATE TEXT SEARCH DICTIONARY tsq_codes_kw AS keyword() WITH (frequency);
+
+statement ok
+CREATE TABLE tsq_codes (id INTEGER PRIMARY KEY, code VARCHAR);
+
+statement ok
+CREATE INDEX tsq_codes_idx ON tsq_codes USING inverted (id, code tsq_codes_kw);
+
+statement ok
+INSERT INTO tsq_codes VALUES
+  (1, '50%x'), (2, '500'), (3, 'a_b'), (4, 'axb'), (5, 'a_bc'), (6, 'axbc'), (7, 'a\bc'), (8, 'abc');
+
+statement ok
+VACUUM (REFRESH_TABLE) tsq_codes;
+
+query
+SELECT id FROM tsq_codes_idx WHERE code @@ to_tsquery('50%?') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM tsq_codes_idx WHERE code @@ to_tsquery('a_?') ORDER BY id;
+----
+id
+3
+
+query
+SELECT id FROM tsq_codes_idx WHERE code @@ to_tsquery('a_b?') ORDER BY id;
+----
+id
+5
+
+query
+SELECT id FROM tsq_codes_idx WHERE code @@ to_tsquery('a\\b?') ORDER BY id;
+----
+id
+7
+
+query
+SELECT id FROM tsq_codes_idx WHERE code @@ to_tsquery('"50%?"') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM tsq_codes_idx WHERE code @@ to_tsquery('"a_?"') ORDER BY id;
+----
+id
+3
+
+query
+SELECT id FROM tsq_codes_idx WHERE code @@ to_tsquery('fn:wildcard(a_b)') ORDER BY id;
+----
+id
+3
+
+query
+SELECT id FROM tsq_codes_idx WHERE code @@ to_tsquery('fn:wildcard(a_b*)') ORDER BY id;
+----
+id
+3
+5

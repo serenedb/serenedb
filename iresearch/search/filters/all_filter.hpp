@@ -47,6 +47,8 @@ class AllQuery : public QueryBuilderImpl<AllQuery> {
   score_t _boost;
 };
 
+extern template class QueryBuilderImpl<AllQuery>;
+
 class All : public Filter {
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,

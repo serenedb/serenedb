@@ -26,6 +26,8 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <string>
@@ -201,5 +203,16 @@ duckdb::optional_ptr<duckdb::DuckCatalog> DefaultDuckCatalog(
 
 duckdb::optional_ptr<SereneDBCatalog> DefaultSereneDBCatalog(
   duckdb::ClientContext& context);
+
+bool IsSereneDB(duckdb::Catalog& catalog);
+
+void ThrowIfReadOnly(const duckdb::Catalog& catalog, const auto&... command) {
+  if (catalog.GetAttached().IsReadOnly()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                    ERR_MSG("cannot run ", command..., " on database \"",
+                            catalog.GetName().GetIdentifierName(),
+                            "\": it is attached read-only"));
+  }
+}
 
 }  // namespace sdb::catalog

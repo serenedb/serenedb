@@ -1,5 +1,3 @@
-add_compile_options(-Wno-error)
-
 add_library(
     search-benchmark-common
     OBJECT
@@ -7,15 +5,27 @@ add_library(
     index_builder.cpp
     line_source.cpp
 )
-target_link_libraries(search-benchmark-common iresearch-static simdjson)
+target_link_libraries(search-benchmark-common PUBLIC iresearch simdjson)
 target_include_directories(
     search-benchmark-common
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PUBLIC ${CMAKE_SOURCE_DIR}/tests/iresearch
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tests/iresearch
 )
 
-add_bench(build_index search-benchmark-game-build)
-add_bench(do_query search-benchmark-game-query)
+add_executable(search-benchmark-game-build build_index.cpp)
+target_link_libraries(
+    search-benchmark-game-build
+    PRIVATE search-benchmark-common
+)
+
+add_executable(search-benchmark-game-query do_query.cpp)
+target_link_libraries(
+    search-benchmark-game-query
+    PRIVATE search-benchmark-common
+)
 
 add_custom_target(search-benchmark-game)
-add_dependencies(search-benchmark-game serenedb-bench-micro)
+add_dependencies(
+    search-benchmark-game
+    search-benchmark-game-build
+    search-benchmark-game-query
+)

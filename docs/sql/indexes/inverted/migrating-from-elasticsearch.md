@@ -73,7 +73,7 @@ The detailed mapping from each Elasticsearch query to the specific SereneDB func
 | [boost](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-boosting-query.html) (`^`) | [`^`](../../functions/search/full-text.md#a--factor-boost) operator |
 | [`_score`](https://www.elastic.co/guide/en/elasticsearch/reference/current/index-modules-similarity.html) (BM25) | [`BM25`](../../functions/search/scoring.md) and other [scorers](../../functions/search/scoring.md) |
 | [highlighting](https://www.elastic.co/guide/en/elasticsearch/reference/current/highlighting.html) | [`ts_highlight`](../../functions/search/highlighting.md), [`ts_offsets`](../../functions/search/highlighting.md) |
-| [kNN](https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html) | [`<->`](../../functions/vector.md) / [`<=>`](../../functions/vector.md) / [`<#>`](../../functions/vector.md) + `ORDER BY … LIMIT` |
+| [kNN](https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html) | [`<->`](../../functions/vector.md) / [`<=>`](../../functions/vector.md) / [`<+>`](../../functions/vector.md) / [`<#>`](../../functions/vector.md) + `ORDER BY … LIMIT` |
 | [geo queries](https://www.elastic.co/guide/en/elasticsearch/reference/current/geo-queries.html) | [`ST_Intersects`](../../functions/search/geo.md), [`ST_Contains`](../../functions/search/geo.md), [`ST_Distance_*`](../../functions/search/geo.md) |
 | [analyzer test](https://www.elastic.co/guide/en/elasticsearch/reference/current/test-analyzer.html) | [`ts_lexize`](../../functions/search/full-text.md#ts_lexize) |
 
@@ -124,7 +124,7 @@ Elasticsearch suggesters read a field's terms to complete and correct what a use
 
 | Elasticsearch | SereneDB | Notes |
 |---|:---:|---|
-| [Dense vector / kNN (IVF)](https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html) | ✅ | [Vector Search](./vector-search.md) |
+| [Dense vector / kNN](https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html) | ✅ | [Vector Search](./vector-search.md): [HNSW](./vector-search.md#hnsw) (`hnsw (...)`) or IVF (`ivf (...)`) indexes |
 | [Geo queries](https://www.elastic.co/guide/en/elasticsearch/reference/current/geo-queries.html) | ✅ | [Geospatial Search](./geospatial-search.md) (`ST_*`) |
 
 ## Aggregations
@@ -174,7 +174,7 @@ Pipeline aggregations post-process the output of other aggregations — SereneDB
 | [`bucket_selector`](https://www.elastic.co/guide/en/elasticsearch/reference/current/search-aggregations-pipeline-bucket-selector-aggregation.html) | [`HAVING`](../../query_syntax/having/index.md) |
 | [`bucket_sort`](https://www.elastic.co/guide/en/elasticsearch/reference/current/search-aggregations-pipeline-bucket-sort-aggregation.html) | [`ORDER BY`](../../query_syntax/orderby/index.md) `… ` [`LIMIT`](../../query_syntax/limit/index.md) |
 
-Aggregates run **over the inverted index itself** — `GROUP BY` and aggregate functions over indexed (and [`INCLUDE`d](./modeling.md#indexed-vs-included-columns)) columns are answered without materializing the base table. Add columns you frequently aggregate to the index. On a keyword column a `terms` aggregation goes further and reads the [term dictionary](../../functions/search/term-dictionary.md) directly, so facet counts cost a dictionary walk rather than a scan; see [Faceted Search](../../../cookbook/search/faceted-search.md). The query below filters with `@@` and buckets the matches by category in one statement — the Elasticsearch equivalent of a `terms` aggregation inside a query:
+Aggregates run **over the inverted index itself** — `GROUP BY` and aggregate functions over [`INCLUDE`d](./modeling.md#indexed-vs-included-columns) columns are answered without materializing the base table, so `INCLUDE` the columns you frequently aggregate. On an indexed keyword column a `terms` aggregation, a count grouped by the column, reads the [term dictionary](../../functions/search/term-dictionary.md) directly, so facet counts cost a dictionary walk rather than a scan; see [Faceted Search](../../../cookbook/search/faceted-search.md). The query below filters with `@@` and buckets the matches by category in one statement — the Elasticsearch equivalent of a `terms` aggregation inside a query:
 
 <SqlLogicTest id="sql/indexes/inverted/migrating-from-elasticsearch/example_001" />
 

@@ -71,6 +71,7 @@ template<typename T, typename EncodeTraits = encode_traits<T>>
 size_t Encode(typename EncodeTraits::type value, byte_type* out, size_t shift) {
   typedef typename EncodeTraits::type Type;
 
+  SDB_ASSERT(shift < BitsRequired<Type>());
   value ^= Type(1) << (BitsRequired<Type>() - 1);
   value &= std::numeric_limits<Type>::max() ^ ((Type(1) << shift) - 1);
   value = absl::big_endian::FromHost(value);

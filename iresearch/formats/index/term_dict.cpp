@@ -419,8 +419,8 @@ void FieldWriter::prepare(const FlushState& state) {
 
 void FieldWriter::write(const BasicTermReader& reader) {
   const auto props = reader.properties();
-  _pw.BeginField(props);
   _pw.SetTermPayloadWriter(reader.PayloadWriter());
+  _pw.BeginField(props);
   const auto width = reader.KeyWidth();
   _width = width <= kMaxStride ? width : 0;
   if (_width == 0) {

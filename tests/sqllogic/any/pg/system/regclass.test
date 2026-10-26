@@ -70,3 +70,45 @@ t
 skipif pg-wire-extended
 statement ok
 DROP TABLE regclass_test_table;
+
+
+statement ok
+CREATE TEMP TABLE regclass_temp_table (id int);
+
+
+statement ok
+CREATE TEMP SEQUENCE regclass_temp_seq;
+
+
+statement ok
+CREATE TEMP VIEW regclass_temp_view AS SELECT 1 AS x;
+
+
+query
+SELECT 'regclass_temp_table'::regclass::text AS tbl,
+       'regclass_temp_seq'::regclass::text AS seq,
+       'regclass_temp_view'::regclass::text AS view;
+----
+tbl	seq	view
+regclass_temp_table	regclass_temp_seq	regclass_temp_view
+
+
+query
+SELECT 'information_schema.tables'::regclass::text AS sys_view,
+       'information_schema.sql_features'::regclass::text AS sys_table,
+       'pg_class'::regclass::text AS pg_table;
+----
+sys_view	sys_table	pg_table
+information_schema.tables	information_schema.sql_features	pg_class
+
+
+statement ok
+DROP VIEW regclass_temp_view;
+
+
+statement ok
+DROP SEQUENCE regclass_temp_seq;
+
+
+statement ok
+DROP TABLE regclass_temp_table;

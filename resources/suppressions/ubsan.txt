@@ -11,7 +11,3 @@ function:third_party/openssl
 
 # TODO(mbkkt) fix alignment issues for fastpack
 alignment:iresearch/utils/bit_packing.cpp
-
-# TODO(mbkkt) fix shift overflow issues in tests, probably just remove this functions and test
-shift-base:iresearch/utils/numeric_utils.cpp
-shift-exponent:iresearch/utils/numeric_utils.cpp

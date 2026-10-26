@@ -126,6 +126,7 @@ class InvertedIndexStorage final
   }
 
   bool ReadOnly() const noexcept { return !_writer; }
+  void Open();
   void OpenReader();
 
   auto GetTransaction() {
@@ -270,6 +271,11 @@ class InvertedIndexStorage final
   duckdb::idx_t _index_id;
   duckdb::idx_t _db_id;
   std::shared_ptr<catalog::DatabaseDirectory> _directory;
+  bool _in_memory;
+  bool _read_only;
+  bool _is_new;
+  uint64_t _segment_memory_max;
+  uint32_t _segment_docs_max;
   bool _absent = false;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;

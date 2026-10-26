@@ -21,6 +21,7 @@
 #include "scheduler/job_scheduler.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/numeric/int128.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -71,8 +72,8 @@ bool IsNegative(const duckdb::interval_t& value) {
   return value.months < 0 || value.days < 0 || value.micros < 0;
 }
 
-int64_t ShortestLength(const duckdb::interval_t& value) {
-  return (value.months * kShortestMonthDays + value.days) *
+absl::int128 ShortestLength(const duckdb::interval_t& value) {
+  return (absl::int128{value.months} * kShortestMonthDays + value.days) *
            duckdb::Interval::MICROS_PER_DAY +
          value.micros;
 }
@@ -310,6 +311,7 @@ void JobScheduler::Arm(const std::shared_ptr<JobState>& state, uint64_t timer) {
 }
 
 void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
+  SDB_PARK_ONCE_ON_FAILURE("pause_job_before_run");
   JobDefinition job;
   bool concurrent = false;
   {
@@ -337,6 +339,7 @@ void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
     }
   }
   RunBody(state, std::move(job), nullptr, concurrent ? 0 : timer);
+  SDB_PARK_ONCE_ON_FAILURE("pause_job_after_run");
 }
 
 void JobScheduler::Execute(duckdb::ClientContext& caller,

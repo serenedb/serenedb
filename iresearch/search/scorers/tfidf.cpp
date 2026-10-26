@@ -37,6 +37,7 @@
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
 #include "iresearch/utils/down_cast.hpp"
@@ -46,13 +47,6 @@
 
 namespace irs {
 namespace {
-
-template<typename T>
-constexpr const T* TryGetValue(const T* value) noexcept {
-  return value;
-}
-
-constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
 IRS_FORCE_INLINE score_t TfIdf(score_t tf, score_t idf) noexcept {
   return std::sqrt(tf) * idf;
@@ -75,7 +69,7 @@ IRS_FORCE_INLINE void TfIdf(score_t* IRS_RESTRICT res, scores_size_t n,
 }
 
 template<bool HasNorm, bool HasScale>
-struct TfIdfScore : public ScoreOperator {
+struct TfIdfScore : public ScoreOperatorOf<TfIdfScore<HasNorm, HasScale>> {
   TfIdfScore(const uint32_t* norm, score_t boost, TFIDFStats idf,
              const FreqBlockAttr* freq, const score_t* scale = nullptr) noexcept
     : freq{freq}, scale{scale}, norm{norm}, idf{boost * idf.value} {}
@@ -85,36 +79,6 @@ struct TfIdfScore : public ScoreOperator {
                                   scores_size_t n) const noexcept {
     TfIdf<MergeType, HasNorm, HasScale>(res, n, freq->value, TryGetValue(norm),
                                         TryGetValue(scale), idf);
-  }
-
-  score_t Score() const noexcept final {
-    score_t res{};
-    ScoreImpl(&res, 1);
-    return res;
-  }
-
-  void Score(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl(res, n);
-  }
-  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, n);
-  }
-  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, n);
-  }
-
-  void ScoreBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kScoreBlock);
-  }
-  void ScoreSumBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
-  }
-  void ScoreMaxBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
-  }
-
-  void ScorePostingBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kPostingBlock);
   }
 
   const FreqBlockAttr* freq;
@@ -146,22 +110,9 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Constant(ctx.boost);
   }
 
-  auto* scale = [&] {
-    auto* attr = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
-    return attr ? attr->value : nullptr;
-  }();
+  const auto* scale = ScaleOf(ctx);
 
-  const uint32_t* norm = nullptr;
-  if (_normalize) {
-    norm = [&] {
-      auto* attr = irs::get<Norm>(ctx.doc_attrs);
-      return attr ? &attr->value : nullptr;
-    }();
-    if (!norm) {
-      norm =
-        ctx.fetcher.AddNorms(ctx.field.norm, ctx.segment.norms(ctx.field.norm));
-    }
-  }
+  const uint32_t* norm = _normalize ? FieldNormsOf(ctx) : nullptr;
 
   return ResolveBool(norm, [&]<bool HasNorms>() {
     return ResolveBool(scale, [&]<bool HasScale>() {

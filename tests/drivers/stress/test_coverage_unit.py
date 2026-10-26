@@ -1,9 +1,10 @@
+import config
 import coverage
 import scenarios
 
 
 def test_every_scenario_has_reachable_kinds():
-    for name in scenarios.SCENARIOS:
+    for name in sorted(set(scenarios.SCENARIOS) - config.SCENARIOS_NEEDING_ICEBERG_REST):
         kinds = coverage.reachable_op_kinds(name, iterations=3000)
         assert kinds, f"{name} generated nothing"
 

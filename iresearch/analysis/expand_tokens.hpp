@@ -195,6 +195,9 @@ struct TypedTokenExpander : TokenExpander {
       }
     }
   };
+
+ protected:
+  ~TypedTokenExpander() = default;
 };
 
 }  // namespace irs::analysis

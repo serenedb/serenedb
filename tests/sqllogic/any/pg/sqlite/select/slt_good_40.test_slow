@@ -52084,13 +52084,12 @@ SELECT DISTINCT + tab0.col1 / ( + col2 + + col0 * col2 ) FROM tab0
 2
 
 skipif mysql # not compatible
-skipif postgres
 query I rowsort
 SELECT + col1 * + CAST ( - col0 + - col2 AS REAL ) * - 0 FROM tab1
 ----
-0
-0
-0
+-0
+-0
+-0
 
 query I rowsort
 SELECT DISTINCT + col2 * 97 AS col1 FROM tab0

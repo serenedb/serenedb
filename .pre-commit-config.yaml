@@ -159,12 +159,14 @@ repos:
         pass_filenames: false
         always_run: true
       - id: check-submodule-pointers
-        name: Check submodule gitlinks (on a version branch, not older than main)
+        name: Check submodule gitlinks (on a version branch or an open fork PR head, not older than main)
         language: python
         entry: python3 scripts/check_submodule_pointers.py
+        args: [--allow-pending]
         # pre-commit filters submodule gitlinks out of its file lists, so a
         # files: pattern on third_party/duckdb never matches; the script
         # no-ops instantly (two local git calls) when the gitlink equals
         # origin/main's, so unconditional runs are cheap.
         always_run: true
         pass_filenames: false
+        verbose: true

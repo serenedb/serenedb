@@ -1,0 +1,52 @@
+target_sources(
+    iresearch
+    PRIVATE
+        column/col_reader.cpp
+        column/col_writer.cpp
+        column/column_reader.cpp
+        column/column_writer.cpp
+        column/internal/write_context.cpp
+        column/merge.cpp
+        column/norm_column_reader.cpp
+        column/norm_writer.cpp
+        column/read_context.cpp
+        column/variant_column_reader.cpp
+        format_utils.cpp
+        index/idx_reader.cpp
+        index/idx_writer.cpp
+        index/term_dict.cpp
+        index/term_dict_ranges.cpp
+        index/term_dict_root.cpp
+        index/term_dict_walk.cpp
+        index_meta_reader.cpp
+        index_meta_writer.cpp
+        posting/block_codec.cpp
+        segment_meta_reader.cpp
+        segment_meta_writer.cpp
+        term_reader.cpp
+)
+
+if(IRESEARCH_BENCH)
+    return()
+endif()
+
+target_sources(
+    iresearch
+    PRIVATE
+        hnsw/hnsw_bases.cpp
+        hnsw/hnsw_graph.cpp
+        hnsw/hnsw_reader.cpp
+        hnsw/hnsw_writer.cpp
+        ivf/centroids.cpp
+        ivf/clustering.cpp
+        ivf/ivf_reader.cpp
+        ivf/ivf_writer.cpp
+        ivf/quantizer.cpp
+        ivf/quantizers/bq.cpp
+        ivf/quantizers/osq.cpp
+        ivf/quantizers/panorama.cpp
+        ivf/quantizers/pq.cpp
+        ivf/quantizers/rabitq.cpp
+        ivf/quantizers/scalar.cpp
+        ivf/quantizers/tq.cpp
+)

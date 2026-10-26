@@ -11,6 +11,18 @@ statement ok
 INSERT INTO postgres.public.sfp_docs VALUES (1, 'alpha'), (2, 'beta');
 
 statement ok
+CREATE DATABASE sfp_live;
+
+statement ok
+CREATE TABLE sfp_live.public.sfp_secret(id INTEGER, note VARCHAR);
+
+statement ok
+INSERT INTO sfp_live.public.sfp_secret VALUES (1, 'payroll');
+
+statement ok
+CREATE VIEW postgres.public.sfp_secret_v AS SELECT id, note FROM sfp_live.public.sfp_secret;
+
+statement ok
 CHECKPOINT postgres;
 
 system ok
@@ -47,6 +59,134 @@ SELECT id FROM sfp_snap.public.sfp_docs_idx WHERE body @@ 'beta';
 ----
 id
 2
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+statement error
+SELECT rolname FROM sfp_snap.pg_catalog.pg_authid ORDER BY rolname;
+----
+db error: ERROR: permission denied for table pg_authid
+
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+query
+SELECT count(*) > 0 AS visible FROM sfp_snap.pg_catalog.pg_class;
+----
+visible
+t
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+query
+SELECT has_table_privilege('sfp_snap.public.sfp_docs', 'SELECT') AS docs,
+       has_any_column_privilege('sfp_snap.public.sfp_docs', 'SELECT') AS any_column,
+       has_column_privilege('sfp_snap.public.sfp_docs', 'body', 'SELECT') AS body,
+       has_table_privilege('sfp_snap.pg_catalog.pg_authid', 'SELECT') AS authid;
+----
+docs	any_column	body	authid
+t	t	t	f
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+statement error
+SELECT has_table_privilege('sfp_snap.public.sfp_docs', 'BOGUS');
+----
+db error: ERROR: unrecognized privilege type: "BOGUS"
+
+
+connection default
+statement ok
+ATTACH '${__TEST_DIR__}/sfp_snap/5' AS sfp_session (TYPE serenedb, READ_ONLY);
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+statement error
+SELECT rolname FROM sfp_session.pg_catalog.pg_authid ORDER BY rolname;
+----
+db error: ERROR: permission denied for table pg_authid
+
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+statement error
+SELECT count(*) FROM sfp_session.pg_catalog.pg_hba_file_rules;
+----
+db error: ERROR: permission denied for table pg_hba_file_rules
+
+
+connection default
+statement ok
+DETACH sfp_session;
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+statement error
+SELECT id, note FROM sfp_live.public.sfp_secret;
+----
+db error: ERROR: permission denied for table sfp_secret
+
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+statement error
+SELECT id, note FROM sfp_snap.public.sfp_secret_v ORDER BY id;
+----
+db error: ERROR: permission denied for table sfp_secret
+
+
+connection default
+statement ok
+GRANT SELECT ON sfp_live.public.sfp_secret TO sfp_reader;
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+query
+SELECT id, note FROM sfp_snap.public.sfp_secret_v ORDER BY id;
+----
+id	note
+1	payroll
+
+connection default
+statement ok
+REVOKE SELECT ON sfp_live.public.sfp_secret FROM sfp_reader;
+
+connection default
+statement ok
+CREATE ROLE sfp_wrapper;
+
+connection default
+statement ok
+GRANT SELECT ON sfp_live.public.sfp_secret TO sfp_wrapper;
+
+connection default
+statement ok
+CREATE VIEW postgres.public.sfp_wrap AS SELECT id, note FROM sfp_snap.public.sfp_secret_v;
+
+connection default
+statement ok
+ALTER VIEW postgres.public.sfp_wrap OWNER TO sfp_wrapper;
+
+connection default
+statement ok
+GRANT SELECT ON postgres.public.sfp_wrap TO sfp_reader;
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+query
+SELECT id, note FROM postgres.public.sfp_wrap ORDER BY id;
+----
+id	note
+1	payroll
+
+connection default
+statement ok
+REVOKE SELECT ON sfp_live.public.sfp_secret FROM sfp_wrapper;
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+statement error
+SELECT id, note FROM postgres.public.sfp_wrap ORDER BY id;
+----
+db error: ERROR: permission denied for table sfp_secret
+
+
+connection default
+statement ok
+DROP VIEW postgres.public.sfp_wrap;
+
+connection default
+statement ok
+DROP ROLE sfp_wrapper;
 
 connection default
 statement ok

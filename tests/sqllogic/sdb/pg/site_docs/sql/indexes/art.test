@@ -42,13 +42,23 @@ statement ok
 DELETE FROM my_table;
 
 statement ok
-INSERT INTO my_table SELECT i FROM tmp;
+INSERT INTO my_table SELECT i + 1 FROM tmp;
 
 statement ok
 DROP TABLE tmp;
 
 statement ok
 COMMIT;
+
+query
+SELECT
+    min(i) AS lowest,
+    max(i) AS highest,
+    count(*) AS total
+FROM my_table;
+----
+lowest	highest	total
+1	3000	3000
 
 # DOCS_TEST: example_003
 

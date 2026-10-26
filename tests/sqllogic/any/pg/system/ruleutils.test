@@ -170,4 +170,33 @@ name	"select"	"Mixed"	"1abc"	"a""b"	text."order"
 
 
 statement ok
+CREATE TEMP TABLE ru_temp (id int, v text);
+
+
+statement ok
+CREATE INDEX ru_temp_v ON ru_temp (v);
+
+
+statement ok
+CREATE TEMP VIEW ru_temp_view AS SELECT id FROM ru_temp;
+
+
+query
+SELECT pg_get_viewdef('ru_temp_view'::regclass) IS NOT NULL AS view_def,
+       pg_get_indexdef('ru_temp_v'::regclass) IS NOT NULL AS index_def,
+       pg_get_indexdef('ru_temp_v'::regclass, 1, false) AS index_column;
+----
+view_def	index_def	index_column
+t	t	v
+
+
+statement ok
+DROP VIEW ru_temp_view;
+
+
+statement ok
+DROP TABLE ru_temp;
+
+
+statement ok
 DROP SCHEMA ru CASCADE;

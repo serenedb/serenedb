@@ -23,6 +23,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/score_bound_writer.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -31,13 +32,6 @@
 
 namespace irs {
 namespace {
-
-template<typename T>
-constexpr const T* TryGetValue(const T* value) noexcept {
-  return value;
-}
-
-constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
 template<ScoreMergeType MergeType, bool HasScale>
 IRS_FORCE_INLINE void RawTfImpl(
@@ -49,7 +43,7 @@ IRS_FORCE_INLINE void RawTfImpl(
 }
 
 template<bool HasScale>
-struct RawTfScore : public ScoreOperator {
+struct RawTfScore : public ScoreOperatorOf<RawTfScore<HasScale>> {
   RawTfScore(score_t boost, const FreqBlockAttr* freq,
              const score_t* scale) noexcept
     : freq{freq}, scale{scale}, boost{boost} {
@@ -61,36 +55,6 @@ struct RawTfScore : public ScoreOperator {
                                   scores_size_t n) const noexcept {
     RawTfImpl<MergeType, HasScale>(res, n, freq->value, TryGetValue(scale),
                                    boost);
-  }
-
-  score_t Score() const noexcept final {
-    score_t res{};
-    ScoreImpl(&res, 1);
-    return res;
-  }
-
-  void Score(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl(res, n);
-  }
-  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, n);
-  }
-  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, n);
-  }
-
-  void ScoreBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kScoreBlock);
-  }
-  void ScoreSumBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
-  }
-  void ScoreMaxBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
-  }
-
-  void ScorePostingBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kPostingBlock);
   }
 
   const FreqBlockAttr* freq;
@@ -109,10 +73,7 @@ ScoreFunction RawTF::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Default();
   }
 
-  auto* scale = [&] {
-    auto* attr = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
-    return attr ? attr->value : nullptr;
-  }();
+  const auto* scale = ScaleOf(ctx);
 
   return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
     return ScoreFunction::Make<RawTfScore<HasScale>>(ctx.boost, freq, scale);

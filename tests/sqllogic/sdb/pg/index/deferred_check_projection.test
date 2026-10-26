@@ -284,18 +284,18 @@ VACUUM (REFRESH_TABLE) dcp_geo
 
 query
 SELECT count(*) FROM dcp_geo_idx
-WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.601,55.701],[37.605,55.701],[37.605,55.705],[37.601,55.705],[37.601,55.701]]]}')
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.60105,55.70105],[37.60505,55.70105],[37.60505,55.70505],[37.60105,55.70505],[37.60105,55.70105]]]}')
 ----
 count
-1597
+1600
 
 query
 SELECT count(*) FROM dcp_geo_idx
-WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.601,55.701],[37.605,55.701],[37.605,55.705],[37.601,55.705],[37.601,55.701]]]}')
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.60105,55.70105],[37.60505,55.70105],[37.60505,55.70505],[37.60105,55.70505],[37.60105,55.70105]]]}')
   AND geo::VARCHAR = '{"type":"Point","coordinates":[' || (37.6 + (id % 100) * 0.0001) || ',' || (55.7 + (id // 100) * 0.0001) || ']}'
 ----
 count
-1597
+1600
 
 query
 EXPLAIN SELECT id, geo FROM dcp_geo_idx
@@ -327,11 +327,11 @@ QUERY PLAN
 query
 SELECT count(*), count(*) FILTER (WHERE geo::VARCHAR = '{"type":"Point","coordinates":[' || (37.6 + (id % 100) * 0.0001) || ',' || (55.7 + (id // 100) * 0.0001) || ']}')
 FROM dcp_geo_idx
-WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.601,55.701],[37.605,55.701],[37.605,55.705],[37.601,55.705],[37.601,55.701]]]}')
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.60105,55.70105],[37.60505,55.70105],[37.60505,55.70505],[37.60105,55.70505],[37.60105,55.70105]]]}')
   AND id % 3 <> 0
 ----
 count	count
-1068	1068
+1067	1067
 
 statement ok
 DROP TABLE dcp_geo

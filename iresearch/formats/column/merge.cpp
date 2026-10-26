@@ -93,7 +93,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       continue;
     }
     for (const auto& col : s.col_reader->Columns()) {
-      if (field_options && !field_options->KeepsColumn(col->Id())) {
+      if (field_options && !field_options->HasColumn(col->Id())) {
         continue;
       }
       if (seen_ids.insert(col->Id()).second) {

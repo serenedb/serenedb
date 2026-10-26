@@ -176,6 +176,7 @@ const VectorScorerOptions& PrepareVectorScorer(
   const VectorScorerOptions& planned) {
   auto& vs = state.owned_vector_scorer.emplace(planned);
   RefreshVectorKnobs(vs, context);
+  vs.rescore_all = state.has_lookup_filter;
   if (vs.query_expr) {
     vs.query_vector = EvaluateQueryVector(context, vs);
   }
@@ -183,12 +184,8 @@ const VectorScorerOptions& PrepareVectorScorer(
              "a vector search has a query vector to search for");
   if (state.top_k) {
     if (vs.kind == irs::AnnKind::Hnsw) {
-      bool chosen_here = false;
-      const auto factor = AnnOversample(context, vs, chosen_here);
       const auto k = static_cast<double>(*state.top_k);
-      const double share = SegmentBeamShare(k, state.total_segments);
-      const double seg_pool = OversamplePool(factor, share);
-      vs.min_ef = ClampCandidates(seg_pool > 0.0 ? seg_pool : share, k,
+      vs.min_ef = ClampCandidates(SegmentBeamShare(k, state.total_segments), k,
                                   state.reader->live_docs_count());
     }
     vs.top_k = static_cast<uint32_t>(*state.top_k);
@@ -278,11 +275,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     return state;
   }
 
-  if (state->shape == ScanShape::CountFast) {
-    state->workers = 1;
-    return state;
-  }
-
   if (state->needs_lookup && ss.relation.IsInvertedIndex()) {
     const auto pk_kind = ss.relation.ScannedIndex().pk.column;
     if (pk_kind == catalog::PkColumnKind::None) {
@@ -324,7 +316,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   state->needs_terms = !ss.offsets.requests.empty();
 
-  if (state->shape == ScanShape::TopK || state->shape == ScanShape::Stream) {
+  if (state->shape == ScanShape::TopK || state->shape == ScanShape::Ann ||
+      state->shape == ScanShape::Stream) {
     if (ss.score.text) {
       state->scorer_obj = search::MakeScorer(*ss.score.text);
     } else if (ss.score.order) {
@@ -376,6 +369,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   if (state->shape == ScanShape::TopK) {
     InitTopKGlobal(*state, context);
+  } else if (state->shape == ScanShape::Ann) {
+    InitAnnGlobal(*state, context);
   }
   return state;
 }
@@ -391,13 +386,6 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       result = MakeTsDictLocal(g, input);
       break;
     }
-    case ScanShape::CountFast: {
-      auto l = duckdb::make_uniq<CountLocalState>();
-      l->local_count = g.reader->live_docs_count();
-      l->units_exhausted = true;
-      result = std::move(l);
-      break;
-    }
     case ScanShape::Count: {
       result = duckdb::make_uniq<CountLocalState>();
       break;
@@ -406,6 +394,13 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       auto l = duckdb::make_uniq<TopKLocalState>();
       l->worker = worker;
       InitTopKLocal(g, *l, input);
+      result = std::move(l);
+      break;
+    }
+    case ScanShape::Ann: {
+      auto l = duckdb::make_uniq<AnnLocalState>();
+      l->worker = worker;
+      InitAnnLocal(g, *l, input);
       result = std::move(l);
       break;
     }
@@ -448,13 +443,16 @@ void IResearchScanFunction(duckdb::ClientContext& context,
     case ScanShape::TsDict:
       RunTsDictScan(context, g, *data.local_state, out);
       break;
-    case ScanShape::CountFast:
     case ScanShape::Count:
       RunCountScan(data, g, data.local_state->Cast<CountLocalState>(), out);
       break;
     case ScanShape::TopK:
       RunTopKScan(context, data, g, data.local_state->Cast<TopKLocalState>(),
                   out);
+      break;
+    case ScanShape::Ann:
+      RunAnnScan(context, data, g, data.local_state->Cast<AnnLocalState>(),
+                 out);
       break;
     case ScanShape::ColScan:
       RunColScan(context, data, g, data.local_state->Cast<ColScanLocalState>(),
@@ -494,15 +492,24 @@ void IResearchSetScanOrder(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::RowGroupOrderOptions> options,
   duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
-  if (!bind_data || !options || !options->single_order_key ||
+  if (!bind_data || !options) {
+    return;
+  }
+  auto& bd = bind_data->Cast<ScanBindData>();
+  if (options->row_group_offset != 0 ||
+      options->leading_null_group_offset != 0) {
+    bd.search.filter = std::make_shared<irs::Empty>();
+    return;
+  }
+  if (!options->single_order_key ||
       (!options->row_limit.IsValid() && !options->row_limit_expression)) {
     return;
   }
   if (GetBoolSetting(context, "sdb_disable_top_k_optimization")) {
     return;
   }
-  auto& bd = bind_data->Cast<ScanBindData>();
-  const auto order_col = options->column_idx.GetPrimaryIndex();
+  const auto order_col =
+    ScanColumnOfStorage(bd, options->column_idx.GetPrimaryIndex());
   if (order_col >= bd.columns.ids.size()) {
     return;
   }
@@ -646,6 +653,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   };
   func.init_local = IResearchScanInitLocal;
   func.cardinality = ScanCardinality;
+  func.get_partition_stats = &IResearchScanPartitionStats;
   func.get_metrics = IResearchScanGetMetrics;
   func.to_string_value = ScanToStringValue;
   func.table_scan_progress = IResearchScanProgress;

@@ -75,8 +75,6 @@ struct RetiredIndex {
 class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                           public MaintainedStore {
  public:
-  // `is_new` opens a fresh index; a durable one opens through OpenWriter or
-  // OpenReader once the catalog replay has kept the table.
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
   SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
@@ -120,7 +118,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     return _directory->StoragePath(GetTableId());
   }
   bool Absent() const noexcept { return _absent; }
-  void OpenWriter(bool in_memory);
+  void Open();
   void OpenReader();
 
   // `exclusive_segment` is required of a writer that will record its flushed
@@ -294,6 +292,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   };
   struct ReplaySession;
 
+  void OpenWriter();
   void OpenDirectory();
   irs::IndexReaderOptions ReaderOptions() const;
   std::shared_ptr<const catalog::InvertedIndexConfig> MergeConfigs(
@@ -312,6 +311,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   duckdb::idx_t _table_id;
   std::shared_ptr<catalog::DatabaseDirectory> _directory;
   bool _is_new;
+  bool _in_memory;
+  bool _read_only;
   bool _absent = false;
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;

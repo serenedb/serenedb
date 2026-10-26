@@ -1110,7 +1110,7 @@ yaclib::Task<bool> PgWireSession<Kind>::AuthenticateCleartext(
         ERR_MSG("cleartext password authentication requires TLS")));
     co_return false;
   }
-  WriteAuthRequest(this->_send, 3, {});  // AuthenticationCleartextPassword
+  WriteAuthRequest(this->_send, 3, "");  // AuthenticationCleartextPassword
   co_await this->Flush();
   auto frame = co_await NextFrame(FrameKind::Typed, kMaxAuthToken);
   if (frame.status != FrameStatus::Ok ||

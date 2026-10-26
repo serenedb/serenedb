@@ -111,20 +111,15 @@ std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
 void RemoveUnowned(const std::filesystem::path& directory,
                    const absl::flat_hash_set<duckdb::idx_t>& owned) {
   for (const auto& [oid, path] : OidDirectories(directory)) {
-    if (owned.contains(oid)) {
-      continue;
-    }
-    std::error_code ec;
-    std::filesystem::remove_all(path, ec);
-    if (ec) {
-      SDB_WARN(STARTUP, "could not remove '", path.string(),
-               "': ", ec.message());
+    if (!owned.contains(oid)) {
+      RemoveDirectory(path);
     }
   }
 }
 
 template<typename Storage>
-void RequirePresent(const Storage& storage, const duckdb::CatalogEntry& entry) {
+void OpenLive(Storage& storage, const duckdb::CatalogEntry& entry) {
+  storage.Open();
   if (storage.Absent()) {
     SDB_FATAL(STARTUP, "the directory '", storage.Path().string(), "' of ",
               entry.name.GetIdentifierName(), " (oid ", entry.oid,
@@ -132,45 +127,29 @@ void RequirePresent(const Storage& storage, const duckdb::CatalogEntry& entry) {
   }
 }
 
-void OpenStorages(const DataDirectory& layout, duckdb::AttachedDatabase& db) {
-  auto& catalog = db.GetCatalog().Cast<SereneDBCatalog>();
+absl::flat_hash_set<duckdb::idx_t> OpenStorages(SereneDBCatalog& catalog) {
   std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
   catalog.ScanSchemas(
     [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
-  std::vector<duckdb::reference<SearchTableEntry>> tables;
-  std::vector<duckdb::reference<InvertedIndexEntry>> indexes;
   absl::flat_hash_set<duckdb::idx_t> oids;
   for (auto& schema : schemas) {
     schema.get().Scan(
       duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        if (auto* table = dynamic_cast<SearchTableEntry*>(&entry)) {
-          tables.emplace_back(*table);
+        if (const auto* table = dynamic_cast<SearchTableEntry*>(&entry)) {
+          OpenLive(*table->Storage(), entry);
           oids.insert(entry.oid);
         }
       });
-    schema.get().Scan(duckdb::CatalogType::INDEX_ENTRY,
-                      [&](duckdb::CatalogEntry& entry) {
-                        auto* index = dynamic_cast<InvertedIndexEntry*>(&entry);
-                        if (index && index->Storage()) {
-                          indexes.emplace_back(*index);
-                          oids.insert(entry.oid);
-                        }
-                      });
+    schema.get().Scan(
+      duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
+        const auto* index = dynamic_cast<InvertedIndexEntry*>(&entry);
+        if (index && index->Storage()) {
+          OpenLive(*index->Storage(), entry);
+          oids.insert(entry.oid);
+        }
+      });
   }
-  if (!catalog.InMemory()) {
-    RemoveUnowned(layout.DatabaseDir(db.oid), oids);
-  }
-  for (auto& table : tables) {
-    const auto& storage = table.get().Storage();
-    storage->OpenWriter(catalog.InMemory());
-    RequirePresent(*storage, table.get());
-  }
-  for (auto& index : indexes) {
-    const auto& storage = index.get().Storage();
-    storage->OpenWriter(catalog.InMemory(),
-                        ResolveSettings(index.get().options));
-    RequirePresent(*storage, index.get());
-  }
+  return oids;
 }
 
 void RemoveUnownedDatabases(const DataDirectory& layout,
@@ -180,6 +159,20 @@ void RemoveUnownedDatabases(const DataDirectory& layout,
     .Scan(cluster.LoginTransaction(),
           [&](duckdb::CatalogEntry& entry) { databases.insert(entry.oid); });
   RemoveUnowned(layout.EngineDir(), databases);
+}
+
+void OpenStorages(const DataDirectory& layout,
+                  duckdb::DatabaseManager& manager) {
+  for (const auto& db : manager.GetDatabases()) {
+    auto& catalog = db->GetCatalog();
+    if (catalog.GetCatalogType() != SereneDBCatalog::kStorageType) {
+      continue;
+    }
+    const auto live = OpenStorages(catalog.Cast<SereneDBCatalog>());
+    if (!catalog.InMemory()) {
+      RemoveUnowned(layout.DatabaseDir(db->oid), live);
+    }
+  }
 }
 
 duckdb::unique_ptr<duckdb::Catalog> AttachCluster(
@@ -402,9 +395,9 @@ void InitCatalog(std::string_view directory) {
       cluster.DropDatabase(cluster.GetCatalogTransaction(context), drop);
     });
   }
+  OpenStorages(layout, manager);
   for (const auto& db : manager.GetDatabases()) {
     if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType) {
-      OpenStorages(layout, *db);
       db->GetStorageManager().FinishLoad(context);
     }
   }

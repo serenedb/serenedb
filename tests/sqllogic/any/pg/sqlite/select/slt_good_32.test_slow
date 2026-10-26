@@ -65905,13 +65905,12 @@ SELECT 33 + 32 * col2 FROM tab0 cor0
 65
 
 skipif mysql # not compatible
-skipif postgres
 query I rowsort
 SELECT + + 42 * - ( - col0 + + CAST ( + col0 AS REAL ) ) * col2 FROM tab0 AS cor0
 ----
-0
-0
-0
+-0
+-0
+-0
 
 query I rowsort
 SELECT ALL 66 AS col2 FROM tab2, tab2 AS cor0

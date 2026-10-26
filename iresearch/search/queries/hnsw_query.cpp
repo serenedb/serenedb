@@ -179,6 +179,36 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   return hits;
 }
 
+std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
+                                  const SubReader& segment,
+                                  std::span<const score_t> spreads,
+                                  std::vector<score_t>& spread_out) {
+  SDB_ASSERT(spreads.size() == found.size());
+  std::vector<uint32_t> order(found.size());
+  std::iota(order.begin(), order.end(), 0);
+  absl::c_sort(order, [&](uint32_t l, uint32_t r) {
+    return found[l].node < found[r].node;
+  });
+  const auto it_mask = segment.MaskedDocs();
+  const auto end =
+    doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
+  std::vector<ScoreDoc> hits;
+  hits.reserve(found.size());
+  spread_out.clear();
+  spread_out.reserve(found.size());
+  for (const auto i : order) {
+    const auto doc = static_cast<doc_id_t>(found[i].node) + doc_limits::min();
+    SDB_ENSURE(doc >= doc_limits::min() && doc < end,
+               "an hnsw hit is outside its segment");
+    if (it_mask.Contains(doc)) {
+      continue;
+    }
+    hits.push_back({.score = found[i].score, .doc = doc});
+    spread_out.push_back(spreads[i]);
+  }
+  return hits;
+}
+
 struct WalkFilterScratch {
   HnswVisited known;
   HnswVisited pass;
@@ -495,7 +525,8 @@ HnswQuery::HnswQuery(const SubReader& segment,
                      const VectorFilterOptions& opts, uint32_t record_size,
                      HnswSearchLimits limits, score_t boost,
                      QueryBuilder::ptr&& inner, AnnQueryCache* cache)
-  : QueryBuilderImpl{segment},
+  : QueryBuilderImpl{segment, static_cast<uint32_t>(segment.docs_count()),
+                     QueryKind::Ann},
     _data{std::move(data)},
     _cache{cache},
     _inner{std::move(inner)},
@@ -506,6 +537,8 @@ HnswQuery::HnswQuery(const SubReader& segment,
     _d{static_cast<uint32_t>(opts.query.size())},
     _record_size{record_size},
     _ef{limits.ef},
+    _top_k{opts.top_k},
+    _rescore_width{opts.rescore_width},
     _threshold{limits.threshold},
     _max_results{limits.max_results},
     _boost{boost},
@@ -654,8 +687,53 @@ void HnswQuery::ScanColumn(HnswSearchScratch& s) const {
   HnswScanTopK(set, _data->graph, dist, _ef, s);
 }
 
-std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
+void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
+                      std::vector<score_t>& spreads) const {
+  auto& nearest = scratch.nearest;
+  const size_t n = nearest.size();
+  if (n == 0) {
+    return;
+  }
+  auto& ids = scratch.batch;
+  auto& scores = scratch.scores;
+  ids.resize(n);
+  scores.resize(3 * n);
+  for (size_t i = 0; i < n; ++i) {
+    ids[i] = nearest[i].node;
+    scores[i] = nearest[i].score;
+  }
+  const std::span<score_t> estimates{scores.data(), n};
+  score_t* errors = scores.data() + n;
+  reader.ScoreErrors(_data->codes.data(), _record_size, ids, estimates, errors);
+  const auto z = _rescore_width;
+  auto floor = std::numeric_limits<score_t>::lowest();
+  if (_top_k != 0 && n > _top_k) {
+    const std::span<score_t> lower{scores.data() + 2 * n, n};
+    for (size_t i = 0; i < n; ++i) {
+      lower[i] = estimates[i] - z * errors[i];
+    }
+    const auto kth = lower.begin() + (_top_k - 1);
+    absl::c_nth_element(lower, kth, std::greater{});
+    floor = *kth;
+  }
+  size_t kept = 0;
+  spreads.clear();
+  for (size_t i = 0; i < n; ++i) {
+    const auto spread = z * errors[i];
+    if (estimates[i] + spread < floor) {
+      continue;
+    }
+    nearest[kept++] = {.score = estimates[i], .node = ids[i]};
+    spreads.push_back(spread);
+  }
+  nearest.resize(kept);
+}
+
+std::vector<ScoreDoc> HnswQuery::RunSearch(
+  detail::TableFilter* table, std::vector<score_t>* spreads) const {
   HnswSearchScratch scratch;
+  std::vector<score_t> widened;
+  bool wide = false;
   if (table && !table->Foldable()) {
     table = nullptr;
   }
@@ -673,8 +751,15 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
                  } else {
                    HnswSearchTopK(_data->graph, dist, _ef, scratch);
                  }
+                 if constexpr (requires { dist.qr; }) {
+                   if (spreads && _ef != 0 && _rescore_width > 0.f) {
+                     Widen(*dist.qr, scratch, widened);
+                     wide = true;
+                   }
+                 }
                });
-  auto hits = CollectHits(scratch.nearest, _segment);
+  auto hits = wide ? CollectHits(scratch.nearest, _segment, widened, *spreads)
+                   : CollectHits(scratch.nearest, _segment);
   if (_ef == 0 && _data->stats && _exact && !hits.empty()) {
     RerankExactDistances(_segment, *_exact, _d, _query, _metric, hits);
     std::erase_if(hits, [&](const ScoreDoc& hit) {

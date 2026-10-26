@@ -481,10 +481,12 @@ void SereneDBCatalog::FinalizeLoad(
   auto& storage = GetAttached().GetStorageManager();
   duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path, oid);
   for (auto& table : SearchTableStorages(*this)) {
+    table->Open();
     table->OpenReader();
   }
   for (auto& index : InvertedIndexEntries(*this)) {
     if (const auto& index_storage = index.get().Storage()) {
+      index_storage->Open();
       index_storage->OpenReader();
     }
   }

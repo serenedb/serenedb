@@ -1,3 +1,5 @@
+control substitution on
+
 statement ok
 DROP ROLE IF EXISTS dbsub_vedernikoff;
 
@@ -11,7 +13,7 @@ CREATE SUBSCRIPTION dbsub_sub1 CONNECTION 'host=localhost dbname=mydb' PUBLICATI
 
 
 statement ok
-GRANT TEMP ON DATABASE postgres TO dbsub_vedernikoff;
+GRANT TEMP ON DATABASE ${__DATABASE__} TO dbsub_vedernikoff;
 
 
 query
@@ -22,7 +24,7 @@ dbsub_sub1
 
 
 statement ok
-REVOKE ALL ON DATABASE postgres FROM dbsub_vedernikoff;
+REVOKE ALL ON DATABASE ${__DATABASE__} FROM dbsub_vedernikoff;
 
 
 query

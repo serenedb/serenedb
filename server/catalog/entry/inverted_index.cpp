@@ -289,13 +289,13 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
            : irs::field_limits::invalid();
 }
 
-bool InvertedIndexConfig::KeepsField(irs::field_id id) const noexcept {
+bool InvertedIndexConfig::HasField(irs::field_id id) const {
   return id == connector::term_dict::kPKFieldId ||
          retained_fields.contains(id) || LookupField(id).entry || FindKey(id);
 }
 
-bool InvertedIndexConfig::KeepsColumn(irs::field_id id) const noexcept {
-  return table_columns.empty() || table_columns.contains(id) || KeepsField(id);
+bool InvertedIndexConfig::HasColumn(irs::field_id id) const {
+  return table_columns.empty() || table_columns.contains(id) || HasField(id);
 }
 
 void InvertedIndexConfig::ForEachAnn(

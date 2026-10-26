@@ -26050,11 +26050,10 @@ SELECT DISTINCT ( - 11 ) AS col1 FROM tab0
 -11
 
 skipif mysql # not compatible
-skipif postgres
 query I rowsort
 SELECT DISTINCT ( + col2 + - tab0.col2 ) * CAST ( - col1 AS REAL ) AS col1 FROM tab0
 ----
-0
+-0
 
 query I rowsort
 SELECT ALL - 30 FROM tab1, tab1 AS cor0

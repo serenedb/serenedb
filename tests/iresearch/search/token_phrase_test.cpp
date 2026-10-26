@@ -40,6 +40,7 @@
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/deferral.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/search/filters/ngram_similarity_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/constant_score.hpp>
@@ -1974,6 +1975,61 @@ TEST(TokenPhraseIndexTest, pruned_top_prunes_unboosted_positional_expansions) {
       }
     }
   }
+}
+
+void ExpectFamiliesScoreAlike(const tests::Families& expected,
+                              const tests::Families& actual) {
+  tests::ExpectScores(expected.fill_scores, actual.hits);
+  tests::ExpectScores(expected.fill_scores, actual.fill_scores);
+  tests::ExpectScores(expected.fill_scores, actual.probe_scores);
+  auto top =
+    std::ranges::to<std::vector>(std::views::values(expected.fill_scores));
+  absl::c_sort(top, std::greater<>{});
+  top.resize(std::min(top.size(), tests::kTop));
+  ASSERT_EQ(top.size(), actual.top.size());
+  for (size_t i = 0; i != top.size(); ++i) {
+    EXPECT_FLOAT_EQ(top[i], actual.top[i]) << i;
+  }
+}
+
+TEST(TokenPhraseIndexTest, constant_scores_keep_what_scales_each_row) {
+  const std::vector<std::string> docs{
+    "quick brown", "quick a brown", "quick a b brown",
+    "quick brawn", "quick a brawn", "brown quick",
+    "ab bc"};
+  const Index index{docs, std::type_identity<DenseWords>{}};
+  const irs::ConstantScore scorer{2.f};
+  auto fixed = Phrase("quick brown");
+  fixed.set_slop(2);
+  auto prefix = Phrase("quick");
+  prefix.push_back<irs::ByPrefixOptions>().term = Bytes("bro");
+  prefix.set_slop(2);
+  auto fuzzy = Phrase("quick");
+  auto& edit = fuzzy.push_back<irs::ByEditDistanceOptions>();
+  edit.term = Bytes("brown");
+  edit.max_distance = 1;
+  fuzzy.set_slop(2);
+  for (const auto* options : {&fixed, &prefix, &fuzzy}) {
+    SCOPED_TRACE(Describe(*options));
+    const auto positional =
+      index.Run(*Lowered(PhraseOn(kPositionalId, *options)), scorer);
+    ExpectFamiliesScoreAlike(positional, positional);
+    if (options != &fuzzy) {
+      ExpectFamiliesScoreAlike(
+        positional,
+        index.Run(*Lowered(PhraseOn(kPlainId, *options, Tokens<DenseWords>())),
+                  scorer));
+    }
+  }
+  irs::ByNGramSimilarity ngram;
+  *ngram.mutable_field_id() = kPositionalId;
+  auto& grams = *ngram.mutable_options();
+  for (const std::string_view gram : {"ab", "bc", "cd", "de"}) {
+    grams.ngrams.emplace_back(Bytes(gram));
+  }
+  grams.threshold = 0.5f;
+  const auto every = index.Run(ngram, scorer);
+  ExpectFamiliesScoreAlike(every, every);
 }
 
 irs::Filter::ptr Shaped(irs::ByPhrase phrase, irs::field_id field,

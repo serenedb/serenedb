@@ -353,9 +353,11 @@ class CompoundFieldIterator final : public BasicTermReader {
  public:
   static constexpr const size_t kProgressStepFields = size_t{1};
 
-  explicit CompoundFieldIterator(size_t size,
-                                 const MergeWriter::FlushProgress& progress)
-    : _term_itr(progress), _progress(progress, kProgressStepFields) {
+  CompoundFieldIterator(size_t size, const MergeWriter::FlushProgress& progress,
+                        const IndexFieldOptions* field_options)
+    : _term_itr(progress),
+      _progress(progress, kProgressStepFields),
+      _field_options{field_options} {
     _field_iterators.reserve(size);
     _field_iterator_mask.reserve(size);
   }
@@ -402,6 +404,7 @@ class CompoundFieldIterator final : public BasicTermReader {
   std::vector<FieldIteratorImpl> _field_iterators;
   mutable CompoundTermIterator _term_itr;
   ProgressTracker _progress;
+  const IndexFieldOptions* _field_options;
 };
 
 void CompoundFieldIterator::Add(const SubReader& reader,
@@ -428,6 +431,10 @@ bool CompoundFieldIterator::Next() {
 
   for (size_t i = 0, count = _field_iterators.size(); i != count; ++i) {
     auto& field_itr = _field_iterators[i];
+    while (_field_options && field_itr.pos < field_itr.ids.size() &&
+           !_field_options->HasField(field_itr.ids[field_itr.pos])) {
+      ++field_itr.pos;
+    }
     if (field_itr.pos >= field_itr.ids.size()) {
       continue;
     }
@@ -474,7 +481,7 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
                       const IndexFieldOptions* field_options) {
   for (auto id : reader.field_ids()) {
     const auto* term_reader = reader.field(id);
-    if (!term_reader || (field_options && !field_options->KeepsField(id))) {
+    if (!term_reader || (field_options && !field_options->HasField(id))) {
       continue;
     }
     const auto& field_meta = term_reader->meta();
@@ -655,8 +662,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  const MergedNormIdMap& merged_norm_ids,
                  const MergeWriter::FlushProgress& progress,
                  IResourceManager& rm, IdxWriter& idx,
-                 std::span<const BasicTermReader* const> extra,
-                 const IndexFieldOptions* field_options) {
+                 std::span<const BasicTermReader* const> extra) {
   auto field_writer =
     std::make_unique<burst_trie::FieldWriter>(/*compaction=*/true, rm);
   field_writer->SetIdxWriter(idx);
@@ -680,9 +686,6 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     if (ei < en && sorted_extra[ei]->id() == fid) {
       field_writer->write(*sorted_extra[ei]);
       ++ei;
-      continue;
-    }
-    if (field_options && !field_options->KeepsField(fid)) {
       continue;
     }
 
@@ -786,7 +789,8 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   TrackingDirectory track_dir{_dir};
 
   FieldMetaMapT field_meta_map;
-  CompoundFieldIterator fields_itr{_readers.size(), progress_callback};
+  CompoundFieldIterator fields_itr{_readers.size(), progress_callback,
+                                   _field_options};
   IndexFeatures index_features{IndexFeatures::None};
   if (!ComputeDocMappingsAndFieldMeta(_readers, segment, field_meta_map,
                                       fields_itr, index_features,
@@ -858,7 +862,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   if (segment.docs_count != 0 &&
       !WriteFields(state, segment, fields_itr, merged_norm_ids,
                    progress_callback, _readers.get_allocator().Manager(), idx,
-                   cluster_readers, _field_options)) {
+                   cluster_readers)) {
     co_return false;
   }
 

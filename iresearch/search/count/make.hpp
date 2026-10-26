@@ -41,31 +41,7 @@ Root::ptr MakeTermCount(const detail::PostingClause& posting,
 
 Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs);
 
-Root::ptr MakeTerm(const detail::PostingClause& posting,
-                   const SubReader& segment, const Context& ctx);
-Root::ptr MakeAll(const SubReader& segment, const Context& ctx);
-
-Root::ptr Make(const TermQuery& query, const Context& ctx);
-Root::ptr Make(const MultiTermQuery& query, const Context& ctx);
-Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx);
-Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx);
-Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx);
-Root::ptr Make(const AllQuery& query, const Context& ctx);
-Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx);
-Root::ptr Make(const ApproxQuery& query, const Context& ctx);
-Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx);
-Root::ptr Make(const ByNestedQuery& query, const Context& ctx);
-Root::ptr Make(const RangeVectorQuery& query, const Context& ctx);
-
-inline Root::ptr Make(const EmptyQueryBuilder&, const Context& ctx) {
-  return MakeConstant(0);
-}
-
-Root::ptr Make(const HnswQuery& query, const Context& ctx);
-inline Root::ptr Make(const KnnVectorQuery&, const Context& ctx) { return {}; }
-Root::ptr Make(const ExactVectorQuery& query, const Context& ctx);
-Root::ptr Make(const BooleanQuery& query, const Context& ctx);
-template<typename Parser, typename Acceptor>
-Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx);
+Root::ptr MakeLiveTerm(const detail::PostingClause& term,
+                       const SubReader& segment);
 
 }  // namespace irs::count

@@ -59,4 +59,6 @@ class MultiTermQuery : public QueryBuilderImpl<MultiTermQuery> {
   ScoreMergeType _merge_type;
 };
 
+extern template class QueryBuilderImpl<MultiTermQuery>;
+
 }  // namespace irs

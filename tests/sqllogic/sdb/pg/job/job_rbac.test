@@ -88,7 +88,7 @@ db error: ERROR: permission denied for table jr_secrets<slt:ignore>
 
 
 query
-SELECT last_status, last_error FROM sdb_jobs() WHERE job_name = 'jr_kostya_steal';
+SELECT last_status, last_error FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jr_kostya_steal';
 ----
 last_status	last_error
 failed	permission denied for table jr_secrets
@@ -156,7 +156,7 @@ RESET ROLE;
 
 
 query
-SELECT body FROM sdb_jobs() WHERE job_name = 'jr_kostya_job';
+SELECT body FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jr_kostya_job';
 ----
 body
 INSERT INTO jr_kostya_log (VALUES (1, current_user))

@@ -106,6 +106,8 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _table_id{table_id},
     _directory{std::move(directory)},
     _is_new{is_new},
+    _in_memory{in_memory},
+    _read_only{read_only},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
     _compression{DeclaredCompression(columns)},
@@ -116,12 +118,18 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _topk_scorer = MakeScorer(*_topk_options);
   }
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
-  if (read_only) {
-    OpenDirectory();
-  } else if (_is_new) {
-    OpenWriter(in_memory);
+  if (is_new) {
+    Open();
   }
   ApplyOptions(options);
+}
+
+void SearchTable::Open() {
+  if (_read_only) {
+    OpenDirectory();
+  } else {
+    OpenWriter();
+  }
 }
 
 SearchTable::~SearchTable() {
@@ -135,11 +143,11 @@ SearchTable::~SearchTable() {
   catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _table_id);
 }
 
-void SearchTable::OpenWriter(bool in_memory) {
+void SearchTable::OpenWriter() {
   SDB_ASSERT(!_writer);
   irs::ResourceManagementOptions resource_manager;
   auto opened = OpenStorageDirectory(*_directory, GetTableId(), _is_new,
-                                     in_memory, resource_manager);
+                                     _in_memory, resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 

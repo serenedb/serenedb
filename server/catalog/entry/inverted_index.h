@@ -155,8 +155,8 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
 
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
   irs::field_id GetNormColumnId(irs::field_id id) const final;
-  bool KeepsField(irs::field_id id) const noexcept final;
-  bool KeepsColumn(irs::field_id id) const noexcept final;
+  bool HasField(irs::field_id id) const final;
+  bool HasColumn(irs::field_id id) const final;
   void ForEachAnn(
     irs::field_id column,
     absl::FunctionRef<void(const irs::AnnInfo&)> visit) const final;

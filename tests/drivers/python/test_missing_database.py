@@ -19,6 +19,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from serened import listens_on  # type: ignore[import-untyped]
 
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
@@ -57,11 +58,13 @@ class _Server:
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
                 return False
-            try:
-                self.connect().close()
-                return True
-            except psycopg.OperationalError:
-                time.sleep(0.2)
+            if listens_on(self.proc.pid, [self.port]):
+                try:
+                    self.connect().close()
+                    return True
+                except psycopg.OperationalError:
+                    pass
+            time.sleep(0.2)
         return False
 
     def stop(self) -> None:

@@ -1135,7 +1135,8 @@ TEST_P(FormatTestCase, format_utils_footer) {
     stream->Close();
   };
   const auto read = [&](std::string_view name, std::string_view data) {
-    auto stream = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
+    const auto file = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput stream{*file};
     ASSERT_TRUE(stream);
     uint32_t value = 0;
     uint64_t data_size = 0;
@@ -1172,7 +1173,8 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
 
   irs::bstring bytes;
   {
-    auto stream = dir().Open("file", duckdb::MappedFileAccess::NORMAL);
+    const auto file = dir().Open("file", duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput stream{*file};
     ASSERT_TRUE(stream);
     bytes.resize(stream.Length());
     stream.ReadData(0, bytes.data(), bytes.size());
@@ -1187,7 +1189,8 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
     stream->Close();
   };
   const auto read = [&](std::string_view name) {
-    auto stream = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
+    const auto file = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput stream{*file};
     ASSERT_TRUE(stream);
     irs::format_utils::ReadFooter(
       stream, name, [](duckdb::BinaryDeserializer& meta, uint64_t) {

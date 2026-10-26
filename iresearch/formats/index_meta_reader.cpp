@@ -64,7 +64,8 @@ std::optional<std::string> LastFile(const Directory& dir,
 uint64_t ReadFile(const Directory& dir, std::string_view filename,
                   MetaPayloadReader& payload,
                   std::vector<IndexSegment>* segments) {
-  auto in = dir.ReadWhole(filename);
+  const auto file = dir.ReadWhole(filename);
+  IndexInput in{*file};
 
   uint64_t cnt = 0;
   format_utils::ReadFooter(

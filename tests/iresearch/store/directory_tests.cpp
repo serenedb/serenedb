@@ -91,11 +91,15 @@ TEST_P(DirectoryTestCase, rename) {
   ASSERT_TRUE(_dir->Has("bar1"));
 
   {
-    auto stream0 = _dir->Open("foo1", duckdb::MappedFileAccess::NORMAL);
+    const auto stream0_file =
+      _dir->Open("foo1", duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput stream0{*stream0_file};
     ASSERT_TRUE(stream0);
     ASSERT_EQ(1, stream0.Length());
     ASSERT_EQ(0, stream0.ReadByte());
-    auto stream1 = _dir->Open("bar1", duckdb::MappedFileAccess::NORMAL);
+    const auto stream1_file =
+      _dir->Open("bar1", duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput stream1{*stream1_file};
     ASSERT_TRUE(stream1);
     ASSERT_EQ(4, stream1.Length());
     ASSERT_EQ(2, stream1.ReadI32());
@@ -111,7 +115,9 @@ TEST_P(DirectoryTestCase, rename) {
   ASSERT_TRUE(_dir->Has("foo1"));
 
   {
-    auto stream1 = _dir->Open("foo1", duckdb::MappedFileAccess::NORMAL);
+    const auto stream1_file =
+      _dir->Open("foo1", duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput stream1{*stream1_file};
     ASSERT_TRUE(stream1);
     ASSERT_EQ(4, stream1.Length());
     ASSERT_EQ(2, stream1.ReadI32());
@@ -159,10 +165,12 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
 
   // read data
   {
-    auto in0 = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
+    const auto in0_file = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput in0{*in0_file};
     ASSERT_FALSE(!in0);
     ASSERT_FALSE(in0.IsEOF());
-    auto in1 = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
+    const auto in1_file = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput in1{*in1_file};
     ASSERT_FALSE(!in1);
     ASSERT_FALSE(in1.IsEOF());
     ASSERT_EQ(0, in0.ReadV32());
@@ -193,7 +201,8 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
 
   // read data using dup
   {
-    auto in0 = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
+    const auto in0_file = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput in0{*in0_file};
     ASSERT_FALSE(!in0);
     auto in1 = in0;
     ASSERT_FALSE(!in1);
@@ -237,7 +246,9 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
       out->Close();
     }
 
-    auto in = _dir->Open("test_async", duckdb::MappedFileAccess::NORMAL);
+    const auto in_file =
+      _dir->Open("test_async", duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput in{*in_file};
     std::mutex in_mtx;
     std::mutex mutex;
     irs::async_utils::ThreadPool<> pool(16);
@@ -410,7 +421,8 @@ TEST_P(DirectoryTestCase, string_read_write) {
 
     // read strings
     {
-      auto in = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
+      const auto in_file = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
+      irs::IndexInput in{*in_file};
       ASSERT_FALSE(!in);
       ASSERT_FALSE(in.IsEOF());
       EXPECT_EQ(strings.size(), in.ReadV32());
@@ -1943,7 +1955,8 @@ TEST_P(DirectoryTestCase, string_read_write) {
 
     // read strings
     {
-      auto in = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
+      const auto in_file = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
+      irs::IndexInput in{*in_file};
       ASSERT_FALSE(!in);
       ASSERT_FALSE(in.IsEOF());
       EXPECT_EQ(strings.size(), in.ReadV32());
@@ -3575,7 +3588,8 @@ TEST_P(DirectoryTestCase, string_read_write) {
 
     // read strings
     {
-      auto in = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
+      const auto in_file = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
+      irs::IndexInput in{*in_file};
       ASSERT_FALSE(!in);
       ASSERT_FALSE(in.IsEOF());
       EXPECT_EQ(strings.size(), in.ReadV32());
@@ -3772,7 +3786,8 @@ TEST_P(DirectoryTestCase, smoke_index_io) {
 
   // read from file
   {
-    auto in = _dir->Open(name, duckdb::MappedFileAccess::NORMAL);
+    const auto in_file = _dir->Open(name, duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput in{*in_file};
     ASSERT_FALSE(!in);
     EXPECT_FALSE(in.IsEOF());
 
@@ -3957,9 +3972,10 @@ TEST_P(DirectoryTestCase, smoke_store) {
 
     ASSERT_TRUE(dir.Has(name));
     EXPECT_EQ(expected_length,
-              dir.Open(name, duckdb::MappedFileAccess::NORMAL).Length());
+              dir.Open(name, duckdb::MappedFileAccess::NORMAL)->Length());
 
-    auto file = dir.Open(name, duckdb::MappedFileAccess::NORMAL);
+    const auto opened = dir.Open(name, duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput file{*opened};
     ASSERT_FALSE(!file);
     EXPECT_FALSE(file.IsEOF());
     EXPECT_EQ(0, file.Position());
@@ -4132,7 +4148,9 @@ TEST_P(DirectoryTestCase, smoke_store) {
     }
 
     {
-      auto in = dir.Open("empty_file", duckdb::MappedFileAccess::NORMAL);
+      const auto in_file =
+        dir.Open("empty_file", duckdb::MappedFileAccess::NORMAL);
+      irs::IndexInput in{*in_file};
       ASSERT_FALSE(!in);
       ASSERT_TRUE(in.IsEOF());
 
@@ -4168,7 +4186,9 @@ TEST_P(DirectoryTestCase, smoke_store) {
     // read from file
     {
       byte_type buf[1024 + 691]{};  // 1024 + 691 from above
-      auto in = dir.Open("nonempty_file", duckdb::MappedFileAccess::NORMAL);
+      const auto in_file =
+        dir.Open("nonempty_file", duckdb::MappedFileAccess::NORMAL);
+      irs::IndexInput in{*in_file};
       ASSERT_FALSE(in.IsEOF());
       ASSERT_FALSE(!in);
       in.ReadData(buf, sizeof buf);
@@ -4202,7 +4222,7 @@ TEST_P(DirectoryTestCase, directory_size) {
 
     auto visitor = [this, &accumulated_size](std::string_view name) {
       accumulated_size +=
-        _dir->Open(name, duckdb::MappedFileAccess::NORMAL).Length();
+        _dir->Open(name, duckdb::MappedFileAccess::NORMAL)->Length();
     };
 
     _dir->Visit(visitor);
@@ -4243,7 +4263,8 @@ TEST_P(DirectoryTestCase, input_type_follows_storage) {
   for (const auto access :
        {duckdb::MappedFileAccess::NORMAL, duckdb::MappedFileAccess::SEQUENTIAL,
         duckdb::MappedFileAccess::RANDOM}) {
-    auto in = _dir->Open("file", access);
+    const auto in_file = _dir->Open("file", access);
+    irs::IndexInput in{*in_file};
     ASSERT_FALSE(!in);
     EXPECT_EQ(whole, in.Whole());
     EXPECT_EQ(whole, irs::IndexInput{in}.Whole());
@@ -4268,7 +4289,8 @@ TEST_P(DirectoryTestCase, reads_across_cache_blocks) {
     return irs::bytes_view{data.data() + offset, count};
   };
 
-  auto in = _dir->Open("blocks", duckdb::MappedFileAccess::NORMAL);
+  const auto in_file = _dir->Open("blocks", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput in{*in_file};
   ASSERT_FALSE(!in);
   ASSERT_EQ(kSize, in.Length());
 
@@ -4345,7 +4367,8 @@ TEST_P(DirectoryTestCase, numbers_across_cache_blocks) {
     out->Close();
   }
 
-  auto in = _dir->Open("numbers", duckdb::MappedFileAccess::NORMAL);
+  const auto in_file = _dir->Open("numbers", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput in{*in_file};
   ASSERT_FALSE(!in);
   ASSERT_EQ(4 * kBlock + 3, in.Length());
 
@@ -4383,7 +4406,8 @@ TEST_P(DirectoryTestCase, stable_reads_follow_storage) {
     out->Close();
   }
 
-  auto in = _dir->Open("stable", duckdb::MappedFileAccess::NORMAL);
+  const auto in_file = _dir->Open("stable", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput in{*in_file};
   ASSERT_FALSE(!in);
   const auto* first = in.ReadStable(10, 100);
   const auto* second = in.ReadStable(kBlock + 7, 30);
@@ -4414,7 +4438,8 @@ TEST_P(DirectoryTestCase, read_whole) {
     out->Close();
   }
 
-  auto in = _dir->ReadWhole("file");
+  const auto in_file = _dir->ReadWhole("file");
+  irs::IndexInput in{*in_file};
   ASSERT_FALSE(!in);
   EXPECT_TRUE(in.Whole());
   ASSERT_EQ(kSize, in.Length());
@@ -4441,7 +4466,7 @@ TEST_P(DirectoryTestCase, create_truncates_existing_file) {
     out->Close();
   }
   ASSERT_EQ(1000,
-            _dir->Open("file", duckdb::MappedFileAccess::NORMAL).Length());
+            _dir->Open("file", duckdb::MappedFileAccess::NORMAL)->Length());
 
   {
     auto out = _dir->Create("file");
@@ -4450,7 +4475,8 @@ TEST_P(DirectoryTestCase, create_truncates_existing_file) {
     out->Close();
   }
   {
-    auto in = _dir->Open("file", duckdb::MappedFileAccess::NORMAL);
+    const auto in_file = _dir->Open("file", duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput in{*in_file};
     ASSERT_FALSE(!in);
     EXPECT_EQ(4, in.Length());
     EXPECT_EQ(42, in.ReadI32());
@@ -4462,7 +4488,7 @@ TEST_P(DirectoryTestCase, create_truncates_existing_file) {
     ASSERT_FALSE(!out);
     out->Close();
   }
-  EXPECT_EQ(0, _dir->Open("file", duckdb::MappedFileAccess::NORMAL).Length());
+  EXPECT_EQ(0, _dir->Open("file", duckdb::MappedFileAccess::NORMAL)->Length());
 }
 
 TEST_P(DirectoryTestCase, open_missing_file) {
@@ -4770,7 +4796,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
 
     ASSERT_FALSE(!file2);
     track_dir.Sync({&file, 1});
-    ASSERT_EQ(1, file2.Length());
+    ASSERT_EQ(1, file2->Length());
     track_dir.Rename(file, "def");
     file2 = {};  // release before remove
     ASSERT_FALSE(track_dir.Remove(file));
@@ -4843,7 +4869,7 @@ TEST_P(DirectoryTestCase, file_tracker) {
     }
     track_dir.Sync({&file, 1});
     ASSERT_EQ(1,
-              track_dir.Open(file, duckdb::MappedFileAccess::NORMAL).Length());
+              track_dir.Open(file, duckdb::MappedFileAccess::NORMAL)->Length());
     ASSERT_TRUE(dir.Has(file));
 
     auto flushed = tracker.Flush();
@@ -4891,7 +4917,9 @@ TEST(DirectoryTest, memory_files_removed_with_last_copy) {
   std::optional<irs::Directory> copy{*files};
   files.reset();
   ASSERT_TRUE(memory.FileExists(path));
-  EXPECT_EQ(42, copy->Open("file", duckdb::MappedFileAccess::NORMAL).ReadI32());
+  EXPECT_EQ(
+    42, irs::IndexInput{*copy->Open("file", duckdb::MappedFileAccess::NORMAL)}
+          .ReadI32());
 
   copy.reset();
   EXPECT_FALSE(memory.FileExists(path));
@@ -4937,12 +4965,14 @@ TEST(DirectoryTest, compacted_memory_files_map_in_place) {
     out->WriteData(data.data(), data.size());
     out->Close();
   }
-  auto blocks = files.Open("file", duckdb::MappedFileAccess::NORMAL);
+  const auto blocks_file = files.Open("file", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput blocks{*blocks_file};
   ASSERT_FALSE(blocks.Whole());
 
   files.Compact("file");
   EXPECT_FALSE(memory.GetBlockFile(files.Path("file")));
-  auto mapped = files.Open("file", duckdb::MappedFileAccess::NORMAL);
+  const auto mapped_file = files.Open("file", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput mapped{*mapped_file};
   ASSERT_TRUE(mapped.Whole());
   ASSERT_EQ(data.size(), mapped.Length());
   const auto* stable = mapped.ReadStable(0, data.size());
@@ -4954,7 +4984,9 @@ TEST(DirectoryTest, compacted_memory_files_map_in_place) {
   EXPECT_EQ(data, read);
 
   files.Compact("file");
-  EXPECT_TRUE(files.Open("file", duckdb::MappedFileAccess::NORMAL).Whole());
+  EXPECT_TRUE(
+    irs::IndexInput{*files.Open("file", duckdb::MappedFileAccess::NORMAL)}
+      .Whole());
 }
 
 size_t MemoryFilesInBlocks(const irs::Directory& files,
@@ -5047,7 +5079,8 @@ TEST(DirectoryTest, private_memory) {
   files.Visit([&](std::string_view name) { names.emplace_back(name); });
   EXPECT_EQ(std::vector<std::string>{"file"}, names);
 
-  auto in = files.Open("file", duckdb::MappedFileAccess::NORMAL);
+  const auto in_file = files.Open("file", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput in{*in_file};
   ASSERT_FALSE(!in);
   ASSERT_TRUE(in.Whole());
   ASSERT_EQ(data.size(), in.Length());
@@ -5056,7 +5089,8 @@ TEST(DirectoryTest, private_memory) {
   EXPECT_EQ(data.size(), in.Position());
   in.Seek(0);
   EXPECT_EQ(data.front(), in.ReadByte());
-  auto other = files.Open("file", duckdb::MappedFileAccess::NORMAL);
+  const auto other_file = files.Open("file", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput other{*other_file};
   ASSERT_FALSE(!other);
   const auto* other_stable = other.ReadStable(0, data.size());
   ASSERT_NE(nullptr, other_stable);
@@ -5067,7 +5101,7 @@ TEST(DirectoryTest, private_memory) {
   ASSERT_FALSE(files.Has("file"));
   ASSERT_TRUE(files.Has("renamed"));
   EXPECT_EQ(data.size(),
-            files.Open("renamed", duckdb::MappedFileAccess::NORMAL).Length());
+            files.Open("renamed", duckdb::MappedFileAccess::NORMAL)->Length());
   ASSERT_TRUE(files.Remove("renamed"));
   ASSERT_FALSE(files.Has("renamed"));
   ASSERT_FALSE(files.Remove("renamed"));
@@ -5108,8 +5142,12 @@ TEST(DirectoryTest, private_memory_roots_are_separate) {
 
   ASSERT_FALSE(lhs.Has("rhs"));
   ASSERT_FALSE(rhs.Has("lhs"));
-  EXPECT_EQ(1, lhs.Open("file", duckdb::MappedFileAccess::NORMAL).ReadI32());
-  EXPECT_EQ(2, rhs.Open("file", duckdb::MappedFileAccess::NORMAL).ReadI32());
+  EXPECT_EQ(1,
+            irs::IndexInput{*lhs.Open("file", duckdb::MappedFileAccess::NORMAL)}
+              .ReadI32());
+  EXPECT_EQ(2,
+            irs::IndexInput{*rhs.Open("file", duckdb::MappedFileAccess::NORMAL)}
+              .ReadI32());
 }
 
 TEST(DirectoryTest, private_memory_reader_outlives_files) {

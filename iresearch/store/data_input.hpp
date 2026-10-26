@@ -107,7 +107,7 @@ class IndexInput {
       _pos{bytes.data()},
       _end{bytes.data() + bytes.size()},
       _length{bytes.size()} {}
-  explicit IndexInput(std::unique_ptr<InputFile> file) noexcept;
+  explicit IndexInput(const InputFile& file) noexcept;
   IndexInput(const IndexInput& other) noexcept
     : _begin{other._begin},
       _pos{other._pos},
@@ -284,7 +284,6 @@ class IndexInput {
   [[noreturn]] void ThrowPastEnd() const;
 
   const InputFile* _file = nullptr;
-  std::unique_ptr<InputFile> _owned;
   std::unique_ptr<BlockState> _state;
 };
 

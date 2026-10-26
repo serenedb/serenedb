@@ -34,13 +34,16 @@
 
 namespace irs {
 
-inline void PrepareInput(std::string& str, IndexInput& in,
-                         const ReaderState& state, std::string_view ext) {
+inline std::unique_ptr<InputFile> PrepareInput(std::string& str, IndexInput& in,
+                                               const ReaderState& state,
+                                               std::string_view ext) {
   SDB_ASSERT(!in);
   irs::FileName(str, state.meta->name, ext);
-  in = state.dir->Open(str, duckdb::MappedFileAccess::RANDOM);
+  auto file = state.dir->Open(str, duckdb::MappedFileAccess::RANDOM);
+  in = IndexInput{*file};
 
   format_utils::ReadFooter(in, str);
+  return file;
 }
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
@@ -74,6 +77,9 @@ class PostingsReader final {
   static auto IteratorImpl(IndexFeatures field_features,
                            IndexFeatures required_features, Factory&& factory);
 
+  std::unique_ptr<InputFile> _doc_file;
+  std::unique_ptr<InputFile> _pos_file;
+  std::unique_ptr<InputFile> _pay_file;
   IndexInput _doc_in;
   IndexInput _pos_in;
   IndexInput _pay_in;
@@ -88,14 +94,14 @@ inline void PostingsReader::prepare(const ReaderState& state,
     (features & (IndexFeatures::Offs | IndexFeatures::Vec));
 
   // prepare document input
-  PrepareInput(buf, _doc_in, state, PostingsWriter::kDocExt);
+  _doc_file = PrepareInput(buf, _doc_in, state, PostingsWriter::kDocExt);
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    PrepareInput(buf, _pos_in, state, PostingsWriter::kPosExt);
+    _pos_file = PrepareInput(buf, _pos_in, state, PostingsWriter::kPosExt);
   }
 
   if (needs_pay) {
-    PrepareInput(buf, _pay_in, state, PostingsWriter::kPayExt);
+    _pay_file = PrepareInput(buf, _pay_in, state, PostingsWriter::kPayExt);
   }
 }
 

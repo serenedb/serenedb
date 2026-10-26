@@ -42,10 +42,12 @@
 namespace irs {
 namespace {
 
-IndexInput OpenColFile(const Directory& dir, std::string_view segment_name,
-                       bool present, duckdb::MappedFileAccess access) {
+std::unique_ptr<InputFile> OpenColFile(const Directory& dir,
+                                       std::string_view segment_name,
+                                       bool present,
+                                       duckdb::MappedFileAccess access) {
   if (!present) {
-    return {};
+    return nullptr;
   }
   return dir.Open(FileName(segment_name), access);
 }
@@ -158,8 +160,11 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
                           duckdb::MappedFileAccess::RANDOM)} {}
 
 ColReader::ColReader(duckdb::DatabaseInstance& db,
-                     std::string_view segment_name, IndexInput in)
-  : _db{&db}, _ctx{db, std::move(in)} {
+                     std::string_view segment_name,
+                     std::unique_ptr<InputFile> file)
+  : _db{&db},
+    _file{std::move(file)},
+    _ctx{db, _file ? IndexInput{*_file} : IndexInput{}} {
   if (!_ctx.HasIn()) {
     return;
   }

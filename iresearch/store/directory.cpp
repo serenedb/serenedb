@@ -324,16 +324,16 @@ IndexOutput::ptr Directory::Create(std::string_view name, bool cached) const {
   return output;
 }
 
-IndexInput Directory::Open(std::string_view name,
-                           duckdb::MappedFileAccess access) const {
+std::unique_ptr<InputFile> Directory::Open(
+  std::string_view name, duckdb::MappedFileAccess access) const {
   const auto path = Path(name);
   if (InBlocks()) {
-    return IndexInput{OpenBlocks(path, name, access)};
+    return OpenBlocks(path, name, access);
   }
-  return IndexInput{OpenMapped(path, access)};
+  return OpenMapped(path, access);
 }
 
-IndexInput Directory::ReadWhole(std::string_view name) const {
+std::unique_ptr<InputFile> Directory::ReadWhole(std::string_view name) const {
   const auto path = Path(name);
   duckdb::OpenFileInfo file{path};
   if (Kind() == StorageKind::Remote) {
@@ -346,7 +346,7 @@ IndexInput Directory::ReadWhole(std::string_view name) const {
   if (size != 0) {
     handle->Read(duckdb::QueryContext{}, bytes.get(), size, 0);
   }
-  return IndexInput{std::make_unique<InputFile>(path, std::move(bytes), size)};
+  return std::make_unique<InputFile>(path, std::move(bytes), size);
 }
 
 std::unique_ptr<InputFile> Directory::OpenMapped(

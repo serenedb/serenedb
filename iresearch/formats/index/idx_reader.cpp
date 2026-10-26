@@ -43,6 +43,7 @@
 namespace irs {
 
 struct IdxReader::Impl {
+  std::unique_ptr<InputFile> file;
   IndexInput in;
   std::vector<std::pair<field_id, std::unique_ptr<AnnIndex>>> ann_entries;
   irs::containers::FlatHashMap<field_id, size_t> ann_by_id;
@@ -57,7 +58,8 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
     return;
   }
   const auto filename = FileName(segment_name, kIdxFormatExt);
-  _impl->in = dir.Open(filename, duckdb::MappedFileAccess::SEQUENTIAL);
+  _impl->file = dir.Open(filename, duckdb::MappedFileAccess::SEQUENTIAL);
+  _impl->in = IndexInput{*_impl->file};
 
   format_utils::ReadFooter(
     _impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {

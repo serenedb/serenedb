@@ -100,7 +100,8 @@ irs::Directory OpenIndex(std::string_view path, std::string_view memory) {
   local.Visit([&](std::string_view name) { names.emplace_back(name); });
   std::vector<irs::byte_type> buffer(1 << 20);
   for (const auto& name : names) {
-    auto in = local.Open(name, duckdb::MappedFileAccess::SEQUENTIAL);
+    const auto file = local.Open(name, duckdb::MappedFileAccess::SEQUENTIAL);
+    irs::IndexInput in{*file};
     auto out = copy.Create(name);
     for (auto left = in.Length(); left != 0;) {
       const auto chunk = std::min<uint64_t>(left, buffer.size());

@@ -171,8 +171,8 @@ void InputFile::Advise(duckdb::MappedFileAccess access) const noexcept {
 
 IndexInput::BlockState::~BlockState() = default;
 
-IndexInput::IndexInput(std::unique_ptr<InputFile> file) noexcept
-  : _length{file->Length()}, _file{file.get()}, _owned{std::move(file)} {
+IndexInput::IndexInput(const InputFile& file) noexcept
+  : _length{file.Length()}, _file{&file} {
   if (!_file->InBlocks()) {
     const auto bytes = _file->Bytes();
     _begin = _pos = bytes.data();
@@ -189,7 +189,6 @@ IndexInput::BlockState& IndexInput::State() {
 
 void IndexInput::Reset(bytes_view bytes) noexcept {
   _state.reset();
-  _owned.reset();
   _file = nullptr;
   _begin = _pos = bytes.data();
   _end = bytes.data() + bytes.size();

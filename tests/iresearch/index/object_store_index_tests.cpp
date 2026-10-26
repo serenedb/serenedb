@@ -273,7 +273,7 @@ TEST(ObjectStoreIndexTest, replace_adopts_segments) {
 constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
 constexpr uint64_t kBlocks = 16;
 
-irs::IndexInput WriteUncached(const irs::Directory& dir) {
+std::unique_ptr<irs::InputFile> WriteUncached(const irs::Directory& dir) {
   const std::vector<irs::byte_type> block(kBlock, 0x5A);
   {
     auto out = dir.Create("blocks");
@@ -283,15 +283,16 @@ irs::IndexInput WriteUncached(const irs::Directory& dir) {
     out->Close();
   }
   duckdb::BlockCache::Get(Db()).Clear();
-  auto in = dir.Open("blocks", duckdb::MappedFileAccess::NORMAL);
+  auto file = dir.Open("blocks", duckdb::MappedFileAccess::NORMAL);
   tests::ObjectStore().ResetRequests();
-  return in;
+  return file;
 }
 
 TEST(ObjectStoreIndexTest, sequential_reads_fetch_ahead) {
   tests::ObjectStore();
   const irs::Directory dir{Db(), Root()};
-  auto in = WriteUncached(dir);
+  const auto file = WriteUncached(dir);
+  irs::IndexInput in{*file};
   while (!in.IsEOF()) {
     std::ignore = in.ReadByte();
   }
@@ -301,7 +302,8 @@ TEST(ObjectStoreIndexTest, sequential_reads_fetch_ahead) {
 TEST(ObjectStoreIndexTest, large_reads_fetch_their_range_at_once) {
   tests::ObjectStore();
   const irs::Directory dir{Db(), Root()};
-  auto in = WriteUncached(dir);
+  const auto file = WriteUncached(dir);
+  irs::IndexInput in{*file};
   irs::bstring buf(kBlocks * kBlock, 0);
   in.ReadData(buf.data(), buf.size());
   EXPECT_EQ(1, tests::ObjectStore().Requests().get);
@@ -505,7 +507,8 @@ TEST(ObjectStoreIndexTest, reads_past_the_end_are_refused) {
     out->WriteU32(42);
     out->Close();
   }
-  auto in = dir.Open("short", duckdb::MappedFileAccess::NORMAL);
+  const auto file = dir.Open("short", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput in{*file};
   EXPECT_EQ(42, in.ReadI32());
   EXPECT_THROW(in.ReadByte(), irs::SqlException);
   in.Seek(2);
@@ -656,7 +659,8 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
 TEST(ObjectStoreIndexTest, random_reads_fetch_only_their_blocks) {
   tests::ObjectStore();
   const irs::Directory dir{Db(), Root()};
-  auto in = WriteUncached(dir);
+  const auto file = WriteUncached(dir);
+  irs::IndexInput in{*file};
   for (uint64_t block = 0; block < kBlocks; block += 2) {
     in.Seek(block * kBlock);
     std::ignore = in.ReadByte();

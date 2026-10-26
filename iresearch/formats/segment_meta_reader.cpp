@@ -51,7 +51,8 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
 
   std::string name{segment_name};
 
-  auto in = dir.ReadWhole(filename);
+  const auto file = dir.ReadWhole(filename);
+  IndexInput in{*file};
 
   std::vector<std::string> files;
   std::vector<FileInfo> infos;

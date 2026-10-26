@@ -128,8 +128,9 @@ class Directory {
 
   IndexOutput::ptr Create(std::string_view name) const;
   IndexOutput::ptr CreateWhole(std::string_view name) const;
-  IndexInput Open(std::string_view name, duckdb::MappedFileAccess access) const;
-  IndexInput ReadWhole(std::string_view name) const;
+  std::unique_ptr<InputFile> Open(std::string_view name,
+                                  duckdb::MappedFileAccess access) const;
+  std::unique_ptr<InputFile> ReadWhole(std::string_view name) const;
   bool Has(std::string_view name) const;
   bool Remove(std::string_view name) const;
   void Rename(std::string_view src, std::string_view dst) const;

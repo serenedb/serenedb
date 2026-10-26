@@ -86,9 +86,10 @@ class ColReader final {
 
  private:
   ColReader(duckdb::DatabaseInstance& db, std::string_view segment_name,
-            IndexInput in);
+            std::unique_ptr<InputFile> file);
 
   duckdb::DatabaseInstance* _db;
+  std::unique_ptr<InputFile> _file;
   ReadContext _ctx;
   std::vector<std::unique_ptr<ColumnReader>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnReader*> _by_id;

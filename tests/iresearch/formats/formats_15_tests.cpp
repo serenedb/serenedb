@@ -375,7 +375,8 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
 
   const irs::ReaderState state{.dir = &dir, .meta = &meta};
 
-  auto in = dir.Open("attributes", duckdb::MappedFileAccess::NORMAL);
+  const auto in_file = dir.Open("attributes", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput in{*in_file};
   EXPECT_FALSE(!in);
   [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(in);
 

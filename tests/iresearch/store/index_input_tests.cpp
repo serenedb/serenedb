@@ -21,7 +21,6 @@
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <memory>
 #include <vector>
 
 #include "tests_shared.hpp"
@@ -52,7 +51,8 @@ TEST_F(IndexInputTest, stable_reads_outlive_evictions) {
   cache.SetUnbackedSize(*file, kBlocks * kBlock);
 
   {
-    irs::IndexInput in{std::make_unique<irs::InputFile>(cache, file, nullptr)};
+    const irs::InputFile blocks{cache, file, nullptr};
+    irs::IndexInput in{blocks};
     std::vector<const irs::byte_type*> stable;
     for (uint64_t pass = 0; pass != 2; ++pass) {
       for (uint64_t block = 0; block != kBlocks; ++block) {
@@ -88,7 +88,8 @@ TEST_F(IndexInputTest, volatile_reads_across_blocks_keep_alignment) {
   cache.SetUnbackedSize(*file, 2 * kBlock);
 
   constexpr uint64_t kAlign = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
-  irs::IndexInput in{std::make_unique<irs::InputFile>(cache, file, nullptr)};
+  const irs::InputFile blocks{cache, file, nullptr};
+  irs::IndexInput in{blocks};
   for (const uint64_t count : {kAlign + 4, 4 * kAlign}) {
     const auto offset = kBlock - kAlign;
     const auto* data = in.ReadVolatile(offset, count);

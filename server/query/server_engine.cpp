@@ -29,6 +29,7 @@
 #include <duckdb/catalog/default/default_views.hpp>
 
 #include "catalog/boot.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "connector/duckdb_pg_text_copy.h"
@@ -235,6 +236,7 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   auto layout = duckdb::make_shared_ptr<catalog::DataDirectory>(datadir);
   connector::RegisterSereneDBStorage(config, layout);
   catalog::RegisterClusterStorage(config, std::move(layout));
+  connector::RegisterClientStateCallback(config);
   connector::RegisterConfigVariables(config);
   connector::RegisterIResearchReplacementScan(config);
   config.SetOptionByName(

@@ -30,6 +30,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/planner/extension_callback.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
@@ -328,6 +329,13 @@ void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
   }
 }
 
+void SereneDBClientState::CloseProgressSource() {
+  if (progress_source) {
+    progress_source->Detach();
+    pg::ProgressRegistry::Instance().Unregister(progress_source.get());
+  }
+}
+
 void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
@@ -355,6 +363,25 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
   SDB_ASSERT(ctx, "SereneDB client state not registered; active query: ",
              context.GetCurrentQuery());
   return *ctx;
+}
+
+namespace {
+
+class ClientStateCallback final : public duckdb::ExtensionCallback {
+ public:
+  void OnConnectionClosed(duckdb::ClientContext& context) final {
+    if (auto state = context.registered_state->Get<SereneDBClientState>(
+          kSereneDBClientStateKey)) {
+      state->CloseProgressSource();
+    }
+  }
+};
+
+}  // namespace
+
+void RegisterClientStateCallback(duckdb::DBConfig& config) {
+  duckdb::ExtensionCallback::Register(
+    config, duckdb::make_shared_ptr<ClientStateCallback>());
 }
 
 void SetDefaultSearchPath(duckdb::ClientContext& context,

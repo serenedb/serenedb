@@ -78,6 +78,8 @@ std::string_view ProgressPhaseName(ProgressCommand command, int64_t phase) {
           return "committing";
         case progress_phase::CreateIndex::Finalizing:
           return "finalizing";
+        case progress_phase::CreateIndex::WaitingForWriters:
+          return "waiting for writers before build";
       }
       return "";
     case ProgressCommand::CreateTableAs:

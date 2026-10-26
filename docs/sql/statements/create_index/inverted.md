@@ -96,6 +96,12 @@ Writes to a search table never wait for an index change. `CREATE INDEX` and `CRE
 
 An inverted index on a regular table or a view has storage of its own, so transactions can create, replace or drop different indexes of the same table or view at the same time.
 
+## Building next to writes
+
+`CREATE INDEX` on a regular table does not block writes: other sessions keep inserting, updating and deleting rows while the index is built, and the finished index contains their changes. The build first waits for every transaction that was open when it started to commit or roll back; while it waits, `pg_stat_progress_create_index` shows the phase `waiting for writers before build`. A long transaction, an idle one included, holds the build until it ends. Cancelling the build, for example with `pg_cancel_backend`, leaves no index behind.
+
+In a transaction that has already updated or deleted rows, `CREATE INDEX` on a regular table fails with `CREATE INDEX on "<table>" cannot run in a transaction that has updated or deleted rows`; run it in a transaction of its own. Inserting rows earlier in the same transaction is allowed, and so is updating or deleting rows the transaction inserted itself.
+
 ## Examples
 
 Create a dictionary, index two text columns with it, then query the index:

@@ -228,6 +228,57 @@ CREATE INDEX lxs_x ON public.lxs USING inverted (body, id)
 
 connection after_alter_crash
 statement ok
+VACUUM (REFRESH_TABLE) lxs;
+
+connection after_alter_crash
+query
+SELECT lx_stale_segments('lxs') AS stale, lx_orphans() AS orphans;
+----
+stale	orphans
+0	0
+
+# A rolled-back replace that rebuilt the segments one by one leaves no file of
+# its own either.
+connection after_alter_crash
+statement ok
+SET search_backfill_group_bytes = 1;
+
+connection after_alter_crash
+statement ok
+BEGIN;
+
+connection after_alter_crash
+statement ok
+CREATE OR REPLACE INDEX lxs_x ON lxs USING inverted (body);
+
+connection after_alter_crash
+statement ok
+ROLLBACK;
+
+connection after_alter_crash
+statement ok
+RESET search_backfill_group_bytes;
+
+connection after_alter_crash
+statement ok
+VACUUM (REFRESH_TABLE) lxs;
+
+connection after_alter_crash
+query
+SELECT lx_stale_segments('lxs') AS stale, lx_orphans() AS orphans;
+----
+stale	orphans
+0	0
+
+connection after_alter_crash
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'lxs_x';
+----
+def
+CREATE INDEX lxs_x ON public.lxs USING inverted (body, id)
+
+connection after_alter_crash
+statement ok
 CREATE INDEX lxs_y ON lxs USING inverted (id);
 
 connection after_alter_crash

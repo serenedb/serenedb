@@ -217,14 +217,26 @@ CREATE OR REPLACE INDEX sdl_keep_inv ON sdl_t USING inverted (id, body);
 
 
 statement ok
+CREATE OR REPLACE TABLE sdl_keep_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
 ROLLBACK;
 
 
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT sdl_orphans() AS orphans, sdl_stored('sdl_keep_inv') AS kept;
+SELECT sdl_orphans() AS orphans, sdl_stored('sdl_keep_inv') AS kept,
+       sdl_stored('sdl_keep_s') AS kept_table;
 ----
-orphans	kept
-0	t
+orphans	kept	kept_table
+0	t	t
+
+
+query
+SELECT string_agg(id::TEXT, ',' ORDER BY id) AS s FROM sdl_keep_s WHERE body @@ 'alpha';
+----
+s
+1
 
 
 query
@@ -322,4 +334,57 @@ SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engi
 WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM sdl_oids WHERE name = 'sdl_db') || '/%';
 ----
 leftover
+0
+
+
+# ----------------------------------------------------------------------
+# 6. A failed CREATE DATABASE of a name whose dropped database another
+#    transaction still sees removes the directory it made.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE DATABASE sdl_db2;
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'sdl_db2';
+----
+n
+1
+
+
+statement ok
+DROP DATABASE sdl_db2;
+
+
+statement ok
+SET sdb_faults = 'unable_to_create';
+
+
+statement error
+CREATE DATABASE sdl_db2;
+----
+db error: ERROR: internal error
+
+
+statement ok
+RESET sdb_faults;
+
+
+connection holder
+statement ok
+COMMIT;
+
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS orphans FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/')
+WHERE regexp_extract(file, '[^/]+$') NOT IN (SELECT oid::TEXT FROM pg_database);
+----
+orphans
 0

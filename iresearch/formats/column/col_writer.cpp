@@ -149,7 +149,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
     OpenColumnInternal(id, std::move(type), opts.skip_validity, row_group_size,
                        opts.compression, opts.hyperloglog);
   if (_field_options) {
-    _field_options->ForEachAnn(
+    _field_options->ForEachLiveAnn(
       id, [&](const AnnInfo& info) { AttachAnn(id, info); });
   }
   return cw;

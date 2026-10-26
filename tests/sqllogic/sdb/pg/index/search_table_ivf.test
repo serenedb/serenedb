@@ -214,3 +214,50 @@ SELECT count(*) AS n FROM rv;
 ----
 n
 1000
+
+# --- An IVF key and another key of its column in one index ---
+# They share the column's field: the IVF and the column filter both answer,
+# before and after a merge.
+
+statement ok
+CREATE TABLE sv (id BIGINT PRIMARY KEY, vec FLOAT[3])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX sv_a ON sv USING inverted (vec ivf(metric = 'l2'), vec);
+
+statement ok
+CREATE INDEX sv_b ON sv USING inverted (id, vec ivf(metric = 'l2')) INCLUDE (vec);
+
+statement ok
+INSERT INTO sv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
+  FROM range(300) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sv;
+
+query
+SELECT (SELECT id FROM sv_a ORDER BY vec <-> array_value(5::FLOAT, 5::FLOAT, 5.1::FLOAT) LIMIT 1) AS a,
+       (SELECT id FROM sv_b ORDER BY vec <-> array_value(5::FLOAT, 5::FLOAT, 5.1::FLOAT) LIMIT 1) AS b,
+       (SELECT id FROM sv_a WHERE vec = array_value(5::FLOAT, 5::FLOAT, 5::FLOAT)) AS eq;
+----
+a	b	eq
+5	5	5
+
+statement ok
+INSERT INTO sv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
+  FROM range(300, 600) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sv;
+
+statement ok
+VACUUM (COMPACT_TABLE) sv;
+
+query
+SELECT (SELECT id FROM sv_a ORDER BY vec <-> array_value(505::FLOAT, 1::FLOAT, 11::FLOAT) LIMIT 1) AS a,
+       (SELECT id FROM sv_b ORDER BY vec <-> array_value(505::FLOAT, 1::FLOAT, 11::FLOAT) LIMIT 1) AS b,
+       (SELECT id FROM sv_a WHERE vec = array_value(505::FLOAT, 1::FLOAT, 11::FLOAT)) AS eq;
+----
+a	b	eq
+505	505	505

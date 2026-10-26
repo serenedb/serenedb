@@ -1242,9 +1242,7 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
 
     if (bare_column) {
       record.field_id = record.column_id;
-      if (search_table && opclass.IsAnn()) {
-        record.field_id = next_id();
-      } else if (search_table) {
+      if (search_table) {
         auto [it, fresh] = term_fields.try_emplace(record.column_id, 0);
         if (fresh) {
           it->second = next_id();

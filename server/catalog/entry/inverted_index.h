@@ -157,10 +157,10 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   irs::field_id GetNormColumnId(irs::field_id id) const final;
   bool HasField(irs::field_id id) const final;
   bool HasColumn(irs::field_id id) const final;
-  void ForEachAnn(
+  void ForEachLiveAnn(
     irs::field_id column,
     absl::FunctionRef<void(const irs::AnnInfo&)> visit) const final;
-  void ForEachMergedAnn(
+  void ForEachAccessibleAnn(
     irs::field_id column,
     absl::FunctionRef<void(const irs::AnnInfo&)> visit) const final;
   const irs::AnnInfo* FindAnn(irs::field_id column,
@@ -195,8 +195,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   PkPolicy pk;
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
-  irs::containers::FlatHashSet<irs::field_id> retained_fields;
-  std::vector<irs::AnnInfo> retained_anns;
+  std::vector<std::shared_ptr<const InvertedIndexConfig>> retired;
   irs::containers::FlatHashSet<irs::field_id> table_columns;
 
  private:
@@ -212,6 +211,8 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
     return key == kNoKey ? nullptr : &keys[key];
   }
   ExpressionSlots SlotsOf(std::string_view normalized) const noexcept;
+  const InvertedIndexField* FindAccessibleEntry(
+    irs::field_id field_id) const noexcept;
 
   irs::containers::FlatHashMap<irs::field_id, uint32_t> _field_keys;
   irs::containers::FlatHashMap<irs::field_id, irs::field_id> _column_fields;

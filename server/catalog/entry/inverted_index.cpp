@@ -262,7 +262,7 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
       it != declared_compression.end()) {
     declared = it->second;
   }
-  if (const auto* entry = FindEntry(id)) {
+  if (const auto* entry = FindAccessibleEntry(id)) {
     auto options = entry->column_options;
     if (options.compression == duckdb::CompressionType::COMPRESSION_AUTO) {
       options.compression = declared;
@@ -279,26 +279,29 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
 }
 
 irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
-  const auto it = fields.find(id);
-  if (it == fields.end()) {
+  const auto* entry = FindAccessibleEntry(id);
+  if (!entry) {
     return irs::field_limits::invalid();
   }
   // Norms live in the field's own synthetic column, allocated with it.
-  return it->second.features.HasFeatures(irs::IndexFeatures::Norm)
-           ? it->second.synthetic_column
+  return entry->features.HasFeatures(irs::IndexFeatures::Norm)
+           ? entry->synthetic_column
            : irs::field_limits::invalid();
 }
 
 bool InvertedIndexConfig::HasField(irs::field_id id) const {
-  return id == connector::term_dict::kPKFieldId ||
-         retained_fields.contains(id) || LookupField(id).entry || FindKey(id);
+  return id == connector::term_dict::kPKFieldId || LookupField(id).entry ||
+         absl::c_any_of(retired, [&](const auto& config) {
+           return config->LookupField(id).entry != nullptr;
+         });
 }
 
 bool InvertedIndexConfig::HasColumn(irs::field_id id) const {
-  return table_columns.empty() || table_columns.contains(id) || HasField(id);
+  const bool search_table = !table_columns.empty();
+  return !search_table || table_columns.contains(id) || HasField(id);
 }
 
-void InvertedIndexConfig::ForEachAnn(
+void InvertedIndexConfig::ForEachLiveAnn(
   irs::field_id column,
   absl::FunctionRef<void(const irs::AnnInfo&)> visit) const {
   for (const auto& ann : _anns) {
@@ -308,14 +311,12 @@ void InvertedIndexConfig::ForEachAnn(
   }
 }
 
-void InvertedIndexConfig::ForEachMergedAnn(
+void InvertedIndexConfig::ForEachAccessibleAnn(
   irs::field_id column,
   absl::FunctionRef<void(const irs::AnnInfo&)> visit) const {
-  ForEachAnn(column, visit);
-  for (const auto& ann : retained_anns) {
-    if (ann.column_id == column) {
-      visit(ann);
-    }
+  ForEachLiveAnn(column, visit);
+  for (const auto& config : retired) {
+    config->ForEachLiveAnn(column, visit);
   }
 }
 
@@ -398,13 +399,13 @@ InvertedIndexConfig::InvertedIndexConfig(
     if (irs::field_limits::valid(key.column_id)) {
       _column_fields.try_emplace(key.column_id, key.field_id);
     }
-    if (const auto* entry = FindEntry(key.field_id)) {
-      const auto& ann = entry->column_options.ann_info;
-      if (ann && absl::c_none_of(_anns, [&](const irs::AnnInfo& added) {
-            return added.centroids_id == ann->centroids_id;
-          })) {
-        _anns.push_back(*ann);
-      }
+    const auto* entry = FindEntry(key.field_id);
+    SDB_ASSERT(entry);
+    const auto& ann = entry->column_options.ann_info;
+    if (ann && absl::c_none_of(_anns, [&](const irs::AnnInfo& added) {
+          return added.centroids_id == ann->centroids_id;
+        })) {
+      _anns.push_back(*ann);
     }
     if (key.normalized_expression.empty()) {
       continue;
@@ -413,10 +414,6 @@ InvertedIndexConfig::InvertedIndexConfig(
       _expressions.try_emplace(key.normalized_expression).first->second;
     if (slots.first == kNoKey) {
       slots.first = i;
-    }
-    const auto* entry = FindEntry(key.field_id);
-    if (!entry) {
-      continue;
     }
     if (entry->IsStored()) {
       _stores_expressions = true;
@@ -475,6 +472,19 @@ const InvertedIndexField* InvertedIndexConfig::FindEntry(
   irs::field_id field_id) const noexcept {
   const auto it = fields.find(field_id);
   return it == fields.end() ? nullptr : &it->second;
+}
+
+const InvertedIndexField* InvertedIndexConfig::FindAccessibleEntry(
+  irs::field_id field_id) const noexcept {
+  if (const auto* entry = FindEntry(field_id)) {
+    return entry;
+  }
+  for (const auto& config : retired) {
+    if (const auto* entry = config->FindEntry(field_id)) {
+      return entry;
+    }
+  }
+  return nullptr;
 }
 
 irs::field_id InvertedIndexConfig::TermField(

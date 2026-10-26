@@ -92,3 +92,63 @@ id
 3
 5
 6
+
+# A transaction that began before the DROP INDEX still sees the index, so a
+# merge keeps its fields, norms included, until that transaction ends.
+statement ok
+CREATE TABLE held (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX held_idx ON held USING inverted (body dic_norms);
+
+statement ok
+INSERT INTO held VALUES (1, 'the quick brown fox'), (2, 'lazy dog jumps');
+
+statement ok
+VACUUM (REFRESH_TABLE) held;
+
+statement ok
+INSERT INTO held VALUES (3, 'fox runs fast'), (4, 'a dog sleeps');
+
+statement ok
+VACUUM (REFRESH_TABLE) held;
+
+connection holder
+statement ok
+BEGIN;
+
+connection holder
+query
+SELECT id FROM held_idx WHERE body @@ 'fox' ORDER BY id;
+----
+id
+1
+3
+
+statement ok
+DROP INDEX held_idx;
+
+statement ok
+VACUUM (COMPACT_TABLE) held;
+
+connection holder
+query
+SELECT id FROM held_idx WHERE body @@ 'fox' ORDER BY id;
+----
+id
+1
+3
+
+connection holder
+statement ok
+COMMIT;
+
+query
+SELECT id, body FROM held ORDER BY id;
+----
+id	body
+1	the quick brown fox
+2	lazy dog jumps
+3	fox runs fast
+4	a dog sleeps

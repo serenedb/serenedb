@@ -197,15 +197,15 @@ class IndexFieldOptions {
   virtual bool HasField(field_id) const { return true; }
   virtual bool HasColumn(field_id) const { return true; }
 
-  virtual void ForEachAnn(field_id column,
-                          absl::FunctionRef<void(const AnnInfo&)> visit) const {
+  virtual void ForEachLiveAnn(
+    field_id column, absl::FunctionRef<void(const AnnInfo&)> visit) const {
     if (const auto opts = GetColumnOptions(column); opts.ann_info) {
       visit(*opts.ann_info);
     }
   }
-  virtual void ForEachMergedAnn(
+  virtual void ForEachAccessibleAnn(
     field_id column, absl::FunctionRef<void(const AnnInfo&)> visit) const {
-    ForEachAnn(column, visit);
+    ForEachLiveAnn(column, visit);
   }
 
   // Segment reuse gate: two writes share a segment only if their options are

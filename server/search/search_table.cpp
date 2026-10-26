@@ -333,28 +333,8 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   merged->declared_compression = _compression;
   merged->table_columns = _table_columns;
   for (const auto& weak : _retired) {
-    const auto retired = weak.lock();
-    if (!retired) {
-      continue;
-    }
-    const auto& config = *retired->config;
-    const auto retain = [&](irs::field_id id) {
-      if (irs::field_limits::valid(id)) {
-        merged->retained_fields.insert(id);
-      }
-    };
-    for (const auto& key : config.keys) {
-      retain(key.field_id);
-    }
-    for (const auto& [id, field] : config.fields) {
-      retain(id);
-      retain(field.numeric_field_id);
-      retain(field.bool_field_id);
-      retain(field.null_field_id);
-      retain(field.synthetic_column);
-      if (const auto& ann = field.column_options.ann_info) {
-        merged->retained_anns.push_back(*ann);
-      }
+    if (const auto retired = weak.lock()) {
+      merged->retired.push_back(retired->config);
     }
   }
   return merged;

@@ -109,6 +109,9 @@ class ExternalServer(Fixture):
     def server(self, i):
         return self
 
+    def watch(self, r, i):
+        return self
+
     def pid(self):
         return None
 
@@ -212,7 +215,8 @@ def sqllogic_units(ctx, args, skips):
     if args.corpus:
         check_out_corpus(ctx)
     units = []
-    pool = () if ctx.attribute else ("servers",)
+    pool = ("servers",) if args.server else ()
+    shared = () if ctx.attribute or args.server else ("servers",)
     for path in find_tests(base / "sdb", args.fast):
         rel = str(path.relative_to(base))
         if CORPUS in rel and not args.corpus:
@@ -235,7 +239,7 @@ def sqllogic_units(ctx, args, skips):
             if CORPUS not in rel:
                 cpus = 1 + sum(INFERENCE_CPUS.get(f, 0) for f in fixtures)
                 units.append(Unit(uid, "sqllogic", _sqllogic_run(ctx, args, rel, engine), cpus=cpus,
-                                  mem_gb=0.3, fixtures=pool + fixtures, cost=cost,
+                                  mem_gb=0.3, fixtures=pool + fixtures, shared=shared, cost=cost,
                                   timeout=timeout, group=f"sqllogic:{rel}"))
                 continue
             parts = corpus_parts(ctx, args, cost)
@@ -243,7 +247,7 @@ def sqllogic_units(ctx, args, skips):
                 part = (k, parts) if parts > 1 else None
                 units.append(Unit(f"{uid}#{k}/{parts}" if part else uid, "sqllogic",
                                   _sqllogic_run(ctx, args, rel, engine, part), cpus=1, mem_gb=0.3,
-                                  fixtures=pool + fixtures, cost=cost / parts,
+                                  fixtures=pool + fixtures, shared=shared, cost=cost / parts,
                                   timeout=max(ctx.timeout_floor, timeout / parts)))
     return units
 
@@ -301,8 +305,7 @@ def _shared_run(ctx, args, rel, engine, fixture, label, part=None):
         pool = r.fixture(fixture)
         i, generation = pool.acquire()
         try:
-            server = pool.server(i)
-            r.stack_pids = lambda: (server.pid(),)
+            server = pool.watch(r, i)
             res = r.exec(_runner_args(ctx, args, rel, engine, server, r.env, part, label),
                          cwd=sqllogic_dir(ctx))
         finally:
@@ -325,7 +328,7 @@ def _sqllogic_run(ctx, args, rel, engine, part=None):
     shared = _shared_run(ctx, args, rel, engine, "servers", "serenedb", part)
 
     def run(r):
-        if 0 < r.attempt < 100 and not args.server:
+        if r.alone and not args.server:
             return private(r)
         return shared(r)
 

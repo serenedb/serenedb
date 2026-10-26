@@ -1,3 +1,4 @@
+import contextlib
 import itertools
 import math
 import os
@@ -13,10 +14,16 @@ from pathlib import Path
 
 from . import attribution, proc, reports
 
-PASSED, FAILED, STUCK, CRASHED, SKIPPED, FLAKY = (
-    "passed", "failed", "stuck", "crashed", "skipped", "flaky")
+PASSED, FAILED, STUCK, CRASHED, SKIPPED, FLAKY, INTERRUPTED, SETUP = (
+    "passed", "failed", "stuck", "crashed", "skipped", "flaky", "interrupted", "setup")
 BAD = (FAILED, STUCK, CRASHED, FLAKY)
 RERUN = (FAILED, STUCK, CRASHED)
+INTERRUPTED_EXIT = 130
+FIXTURE_STARTUP_S = 30.0
+
+
+def alone(attempt):
+    return 0 < attempt < 100
 
 
 @dataclass
@@ -41,9 +48,13 @@ class Unit:
     timeout: float = 600.0
     members: tuple = ()
     label: bool = True
+    shared: tuple = ()
 
     def safe_name(self):
         return re.sub(r"[^A-Za-z0-9_.-]+", "_", self.id)[-180:]
+
+    def fixtures_for(self, attempt):
+        return self.fixtures if alone(attempt) else self.fixtures + self.shared
 
 
 @dataclass
@@ -110,6 +121,10 @@ class Context:
         path.mkdir()
         return path
 
+    def fixture_startup(self, name):
+        expected = self.timing.expect(f"fixture:{name}")
+        return FIXTURE_STARTUP_S * self.config.slowdown if expected is None else expected
+
     def finding(self, result):
         with self._lock:
             self.findings.append(result)
@@ -120,6 +135,7 @@ class Run:
         self.ctx = ctx
         self.unit = unit
         self.attempt = attempt
+        self.alone = alone(attempt)
         name = unit.safe_name() + (f".{attempt}" if attempt else "")
         self.dir = ctx.out_dir / "units" / name
         if self.dir.exists():
@@ -133,12 +149,14 @@ class Run:
         self.deadline = min(self.started + unit.timeout, ctx.budget_end)
         self.cancelled = cancelled
         self.stack_pids = lambda: ()
+        self.stalled = lambda: 0.0
+        self.dumping = contextlib.nullcontext
         self.profile_dir = self.dir / "profiles" if ctx.attribute else ctx.out_dir / "profiles"
         env = dict(ctx.base_env)
         env["TMPDIR"] = str(self.tmp)
         env.update(ctx.build.sanitizer_env(self.san_dir))
         env.update(ctx.build.coverage_env(self.profile_dir))
-        for name in unit.fixtures:
+        for name in unit.fixtures_for(attempt):
             env.update(ctx.fixtures[name].env())
         self.env = env
 
@@ -159,7 +177,7 @@ class Run:
             argv, env=merged, cwd=cwd or self.ctx.root, log_path=log or self.log,
             timeout=min(timeout or self.remaining(), self.remaining()),
             stack_dir=self.dir, extra_stack_pids=self.stack_pids,
-            cancelled=self.cancelled,
+            cancelled=self.cancelled, stalled=self.stalled, dumping=self.dumping,
         )
 
     def outcome(self, res, detail="", san_dirs=(), log=None):
@@ -192,6 +210,14 @@ def _budget_outcome(out):
     return Outcome(FAILED, detail, signature="budget", members=members, artifacts=out.artifacts)
 
 
+def _interrupted_outcome(out):
+    detail = "the run was interrupted"
+    members = {k: (INTERRUPTED, v[1], detail) if v[0] in BAD else v for k, v in out.members.items()}
+    if out.status not in BAD:
+        return Outcome(out.status, out.detail, out.signature, members, out.artifacts)
+    return Outcome(INTERRUPTED, detail, members=members, artifacts=out.artifacts)
+
+
 class Scheduler:
     def __init__(self, ctx, units, fixture_factories):
         self.ctx = ctx
@@ -205,10 +231,15 @@ class Scheduler:
         self._running = {}
         self._fixture_locks = {}
         self._fixture_errors = {}
+        self._starting = set()
         self._stopping = False
         self._done = 0
         self._last_progress = 0.0
         self._blocked_since = None
+
+    @property
+    def interrupted(self):
+        return self._stopping
 
     def _fixture(self, name):
         with self._cv:
@@ -220,6 +251,7 @@ class Scheduler:
                 fixture = self.factories[name](self.ctx)
                 for required in fixture.requires:
                     self._fixture(required)
+                started_wall = time.time()
                 t0 = time.monotonic()
                 try:
                     fixture.start(self.ctx)
@@ -231,8 +263,33 @@ class Scheduler:
                         pass
                     raise RuntimeError(f"fixture {name} failed to start: {e}") from e
                 self.ctx.fixtures[name] = fixture
-                self._log(f"fixture {name} up in {time.monotonic() - t0:.1f}s")
+                took = time.monotonic() - t0
+                with self._cv:
+                    self.results.append(Result(f"fixture:{name}", "fixture", SETUP, took, 0, started_wall))
+                self._log(f"fixture {name} up in {took:.1f}s")
             return self.ctx.fixtures[name]
+
+    def _start_fixture(self, name):
+        try:
+            self._fixture(name)
+        except Exception:
+            pass
+        with self._cv:
+            self._starting.discard(name)
+            self._free_cpus += 1
+            self._cv.notify_all()
+
+    def _ready(self, unit, attempt):
+        waiting = False
+        for name in unit.fixtures_for(attempt):
+            if name in self.ctx.fixtures or name in self._fixture_errors:
+                continue
+            waiting = True
+            if name not in self._starting:
+                self._starting.add(name)
+                self._free_cpus -= 1
+                threading.Thread(target=self._start_fixture, args=(name,), daemon=True).start()
+        return not waiting
 
     def _log(self, msg):
         print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -264,8 +321,10 @@ class Scheduler:
         t0 = time.monotonic()
         run = None
         try:
-            for name in unit.fixtures:
+            for name in unit.fixtures_for(attempt):
                 self._fixture(name)
+            started_wall = time.time()
+            t0 = time.monotonic()
             run = Run(self.ctx, unit, attempt, lambda: self._stopping)
             out = unit.run(run)
             if out.status == STUCK and run.cut_by_budget():
@@ -278,6 +337,8 @@ class Scheduler:
             if run is not None:
                 with open(run.log, "a") as fh:
                     fh.write(traceback.format_exc())
+        if self._stopping:
+            out = _interrupted_outcome(out)
         duration = time.monotonic() - t0
         unit_dir = str(run.dir) if run else ""
         res = Result(unit.id, unit.suite, out.status, duration, attempt, started_wall,
@@ -340,15 +401,20 @@ class Scheduler:
                 launched = True
                 while launched and pending and not self._stopping:
                     launched = False
-                    head_fits = self._resources_fit(pending[0])
-                    if head_fits:
-                        self._blocked_since = None
-                    elif self._blocked_since is None:
-                        self._blocked_since = time.monotonic()
-                    reserve = (not head_fits and self._blocked_since is not None
-                               and time.monotonic() - self._blocked_since > 60)
+                    head = None
+                    reserve = False
                     for i, unit in enumerate(pending):
-                        if reserve and i > 0:
+                        if not self._ready(unit, attempt):
+                            continue
+                        if head is None:
+                            head = unit
+                            if self._resources_fit(unit):
+                                self._blocked_since = None
+                            elif self._blocked_since is None:
+                                self._blocked_since = time.monotonic()
+                            reserve = (self._blocked_since is not None
+                                       and time.monotonic() - self._blocked_since > 60)
+                        elif reserve:
                             break
                         if self._fits(unit):
                             self._take(unit)
@@ -380,7 +446,8 @@ class Scheduler:
         for attempt in range(1, attempts + 1):
             if time.monotonic() > deadline:
                 break
-            self._reset_stateful(wanted)
+            self._reset_stateful(wanted, attempt)
+            self._fixture_errors.clear()
             self.run_pass(wanted, attempt=attempt, deadline=deadline)
         for r in failed:
             later = [x for x in self.results if x.unit == r.unit and x.attempt > 0]
@@ -401,7 +468,7 @@ class Scheduler:
         for k in range(rounds):
             if time.monotonic() > deadline:
                 break
-            self._reset_stateful(candidates)
+            self._reset_stateful(candidates, 100 + k)
             self.run_pass(candidates, attempt=100 + k, deadline=deadline)
         for r in list(first.values()):
             reps = [x for x in self.results if x.unit == r.unit and x.attempt >= 100]
@@ -414,13 +481,16 @@ class Scheduler:
 
     def invert(self, changed):
         for r in self.results:
-            if r.attempt != 0 or r.status == SKIPPED or r.suite == "fixture":
+            if r.attempt != 0 or r.suite == "fixture":
                 continue
             if r.suite != "server" and r.unit not in changed:
                 r.status = SKIPPED
                 r.detail = "not a changed test"
                 continue
-            if r.status == PASSED:
+            if r.status == SKIPPED:
+                r.status = FAILED
+                r.detail = f"did not run without the fix, so it proves nothing: {r.detail}"
+            elif r.status == PASSED:
                 r.status = FAILED
                 r.detail = "passes without the fix: the test does not reproduce the bug"
             else:
@@ -438,10 +508,10 @@ class Scheduler:
             self.results.append(f)
             self._report(f)
 
-    def _reset_stateful(self, units):
+    def _reset_stateful(self, units, attempt):
         started = self.ctx.fixtures
         reset = set()
-        todo = [n for u in units for n in u.fixtures]
+        todo = [n for u in units for n in u.fixtures_for(attempt)]
         while todo:
             name = todo.pop()
             if name in reset or name not in started or not started[name].stateful:
@@ -455,6 +525,8 @@ class Scheduler:
             self._stop_fixture(name)
 
     def stop_fixtures(self):
+        with self._cv:
+            self._cv.wait_for(lambda: not self._starting)
         shutil.rmtree(self.ctx.tmp_root, ignore_errors=True)
         for name in reversed(list(self.ctx.fixtures)):
             self._stop_fixture(name)

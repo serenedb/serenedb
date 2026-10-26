@@ -13,6 +13,11 @@ on:
         type: string
         required: false
         default: ""
+      PR_NUMBER:
+        description: "PR number, recorded with the results"
+        type: string
+        required: false
+        default: ""
       CHANGED:
         description: "Only the pg tests the diff against main changes"
         type: boolean
@@ -35,6 +40,11 @@ on:
         type: string
         required: false
         default: ""
+      PR_NUMBER:
+        description: "PR number, recorded with the results"
+        type: string
+        required: false
+        default: ""
       CHANGED:
         description: "Only the pg tests the diff against main changes"
         type: boolean
@@ -48,6 +58,10 @@ on:
 
 env:
   SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
+  SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+  SDB_SHA: ${{ inputs.PR_SHA || github.sha }}
+  SDB_PR: ${{ inputs.PR_NUMBER }}
+  SDB_BRANCH: ${{ inputs.PR_NUMBER == '' && github.ref_name || '' }}
 
 jobs:
   validate:

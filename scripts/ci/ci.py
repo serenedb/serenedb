@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import fcntl
 import fnmatch
 import hashlib
 import json
@@ -40,6 +41,7 @@ BUNDLE_PATHS = (
     "third_party/duckdb/test/unittest", "third_party/re2/CTestTestfile.cmake", "CMakeCache.txt",
 )
 BUNDLE_CACHE = Path(os.environ.get("SDB_BUNDLE_CACHE", "/mnt/data/sdb-ci/bundles"))
+ARCHES = ("x86_64", "aarch64")
 IMAGE_REPO = "serenedb/serenedb-build-ubuntu"
 IMAGE_DOCKERFILE = "scripts/ci/build-ubuntu.Dockerfile"
 IMAGE_CONTEXTS = {"": "scripts/ci", "drivers": "tests/drivers"}
@@ -132,12 +134,19 @@ def cmd_pack(args):
     print(f"{out} {out.stat().st_size >> 20} MB")
 
 
+def shared_cache():
+    BUNDLE_CACHE.mkdir(parents=True, exist_ok=True)
+    info = BUNDLE_CACHE.stat()
+    if info.st_uid == os.getuid() and info.st_mode & 0o1777 != 0o1777:
+        BUNDLE_CACHE.chmod(0o1777)
+
+
 def fetch_bundle(config, arch, dig, dest, archive=None):
     dest = Path(dest)
     marker = dest / ".complete"
     if marker.is_file():
         return dest
-    BUNDLE_CACHE.mkdir(parents=True, exist_ok=True)
+    shared_cache()
     tmp_dir = Path(tempfile.mkdtemp(dir=BUNDLE_CACHE, prefix=".fetch-"))
     try:
         if archive:
@@ -155,6 +164,7 @@ def fetch_bundle(config, arch, dig, dest, archive=None):
                         image_name(), "tar", "-C", str(unpacked), "-I", "zstd -T0",
                         "-xf", str(archive)], check=True)
         (unpacked / ".complete").write_text(dig)
+        unpacked.chmod(0o755)
         if dest.exists():
             shutil.rmtree(dest)
         unpacked.rename(dest)
@@ -169,7 +179,14 @@ def prune_bundles(keep_days=2):
     cutoff = time.time() - keep_days * 86400
     for d in BUNDLE_CACHE.iterdir():
         try:
-            if d.stat().st_mtime < cutoff:
+            info = d.stat()
+            if info.st_uid != os.getuid() or info.st_mtime >= cutoff:
+                continue
+            if not (d / ".complete").is_file():
+                shutil.rmtree(d, ignore_errors=True)
+                continue
+            with open(d / ".complete") as marker:
+                fcntl.flock(marker, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 shutil.rmtree(d, ignore_errors=True)
         except OSError:
             pass
@@ -231,24 +248,47 @@ def cmd_shards(args):
             cost = float(parts[0][:-1])
             total += cost * int(parts[2])
             biggest = max(biggest, cost)
+    plan = next(line.split()[1] for line in res.stderr.splitlines() if line.startswith("plan "))
     cpus = args.cpus
     wall = total / cpus
     count = max(1, min(args.max_shards, round(wall / args.target_seconds + 0.5)))
-    print(json.dumps([{"spec": f"{i}/{count}", "name": f"{i}of{count}"} for i in range(1, count + 1)]))
+    print(json.dumps([{"spec": f"{i}/{count}", "name": f"{i}of{count}", "plan": plan}
+                      for i in range(1, count + 1)]))
     print(f"{total:.0f}s of work, biggest unit {biggest:.0f}s, {count} shard(s)", file=sys.stderr)
+
+
+def timing_key(config, arch, attribute=False):
+    return f"timing/{config}{'-attribute' if attribute else ''}-{arch}.parquet"
+
+
+def _learns_from(name, args):
+    pr = re.search(r"-pr(\d+)-", name)
+    if args.from_prs:
+        return pr is not None
+    if args.pr:
+        return pr is not None and pr.group(1) == args.pr
+    return pr is None
 
 
 def cmd_timing(args):
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp())
     try:
-        scales = {}
+        sources = []
         if store.reachable():
             own = CONFIGS[args.config].slowdown
-            for name, config in CONFIGS.items():
-                if store.get(f"timing/{name}-{args.arch}.parquet", tmp / f"{name}.parquet"):
-                    scales[name] = own / config.slowdown
-        store.timing_snapshot(tmp, scales, args.config, args.out)
+            wanted = [(name, False, own / config.slowdown, name == args.config and not args.attribute)
+                      for name, config in CONFIGS.items()]
+            if args.attribute:
+                wanted.append((args.config, True, 1.0, True))
+            other = next(a for a in ARCHES if a != args.arch)
+            for name, attribute, scale, measured in wanted:
+                local = tmp / Path(timing_key(name, args.arch, attribute)).name
+                if store.get(timing_key(name, args.arch, attribute), local):
+                    sources.append((local, scale, measured))
+                elif store.get(timing_key(name, other, attribute), local):
+                    sources.append((local, scale, False))
+        store.timing_snapshot(tmp, sources, args.out)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -256,33 +296,33 @@ def cmd_timing(args):
 def cmd_update_timing(args):
     tmp = Path(tempfile.mkdtemp())
     try:
-        wanted = []
         shard = re.compile(rf"-{re.escape(args.config)}-{re.escape(args.arch)}-\d+of\d+\.parquet$")
-        for key in store.recent("results", args.days):
-            name = key.rsplit("/", 1)[1]
-            if shard.search(name) and (f"-pr{args.pr}-" in name if args.pr else "-pr" not in name):
-                wanted.append(key)
+        wanted = [key for key in store.recent("results", args.days)
+                  if shard.search(key) and _learns_from(key.rsplit("/", 1)[1], args)]
         files = store.fetch_all(wanted, tmp)
         if not files:
             print("no results to learn timings from")
             return
         old = tmp / "old.parquet"
-        key = f"timing/{args.config}-{args.arch}.parquet"
-        have_old = store.get(key, old)
-        attempts = (f"SELECT unit, coalesce(run, concat(sha, ':', started)) AS r, "
-                    f"CASE WHEN status = 'stuck' THEN 2 * duration ELSE duration END AS d "
-                    f"FROM read_parquet([{store.quoted(files)}], union_by_name = true) "
-                    f"WHERE coalesce(pr, '') = '{args.pr}' AND NOT coalesce(attribute, false) "
-                    f"AND NOT wrapper AND duration > 0 "
-                    f"AND status IN ('passed', 'failed', 'flaky', 'stuck')")
-        runs = (f"SELECT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, sum(d) AS d "
-                f"FROM (SELECT unit, r, max(d) AS d FROM ({attempts}) GROUP BY ALL) GROUP BY 1, r")
-        fresh = (f"SELECT unit, quantile_cont(d, 0.95) AS p95, count(*) AS n FROM ({runs}) "
-                 f"GROUP BY unit")
-        keep = (f" UNION ALL SELECT unit, p95, n FROM read_parquet('{old}') "
-                f"WHERE unit NOT IN (SELECT unit FROM fresh)") if have_old else ""
+        key = timing_key(args.config, args.arch, args.attribute)
+        have_old = store.get(key, old) and "seen" in {
+            r["name"] for r in store.shell(f"SELECT name FROM parquet_schema('{old}')", tmp)}
+        source = ("coalesce(pr, '') <> '' AND status IN ('passed', 'setup')" if args.from_prs else
+                  f"coalesce(pr, '') = '{args.pr}' AND status IN ('passed', 'failed', 'flaky', 'setup')")
+        attempts = (f"SELECT unit, coalesce(run, concat(sha, ':', started)) AS r, duration AS d, "
+                    f"started AS s FROM read_parquet([{store.quoted(files)}], union_by_name = true) "
+                    f"WHERE {source} AND coalesce(attribute, false) = {str(args.attribute).lower()} "
+                    f"AND NOT wrapper AND duration > 0 AND coalesce(signature, '') <> 'budget'")
+        runs = (f"SELECT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, sum(d) AS d, max(s) AS s "
+                f"FROM (SELECT unit, r, max(d) AS d, max(s) AS s FROM ({attempts}) GROUP BY ALL) "
+                f"GROUP BY 1, r")
+        fresh = (f"SELECT unit, quantile_cont(d, 0.95) AS p95, count(*) AS n, max(s) AS seen "
+                 f"FROM ({runs}) GROUP BY unit")
+        keep = (f" UNION ALL SELECT unit, p95, n, seen FROM read_parquet('{old}') "
+                f"WHERE unit NOT IN (SELECT unit FROM fresh) "
+                f"AND seen >= {time.time() - args.keep_days * 86400}") if have_old else ""
         new = tmp / "new.parquet"
-        store.shell(f"COPY (WITH fresh AS ({fresh}) SELECT unit, p95, n FROM fresh{keep}) "
+        store.shell(f"COPY (WITH fresh AS ({fresh}) SELECT unit, p95, n, seen FROM fresh{keep}) "
                     f"TO '{new}' (FORMAT parquet, COMPRESSION zstd)", tmp)
         store.put(key, new)
         print(f"{key}: learned from {len(files)} result file(s)")
@@ -304,6 +344,8 @@ def cmd_nearest(args):
             print("no selection map in the store yet")
             return
         covering = selection.covering_units(local, functions, tmp)
+        batches = selection.members_of(local, {r["unit"] for rows in covering.values() for r in rows},
+                                       tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     run = defaultdict(list)
@@ -311,8 +353,10 @@ def cmd_nearest(args):
         for start, end, function in found:
             units = run[(file, start, end)]
             for r in covering.get(function, []):
-                if r["unit"] not in units and r["rank"] <= selection.CHEAPEST:
-                    units.append(r["unit"])
+                members = batches.get(r["unit"])
+                name = f"{members[0]} (+{len(members) - 1} in its batch)" if members else r["unit"]
+                if name not in units and r["rank"] <= selection.CHEAPEST:
+                    units.append(name)
     for d in data["uncovered"]:
         found = [(s, e) for s, e, _ in spans.get(d["file"], []) if run[(d["file"], s, e)]]
         if not found:
@@ -383,7 +427,7 @@ def cmd_coverage_report(args):
     if args.config != "dev" or not os.environ.get("SDB_PR") or args.everything:
         return
     timing = out / "timing.json"
-    cmd_timing(argparse.Namespace(config=args.config, arch=arch, out=timing))
+    cmd_timing(argparse.Namespace(config=args.config, arch=arch, attribute=False, out=timing))
     socket_group = str(os.stat("/var/run/docker.sock").st_gid)
     res = subprocess.run([*docker, "--group-add", socket_group, "-e", "SDB_PR", "-e", "SDB_STORE_HOST",
                           "-v", "/var/run/docker.sock:/var/run/docker.sock", image,
@@ -546,13 +590,22 @@ def main(argv):
     p = sub.add_parser("timing", help="write the store's timing snapshot for a config as JSON")
     p.add_argument("--config", required=True)
     p.add_argument("--arch", required=True)
+    p.add_argument("--attribute", action="store_true", help="for a run with test.py --attribute")
     p.add_argument("--out", required=True)
     p.set_defaults(fn=cmd_timing)
     p = sub.add_parser("update-timing", help="learn a config's timings from main's recent results")
     p.add_argument("--config", required=True)
     p.add_argument("--arch", required=True)
     p.add_argument("--days", type=int, default=14)
-    p.add_argument("--pr", default="", help="learn from this PR's runs instead (a calibration PR)")
+    p.add_argument("--keep-days", type=int, default=30,
+                   help="how long a unit missing from the recent results keeps its timing")
+    p.add_argument("--attribute", action="store_true",
+                   help="learn the runs with test.py --attribute, which plan the next ones")
+    source = p.add_mutually_exclusive_group()
+    source.add_argument("--pr", default="", help="learn from this PR's runs instead (a calibration PR)")
+    source.add_argument("--from-prs", action="store_true",
+                        help="learn from the units that passed in PR runs: dev, whose main runs "
+                             "attribute coverage")
     p.set_defaults(fn=cmd_update_timing)
     p = sub.add_parser("selection-map", help="build the test selection map from a run's attribution")
     p.add_argument("--run", required=True)

@@ -13,7 +13,7 @@ from serened import reserve_port
 
 from .. import reports
 from ..scheduler import CRASHED, FAILED, PASSED, SKIPPED, STUCK, Fixture, Outcome, Unit
-from . import Skip, plan, skipped
+from . import BELOW_RESOLUTION, Skip, plan, skipped
 
 SUITES = ("core", "cpp", "avro", "azure", "httpfs", "iceberg", "inet", "markdown",
           "postgres_scanner", "spatial", "interop")
@@ -28,6 +28,12 @@ CORE_SERIAL = (
     "test/sql/storage/concurrent_checkpoint_append_before_snapshot.test_slow",
     "test/sql/storage/concurrent_checkpoint_index_in_memory.test_slow",
     "test/sql/storage/concurrent_checkpoint_writes_mid_write.test_slow",
+)
+ICEBERG_SETUP = "test/sql/local/catalog_test_config_setup/"
+ICEBERG_CUSTOM = (
+    "test/sql/local/catalog_custom_setup/",
+    "test/sql/local/partitioning/foldable_expression_filter.test",
+    "test/sql/local/partitioning/in_filter.test",
 )
 ENV_FIXTURES = (
     ("S3_", "duckdb:s3"), ("DUCKDB_S3_", "duckdb:s3"), ("AWS_", "duckdb:s3"),
@@ -127,8 +133,11 @@ def _relative(ctx, suite, name):
 
 
 def duckdb_units(ctx, args, skips):
-    if not ctx.build.duckdb_unittests or not unittest_binary(ctx).is_file():
+    if not ctx.build.duckdb_unittests:
         return []
+    if not unittest_binary(ctx).is_file():
+        raise SystemExit(f"{unittest_binary(ctx)} is missing, though the build has "
+                         "SDB_BUILD_DUCKDB_UNITTESTS on: build the unittest target")
     suites = args.duckdb_suites or SUITES
     units = []
     for suite in suites:
@@ -140,23 +149,25 @@ def duckdb_units(ctx, args, skips):
                                   cost=cost, timeout=timeout))
             continue
         names = list_tests(ctx, suite)
+        if not names:
+            raise SystemExit(f"{unittest_binary(ctx)} lists no test of the DuckDB {suite} suite")
         if suite == "cpp":
             may_fail = frozenset(list_tests(ctx, suite, "[!mayfail]"))
-            units += _batches(ctx, skips, suite, [(n, ()) for n in names], cpp=True, may_fail=may_fail)
+            units += _batches(ctx, skips, suite, [(n, n) for n in names], cpp=True, may_fail=may_fail)
             continue
         excluded = config_skips(ctx, suite)
         groups = {}
         special = []
         for name in names:
-            reason = excluded.get(_relative(ctx, suite, name))
+            key = _relative(ctx, suite, name)
+            reason = excluded.get(key)
             if reason is not None:
-                ctx.skips.append((f"duckdb:{suite}:{name}", Skip(name, "divergence", reason)))
+                ctx.skips.append((f"duckdb:{suite}:{key}", Skip(key, "divergence", reason)))
                 continue
-            rel = name
-            if suite == "iceberg" and "/test/sql/local/catalog_" in name:
-                special.append(name)
+            if suite == "iceberg" and key.startswith((ICEBERG_SETUP, *ICEBERG_CUSTOM)):
+                special.append((name, key))
                 continue
-            fixtures = required_fixtures(ctx, rel)
+            fixtures = required_fixtures(ctx, name)
             serial = None
             if suite == "postgres_scanner":
                 serial = "duckdb:postgres"
@@ -164,10 +175,9 @@ def duckdb_units(ctx, args, skips):
                 serial = "duckdb:core-serial"
             elif suite == "httpfs" and "duckdb:s3" in fixtures:
                 serial = "duckdb:s3"
-            groups.setdefault((fixtures, serial), []).append(name)
-        for (fixtures, serial), members in sorted(groups.items(), key=lambda kv: str(kv[0])):
-            units += _batches(ctx, skips, suite, [(m, fixtures) for m in members],
-                              serial=serial, fixtures=fixtures)
+            groups.setdefault((fixtures, serial), []).append((name, key))
+        for (fixtures, serial), tests in sorted(groups.items(), key=lambda kv: str(kv[0])):
+            units += _batches(ctx, skips, suite, tests, serial=serial, fixtures=fixtures)
         if suite == "iceberg" and special:
             units += _iceberg_special(ctx, skips, special)
     return units
@@ -175,14 +185,14 @@ def duckdb_units(ctx, args, skips):
 
 def _batches(ctx, skips, suite, tests, cpp=False, serial=None, fixtures=(), may_fail=frozenset()):
     planned = []
-    for name, _ in tests:
-        uid = f"duckdb:{suite}:{name}"
+    for name, key in tests:
+        uid = f"duckdb:{suite}:{key}"
         skip = skipped(skips, uid)
         if skip:
             ctx.skips.append((uid, skip))
             continue
         cost, timeout = plan(ctx, uid, 1.5 if cpp else 30.0 if name.endswith(".test_slow") else 3.0)
-        planned.append((name, cost, timeout))
+        planned.append(((name, key), cost, timeout))
     target = BATCH_SECONDS * ctx.config.slowdown
     per_unit = 1 if serial else BATCH_MAX
     units = []
@@ -192,8 +202,8 @@ def _batches(ctx, skips, suite, tests, cpp=False, serial=None, fixtures=(), may_
         nonlocal batch, batch_cost
         if not batch:
             return
-        members = tuple(n for n, _, _ in batch)
-        uid = f"duckdb:{suite}:batch:{members[0]}+{len(members) - 1}"
+        members = tuple(test for test, _, _ in batch)
+        uid = f"duckdb:{suite}:batch:{members[0][1]}+{len(members) - 1}"
         jobs = 1 if serial else JOBS
         expected = max(batch_cost / jobs, max(c for _, c, _ in batch))
         timeout = max(ctx.timeout_floor, 5 * expected + 60 * ctx.config.slowdown,
@@ -201,13 +211,13 @@ def _batches(ctx, skips, suite, tests, cpp=False, serial=None, fixtures=(), may_
         units.append(Unit(uid, "duckdb", _batch_run(ctx, suite, members, cpp, jobs, may_fail),
                           cpus=jobs, mem_gb=3.0 * jobs, fixtures=fixtures, group=serial,
                           cost=expected, timeout=timeout,
-                          members=tuple(f"duckdb:{suite}:{m}" for m in members)))
+                          members=tuple(f"duckdb:{suite}:{key}" for _, key in members)))
         batch, batch_cost = [], 0.0
 
-    for name, cost, timeout in planned:
+    for test, cost, timeout in planned:
         if batch and (batch_cost + cost > target * JOBS or len(batch) >= per_unit):
             flush()
-        batch.append((name, cost, timeout))
+        batch.append((test, cost, timeout))
         batch_cost += cost
     flush()
     return units
@@ -224,6 +234,7 @@ def _ended(line):
 
 
 def _parse_events(text, members, label):
+    keys = dict(members)
     results = {}
     pids = {}
     took = {}
@@ -231,7 +242,7 @@ def _parse_events(text, members, label):
     for line in text.splitlines():
         m = _TOOK.match(line)
         if m:
-            took[m.group(1)] = float(m.group(2))
+            took[m.group(1)] = max(float(m.group(2)), BELOW_RESOLUTION)
         m = _EVENT.search(line)
         if m:
             try:
@@ -249,13 +260,12 @@ def _parse_events(text, members, label):
         if ended:
             name, pid, status, detail = ended
             results[name] = [status, detail]
-            pids[pid] = name
+            pids[pid] = keys.get(name, name)
     out = {}
-    for name in members:
-        key = f"{label}:{name}"
+    for name, key in members:
         if name in results:
             status, detail = results[name]
-            out[key] = (status, took.get(name, 0.0), detail)
+            out[f"{label}:{key}"] = (status, took.get(name, 0.0), detail)
     return out, pids, began
 
 
@@ -282,12 +292,13 @@ def _batch_run(ctx, suite, members, cpp, jobs, may_fail=frozenset()):
     label = f"duckdb:{suite}"
 
     def run(r):
+        names = [name for name, _ in members]
         argv = [unittest_binary(ctx), "--test-dir", core_dir(ctx), *config_args(ctx, suite)]
         if cpp:
-            argv += ["--jobs", str(max(2, jobs)), ",".join(_escape(m) for m in members)]
+            argv += ["--jobs", str(max(2, jobs)), ",".join(_escape(n) for n in names)]
         else:
             listing = r.dir / "tests.txt"
-            listing.write_text("\n".join(members) + "\n")
+            listing.write_text("\n".join(names) + "\n")
             argv += ["--emit-test-events", "--jobs", str(max(2, jobs)), "-f", str(listing)]
         res = r.exec(argv, env={**THREADS, **_halt_on_ubsan(r)}, cwd=core_dir(ctx))
         text = r.log.read_text(errors="replace") if r.log.exists() else ""
@@ -297,22 +308,22 @@ def _batch_run(ctx, suite, members, cpp, jobs, may_fail=frozenset()):
         else:
             member_results, pids, began = _parse_events(text, members, label)
         if res.stuck:
-            unfinished = [m for m in members if f"{label}:{m}" not in member_results]
-            launched = sorted(unfinished, key=lambda m: not m.endswith(".test_slow"))
-            head = next((m for m in unfinished if m in began), launched[0] if launched else None)
+            unfinished = [m for m in members if f"{label}:{m[1]}" not in member_results]
+            launched = sorted(unfinished, key=lambda m: not m[0].endswith(".test_slow"))
+            head = next((m for m in unfinished if m[0] in began), launched[0] if launched else None)
             for m in unfinished:
-                member_results[f"{label}:{m}"] = (
+                member_results[f"{label}:{m[1]}"] = (
                     (STUCK, res.duration, f"no result after {res.duration:.0f}s; stacks saved")
                     if m == head else (SKIPPED, 0.0, "no result: the batch timed out"))
             return Outcome(STUCK, "batch did not finish; stacks saved", signature="stuck",
                            members=member_results)
         out = r.outcome(res)
         unattributed = _attribute(r.san_dir, pids, member_results, label)
-        missing = [m for m in members if f"{label}:{m}" not in member_results]
+        missing = [key for _, key in members if f"{label}:{key}" not in member_results]
         if missing:
             reason = out.signature or out.detail or f"exit {res.returncode}"
-            for m in missing:
-                member_results[f"{label}:{m}"] = (FAILED, 0.0, f"no result reported ({reason})")
+            for key in missing:
+                member_results[f"{label}:{key}"] = (FAILED, 0.0, f"no result reported ({reason})")
         bad = [k for k, v in member_results.items() if v[0] in (FAILED, CRASHED, STUCK)]
         if bad:
             status = CRASHED if any(v[0] == CRASHED for v in member_results.values()) else FAILED
@@ -330,7 +341,7 @@ def _batch_run(ctx, suite, members, cpp, jobs, may_fail=frozenset()):
 
 
 def _parse_catch(text, members, label, may_fail=frozenset()):
-    wanted = set(members)
+    wanted = {name for name, _ in members}
     rule = "-" * 79
     lines = text.splitlines()
     took = {}
@@ -341,7 +352,7 @@ def _parse_catch(text, members, label, may_fail=frozenset()):
     for i, line in enumerate(lines):
         m = _TOOK.match(line)
         if m and m.group(1) in wanted:
-            took[m.group(1)] = float(m.group(2))
+            took[m.group(1)] = max(float(m.group(2)), BELOW_RESOLUTION)
             continue
         ended = _ended(line)
         if ended and ended[0] in wanted:
@@ -356,24 +367,22 @@ def _parse_catch(text, members, label, may_fail=frozenset()):
             detail = next((ln.strip() for ln in lines[i + 1:i + 6] if ln.strip()), "")
             failed[current] = f"{line.strip()} {detail}"[:300]
     out = {}
-    for name in members:
-        key = f"{label}:{name}"
+    for name, key in members:
+        uid = f"{label}:{key}"
         if name in ended_with:
             status, detail = ended_with[name]
-            out[key] = (status, took.get(name, 0.0), detail)
+            out[uid] = (status, took.get(name, 0.0), detail)
         elif name in failed:
-            out[key] = (FAILED, took.get(name, 0.0), failed[name])
+            out[uid] = (FAILED, took.get(name, 0.0), failed[name])
         elif name in took:
-            out[key] = (PASSED, took[name], "")
+            out[uid] = (PASSED, took[name], "")
     return out, pids
 
 
-def _iceberg_special(ctx, skips, names):
+def _iceberg_special(ctx, skips, tests):
     ice = ctx.root / SUITE_DIRS["iceberg"]
-    setup = tuple(n for n in names if "/test/sql/local/catalog_test_config_setup/" in n)
-    custom = tuple([n for n in names if "/test/sql/local/catalog_custom_setup/" in n]
-                   + [str(ice / "test/sql/local/partitioning/foldable_expression_filter.test"),
-                      str(ice / "test/sql/local/partitioning/in_filter.test")])
+    setup = tuple(t for t in tests if t[1].startswith(ICEBERG_SETUP))
+    custom = tuple(t for t in tests if t[1].startswith(ICEBERG_CUSTOM))
     steps = tuple(s for s in (
         ("setup", setup, ["--test-config", str(ice / "test/configs/fixture.json")], {}),
         ("custom", custom, [], {"CATALOG_TEST_CONFIG_SETUP": "fixture"}),
@@ -384,7 +393,7 @@ def _iceberg_special(ctx, skips, names):
     cost, timeout = plan(ctx, uid, 120.0)
     return [Unit(uid, "duckdb", _ordered_run(ctx, steps), cpus=2, mem_gb=4.0,
                  fixtures=("duckdb:iceberg", "duckdb:proxies"), cost=cost, timeout=timeout,
-                 members=tuple(f"duckdb:iceberg:{m}" for _, members, _, _ in steps for m in members))]
+                 members=tuple(f"duckdb:iceberg:{key}" for _, step, _, _ in steps for _, key in step))]
 
 
 def _ordered_run(ctx, steps):
@@ -395,7 +404,7 @@ def _ordered_run(ctx, steps):
         failure = None
         for key, members, extra, env in steps:
             listing = r.dir / f"{key}.txt"
-            listing.write_text("\n".join(members) + "\n")
+            listing.write_text("\n".join(name for name, _ in members) + "\n")
             local_env = dict(THREADS, **env)
             if env.get("CATALOG_TEST_CONFIG_SETUP") and r.env.get("ICEBERG_HTTP_PROXY"):
                 local_env["HTTP_PROXY_PUBLIC"] = r.env["ICEBERG_HTTP_PROXY"]

@@ -10,17 +10,26 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 
 from . import attribution, report, selection, store
 from .config import CONFIGS, Build, cpu_count, memory_gb
-from .scheduler import Context, Scheduler, install_signal_handlers
+from .scheduler import INTERRUPTED_EXIT, Context, Scheduler, install_signal_handlers
 from .suites import load_skips
 from .suites import drivers, duckdb, fuzz, gtest, sqllogic
 from .timing import Timing
 
 ROOT = Path(__file__).resolve().parents[3]
 _GENERATED = re.compile(r"^(.*?)(?:\.\d+)?\.gen\.test$")
+_GTEST_CASE = re.compile(r"^\s*(?:TYPED_)?TEST(?:_F|_P)?\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)", re.M)
+_CATCH_CASE = re.compile(r'^\s*TEST_CASE\s*\(\s*"((?:[^"\\]|\\.)*)"', re.M)
+SCRIPT_TESTS = ("sqllogic:", "recovery:", "postgres:")
+DRIVER_DIRS = {"network": ("network:hba",), "spec": ("drivers:*",), "run.sh": ("drivers:*",),
+               "stress": ("stress:*",), "sqlsmith": ("sqlsmith",)}
+DUCKDB_DIRS = {d: s for s, d in duckdb.SUITE_DIRS.items() if s != "cpp"}
+DUCKDB_TESTS = (".test", ".test_slow", ".test_coverage")
+CPP_SOURCES = (".cpp", ".cc", ".h", ".hpp")
 SUITES = ("sqllogic", "recovery", "cancellation", "gtest", "iresearch", "iresearch-load", "drivers",
           "re2", "duckdb", "sqlsmith", "stress", "postgres")
 DEFAULT_SUITES = tuple(s for s in SUITES if s != "postgres")
@@ -89,7 +98,11 @@ def parse_args(argv):
     ap.add_argument("--selection-spans", type=Path, default=None,
                     help="the changed files' function spans, from a coverage report "
                          "(scripts/coverage/diff.py writes spans.json)")
-    ap.add_argument("--list", action="store_true", help="print the units and exit")
+    ap.add_argument("--list", action="store_true",
+                    help="print the units and exit, and the digest of the plan to stderr")
+    ap.add_argument("--plan", default="",
+                    help="the digest --list printed for this run: a shard that plans other units "
+                         "fails instead of running them")
     ap.add_argument("--keep", action="store_true", help="keep the directories of passed units")
     ap.add_argument("--verbose", action="store_true", help="log every unit")
     return ap.parse_args(argv)
@@ -158,66 +171,109 @@ def changed_files(base):
     return names
 
 
-def _changed(uid, keys, generated):
-    tail = uid.split(":", 2)[-1].split("#", 1)[0]
-    if tail in keys or uid in keys:
-        return True
-    if not uid.startswith(("sqllogic:", "recovery:")):
-        return False
-    base = ROOT / "tests" / "sqllogic"
-    if os.path.realpath(base / tail) in keys:
-        return True
-    source = _GENERATED.match(tail)
-    return bool(source) and os.path.realpath(base / source.group(1)) in generated
+class ChangedTests:
+    def __init__(self, names, compiled):
+        self.ids = defaultdict(set)
+        self.globs = defaultdict(set)
+        self.scripts = {}
+        self.generated = {}
+        self.gtest_cases = defaultdict(set)
+        self.catch_cases = defaultdict(set)
+        for name in names:
+            self._add(name, compiled)
 
-
-def changed_units(units, base):
-    names = changed_files(base)
-    keys = set()
-    generated = set()
-    for name in names:
+    def _add(self, name, compiled):
+        parts = name.split("/")
         if name.startswith("tests/sqllogic/generators/") and name.endswith((".py", ".recorded")):
             rel = name[len("tests/sqllogic/generators/"):].rsplit(".", 1)[0]
-            generated.add(os.path.realpath(ROOT / "tests" / "sqllogic" / rel))
-            continue
-        if name.startswith("tests/sqllogic/"):
-            keys.add(os.path.realpath(ROOT / name))
+            self.generated[os.path.realpath(ROOT / "tests" / "sqllogic" / rel)] = name
+        elif name.startswith("tests/sqllogic/"):
+            self.scripts[os.path.realpath(ROOT / name)] = name
         elif name.startswith("tests/drivers/"):
-            keys.add("drivers:" + name.split("/")[2])
-        elif "/test/" in name and name.startswith("third_party/"):
-            keys.add(str(ROOT / name))
-            keys.add(name.split("/", 2)[2])
+            for uid in DRIVER_DIRS.get(parts[2], (f"drivers:{parts[2]}",)):
+                (self.globs if "*" in uid else self.ids)[uid].add(name)
+        elif name.startswith("third_party/") and "/test/" in name and name.endswith(DUCKDB_TESTS):
+            suite = DUCKDB_DIRS.get("/".join(parts[:2]))
+            if suite:
+                self.ids[f"duckdb:{suite}:{'/'.join(parts[2:])}"].add(name)
+        if not compiled or not name.endswith(CPP_SOURCES):
+            return
+        if name.startswith("tests/"):
+            for case in _GTEST_CASE.findall((ROOT / name).read_text(errors="replace")):
+                self.gtest_cases[case].add(name)
+        elif name.startswith("third_party/duckdb/test/"):
+            for case in _CATCH_CASE.findall((ROOT / name).read_text(errors="replace")):
+                self.catch_cases[re.sub(r"\\(.)", r"\1", case)].add(name)
+        elif name.startswith("third_party/re2/re2/testing/"):
+            self.ids[f"re2:{Path(name).stem}"].add(name)
+
+    def sources(self, uid):
+        found = set(self.ids.get(uid, ()))
+        for glob, names in self.globs.items():
+            if fnmatch.fnmatchcase(uid, glob):
+                found |= names
+        kind, _, rest = uid.partition(":")
+        if kind == "gtest":
+            heads, _, tail = rest.partition(":")[2].partition(".")
+            test = tail.split("/", 1)[0]
+            for suite in heads.split("/"):
+                found |= self.gtest_cases.get((suite, test), set())
+        elif uid.startswith("duckdb:cpp:"):
+            found |= self.catch_cases.get(uid[len("duckdb:cpp:"):], set())
+        elif uid.startswith(SCRIPT_TESTS):
+            base = ROOT / "tests" / "sqllogic"
+            rel = uid.split(":", 2)[-1].split("#", 1)[0]
+            source = _GENERATED.match(rel)
+            for path in (self.scripts.get(os.path.realpath(base / rel)),
+                         source and self.generated.get(os.path.realpath(base / source.group(1)))):
+                if path:
+                    found.add(path)
+        return found
+
+
+def changed_units(units, base, compiled=True):
+    changed = ChangedTests(changed_files(base), compiled)
     picked = []
     tests = set()
+    claimed = set()
     for u in units:
-        members = {m for m in u.members if _changed(m, keys, generated)}
-        if members or _changed(u.id, keys, generated):
+        members = set()
+        for uid in (*u.members, u.id):
+            sources = changed.sources(uid)
+            if sources:
+                members.add(uid)
+                claimed |= sources
+        if members:
             picked.append(u)
-            tests |= members or {u.id}
-    return picked, tests
+            tests |= members - {u.id} or {u.id}
+    return picked, tests, claimed
 
 
-def write_selection(args, units, changed, out):
+def write_selection(args, units, changed, claimed, out):
     work = out / "selection"
     work.mkdir(parents=True, exist_ok=True)
     local = work / "map.parquet"
     if not store.reachable() or not store.get(f"selection/dev-{platform.machine()}.parquet", local):
         result = {"mode": "no map"}
     else:
-        result = selection.report(units, args.changed, changed_files(args.changed), changed,
+        result = selection.report(units, args.changed, changed_files(args.changed), changed, claimed,
                                   local, json.loads(args.selection_spans.read_text()), work,
                                   pr=os.environ.get("SDB_PR", ""))
     args.selection_report.write_text(json.dumps(result, indent=1))
 
 
-def shard(units, index, count):
+def shard(units, index, count, startup=lambda fixture: 0.0):
     if count == 1:
         return units
     loads = [0.0] * count
+    started = [set() for _ in range(count)]
     picked = []
-    for u in sorted(units, key=lambda u: (-u.cost, u.id)):
-        k = min(range(count), key=lambda i: (loads[i], i))
-        loads[k] += u.cost
+    for u in sorted(units, key=lambda u: (-u.cost * u.cpus, u.id)):
+        fixtures = {*u.fixtures, *u.shared}
+        k = min(range(count),
+                key=lambda i: (loads[i] + sum(startup(f) for f in fixtures - started[i]), i))
+        loads[k] += u.cost * u.cpus
+        started[k] |= fixtures
         if k == index:
             picked.append(u)
     return picked
@@ -269,21 +325,31 @@ def main(argv):
     units = build_units(ctx, args, suites, skips)
     if args.expect_fail and not args.changed:
         raise SystemExit("--expect-fail needs --changed")
-    changed, changed_tests = changed_units(units, args.changed) if args.changed else ([], set())
+    changed, changed_tests, claimed = (changed_units(units, args.changed, compiled=not args.expect_fail)
+                                       if args.changed else ([], set(), set()))
+    if args.expect_fail and not changed:
+        raise SystemExit("the diff changes no test that can fail on the merge base: the bugfix check "
+                         "runs the changed sqllogic, recovery, driver and DuckDB sqllogic tests, "
+                         "while gtest, DuckDB C++ and re2 tests are compiled into its binaries")
     if args.only_changed:
         units = changed
     if args.selection_report:
         if not args.changed or not args.selection_spans:
             raise SystemExit("--selection-report needs --changed and --selection-spans")
-        write_selection(args, units, changed, out)
+        write_selection(args, units, changed, claimed, out)
     plan = hashlib.sha256("".join(sorted(f"{u.id}\t{u.cost!r}\n" for u in units)).encode()).hexdigest()
-    units = shard(units, index - 1, count)
+    if args.plan and args.plan != plan:
+        raise SystemExit(f"this shard planned other units than the build job (plan {plan[:12]}, "
+                         f"not {args.plan[:12]}): the shards would run some units twice and others "
+                         "never")
+    units = shard(units, index - 1, count, ctx.fixture_startup)
     changed_ids = {u.id for u in changed}
     changed = [u for u in units if u.id in changed_ids]
     if args.list:
         for u in sorted(units, key=lambda u: (-u.cost, u.id)):
             print(f"{u.cost:8.1f}s {u.timeout:7.0f}s {u.cpus} {u.id}")
         print(f"{len(units)} units, {sum(u.cost for u in units):.0f}s expected", file=sys.stderr)
+        print(f"plan {plan}", file=sys.stderr)
         return 0
     factories = {}
     factories.update(sqllogic.fixture_factories(ctx, args))
@@ -316,10 +382,13 @@ def main(argv):
         "sha": os.environ.get("SDB_SHA", ""), "pr": os.environ.get("SDB_PR", ""),
         "branch": os.environ.get("SDB_BRANCH", ""), "run": os.environ.get("SDB_RUN_ID", ""),
         "attribute": args.attribute, "plan": plan,
-        "check": os.environ.get("SDB_CHECK", ""),
+        "check": os.environ.get("SDB_CHECK", ""), "interrupted": sched.interrupted,
     }
-    report.write(out, meta, results, ctx.skips)
+    shard_skips = ctx.skips if index == 1 else []
+    report.write(out, meta, results, shard_skips)
     if args.attribute and (attribution.directory(ctx) / "index.jsonl").is_file():
         store.attribution_parquet(attribution.directory(ctx), out / "attribution.parquet")
-    print(report.summary(meta, results, ctx.skips))
+    print(report.summary(meta, results, shard_skips))
+    if sched.interrupted:
+        return INTERRUPTED_EXIT
     return 1 if report.failed(results) else 0

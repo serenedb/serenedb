@@ -3,7 +3,7 @@ from pathlib import Path
 
 from ..scheduler import CRASHED, FAILED, PASSED, Outcome, Unit
 from ..servers import Server, ServerPool
-from . import plan, skipped
+from . import gtest, plan, skipped
 
 LANGS = ("python", "java", "js", "go", "rust", "php", "csharp", "c", "ruby", "r", "psql")
 CPUS = {"java": 4, "csharp": 2, "js": 2, "python": 3}
@@ -42,7 +42,6 @@ def _summary_line(text, lang):
 
 
 def _run_lang(ctx, r, lang, server):
-    r.stack_pids = lambda: (server.pid(),)
     shared = ctx.out_dir / "drivers-shared"
     shared.mkdir(exist_ok=True)
     return r.exec([ctx.root / "tests" / "drivers" / "run.sh", "--lang", lang,
@@ -60,6 +59,7 @@ def _driver_run(ctx, lang, own):
         if own:
             server = Server(ctx, r.dir / "server",
                             profile_dir=r.profile_dir if ctx.attribute else None, **SERVER).start()
+            r.stack_pids = lambda: (server.pid(),)
             try:
                 res = _run_lang(ctx, r, lang, server)
             finally:
@@ -71,7 +71,7 @@ def _driver_run(ctx, lang, own):
             pool = r.fixture("driver-servers")
             i, generation = pool.acquire()
             try:
-                res = _run_lang(ctx, r, lang, pool.server(i))
+                res = _run_lang(ctx, r, lang, pool.watch(r, i))
             finally:
                 pool.release(i)
             out = r.outcome(res)
@@ -98,16 +98,15 @@ def _network_run(ctx):
 
 
 def re2_units(ctx, args, skips):
-    testfile = ctx.build.dir / "third_party" / "re2" / "CTestTestfile.cmake"
-    if not ctx.build.gtests or not testfile.is_file():
+    if not ctx.build.gtests:
         return []
+    testfile = gtest.required_binary(ctx.build.dir / "third_party" / "re2" / "CTestTestfile.cmake",
+                                     "re2-tests")
     units = []
     for m in re.finditer(r'add_test\(\[=\[(\S+?)\]=\] "([^"]+)"((?: "[^"]*")*)\)',
                          testfile.read_text()):
         name, binary, rest = m.group(1), Path(m.group(2)), re.findall(r'"([^"]*)"', m.group(3))
-        local = ctx.build.dir / "third_party" / "re2" / binary.name
-        if not local.is_file():
-            continue
+        local = gtest.required_binary(ctx.build.dir / "third_party" / "re2" / binary.name, "re2-tests")
         uid = f"re2:{name}"
         skip = skipped(skips, uid)
         if skip:

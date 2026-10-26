@@ -1,9 +1,13 @@
 FROM docker:29.9.2 AS docker-cli
 FROM rust:1.99.1 AS rust
+FROM duckdb/duckdb:1.5.5 AS vanilla-duckdb
 
 FROM ubuntu:26.04
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+
+COPY --from=vanilla-duckdb /duckdb /opt/duckdb-1.5.5/duckdb
+ENV VANILLA_DUCKDB=/opt/duckdb-1.5.5/duckdb
 
 COPY --from=rust /usr/local/rustup /usr/local/rustup
 COPY --from=rust /usr/local/cargo /usr/local/cargo

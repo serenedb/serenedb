@@ -38,6 +38,7 @@ else
 		bundle=$(realpath "$DIGEST")
 	else
 		bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "$DIGEST") || exit 1
+		exec {bundle_lock}<"$bundle/.complete" && flock -s "$bundle_lock" || exit 1
 	fi
 	build=(-v "$bundle:$bundle")
 	test_args=(--build-dir "$bundle")
@@ -86,6 +87,10 @@ docker run --rm --name "$name" \
 	"$BUILD_IMAGE" python3 scripts/ci/test.py "${test_args[@]}" --config "$CONFIG" \
 	--shard "$SHARD" "${timing[@]}" --out "$out" "$@"
 rc=$?
+if ((rc == 130)); then
+	echo "the run was interrupted: its results and profiles stay out of the store" >&2
+	SDB_STORE_RESULTS=false
+fi
 
 if [[ -f "$out/results.jsonl" ]] && [[ "$SDB_STORE_RESULTS" == true ]]; then
 	python3 scripts/ci/ci.py elsewhere --results "$out/results.jsonl" ||

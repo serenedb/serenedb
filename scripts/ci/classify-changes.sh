@@ -45,15 +45,24 @@ declare -A SUITE_OF_DIR=(
 	[openssl-cmake]="httpfs azure iceberg postgres_scanner"
 )
 
-iresearch=false other_tp=false re2=false pg=false
+iresearch=false other_tp=false re2=false pg=false everything=false
 declare -A suite_hit=()
 
 while IFS= read -r f; do
 	[[ -z "$f" ]] && continue
 	case "$f" in
+	CMakeLists.txt | CMakePresets.json | cmake/* | scripts/ci/build-ubuntu.Dockerfile | scripts/ci/build.bash | \
+		scripts/ci/config.sh | scripts/ci/test.py | scripts/ci/run_shard.sh | scripts/ci/testlib/* | \
+		tests/drivers/harness/*)
+		everything=true
+		;;
+	esac
+	case "$f" in
 	third_party/re2 | third_party/re2/* | third_party/abseil-cpp | third_party/abseil-cpp/* | \
 		third_party/googletest | third_party/googletest/* | third_party/simdutf | third_party/simdutf/* | \
-		third_party/CMakeLists.txt | cmake/OptimizeForArchitecture.cmake)
+		third_party/duckdb | third_party/duckdb/* | third_party/llvm-project | third_party/llvm-project/* | \
+		third_party/jemalloc | third_party/jemalloc/* | third_party/jemalloc-cmake | third_party/jemalloc-cmake/* | \
+		third_party/tcmalloc | third_party/tcmalloc/* | third_party/CMakeLists.txt)
 		re2=true
 		;;
 	esac
@@ -116,6 +125,10 @@ done <<<"$changed"
 if [[ "$other_tp" == true ]]; then
 	iresearch=true
 fi
+if [[ "$everything" == true ]]; then
+	iresearch=true re2=true pg=true
+	for s in $ALL_SUITES; do suite_hit[$s]=1; done
+fi
 
 duckdb_suites=""
 for s in $ALL_SUITES; do
@@ -132,3 +145,4 @@ emit iresearch "$iresearch"
 emit duckdb_suites "$duckdb_suites"
 emit re2 "$re2"
 emit pg "$pg"
+emit everything "$everything"

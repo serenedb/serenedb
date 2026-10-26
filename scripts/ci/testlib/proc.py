@@ -1,3 +1,4 @@
+import contextlib
 import ctypes
 import os
 import shutil
@@ -160,12 +161,12 @@ def spawn(argv, *, env, cwd, log_path):
 
 
 def run(argv, *, env, cwd, log_path, timeout, stack_dir, extra_stack_pids=lambda: (),
-        cancelled=None):
+        cancelled=None, stalled=lambda: 0.0, dumping=contextlib.nullcontext):
     start = time.monotonic()
     proc = spawn(argv, env=env, cwd=cwd, log_path=log_path)
     deadline = start + timeout
     while True:
-        remaining = deadline - time.monotonic()
+        remaining = deadline + stalled() - time.monotonic()
         try:
             rc = proc.wait(timeout=max(0.0, min(remaining, 1.0)))
             kill_session(proc.pid)
@@ -176,10 +177,11 @@ def run(argv, *, env, cwd, log_path, timeout, stack_dir, extra_stack_pids=lambda
             kill_session(proc.pid)
             proc.wait()
             return ProcResult(None, time.monotonic() - start)
-        if time.monotonic() >= deadline:
+        if time.monotonic() >= deadline + stalled():
             break
-    pids = session_pids(proc.pid) + [p for p in extra_stack_pids() if p]
-    stacks = dump_all_stacks(pids, stack_dir)
+    with dumping():
+        pids = session_pids(proc.pid) + [p for p in extra_stack_pids() if p]
+        stacks = dump_all_stacks(pids, stack_dir)
     kill_session(proc.pid)
     proc.wait()
     return ProcResult(None, time.monotonic() - start, stuck=True, stacks=stacks)

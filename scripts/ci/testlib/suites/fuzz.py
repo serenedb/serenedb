@@ -10,7 +10,7 @@ from serened import pg_startup_reachable
 from .. import proc, reports
 from ..scheduler import CRASHED, FAILED, PASSED, STUCK, Fixture, Outcome, Unit
 from ..servers import Server
-from . import plan, skipped, sqllogic
+from . import gtest, plan, skipped, sqllogic
 
 CANCEL_FILES = 4
 CANCEL_ROUND_FILES = 32
@@ -254,10 +254,10 @@ class CorpusFixture(Fixture):
 
 
 def iresearch_load_units(ctx, args, skips):
-    binary = ctx.build.bin("iresearch-load-tests")
     uid = "iresearch-load:LoadTest"
-    if not binary.is_file() or skipped(skips, uid):
+    if not ctx.build.gtests or skipped(skips, uid):
         return []
+    binary = gtest.required_binary(ctx.build.bin("iresearch-load-tests"), "iresearch-load-tests")
     cost, timeout = plan(ctx, uid, 600.0)
 
     def run(r):

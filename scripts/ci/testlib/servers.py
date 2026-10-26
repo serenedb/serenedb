@@ -1,3 +1,4 @@
+import contextlib
 import shutil
 import signal
 import subprocess
@@ -150,6 +151,7 @@ class ServerPool(Fixture):
         self.servers = [Server(ctx, home / str(i), threads=threads, **server_args)
                         for i in range(count)]
         self.load = [0] * count
+        self.stalls = [[] for _ in range(count)]
         self.lock = threading.Lock()
         self.findings = []
         self.crash_info = {}
@@ -215,6 +217,29 @@ class ServerPool(Fixture):
 
     def server(self, i):
         return self.servers[i]
+
+    @contextlib.contextmanager
+    def stalling(self, i):
+        stall = [time.monotonic(), None]
+        with self.lock:
+            self.stalls[i].append(stall)
+        try:
+            yield
+        finally:
+            stall[1] = time.monotonic()
+
+    def stalled(self, i, since):
+        now = time.monotonic()
+        with self.lock:
+            return sum(max(0.0, (end or now) - max(start, since)) for start, end in self.stalls[i])
+
+    def watch(self, r, i):
+        since = time.monotonic()
+        server = self.servers[i]
+        r.stack_pids = lambda: (server.pid(),)
+        r.stalled = lambda: self.stalled(i, since)
+        r.dumping = lambda: self.stalling(i)
+        return server
 
     def crashed_during(self, i, generation):
         with self.lock:

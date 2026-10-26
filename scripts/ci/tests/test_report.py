@@ -7,13 +7,13 @@ sys.path[:0] = [str(ROOT / "scripts" / "ci")]
 import report  # noqa: E402
 
 
-def shard(config):
-    return {"config": config, "arch": "x86_64", "check": "", "duration": 60, "shard": "1/1",
+def shard(config, arch="x86_64", check=""):
+    return {"config": config, "arch": arch, "check": check, "duration": 60, "shard": "1/1",
             "plan": "p"}
 
 
-def unit(config, status):
-    return {"unit": f"{config}:u", "config": config, "arch": "x86_64", "check": "", "status": status,
+def unit(config, status, arch="x86_64", check=""):
+    return {"unit": f"{config}:u", "config": config, "arch": arch, "check": check, "status": status,
             "attempt": 0, "member_of": "", "wrapper": False, "detail": "", "signature": ""}
 
 
@@ -68,5 +68,15 @@ def test_a_failed_job_is_listed_only_when_its_test_lines_do_not_show_it():
     assert "- ❌ **asan/x86_64**: 0 passed, 0 failed, 1 flaky" in body
     assert "**asan**:" not in body
     assert "- ❌ **dev**: failure outside the tests" in body
-    assert "- ❌ **image**: failure before any test result" in body
+    assert "- ❌ **image**: failure\n" in body
     assert "**perf**:" not in body
+
+
+def test_a_failed_job_finds_its_arm64_and_check_results():
+    needs = {"perf-arm64": {"result": "failure"}, "validate-pg": {"result": "failure"},
+             "tsan": {"result": "failure"}}
+    body, _ = report.build_report([shard("perf", "aarch64"), shard("perf", "x86_64", "pg")],
+                                  [unit("perf", "failed", "aarch64"), unit("perf", "failed", "x86_64", "pg")],
+                                  needs, "https://example.com/runs/1")
+    assert "**perf-arm64**" not in body and "**validate-pg**" not in body
+    assert "- ❌ **tsan**: failure before any test result" in body

@@ -145,9 +145,11 @@ jobs:
           clean: false
       - name: Update the timing store
         run: |
-          for config in perf dev asan tsan msan; do
+          for config in perf asan tsan msan; do
             python3 scripts/ci/ci.py update-timing --config "$config" --arch x86_64
           done
+          python3 scripts/ci/ci.py update-timing --config dev --arch x86_64 --attribute
+          python3 scripts/ci/ci.py update-timing --config dev --arch x86_64 --from-prs
 
   report:
     name: Report Status

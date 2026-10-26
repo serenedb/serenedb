@@ -98,12 +98,15 @@ jobs:
         id: plan
         if: inputs.TESTS
         env:
+          TEST_ARGS: ${{ inputs.TEST_ARGS }}
           BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
         run: |
           set -f
           source scripts/ci/config.sh
           sdb_config "${{ inputs.CONFIG }}"
-          python3 scripts/ci/ci.py timing --config "$CONFIG" --arch "$ARCH" --out out/timing.json
+          attribute=()
+          [[ " $TEST_ARGS " != *" --attribute "* ]] || attribute=(--attribute)
+          python3 scripts/ci/ci.py timing --config "$CONFIG" --arch "$ARCH" "${attribute[@]}" --out out/timing.json
           bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "${{ steps.build.outputs.digest }}")
           plan() {
             docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \

@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 
 from ..scheduler import CRASHED, FAILED, PASSED, SKIPPED, STUCK, Outcome, Unit
-from . import plan, skipped
+from . import BELOW_RESOLUTION, plan, skipped
 
 _RESULT = re.compile(r"^\[\s*(OK|FAILED|SKIPPED)\s*\] (\S+?)(?:, where .*)? \((\d+) ms\)\s*$")
 _RUN = re.compile(r"^\[ RUN\s*\] (\S+)\s*$")
@@ -45,7 +45,7 @@ def parse_log(text):
         m = _RESULT.match(line)
         if m:
             status = {"OK": PASSED, "FAILED": FAILED, "SKIPPED": SKIPPED}[m.group(1)]
-            results[m.group(2)] = (status, int(m.group(3)) / 1000.0)
+            results[m.group(2)] = (status, max(int(m.group(3)) / 1000.0, BELOW_RESOLUTION))
     unfinished = [t for t in started if t not in results]
     return results, unfinished
 
@@ -198,18 +198,24 @@ class GtestBinary:
         return run
 
 
+def required_binary(path, target):
+    if not path.is_file():
+        raise SystemExit(f"{path} is missing, though the build has SDB_GTEST on: build the {target} "
+                         "target")
+    return path
+
+
 def gtest_units(ctx, args, skips):
     if not ctx.build.gtests:
         return []
-    units = []
-    for path in sorted((ctx.build.dir / "bin").glob("serenedb-tests*")):
-        units += GtestBinary(ctx, path.name, env={"LANG": "en_US"}).units(skips)
-    return units
+    required_binary(ctx.build.bin("serenedb-tests"), "serenedb-tests")
+    return GtestBinary(ctx, "serenedb-tests", env={"LANG": "en_US"}).units(skips)
 
 
 def iresearch_units(ctx, args, skips):
-    if not ctx.build.gtests or not ctx.build.bin("iresearch-tests").is_file():
+    if not ctx.build.gtests:
         return []
+    required_binary(ctx.build.bin("iresearch-tests"), "iresearch-tests")
     resources = ctx.root / "resources" / "tests" / "iresearch"
     return IresearchBinary(ctx, "iresearch-tests", [f"--ires_resource_dir={resources}"],
                            env={"MALLOC_ARENA_MAX": "1"}).units(skips)

@@ -1,11 +1,11 @@
 import json
 from dataclasses import asdict
 
-from .scheduler import BAD, CRASHED, FAILED, FLAKY, PASSED, SKIPPED, STUCK
+from .scheduler import BAD, CRASHED, FAILED, FLAKY, INTERRUPTED, PASSED, SETUP, SKIPPED, STUCK
 
 
 def counted(results):
-    return [r for r in results if r.attempt == 0 and not r.wrapper]
+    return [r for r in results if r.attempt == 0 and not r.wrapper and r.status != SETUP]
 
 
 def failed(results):
@@ -20,13 +20,15 @@ def _duration(seconds):
 
 def summary(meta, results, skips, limit=40):
     rows = counted(results)
-    count = {k: 0 for k in (PASSED, FAILED, FLAKY, STUCK, CRASHED, SKIPPED)}
+    count = {k: 0 for k in (PASSED, FAILED, FLAKY, STUCK, CRASHED, SKIPPED, INTERRUPTED)}
     for r in rows:
         count[r.status] = count.get(r.status, 0) + 1
     skipped = count[SKIPPED] + len(skips)
     head = (f"{meta['config']}/{meta['arch']} shard {meta['shard']}: {count[PASSED]} passed, "
             f"{count[FAILED]} failed, {count[FLAKY]} flaky, {count[STUCK]} stuck, "
-            f"{count[CRASHED]} crashed, {skipped} skipped in {_duration(meta['duration'])}")
+            f"{count[CRASHED]} crashed, {skipped} skipped"
+            + (f", {count[INTERRUPTED]} interrupted" if count[INTERRUPTED] else "")
+            + f" in {_duration(meta['duration'])}")
     lines = [head]
     bad = [r for r in results if r.attempt == 0 and r.status in BAD
            and not (r.wrapper and any(m.member_of == r.unit and m.status in BAD for m in rows))]

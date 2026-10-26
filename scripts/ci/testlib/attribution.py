@@ -32,7 +32,8 @@ def collect(ctx, unit, run, status):
         print(f"no attribution for {unit.id}: {show.stderr.strip()[-300:]}", flush=True)
         return
     with _lock, open(out / "index.jsonl", "a") as fh:
-        fh.write(json.dumps({"n": n, "unit": unit.id, "status": status}) + "\n")
+        fh.write(json.dumps({"n": n, "unit": unit.id, "status": status,
+                             "members": list(unit.members)}) + "\n")
     shard_profiles = ctx.out_dir / "profiles"
     shard_profiles.mkdir(exist_ok=True)
     merged.rename(shard_profiles / f"unit-{n}.profdata")

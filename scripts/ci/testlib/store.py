@@ -7,7 +7,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-RELEASE_IMAGE = "serenedb/serenedb:latest"
+RELEASE_IMAGE = ("serenedb/serenedb:26.10.2"
+                 "@sha256:d8b14726c5c9ec3740d5d081413e6603d5ae4e6b3db82a446f0a74c42ce59ba3")
 
 
 def url(path):
@@ -140,26 +141,28 @@ def jsonl_to_parquet(src, dest):
 
 def attribution_parquet(src, dest):
     src, dest = Path(src).resolve(), Path(dest).resolve()
-    shell(f"COPY (SELECT i.unit, i.status, f.function FROM read_csv('{src}/*.txt', "
-          f"columns = {{'function': 'VARCHAR'}}, header = false, delim = '\\t', quote = '', "
-          f"escape = '', filename = true) f JOIN read_json('{src}/index.jsonl', "
-          f"format = 'newline_delimited') i "
-          f"ON regexp_extract(f.filename, '([0-9]+)\\.txt$', 1)::INTEGER = i.n) "
+    index = (f"read_json('{src}/index.jsonl', format = 'newline_delimited', columns = {{'n': 'INTEGER', "
+             f"'unit': 'VARCHAR', 'status': 'VARCHAR', 'members': 'VARCHAR[]'}})")
+    shell(f"COPY (SELECT i.unit, i.status, f.function, NULL::VARCHAR AS member FROM read_csv("
+          f"'{src}/*.txt', columns = {{'function': 'VARCHAR'}}, header = false, delim = '\\t', "
+          f"quote = '', escape = '', filename = true) f JOIN {index} i "
+          f"ON regexp_extract(f.filename, '([0-9]+)\\.txt$', 1)::INTEGER = i.n "
+          f"UNION ALL SELECT unit, status, NULL::VARCHAR, unnest(members) FROM {index}) "
           f"TO '{dest}' (FORMAT parquet, COMPRESSION zstd)", dest.parent)
 
 
-def timing_snapshot(work, scales, own, dest):
+def timing_snapshot(work, sources, dest):
     units, priors = {}, {}
-    if scales:
+    if sources:
         work = Path(work).resolve()
-        files = [work / f"{name}.parquet" for name in scales]
-        rows = shell(f"SELECT unit, p95, parse_filename(filename, true) AS config "
-                     f"FROM read_parquet([{quoted(files)}], filename = true)", work)
+        roles = {str(Path(path).resolve()): (scale, measured) for path, scale, measured in sources}
+        rows = shell(f"SELECT unit, p95, filename FROM read_parquet([{quoted(roles)}], filename = true)",
+                     work)
         for r in rows:
-            if r["config"] == own:
+            scale, measured = roles[r["filename"]]
+            if measured:
                 units[r["unit"]] = r["p95"]
             else:
-                scaled = r["p95"] * scales[r["config"]]
-                priors[r["unit"]] = max(scaled, priors.get(r["unit"], 0.0))
+                priors[r["unit"]] = max(r["p95"] * scale, priors.get(r["unit"], 0.0))
     priors = {unit: p95 for unit, p95 in priors.items() if unit not in units}
     Path(dest).write_text(json.dumps({"units": units, "priors": priors}))

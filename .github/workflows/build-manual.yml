@@ -75,6 +75,7 @@ jobs:
       test_args: ${{ steps.select.outputs.test_args }}
       sanitizer_test_args: ${{ steps.select.outputs.sanitizer_test_args }}
       pg: ${{ steps.classify.outputs.pg }}
+      everything: ${{ steps.classify.outputs.everything }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -315,7 +316,8 @@ jobs:
     with:
       LOCATION: linux-amd64
       PR_SHA: ${{ inputs.PR_SHA }}
-      CHANGED: ${{ !inputs.EVERYTHING }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+      CHANGED: ${{ !inputs.EVERYTHING && needs.prepare.outputs.everything != 'true' }}
       CORPUS: ${{ inputs.CORPUS }}
     secrets: inherit
 

@@ -13,8 +13,17 @@ from testlib.scheduler import BAD
 MARKER = "<!-- serenedb-ci-report -->"
 HISTORY = re.compile(r"<!-- ci-history:(.*?) -->")
 ORDER = ("perf", "dev", "asan", "tsan", "msan")
+CHECK_JOBS = {"validate-pg": "pg", "bugfix": "bugfix"}
 COVERAGE_ROWS = 40
 KEEP_RUNS = 30
+
+
+def job_keys(job, keys):
+    if job in CHECK_JOBS:
+        return [k for k in keys if k[2] == CHECK_JOBS[job]]
+    config, _, location = job.partition("-")
+    arch = {"": "x86_64", "arm64": "aarch64"}.get(location)
+    return [k for k in keys if (k[0], k[1]) == (config, arch) and k[2] not in CHECK_JOBS.values()]
 
 
 def load(results_dir):
@@ -138,9 +147,10 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None, subje
         if result not in ("failure", "cancelled"):
             continue
         failed_jobs = True
-        mine = [k for k in keys if job in (k[0], k[2])]
+        mine = job_keys(job, keys)
         if not mine:
-            lines.append(f"- ❌ **{job}**: {result} before any test result")
+            tests = job in CHECK_JOBS or job.partition("-")[0] in ORDER
+            lines.append(f"- ❌ **{job}**: {result}" + (" before any test result" if tests else ""))
         elif not red.intersection(mine):
             lines.append(f"- ❌ **{job}**: {result} outside the tests")
     counts = {s: sum(by_config[k][s] for k in keys) for s in BAD}

@@ -4,6 +4,7 @@ from pathlib import Path
 
 TIMEOUT_MULT = 5.0
 UNKNOWN_MULT = 10.0
+BELOW_RESOLUTION = 0.0005
 
 
 @dataclass(frozen=True)

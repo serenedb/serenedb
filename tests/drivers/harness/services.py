@@ -19,7 +19,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 FIXTURES = REPO / "tests" / "sqllogic" / "fixtures"
 
-MINIO_IMAGE = "pgsty/minio:latest"
+MINIO_IMAGE = "pgsty/minio:RELEASE.2026-08-04T00-00-00Z"
 POD_IMAGE = "alpine:3.22"
 AZURITE_IMAGE = "mcr.microsoft.com/azure-storage/azurite:3.37.0"
 ICEBERG_REST_IMAGE = "apache/iceberg-rest-fixture:1.10.1"

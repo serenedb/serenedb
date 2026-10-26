@@ -22,7 +22,7 @@ def git(*args, cwd=ROOT):
                           check=True).stdout
 
 
-def changed_lines(base):
+def changed_lines(base, deletions=False):
     lines = defaultdict(set)
 
     def collect(diff, prefix=""):
@@ -38,6 +38,8 @@ def changed_lines(base):
                 if m:
                     start, count = int(m.group(1)), int(m.group(2) or 1)
                     lines[current].update(range(start, start + count))
+                    if deletions and not count:
+                        lines[current].update({max(start, 1), start + 1})
 
     merge_base = git("merge-base", base, "HEAD").strip()
     collect(git("diff", "-U0", "--no-renames", "--diff-filter=AM", merge_base, "HEAD"))

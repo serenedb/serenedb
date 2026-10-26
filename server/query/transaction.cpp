@@ -119,7 +119,9 @@ void Transaction::OnStatementBegin() {
 void Transaction::OnStatementEnd() {
   // Resampled here so the next Bind -- which runs between statements -- sees
   // the DDL this one performed and re-plans against it.
-  RefreshCatalogEpoch();
+  if (GetClientContext().transaction.HasActiveTransaction()) {
+    RefreshCatalogEpoch();
+  }
   if (_statement_is_dml) {
     _had_dml = true;
   }

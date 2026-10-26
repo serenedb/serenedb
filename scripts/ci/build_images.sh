@@ -24,10 +24,15 @@ if [[ "$MODE" == arch || "$MODE" == merge ]]; then
 		echo "[-] Error: DOCKER_USERNAME and DOCKER_PASSWORD are required to push." >&2
 		exit 1
 	fi
-	docker logout >/dev/null 2>&1 || true
 	trap 'docker logout >/dev/null 2>&1 || true' EXIT
-	echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin >/dev/null
+	docker logout >/dev/null 2>&1 || true
 fi
+
+login() {
+	echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin >/dev/null
+}
+
+BUILT=()
 
 BUILDER_READY=false
 builder() {
@@ -59,12 +64,12 @@ image() {
 		;;
 	arch)
 		builder
-		echo "[*] Building and pushing ${image}-${ARCH}..."
-		docker buildx build --push --platform "linux/${ARCH}" -t "${image}-${ARCH}" "$@"
+		echo "[*] Building ${image}-${ARCH}..."
+		docker buildx build --load --platform "linux/${ARCH}" -t "${image}-${ARCH}" "$@"
+		BUILT+=("${image}-${ARCH}")
 		;;
 	merge)
-		docker buildx imagetools create --tag "$image" "${image}-amd64" "${image}-arm64"
-		echo "[+] Pushed ${image}"
+		BUILT+=("$image")
 		;;
 	esac
 }
@@ -76,3 +81,15 @@ for fixture in ollama postgres; do
 	image "serenedb/serenedb-test-${fixture}:$("${FIXTURES}/image_tag.sh" "${FIXTURES}/${fixture}")" \
 		"${FIXTURES}/${fixture}"
 done
+
+if [ ${#BUILT[@]} -ne 0 ]; then
+	login
+	for image in "${BUILT[@]}"; do
+		if [ "$MODE" = arch ]; then
+			docker push "$image"
+		else
+			docker buildx imagetools create --tag "$image" "${image}-amd64" "${image}-arm64"
+		fi
+		echo "[+] Pushed ${image}"
+	done
+fi

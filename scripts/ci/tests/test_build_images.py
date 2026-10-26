@@ -67,9 +67,18 @@ def test_arch_pushes_only_this_machines_architecture_without_emulation(build):
     image, run = build
     log, _ = run(inspect_rc=1, mode="arch")
     builds = [line for line in log if line.startswith("buildx build")]
-    assert any(f"--push --platform linux/{ARCH} -t {image}-{ARCH} " in line for line in builds)
+    assert any(f"--load --platform linux/{ARCH} -t {image}-{ARCH} " in line for line in builds)
     assert all(f"linux/{ARCH}" in line for line in builds)
+    assert f"push {image}-{ARCH}" in log
     assert not any("binfmt" in line or "--privileged" in line for line in log)
+
+
+def test_arch_builds_before_it_logs_in_to_push(build):
+    _, run = build
+    log, _ = run(inspect_rc=1, mode="arch")
+    login = next(i for i, line in enumerate(log) if line.startswith("login"))
+    assert all(i < login for i, line in enumerate(log) if line.startswith("buildx"))
+    assert all(i > login for i, line in enumerate(log) if line.startswith("push"))
 
 
 def test_merge_joins_both_architectures_and_never_as_latest(build):

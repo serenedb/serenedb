@@ -46,7 +46,7 @@ on:
         required: false
         default: false
       PUSH_IMAGE:
-        description: "Push the Docker image by digest, for the release to join the architectures"
+        description: "Push the Docker image under <version>-<arch> once it passed its RTA, for the release to join the architectures"
         type: boolean
         required: false
         default: false
@@ -87,7 +87,7 @@ jobs:
     outputs:
       packages_ok: ${{ steps.package.outcome == 'success' }}
       rta_ok: ${{ steps.deb_rta.outcome != 'failure' && steps.tarball_rta.outcome != 'failure' && steps.docker_image.outcome == 'success' && steps.docker_rta.outcome != 'failure' }}
-      image_digest: ${{ steps.docker_image.outputs.image_digest }}
+      image_digest: ${{ steps.docker_push.outputs.image_digest }}
     runs-on:
       - ${{ inputs.LOCATION }}
     permissions:
@@ -197,15 +197,8 @@ jobs:
       - name: Docker image
         id: docker_image
         if: steps.package.outcome == 'success'
-        env:
-          PUSH_DIGEST: ${{ inputs.PUSH_IMAGE }}
-          DOCKER_USERNAME: serenedb
-          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
         run: |
-          trap 'docker logout >/dev/null 2>&1 || true' EXIT
-          if [[ "$PUSH_DIGEST" == true ]]; then
-            echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-          fi
+          docker logout >/dev/null 2>&1 || true
           ./packages/build_docker.bash
 
       - name: Docker RTA
@@ -215,6 +208,21 @@ jobs:
         env:
           DOCKER_TEST_IMAGE: ${{ steps.docker_image.outputs.image }}
         run: ./scripts/ci/steps/08-ci-docker-rta.bash
+
+      - name: Push the image
+        id: docker_push
+        if: inputs.PUSH_IMAGE && steps.docker_image.outcome == 'success' && steps.docker_rta.outcome != 'failure'
+        env:
+          IMAGE: ${{ steps.docker_image.outputs.image }}
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+        run: |
+          trap 'docker logout >/dev/null 2>&1 || true' EXIT
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker push "$IMAGE"
+          digest=$(docker image inspect --format '{{join .RepoDigests "\n"}}' "$IMAGE" | sed -n "s|^${IMAGE%:*}@||p" | head -1)
+          [[ -n "$digest" ]] || { echo "the push reported no digest" >&2; exit 1; }
+          echo "image_digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Upload packages
         if: always() && inputs.UPLOAD_ARTIFACTS && steps.package.outcome == 'success'

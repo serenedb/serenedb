@@ -2,15 +2,11 @@
 
 # Builds the Docker image of this machine's architecture, natively, from its install tarball
 # (packages/tarball/install-<arch>.tar.gz, made by build_targz.bash) and loads it into the local
-# daemon as <registry>/serenedb:<version>-<arch> (written to GITHUB_OUTPUT as image=). With
-# PUSH_DIGEST=true the same build is also pushed by digest, without a tag, and the digest is printed as
-# image_digest=<digest> (and written to GITHUB_OUTPUT): push_docker.bash joins the architectures'
-# digests under the release's tags.
+# daemon as <registry>/serenedb:<version>-<arch> (written to GITHUB_OUTPUT as image=).
 #
 # Environment Configuration:
 #   DOCKER_TAG               Version tag (if unset, derived from find_version.bash)
 #   DOCKER_REGISTRY          Registry prefix (default: serenedb)
-#   PUSH_DIGEST              true to push the image by digest (log in to the registry first)
 
 set -e
 
@@ -59,11 +55,6 @@ cp "$TARBALL" "${BUILD_DIR}/install-${ARCH}.tar.gz"
 docker buildx rm "$BUILDER_NAME" >/dev/null 2>&1 || true
 docker buildx create --name "$BUILDER_NAME" --driver-opt network=host >/dev/null
 
-OUTPUTS=(--output type=docker)
-if [ "${PUSH_DIGEST:-false}" = true ]; then
-	OUTPUTS+=(--output "type=image,name=docker.io/${FULL_IMAGE_NAME},push-by-digest=true,name-canonical=true,push=true")
-fi
-
 log "Building ${LOCAL_IMAGE} for linux/${ARCH}..."
 docker buildx build \
 	--builder "$BUILDER_NAME" \
@@ -75,25 +66,13 @@ docker buildx build \
 	--provenance=false \
 	--sbom=false \
 	--no-cache \
-	--metadata-file "${BUILD_DIR}/metadata.json" \
-	"${OUTPUTS[@]}" \
+	--load \
 	--file "${BUILD_DIR}/Dockerfile" \
 	"${BUILD_DIR}"
 
 log "=== Smoke test ==="
 docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} "$LOCAL_IMAGE" --version ||
 	error "Version check failed"
-
-if [ "${PUSH_DIGEST:-false}" = true ]; then
-	digest=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' \
-		"${BUILD_DIR}/metadata.json")
-	[ -n "$digest" ] || error "The build reported no digest"
-	log "Pushed ${FULL_IMAGE_NAME}@${digest}"
-	echo "image_digest=${digest}"
-	if [ -n "${GITHUB_OUTPUT:-}" ]; then
-		echo "image_digest=${digest}" >>"$GITHUB_OUTPUT"
-	fi
-fi
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
 	echo "image=${LOCAL_IMAGE}" >>"$GITHUB_OUTPUT"

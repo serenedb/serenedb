@@ -311,7 +311,7 @@ jobs:
   validate-pg:
     name: validate pg
     needs: [prepare, image]
-    if: ${{ !cancelled() && inputs.LOCATION != 'dev-only' && (inputs.EVERYTHING || needs.prepare.outputs.pg == 'true') }}
+    if: inputs.LOCATION != 'dev-only' && (inputs.EVERYTHING || needs.prepare.outputs.pg == 'true')
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
       LOCATION: linux-amd64

@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Publishes the release image: joins the architectures' images, which build_docker.bash pushed by
-# digest, into one multi-platform image under the version tag and every extra tag.
+# Publishes the release image: joins the architectures' images, which the package jobs pushed under
+# <version>-<arch>, by their digests into one multi-platform image under the version tag and every
+# extra tag.
 #
 # Environment Configuration:
 #   DOCKER_TAG               Version tag (required)

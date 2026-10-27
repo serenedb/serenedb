@@ -6,6 +6,7 @@ from . import plan, skipped
 
 LANGS = ("python", "java", "js", "go", "rust", "php", "csharp", "c", "ruby", "r", "psql")
 CPUS = {"java": 4, "csharp": 2, "js": 2, "python": 3}
+PARTS = {"python": 4}
 OWN_SERVER = ("psql",)
 HTTP_TOKEN = "drivers-ci-token"
 TRUST_HBA = "host all all 0.0.0.0/0 trust\nhost all all ::0/0 trust\nlocal all all trust\n"
@@ -21,9 +22,13 @@ def driver_units(ctx, args, skips):
             continue
         cost, timeout = plan(ctx, uid, 120.0)
         own = lang in OWN_SERVER
-        units.append(Unit(uid, "drivers", _driver_run(ctx, lang, own), cpus=CPUS.get(lang, 2),
-                          mem_gb=2.0, fixtures=() if own else ("driver-servers",),
-                          cost=cost, timeout=timeout))
+        parts = PARTS.get(lang, 1)
+        for k in range(1, parts + 1):
+            part = f"{k}/{parts}" if parts > 1 else ""
+            units.append(Unit(f"{uid}#{part}" if part else uid, "drivers",
+                              _driver_run(ctx, lang, own, part), cpus=CPUS.get(lang, 2), mem_gb=2.0,
+                              fixtures=() if own else ("driver-servers",), cost=cost / parts,
+                              timeout=max(ctx.timeout_floor, timeout / parts)))
     uid = "network:hba"
     if not skipped(skips, uid):
         cost, timeout = plan(ctx, uid, 30.0)
@@ -40,7 +45,7 @@ def _summary_line(text, lang):
     return ""
 
 
-def _run_lang(ctx, r, lang, server):
+def _run_lang(ctx, r, lang, server, part):
     shared = ctx.out_dir / "drivers-shared"
     shared.mkdir(exist_ok=True)
     return r.exec([ctx.root / "tests" / "drivers" / "run.sh", "--lang", lang,
@@ -49,17 +54,18 @@ def _run_lang(ctx, r, lang, server):
                    "--junit", str(r.dir / "junit")],
                   env={"SDB_DRV_HTTP_PORT": str(server.http_port),
                        "SDB_DRV_HTTP_TOKEN": HTTP_TOKEN,
-                       "SDB_DRV_SHARED_DIR": str(shared)})
+                       "SDB_DRV_SHARED_DIR": str(shared),
+                       "SDB_DRV_PY_PART": part})
 
 
-def _driver_run(ctx, lang, own):
+def _driver_run(ctx, lang, own, part):
     def run(r):
         crash = None
         if own:
             server = Server(ctx, r.dir / "server", **SERVER).start()
             r.stack_pids = lambda: (server.pid(),)
             try:
-                res = _run_lang(ctx, r, lang, server)
+                res = _run_lang(ctx, r, lang, server, part)
             finally:
                 stop = server.stop()
             out = r.outcome(res, san_dirs=(server.san_dir,))
@@ -69,7 +75,7 @@ def _driver_run(ctx, lang, own):
             pool = r.fixture("driver-servers")
             i, generation = pool.acquire()
             try:
-                res = _run_lang(ctx, r, lang, pool.watch(r, i))
+                res = _run_lang(ctx, r, lang, pool.watch(r, i), part)
             finally:
                 pool.release(i)
             out = r.outcome(res)

@@ -62,6 +62,8 @@ def parse_args(argv):
                          "checking the submodule out when it is not")
     ap.add_argument("--biglake", action="store_true",
                     help="run the iceberg tests against Google BigLake (needs BIGLAKE_* env)")
+    ap.add_argument("--long-tests", action="store_true",
+                    help="also run the gtests too long for a PR run (SDB_LONG_TESTS)")
     ap.add_argument("--duckdb-suite", dest="duckdb_suites", action="append",
                     choices=duckdb.SUITES, help="DuckDB suite (repeatable; default: all)")
     ap.add_argument("--fuzz-seconds", type=float, default=300.0,
@@ -196,7 +198,7 @@ class ChangedTests:
                 self.catch_cases[re.sub(r"\\(.)", r"\1", case)].add(name)
 
     def sources(self, uid):
-        found = set(self.ids.get(uid, ()))
+        found = set(self.ids.get(uid.partition("#")[0], ()))
         for glob, names in self.globs.items():
             if fnmatch.fnmatchcase(uid, glob):
                 found |= names
@@ -277,6 +279,8 @@ def main(argv):
     jobs = args.jobs or cpu_count()
     base_env = dict(os.environ)
     base_env["RESOURCES"] = str(ROOT / "resources")
+    if args.long_tests:
+        base_env["SDB_LONG_TESTS"] = "1"
     base_env["WORKSPACE"] = str(ROOT)
     if build.dir:
         base_env["BUILD_DIR"] = os.path.relpath(build.dir, ROOT)

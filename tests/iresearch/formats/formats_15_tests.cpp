@@ -839,7 +839,9 @@ TEST_P(Format15TestCase, MediumPostings) {
 }
 
 TEST_P(Format15TestCase, LongPostings) {
-  GTEST_SKIP() << "too long for our CI";
+  if (!std::getenv("SDB_LONG_TESTS")) {
+    GTEST_SKIP() << "too long for a PR run: test.py --long-tests runs it";
+  }
   static constexpr size_t kCount = 10000;
   const auto docs = GenerateDocs(kCount, 50.f, 13.f, 1);
 
@@ -847,7 +849,9 @@ TEST_P(Format15TestCase, LongPostings) {
 }
 
 TEST_P(Format15TestCase, VeryLongPostings) {
-  GTEST_SKIP() << "too long for our CI";
+  if (!std::getenv("SDB_LONG_TESTS")) {
+    GTEST_SKIP() << "too long for a PR run: test.py --long-tests runs it";
+  }
   static constexpr size_t kCount = size_t{1} << 15;
   const auto docs = GenerateDocs(kCount, 1000.f, 20.f, 2);
 

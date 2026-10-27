@@ -2015,8 +2015,9 @@ TEST_P(IndexTestCase, europarl_docs_automaton) {
 }
 
 TEST_P(IndexTestCase, europarl_docs_big) {
-  if (dynamic_cast<irs::FSDirectory*>(&dir()) != nullptr) {
-    GTEST_SKIP() << "too long for our CI";
+  if (dynamic_cast<irs::FSDirectory*>(&dir()) &&
+      !std::getenv("SDB_LONG_TESTS")) {
+    GTEST_SKIP() << "too long for a PR run: test.py --long-tests runs it";
   }
   {
     tests::EuroparlDocTemplate doc;
@@ -2027,9 +2028,9 @@ TEST_P(IndexTestCase, europarl_docs_big) {
 }
 
 TEST_P(IndexTestCase, europarl_docs_big_automaton) {
-#ifdef SDB_DEV
-  GTEST_SKIP() << "too long for our CI";
-#endif
+  if (!std::getenv("SDB_LONG_TESTS")) {
+    GTEST_SKIP() << "too long for a PR run: test.py --long-tests runs it";
+  }
 
   {
     tests::EuroparlDocTemplate doc;

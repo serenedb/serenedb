@@ -49,6 +49,13 @@ def test_a_changed_test_picks_its_units_in_every_suite(monkeypatch, tmp_path):
     assert len(picked) == 7
 
 
+def test_a_changed_driver_test_picks_every_part_of_its_language(monkeypatch, tmp_path):
+    parts = [unit(f"drivers:python#{k}/4") for k in range(1, 5)]
+    picked, _ = changed(monkeypatch, tmp_path, {"tests/drivers/python/test_copy.py": ""},
+                        [*parts, unit("drivers:java")])
+    assert picked == parts
+
+
 def test_a_changed_test_source_picks_the_compiled_tests_it_defines(monkeypatch, tmp_path):
     units = [unit("gtest:serenedb-tests:batch:Plain.Works+3", members=(
                  "gtest:serenedb-tests:Plain.Works", "gtest:serenedb-tests:Plain.Other",

@@ -30,7 +30,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iresearch/utils/debugging.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
@@ -310,7 +310,7 @@ class Transport : public TransportBase {
       co_await _write_gate.Wait(*_ioexec);
       if (_write_armed.exchange(false, std::memory_order_acq_rel)) {
         SDB_IF_FAILURE("send_writer_throw") {
-          irs::RemoveFailurePointDebugging("send_writer_throw");
+          duckdb::FaultPoints::Disarm("send_writer_throw");
           THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
         }
         auto [ec, bytes] = co_await _socket.Write(_write_view).NoThrow();

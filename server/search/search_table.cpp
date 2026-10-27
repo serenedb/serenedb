@@ -29,6 +29,7 @@
 #include <chrono>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -42,7 +43,6 @@
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/log.hpp>

@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>

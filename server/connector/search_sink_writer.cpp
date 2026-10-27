@@ -24,12 +24,12 @@
 
 #include <cstdio>
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iterator>

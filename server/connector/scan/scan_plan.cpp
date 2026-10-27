@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
@@ -41,7 +42,6 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 

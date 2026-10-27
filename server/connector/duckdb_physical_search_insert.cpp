@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
@@ -34,7 +35,6 @@
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>

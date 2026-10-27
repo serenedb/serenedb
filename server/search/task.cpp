@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <exception>

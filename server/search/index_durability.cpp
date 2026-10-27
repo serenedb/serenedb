@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -35,7 +36,6 @@
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>

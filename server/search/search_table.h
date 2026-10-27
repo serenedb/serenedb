@@ -56,6 +56,7 @@
 #include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/search_pending_delta.h"
+#include "search/search_table_changes.h"
 #include "search/store_stats.h"
 #include "search/writer_generations.h"
 
@@ -71,7 +72,6 @@ namespace sdb::search {
 class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                           public MaintainedStore {
  public:
-  // `is_new` opens a fresh index; otherwise the durable one is reopened.
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
   SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
@@ -116,6 +116,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     return _directory->StoragePath(GetTableId());
   }
   bool Absent() const noexcept { return _absent; }
+  void Open();
   void OpenReader();
 
   // `exclusive_segment` is required of a writer that will record its flushed
@@ -129,6 +130,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                     std::span<const connector::ColumnId> column_ids,
                     duckdb::DataChunk& chunk, uint64_t row_start);
   void ReplayDelete(duckdb::AttachedDatabase& db, duckdb::DataChunk& chunk);
+  void ReplayDeleteRanges(duckdb::AttachedDatabase& db,
+                          std::vector<RowRange> rows);
   void ReplayTruncate(duckdb::AttachedDatabase& db);
   void ReplayAdoptSegments(duckdb::AttachedDatabase& db,
                            std::vector<std::string> segments);
@@ -255,16 +258,22 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     return _delete_log_open.load(std::memory_order_acquire);
   }
   void OpenDeleteLog();
-  void AppendDeleteLog(std::span<const int64_t> rows);
+  void AppendDeleteLog(std::span<const RowRange> rows);
   void RecordTruncateForBuild(const irs::SourcePosition& position);
   bool TruncatedAfter(const irs::SourcePosition& position) {
     absl::MutexLock lock{&_delete_log_mutex};
     return _build_truncate > position;
   }
 
-  std::pair<std::vector<int64_t>, irs::SourcePosition> DrainDeleteLog() {
+  struct DrainedDeleteLog {
+    std::vector<RowRange> rows;
+    irs::SourcePosition truncate;
+  };
+
+  DrainedDeleteLog DrainDeleteLog() {
     absl::MutexLock lock{&_delete_log_mutex};
-    return {std::exchange(_delete_log, {}), _build_truncate};
+    return {.rows = std::exchange(_delete_log, {}),
+            .truncate = _build_truncate};
   }
 
   std::pair<irs::DirectoryReader, irs::SourcePosition>
@@ -292,7 +301,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   };
   struct ReplaySession;
 
-  void OpenWriter(bool in_memory);
+  void OpenWriter();
   void OpenDirectory();
   irs::IndexReaderOptions ReaderOptions() const;
   std::shared_ptr<const catalog::InvertedIndexConfig> MergeConfigs(
@@ -309,6 +318,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   duckdb::idx_t _table_id;
   std::shared_ptr<catalog::DatabaseDirectory> _directory;
   bool _is_new;
+  bool _in_memory;
+  bool _read_only;
   bool _absent = false;
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
@@ -335,7 +346,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   // entirely when no build is running, which is the normal case.
   std::atomic<bool> _delete_log_open{false};
   absl::Mutex _delete_log_mutex;
-  std::vector<int64_t> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
+  std::vector<RowRange> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
   irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_delete_log_mutex);
   // How often a waiting rebuild surfaces to check for cancellation. The
   // CondVar does the blocking; this only bounds how long a cancelled statement

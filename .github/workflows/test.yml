@@ -1,0 +1,135 @@
+name: task | serenedb test
+
+on:
+  workflow_call:
+    inputs:
+      CONFIG:
+        description: "perf, dev, asan, tsan or msan (scripts/ci/config.sh)"
+        type: string
+        required: true
+      NAME:
+        description: "A second test run on CONFIG's build (biglake): names its artifacts and results"
+        type: string
+        required: false
+        default: ""
+      LOCATION:
+        description: "Runner label"
+        type: string
+        required: false
+        default: "linux-amd64"
+      DIGEST:
+        description: "Input digest of the build to test"
+        type: string
+        required: true
+      SHARDS:
+        description: "The test shards the build planned, as JSON"
+        type: string
+        required: true
+      TEST_ARGS:
+        description: "Extra scripts/ci/test.py arguments (suite selection, budgets)"
+        type: string
+        required: false
+        default: ""
+      PR_SHA:
+        description: "Commit SHA to check out (empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
+      PR_NUMBER:
+        description: "PR number, recorded with the results"
+        type: string
+        required: false
+        default: ""
+
+env:
+  SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
+  SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+  SDB_SHA: ${{ inputs.PR_SHA || github.sha }}
+  SDB_PR: ${{ inputs.PR_NUMBER }}
+  SDB_BRANCH: ${{ inputs.PR_NUMBER == '' && github.ref_name || '' }}
+
+jobs:
+  test:
+    name: test ${{ inputs.CONFIG }} ${{ matrix.shard.name }} (${{ inputs.LOCATION }})
+    runs-on:
+      - ${{ inputs.LOCATION }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(inputs.SHARDS) }}
+    steps:
+      - name: Reap containers left on this runner
+        run: |
+          echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
+          filter="label=serenedb.owner=ci-${RUNNER_NAME}"
+          docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
+          docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
+          docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
+          git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.PR_SHA || github.sha }}
+          fetch-depth: 1
+          submodules: true
+          clean: false
+
+      - name: Clean the checkout
+        run: |
+          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
+          git clean -ffdxq
+          git submodule foreach --quiet --recursive 'git clean -ffdxq'
+          git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
+
+      - name: Fetch the timing snapshot
+        uses: actions/download-artifact@v8
+        with:
+          name: timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
+          path: out
+
+      - name: Run the shard
+        env:
+          SDB_CHECK: ${{ inputs.NAME }}
+          SEARCHBENCH_S3_KEY_ID: ${{ secrets.SEARCHBENCH_S3_KEY_ID }}
+          SEARCHBENCH_S3_SECRET: ${{ secrets.SEARCHBENCH_S3_SECRET }}
+          BIGLAKE_PROJECT: ${{ secrets.BIGLAKE_PROJECT }}
+          BIGLAKE_CATALOG: ${{ secrets.BIGLAKE_CATALOG }}
+          BIGLAKE_CLIENT_EMAIL: ${{ secrets.BIGLAKE_CLIENT_EMAIL }}
+          BIGLAKE_PRIVATE_KEY: ${{ secrets.BIGLAKE_PRIVATE_KEY }}
+          BIGLAKE_PRIVATE_KEY_ID: ${{ secrets.BIGLAKE_PRIVATE_KEY_ID }}
+        run: |
+          set -f
+          ./scripts/ci/run_shard.sh "${{ inputs.CONFIG }}" "${{ inputs.DIGEST }}" \
+            "${{ matrix.shard.spec }}" out/timing.json --budget 19800 --plan "${{ matrix.shard.plan }}" \
+            ${{ inputs.TEST_ARGS }}
+
+      - name: Summary
+        if: always()
+        run: cat out/test-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: results-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ matrix.shard.name }}
+          path: |
+            out/test-*/results.jsonl
+            out/test-*/summary.txt
+            out/test-*/meta.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload what failed
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: failure-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ matrix.shard.name }}
+          path: out/failure-*.tar.zst
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Reap containers of this job
+        if: always()
+        run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"

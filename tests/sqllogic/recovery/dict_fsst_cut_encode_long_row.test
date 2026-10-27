@@ -31,7 +31,7 @@ statement ok
 CREATE TABLE dfel.t AS
   SELECT ord,
     CASE WHEN ord = 48000 THEN
-      (SELECT string_agg(chr((32 + (hash(ord * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(16000) r(i))
+      (SELECT string_agg(chr((32 + (hash(48000 * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(16000) r(i))
     ELSE
       substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 0) % 62)::INTEGER, 1)
       || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 1) % 62)::INTEGER, 1)
@@ -51,7 +51,7 @@ CHECKPOINT dfel;
 query
 SELECT count(*) AS n, max(length(s)) AS max_len,
        bool_and(s = CASE WHEN ord = 48000 THEN
-         (SELECT string_agg(chr((32 + (hash(ord * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(16000) r(i))
+         (SELECT string_agg(chr((32 + (hash(48000 * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(16000) r(i))
        ELSE
          substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 0) % 62)::INTEGER, 1)
          || substr('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', (1 + hash((ord // 2) * 6 + 1) % 62)::INTEGER, 1)

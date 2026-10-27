@@ -1,0 +1,76 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET GLOBAL checkpoint_threshold = '1MB';
+
+statement ok
+CREATE TABLE wdel (id BIGINT, body TEXT)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO wdel SELECT i, 'seed' FROM range(0, 20000) r(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) wdel;
+
+statement ok
+CHECKPOINT;
+
+statement ok
+SET threads = 1;
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM wdel WHERE id < 5000;
+
+statement ok
+INSERT INTO wdel SELECT i, 'p1_' || i || repeat('x', 200) FROM range(100000, 105000) r(i);
+
+statement ok
+DELETE FROM wdel WHERE id >= 10000 AND id < 15000;
+
+statement ok
+DELETE FROM wdel WHERE id % 100 = 7 AND id >= 15000;
+
+statement ok
+INSERT INTO wdel SELECT i, 'p2_' || i || repeat('x', 200) FROM range(200000, 205000) r(i);
+
+statement ok
+DELETE FROM wdel WHERE id >= 5000 AND id < 5010;
+
+statement ok
+INSERT INTO wdel VALUES (300000, 'tail');
+
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+statement error connection closed
+COMMIT;
+
+connection after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(DISTINCT id) AS d, min(id) AS lo, max(id) AS hi FROM wdel;
+----
+n	d	lo	hi
+19941	19941	5010	300000
+
+connection after
+query
+SELECT count(*) AS n FROM wdel
+WHERE id < 5010 OR (id >= 10000 AND id < 15000) OR (id % 100 = 7 AND id >= 15000 AND id < 20000);
+----
+n
+0
+
+connection after
+query
+SELECT count(*) FILTER (WHERE body = 'seed') AS seed,
+       count(*) FILTER (WHERE body LIKE 'p1%') AS p1,
+       count(*) FILTER (WHERE body LIKE 'p2%') AS p2,
+       count(*) FILTER (WHERE body = 'tail') AS tail
+FROM wdel;
+----
+seed	p1	p2	tail
+9940	5000	5000	1

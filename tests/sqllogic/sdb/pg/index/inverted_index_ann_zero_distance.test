@@ -1,0 +1,166 @@
+statement ok
+CREATE TABLE zl2 (pk INTEGER PRIMARY KEY, emb FLOAT[4]);
+
+statement ok
+INSERT INTO zl2 VALUES (1, [1, 2, 3, 4]), (2, [5, 6, 7, 8]), (3, [0, 0, 0, 0]), (4, [0, 1, 0, 0]);
+
+statement ok
+CREATE INDEX zl2_idx ON zl2 USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+CREATE TABLE zl1 (pk INTEGER PRIMARY KEY, emb FLOAT[4]);
+
+statement ok
+INSERT INTO zl1 SELECT * FROM zl2;
+
+statement ok
+CREATE INDEX zl1_idx ON zl1 USING inverted(pk, emb hnsw (metric = 'l1', quant = 'none'));
+
+statement ok
+CREATE TABLE zip (pk INTEGER PRIMARY KEY, emb FLOAT[4]);
+
+statement ok
+INSERT INTO zip SELECT * FROM zl2;
+
+statement ok
+CREATE INDEX zip_idx ON zip USING inverted(pk, emb hnsw (metric = 'ip', quant = 'none'));
+
+statement ok
+VACUUM (REFRESH_TABLE) zl2;
+
+statement ok
+VACUUM (REFRESH_TABLE) zl1;
+
+statement ok
+VACUUM (REFRESH_TABLE) zip;
+
+query
+SELECT pk, emb <-> [1, 2, 3, 4]::FLOAT[4] AS d
+FROM zl2_idx ORDER BY emb <-> [1, 2, 3, 4]::FLOAT[4] LIMIT 1;
+----
+pk	d
+1	0
+
+query
+SELECT pk, l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) AS d
+FROM zl2_idx ORDER BY l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) LIMIT 1;
+----
+pk	d
+1	0
+
+query
+SELECT pk, l2_norm(emb) AS d FROM zl2_idx ORDER BY l2_norm(emb) LIMIT 1;
+----
+pk	d
+3	0
+
+query
+SELECT pk, emb <+> [1, 2, 3, 4]::FLOAT[4] AS d
+FROM zl1_idx ORDER BY emb <+> [1, 2, 3, 4]::FLOAT[4] LIMIT 1;
+----
+pk	d
+1	0
+
+query
+SELECT pk, l1_norm(emb) AS d FROM zl1_idx ORDER BY l1_norm(emb) LIMIT 1;
+----
+pk	d
+3	0
+
+query
+SELECT pk, emb <#> [1, 0, 0, 0]::FLOAT[4] AS d
+FROM zip_idx WHERE pk = 4 ORDER BY emb <#> [1, 0, 0, 0]::FLOAT[4] LIMIT 1;
+----
+pk	d
+4	-0
+
+query
+SELECT [0, 1, 0, 0]::FLOAT[4] <#> [1, 0, 0, 0]::FLOAT[4] AS d;
+----
+d
+-0
+
+query
+SELECT pk, emb <+> [1, 2, 3, 4]::FLOAT[4] AS d FROM zl1_idx
+WHERE emb <+> [1, 2, 3, 4]::FLOAT[4] <= 9 ORDER BY emb <+> [1, 2, 3, 4]::FLOAT[4] LIMIT 4;
+----
+pk	d
+1	0
+4	9
+
+query
+EXPLAIN SELECT pk, emb <+> [1, 2, 3, 4]::FLOAT[4] AS d FROM zl1_idx
+WHERE emb <+> [1, 2, 3, 4]::FLOAT[4] <= 9 ORDER BY emb <+> [1, 2, 3, 4]::FLOAT[4] LIMIT 4;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: zl1_idx                         │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Vector Range ─╮                     │
+│ │ Field: emb     │                     │
+│ │ Metric: l1     │                     │
+│ │ Radius: <= 9   │                     │
+│ ╰────────────────╯                     │
+│ Top: 4                                 │
+│ Projections: pk,                       │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
+
+query
+SELECT pk, emb <+> [1, 2, 3, 4]::FLOAT[4] AS d FROM zl1_idx
+WHERE emb <+> [1, 2, 3, 4]::FLOAT[4] > 9 ORDER BY emb <+> [1, 2, 3, 4]::FLOAT[4] LIMIT 4;
+----
+pk	d
+3	10
+2	16
+
+query
+EXPLAIN SELECT pk, emb <+> [1, 2, 3, 4]::FLOAT[4] AS d FROM zl1_idx
+WHERE emb <+> [1, 2, 3, 4]::FLOAT[4] > 9 ORDER BY emb <+> [1, 2, 3, 4]::FLOAT[4] LIMIT 4;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: zl1_idx                         │
+│ Lookup: table                          │
+│ Score: l1_distance(emb, FLOAT[4])      │
+│ Top: 4                                 │
+│ Projections: pk,                       │
+│              sdb_inverted_index_score  │
+│ Column Filter:                         │
+│ sdb_inverted_index_score > 9           │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT pk, l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) AS d FROM zl2_idx
+WHERE l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) <= 27
+ORDER BY l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) LIMIT 4;
+----
+pk	d
+1	0
+4	27
+
+query
+SELECT pk, l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) AS d FROM zl2_idx
+WHERE l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) > 27
+ORDER BY l2_sqr_distance(emb, [1, 2, 3, 4]::FLOAT[4]) LIMIT 4;
+----
+pk	d
+3	30
+2	64
+
+query
+SELECT pk, l1_norm(emb) AS d FROM zl1_idx WHERE l1_norm(emb) <= 1 ORDER BY l1_norm(emb) LIMIT 4;
+----
+pk	d
+3	0
+4	1
+
+query
+SELECT pk, l1_norm(emb) AS d FROM zl1_idx WHERE l1_norm(emb) > 1 ORDER BY l1_norm(emb) LIMIT 4;
+----
+pk	d
+1	10
+2	26

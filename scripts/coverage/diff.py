@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import re
+import subprocess
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+SOURCE = re.compile(r"\.(c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|tpp|inc)$")
+HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def is_test(path):
+    return path.startswith(("tests/", "resources/tests/")) or (
+        path.startswith("third_party/") and ("/test/" in path or "/testing/" in path))
+
+
+def git(*args, cwd=ROOT):
+    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True,
+                          check=True).stdout
+
+
+def changed_lines(base):
+    lines = defaultdict(set)
+
+    def collect(diff, prefix=""):
+        current = None
+        for line in diff.splitlines():
+            if line.startswith("+++ "):
+                path = line[4:]
+                current = prefix + path[2:] if path.startswith("b/") else None
+                if current and not SOURCE.search(current):
+                    current = None
+            elif current:
+                m = HUNK.match(line)
+                if m:
+                    start, count = int(m.group(1)), int(m.group(2) or 1)
+                    lines[current].update(range(start, start + count))
+
+    merge_base = git("merge-base", base, "HEAD").strip()
+    collect(git("diff", "-U0", "--no-renames", "--diff-filter=AM", merge_base, "HEAD"))
+    for entry in git("diff", "--raw", "--no-renames", merge_base, "HEAD").splitlines():
+        meta, _, path = entry.partition("\t")
+        fields = meta.split()
+        if len(fields) < 4 or fields[0] != ":160000" or fields[1] != "160000":
+            continue
+        old, new = fields[2], fields[3]
+        sub = ROOT / path
+        try:
+            git("cat-file", "-e", old, cwd=sub)
+        except subprocess.CalledProcessError:
+            subprocess.run(["git", "-C", str(sub), "fetch", "-q", "--depth", "1", "origin", old],
+                           check=False)
+        try:
+            collect(git("diff", "-U0", "--no-renames", "--diff-filter=AM", old, new, cwd=sub),
+                    prefix=path + "/")
+        except subprocess.CalledProcessError as e:
+            print(f"warning: cannot diff {path} {old}..{new}: {e.stderr.strip()}", file=sys.stderr)
+    return lines
+
+
+def objects(build_dir):
+    build_dir = Path(build_dir)
+    candidates = sorted((build_dir / "bin").iterdir()) if (build_dir / "bin").is_dir() else []
+    found = []
+    for b in [*candidates, build_dir / "third_party" / "duckdb" / "test" / "unittest"]:
+        if not b.is_file():
+            continue
+        sections = subprocess.run(["llvm-readelf-23", "-S", str(b)], capture_output=True).stdout
+        if b"__llvm_covmap" in sections:
+            found.append(str(b))
+    if not found:
+        raise SystemExit(f"no coverage-instrumented binaries in {build_dir}")
+    return found
+
+
+def merge(profiles, dest):
+    files = []
+    for p in map(Path, profiles):
+        if p.is_dir():
+            files += sorted(str(f) for f in p.iterdir() if f.suffix in (".profraw", ".profdata"))
+        else:
+            files.append(str(p))
+    if not files:
+        raise SystemExit(f"no profiles in {' '.join(profiles)}")
+    subprocess.run(["llvm-profdata-23", "merge", "-sparse", "-failure-mode=any", "-o", str(dest),
+                    *files], check=True)
+    return dest
+
+
+def _with_objects(cmd, objects, sources):
+    cmd.append(objects[0])
+    for o in objects[1:]:
+        cmd += ["-object", o]
+    return cmd + (["-sources", *sources] if sources else [])
+
+
+def export(fmt, profdata, objects, sources=(), extra=()):
+    cmd = _with_objects(["llvm-cov-23", "export", f"-format={fmt}", f"-instr-profile={profdata}",
+                         *extra], objects, sources)
+    res = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
+    if res.returncode != 0:
+        raise SystemExit(f"llvm-cov export failed: {res.stderr[-2000:]}")
+    return res.stdout
+
+
+def html(profdata, objects, sources, dest):
+    cmd = _with_objects(["llvm-cov-23", "show", "-format=html", f"-output-dir={dest}",
+                         "-show-mcdc", "-show-branches=count", f"-instr-profile={profdata}"],
+                        objects, sources)
+    subprocess.run(cmd, check=True, cwd=ROOT)
+
+
+def parse_lcov(text):
+    files = {}
+    current = None
+    for line in text.splitlines():
+        if line.startswith("SF:"):
+            current = files.setdefault(line[3:], {"lines": {}, "branches": defaultdict(list),
+                                                  "functions": {}})
+        elif current is None:
+            continue
+        elif line.startswith("DA:"):
+            no, count = line[3:].split(",")[:2]
+            current["lines"][int(no)] = max(current["lines"].get(int(no), 0), int(count))
+        elif line.startswith("BRDA:"):
+            no, _block, _branch, taken = line[5:].split(",")
+            current["branches"][int(no)].append(0 if taken == "-" else int(taken))
+        elif line.startswith("FN:"):
+            no, name = line[3:].split(",", 1)
+            current["functions"].setdefault(name, [int(no), 0])
+        elif line.startswith("FNDA:"):
+            count, name = line[5:].split(",", 1)
+            if name in current["functions"]:
+                current["functions"][name][1] = max(current["functions"][name][1], int(count))
+        elif line == "end_of_record":
+            current = None
+    return files
+
+
+def demangle(names):
+    if not names:
+        return {}
+    res = subprocess.run(["llvm-cxxfilt-23"], input="\n".join(names), capture_output=True,
+                         text=True)
+    out = res.stdout.splitlines() if res.returncode == 0 else names
+    return dict(zip(names, out))
+
+
+def parse_json(text):
+    files = {}
+    data = json.loads(text)["data"][0]
+    for f in data["files"]:
+        files[f["filename"]] = {"mcdc": f.get("mcdc_records", []), "branches": f["branches"],
+                                "functions": []}
+    names = demangle(sorted({fn["name"] for fn in data["functions"]}))
+    for fn in data["functions"]:
+        if not fn["regions"] or not fn["filenames"]:
+            continue
+        body = fn["regions"][0]
+        entry = files.get(fn["filenames"][body[5]])
+        if entry is not None:
+            entry["functions"].append((body[0], body[2], names.get(fn["name"], fn["name"]),
+                                       fn["name"]))
+    return files
+
+
+def enclosing(functions, no):
+    inside = [f for f in functions if f[0] <= no <= f[1]]
+    return min(inside, key=lambda f: f[1] - f[0])[2] if inside else ""
+
+
+def snippet(path, line_start, col_start, line_end, col_end):
+    text = source_line(path, line_start)
+    if line_start == line_end:
+        return text[col_start - 1:col_end - 1]
+    return text[col_start - 1:]
+
+
+def mcdc_conditions(record, branches):
+    start, end = (record[0], record[1]), (record[2], record[3])
+    inside = sorted(b for b in branches
+                    if b[8] == 6 and start <= (b[0], b[1]) and (b[2], b[3]) <= end)
+    return inside
+
+
+def normalize(path):
+    p = Path(path)
+    if p.is_absolute():
+        try:
+            return str(p.resolve().relative_to(ROOT))
+        except ValueError:
+            return str(p)
+    return str(Path(*[part for part in p.parts if part != "."]))
+
+
+def source_line(path, no):
+    try:
+        with open(ROOT / path, errors="replace") as fh:
+            for i, text in enumerate(fh, 1):
+                if i == no:
+                    return text.rstrip("\n")[:200]
+    except OSError:
+        pass
+    return ""
+
+
+def ranges(numbers):
+    out = []
+    for n in sorted(numbers):
+        if out and n == out[-1][1] + 1:
+            out[-1][1] = n
+        else:
+            out.append([n, n])
+    return ",".join(f"{a}-{b}" if a != b else f"{a}" for a, b in out)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Coverage of the lines a change touches.")
+    profile = ap.add_mutually_exclusive_group(required=True)
+    profile.add_argument("--profdata", help="a merged profile")
+    profile.add_argument("--profiles", nargs="+",
+                         help=".profraw/.profdata files or directories of them, to merge")
+    binaries = ap.add_mutually_exclusive_group(required=True)
+    binaries.add_argument("--objects", nargs="+", help="the instrumented binaries")
+    binaries.add_argument("--build-dir", help="a coverage build (SDB_COVERAGE=On) or its bundle")
+    ap.add_argument("--base", default="origin/main")
+    ap.add_argument("--label", default="coverage")
+    ap.add_argument("--html", action="store_true",
+                    help="also render the changed files as HTML into <out>/html")
+    ap.add_argument("--out", required=True, help="output directory")
+    args = ap.parse_args()
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    args.profdata = args.profdata or merge(args.profiles, out / "merged.profdata")
+    args.objects = args.objects or objects(args.build_dir)
+    changed = changed_lines(args.base)
+    sources = [p for p in changed if (ROOT / p).is_file()]
+    reported = [p for p in sources if not is_test(p)]
+    if args.html and reported:
+        html(args.profdata, args.objects, reported, out / "html")
+    summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0], "mcdc": [0, 0]}
+    details = []
+    uncovered_ranges = {}
+    if reported:
+        regions = {normalize(k): v for k, v in parse_json(export("text", args.profdata,
+                                                                  args.objects, reported)).items()}
+        report = {normalize(k): v for k, v in parse_lcov(export("lcov", args.profdata, args.objects,
+                                                                  reported)).items()}
+        for path in sorted(reported):
+            data = report.get(path)
+            if not data:
+                continue
+            spans = regions.get(path, {"mcdc": [], "branches": [], "functions": []})
+            touched = changed[path]
+            missed = []
+            for no in sorted(touched & set(data["lines"])):
+                summary["lines"][1] += 1
+                if data["lines"][no] > 0:
+                    summary["lines"][0] += 1
+                else:
+                    missed.append(no)
+                    details.append({"kind": "line", "file": path, "line": no,
+                                    "function": enclosing(spans["functions"], no),
+                                    "source": source_line(path, no)})
+            for no in sorted(touched & set(data["branches"])):
+                for idx, taken in enumerate(data["branches"][no]):
+                    summary["branches"][1] += 1
+                    if taken > 0:
+                        summary["branches"][0] += 1
+                    else:
+                        details.append({"kind": "branch", "file": path, "line": no,
+                                        "direction": "true" if idx % 2 == 0 else "false",
+                                        "function": enclosing(spans["functions"], no),
+                                        "source": source_line(path, no)})
+            for name, (start, count) in data["functions"].items():
+                if start in touched:
+                    summary["functions"][1] += 1
+                    if count > 0:
+                        summary["functions"][0] += 1
+                    else:
+                        details.append({"kind": "function", "file": path, "line": start,
+                                        "function": enclosing(spans["functions"], start) or name,
+                                        "source": source_line(path, start)})
+            seen = set()
+            for record in spans["mcdc"]:
+                decision = tuple(record[:4])
+                if decision in seen or not touched & set(range(record[0], record[2] + 1)):
+                    continue
+                seen.add(decision)
+                conditions = mcdc_conditions(record, spans["branches"])
+                for idx, shown in enumerate(record[9]):
+                    summary["mcdc"][1] += 1
+                    if shown:
+                        summary["mcdc"][0] += 1
+                        continue
+                    where = conditions[idx] if idx < len(conditions) else decision
+                    details.append({
+                        "kind": "mcdc", "file": path, "line": where[0], "column": where[1],
+                        "condition": idx + 1,
+                        "condition_source": snippet(path, *where[:4]),
+                        "decision_source": snippet(path, *decision),
+                        "function": enclosing(spans["functions"], record[0]),
+                        "test_vectors": [v for v in record[10] if v.get("executed")],
+                    })
+            if missed:
+                uncovered_ranges[path] = ranges(missed)
+    text = (f"{args.label}: lines {summary['lines'][0]}/{summary['lines'][1]}, "
+            f"functions {summary['functions'][0]}/{summary['functions'][1]}, "
+            f"branches {summary['branches'][0]}/{summary['branches'][1]}, "
+            f"MC/DC {summary['mcdc'][0]}/{summary['mcdc'][1]}")
+    if uncovered_ranges:
+        text += "\nuncovered: " + "  ".join(f"{p}:{r}" for p, r in uncovered_ranges.items())
+    (out / "summary.txt").write_text(text + "\n")
+    (out / "coverage.json").write_text(json.dumps({"summary": summary, "uncovered": details},
+                                                  indent=1))
+    print(text)
+
+
+if __name__ == "__main__":
+    main()

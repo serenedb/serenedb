@@ -122,7 +122,7 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
       target, [this](doc_id_t prev) IRS_FORCE_INLINE { ReadLeaf(prev); });
   }
 
-  const uint64_t* _bitset = nullptr;
+  const UnalignedWord* _bitset = nullptr;
   block_io::FillLeaf::Kind _kind = block_io::FillLeaf::Kind::Docs;
   uint32_t _len = 0;
 };

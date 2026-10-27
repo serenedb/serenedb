@@ -30,7 +30,6 @@
 #include <string>
 
 #include "server/utils/lifecycle.h"
-#include "server/utils/signals.h"
 
 namespace sdb::app {
 
@@ -104,7 +103,6 @@ void AppServer::parseOptions(int argc, char* argv[]) {
 }
 
 void AppServer::wait() {
-  signals::InstallShutdownHandlers();
   lifecycle::WaitForShutdown();
   SDB_INFO(GENERAL, "received shutdown signal, beginning shut down sequence");
 }

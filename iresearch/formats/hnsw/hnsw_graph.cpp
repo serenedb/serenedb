@@ -45,7 +45,7 @@ void ReadArray(IndexInput& in, std::vector<T>& v) {
   const auto size = static_cast<size_t>(in.ReadI64());
   v.resize(size);
   if (size != 0) {
-    in.ReadData(reinterpret_cast<byte_type*>(v.data()), sizeof(T) * size);
+    ReadOnce(in, reinterpret_cast<byte_type*>(v.data()), sizeof(T) * size);
   }
 }
 

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb.hpp>
+#include <duckdb/common/enums/row_id_handling.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/planner/column_binding.hpp>
 #include <memory>
@@ -40,7 +41,7 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality, bool return_chunk,
-    bool updates_key_columns);
+    duckdb::RowIdHandling row_id_handling, bool updates_key_columns);
 
   bool IsSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
@@ -64,6 +65,7 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
   duckdb::vector<duckdb::PhysicalIndex> _columns;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _expressions;
   bool _return_chunk = false;
+  duckdb::RowIdHandling _row_id_handling;
   [[maybe_unused]] bool _updates_key_columns = false;
 };
 

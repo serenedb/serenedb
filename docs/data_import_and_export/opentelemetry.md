@@ -56,11 +56,7 @@ service:
 A successful export answers `200` with an empty `Export<Signal>ServiceResponse`
 (`{}`).
 
-The tables are created **at startup**, in the listener's database, when a
-listener serves `?api=otel` and the schema is not there yet — so a fresh database needs no setup step, and the
-first export lands in a schema that already exists. A server started without
-the `otel` API creates nothing, and an export against a missing schema answers
-`500` naming the absent relation rather than creating it behind your back.
+The tables are created **at startup**, in the listener's database, when a listener serves `?api=otel` and the schema is not there yet — so a fresh database needs no setup step, and the first export lands in a schema that already exists.
 
 To run a schema of your own — extra promoted columns, expression indexes over
 hot attribute paths — apply it before the first start; startup leaves an
@@ -71,13 +67,14 @@ naming the database, the schema and the column. Fix the table, or leave it
 alone and start with the built-in schema somewhere new: `db=` or `schema=` on
 the listener creates it, e.g. `--listen='http://0.0.0.0:4318?api=otel&schema=otel'`.
 
-A table dropped or changed after startup fails each export to it with `500`:
-`the OpenTelemetry schema is missing: …` for a dropped table, and
-`invalid OpenTelemetry schema: column … is …, expected …` for a changed one.
-Other failures follow the OTLP retry rules: rejected data (a constraint or a
-value the column cannot hold) answers `400`, which clients do not retry, and
-a transient server condition (a transaction conflict, out of memory, shutdown)
-answers `503`, which they do.
+With `create_schema=false` on the listener, startup creates nothing — no database, schema, table or index — and a schema that does not match is logged as a warning instead of stopping the server. The listener's database must exist. Create the tables whenever you like, for example from your own copy of `resources/otel/otel_schema.sql`; until the tables an export writes to exist and match, the export answers `503`, which clients retry, so no data is lost while the schema is being set up:
+
+```bash
+serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel&create_schema=false'
+psql -h 127.0.0.1 -p 7890 -U postgres -d postgres -f my_otel_schema.sql
+```
+
+A table dropped or changed after startup fails each export to it with `503` until it is fixed: `the OpenTelemetry schema is missing: …` for a dropped table, and `invalid OpenTelemetry schema: column … is …, expected …` for a changed one. Other failures follow the OTLP retry rules: rejected data (a constraint or a value the column cannot hold) answers `400`, which clients do not retry, and a transient server condition (a transaction conflict, out of memory, shutdown) answers `503`, which they do.
 
 Each export is written in one transaction, so a failed export stores nothing: a metrics export whose points span several `otel_metrics_*` tables is written to all of them or to none, and a client retry cannot duplicate the tables that succeeded the first time.
 
@@ -182,6 +179,29 @@ arrays, a summary carries quantile pairs.
 Each table is created `WITH (storage = 'search')` and gets one inverted index
 covering what dashboards filter, group and facet on. Columns outside the index
 are still stored and retrievable; they are read with a columnstore scan.
+
+### Your own indexes
+
+The shipped indexes are a default, not part of the schema: ingest checks the tables' columns, never their indexes. Startup creates each missing table together with its shipped index, and leaves a table that exists as it is, indexes included, so an index of your own survives restarts. To use your own, drop the shipped index and create yours.
+
+A table without an index still answers every query with a columnstore scan, which skips the parts of the table whose `"timestamp"` range a filter rules out, but it has no full-text search with `@@`, no BM25 and no facets, and an equality lookup such as `trace_id = '…'` reads the whole column.
+
+For example, to find `downstream_remote_disconnect` by `remote` or `disconnect`, index `body` with a dictionary that splits on `_`:
+
+```sql
+CREATE TEXT SEARCH DICTIONARY otel_words AS
+    split_by_non_alpha(case := 'lower', break := 'alnum')
+    WITH (frequency, position, norm);
+
+DROP INDEX otel_logs_idx;
+
+CREATE INDEX otel_logs_idx ON otel_logs USING inverted (
+    "timestamp", body otel_words, severity_text, severity_number,
+    service_name, event_name, trace_id
+);
+```
+
+An index created on a table that already holds rows indexes those rows too, which rewrites the table: on a large table, replace the index before the first export, or in a quiet period. Between the `DROP INDEX` and the `CREATE INDEX`, `@@` search on the table is unavailable.
 
 ## Timestamps
 
@@ -304,14 +324,94 @@ WHERE "timestamp" @@ ts_ge(TIMESTAMP_NS '2026-09-08 00:00:00')
 GROUP BY 1 ORDER BY 1;
 ```
 
-A metric rollup:
+A gauge rollup:
 
 ```sql
-SELECT metric_name, date_trunc('minute', "timestamp") AS minute, sum(value)
-FROM otel_metrics_sum
-WHERE metric_name @@ 'http.server.request_count'
+SELECT metric_name, date_trunc('minute', "timestamp") AS minute, avg(value)
+FROM otel_metrics_gauge
+WHERE metric_name @@ 'process.memory.usage'
   AND "timestamp" @@ ts_ge(TIMESTAMP_NS '2026-09-08 00:00:00')
 GROUP BY 1, 2 ORDER BY 1, 2;
+```
+
+### Counters and histograms
+
+SDKs export sums and histograms as running totals by default (`aggregation_temporality = 'Cumulative'`), so `sum(value)` adds up totals instead of counting what happened in a time bucket. [`otel_rate`, `otel_increase` and `otel_irate`](../sql/functions/aggregates/index.md#counter-and-histogram-aggregates) read them as counters. Compute them per series, one metric with one set of resource and data point attributes, then add the series up:
+
+```sql
+SELECT minute, service_name, sum(per_second) AS requests_per_second
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute, service_name,
+         resource_attributes, attributes,
+         otel_rate(value, "timestamp") AS per_second
+  FROM otel_metrics_sum
+  WHERE metric_name = 'http.server.request.count'
+  GROUP BY ALL
+)
+GROUP BY ALL ORDER BY ALL;
+```
+
+Latency percentiles come from the histogram buckets the same way: `otel_increase(bucket_counts, "timestamp")` per series, then `otel_histogram_quantile` over the series:
+
+```sql
+SELECT minute,
+       otel_histogram_quantile(0.5, buckets, explicit_bounds) AS p50,
+       otel_histogram_quantile(0.99, buckets, explicit_bounds) AS p99
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute,
+         resource_attributes, attributes, explicit_bounds,
+         otel_increase(bucket_counts, "timestamp") AS buckets
+  FROM otel_metrics_histogram
+  WHERE metric_name = 'http.server.duration'
+  GROUP BY ALL
+)
+GROUP BY minute ORDER BY minute;
+```
+
+Points exported with delta temporality (`aggregation_temporality = 'Delta'`) need neither: `sum(value)` and `otel_histogram_quantile(q, bucket_counts, explicit_bounds)` over the rows of a time bucket give what happened in it.
+
+The same per-series buckets give the share of requests under a latency target with `otel_histogram_fraction`, and the spread with `otel_histogram_stddev`:
+
+```sql
+SELECT minute,
+       otel_histogram_fraction('-inf'::DOUBLE, 0.3, buckets, explicit_bounds) AS under_300ms,
+       otel_histogram_stddev(buckets, explicit_bounds) AS stddev
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute,
+         resource_attributes, attributes, explicit_bounds,
+         otel_increase(bucket_counts, "timestamp") AS buckets
+  FROM otel_metrics_histogram
+  WHERE metric_name = 'http.server.duration'
+  GROUP BY ALL
+)
+GROUP BY minute ORDER BY minute;
+```
+
+Exponential histograms (`otel_metrics_exponential_histogram`) are read the same way once [`otel_exponential_histogram`](../sql/functions/aggregates/index.md#counter-and-histogram-aggregates) packs their bucket columns into one value; rows at different scales are combined:
+
+```sql
+SELECT minute,
+       otel_histogram_quantile(0.99, h) AS p99,
+       otel_histogram_fraction('-inf'::DOUBLE, 0.3, h) AS under_300ms
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute, resource_attributes, attributes,
+         otel_increase(otel_exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
+                                                  negative_offset, negative_bucket_counts), "timestamp") AS h
+  FROM otel_metrics_exponential_histogram
+  WHERE metric_name = 'http.server.duration'
+  GROUP BY ALL
+)
+GROUP BY minute ORDER BY minute;
+```
+
+Gauges (`otel_metrics_gauge`) are averaged or compared directly; `otel_deriv` gives their per-second trend and `otel_predict_linear` extrapolates it, for example the free disk space an hour after the last sample:
+
+```sql
+SELECT service_name, otel_predict_linear(value, "timestamp", 3600) AS free_in_an_hour
+FROM otel_metrics_gauge
+WHERE metric_name = 'system.filesystem.free'
+  AND "timestamp" @@ ts_ge(TIMESTAMP_NS '2026-09-08 00:00:00')
+GROUP BY service_name;
 ```
 
 On a column indexed without a dictionary, such as `service_name` or
@@ -330,6 +430,23 @@ it when you need determinism, for example in tests:
 VACUUM (REFRESH_TABLE) otel_logs;
 ```
 
+## Retention
+
+The tables keep every row until it is deleted. A [job](../sql/statements/create_job/index.md) that deletes old rows on a schedule keeps each table to a [retention period](../sql/statements/delete/index.md#retention) of its own:
+
+```sql
+CREATE JOB otel_logs_retention EVERY 1 HOUR AS
+    DELETE FROM otel_logs WHERE "timestamp" < now() - INTERVAL '30 days';
+
+CREATE JOB otel_traces_retention EVERY 1 HOUR AS
+    DELETE FROM otel_traces WHERE "timestamp" < now() - INTERVAL '30 days';
+
+CREATE JOB otel_metrics_sum_retention EVERY 1 HOUR AS
+    DELETE FROM otel_metrics_sum WHERE "timestamp" < now() - INTERVAL '90 days';
+```
+
+Telemetry arrives in roughly time order, so the rows a job deletes are mostly consecutive: the log space of the delete grows with the number of such stretches, not with the number of rows.
+
 ## Schema evolution
 
 A search table's schema is fixed. `ALTER TABLE ADD COLUMN`, `DROP COLUMN` and
@@ -338,5 +455,5 @@ and it indexes the rows already in the table. To change the schema, create a
 new table with `CREATE TABLE ... AS SELECT`, switch writers to it, and rename.
 
 Re-running the DDL is safe — every statement is `IF NOT EXISTS`, including on
-a table that already holds rows. Startup checks for the schema before running
-any of it, so a restart does no work at all.
+a table that already holds rows. Startup creates only the tables that are
+missing, so a restart of a complete schema does no work at all.

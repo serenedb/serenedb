@@ -152,6 +152,9 @@ duckdb::unique_ptr<duckdb::Expression> WrapScoreEmit(
     case ScoreEmit::Negate:
       exec = EmitScoreFilterExec<ScoreEmit::Negate>;
       break;
+    case ScoreEmit::ZeroMinus:
+      exec = EmitScoreFilterExec<ScoreEmit::ZeroMinus>;
+      break;
     case ScoreEmit::Identity:
       return score_ref;
   }
@@ -322,6 +325,20 @@ void AddDeferredColumnFilter(ScanGlobalState& state,
   BindExpressionFilter(cf, *owned, std::move(deferred.type));
 }
 
+std::optional<ColumnId> FetchableColumn(
+  const ScanBindData& bind, const duckdb::ColumnIndex& column_index) {
+  const auto bind_col = column_index.GetPrimaryIndex();
+  if (column_index.IsVirtualColumn() || column_index.HasChildren() ||
+      bind_col >= bind.columns.ids.size()) {
+    return std::nullopt;
+  }
+  const auto col_id = bind.columns.ids[bind_col];
+  if (VirtualIndexColumnType(col_id)) {
+    return std::nullopt;
+  }
+  return col_id;
+}
+
 }  // namespace
 
 const irs::Filter& MatchAllFilter() {
@@ -444,6 +461,10 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
       state.generated_pk_output_idx = proj;
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(std::move(*pk_type));
+    } else if (col_id == kColumnIdentifierDocAddress) {
+      state.doc_address_output_idx = proj;
+      state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+      state.projected_types.push_back(duckdb::LogicalType::BIGINT);
     } else if (col_id == kColumnIdentifierTableOid) {
       state.tableoid_output_idx = proj;
       state.tableoid_value = bind_data.RelationId();
@@ -630,6 +651,18 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
   }
 }
 
+bool IsLookupServed(const ScanBindData& bind,
+                    const duckdb::ColumnIndex& column_index) {
+  const auto col_id = FetchableColumn(bind, column_index);
+  return col_id && !bind.relation.Stores(*col_id);
+}
+
+bool IsStoreServed(const ScanBindData& bind,
+                   const duckdb::ColumnIndex& column_index) {
+  const auto col_id = FetchableColumn(bind, column_index);
+  return col_id && bind.relation.Stores(*col_id);
+}
+
 ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
   if (ss.ts_dict.Active()) {
     return ScanShape::TsDict;
@@ -638,11 +671,12 @@ ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
     g.col_filters,
     [](const ScanGlobalState::ColFilter& f) { return f.is_score; });
   if (!g.has_output_column && !g.needs_lookup && !score_filter) {
-    return ss.IsMatchAll() && g.col_filters.empty() ? ScanShape::CountFast
-                                                    : ScanShape::Count;
+    return ScanShape::Count;
   }
-  if (g.top_k && (ss.score.text || ss.score.order) &&
-      (!g.has_lookup_filter || ss.score.vector)) {
+  if (g.top_k && ss.score.vector && ss.score.order) {
+    return ScanShape::Ann;
+  }
+  if (g.top_k && ss.score.text && !g.has_lookup_filter) {
     return ScanShape::TopK;
   }
   if (ss.IsMatchAll() && !ss.offsets.Active() && !ss.score.text &&
@@ -674,6 +708,19 @@ void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
   auto* mapped = duckdb::FlatVector::GetDataMutable<float>(score_out);
   for (duckdb::idx_t i = 0; i < num_rows; ++i) {
     mapped[i] = ApplyScoreEmit(emit, raw[i]);
+  }
+}
+
+void WriteDocAddresses(const ScanGlobalState& g, uint32_t seg,
+                       std::span<const irs::doc_id_t> docs,
+                       duckdb::DataChunk& output) {
+  if (g.doc_address_output_idx == duckdb::DConstants::INVALID_INDEX) {
+    return;
+  }
+  auto* out = duckdb::FlatVector::GetDataMutable<int64_t>(
+    output.data[g.doc_address_output_idx]);
+  for (size_t i = 0; i < docs.size(); ++i) {
+    out[i] = DocAddress(seg, docs[i]);
   }
 }
 
@@ -772,6 +819,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
     f.pk_column = batch.pk;
   }
   WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
+  WriteDocAddresses(g, batch.seg, batch.docs, output);
   WriteVirtualColumns(g, batch.count, batch.score_vec, output);
   return batch.count;
 }

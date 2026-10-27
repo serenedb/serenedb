@@ -35,6 +35,11 @@ repos:
       - id: trailing-whitespace
         exclude: \.test$
 
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.7
+    hooks:
+      - id: actionlint-docker
+
   - repo: https://github.com/BlankSpruce/gersemi
     rev: 0.26.1
     hooks:
@@ -125,6 +130,12 @@ repos:
         language: python
         entry: python3 scripts/check_no_tmp_in_sqllogic.py
         files: ^tests/sqllogic/.*\.test
+      - id: check-sqllogic-layout
+        name: Check the sqllogic any/ symlinks
+        language: python
+        entry: python3 scripts/check_sqllogic_layout.py
+        always_run: true
+        pass_filenames: false
       - id: check-snake-case-filenames
         name: Check C++ filenames are snake_case
         language: python
@@ -159,12 +170,21 @@ repos:
         pass_filenames: false
         always_run: true
       - id: check-submodule-pointers
-        name: Check submodule gitlinks (on a version branch, not older than main)
+        name: Check submodule gitlinks (on a version branch or an open fork PR head, not older than main)
         language: python
         entry: python3 scripts/check_submodule_pointers.py
+        args: [--allow-pending]
         # pre-commit filters submodule gitlinks out of its file lists, so a
         # files: pattern on third_party/duckdb never matches; the script
         # no-ops instantly (two local git calls) when the gitlink equals
         # origin/main's, so unconditional runs are cheap.
         always_run: true
+        pass_filenames: false
+        verbose: true
+      - id: ci-script-tests
+        name: Test the CI scripts
+        language: python
+        additional_dependencies: [pytest==9.1.1]
+        entry: python3 -m pytest -q -p no:cacheprovider scripts/ci/tests
+        files: ^(scripts/(ci/(ci\.py|report\.py|build_images\.sh|testlib/|tests/)|coverage/diff\.py|check_submodule_pointers\.py)|\.github/workflows/simple\.yml)
         pass_filenames: false

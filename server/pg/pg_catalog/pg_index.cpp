@@ -73,17 +73,15 @@ MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
         host_entry && host_entry->type == duckdb::CatalogType::TABLE_ENTRY
           ? &host_entry->Cast<duckdb::TableCatalogEntry>()
           : nullptr;
-      const auto& column_ids = entry.column_ids;
-      auto natts = static_cast<int16_t>(column_ids.size());
-
-      // Build indkey: map column IDs to 1-based attnum in the parent table
+      const auto columns = ColumnsOfIndex(entry, host);
+      const auto natts = static_cast<int16_t>(columns.columns.size());
       std::vector<int16_t> indkey;
-      indkey.reserve(column_ids.size());
 
       // An index over a view has no attnums of its own to report.
       if (host) {
-        for (auto col_id : column_ids) {
-          indkey.emplace_back(TableEntryAttnum(*host, col_id));
+        indkey.reserve(columns.columns.size());
+        for (const auto& column : columns.columns) {
+          indkey.emplace_back(column.attnum);
         }
       }
       const bool is_unique_index = entry.IsUnique();
@@ -92,7 +90,7 @@ MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
         .indexrelid = entry.oid,
         .indrelid = host ? host->oid : 0,
         .indnatts = natts,
-        .indnkeyatts = natts,
+        .indnkeyatts = static_cast<int16_t>(columns.keys),
         .indisunique = is_unique_index,
         .indnullsnotdistinct = false,
         .indisprimary = false,

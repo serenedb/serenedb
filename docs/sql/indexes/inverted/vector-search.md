@@ -9,7 +9,7 @@ import DocCallout from "@site/src/components/DocCallout";
 
 The [inverted index](./index.md) also indexes **vector embeddings** for approximate nearest neighbor (ANN) search. This powers semantic search, recommendations and other similarity workloads over `FLOAT` vectors. Two index kinds are available: **IVF** (`ivf (...)`), which partitions the vectors into clusters, and **[HNSW](#hnsw)** (`hnsw (...)`), which links them into a navigable graph.
 
-IVF partitions the vectors into `nlist` coarse clusters (found by k-means at build time). A query first identifies the clusters closest to the query vector, then computes distances only within those, so a search touches a small fraction of the vectors instead of scanning them all. That is what makes it *approximate* -- it trades a little recall for a large speed-up, and the number of clusters scanned (`nprobe`, a query-time setting) tunes that trade-off. Optional quantization (`quant`) compresses each stored vector to shrink the index further, at some additional recall cost that can be recovered by reranking.
+IVF groups the vectors of each index segment into clusters, sized by the `sdb_ivf_posting_size` setting (1024 vectors by default, read when the index is created), so the number of clusters follows the segment's row count. A query first identifies the clusters closest to the query vector, then computes distances only within those, so a search touches a small fraction of the vectors instead of scanning them all. That is what makes it *approximate* -- it trades a little recall for a large speed-up, and the number of clusters scanned, set by the [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings) session setting, tunes that trade-off. Optional quantization (`quant`) compresses each stored vector to shrink the index further, at some additional recall cost that can be recovered by reranking.
 
 ## Creating a vector index
 
@@ -17,13 +17,11 @@ A vector column uses the `ivf (...)` or [`hnsw (...)`](#hnsw) operator class. Th
 
 <SqlLogicTest id="sql/indexes/inverted/vector-search/example_001" />
 
-For `ivf`, the `metric` is required. Everything else is optional: the index is sized automatically from the row count and, for `l2`, `ip` and `cosine`, quantized with `sq8`:
+For `ivf`, the `metric` is required. Everything else is optional: no option sizes the clusters, and for `l2`, `ip` and `cosine` the vectors are quantized with `sq8` unless `quant` says otherwise:
 
 | Parameter | Description |
 |---|---|
 | `metric` | Distance metric: `l2` (Euclidean), `cosine`, `ip` (inner product) or `l1` (Manhattan) |
-| `nlist` | Number of coarse clusters. Higher values narrow each cluster (faster, more precise probes) at the cost of build time. Mutually exclusive with `nlist_factor` |
-| `nlist_factor` | Sizes `nlist` relative to the row count as `round(nlist_factor * sqrt(rows))`. Default `2.0`. Mutually exclusive with `nlist` |
 | `quant` | Vector compression: `sq8` (the default for `l2`, `ip` and `cosine`), `sq4`, `usq8`, `usq4`, `fp16`, `bf16`, `pq`, `rabitq`, `tq`, `bq`, `osq` or `none` (the default for `l1`) -- see [Quantization](#quantization) below. `l1` indexes are always unquantized, and `rabitq` needs `l2` or `ip` |
 | `pq_m` | Number of subquantizers for `quant = 'pq'`. Must evenly divide the vector dimension `N`. Defaults to a value close to a 2-dimensional subvector |
 | `rabitq_bits` | Extra magnitude bits per dimension for `quant = 'rabitq'`, `1` to `9`. Default `1` (sign-only). Also spelled `nb_bits` |
@@ -63,7 +61,7 @@ Scan more clusters for better recall with the [`sdb_ivf_search_nprobe` session s
 
 <DocCallout type="tip">
 
-For a quantized index (`quant` other than `none`), the [`sdb_ann_oversample` session setting](./maintenance.md#session-settings) controls how many candidates are re-scored with exact distances before the top `k` is picked; `0` answers from the codes alone. See [Oversampling](#oversampling).
+For a quantized index (`quant` other than `none`), the [`sdb_ann_rescore_width` session setting](./maintenance.md#session-settings) controls how many candidates are re-scored with exact distances before the top `k` is picked; `0` answers from the codes alone. See [Re-scoring](#rescoring).
 
 </DocCallout>
 
@@ -87,11 +85,11 @@ A distance selected without `ORDER BY ... LIMIT` and without a radius, such as `
 
 ## Quantization {#quantization}
 
-An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `quant` says otherwise, `ivf` and [`hnsw`](#hnsw) alike; an `l1` index stores full-precision vectors. Quantization shrinks the index, trading some recall for size -- recoverable with [oversampling](#oversampling), which re-scores a candidate pool with exact distances before picking the final `k`:
+An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `quant` says otherwise, `ivf` and [`hnsw`](#hnsw) alike; an `l1` index stores full-precision vectors. Quantization shrinks the index, trading some recall for size -- recoverable with [re-scoring](#rescoring), which reads candidates back at full precision before picking the final `k`:
 
 | `quant` | Compression | Notes |
 |---|---|---|
-| `none` | none | Full-precision vectors; never reranks regardless of `sdb_ann_oversample`. The only choice for `l1`. With 256 to 4096 dimensions and at least eight rows per dimension, an `hnsw` index searches faster with the same answer; it stores one more float per row, and holds a `N` x `N` float matrix in memory |
+| `none` | none | Full-precision vectors; never re-scored. The only choice for `l1`. With 256 to 4096 dimensions and at least eight rows per dimension, an `hnsw` index searches faster with the same answer; it stores one more float per row, and holds a `N` x `N` float matrix in memory |
 | `sq8` (default) | 8-bit scalar quantization per dimension | Good recall/size trade-off. With `ip` or `cosine`, 256 to 4096 dimensions and at least eight rows per dimension, an `hnsw` index searches faster; it stores one more float per row for every 128 dimensions, and holds the same matrix as `none` in memory, plus an 8-bit copy of it |
 | `sq4` | 4-bit scalar quantization per dimension | Smaller than `sq8`, lower recall before reranking |
 | `usq8` / `usq4` | As `sq8` / `sq4`, but one min/max for the whole vector instead of one per dimension | Cheaper to decode |
@@ -99,20 +97,21 @@ An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `qu
 | `pq` | Product quantization -- the vector is split into `pq_m` subvectors, each quantized against its own codebook: 16 centroids (4 bits) per subvector under `ivf`, 256 centroids (one byte) under `hnsw` | Highest compression; recall is sensitive to `pq_m` (must divide `N`) |
 | `rabitq` | RaBitQ binary quantization, 1 bit per dimension plus `rabitq_bits` - 1 extra magnitude bits | Very compact; `rabitq_bits` (1 to 9) trades size for recall. Needs `l2` or `ip` |
 | `tq` | Low-bit quantization with `nb_bits` (1 to 5 or 1.5, default 3) bits per dimension | Size and recall grow with `nb_bits` |
-| `bq` | Binary quantization: 1 bit per dimension, set above a cut point fitted to that dimension's values; with `nb_bits = 2`, a second bit splits each dimension into a low, middle and high range; `1.5` shares the second bit between two neighbouring dimensions | Smallest and cheapest to compare. With `query_bits = 1` a nearest-neighbor score is a bit count, so rely on [oversampling](#oversampling); `4` or `8` estimate the real distance, as a range query always does |
+| `bq` | Binary quantization: 1 bit per dimension, set above a cut point fitted to that dimension's values; with `nb_bits = 2`, a second bit splits each dimension into a low, middle and high range; `1.5` shares the second bit between two neighbouring dimensions | Smallest and cheapest to compare. With `query_bits = 1` the search compares bit counts, which is fastest; `4` or `8` estimate the real distance throughout, as a range query always does |
 | `osq` | `nb_bits` (1, 2, 4, 7 or 8, default 1) bits per dimension relative to the centroid, on a quantization interval fitted to each vector, with a few correction terms stored beside the codes; the query is quantized to `query_bits` | Scores estimate the real distance; per-vector intervals pay off most at 1 to 4 bits. Each vector carries 16 extra bytes |
 
 Quantization applies to `l2`, `ip` and `cosine` indexes; `l1` indexes are always unquantized.
 
-Quantization also speeds up the scan itself, not just the index size: quantized codes are stored inline in each cluster's postings, laid out contiguously per cluster, so a probe reads them sequentially instead of chasing full vectors elsewhere; and comparing quantized codes (a table lookup for `pq`, a popcount for `rabitq` and `bq`, integer arithmetic for `sq8`/`sq4` and `osq`) is cheaper than a full-precision `FLOAT[N]` distance. So `quant` is a query-latency optimization as much as a storage one -- the smaller, posting-aware layout is what lets `nprobe` scan more clusters for the same latency budget.
+Quantization makes queries faster as well as the index smaller: a quantized `ivf` index scans its clusters faster, so [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings) can probe more of them at the same latency.
 
-### Oversampling {#oversampling}
+### Re-scoring {#rescoring}
 
-A quantized score is an *estimate*, and two segments' estimates are not comparable -- each segment trains its own quantizer. [`sdb_ann_oversample`](./maintenance.md#session-settings) says how much of that to undo: the search runs on the codes, `ceil(sdb_ann_oversample * k)` of each segment's candidates are read back at full precision and re-ordered, and only then are segments compared against each other.
+A quantized score is an *estimate*. [`sdb_ann_rescore_width`](./maintenance.md#session-settings) sets how many candidates are read back at full precision before the final `k` is picked: a candidate, from whichever segment, is re-scored while its code score plus `sdb_ann_rescore_width` times the code's estimated error could still beat the `k`-th best exact score found so far. A segment holding many of the nearest neighbours has more of them re-scored, and a segment holding none has none.
 
-- `-1` (the default) re-scores every quantized index at `1`: each segment's top `k` are read back at full precision, so segments are compared on exact distances and a query the engine answers by scanning comes back exact. `fp16` and `bf16` are the exception and answer from their codes, which are close to exact already.
+- `-1` (the default) uses a width per quantizer, larger where the error estimate is looser: `2` for `sq8` and 1-bit `rabitq`, `3` for `tq` and multi-bit `rabitq`, `4` for `usq8`, `5` for `sq4`, `6` for `usq4`, and `7` for `osq` at 4 or more bits. `pq` uses `2` on an `ivf` index and `3` on an `hnsw` index, `bq` `1` and `3`, and `osq` at 1 or 2 bits `3` and `2`. `fp16` and `bf16` answer from their codes, which are close to exact already.
 - `0` answers from the codes, which is faster and caps recall at whatever the codes can tell apart.
-- A value above `1` widens the pool. For HNSW the beam is widened with it, since a beam of a hundred cannot hand four hundred candidates to the rescorer.
+- A larger value re-scores more candidates and misses fewer: a neighbour sitting exactly at the `k`-th score is missed with the probability that a normal error exceeds that many standard deviations, about 2% at `2` and 0.1% at `3`. Neighbours further above the `k`-th score are missed less often.
+- It does not widen the search: [`sdb_hnsw_ef_search`](./maintenance.md#session-settings) and [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings) decide which candidates there are to re-score.
 
 ## HNSW {#hnsw}
 
@@ -131,7 +130,7 @@ A quantized score is an *estimate*, and two segments' estimates are not comparab
 | `query_bits` | Query encoding for `quant = 'bq'` and `quant = 'osq'` -- see the `ivf` table above |
 | `compression` | Whether the stored vectors are compressed. Default `true` |
 
-A graph walk reads a great many candidate vectors, so the smaller code pays for itself, and [oversampling](#oversampling) restores the recall it costs.
+A graph walk reads a great many candidate vectors, so the smaller code pays for itself, and [re-scoring](#rescoring) restores the recall it costs.
 
 ### Filtered search {#filtered-search}
 

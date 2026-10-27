@@ -23,7 +23,7 @@
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/count/make_boolean.hpp"
+#include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/subtract.hpp"
 #include "iresearch/search/detail/boolean_builder.hpp"
 
@@ -39,8 +39,8 @@ Root::ptr MakeSubtractDisjunction(const detail::PostingClause& first,
     std::swap(rarest, densest);
   }
   const std::array<detail::PostingClause, 2> terms{*rarest, *densest};
-  auto conjunction =
-    detail::builder::MakeSparseConjunction<Api>(terms, {}, segment, ctx);
+  auto conjunction = detail::builder::MakeSparseConjunction<Family>(
+    terms, {}, segment, ctx, detail::NoScoring{}, utils::Empty{});
   if (!conjunction) {
     return {};
   }

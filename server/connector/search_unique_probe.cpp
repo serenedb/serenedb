@@ -39,15 +39,15 @@ UniqueProbe::UniqueProbe(
   std::span<const irs::SubReader* const> unpublished_segments,
   std::span<const std::vector<irs::bstring>* const> unpublished_keys,
   std::span<const irs::field_id> key_fields,
-  std::span<const int64_t> deleted_rowids) {
+  std::span<const search::RowRange> deleted_ranges) {
   SDB_ASSERT(!key_fields.empty());
   _segments.reserve(reader.size() + unpublished_segments.size());
 
   for (size_t i = 0; i != reader.size(); ++i) {
-    AddSegment(reader[i], key_fields, deleted_rowids);
+    AddSegment(reader[i], key_fields, deleted_ranges);
   }
   for (const auto* sub : unpublished_segments) {
-    AddSegment(*sub, key_fields, deleted_rowids);
+    AddSegment(*sub, key_fields, deleted_ranges);
   }
 
   _keys.assign(unpublished_keys.begin(), unpublished_keys.end());
@@ -59,7 +59,7 @@ UniqueProbe::UniqueProbe(
 
 void UniqueProbe::AddSegment(const irs::SubReader& sub,
                              std::span<const irs::field_id> key_fields,
-                             std::span<const int64_t> deleted_rowids) {
+                             std::span<const search::RowRange> deleted_ranges) {
   Segment segment{.sub = &sub, .mask = sub.MaskedDocs()};
 
   segment.fields.reserve(key_fields.size());
@@ -74,19 +74,21 @@ void UniqueProbe::AddSegment(const irs::SubReader& sub,
     return;
   }
 
-  if (!deleted_rowids.empty()) {
+  if (!deleted_ranges.empty()) {
     const auto* pk_field = sub.field(term_dict::kPKFieldId);
     SDB_ASSERT(pk_field);
-    for (const auto rowid : deleted_rowids) {
-      const auto term =
-        primary_key::GeneratedKeyTerm(static_cast<uint64_t>(rowid));
-      const auto doc =
-        FirstLiveDoc(*pk_field,
-                     irs::ViewCast<irs::byte_type>(
-                       std::string_view{term.GetData(), term.GetSize()}),
-                     segment.mask, nullptr);
-      if (!irs::doc_limits::eof(doc)) {
-        segment.deleted.Add(doc);
+    for (const auto& range : deleted_ranges) {
+      for (auto rowid = range.begin; rowid != range.end; ++rowid) {
+        const auto term =
+          primary_key::GeneratedKeyTerm(static_cast<uint64_t>(rowid));
+        const auto doc =
+          FirstLiveDoc(*pk_field,
+                       irs::ViewCast<irs::byte_type>(
+                         std::string_view{term.GetData(), term.GetSize()}),
+                       segment.mask, nullptr);
+        if (!irs::doc_limits::eof(doc)) {
+          segment.deleted.Add(doc);
+        }
       }
     }
   }

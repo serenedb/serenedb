@@ -6,29 +6,36 @@ on:
   workflow_dispatch:
     inputs:
       LOCATION:
-        description: 'Runner label (linux = any of our machines; all = amd64 + arm64 explicitly)'
+        description: 'linux-amd64 = arm64 builds without tests; all = arm64 tests too; dev-only = the amd64 dev config alone, reported as "serenedb | dev only", never the merge check'
         type: choice
         required: true
         default: 'linux-amd64'
         options:
-          - linux
           - linux-amd64
-          - linux-arm64
           - all
+          - dev-only
       EVERYTHING:
-        description: 'Scope: run everything regardless of diff'
+        description: 'Ignore the diff: run everything'
         type: boolean
         default: false
-      EXTRA_ASAN:
-        description: 'Run the full in-scope suite set under ASAN (not just ours + drivers)'
+      BUGFIX:
+        description: 'Bugfix check: the changed tests must fail on the merge base'
         type: boolean
         default: false
-      EXTRA_TSAN:
-        description: 'Run the full in-scope suite set under TSAN (not just ours + drivers)'
+      CORPUS:
+        description: 'Also run the sqlite corpus (tests/sqllogic/any/pg/sqlite)'
         type: boolean
         default: false
       BIGLAKE:
-        description: 'Launch BigLake tests: sqllogic + recovery + stress against the real catalog in the dev build (needs the BIGLAKE_* secrets)'
+        description: 'Also run sqllogic + recovery + stress against the real BigLake catalog in dev (needs the BIGLAKE_* secrets)'
+        type: boolean
+        default: false
+      DUCKDB_SANITIZERS:
+        description: "Also run the DuckDB suites the diff opens in asan, tsan and msan (they always run in dev)"
+        type: boolean
+        default: false
+      IRESEARCH_SANITIZERS:
+        description: 'Also run the iresearch tests the diff opens in asan, tsan and msan (they always run in dev)'
         type: boolean
         default: false
       PR_SHA:
@@ -42,7 +49,7 @@ on:
         required: false
         default: ''
       BUILD_CONFIG:
-        description: 'Internal: PR metadata (set by trigger bot)'
+        description: 'Internal: PR metadata (set by trigger bot); FLAKY_RUNS runs the changed tests that many times in every config'
         type: string
         required: false
         default: '{}'
@@ -50,137 +57,307 @@ on:
 permissions:
   statuses: write
   contents: read
+  checks: read
+  pull-requests: write
 
 concurrency:
   group: build-manual-${{ inputs.PR_NUMBER && format('pr-{0}', inputs.PR_NUMBER) || github.run_id }}
   cancel-in-progress: true
 
+env:
+  SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
+
 jobs:
-  classify:
-    name: classify changes
-    if: ${{ !inputs.EVERYTHING }}
+  prepare:
+    name: prepare
     runs-on: ubuntu-latest
     outputs:
-      iresearch: ${{ steps.classify.outputs.iresearch }}
-      duckdb_suites: ${{ steps.classify.outputs.duckdb_suites }}
-      re2: ${{ steps.classify.outputs.re2 }}
-      pg_tests: ${{ steps.classify.outputs.pg_tests }}
+      test_args: ${{ steps.select.outputs.test_args }}
+      sanitizer_test_args: ${{ steps.select.outputs.sanitizer_test_args }}
+      pg: ${{ steps.classify.outputs.pg }}
+      everything: ${{ steps.classify.outputs.everything }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.PR_SHA || github.sha }}
           fetch-depth: 0
+      - name: pre-commit is not red
+        if: inputs.PR_SHA != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/ci.py wait-check --repo "${{ github.repository }}" --sha "${{ inputs.PR_SHA }}" --name pre-commit
       - id: classify
         run: ./scripts/ci/classify-changes.sh origin/main
+      - id: select
+        env:
+          EVERYTHING: ${{ inputs.EVERYTHING }}
+          IRESEARCH: ${{ steps.classify.outputs.iresearch }}
+          RE2: ${{ steps.classify.outputs.re2 }}
+          DUCKDB_SUITES: ${{ steps.classify.outputs.duckdb_suites }}
+          CORPUS: ${{ inputs.CORPUS }}
+          DUCKDB_SANITIZERS: ${{ inputs.DUCKDB_SANITIZERS }}
+          IRESEARCH_SANITIZERS: ${{ inputs.IRESEARCH_SANITIZERS }}
+          BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
+        run: |
+          args=(--duckdb-suites "$DUCKDB_SUITES")
+          [[ "$EVERYTHING" != true ]] || args+=(--everything)
+          [[ "$CORPUS" != true ]] || args+=(--corpus)
+          [[ "$RE2" != true ]] || args+=(--re2)
+          sanitizer=("${args[@]}")
+          [[ "$IRESEARCH" != true ]] || args+=(--iresearch)
+          [[ "$IRESEARCH" != true || "$IRESEARCH_SANITIZERS" != true ]] || sanitizer+=(--iresearch)
+          [[ "$DUCKDB_SANITIZERS" == true ]] || sanitizer+=(--no-duckdb)
+          runs=$(python3 -c 'import json, os; print(int(json.loads(os.environ["BUILD_CONFIG"] or "{}").get("FLAKY_RUNS", 1)))')
+          flaky=""
+          if ((runs > 1)); then
+            flaky="--changed origin/main --repeat $((runs - 1))"
+          fi
+          echo "test_args=$(python3 scripts/ci/ci.py select-suites "${args[@]}") $flaky" >> "$GITHUB_OUTPUT"
+          echo "sanitizer_test_args=$(python3 scripts/ci/ci.py select-suites "${sanitizer[@]}") $flaky" >> "$GITHUB_OUTPUT"
+
+  image:
+    needs: prepare
+    uses: ./.github/workflows/build-images.yml
+    with:
+      REF: ${{ inputs.PR_SHA || github.sha }}
+    secrets: inherit
 
   perf:
-    name: perf (${{ matrix.location }})
-    needs: classify
-    if: ${{ !cancelled() }}
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
+    needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only'
+    uses: ./.github/workflows/config.yml
     with:
-      LOCATION: ${{ matrix.location }}
       CONFIG: perf
-      SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
-      SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit
 
   dev:
-    name: dev (${{ matrix.location }})
-    needs: classify
-    if: ${{ !cancelled() }}
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
+    needs: [prepare, image]
+    uses: ./.github/workflows/config.yml
     with:
-      LOCATION: ${{ matrix.location }}
       CONFIG: dev
-      IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
-      RE2: ${{ inputs.EVERYTHING || needs.classify.outputs.re2 == 'true' }}
-      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop' || needs.classify.outputs.duckdb_suites }}
-      SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
-      SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
-      BIGLAKE: ${{ inputs.BIGLAKE }}
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+      BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE && '--biglake --suite sqllogic --suite recovery --suite stress --stress-profile biglake-reindex-smoke' || '' }}
       PR_SHA: ${{ inputs.PR_SHA }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit
 
   asan:
-    name: asan (${{ matrix.location }})
-    needs: classify
-    if: ${{ !cancelled() }}
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
+    needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only'
+    uses: ./.github/workflows/config.yml
     with:
-      LOCATION: ${{ matrix.location }}
       CONFIG: asan
-      RUN_EXTRA: ${{ inputs.EVERYTHING || inputs.EXTRA_ASAN }}
-      IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
-      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop' || needs.classify.outputs.duckdb_suites }}
-      SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
-      SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
+      TEST_ARGS: ${{ needs.prepare.outputs.sanitizer_test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit
 
   tsan:
-    name: tsan (${{ matrix.location }})
-    needs: classify
-    if: ${{ !cancelled() }}
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
+    needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only'
+    uses: ./.github/workflows/config.yml
     with:
-      LOCATION: ${{ matrix.location }}
       CONFIG: tsan
-      RUN_EXTRA: ${{ inputs.EVERYTHING || inputs.EXTRA_TSAN }}
-      IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
-      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop' || needs.classify.outputs.duckdb_suites }}
-      SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
-      SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
+      TEST_ARGS: ${{ needs.prepare.outputs.sanitizer_test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit
+
+  msan:
+    needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only'
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: msan
+      TEST_ARGS: ${{ needs.prepare.outputs.sanitizer_test_args }}
+      PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+    secrets: inherit
+
+  perf-arm64:
+    needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only'
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: perf
+      LOCATION: linux-arm64
+      TESTS: ${{ inputs.LOCATION == 'all' }}
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+      PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+    secrets: inherit
+
+  dev-arm64:
+    needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only'
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: dev
+      LOCATION: linux-arm64
+      TESTS: ${{ inputs.LOCATION == 'all' }}
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+      PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+    secrets: inherit
+
+  coverage:
+    name: coverage dev (linux-amd64)
+    needs: dev
+    if: ${{ !cancelled() && needs.dev.outputs.digest != '' }}
+    runs-on:
+      - linux-amd64
+    timeout-minutes: 60
+    env:
+      SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      SDB_SHA: ${{ inputs.PR_SHA || github.sha }}
+      SDB_PR: ${{ inputs.PR_NUMBER }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.PR_SHA || github.sha }}
+          fetch-depth: 1
+          submodules: true
+          clean: false
+
+      - name: Clean the checkout
+        run: |
+          git config --global --add safe.directory '*'
+          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
+          git clean -ffdxq
+          git submodule foreach --quiet --recursive 'git clean -ffdxq'
+          git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
+
+      - name: Coverage of the change
+        env:
+          SHARDS: ${{ needs.dev.outputs.shards }}
+        run: |
+          python3 scripts/ci/ci.py coverage-report --config dev --digest "${{ needs.dev.outputs.digest }}" \
+            --run "$SDB_RUN_ID" --base origin/main \
+            --shards "$(python3 -c 'import json, os; print(len(json.loads(os.environ["SHARDS"])))')"
+          cat out/coverage-*/summary.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-dev-linux-amd64
+          path: |
+            out/coverage-*/summary.txt
+            out/coverage-*/coverage.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  bugfix:
+    name: bugfix check
+    needs: [prepare, image]
+    if: inputs.BUGFIX && inputs.LOCATION != 'dev-only'
+    runs-on:
+      - linux-amd64
+    timeout-minutes: 240
+    env:
+      SDB_STORE_RESULTS: "false"
+    steps:
+      - name: Reap containers left on this runner
+        run: |
+          echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
+          filter="label=serenedb.owner=ci-${RUNNER_NAME}"
+          docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
+          docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
+          docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
+          git config --global --add safe.directory '*'
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.PR_SHA || github.sha }}
+          fetch-depth: 1
+          submodules: true
+          clean: false
+      - name: Clean the checkout
+        run: |
+          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
+          git clean -ffdxq
+          git submodule foreach --quiet --recursive 'git clean -ffdxq'
+      - name: The changed tests fail without the fix
+        run: ./scripts/ci/bugfix_check.sh origin/main
+      - name: Summary
+        if: always()
+        run: cat out/test-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: results-bugfix
+          path: |
+            out/test-*/results.jsonl
+            out/test-*/summary.txt
+            out/test-*/meta.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Reap containers of this job
+        if: always()
+        run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"
 
   validate-pg:
     name: validate pg
-    needs: classify
-    if: ${{ !cancelled() && (inputs.EVERYTHING || needs.classify.outputs.pg_tests != '') }}
+    needs: [prepare, image]
+    if: inputs.LOCATION != 'dev-only' && (inputs.EVERYTHING || needs.prepare.outputs.pg == 'true')
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
       LOCATION: linux-amd64
       PR_SHA: ${{ inputs.PR_SHA }}
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
-      # empty = run all pg tests downstream
-      PG_TESTS: ${{ inputs.EVERYTHING && '' || needs.classify.outputs.pg_tests }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+      CHANGED: ${{ !inputs.EVERYTHING && needs.prepare.outputs.everything != 'true' }}
+      CORPUS: ${{ inputs.CORPUS }}
     secrets: inherit
 
   report:
     name: Report Status
-    needs: [classify, dev, asan, tsan, perf, validate-pg]
+    needs: [prepare, image, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, coverage, bugfix, validate-pg]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (for notify script)
+      - name: Checkout (for the report scripts)
         uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.PR_SHA || github.sha }}
           fetch-depth: 1
           submodules: false
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
+      - name: Fetch the results
+        uses: actions/download-artifact@v8
+        with:
+          pattern: results-*
+          path: results
+      - name: Fetch the coverage
+        uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-*
+          path: coverage
+      - name: Write the report
+        id: report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEEDS: ${{ toJSON(needs) }}
+          PR_NUMBER: ${{ contains(inputs.BUILD_CONFIG, 'PR_SHA') && inputs.PR_NUMBER || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPORT_SHA: ${{ inputs.PR_SHA || github.sha }}
+          REPORT_INPUTS: ${{ toJSON(inputs) }}
+        run: python3 scripts/ci/report.py --results results --coverage coverage --out report.md
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: report
+          path: |
+            report.md
+            report.json
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Send notification
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
@@ -197,7 +374,7 @@ jobs:
         run: ./scripts/send_notification.bash
       - name: Update PR commit status
         if: contains(inputs.BUILD_CONFIG, 'PR_SHA')
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
           JOB_STATUS: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}

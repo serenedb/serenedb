@@ -267,6 +267,13 @@ statement error (?i)like pattern must not end with escape character
 SELECT 'abc' ILIKE 'abX' ESCAPE 'X'
 
 
+statement error
+SELECT 'abc' LIKE 'a' ESCAPE '##'
+----
+db error: ERROR: invalid escape string
+HINT: Escape string must be empty or one character.
+
+
 statement ok
 CREATE TABLE ilike_strs AS
 SELECT i AS id,

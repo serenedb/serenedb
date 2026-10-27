@@ -43,6 +43,13 @@ float8
 
 
 query
+SELECT '-0'::float8;
+----
+float8
+-0
+
+
+query
 SELECT 'Infinity'::float8;
 ----
 float8
@@ -114,6 +121,13 @@ float8
 
 
 query
+SELECT '-0'::float8;
+----
+float8
+-0
+
+
+query
 SELECT 'Infinity'::float8;
 ----
 float8
@@ -175,6 +189,13 @@ SELECT (-0.0)::float8;
 ----
 float8
 0
+
+
+query
+SELECT '-0'::float8;
+----
+float8
+-0
 
 
 query

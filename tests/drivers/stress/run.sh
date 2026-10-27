@@ -8,7 +8,7 @@
 # That is why it is a standalone launcher, like tests/drivers/network/run.sh.
 #
 # Local:  tests/drivers/stress/run.sh --profile smoke
-# CI:     invoked by scripts/ci/steps/051-ci-in-docker-run-stress-tests.bash
+# CI:     the stress:<profile> units of scripts/ci/test.py
 #
 set -o pipefail
 

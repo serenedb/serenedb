@@ -81,14 +81,16 @@ A [view- or external-data-backed index](./views.md) holds a snapshot of its sour
 
 ## Schema changes on an indexed table
 
-An inverted index pins every column it reads, including columns reached only through an [indexed expression](./modeling.md#indexing-expressions) -- for example a struct sub-field such as `(s['id']::INTEGER)` pins the whole `s` column.
+An inverted index pins every column it reads, including columns reached only through an [indexed expression](./modeling.md#indexing-expressions) -- for example a struct sub-field such as `(s['id']::INTEGER)` pins the whole `s` column. On a regular table:
 
-- **`RENAME` column, table or index** -- allowed; the index keys columns by id and follows the rename automatically.
-- **`ADD COLUMN`** -- allowed; it is index-neutral (existing rows are backfilled).
-- **`ALTER COLUMN ... TYPE`** on a pinned column -- rejected; the index stores values of the old type. Drop the index first, change the type, then recreate it.
+- **`RENAME` column, table or index** -- allowed; the index follows the rename.
+- **`ADD COLUMN`** -- allowed; the index is unaffected.
+- **`ALTER COLUMN ... TYPE`** on a pinned column -- rejected with `Cannot change the type of this column: an index depends on it!`; the index stores values of the old type. Drop the index first, change the type, then recreate it.
 - **`ADD` / `DROP` / `RENAME` of a struct field** on a pinned column -- rejected for the same reason, even when the indexed expression targets a *different* sub-field (the whole column is pinned). Drop the index first.
-- **`DROP COLUMN`** on a pinned column -- allowed; it cascade-drops every index that covers the column.
-- **`DROP COLUMN`** on any other column -- allowed, including one that comes before a pinned column; the index keeps its columns by stable id.
+- **`DROP COLUMN`** on a pinned column -- allowed; it drops every index that covers the column.
+- **`DROP COLUMN`** on any other column -- allowed, including one that comes before a pinned column.
+
+A search table's columns are fixed, whether or not it has indexes: `ADD COLUMN`, `DROP COLUMN` and `ALTER COLUMN ... TYPE` are rejected, while renaming the table or a column is allowed. See [Search tables](../../statements/alter_table/index.md#search-tables) in the `ALTER TABLE` reference.
 
 ## Performance
 
@@ -97,6 +99,7 @@ Tuning is mostly about the background cadence and segment layout; use only the o
 - **Refresh vs. compaction cadence** -- lower `refresh_interval` for fresher results, raise it (or `0`) to reduce overhead on write-heavy tables; `compaction_interval` governs how aggressively segments merge, and `cleanup_interval_step` how soon the files they replace are deleted.
 - **Row-group size** -- `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting. It must be a multiple of the vector size (2048), and it is also the unit a scan hands to one worker: an index whose segments hold few row groups cannot spread a scan over more threads than it has row groups, so lower it when rows are expensive to materialise and the index is small. It is fixed at `CREATE INDEX` and applies to segments written afterwards.
 - **Build then index** -- for a bulk load, create the table, load the data, then create the index; this produces a more compact index than loading into an already-indexed table.
+- **Whole-relation aggregates** -- `count(*)` over a search table or an index relation (`FROM my_index`) without a `WHERE` clause is answered from the document counts, without reading any document. `min` and `max` of numeric and temporal `INCLUDE`d columns and of keyword columns are answered the same way while the relation holds no deleted documents; deleted documents are dropped by compaction, and until then `min` and `max` read the documents. `EXPLAIN` shows no index scan for an aggregate answered this way.
 - **Top-K** -- set [`optimize_top_k`](./ranking.md#top-k-queries-and-wand-pruning) to accelerate `ORDER BY <scorer> ... LIMIT k`.
 - **Write memory** -- [`segment_memory_max`](#write-memory) sets the segment size a write produces and, together with `checkpoint_threshold` for a serial write, what the write holds in memory.
 
@@ -142,7 +145,7 @@ Beyond the per-index `WITH` options, a few **`sdb_`-prefixed session settings** 
 | `sdb_hnsw_ef_search` | `-1` | Beam width of each segment's search for an [HNSW](./vector-search.md#hnsw) kNN query. Higher = better recall, slower queries. A value is used as written, floored only at the share of the query's `LIMIT` one segment is expected to hold. `-1` lets the engine choose: the index's `ef_construction` or the `LIMIT`, whichever is larger, which keeps recall high at any `LIMIT` without tuning. |
 | `sdb_hnsw_filter_mode` | `auto` | How an [HNSW](./vector-search.md#filtered-search) index answers a kNN query with a `WHERE`: `auto` picks by the predicate's estimated selectivity and, where codes are long or the rows near the query are mostly rejected, walks as `twohop`, `scan` scores every admitted row, and `walk`, `prune`, `twohop` and `bridge` force a walk shape. For measurement -- `auto` is the one to leave alone. |
 | `sdb_hnsw_column_filter` | `auto` | How an [HNSW](./vector-search.md#filtered-search) walk answers a predicate on columns the index does not index (`INCLUDE`d ones): `fold` evaluates it over the whole segment before the walk, `read` reads the columns of each row the walk reaches, and `auto` reads while the walk is expected to reach few enough rows for that to cost less than the fold, pricing a read by the columns' encodings. For measurement -- `auto` is the one to leave alone. |
-| `sdb_ann_oversample` | `-1` | For a quantized (`quant` other than `none`) [vector](./vector-search.md#oversampling) index, `ceil(sdb_ann_oversample * k)` of each segment's candidates are re-read at full precision and re-ordered before segments are compared. `0` answers from the codes alone; `-1` re-scores every quantized index at `1`. Ignored for unquantized indexes. |
+| `sdb_ann_rescore_width` | `-1` | For a quantized (`quant` other than `none`) [vector](./vector-search.md#rescoring) index, how far a candidate's code score may be off and still have it re-read at full precision: candidates from every segment are re-scored while their code score plus this many times the code's estimated error could still beat the `k`-th best exact score. `0` answers from the codes alone; `-1` uses a width per quantizer, listed under [Re-scoring](./vector-search.md#rescoring). Ignored for unquantized indexes. |
 | `sdb_ann_force_exact` | `false` | Skip the ANN walk and return the exact answer, for a nearest-`k` query and a distance range alike. Every row with a vector is considered; an `hnsw` index's 8-bit codes (`sq8`, `usq8`) rule out most rows before their stored vectors are read. Useful to measure recall. `false` leaves the choice to the engine, which may still answer a selective filter with an exact scan. |
 | `sdb_scan_split` | `auto` | How an index scan shares a segment between worker threads. Each worker scans the row groups of a segment in order. `tail` gives every worker a segment of its own; only when no segment is left unclaimed does an idle worker join the segment with the most row groups left, so a segment is split across workers only at the end of the scan, when there are fewer segments than workers, or when one segment holds most of the data. `always` puts every worker on the same segment until all of its row groups are claimed; `never` scans each segment whole on one worker. `auto` is `always` when the query has an `ORDER BY <column> LIMIT` scan order and `tail` otherwise. Meant for benchmarking and tests. |
 | `sdb_scan_order` | `auto` | The order an index scan claims its segments in. `largest_first` and `smallest_first` order them by live document count; `order` is best-first by the `ORDER BY` column's row-group statistics when the query has a scan order, so the `TOP_N` bound tightens early. `auto` is `order` under a scan order and `largest_first` otherwise. |
@@ -152,7 +155,7 @@ Beyond the per-index `WITH` options, a few **`sdb_`-prefixed session settings** 
 ```sql
 SET sdb_ivf_search_nprobe = 32;  -- scan more IVF clusters for this session
 SET sdb_hnsw_ef_search = 256;    -- widen the HNSW beam
-SET sdb_ann_oversample = 2;      -- widen the exact-rescore pool for a quantized index
+SET sdb_ann_rescore_width = 3;   -- re-score more candidates of a quantized index
 SET sdb_levenshtein_max_terms = 256; -- widen fuzzy expansion
 -- ... run queries ...
 RESET sdb_ivf_search_nprobe;     -- back to the default
@@ -168,24 +171,24 @@ The standard `pg_indexes` view also lists them (alongside the primary-key index)
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_005" />
 
-<DocCallout type="attention">
+<DocCallout type="info">
 
-`pg_indexes_size()` is not yet meaningful for inverted indexes -- it returns `0`. Use `sdb_indexes()` / `pg_indexes` for index metadata.
+`pg_relation_size()` of an inverted index returns its size on disk, counting the refreshed rows only, and `pg_indexes_size()` of a regular table adds the inverted indexes on it to its other indexes. An index on a search table has no storage of its own, so both count it as `0`; its data is part of `pg_relation_size()` of the table. `pg_indexes_size()` of a view returns `0`.
 
 </DocCallout>
 
-### Per-index statistics in `sdb_metrics` {#sdb-metrics}
+### Statistics in `sdb_metrics` {#sdb-metrics}
 
-The `sdb_metrics` system table exposes live runtime metrics. Most rows are process-wide gauges (connection counts, active/pending maintenance tasks) and carry a `NULL` `relation_id`. In addition, **each inverted index contributes a row per statistic**, tagged with the index's oid in the `relation_id` column -- describing its physical state and the health of its background maintenance.
+The `sdb_metrics` system table exposes live runtime metrics. Most rows are process-wide gauges (connection counts, active/pending maintenance tasks) and carry a `NULL` `relation_id`. In addition, **each search table and each inverted index on a regular table or a view contributes a row per statistic**, tagged with its oid in the `relation_id` column -- describing its physical state and the health of its background maintenance. An inverted index on a search table has no storage of its own and contributes no rows: the search table's rows cover its indexes.
 
 | Column | Description |
 | :--- | :--- |
 | `metric` | Metric name |
 | `value` | Current value (`UBIGINT`) |
 | `description` | Human-readable description |
-| `relation_id` | Oid of the inverted index the row describes (an index is a relation in `pg_class`), or `NULL` for a process-wide gauge |
+| `relation_id` | Oid of the search table or inverted index the row describes (a relation in `pg_class`), or `NULL` for a process-wide gauge |
 
-The per-index metrics, modelled on the statistics an ArangoSearch / IResearch data store reports:
+The metrics of each search table and inverted index:
 
 | Metric | Meaning |
 | :--- | :--- |
@@ -202,24 +205,9 @@ The per-index metrics, modelled on the statistics an ArangoSearch / IResearch da
 | `avg_cleanup_time_ms` | Average duration of the last few cleanups, in ms |
 | `avg_consolidation_time_ms` | Average duration of the last few consolidations, in ms |
 
-The `avg_*` values are a rolling average over a small window of the most recent successful operations. Rows cover the inverted indexes in the **current database**. Join `pg_class` to resolve the index name, or `pg_index` to reach the base table:
+The `avg_*` values are a rolling average over a small window of the most recent successful operations. Rows cover the search tables and inverted indexes in the **current database**. Join `pg_class` to resolve the name. To group the rows by table, join `pg_index` as well: an index's rows reach its table through `indrelid`, while a search table's rows carry the table's own oid. Here `my_logs` is a regular table with the inverted index `logs_idx`, and `my_events` a search table:
 
-```sql
--- Per-index statistics, with index names
-SELECT c.relname AS index, m.metric, m.value
-FROM sdb_metrics m
-JOIN pg_class c ON c.oid = m.relation_id
-WHERE m.relation_id IS NOT NULL
-ORDER BY c.relname, m.metric;
-
--- Statistics for the indexes on one table
-SELECT m.metric, m.value
-FROM sdb_metrics m
-JOIN pg_index i ON i.indexrelid = m.relation_id
-JOIN pg_class t ON t.oid = i.indrelid
-WHERE t.relname = 'my_table'
-ORDER BY m.metric;
-```
+<SqlLogicTest id="sql/indexes/inverted/maintenance/sdb_metrics" />
 
 A persistently high `num_buffered_docs`, a growing `num_failed_*`, or a climbing `avg_commit_time_ms` are signs that maintenance is falling behind the write rate -- see [Background intervals](#background-intervals) and [Performance](#performance) for the knobs.
 

@@ -84,12 +84,12 @@ class HttpResponseWriter {
   void Text(HttpStatus status, std::string_view body);
   void Error(HttpStatus status, std::string_view error_label);
   void Fixed(HttpStatus status, std::string_view content_type,
-             std::string_view body, std::string_view extra_headers = {});
+             std::string_view body, std::string_view extra_headers = "");
 
   // --- known-length streamed body ----------------------------------------
   // A compressed body has no known length up front, so it is framed chunked.
   void WriteHead(HttpStatus status, std::string_view content_type,
-                 uint64_t content_length, std::string_view extra_headers = {});
+                 uint64_t content_length, std::string_view extra_headers = "");
   void Write(std::string_view data);
 
   // --- chunked streamed body ----------------------------------------------
@@ -98,7 +98,7 @@ class HttpResponseWriter {
   // block fills or at Finish(). Incremental-delivery endpoints (SSE and the
   // like) must not run on a listener with compression enabled.
   void WriteHeadChunked(HttpStatus status, std::string_view content_type,
-                        std::string_view extra_headers = {});
+                        std::string_view extra_headers = "");
 
   // Between BeginChunk/EndChunk the raw buffer is exposed: serializers write
   // payload bytes directly (WriteObject and friends), then the seal patches
@@ -154,7 +154,7 @@ class HttpResponseWriter {
   State _state = State::kIdle;
   bool _keep_alive;
   bool _head_only;
-  std::string_view _extra;
+  std::string_view _extra = "";
 };
 
 }  // namespace sdb::network::http

@@ -28,8 +28,8 @@
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting_pruned_clause.hpp"
 #include "iresearch/search/top/posting_pruned_lead.hpp"
-#include "iresearch/search/top/prune_leaves.hpp"
 #include "iresearch/search/top/pruned_conjunction.hpp"
+#include "iresearch/search/top/pruned_leaves.hpp"
 #include "iresearch/utils/empty.hpp"
 
 namespace irs::top {
@@ -83,9 +83,9 @@ Root::ptr MakePrunedConjunction(
         });
     };
     if (size == 2) {
-      return make.template operator()<PruneLeaves<Clause, 1>>();
+      return make.template operator()<PrunedLeaves<Clause, 1>>();
     }
-    return make.template operator()<PruneLeaves<Clause>>();
+    return make.template operator()<PrunedLeaves<Clause>>();
   });
 }
 

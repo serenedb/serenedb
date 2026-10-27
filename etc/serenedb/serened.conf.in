@@ -6,7 +6,7 @@
 # 'serened --helpfull' to list every available flag.
 
 # Path to the database directory.
---server_directory=@LOCALSTATEDIR@/lib/serenedb
+--server_directory=@CMAKE_INSTALL_FULL_LOCALSTATEDIR@/lib/serenedb
 
 # Endpoint(s) the server listens on. Comma-separate for multiple endpoints
 # (a repeated --listen is last-wins, not additive).
@@ -31,4 +31,4 @@
 # Filesystem destination, used only when --log_storage=file. A path ending in
 # '.csv' is written as a single log file; any other path is treated as a
 # directory that log CSVs are written into.
-# --log_path=@LOCALSTATEDIR@/log/serenedb
+# --log_path=@CMAKE_INSTALL_FULL_LOCALSTATEDIR@/log/serenedb

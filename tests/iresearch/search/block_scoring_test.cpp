@@ -487,6 +487,129 @@ TEST(LoserScoreCollectorPredicate, FiltersBatchedAddDocsAcrossChunks) {
   EXPECT_EQ(96u, result[2].doc);
 }
 
+bool BetterHit(const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+  if (l.score != r.score) {
+    return l.score > r.score;
+  }
+  return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
+}
+
+uint64_t RandomWord(std::mt19937& rng) { return uint64_t{rng()} << 32 | rng(); }
+
+TEST(LoserScoreCollectorWindow, MatchesBruteForceTopK) {
+  constexpr size_t kTopK = 37;
+  constexpr size_t kWords = 4;
+  constexpr irs::doc_id_t kWindowDocs = kWords * 64;
+  std::mt19937 rng{20261021};
+  for (const bool keep_subset : {false, true}) {
+    SCOPED_TRACE(keep_subset);
+    std::vector<irs::ScoreDoc> hits(kTopK);
+    std::atomic<irs::score_t> threshold{
+      std::numeric_limits<irs::score_t>::lowest()};
+    irs::LoserScoreCollector collector(threshold, std::span{hits});
+    std::vector<irs::ScoreDoc> expected;
+    std::vector<irs::score_t> scores(kWindowDocs);
+    std::vector<uint64_t> mask(kWords);
+    std::vector<uint64_t> keep(kWords);
+    for (irs::doc_id_t window = 0; window != 64; ++window) {
+      const irs::doc_id_t min = irs::doc_limits::min() + window * kWindowDocs;
+      for (size_t w = 0; w != kWords; ++w) {
+        const auto shape = rng() % 4;
+        mask[w] = shape == 0   ? 0
+                  : shape == 1 ? uint64_t{1} << (rng() % 64)
+                               : RandomWord(rng);
+        keep[w] = keep_subset ? mask[w] & RandomWord(rng) : mask[w];
+        for (size_t bit = 0; bit != 64; ++bit) {
+          if ((mask[w] >> bit & 1) == 0) {
+            continue;
+          }
+          const auto doc = static_cast<irs::doc_id_t>(min + w * 64 + bit);
+          const auto score = static_cast<irs::score_t>(doc % 977) +
+                             static_cast<irs::score_t>(doc) * 1e-6f;
+          scores[w * 64 + bit] = score;
+          if (keep[w] >> bit & 1) {
+            expected.push_back({.score = score, .doc = doc});
+          }
+        }
+      }
+      if (keep_subset) {
+        collector.ConsumeWindow<true>(scores.data(), mask.data(), min, kWords,
+                                      keep.data());
+      } else {
+        collector.ConsumeWindow(scores.data(), mask.data(), min, kWords, {});
+      }
+      ASSERT_TRUE(absl::c_all_of(mask, [](uint64_t m) { return m == 0; }));
+      ASSERT_TRUE(
+        absl::c_all_of(scores, [](irs::score_t s) { return s == 0; }));
+    }
+    ASSERT_EQ(expected.size(), collector.TotalMatches());
+    ASSERT_GE(expected.size(), kTopK);
+    absl::c_sort(expected, BetterHit);
+    expected.resize(kTopK);
+    ASSERT_EQ(kTopK, collector.AcceptedCount());
+    absl::c_sort(hits, BetterHit);
+    for (size_t i = 0; i != kTopK; ++i) {
+      ASSERT_EQ(expected[i].doc, hits[i].doc) << i;
+      ASSERT_EQ(expected[i].score, hits[i].score) << i;
+    }
+    ASSERT_EQ(expected.back().score, threshold.load());
+  }
+}
+
+TEST(LoserScoreCollectorSort, MatchesBruteForceTopK) {
+  std::mt19937 rng{20261021};
+  for (const size_t k : {1, 2, 3, 37, 100, 1000}) {
+    for (const size_t n : {size_t{0}, k / 2, k - 1, k, k + 1, 5 * k}) {
+      std::vector<irs::ScoreDoc> candidates(n);
+      for (size_t i = 0; i != n; ++i) {
+        candidates[i] = {
+          .score = rng() % 16 == 0
+                     ? -0.0f
+                     : static_cast<irs::score_t>(rng() % 2000) / 100.0f - 10.0f,
+          .doc = static_cast<irs::doc_id_t>(i),
+          .segment_idx = static_cast<uint32_t>(i * 4 / n),
+        };
+      }
+      std::vector<irs::ScoreDoc> hits(k);
+      std::atomic<irs::score_t> threshold{
+        std::numeric_limits<irs::score_t>::lowest()};
+      irs::LoserScoreCollector collector{threshold, std::span{hits}};
+      for (const auto& candidate : candidates) {
+        collector.SetSegment(candidate.segment_idx);
+        collector.Add(candidate.score, candidate.doc);
+      }
+      const auto accepted = collector.AcceptedCount();
+      ASSERT_EQ(std::min(k, n), accepted);
+      std::vector<irs::ScoreDoc> kept{hits.begin(), hits.begin() + accepted};
+      collector.SortHits();
+      std::vector<irs::ScoreDoc> sorted{hits.begin(), hits.begin() + accepted};
+
+      std::vector<irs::score_t> expected;
+      for (const auto& candidate : candidates) {
+        expected.push_back(candidate.score);
+      }
+      absl::c_sort(expected, std::greater<>{});
+      for (size_t i = 0; i != accepted; ++i) {
+        ASSERT_EQ(expected[i], sorted[i].score) << k << " " << n << " " << i;
+      }
+
+      const auto by_doc = [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+        return l.doc < r.doc;
+      };
+      absl::c_sort(kept, by_doc);
+      absl::c_sort(sorted, by_doc);
+      for (size_t i = 0; i != accepted; ++i) {
+        ASSERT_EQ(kept[i].doc, sorted[i].doc) << k << " " << n << " " << i;
+        ASSERT_EQ(kept[i].segment_idx, sorted[i].segment_idx)
+          << k << " " << n << " " << i;
+        ASSERT_EQ(std::bit_cast<uint32_t>(kept[i].score),
+                  std::bit_cast<uint32_t>(sorted[i].score))
+          << k << " " << n << " " << i;
+      }
+    }
+  }
+}
+
 // Test TFIDF with topic field search (many matches) - verify actual values
 TEST_P(BlockScoringTestCase, TfidfTopicSearch) {
   CreateLargeIndex();

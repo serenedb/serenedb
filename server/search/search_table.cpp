@@ -55,6 +55,7 @@
 #include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
+#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
@@ -94,6 +95,8 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _table_id{table_id},
     _directory{std::move(directory)},
     _is_new{is_new},
+    _in_memory{in_memory},
+    _read_only{read_only},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
     _compression{std::move(compression)},
@@ -103,12 +106,18 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _topk_scorer = MakeScorer(*_topk_options);
   }
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
-  if (read_only) {
-    OpenDirectory();
-  } else {
-    OpenWriter(in_memory);
+  if (is_new) {
+    Open();
   }
   ApplyOptions(options);
+}
+
+void SearchTable::Open() {
+  if (_read_only) {
+    OpenDirectory();
+  } else {
+    OpenWriter();
+  }
 }
 
 SearchTable::~SearchTable() {
@@ -122,10 +131,10 @@ SearchTable::~SearchTable() {
   catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _table_id);
 }
 
-void SearchTable::OpenWriter(bool in_memory) {
+void SearchTable::OpenWriter() {
   irs::ResourceManagementOptions resource_manager;
   auto opened = OpenStorageDirectory(*_directory, GetTableId(), _is_new,
-                                     in_memory, resource_manager);
+                                     _in_memory, resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 
@@ -200,6 +209,7 @@ void SearchTable::StartTasks() {
 
 ResultWithTime SearchTable::RefreshUnsafe(
   bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
+  SDB_ASSERT(_writer);
   const auto begin = std::chrono::steady_clock::now();
   // Read before the publish begins, applied once its reader is installed: a
   // transaction at or below this tick registered on the flush context before
@@ -253,7 +263,7 @@ void SearchTable::RecordTruncateForBuild(const irs::SourcePosition& position) {
   _build_truncate = std::max(_build_truncate, position);
 }
 
-void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
+void SearchTable::AppendDeleteLog(std::span<const RowRange> rows) {
   if (rows.empty()) {
     return;
   }
@@ -561,6 +571,18 @@ void SearchTable::ReplayDelete(duckdb::AttachedDatabase& db,
   connector::RemoveGeneratedRows(
     session->trx, std::span<const int64_t>{
                     duckdb::FlatVector::GetData<int64_t>(rows), chunk.size()});
+}
+
+void SearchTable::ReplayDeleteRanges(duckdb::AttachedDatabase& db,
+                                     std::vector<RowRange> rows) {
+  auto* session = BeginReplay(db);
+  if (!session) {
+    return;
+  }
+  NormalizeRowRanges(rows);
+  if (auto removal = connector::MakeRowRangeRemoval(rows)) {
+    session->trx.Remove(std::move(removal));
+  }
 }
 
 void SearchTable::ReplayTruncate(duckdb::AttachedDatabase& db) {

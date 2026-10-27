@@ -23,7 +23,7 @@
 #include "filter.hpp"
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/queries/query_builder_impl.hpp"
+#include "iresearch/search/queries/query_builder_impl.tpp"
 #include "iresearch/utils/singleton.hpp"
 
 namespace irs {

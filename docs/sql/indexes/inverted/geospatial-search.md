@@ -15,11 +15,11 @@ Use the `encode_geojson` dictionary template on a `JSON` column holding GeoJSON.
 
 <SqlLogicTest id="sql/indexes/inverted/geospatial-search/example_001" />
 
-The `encode_geojson` template indexes `Point`, `LineString`, `Polygon`, `MultiPoint`, `MultiLineString` and `MultiPolygon` geometries; `GeometryCollection` is rejected. GeoJSON coordinates are `[longitude, latitude]`. Each geometry is reduced to [S2](http://s2geometry.io/) cell-ID terms — a cell covering for a shape, one ancestor cell per level for a point. A query shape is covered the same way, so rows match when their cells overlap. An `encode_geopoint` template is also available for extracting a point from latitude/longitude fields of a JSON object, and the `encode_geojson` template accepts `coding = 's2point'` to store a compact S2 encoding of each geometry instead of the source value.
+The `encode_geojson` template indexes `Point`, `LineString`, `Polygon`, `MultiPoint`, `MultiLineString` and `MultiPolygon` geometries. A row holding a `GeometryCollection`, or a value that is not valid GeoJSON, is stored without an error but gets no geo terms, so the spatial predicates below never find it. GeoJSON coordinates are `[longitude, latitude]`. An `encode_geopoint` template is also available for extracting a point from latitude/longitude fields of a JSON object, and the `encode_geojson` template accepts `coding := 's2point'` to store a compact [S2](http://s2geometry.io/) encoding of each geometry instead of the source value.
 
 ### Indexing a `GEOMETRY` column
 
-The native [`GEOMETRY`](../../data_types/geometry.md) type is indexed the same way — point it at the `encode_geojson` template (typically with `coding = 's2point'`). `GEOMETRY` values carry WKB internally and are written from WKT with a coordinate reference system; WKT uses the same `longitude latitude` axis order as GeoJSON:
+The native [`GEOMETRY`](../../data_types/geometry.md) type is indexed the same way, with two requirements. The column must be declared with the CRS84 coordinate reference system, as `GEOMETRY('OGC:CRS84')`: without one, or with another, `CREATE INDEX` fails. And it takes only the `encode_geojson` template, with the default `source` coding or with `coding := 's2point'`; `encode_geopoint` reads JSON fields and needs a `JSON` column. Values are written from WKT, which uses the same `longitude latitude` axis order as GeoJSON:
 
 <SqlLogicTest id="sql/indexes/inverted/geospatial-search/example_005" />
 
@@ -57,7 +57,7 @@ When your data already stores coordinates as separate latitude and longitude fie
 
 ### Distance predicates
 
-`ST_Distance_Between(field, centroid, min, max [, incl_min [, incl_max]])` matches rows within a geodesic distance range of a centroid, and `ST_Distance_Centroid(field, centroid)` returns the geodesic distance for ordering within an index scan. See the [function reference](../../functions/search/geo.md).
+`ST_Distance_Between(field, centroid, min, max [, incl_min [, incl_max]])` matches rows within a geodesic distance range of a centroid. `ST_Distance_Centroid(field, centroid)` compared with a constant in `WHERE`, as in `ST_Distance_Centroid(geo, c) < 500.0`, keeps the rows within that many metres of the centroid. It cannot order or return rows: in `ORDER BY` or a select list it fails with `Inverted index function called outside inverted index context. Use in WHERE clause on a table with an inverted index.` See the [function reference](../../functions/search/geo.md).
 
 <DocCallout type="attention">
 

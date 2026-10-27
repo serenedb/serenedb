@@ -11,7 +11,7 @@ import DocCallout from "@site/src/components/DocCallout";
 
 <DocCallout type="tip">
 
-A scorer reads per-term statistics, so the indexed column must have the `frequency` [feature flag](./text-analysis.md#token-positions-and-feature-flags) enabled. Every scorer takes the index's `tableoid` as its first argument and returns a `FLOAT`.
+Most scorers weigh how often the query's terms occur in each row, which the index records only when the column's dictionary enables the `frequency` [feature flag](./text-analysis.md#token-positions-and-feature-flags). Without it, every row that matches a term scores the same for that term, so enable `frequency` to rank by how often terms occur. Every scorer takes the index's `tableoid` as its first argument and returns a `FLOAT`.
 
 </DocCallout>
 
@@ -36,6 +36,8 @@ SereneDB ships several scorers; [`TFIDF`](../../functions/search/scoring.md) is 
 | `indri_dirichlet` | `mu` (2000) | Indri-style Dirichlet (no floor clamp) |
 | `dfi` | `measure` (`'standardized'`) | Divergence-from-independence; also `'saturated'`, `'chi_squared'` |
 | `raw_tf` / `raw_boost` / `raw_dl` | — | Raw term frequency, boost and document length |
+| `idf` | — | Inverse document frequency of the matched terms: rows that match the same terms score the same |
+| `constant` | `value` (1) | The same `value` for every match, times its boost |
 
 ## Boosting
 
@@ -49,7 +51,7 @@ The common shape `ORDER BY <scorer> DESC LIMIT k` returns the best `k` matches. 
 
 ```sql
 CREATE INDEX movies_idx ON movies
-    USING inverted (id, description ranking_dict)
+    USING inverted (id, title ranking_dict, description ranking_dict, genre)
     WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 ```
 
@@ -59,7 +61,7 @@ Pruning engages only when all of the following hold; otherwise the query still r
 
 - the query is `ORDER BY <scorer>(idx.tableoid) DESC` with a `LIMIT`;
 - the scorer can use the score bounds the index stores (see the table below);
-- the filter is a single term, an `OR` of terms that any one term satisfies, an `AND` of terms, one or more terms with `AND NOT` exclusions (`a AND NOT b`), one required term with optional terms that only add to the score (`to_tsquery('+fox quick')`), or a phrase without slop. An `AND` that also holds such `OR`s, like `(a OR b) AND (c OR d)`, is pruned when enough rows match for pruning to pay off. An `OR` prunes only when the scores of its terms add up: one that keeps the best score of its terms is not pruned, such as a fuzzy [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein) match that expands to several terms, a word whose dictionary gives synonyms, or a group with [`::merge('max')`](../../functions/search/scoring.md#merge). Nor are a phrase with slop or with several terms at one position, an `OR` with a phrase or an `AND` among its branches, and an `OR` that needs more than one but not all of its terms ([`ts_any(list, k)`](../../functions/search/full-text.md#ts_any) or [`::min_match(k)`](../../functions/search/full-text.md#min-match) with `k` above 1). A phrase on a column without `position` ([phrases without positions](./full-text-search.md#phrases-without-positions)) is pruned when at least one of its parts is a plain word, it has no `[min, max]` gaps, and its dictionary puts one token at each position, which synonym and n-gram dictionaries don't.
+- the filter is a single term, an `OR` of terms that any one term satisfies, an `AND` of terms, one or more terms with `AND NOT` exclusions (`a AND NOT b`), one required term with optional terms that only add to the score (`to_tsquery('+fox quick')`), or a phrase without slop. An `AND` that also holds such `OR`s, like `(a OR b) AND (c OR d)`, is pruned when enough rows match for pruning to pay off. An `OR` prunes only when the scores of its terms add up: one that keeps the best score of its terms is not pruned, such as a fuzzy [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein) match that expands to several terms, a word whose dictionary gives synonyms, or a group with [`::merge('max')`](../../functions/search/scoring.md#merge). Nor are a phrase with slop or with a fuzzy `ts_levenshtein` part that matches words other than its own, an `OR` with a phrase or an `AND` among its branches, and an `OR` that needs more than one but not all of its terms ([`ts_any(list, k)`](../../functions/search/full-text.md#ts_any) or [`::min_match(k)`](../../functions/search/full-text.md#min-match) with `k` above 1). A phrase on a column without `position` ([phrases without positions](./full-text-search.md#phrases-without-positions)) is pruned when at least one of its parts is a plain word, it has no `[min, max]` gaps, and its dictionary puts one token at each position, which synonym and n-gram dictionaries don't.
 
 The index stores the kind of score bound that the scorer named in `optimize_top_k` needs, and every scorer that needs the same kind can use it. So `lm_dirichlet` with another `mu`, or `BM25` with another `k1`, prunes too:
 
@@ -73,6 +75,8 @@ The index stores the kind of score bound that the scorer named in `optimize_top_
 `BM25` with `k1 = 0`, `indri_dirichlet`, `raw_boost`, `raw_dl`, `idf` and `constant` have no score bounds, so they never prune, neither in `ORDER BY` nor in `optimize_top_k`.
 
 `EXPLAIN` shows `Top: k, optimized` on the scan (`Top: k, offset n, optimized` when the query has an `OFFSET`) when the first two conditions hold, plus a `Bounds:` row that names the index's scorer when it differs from the `ORDER BY` scorer; it doesn't check the filter's shape. The scan returns the answer rows already ranked, so no separate `TOP_N` operator sits above it. The [`sdb_disable_top_k_optimization` session setting](./maintenance.md#session-settings) turns it off at query time.
+
+Any other ranked query — an ascending order, a scorer the scan cannot rank by, or a filter on a column that is not indexed — ranks the matches in a `TOP_N` above the scan. Columns the query returns but does not order or filter by are then read only for the `k` rows the `TOP_N` keeps, by a `LOOKUP_JOIN` above it (two, when it reads columns the index stores from the index and other columns from the source — see [Inspecting the query plan](./full-text-search.md#inspecting-the-query-plan)), so wide columns cost the same whether the query matches ten rows or a million. This holds for `k` up to [`late_materialization_lookup_max_rows`](../../../configuration/overview.md#query-execution-and-the-optimizer) (2048 by default).
 
 ## Tie-breaking
 
@@ -93,5 +97,5 @@ To blend a lexical (BM25) ranking with a [vector](./vector-search.md) ranking �
 
 - [Full-Text Search](./full-text-search.md) — matching and query construction
 - [Scoring functions](../../functions/search/scoring.md) — full scorer reference
-- [Text Analysis](./text-analysis.md#token-positions-and-feature-flags) — the `frequency` flag scoring requires
+- [Text Analysis](./text-analysis.md#token-positions-and-feature-flags) — the `frequency` and `norm` flags scorers read
 - [BM25/TFIDF Ranking](../../../cookbook/search/ranking.md) — parameter tuning

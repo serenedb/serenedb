@@ -224,6 +224,18 @@ def test_matching_rows_are_not_a_finding():
     assert run([m], s) == []
 
 
+def test_a_table_whose_rows_cannot_be_read_is_unreadable_not_empty():
+    m = Model()
+    m.declare_owned(T1)
+    m.apply_create(T1, "tok1", Outcome.COMMITTED, rows={"r1", "r2"})
+    s = snap(pg={T1: 100}, sets={T1: 100}, tokens={T1: "tok1"})
+    s.row_errors = {T1: "OperationalError: the read failed"}
+    assert kinds(run([m], s)) == ["table_unreadable"]
+    s.row_errors = {}
+    s.row_tokens = {T1: frozenset({"r1", "r2"})}
+    assert run([m], s) == []
+
+
 def test_dropping_a_view_must_cascade_its_inverted_index_in_the_model():
     import ops
     import scenarios

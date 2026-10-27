@@ -151,6 +151,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
 
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
   irs::field_id GetNormColumnId(irs::field_id id) const final;
+  bool HasField(irs::field_id id) const final;
 
   const InvertedIndexField* FindEntry(irs::field_id field_id) const noexcept;
   irs::field_id TermField(irs::field_id column_id) const noexcept;
@@ -172,7 +173,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   bool WritesField(const InvertedIndexKey& key) const noexcept {
     return FindKey(key.field_id) == &key;
   }
-  bool StoresExpression(irs::field_id field_id) const noexcept;
+  std::string_view StoredExpression(irs::field_id field_id) const noexcept;
   bool StoresExpressions() const noexcept { return _stores_expressions; }
   bool HasExpressionKeys() const noexcept { return !_expressions.empty(); }
 

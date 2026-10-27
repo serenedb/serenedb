@@ -54,6 +54,12 @@ void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
 void ClassifyColumnstoreProjections(ScanGlobalState& state,
                                     const ScanBindData& bind_data);
 
+bool IsLookupServed(const ScanBindData& bind,
+                    const duckdb::ColumnIndex& column_index);
+
+bool IsStoreServed(const ScanBindData& bind,
+                   const duckdb::ColumnIndex& column_index);
+
 ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss);
 
 inline void EnsurePlanned(bool planned) {

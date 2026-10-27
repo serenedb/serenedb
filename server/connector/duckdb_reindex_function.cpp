@@ -230,8 +230,9 @@ class PassConnection {
       _conn{*context.db},
       _ctx{std::make_shared<ConnectionContext>(
         *_conn.context, caller.user(), caller.GetRoleId(), target.database,
-        target.database_id, nullptr, caller.GetBackendPid(), nullptr)} {
-    SereneDBClientState::Register(*_conn.context, _ctx);
+        target.database_id, nullptr, caller.GetBackendPid(), nullptr)},
+      _progress{
+        SereneDBClientState::Register(*_conn.context, _ctx).progress_source} {
     _conn.context->config.user_settings = context.config.user_settings;
   }
   ~PassConnection() {
@@ -285,6 +286,7 @@ class PassConnection {
   ConnectionContext& _caller;
   duckdb::Connection _conn;
   std::shared_ptr<ConnectionContext> _ctx;
+  pg::ProgressRegistration _progress;
 };
 
 bool CollectDeadRowPks(duckdb::ClientContext& context,
@@ -974,7 +976,7 @@ std::optional<Source> ResolveSource(duckdb::ClientContext& context,
     }
   }
   src.fast_path = std::move(*fp);
-  src.bind = BindFastPathSource(context, src.fast_path);
+  src.bind = std::move(BindFastPathSource(context, src.fast_path)->bind_data);
   if (!src.bind) {
     return std::nullopt;
   }
@@ -1053,9 +1055,9 @@ class ReindexSession {
       _ctx{std::make_shared<ConnectionContext>(*_conn.context, user, role_id,
                                                database, database_id, nullptr,
                                                backend_pid, nullptr)},
-      _sink{std::move(sink)} {
-    SereneDBClientState::Register(*_conn.context, _ctx);
-  }
+      _progress{
+        SereneDBClientState::Register(*_conn.context, _ctx).progress_source},
+      _sink{std::move(sink)} {}
   ~ReindexSession() {
     _ctx->ConsumeNotices([&](auto& notice) { _sink(notice); });
   }
@@ -1069,6 +1071,7 @@ class ReindexSession {
  private:
   duckdb::Connection _conn;
   std::shared_ptr<ConnectionContext> _ctx;
+  pg::ProgressRegistration _progress;
   NoticeSink _sink;
 };
 
@@ -1084,11 +1087,7 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
-  if (target.index->catalog.GetAttached().IsReadOnly()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                    ERR_MSG("cannot REINDEX \"", name,
-                            "\": its database is attached read-only"));
-  }
+  catalog::ThrowIfReadOnly(target.index->catalog, "REINDEX");
   pg::ProgressMetrics* progress = nullptr;
   if (auto client_state = context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey);

@@ -18,6 +18,7 @@ Secrets are typed, their type identifies which service they are for. The followi
 
 | Secret type   | Service / protocol             |
 | ------------- | ------------------------------ |
+| `aws`         | AWS: takes the options of `s3` and serves the `s3://`, `r2://` and `gcs://` paths that no secret of their own type matches; Iceberg catalogs accept it in place of `s3` |
 | `azure`       | Azure Blob Storage             |
 | `clickhouse`  | [ClickHouse](#clickhouse-secrets) |
 | `gcs`         | Google Cloud Storage           |
@@ -30,14 +31,15 @@ Secrets are typed, their type identifies which service they are for. The followi
 | `s3`          | AWS S3                         |
 | `typesafe`    | TypeSafe Jev or a local Kev server, used by [`ai_system_one`](../sql/functions/ai.md#ai_system_one) |
 
-Per-cloud guides cover how to obtain each kind of credential and which one fits your deployment: [Google Cloud credentials](./google_cloud_credentials.md) (`gcs`, and `iceberg` targeting BigLake), [AWS credentials](./aws_credentials.md) (`s3`, and the S3 Tables / Glue catalogs), and [Azure credentials](./azure_credentials.md) (`azure`). For `iceberg` secrets in general — every supported catalog authentication method, and when to use which — see [Iceberg catalog authentication](./iceberg_authentication.md). The remaining types are single-credential and documented where they are used: [`r2`](../cookbook/network_cloud_storage/cloudflare_r2_import.md), [`http`](../cookbook/network_cloud_storage/http_import.md), `huggingface`, and `postgres`; [`clickhouse`](#clickhouse-secrets) is described below. The [`openai` and `typesafe`](../sql/functions/ai.md#providers) secrets are refused when their `base_url` uses plain `http://` for a host other than localhost, unless `sdb_ai_allow_insecure_endpoint` is on.
+`sdb_secret_types()` also lists `rds`, which cannot be created.
 
-For each type, there are one or more “secret providers” that specify how the secret is created. Secrets can also have an optional scope, which is a file path prefix that the secret applies to. When fetching a secret for a path, the secret scopes are compared to the path, returning the matching secret for the path. In the case of multiple matching secrets, the longest prefix is chosen.
+Per-cloud guides cover how to obtain each kind of credential and which one fits your deployment: [Google Cloud credentials](./google_cloud_credentials.md) (`gcs`, and `iceberg` targeting BigLake), [AWS credentials](./aws_credentials.md) (`s3`, and the S3 Tables / Glue catalogs), and [Azure credentials](./azure_credentials.md) (`azure`). For `iceberg` secrets in general — every supported catalog authentication method, and when to use which — see [Iceberg catalog authentication](./iceberg_authentication.md). The remaining types are single-credential and documented where they are used: [`r2`](../cookbook/network_cloud_storage/cloudflare_r2_import.md), [`http`](../cookbook/network_cloud_storage/http_import.md), `huggingface`, and `postgres`; [`clickhouse`](#clickhouse-secrets) is described below. An AI function refuses an [`openai` or `typesafe`](../sql/functions/ai.md#providers) secret whose `base_url` does not start with `https://`, unless its host is local (`localhost`, an address in `127.0.0.0/8` or `[::1]`) or `sdb_ai_allow_insecure_endpoint` is on; `CREATE SECRET` itself accepts such a secret.
+
+For each type, there are one or more "secret providers" that specify how the secret is created. Secrets can also have an optional scope, which is a file path prefix that the secret applies to. When fetching a secret for a path, the secret scopes are compared to the path, returning the matching secret for the path. In the case of multiple matching secrets, the longest prefix is chosen.
 
 ## Creating a Secret
 
-Secrets can be created using the [`CREATE SECRET` SQL statement](../sql/statements/create_secret/index.md).
-Secrets can be **temporary** or **persistent**. Temporary secrets are used by default and live in memory for the lifespan of the SereneDB instance. Persistent secrets are stored in an **unencrypted** format and are automatically loaded when SereneDB starts.
+Secrets can be created using the [`CREATE SECRET` SQL statement](../sql/statements/create_secret/index.md). Secrets can be **temporary** or **persistent**. Temporary secrets are used by default and live in memory for the lifespan of the SereneDB instance. Persistent secrets are stored in an **unencrypted** format and are automatically loaded when SereneDB starts.
 
 ### Secret Providers
 
@@ -73,7 +75,7 @@ If two secrets exist for a service type, the scope can be used to decide which o
 
 <SqlLogicTest id="configuration/secrets_manager/example_006" />
 
-Now, if the user queries something from `s3://⟨my-other-bucket⟩/something`, secret `secret2` will be chosen automatically for that request. To see which secret is being used, the `which_secret` scalar function can be used, which takes a path and a secret type as parameters:
+Now, if the user queries something from `s3://⟨my-other-bucket⟩/something`, secret `secret2` will be chosen automatically for that request. To see which secret is being used, the `which_secret` table function can be used, which takes a path and a secret type as parameters:
 
 <SqlLogicTest id="configuration/secrets_manager/example_007" />
 
@@ -92,4 +94,4 @@ Secrets can be listed using the built-in table-producing function, e.g., by usin
 
 <SqlLogicTest id="configuration/secrets_manager/example_008" />
 
-Sensitive information will be redacted.
+`sdb_secrets()` shows some sensitive values as `redacted`, but it does not hide every credential a secret holds, so do not rely on it to keep credentials from the users who can call it. The `http_proxy_password` of an `s3`, `r2`, `gcs` or `aws` secret, for one, is shown as given.

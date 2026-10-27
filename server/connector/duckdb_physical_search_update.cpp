@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/execution/row_id_deduplicator.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
@@ -57,6 +58,7 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
 
   std::vector<primary_key::PKColumn> old_pk_columns;
   std::vector<primary_key::KeySlot> pk_slots;
+  std::optional<duckdb::RowIdDeduplicator> updated_rows;
 
   std::shared_lock<std::shared_mutex> table_lock;
   uint64_t write_buffer_max_bytes = 0;
@@ -77,13 +79,14 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk,
-  bool updates_key_columns)
+  duckdb::RowIdHandling row_id_handling, bool updates_key_columns)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _table(table),
     _columns(std::move(columns)),
     _expressions(std::move(expressions)),
     _return_chunk(return_chunk),
+    _row_id_handling(row_id_handling),
     _updates_key_columns(updates_key_columns) {}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
@@ -128,6 +131,10 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   for (auto i = width - row_ids; i < width; ++i) {
     state->old_pk_columns.emplace_back(i, input_types[i]);
   }
+  if (_row_id_handling != duckdb::RowIdHandling::ASSUME_UNIQUE) {
+    state->updated_rows.emplace(context, duckdb::vector<duckdb::LogicalType>{
+                                           state->old_pk_columns.front().type});
+  }
 
   state->generated_pk_seq = _table.GeneratedPkSequence(context);
   SDB_ASSERT(state->generated_pk_seq);
@@ -143,6 +150,11 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
+  if (gstate.updated_rows &&
+      primary_key::KeepFirstRowIds(*gstate.updated_rows, chunk,
+                                   gstate.old_pk_columns.front()) == 0) {
+    return duckdb::SinkResultType::NEED_MORE_INPUT;
+  }
   const auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;

@@ -39,6 +39,7 @@
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shuffle.hpp"
 
@@ -61,8 +62,17 @@ struct LayerLayout {
 
   static LayerLayout Read(IndexInput& in, size_t d) {
     const size_t n_total = static_cast<size_t>(in.ReadI64());
-    const size_t body_start = static_cast<size_t>(in.Position());
+    const size_t body_start = BodyStart(in.Position());
     return {n_total, body_start, body_start + n_total * d * sizeof(float)};
+  }
+  static size_t BodyStart(uint64_t position) {
+    return static_cast<size_t>(position + (-position & (alignof(float) - 1)));
+  }
+  static void PadBody(IndexOutput& out) {
+    for (auto pad = BodyStart(out.Position()) - out.Position(); pad != 0;
+         --pad) {
+      out.WriteByte(0);
+    }
   }
   size_t CentroidPos(size_t start, size_t d) const {
     return body_start + start * d * sizeof(float);
@@ -318,15 +328,15 @@ std::vector<CentroidsNode> CentroidsNode::Deserialize(
     in.Seek(layout.CentroidPos(start, d));
     node.centroids.resize(node.size * d);
     if (node.size != 0) {
-      in.ReadData(reinterpret_cast<byte_type*>(node.centroids.data()),
-                  node.size * sizeof(node.centroids[0]) * d);
+      ReadOnce(in, reinterpret_cast<byte_type*>(node.centroids.data()),
+               node.size * sizeof(node.centroids[0]) * d);
     }
 
     if (level > 0) {
       node.child_offsets.resize(node.size + 1);
       in.Seek(layout.OffsetsPos(start));
-      in.ReadData(reinterpret_cast<byte_type*>(node.child_offsets.data()),
-                  (node.size + 1) * sizeof(size_t));
+      ReadOnce(in, reinterpret_cast<byte_type*>(node.child_offsets.data()),
+               (node.size + 1) * sizeof(size_t));
     }
     nodes.emplace_back(std::move(node));
   }
@@ -347,6 +357,17 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
   bufs.centroids.reserve(starts.size());
   bufs.child_offsets.reserve(starts.size());
   for (auto&& [start, size] : std::views::zip(starts, sizes)) {
+    if (size == 0) {
+      continue;
+    }
+    file_utils::Hint(in, layout.CentroidPos(start, d),
+                     size * d * sizeof(float));
+    if (level > 0) {
+      file_utils::Hint(in, layout.OffsetsPos(start),
+                       (size + 1) * sizeof(size_t));
+    }
+  }
+  for (auto&& [start, size] : std::views::zip(starts, sizes)) {
     CentroidsNodeView node;
     node.base = start;
     node.size = size;
@@ -357,6 +378,7 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
     const uint64_t offset = layout.CentroidPos(start, d);
     const size_t centroids_bytes = size * d * sizeof(float);
     if (const byte_type* p = in.ReadStable(offset, centroids_bytes)) {
+      SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % alignof(float) == 0);
       node.centroids =
         std::span<const float>{reinterpret_cast<const float*>(p), size * d};
     } else {
@@ -382,6 +404,7 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
 
 void CentroidsNode::Serialize(IndexOutput& out) const {
   out.WriteU64(size);
+  LayerLayout::PadBody(out);
   if (size != 0) {
     out.WriteData(reinterpret_cast<const byte_type*>(centroids.data()),
                   size * d * sizeof(centroids[0]));
@@ -434,11 +457,12 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     .child_offsets = std::span<const size_t>{_root.child_offsets},
     .base = 0,
     .size = _root.size};
+  std::vector<LayerBuffers> layers;
   std::vector<CentroidsNode::Candidate> leaves;
   irs::ResolveEnum<VectorMetric>(_head.metric, [&]<VectorMetric Metric>() {
-    CentroidsNode::Search<Metric>(
-      query, in, width, static_cast<bool>(out_centroids), _root.level,
-      std::span{&root_view, 1}, 0, _root.size, leaves);
+    CentroidsNode::Search<Metric>(query, in, width, _root.level,
+                                  std::span{&root_view, 1}, 0, _root.size,
+                                  layers, leaves);
     const auto k = std::min<size_t>(nprobe, leaves.size());
     const auto mid = leaves.begin() + k;
     const auto by_dist_desc = [](const CentroidsNode::Candidate& l,
@@ -573,6 +597,7 @@ CentroidsSpan CentroidsBuilder::Serialize(IndexOutput& out) const {
   for (size_t p = 0; p < layers.size(); ++p) {
     const auto& layer = layers[p];
     out.WriteU64(layer.rows);
+    LayerLayout::PadBody(out);
     for (size_t j = layer.first; j < layer.last; ++j) {
       out.WriteData(
         reinterpret_cast<const byte_type*>(_nodes[j].centroids.data()),

@@ -29,6 +29,8 @@
 #include <memory>
 #include <vector>
 
+#include "search/search_table_changes.h"
+
 namespace sdb::search {
 
 // What one committed transaction leaves behind until a refresh publishes it:
@@ -41,12 +43,14 @@ namespace sdb::search {
 // an unflushed iresearch transaction, so its keys travel as terms, bounded by
 // the threshold that kept them there. `removed` is the rowids the transaction
 // deleted: published rows that are no longer live, which a probe must discount
-// for exactly as long as the reader still shows them.
+// for exactly as long as the reader still shows them. It carries the ranges the
+// change entry recorded rather than their rowids, so a row-range DELETE is not
+// expanded here only to be walked once.
 struct PendingGeneration {
   uint64_t tick = 0;
   std::vector<irs::SegmentReader> segments;
   std::vector<std::vector<irs::bstring>> keys;
-  std::vector<int64_t> removed;
+  std::vector<RowRange> removed;
 
   bool Empty() const noexcept {
     return segments.empty() && keys.empty() && removed.empty();

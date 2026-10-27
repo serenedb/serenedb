@@ -3,7 +3,7 @@
 # DOCS_TEST_BODY
 
 statement ok
-SET preserve_identifier_case = false;
+SET preserve_identifier_case = 'lowercase';
 
 statement ok
 CREATE TABLE tbl AS SELECT cos(pi()) AS CosineOfPi;

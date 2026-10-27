@@ -20,8 +20,13 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <duckdb.hpp>
 #include <memory>
+#include <thread>
 
+#include "connector/duckdb_client_state.h"
+#include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 
 namespace sdb::pg {
@@ -157,6 +162,33 @@ TEST(ProgressRegistryTest, DetachedSourceReportsNoDuckDBProgress) {
   EXPECT_EQ(snap->rows_processed, 0);
 
   ProgressRegistry::Instance().Unregister(source.get());
+}
+
+TEST(ProgressRegistryTest,
+     ClosedRegistrationDetachesBeforeTheConnectionIsDestroyed) {
+  duckdb::DuckDB db{nullptr};
+  auto conn = std::make_unique<duckdb::Connection>(db);
+  auto& state = connector::SereneDBClientState::Register(
+    *conn->context,
+    std::make_shared<ConnectionContext>(*conn->context, "postgres", 0, "memory",
+                                        0, nullptr, 1006, nullptr));
+  ProgressRegistration registration{state.progress_source};
+  state.progress_source->BeginQuery("SELECT 1");
+
+  bool listed = false;
+  std::atomic_bool snapshotted;
+  std::thread observer{[&] {
+    listed = FindByPid(1006).has_value();
+    snapshotted.store(true, std::memory_order_relaxed);
+  }};
+  while (!snapshotted.load(std::memory_order_relaxed)) {
+  }
+  registration = {};
+  conn.reset();
+  observer.join();
+
+  EXPECT_TRUE(listed);
+  EXPECT_FALSE(FindByPid(1006).has_value());
 }
 
 TEST(ProgressNamesTest, CommandIoTypePhase) {

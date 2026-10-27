@@ -397,7 +397,7 @@ TEST(wordnet_synonyms_tests, make_state_invalid_input) {
   try {
     WordnetSynonymsTokenizer::MakeState("not a wordnet record");
     FAIL() << "expected irs::SqlException";
-  } catch (const irs::SqlException& e) {
+  } catch (const irs::SqlException&) {
   }
 }
 

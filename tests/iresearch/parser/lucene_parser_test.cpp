@@ -1446,6 +1446,30 @@ TEST_F(LuceneParserTest, FieldQuestionMarkWildcard) {
   AssertWildcard(*Optional().filters[0], kFieldId, "te_m");
 }
 
+TEST_F(LuceneParserTest, WildcardHeadIsLiteral) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "a_?"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "a\\__");
+}
+
+TEST_F(LuceneParserTest, WildcardHeadKeepsPercent) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "x%y?"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "x\\%y_");
+}
+
+TEST_F(LuceneParserTest, WildcardHeadKeepsBackslash) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "x\\\\y?"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "x\\\\y_");
+}
+
+TEST_F(LuceneParserTest, FnWildcardTermIsLiteral) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "fn:wildcard(a_b)"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "a\\_b");
+}
+
 TEST_F(LuceneParserTest, SuffixQuery) {
   ASSERT_TRUE(irs::ParseQuery(ctx, "*suffix"));
   ASSERT_EQ(1, Optional().size());
@@ -2167,6 +2191,18 @@ TEST_F(LuceneParserTest, MaxGapsOverMoreThanAPairIsRefused) {
   // which a phrase cannot say
   EXPECT_ANY_THROW(
     irs::ParseQuery(ctx, "fn:maxgaps(2 fn:ordered(alpha beta gamma))"));
+}
+
+TEST_F(LuceneParserTest, SlopOverAnIntervalGapIsRefused) {
+  EXPECT_ANY_THROW(irs::ParseQuery(ctx, "\"alpha 1-3 beta\"~2"));
+  EXPECT_ANY_THROW(irs::ParseQuery(ctx, "\"alpha 1-3 beta\"^2~2"));
+  EXPECT_ANY_THROW(irs::ParseQuery(ctx, "fn:ordered(alpha beta)^2~2"));
+}
+
+TEST_F(LuceneParserTest, SlopOverAnExactGapIsAPhrase) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "\"alpha 2-2 beta\"~1"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPhrase(*Optional().filters[0], kFieldId, 0.0f, 1);
 }
 
 TEST_F(LuceneParserTest, FieldExistenceIsRefused) {

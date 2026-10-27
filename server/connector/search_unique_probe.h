@@ -24,13 +24,15 @@
 #include <iresearch/utils/bytes_utils.hpp>
 #include <span>
 
+#include "search/search_table_changes.h"
+
 namespace sdb::connector {
 
 // "Does this key already exist outside the current transaction?" over the two
 // tiers a certifier cannot see from one reader: what the published reader
 // holds, and what committed transactions have left unpublished. Rows of the
 // second tier arrive as whole segments where their transaction flushed them
-// and as bare keys where it did not; `deleted_rowids` spans both tiers, since
+// and as bare keys where it did not; `deleted_ranges` spans both tiers, since
 // a removal is invisible in the reader until the same publish applies it.
 class UniqueProbe {
  public:
@@ -39,7 +41,7 @@ class UniqueProbe {
     std::span<const irs::SubReader* const> unpublished_segments,
     std::span<const std::vector<irs::bstring>* const> unpublished_keys,
     std::span<const irs::field_id> key_fields,
-    std::span<const int64_t> deleted_rowids);
+    std::span<const search::RowRange> deleted_ranges);
 
   bool Exists(std::span<const irs::bstring> key_terms);
 
@@ -58,7 +60,7 @@ class UniqueProbe {
 
   void AddSegment(const irs::SubReader& sub,
                   std::span<const irs::field_id> key_fields,
-                  std::span<const int64_t> deleted_rowids);
+                  std::span<const search::RowRange> deleted_ranges);
 
   // Unpublished keys indexed by key column, built on the first MayHold for
   // that column: the column the walk leads with is chosen after the probe is

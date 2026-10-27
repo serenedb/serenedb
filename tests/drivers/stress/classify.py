@@ -1,5 +1,7 @@
 import enum
 
+import faults
+
 SERIALIZATION_FAILURE = "40001"
 OBJECT_IN_USE = "55006"
 UNDEFINED_TABLE = "42P01"
@@ -166,7 +168,8 @@ def _finding(label):
 
 def has_crash_fault(faults_armed):
     return any(
-        name.startswith(CRASH_FAULT_PREFIXES) for name in (faults_armed or ())
+        name in faults.CRASH_FAULTS or name.startswith(CRASH_FAULT_PREFIXES)
+        for name in (faults_armed or ())
     )
 
 

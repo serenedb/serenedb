@@ -38,10 +38,6 @@
 	path = third_party/fmt
 	url = https://github.com/serenedb/fmt.git
 	shallow = true
-[submodule "third_party/liburing"]
-	path = third_party/liburing
-	url = https://github.com/serenedb/liburing.git
-	shallow = true
 [submodule "third_party/lz4"]
 	path = third_party/lz4
 	url = https://github.com/serenedb/lz4.git
@@ -62,6 +58,11 @@
 	path = third_party/sqllogictest-rs
 	url = https://github.com/serenedb/sqllogictest-rs.git
 	shallow = true
+[submodule "tests/sqllogic/any/pg/sqlite"]
+	path = tests/sqllogic/any/pg/sqlite
+	url = https://github.com/serenedb/sqllogictest.git
+	shallow = true
+	update = none
 [submodule "third_party/zstd"]
 	path = third_party/zstd
 	url = https://github.com/serenedb/zstd.git

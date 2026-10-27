@@ -1,43 +1,49 @@
 name: serenedb | create infra
-
 run-name: "serenedb | create infra"
 
 on:
   workflow_dispatch:
+  workflow_call:
     inputs:
-      LOCATION:
-        description: 'Where the build is executed'
-        type: choice
-        required: true
-        options:
-          - linux-amd64
-          - linux-arm64
-          - linux
-        default: 'linux-amd64'
-      PUSH_IMAGES_2_REGISTRY:
-        description: 'Push build images to Docker Hub'
-        required: true
-        type: boolean
-        default: false
-      TAG_LATEST:
-        description: 'Also tag the build image :latest, which every CI run uses by default'
-        required: true
-        type: boolean
-        default: false
-      TAG:
-        description: 'Also tag the build image with this name (e.g. a branch, / becomes -)'
-        required: false
+      REF:
+        description: 'The commit whose images the registry must have'
         type: string
-        default: ''
+        required: true
 
 permissions:
   contents: read
 
 jobs:
-  build-image:
-    name: Produce Build Image
+  missing:
+    name: Find the images the registry lacks
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.missing.outputs.images }}
+    steps:
+      - name: Checkout SereneDB
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.REF || github.sha }}
+          fetch-depth: 1
+          submodules: false
+
+      - name: List them
+        id: missing
+        working-directory: ./scripts/ci
+        run: |
+          images=$(./build_images.sh missing | paste -sd' ')
+          echo "images=$images" >> "$GITHUB_OUTPUT"
+          echo "missing: ${images:-none}"
+
+  build:
+    name: Build ${{ matrix.location }}
+    needs: missing
+    if: needs.missing.outputs.images != ''
+    strategy:
+      matrix:
+        location: [linux-amd64, linux-arm64]
     runs-on:
-      - ${{ inputs.LOCATION }}
+      - ${{ matrix.location }}
     steps:
       - name: Reap containers left on this runner
         run: |
@@ -50,26 +56,56 @@ jobs:
       - name: Checkout SereneDB
         uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.REF || github.sha }}
           fetch-depth: 1
           submodules: false
           clean: true
 
-      - name: Setup QEMU for multi-arch
-        run: docker run --rm --label "serenedb.owner=$SDB_DOCKER_OWNER" --privileged tonistiigi/binfmt --install all
-
-      - name: Build and push build images
+      - name: Build and push this architecture
         working-directory: ./scripts/ci
         env:
-          DOCKER_REGISTRY: serenedb
           DOCKER_USERNAME: serenedb
           DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
-          PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
-          TAG_LATEST: ${{ inputs.TAG_LATEST }}
-          EXTRA_TAG: ${{ inputs.TAG }}
-        run: ./build_images.sh
+        run: ./build_images.sh arch
+
+      - name: Reap containers of this job
+        if: always()
+        run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"
+
+  merge:
+    name: Join the architectures
+    needs: [missing, build]
+    if: needs.missing.outputs.images != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout SereneDB
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.REF || github.sha }}
+          fetch-depth: 1
+          submodules: false
+
+      - name: Push every image under its own tag
+        working-directory: ./scripts/ci
+        env:
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+        run: ./build_images.sh merge
+
+  notify:
+    name: Send notification
+    needs: [missing, build, merge]
+    if: always() && !cancelled() && inputs.REF == ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout SereneDB
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
 
       - name: Send notification
-        if: always() && !cancelled()
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
@@ -77,13 +113,9 @@ jobs:
           TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
           BRANCH: ${{ github.ref_name }}
-          JOB_STATUS: ${{ job.status }}
+          JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
           ACTOR: ${{ github.actor }}
           RUN_NAME: "serenedb | create infra"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/send_notification.bash
-
-      - name: Reap containers of this job
-        if: always()
-        run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"

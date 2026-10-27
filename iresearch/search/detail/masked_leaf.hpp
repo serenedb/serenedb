@@ -41,7 +41,7 @@ class MaskedLeaf {
     _packed = true;
   }
 
-  void Reset(const block_io::FillLeaf& leaf, const uint64_t* bitset,
+  void Reset(const block_io::FillLeaf& leaf, const UnalignedWord* bitset,
              uint32_t len) noexcept {
     _bitset = bitset;
     _len = len;
@@ -107,7 +107,7 @@ class MaskedLeaf {
     return doc_limits::eof();
   }
 
-  const uint64_t* _bitset = nullptr;
+  const UnalignedWord* _bitset = nullptr;
   uint64_t _prefix_word = 0;
   uint32_t _words = 0;
   uint32_t _len = 0;

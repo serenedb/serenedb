@@ -91,6 +91,14 @@ HINT: Nonspacing marks that accent := false keeps: a list of single marks, each 
 
 
 statement error
+SELECT normalize_tokens('Йод', accent := false, keep_marks := ['U0306']);
+----
+db error: ERROR: invalid value in "keep_marks" parameter
+DETAIL: "U0306" is not a single nonspacing mark
+HINT: Nonspacing marks that accent := false keeps: a list of single marks, each given as the character or as U+XXXX
+
+
+statement error
 SELECT normalize_tokens('Йод', accent := false, keep_marks := ['U+0306U+0308']);
 ----
 db error: ERROR: invalid value in "keep_marks" parameter

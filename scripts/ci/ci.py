@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "harness")]
 
-from testlib import store  # noqa: E402
+from testlib import selection, store  # noqa: E402
 from testlib.config import CONFIGS  # noqa: E402
 from testlib.scheduler import BAD  # noqa: E402
 
@@ -257,13 +257,17 @@ def cmd_shards(args):
     print(f"{total:.0f}s of work, biggest unit {biggest:.0f}s, {count} shard(s)", file=sys.stderr)
 
 
-def timing_key(config, arch):
-    return f"timing/{config}-{arch}.parquet"
+def timing_key(config, arch, attribute=False):
+    return f"timing/{config}{'-attribute' if attribute else ''}-{arch}.parquet"
 
 
 def _learns_from(name, args):
     pr = re.search(r"-pr(\d+)-", name)
-    return pr.group(1) == args.pr if pr else not args.pr
+    if args.from_prs:
+        return pr is not None
+    if args.pr:
+        return pr is not None and pr.group(1) == args.pr
+    return pr is None
 
 
 def cmd_timing(args):
@@ -273,13 +277,17 @@ def cmd_timing(args):
         sources = []
         if store.reachable():
             own = CONFIGS[args.config].slowdown
+            wanted = [(name, False, own / config.slowdown, name == args.config and not args.attribute)
+                      for name, config in CONFIGS.items()]
+            if args.attribute:
+                wanted.append((args.config, True, 1.0, True))
             other = next(a for a in ARCHES if a != args.arch)
-            for name, config in CONFIGS.items():
-                local = tmp / f"{name}.parquet"
-                if store.get(timing_key(name, args.arch), local):
-                    sources.append((local, own / config.slowdown, name == args.config))
-                elif store.get(timing_key(name, other), local):
-                    sources.append((local, own / config.slowdown, False))
+            for name, attribute, scale, measured in wanted:
+                local = tmp / Path(timing_key(name, args.arch, attribute)).name
+                if store.get(timing_key(name, args.arch, attribute), local):
+                    sources.append((local, scale, measured))
+                elif store.get(timing_key(name, other, attribute), local):
+                    sources.append((local, scale, False))
         store.timing_snapshot(tmp, sources, args.out)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -296,13 +304,14 @@ def cmd_update_timing(args):
             print("no results to learn timings from")
             return
         old = tmp / "old.parquet"
-        key = timing_key(args.config, args.arch)
+        key = timing_key(args.config, args.arch, args.attribute)
         have_old = store.get(key, old) and "seen" in {
             r["name"] for r in store.shell(f"SELECT name FROM parquet_schema('{old}')", tmp)}
+        source = ("coalesce(pr, '') <> '' AND status IN ('passed', 'setup')" if args.from_prs else
+                  f"coalesce(pr, '') = '{args.pr}' AND status IN ('passed', 'failed', 'flaky', 'setup')")
         attempts = (f"SELECT unit, coalesce(run, concat(sha, ':', started)) AS r, duration AS d, "
                     f"started AS s FROM read_parquet([{store.quoted(files)}], union_by_name = true) "
-                    f"WHERE coalesce(pr, '') = '{args.pr}' "
-                    f"AND status IN ('passed', 'failed', 'flaky', 'setup') "
+                    f"WHERE {source} AND coalesce(attribute, false) = {str(args.attribute).lower()} "
                     f"AND NOT wrapper AND duration > 0 AND coalesce(signature, '') <> 'budget'")
         runs = (f"SELECT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, sum(d) AS d, max(s) AS s "
                 f"FROM (SELECT unit, r, max(d) AS d, max(s) AS s FROM ({attempts}) GROUP BY ALL) "
@@ -319,6 +328,54 @@ def cmd_update_timing(args):
         print(f"{key}: learned from {len(files)} result file(s)")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def cmd_nearest(args):
+    path = Path(args.coverage)
+    data = json.loads(path.read_text())
+    spans = json.loads(Path(args.spans).read_text())
+    functions = {s[2] for d in data["uncovered"] for s in spans.get(d["file"], [])}
+    if not functions:
+        return
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        local = tmp / "map.parquet"
+        if not store.get(f"selection/dev-{args.arch}.parquet", local):
+            print("no selection map in the store yet")
+            return
+        covering = selection.covering_units(local, functions, tmp)
+        batches = selection.members_of(local, {r["unit"] for rows in covering.values() for r in rows},
+                                       tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    run = defaultdict(list)
+    for file, found in spans.items():
+        for start, end, function in found:
+            units = run[(file, start, end)]
+            for r in covering.get(function, []):
+                members = batches.get(r["unit"])
+                name = f"{members[0]} (+{len(members) - 1} in its batch)" if members else r["unit"]
+                if name not in units and r["rank"] <= selection.CHEAPEST:
+                    units.append(name)
+    for d in data["uncovered"]:
+        found = [(s, e) for s, e, _ in spans.get(d["file"], []) if run[(d["file"], s, e)]]
+        if not found:
+            continue
+        line = d["line"]
+        inside = [s for s in found if s[0] <= line <= s[1]]
+        span = (max(inside, key=lambda s: (s[0], -s[1])) if inside
+                else min(found, key=lambda s: min(abs(line - s[0]), abs(line - s[1]))))
+        d["tests"] = run[(d["file"], *span)][:selection.CHEAPEST]
+        d["tests_run"] = f"{d['file']}:{span[0]}-{span[1]}"
+    path.write_text(json.dumps(data, indent=1))
+
+
+def cmd_selection_map(args):
+    work = Path(args.work).resolve()
+    work.mkdir(parents=True, exist_ok=True)
+    stats = selection.build_map(args.run, args.config, args.arch, work, args.shards)
+    print(f"selection/{args.config}-{args.arch}.parquet: {stats['functions']} functions, "
+          f"{stats['units']} units, {stats['rows']} rows")
 
 
 def cmd_select_suites(args):
@@ -362,6 +419,24 @@ def cmd_coverage_report(args):
                     "--out", str(out)], check=True)
     shutil.rmtree(profiles)
     (out / "merged.profdata").unlink(missing_ok=True)
+    try:
+        cmd_nearest(argparse.Namespace(coverage=out / "coverage.json", spans=out / "spans.json",
+                                       arch=arch))
+    except (OSError, RuntimeError, ValueError) as e:
+        print(f"warning: no nearest tests for the uncovered lines: {e}", file=sys.stderr)
+    if args.config != "dev" or not os.environ.get("SDB_PR") or args.everything:
+        return
+    timing = out / "timing.json"
+    cmd_timing(argparse.Namespace(config=args.config, arch=arch, attribute=False, out=timing))
+    socket_group = str(os.stat("/var/run/docker.sock").st_gid)
+    res = subprocess.run([*docker, "--group-add", socket_group, "-e", "SDB_PR", "-e", "SDB_STORE_HOST",
+                          "-v", "/var/run/docker.sock:/var/run/docker.sock", image,
+                          "python3", "scripts/ci/test.py", "--build-dir", str(bundle), "--config", "dev",
+                          "--timing", str(timing), "--list", *args.test_args.split(),
+                          "--changed", args.base, "--selection-report", str(out / "selection.json"),
+                          "--selection-spans", str(out / "spans.json")], stdout=subprocess.DEVNULL)
+    if res.returncode != 0:
+        print("warning: no selection report", file=sys.stderr)
 
 
 def cmd_wait_check(args):
@@ -460,6 +535,10 @@ def cmd_results(args):
         store.jsonl_to_parquet(bad, bad.with_suffix(".parquet"))
         store.put(f"failures/{day}/{args.run}-{pr}{shard}.parquet", bad.with_suffix(".parquet"))
         print(f"failures/{day}/{args.run}-{pr}{shard}.parquet")
+    attribution = src.parent / "attribution.parquet"
+    if attribution.is_file():
+        store.put(f"attribution/{args.run}/{shard}.parquet", attribution)
+        print(f"attribution/{args.run}/{shard}.parquet")
 
 
 def main(argv):
@@ -511,6 +590,7 @@ def main(argv):
     p = sub.add_parser("timing", help="write the store's timing snapshot for a config as JSON")
     p.add_argument("--config", required=True)
     p.add_argument("--arch", required=True)
+    p.add_argument("--attribute", action="store_true", help="for a run with test.py --attribute")
     p.add_argument("--out", required=True)
     p.set_defaults(fn=cmd_timing)
     p = sub.add_parser("update-timing", help="learn a config's timings from main's recent results")
@@ -519,8 +599,22 @@ def main(argv):
     p.add_argument("--days", type=int, default=14)
     p.add_argument("--keep-days", type=int, default=30,
                    help="how long a unit missing from the recent results keeps its timing")
-    p.add_argument("--pr", default="", help="learn from this PR's runs instead (a calibration PR)")
+    p.add_argument("--attribute", action="store_true",
+                   help="learn the runs with test.py --attribute, which plan the next ones")
+    source = p.add_mutually_exclusive_group()
+    source.add_argument("--pr", default="", help="learn from this PR's runs instead (a calibration PR)")
+    source.add_argument("--from-prs", action="store_true",
+                        help="learn from the units that passed in PR runs: dev, whose main runs "
+                             "attribute coverage")
     p.set_defaults(fn=cmd_update_timing)
+    p = sub.add_parser("selection-map", help="build the test selection map from a run's attribution")
+    p.add_argument("--run", required=True)
+    p.add_argument("--config", default="dev")
+    p.add_argument("--arch", required=True)
+    p.add_argument("--work", required=True)
+    p.add_argument("--shards", type=int, required=True,
+                   help="how many shards the run had: a map from fewer is not published")
+    p.set_defaults(fn=cmd_selection_map)
     p = sub.add_parser("select-suites", help="print the test.py arguments for the suites a diff "
                                              "opens (scripts/ci/classify-changes.sh)")
     p.add_argument("--everything", action="store_true", help="every suite, whatever the diff")
@@ -531,12 +625,15 @@ def main(argv):
     p.add_argument("--no-duckdb", action="store_true",
                    help="leave out DuckDB's suites the diff opens (sqlsmith still follows core)")
     p.set_defaults(fn=cmd_select_suites)
-    p = sub.add_parser("coverage-report", help="report the coverage of a change from a run's profiles")
+    p = sub.add_parser("coverage-report", help="report the coverage of a change from a run's "
+                                               "profiles, with the nearest units and the selection")
     p.add_argument("--config", default="dev")
     p.add_argument("--digest", required=True, help="the bundle the run tested")
     p.add_argument("--run", required=True, help="<run id>-<attempt>")
     p.add_argument("--base", default="origin/main")
     p.add_argument("--shards", type=int, default=0, help="how many shards the run had")
+    p.add_argument("--test-args", default="", help="the run's test.py arguments, for the selection")
+    p.add_argument("--everything", action="store_true", help="the run ignored the selection")
     p.set_defaults(fn=cmd_coverage_report)
     p = sub.add_parser("wait-check", help="wait for a commit's check run to finish; fail unless it "
                                           "succeeded")
@@ -545,6 +642,12 @@ def main(argv):
     p.add_argument("--name", required=True)
     p.add_argument("--timeout", type=float, default=3600.0)
     p.set_defaults(fn=cmd_wait_check)
+    p = sub.add_parser("nearest", help="name the units that run the code nearest to each "
+                                       "uncovered line of a coverage report")
+    p.add_argument("--coverage", required=True)
+    p.add_argument("--spans", required=True, help="the changed files' function spans (spans.json)")
+    p.add_argument("--arch", required=True)
+    p.set_defaults(fn=cmd_nearest)
     p = sub.add_parser("results", help="store a shard's results as Parquet")
     p.add_argument("--results", required=True)
     p.add_argument("--run", required=True)

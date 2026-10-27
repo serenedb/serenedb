@@ -1,6 +1,7 @@
 import argparse
 import fnmatch
 import hashlib
+import json
 import math
 import os
 import platform
@@ -12,7 +13,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-from . import report
+from . import attribution, report, selection, store
 from .config import CONFIGS, Build, cpu_count, memory_gb
 from .scheduler import INTERRUPTED_EXIT, Context, Scheduler, install_signal_handlers
 from .suites import load_skips
@@ -88,6 +89,15 @@ def parse_args(argv):
                     help="run only the --changed units")
     ap.add_argument("--expect-fail", action="store_true",
                     help="every unit must fail (a fix's tests against the build without it)")
+    ap.add_argument("--attribute", action="store_true",
+                    help="coverage builds: every unit gets its own server and profile, and the "
+                         "functions it runs are recorded for test selection")
+    ap.add_argument("--selection-report", type=Path, default=None,
+                    help="write which units the store's selection map picks for the --changed "
+                         "diff (report only: the run still runs every unit)")
+    ap.add_argument("--selection-spans", type=Path, default=None,
+                    help="the changed files' function spans, from a coverage report "
+                         "(scripts/coverage/diff.py writes spans.json)")
     ap.add_argument("--list", action="store_true",
                     help="print the units and exit, and the digest of the plan to stderr")
     ap.add_argument("--plan", default="",
@@ -225,12 +235,31 @@ def changed_units(units, base, compiled=True):
     changed = ChangedTests(changed_files(base), compiled)
     picked = []
     tests = set()
+    claimed = set()
     for u in units:
-        members = {uid for uid in (*u.members, u.id) if changed.sources(uid)}
+        members = set()
+        for uid in (*u.members, u.id):
+            sources = changed.sources(uid)
+            if sources:
+                members.add(uid)
+                claimed |= sources
         if members:
             picked.append(u)
             tests |= members - {u.id} or {u.id}
-    return picked, tests
+    return picked, tests, claimed
+
+
+def write_selection(args, units, changed, claimed, out):
+    work = out / "selection"
+    work.mkdir(parents=True, exist_ok=True)
+    local = work / "map.parquet"
+    if not store.reachable() or not store.get(f"selection/dev-{platform.machine()}.parquet", local):
+        result = {"mode": "no map"}
+    else:
+        result = selection.report(units, args.changed, changed_files(args.changed), changed, claimed,
+                                  local, json.loads(args.selection_spans.read_text()), work,
+                                  pr=os.environ.get("SDB_PR", ""))
+    args.selection_report.write_text(json.dumps(result, indent=1))
 
 
 def shard(units, index, count, startup=lambda fixture: 0.0):
@@ -286,22 +315,28 @@ def main(argv):
         base_env["SDB_DRV_SERENED_BIN"] = str(build.bin("serened"))
     base_env.setdefault("SDB_DOCKER_OWNER", f"test-py-{os.getpid()}")
     os.environ["SDB_DOCKER_OWNER"] = base_env["SDB_DOCKER_OWNER"]
+    if args.attribute and not build.coverage:
+        raise SystemExit("--attribute needs a coverage build (SDB_COVERAGE=On)")
     ctx = Context(root=ROOT, build=build, config=config, out_dir=out,
                   timing=Timing.load(args.timing), jobs=jobs,
                   mem_gb=args.mem or memory_gb() * 0.75, verbose=args.verbose or args.keep,
-                  base_env=base_env, budget_end=budget_end)
+                  base_env=base_env, attribute=args.attribute, budget_end=budget_end)
     skips = load_skips(ROOT, config.name)
     units = build_units(ctx, args, suites, skips)
     if args.expect_fail and not args.changed:
         raise SystemExit("--expect-fail needs --changed")
-    changed, changed_tests = (changed_units(units, args.changed, compiled=not args.expect_fail)
-                              if args.changed else ([], set()))
+    changed, changed_tests, claimed = (changed_units(units, args.changed, compiled=not args.expect_fail)
+                                       if args.changed else ([], set(), set()))
     if args.expect_fail and not changed:
         raise SystemExit("the diff changes no test that can fail on the merge base: the bugfix check "
                          "runs the changed sqllogic, recovery, driver and DuckDB sqllogic tests, "
                          "while gtest, DuckDB C++ and re2 tests are compiled into its binaries")
     if args.only_changed:
         units = changed
+    if args.selection_report:
+        if not args.changed or not args.selection_spans:
+            raise SystemExit("--selection-report needs --changed and --selection-spans")
+        write_selection(args, units, changed, claimed, out)
     plan = hashlib.sha256("".join(sorted(f"{u.id}\t{u.cost!r}\n" for u in units)).encode()).hexdigest()
     if args.plan and args.plan != plan:
         raise SystemExit(f"this shard planned other units than the build job (plan {plan[:12]}, "
@@ -346,10 +381,13 @@ def main(argv):
         "started": started, "duration": time.time() - started,
         "sha": os.environ.get("SDB_SHA", ""), "pr": os.environ.get("SDB_PR", ""),
         "branch": os.environ.get("SDB_BRANCH", ""), "run": os.environ.get("SDB_RUN_ID", ""),
-        "plan": plan, "check": os.environ.get("SDB_CHECK", ""), "interrupted": sched.interrupted,
+        "attribute": args.attribute, "plan": plan,
+        "check": os.environ.get("SDB_CHECK", ""), "interrupted": sched.interrupted,
     }
     shard_skips = ctx.skips if index == 1 else []
     report.write(out, meta, results, shard_skips)
+    if args.attribute and (attribution.directory(ctx) / "index.jsonl").is_file():
+        store.attribution_parquet(attribution.directory(ctx), out / "attribution.parquet")
     print(report.summary(meta, results, shard_skips))
     if sched.interrupted:
         return INTERRUPTED_EXIT

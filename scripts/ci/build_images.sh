@@ -29,7 +29,7 @@ if [[ "$MODE" == arch || "$MODE" == merge ]]; then
 fi
 
 login() {
-	echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin >/dev/null
+	docker login -u "$DOCKER_USERNAME" --password-stdin <<<"$DOCKER_PASSWORD" >/dev/null
 }
 
 BUILT=()

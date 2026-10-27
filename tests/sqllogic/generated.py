@@ -8,8 +8,6 @@ import sys
 PLACEHOLDER = "<recorded>"
 PART = "<part>"
 KEY_WIDTH = 16
-SQL_WIDTH = 100
-LITERAL_WIDTH = 24
 NEW_ERRORS = "SDB_RECORD_NEW_ERRORS"
 
 
@@ -94,23 +92,6 @@ def unescape(text):
                   text)
 
 
-def excerpts(sqls):
-    queries = [sql.replace("\n", " ").replace("\t", " ") for sql in sqls]
-    prefix = os.path.commonprefix(queries) if len(queries) > 1 else ""
-    while prefix and (prefix.count("'") % 2 or not prefix.endswith(" ")):
-        prefix = prefix[:-1]
-    out = []
-    for sql in queries:
-        parts = sql[len(prefix):].split("'")
-        parts[1::2] = [part if len(part) <= LITERAL_WIDTH
-                       else part[:LITERAL_WIDTH - 3] + "..."
-                       for part in parts[1::2]]
-        sql = "'".join(parts)
-        out.append(sql if len(sql) <= SQL_WIDTH
-                   else sql[:SQL_WIDTH - 3] + "...")
-    return out
-
-
 def load(path):
     try:
         with open(path) as f:
@@ -121,11 +102,11 @@ def load(path):
     for line in lines:
         if not line:
             continue
-        key, _, rest = line.split("\t", 2)
+        key, _, rest = line.partition("\t")
         if rest.startswith("error\t"):
             records[key] = ("error", unescape(rest[len("error\t"):]))
         else:
-            records[key] = ("values", rest.split(" "))
+            records[key] = ("values", rest.split("\t"))
     return records
 
 
@@ -188,9 +169,13 @@ def record(text, overridden, target):
             value = cells[j] if j < len(cells) else ""
             if value == PLACEHOLDER:
                 return None
-            if not value or len(value.split()) != 1:
-                sys.exit(f"{target} can't record {value!r} at {expected[1]}")
+            if not value:
+                sys.exit(f"{target} can't record an empty value at "
+                         f"{expected[1]}")
             values.append(value)
+        if len(values) > 1 and values[0] == "error":
+            sys.exit(f"{target} can't record 'error' as the first of "
+                     f"several values at {expected[1]}")
         records[key] = ("values", values)
     return records
 
@@ -202,6 +187,17 @@ def generate(generator):
                       env.get("PYTHONPATH")]))
     return subprocess.run([sys.executable, generator], check=True, env=env,
                           stdout=subprocess.PIPE, text=True).stdout
+
+
+def show(generator, keys):
+    records = load(generator[:-len(".py")] + ".recorded")
+    for key, sql in recorded(generate(generator)):
+        if keys and key not in keys:
+            continue
+        kind, value = records.get(key, ("missing", None))
+        answer = ("not recorded" if kind == "missing" else
+                  f"error: {value}" if kind == "error" else "\t".join(value))
+        print(f"{key}\t{answer}\n{sql}\n")
 
 
 def main(command, generator, target):
@@ -228,11 +224,9 @@ def main(command, generator, target):
         print(f"{target} wasn't overridden, {path} is unchanged",
               file=sys.stderr)
         return
-    queries = recorded(text)
-    shown = dict(zip((key for key, _ in queries),
-                     excerpts([sql for _, sql in queries])))
+    queries = dict(recorded(text))
     previous = load(path)
-    fresh = [f"{key}\t{shown[key]}\n  {value}"
+    fresh = [f"{key}\t{queries[key]}\n  {value}"
              for key, (kind, value) in records.items()
              if kind == "error" and previous.get(key) != (kind, value)]
     if fresh and os.environ.get(NEW_ERRORS) != "1":
@@ -242,10 +236,13 @@ def main(command, generator, target):
     lines = []
     for key, (kind, value) in records.items():
         rest = (f"error\t{escape(value)}" if kind == "error"
-                else " ".join(value))
-        lines.append(f"{key}\t{shown[key]}\t{rest}")
+                else "\t".join(value))
+        lines.append(f"{key}\t{rest}")
     write(path, "\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:])
+    if sys.argv[1] == "show":
+        show(sys.argv[2], set(sys.argv[3:]))
+    else:
+        main(*sys.argv[1:])

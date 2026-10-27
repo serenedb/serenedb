@@ -38,6 +38,11 @@ def test_failed_checkpoint_marker_survives_second_crash(tmp_path: Path) -> None:
     try:
         server.start()
         with _connect(server) as pudge:
+            try:
+                pudge.execute("SET sdb_faults = 'pause_checkpoint'")
+                pudge.execute("SET sdb_faults = '-pause_checkpoint'")
+            except psycopg.Error:
+                pytest.skip("serened is built without fault injection")
             pudge.execute("CREATE TABLE donsimon_runs (id INTEGER, note TEXT)")
             pudge.execute("INSERT INTO donsimon_runs SELECT i, 'first' FROM range(0, 500) r(i)")
             pudge.execute("SET debug_checkpoint_abort = 'before_header'")

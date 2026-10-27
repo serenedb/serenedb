@@ -4,10 +4,33 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
+COVERAGE = Path(__file__).resolve().parent / "coverage"
 sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "scripts" / "coverage")]
 
 import diff  # noqa: E402
 import report  # noqa: E402
+
+
+def test_assertions_verification_and_unreachable_code_are_not_coverage_targets(monkeypatch):
+    monkeypatch.setattr(diff, "ROOT", COVERAGE)
+    monkeypatch.setattr(diff, "demangle", lambda names: {})
+    diff.source_lines.cache_clear()
+    spans = diff.parse_json((COVERAGE / "asserts.json").read_text())["asserts.cpp"]
+    data = diff.parse_lcov((COVERAGE / "asserts.lcov").read_text())["asserts.cpp"]
+    summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0], "mcdc": [0, 0]}
+    details = []
+    diff.cover("asserts.cpp", set(range(1, 200)), data, spans, summary, details)
+    diff.source_lines.cache_clear()
+    assert summary == {"lines": [14, 14], "functions": [3, 3], "branches": [4, 8], "mcdc": [0, 2]}
+    assert sorted((d["kind"], d.get("direction") or d["condition"],
+                   (d.get("condition_source") or d["source"]).strip()) for d in details) == [
+        ("branch", "false", "case 1:"),
+        ("branch", "false", "if (x > 0 && y > 0) {"),
+        ("branch", "false", "if (x > 0 && y > 0) {"),
+        ("branch", "false", "return sdb::coverage::Work(argc, argc) == 1 ? 0 : 1;"),
+        ("mcdc", 1, "x > 0"),
+        ("mcdc", 2, "y > 0"),
+    ]
 
 
 @pytest.mark.parametrize("path,test", [

@@ -1,16 +1,3 @@
-# ALTER SCHEMA ... RENAME TO, built the way a table rename works.
-#
-# The schema gets a new version under the new name in the schemas CatalogSet,
-# sharing its contents and its SchemaInfo with the old versions; the shared
-# name flips at ALTER time, so every child's schema name follows, the same way
-# a table's shared storage name flips. The dependency manager re-keys the
-# children's edges and refuses the rename when a child has a dependent that
-# stores names as text (a view or a macro), the same rule a table rename
-# applies to its own dependents. Concurrency is the table's: alters of one
-# schema conflict through the catalog set, and writes into the schema's tables
-# by other transactions are not refused.
-
-
 statement ok
 CREATE SCHEMA csr_a;
 
@@ -111,6 +98,16 @@ DROP SEQUENCE csr_b.t_id_seq;
 db error: ERROR: Cannot drop entry "t_id_seq" because there are entries that depend on it.
 <slt:ignore>
 
+
+statement error
+DROP TYPE csr_b.mood;
+----
+db error: ERROR: Cannot drop entry "mood" because there are entries that depend on it.
+<slt:ignore>
+
+
+statement ok
+ALTER TABLE csr_b.m ADD COLUMN extra INTEGER;
 
 statement error
 DROP TYPE csr_b.mood;
@@ -251,3 +248,38 @@ DETAIL: The prefix "pg_" is reserved for system schemas.
 
 statement ok
 DROP SCHEMA csr_reserved;
+
+
+statement ok
+CREATE SCHEMA csr_copy_a;
+
+statement ok
+CREATE TYPE csr_copy_a.mood AS ENUM ('sad', 'ok');
+
+statement ok
+CREATE TABLE csr_copy_a.m (id INTEGER, m csr_copy_a.mood);
+
+statement ok
+ALTER SCHEMA csr_copy_a RENAME TO csr_copy_b;
+
+
+control substitution on
+
+statement ok
+CREATE DATABASE csr_copy_${__DATABASE__};
+
+statement ok
+COPY FROM DATABASE ${__DATABASE__} TO csr_copy_${__DATABASE__};
+
+statement error
+DROP TYPE csr_copy_${__DATABASE__}.csr_copy_b.mood;
+----
+db error: ERROR: Cannot drop entry "mood" because there are entries that depend on it.
+<slt:ignore>
+
+
+statement ok
+DROP DATABASE csr_copy_${__DATABASE__};
+
+statement ok
+DROP SCHEMA csr_copy_b CASCADE;

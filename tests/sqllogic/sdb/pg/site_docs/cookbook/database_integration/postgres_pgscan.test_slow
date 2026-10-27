@@ -1,7 +1,7 @@
 control substitution on
 
 # Doc examples for the cookbook "Query PostgreSQL" page. The `_pgscan` filename
-# suffix tells tests/sqllogic/run.sh to bring up a real postgres backend at
+# suffix tells scripts/ci/test.py to bring up a real postgres backend at
 # ${PGHOST}:${PGPORT}. Display SQL (DOCS_TEST_RAW, the `#|` lines) uses the
 # friendly alias `pg` and localhost; the runnable body uses the substituted
 # host/port/user and a per-run unique alias so concurrent runs don't collide.

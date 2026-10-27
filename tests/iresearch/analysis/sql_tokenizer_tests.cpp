@@ -27,21 +27,16 @@
 #include <iresearch/utils/pg/sql_exception.hpp>
 
 #include "gtest/gtest.h"
+#include "test_resources.hpp"
 #include "token_sink_utils.hpp"
 
 namespace {
 
 using irs::analysis::SqlTokenizer;
 
-duckdb::ClientContext& TestContext() {
-  static auto* conn =
-    new duckdb::Connection{irs::DuckDBEngine::Instance().instance()};
-  return *conn->context;
-}
-
 irs::analysis::Tokenizer::ptr MakeBound(std::string expression) {
   auto a = SqlTokenizer::Make({.expression = std::move(expression)});
-  a->Bind(TestContext());
+  a->Bind(tests::EngineContext());
   return a;
 }
 
@@ -138,7 +133,7 @@ TEST(SqlTokenizerTest, pipelineNullDropKeepsStackedPositions) {
   stages.emplace_back(SqlTokenizer::Make(
     {.expression = "CASE WHEN length(input) >= 3 THEN input END"}));
   irs::analysis::PipelineTokenizer pipe{std::move(stages)};
-  pipe.Bind(TestContext());
+  pipe.Bind(tests::EngineContext());
   const auto tokens =
     tests::Analyze(pipe, "search engine", irs::TokenLayout::TermsPos);
   ASSERT_TRUE(tokens.has_value());
@@ -202,10 +197,10 @@ TEST(SqlTokenizerTest, matchesDelimitedTokenizer) {
 
 TEST(SqlTokenizerTest, rebindAcrossPoolCycles) {
   auto a = SqlTokenizer::Make({.expression = "upper(input)"});
-  a->Bind(TestContext());
+  a->Bind(tests::EngineContext());
   ASSERT_EQ(tests::AnalyzeTerms(*a, "x"), (std::vector<std::string>{"X"}));
   a->Unbind();
-  a->Bind(TestContext());
+  a->Bind(tests::EngineContext());
   ASSERT_EQ(tests::AnalyzeTerms(*a, "y"), (std::vector<std::string>{"Y"}));
 }
 
@@ -232,7 +227,7 @@ TEST(SqlTokenizerTest, parseErrors) {
 TEST(SqlTokenizerTest, bindErrors) {
   const auto expect_bind_error = [&](std::string expression) {
     auto a = SqlTokenizer::Make({.expression = std::move(expression)});
-    ASSERT_THROW(a->Bind(TestContext()), irs::SqlException);
+    ASSERT_THROW(a->Bind(tests::EngineContext()), irs::SqlException);
   };
   expect_bind_error("no_such_function_xyz(input)");
   expect_bind_error("upper(no_such_column)");
@@ -272,14 +267,14 @@ TEST(SqlTokenizerTest, traits_unique_by_mode) {
   {
     SqlTokenizer a{{.expression = "upper(input)"}};
     ASSERT_FALSE(a.Traits().unique);
-    a.Bind(TestContext());
+    a.Bind(tests::EngineContext());
     ASSERT_TRUE(a.Traits().unique);
     a.Unbind();
     ASSERT_TRUE(a.Traits().unique);
   }
   {
     SqlTokenizer a{{.expression = "string_split(input, ',')"}};
-    a.Bind(TestContext());
+    a.Bind(tests::EngineContext());
     ASSERT_FALSE(a.Traits().unique);
   }
 }

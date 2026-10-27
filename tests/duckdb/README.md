@@ -9,26 +9,23 @@ the regular sqllogic tree under [tests/sqllogic/](../sqllogic/).
 
 ## Prereqs
 
-- A configured build dir (`build/`). The `unittest` binary is built by default;
-  the driver will `ninja unittest` for you if needed. Configure with
-  `-DSDB_BUILD_DUCKDB_UNITTESTS=OFF` to skip it (the driver then refuses to run).
-- `docker` for the `postgres_scanner` suite only, and only when `PGHOST` isn't
-  already set: the runner then brings up the PostGIS fixture image
-  (`tests/sqllogic/fixtures/postgres`, postgres 18.6) on a free port via
-  [docker-compose.postgres.yml](docker-compose.postgres.yml). CI sets `PGHOST`,
-  so it reuses the postgres already in the compose stack.
-- `docker` for the `iceberg` suite, unless the Iceberg REST fixture already
-  answers at `127.0.0.1:8181` (see [The iceberg fixture](#the-iceberg-fixture)).
+- A configured build dir. The `unittest` binary is built by default; run
+  `ninja unittest` after a change. Configure with `-DSDB_BUILD_DUCKDB_UNITTESTS=OFF`
+  to skip it, and no DuckDB suite runs.
+- `docker` for the suites with services: `scripts/ci/test.py` starts each service
+  when the first test that needs it runs.
+- PySpark for the `iceberg` suite's data ([The iceberg fixture](#the-iceberg-fixture)):
+  the CI image has it, so without it on the host run the suite through
+  `scripts/ci/run_shard.sh`.
 
 ## Running
 
 ```bash
-tests/duckdb/run.sh                    # every suite
-tests/duckdb/run.sh --suite core       # just duckdb core
-tests/duckdb/run.sh --suite avro,inet  # a subset
-tests/duckdb/run.sh --suite interop    # DuckDB files against the official duckdb/duckdb image
-tests/duckdb/run.sh --jobs 8           # 8 test files at a time (default: nproc)
-tests/duckdb/run.sh --list             # suite names
+scripts/ci/test.py --build-dir build_clangd --suite duckdb                         # every suite
+scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite core     # just duckdb core
+scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite avro --duckdb-suite inet
+scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite interop  # DuckDB files against the official duckdb/duckdb image
+scripts/ci/test.py --build-dir build_clangd --suite duckdb --test '*test/sql/aggregate/*'
 ```
 
 The binary registers core's test tree plus each statically linked extension's
@@ -36,22 +33,17 @@ The binary registers core's test tree plus each statically linked extension's
 is selected purely by name filter. Those filters are also what makes `.test_slow`
 run: those files carry Catch2's hidden `[.]` tag, which an unfiltered run skips.
 
-Test files run in parallel the way `tests/sqllogic/run.sh --jobs` runs them:
-`--jobs` (or `DUCKDB_JOBS`) is handed to `unittest`, which lists the matching
-tests and keeps that many copies of itself running, one test file each,
-`.test_slow` files first. Every copy has its own scratch dir
-(`duckdb_unittest_tempdir/<pid>/`), `HOME` and spill directory (an in-memory
-database spills under the scratch dir; a database file keeps its `<db>.tmp`).
-The `postgres_scanner` suite is the exception: its files share the fixture's
-`postgresscanner` database and reuse table names, so it runs as a second,
-sequential `unittest` call. The core tests that check wall-clock windows around
-their sleeps (`CORE_SERIAL_TESTS` in `run.sh`) run in that call too: next to the
-parallel files' load, a commit's fsync can stall the schedule past the window.
+Every test file is a result of its own (`duckdb:<suite>:<file>`, and the `cpp`
+suite's cases likewise), run in batches of about 30 seconds of work by one
+`unittest --jobs 2` each. Every copy of `unittest` has its own scratch dir
+(`duckdb_unittest_tempdir/<run>/`), `HOME` and spill directory. Some files run one
+at a time: the `postgres_scanner` suite's share the fixture's `postgresscanner`
+database and reuse table names, the S3-gated httpfs tests share bucket objects,
+and the core tests that check wall-clock windows around their sleeps would see a
+commit's fsync stall past the window next to other files' load. A config's skip
+entries are reported as skipped results with their reason.
 
-The log lands in `out/test-results/duckdb.log` (override with `REPORTS_DIR`). In CI
-the run comes from `048-ci-in-docker-run-duckdb-tests.bash` via
-[docker-compose.duckdb.yml](../sqllogic/docker-compose.duckdb.yml), with the suite
-list (`DUCKDB_SUITES`) derived from the diff by `scripts/ci/classify-changes.sh`:
+In CI the suites a diff opens come from `scripts/ci/classify-changes.sh`:
 duckdb itself or any dependency it shares selects every suite, while an
 extension-only dependency selects just that extension.
 
@@ -190,7 +182,7 @@ A suite with a `config/<suite>.json` runs with it as DuckDB's `--test-config`,
 listing the tests we skip and why. Everything not on that list is a live regression gate on
 the fork -- if a test starts failing, the fork broke it.
 
-A sanitizer or Debug build (`SDB_SANITIZE` set, or `CMAKE_BUILD_TYPE=Debug`) also runs with [config/slow_build.json](config/slow_build.json). It sets `TEST_MAX_EXECUTION_TIME`, the limit of the tests that stop a runaway query with `SET max_execution_time={TEST_MAX_EXECUTION_TIME}` (declared with `test-env` and its normal default), to 300 seconds.
+A sanitizer, coverage or Debug build (`SDB_SANITIZE` set, `SDB_COVERAGE=On`, or `CMAKE_BUILD_TYPE=Debug`) also runs with [config/slow_build.json](config/slow_build.json). It sets `TEST_MAX_EXECUTION_TIME`, the limit of the tests that stop a runaway query with `SET max_execution_time={TEST_MAX_EXECUTION_TIME}` (declared with `test-env` and its normal default), to 300 seconds.
 
 The skips fall into a few kinds, and the `reason` on every entry says which:
 
@@ -219,7 +211,7 @@ shows: a scratch `--root-dir` with `benchmark` and `extension` symlinked from
 
 ## Environment-gated tests
 
-Upstream gates tests that need a service or a credential behind `require-env`. `run.sh` provides every service that can run in a container and exports the variables, so these tests run; the services live in [docker-compose.duckdb.yml](../sqllogic/docker-compose.duckdb.yml) in CI and are started on demand locally:
+Upstream gates tests that need a service or a credential behind `require-env`. `test.py` provides every service that can run in a container and exports the variables, so these tests run:
 
 | Suite | What runs | Variables |
 |---|---|---|
@@ -231,9 +223,9 @@ Upstream gates tests that need a service or a credential behind `require-env`. `
 | iceberg | the REST fixture and the Spark data ([above](#the-iceberg-fixture)), `mitmdump` on `localhost:8878` as its proxy and on `localhost:19133` with the vended-credentials script | `FIXTURE_SERVER_AVAILABLE`, `DUCKDB_ICEBERG_HAVE_GENERATED_DATA`, `HTTP_PROXY_PUBLIC`, `VENDED_CREDENTIAL_REFRESH_PROXY` |
 | postgres_scanner | the PostGIS fixture image (`tests/sqllogic/fixtures/postgres`) with `postgis` created | `HAS_POSTGIS`; `SANITIZER_BUILD` when the build sets `SDB_SANITIZE` |
 
-The S3-gated httpfs tests share bucket objects (both `version_id_pinning` tests rewrite the same file), so they run sequentially, like the postgres_scanner suite.
+The S3-gated httpfs tests share bucket objects (both `version_id_pinning` tests rewrite the same file), so they run sequentially, like the postgres_scanner suite. One SeaweedFS serves them on `duckdb-minio.com:9000` and the Iceberg fixture on `127.0.0.1:9000`; a service a test writes into restarts, with everything on top of it, before a failed test reruns.
 
-Locally `run.sh` starts the S3 server only when `duckdb-minio.com` and its bucket names resolve, as upstream requires. Point them at a loopback address other than `127.0.0.1`, whose port 9000 belongs to the Iceberg fixture:
+`test.py` starts the S3 server only when `duckdb-minio.com` and its bucket names resolve to one loopback address other than `127.0.0.1`, as upstream requires; the CI container has these hosts:
 
 ```
 127.0.0.2 duckdb-minio.com test-bucket.duckdb-minio.com test-bucket-2.duckdb-minio.com test-bucket-public.duckdb-minio.com
@@ -273,7 +265,7 @@ A DuckDB file must hold only what DuckDB reads, so SereneDB-only state (stored g
 - if DuckDB can store the change, add its DDL/DML to `base.sql` or `changes.sql` and a query to `check_base.sql` or `check_changes.sql`;
 - if it cannot, add the refusal to `third_party/duckdb/test/sql/storage/serenedb_state_in_duckdb_file.test`;
 - a new compression method or layout goes into `INTEROP_COMPRESSIONS`, when DuckDB has the method;
-- run `tests/duckdb/run.sh --suite core,interop`.
+- run `scripts/ci/test.py --build-dir <build> --suite duckdb --duckdb-suite core --duckdb-suite interop`.
 
 ## The postgres_scanner fixture
 
@@ -283,25 +275,25 @@ Three things about the postgres fixture are non-obvious:
   `attach_postgres.json`.** Upstream's config is for the inverse scenario
   (running DuckDB *core's* suite against postgres-as-storage); its
   `on_new_connection: USE pgdb;` breaks duckdb_postgres' own tests.
-- **The locale is pinned to `C.UTF-8`** (here and in the CI compose file).
+- **The locale is pinned to `C.UTF-8`.**
   DuckDB rewrites `col LIKE 'foo9%'` into `col >= 'foo9' AND col < 'foo:'`;
   under the postgres image's default `en_US.utf8`, `:` sorts before `9`, so the
   range excludes matching rows and `attach_like.test` fails. Upstream's CI runs
   a C-locale postgres and never hits this.
-- **`tpch.lineitem` is synthetic (10k rows).** Upstream seeds tpch through
-  DuckDB's dbgen; we don't ship the CLI, so the runner fakes the one table
-  `attach_timeout_error.test` needs to trip its 1s statement_timeout.
+- **The `tpch` schema is TPC-H at scale factor 0.01** from DuckDB's own `dbgen`,
+  loaded through `unittest --stdin` ([provision_tpch.test](provision_tpch.test)):
+  `scanner/tpch.test_slow` compares against the sf 0.01 answers.
 
 ## The iceberg fixture
 
 The `iceberg` suite runs most of duckdb_iceberg's tests against a live catalog: `apache/iceberg-rest-fixture` with SeaweedFS as its S3 store, the same pair upstream's CI uses. Upstream's tests and `test/configs/fixture.json` hard-code `127.0.0.1:8181` (REST) and `127.0.0.1:9000` (S3), so the fixture always listens there:
 
-- **Locally**, `run.sh` starts the extension's own [scripts/docker-compose.yml](../../third_party/duckdb_iceberg/scripts/docker-compose.yml) on those host ports, and stops it at exit. A fixture that already answers at `127.0.0.1:8181` is reused.
-- **In CI**, [docker-compose.duckdb.yml](../sqllogic/docker-compose.duckdb.yml) runs SeaweedFS, the bucket setup and the REST server in one network namespace that the tests container joins, so they are on its `127.0.0.1`. `ICEBERG_FIXTURE_RUNNING=1` tells `run.sh` to wait for that fixture, not start one.
+- **In CI** the SeaweedFS shared with the S3 tests, the bucket setup and the REST server join the test container's network namespace, so they are on its `127.0.0.1`.
+- **Locally** they publish those host ports.
 
-Before the tests, [generate_iceberg_data.sh](generate_iceberg_data.sh) runs upstream's own data generators (`scripts/data_generators`, PySpark 4.0 with the Iceberg runtime jar checked into the submodule) twice: against the REST catalog (`fixture`), and into `data/generated/iceberg/spark-local` (`local`). Many tests compare what DuckDB writes with what Spark wrote, so the reference data comes from Spark itself. The build image carries PySpark, a Java 21 runtime for it (Spark 4.0's Hadoop does not run on newer Java) and the Ivy cache of the Spark packages, so nothing is downloaded. Outside the image (no `pyspark` on the host), `run.sh` runs the generator in `BUILD_IMAGE` (default `serenedb/serenedb-build-ubuntu:latest`). Its log is `out/test-results/iceberg-data.log`.
+Before the tests, [generate_iceberg_data.sh](generate_iceberg_data.sh) runs upstream's own data generators (`scripts/data_generators`, PySpark 4.0 with the Iceberg runtime jar checked into the submodule) twice: against the REST catalog (`fixture`), and into `data/generated/iceberg/spark-local` (`local`). Many tests compare what DuckDB writes with what Spark wrote, so the reference data comes from Spark itself. The build image carries PySpark, a Java 21 runtime for it (Spark 4.0's Hadoop does not run on newer Java) and the Ivy cache of the Spark packages, so nothing is downloaded. Its log is `out/test/services/iceberg-data.log`.
 
-The suite then runs in three `unittest` calls: the extension's tests without the catalog directories in parallel, then, in upstream CI's order and with its `--order lex`, `catalog_test_config_setup` with upstream's `fixture.json`, and `catalog_custom_setup` (`FIXTURE_SERVER_AVAILABLE`). The catalog tests share one REST catalog, its namespaces and its table names, so they run sequentially and in that order: some count the requests or namespaces an earlier test leaves behind.
+The extension's tests outside the catalog directories run in batches like every suite. The catalog tests run as one unit, in upstream CI's order and with its `--order lex`: `catalog_test_config_setup` with upstream's `fixture.json`, then `catalog_custom_setup` (`FIXTURE_SERVER_AVAILABLE`). They share one REST catalog, its namespaces and its table names, so they run sequentially and in that order: some count the requests or namespaces an earlier test leaves behind. `http_proxy.test` reads the proxy's log from `third_party/duckdb_iceberg/mitmproxy.log`, which the fixture removes when it stops.
 
 ## Traps
 
@@ -311,8 +303,8 @@ The suite then runs in three `unittest` calls: the extension's tests without the
   `Table with name ... already exists`. The default scratch dir
   (`duckdb_unittest_tempdir/<pid>/` under the test-dir) is gitignored in every
   vendored repo, so there is nothing to work around.
-- **`unittest` is ~1.3GB.** That's why it's behind `SDB_BUILD_DUCKDB_UNITTESTS`
-  and why CI only builds it when a `third_party/` diff puts these suites in scope.
+- **`unittest` is ~1.3GB.** That's why it's behind `SDB_BUILD_DUCKDB_UNITTESTS`;
+  CI builds it in every config but `perf`.
 - **Don't switch these runs to `-r junit`.** Catch2 v2 allows one reporter, so
   the junit one replaces the console output that carries every failure's query,
   expected value and actual value -- and it counts each skipped test as a

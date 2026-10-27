@@ -109,6 +109,32 @@ TEST(ListenSpec, HttpDatabaseParam) {
   EXPECT_TRUE(Parse({"http://127.0.0.1:4318?api=otel"})[0].database.empty());
 }
 
+TEST(ListenSpec, HttpCreateSchemaParam) {
+  EXPECT_TRUE(Parse({"http://127.0.0.1:4318?api=otel"})[0].create_schema);
+  EXPECT_TRUE(Parse({"http://127.0.0.1:4318?api=otel&create_schema=true"})[0]
+                .create_schema);
+  EXPECT_FALSE(Parse({"http://127.0.0.1:4318?api=otel&create_schema=false"})[0]
+                 .create_schema);
+}
+
+TEST(ListenSpec, CreateSchemaOnPgIsRejected) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"postgres://127.0.0.1:7890?create_schema=false"});
+    },
+    "'create_schema' is only valid on an http endpoint");
+}
+
+TEST(ListenSpec, CreateSchemaNeedsBoolean) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"http://127.0.0.1:4318?api=otel&create_schema=maybe"});
+    },
+    "invalid boolean for 'create_schema'");
+}
+
 TEST(ListenSpec, HttpsImpliesTls) {
   const auto specs = Parse({"https://127.0.0.1:9443?api=es"});
   ASSERT_EQ(specs.size(), 1u);

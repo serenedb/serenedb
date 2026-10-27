@@ -30,6 +30,7 @@ namespace {
 TEST(SearchEngineTest, ManualCompactionKeepsAnnWorkersWhenEverySlotIsBusy) {
   Server server;
   BackgroundScheduler scheduler;
+  scheduler.start();
   SearchEngine engine;
   int held = 0;
   while (engine.TryAcquireCompaction()) {
@@ -43,6 +44,7 @@ TEST(SearchEngineTest, ManualCompactionKeepsAnnWorkersWhenEverySlotIsBusy) {
   for (; held != 0; --held) {
     engine.ReleaseCompaction();
   }
+  scheduler.stop();
 }
 
 }  // namespace

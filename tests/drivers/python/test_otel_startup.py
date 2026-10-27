@@ -35,10 +35,11 @@ def _break_schema(tmp_path: Path, statement: str) -> None:
         server.close()
 
 
-def _start_otel(tmp_path: Path) -> subprocess.CompletedProcess:
+def _start_otel(tmp_path: Path,
+                params: str = "api=otel") -> subprocess.CompletedProcess:
     with reserve_port() as pg_sock, reserve_port() as http_sock:
         listen = (f"postgres://127.0.0.1:{pg_sock.getsockname()[1]},"
-                  f"http://127.0.0.1:{http_sock.getsockname()[1]}?api=otel")
+                  f"http://127.0.0.1:{http_sock.getsockname()[1]}?{params}")
         return subprocess.run(
             [SERENED_BIN, str(tmp_path / "data"), f"--listen={listen}"],
             capture_output=True, text=True, timeout=60,
@@ -121,6 +122,55 @@ def _indexes_of(server: _Server, table: str) -> list[str]:
     return [row[0] for row in server.pg.execute(
         "SELECT indexname FROM pg_indexes WHERE tablename = %s "
         "ORDER BY indexname", (table,)).fetchall()]
+
+
+def test_without_create_schema_exports_wait_for_the_tables(
+        tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel&create_schema=false")
+    try:
+        assert _otel_objects(server, "pg_tables") == 0
+        assert "Exports answer 503" in server.serened.log.tail(0)
+        logs = (FIXTURES / "logs/basic.json").read_bytes()
+        metrics = (FIXTURES / "metrics/mixed_batch.json").read_bytes()
+        assert server.post("/v1/logs", logs, "application/json") == 503
+        assert server.post("/v1/metrics", metrics, "application/json") == 503
+
+        sql = (FIXTURES.parent / "otel_schema.sql").read_text()
+        for statement in sql.split(";\n"):
+            if statement.strip():
+                server.pg.execute(statement)
+
+        assert server.post("/v1/logs", logs, "application/json") == 200
+        assert server.post("/v1/metrics", metrics, "application/json") == 200
+        assert server.count("otel_logs") > 0
+        assert server.count("otel_metrics_gauge") > 0
+    finally:
+        server.close()
+
+
+def test_without_create_schema_mistyped_column_answers_503(
+        tmp_path: Path) -> None:
+    _break_schema(
+        tmp_path,
+        'CREATE TABLE otel_logs ("timestamp" VARCHAR NOT NULL) '
+        "WITH (storage = 'search')",
+    )
+    server = _Server(tmp_path, "api=otel&create_schema=false")
+    try:
+        assert "invalid OpenTelemetry schema" in server.serened.log.tail(0)
+        body = (FIXTURES / "logs/basic.json").read_bytes()
+        assert server.post("/v1/logs", body, "application/json") == 503
+        assert _otel_objects(server, "pg_tables") == 1
+    finally:
+        server.close()
+
+
+def test_without_create_schema_missing_database_refuses_startup(
+        tmp_path: Path) -> None:
+    result = _start_otel(tmp_path, "api=otel&db=telemetry&create_schema=false")
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "database 'telemetry' does not exist" in output, output
 
 
 def test_missing_table_is_created_with_its_index(tmp_path: Path) -> None:
@@ -236,7 +286,7 @@ def test_failed_metrics_export_writes_no_table(tmp_path: Path) -> None:
         conn.request("POST", "/v1/metrics", body=body, headers=headers)
         response = conn.getresponse()
         response.read()
-        assert response.status == 500
+        assert response.status == 503
         for table in ("otel_metrics_gauge", "otel_metrics_sum",
                       "otel_metrics_histogram"):
             assert server.count(table) == 0, table

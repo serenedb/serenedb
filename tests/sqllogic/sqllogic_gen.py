@@ -4,6 +4,7 @@ import sys
 import textwrap
 
 RECORDED = "<recorded>"
+PART = "<part>"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -24,6 +25,9 @@ class Test:
             self._lines += textwrap.wrap(paragraph, 78, initial_indent="# ",
                                          subsequent_indent="# ")
         self._lines.append("")
+
+    def part(self):
+        self._lines += [PART, ""]
 
     def section(self, title):
         self._lines += textwrap.wrap(title, 78, initial_indent="# --- ",

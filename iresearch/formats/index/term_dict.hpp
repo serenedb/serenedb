@@ -67,8 +67,10 @@ struct FsstEncoderDelete {
 
 using FsstEncoder = std::unique_ptr<duckdb_fsst_encoder_t, FsstEncoderDelete>;
 
+inline constexpr size_t kMaxRecordBytes = 128;
+
 struct RecordBytes {
-  std::array<byte_type, 128> bytes;
+  std::array<byte_type, kMaxRecordBytes> bytes;
 };
 
 class RecordOutput final : private RecordBytes, public BufferedOutput {
@@ -293,12 +295,23 @@ class TermReaderImpl final : public TermReader {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
 
   const FieldReader& Owner() const noexcept { return *_owner; }
+  TermPostings::ptr PostingsOf(IndexFeatures features, const PostingMeta& meta,
+                               TermPostings::ptr reuse) const;
   uint32_t Blocks() const noexcept { return _blocks; }
   bool Single() const noexcept { return _blocks == 0; }
   const PostingMeta& SingleMeta() const noexcept { return _single; }
   bool Small() const noexcept { return _blocks == 1; }
   const duckdb_fsst_decoder_t* Fsst() const noexcept;
   const Root& GetRoot() const noexcept { return _root; }
+  uint32_t BlockOf(bytes_view key) const noexcept {
+    return Small() ? 0 : static_cast<uint32_t>(_root.Find(key));
+  }
+  uint32_t BlockFrom(uint32_t block, bytes_view key) const noexcept {
+    return block + 1 < _blocks && _root.NotAfter(block + 1, key)
+             ? static_cast<uint32_t>(_root.FindFrom(block + 1, key))
+             : block;
+  }
+  uint32_t BlockEnd(bytes_view upper) const;
   bytes_view KeyPrefix() const noexcept {
     return bytes_view{_min_key}.substr(0, _prefix_size);
   }
@@ -429,6 +442,13 @@ class FieldReader final {
 
 inline const duckdb_fsst_decoder_t* TermReaderImpl::Fsst() const noexcept {
   return _owner->Fsst();
+}
+
+inline TermPostings::ptr TermReaderImpl::PostingsOf(
+  IndexFeatures features, const PostingMeta& meta,
+  TermPostings::ptr reuse) const {
+  return _owner->Postings().Postings(_meta.index_features, features, meta,
+                                     _has_score_bounds, std::move(reuse));
 }
 
 inline uint64_t TermReaderImpl::BlockOffset(size_t block) const noexcept {

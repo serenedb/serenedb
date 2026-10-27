@@ -54,13 +54,10 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
   const bytes_view type_tag = has_min   ? bytes_view{rng.min}.substr(0, 1)
                               : has_max ? bytes_view{rng.max}.substr(0, 1)
                                         : bytes_view{};
-  const bstring from = !has_min ? bstring{type_tag}
-                       : rng.min_type == BoundType::Exclusive
-                         ? AfterKey(rng.min)
-                         : rng.min;
-  const bstring to = !has_max ? UpperBoundOf(type_tag)
-                     : rng.max_type == BoundType::Inclusive ? AfterKey(rng.max)
-                                                            : rng.max;
+  const bstring from =
+    has_min ? RangeLower(rng.min, rng.min_type) : bstring{type_tag};
+  const bstring to =
+    has_max ? RangeUpper(rng.max, rng.max_type) : UpperBoundOf(type_tag);
   auto query = memory::make_tracked<MultiTermQuery>(
     ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
   MultiTermVisitor mtv{ctx, query->State(), *reader};

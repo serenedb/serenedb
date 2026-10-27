@@ -57,6 +57,38 @@ constexpr uint32_t kArtLongRest = kArtInline + 1;
 constexpr uint32_t kArtMissing = std::numeric_limits<uint32_t>::max();
 constexpr byte_type kArtAbsent = 0x80;
 
+struct ArtMeta {
+  uint32_t depth;
+  uint32_t fanout;
+  ArtKind kind;
+  bool terminal;
+  uint8_t path;
+};
+
+uint64_t PackArtMeta(const ArtMeta& meta) noexcept {
+  return meta.depth | uint64_t{meta.fanout} << 32 |
+         uint64_t{static_cast<uint8_t>(meta.kind)} << 48 |
+         uint64_t{meta.terminal} << 50 | uint64_t{meta.path} << 56;
+}
+
+constexpr uint32_t ArtDepth(uint64_t meta) noexcept {
+  return static_cast<uint32_t>(meta);
+}
+
+constexpr uint32_t ArtFanout(uint64_t meta) noexcept {
+  return static_cast<uint32_t>(meta >> 32) & 0xFFFF;
+}
+
+constexpr ArtKind ArtKindOf(uint64_t meta) noexcept {
+  return static_cast<ArtKind>((meta >> 48) & 3);
+}
+
+constexpr uint32_t ArtTerminal(uint64_t meta) noexcept {
+  return static_cast<uint32_t>(meta >> 50) & 1;
+}
+
+constexpr uint64_t ArtPath(uint64_t meta) noexcept { return meta >> 56; }
+
 IRS_FORCE_INLINE uint64_t LoadHead(const byte_type* p, size_t size) noexcept {
   if (size >= sizeof(uint64_t)) {
     return absl::big_endian::Load64(p);
@@ -150,7 +182,7 @@ size_t SeparatorBytes(const Separators& separators) noexcept {
 }
 
 EytzingerRoot::EytzingerRoot(Separators separators)
-  : _separators{std::move(separators)},
+  : SeparatorRoot{std::move(separators)},
     _prefix{SharedPrefix(_separators)},
     _count{SeparatorCount(_separators)} {
   const size_t count = _count;
@@ -229,15 +261,20 @@ size_t EytzingerRoot::FindFrom(size_t from, bytes_view key) const noexcept {
   });
 }
 
-TreeRoot::TreeRoot(Separators separators)
-  : _separators{std::move(separators)},
-    _prefix{SharedPrefix(_separators)},
-    _count{SeparatorCount(_separators)} {
+std::vector<size_t> TreeRoot::LevelSizes(size_t count) {
   std::vector<size_t> sizes{
-    std::max<size_t>(1, (_count + kFanout - 1) / kFanout)};
+    std::max<size_t>(1, (count + kFanout - 1) / kFanout)};
   while (sizes.back() != 1) {
     sizes.push_back((sizes.back() + kFanout - 1) / kFanout);
   }
+  return sizes;
+}
+
+TreeRoot::TreeRoot(Separators separators)
+  : SeparatorRoot{std::move(separators)},
+    _prefix{SharedPrefix(_separators)},
+    _count{SeparatorCount(_separators)} {
+  const auto sizes = LevelSizes(_count);
   const size_t height = sizes.size();
   _levels.resize(height);
   size_t total = 0;
@@ -351,7 +388,7 @@ bool TreeRoot::NotAfter(size_t block, bytes_view key) const noexcept {
   return SeparatorAt(_separators, block - 1) <= key;
 }
 
-ArtRoot::ArtRoot(Separators separators) : _separators{std::move(separators)} {
+ArtRoot::ArtRoot(Separators separators) : SeparatorRoot{std::move(separators)} {
   const size_t count = SeparatorCount(_separators);
   if (count < 2) {
     return;
@@ -396,10 +433,13 @@ ArtRoot::ArtRoot(Separators separators) : _separators{std::move(separators)} {
     _words.resize(children + 2 * slots);
     const size_t path = depth - from;
     _words[at] = lo | uint64_t{hi} << 32;
-    _words[at + 1] = depth | uint64_t{fanout} << 32 |
-                     uint64_t{static_cast<uint8_t>(kind)} << 48 |
-                     uint64_t{terminal} << 50 |
-                     (path <= kArtInline ? path : kArtLongPath) << 56;
+    _words[at + 1] = PackArtMeta({
+      .depth = static_cast<uint32_t>(depth),
+      .fanout = static_cast<uint32_t>(fanout),
+      .kind = kind,
+      .terminal = terminal,
+      .path = static_cast<uint8_t>(path <= kArtInline ? path : kArtLongPath),
+    });
     _words[at + 2] =
       path <= kArtInline ? LoadHead(first.data() + from, path) : 0;
     auto* map = reinterpret_cast<byte_type*>(_words.data() + at + kArtHeader);
@@ -464,10 +504,10 @@ size_t ArtRoot::Find(bytes_view key) const noexcept {
     const auto first = static_cast<uint32_t>(node[0]);
     const auto end = static_cast<uint32_t>(node[0] >> 32);
     const uint64_t meta = node[1];
-    const auto depth = static_cast<uint32_t>(meta);
+    const auto depth = ArtDepth(meta);
     if (from != depth) {
       const size_t shared = std::min<size_t>(depth, key.size());
-      if (const uint64_t path = meta >> 56; path != kArtLongPath) {
+      if (ArtPath(meta) != kArtLongPath) {
         const uint64_t head =
           shared > from ? LoadHead(key.data() + from, shared - from) : 0;
         if (head != node[2]) {
@@ -483,11 +523,11 @@ size_t ArtRoot::Find(bytes_view key) const noexcept {
       }
     }
     if (key.size() <= depth) {
-      return key.size() < depth ? first : first + ((meta >> 50) & 1);
+      return key.size() < depth ? first : first + ArtTerminal(meta);
     }
     const byte_type label = key[depth];
-    const auto fanout = static_cast<uint32_t>(meta >> 32) & 0xFFFF;
-    const auto kind = static_cast<ArtKind>((meta >> 48) & 3);
+    const auto fanout = ArtFanout(meta);
+    const auto kind = ArtKindOf(meta);
     const uint64_t* children = node + kArtHeader;
     uint32_t slot;
     if (kind == ArtKind::Node16) {

@@ -33,6 +33,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::term_dict {
@@ -50,6 +51,17 @@ constexpr uint64_t kFsstMaxMeanSuffix = 16;
 constexpr uint64_t kFsstMinRatioPct = 115;
 constexpr byte_type kZeros[kPage]{};
 constexpr uint32_t kNoBlock = std::numeric_limits<uint32_t>::max();
+constexpr size_t kBatchTerms = 64;
+
+[[noreturn]] void Corrupted(std::string_view what) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                  ERR_MSG("term dictionary: bad ", what));
+}
+
+[[noreturn]] void Corrupted(std::string_view what, field_id id) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                  ERR_MSG("term dictionary: bad ", what, " of field ", id));
+}
 
 uint64_t VSize(uint64_t value) noexcept {
   return bytes_io<uint64_t, sizeof(uint64_t)>::vsize(value);
@@ -75,9 +87,8 @@ void AppendFieldPrefix(bstring& out, uint32_t ordinal) {
 uint64_t VarBytes(uint64_t count, uint64_t head_skip, uint32_t max,
                   uint64_t suffixes, uint64_t records) noexcept {
   const uint64_t restarts = (count + kRestartInterval - 1) / kRestartInterval;
-  return 2 + VSize(count) + VSize(restarts) + VSize(suffixes) +
-         VSize(records) + VSize(head_skip) +
-         (kVarRestart + kHeadBytes) * restarts +
+  return 2 + VSize(count) + VSize(restarts) + VSize(suffixes) + VSize(records) +
+         VSize(head_skip) + (kVarRestart + kHeadBytes) * restarts +
          kRecordOffset * RecordGroups(count) +
          count * (2 * uint64_t{ColumnWidth(max)} + 2) + suffixes + records +
          kSlack;
@@ -95,6 +106,31 @@ uint64_t FixedBytes(uint64_t count, uint64_t records, uint64_t width,
 bytes_view KeyAt(const BlockBuilder& block, size_t i) noexcept {
   const uint32_t begin = i == 0 ? 0 : block.ends[i - 1];
   return {block.keys.data() + begin, block.ends[i] - begin};
+}
+
+struct VarEntry {
+  bytes_view suffix;
+  size_t lcp;
+  uint32_t head_skip;
+  bool restart;
+};
+
+VarEntry VarEntryAt(const BlockBuilder& block, uint32_t index,
+                    bytes_view key) noexcept {
+  const bool restart = index % kRestartInterval == 0;
+  const size_t lcp =
+    restart ? 0 : CommonPrefixLength(KeyAt(block, index - 1), key);
+  uint32_t head_skip = block.head_skip;
+  if (restart) {
+    head_skip = static_cast<uint32_t>(
+      index == 0 ? key.size() : CommonPrefixLength(KeyAt(block, 0), key));
+  }
+  return {
+    .suffix = key.substr(lcp),
+    .lcp = lcp,
+    .head_skip = head_skip,
+    .restart = restart,
+  };
 }
 
 void Clear(VarColumns& columns) noexcept {
@@ -147,10 +183,9 @@ bool Compresses(duckdb_fsst_encoder_t* encoder, bstring& arena,
          raw * 100 >= coded * kFsstMinRatioPct + table_size * 100;
 }
 
-uint32_t ColumnMax(const VarColumns& columns, size_t lcp,
-                   size_t len) noexcept {
-  return std::max({columns.max, static_cast<uint32_t>(lcp),
-                   static_cast<uint32_t>(len)});
+uint32_t ColumnMax(const VarColumns& columns, size_t lcp, size_t len) noexcept {
+  return std::max(
+    {columns.max, static_cast<uint32_t>(lcp), static_cast<uint32_t>(len)});
 }
 
 void AppendEntry(VarColumns& columns, bool restart, size_t lcp,
@@ -244,7 +279,7 @@ void Serialize(const BlockBuilder& block, bstring& page) {
 
 uint32_t Find(const BlockView& view, Probe key,
               const duckdb_fsst_decoder_t* fsst) noexcept {
-  if (view.kind == BlockKind::Var) {
+  if (!view.fixed) {
     const auto bound = VarLowerBound(view, key, fsst);
     return bound.equal ? bound.entry : kNoEntry;
   }
@@ -354,10 +389,8 @@ class TermIteratorImpl : public SeekTermIterator {
 
   TermPostings::ptr ReusePostings(IndexFeatures features,
                                   TermPostings::ptr reuse) const final {
-    const auto& field = _cursor.Field();
-    return field.Owner().Postings().Postings(
-      field.meta().index_features, features, _cursor.Meta(),
-      field.HasScoreBounds(), std::move(reuse));
+    return _cursor.Field().PostingsOf(features, _cursor.Meta(),
+                                      std::move(reuse));
   }
 
  private:
@@ -377,7 +410,7 @@ class TermIteratorImpl : public SeekTermIterator {
 void RecordOutput::WriteDirect(const byte_type*, size_t) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                   ERR_MSG("term dictionary: posting record exceeds ",
-                          RecordBytes{}.bytes.size(), " bytes"));
+                          kMaxRecordBytes, " bytes"));
 }
 
 void FsstEncoderDelete::operator()(
@@ -490,7 +523,7 @@ void FieldWriter::write(const BasicTermReader& reader) {
   const bool freq_exists =
     IndexFeatures::None != (props.index_features & IndexFeatures::Freq);
 
-  const auto consume = [&](auto&& term_of, const PostingMeta& meta) {
+  const auto consume = [&](bytes_view term, const PostingMeta& meta) {
     if (freq_exists) {
       sum_tfreq += meta.freq;
     }
@@ -498,7 +531,6 @@ void FieldWriter::write(const BasicTermReader& reader) {
       return;
     }
     sum_dfreq += meta.docs_count;
-    const bytes_view term = term_of();
     Add(term, meta);
     if (_ranges.Active()) {
       _ranges.Add(term, meta);
@@ -513,7 +545,7 @@ void FieldWriter::write(const BasicTermReader& reader) {
       PostingMeta meta;
       auto postings = terms->postings(props.index_features);
       _pw.Write(*postings, meta);
-      consume([&] { return terms->value(); }, meta);
+      consume(terms->value(), meta);
     }
   } else {
     constexpr size_t kTermBatch = 128;
@@ -524,7 +556,7 @@ void FieldWriter::write(const BasicTermReader& reader) {
       for (size_t i = 0; i != n; ++i) {
         PostingMeta meta;
         _pw.WritePostings(posting_batch[i], meta);
-        consume([&] { return term_batch[i]; }, meta);
+        consume(term_batch[i], meta);
       }
     }
   }
@@ -612,68 +644,50 @@ bool FieldWriter::AppendFixedKey(bytes_view key, uint64_t records) {
 
 void FieldWriter::AppendVarColumns(uint32_t index, bytes_view key) {
   auto& block = _block;
-  const bool restart = index % kRestartInterval == 0;
-  const size_t lcp =
-    restart ? 0 : CommonPrefixLength(KeyAt(block, index - 1), key);
-  const auto suffix = key.substr(lcp);
-  if (restart) {
-    block.head_skip = static_cast<uint32_t>(
-      index == 0 ? key.size() : CommonPrefixLength(KeyAt(block, 0), key));
-  }
-  AppendEntry(block.raw, restart, lcp, suffix);
+  const auto entry = VarEntryAt(block, index, key);
+  block.head_skip = entry.head_skip;
+  AppendEntry(block.raw, entry.restart, entry.lcp, entry.suffix);
   if (_fsst && _encode && block.all_coded) {
-    AppendEntry(block.coded, restart, lcp,
-                restart ? suffix : EncodeSuffix(suffix));
+    AppendEntry(block.coded, entry.restart, entry.lcp,
+                entry.restart ? entry.suffix : EncodeSuffix(entry.suffix));
   }
 }
 
 bool FieldWriter::AppendVarKey(bytes_view key, uint64_t records) {
   auto& block = _block;
   const auto count = static_cast<uint32_t>(block.ends.size());
-  if (block.kind == BlockKind::FixedStride) {
-    const auto fixed_size = block.size;
+  const bool converts = block.kind == BlockKind::FixedStride;
+  if (converts) {
     for (uint32_t i = 0; i != count; ++i) {
       AppendVarColumns(i, KeyAt(block, i));
     }
-    block.kind = BlockKind::Var;
-    if (!AppendVarKey(key, records)) {
-      Clear(block.raw);
-      Clear(block.coded);
-      block.coded_size = std::numeric_limits<uint64_t>::max();
-      block.head_skip = 0;
-      block.size = fixed_size;
-      block.kind = BlockKind::FixedStride;
-      return false;
-    }
-    return true;
   }
-  const bool restart = count % kRestartInterval == 0;
-  const size_t lcp =
-    restart ? 0 : CommonPrefixLength(KeyAt(block, count - 1), key);
-  const auto suffix = key.substr(lcp);
-  uint32_t head_skip = block.head_skip;
-  if (restart) {
-    head_skip = static_cast<uint32_t>(
-      count == 0 ? key.size() : CommonPrefixLength(KeyAt(block, 0), key));
-  }
+  const auto entry = VarEntryAt(block, count, key);
   const auto size_with = [&](const VarColumns& columns, size_t suffix_size) {
-    return VarBytes(count + 1, head_skip, ColumnMax(columns, lcp, suffix_size),
+    return VarBytes(count + 1, entry.head_skip,
+                    ColumnMax(columns, entry.lcp, suffix_size),
                     columns.suffixes.size() + suffix_size, records);
   };
-  const uint64_t size = size_with(block.raw, suffix.size());
+  const uint64_t size = size_with(block.raw, entry.suffix.size());
   const bool encode = _fsst && _encode && block.all_coded;
   bytes_view coded;
   uint64_t coded_size = std::numeric_limits<uint64_t>::max();
   if (encode) {
-    coded = restart ? suffix : EncodeSuffix(suffix);
+    coded = entry.restart ? entry.suffix : EncodeSuffix(entry.suffix);
     coded_size = size_with(block.coded, coded.size());
   }
   if (count != 0 && std::min(size, coded_size) > kPage) {
+    if (converts) {
+      Clear(block.raw);
+      Clear(block.coded);
+      block.head_skip = 0;
+    }
     return false;
   }
-  AppendEntry(block.raw, restart, lcp, suffix);
+  block.kind = BlockKind::Var;
+  AppendEntry(block.raw, entry.restart, entry.lcp, entry.suffix);
   if (encode) {
-    AppendEntry(block.coded, restart, lcp, coded);
+    AppendEntry(block.coded, entry.restart, entry.lcp, coded);
     block.coded_size = coded_size;
   } else if (block.all_coded) {
     block.all_coded = false;
@@ -681,7 +695,7 @@ bool FieldWriter::AppendVarKey(bytes_view key, uint64_t records) {
     block.coded_size = std::numeric_limits<uint64_t>::max();
   }
   block.size = size;
-  block.head_skip = head_skip;
+  block.head_skip = entry.head_skip;
   return true;
 }
 
@@ -877,10 +891,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, field_id id,
              " exceeds uint32_t::max");
   _freq.value = static_cast<uint32_t>(total);
 
-  const auto corrupted = [&] {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                    ERR_MSG("term dictionary: bad record of field ", id));
-  };
+  const auto corrupted = [&] { Corrupted("record", id); };
   in.Seek(meta.body_offset);
   const auto flags = in.ReadByte();
   bstring prefix;
@@ -897,7 +908,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, field_id id,
     _max_key = _min_key;
     RecordBytes record{};
     const auto size = in.ReadV32();
-    if (size > record.bytes.size()) {
+    if (size > kMaxRecordBytes) {
       corrupted();
     }
     in.ReadData(record.bytes.data(), size);
@@ -955,11 +966,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, field_id id,
 }
 
 uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in) {
-  const auto corrupted = [&] {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-      ERR_MSG("term dictionary: bad range levels of field ", _meta.id));
-  };
+  const auto corrupted = [&] { Corrupted("range levels", _meta.id); };
   const auto offset = in.ReadV64();
   const auto size = in.ReadV64();
   if (size == 0 || offset > owner.RangesSize() ||
@@ -1014,9 +1021,7 @@ void TermReaderImpl::ReadInline(PostingMeta& meta, BlockBuffer& buffer) const {
   const uint64_t end =
     Small() ? _inline_base + _small_inline.size() : InlineEnd() - InlineBegin();
   if (meta.inline_end < begin + meta.inline_size || meta.inline_end > end) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-      ERR_MSG("term dictionary: bad inline postings of field ", _meta.id));
+    Corrupted("inline postings", _meta.id);
   }
   const uint64_t at = meta.inline_end - meta.inline_size;
   if (Small()) {
@@ -1106,13 +1111,18 @@ SeekTermIterator::ptr TermReaderImpl::IteratorUntil(bytes_view upper) const {
   }
   auto it = memory::make_managed<TermIteratorImpl>(*this);
   if (!upper.empty() && !Small()) {
-    PaddedKey key;
-    key.Assign(KeyPrefix(), upper);
-    it->ReadaheadUntil(upper > max()
-                         ? _blocks
-                         : static_cast<uint32_t>(_root.Find(key.Key())) + 1);
+    it->ReadaheadUntil(BlockEnd(upper));
   }
   return it;
+}
+
+uint32_t TermReaderImpl::BlockEnd(bytes_view upper) const {
+  if (upper.empty() || upper > max()) {
+    return _blocks;
+  }
+  PaddedKey key;
+  key.Assign(KeyPrefix(), upper);
+  return BlockOf(key.Key()) + 1;
 }
 
 bool TermReaderImpl::Excludes(bytes_view term) const noexcept {
@@ -1129,14 +1139,14 @@ PostingMeta TermReaderImpl::Lookup(bytes_view term) const {
   }
   PaddedKey padded;
   const auto probe = padded.Assign(KeyPrefix(), term);
-  const size_t block = Small() ? 0 : _root.Find(padded.Key());
+  const uint32_t block = BlockOf(padded.Key());
   BlockBuffer buffer;
   const auto view = Parse(Block(block, buffer));
   const auto entry = Find(view, probe, Fsst());
   if (entry == kNoEntry) {
     return {};
   }
-  auto meta = DecodeRecord(*this, view, static_cast<uint32_t>(block), entry);
+  auto meta = DecodeRecord(*this, view, block, entry);
   if (meta.inline_size != 0) {
     ReadInline(meta, buffer);
   }
@@ -1152,8 +1162,8 @@ void TermReaderImpl::LookupBatch(std::span<const bytes_view> terms,
     }
     return;
   }
-  std::vector<uint32_t> blocks(terms.size(), kNoBlock);
-  std::vector<std::pair<uint64_t, uint64_t>> ranges;
+  containers::SmallVector<uint32_t, kBatchTerms> blocks(terms.size(), kNoBlock);
+  containers::SmallVector<std::pair<uint64_t, uint64_t>, kBatchTerms> ranges;
   PaddedKey padded;
   uint32_t last = kNoBlock;
   bytes_view last_term;
@@ -1167,13 +1177,9 @@ void TermReaderImpl::LookupBatch(std::span<const bytes_view> terms,
       continue;
     }
     padded.Assign(KeyPrefix(), term);
-    const auto key = padded.Key();
-    auto block = last;
-    if (block == kNoBlock || term < last_term) {
-      block = static_cast<uint32_t>(_root.Find(key));
-    } else if (block + 1 < _blocks && _root.NotAfter(block + 1, key)) {
-      block = static_cast<uint32_t>(_root.FindFrom(block + 1, key));
-    }
+    const auto block = last == kNoBlock || term < last_term
+                         ? BlockOf(padded.Key())
+                         : BlockFrom(last, padded.Key());
     blocks[i] = last = block;
     last_term = term;
     ranges.emplace_back(BlockOffset(block), BlockOffset(block + 1));
@@ -1225,8 +1231,7 @@ void TermReaderImpl::ReadDocs(bytes_view term, Acceptor acceptor) const {
     acceptor(doc_limits::min() + meta.doc_delta);
     return;
   }
-  auto docs_it = _owner->Postings().Postings(
-    _meta.index_features, IndexFeatures::None, meta, _has_score_bounds);
+  auto docs_it = PostingsOf(IndexFeatures::None, meta, {});
   doc_id_t docs[doc_limits::kBlockSize];
   while (const auto n = docs_it->NextDocs(docs, nullptr)) {
     for (uint32_t i = 0; i != n; ++i) {
@@ -1315,16 +1320,12 @@ void FieldReader::FillCopies() {
 
 Separators FieldReader::ReadBody(IndexInput& in, uint64_t offset,
                                  uint64_t head) {
-  const auto corrupted = [](std::string_view what) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                    ERR_MSG("term dictionary: bad ", what));
-  };
   if (head == 0 || offset > in.Length() || head > in.Length() - offset) {
-    corrupted("head extent");
+    Corrupted("head extent");
   }
   in.Seek(offset);
   if (in.ReadV32() != kRestartInterval) {
-    corrupted("restart interval");
+    Corrupted("restart interval");
   }
   const auto blocks = in.ReadV32();
   _block_count = blocks;
@@ -1332,7 +1333,7 @@ Separators FieldReader::ReadBody(IndexInput& in, uint64_t offset,
     _first_page = in.ReadV64();
     const auto spans = in.ReadV32();
     if (spans > blocks) {
-      corrupted("block directory");
+      Corrupted("block directory");
     }
     _spans.reserve(spans);
     uint64_t block = 0;
@@ -1340,21 +1341,20 @@ Separators FieldReader::ReadBody(IndexInput& in, uint64_t offset,
     for (uint32_t i = 0; i != spans; ++i) {
       const auto delta = in.ReadV32();
       if (i != 0 && delta == 0) {
-        corrupted("block directory");
+        Corrupted("block directory");
       }
       block += delta;
       extra += in.ReadV32();
       if (block >= blocks || extra > std::numeric_limits<uint32_t>::max()) {
-        corrupted("block directory");
+        Corrupted("block directory");
       }
       _spans.push_back({
         .block = static_cast<uint32_t>(block),
         .extra = static_cast<uint32_t>(extra),
       });
     }
-    if (_first_page > offset / kPage ||
-        PageOffset(blocks - 1) >= offset) {
-      corrupted("block directory");
+    if (_first_page > offset / kPage || PageOffset(blocks - 1) >= offset) {
+      Corrupted("block directory");
     }
   }
   const auto size = in.ReadV64();
@@ -1368,7 +1368,7 @@ Separators FieldReader::ReadBody(IndexInput& in, uint64_t offset,
       duckdb_fsst_import(decoder.get(), table.data(), table.size());
     if (consumed == DUCKDB_FSST_IMPORT_VERSION_MISMATCH ||
         consumed == DUCKDB_FSST_IMPORT_OUT_OF_BOUNDS) {
-      corrupted("FSST table");
+      Corrupted("FSST table");
     }
     _fsst = std::move(decoder);
   }
@@ -1378,7 +1378,7 @@ Separators FieldReader::ReadBody(IndexInput& in, uint64_t offset,
   if (in.Position() > _inline_offset ||
       _inline_size > in.Length() - _inline_offset ||
       _ranges_size > in.Length() - _inline_offset - _inline_size) {
-    corrupted("inline postings");
+    Corrupted("inline postings");
   }
   _bytes = _spans.capacity() * sizeof(SpanningBlock) +
            (_fsst ? sizeof(duckdb_fsst_decoder_t) : 0);

@@ -121,36 +121,22 @@ void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
       key.append(kStringEnd);
     } break;
     case duckdb::LogicalTypeId::FLOAT: {
-      auto val = duckdb::UnifiedVectorFormat::GetData<float>(fmt)[idx];
-      auto base = key.size();
+      const auto val = irs::numeric_utils::CanonicalFloat(
+        duckdb::UnifiedVectorFormat::GetData<float>(fmt)[idx]);
+      const auto base = key.size();
       irs::utils::StrAppend(key, sizeof(float));
-      if (val != 0 && !std::isnan(val)) {
-        absl::big_endian::Store32(key.data() + base,
-                                  irs::numeric_utils::Ftoi32(val));
-        key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      } else if (val == 0) {
-        static constexpr char kZero[] = "\x80\0\0\0";
-        std::memcpy(key.data() + base, kZero, sizeof(float));
-      } else {
-        static constexpr char kPosNaN[] = "\xFF\xC0\x00\x00";
-        std::memcpy(key.data() + base, kPosNaN, sizeof(float));
-      }
+      absl::big_endian::Store32(key.data() + base,
+                                irs::numeric_utils::Ftoi32(val));
+      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
     } break;
     case duckdb::LogicalTypeId::DOUBLE: {
-      auto val = duckdb::UnifiedVectorFormat::GetData<double>(fmt)[idx];
-      auto base = key.size();
+      const auto val = irs::numeric_utils::CanonicalFloat(
+        duckdb::UnifiedVectorFormat::GetData<double>(fmt)[idx]);
+      const auto base = key.size();
       irs::utils::StrAppend(key, sizeof(double));
-      if (val != 0 && !std::isnan(val)) {
-        absl::big_endian::Store64(key.data() + base,
-                                  irs::numeric_utils::Dtoi64(val));
-        key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      } else if (val == 0) {
-        static constexpr char kZero[] = "\x80\0\0\0\0\0\0\0";
-        std::memcpy(key.data() + base, kZero, sizeof(double));
-      } else {
-        static constexpr char kPosNaN[] = "\xFF\xF8\x00\x00\x00\x00\x00\x00";
-        std::memcpy(key.data() + base, kPosNaN, sizeof(double));
-      }
+      absl::big_endian::Store64(key.data() + base,
+                                irs::numeric_utils::Dtoi64(val));
+      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
       break;
     }
     default:

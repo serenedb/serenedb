@@ -118,7 +118,25 @@ size_t SeparatorCount(const Separators& separators) noexcept;
 bytes_view SeparatorAt(const Separators& separators, size_t i) noexcept;
 size_t SeparatorBytes(const Separators& separators) noexcept;
 
-class EytzingerRoot {
+class SeparatorRoot {
+ public:
+  size_t Blocks() const noexcept { return SeparatorCount(_separators) + 1; }
+  bytes_view Separator(size_t block) const noexcept {
+    return SeparatorAt(_separators, block - 1);
+  }
+  bool NotAfter(size_t block, bytes_view key) const noexcept {
+    return Separator(block) <= key;
+  }
+
+ protected:
+  SeparatorRoot() = default;
+  explicit SeparatorRoot(Separators separators) noexcept
+    : _separators{std::move(separators)} {}
+
+  Separators _separators;
+};
+
+class EytzingerRoot : public SeparatorRoot {
  public:
   struct alignas(16) Node {
     uint64_t head;
@@ -131,15 +149,9 @@ class EytzingerRoot {
   EytzingerRoot(EytzingerRoot&&) noexcept = default;
   EytzingerRoot& operator=(EytzingerRoot&&) noexcept = default;
 
-  size_t Blocks() const noexcept { return SeparatorCount(_separators) + 1; }
+  using SeparatorRoot::NotAfter;
   size_t Find(bytes_view key) const noexcept;
   size_t FindFrom(size_t from, bytes_view key) const noexcept;
-  bool NotAfter(size_t block, bytes_view key) const noexcept {
-    return Separator(block) <= key;
-  }
-  bytes_view Separator(size_t block) const noexcept {
-    return SeparatorAt(_separators, block - 1);
-  }
   size_t MemoryBytes() const noexcept {
     return SeparatorBytes(_separators) + _storage.capacity() * sizeof(Node);
   }
@@ -150,34 +162,22 @@ class EytzingerRoot {
   size_t Outside(bytes_view key) const noexcept;
   size_t Resolve(size_t k) const noexcept;
 
-  Separators _separators;
   std::vector<Node> _storage;
   const Node* _nodes = nullptr;
   bstring _prefix;
   size_t _count = 0;
 };
 
-class TreeRoot {
+class TreeRoot : public SeparatorRoot {
  public:
   TreeRoot() = default;
   explicit TreeRoot(Separators separators);
 
-  static size_t Height(size_t count) noexcept {
-    size_t nodes = std::max<size_t>(1, (count + kFanout - 1) / kFanout);
-    size_t height = 1;
-    for (; nodes != 1; ++height) {
-      nodes = (nodes + kFanout - 1) / kFanout;
-    }
-    return height;
-  }
+  static size_t Height(size_t count) { return LevelSizes(count).size(); }
 
-  size_t Blocks() const noexcept { return _count + 1; }
   size_t Find(bytes_view key) const noexcept;
   size_t FindFrom(size_t from, bytes_view key) const noexcept;
   bool NotAfter(size_t block, bytes_view key) const noexcept;
-  bytes_view Separator(size_t block) const noexcept {
-    return SeparatorAt(_separators, block - 1);
-  }
   size_t MemoryBytes() const noexcept {
     return SeparatorBytes(_separators) + _nodes.capacity() * sizeof(Node) +
            _levels.capacity() * sizeof(size_t) + _prefix.capacity();
@@ -195,6 +195,7 @@ class TreeRoot {
     size_t outside;
   };
 
+  static std::vector<size_t> LevelSizes(size_t count);
   Located Locate(bytes_view key) const noexcept;
   size_t Descend(uint64_t head) const noexcept;
   size_t Resolve(size_t from, size_t upper, uint64_t head,
@@ -203,7 +204,6 @@ class TreeRoot {
     return reinterpret_cast<const uint64_t*>(_nodes.data() + _leaves);
   }
 
-  Separators _separators;
   bstring _prefix;
   std::vector<Node> _nodes;
   std::vector<size_t> _levels;
@@ -211,21 +211,14 @@ class TreeRoot {
   size_t _count = 0;
 };
 
-class ArtRoot {
+class ArtRoot : public SeparatorRoot {
  public:
   ArtRoot() = default;
   explicit ArtRoot(Separators separators);
 
-  size_t Blocks() const noexcept { return SeparatorCount(_separators) + 1; }
   size_t Find(bytes_view key) const noexcept;
   size_t FindFrom(size_t from, bytes_view key) const noexcept {
     return std::max(from, Find(key));
-  }
-  bool NotAfter(size_t block, bytes_view key) const noexcept {
-    return Separator(block) <= key;
-  }
-  bytes_view Separator(size_t block) const noexcept {
-    return SeparatorAt(_separators, block - 1);
   }
   size_t MemoryBytes() const noexcept {
     return SeparatorBytes(_separators) + _words.capacity() * sizeof(uint64_t);
@@ -236,7 +229,6 @@ class ArtRoot {
   size_t Leaf(const uint64_t* child, size_t depth,
               bytes_view key) const noexcept;
 
-  Separators _separators;
   std::vector<uint64_t> _words;
   uint64_t _visits = 0;
 };

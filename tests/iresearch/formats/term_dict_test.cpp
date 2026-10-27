@@ -1357,6 +1357,45 @@ TEST_P(TermDictTest, acceptor_walks) {
   }
 }
 
+TEST_P(TermDictTest, walks_stay_inside_their_field) {
+  const auto ladder = [](std::string_view last) {
+    std::vector<irs::bstring> keys;
+    for (size_t i = 0; i != 3000; ++i) {
+      const auto digits = std::to_string(i);
+      keys.emplace_back(
+        Bytes("ay" + std::string(4 - digits.size(), '0') + digits));
+    }
+    keys.emplace_back(Bytes(last));
+    return MakeEntries(std::move(keys));
+  };
+  const Field fields[]{
+    {.id = 1, .entries = ladder("az")},
+    {.id = 2, .entries = MakeEntries({Bytes("xb1"), Bytes("xb2")})},
+    {.id = 3, .entries = ladder("az0000")},
+    {.id = 4, .entries = MakeEntries({Bytes("xb1000"), Bytes("xb2000")})},
+  };
+  Write(fields);
+  for (const irs::field_id id : {1, 3}) {
+    SCOPED_TRACE(testing::Message("field ") << id);
+    const auto& walked =
+      static_cast<const irs::term_dict::TermReaderImpl&>(*Get(id));
+    const auto& next =
+      static_cast<const irs::term_dict::TermReaderImpl&>(*Get(id + 1));
+    ASSERT_LT(1, walked.Blocks());
+    ASSERT_NE(0, next.FirstEntry());
+    const auto& entries = fields[id - 1].entries;
+    for (const std::string_view pattern : {".b.*", "a[a-x].*|b.*"}) {
+      SCOPED_TRACE(testing::Message("pattern ") << pattern);
+      AssertWalk(walked, entries,
+                 irs::RegexpAcceptor{irs::ViewCast<irs::byte_type>(pattern)});
+    }
+    const auto description = irs::MakeParametricDescription(1, false);
+    const irs::LevenshteinAcceptor acceptor{description, {}, next.min()};
+    auto it = walked.iterator(acceptor);
+    ASSERT_FALSE(it->next());
+  }
+}
+
 TEST_P(TermDictTest, infix_walks_match_coded_and_raw_blocks) {
   const auto keys = Words(20000, 17);
   const Field fields[]{
@@ -1414,17 +1453,15 @@ TEST_P(TermDictTest, suffix_walks_match_coded_and_raw_blocks) {
       BlockKinds(static_cast<const irs::term_dict::TermReaderImpl&>(
         *reader))[static_cast<size_t>(irs::term_dict::BlockKind::VarFsst)] > 1);
     for (const std::string_view pattern :
-         {"%ion", "%s", "%tion", "%alism", "%ings", "%12", "%a",
-          "%ationalism", "%ationalismpresent", "%nation", "%zz", "%#",
-          "%n#", "%s#"}) {
+         {"%ion", "%s", "%tion", "%alism", "%ings", "%12", "%a", "%ationalism",
+          "%ationalismpresent", "%nation", "%zz", "%#", "%n#", "%s#"}) {
       SCOPED_TRACE(testing::Message("pattern ") << pattern);
       AssertWalk(*reader, field.entries,
                  irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
                                      irs::ViewCast<irs::byte_type>(pattern)});
     }
-    for (const std::string_view pattern :
-         {".*(ing|ion)", ".*(s|al)", "s.*tion", ".*(ism|ation)s",
-          ".*(#|ion)"}) {
+    for (const std::string_view pattern : {".*(ing|ion)", ".*(s|al)", "s.*tion",
+                                           ".*(ism|ation)s", ".*(#|ion)"}) {
       SCOPED_TRACE(testing::Message("pattern ") << pattern);
       AssertWalk(*reader, field.entries,
                  irs::RegexpAcceptor{irs::ViewCast<irs::byte_type>(pattern)});
@@ -1743,9 +1780,12 @@ TEST_P(TermDictTest, evicted_warm_pages_are_prefetched_again) {
     }
     ASSERT_FALSE(offsets.empty());
     for (const uint64_t at : offsets) {
-      ASSERT_TRUE(absl::c_any_of(prefetched, [&](const auto& range) {
-        return range.first <= at && at < range.second;
-      })) << at;
+      ASSERT_TRUE(absl::c_any_of(prefetched,
+                                 [&](const auto& range) {
+                                   return range.first <= at &&
+                                          at < range.second;
+                                 }))
+        << at;
     }
   }
 

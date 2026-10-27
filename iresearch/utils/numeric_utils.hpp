@@ -24,8 +24,10 @@
 
 #include <absl/base/internal/endian.h>
 
+#include <cmath>
 #include <cstring>
 #include <limits>
+#include <type_traits>
 
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/string.hpp"
@@ -217,6 +219,15 @@ template<>
 struct numeric_traits<long double> {};  // numeric_traits
 
 template<typename T>
+T CanonicalFloat(T value) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  if (value == 0) {
+    return 0;
+  }
+  return std::isnan(value) ? std::numeric_limits<T>::quiet_NaN() : value;
+}
+
+template<typename T>
 struct NumericEncodeOf;
 
 template<>
@@ -240,7 +251,8 @@ template<>
 struct NumericEncodeOf<float_t> {
   using Traits = encode_traits<float_t>;
   static uint32_t Integral(float_t value) noexcept {
-    return static_cast<uint32_t>(numeric_traits<float_t>::integral(value));
+    return static_cast<uint32_t>(
+      numeric_traits<float_t>::integral(CanonicalFloat(value)));
   }
 };
 #endif
@@ -249,7 +261,8 @@ template<>
 struct NumericEncodeOf<double_t> {
   using Traits = encode_traits<double_t>;
   static uint64_t Integral(double_t value) noexcept {
-    return static_cast<uint64_t>(numeric_traits<double_t>::integral(value));
+    return static_cast<uint64_t>(
+      numeric_traits<double_t>::integral(CanonicalFloat(value)));
   }
 };
 

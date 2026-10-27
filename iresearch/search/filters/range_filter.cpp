@@ -32,9 +32,6 @@
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
-
-namespace {}  // namespace
-
 namespace {
 
 enum class RangeKind {
@@ -54,23 +51,12 @@ RangeKind Classify(const ByRangeOptions::range_type& rng) noexcept {
   return RangeKind::Range;
 }
 
-bstring RangeUpper(const ByRangeFilterOptions::range_type& range) {
-  switch (range.max_type) {
-    case BoundType::Unbounded:
-      return {};
-    case BoundType::Inclusive:
-      return AfterKey(range.max);
-    case BoundType::Exclusive:
-      return range.max;
-  }
-  return {};
-}
-
 class ByRangeIterator : public WrappedTermIterator {
  public:
   ByRangeIterator(const TermReader& reader,
                   const ByRangeFilterOptions::range_type& range)
-    : WrappedTermIterator{reader.IteratorUntil(RangeUpper(range))},
+    : WrappedTermIterator{reader.IteratorUntil(
+        RangeUpper(range.max, range.max_type))},
       _range{&range} {}
 
   bool next() final {

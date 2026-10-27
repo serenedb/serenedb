@@ -235,26 +235,6 @@ struct bytes_io<T, sizeof(uint64_t)> {
   }
 
   template<typename InputIterator>
-  IRS_FORCE_INLINE static T vread_short(InputIterator& in) {
-    T out = *in;
-    ++in;
-    if (!(out & kMask)) [[likely]] {
-      return out;
-    }
-    out -= kMask;
-    for (uint32_t shift = 7; shift < 8 * sizeof(T); shift += 7) {
-      const T b = *in;
-      ++in;
-      out += b << shift;
-      if (!(b & kMask)) {
-        return out;
-      }
-      out -= kMask << shift;
-    }
-    return out;
-  }
-
-  template<typename InputIterator>
   static T vread_tail(InputIterator& in, T out) {
     out -= kMask;
     T b = *in;
@@ -397,11 +377,6 @@ inline T ReadBE(Iterator& in) {
 template<typename T, typename Iterator>
 inline T vread(Iterator& in) {
   return bytes_io<T, sizeof(T)>::vread(in);
-}
-
-template<typename T, typename Iterator>
-IRS_FORCE_INLINE T vread_short(Iterator& in) {
-  return bytes_io<T, sizeof(T)>::vread_short(in);
 }
 
 template<typename N, std::invocable<byte_type> Assign>

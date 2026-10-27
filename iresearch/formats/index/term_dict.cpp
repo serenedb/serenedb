@@ -72,13 +72,14 @@ void AppendFieldPrefix(bstring& out, uint32_t ordinal) {
   out.append(rest, sizeof(rest));
 }
 
-uint64_t VarBytes(uint64_t count, uint64_t head_skip, uint64_t headers,
+uint64_t VarBytes(uint64_t count, uint64_t head_skip, uint32_t max,
                   uint64_t suffixes, uint64_t records) noexcept {
   const uint64_t restarts = (count + kRestartInterval - 1) / kRestartInterval;
-  return 1 + VSize(count) + VSize(restarts) + VSize(headers) + VSize(suffixes) +
+  return 2 + VSize(count) + VSize(restarts) + VSize(suffixes) +
          VSize(records) + VSize(head_skip) +
          (kVarRestart + kHeadBytes) * restarts +
-         kRecordOffset * RecordGroups(count) + headers + suffixes + records +
+         kRecordOffset * RecordGroups(count) +
+         count * (2 * uint64_t{ColumnWidth(max)} + 2) + suffixes + records +
          kSlack;
 }
 
@@ -97,9 +98,11 @@ bytes_view KeyAt(const BlockBuilder& block, size_t i) noexcept {
 }
 
 void Clear(VarColumns& columns) noexcept {
-  columns.headers.clear();
+  columns.lcps.clear();
+  columns.lens.clear();
   columns.suffixes.clear();
   columns.restarts.clear();
+  columns.max = 0;
 }
 
 void Clear(BlockBuilder& block) noexcept {
@@ -144,25 +147,38 @@ bool Compresses(duckdb_fsst_encoder_t* encoder, bstring& arena,
          raw * 100 >= coded * kFsstMinRatioPct + table_size * 100;
 }
 
-uint64_t HeaderBytes(size_t lcp, size_t len) noexcept {
-  return VSize(uint64_t{lcp} << 5 | std::min<uint64_t>(len, 31)) +
-         (len >= 31 ? VSize(len - 31) : 0);
+uint32_t ColumnMax(const VarColumns& columns, size_t lcp,
+                   size_t len) noexcept {
+  return std::max({columns.max, static_cast<uint32_t>(lcp),
+                   static_cast<uint32_t>(len)});
 }
 
 void AppendEntry(VarColumns& columns, bool restart, size_t lcp,
                  bytes_view suffix) {
   if (restart) {
-    columns.restarts.push_back({
-      static_cast<uint16_t>(columns.headers.size()),
-      static_cast<uint16_t>(columns.suffixes.size()),
-    });
+    columns.restarts.push_back(static_cast<uint16_t>(columns.suffixes.size()));
   }
-  BytesOutput out{columns.headers};
-  out.WriteV64(uint64_t{lcp} << 5 | std::min<uint64_t>(suffix.size(), 31));
-  if (suffix.size() >= 31) {
-    out.WriteV64(suffix.size() - 31);
-  }
+  columns.max = ColumnMax(columns, lcp, suffix.size());
+  columns.lcps.push_back(static_cast<uint32_t>(lcp));
+  columns.lens.push_back(static_cast<uint32_t>(suffix.size()));
   columns.suffixes.append(suffix);
+}
+
+void WriteColumn(BytesOutput& out, std::span<const uint32_t> values,
+                 uint32_t width) {
+  for (const auto value : values) {
+    switch (width) {
+      case 1:
+        out.WriteByte(static_cast<byte_type>(value));
+        break;
+      case 2:
+        out.WriteU16(static_cast<uint16_t>(value));
+        break;
+      default:
+        out.WriteU32(value);
+        break;
+    }
+  }
 }
 
 void WriteHeads(BytesOutput& out, const BlockBuilder& block, size_t step,
@@ -182,20 +198,29 @@ void Serialize(const BlockBuilder& block, bstring& page) {
   const bool coded = block.kind == BlockKind::VarFsst;
   if (block.kind != BlockKind::FixedStride) {
     const auto& columns = coded ? block.coded : block.raw;
+    const uint32_t width = ColumnWidth(columns.max);
     out.WriteV32(static_cast<uint32_t>(columns.restarts.size()));
-    out.WriteV64(columns.headers.size());
+    out.WriteByte(static_cast<byte_type>(width));
     out.WriteV64(columns.suffixes.size());
     out.WriteV64(block.records.size());
     out.WriteV32(block.head_skip);
-    for (const auto& restart : columns.restarts) {
-      out.WriteU16(restart[0]);
-      out.WriteU16(restart[1]);
+    for (const auto restart : columns.restarts) {
+      out.WriteU16(restart);
     }
     WriteHeads(out, block, kRestartInterval, block.head_skip);
     for (const auto start : block.record_starts) {
       out.WriteU16(start);
     }
-    out.WriteData(columns.headers.data(), columns.headers.size());
+    WriteColumn(out, columns.lcps, width);
+    WriteColumn(out, columns.lens, width);
+    for (uint32_t i = 0; i != count; ++i) {
+      const auto key = KeyAt(block, i);
+      out.WriteByte(key.empty() ? 0 : key.back());
+    }
+    for (uint32_t i = 0; i != count; ++i) {
+      const auto lcp = columns.lcps[i];
+      out.WriteByte(lcp == 0 ? 0 : KeyAt(block, i)[lcp - 1]);
+    }
     out.WriteData(columns.suffixes.data(), columns.suffixes.size());
   } else {
     const uint32_t stride = block.width - block.prefix;
@@ -395,7 +420,7 @@ void FieldWriter::SampleFsst(const BasicTermReader& reader) {
     AppendVarColumns(i, KeyAt(block, i));
   }
   block.coded_size =
-    VarBytes(count, block.head_skip, block.coded.headers.size(),
+    VarBytes(count, block.head_skip, block.coded.max,
              block.coded.suffixes.size(), block.records.size());
 }
 
@@ -632,8 +657,7 @@ bool FieldWriter::AppendVarKey(bytes_view key, uint64_t records) {
       count == 0 ? key.size() : CommonPrefixLength(KeyAt(block, 0), key));
   }
   const auto size_with = [&](const VarColumns& columns, size_t suffix_size) {
-    return VarBytes(count + 1, head_skip,
-                    columns.headers.size() + HeaderBytes(lcp, suffix_size),
+    return VarBytes(count + 1, head_skip, ColumnMax(columns, lcp, suffix_size),
                     columns.suffixes.size() + suffix_size, records);
   };
   const uint64_t size = size_with(block.raw, suffix.size());

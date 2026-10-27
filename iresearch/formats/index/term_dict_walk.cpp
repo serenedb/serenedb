@@ -43,9 +43,15 @@ class KeyFilter {
     : _required{required}, _exempt{exempt} {
     if (!required.empty()) {
       SDB_ASSERT(required.size() <= std::numeric_limits<uint8_t>::max());
+      _words.reserve(required.size());
       for (const auto& suffix : required) {
         SDB_ASSERT(!suffix.empty());
         ++_starts[suffix.back() + 1];
+        _tails.Add(suffix.back());
+        uint64_t word = 0;
+        std::memcpy(&word, suffix.data(),
+                    std::min(suffix.size(), sizeof(uint64_t)));
+        _words.push_back(absl::little_endian::ToHost64(word));
       }
       for (size_t label = 0; label != kLabels; ++label) {
         _starts[label + 1] += _starts[label];
@@ -60,21 +66,49 @@ class KeyFilter {
   }
 
   bool Active() const noexcept { return _kind != Kind::None; }
-  bool Infix() const noexcept { return _kind == Kind::Infix; }
 
-  void Restart() noexcept { _lcp = 0; }
+  void Restart() noexcept {
+    _lcp = 0;
+    _checked = false;
+  }
 
   void Share(size_t lcp) noexcept { _lcp = std::min(_lcp, lcp); }
 
-  IRS_FORCE_INLINE bool Rejects(Cursor& cursor) {
+  IRS_FORCE_INLINE bool Rejects(Cursor& cursor, size_t prefix) {
     if (_kind == Kind::Suffix) {
-      return SuffixRejects(cursor.Term());
+      return SuffixRejects(cursor, prefix);
     }
     return InfixRejects(cursor);
   }
 
-  IRS_FORCE_INLINE uint32_t SkipRejected(Cursor& cursor) {
+  IRS_FORCE_INLINE uint32_t SkipRejected(Cursor& cursor, size_t prefix) {
     const auto& view = cursor.View();
+    if (_kind == Kind::Suffix) {
+      if (!_exempt.empty() || view.kind != BlockKind::Var) {
+        return std::numeric_limits<uint32_t>::max();
+      }
+      const auto* fsst = SuffixCodes(cursor);
+      uint32_t lcp = std::numeric_limits<uint32_t>::max();
+      for (;;) {
+        auto last = Match::None;
+        lcp = std::min(
+          lcp, cursor.SkipTails(
+                 prefix, _tails,
+                 [&](const byte_type* data, uint32_t size, uint32_t shared,
+                     byte_type before) IRS_FORCE_INLINE {
+                   last = Classify(data, size, fsst,
+                                   {.byte = before, .known = shared > prefix});
+                   return last == Match::None;
+                 }));
+        if (last != Match::Unknown) {
+          return lcp;
+        }
+        if (EndsWithRequired(cursor.PeekNext().substr(prefix))) {
+          return lcp;
+        }
+        lcp = std::min(lcp, cursor.TakePeeked());
+      }
+    }
     if (_kind != Kind::Infix || _checks != kInfixProbe ||
         view.kind != BlockKind::Var) {
       return std::numeric_limits<uint32_t>::max();
@@ -90,26 +124,26 @@ class KeyFilter {
       SeekHit(_hit, static_cast<uint32_t>(cursor.NextSuffix() - base));
     uint32_t lcp;
     if (view.coded) {
-      lcp = cursor.SkipWhile(
-        [&](const byte_type* data, uint32_t shared, uint32_t size) {
-          const auto from = static_cast<uint32_t>(data - base);
-          while (hit != count && hits[hit] <= from) {
-            ++hit;
-          }
-          const auto* p = data;
-          return (NextCode(p) & (Across(shared) | 1)) == 0 &&
-                 (hit == count || hits[hit] >= from + size);
-        });
+      lcp = cursor.SkipWhile([&](const byte_type* data, uint32_t shared,
+                                 uint32_t size, byte_type before) {
+        const auto from = static_cast<uint32_t>(data - base);
+        while (hit != count && hits[hit] <= from) {
+          ++hit;
+        }
+        const auto* p = data;
+        return (NextCode(p) & (Boundary(shared, before) | 1)) == 0 &&
+               (hit == count || hits[hit] >= from + size);
+      });
     } else {
-      lcp = cursor.SkipWhile(
-        [&](const byte_type* data, uint32_t shared, uint32_t size) {
-          const auto from = static_cast<uint32_t>(data - base);
-          while (hit != count && hits[hit] < from) {
-            ++hit;
-          }
-          return (_literals[data[0]] & Across(shared)) == 0 &&
-                 (size < m || hit == count || hits[hit] >= from + size - m + 1);
-        });
+      lcp = cursor.SkipWhile([&](const byte_type* data, uint32_t shared,
+                                 uint32_t size, byte_type before) {
+        const auto from = static_cast<uint32_t>(data - base);
+        while (hit != count && hits[hit] < from) {
+          ++hit;
+        }
+        return (_literals[data[0]] & Boundary(shared, before)) == 0 &&
+               (size < m || hit == count || hits[hit] >= from + size - m + 1);
+      });
     }
     _hit = hit;
     return lcp;
@@ -129,7 +163,163 @@ class KeyFilter {
   static constexpr size_t kHeads = 32;
   static constexpr size_t kNone = std::numeric_limits<size_t>::max();
 
-  IRS_NO_INLINE bool SuffixRejects(bytes_view key) const noexcept {
+  struct Tail {
+    uint64_t bytes;
+    size_t size;
+  };
+
+  struct Before {
+    byte_type byte;
+    bool known;
+  };
+
+  enum class Match : uint8_t {
+    None,
+    Some,
+    Unknown,
+  };
+
+  static Tail TailOf(const byte_type* data, uint32_t size,
+                     const duckdb_fsst_decoder_t* fsst) noexcept {
+    if (!fsst) {
+      const size_t n = std::min<size_t>(size, sizeof(uint64_t));
+      uint64_t bytes = 0;
+      std::memcpy(reinterpret_cast<byte_type*>(&bytes) + sizeof(uint64_t) - n,
+                  data + size - n, n);
+      return {.bytes = absl::little_endian::ToHost64(bytes), .size = size};
+    }
+    uint64_t bytes = 0;
+    size_t decoded = 0;
+    for (uint32_t i = 0; i != size;) {
+      const size_t code = data[i++];
+      uint64_t symbol;
+      size_t len;
+      if (code != FSST_ESC) [[likely]] {
+        symbol = absl::little_endian::Load64(
+          reinterpret_cast<const byte_type*>(&fsst->symbol[code]));
+        len = fsst->len[code];
+      } else {
+        symbol = data[i++];
+        len = 1;
+      }
+      bytes = len == sizeof(uint64_t)
+                ? symbol
+                : (bytes >> (8 * len)) | (symbol << (8 * (8 - len)));
+      decoded += len;
+    }
+    return {.bytes = bytes, .size = decoded};
+  }
+
+  Match TailMatch(Tail tail, Before before) const noexcept {
+    if (tail.size == 0) {
+      return Match::Unknown;
+    }
+    const auto last = static_cast<byte_type>(tail.bytes >> 56);
+    auto match = Match::None;
+    for (auto i = _starts[last]; i != _starts[last + 1]; ++i) {
+      const size_t size = _required[i].size();
+      if (size > sizeof(uint64_t)) {
+        match = Match::Unknown;
+        continue;
+      }
+      const size_t have = std::min(size, tail.size);
+      const uint64_t mask = have == sizeof(uint64_t)
+                              ? ~uint64_t{0}
+                              : (uint64_t{1} << (8 * have)) - 1;
+      if ((tail.bytes >> (8 * (8 - have))) !=
+          ((_words[i] >> (8 * (size - have))) & mask)) {
+        continue;
+      }
+      if (have == size) {
+        return Match::Some;
+      }
+      if (!before.known ||
+          static_cast<byte_type>(_words[i] >> (8 * (size - have - 1))) !=
+            before.byte) {
+        continue;
+      }
+      if (have + 1 == size) {
+        return Match::Some;
+      }
+      match = Match::Unknown;
+    }
+    return match;
+  }
+
+  IRS_FORCE_INLINE Match Classify(const byte_type* data, uint32_t size,
+                                  const duckdb_fsst_decoder_t* fsst,
+                                  Before before) const noexcept {
+    if (size != 0) {
+      const auto last = data[size - 1];
+      if (!fsst) {
+        if (_starts[last] == _starts[last + 1]) {
+          return Match::None;
+        }
+      } else if (size == 1 || data[size - 2] != FSST_ESC) {
+        if (const auto match = _last[last]; match != Match::Unknown) {
+          return match;
+        }
+      }
+    }
+    return ClassifyTail(data, size, fsst, before);
+  }
+
+  IRS_NO_INLINE Match ClassifyTail(const byte_type* data, uint32_t size,
+                                   const duckdb_fsst_decoder_t* fsst,
+                                   Before before) const noexcept {
+    return TailMatch(TailOf(data, size, fsst), before);
+  }
+
+  const duckdb_fsst_decoder_t* SuffixCodes(const Cursor& cursor) {
+    if (!cursor.View().coded) {
+      return nullptr;
+    }
+    const auto* fsst = cursor.Field().Fsst();
+    if (!_coded) [[unlikely]] {
+      BuildLast(*fsst);
+    }
+    return fsst;
+  }
+
+  void BuildLast(const duckdb_fsst_decoder_t& decoder) {
+    _last.fill(Match::Unknown);
+    for (size_t code = 0; code != FSST_ESC; ++code) {
+      byte_type bytes[sizeof(uint64_t)];
+      std::memcpy(bytes, &decoder.symbol[code], sizeof(bytes));
+      const bytes_view symbol{bytes, decoder.len[code]};
+      auto match = Match::None;
+      for (const auto& suffix : _required) {
+        const bytes_view required{suffix};
+        if (symbol.size() >= required.size()) {
+          if (symbol.ends_with(required)) {
+            match = Match::Some;
+            break;
+          }
+        } else if (required.ends_with(symbol)) {
+          match = Match::Unknown;
+        }
+      }
+      _last[code] = match;
+    }
+    _coded = true;
+  }
+
+  IRS_NO_INLINE bool SuffixRejects(Cursor& cursor, size_t prefix) {
+    if (const auto* pending = cursor.Pending();
+        pending && pending->lcp >= prefix) {
+      const auto match =
+        Classify(pending->data, pending->size, SuffixCodes(cursor),
+                 {.byte = cursor.View().befores[cursor.Entry()],
+                  .known = pending->lcp > prefix});
+      if (match == Match::Some) {
+        return false;
+      }
+      if (match == Match::None && _exempt.empty()) {
+        return true;
+      }
+    }
+    cursor.Materialize();
+    const auto key = cursor.Term();
     return !EndsWithRequired(key) && !Exempt(key);
   }
 
@@ -186,6 +376,9 @@ class KeyFilter {
       const auto byte = static_cast<byte_type>(label);
       _literals[label] = Pieces({&byte, 1});
     }
+    for (size_t k = 1; k != m; ++k) {
+      _before[_infix[k - 1]] |= uint64_t{1} << k;
+    }
   }
 
   void BuildCodes(const duckdb_fsst_decoder_t& decoder) {
@@ -213,8 +406,9 @@ class KeyFilter {
     return pieces;
   }
 
-  uint64_t Across(size_t lcp) const noexcept {
-    return (uint64_t{2} << std::min(lcp, _infix.size() - 1)) - 2;
+  uint64_t Boundary(size_t lcp, byte_type before) const noexcept {
+    return ((uint64_t{2} << std::min(lcp, _infix.size() - 1)) - 2) &
+           _before[before];
   }
 
   uint64_t NextCode(const byte_type*& p) const noexcept {
@@ -233,9 +427,8 @@ class KeyFilter {
         BuildCodes(*cursor.Field().Fsst());
       }
       for (uint32_t group = 0; group != view.restarts; ++group) {
-        const auto* hp = view.headers + HeaderOffset(view, group);
-        const auto* p =
-          view.suffixes + SuffixOffset(view, group) + ReadHeader(hp).len;
+        const auto* p = view.suffixes + SuffixOffset(view, group) +
+                        HeaderAt(view, group * kRestartInterval).len;
         const auto* end = group + 1 == view.restarts
                             ? view.records
                             : view.suffixes + SuffixOffset(view, group + 1);
@@ -326,7 +519,8 @@ class KeyFilter {
       LoadHits(cursor);
     }
     const size_t m = _infix.size();
-    const uint64_t across = Across(suffix->lcp);
+    const uint64_t across =
+      Boundary(suffix->lcp, view.befores[cursor.Entry()]);
     const auto from = static_cast<uint32_t>(suffix->data - view.suffixes);
     if (view.coded) {
       const auto* p = suffix->data;
@@ -349,7 +543,9 @@ class KeyFilter {
   }
 
   IRS_FORCE_INLINE bool InfixRejects(Cursor& cursor) {
-    const bool found = _end <= _lcp || Contains(cursor);
+    const bool found =
+      _end <= _lcp || (_checked ? Contains(cursor) : Confirm(cursor));
+    _checked = true;
     _lcp = kNone;
     if (_checks != kInfixProbe) {
       _rejects += !found;
@@ -361,12 +557,16 @@ class KeyFilter {
   }
 
   std::span<const bstring> _required;
+  std::vector<uint64_t> _words;
   std::span<const RegexpAcceptor::ExemptKey> _exempt;
   std::array<uint8_t, kLabels + 1> _starts{};
+  TailSet _tails;
   bytes_view _infix;
   std::vector<uint8_t> _bytes;
   std::array<uint64_t, kLabels> _literals{};
+  std::array<uint64_t, kLabels> _before{};
   std::array<uint64_t, kLabels> _codes{};
+  std::array<Match, kLabels> _last{};
   re2::LiteralFinder _finder;
   std::vector<uint32_t> _hits;
   size_t _hit = 0;
@@ -376,6 +576,7 @@ class KeyFilter {
   size_t _end = kNone;
   uint32_t _checks = 0;
   uint32_t _rejects = 0;
+  bool _checked = false;
   Kind _kind = Kind::None;
 };
 
@@ -513,6 +714,7 @@ class BlockPlan {
 template<typename A>
 void Readahead(Cursor& cursor, const A& a) {
   constexpr uint64_t kMaxPrefetch = uint64_t{256} << 20;
+  constexpr uint64_t kProbedSpan = uint64_t{1} << 20;
   const auto& field = cursor.Field();
   const auto& root = field.GetRoot();
   const auto lower = a.LowerBound();
@@ -537,7 +739,7 @@ void Readahead(Cursor& cursor, const A& a) {
   const uint64_t range = field.BlockOffset(end) - offset;
   const uint64_t size = std::min(range, kMaxPrefetch);
   cursor.ReadaheadUntil(range <= kMaxPrefetch ? 0 : end, false);
-  if (file_utils::StillWarm(in, offset, size, true)) {
+  if (file_utils::StillWarm(in, offset, size, size >= kProbedSpan)) {
     return;
   }
   if (in.Resident(offset, size)) {
@@ -641,6 +843,7 @@ class AcceptorIterator : public SeekTermIterator {
   };
 
   static constexpr uint32_t kUnranged = std::numeric_limits<uint32_t>::max();
+  static constexpr size_t kMaxContinuation = 4;
 
   Range LiveRange(size_t depth) {
     if (depth >= _ranged) {
@@ -696,11 +899,21 @@ class AcceptorIterator : public SeekTermIterator {
     SDB_ASSERT(path.data() != _target.Data());
     for (;;) {
       const auto range = LiveRange(depth);
-      const auto label = std::max<uint32_t>(path[depth] + 1, range.lo);
+      auto label = std::max<uint32_t>(path[depth] + 1, range.lo);
+      State next{};
+      for (; label <= range.hi; ++label) {
+        next = _a->Step(_states[depth], static_cast<byte_type>(label));
+        if (A::Alive(next)) {
+          break;
+        }
+      }
       if (label <= range.hi) {
-        auto* target = _target.Resize(depth + 1);
+        std::array<byte_type, kMaxContinuation> tail;
+        const size_t extra = Continuation(next, tail);
+        auto* target = _target.Resize(depth + 1 + extra);
         std::memcpy(target, path.data(), depth);
         target[depth] = static_cast<byte_type>(label);
+        std::memcpy(target + depth + 1, tail.data(), extra);
         return true;
       }
       if (depth == _k) {
@@ -708,6 +921,39 @@ class AcceptorIterator : public SeekTermIterator {
       }
       --depth;
     }
+  }
+
+  size_t Continuation(State state,
+                      std::array<byte_type, kMaxContinuation>& tail) const {
+    size_t size = 0;
+    for (; size != tail.size(); ++size) {
+      if constexpr (A::kMayBeUnknown) {
+        if (A::Unknown(state)) {
+          break;
+        }
+      }
+      typename A::PayloadType payload{};
+      if (_a->Accept(state, payload)) {
+        break;
+      }
+      uint32_t lo = 1;
+      uint32_t hi = 0;
+      _a->LiveRange(state, lo, hi);
+      uint32_t label = lo;
+      State next{};
+      for (; label <= hi; ++label) {
+        next = _a->Step(state, static_cast<byte_type>(label));
+        if (A::Alive(next)) {
+          break;
+        }
+      }
+      if (label == 0 || label > hi) {
+        break;
+      }
+      tail[size] = static_cast<byte_type>(label);
+      state = next;
+    }
+    return size;
   }
 
   bool Seek(bytes_view target, size_t valid) {
@@ -818,7 +1064,7 @@ class AcceptorIterator : public SeekTermIterator {
     if (_cursor.AtBlockEnd()) [[unlikely]] {
       return NextBlock();
     }
-    const size_t lcp = _filter.Infix() ? _cursor.Skip() : _cursor.Next();
+    const size_t lcp = _filter.Active() ? _cursor.Skip() : _cursor.Next();
     _check = lcp <= _valid;
     _valid = std::min(_valid, lcp);
     _filter.Share(lcp);
@@ -842,8 +1088,8 @@ class AcceptorIterator : public SeekTermIterator {
           }
         }
       }
-      if (_filter.Active() && _filter.Rejects(_cursor)) {
-        _valid = std::min<size_t>(_valid, _filter.SkipRejected(_cursor));
+      if (_filter.Active() && _filter.Rejects(_cursor, _k)) {
+        _valid = std::min<size_t>(_valid, _filter.SkipRejected(_cursor, _k));
         if (!Advance()) {
           return End();
         }

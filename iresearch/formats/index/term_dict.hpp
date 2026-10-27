@@ -89,9 +89,11 @@ constexpr uint64_t RecordGroups(uint64_t count) noexcept {
 }
 
 struct VarColumns {
-  bstring headers;
+  std::vector<uint32_t> lcps;
+  std::vector<uint32_t> lens;
   bstring suffixes;
-  std::vector<std::array<uint16_t, 2>> restarts;
+  std::vector<uint16_t> restarts;
+  uint32_t max = 0;
 };
 
 struct BlockBuilder {

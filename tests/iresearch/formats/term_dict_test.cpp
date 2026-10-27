@@ -29,6 +29,8 @@
 #include <iresearch/formats/reader_state.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/levenshtein_acceptor.hpp>
+#include <iresearch/utils/levenshtein_utils.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
@@ -100,6 +102,7 @@ struct ReadState {
   std::vector<size_t> hinted;
   uint32_t warm_epoch = 0;
   uint64_t warm_limit = std::numeric_limits<uint64_t>::max();
+  size_t resident_checks = 0;
   bool resident = false;
 };
 
@@ -166,6 +169,7 @@ class CountingInput final : public irs::IndexInput {
     _state->evicted.emplace_back(offset, offset + count);
   }
   bool Resident(uint64_t, uint64_t) const noexcept final {
+    ++_state->resident_checks;
     return _state->resident;
   }
   bool Warm(uint64_t, uint64_t count) const noexcept final {
@@ -206,6 +210,7 @@ class CountingDirectory final : public tests::DirectoryMock {
   }
   void SetResident(bool resident) noexcept { _state->resident = resident; }
   void SetWarmLimit(uint64_t limit) noexcept { _state->warm_limit = limit; }
+  size_t& ResidentChecks() const noexcept { return _state->resident_checks; }
 
  private:
   std::shared_ptr<ReadState> _state = std::make_shared<ReadState>();
@@ -1382,6 +1387,101 @@ TEST_P(TermDictTest, infix_walks_match_coded_and_raw_blocks) {
   }
 }
 
+TEST_P(TermDictTest, suffix_walks_match_coded_and_raw_blocks) {
+  const auto keys = Words(4000, 17);
+  auto escaped = keys;
+  for (size_t i = 0; i < keys.size(); i += 199) {
+    escaped.push_back(keys[i] + Bytes("#"));
+  }
+  std::vector<irs::bstring> wide;
+  for (const auto& word : Words(100, 23)) {
+    wide.push_back(Bytes("zz") + irs::bstring(600, 'q') + word);
+    wide.push_back(word + irs::bstring(40, 'x') + word);
+  }
+  const Field fields[]{
+    {.id = 1, .entries = MakeEntries(escaped), .sample = false},
+    {.id = 2, .entries = MakeEntries(wide), .sample = false},
+    {.id = 3, .entries = MakeEntries(keys)},
+    {.id = 4, .entries = MakeEntries(escaped)},
+  };
+  Write(fields);
+  for (const auto& field : fields) {
+    SCOPED_TRACE(testing::Message("field ") << field.id);
+    const auto* reader = Get(field.id);
+    ASSERT_NE(nullptr, reader);
+    ASSERT_EQ(
+      field.sample,
+      BlockKinds(static_cast<const irs::term_dict::TermReaderImpl&>(
+        *reader))[static_cast<size_t>(irs::term_dict::BlockKind::VarFsst)] > 1);
+    for (const std::string_view pattern :
+         {"%ion", "%s", "%tion", "%alism", "%ings", "%12", "%a",
+          "%ationalism", "%ationalismpresent", "%nation", "%zz", "%#",
+          "%n#", "%s#"}) {
+      SCOPED_TRACE(testing::Message("pattern ") << pattern);
+      AssertWalk(*reader, field.entries,
+                 irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
+                                     irs::ViewCast<irs::byte_type>(pattern)});
+    }
+    for (const std::string_view pattern :
+         {".*(ing|ion)", ".*(s|al)", "s.*tion", ".*(ism|ation)s",
+          ".*(#|ion)"}) {
+      SCOPED_TRACE(testing::Message("pattern ") << pattern);
+      AssertWalk(*reader, field.entries,
+                 irs::RegexpAcceptor{irs::ViewCast<irs::byte_type>(pattern)});
+    }
+  }
+}
+
+TEST_P(TermDictTest, fuzzy_walks_match_coded_and_raw_blocks) {
+  const auto keys = Words(20000, 17);
+  const Field fields[]{
+    {.id = 1, .entries = MakeEntries(keys), .sample = false},
+    {.id = 2, .entries = MakeEntries(keys)},
+  };
+  Write(fields);
+  for (const auto& field : fields) {
+    SCOPED_TRACE(testing::Message("field ") << field.id);
+    const auto* reader = Get(field.id);
+    ASSERT_NE(nullptr, reader);
+    const auto& entries = field.entries;
+    std::vector<irs::bstring> targets;
+    for (size_t i = 0; i < entries.size(); i += entries.size() / 12) {
+      irs::bstring target{entries[i].key};
+      targets.push_back(target);
+      if (target.size() > 2) {
+        target[target.size() / 2] = 'q';
+        targets.push_back(std::move(target));
+      }
+    }
+    for (const uint8_t distance : {1, 2}) {
+      for (const bool transpositions : {false, true}) {
+        const auto description =
+          irs::MakeParametricDescription(distance, transpositions);
+        for (const auto& target : targets) {
+          SCOPED_TRACE(testing::Message("target ")
+                       << irs::ViewCast<char>(irs::bytes_view{target})
+                       << " distance " << int{distance} << " transpositions "
+                       << transpositions);
+          const irs::LevenshteinAcceptor acceptor{description, {}, target};
+          std::vector<irs::bytes_view> expected;
+          for (const auto& entry : entries) {
+            if (acceptor.Matches(entry.key)) {
+              expected.emplace_back(entry.key);
+            }
+          }
+          auto it = reader->iterator(acceptor);
+          size_t i = 0;
+          for (; it->next(); ++i) {
+            ASSERT_LT(i, expected.size());
+            ASSERT_EQ(expected[i], it->value());
+          }
+          ASSERT_EQ(expected.size(), i);
+        }
+      }
+    }
+  }
+}
+
 TEST_P(TermDictTest, reads_per_operation) {
   const Field fields[]{
     {.id = 1, .entries = MakeEntries({Bytes("x"), Bytes("y"), Bytes("z")})},
@@ -1673,6 +1773,61 @@ TEST_P(TermDictTest, evicted_warm_pages_are_prefetched_again) {
   counting.MarkWarm();
   scan(stale);
   ASSERT_EQ(fresh, stale);
+}
+
+TEST_P(TermDictTest, only_large_batches_check_the_page_cache) {
+  const Field fields[]{{.id = 2, .entries = MakeEntries(Words(400000, 5))}};
+  Write(fields);
+  CountingDirectory counting{dir()};
+  Open(counting);
+  const auto* reader = Get(2);
+  ASSERT_NE(nullptr, reader);
+  const auto& entries = fields[0].entries;
+  const auto lookup = [&](size_t count) {
+    std::vector<irs::bytes_view> terms;
+    for (size_t i = 0; i != count; ++i) {
+      terms.emplace_back(entries[i * (entries.size() / count)].key);
+    }
+    std::vector<irs::PostingMeta> metas(terms.size());
+    reader->LookupBatch(terms, metas);
+  };
+  lookup(50);
+  irs::file_utils::SyncResidency();
+
+  counting.MarkWarm();
+  counting.SetResident(true);
+  counting.ResidentChecks() = 0;
+  lookup(2);
+  ASSERT_EQ(0, counting.ResidentChecks());
+  lookup(50);
+  ASSERT_LT(0, counting.ResidentChecks());
+}
+
+TEST_P(TermDictTest, only_wide_walks_check_the_page_cache) {
+  const Field fields[]{{.id = 2, .entries = MakeEntries(Words(400000, 5))}};
+  Write(fields);
+  CountingDirectory counting{dir()};
+  Open(counting);
+  const auto* reader = Get(2);
+  ASSERT_NE(nullptr, reader);
+  const auto walk = [&](std::string_view pattern) {
+    const irs::RegexpAcceptor acceptor{irs::RegexpAcceptor::WildcardTag{},
+                                       irs::ViewCast<irs::byte_type>(pattern)};
+    auto it = reader->iterator(acceptor);
+    while (it->next()) {
+    }
+  };
+  walk("%");
+  walk("conion%");
+  irs::file_utils::SyncResidency();
+
+  counting.MarkWarm();
+  counting.SetResident(true);
+  counting.ResidentChecks() = 0;
+  walk("conion%");
+  ASSERT_EQ(0, counting.ResidentChecks());
+  walk("%");
+  ASSERT_LT(0, counting.ResidentChecks());
 }
 
 TEST_P(TermDictTest, scans_read_ahead_to_their_bound) {

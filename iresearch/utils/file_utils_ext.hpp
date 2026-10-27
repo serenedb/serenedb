@@ -171,6 +171,7 @@ void SyncResidency() noexcept;
 void PollResidency() noexcept;
 
 inline constexpr uint64_t kWarmProbes = 4;
+inline constexpr size_t kProbedBatch = 16;
 
 template<typename Input>
 bool StillWarm(const Input& in, uint64_t offset, uint64_t size,
@@ -178,7 +179,7 @@ bool StillWarm(const Input& in, uint64_t offset, uint64_t size,
   if (!in.Warm(offset, size)) {
     return false;
   }
-  if (!probe && size <= kPrefetchChunk) {
+  if (!probe) {
     return true;
   }
   const auto probes =

@@ -139,7 +139,9 @@ void PrefetchRanges(const Input& in,
   uint64_t budget = kMaxPrefetch;
   for (size_t i = 0; i != n && budget != 0; ++i) {
     const auto size = std::min(ranges[i].second - ranges[i].first, budget);
-    file_utils::Hint(in, ranges[i].first, size, i < file_utils::kWarmProbes);
+    file_utils::Hint(in, ranges[i].first, size,
+                     n >= file_utils::kProbedBatch &&
+                       i < file_utils::kWarmProbes);
     budget -= size;
   }
 }
@@ -178,7 +180,7 @@ class GrowingHint {
       return;
     }
     const auto len = std::min(_window, _stop - from);
-    file_utils::Hint(in, from, len, true);
+    file_utils::Hint(in, from, len, false);
     _end = from + len;
     _window = std::min(2 * _window, kLast);
   }

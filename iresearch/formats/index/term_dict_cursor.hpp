@@ -22,6 +22,10 @@
 
 #include <absl/base/internal/endian.h>
 
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -41,7 +45,11 @@ namespace irs::term_dict {
 
 inline constexpr uint32_t kSlack = block_codec::kInSlack;
 inline constexpr uint32_t kNoEntry = std::numeric_limits<uint32_t>::max();
-inline constexpr uint32_t kVarRestart = 2 * sizeof(uint16_t);
+inline constexpr uint32_t kVarRestart = sizeof(uint16_t);
+
+constexpr uint32_t ColumnWidth(uint32_t max) noexcept {
+  return max <= 0xFF ? 1 : max <= 0xFFFF ? 2 : 4;
+}
 
 enum class Position : uint8_t {
   Before,
@@ -57,27 +65,21 @@ struct BlockView {
   uint32_t stride;
   uint32_t prefix;
   uint32_t head_skip;
+  uint32_t width;
   const byte_type* table;
   const byte_type* heads;
   const byte_type* record_offsets;
-  const byte_type* headers;
+  const byte_type* lcps;
+  const byte_type* lens;
+  const byte_type* tails;
+  const byte_type* befores;
   const byte_type* suffixes;
   const byte_type* keys;
   const byte_type* records;
 };
 
-inline uint32_t Restart(const BlockView& view, uint32_t restart,
-                        uint32_t column) noexcept {
-  return absl::little_endian::Load16(view.table + kVarRestart * restart +
-                                     sizeof(uint16_t) * column);
-}
-
-inline uint32_t HeaderOffset(const BlockView& view, uint32_t restart) noexcept {
-  return Restart(view, restart, 0);
-}
-
 inline uint32_t SuffixOffset(const BlockView& view, uint32_t restart) noexcept {
-  return Restart(view, restart, 1);
+  return absl::little_endian::Load16(view.table + kVarRestart * restart);
 }
 
 inline uint32_t RecordOffset(const BlockView& view, uint32_t group) noexcept {
@@ -103,16 +105,18 @@ inline BlockView Parse(const byte_type* p) {
   view.count = vread<uint32_t>(p);
   if (view.kind == BlockKind::Var) {
     view.restarts = vread<uint32_t>(p);
-    const auto headers = vread<uint64_t>(p);
+    view.width = *p++;
     const auto suffixes = vread<uint64_t>(p);
     vskip<uint64_t>(p);
     view.head_skip = vread<uint32_t>(p);
     view.table = p;
     view.heads = p + kVarRestart * view.restarts;
     view.record_offsets = view.heads + kHeadBytes * view.restarts;
-    view.headers =
-      view.record_offsets + kRecordOffset * RecordGroups(view.count);
-    view.suffixes = view.headers + headers;
+    view.lcps = view.record_offsets + kRecordOffset * RecordGroups(view.count);
+    view.lens = view.lcps + uint64_t{view.count} * view.width;
+    view.tails = view.lens + uint64_t{view.count} * view.width;
+    view.befores = view.tails + view.count;
+    view.suffixes = view.befores + view.count;
     view.records = view.suffixes + suffixes;
     return view;
   }
@@ -139,17 +143,76 @@ struct Header {
   uint32_t len;
 };
 
-inline IRS_FORCE_INLINE Header ReadHeader(const byte_type*& p) noexcept {
-  const auto head = vread_short<uint64_t>(p);
-  Header header{
-    .lcp = static_cast<uint32_t>(head >> 5),
-    .len = static_cast<uint32_t>(head & 31),
-  };
-  if (header.len == 31) [[unlikely]] {
-    header.len += static_cast<uint32_t>(vread_short<uint64_t>(p));
+IRS_FORCE_INLINE inline uint32_t ColumnAt(const byte_type* column,
+                                          uint32_t width,
+                                          uint32_t entry) noexcept {
+  if (width == 1) [[likely]] {
+    return column[entry];
   }
-  return header;
+  if (width == 2) {
+    return absl::little_endian::Load16(column + 2 * uint64_t{entry});
+  }
+  return absl::little_endian::Load32(column + 4 * uint64_t{entry});
 }
+
+IRS_FORCE_INLINE inline Header HeaderAt(const BlockView& view,
+                                        uint32_t entry) noexcept {
+  return {
+    .lcp = ColumnAt(view.lcps, view.width, entry),
+    .len = ColumnAt(view.lens, view.width, entry),
+  };
+}
+
+class TailSet {
+ public:
+  void Add(byte_type b) noexcept {
+    _bits[b >> 6] |= uint64_t{1} << (b & 63);
+    auto& rows = b >> 4 < 8 ? _low : _high;
+    rows[b & 0x0F] |= static_cast<byte_type>(1 << ((b >> 4) & 7));
+  }
+
+  bool Contains(byte_type b) const noexcept {
+    return (_bits[b >> 6] >> (b & 63)) & 1;
+  }
+
+  IRS_FORCE_INLINE uint32_t Find(const byte_type* tails,
+                                 uint32_t count) const noexcept {
+    SDB_ASSERT(count <= kRestartInterval);
+#ifdef __AVX2__
+    const auto bytes =
+      _mm_loadu_si128(reinterpret_cast<const __m128i*>(tails));
+    const auto nibble = _mm_set1_epi8(0x0F);
+    const auto lo = _mm_and_si128(bytes, nibble);
+    const auto hi = _mm_and_si128(_mm_srli_epi16(bytes, 4), nibble);
+    const auto rows = _mm_blendv_epi8(
+      _mm_shuffle_epi8(Load(_low), lo), _mm_shuffle_epi8(Load(_high), lo),
+      _mm_cmpgt_epi8(hi, _mm_set1_epi8(7)));
+    const auto bits = _mm_shuffle_epi8(
+      _mm_setr_epi8(1, 2, 4, 8, 16, 32, 64, -128, 1, 2, 4, 8, 16, 32, 64, -128),
+      hi);
+    const auto found = _mm_cmpeq_epi8(_mm_and_si128(rows, bits), bits);
+    return static_cast<uint32_t>(_mm_movemask_epi8(found)) &
+           ((uint32_t{1} << count) - 1);
+#else
+    uint32_t found = 0;
+    for (uint32_t i = 0; i != count; ++i) {
+      found |= uint32_t{Contains(tails[i])} << i;
+    }
+    return found;
+#endif
+  }
+
+ private:
+#ifdef __AVX2__
+  static __m128i Load(const std::array<byte_type, 16>& rows) noexcept {
+    return _mm_load_si128(reinterpret_cast<const __m128i*>(rows.data()));
+  }
+#endif
+
+  std::array<uint64_t, 4> _bits{};
+  alignas(16) std::array<byte_type, 16> _low{};
+  alignas(16) std::array<byte_type, 16> _high{};
+};
 
 inline size_t DecodeInto(const duckdb_fsst_decoder_t& decoder, bytes_view codes,
                          byte_type* out, size_t limit) noexcept {
@@ -253,8 +316,7 @@ CompareCoded(const duckdb_fsst_decoder_t& decoder, bytes_view codes, Probe rest,
 }
 
 inline bytes_view RestartKey(const BlockView& view, uint32_t restart) noexcept {
-  const auto* p = view.headers + HeaderOffset(view, restart);
-  const auto header = ReadHeader(p);
+  const auto header = HeaderAt(view, restart * kRestartInterval);
   SDB_ASSERT(header.lcp == 0);
   return {view.suffixes + SuffixOffset(view, restart), header.len};
 }
@@ -344,11 +406,10 @@ inline Bound VarLowerBound(const BlockView& view, Probe probe,
   const uint32_t group = restarts - 1;
   const uint32_t first = group * kRestartInterval;
   const uint32_t end = std::min(first + kRestartInterval, view.count);
-  const auto* hp = view.headers + HeaderOffset(view, group);
   const auto* sp = view.suffixes + SuffixOffset(view, group);
   size_t matched = 0;
   for (uint32_t entry = first; entry != end; ++entry) {
-    const auto header = ReadHeader(hp);
+    const auto header = HeaderAt(view, entry);
     const auto* suffix = sp;
     sp += header.len;
     const auto order =
@@ -510,7 +571,7 @@ class Cursor {
     }
     _entry = entry;
     SDB_ASSERT(_entry < _view.count);
-    const auto header = ReadHeader(_hp);
+    const auto header = HeaderAt(_view, entry);
     PushPending(_sp, header);
     _mat = std::min<size_t>(_mat, header.lcp);
     _sp += header.len;
@@ -525,39 +586,93 @@ class Cursor {
     }
     const uint32_t first = _entry + 1;
     const uint32_t end = std::min(_restart, _stop);
-    const auto* hp = _hp;
     const auto* sp = _sp;
     uint32_t entry = first;
     uint32_t lcp = kNone;
     for (; entry < end; ++entry) {
-      const auto* at = hp;
-      const auto header = ReadHeader(hp);
-      if (!reject(sp, header.lcp, header.len)) {
-        hp = at;
+      const auto header = HeaderAt(_view, entry);
+      if (!reject(sp, header.lcp, header.len, _view.befores[entry])) {
         break;
       }
       lcp = std::min(lcp, header.lcp);
       sp += header.len;
     }
-    if (entry == first) {
+    return Skipped(first, entry, end, sp, lcp);
+  }
+
+  template<typename Reject>
+  IRS_FORCE_INLINE uint32_t SkipTails(size_t prefix, const TailSet& tails,
+                                      Reject&& reject) {
+    constexpr uint32_t kNone = std::numeric_limits<uint32_t>::max();
+    if (_view.kind != BlockKind::Var || _entry == kNoEntry) {
       return kNone;
     }
-    _mat = std::min<size_t>(_mat, lcp);
-    if (entry == end) {
-      _size = _mat;
-      _pendings = 0;
-      _partial = true;
-    } else {
-      for (const auto* sp_at = _sp; _hp != hp;) {
-        const auto header = ReadHeader(_hp);
-        PushPending(sp_at, header);
-        sp_at += header.len;
-      }
+    const uint32_t first = _entry + 1;
+    const uint32_t end = std::min(_restart, _stop);
+    if (first >= end) {
+      return kNone;
     }
-    _entry = entry - 1;
-    _hp = hp;
-    _sp = sp;
-    return lcp;
+    uint32_t candidates = tails.Find(_view.tails + first, end - first);
+    const auto* sp = _sp;
+    uint32_t entry = first;
+    uint32_t lcp = kNone;
+    for (;;) {
+      const uint32_t next =
+        candidates == 0 ? end : first + std::countr_zero(candidates);
+      for (; entry != next; ++entry) {
+        const auto header = HeaderAt(_view, entry);
+        if (header.lcp < prefix) {
+          return Skipped(first, entry, end, sp, lcp);
+        }
+        lcp = std::min(lcp, header.lcp);
+        sp += header.len;
+      }
+      if (entry == end) {
+        break;
+      }
+      candidates &= candidates - 1;
+      const auto header = HeaderAt(_view, entry);
+      if (header.lcp < prefix ||
+          !reject(sp, header.len, header.lcp, _view.befores[entry])) {
+        break;
+      }
+      lcp = std::min(lcp, header.lcp);
+      sp += header.len;
+      ++entry;
+    }
+    return Skipped(first, entry, end, sp, lcp);
+  }
+
+  bytes_view PeekNext() {
+    SDB_ASSERT(_view.kind == BlockKind::Var);
+    SDB_ASSERT(_entry != kNoEntry && _entry + 1 < std::min(_restart, _stop));
+    Materialize();
+    const auto header = HeaderAt(_view, _entry + 1);
+    const size_t bound =
+      header.lcp + size_t{header.len} * (_view.coded ? sizeof(uint64_t) : 1);
+    if (_peek.size() < bound + kKeyPad) {
+      utils::StrResizeAmortized(_peek, bound + kKeyPad);
+    }
+    auto* out = _peek.data();
+    std::memcpy(out, _key.data(), header.lcp);
+    if (_view.coded) {
+      _peeked = header.lcp + DecodeInto(*_field->Fsst(), {_sp, header.len},
+                                        out + header.lcp,
+                                        std::numeric_limits<uint32_t>::max());
+    } else {
+      std::memcpy(out + header.lcp, _sp, header.len);
+      _peeked = header.lcp + header.len;
+    }
+    return {out, _peeked};
+  }
+
+  uint32_t TakePeeked() noexcept {
+    const auto header = HeaderAt(_view, ++_entry);
+    _sp += header.len;
+    std::swap(_key, _peek);
+    _size = _peeked;
+    _mat = _size;
+    return header.lcp;
   }
 
   void Materialize() {
@@ -588,6 +703,7 @@ class Cursor {
     _size = _mat;
     if (_block != kNoEntry && block == _block + 1) {
       ReadAhead(block);
+      FetchLines(block + 1);
     } else if (_block != kNoEntry && block > _block) {
       _ahead = std::max(_ahead, block + 1);
       _window = std::max(kFirstWindow, _window / 2);
@@ -607,7 +723,6 @@ class Cursor {
     _stop =
       block + 1 == _field->Blocks() ? _field->LastEntry() + 1 : _view.count;
     _block = block;
-    _hp = _view.headers;
     _sp = _view.suffixes;
   }
 
@@ -628,7 +743,7 @@ class Cursor {
     if (_view.kind != BlockKind::Var) {
       return SetFixed(_entry);
     }
-    const auto header = ReadHeader(_hp);
+    const auto header = HeaderAt(_view, _entry);
     const bytes_view suffix{_sp, header.len};
     _sp += header.len;
     if (_entry == _restart) {
@@ -759,6 +874,29 @@ class Cursor {
              : _key[common] < probe.data[common];
   }
 
+  uint32_t Skipped(uint32_t first, uint32_t entry, uint32_t end,
+                   const byte_type* sp, uint32_t lcp) noexcept {
+    if (entry == first) {
+      return std::numeric_limits<uint32_t>::max();
+    }
+    _mat = std::min<size_t>(_mat, lcp);
+    if (entry == end) {
+      _size = _mat;
+      _pendings = 0;
+      _partial = true;
+    } else {
+      const auto* pending = _sp;
+      for (uint32_t skipped = first; skipped != entry; ++skipped) {
+        const auto header = HeaderAt(_view, skipped);
+        PushPending(pending, header);
+        pending += header.len;
+      }
+    }
+    _entry = entry - 1;
+    _sp = sp;
+    return lcp;
+  }
+
   void PushPending(const byte_type* data, Header header) noexcept {
     SDB_ASSERT(_pendings < _pending.size());
     _pending[_pendings++] = {
@@ -771,7 +909,6 @@ class Cursor {
   void Group(uint32_t group) {
     _entry = group == 0 ? kNoEntry : group * kRestartInterval - 1;
     _restart = group * kRestartInterval;
-    _hp = _view.headers + HeaderOffset(_view, group);
     _sp = _view.suffixes + SuffixOffset(_view, group);
     Next();
   }
@@ -780,16 +917,14 @@ class Cursor {
     SDB_ASSERT(_pendings == 0);
     const auto* fsst = _view.coded ? _field->Fsst() : nullptr;
     const uint32_t end = std::min(_restart, _view.count);
-    const auto* hp = _hp;
     const auto* sp = _sp;
     for (uint32_t entry = _entry + 1; entry != end; ++entry) {
-      const auto header = ReadHeader(hp);
+      const auto header = HeaderAt(_view, entry);
       const auto* suffix = sp;
       sp += header.len;
       if (header.lcp > matched) {
         continue;
       }
-      _hp = hp;
       _sp = sp;
       _entry = entry;
       if (header.lcp < matched) {
@@ -830,7 +965,6 @@ class Cursor {
       _entry = kNoEntry;
       return false;
     }
-    _hp = hp;
     _sp = sp;
     _entry = end - 1;
     Next();
@@ -892,6 +1026,18 @@ class Cursor {
     return static_cast<uint32_t>(lcp);
   }
 
+  void FetchLines(uint32_t block) const noexcept {
+    constexpr uint64_t kLine = 64;
+    const auto* base = _field->Owner().Base();
+    if (!base || block >= _field->Blocks()) {
+      return;
+    }
+    const uint64_t end = _field->BlockOffset(block + 1);
+    for (uint64_t at = _field->BlockOffset(block); at < end; at += kLine) {
+      __builtin_prefetch(base + at);
+    }
+  }
+
   void ReadAhead(uint32_t block) noexcept {
     if (_ahead >= _end || block + 1 + _issued / 2 < _ahead) {
       return;
@@ -936,10 +1082,11 @@ class Cursor {
   const TermReaderImpl* _field;
   BlockBuffer _buffer;
   BlockView _view{};
-  const byte_type* _hp = nullptr;
   const byte_type* _sp = nullptr;
   const byte_type* _records = nullptr;
   bstring _key;
+  bstring _peek;
+  size_t _peeked = 0;
   PaddedKey _probe;
   PostingMeta _meta;
   std::array<PendingSuffix, kRestartInterval> _pending;

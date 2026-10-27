@@ -47,7 +47,6 @@
 #include <vector>
 
 #include "connector/common.h"
-#include "connector/functions/array.h"
 #include "pg/types/cast.h"
 #include "pg/types/float.h"
 #include "pg/types/function.h"
@@ -2689,12 +2688,8 @@ void RegisterCasts(duckdb::CastFunctionSet& casts) {
   RegisterType<Geometric::Line>(casts);
   RegisterType<Geometric::Lseg>(casts);
   RegisterType<Geometric::Box>(casts);
-  auto boxes = MakeType(Geometric::Box);
-  for (size_t dimensions = 0; dimensions < connector::kMaxArrayDimensions;
-       ++dimensions) {
-    boxes = duckdb::LogicalType::LIST(boxes);
-    RegisterTextInput(casts, boxes, BindTextToBoxes);
-  }
+  RegisterTextInput(casts, duckdb::LogicalType::LIST(MakeType(Geometric::Box)),
+                    BindTextToBoxes);
   RegisterType<Geometric::Path>(casts);
   RegisterType<Geometric::Polygon>(casts);
   RegisterType<Geometric::Circle>(casts);

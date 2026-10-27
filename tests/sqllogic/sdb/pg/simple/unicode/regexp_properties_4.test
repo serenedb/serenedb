@@ -1,0 +1,1672 @@
+statement ok
+CREATE TABLE rp_cp AS
+    SELECT c::INTEGER AS c, chr(c::INTEGER) AS s FROM range(0, 55296) t(c)
+    UNION ALL
+    SELECT c::INTEGER AS c, chr(c::INTEGER) AS s FROM range(57344, 1114112) t(c);
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Lu}');
+----
+n	lo	hi	total	squares
+1886	65	125217	89399941	8847081614423
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Ll}');
+----
+n	lo	hi	total	squares
+2283	97	125251	107102796	10401694032156
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Lt}');
+----
+n	lo	hi	total	squares
+31	453	8188	220514	1771515306
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=LC}');
+----
+n	lo	hi	total	squares
+4200	65	125251	196723251	19250547161885
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Lm}');
+----
+n	lo	hi	total	squares
+410	688	125259	20036915	1860770218331
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Lo}');
+----
+n	lo	hi	total	squares
+141062	170	210041	15952245080	2404910835481038
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=L}');
+----
+n	lo	hi	total	squares
+145672	65	210041	16169005246	2426022152861254
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Mn}');
+----
+n	lo	hi	total	squares
+2059	768	917999	298222400	209226986218060
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Me}');
+----
+n	lo	hi	total	squares
+13	1160	42610	195909	5991995813
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Mc}');
+----
+n	lo	hi	total	squares
+471	2307	119154	19881220	1467081171698
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=M}');
+----
+n	lo	hi	total	squares
+2543	768	917999	318299529	210700059385571
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Nd}');
+----
+n	lo	hi	total	squares
+770	48	130041	40623335	3580836350425
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Nl}');
+----
+n	lo	hi	total	squares
+239	5870	94198	13482374	931958047714
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=No}');
+----
+n	lo	hi	total	squares
+915	178	127244	57560662	5341255527096
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=N}');
+----
+n	lo	hi	total	squares
+1924	48	130041	111666371	9854049925235
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Zs}');
+----
+n	lo	hi	total	squares
+17	32	12288	124933	1059853667
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Zl}');
+----
+n	lo	hi	total	squares
+1	8232	8232	8232	67765824
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Zp}');
+----
+n	lo	hi	total	squares
+1	8233	8233	8233	67782289
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Z}');
+----
+n	lo	hi	total	squares
+19	32	12288	141398	1195401780
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Cc}');
+----
+n	lo	hi	total	squares
+65	0	159	5215	688225
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Cf}');
+----
+n	lo	hi	total	squares
+170	173	917631	92312063	81963632534023
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Co}');
+----
+n	lo	hi	total	squares
+137468	57344	1114109	137822040966	144321500263864694
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Cs}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=C}');
+----
+n	lo	hi	total	squares
+952433	0	1114111	603248169685	458233549051886287
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Pd}');
+----
+n	lo	hi	total	squares
+27	45	69293	635487	32542977883
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Ps}');
+----
+n	lo	hi	total	squares
+79	40	65378	1830591	86984312949
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Pe}');
+----
+n	lo	hi	total	squares
+77	41	65379	1814706	86864308168
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Pc}');
+----
+n	lo	hi	total	squares
+10	95	65343	415682	25658968026
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Po}');
+----
+n	lo	hi	total	squares
+641	33	125279	24000212	1592100532584
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Sm}');
+----
+n	lo	hi	total	squares
+960	43	129240	13004543	511375043433
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Sc}');
+----
+n	lo	hi	total	squares
+64	36	126128	1360628	87152254470
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Sk}');
+----
+n	lo	hi	total	squares
+125	94	127999	3403074	221857053740
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=So}');
+----
+n	lo	hi	total	squares
+7468	166	130042	612920063	72296243946467
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=S}');
+----
+n	lo	hi	total	squares
+8617	36	130042	630688308	73116628298110
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Pi}');
+----
+n	lo	hi	total	squares
+12	171	11808	112041	1172412121
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=Pf}');
+----
+n	lo	hi	total	squares
+10	187	11809	95624	1037439024
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gcm=P}');
+----
+n	lo	hi	total	squares
+856	33	125279	28904343	1826360950755
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ID_Type=Not_Character}');
+----
+n	lo	hi	total	squares
+952257	0	1114111	603155857434	458151585419333960
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ID_Type=Deprecated}');
+----
+n	lo	hi	total	squares
+15	329	917505	1007314	842498307398
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ID_Type=Default_Ignorable}');
+----
+n	lo	hi	total	squares
+398	173	917999	311182771	283272162332123
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ID_Type=Not_NFKC}');
+----
+n	lo	hi	total	squares
+4958	160	195101	393860587	48125721547777
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ID_Type=Not_XID}');
+----
+n	lo	hi	total	squares
+9113	9	130042	676265551	76858627683035
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ID_Type=Exclusion}');
+----
+n	lo	hi	total	squares
+22048	994	125142	1865434193	166777917241079
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ID_Type=Obsolete}');
+----
+n	lo	hi	total	squares
+1941	312	123023	76082602	6221838799048
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ID_Type=Technical}');
+----
+n	lo	hi	total	squares
+1864	384	122666	107241056	11520268972608
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ID_Type=Uncommon_Use}');
+----
+n	lo	hi	total	squares
+83221	276	210041	12739037387	2168861976532961
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ID_Type=Limited_Use}');
+----
+n	lo	hi	total	squares
+5285	746	125279	220521844	15086810514226
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ID_Type=Inclusion}');
+----
+n	lo	hi	total	squares
+18	39	12539	63308	543727706
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ID_Type=Recommended}');
+----
+n	lo	hi	total	squares
+33773	48	171416	1178121906	48402388166210
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Zyyy}');
+----
+n	lo	hi	total	squares
+8655	0	917631	777559486	163028336516494
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Common}');
+----
+n	lo	hi	total	squares
+9123	0	917631	791452744	163871958811072
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Bopo}');
+----
+n	lo	hi	total	squares
+122	711	65381	1816179	46828540201
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Bopomofo}');
+----
+n	lo	hi	total	squares
+77	746	12735	949027	11972476343
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Deva}');
+----
+n	lo	hi	total	squares
+221	700	72457	3149685	133907376381
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Devanagari}');
+----
+n	lo	hi	total	squares
+164	2304	72457	2397130	113028007750
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Gujr}');
+----
+n	lo	hi	total	squares
+105	2385	43065	689985	19250851163
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Gujarati}');
+----
+n	lo	hi	total	squares
+91	2689	2815	249800	685840016
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Hira}');
+----
+n	lo	hi	total	squares
+433	12289	127488	34627419	3647557723497
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Hiragana}');
+----
+n	lo	hi	total	squares
+381	12353	127488	33455756	3598474288282
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Latn}');
+----
+n	lo	hi	total	squares
+1559	65	122666	28108138	1591704613716
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Latin}');
+----
+n	lo	hi	total	squares
+1492	65	122666	27636580	1574803610196
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Ital}');
+----
+n	lo	hi	total	squares
+39	66304	66351	2586624	171554460428
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Old_Italic}');
+----
+n	lo	hi	total	squares
+39	66304	66351	2586624	171554460428
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Taml}');
+----
+n	lo	hi	total	squares
+133	2385	73727	4316539	299376333285
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Tamil}');
+----
+n	lo	hi	total	squares
+123	2946	73727	3974599	277586221335
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Cans}');
+----
+n	lo	hi	total	squares
+726	5120	72383	5084103	105596281679
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Canadian_Aboriginal}');
+----
+n	lo	hi	total	squares
+726	5120	72383	5084103	105596281679
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Tagb}');
+----
+n	lo	hi	total	squares
+20	5941	6003	119755	717068345
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Tagbanwa}');
+----
+n	lo	hi	total	squares
+18	5984	6003	107872	646465500
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Osma}');
+----
+n	lo	hi	total	squares
+40	66688	66729	2668320	177998296520
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Osmanya}');
+----
+n	lo	hi	total	squares
+40	66688	66729	2668320	177998296520
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Bugi}');
+----
+n	lo	hi	total	squares
+31	6656	43471	243590	3224650680
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Buginese}');
+----
+n	lo	hi	total	squares
+30	6656	6687	200119	1334922839
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Tfng}');
+----
+n	lo	hi	total	squares
+66	770	11647	689705	7940004857
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Tifinagh}');
+----
+n	lo	hi	total	squares
+59	11568	11647	684258	7935765558
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Brah}');
+----
+n	lo	hi	total	squares
+115	69632	69759	8014392	558526045306
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Brahmi}');
+----
+n	lo	hi	total	squares
+115	69632	69759	8014392	558526045306
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Egyh}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Egyh}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Hmng}');
+----
+n	lo	hi	total	squares
+127	92928	93071	11810609	1098350509201
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Pahawh_Hmong}');
+----
+n	lo	hi	total	squares
+127	92928	93071	11810609	1098350509201
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Latf}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Latf}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Maya}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Maya}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Phag}');
+----
+n	lo	hi	total	squares
+61	6146	43127	2452543	104356055391
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Phags_Pa}');
+----
+n	lo	hi	total	squares
+56	43072	43127	2413572	104023761044
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Syre}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Syre}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Visp}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Visp}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Jpan}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Jpan}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Rjng}');
+----
+n	lo	hi	total	squares
+37	43312	43359	1603221	69468047295
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Rejang}');
+----
+n	lo	hi	total	squares
+37	43312	43359	1603221	69468047295
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Mtei}');
+----
+n	lo	hi	total	squares
+79	43744	44025	3470133	152429102131
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Meetei_Mayek}');
+----
+n	lo	hi	total	squares
+79	43744	44025	3470133	152429102131
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Kthi}');
+----
+n	lo	hi	total	squares
+89	2406	69837	5212503	349978445005
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Kaithi}');
+----
+n	lo	hi	total	squares
+68	69760	69837	4745968	331238442510
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Prti}');
+----
+n	lo	hi	total	squares
+30	68416	68447	2052931	140484192315
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Inscriptional_Parthian}');
+----
+n	lo	hi	total	squares
+30	68416	68447	2052931	140484192315
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Bamu}');
+----
+n	lo	hi	total	squares
+657	42656	92728	56358192	5023074365208
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Bamum}');
+----
+n	lo	hi	total	squares
+657	42656	92728	56358192	5023074365208
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Dupl}');
+----
+n	lo	hi	total	squares
+154	183	113827	16735717	1901847224799
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Duployan}');
+----
+n	lo	hi	total	squares
+143	113664	113823	16264460	1849879023298
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Mend}');
+----
+n	lo	hi	total	squares
+213	124928	125142	26632274	3329944560054
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Mende_Kikakui}');
+----
+n	lo	hi	total	squares
+213	124928	125142	26632274	3329944560054
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Sind}');
+----
+n	lo	hi	total	squares
+81	2404	70393	5289890	360088982700
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Khudawadi}');
+----
+n	lo	hi	total	squares
+69	70320	70393	4854476	341535352774
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Nshu}');
+----
+n	lo	hi	total	squares
+397	94177	111355	44112547	4901846445499
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Nushu}');
+----
+n	lo	hi	total	squares
+397	94177	111355	44112547	4901846445499
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Wole}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Wole}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Mahj}');
+----
+n	lo	hi	total	squares
+62	183	70006	3189195	209640800131
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Mahajani}');
+----
+n	lo	hi	total	squares
+39	69968	70006	2729493	191029031531
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Pauc}');
+----
+n	lo	hi	total	squares
+57	72384	72440	4127484	298879386836
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Pau_Cin_Hau}');
+----
+n	lo	hi	total	squares
+57	72384	72440	4127484	298879386836
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Newa}');
+----
+n	lo	hi	total	squares
+106	2385	70753	6914815	485303155303
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Newa}');
+----
+n	lo	hi	total	squares
+97	70656	70753	6858293	484909178305
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Gonm}');
+----
+n	lo	hi	total	squares
+77	2404	73049	5479904	399700482078
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Masaram_Gondi}');
+----
+n	lo	hi	total	squares
+75	72960	73049	5475095	399688918837
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Maka}');
+----
+n	lo	hi	total	squares
+25	73440	73464	1836300	134879908900
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Makasar}');
+----
+n	lo	hi	total	squares
+25	73440	73464	1836300	134879908900
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Elym}');
+----
+n	lo	hi	total	squares
+23	69600	69622	1601053	111450901395
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Elymaic}');
+----
+n	lo	hi	total	squares
+23	69600	69622	1601053	111450901395
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Diak}');
+----
+n	lo	hi	total	squares
+72	71936	72025	5182474	373028333904
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Dives_Akuru}');
+----
+n	lo	hi	total	squares
+72	71936	72025	5182474	373028333904
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Tnsa}');
+----
+n	lo	hi	total	squares
+89	92784	92873	8261702	766918261076
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Tangsa}');
+----
+n	lo	hi	total	squares
+89	92784	92873	8261702	766918261076
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Aran}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Aran}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Sunu}');
+----
+n	lo	hi	total	squares
+51	768	72697	3202749	232331205355
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Sunuwar}');
+----
+n	lo	hi	total	squares
+44	72640	72697	3197246	232326876654
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{scx=Tayo}');
+----
+n	lo	hi	total	squares
+55	124608	124671	6854965	854373563811
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Tai_Yo}');
+----
+n	lo	hi	total	squares
+55	124608	124671	6854965	854373563811
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Identifier_Type=Not_Character}');
+----
+n	lo	hi	total	squares
+952257	0	1114111	603155857434	458151585419333960
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Identifier_Type=Deprecated}');
+----
+n	lo	hi	total	squares
+15	329	917505	1007314	842498307398
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Identifier_Type=Default_Ignorable}');
+----
+n	lo	hi	total	squares
+398	173	917999	311182771	283272162332123
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Identifier_Type=Not_NFKC}');
+----
+n	lo	hi	total	squares
+4958	160	195101	393860587	48125721547777
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Identifier_Type=Not_XID}');
+----
+n	lo	hi	total	squares
+9113	9	130042	676265551	76858627683035
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Identifier_Type=Exclusion}');
+----
+n	lo	hi	total	squares
+22048	994	125142	1865434193	166777917241079
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Identifier_Type=Obsolete}');
+----
+n	lo	hi	total	squares
+1941	312	123023	76082602	6221838799048
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Identifier_Type=Technical}');
+----
+n	lo	hi	total	squares
+1864	384	122666	107241056	11520268972608
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Identifier_Type=Uncommon_Use}');
+----
+n	lo	hi	total	squares
+83221	276	210041	12739037387	2168861976532961
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Identifier_Type=Limited_Use}');
+----
+n	lo	hi	total	squares
+5285	746	125279	220521844	15086810514226
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Identifier_Type=Inclusion}');
+----
+n	lo	hi	total	squares
+18	39	12539	63308	543727706
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Identifier_Type=Recommended}');
+----
+n	lo	hi	total	squares
+33773	48	171416	1178121906	48402388166210
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=1.1}');
+----
+n	lo	hi	total	squares
+33979	0	65535	1144672688	49638274625596
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=2.0}');
+----
+n	lo	hi	total	squares
+176452	0	1114111	139154205645	144390605073538865
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=3.2}');
+----
+n	lo	hi	total	squares
+232755	0	1114111	146235947019	145517896676327145
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=4.1}');
+----
+n	lo	hi	total	squares
+235254	0	1114111	146539981615	145725954512341363
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=5.2}');
+----
+n	lo	hi	total	squares
+244895	0	1114111	147565475475	145875851856099679
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=6.0}');
+----
+n	lo	hi	total	squares
+246983	0	1114111	147792018368	145904158024181902
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=7.0}');
+----
+n	lo	hi	total	squares
+250555	0	1114111	148085267829	145932509816324481
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=9.0}');
+----
+n	lo	hi	total	squares
+265771	0	1114111	150031611090	146209972420634442
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=11.0}');
+----
+n	lo	hi	total	squares
+274973	0	1114111	151591484816	146489491191391170
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=13.0}');
+----
+n	lo	hi	total	squares
+281458	0	1114111	152731777916	146702551582789826
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=15.0}');
+----
+n	lo	hi	total	squares
+286785	0	1114111	153687534027	146887025484016009
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=15.1}');
+----
+n	lo	hi	total	squares
+287412	0	1114111	153806884667	146909903759193067
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=16.0}');
+----
+n	lo	hi	total	squares
+292597	0	1114111	154253991427	146949598322177629
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=17.0}');
+----
+n	lo	hi	total	squares
+297400	0	1114111	155195197132	147140452481639444
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=3}');
+----
+n	lo	hi	total	squares
+186761	0	1114111	139330814403	144394696869979379
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=3.2.0.0}');
+----
+n	lo	hi	total	squares
+232755	0	1114111	146235947019	145517896676327145
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age= 4 . 1 }');
+----
+n	lo	hi	total	squares
+233981	0	1114111	146500161640	145723366812081156
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Age=V3_2}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{nv=0}');
+----
+n	lo	hi	total	squares
+97	48	130032	5208683	473293145719
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{nv=1}');
+----
+n	lo	hi	total	squares
+158	49	133418	8883359	765237831647
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{nv=0.5}');
+----
+n	lo	hi	total	squares
+20	189	126268	1154528	92400820474
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{nv=-0.5}');
+----
+n	lo	hi	total	squares
+1	3891	3891	3891	15139881
+
+
+query error db error: ERROR: invalid character class range: \\p\{nv=1/2\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{nv=1/2}');
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{nv=1000000000000}');
+----
+n	lo	hi	total	squares
+2	20806	93025	113831	9086540261
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{nv=12}');
+----
+n	lo	hi	total	squares
+9	8555	119532	387475	37871210037
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{nv=-123456789}');
+----
+n	lo	hi	total	squares
+1110041	0	1114111	620390251106	460944781069536710
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{nv=0x10}');
+----
+n	lo	hi	total	squares
+8	2553	119536	372930	37734040684
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{nv=1e3}');
+----
+n	lo	hi	total	squares
+22	3058	126236	1177511	89527004589
+
+
+query error db error: ERROR: invalid character class range: \\p\{nv=abc\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{nv=abc}');
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ccc=230}');
+----
+n	lo	hi	total	squares
+546	768	125257	16903033	1529202081227
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ccc= 230}');
+----
+n	lo	hi	total	squares
+546	768	125257	16903033	1529202081227
+
+
+query error db error: ERROR: invalid character class range: \\p\{ccc=230 \}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ccc=230 }');
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ccc=0x10}');
+----
+n	lo	hi	total	squares
+1	1462	1462	1462	2137444
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ccc=2.3e2}');
+----
+n	lo	hi	total	squares
+546	768	125257	16903033	1529202081227
+
+
+query error db error: ERROR: invalid character class range: \\p\{ccc=256\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ccc=256}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{ccc=\-1\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ccc=-1}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{ccc=1\.5\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ccc=1.5}');
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ccc=Above}');
+----
+n	lo	hi	total	squares
+546	768	125257	16903033	1529202081227
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{L}');
+----
+n	lo	hi	total	squares
+145672	65	210041	16169005246	2426022152861254
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Lu}');
+----
+n	lo	hi	total	squares
+1886	65	125217	89399941	8847081614423
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{LC}');
+----
+n	lo	hi	total	squares
+4200	65	125251	196723251	19250547161885
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{C}');
+----
+n	lo	hi	total	squares
+952433	0	1114111	603248169685	458233549051886287
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Cn}');
+----
+n	lo	hi	total	squares
+814730	888	1114111	465333811441	313830085154799345
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Co}');
+----
+n	lo	hi	total	squares
+137468	57344	1114109	137822040966	144321500263864694
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Cs}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Letter}');
+----
+n	lo	hi	total	squares
+145672	65	210041	16169005246	2426022152861254
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Uppercase_Letter}');
+----
+n	lo	hi	total	squares
+1886	65	125217	89399941	8847081614423
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Cased_Letter}');
+----
+n	lo	hi	total	squares
+4200	65	125251	196723251	19250547161885
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{punct}');
+----
+n	lo	hi	total	squares
+856	33	125279	28904343	1826360950755
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{digit}');
+----
+n	lo	hi	total	squares
+770	48	130041	40623335	3580836350425
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{cntrl}');
+----
+n	lo	hi	total	squares
+65	0	159	5215	688225
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Latn}');
+----
+n	lo	hi	total	squares
+1492	65	122666	27636580	1574803610196
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Greek}');
+----
+n	lo	hi	total	squares
+518	880	119365	15787342	1362318734550
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Zyyy}');
+----
+n	lo	hi	total	squares
+9123	0	917631	791452744	163871958811072
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Inherited}');
+----
+n	lo	hi	total	squares
+684	768	917999	234826715	203635183926369
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Unknown}');
+----
+n	lo	hi	total	squares
+952198	888	1114111	603155852407	458151585418664039
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Hrkt}');
+----
+n	lo	hi	total	squares
+0	NULL	NULL	NULL	NULL
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Any}');
+----
+n	lo	hi	total	squares
+1112064	0	1114111	620506874880	460955069498708992
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ASCII}');
+----
+n	lo	hi	total	squares
+128	0	127	8128	690880
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Assigned}');
+----
+n	lo	hi	total	squares
+297334	0	1114109	155173063439	147124984343909647
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Lower}');
+----
+n	lo	hi	total	squares
+2595	97	125251	120352567	11626296657581
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Upper}');
+----
+n	lo	hi	total	squares
+2006	65	127369	99712749	10115053426983
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{White_Space}');
+----
+n	lo	hi	total	squares
+25	9	12288	141586	1195420084
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{l_u}');
+----
+n	lo	hi	total	squares
+1886	65	125217	89399941	8847081614423
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{ lu }');
+----
+n	lo	hi	total	squares
+1886	65	125217	89399941	8847081614423
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{L-U}');
+----
+n	lo	hi	total	squares
+1886	65	125217	89399941	8847081614423
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{UPPERCASE_LETTER}');
+----
+n	lo	hi	total	squares
+1886	65	125217	89399941	8847081614423
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{gc=L}');
+----
+n	lo	hi	total	squares
+145672	65	210041	16169005246	2426022152861254
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{General_Category=Letter}');
+----
+n	lo	hi	total	squares
+145672	65	210041	16169005246	2426022152861254
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Script=Latin}');
+----
+n	lo	hi	total	squares
+1492	65	122666	27636580	1574803610196
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{sc=latn}');
+----
+n	lo	hi	total	squares
+1492	65	122666	27636580	1574803610196
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{blk=ASCII}');
+----
+n	lo	hi	total	squares
+128	0	127	8128	690880
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Block=Basic Latin}');
+----
+n	lo	hi	total	squares
+128	0	127	8128	690880
+
+
+query error db error: ERROR: invalid character class range: \\p\{Name=LATIN SMALL LETTER A\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Name=LATIN SMALL LETTER A}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{na1=X\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{na1=X}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{InPC\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{InPC}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{bmg=X\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{bmg=X}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{Script\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Script}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{Script=\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Script=}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{=L\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{=L}');
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{L=}');
+----
+n	lo	hi	total	squares
+145672	65	210041	16169005246	2426022152861254
+
+
+query error db error: ERROR: invalid character class range: \\p\{Alphabetic=Lu\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Alphabetic=Lu}');
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Alphabetic=Y}');
+----
+n	lo	hi	total	squares
+147421	65	210041	16244122866	2431990139423828
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Alphabetic=True}');
+----
+n	lo	hi	total	squares
+147421	65	210041	16244122866	2431990139423828
+
+
+query error db error: ERROR: invalid character class range: \\p\{nonsense\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{nonsense}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{L\#\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{L#}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{L@\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{L@}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{L\$\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{L$}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{Llé\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Llé}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{InGreek\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{InGreek}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{isL\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{isL}');
+
+
+query error db error: ERROR: invalid character class range: \\p\{Is_Alphabetic\}
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total, sum(c::BIGINT * c) AS squares FROM rp_cp WHERE regexp_full_match(s, '\p{Is_Alphabetic}');
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total FROM rp_cp WHERE regexp_full_match(s, '\pL');
+----
+n	lo	hi	total
+145672	65	210041	16169005246
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total FROM rp_cp WHERE regexp_full_match(s, '\PL');
+----
+n	lo	hi	total
+966392	0	1114111	604337869634
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total FROM rp_cp WHERE regexp_full_match(s, '\p{^L}');
+----
+n	lo	hi	total
+966392	0	1114111	604337869634
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total FROM rp_cp WHERE regexp_full_match(s, '\P{^L}');
+----
+n	lo	hi	total
+145672	65	210041	16169005246
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total FROM rp_cp WHERE regexp_full_match(s, '[\p{L}\p{N}]');
+----
+n	lo	hi	total
+147596	48	210041	16280671617
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total FROM rp_cp WHERE regexp_full_match(s, '[^\p{L}]');
+----
+n	lo	hi	total
+966392	0	1114111	604337869634
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi, sum(c) AS total FROM rp_cp WHERE regexp_full_match(s, '\pN');
+----
+n	lo	hi	total
+1924	48	130041	111666371
+
+
+query
+SELECT count(*) AS n FROM rp_cp WHERE regexp_full_match(s, '(?i)\p{Lu}');
+----
+n
+3267
+
+
+statement ok
+DROP TABLE rp_cp;

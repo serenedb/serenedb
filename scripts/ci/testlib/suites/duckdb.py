@@ -4,9 +4,11 @@ import os
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import time
 import urllib.request
+from contextlib import closing
 from pathlib import Path
 
 import services
@@ -30,6 +32,7 @@ CORE_SERIAL = (
     "test/sql/storage/concurrent_checkpoint_index_in_memory.test_slow",
     "test/sql/storage/concurrent_checkpoint_writes_mid_write.test_slow",
 )
+ICEBERG_CATALOG = "iceberg_catalog.db"
 ICEBERG_SETUP = "test/sql/local/catalog_test_config_setup/"
 ICEBERG_CUSTOM = (
     "test/sql/local/catalog_custom_setup/",
@@ -687,6 +690,8 @@ class IcebergFixture(_DockerFixture):
         (work / "generated").mkdir(parents=True)
         (work / "catalog").mkdir()
         (work / "catalog").chmod(0o777)
+        (work / "catalog" / ICEBERG_CATALOG).touch()
+        (work / "catalog" / ICEBERG_CATALOG).chmod(0o666)
         fixed = os.environ.get("SDB_ICEBERG_DATA")
         key = f"artifacts/duckdb-iceberg/{_iceberg_data_key(ctx, fixed)}.tar.zst"
         cached = bool(fixed) and store.reachable() and self._restore(key, work)
@@ -695,9 +700,11 @@ class IcebergFixture(_DockerFixture):
                                  "-e", "CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO",
                                  "-e", "CATALOG_S3_ENDPOINT=http://127.0.0.1:9000",
                                  "-e", "CATALOG_S3_PATH__STYLE__ACCESS=true",
-                                 "-e", "CATALOG_URI=jdbc:sqlite:/catalog/iceberg_catalog.db",
+                                 "-e", f"CATALOG_URI=jdbc:sqlite:/catalog/{ICEBERG_CATALOG}",
                                  "-v", f"{work / 'catalog'}:/catalog"], peer="store")
         services.wait_for("Iceberg REST", lambda: _http_ok("http://127.0.0.1:8181/v1/config"), 90)
+        if cached:
+            _load_catalog(work)
         env = dict(ctx.base_env)
         if fixed:
             for link, target in ((Path(fixed), work / "generated"), (ice / "data" / "generated", Path(fixed))):
@@ -743,18 +750,20 @@ class IcebergFixture(_DockerFixture):
 
     def _restore(self, key, work):
         archive = work / "data.tar.zst"
+        saved = work / "saved"
         try:
             if not store.get(key, archive):
                 return False
-            subprocess.run(["tar", "--zstd", "-xf", str(archive), "-C", str(work)], check=True,
+            saved.mkdir()
+            subprocess.run(["tar", "--zstd", "-xf", str(archive), "-C", str(saved)], check=True,
                            capture_output=True)
         except (OSError, RuntimeError, subprocess.CalledProcessError):
+            shutil.rmtree(saved, ignore_errors=True)
             return False
         finally:
             archive.unlink(missing_ok=True)
-        (work / "catalog").chmod(0o777)
-        (work / "catalog" / "iceberg_catalog.db").chmod(0o666)
-        self._sync(work, "/data/warehouse", "s3://warehouse")
+        (saved / "generated").rename(work / "generated")
+        self._sync(work, "/data/saved/warehouse", "s3://warehouse")
         return True
 
     def _save(self, key, work):
@@ -766,6 +775,15 @@ class IcebergFixture(_DockerFixture):
             store.put(key, archive)
         finally:
             archive.unlink(missing_ok=True)
+
+
+def _load_catalog(work):
+    with closing(sqlite3.connect(work / "catalog" / ICEBERG_CATALOG, timeout=30)) as db:
+        db.execute("ATTACH ? AS saved", (str(work / "saved" / "catalog" / ICEBERG_CATALOG),))
+        with db:
+            for table in ("iceberg_tables", "iceberg_namespace_properties"):
+                db.execute(f"INSERT INTO {table} SELECT * FROM saved.{table}")
+    shutil.rmtree(work / "saved")
 
 
 def _iceberg_data_key(ctx, fixed):

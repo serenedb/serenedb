@@ -102,6 +102,39 @@ rollbacks
 2
 
 
+connection c_rubick_term database=rubick_stat_db
+statement ok
+CREATE TABLE stat_term_pid AS SELECT pg_backend_pid() AS pid;
+
+
+connection c_rubick_term database=rubick_stat_db
+statement ok
+BEGIN;
+
+
+connection c_rubick_term database=rubick_stat_db
+statement ok
+SELECT 1;
+
+
+connection c_rubick_a database=rubick_stat_db
+query
+SELECT pg_terminate_backend(pid) AS terminated FROM stat_term_pid;
+----
+terminated
+t
+
+
+connection c_rubick_a database=rubick_stat_db
+query ok retry 40 backoff 250ms
+SELECT d.xact_rollback - b.xact_rollback AS rollbacks
+FROM pg_stat_database d, stat_before b
+WHERE d.datname = current_database();
+----
+rollbacks
+3
+
+
 query
 SELECT xact_commit, xact_rollback, sessions, session_time, active_time, idle_in_transaction_time
 FROM pg_stat_database WHERE datid = 0;

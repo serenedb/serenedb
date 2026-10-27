@@ -147,14 +147,19 @@ namespace {
 
 void AddSessionStats(DatabaseStats& stats, const ProgressSource& source,
                      int64_t until_us) {
-  stats.xact_commit += source.xact_commit.load(std::memory_order_relaxed);
-  stats.xact_rollback += source.xact_rollback.load(std::memory_order_relaxed);
   if (!source.client_backend) {
     return;
   }
   ++stats.sessions;
   stats.session_time_us +=
     std::max<int64_t>(until_us - source.backend_start_us, 0);
+}
+
+void TakeTransactions(DatabaseStats& stats, ProgressSource& source) {
+  stats.xact_commit +=
+    source.xact_commit.exchange(0, std::memory_order_relaxed);
+  stats.xact_rollback +=
+    source.xact_rollback.exchange(0, std::memory_order_relaxed);
 }
 
 }  // namespace
@@ -169,11 +174,24 @@ void ProgressRegistry::Register(std::shared_ptr<ProgressSource> source) {
   _sources.emplace(source.get(), std::move(source));
 }
 
-void ProgressRegistry::Unregister(const ProgressSource* source) {
+void ProgressRegistry::Unregister(ProgressSource* source) {
   const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
   absl::MutexLock lock{&_mu};
-  AddSessionStats(_ended_stats[source->datid], *source, now);
+  auto& stats = _ended_stats[source->datid];
+  TakeTransactions(stats, *source);
+  AddSessionStats(stats, *source, now);
   _sources.erase(source);
+}
+
+void ProgressRegistry::CollectTransactions(ProgressSource& source) {
+  absl::MutexLock lock{&_mu};
+  if (_sources.contains(&source)) {
+    return;
+  }
+  if (const auto it = _ended_stats.find(source.datid);
+      it != _ended_stats.end()) {
+    TakeTransactions(it->second, source);
+  }
 }
 
 DatabaseStats ProgressRegistry::GetDatabaseStats(int64_t datid) const {
@@ -185,6 +203,9 @@ DatabaseStats ProgressRegistry::GetDatabaseStats(int64_t datid) const {
   }
   for (const auto& [_, source] : _sources) {
     if (source->datid == datid) {
+      stats.xact_commit += source->xact_commit.load(std::memory_order_relaxed);
+      stats.xact_rollback +=
+        source->xact_rollback.load(std::memory_order_relaxed);
       AddSessionStats(stats, *source, now);
     }
   }

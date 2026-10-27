@@ -199,11 +199,12 @@ class ProgressRegistry {
   }
 
   void Register(std::shared_ptr<ProgressSource> source);
-  void Unregister(const ProgressSource* source);
+  void Unregister(ProgressSource* source);
 
   std::vector<ProgressSnapshot> GetSnapshots() const;
 
   DatabaseStats GetDatabaseStats(int64_t datid) const;
+  void CollectTransactions(ProgressSource& source);
   void ForgetDatabase(int64_t datid);
 
   size_t OtherSessions(int64_t datid, int32_t pid, absl::Duration wait) const;

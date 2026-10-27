@@ -67,6 +67,12 @@ class SereneDBClientState final : public duckdb::ClientContextState {
     std::shared_ptr<ConnectionContext> connection_ctx)
     : _connection_ctx{std::move(connection_ctx)} {}
 
+  ~SereneDBClientState() final {
+    if (progress_source) {
+      pg::ProgressRegistry::Instance().CollectTransactions(*progress_source);
+    }
+  }
+
   ConnectionContext& GetConnectionContext() const { return *_connection_ctx; }
 
   // The connection's row in sdb_progress. Execution paths write the

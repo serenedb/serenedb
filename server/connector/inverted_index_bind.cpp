@@ -38,8 +38,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/optimizer/matcher/expression_matcher.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_lambda_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
@@ -1177,6 +1177,10 @@ bool ContainsRegLike(const duckdb::Expression& expr) {
   if (duckdb::TypeVisitor::Contains(expr.GetReturnType(), pg::IsRegLike)) {
     return true;
   }
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_LAMBDA) {
+    return ContainsRegLike(
+      *expr.Cast<duckdb::BoundLambdaExpression>().LambdaExpr());
+  }
   bool found = false;
   duckdb::ExpressionIterator::EnumerateChildren(
     expr, [&](const duckdb::Expression& child) {
@@ -1185,18 +1189,23 @@ bool ContainsRegLike(const duckdb::Expression& expr) {
   return found;
 }
 
-void ValidateConstantParts(duckdb::Expression& expr,
+void ValidateConstantParts(const duckdb::Expression& expr,
                            duckdb::ClientContext& context) {
-  duckdb::vector<duckdb::reference<duckdb::Expression>> bindings;
-  if (duckdb::FoldableConstantMatcher{}.Match(expr, bindings)) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_LAMBDA) {
+    ValidateConstantParts(
+      *expr.Cast<duckdb::BoundLambdaExpression>().LambdaExpr(), context);
+    return;
+  }
+  if (expr.IsFoldable()) {
     if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
       duckdb::ExpressionExecutor::EvaluateScalar(context, expr);
     }
     return;
   }
   duckdb::ExpressionIterator::EnumerateChildren(
-    expr,
-    [&](duckdb::Expression& child) { ValidateConstantParts(child, context); });
+    expr, [&](const duckdb::Expression& child) {
+      ValidateConstantParts(child, context);
+    });
 }
 
 std::shared_ptr<InvertedIndexConfig> DeriveKeys(

@@ -34,7 +34,6 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
-#include <iterator>
 #include <span>
 #include <string>
 #include <vector>
@@ -99,9 +98,7 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
     if (!changes.segments.empty()) {
       // Everything promoted sits ahead of what is left inline: a removal in
       // this record names rows committed before the transaction, never these.
-      _entries.WriteAdoptSegments(duckdb::vector<std::string>(
-        std::make_move_iterator(changes.segments.begin()),
-        std::make_move_iterator(changes.segments.end())));
+      _entries.WriteAdoptSegments(std::move(changes.segments));
     }
     changes.Visit(
       truncates ? 1 : 0,

@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "catalog/persistence/search_table.h"
+#include "connector/column_id.h"
 #include "query/config_variable_names.h"
 
 namespace duckdb {
@@ -202,6 +203,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
     duckdb::ClientContext& context, duckdb::AlterTableInfo& alter);
 
   duckdb::ColumnList _columns;
+  std::vector<connector::ColumnId> _column_ids;
   std::shared_ptr<search::SearchTable> _storage;
   SearchTableOptions _options;
   duckdb::Identifier _pk_sequence;

@@ -170,6 +170,16 @@ std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
                                                std::move(fields));
 }
 
+std::vector<connector::ColumnId> ColumnIdsOf(
+  const duckdb::ColumnList& columns) {
+  std::vector<connector::ColumnId> ids;
+  ids.reserve(columns.LogicalColumnCount());
+  for (const auto& column : columns.Logical()) {
+    ids.emplace_back(connector::TableColumnId(column));
+  }
+  return ids;
+}
+
 }  // namespace
 
 TableEngine ReadStorageEngine(const WithOptions& options) {
@@ -227,6 +237,7 @@ SearchTableEntry::SearchTableEntry(
   : duckdb::TableCatalogEntry{catalog, schema, info.Base(),
                               std::move(inherited_triggers)},
     _columns{std::move(info.Base().columns)},
+    _column_ids{ColumnIdsOf(_columns)},
     _storage{std::move(inherited_storage)} {
   auto& base = info.Base();
   if (base.oid == 0) {
@@ -452,11 +463,7 @@ void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
 void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
                                     duckdb::DataChunk& chunk,
                                     duckdb::optional_idx row_start) {
-  std::vector<connector::ColumnId> column_ids;
-  for (const auto& column : _columns.Logical()) {
-    column_ids.emplace_back(connector::TableColumnId(column));
-  }
-  _storage->ReplayInsert(context, catalog, column_ids, chunk,
+  _storage->ReplayInsert(context, catalog, _column_ids, chunk,
                          row_start.GetIndex());
 }
 

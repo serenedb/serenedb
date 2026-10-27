@@ -212,20 +212,23 @@ def test_own_index_survives_restart(tmp_path: Path) -> None:
         ]), "application/json") == 200
         assert server.count("otel_logs") == 2
 
-        server.pg.execute("DROP INDEX otel_logs_idx")
         server.pg.execute(
             "CREATE TEXT SEARCH DICTIONARY otel_words AS "
             "split_by_non_alpha(case := 'lower', break := 'alnum') "
             "WITH (frequency, position, norm)")
         server.pg.execute(
-            "CREATE INDEX otel_logs_words ON otel_logs USING inverted "
+            "CREATE OR REPLACE INDEX otel_logs_idx ON otel_logs USING inverted "
             '("timestamp", body otel_words, service_name)')
     finally:
         server.close()
 
     server = _Server(tmp_path, "api=otel")
     try:
-        assert _indexes_of(server, "otel_logs") == ["otel_logs_words"]
+        assert _indexes_of(server, "otel_logs") == ["otel_logs_idx"]
+        definition = server.pg.execute(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = 'otel_logs_idx'"
+        ).fetchone()[0]
+        assert "otel_words" in definition, definition
         assert server.post("/v1/logs", export([
             "local_disconnect", "remote peer closed",
         ]), "application/json") == 200

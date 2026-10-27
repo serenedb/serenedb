@@ -512,6 +512,7 @@ class Enforcer {
         auto& create = op.Cast<duckdb::LogicalCreateIndex>();
         if (_enforce) {
           RequireOwner(create.table);
+          CheckReplace(*create.info);
         }
         break;
       }

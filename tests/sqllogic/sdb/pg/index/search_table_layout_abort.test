@@ -1,0 +1,225 @@
+# A CREATE OR REPLACE INDEX, ALTER TABLE or DROP INDEX that fails or is rolled
+# back leaves the table and its indexes as they were, on a search table and on
+# a regular table, also when the failed rebuild had already published some of
+# the table's segments.
+
+statement ok
+CREATE MACRO la_vec(i) AS
+  list_transform(range(16),
+                 j -> (sin(i * 0.0137 * (j % 5 + 1) + j * 0.71))::FLOAT)::FLOAT[16];
+
+
+statement ok
+CREATE TABLE la_ref (id INTEGER PRIMARY KEY, body TEXT, emb FLOAT[16])
+
+
+statement ok
+INSERT INTO la_ref SELECT i, CASE WHEN i < 500 THEN i::TEXT ELSE 'x' || i END, la_vec(i) FROM range(1000) t(i)
+
+
+statement ok
+SET sdb_ivf_search_nprobe = 1000
+
+
+statement ok
+SET sdb_ann_rescore_width = 100
+
+
+statement ok
+CREATE TABLE la (id INTEGER PRIMARY KEY, body TEXT, emb FLOAT[16])
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+INSERT INTO la SELECT * FROM la_ref WHERE id < 500
+
+
+statement ok
+VACUUM (REFRESH_TABLE) la
+
+
+statement ok
+INSERT INTO la SELECT * FROM la_ref WHERE id >= 500
+
+
+statement ok
+VACUUM (REFRESH_TABLE) la
+
+
+statement ok
+CREATE INDEX la_x ON la USING inverted (body)
+
+
+statement ok
+CREATE INDEX la_v ON la USING inverted (id, emb ivf (metric = 'l2', quant = 'sq8'))
+
+
+# --- A failing replace: the first segment is rebuilt and published, the
+# second one fails to convert ---
+
+statement ok
+SET search_backfill_group_bytes = 1
+
+
+statement error
+CREATE OR REPLACE INDEX la_x ON la USING inverted ((body::INT))
+----
+db error: ERROR: Could not convert string <slt:ignore> to INT32
+
+
+statement ok
+RESET search_backfill_group_bytes
+
+
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'la_x'
+----
+def
+CREATE INDEX la_x ON public.la USING inverted (body)
+
+
+query
+SELECT (SELECT count(*) FROM la_x WHERE body = '7') AS first, (SELECT count(*) FROM la_x WHERE body = 'x777') AS second, (SELECT count(*) FROM la) AS n
+----
+first	second	n
+1	1	1000
+
+
+statement ok
+CREATE INDEX la_y ON la USING inverted (id)
+
+
+# --- A rolled-back replace with another quantization ---
+
+statement ok
+BEGIN
+
+
+statement ok
+CREATE OR REPLACE INDEX la_v ON la USING inverted (id, emb ivf (metric = 'l2', quant = 'pq', pq_m = 8))
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'la_v'
+----
+def
+CREATE INDEX la_v ON public.la USING inverted (id, emb ivf (metric=l2, quant=sq8))
+
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM la_v ORDER BY emb <-> la_vec(321.5) LIMIT 10)
+  INTERSECT (SELECT id FROM la_ref ORDER BY emb <-> la_vec(321.5) LIMIT 10)) t
+----
+hits
+10
+
+
+# --- A rolled-back ALTER TABLE ---
+
+statement ok
+BEGIN
+
+
+statement ok
+ALTER TABLE la SET (refresh_interval = 4321)
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT reloptions[1] AS refresh FROM pg_class WHERE relname = 'la'
+----
+refresh
+refresh_interval=1000
+
+
+# --- A rolled-back DROP INDEX ---
+
+statement ok
+BEGIN
+
+
+statement ok
+DROP INDEX la_x
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT count(*) AS n FROM la_x WHERE body = 'x777'
+----
+n
+1
+
+
+# --- A compaction after all of that keeps every index answering ---
+
+statement ok
+VACUUM (COMPACT_TABLE) la
+
+
+query
+SELECT (SELECT count(*) FROM la_x WHERE body = '7') AS x, (SELECT count(*) FROM la_y WHERE id = 7) AS y
+----
+x	y
+1	1
+
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM la_v ORDER BY emb <-> la_vec(654.5) LIMIT 10)
+  INTERSECT (SELECT id FROM la_ref ORDER BY emb <-> la_vec(654.5) LIMIT 10)) t
+----
+hits
+10
+
+
+# --- A regular table ---
+
+statement ok
+CREATE TABLE lr AS SELECT id, body FROM la_ref
+
+
+statement ok
+CREATE INDEX lr_x ON lr USING inverted (body)
+
+
+statement error
+CREATE OR REPLACE INDEX lr_x ON lr USING inverted ((body::INT))
+----
+db error: ERROR: Could not convert string 'x500' to INT32 when casting from source column body
+
+
+statement ok
+BEGIN
+
+
+statement ok
+CREATE OR REPLACE INDEX lr_x ON lr USING inverted (body, id)
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT regexp_extract(regexp_replace(sql, ' WITH \(.*', ''), 'USING inverted \((.*)\)$', 1) AS keys FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'lr_x'
+----
+keys
+body
+
+
+query
+SELECT (SELECT count(*) FROM lr_x WHERE body = '7') AS first, (SELECT count(*) FROM lr_x WHERE body = 'x777') AS second
+----
+first	second
+1	1

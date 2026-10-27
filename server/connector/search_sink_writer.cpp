@@ -29,6 +29,7 @@
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iterator>
@@ -1133,7 +1134,9 @@ void RemoveGeneratedRows(irs::IndexWriter::Transaction& trx,
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context) {
+  SDB_PARK_ONCE_ON_FAILURE("search_insert_sink_before_config");
   auto config = shard.Config();
+  SDB_PARK_ONCE_ON_FAILURE("search_insert_sink_after_config");
   std::vector<IndexedExpression> indexed_exprs;
   for (const auto& key : config->keys) {
     if (key.normalized_expression.empty() || !config->WritesField(key)) {

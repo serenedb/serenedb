@@ -79,6 +79,7 @@
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_backfill.h"
 #include "connector/view_fast_path.h"
+#include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 #include "pg/sql_utils.h"
@@ -242,6 +243,13 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     pk_type.id() == duckdb::LogicalTypeId::STRUCT && pk_type != pg::CTID()
       ? PkShape::Struct
       : PkShape::Single;
+  if (_relation.type == duckdb::CatalogType::TABLE_ENTRY &&
+      _relation.Cast<duckdb::TableCatalogEntry>().GetLogStorage() &&
+      !IndexNameTaken(context, *_info, _relation)) {
+    auto& search_table = _relation.Cast<catalog::SearchTableEntry>();
+    search_table.Storage()->ClaimLayout(context,
+                                        search_table.name.GetIdentifierName());
+  }
   if (IsReindexPass()) {
     // The pass carries the index's name, resolved in the schema the statement
     // is qualified with -- the same pair every other lookup in this operator
@@ -274,12 +282,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       if (const auto& store = index_entry.SearchStore()) {
         state->build_claim =
           store->BeginIndexBuild(index_entry.oid, index_entry.Config());
-        if (!state->build_claim.Claimed()) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
-                          ERR_MSG("an index build is already running on "
-                                  "search table ",
-                                  _relation.oid));
-        }
         SearchBackfillTarget backfill;
         backfill.shard = store;
         backfill.catalog = &_relation.ParentCatalog();

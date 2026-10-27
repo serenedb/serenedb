@@ -79,13 +79,11 @@ inline bool PrepareVectorState(
   const CentroidsTree& ivf, const SubReader& segment, const PrepareContext& ctx,
   const VectorFilterOptions& opts, uint32_t nprobe, VectorState& state,
   QueryBuilder::ptr& inner_query, CodebookUse use, uint32_t beam = 0) {
-  if (opts.query.empty() || nprobe == 0 ||
-      !field_limits::valid(opts.centroids_id) ||
-      !field_limits::valid(opts.postings_id)) {
+  if (opts.query.empty() || nprobe == 0 || !field_limits::valid(opts.ann_id)) {
     return false;
   }
 
-  const auto* postings = segment.field(opts.postings_id);
+  const auto* postings = segment.field(opts.ann_id);
   if (!postings || ivf.Empty() || opts.query.size() != ivf.Dim()) {
     return false;
   }
@@ -131,7 +129,7 @@ inline bool PrepareVectorState(
   }
 
   state.reader = postings;
-  state.vector_column = segment.Column(opts.centroids_id);
+  state.vector_column = segment.Column(opts.column_id);
   state.col_reader = segment.GetColReader();
   state.quant = opts.quant;
   state.d = d;

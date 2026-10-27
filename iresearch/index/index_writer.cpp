@@ -1358,7 +1358,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
   if (options.column_options || options.norm_column_id) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
       std::move(options.column_options), std::move(options.norm_column_id),
-      options.row_group_size);
+      options.row_group_size, std::move(options.anns));
   }
   if (options.cleanup_on_open) {
     // Remove non-index files from directory

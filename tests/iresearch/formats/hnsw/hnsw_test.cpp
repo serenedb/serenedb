@@ -49,28 +49,32 @@ namespace {
 inline constexpr irs::field_id kVec = 1;
 inline constexpr uint32_t kDim = 8;
 
+void SetAnn(irs::IndexWriterOptions& opts, irs::AnnInfo ann) {
+  opts.anns[ann.column_id].push_back(ann.field_id);
+  opts.column_options = [ann = std::move(ann)](irs::field_id id) {
+    irs::ColumnOptions col;
+    if (id == ann.field_id) {
+      col.ann_info = ann;
+    }
+    return col;
+  };
+}
+
 irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
                                           irs::VectorQuantization quant,
                                           uint32_t nb_bits = 0,
                                           uint32_t d = kDim) {
   auto opts = irs::tests::DefaultWriterOptions();
-  opts.column_options = [metric, quant, nb_bits,
-                         d](irs::field_id id) -> irs::ColumnOptions {
-    irs::ColumnOptions col;
-    if (id == kVec) {
-      col.ann_info = irs::AnnInfo{
-        .kind = irs::AnnKind::Hnsw,
-        .centroids_id = kVec,
-        .postings_id = kVec,
-        .d = static_cast<int>(d),
-        .metric = metric,
-        .quant = {.kind = quant, .nb_bits = nb_bits},
-        .m = 8,
-        .ef_construction = 64,
-      };
-    }
-    return col;
-  };
+  SetAnn(opts, irs::AnnInfo{
+                 .kind = irs::AnnKind::Hnsw,
+                 .field_id = kVec,
+                 .column_id = kVec,
+                 .d = static_cast<int>(d),
+                 .metric = metric,
+                 .quant = {.kind = quant, .nb_bits = nb_bits},
+                 .m = 8,
+                 .ef_construction = 64,
+               });
   return opts;
 }
 
@@ -150,8 +154,8 @@ irs::ByVectorSimilarity MakeKnnFilter(const std::vector<float>& query,
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query = query;
-  opts.centroids_id = kVec;
-  opts.postings_id = kVec;
+  opts.column_id = kVec;
+  opts.ann_id = kVec;
   opts.metric = metric;
   opts.quant = quant;
   opts.nprobe = ef;
@@ -1400,22 +1404,16 @@ TEST_P(HnswBuildWorkersTest, BuildTakesWorkersAsTheyFreeUp) {
     .executor = pool.Get(), .acquire = acquire, .release = release};
 
   auto opts = irs::tests::DefaultWriterOptions();
-  opts.column_options = [quant](irs::field_id id) -> irs::ColumnOptions {
-    irs::ColumnOptions col;
-    if (id == kVec) {
-      col.ann_info = irs::AnnInfo{
-        .kind = irs::AnnKind::Hnsw,
-        .centroids_id = kVec,
-        .postings_id = kVec,
-        .d = kDim,
-        .metric = irs::VectorMetric::L2Sqr,
-        .quant = quant,
-        .m = 8,
-        .ef_construction = 64,
-      };
-    }
-    return col;
-  };
+  SetAnn(opts, irs::AnnInfo{
+                 .kind = irs::AnnKind::Hnsw,
+                 .field_id = kVec,
+                 .column_id = kVec,
+                 .d = kDim,
+                 .metric = irs::VectorMetric::L2Sqr,
+                 .quant = quant,
+                 .m = 8,
+                 .ef_construction = 64,
+               });
   opts.ann_env = &env;
 
   irs::MemoryDirectory dir;
@@ -1464,22 +1462,16 @@ TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
   const auto vecs = MakeVectors(kRows, 17, kD);
   const auto link_quality = [&](irs::AnnInfo::Quantizer quant) {
     auto opts = irs::tests::DefaultWriterOptions();
-    opts.column_options = [quant](irs::field_id id) -> irs::ColumnOptions {
-      irs::ColumnOptions col;
-      if (id == kVec) {
-        col.ann_info = irs::AnnInfo{
-          .kind = irs::AnnKind::Hnsw,
-          .centroids_id = kVec,
-          .postings_id = kVec,
-          .d = static_cast<int>(kD),
-          .metric = irs::VectorMetric::L2Sqr,
-          .quant = quant,
-          .m = 8,
-          .ef_construction = 64,
-        };
-      }
-      return col;
-    };
+    SetAnn(opts, irs::AnnInfo{
+                   .kind = irs::AnnKind::Hnsw,
+                   .field_id = kVec,
+                   .column_id = kVec,
+                   .d = static_cast<int>(kD),
+                   .metric = irs::VectorMetric::L2Sqr,
+                   .quant = quant,
+                   .m = 8,
+                   .ef_construction = 64,
+                 });
     irs::MemoryDirectory dir;
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
     EXPECT_NE(nullptr, writer);

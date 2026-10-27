@@ -1,0 +1,407 @@
+control substitution on
+
+# CREATE OR REPLACE INDEX across a crash. After a restart the catalog holds the
+# replacing index when the replace committed, and the replaced one when it
+# rolled back or crashed before its commit was durable; whichever index came
+# back answers from the rows it was built over and indexes the rows written
+# after it. Every index kind is replaced: a plain index, an inverted index on a
+# table, on a search table and on a view.
+#
+# The restarts cover WAL replay (sections 1 to 3) and a checkpoint (section 4).
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY corir_dict AS split_text(case := 'lower');
+
+
+statement ok
+CREATE TABLE corir_t (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO corir_t VALUES (1, 'Alpha'), (2, 'beta'), (3, 'alpha');
+
+
+statement ok
+CREATE TABLE corir_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO corir_s VALUES (1, 'Alpha'), (2, 'beta'), (3, 'alpha');
+
+
+statement ok
+CREATE TABLE corir_vt (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO corir_vt VALUES (1, 'Alpha'), (2, 'beta'), (3, 'alpha');
+
+
+statement ok
+CREATE VIEW corir_v AS SELECT id, body FROM corir_vt;
+
+
+# ----------------------------------------------------------------------
+# 1. WAL replay.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE INDEX corir_art ON corir_t (id);
+
+
+statement ok
+CREATE OR REPLACE INDEX corir_art ON corir_t (id, body);
+
+
+statement ok
+CREATE INDEX corir_t_inv ON corir_t USING inverted (body);
+
+
+statement ok
+CREATE OR REPLACE INDEX corir_t_inv ON corir_t USING inverted (id, body corir_dict);
+
+
+statement ok
+CREATE INDEX corir_s_inv ON corir_s USING inverted (body);
+
+
+statement ok
+CREATE OR REPLACE INDEX corir_s_inv ON corir_s USING inverted (id, body corir_dict);
+
+
+statement ok
+CREATE INDEX corir_v_inv ON corir_v USING inverted (body) WITH (reindex_interval = 1000);
+
+
+statement ok
+CREATE OR REPLACE INDEX corir_v_inv ON corir_v USING inverted (id, body corir_dict) WITH (reindex_interval = 3600000);
+
+
+# An inverted index replaced by a plain one.
+statement ok
+CREATE INDEX corir_kind ON corir_t USING inverted (body);
+
+
+statement ok
+CREATE OR REPLACE INDEX corir_kind ON corir_t (body);
+
+
+# A rolled back replace leaves the old index.
+statement ok
+CREATE INDEX corir_rb ON corir_s USING inverted (body corir_dict);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE INDEX corir_rb ON corir_s USING inverted (body);
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+INSERT INTO corir_t VALUES (4, 'ALPHA');
+
+
+statement ok
+INSERT INTO corir_s VALUES (4, 'ALPHA');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) corir_t;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) corir_s;
+
+
+query
+SELECT relname AS indexname, regexp_replace(pg_get_indexdef(oid), ' WITH \(.*', '') AS def FROM pg_class
+WHERE relkind = 'i' AND relname LIKE 'corir%' AND relname <> 'corir_s_pkey' ORDER BY relname;
+----
+indexname	def
+corir_art	CREATE INDEX corir_art ON public.corir_t USING secondary (id, body)
+corir_kind	CREATE INDEX corir_kind ON public.corir_t USING secondary (body)
+corir_rb	CREATE INDEX corir_rb ON public.corir_s USING inverted (body corir_dict)
+corir_s_inv	CREATE INDEX corir_s_inv ON public.corir_s USING inverted (id, body corir_dict)
+corir_t_inv	CREATE INDEX corir_t_inv ON public.corir_t USING inverted (id, body corir_dict)
+corir_v_inv	CREATE INDEX corir_v_inv ON public.corir_v USING inverted (id, body corir_dict)
+
+
+query
+SELECT (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_t_inv WHERE body @@ 'alpha') AS t,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_s_inv WHERE body @@ 'alpha') AS s,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_rb WHERE body @@ 'alpha') AS rb,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_v_inv WHERE body @@ 'alpha') AS v;
+----
+t	s	rb	v
+1,3,4	1,3,4	1,3,4	1,3
+
+
+query
+SELECT schedule FROM sdb_jobs() WHERE job_name = 'corir_v_inv';
+----
+schedule
+AFTER INTERVAL '01:00:00'
+
+
+# Under the extended protocol the Sync that follows the SET is already the
+# next packet, so the SET itself is what the connection dies on.
+skipif pg-wire-extended
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart: WAL replay ---
+
+connection after_replay
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT relname AS indexname, regexp_replace(pg_get_indexdef(oid), ' WITH \(.*', '') AS def FROM pg_class
+WHERE relkind = 'i' AND relname LIKE 'corir%' AND relname <> 'corir_s_pkey' ORDER BY relname;
+----
+indexname	def
+corir_art	CREATE INDEX corir_art ON public.corir_t USING secondary (id, body)
+corir_kind	CREATE INDEX corir_kind ON public.corir_t USING secondary (body)
+corir_rb	CREATE INDEX corir_rb ON public.corir_s USING inverted (body corir_dict)
+corir_s_inv	CREATE INDEX corir_s_inv ON public.corir_s USING inverted (id, body corir_dict)
+corir_t_inv	CREATE INDEX corir_t_inv ON public.corir_t USING inverted (id, body corir_dict)
+corir_v_inv	CREATE INDEX corir_v_inv ON public.corir_v USING inverted (id, body corir_dict)
+
+
+connection after_replay
+query
+SELECT (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_t_inv WHERE body @@ 'alpha') AS t,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_s_inv WHERE body @@ 'alpha') AS s,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_rb WHERE body @@ 'alpha') AS rb,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_v_inv WHERE body @@ 'alpha') AS v;
+----
+t	s	rb	v
+1,3,4	1,3,4	1,3,4	1,3
+
+
+connection after_replay
+query
+SELECT schedule FROM sdb_jobs() WHERE job_name = 'corir_v_inv';
+----
+schedule
+AFTER INTERVAL '01:00:00'
+
+
+# The indexes that came back keep indexing new rows.
+connection after_replay
+statement ok
+INSERT INTO corir_t VALUES (5, 'Alpha');
+
+
+connection after_replay
+statement ok
+INSERT INTO corir_s VALUES (5, 'Alpha');
+
+
+connection after_replay
+statement ok
+VACUUM (REFRESH_TABLE) corir_t;
+
+
+connection after_replay
+statement ok
+VACUUM (REFRESH_TABLE) corir_s;
+
+
+connection after_replay
+query
+SELECT (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_t_inv WHERE body @@ 'alpha') AS t,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_s_inv WHERE body @@ 'alpha') AS s,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_rb WHERE body @@ 'alpha') AS rb;
+----
+t	s	rb
+1,3,4,5	1,3,4,5	1,3,4,5
+
+
+# ----------------------------------------------------------------------
+# 2. A replace whose commit crashes before it is durable is lost.
+# ----------------------------------------------------------------------
+
+connection after_replay
+statement ok
+BEGIN;
+
+
+connection after_replay
+statement ok
+CREATE OR REPLACE INDEX corir_art ON corir_t (body);
+
+
+connection after_replay
+statement ok
+CREATE OR REPLACE INDEX corir_t_inv ON corir_t USING inverted (body);
+
+
+connection after_replay
+statement ok
+SET sdb_faults = 'crash_before_commit';
+
+
+connection after_replay
+statement error connection closed
+COMMIT;
+
+
+# --- restart: nothing of that transaction ---
+
+connection after_before_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT indexname, regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes
+WHERE indexname IN ('corir_art', 'corir_t_inv') ORDER BY indexname;
+----
+indexname	def
+corir_art	CREATE INDEX corir_art ON public.corir_t USING secondary (id, body)
+corir_t_inv	CREATE INDEX corir_t_inv ON public.corir_t USING inverted (id, body corir_dict)
+
+
+connection after_before_commit
+query
+SELECT string_agg(id::TEXT, ',' ORDER BY id) AS t FROM corir_t_inv WHERE body @@ 'alpha';
+----
+t
+1,3,4,5
+
+
+# ----------------------------------------------------------------------
+# 3. A replace whose commit crashes after it is durable is kept.
+# ----------------------------------------------------------------------
+
+connection after_before_commit
+statement ok
+BEGIN;
+
+
+connection after_before_commit
+statement ok
+CREATE OR REPLACE INDEX corir_s_inv ON corir_s USING inverted (body);
+
+
+connection after_before_commit
+statement ok
+CREATE OR REPLACE INDEX corir_art ON corir_t (body);
+
+
+connection after_before_commit
+statement ok
+CREATE OR REPLACE INDEX corir_t_inv ON corir_t USING inverted (id, body);
+
+
+connection after_before_commit
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+
+connection after_before_commit
+statement error connection closed
+COMMIT;
+
+
+# --- restart: all of that transaction ---
+
+connection after_after_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT indexname, regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes
+WHERE indexname IN ('corir_art', 'corir_s_inv', 'corir_t_inv') ORDER BY indexname;
+----
+indexname	def
+corir_art	CREATE INDEX corir_art ON public.corir_t USING secondary (body)
+corir_s_inv	CREATE INDEX corir_s_inv ON public.corir_s USING inverted (body)
+corir_t_inv	CREATE INDEX corir_t_inv ON public.corir_t USING inverted (id, body)
+
+
+# Verbatim matching: only the row spelled 'alpha' matches.
+connection after_after_commit
+query
+SELECT (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_s_inv WHERE body @@ 'alpha') AS s,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_t_inv WHERE body @@ 'alpha') AS t;
+----
+s	t
+3	3
+
+
+# ----------------------------------------------------------------------
+# 4. Checkpoint. The replacing definitions are the ones it writes.
+# ----------------------------------------------------------------------
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE INDEX corir_t_inv ON corir_t USING inverted (body);
+
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE INDEX corir_s_inv ON corir_s USING inverted (id, body corir_dict);
+
+
+connection after_after_commit
+statement ok
+CREATE OR REPLACE INDEX corir_art ON corir_t USING inverted (body corir_dict);
+
+
+connection after_after_commit
+statement ok
+CHECKPOINT;
+
+
+skipif pg-wire-extended
+connection after_after_commit
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_after_commit
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_after_commit
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart: from the checkpoint ---
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT relname AS indexname, regexp_replace(pg_get_indexdef(oid), ' WITH \(.*', '') AS def FROM pg_class
+WHERE relkind = 'i' AND relname LIKE 'corir%' AND relname <> 'corir_s_pkey' ORDER BY relname;
+----
+indexname	def
+corir_art	CREATE INDEX corir_art ON public.corir_t USING inverted (body corir_dict)
+corir_kind	CREATE INDEX corir_kind ON public.corir_t USING secondary (body)
+corir_rb	CREATE INDEX corir_rb ON public.corir_s USING inverted (body corir_dict)
+corir_s_inv	CREATE INDEX corir_s_inv ON public.corir_s USING inverted (id, body corir_dict)
+corir_t_inv	CREATE INDEX corir_t_inv ON public.corir_t USING inverted (body)
+corir_v_inv	CREATE INDEX corir_v_inv ON public.corir_v USING inverted (id, body corir_dict)
+
+
+connection after_checkpoint
+query
+SELECT (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_t_inv WHERE body @@ 'alpha') AS t,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_s_inv WHERE body @@ 'alpha') AS s,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_art WHERE body @@ 'alpha') AS art;
+----
+t	s	art
+3	1,3,4,5	1,3,4,5

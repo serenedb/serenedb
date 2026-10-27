@@ -132,6 +132,7 @@ struct IndexWriterOptions : public SegmentOptions {
   ColumnOptionsProvider column_options;
   NormColumnIdProvider norm_column_id;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  AnnFieldsByColumn anns;
 
   const AnnBuildEnv* ann_env = nullptr;
 

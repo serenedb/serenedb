@@ -47,8 +47,6 @@ class AnnWriter {
 
   virtual AnnKind Kind() const noexcept = 0;
 
-  virtual field_id ColumnId() const noexcept = 0;
-
   virtual bool Empty() const noexcept = 0;
 
   virtual void SetMergeSources(std::span<const MergeSource>) noexcept {}

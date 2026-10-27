@@ -116,15 +116,29 @@ const duckdb::ColumnDefinition* FindColumnById(
   return nullptr;
 }
 
+search::SearchTableTransaction::PinnedSearchTable PinnedSearchTable(
+  duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
+  const std::shared_ptr<search::SearchTable>& store) {
+  const auto make = [&] {
+    auto config = store->ScanConfig();
+    return search::SearchTableTransaction::PinnedSearchTable{
+      .reader =
+        std::make_shared<irs::DirectoryReader>(store->GetDirectoryReader()),
+      .config = std::move(config),
+    };
+  };
+  auto* conn_ctx = GetSereneDBContextPtr(context);
+  if (!conn_ctx) {
+    return make();
+  }
+  return conn_ctx->SearchTxn().EnsureSearchTable(database_oid, oid, make);
+}
+
 irs::DirectoryReader PinnedSearchReader(
   duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
   const std::shared_ptr<search::SearchTable>& store) {
-  auto* conn_ctx = GetSereneDBContextPtr(context);
-  if (!conn_ctx) {
-    return store->GetDirectoryReader();
-  }
-  return irs::DirectoryReader{*conn_ctx->SearchTxn().EnsureSearchTableReader(
-    database_oid, oid, [&] { return store->GetDirectoryReader(); })};
+  return irs::DirectoryReader{
+    *PinnedSearchTable(context, database_oid, oid, store).reader};
 }
 
 decltype(SearchSpec::acquire_snapshot) SearchTableSnapshot(
@@ -251,8 +265,8 @@ std::unique_ptr<AnnFilter> MakeAnnFilter(
   *f->mutable_field_id() = vs.field_id;
   auto* o = f->mutable_options();
   o->query = vs.query_vector;
-  o->centroids_id = vs.centroids_id;
-  o->postings_id = vs.postings_id;
+  o->column_id = vs.field_id;
+  o->ann_id = vs.ann_id;
   o->metric = vs.metric;
   o->quant = vs.quant;
   o->inner = std::move(inner);
@@ -508,7 +522,8 @@ duckdb::TableFunction BindSearchTableScan(
     MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search");
   AcquireSnapshot(*data, context, SearchTableSnapshot(entry));
   data->score.prune = store->TopKScorer();
-  data->relation.inverted_config = store->ScanConfig();
+  data->relation.inverted_config =
+    PinnedSearchTable(context, entry.catalog.GetOid(), entry.oid, store).config;
   data->relation.row_group_size =
     data->relation.inverted_config->row_group_size;
   bind_data = std::move(data);
@@ -713,7 +728,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
     *f->mutable_field_id() = vs.field_id;
     auto* o = f->mutable_options();
     o->query = vs.query_vector;
-    o->centroids_id = vs.centroids_id;
+    o->ann_id = vs.ann_id;
     o->metric = vs.metric;
     o->radius = radius;
     o->inclusive = vs.radius_inclusive;

@@ -243,11 +243,12 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     pk_type.id() == duckdb::LogicalTypeId::STRUCT && pk_type != pg::CTID()
       ? PkShape::Struct
       : PkShape::Single;
-  if (const auto* search_table =
-        dynamic_cast<const catalog::SearchTableEntry*>(&_relation);
-      search_table && !IndexNameTaken(context, *_info, _relation)) {
-    search_table->Storage()->ClaimLayout(
-      context, search_table->name.GetIdentifierName());
+  if (_relation.type == duckdb::CatalogType::TABLE_ENTRY &&
+      _relation.Cast<duckdb::TableCatalogEntry>().GetLogStorage() &&
+      !IndexNameTaken(context, *_info, _relation)) {
+    auto& search_table = _relation.Cast<catalog::SearchTableEntry>();
+    search_table.Storage()->ClaimLayout(context,
+                                        search_table.name.GetIdentifierName());
   }
   if (IsReindexPass()) {
     // The pass carries the index's name, resolved in the schema the statement

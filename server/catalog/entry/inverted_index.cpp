@@ -289,16 +289,23 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
            : irs::field_limits::invalid();
 }
 
-bool InvertedIndexConfig::HasField(irs::field_id id) const {
-  return id == connector::term_dict::kPKFieldId || LookupField(id).entry;
+irs::FieldKind InvertedIndexConfig::GetFieldKind(irs::field_id id) const {
+  if (id == connector::term_dict::kPKFieldId || LookupField(id).entry) {
+    return irs::FieldKind::Index;
+  }
+  return table_columns.contains(id) ? irs::FieldKind::Column
+                                    : irs::FieldKind::None;
 }
 
 const irs::AnnInfo* InvertedIndexConfig::FindAnn(
   irs::field_id column, irs::VectorMetric metric) const noexcept {
-  const auto it = absl::c_find_if(anns, [&](const irs::AnnInfo& ann) {
-    return ann.column_id == column && ann.metric == metric;
-  });
-  return it == anns.end() ? nullptr : &*it;
+  for (const auto id : AnnFields(column)) {
+    const auto& ann = FindEntry(id)->column_options.ann_info;
+    if (ann->metric == metric) {
+      return &*ann;
+    }
+  }
+  return nullptr;
 }
 
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
@@ -374,11 +381,11 @@ InvertedIndexConfig::InvertedIndexConfig(
     }
     const auto* entry = FindEntry(key.field_id);
     SDB_ASSERT(entry);
-    const auto& ann = entry->column_options.ann_info;
-    if (ann && absl::c_none_of(anns, [&](const irs::AnnInfo& added) {
-          return added.centroids_id == ann->centroids_id;
-        })) {
-      anns.push_back(*ann);
+    if (const auto& ann = entry->column_options.ann_info) {
+      auto& ids = anns[ann->column_id];
+      if (!absl::c_linear_search(ids, ann->field_id)) {
+        ids.push_back(ann->field_id);
+      }
     }
     if (key.normalized_expression.empty()) {
       continue;

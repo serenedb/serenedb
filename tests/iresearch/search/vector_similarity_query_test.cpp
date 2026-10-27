@@ -74,21 +74,21 @@ irs::IndexWriterOptions MakeWriterOptions(
     irs::ColumnOptions col;
     if (id == kVec) {
       col.compression = compression;
+      col.ann_info = irs::AnnInfo{
+        .field_id = kVec,
+        .column_id = kVec,
+        .d = kDim,
+        .metric = irs::VectorMetric::L2Sqr,
+        .quant = {.kind = irs::VectorQuantization::SQ8},
+        .sample_factor = 1.f,
+        // Larger than any doc count used here, so every test indexes a single
+        // cluster and doc ids map 1:1 onto one posting list.
+        .posting_size = 1024,
+      };
     }
     return col;
   };
-  opts.anns.push_back(irs::AnnInfo{
-    .centroids_id = kVec,
-    .postings_id = kVec,
-    .d = kDim,
-    .metric = irs::VectorMetric::L2Sqr,
-    .quant = {.kind = irs::VectorQuantization::SQ8},
-    .sample_factor = 1.f,
-    // Larger than any doc count used here, so every test indexes a single
-    // cluster and doc ids map 1:1 onto one posting list.
-    .posting_size = 1024,
-    .column_id = kVec,
-  });
+  opts.anns[kVec].push_back(kVec);
   return opts;
 }
 
@@ -141,8 +141,7 @@ irs::ByVectorSimilarity MakeKnnFilter() {
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
   opts.column_id = kVec;
-  opts.centroids_id = kVec;
-  opts.postings_id = kVec;
+  opts.ann_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;
   opts.quant = irs::VectorQuantization::SQ8;
   opts.nprobe = 1000;
@@ -225,8 +224,7 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
   opts.column_id = kVec;
-  opts.centroids_id = kVec;
-  opts.postings_id = kVec;
+  opts.ann_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;
   opts.quant = irs::VectorQuantization::SQ8;
   opts.radius = 100000.f;
@@ -391,7 +389,7 @@ irs::ByVectorExact MakeExactFilter(float x, float radius, bool inclusive) {
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
   opts.query[0] = x;
-  opts.centroids_id = kVec;
+  opts.ann_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;
   opts.radius = radius;
   opts.inclusive = inclusive;

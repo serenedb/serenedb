@@ -1312,8 +1312,7 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
                         entry.ParentSchema(context).name.GetIdentifierName(),
                         label, value_type, opclass, dict, next_id, field);
     if (auto& ann = field.column_options.ann_info) {
-      ann->centroids_id = record.field_id;
-      ann->postings_id = record.field_id;
+      ann->field_id = record.field_id;
       ann->column_id = bare_column ? record.column_id : record.field_id;
     }
 

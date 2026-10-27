@@ -76,6 +76,10 @@ An index on a search table can't be partial: there, `CREATE INDEX … WHERE …`
 
 An inverted index can be built over a base table or a view (including a view over `read_parquet`/`read_csv` on local disk or S3). The index derives each row's identity automatically from the view's source; there is no `pk` option, and only attached external databases accept an explicit key through `key_columns` (see [Row identity](../../indexes/inverted/views.md#row-identity)). The postings are a snapshot of the source, refreshed by `REINDEX INDEX` or the `reindex_interval` option (see [Refreshing the index](../../indexes/inverted/views.md#refreshing-the-index)). See also [Indexing a table vs. a view](../../indexes/inverted/index.md#indexing-a-table-or-a-view).
 
+## Several indexes on a search table column
+
+A search table can have several indexes on the same column or expression, each with its own text search dictionary. A query on the table itself (`FROM <table>`) answers a predicate on that column through the index created first, also after a restart. To search through another of them, query that index (`FROM <index>`).
+
 ## Replacing an index
 
 `CREATE OR REPLACE INDEX` rebuilds an inverted index under its name, for example to give a column another dictionary, to give a vector column another quantization, or to add `INCLUDE` columns. The new index indexes every row of the table or view; other connections keep querying the old index until the replacing transaction commits. See [`CREATE OR REPLACE INDEX`](./index.md#create-or-replace-index).

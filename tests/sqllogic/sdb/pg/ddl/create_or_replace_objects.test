@@ -2967,10 +2967,10 @@ indexname
 coro_ix_inv
 
 
-# A temporary table's UNIQUE index is replaced the same way, and so is one
+# A UNIQUE index is replaced on another column the same way, and so is one
 # dropped and created again under its name in one transaction.
 statement ok
-CREATE TEMP TABLE coro_ixt (id INT, body TEXT);
+CREATE TABLE coro_ixt (id INT, body TEXT);
 
 
 statement count 2
@@ -3021,7 +3021,7 @@ DROP TABLE coro_ixt;
 
 # Every index the transaction dropped releases its name, not only the last one.
 statement ok
-CREATE TEMP TABLE coro_ixm (a INT, b INT, c INT);
+CREATE TABLE coro_ixm (a INT, b INT, c INT);
 
 
 statement count 2

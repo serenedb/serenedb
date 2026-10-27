@@ -86,6 +86,15 @@ irs::containers::FlatHashSet<irs::field_id> TableColumns(
   return ids;
 }
 
+template<typename Config>
+std::vector<Config> WithConfig(std::vector<Config> configs, Config config) {
+  const auto it = absl::c_upper_bound(
+    configs, config.oid,
+    [](duckdb::idx_t oid, const Config& other) { return oid < other.oid; });
+  configs.insert(it, std::move(config));
+  return configs;
+}
+
 }  // namespace
 
 struct SearchTable::ReplaySession {
@@ -362,9 +371,9 @@ void SearchTable::MergeIndexConfig(
   duckdb::idx_t index_oid,
   std::shared_ptr<const catalog::InvertedIndexConfig> config) {
   absl::MutexLock lock{&_layout_mutex};
-  auto configs = _layout.configs;
-  configs.emplace_back(index_oid, std::move(config));
-  RebuildConfig(std::move(configs), _layout.building_index);
+  RebuildConfig(
+    WithConfig(_layout.configs, IndexConfig{index_oid, std::move(config)}),
+    _layout.building_index);
 }
 
 void SearchTable::ClaimLayout(duckdb::ClientContext& context,
@@ -396,9 +405,8 @@ bool SearchTable::AcquireLayout(duckdb::transaction_t owner,
 
 void SearchTable::ReleaseLayout(duckdb::transaction_t owner) noexcept {
   absl::MutexLock lock{&_layout_mutex};
-  if (_layout.owner == owner) {
-    _layout.owner = kNoLayoutOwner;
-  }
+  SDB_ASSERT(_layout.owner == owner);
+  _layout.owner = kNoLayoutOwner;
 }
 
 SearchTable::BuildClaim SearchTable::BeginIndexBuild(
@@ -407,9 +415,9 @@ SearchTable::BuildClaim SearchTable::BeginIndexBuild(
   BuildClaim claim{*this, index_oid};
   absl::MutexLock lock{&_layout_mutex};
   SDB_ASSERT(!_layout.building_index);
-  auto configs = _layout.configs;
-  configs.emplace_back(index_oid, std::move(config));
-  RebuildConfig(std::move(configs), index_oid);
+  RebuildConfig(
+    WithConfig(_layout.configs, IndexConfig{index_oid, std::move(config)}),
+    index_oid);
   return claim;
 }
 

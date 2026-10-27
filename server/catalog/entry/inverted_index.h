@@ -152,7 +152,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
 
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
   irs::field_id GetNormColumnId(irs::field_id id) const final;
-  bool HasField(irs::field_id id) const final;
+  irs::FieldKind GetFieldKind(irs::field_id id) const final;
   const irs::AnnInfo* FindAnn(irs::field_id column,
                               irs::VectorMetric metric) const noexcept;
 
@@ -185,6 +185,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   PkPolicy pk;
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
+  irs::containers::FlatHashSet<irs::field_id> table_columns;
 
  private:
   static constexpr uint32_t kNoKey = std::numeric_limits<uint32_t>::max();

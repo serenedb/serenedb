@@ -235,15 +235,15 @@ void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
   }
 }
 
-void Transaction::Commit() {
-  absl::Cleanup destroy = [this] { Destroy(); };
+void Transaction::Commit(duckdb::transaction_t owner) {
+  absl::Cleanup destroy = [this, owner] { Destroy(owner); };
   for (auto& action : _on_commit) {
     action();
   }
 }
 
-void Transaction::Rollback() {
-  absl::Cleanup destroy = [this] { Destroy(); };
+void Transaction::Rollback(duckdb::transaction_t owner) {
+  absl::Cleanup destroy = [this, owner] { Destroy(owner); };
   if (_search_txn) {
     _search_txn->Abort();
   }
@@ -302,19 +302,16 @@ void Transaction::RefreshCreatedIndexes(duckdb::idx_t database) {
 void Transaction::ClaimSearchLayout(std::shared_ptr<search::SearchTable> table,
                                     duckdb::transaction_t owner,
                                     std::string_view name) {
-  SDB_ASSERT(_layout_claims.empty() || _layout_owner == owner);
   if (table->AcquireLayout(owner, name)) {
-    _layout_owner = owner;
-    _layout_claims.push_back(std::move(table));
+    _layout_claims.emplace_back(std::move(table));
   }
 }
 
-void Transaction::Destroy() noexcept {
+void Transaction::Destroy(duckdb::transaction_t owner) noexcept {
   for (const auto& table : _layout_claims) {
-    table->ReleaseLayout(_layout_owner);
+    table->ReleaseLayout(owner);
   }
   _layout_claims.clear();
-  _layout_owner = search::SearchTable::kNoLayoutOwner;
   _search_transactions.clear();
   _search_snapshots.clear();
   _feed_columns = {};

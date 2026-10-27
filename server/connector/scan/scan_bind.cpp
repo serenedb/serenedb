@@ -266,8 +266,7 @@ std::unique_ptr<AnnFilter> MakeAnnFilter(
   auto* o = f->mutable_options();
   o->query = vs.query_vector;
   o->column_id = vs.field_id;
-  o->centroids_id = vs.centroids_id;
-  o->postings_id = vs.postings_id;
+  o->ann_id = vs.ann_id;
   o->metric = vs.metric;
   o->quant = vs.quant;
   o->inner = std::move(inner);
@@ -729,7 +728,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
     *f->mutable_field_id() = vs.field_id;
     auto* o = f->mutable_options();
     o->query = vs.query_vector;
-    o->centroids_id = vs.centroids_id;
+    o->ann_id = vs.ann_id;
     o->metric = vs.metric;
     o->radius = radius;
     o->inclusive = vs.radius_inclusive;

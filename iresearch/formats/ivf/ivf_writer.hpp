@@ -153,7 +153,6 @@ class IvfWriter final : public AnnWriter {
 
  private:
   struct Result {
-    field_id postings_id;
     std::unique_ptr<QuantizerWriter> qw;
     BuiltIvf data;
   };

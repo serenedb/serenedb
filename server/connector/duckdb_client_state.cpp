@@ -295,7 +295,7 @@ void SereneDBClientState::TransactionCommit(
     }
   }
   tls_committing_ctx = nullptr;
-  _connection_ctx->Commit();
+  _connection_ctx->Commit(transaction.global_transaction_id);
   _connection_ctx->RefreshCatalogEpoch(transaction);
   if (transaction.ModifiedDatabase()) {
     catalog::ClusterOf(*context.db).MaybeCompactCatalogLog();
@@ -305,7 +305,7 @@ void SereneDBClientState::TransactionCommit(
 void SereneDBClientState::TransactionRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   tls_committing_ctx = nullptr;
-  _connection_ctx->Rollback();
+  _connection_ctx->Rollback(transaction.global_transaction_id);
   _connection_ctx->RefreshCatalogEpoch(transaction);
 }
 

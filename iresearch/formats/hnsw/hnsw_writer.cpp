@@ -1334,14 +1334,14 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   const auto ef = _info.ef_construction;
   SDB_ASSERT(m != 0 && ef != 0);
   const auto donor =
-    PickMergeDonor(_merge_sources, _info.centroids_id, _d, _info.metric, m);
+    PickMergeDonor(_merge_sources, _info.field_id, _d, _info.metric, m);
 
   if (_qw && RotatesCodes(_info, _d)) {
     auto vectors =
       LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);
     const bool enough = PanoramaEnough(valid, _d);
-    const auto basis = AcquireBasis(_bases, _info.centroids_id, donor, vectors,
-                                    valid, _d, enough);
+    const auto basis =
+      AcquireBasis(_bases, _info.field_id, donor, vectors, valid, _d, enough);
     if (basis && enough) {
       RotateForPanorama(vectors, valid.size(), _d, *basis, env, _rotation);
       const auto stats = EncodeRotated(vectors, valid, env);
@@ -1369,8 +1369,8 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     _vectors = LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);
     if (RotationApplies(_info.metric, _d)) {
       const bool enough = PanoramaEnough(valid, _d);
-      const auto basis = AcquireBasis(_bases, _info.centroids_id, donor,
-                                      _vectors, valid, _d, enough);
+      const auto basis = AcquireBasis(_bases, _info.field_id, donor, _vectors,
+                                      valid, _d, enough);
       if (basis && enough) {
         RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation);
         _norms = RowNorms(_vectors, valid.size(), _d);
@@ -1456,9 +1456,8 @@ void HnswWriter::Flush() {
     write_floats(_qw ? _tails : _norms);
   }
 
-  _idx->AddHnsw(
-    _info.centroids_id,
-    HnswMeta{.offset = offset, .byte_size = out.Position() - offset});
+  _idx->AddHnsw(_info.field_id, HnswMeta{.offset = offset,
+                                         .byte_size = out.Position() - offset});
 
   _vectors.clear();
   _vectors.shrink_to_fit();

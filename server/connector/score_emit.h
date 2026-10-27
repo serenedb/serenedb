@@ -72,8 +72,7 @@ struct VectorScorerOptions {
   irs::VectorMetric metric;
   ScoreEmit score_emit;
   duckdb::OrderType natural_order;
-  irs::field_id centroids_id = irs::field_limits::invalid();
-  irs::field_id postings_id = irs::field_limits::invalid();
+  irs::field_id ann_id = irs::field_limits::invalid();
   irs::VectorQuantization quant = irs::VectorQuantization::None;
   uint32_t nb_bits = 0;
   irs::AnnKind kind = irs::AnnKind::Ivf;

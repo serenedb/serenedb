@@ -93,8 +93,8 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       continue;
     }
     for (const auto& col : s.col_reader->Columns()) {
-      if (field_options && !field_options->HasField(col->Id()) &&
-          !field_options->table_columns.contains(col->Id())) {
+      if (field_options &&
+          field_options->GetFieldKind(col->Id()) == FieldKind::None) {
         continue;
       }
       if (seen_ids.insert(col->Id()).second) {
@@ -146,10 +146,10 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
                         row_group_size, opts.compression, false);
     if (field_options) {
-      for (const auto& ann : field_options->anns) {
-        if (ann.column_id == field_id_v) {
-          output.AttachAnn(field_id_v, ann).SetMergeSources(sources);
-        }
+      for (const auto ann : field_options->AnnFields(field_id_v)) {
+        output
+          .AttachAnn(field_id_v, *field_options->GetColumnOptions(ann).ann_info)
+          .SetMergeSources(sources);
       }
     }
 

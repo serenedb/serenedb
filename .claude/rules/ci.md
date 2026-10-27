@@ -29,7 +29,7 @@ paths:
 
 ## A red run
 
-- A PR's first comment is the CI report (it starts with `<!-- serenedb-ci-report -->`), which only the runs write: the latest run's report, with one line per config, the failures with their first lines, sanitizer report signatures and the coverage of the change, and the earlier runs folded below it with their verdicts. The trigger comment follows it, and only people and the trigger write it. `gh run download <id> -n report` fetches `report.json` with every failure.
+- A PR's first comment is the CI report (it starts with `<!-- serenedb-ci-report -->`), which only the runs write: the latest run's report, with one line per config, the failures with their first lines, sanitizer report signatures and the coverage of the change, and the earlier runs folded below it with their verdicts. The trigger comment follows it, and only people and the trigger write it; the `spawn-build-bot` label replaces it with a fresh one. `gh run download <id> -n report` fetches `report.json` with every failure.
 - A failed unit reran alone: FLAKY when a rerun passed, deterministic otherwise; the run stays red either way. A crash or a hang (STUCK, with every thread's stack) is critical.
 - A unit that also failed on main or in another PR within a week says where (`also failed in main (asan, 2 run(s), ...)`).
 - `gh run download <id> -n failure-<config>-<location>-<shard>` fetches the failed units' logs, server logs, sanitizer reports and stacks; `gh run view <id> --log-failed` shows each shard's summary.

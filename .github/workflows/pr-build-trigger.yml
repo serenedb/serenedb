@@ -62,10 +62,15 @@ jobs:
             if (!comments.some(c => (c.body || '').startsWith('<!-- serenedb-ci-report -->'))) {
               await github.rest.issues.createComment({
                 owner, repo, issue_number,
-                body: '<!-- serenedb-ci-report -->\n### CI results\n\nNo run yet: check **Trigger Jobs** in the comment below.',
+                body: '<!-- serenedb-ci-report -->\n### CI results\n\nNo results yet: check **Trigger Jobs** in the comment below.',
               });
             }
 
+            for (const c of comments) {
+              if (c.user?.login === 'github-actions[bot]' && (c.body || '').startsWith('<!-- serenedb-ci-trigger -->')) {
+                await github.rest.issues.deleteComment({ owner, repo, comment_id: c.id });
+              }
+            }
             await github.rest.issues.createComment({ owner, repo, issue_number, body });
 
             if (context.payload.action === 'labeled') {
@@ -202,7 +207,7 @@ jobs:
             ].filter(Boolean);
             const optsStr = opts.length > 0 ? opts.join(', ') : 'default';
             const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16) + ' UTC';
-            const latest = `\n\n<!-- ci-latest -->**Latest:** ${optsStr} · [View Run](${runUrl}) · ${timestamp}`;
+            const latest = `\n\n<!-- ci-latest -->\n**Latest:** ${optsStr} · [View Run](${runUrl}) · ${timestamp}`;
             const section = /\n\n<!-- ci-(data:.*?|latest) -->[\s\S]*$/;
             const { data: current } = await github.rest.issues.getComment({ owner, repo, comment_id: comment.id });
             let updatedBody = current.body.replace('- [x] **Trigger Jobs**', '- [ ] **Trigger Jobs**');

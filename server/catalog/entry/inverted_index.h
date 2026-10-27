@@ -96,9 +96,6 @@ struct InvertedIndexFieldLookup {
 // name the index type is registered under.
 inline constexpr const char* kInvertedIndexTypeName = "inverted";
 
-// The two built-in opclasses. An opclass written bare resolves against the
-// schema's text search dictionaries first, so a dictionary of either name
-// shadows the built-in; the parenthesised form always selects the built-in.
 inline constexpr std::string_view kIncludedKind = "included";
 inline constexpr std::string_view kIVFKind = "ivf";
 inline constexpr std::string_view kHNSWKind = "hnsw";
@@ -233,6 +230,7 @@ class IndexTokenizers {
     TokenizerRef tokenizer;
     irs::IndexFeatures features = irs::IndexFeatures::None;
     irs::field_id tokenizer_column = irs::field_limits::invalid();
+    std::optional<irs::curve::Options> curve;
   };
 
   irs::containers::FlatHashMap<irs::field_id, Field> _fields;

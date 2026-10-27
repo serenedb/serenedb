@@ -56,6 +56,9 @@ def test_run_options_name_the_ticked_boxes():
         "duckdb sanitizers, everything, all architectures")
     assert report.run_options({"LOCATION": "linux-amd64", "BUGFIX": False}) == "default"
     assert report.run_options({"LOCATION": "dev-only", "CORPUS": True}) == "corpus, dev only"
+    assert report.run_options({"LOCATION": "linux-amd64", "BUILD_CONFIG": '{"FLAKY_RUNS": 3}'}) == (
+        "flaky check 3 runs")
+    assert report.run_options({"LOCATION": "linux-amd64", "BUILD_CONFIG": '{"FLAKY_RUNS": 1}'}) == "default"
 
 
 def test_a_failed_job_is_listed_only_when_its_test_lines_do_not_show_it():

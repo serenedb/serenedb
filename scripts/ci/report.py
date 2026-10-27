@@ -185,6 +185,9 @@ def run_options(inputs):
     location = {"all": "all architectures", "dev-only": "dev only"}.get(inputs.get("LOCATION"))
     if location:
         opts.append(location)
+    runs = int(json.loads(inputs.get("BUILD_CONFIG") or "{}").get("FLAKY_RUNS", 1))
+    if runs > 1:
+        opts.append(f"flaky check {runs} runs")
     return ", ".join(opts) or "default"
 
 

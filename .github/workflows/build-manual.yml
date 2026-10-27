@@ -49,7 +49,7 @@ on:
         required: false
         default: ''
       BUILD_CONFIG:
-        description: 'Internal: PR metadata (set by trigger bot)'
+        description: 'Internal: PR metadata (set by trigger bot); FLAKY_RUNS runs the changed tests that many times in every config'
         type: string
         required: false
         default: '{}'
@@ -97,6 +97,7 @@ jobs:
           CORPUS: ${{ inputs.CORPUS }}
           DUCKDB_SANITIZERS: ${{ inputs.DUCKDB_SANITIZERS }}
           IRESEARCH_SANITIZERS: ${{ inputs.IRESEARCH_SANITIZERS }}
+          BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
         run: |
           args=(--duckdb-suites "$DUCKDB_SUITES")
           [[ "$EVERYTHING" != true ]] || args+=(--everything)
@@ -106,8 +107,13 @@ jobs:
           [[ "$IRESEARCH" != true ]] || args+=(--iresearch)
           [[ "$IRESEARCH" != true || "$IRESEARCH_SANITIZERS" != true ]] || sanitizer+=(--iresearch)
           [[ "$DUCKDB_SANITIZERS" == true ]] || sanitizer+=(--no-duckdb)
-          echo "test_args=$(python3 scripts/ci/ci.py select-suites "${args[@]}")" >> "$GITHUB_OUTPUT"
-          echo "sanitizer_test_args=$(python3 scripts/ci/ci.py select-suites "${sanitizer[@]}")" >> "$GITHUB_OUTPUT"
+          runs=$(python3 -c 'import json, os; print(int(json.loads(os.environ["BUILD_CONFIG"] or "{}").get("FLAKY_RUNS", 1)))')
+          flaky=""
+          if ((runs > 1)); then
+            flaky="--changed origin/main --repeat $((runs - 1))"
+          fi
+          echo "test_args=$(python3 scripts/ci/ci.py select-suites "${args[@]}") $flaky" >> "$GITHUB_OUTPUT"
+          echo "sanitizer_test_args=$(python3 scripts/ci/ci.py select-suites "${sanitizer[@]}") $flaky" >> "$GITHUB_OUTPUT"
 
   image:
     needs: prepare
@@ -132,7 +138,7 @@ jobs:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: dev
-      TEST_ARGS: ${{ needs.prepare.outputs.test_args }} --changed origin/main --repeat 3
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
       BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE && '--biglake --suite sqllogic --suite recovery --suite stress --stress-profile biglake-reindex-smoke' || '' }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
@@ -155,7 +161,7 @@ jobs:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: tsan
-      TEST_ARGS: ${{ needs.prepare.outputs.sanitizer_test_args }} --changed origin/main --repeat 3
+      TEST_ARGS: ${{ needs.prepare.outputs.sanitizer_test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit

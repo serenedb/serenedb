@@ -49,6 +49,7 @@ jobs:
               '- [ ] Bugfix check (the changed tests must fail on the merge base)',
               '- [ ] sqlite corpus (tests/sqllogic/any/pg/sqlite)',
               '- [ ] BigLake tests (sqllogic + recovery + stress against the real catalog)',
+              '- Flaky check runs: 1 (the tests the diff changes run this many times in every config; any failing run makes the test flaky)',
               '',
               '---',
               '- [ ] **Trigger Jobs**',
@@ -120,6 +121,7 @@ jobs:
             const duckdbSanitizers = isChecked('DuckDB sanitizers');
             const iresearchSanitizers = isChecked('iresearch sanitizers');
             const devOnly = isChecked('Dev only');
+            const flakyRuns = Math.min(10, Math.max(1, Number(body.match(/Flaky check runs:\s*(\d+)/)?.[1] ?? 1)));
 
             const { owner, repo } = context.repo;
             const statusContext = devOnly ? 'serenedb | dev only' : 'serenedb | build & test';
@@ -160,6 +162,7 @@ jobs:
                   PR_SHA: sha,
                   PR_BRANCH: branch,
                   PR_STATUS_CONTEXT: statusContext,
+                  FLAKY_RUNS: flakyRuns,
                 }),
               },
             });

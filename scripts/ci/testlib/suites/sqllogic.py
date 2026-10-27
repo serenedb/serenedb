@@ -216,7 +216,7 @@ def sqllogic_units(ctx, args, skips):
         check_out_corpus(ctx)
     units = []
     pool = ("servers",) if args.server else ()
-    shared = () if args.server else ("servers",)
+    shared = () if ctx.attribute or args.server else ("servers",)
     for path in find_tests(base / "sdb", args.fast):
         rel = str(path.relative_to(base))
         if CORPUS in rel and not args.corpus:
@@ -323,6 +323,8 @@ def _shared_run(ctx, args, rel, engine, fixture, label, part=None):
 
 def _sqllogic_run(ctx, args, rel, engine, part=None):
     private = _private_run(ctx, args, rel, engine, part)
+    if ctx.attribute:
+        return private
     shared = _shared_run(ctx, args, rel, engine, "servers", "serenedb", part)
 
     def run(r):

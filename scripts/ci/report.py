@@ -72,10 +72,28 @@ def uncovered_row(d):
             "branch": f"branch never {d.get('direction')}",
             "mcdc": f"MC/DC condition {d.get('condition')}"}[d["kind"]]
     code = d.get("condition_source") if d["kind"] == "mcdc" else d.get("source")
-    return f"| `{d['file']}:{d['line']}` | {what} | {_code(code or '')} |"
+    tests = ", ".join(f"`{t}`" for t in d.get("tests", [])) or "none in the map"
+    return f"| `{d['file']}:{d['line']}` | {what} | {_code(code or '')} | {tests} |"
 
 
-def build_report(metas, rows, needs, run_url, coverage=(), subject=""):
+def load_selection(selection_dir):
+    if not selection_dir:
+        return None
+    found = sorted(Path(selection_dir).glob("**/selection.json"))
+    return json.loads(found[0].read_text()) if found else None
+
+
+def selection_line(sel):
+    if sel["mode"] == "no map":
+        return "no selection map in the store yet"
+    if sel["mode"] == "everything":
+        return f"would run every unit: {', '.join(sel['everything_because'][:3])}"
+    share = 100 * sel["selected_cost"] / sel["cost"] if sel["cost"] else 0
+    return (f"would run {sel['selected']} of {sel['units']} units, "
+            f"{share:.0f}% of the expected test time")
+
+
+def build_report(metas, rows, needs, run_url, coverage=(), selection=None, subject=""):
     by_config = defaultdict(lambda: defaultdict(int))
     longest = defaultdict(float)
     shards = defaultdict(int)
@@ -142,13 +160,16 @@ def build_report(metas, rows, needs, run_url, coverage=(), subject=""):
         lines += ["", "**Coverage of the change**", "", "```", *(c["summary"] for c in coverage), "```"]
         uncovered = [d for c in coverage for d in c["uncovered"]]
         if uncovered:
-            lines += ["", f"<details><summary>{len(uncovered)} uncovered</summary>", "",
-                      "| where | not covered | code |", "| --- | --- | --- |",
+            lines += ["", f"<details><summary>{len(uncovered)} uncovered, with the tests that run "
+                      "the code nearest to each: where a test for it goes</summary>", "",
+                      "| where | not covered | code | nearest tests |", "| --- | --- | --- | --- |",
                       *(uncovered_row(d) for d in uncovered[:COVERAGE_ROWS])]
             if len(uncovered) > COVERAGE_ROWS:
                 lines.append(f"\n... and {len(uncovered) - COVERAGE_ROWS} more in the "
                              "`coverage-dev-linux-amd64` artifact")
             lines += ["", "</details>"]
+    if selection:
+        lines += ["", f"**Test selection** (report only, every unit ran): {selection_line(selection)}"]
     if signatures:
         lines += ["", f"**Sanitizer reports** ({len(signatures)})", ""]
         ranked = sorted(signatures.items(), key=lambda kv: (-len(kv[1]), kv[0]))
@@ -175,6 +196,7 @@ def build_report(metas, rows, needs, run_url, coverage=(), subject=""):
         "failures": failures,
         "sanitizer_signatures": {k: sorted(v) for k, v in signatures.items()},
         "coverage": list(coverage),
+        "selection": selection,
     }
     return "\n".join(lines) + "\n", summary
 
@@ -226,6 +248,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True)
     ap.add_argument("--coverage", default="")
+    ap.add_argument("--selection", default="")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     metas, rows = load(args.results)
@@ -234,6 +257,7 @@ def main():
     sha = os.environ.get("REPORT_SHA", "")[:9]
     options = run_options(json.loads(os.environ.get("REPORT_INPUTS", "{}") or "{}"))
     body, summary = build_report(metas, rows, needs, run_url, load_coverage(args.coverage),
+                                 load_selection(args.selection),
                                  " · ".join(s for s in (sha and f"`{sha}`", options) if s))
     Path(args.out).write_text(body)
     Path(args.out).with_suffix(".json").write_text(json.dumps(summary, indent=1))

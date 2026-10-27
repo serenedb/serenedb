@@ -76,8 +76,7 @@ t.statement("CREATE TABLE dst AS SELECT tstz, v FROM (SELECT TIMESTAMPTZ '2025-0
             "'2025-10-24 00:00:00+00' + INTERVAL (i * 41) MINUTE, 1000 + i FROM range(0, 400) t(i) UNION ALL "
             "SELECT TIMESTAMPTZ '2024-12-31 12:00:00+00' + INTERVAL (i * 41) MINUTE, 2000 + i FROM range(0, 100) "
             "t(i));")
-diff(t, "c", shapes, "compressed_materialization", ["shape", "k", "c", "s"], "1, 2",
-     "SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM {};", ["rows", "shapes"])
+diff(t, "c", shapes, "compressed_materialization", ["shape", "k", "c", "s"])
 t.query("SELECT year(ts) AS y, month(ts) AS m, count(*) AS c FROM g WHERE v BETWEEN 5000 AND 12000 GROUP BY 1, 2 "
         "ORDER BY 1, 2;", ["y", "m", "c"], 4)
 for zone in ("Europe/Berlin", "America/Havana", "Asia/Tokyo", "Australia/Lord_Howe", "Pacific/Kiritimati",

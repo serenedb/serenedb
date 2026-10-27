@@ -75,8 +75,7 @@ t.statement("CREATE TABLE dst AS SELECT tstz, v FROM (SELECT TIMESTAMPTZ '2025-0
             "'2025-10-24 00:00:00+00' + INTERVAL (i * 41) MINUTE, 1000 + i FROM range(0, 400) t(i) UNION ALL "
             "SELECT TIMESTAMPTZ '2025-11-01 12:00:00+00' + INTERVAL (i * 41) MINUTE, 2000 + i FROM range(0, 100) "
             "t(i));")
-diff(t, "n", shapes, "compressed_materialization", ["shape", "k1", "k2", "c", "s"], "1, 2, 3",
-     "SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM {};", ["rows", "shapes"])
+diff(t, "n", shapes, "compressed_materialization", ["shape", "k1", "k2", "c", "s"])
 t.query("SELECT m::VARCHAR AS m, d::VARCHAR AS d, h::VARCHAR AS h, c FROM (SELECT date_trunc('month', ts) AS m, "
         "date_trunc('day', ts) AS d, date_trunc('hour', ts) AS h, count(*) AS c FROM g WHERE v BETWEEN 400 AND 460 "
         "GROUP BY 1, 2, 3) ORDER BY 3;", ["m", "d", "h", "c"], 8)

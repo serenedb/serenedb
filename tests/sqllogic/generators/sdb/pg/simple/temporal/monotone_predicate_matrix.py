@@ -88,7 +88,6 @@ ZONED = (
     ("last_day(tstz)", "last_day({at})"),
     ("epoch_ms(tstz)", "epoch_ms({at})"),
 )
-COUNT = "SELECT count(*) AS shapes, sum(c) AS rows FROM {};"
 
 
 def constant_shapes():
@@ -134,7 +133,7 @@ t.statement("INSERT INTO g VALUES (NULL, NULL, NULL, NULL, NULL, -1, NULL), ('in
             "'infinity', 'inf', 1, -2, NULL), ('-infinity', '-infinity', '-infinity', '-inf', 2, -3, NULL), "
             "(TIMESTAMP '2025-01-15 12:00:00', TIMESTAMPTZ '2025-01-15 12:00:00+00', DATE '2025-01-15', "
             "'nan', 3, -4, TIMESTAMP '2025-01-15 12:00:00');")
-diff(t, "p", constant_shapes(), "expression_rewriter", ["shape", "c", "s"], "1", COUNT, ["shapes", "rows"])
+diff(t, "p", constant_shapes(), "expression_rewriter", ["shape", "c", "s"])
 t.query("SELECT sum(CASE WHEN date_trunc('day', ts) = TIMESTAMP '2025-01-15' THEN 1 ELSE 0 END), "
         "sum(CASE WHEN year(ts) = 2025 THEN 1 ELSE 0 END), count(*) FILTER (WHERE date_trunc('day', ts) >= "
         "TIMESTAMP '2025-01-15'), bool_or(year(ts) >= 2030), bool_and(coalesce(date_trunc('hour', ts) < "
@@ -157,8 +156,7 @@ t.statement("CREATE TABLE zt AS SELECT zone, make_timestamptz(epoch_us(t) + (m -
             "'2018-02-18 02:00:00+00')) a(zone, t), range(0, 1153) r(m);")
 for zone, ts in TRANSITIONS:
     t.statement(f"SET TimeZone = '{zone}';")
-    diff(t, zone.lower().replace("/", "_"), transition_shapes(zone, ts), "expression_rewriter",
-         ["shape", "c", "s"], "1", COUNT, ["shapes", "rows"])
+    diff(t, zone.lower().replace("/", "_"), transition_shapes(zone, ts), "expression_rewriter", ["shape", "c", "s"])
 t.statement("SET TimeZone = 'Europe/Berlin';")
 t.query("SELECT " + ", ".join(f"date_bin(INTERVAL '2 hours', {value}, TIMESTAMP '2000-01-01 01:00')::VARCHAR"
                               for value in ("'infinity'::TIMESTAMP", "'-infinity'::TIMESTAMP", "NULL::TIMESTAMP",

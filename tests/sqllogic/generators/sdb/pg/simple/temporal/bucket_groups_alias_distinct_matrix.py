@@ -113,8 +113,7 @@ t.statement("CREATE TABLE g AS SELECT TIMESTAMP '2024-12-28 00:00:00' + INTERVAL
             "(DATE '2024-12-28' + (i % 300)::INTEGER)::DATE AS d, (i % 1000)::DOUBLE AS price, "
             "(i % 5)::SMALLINT AS sev, i AS v FROM range(50000) t(i);")
 t.statement("INSERT INTO g VALUES (NULL, NULL, NULL, NULL, NULL, -1);")
-diff(t, "a", shapes, "compressed_materialization", ["shape", "k", "c", "s"], "1, 2",
-     "SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM {};", ["rows", "shapes"])
+diff(t, "a", shapes, "compressed_materialization", ["shape", "k", "c", "s"])
 t.query("SELECT k::VARCHAR AS k, c FROM (SELECT k, count(*) AS c FROM (SELECT date_trunc('hour', ts) AS k, v FROM g) "
         "WHERE v BETWEEN 400 AND 430 GROUP BY k) ORDER BY 1;", ["k", "c"], 5)
 t.query("SELECT k::VARCHAR AS k FROM (SELECT DISTINCT date_trunc('day', tstz) AS k FROM g WHERE v BETWEEN 400 AND 900) "

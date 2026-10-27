@@ -49,7 +49,6 @@ t.statement("CREATE TABLE nsb AS SELECT ts_ns, ts_ns::TIMESTAMP_MS AS ts_ms, ts_
             "t(i) UNION ALL SELECT TIMESTAMP_NS '1970-01-01 00:00:00.0000005', 500 UNION ALL SELECT TIMESTAMP_NS "
             "'1969-12-31 23:59:59.9999985', 501 UNION ALL SELECT NULL, 502);")
 for name, selects in (("prec", regular), ("nsb", boundary)):
-    diff(t, name, selects, "compressed_materialization", ["shape", "k", "c", "s"], "1, 2",
-         "SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM {};", ["rows", "shapes"])
+    diff(t, name, selects, "compressed_materialization", ["shape", "k", "c", "s"])
 
 t.write()

@@ -40,7 +40,6 @@ t.statement("CREATE TABLE tb_wide AS SELECT TIMESTAMP '1950-06-01 00:00:00' + IN
             "(TIMESTAMP '1950-06-01 00:00:00' + INTERVAL (i * 29) DAY)::TIMESTAMPTZ AS tstz, "
             "(DATE '1950-06-01' + (i * 29)::INTEGER)::DATE AS d, i AS v FROM range(0, 1400) t(i);")
 for name, selects in (("tb", shapes), ("inf", infinite), ("wide", wide)):
-    diff(t, name, selects, "compressed_materialization", ["shape", "k", "c", "s"], "1, 2",
-         "SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM {};", ["rows", "shapes"])
+    diff(t, name, selects, "compressed_materialization", ["shape", "k", "c", "s"])
 
 t.write()

@@ -55,7 +55,6 @@ DATES = (
     "TRY_CAST(date_trunc('day', ts) AS DATE)", "date_trunc('hour', ts) + INTERVAL '30 minutes' + INTERVAL '15 minutes'",
     "strftime(date_trunc('hour', ts), '%H')", "-epoch(date_trunc('hour', ts))",
 )
-COUNT = "SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM {};"
 
 t.statement("SET TimeZone = 'Europe/Berlin';")
 t.statement("CREATE TABLE num AS SELECT i AS x, (i * 1.5)::DOUBLE AS d, (i * 0.25)::FLOAT AS f, "
@@ -72,9 +71,8 @@ t.statement("CREATE TABLE numx AS SELECT (i - 5000) * 0.37 AS d, (i - 5000)::BIG
 t.statement("CREATE TABLE nan AS SELECT d, v FROM numx UNION ALL SELECT 'nan'::DOUBLE, -1 UNION ALL SELECT "
             "'inf'::DOUBLE, -2 UNION ALL SELECT '-inf'::DOUBLE, -3;")
 diff(t, "num", [named(table, expr, table) for table, exprs in NUMERIC.items() for expr in exprs],
-     "compressed_materialization", ["shape", "k", "c", "s"], "1, 2", COUNT, ["rows", "shapes"])
-diff(t, "dt", [named("dt", expr, "num") for expr in DATES], "compressed_materialization", ["shape", "k", "c", "s"],
-     "1, 2", COUNT, ["rows", "shapes"])
+     "compressed_materialization", ["shape", "k", "c", "s"])
+diff(t, "dt", [named("dt", expr, "num") for expr in DATES], "compressed_materialization", ["shape", "k", "c", "s"])
 t.statement("SET error_on_division_by_zero = false;")
 t.query("SELECT count(*) AS c, count(b) AS nn FROM (SELECT x // 0 AS b, count(*) AS c FROM num GROUP BY 1);",
         ["c", "nn"])

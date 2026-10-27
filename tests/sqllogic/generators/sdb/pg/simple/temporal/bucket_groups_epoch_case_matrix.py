@@ -93,8 +93,7 @@ t.statement("CREATE TABLE g AS SELECT TIMESTAMP '2024-12-28 00:00:00' + INTERVAL
 t.statement("INSERT INTO g VALUES (NULL, NULL, NULL, NULL, NULL, NULL, NULL, -1);")
 t.statement("CREATE TABLE old AS SELECT TIMESTAMP '1969-12-25 00:00:00' + INTERVAL (i * 173) MINUTE AS ts, "
             "i AS v FROM range(4000) t(i);")
-diff(t, "e", shapes, "compressed_materialization", ["shape", "k", "c", "s"], "1, 2",
-     "SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM {};", ["rows", "shapes"])
+diff(t, "e", shapes, "compressed_materialization", ["shape", "k", "c", "s"])
 t.query("SELECT k, c FROM (SELECT CASE WHEN price < 100 THEN 'low' WHEN price < 500 THEN 'mid' ELSE 'high' END "
         "AS k, count(*) AS c FROM g GROUP BY 1) ORDER BY 1;", ["k", "c"], 3)
 t.query("SELECT k::VARCHAR AS k, c FROM (SELECT date_bin(INTERVAL '1 day', ts, TIMESTAMP '2000-01-01 06:00') AS k, "

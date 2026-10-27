@@ -43,13 +43,17 @@ def total(t, name, selects, disabled, chunk=100):
             ["rows", "shapes", "ref_minus_got", "got_minus_ref"])
 
 
-def diff(t, name, selects, disabled, columns, order, count, count_columns):
+def diff(t, name, selects, disabled, columns):
     t.statement(f"SET disabled_optimizers = '{disabled}';")
     union(t, f"ref_{name}", selects, "CREATE TABLE")
     t.statement("RESET disabled_optimizers;")
     union(t, f"got_{name}", selects, "CREATE TABLE")
     listed = ", ".join(columns)
+    order = ", ".join(str(i) for i in range(1, len(columns) - 1))
     for a, b in ((f"got_{name}", f"ref_{name}"), (f"ref_{name}", f"got_{name}")):
         t.query(f"SELECT {listed} FROM (SELECT * FROM {a} EXCEPT ALL SELECT * FROM {b}) ORDER BY {order};",
                 columns, 0)
-    t.query(count.format(f"got_{name}"), count_columns)
+    if columns == ["shape", "c", "s"]:
+        t.query(f"SELECT count(*) AS shapes, sum(c) AS rows FROM got_{name};", ["shapes", "rows"])
+    else:
+        t.query(f"SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM got_{name};", ["rows", "shapes"])

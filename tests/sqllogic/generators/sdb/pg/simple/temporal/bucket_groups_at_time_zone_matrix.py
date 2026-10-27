@@ -47,7 +47,6 @@ t.statement("INSERT INTO g VALUES (NULL, NULL, -1), (TIMESTAMPTZ 'infinity', TIM
 t.statement("CREATE TABLE gf AS SELECT * FROM g WHERE isfinite(tstz) OR tstz IS NULL;")
 for k, session in enumerate(("Europe/Berlin", "Pacific/Kiritimati", "Asia/Kolkata"), 1):
     t.statement(f"SET TimeZone = '{session}';")
-    diff(t, str(k), shapes(), "compressed_materialization", ["shape", "k", "c", "s"], "1, 2",
-         "SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM {};", ["rows", "shapes"])
+    diff(t, str(k), shapes(), "compressed_materialization", ["shape", "k", "c", "s"])
 
 t.write()

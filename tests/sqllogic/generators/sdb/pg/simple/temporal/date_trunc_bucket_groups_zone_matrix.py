@@ -75,7 +75,6 @@ for part, zones in enumerate(ZONES):
     t.part()
     for k, zone in enumerate(zones, 1 + part * len(zones)):
         t.statement(f"SET TimeZone = '{zone}';")
-        diff(t, str(k), shapes(zone), "compressed_materialization", ["shape", "k", "c", "s"], "1, 2",
-             "SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM {};", ["rows", "shapes"])
+        diff(t, str(k), shapes(zone), "compressed_materialization", ["shape", "k", "c", "s"])
 
 t.write()

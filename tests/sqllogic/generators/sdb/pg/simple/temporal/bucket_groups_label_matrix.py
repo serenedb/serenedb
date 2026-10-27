@@ -77,11 +77,10 @@ t.statement("INSERT INTO lab_inf VALUES (TIMESTAMP 'infinity', TIMESTAMPTZ 'infi
 t.statement("CREATE TABLE old AS SELECT TIMESTAMP '1890-01-01 00:00:00' + INTERVAL (i * 977) HOUR AS ts, "
             "(TIMESTAMP '1890-01-01 00:00:00' + INTERVAL (i * 977) HOUR)::TIMESTAMPTZ AS tstz, "
             "(DATE '1890-01-01' + (i * 37)::INTEGER)::DATE AS d, i AS v FROM range(0, 4000) t(i);")
-count = "SELECT count(*) AS rows, count(DISTINCT shape) AS shapes FROM {};"
-diff(t, "lab", shapes, "compressed_materialization", ["shape", "k", "c", "s"], "1, 2", count, ["rows", "shapes"])
+diff(t, "lab", shapes, "compressed_materialization", ["shape", "k", "c", "s"])
 t.statement("SET TimeZone = 'Pacific/Kiritimati';")
 diff(t, "kir", [named("kiritimati", expr, "lab") for expr in KIRITIMATI], "compressed_materialization",
-     ["shape", "k", "c", "s"], "1, 2", count, ["rows", "shapes"])
+     ["shape", "k", "c", "s"])
 t.statement("SET TimeZone = 'Europe/Berlin';")
 t.query("SELECT year(ts) || '-Q' || quarter(ts) AS q, count(*) AS c FROM lab WHERE v < 2000 GROUP BY 1 ORDER BY 1;",
         ["q", "c"], 5)

@@ -1022,7 +1022,7 @@ ReindexOutcome RunClaimed(
     return {ReindexAction::UpToDate, 0, 0, 0, 0};
   }
   src->files = ListSourceFiles(*src->list);
-  SDB_WAIT_ON_FAILURE("pause_reindex_before_pass");
+  SDB_PARK_ONCE_ON_FAILURE("pause_reindex_before_pass");
   if (src->iceberg_list) {
     if (manifest->version && src->version &&
         !SnapshotIsAncestor(*src->iceberg_list, manifest->version)) {

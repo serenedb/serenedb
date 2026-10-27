@@ -301,6 +301,7 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
   int stretch = 0;
   try {
     for (;;) {
+      SDB_PARK_ONCE_ON_FAILURE("pause_refresh_loop_head");
       auto idx = weak.lock();
       if (!idx) {
         SDB_TRACE(SEARCH, "maintenance target is deleted, ending ", name,
@@ -335,6 +336,7 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
       }
 
       SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
+      SDB_PARK_ONCE_ON_FAILURE("pause_refresh_loop_before_tick");
 
       co_await yaclib::On(s.executor());
       if (ShouldStop()) {

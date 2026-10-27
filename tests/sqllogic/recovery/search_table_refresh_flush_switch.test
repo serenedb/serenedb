@@ -40,18 +40,21 @@ connection default
 statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
 
+connection default
+statement ok
+SET sdb_faults = 'pause_index_refresh_lock_wait';
+
 connection truncator
 statement async ok
 TRUNCATE rfs;
 
-sleep 1s
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_index_refresh_lock_wait:parked';
 
 connection default
-query
-SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'TRUNCATE%';
-----
-n
-1
+statement ok
+SET sdb_faults = 'pause_index_refresh_lock_wait:release';
 
 connection default
 statement ok

@@ -52,6 +52,15 @@ constexpr duckdb::field_id_t kFieldWalOffset = 2;
 constexpr duckdb::field_id_t kFieldManifest = 3;
 constexpr duckdb::field_id_t kFieldCheckpoint = 4;
 
+std::unique_lock<absl::Mutex> LockRefresh(absl::Mutex& mutex) {
+  std::unique_lock lock{mutex, std::try_to_lock};
+  if (!lock.owns_lock()) {
+    SDB_PARK_ONCE_ON_FAILURE("pause_index_refresh_lock_wait");
+    lock.lock();
+  }
+  return lock;
+}
+
 duckdb::shared_ptr<duckdb::AttachedDatabase> AttachedDatabaseById(
   duckdb::idx_t id) {
   auto& manager =
@@ -292,14 +301,14 @@ void IndexDurability::ReplaceSegments(
   std::span<const std::string_view> adopted_metas,
   absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
     removal_provider) {
-  std::unique_lock lock{_refresh_mutex};
+  auto lock = LockRefresh(_refresh_mutex);
   AwaitPendingSave(lock, writer);
   writer.ReplaceSegments(replaced, adopted_metas, removal_provider);
 }
 
 void IndexDurability::Clear(irs::IndexWriter& writer,
                             const irs::SourcePosition& position) {
-  absl::MutexLock lock{&_refresh_mutex};
+  const auto lock = LockRefresh(_refresh_mutex);
   SDB_ASSERT(_pending_checkpoint == 0);
   writer.Clear(position);
   MarkPublished();

@@ -21,8 +21,8 @@
 #include "pg/copy_in_batches.h"
 
 #include <algorithm>
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 
 namespace sdb::pg {
 

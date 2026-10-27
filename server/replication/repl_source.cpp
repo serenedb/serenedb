@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -49,7 +50,6 @@
 #include <duckdb/parser/tableref/joinref.hpp>
 #include <duckdb/parser/tableref/subqueryref.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <stdexcept>

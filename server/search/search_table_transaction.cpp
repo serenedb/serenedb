@@ -448,6 +448,19 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
           .SharedCheckpointLock();
     }
   }
+  // Every insert this transaction makes is behind us, so the flushed set is
+  // final: Stage only registers the transactions on the flush context, which
+  // never flushes. Opening the readers here keeps the install that Stage does
+  // under DuckDB's commit lock free of file IO.
+  for (auto& [table_id, w] : _writes) {
+    for (const auto& trx : w.transactions) {
+      for (const auto& flushed : trx->Flushed()) {
+        if (auto reader = w.shard->OpenFlushedSegment(flushed.meta)) {
+          w.flushed_segments.push_back(std::move(reader));
+        }
+      }
+    }
+  }
 }
 
 void SearchTableTransaction::Stage(const irs::SourcePosition& position,
@@ -482,17 +495,7 @@ void SearchTableTransaction::InstallPendingDelta(SearchShardWrites& w,
     }
   }
 
-  for (const auto& trx : w.transactions) {
-    for (const auto& flushed : trx->Flushed()) {
-      // Opened now rather than pinned by name: a segment this commit flushed
-      // is unreferenced until the publish adopts it, so the cleaner may unlink
-      // the file meanwhile, and an open reader survives that where a filename
-      // would not.
-      if (auto reader = w.shard->OpenFlushedSegment(flushed.meta)) {
-        generation->segments.push_back(std::move(reader));
-      }
-    }
-  }
+  generation->segments = std::move(w.flushed_segments);
 
   w.shard->Delta().Install(std::move(generation));
 }

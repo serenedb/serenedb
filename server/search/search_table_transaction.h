@@ -25,6 +25,7 @@
 #include <duckdb/storage/storage_lock.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/segment_reader.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
@@ -37,7 +38,6 @@
 #include "connector/primary_key.h"
 #include "connector/search_key_index.h"
 #include "connector/search_key_unique.h"
-#include "connector/search_unique_probe.h"
 #include "search/search_table_changes.h"
 
 namespace duckdb {
@@ -75,6 +75,12 @@ struct SearchShardWrites {
   // values is emptied there. Rows that reached a segment are not among them:
   // the delta names those segments and reads their dictionaries instead.
   std::vector<connector::KeyTerms> pending_keys;
+  // Readers over the segments this transaction flushed, opened rather than
+  // pinned by name: such a segment is unreferenced until the publish adopts
+  // it, so the cleaner may unlink the file meanwhile, and an open reader
+  // survives that where a filename would not. Opened at PrepareCommit so that
+  // the install under DuckDB's commit lock stays free of file IO.
+  std::vector<irs::SegmentReader> flushed_segments;
 };
 
 // Holds a query::Transaction's search-table (TableEngine::Search) state and

@@ -27,7 +27,10 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 RECOVERY_DIR = "tests/sqllogic/recovery"
-SOURCE_DIRS = ("server", "iresearch", "third_party/duckdb/src", "third_party/duckdb/extension")
+SOURCE_DIRS = ("server", "iresearch")
+DUCKDB_CHECKOUT = "third_party/duckdb/.git"
+DUCKDB_DIRS = ("third_party/duckdb/src", "third_party/duckdb/extension")
+DUCKDB_PARK_FAULTS = frozenset({"pause_checkpoint", "pause_wal_sync"})
 TEST_DIR = "tests"
 
 TEST_EXTS = (".test", ".test_slow")
@@ -124,23 +127,45 @@ def lineno(text, pos):
     return text.count("\n", 0, pos) + 1
 
 
-def main():
-    errors = []
-
-    # ----- collect source-side definitions -----
+def scan_sources(dirs):
     # Substring pre-filters gate the regex: the bulk of the tree (notably the
     # ~630MB of sqlite-derived .test_slow files) contains no fault points, and a
     # plain `in` is far cheaper than running finditer over every byte.
-    source_faults = {}  # name -> "path:line"
-    park_faults = set()
-    for path in (p for d in SOURCE_DIRS for p in walk_files(d, SOURCE_EXTS)):
+    faults = {}  # name -> "path:line"
+    parks = set()
+    for path in (p for d in dirs for p in walk_files(d, SOURCE_EXTS)):
         text = read(path)
         if "FAIL" not in text and "Fail" not in text:
             continue
         for m in SOURCE_DEF.finditer(text):
-            source_faults.setdefault(m.group(1), f"{rel(path)}:{lineno(text, m.start())}")
+            faults.setdefault(m.group(1), f"{rel(path)}:{lineno(text, m.start())}")
         for m in PARK_DEF.finditer(text):
-            park_faults.add(m.group(1))
+            parks.add(m.group(1))
+    return faults, parks
+
+
+def main():
+    errors = []
+
+    # ----- collect source-side definitions -----
+    source_faults, park_faults = scan_sources(SOURCE_DIRS)
+    if os.path.exists(os.path.join(ROOT, DUCKDB_CHECKOUT)):
+        duckdb_faults, duckdb_parks = scan_sources(DUCKDB_DIRS)
+        for name, loc in sorted(duckdb_faults.items()):
+            if name not in DUCKDB_PARK_FAULTS or name not in duckdb_parks:
+                errors.append(
+                    f"{loc}: fault '{name}' is missing from DUCKDB_PARK_FAULTS in "
+                    "scripts/check_fault_points.py, which CI's pre-commit reads "
+                    "instead of DuckDB's sources (it checks out no submodules)"
+                )
+        for name in sorted(DUCKDB_PARK_FAULTS - duckdb_parks):
+            errors.append(
+                f"scripts/check_fault_points.py: DUCKDB_PARK_FAULTS lists '{name}', "
+                "which DuckDB's sources do not park on"
+            )
+    for name in sorted(DUCKDB_PARK_FAULTS):
+        source_faults.setdefault(name, DUCKDB_DIRS[0])
+    park_faults |= DUCKDB_PARK_FAULTS
 
     # ----- single pass over tests/ (checks #1 and the #3 test net) -----
     test_faults = {}  # name -> "path:line" (recovery activations only)

@@ -57,11 +57,6 @@ std::string NormalizedExpression(
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context,
   const catalog::InvertedIndexConfig* stored_expressions = nullptr);
 
-std::string NormalizedIndexKey(const duckdb::Expression& expr,
-                               duckdb::idx_t table_id,
-                               std::span<const ColumnId> col_index_to_id,
-                               duckdb::ClientContext& context);
-
 bool ComputedFromRowAlone(const duckdb::Expression& expr);
 
 }  // namespace sdb::connector

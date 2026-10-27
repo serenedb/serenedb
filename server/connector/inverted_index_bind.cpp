@@ -1273,7 +1273,7 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
       record.expression_text = label;
       // Frozen here in the same normalized form a query will produce, so the
       // match later needs nothing but the entry.
-      record.normalized_expression = connector::NormalizedIndexKey(
+      record.normalized_expression = connector::NormalizedExpression(
         *exprs[i], relation.oid, column_ids, context);
       auto [it, fresh] =
         expression_fields.try_emplace(record.normalized_expression, 0);

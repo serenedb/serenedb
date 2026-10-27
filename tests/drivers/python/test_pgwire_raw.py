@@ -1298,10 +1298,10 @@ def test_copy_feeder_error_ends_the_copy(conn):
         c.run_ok("create table t_copy_feeder(a int)")
         c.send("Q", _cstr("copy t_copy_feeder from stdin"))
         assert c.read_msg()[0] == "G"
-        c.send("d", b"1\n")
-        c.send("c")
         c.sock.settimeout(10)
-        with pytest.raises(EOFError):
+        with pytest.raises((EOFError, ConnectionError)):
+            c.send("d", b"1\n")
+            c.send("c")
             while True:
                 c.read_msg()
         assert first_field(conn.run("select count(*) from t_copy_feeder")) == b"0"

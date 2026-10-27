@@ -295,9 +295,10 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     std::vector<IndexConfig> configs;
     std::vector<IndexConfig> retired;
     std::optional<duckdb::idx_t> building_index;
-    bool retired_released = false;
+    bool compaction_stale = false;
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
     std::shared_ptr<const catalog::InvertedIndexConfig> scan_config;
+    std::shared_ptr<const catalog::InvertedIndexConfig> compaction_config;
   };
   struct ReplaySession;
 
@@ -305,9 +306,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void OpenDirectory();
   irs::IndexReaderOptions ReaderOptions() const;
   std::shared_ptr<const catalog::InvertedIndexConfig> MergeConfigs(
-    std::span<const IndexConfig> configs,
-    std::optional<duckdb::idx_t> skip) const
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_layout_mutex);
+    std::span<const IndexConfig> configs, std::span<const IndexConfig> retired,
+    std::optional<duckdb::idx_t> skip) const;
   template<typename Configs>
   void RebuildConfig(Configs&& configs,
                      std::optional<duckdb::idx_t> building_index)

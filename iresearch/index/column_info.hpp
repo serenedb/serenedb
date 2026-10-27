@@ -22,15 +22,15 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <vector>
 
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -190,23 +190,13 @@ using NormColumnIdProvider = std::function<field_id(field_id)>;
 class IndexFieldOptions {
  public:
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  containers::FlatHashSet<field_id> table_columns;
+  std::vector<AnnInfo> anns;
 
   virtual ~IndexFieldOptions() = default;
   virtual ColumnOptions GetColumnOptions(field_id id) const = 0;
   virtual field_id GetNormColumnId(field_id id) const = 0;
   virtual bool HasField(field_id) const { return true; }
-  virtual bool HasColumn(field_id) const { return true; }
-
-  virtual void ForEachLiveAnn(
-    field_id column, absl::FunctionRef<void(const AnnInfo&)> visit) const {
-    if (const auto opts = GetColumnOptions(column); opts.ann_info) {
-      visit(*opts.ann_info);
-    }
-  }
-  virtual void ForEachAccessibleAnn(
-    field_id column, absl::FunctionRef<void(const AnnInfo&)> visit) const {
-    ForEachLiveAnn(column, visit);
-  }
 
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --
@@ -232,10 +222,12 @@ class FunctionFieldOptions final : public IndexFieldOptions {
  public:
   FunctionFieldOptions(ColumnOptionsProvider column_options,
                        NormColumnIdProvider norm_column_id,
-                       uint32_t row_group_size) noexcept
+                       uint32_t row_group_size,
+                       std::vector<AnnInfo> anns) noexcept
     : _column_options{std::move(column_options)},
       _norm_column_id{std::move(norm_column_id)} {
     this->row_group_size = row_group_size;
+    this->anns = std::move(anns);
   }
 
   ColumnOptions GetColumnOptions(field_id id) const final {

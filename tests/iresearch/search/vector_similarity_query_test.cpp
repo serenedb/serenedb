@@ -74,21 +74,21 @@ irs::IndexWriterOptions MakeWriterOptions(
     irs::ColumnOptions col;
     if (id == kVec) {
       col.compression = compression;
-      col.ann_info = irs::AnnInfo{
-        .centroids_id = kVec,
-        .postings_id = kVec,
-        .d = kDim,
-        .metric = irs::VectorMetric::L2Sqr,
-        .quant = {.kind = irs::VectorQuantization::SQ8},
-        .sample_factor = 1.f,
-        // Larger than any doc count used here, so every test indexes a single
-        // cluster and doc ids map 1:1 onto one posting list.
-        .posting_size = 1024,
-        .column_id = kVec,
-      };
     }
     return col;
   };
+  opts.anns.push_back(irs::AnnInfo{
+    .centroids_id = kVec,
+    .postings_id = kVec,
+    .d = kDim,
+    .metric = irs::VectorMetric::L2Sqr,
+    .quant = {.kind = irs::VectorQuantization::SQ8},
+    .sample_factor = 1.f,
+    // Larger than any doc count used here, so every test indexes a single
+    // cluster and doc ids map 1:1 onto one posting list.
+    .posting_size = 1024,
+    .column_id = kVec,
+  });
   return opts;
 }
 

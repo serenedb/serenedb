@@ -1355,10 +1355,11 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
   writer->_ann_env = options.ann_env;
   writer->_hnsw_bases = std::move(hnsw_bases);
   // Wrap the provider callbacks into the fallback options (tests).
-  if (options.column_options || options.norm_column_id) {
+  if (options.column_options || options.norm_column_id ||
+      !options.anns.empty()) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
       std::move(options.column_options), std::move(options.norm_column_id),
-      options.row_group_size);
+      options.row_group_size, std::move(options.anns));
   }
   if (options.cleanup_on_open) {
     // Remove non-index files from directory

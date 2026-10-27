@@ -297,33 +297,36 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::ScanConfig()
 
 bool SearchTable::IsCurrentConfig(const irs::IndexFieldOptions* options) const {
   absl::ReaderMutexLock lock{&_layout_mutex};
-  return _layout.config.get() == options;
+  return _layout.compaction_config.get() == options;
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig>
 SearchTable::CompactionConfig() {
   absl::MutexLock lock{&_layout_mutex};
-  if (_layout.retired_released) {
+  if (_layout.compaction_stale) {
     RebuildConfig(_layout.configs, _layout.building_index);
   }
-  return _layout.config;
+  return _layout.compaction_config;
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
-  std::span<const IndexConfig> configs,
+  std::span<const IndexConfig> configs, std::span<const IndexConfig> retired,
   std::optional<duckdb::idx_t> skip) const {
   std::vector<catalog::InvertedIndexKey> keys;
   catalog::InvertedIndexFields fields;
-  for (const auto& index : configs) {
-    if (index.oid == skip) {
-      continue;
-    }
+  const auto add = [&](const IndexConfig& index) {
     for (const auto& [id, field] : index.config->fields) {
       fields.emplace(id, field);
     }
     keys.insert(keys.end(), index.config->keys.begin(),
                 index.config->keys.end());
+  };
+  for (const auto& index : configs) {
+    if (index.oid != skip) {
+      add(index);
+    }
   }
+  absl::c_for_each(retired, add);
   auto merged = std::make_shared<catalog::InvertedIndexConfig>(
     std::move(keys), std::move(fields));
   merged->pk = {.index_term = true, .column = catalog::PkColumnKind::None};
@@ -331,26 +334,28 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   merged->row_group_size = _row_group_size;
   merged->declared_compression = _compression;
   merged->table_columns = _table_columns;
-  for (const auto& retired : _layout.retired) {
-    merged->retired.push_back(retired.config);
-  }
   return merged;
 }
 
 template<typename Configs>
 void SearchTable::RebuildConfig(Configs&& configs,
                                 std::optional<duckdb::idx_t> building_index) {
-  auto config = MergeConfigs(configs, std::nullopt);
+  auto config = MergeConfigs(configs, {}, std::nullopt);
   auto scan_config =
-    building_index ? MergeConfigs(configs, building_index) : config;
+    building_index ? MergeConfigs(configs, {}, building_index) : config;
+  auto compaction_config =
+    _layout.retired.empty()
+      ? config
+      : MergeConfigs(configs, _layout.retired, std::nullopt);
   SDB_IF_FAILURE("SearchTable::RebuildConfig") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
   _layout.configs = std::forward<Configs>(configs);
   _layout.building_index = building_index;
-  _layout.retired_released = false;
   _layout.config = std::move(config);
   _layout.scan_config = std::move(scan_config);
+  _layout.compaction_config = std::move(compaction_config);
+  _layout.compaction_stale = false;
 }
 
 void SearchTable::MergeIndexConfig(
@@ -427,6 +432,7 @@ void SearchTable::AbortIndexBuild(duckdb::idx_t index_oid) noexcept {
     return index.oid == index_oid;
   });
   _layout.config = _layout.scan_config;
+  _layout.compaction_stale = true;
 }
 
 void SearchTable::BuildClaim::Finish() noexcept { Release(/*finished=*/true); }
@@ -475,7 +481,7 @@ void SearchTable::ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept {
   if (std::erase_if(_layout.retired, [&](const IndexConfig& index) {
         return index.oid == index_oid;
       }) != 0) {
-    _layout.retired_released = true;
+    _layout.compaction_stale = true;
   }
 }
 

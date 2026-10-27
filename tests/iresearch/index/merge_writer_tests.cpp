@@ -1206,7 +1206,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   irs::SegmentMeta index_segment;
 
   const irs::FunctionFieldOptions field_options{
-    nullptr, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
+    nullptr,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   const irs::SegmentWriterOptions options{
     .db = &::irs::DuckDBEngine::Instance().instance(),
     .field_options = &field_options,

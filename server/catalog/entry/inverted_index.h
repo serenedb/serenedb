@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <array>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -155,13 +153,6 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
   irs::field_id GetNormColumnId(irs::field_id id) const final;
   bool HasField(irs::field_id id) const final;
-  bool HasColumn(irs::field_id id) const final;
-  void ForEachLiveAnn(
-    irs::field_id column,
-    absl::FunctionRef<void(const irs::AnnInfo&)> visit) const final;
-  void ForEachAccessibleAnn(
-    irs::field_id column,
-    absl::FunctionRef<void(const irs::AnnInfo&)> visit) const final;
   const irs::AnnInfo* FindAnn(irs::field_id column,
                               irs::VectorMetric metric) const noexcept;
 
@@ -194,8 +185,6 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   PkPolicy pk;
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
-  std::vector<std::shared_ptr<const InvertedIndexConfig>> retired;
-  irs::containers::FlatHashSet<irs::field_id> table_columns;
 
  private:
   static constexpr uint32_t kNoKey = std::numeric_limits<uint32_t>::max();
@@ -210,14 +199,11 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
     return key == kNoKey ? nullptr : &keys[key];
   }
   ExpressionSlots SlotsOf(std::string_view normalized) const noexcept;
-  const InvertedIndexField* FindAccessibleEntry(
-    irs::field_id field_id) const noexcept;
 
   irs::containers::FlatHashMap<irs::field_id, uint32_t> _field_keys;
   irs::containers::FlatHashMap<irs::field_id, irs::field_id> _column_fields;
   irs::containers::FlatHashMap<std::string, ExpressionSlots> _expressions;
   irs::containers::FlatHashMap<irs::field_id, irs::field_id> _owners;
-  std::vector<irs::AnnInfo> _anns;
   bool _stores_expressions = false;
 };
 

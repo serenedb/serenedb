@@ -44,6 +44,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -401,11 +402,15 @@ void IvfWriter::Flush() {
   const uint64_t stats_offset = out.Position();
   _result.qw->Serialize(out);
   const uint64_t stats_byte_size = out.Position() - stats_offset;
-  _idx->AddIvf(_info.field_id,
-               IvfCentroidMeta{.tree_offset = tree_span.offset,
-                               .tree_byte_size = tree_span.byte_size,
-                               .stats_offset = stats_offset,
-                               .stats_byte_size = stats_byte_size});
+  IvfCentroidMeta meta{
+    .tree_offset = tree_span.offset,
+    .tree_byte_size = tree_span.byte_size,
+    .stats_offset = stats_offset,
+    .stats_byte_size = stats_byte_size,
+    .root_byte_size = tree_span.root_byte_size,
+  };
+  SDB_IF_FAILURE("irs::OldAnnFormat") { meta.root_byte_size = 0; }
+  _idx->AddIvf(_info.field_id, meta);
 }
 
 const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,

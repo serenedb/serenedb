@@ -194,10 +194,12 @@ class HnswGraph {
   }
 
   void Serialize(DataOutput& out) const;
-  static HnswGraph Deserialize(IndexInput& in);
+  static HnswGraph Deserialize(IndexInput& in, bool stored_offsets);
 
  private:
   friend class HnswGraphWriter;
+
+  uint64_t ComputeOffsets();
 
   uint64_t Upper(uint32_t node, uint32_t level) const noexcept {
     SDB_ASSERT(level != 0);

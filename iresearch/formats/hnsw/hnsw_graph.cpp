@@ -27,6 +27,7 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/debugging.hpp"
 
 namespace irs {
 namespace {
@@ -63,19 +64,23 @@ void HnswGraphWriter::Reset(size_t nodes, uint32_t m) {
   _graph._max_level = 0;
 }
 
+uint64_t HnswGraph::ComputeOffsets() {
+  _offsets.resize(_levels.size() + 1);
+  uint64_t total = 0;
+  for (size_t i = 0; i < _levels.size(); ++i) {
+    _offsets[i] = total;
+    if (_levels[i] > 1) {
+      total += static_cast<uint64_t>(_levels[i] - 1) * _m;
+    }
+  }
+  _offsets.back() = total;
+  return total;
+}
+
 void HnswGraphWriter::AllocateLinks() {
   auto& levels = _graph._levels;
   _graph._base.assign(levels.size() * size_t{_graph._m0}, kHnswInvalidNode);
-  _graph._offsets.resize(levels.size() + 1);
-  uint64_t total = 0;
-  for (size_t i = 0; i < levels.size(); ++i) {
-    _graph._offsets[i] = total;
-    if (levels[i] > 1) {
-      total += static_cast<uint64_t>(levels[i] - 1) * _graph._m;
-    }
-  }
-  _graph._offsets.back() = total;
-  _graph._upper.assign(total, kHnswInvalidNode);
+  _graph._upper.assign(_graph.ComputeOffsets(), kHnswInvalidNode);
 
   _proc_offsets.resize(levels.size() + 1);
   uint32_t slots = 0;
@@ -92,19 +97,23 @@ void HnswGraph::Serialize(DataOutput& out) const {
   out.WriteU32(_entry);
   out.WriteU32(_max_level);
   WriteArray(out, _levels);
-  WriteArray(out, _offsets);
+  SDB_IF_FAILURE("irs::OldAnnFormat") { WriteArray(out, _offsets); }
   WriteArray(out, _base);
   WriteArray(out, _upper);
 }
 
-HnswGraph HnswGraph::Deserialize(IndexInput& in) {
+HnswGraph HnswGraph::Deserialize(IndexInput& in, bool stored_offsets) {
   HnswGraph g;
   g._m = static_cast<uint32_t>(in.ReadI32());
   g._m0 = 2 * g._m;
   g._entry = static_cast<uint32_t>(in.ReadI32());
   g._max_level = static_cast<uint32_t>(in.ReadI32());
   ReadArray(in, g._levels);
-  ReadArray(in, g._offsets);
+  if (stored_offsets) {
+    ReadArray(in, g._offsets);
+  } else {
+    g.ComputeOffsets();
+  }
   ReadArray(in, g._base);
   ReadArray(in, g._upper);
   return g;

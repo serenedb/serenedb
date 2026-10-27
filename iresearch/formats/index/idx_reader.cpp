@@ -105,12 +105,15 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
               obj.ReadProperty<uint64_t>(3, "stats_offset");
             const auto stats_byte_size =
               obj.ReadProperty<uint64_t>(4, "stats_byte_size");
+            const auto root_byte_size =
+              obj.ReadPropertyWithExplicitDefault<uint64_t>(5, "root_byte_size",
+                                                            0);
             _impl->ann_ends.push_back(tree_offset + tree_byte_size);
             _impl->ann_ends.push_back(stats_offset + stats_byte_size);
 
             auto body = _impl->in->Dup();
             body->Seek(tree_offset);
-            auto entry = CentroidsTree::Deserialize(*body, tree_byte_size);
+            auto entry = CentroidsTree::Deserialize(*body, root_byte_size);
             entry.SetQuantStatsLocation(stats_offset, stats_byte_size);
 
             const size_t idx = _impl->ann_entries.size();
@@ -124,19 +127,39 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
             const auto id = obj.ReadProperty<uint64_t>(0, "id");
-            const auto offset = obj.ReadProperty<uint64_t>(1, "offset");
-            const auto byte_size = obj.ReadProperty<uint64_t>(2, "byte_size");
-            _impl->ann_ends.push_back(offset + byte_size);
+            HnswMeta meta{
+              .offset = obj.ReadProperty<uint64_t>(1, "offset"),
+              .byte_size = obj.ReadProperty<uint64_t>(2, "byte_size"),
+            };
+            _impl->ann_ends.push_back(meta.offset + meta.byte_size);
 
-            auto body = _impl->in->Dup();
-            body->Seek(offset);
-            auto header = HnswIndex::ReadHeader(*body);
+            auto& h = meta.header;
+            h.d = obj.ReadPropertyWithExplicitDefault<uint32_t>(3, "d", h.d);
+            h.metric =
+              static_cast<VectorMetric>(obj.ReadPropertyWithExplicitDefault(
+                4, "metric", static_cast<uint8_t>(h.metric)));
+            h.quant = static_cast<VectorQuantization>(
+              obj.ReadPropertyWithExplicitDefault(
+                5, "quant", static_cast<uint8_t>(h.quant)));
+            h.ef_construction = obj.ReadPropertyWithExplicitDefault<uint32_t>(
+              6, "ef_construction", h.ef_construction);
+            h.record_size = obj.ReadPropertyWithExplicitDefault<uint32_t>(
+              7, "record_size", h.record_size);
+            h.rows =
+              obj.ReadPropertyWithExplicitDefault<uint64_t>(8, "rows", h.rows);
+            h.rotated = obj.ReadPropertyWithExplicitDefault<bool>(9, "rotated",
+                                                                  h.rotated);
+            if (h.d == 0) {
+              auto body = _impl->in->Dup();
+              body->Seek(meta.offset);
+              h = HnswIndex::ReadHeader(*body);
+              meta.offset = body->Position();
+              meta.stored_offsets = true;
+            }
 
             const size_t idx = _impl->ann_entries.size();
             _impl->ann_entries.emplace_back(
-              id, std::make_unique<HnswIndex>(
-                    header, HnswMeta{.offset = offset, .byte_size = byte_size},
-                    id, hnsw_bases));
+              id, std::make_unique<HnswIndex>(meta, id, hnsw_bases));
             _impl->ann_by_id.emplace(id, idx);
           });
         });

@@ -2759,7 +2759,7 @@ void RegisterLineFunctions(Functions& functions) {
   Operator(functions, "?#", "line_intersect", Function<&LinesIntersect>());
   Operator(functions, "?||", "line_parallel", Function<&LinesParallel>());
   Operator(functions, "?-|", "line_perp", Function<&LinesPerpendicular>());
-  Add(functions, "line_vertical", Function<&LineVertical>());
+  Operator(functions, "?|", "line_vertical", Function<&LineVertical>());
   Add(functions, "line_horizontal", Function<&LineHorizontal>());
   Add(functions, "line_eq", Function<&LinesEqual>());
   Operator(functions, "<->", "line_distance", Function<&LineDistance>());
@@ -2782,7 +2782,7 @@ void RegisterLsegFunctions(Functions& functions) {
   Operator(functions, "?#", "lseg_intersect", Function<&LsegsIntersect>());
   Operator(functions, "?||", "lseg_parallel", Function<&LsegsParallel>());
   Operator(functions, "?-|", "lseg_perp", Function<&LsegsPerpendicular>());
-  Add(functions, "lseg_vertical", Function<&LsegVertical>());
+  Operator(functions, "?|", "lseg_vertical", Function<&LsegVertical>());
   Add(functions, "lseg_horizontal", Function<&LsegHorizontal>());
   Add(functions, "lseg_eq", Function<&LsegsEqual>());
   Add(functions, "lseg_ne", Function<&LsegsDiffer>());

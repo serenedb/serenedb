@@ -554,7 +554,7 @@ a	b	intersects	parallel	perp	dist	crossing
 
 
 query
-SELECT id, line_horizontal(l) AS horizontal, line_vertical(l) AS vertical
+SELECT id, line_horizontal(l) AS horizontal, ?| l AS vertical
 FROM geo_lines
 ORDER BY id;
 ----
@@ -610,7 +610,7 @@ a	b	intersects	parallel	perp	dist	crossing	closest
 
 
 query
-SELECT id, @-@ s AS len, @@ s AS center, lseg_horizontal(s) AS horizontal, lseg_vertical(s) AS vertical
+SELECT id, @-@ s AS len, @@ s AS center, lseg_horizontal(s) AS horizontal, ?| s AS vertical
 FROM geo_lsegs
 ORDER BY id;
 ----

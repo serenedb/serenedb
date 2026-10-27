@@ -525,12 +525,13 @@ generate_wildcard_ngrams(<analyzer>, ngram_size := 3)
   as a function: generate_wildcard_ngrams(value, ngram_size := 3)
   ngram_size  N-gram size for wildcard prefix indexing (minimum 2)
 
-normalize_tokens(locale := '', case := 'none', accent := true, form := 'nfc')
-  as a function: normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc')
-  locale  Locale for case conversion; omit for locale-independent simple case
-  case    Text case conversion: none, lower, upper, fold
-  accent  Preserve accent marks
-  form    Unicode normalization form: nfc, nfd, nfkc, nfkd, nfkc_cf
+normalize_tokens(locale := '', case := 'none', accent := true, form := 'nfc', keep_marks := [])
+  as a function: normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc', keep_marks := [])
+  locale      Locale for case conversion; omit for locale-independent simple case
+  case        Text case conversion: none, lower, upper, fold
+  accent      Preserve accent marks
+  form        Unicode normalization form: nfc, nfd, nfkc, nfkd, nfkc_cf
+  keep_marks  Nonspacing marks that accent := false keeps: a list of single marks, each given as the character or as U+XXXX
 
 split_text_icu(locale, break := 'alpha')
   as a function: split_text_icu(value, locale, break := 'alpha')

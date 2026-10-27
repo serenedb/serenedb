@@ -1511,7 +1511,8 @@ CREATE TABLE inc_e_read(id INT PRIMARY KEY, title VARCHAR, n INT);
 
 statement ok
 CREATE INDEX inc_e_read_idx ON inc_e_read USING inverted(
-    id, (lower(title)) verbatim_dict, (lower(title)) included(), (n + 1) included());
+    id, (lower(title)) verbatim_dict, (lower(title)) included(), (n + 1) included())
+    WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO inc_e_read VALUES (1, 'New York', 10), (2, 'Boston', 20), (3, 'NEWARK', 30), (4, 'abc', 40);

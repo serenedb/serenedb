@@ -378,8 +378,13 @@ inline constexpr OptionInfo kNormLocale{
   "locale", ""sv,
   "Locale for case conversion; omit for locale-independent simple case"};
 
+inline constexpr OptionInfo kKeepMarks{
+  "keep_marks", OptionInfo::ListTag{},
+  "Nonspacing marks that accent := false keeps: a list of single marks, each "
+  "given as the character or as U+XXXX"};
+
 inline constexpr OptionInfo kNormOptions[] = {kNormLocale, kNormCase, kAccent,
-                                              kForm};
+                                              kForm, kKeepMarks};
 
 inline constexpr OptionInfo kSplitByNonAlphaOptions[] = {kCase, kNonAlphaBreak};
 

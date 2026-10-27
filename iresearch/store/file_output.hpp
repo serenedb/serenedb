@@ -57,13 +57,16 @@ class FileOutput final : public IndexOutput {
   void CloseImpl() final;
   void Release() noexcept;
   void Overflow(const byte_type* data, size_t size) final;
+  void SetWindow(duckdb::FileWriteWindow window) noexcept;
+  void CommitWindow();
   void WriteHandle(const byte_type* b, size_t len);
   void CacheBytes(const byte_type* b, size_t len) noexcept;
   void FinishCache(bool published) noexcept;
 
+  static constexpr size_t kBufferSize = 64 * 1024;
   static constexpr size_t kWritebackHintBytes = 8 << 20;
 
-  byte_type _buf[64 * 1024];
+  std::unique_ptr<byte_type[]> _buf;
   std::unique_ptr<duckdb::FileHandle> _handle;
   Crc32c _crc;
   uint64_t _unhinted = 0;

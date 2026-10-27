@@ -5171,6 +5171,55 @@ TEST(DirectoryTest, private_memory_reader_outlives_files) {
   EXPECT_TRUE(reader == reader.Reopen());
 }
 
+TEST(DirectoryTest, memory_files_written_through_windows_read_back) {
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  duckdb::MemoryFileSystem heap;
+  const irs::Directory private_files{db, heap, TestEnv::MemoryRoot()};
+  const irs::Directory shared_files{db, TestEnv::MemoryRoot()};
+  constexpr uint64_t kValues = 100000;
+  constexpr uint64_t kChunkEvery = 25000;
+  const irs::bstring chunk(70000, irs::byte_type{0x5A});
+  for (const auto* files : {&private_files, &shared_files}) {
+    uint32_t checksum = 0;
+    {
+      auto out = files->Create("windows");
+      for (uint64_t i = 0; i != kValues; ++i) {
+        out->WriteV64(i * 2654435761);
+        out->WriteU32(static_cast<uint32_t>(i));
+        out->WriteByte(static_cast<irs::byte_type>(i));
+        if (i % kChunkEvery == 0) {
+          out->WriteData(chunk.data(), chunk.size());
+        }
+      }
+      checksum = out->Checksum();
+      out->WriteU64(kValues);
+      out->Close();
+    }
+    const auto file = files->Open("windows", duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput in{*file};
+    irs::bstring read(chunk.size(), irs::byte_type{0});
+    for (uint64_t i = 0; i != kValues; ++i) {
+      ASSERT_EQ(i * 2654435761, in.ReadV64());
+      ASSERT_EQ(static_cast<int32_t>(i), in.ReadI32());
+      ASSERT_EQ(static_cast<irs::byte_type>(i), in.ReadByte());
+      if (i % kChunkEvery == 0) {
+        in.ReadData(read.data(), read.size());
+        ASSERT_EQ(chunk, read);
+      }
+    }
+    const auto body = in.Position();
+    ASSERT_EQ(static_cast<int64_t>(kValues), in.ReadI64());
+    ASSERT_EQ(in.Length(), in.Position());
+
+    irs::IndexInput whole{*file};
+    irs::bstring bytes(body, irs::byte_type{0});
+    whole.ReadData(bytes.data(), bytes.size());
+    irs::Crc32c crc;
+    crc.process_bytes(bytes.data(), bytes.size());
+    EXPECT_EQ(crc.checksum(), checksum);
+  }
+}
+
 class DirectoryHookTest : public TestBase {};
 
 TEST_F(DirectoryHookTest, ref_tracker_failures) {

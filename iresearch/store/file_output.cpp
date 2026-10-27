@@ -58,8 +58,12 @@ FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
                        duckdb::BlockCache* cache)
   : _handle{std::move(handle)}, _observers{observers}, _remote{remote} {
   SDB_ASSERT(_handle);
-  _begin = _pos = _buf;
-  _end = std::end(_buf);
+  SetWindow(_handle->GetWriteWindow());
+  if (_begin == nullptr) {
+    _buf = std::make_unique_for_overwrite<byte_type[]>(kBufferSize);
+    _begin = _pos = _buf.get();
+    _end = _begin + kBufferSize;
+  }
   if (!_remote) {
     return;
   }
@@ -83,10 +87,31 @@ FileOutput::~FileOutput() {
 }
 
 void FileOutput::Flush() {
+  if (!_buf) {
+    CommitWindow();
+    _begin = _pos = _end = nullptr;
+    return;
+  }
   if (_pos != _begin) {
     WriteHandle(_begin, static_cast<size_t>(_pos - _begin));
   }
   _pos = _begin;
+}
+
+void FileOutput::SetWindow(duckdb::FileWriteWindow window) noexcept {
+  _begin = _pos = window.data;
+  _end = window.data + window.size;
+}
+
+void FileOutput::CommitWindow() {
+  const auto size = static_cast<size_t>(_pos - _begin);
+  if (size == 0) {
+    return;
+  }
+  _crc.process_bytes(_begin, size);
+  _handle->CommitWriteWindow(size);
+  _offset += size;
+  _begin = _pos;
 }
 
 uint32_t FileOutput::Checksum() {
@@ -121,6 +146,23 @@ void FileOutput::CloseImpl() {
 }
 
 void FileOutput::Overflow(const byte_type* data, size_t size) {
+  if (!_buf) {
+    for (;;) {
+      const auto chunk = std::min(size, Remain());
+      if (chunk != 0) {
+        std::memcpy(_pos, data, chunk);
+        _pos += chunk;
+        data += chunk;
+        size -= chunk;
+      }
+      if (size == 0) {
+        return;
+      }
+      CommitWindow();
+      SetWindow(_handle->GetWriteWindow());
+      SDB_ASSERT(_begin != _end);
+    }
+  }
   auto remain = Remain();
   SDB_ASSERT(size >= remain);
   const auto option =

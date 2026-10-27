@@ -153,16 +153,23 @@ def fetch_bundle(config, arch, dig, dest, archive=None):
             archive = Path(archive).resolve()
         else:
             archive = tmp_dir / "bundle.tar.zst"
-            if not store.get(bundle_name(config, arch, dig), archive):
-                raise SystemExit(f"no bundle {bundle_name(config, arch, dig)} in the store")
+            name = bundle_name(config, arch, dig)
+            print(f"downloading {name} from the store", file=sys.stderr, flush=True)
+            start = time.monotonic()
+            if not store.get(name, archive):
+                raise SystemExit(f"no bundle {name} in the store")
+            print(f"downloaded {archive.stat().st_size >> 20} MB in {time.monotonic() - start:.0f}s",
+                  file=sys.stderr, flush=True)
         unpacked = tmp_dir / "unpacked"
         unpacked.mkdir()
         owner = os.environ.get("SDB_DOCKER_OWNER")
+        start = time.monotonic()
         subprocess.run(["docker", "run", "--rm", *(["--label", f"serenedb.owner={owner}"] if owner else []),
                         "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{BUNDLE_CACHE}:{BUNDLE_CACHE}",
                         "-v", f"{archive.parent}:{archive.parent}",
                         image_name(), "tar", "-C", str(unpacked), "-I", "zstd -T0",
                         "-xf", str(archive)], check=True)
+        print(f"unpacked into {dest} in {time.monotonic() - start:.0f}s", file=sys.stderr, flush=True)
         (unpacked / ".complete").write_text(dig)
         unpacked.chmod(0o755)
         if dest.exists():

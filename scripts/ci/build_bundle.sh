@@ -74,8 +74,10 @@ docker run --rm \
 		python3 scripts/ci/ci.py pack --build-dir "$0" --runner /cargo-target/release/sqllogictest --out "out/bundle.tar.zst"
 	' "$BUILD_DIR"
 
+echo "uploading $bundle ($(du -m out/bundle.tar.zst | cut -f1) MB) to the store"
+start=$SECONDS
 python3 scripts/ci/ci.py upload out/bundle.tar.zst "$bundle"
+echo "stored $bundle in $((SECONDS - start))s"
 python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "$digest" \
 	--archive out/bundle.tar.zst >/dev/null
 rm -f out/bundle.tar.zst
-echo "stored $bundle"

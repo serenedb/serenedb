@@ -68,10 +68,19 @@ SELECT array_fill(7, ARRAY[100000, 100000]);
 db error: ERROR: array size exceeds the maximum allowed (134217727)
 
 
+skipif serenedb
 statement error
 SELECT array_fill(7, ARRAY[1, 1, 1, 1, 1, 1, 1]);
 ----
 db error: ERROR: number of array dimensions (7) exceeds the maximum allowed (6)
+
+
+onlyif serenedb
+query
+SELECT array_fill(7, ARRAY[1, 1, 1, 1, 1, 1, 1]);
+----
+array_fill
+{{{{{{{7}}}}}}}
 
 
 statement error

@@ -30,6 +30,7 @@
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -196,8 +197,16 @@ duckdb::unique_ptr<duckdb::FunctionData> ArrayFillBind(
   const auto element = input.GetArguments()[0]->GetReturnType();
   CheckPolymorphicType(element);
   const auto ndims = BoundDimensionCount(input);
+  const auto max_dims =
+    duckdb::Settings::Get<duckdb::MaxExpressionDepthSetting>(
+      input.GetClientContext());
+  if (ndims > max_dims) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                    ERR_MSG("number of array dimensions (", ndims,
+                            ") exceeds the maximum allowed (", max_dims, ")"));
+  }
   auto type = element;
-  for (size_t i = 0; i < std::min(ndims, kMaxArrayDimensions + 1); ++i) {
+  for (size_t i = 0; i < ndims; ++i) {
     type = duckdb::LogicalType::LIST(type);
   }
   auto& function = input.GetBoundFunction();
@@ -310,12 +319,6 @@ void ArrayFillFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       CheckDimensionsNotNull(*lbs_list, row);
     }
     ReadDimensions(dims_list, row, dims);
-    if (dims.size() > kMaxArrayDimensions) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-        ERR_MSG("number of array dimensions (", dims.size(),
-                ") exceeds the maximum allowed (", kMaxArrayDimensions, ")"));
-    }
     lbs.assign(dims.size(), 1);
     if (lbs_list) {
       ReadDimensions(*lbs_list, row, lbs);

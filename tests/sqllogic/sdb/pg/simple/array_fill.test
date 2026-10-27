@@ -44,3 +44,16 @@ HINT: Pass the dimensions as a constant or an ARRAY[...] constructor.
 
 statement ok
 DROP TABLE array_fill_dims
+
+
+query
+SELECT array_fill(0, ARRAY[1, 1, 1, 1, 1, 1, 1, 1]);
+----
+array_fill
+{{{{{{{{0}}}}}}}}
+
+
+statement error
+SELECT array_fill(0, string_to_array(repeat('1,', 1000) || '1', ',')::int[]);
+----
+db error: ERROR: number of array dimensions (1001) exceeds the maximum allowed (1000)

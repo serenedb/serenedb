@@ -649,7 +649,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | array_append       | Yes           |                                |
 | array_cat          | Yes           |                                |
 | array_dims         | Yes           |                                |
-| array_fill         | Yes           | Lower bounds must be 1; dimensions taken from a column fill one-dimensional arrays unless written as `ARRAY[...]` |
+| array_fill         | Yes           | Lower bounds must be 1; dimensions taken from a column fill one-dimensional arrays unless written as `ARRAY[...]`; up to `max_expression_depth` dimensions (1000 by default) |
 | array_lower        | Yes           |                                |
 | array_ndims        | Yes           |                                |
 | array_position     | Yes           |                                |

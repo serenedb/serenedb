@@ -269,11 +269,11 @@ class BasicInput {
     return pinned;
   }
   PinnedBytes Pin(uint64_t offset, uint64_t count) const {
-    if (_file != nullptr) {
+    if (!Whole()) {
       return _file->Pin(offset, count);
     }
     if (offset > Length() || count > Length() - offset) [[unlikely]] {
-      ThrowPastEnd(nullptr, offset, Length());
+      ThrowPastEnd(_file, offset, Length());
     }
     return {.bytes = {_begin + offset, count}};
   }

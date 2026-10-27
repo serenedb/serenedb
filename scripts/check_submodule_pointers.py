@@ -244,18 +244,27 @@ class Unreachable(Exception):
 def open_fork_pr(repo: str, sha: str) -> tuple[str, str] | None:
     code, body = api_get(f"repos/{repo}/commits/{sha}/pulls")
     if code in (404, 422):
-        return None
-    if code != 200 or not isinstance(body, list):
+        body = []
+    elif code != 200 or not isinstance(body, list):
         raise Unreachable(f"cannot list the pull requests of {sha} on {repo}")
-    for pr in body:
-        base = pr.get("base", {}).get("ref", "")
-        if (
-            pr.get("state") == "open"
-            and pr.get("head", {}).get("sha") == sha
-            and VERSION_BRANCH.match(base)
-        ):
-            return f"{repo}#{pr['number']} into {base}", base
-    return None
+    page = 0
+    while True:
+        for pr in body:
+            base = pr.get("base", {}).get("ref", "")
+            if (
+                pr.get("state") == "open"
+                and pr.get("head", {}).get("sha") == sha
+                and VERSION_BRANCH.match(base)
+            ):
+                return f"{repo}#{pr['number']} into {base}", base
+        if page and len(body) < 100:
+            return None
+        page += 1
+        code, body = api_get(
+            f"repos/{repo}/pulls?state=open&per_page=100&page={page}"
+        )
+        if code != 200 or not isinstance(body, list):
+            raise Unreachable(f"cannot list the open pull requests on {repo}")
 
 
 def validate_api(
@@ -356,33 +365,38 @@ def check(path: str, override_sha: str | None, rev: str | None) -> str:
     return status
 
 
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--path", help="check only this submodule path")
-parser.add_argument("--sha", help="validate this sha instead of the staged gitlink")
-parser.add_argument("--rev", help="check the gitlinks of this commit, not the index")
-parser.add_argument(
-    "--base",
-    help="check only the gitlinks that differ from this commit "
-    "(default: the merge base with origin/main)",
-)
-parser.add_argument(
-    "--allow-pending",
-    action="store_true",
-    help="pass a gitlink that is the head of an open fork PR",
-)
-args, _ = parser.parse_known_args()
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--path", help="check only this submodule path")
+    parser.add_argument("--sha", help="validate this sha instead of the staged gitlink")
+    parser.add_argument("--rev", help="check the gitlinks of this commit, not the index")
+    parser.add_argument(
+        "--base",
+        help="check only the gitlinks that differ from this commit "
+        "(default: the merge base with origin/main)",
+    )
+    parser.add_argument(
+        "--allow-pending",
+        action="store_true",
+        help="pass a gitlink that is the head of an open fork PR",
+    )
+    args, _ = parser.parse_known_args()
 
-if args.path:
-    paths = [args.path]
-else:
-    base = args.base or git("merge-base", args.rev or "HEAD", "origin/main")
-    paths = checked_paths(args.rev, base)
-    if paths is None:
-        print(f"cannot list the gitlinks of {args.rev or 'the index'}", file=sys.stderr)
-        sys.exit(1)
-results = [check(path, args.sha, args.rev) for path in paths]
-if "fail" in results:
-    sys.exit(1)
-if "pending" in results and not args.allow_pending:
-    sys.exit(3)
-sys.exit(0)
+    if args.path:
+        paths = [args.path]
+    else:
+        base = args.base or git("merge-base", args.rev or "HEAD", "origin/main")
+        paths = checked_paths(args.rev, base)
+        if paths is None:
+            print(f"cannot list the gitlinks of {args.rev or 'the index'}", file=sys.stderr)
+            return 1
+    results = [check(path, args.sha, args.rev) for path in paths]
+    if "fail" in results:
+        return 1
+    if "pending" in results and not args.allow_pending:
+        return 3
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

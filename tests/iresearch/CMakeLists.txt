@@ -207,9 +207,11 @@ target_link_libraries(
 )
 sdb_link_duckdb_extensions(iresearch-tests)
 
-add_executable(iresearch-load-tests search/load_test.cpp)
-target_link_libraries(
-    iresearch-load-tests
-    PRIVATE iresearch-test-support search-benchmark-common serene
-)
-sdb_link_duckdb_extensions(iresearch-load-tests)
+if(NOT IRESEARCH_LIBRARY)
+    add_executable(iresearch-load-tests search/load_test.cpp)
+    target_link_libraries(
+        iresearch-load-tests
+        PRIVATE iresearch-test-support search-benchmark-common serene
+    )
+    sdb_link_duckdb_extensions(iresearch-load-tests)
+endif()

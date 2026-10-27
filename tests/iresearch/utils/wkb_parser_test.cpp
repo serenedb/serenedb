@@ -28,6 +28,7 @@
 #include <iresearch/utils/geo/s2/multi_polyline_region.hpp>
 #include <iresearch/utils/geo/shape_container.hpp>
 #include <iresearch/utils/geo/wkb.hpp>
+#include <limits>
 #include <string>
 
 #include "gtest/gtest.h"
@@ -101,6 +102,15 @@ TEST(WkbParser, Polygon_SingleRing) {
     .PutU32(5);  // 5 vertices (closed)
   b.PutXY(0.0, 0.0).PutXY(1.0, 0.0).PutXY(1.0, 1.0).PutXY(0.0, 1.0).PutXY(0.0,
                                                                           0.0);
+  ShapeContainer shape;
+  ASSERT_TRUE(ParseShapeWKB(b.View(), shape));
+  EXPECT_EQ(ShapeContainer::Type::S2Polygon, shape.type());
+}
+
+TEST(WkbParser, Polygon_Triangle) {
+  WkbBuilder b;
+  b.Header(3).PutU32(1).PutU32(4);
+  b.PutXY(0.0, 0.0).PutXY(1.0, 0.0).PutXY(0.0, 1.0).PutXY(0.0, 0.0);
   ShapeContainer shape;
   ASSERT_TRUE(ParseShapeWKB(b.View(), shape));
   EXPECT_EQ(ShapeContainer::Type::S2Polygon, shape.type());
@@ -219,6 +229,31 @@ TEST(WkbParser, RejectsTruncatedPoint) {
   b.Header(1).PutDouble(6.5);  // missing latitude
   ShapeContainer shape;
   EXPECT_FALSE(ParseShapeWKB(b.View(), shape));
+}
+
+TEST(WkbParser, RejectsCountsBeyondInput) {
+  for (const bool little_endian : {true, false}) {
+    for (const uint32_t type : {2u, 3u, 4u, 5u, 6u}) {
+      SCOPED_TRACE(testing::Message()
+                   << type << " little_endian=" << little_endian);
+      WkbBuilder b;
+      b.PutU8(little_endian)
+        .PutU32(little_endian ? type : std::byteswap(type))
+        .PutU32(std::numeric_limits<uint32_t>::max());
+      ShapeContainer shape;
+      EXPECT_NO_THROW({ EXPECT_FALSE(ParseShapeWKB(b.View(), shape)); });
+    }
+  }
+}
+
+TEST(WkbParser, RejectsRingVertexCountBeyondInput) {
+  WkbBuilder b;
+  b.Header(3).PutU32(1).PutU32(std::numeric_limits<uint32_t>::max());
+  for (size_t i = 0; i < 4; ++i) {
+    b.PutXY(0.0, 0.0);
+  }
+  ShapeContainer shape;
+  EXPECT_NO_THROW({ EXPECT_FALSE(ParseShapeWKB(b.View(), shape)); });
 }
 
 TEST(WkbParser, RejectsBadByteOrder) {

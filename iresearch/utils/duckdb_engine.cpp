@@ -20,6 +20,11 @@
 
 #include "iresearch/utils/duckdb_engine.hpp"
 
+#ifdef IRESEARCH_LIBRARY
+#include <core_functions_extension.hpp>
+#include <icu_extension.hpp>
+#endif
+
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
 #include <absl/strings/ascii.h>
@@ -85,6 +90,22 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
   config.SetOptionByName("table_function_identifier_conversion",
                          duckdb::Value{"DISABLE_IMPLICIT_STRING"});
 
+#ifdef IRESEARCH_LIBRARY
+  config.linked_extensions.push_back({
+    .name = "core_functions",
+    .load =
+      [](duckdb::DuckDB& db) {
+        db.LoadStaticExtension<duckdb::CoreFunctionsExtension>();
+      },
+  });
+  config.linked_extensions.push_back({
+    .name = "icu",
+    .load =
+      [](duckdb::DuckDB& db) {
+        db.LoadStaticExtension<duckdb::IcuExtension>();
+      },
+  });
+#endif
   mutator(config);
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
@@ -100,11 +121,11 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
                          enabled);
     db_config.SetOptionByName("httpfs_connection_caching", enabled);
   }
-  // Attached iceberg tables read CURRENT metadata: the default txn-start
-  // time travel errors out any catalog enumeration that walks a table
-  // created after the reader's transaction began.
-  db_config.SetOptionByName("iceberg_use_metadata_log",
-                            duckdb::Value::BOOLEAN(false));
+  if (db_config.HasExtensionOption("iceberg_use_metadata_log")) {
+    // Catalog enumeration must see tables created after transaction start.
+    db_config.SetOptionByName("iceberg_use_metadata_log",
+                              duckdb::Value::BOOLEAN(false));
+  }
 
   auto& manager = _db->instance->GetLogManager();
 

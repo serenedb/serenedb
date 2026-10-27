@@ -158,6 +158,12 @@ repos:
         entry: scripts/duckdb_family.sh format --staged
         pass_filenames: false
         always_run: true
+      - id: test-submodule-pointers
+        name: Test submodule gitlink validation
+        language: python
+        entry: python3 -m unittest discover -s scripts/tests -v
+        files: ^(scripts/check_submodule_pointers\.py|scripts/tests/.*\.py|\.pre-commit-config\.yaml)$
+        pass_filenames: false
       - id: check-submodule-pointers
         name: Check submodule gitlinks (on a version branch or an open fork PR head, not older than main)
         language: python

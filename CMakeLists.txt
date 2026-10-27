@@ -113,6 +113,17 @@ option(
     "build only search-benchmark-game, against a minimal iresearch: no server, vector, geo, fastText or DuckDB extensions besides icu"
     OFF
 )
+option(
+    IRESEARCH_LIBRARY
+    "build and install the standalone IResearch C++ library"
+    OFF
+)
+if(IRESEARCH_LIBRARY AND IRESEARCH_BENCH)
+    message(
+        FATAL_ERROR
+        "IRESEARCH_LIBRARY and IRESEARCH_BENCH are mutually exclusive"
+    )
+endif()
 if(IRESEARCH_BENCH AND SDB_GTEST)
     message(
         FATAL_ERROR
@@ -250,6 +261,12 @@ option(
 )
 
 option(SDB_STATIC "link executables statically" OFF)
+if(IRESEARCH_LIBRARY AND SDB_STATIC)
+    message(FATAL_ERROR "IRESEARCH_LIBRARY requires SDB_STATIC=OFF")
+endif()
+if(IRESEARCH_LIBRARY)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
 
 option(
     SDB_VTUNE
@@ -608,20 +625,22 @@ endif()
 ################################################################################
 
 include(GNUInstallDirs)
-install(
-    FILES ${CMAKE_SOURCE_DIR}/LICENSE
-    DESTINATION ${CMAKE_INSTALL_DOCDIR}
-    RENAME LICENSE.txt
-)
-# glibc license files (required for static linking, see glibc LICENSES file)
-install(
-    DIRECTORY ${CMAKE_SOURCE_DIR}/resources/licenses/glibc/
-    DESTINATION ${CMAKE_INSTALL_DOCDIR}/glibc
-)
-install(DIRECTORY DESTINATION ${CMAKE_INSTALL_LOCALSTATEDIR}/lib/serenedb)
-install(DIRECTORY DESTINATION ${CMAKE_INSTALL_LOCALSTATEDIR}/log/serenedb)
-# systemd service file is installed via debian packaging
-# (packages/debian/source/common/serenedb.service)
+if(NOT IRESEARCH_LIBRARY)
+    install(
+        FILES ${CMAKE_SOURCE_DIR}/LICENSE
+        DESTINATION ${CMAKE_INSTALL_DOCDIR}
+        RENAME LICENSE.txt
+    )
+    # glibc license files (required for static linking, see glibc LICENSES file)
+    install(
+        DIRECTORY ${CMAKE_SOURCE_DIR}/resources/licenses/glibc/
+        DESTINATION ${CMAKE_INSTALL_DOCDIR}/glibc
+    )
+    install(DIRECTORY DESTINATION ${CMAKE_INSTALL_LOCALSTATEDIR}/lib/serenedb)
+    install(DIRECTORY DESTINATION ${CMAKE_INSTALL_LOCALSTATEDIR}/log/serenedb)
+    # systemd service file is installed via debian packaging
+    # (packages/debian/source/common/serenedb.service)
+endif()
 
 ################################################################################
 ## SUB-PROJECTS
@@ -667,6 +686,13 @@ if(SDB_COVERAGE)
 endif()
 
 add_subdirectory(iresearch)
+if(IRESEARCH_LIBRARY)
+    include(cmake/IResearchLibrary.cmake)
+    if(SDB_GTEST)
+        add_subdirectory(tests)
+    endif()
+    return()
+endif()
 if(NOT IRESEARCH_BENCH)
     add_subdirectory(server)
     add_subdirectory(examples/iresearch EXCLUDE_FROM_ALL)

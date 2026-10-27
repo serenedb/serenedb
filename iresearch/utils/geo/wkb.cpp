@@ -47,6 +47,9 @@ constexpr uint32_t kEwkbSridFlag = 0x20000000;
 constexpr uint32_t kEwkbZFlag = 0x80000000;
 constexpr uint32_t kEwkbMFlag = 0x40000000;
 constexpr int32_t kCRS84Srid = 4326;
+constexpr size_t kWkbHeaderSize = sizeof(uint8_t) + sizeof(uint32_t);
+constexpr size_t kWkbPointSize = 2 * sizeof(double);
+constexpr uint32_t kMinRingVertices = 4;
 
 // OGC SFA geometry type codes, masked to the low bits.
 enum class WkbType : uint32_t {
@@ -119,6 +122,8 @@ class WkbCursor {
 
   bool Empty() const noexcept { return _ptr >= _end; }
 
+  size_t Remaining() const noexcept { return static_cast<size_t>(_end - _ptr); }
+
  private:
   const char* _ptr;
   const char* _end;
@@ -148,6 +153,10 @@ class WkbReader {
     } else {
       return _cursor->ReadDoubleBE(out);
     }
+  }
+
+  bool ReadCount(uint32_t& out, size_t min_item_size) noexcept {
+    return ReadU32(out) && out <= _cursor->Remaining() / min_item_size;
   }
 
   // WKB coordinate order is (lng, lat).
@@ -231,7 +240,7 @@ void ReadPoint(R& r, S2LatLng& out) {
 template<typename R>
 void ReadLineStringVertices(R& r, std::vector<S2LatLng>& cache) {
   uint32_t count;
-  if (!r.ReadU32(count)) {
+  if (!r.ReadCount(count, kWkbPointSize)) {
     THROW_SQL_ERROR(ERR_MSG("WKB: truncated LineString vertex count"));
   }
   cache.clear();
@@ -257,7 +266,8 @@ void ReadLineStringVertices(R& r, std::vector<S2LatLng>& cache) {
 template<typename R>
 void ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
   uint32_t ring_count;
-  if (!r.ReadU32(ring_count)) {
+  if (!r.ReadCount(ring_count,
+                   sizeof(uint32_t) + kMinRingVertices * kWkbPointSize)) {
     THROW_SQL_ERROR(ERR_MSG("WKB: truncated Polygon ring count"));
   }
   out.clear();
@@ -265,11 +275,11 @@ void ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
   S2Loop* first = nullptr;
   for (uint32_t i = 0; i < ring_count; ++i) {
     uint32_t vcount;
-    if (!r.ReadU32(vcount)) {
+    if (!r.ReadCount(vcount, kWkbPointSize)) {
       THROW_SQL_ERROR(
         ERR_MSG("WKB: truncated Polygon ring-", i, " vertex count"));
     }
-    if (vcount < 4) {
+    if (vcount < kMinRingVertices) {
       THROW_SQL_ERROR(
         ERR_MSG("WKB: Polygon ring must have >= 4 vertices (closed); ring ", i,
                 " has ", vcount));
@@ -352,7 +362,7 @@ void ParsePolygon(R& r, ShapeContainer& region) {
 template<typename R>
 void ParseMultiPoint(R& r, ShapeContainer& region) {
   uint32_t count;
-  if (!r.ReadU32(count)) {
+  if (!r.ReadCount(count, kWkbHeaderSize + kWkbPointSize)) {
     THROW_SQL_ERROR(ERR_MSG("WKB: truncated MultiPoint count"));
   }
   auto multi = std::make_unique<S2MultiPointRegion>();
@@ -376,7 +386,7 @@ void ParseMultiPoint(R& r, ShapeContainer& region) {
 template<typename R>
 void ParseMultiLineString(R& r, ShapeContainer& region) {
   uint32_t count;
-  if (!r.ReadU32(count)) {
+  if (!r.ReadCount(count, kWkbHeaderSize + sizeof(uint32_t))) {
     THROW_SQL_ERROR(ERR_MSG("WKB: truncated MultiLineString count"));
   }
   auto multi = std::make_unique<S2MultiPolylineRegion>();
@@ -412,7 +422,7 @@ void ParseMultiLineString(R& r, ShapeContainer& region) {
 template<typename R>
 void ParseMultiPolygon(R& r, ShapeContainer& region) {
   uint32_t count;
-  if (!r.ReadU32(count)) {
+  if (!r.ReadCount(count, kWkbHeaderSize + sizeof(uint32_t))) {
     THROW_SQL_ERROR(ERR_MSG("WKB: truncated MultiPolygon count"));
   }
   // Flatten all member loops into one S2Polygon -- S2 handles disjoint

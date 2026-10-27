@@ -357,7 +357,7 @@ sdb_add_module(libstemmer_c DIR libstemmer_c-cmake)
 ################################################################################
 
 set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
-set(LZ4_POSITION_INDEPENDENT_LIB OFF CACHE BOOL "" FORCE)
+set(LZ4_POSITION_INDEPENDENT_LIB ${IRESEARCH_LIBRARY} CACHE BOOL "" FORCE)
 sdb_add_module(lz4 DIR lz4/build/cmake)
 
 ################################################################################
@@ -594,7 +594,11 @@ target_include_directories(
 
 set(DUCKDB_OPTIMIZATION_PROFILE NONE CACHE STRING "" FORCE)
 set(BUILD_SHELL FALSE CACHE BOOL "" FORCE)
-set(BUILD_SHELL_STATIC_LIB TRUE CACHE BOOL "" FORCE)
+if(IRESEARCH_LIBRARY)
+    set(BUILD_SHELL_STATIC_LIB FALSE CACHE BOOL "" FORCE)
+else()
+    set(BUILD_SHELL_STATIC_LIB TRUE CACHE BOOL "" FORCE)
+endif()
 option(
     SDB_BUILD_DUCKDB_UNITTESTS
     "Build DuckDB's unittest binary for vendored-extension test suites"
@@ -605,7 +609,7 @@ option(
     "Build DuckDB's benchmark_runner for its benchmark suites"
     ON
 )
-if(IRESEARCH_BENCH)
+if(IRESEARCH_BENCH OR IRESEARCH_LIBRARY)
     set(BUILD_UNITTESTS FALSE CACHE BOOL "" FORCE)
     set(ENABLE_UNITTEST_CPP_TESTS FALSE CACHE BOOL "" FORCE)
     set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
@@ -636,7 +640,11 @@ set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(SPATIAL_USE_GEOS FALSE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_BOOST TRUE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_RTREE FALSE CACHE BOOL "" FORCE)
-if(IRESEARCH_BENCH)
+if(IRESEARCH_LIBRARY)
+    set(BUILD_EXTENSIONS "core_functions;icu" CACHE STRING "" FORCE)
+    set(STATICALLY_LINK_EXTENSIONS "core_functions;icu" CACHE STRING "" FORCE)
+    set(DUCKDB_EXTENSION_CONFIGS "" CACHE STRING "" FORCE)
+elseif(IRESEARCH_BENCH)
     set(BUILD_EXTENSIONS "icu" CACHE STRING "" FORCE)
     set(STATICALLY_LINK_EXTENSIONS "icu" CACHE STRING "" FORCE)
     set(DUCKDB_EXTENSION_CONFIGS "" CACHE STRING "" FORCE)
@@ -720,7 +728,11 @@ target_link_libraries(
         simdutf
 )
 
-if(NOT IRESEARCH_BENCH)
+if(IRESEARCH_LIBRARY)
+    target_link_libraries(duckdb_static PUBLIC core_functions_extension)
+endif()
+
+if(NOT IRESEARCH_BENCH AND NOT IRESEARCH_LIBRARY)
     target_link_libraries(
         iceberg_catalog_rest_storage_authorization
         PRIVATE OpenSSL::Crypto

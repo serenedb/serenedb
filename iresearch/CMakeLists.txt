@@ -1,6 +1,6 @@
 find_package(FLEX)
 find_package(BISON)
-if(FLEX_FOUND AND BISON_FOUND)
+if(FLEX_FOUND AND BISON_FOUND AND NOT IRESEARCH_LIBRARY)
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -108,3 +108,20 @@ target_link_libraries(
     PUBLIC OpenSSL::Crypto OpenSSL::SSL fasttext-static faiss s2
     PRIVATE lz4_static stemmer-static
 )
+
+if(IRESEARCH_LIBRARY)
+    target_compile_definitions(iresearch PRIVATE IRESEARCH_LIBRARY)
+    target_sources(
+        iresearch
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/third_party/duckdb_inet/src/inet_html_table.cpp
+    )
+    set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/third_party/duckdb_inet/src/inet_html_table.cpp
+        PROPERTIES COMPILE_OPTIONS -w
+    )
+    target_include_directories(
+        iresearch
+        PRIVATE ${PROJECT_SOURCE_DIR}/third_party/duckdb_inet/src
+    )
+endif()

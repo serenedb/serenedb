@@ -565,9 +565,7 @@ class S3Fixture(_DockerFixture):
 
     def start(self, ctx):
         services.wait_for("S3 test server", lambda: _http_ok("http://duckdb-minio.com:9000"), 60)
-        data = ctx.out_dir / "services" / "s3-data"
-        shutil.rmtree(data, ignore_errors=True)
-        data.mkdir(parents=True)
+        data = ctx.unit_tmp()
         core = core_dir(ctx)
         script = "\n".join([
             "require tpch", "", "require parquet", "", "statement ok", "CALL dbgen(sf=1);", "",
@@ -606,12 +604,11 @@ class HttpFixture(_DockerFixture):
             self.reserved.close()
 
     def start(self, ctx):
-        root = ctx.out_dir / "services" / "http-server"
-        shutil.rmtree(root, ignore_errors=True)
-        root.mkdir(parents=True)
+        root = ctx.unit_tmp()
         self.reserved = reserve_port()
         port = self.reserved.getsockname()[1]
-        log = open(root.parent / "http-server.log", "ab")
+        (ctx.out_dir / "services").mkdir(parents=True, exist_ok=True)
+        log = open(ctx.out_dir / "services" / "http-server.log", "ab")
         self.procs.append(subprocess.Popen(
             ["python3", "-m", "http.server", "--bind", "127.0.0.1", "--directory", str(root), str(port)],
             stdout=log, stderr=subprocess.STDOUT))

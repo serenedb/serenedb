@@ -1,1 +1,0 @@
-duckdb:core:test/sql/index/art/memory/test_art_varchar.test_slow	issue	CREATE INDEX's debug check renders the whole 57.6M-key ART as text (#1884)

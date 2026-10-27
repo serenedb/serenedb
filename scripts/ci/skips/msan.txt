@@ -1,4 +1,3 @@
-duckdb:core:test/sql/index/art/memory/test_art_varchar.test_slow	issue	CREATE INDEX's debug check renders the whole 57.6M-key ART as text (#1884)
 duckdb:core:test/fuzzer/sqlsmith/nullif_map_with_config.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/aggregate/aggregates/aggregate_state_spilling.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/aggregate/aggregates/mode_rewrite_memory.test	issue	temporary files hold buffer bytes nothing wrote (#1883)

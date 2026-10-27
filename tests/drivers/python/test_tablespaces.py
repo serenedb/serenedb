@@ -551,6 +551,61 @@ def test_reads_refuse_an_object_replaced_after_its_upload(tmp_path: Path) -> Non
             server.stop()
 
 
+def test_a_refresh_opens_the_files_it_wrote_without_a_head(tmp_path: Path) -> None:
+    location = f"s3://bucket/written-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            _create_index(server)
+            assert _matches(server) == [1]
+            fake.trace = []
+            with server.connect() as conn:
+                conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
+                conn.execute("VACUUM (REFRESH_TABLE) docs")
+            assert _matches(server) == [1, 3]
+            trace, fake.trace = fake.trace, None
+        finally:
+            server.stop()
+    written = {entry["key"] for entry in trace if entry["method"] == "PUT"}
+    assert written, trace
+    assert not [entry for entry in trace
+                if entry["method"] == "HEAD" and entry["key"] in written], trace
+
+
+def test_reads_refuse_a_blob_replaced_after_its_upload(tmp_path: Path) -> None:
+    location = f"az://indexes/replaced-{tmp_path.name}"
+    with FakeAzure() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE PERSISTENT SECRET index_store (TYPE azure, "
+                    f"CONNECTION_STRING '{fake.connection_string}', "
+                    f"SCOPE '{location}')")
+            _create_tablespace(server, location)
+            _create_index(server)
+            assert _matches(server) == [1]
+            terms = [name for name in fake.names("indexes", f"replaced-{tmp_path.name}/")
+                     if name.endswith(".idx")]
+            assert terms, fake.names("indexes")
+            for name in terms:
+                with fake.lock:
+                    size = len(fake.blobs[("indexes", name)].data)
+                fake.replace("indexes", name, bytes(size))
+            with server.connect() as conn:
+                conn.execute("SET GLOBAL enable_external_file_cache = false")
+                conn.execute("SET GLOBAL enable_external_file_cache = true")
+                with pytest.raises(psycopg.Error, match="changed after it was opened"):
+                    conn.execute(
+                        "SELECT id FROM docs_body WHERE body @@ 'fox'").fetchall()
+        finally:
+            server.stop()
+
+
 def test_a_failed_part_aborts_its_upload(tmp_path: Path) -> None:
     location = f"s3://bucket/failed-{tmp_path.name}"
     with FakeS3() as fake:

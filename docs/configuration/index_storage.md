@@ -66,7 +66,7 @@ What costs requests to the object store:
 | Operation | Requests |
 | --------- | -------- |
 | A query | reads of the blocks that are not cached |
-| A refresh or a merge | the upload of each new index file: one request for a file up to 5 MiB, parts for a larger one |
+| A refresh or a merge | the upload of each new index file: one request for a file up to 5 MiB, parts for a larger one; with the external file cache on, the index opens the files it wrote without a request |
 | Each commit of an index | a copy and a delete of one small file |
 | A checkpoint | a refresh and a commit of each index of the database that has rows not yet refreshed; the indexes are saved in parallel, so a checkpoint waits for the slowest of them rather than for all of them in turn |
 | Opening an index at startup | one check that the index exists, three listings of its files, one of which removes the files an interrupted write left behind, one read of its commit file and one of each segment's metadata, then for each index file a check of its size and a read of its footer; the segments open in parallel. Indexes and search tables open in parallel too, so startup waits for the slowest of them rather than for all of them in turn |
@@ -79,7 +79,7 @@ The requests themselves, those of queries and those of background refreshes, mer
 
 <SqlLogicTest id="configuration/index_storage_requests/example_001" hideResult />
 
-Reads and listings are `GET`; the check that an index exists and the size check of each index file it opens `HEAD`; uploads, their parts and copies `PUT`; batched deletes, and on S3 the start and completion of a large upload, `POST`.
+Reads and listings are `GET`; the check that an index exists and the size check of each index file it opens, other than one it wrote with the external file cache on, `HEAD`; uploads, their parts and copies `PUT`; batched deletes, and on S3 the start and completion of a large upload, `POST`.
 
 ## Integrity
 

@@ -23,6 +23,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/btree_map.h>
 #include <absl/strings/str_cat.h>
+#include <fast_float/fast_float.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -195,8 +196,24 @@ duckdb::unique_ptr<duckdb::FileHandle> SimulatedObjectStore::OpenFileExtended(
     return handle;
   }
   bool download = false;
+  std::string etag;
+  duckdb::idx_t known_size = 0;
   if (file.extended_info) {
     file.extended_info->TryGetOption("force_full_download", download);
+    if (file.extended_info->TryGetOption("etag", etag) &&
+        file.extended_info->TryGetOption("file_size", known_size)) {
+      uint64_t version = 0;
+      const auto [end, ec] =
+        fast_float::from_chars(etag.data(), etag.data() + etag.size(), version);
+      if (ec != std::errc{} || end != etag.data() + etag.size()) {
+        throw duckdb::IOException("\"%s\" is not a version of \"%s\"", etag,
+                                  path);
+      }
+      auto handle = duckdb::make_uniq<ObjectHandle>(*this, path, flags, nullptr,
+                                                    known_size, false);
+      handle->version = version;
+      return handle;
+    }
   }
   if (download) {
     if (flags.ReturnNullIfNotExists() && !Find(path)) {

@@ -227,7 +227,9 @@ void FileOutput::CacheBytes(const byte_type* b, size_t len) noexcept try {
 void FileOutput::FinishCache(bool published) noexcept {
   try {
     if (published) {
-      _cached->Finish();
+      auto& fs = _handle->file_system;
+      _cached->Finish(fs.GetVersionTag(*_handle),
+                      fs.GetLastModifiedTime(*_handle));
     } else {
       _cached->Abandon();
     }

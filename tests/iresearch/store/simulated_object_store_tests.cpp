@@ -257,6 +257,32 @@ TEST(SimulatedObjectStoreTest, files_this_process_wrote_open_without_requests) {
   EXPECT_EQ(0, store.Requests().get);
 }
 
+TEST(SimulatedObjectStoreTest,
+     files_opened_without_requests_refuse_an_object_replaced_since) {
+  auto& store = tests::ObjectStore();
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  irs::Directory files{db, Root()};
+  {
+    auto out = files.Create("written");
+    for (uint32_t i = 0; i != 100000; ++i) {
+      out->WriteU32(i);
+    }
+    out->Close();
+  }
+
+  store.ResetRequests();
+  const auto in_file = files.Open("written", duckdb::MappedFileAccess::NORMAL);
+  EXPECT_EQ(0, store.Requests().head);
+  store.Publish(files.Path("written"), std::string(400000, '\0'));
+  duckdb::BlockCache::Get(db).Clear();
+
+  irs::IndexInput in{*in_file};
+  const auto error = Error([&] { in.ReadI32(); });
+  EXPECT_NE(std::string::npos,
+            error.RawMessage().find("changed after it was opened"))
+    << error.RawMessage();
+}
+
 TEST(SimulatedObjectStoreTest, for_each_rethrows_what_a_visit_threw) {
   tests::ObjectStore();
   irs::Directory files{irs::DuckDBEngine::Instance().instance(), Root()};

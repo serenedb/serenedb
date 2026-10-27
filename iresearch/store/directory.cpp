@@ -184,13 +184,25 @@ std::unique_ptr<InputFile> Directory::OpenMapped(
 std::unique_ptr<InputFile> Directory::OpenBlocks(
   const std::string& path) const {
   auto& cache = Cache();
-  if (duckdb::BlockCacheFileInfo known; cache.TryGetFile(path, known)) {
+  const auto flags = duckdb::FileFlags::FILE_FLAGS_READ |
+                     duckdb::FileFlags::FILE_FLAGS_PARALLEL_ACCESS;
+  if (duckdb::BlockCacheFileInfo known;
+      cache.TryGetFile(path, known) && !known.validation.version_tag.empty()) {
+    duckdb::OpenFileInfo file{path};
+    file.extended_info =
+      duckdb::make_shared_ptr<duckdb::ExtendedOpenFileInfo>();
+    auto& options = file.extended_info->options;
+    options.emplace("file_size",
+                    duckdb::Value::UBIGINT(known.validation.file_size));
+    options.emplace("etag", duckdb::Value{known.validation.version_tag});
+    options.emplace("last_modified",
+                    duckdb::Value::TIMESTAMP(known.validation.last_modified));
     return std::make_unique<InputFile>(
-      cache, cache.OpenFile(path, known, false, nullptr));
+      cache,
+      cache.OpenFile(path, known, false, _state->fs.OpenFile(file, flags)));
   }
   duckdb::shared_ptr<duckdb::FileHandle> handle =
-    _state->fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ |
-                                duckdb::FileFlags::FILE_FLAGS_PARALLEL_ACCESS);
+    _state->fs.OpenFile(path, flags);
   duckdb::BlockCacheFileInfo info;
   info.validation.file_size =
     duckdb::NumericCast<duckdb::idx_t>(handle->GetFileSize());

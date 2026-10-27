@@ -1207,6 +1207,7 @@ def test_portal_dropped_at_committing_sync(conn):
         conn.run_ok("drop table if exists t_pdrop")
 
 
+@pytest.mark.faults
 @pytest.mark.usefixtures("own_server")
 def test_implicit_block_commit_error_replaces_command_complete(conn):
     # PG commits the implicit block in finish_xact_command BEFORE EndCommand
@@ -1221,8 +1222,7 @@ def test_implicit_block_commit_error_replaces_command_complete(conn):
         conn.send("Q", _cstr(sql))
         return conn.drain_to_ready()
 
-    if "E" in types(simple("set sdb_faults='implicit_block_commit'")):
-        pytest.skip("fault injection not enabled in this build")
+    assert "E" not in types(simple("set sdb_faults='implicit_block_commit'"))
     try:
         assert "E" not in types(simple("drop table if exists t_c5"))
         assert "E" not in types(simple("create table t_c5(id int)"))
@@ -1292,6 +1292,7 @@ def test_copy_from_stdin_quoted_upper_case_format(conn):
         conn.run_ok("drop table if exists smoke_copy_fmt_case")
 
 
+@pytest.mark.faults
 @pytest.mark.usefixtures("own_server")
 def test_copy_feeder_error_ends_the_copy(conn):
     # A throw in the COPY FROM STDIN feeder, the io coroutine that hands the
@@ -1299,8 +1300,7 @@ def test_copy_feeder_error_ends_the_copy(conn):
     # whose place in the client's stream is lost. The throw used to end the
     # feeder without telling the COPY: the worker waited for data forever, and
     # the client for the COPY's answer.
-    if "E" in types(conn.run("set sdb_faults='copy_feeder_throw'")):
-        pytest.skip("fault injection not enabled in this build")
+    conn.run_ok("set sdb_faults='copy_feeder_throw'")
     c = WireConn()
     try:
         c.run_ok("drop table if exists t_copy_feeder")
@@ -1320,10 +1320,10 @@ def test_copy_feeder_error_ends_the_copy(conn):
         conn.run("drop table if exists t_copy_feeder")
 
 
+@pytest.mark.faults
 @pytest.mark.usefixtures("own_server")
 def test_copy_takes_rows_while_the_client_waits(conn):
-    if "E" in types(conn.run("set sdb_faults='pause_copy_take_blocked'")):
-        pytest.skip("fault injection not enabled in this build")
+    conn.run_ok("set sdb_faults='pause_copy_take_blocked'")
     c = WireConn()
     try:
         conn.run_ok("drop table if exists t_copy_taken")
@@ -1346,10 +1346,10 @@ def test_copy_takes_rows_while_the_client_waits(conn):
         conn.run("drop table if exists t_copy_taken")
 
 
+@pytest.mark.faults
 @pytest.mark.usefixtures("own_server")
 def test_copy_feeder_wake_outlives_the_session(conn):
-    if "E" in types(conn.run("set sdb_faults='copy_feeder_done_wake'")):
-        pytest.skip("fault injection not enabled in this build")
+    conn.run_ok("set sdb_faults='copy_feeder_done_wake'")
     c = WireConn()
     try:
         conn.run_ok("drop table if exists t_copy_done_wake")

@@ -286,6 +286,7 @@ def main(argv):
         base_env["BUILD_DIR"] = os.path.relpath(build.dir, ROOT)
         base_env["SERENED"] = str(build.bin("serened"))
         base_env["SDB_DRV_SERENED_BIN"] = str(build.bin("serened"))
+        base_env["SDB_FAULT_INJECTION"] = "1" if build.fault_injection else "0"
     base_env.setdefault("SDB_DOCKER_OWNER", f"test-py-{os.getpid()}")
     os.environ["SDB_DOCKER_OWNER"] = base_env["SDB_DOCKER_OWNER"]
     ctx = Context(root=ROOT, build=build, config=config, out_dir=out,

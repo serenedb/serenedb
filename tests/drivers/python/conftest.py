@@ -17,6 +17,7 @@ SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
     str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serened"),
 )
+FAULT_INJECTION = os.environ.get("SDB_FAULT_INJECTION", "1") != "0"
 
 
 def _own_server(tmp_dir: Path):
@@ -44,5 +45,19 @@ def own_server_module(tmp_path_factory):
     yield from _own_server(tmp_path_factory.mktemp("serened"))
 
 
+@pytest.fixture(scope="session")
+def faults() -> bool:
+    return FAULT_INJECTION
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "faults: needs serened built with fault injection")
+
+
 def pytest_collection_modifyitems(config, items):
-    pass
+    if FAULT_INJECTION:
+        return
+    skip = pytest.mark.skip(reason="serened is built without fault injection")
+    for item in items:
+        if item.get_closest_marker("faults"):
+            item.add_marker(skip)

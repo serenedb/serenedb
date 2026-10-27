@@ -176,6 +176,30 @@ rel	tbl	total	idx
 t	t	t	t
 
 
+# A pg_class oid, as psql's \dt+ and \di+ pass it, gives the same sizes as the name.
+query
+SELECT pg_relation_size('size_test') = pg_relation_size(c.oid) AS rel,
+       pg_table_size('size_test') = pg_table_size(c.oid) AS tbl,
+       pg_total_relation_size('size_test') = pg_total_relation_size(c.oid) AS total,
+       pg_indexes_size('size_test') = pg_indexes_size(c.oid) AS idx,
+       pg_size_pretty(pg_table_size(c.oid)) IS NOT NULL AS pretty
+FROM pg_class c
+WHERE c.relname = 'size_test';
+----
+rel	tbl	total	idx	pretty
+t	t	t	t	t
+
+
+query
+SELECT pg_relation_size('size_test_pkey') = pg_relation_size(c.oid) AS rel,
+       pg_total_relation_size('size_test_pkey') = pg_total_relation_size(c.oid) AS total
+FROM pg_class c
+WHERE c.relname = 'size_test_pkey';
+----
+rel	total
+t	t
+
+
 query
 SELECT pg_relation_size('information_schema.tables') AS rel,
        pg_table_size('information_schema.tables') AS tbl,

@@ -41,3 +41,51 @@ SELECT count(*) AS c FROM view_column_case_idx WHERE split_by_non_alpha(Body, ca
 ----
 c
 20
+
+
+# A quoted mixed-case column of the view is a searchable key as well as an
+# included one, and the unquoted name resolves to the same column.
+statement count 10
+COPY (SELECT i AS "AdvEngineID", 'http://example.com/' || i AS "URL" FROM range(1, 11) t(i))
+TO '${__TEST_DIR__}/view_column_case_quoted.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE VIEW view_column_case_quoted_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/view_column_case_quoted.parquet');
+
+
+statement ok
+CREATE INDEX view_column_case_quoted_num ON view_column_case_quoted_v USING inverted ("AdvEngineID");
+
+
+statement ok
+CREATE INDEX view_column_case_quoted_url ON view_column_case_quoted_v USING inverted ("URL");
+
+
+statement ok
+CREATE INDEX view_column_case_quoted_included ON view_column_case_quoted_v USING inverted ("AdvEngineID" included());
+
+
+statement ok
+CREATE INDEX view_column_case_unquoted_num ON view_column_case_quoted_v USING inverted (AdvEngineID);
+
+
+query
+SELECT "AdvEngineID" FROM view_column_case_quoted_num WHERE "AdvEngineID" = 3;
+----
+AdvEngineID
+3
+
+
+query
+SELECT "URL" FROM view_column_case_quoted_url WHERE "URL" @@ 'http://example.com/7';
+----
+URL
+http://example.com/7
+
+
+query
+SELECT AdvEngineID FROM view_column_case_unquoted_num WHERE AdvEngineID = 9;
+----
+AdvEngineID
+9

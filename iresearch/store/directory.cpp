@@ -184,6 +184,10 @@ std::unique_ptr<InputFile> Directory::OpenMapped(
 std::unique_ptr<InputFile> Directory::OpenBlocks(
   const std::string& path) const {
   auto& cache = Cache();
+  if (duckdb::BlockCacheFileInfo known; cache.TryGetFile(path, known)) {
+    return std::make_unique<InputFile>(
+      cache, cache.OpenFile(path, known, false, nullptr));
+  }
   duckdb::shared_ptr<duckdb::FileHandle> handle =
     _state->fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ |
                                 duckdb::FileFlags::FILE_FLAGS_PARALLEL_ACCESS);

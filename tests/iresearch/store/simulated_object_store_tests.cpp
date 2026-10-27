@@ -236,6 +236,27 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
                duckdb::IOException);
 }
 
+TEST(SimulatedObjectStoreTest, files_this_process_wrote_open_without_requests) {
+  auto& store = tests::ObjectStore();
+  irs::Directory files{irs::DuckDBEngine::Instance().instance(), Root()};
+  {
+    auto out = files.Create("written");
+    for (uint32_t i = 0; i != 100000; ++i) {
+      out->WriteU32(i);
+    }
+    out->Close();
+  }
+
+  store.ResetRequests();
+  const auto in_file = files.Open("written", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput in{*in_file};
+  for (uint32_t i = 0; i != 100000; ++i) {
+    ASSERT_EQ(i, static_cast<uint32_t>(in.ReadI32()));
+  }
+  EXPECT_EQ(0, store.Requests().head);
+  EXPECT_EQ(0, store.Requests().get);
+}
+
 TEST(SimulatedObjectStoreTest, for_each_rethrows_what_a_visit_threw) {
   tests::ObjectStore();
   irs::Directory files{irs::DuckDBEngine::Instance().instance(), Root()};

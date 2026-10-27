@@ -50,6 +50,7 @@
 #include <vector>
 
 #include "index/doc_generator.hpp"
+#include "test_resources.hpp"
 #include "tests_config.hpp"
 #include "tests_shared.hpp"
 
@@ -84,7 +85,13 @@ uint32_t IterationTracker::gSIteration = (std::numeric_limits<uint32_t>::max)();
 const std::string kIresOutputPath("ires_output_path");
 const std::string kIresResourceDir("ires_resource_dir");
 
+constinit duckdb::Connection* gEngineConnection = nullptr;
+
 }  // namespace
+
+duckdb::ClientContext& tests::EngineContext() {
+  return *gEngineConnection->context;
+}
 
 const std::string TestEnv::kTestResults("test_detail.xml");
 
@@ -258,7 +265,11 @@ int main(int argc, char* argv[]) {
   // heap-use-after-free.
   irs::DuckDBEngine::Instance().Initialize();
 
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  gEngineConnection = connection.get();
   const int code = TestEnv::initialize(argc, argv);
+  gEngineConnection = nullptr;
+  connection.reset();
   if (code < 0) {
     irs::DuckDBEngine::Instance().Shutdown();
     return EXIT_FAILURE;

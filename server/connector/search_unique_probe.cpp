@@ -59,11 +59,11 @@ UniqueProbe::UniqueProbe(const irs::DirectoryReader& reader,
       for (const auto rowid : deleted_rowids) {
         const auto term =
           primary_key::GeneratedKeyTerm(static_cast<uint64_t>(rowid));
-        const auto doc = FirstLiveDoc(
-          *pk_field,
-          irs::ViewCast<irs::byte_type>(
-            std::string_view{term.GetData(), term.GetSize()}),
-          segment.mask, nullptr);
+        const auto doc =
+          FirstLiveDoc(*pk_field,
+                       irs::ViewCast<irs::byte_type>(
+                         std::string_view{term.GetData(), term.GetSize()}),
+                       segment.mask, nullptr);
         if (!irs::doc_limits::eof(doc)) {
           segment.deleted.Add(doc);
         }
@@ -71,6 +71,16 @@ UniqueProbe::UniqueProbe(const irs::DirectoryReader& reader,
     }
     _segments.push_back(std::move(segment));
   }
+}
+
+bool UniqueProbe::MayHold(size_t field, irs::bytes_view term) const {
+  for (const auto& segment : _segments) {
+    SDB_ASSERT(field < segment.fields.size());
+    if (segment.fields[field]->Lookup(term).docs_count != 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool UniqueProbe::Exists(std::span<const irs::bstring> key_terms) {
@@ -106,13 +116,26 @@ bool UniqueProbe::Exists(std::span<const irs::bstring> key_terms) {
       if (i == seed) {
         continue;
       }
+      // Posting lists ascend by doc id, so _hits does too -- relied on by the
+      // lower_bound below, both for membership and as the stop signal.
+      SDB_ASSERT(absl::c_is_sorted(_hits));
+
+      // TODO(dronplane): seek to _hits.front() instead of walking from the
+      // start of the posting list. ReadDocs is push-only and TermPostings has
+      // no seek; only lead::Node does, which means preparing a filter. Revisit
+      // when a doc-level seek reaches the TermReader surface, or alongside the
+      // sequential dictionary scan of the parallel-path merge.
       _next.clear();
       ForEachLiveDoc(*segment.fields[i], key_terms[i], segment.mask,
                      &segment.deleted, [&](irs::doc_id_t doc) {
-                       if (absl::c_linear_search(_hits, doc)) {
+                       const auto it = absl::c_lower_bound(_hits, doc);
+                       if (it == _hits.end()) {
+                         return false;
+                       }
+                       if (*it == doc) {
                          _next.push_back(doc);
                        }
-                       return true;
+                       return _next.size() != _hits.size();
                      });
       _hits.swap(_next);
     }

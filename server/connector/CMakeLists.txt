@@ -5,6 +5,7 @@ target_sources(
         primary_key.cpp
         offsets_collector.cpp
         search_key_index.cpp
+        search_key_unique.cpp
         search_unique_probe.cpp
         search_sink_writer.cpp
         search_table_backfill.cpp

@@ -40,11 +40,10 @@
 
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
-#include "connector/search_filter_builder.hpp"
+#include "connector/search_key_unique.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_unique_probe.h"
 #include "search/search_table.h"
-#include "server/utils/primary_key.h"
 
 namespace sdb::search {
 namespace {
@@ -185,9 +184,6 @@ void SearchTableTransaction::AddInlineInsertChunk(
   duckdb::DataChunk& chunk, uint64_t pk_base) {
   _changes[shard->GetTableId()].AppendInsertChunk(
     buffer_manager, types, column_ids, catalog, chunk, pk_base);
-#ifdef SDB_DEV
-  EnsureShardWrites(shard).pk_runs.emplace_back(pk_base, chunk.size());
-#endif
 }
 
 void SearchTableTransaction::AddKeys(
@@ -277,92 +273,43 @@ void SearchTableTransaction::CertifyKeys(
 
   std::vector<int64_t> deleted;
   for (const auto& op : changes->second.ops) {
-    deleted.insert(deleted.end(), op.delete_rows.begin(),
-                   op.delete_rows.end());
+    deleted.insert(deleted.end(), op.delete_rows.begin(), op.delete_rows.end());
   }
 
   connector::UniqueProbe probe{shard->GetDirectoryReader(), key_fields,
                                deleted};
 
-  std::vector<irs::bstring> terms(slots.size());
-  const auto certify = [&](duckdb::DataChunk& chunk) {
-    for (duckdb::idx_t row = 0; row != chunk.size(); ++row) {
-      for (size_t i = 0; i != slots.size(); ++i) {
-        const connector::SearchColumnInfo info{.field_id = slots[i].column,
-                                               .logical_type = slots[i].type};
-        irs::TermClause clause;
-        const auto status = connector::SetupTermClause(
-          clause, info, chunk.GetValue(slots[i].input_col_idx, row));
-        if (!status.ok()) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                          ERR_MSG(status.message()));
+  std::vector<irs::SegmentReader> readers;
+  if (const auto writes = _writes.find(shard->GetTableId());
+      writes != _writes.end()) {
+    for (const auto& trx : writes->second.transactions) {
+      for (const auto& flushed : trx->Flushed()) {
+        auto reader = shard->OpenFlushedSegment(flushed.meta);
+        if (reader) {
+          readers.push_back(std::move(reader));
         }
-        terms[i] = std::move(clause.term);
-      }
-      if (probe.Exists(terms)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-          ERR_MSG("Duplicate key \"", slots[0].name, ": ",
-                  chunk.GetValue(slots[0].input_col_idx, row).ToString(),
-                  "\" violates primary key constraint."));
       }
     }
-  };
-
-  if (changes->second.collection != nullptr) {
-    for (auto& chunk : changes->second.collection->Chunks()) {
-      certify(chunk);
-    }
   }
 
-  const auto writes = _writes.find(shard->GetTableId());
-  if (writes == _writes.end()) {
-    return;
+  auto* rows = changes->second.collection.get();
+  if (rows != nullptr && rows->Count() == 0) {
+    rows = nullptr;
   }
-  for (const auto& trx : writes->second.transactions) {
-    for (const auto& flushed : trx->Flushed()) {
-      CertifySegment(*shard, flushed.meta, key_fields, slots, probe);
-    }
-  }
-}
-
-void SearchTableTransaction::CertifySegment(
-  SearchTable& shard, const irs::SegmentMeta& meta,
-  std::span<const irs::field_id> key_fields,
-  std::span<const connector::primary_key::KeySlot> slots,
-  connector::UniqueProbe& probe) {
-  const auto segment = shard.OpenFlushedSegment(meta);
-  if (!segment) {
+  if (readers.empty() && rows == nullptr) {
     return;
   }
 
-  irs::containers::FlatHashMap<irs::doc_id_t, std::vector<irs::bstring>> keys;
-  for (size_t i = 0; i != key_fields.size(); ++i) {
-    const auto* field = segment.field(key_fields[i]);
-    if (field == nullptr) {
-      return;
-    }
-    auto terms = field->iterator();
-    while (terms->next()) {
-      const auto term = terms->value();
-      field->ReadDocs(term, [&](irs::doc_id_t doc) {
-        auto& key = keys[doc];
-        key.resize(key_fields.size());
-        key[i].assign(term);
-        return true;
-      });
-    }
+  std::vector<const irs::SubReader*> segments;
+  segments.reserve(readers.size());
+  for (const auto& reader : readers) {
+    segments.push_back(&reader);
   }
 
-  for (const auto& [doc, key] : keys) {
-    if (absl::c_any_of(key, [](const auto& t) { return t.empty(); })) {
-      continue;
-    }
-    if (probe.Exists(key)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-                      ERR_MSG("Duplicate key on column \"", slots[0].name,
-                              "\" violates primary key constraint."));
-    }
+  if (connector::FindDuplicateKey(segments, rows, slots, probe)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+                    ERR_MSG("Duplicate key on column \"", slots[0].name,
+                            "\" violates primary key constraint."));
   }
 }
 
@@ -375,17 +322,7 @@ void SearchTableTransaction::FlushBufferTransaction(duckdb::idx_t shard_id) {
 
 void SearchTableTransaction::AddSearchDeletes(
   const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows) {
-#ifdef SDB_DEV
-  const auto& w = EnsureShardWrites(shard);
-  for (const auto row : rows) {
-    const auto id = static_cast<uint64_t>(row);
-    for (const auto& [base, count] : w.pk_runs) {
-      SDB_ASSERT(id < base || id >= base + count);
-    }
-  }
-#else
   EnsureShardWrites(shard);
-#endif
   _changes[shard->GetTableId()].AppendDeletes(rows);
 }
 
@@ -442,13 +379,24 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
       SDB_IF_FAILURE("search_feed_pending_fails") {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
-      if (w.transactions.empty() ||
-          w.transactions.back().get() == w.buffer_trx) {
-        w.transactions.push_back(
-          std::make_unique<irs::IndexWriter::Transaction>(
-            w.shard->GetTransaction()));
+      if (w.buffer_trx != nullptr) {
+        // Into the segment that is about to be flushed, fsynced and named in
+        // the record, so the tail travels as a reference instead of a second
+        // copy of the rows. Dropping it from the buffer here is what keeps the
+        // record from carrying both.
+        ReplayBuffer(*w.shard, entry, *w.buffer_trx, context);
+        entry.ClearBufferedRows();
+      } else {
+        // No exclusive segment to join: the tail goes to a pooled one, which
+        // may hold other transactions' documents and so can never be named.
+        // The record carries these rows inline instead.
+        if (w.transactions.empty()) {
+          w.transactions.push_back(
+            std::make_unique<irs::IndexWriter::Transaction>(
+              w.shard->GetTransaction()));
+        }
+        ReplayBuffer(*w.shard, entry, *w.transactions.back(), context);
       }
-      ReplayBuffer(*w.shard, entry, *w.transactions.back(), context);
     }
     if (w.buffer_trx != nullptr) {
       for (const auto& segment : w.buffer_trx->FlushAndFsync()) {

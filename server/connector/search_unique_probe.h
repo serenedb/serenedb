@@ -34,6 +34,11 @@ class UniqueProbe {
 
   bool Exists(std::span<const irs::bstring> key_terms);
 
+  // Whether any segment holds `term` for key column `field`, ignoring deletes.
+  // A false rules the term out without reading a posting list; a true still
+  // needs `Exists` to settle it.
+  bool MayHold(size_t field, irs::bytes_view term) const;
+
  private:
   struct Segment {
     const irs::SubReader* sub;

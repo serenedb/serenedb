@@ -184,9 +184,6 @@ id	s
 # through the write buffer, so it exercises a second key source. It has to stay
 # large enough to actually parallelise: a small INSERT ... SELECT takes the
 # buffered path and silently re-tests the case above.
-#
-# NOT covered here, and known-failing until the term-dictionary merge lands: a
-# bulk insert whose keys duplicate EACH OTHER rather than a published row.
 statement ok
 CREATE TABLE pkb (id BIGINT PRIMARY KEY, s TEXT)
   WITH (storage='search', compaction_interval=0);
@@ -214,3 +211,295 @@ SELECT count(*) AS n FROM pkb;
 ----
 n
 1
+
+
+# ---------------------------------------------------------------------------
+# Below: two key sources in ONE transaction conflicting with each other rather
+# than with published state. A statement reaches the reader either through the
+# write buffer (serial) or through the segments it flushed (bulk), and each is
+# certified against what was published before the transaction -- never against
+# the other. Every case here commits two rows under one key until the sources
+# are certified against each other.
+# ---------------------------------------------------------------------------
+
+statement ok
+SET threads = 4;
+
+
+# Serial first: the row sits in the write buffer while the bulk statement
+# flushes a segment containing the same key.
+statement ok
+CREATE TABLE pkx1 (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO pkx1 VALUES (7, 'serial');
+
+statement error
+INSERT INTO pkx1 SELECT i, 'bulk' FROM range(1, 20000) t(i);
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+statement ok
+ROLLBACK;
+
+
+# Bulk first: the segment is already flushed when the serial row is buffered.
+statement ok
+CREATE TABLE pkx2 (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO pkx2 SELECT i, 'bulk' FROM range(1, 20000) t(i);
+
+statement error
+INSERT INTO pkx2 VALUES (7, 'serial');
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+statement ok
+ROLLBACK;
+
+
+# Two bulk statements: neither is in the write buffer at all.
+statement ok
+CREATE TABLE pkx3 (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO pkx3 SELECT i, 'bulk1' FROM range(1, 20000) t(i);
+
+statement error
+INSERT INTO pkx3 SELECT i, 'bulk2' FROM range(1, 20000) t(i);
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+statement ok
+ROLLBACK;
+
+
+# One bulk statement whose own keys repeat: the duplicate is inside the
+# segments the statement itself produced, with nothing published to hit.
+statement ok
+CREATE TABLE pkx4 (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement error
+INSERT INTO pkx4 SELECT i % 1000, 'x' FROM range(0, 20000) t(i);
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pkx4;
+
+query
+SELECT count(*) AS n FROM pkx4;
+----
+n
+0
+
+
+# A composite key is merged on one column and the rest are compared only where
+# that column already collides. These rows all collide on `a` and must not be
+# rejected: a conflict needs EVERY column to repeat.
+statement ok
+CREATE TABLE pkc1 (a BIGINT, b TEXT, PRIMARY KEY (a, b))
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO pkc1 SELECT 1, 'v' || i FROM range(1, 20000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pkc1;
+
+query
+SELECT count(*) AS n FROM pkc1;
+----
+n
+19999
+
+
+# The same shape, with one full key repeated: the seed column collides for every
+# row, so only the second column separates them.
+statement ok
+CREATE TABLE pkc2 (a BIGINT, b TEXT, PRIMARY KEY (a, b))
+  WITH (storage='search', compaction_interval=0);
+
+statement error
+INSERT INTO pkc2 SELECT 1, 'v' || (i % 1000) FROM range(0, 20000) t(i);
+----
+db error: ERROR: Duplicate key on column "a" violates primary key constraint.
+
+
+# A composite key repeating against PUBLISHED state rather than within the
+# statement, where the seed column alone is not enough to decide.
+statement ok
+CREATE TABLE pkc3 (a BIGINT, b TEXT, PRIMARY KEY (a, b))
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO pkc3 VALUES (1, 'v7');
+
+statement ok
+VACUUM (REFRESH_TABLE) pkc3;
+
+statement ok
+INSERT INTO pkc3 SELECT 1, 'w' || i FROM range(1, 20000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pkc3;
+
+statement error
+INSERT INTO pkc3 SELECT 1, 'v' || i FROM range(1, 20000) t(i);
+----
+db error: ERROR: Duplicate key on column "a" violates primary key constraint.
+
+
+# ---------------------------------------------------------------------------
+# Below: composite keys where EVERY row is a candidate, so the non-seed columns
+# are read for all of them at once rather than per colliding seed term. `a`
+# leads the walk in each case -- it holds far more distinct terms than `b` --
+# so `b` is the column read back, and the cases differ only in what it holds.
+# ---------------------------------------------------------------------------
+
+statement ok
+SET threads = 4;
+
+
+# Every seed term is published and no full key repeats: the read-back has to
+# tell twenty thousand keys apart without inventing a conflict.
+statement ok
+CREATE TABLE pkg1 (a BIGINT, b TEXT, PRIMARY KEY (a, b))
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO pkg1 SELECT i, 'p' || (i % 500) FROM range(0, 20000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pkg1;
+
+statement ok
+INSERT INTO pkg1 SELECT i, 'q' || (i % 500) FROM range(0, 20000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pkg1;
+
+query
+SELECT count(*) AS n FROM pkg1;
+----
+n
+40000
+
+
+# The same shape with ONE row repeating its published key: the needle has to
+# survive a read-back that spans many batches.
+statement ok
+CREATE TABLE pkg2 (a BIGINT, b TEXT, PRIMARY KEY (a, b))
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO pkg2 SELECT i, 'p' || (i % 500) FROM range(0, 20000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pkg2;
+
+statement error
+INSERT INTO pkg2
+  SELECT i, CASE WHEN i = 12345 THEN 'p' || (i % 500) ELSE 'q' || (i % 500) END
+  FROM range(0, 20000) t(i);
+----
+db error: ERROR: Duplicate key on column "a" violates primary key constraint.
+
+
+# Two bulk statements in one transaction, every seed term shared between them:
+# the candidates of one group come from several segments at once.
+statement ok
+CREATE TABLE pkg3 (a BIGINT, b TEXT, PRIMARY KEY (a, b))
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO pkg3 SELECT i, 'x' || (i % 500) FROM range(0, 20000) t(i);
+
+statement ok
+INSERT INTO pkg3 SELECT i, 'y' || (i % 500) FROM range(0, 20000) t(i);
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) pkg3;
+
+query
+SELECT count(*) AS n FROM pkg3;
+----
+n
+40000
+
+
+# The same two statements writing the same keys: now they do conflict.
+statement ok
+CREATE TABLE pkg4 (a BIGINT, b TEXT, PRIMARY KEY (a, b))
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO pkg4 SELECT i, 'x' || (i % 500) FROM range(0, 20000) t(i);
+
+statement error
+INSERT INTO pkg4 SELECT i, 'x' || (i % 500) FROM range(0, 20000) t(i);
+----
+db error: ERROR: Duplicate key on column "a" violates primary key constraint.
+
+
+statement ok
+ROLLBACK;
+
+
+# A numeric column read back: a key is only ever equal to another when the term
+# is full precision, so a value that comes back from storage has to encode to
+# exactly the term the index holds, not to one of its coarser buckets.
+statement ok
+CREATE TABLE pkg5 (a BIGINT, b INTEGER, PRIMARY KEY (a, b))
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO pkg5 SELECT i, i % 500 FROM range(0, 20000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pkg5;
+
+statement ok
+INSERT INTO pkg5 SELECT i, (i % 500) + 1000 FROM range(0, 20000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pkg5;
+
+query
+SELECT count(*) AS n FROM pkg5;
+----
+n
+40000
+
+
+statement error
+INSERT INTO pkg5 SELECT i, i % 500 FROM range(0, 20000) t(i);
+----
+db error: ERROR: Duplicate key on column "a" violates primary key constraint.

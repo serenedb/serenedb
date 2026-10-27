@@ -12,7 +12,6 @@ sys.path.insert(0, str(ROOT / "scripts" / "coverage"))
 import diff  # noqa: E402
 
 KEEP = 200
-CUTOFF = 25
 CHEAPEST = 3
 NO_TIMING = "SELECT NULL::VARCHAR AS unit, NULL::DOUBLE AS p95 WHERE false"
 
@@ -91,7 +90,7 @@ def inert(path):
     return path.startswith(".claude/") or (path.endswith(".md") and not path.startswith("docs/"))
 
 
-def report(units, base, changed, changed_units, claimed, map_path, spans, work, pr="", cutoff=CUTOFF):
+def report(units, base, changed, changed_units, claimed, map_path, spans, work, pr=""):
     work = Path(work)
     files = diff.changed_lines(base, deletions=True)
     selected = defaultdict(set)
@@ -130,8 +129,10 @@ def report(units, base, changed, changed_units, claimed, map_path, spans, work, 
     for path in sources if not everything else ():
         for line in sorted(files[path]):
             hits = [r for f in innermost(spans.get(path, []), line) for r in covering.get(f, [])]
-            picks[path][line] = {r["unit"] for r in hits
-                                 if r["covering"] <= cutoff or r["rank"] <= CHEAPEST}
+            if any(r["covering"] > KEEP for r in hits):
+                everything.append(f"{path}:{line} (run by more than {KEEP} units)")
+                break
+            picks[path][line] = {r["unit"] for r in hits}
     batches = members_of(map_path, {u for lines in picks.values() for found in lines.values()
                                     for u in found if u not in owner}, work)
     for path, lines in picks.items():

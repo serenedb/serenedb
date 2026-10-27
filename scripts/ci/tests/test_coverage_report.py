@@ -60,6 +60,27 @@ def test_a_line_covered_only_by_units_missing_from_the_plan_runs_everything(monk
     assert result["everything_because"] == [f"{path}:3"]
 
 
+def test_a_line_selects_every_unit_that_runs_its_function(monkeypatch):
+    path = "server/a.cpp"
+    units = {f"sqllogic:pg-wire-simple:sdb/{i}.test": () for i in range(30)}
+    result = run_report(
+        monkeypatch, {path: {3}}, {path: [[1, 9, "F"]]},
+        {"F": [{"unit": u, "covering": 30, "rank": i + 1} for i, u in enumerate(units)]}, units)
+    assert result["mode"] == "selected"
+    assert result["selected"] == 30
+
+
+def test_a_line_in_a_function_too_many_units_run_runs_everything(monkeypatch):
+    path = "server/a.cpp"
+    result = run_report(
+        monkeypatch, {path: {3}}, {path: [[1, 9, "F"]]},
+        {"F": [{"unit": "sqllogic:pg-wire-simple:sdb/a.test", "covering": selection.KEEP + 1,
+                "rank": 1}]},
+        {"sqllogic:pg-wire-simple:sdb/a.test": ()})
+    assert result["mode"] == "everything"
+    assert result["everything_because"] == [f"{path}:3 (run by more than {selection.KEEP} units)"]
+
+
 def test_a_changed_file_no_unit_claims_runs_everything_unless_nothing_reads_it(monkeypatch):
     harness = "tests/drivers/harness/services.py"
     changed = [harness, "tests/sqllogic/sdb/a.test", "README.md", ".claude/rules/ci.md"]

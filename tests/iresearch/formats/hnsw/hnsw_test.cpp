@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/random/distributions.h>
 
 #include <algorithm>
@@ -36,7 +35,6 @@
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <numeric>
 #include <random>
@@ -206,23 +204,6 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
   return docs;
 }
 
-double KnnRecall(const irs::DirectoryReader& reader,
-                 const std::vector<std::vector<float>>& vecs,
-                 irs::VectorMetric metric, irs::VectorQuantization quant) {
-  constexpr size_t kK = 10;
-  size_t total = 0;
-  size_t matched = 0;
-  for (const auto& q : MakeVectors(20, 99)) {
-    auto filter = MakeKnnFilter(q, metric, quant, 128);
-    const auto got = RunKnn(reader, filter);
-    for (const auto doc : BruteForceTopK(vecs, q, metric, kK)) {
-      ++total;
-      matched += std::ranges::find(got, doc) != got.end() ? 1 : 0;
-    }
-  }
-  return static_cast<double>(matched) / static_cast<double>(total);
-}
-
 class ZeroDupInput final : public irs::BytesViewInput {
  public:
   explicit ZeroDupInput(irs::bstring bytes)
@@ -251,10 +232,6 @@ class ZeroDupDirectory final : public tests::DirectoryMock {
     return std::make_unique<ZeroDupInput>(std::move(bytes));
   }
 };
-
-const irs::HnswHeader& OpenHeader(const irs::IdxReader& idx) {
-  return static_cast<const irs::HnswIndex&>(*idx.Ann(kVec)).Header();
-}
 
 // (quant, nb_bits, recall floor). TurboQuant needs its bit width spelled out --
 // TQ accepts 1-5 -- and estimates a shorter code than the scalar quantizers
@@ -606,7 +583,8 @@ TEST_P(HnswIndexTest, OpenReadsTheHeaderFromTheFooter) {
 
   ZeroDupDirectory zeroed{dir};
   const irs::IdxReader idx{zeroed, segment.Meta().name, nullptr};
-  const auto& header = OpenHeader(idx);
+  const auto& header =
+    static_cast<const irs::HnswIndex&>(*idx.Ann(kVec)).Header();
   EXPECT_EQ(kDim, header.d);
   EXPECT_EQ(Metric(), header.metric);
   EXPECT_EQ(Quant(), header.quant);
@@ -614,36 +592,6 @@ TEST_P(HnswIndexTest, OpenReadsTheHeaderFromTheFooter) {
   EXPECT_EQ(kRows, header.rows);
   EXPECT_EQ(built.record_size, header.record_size);
   EXPECT_EQ(built.rotated, header.rotated);
-}
-
-TEST_P(HnswIndexTest, OldFormatStillOpens) {
-  if (!irs::AddFailurePointDebugging("irs::OldAnnFormat")) {
-    GTEST_SKIP() << "needs fault injection";
-  }
-  absl::Cleanup disarm = [] {
-    irs::RemoveFailurePointDebugging("irs::OldAnnFormat");
-  };
-  constexpr size_t kRows = 500;
-  const auto vecs = MakeVectors(kRows, 7);
-  irs::MemoryDirectory dir;
-  auto reader = BuildIndex(dir, vecs, Metric(), Quant(), NbBits());
-  std::move(disarm).Invoke();
-  ASSERT_NE(nullptr, reader);
-
-  ZeroDupDirectory zeroed{dir};
-  EXPECT_EQ(
-    0U,
-    OpenHeader(irs::IdxReader{zeroed, (*reader)[0].Meta().name, nullptr}).d);
-
-  auto reopened = irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()};
-  ASSERT_NE(nullptr, reopened);
-  const auto& header =
-    static_cast<const irs::HnswIndex&>(*(*reopened)[0].Ann(kVec)).Header();
-  EXPECT_EQ(kDim, header.d);
-  EXPECT_EQ(Metric(), header.metric);
-  EXPECT_EQ(Quant(), header.quant);
-  EXPECT_EQ(kRows, header.rows);
-  EXPECT_GE(KnnRecall(reopened, vecs, Metric(), Quant()), RecallFloor());
 }
 
 INSTANTIATE_TEST_SUITE_P(

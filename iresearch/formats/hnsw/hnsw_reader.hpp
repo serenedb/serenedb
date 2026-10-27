@@ -87,8 +87,6 @@ class HnswIndex final : public AnnIndex {
                              std::span<const float> query,
                              VectorMetric metric) const final;
 
-  static HnswHeader ReadHeader(IndexInput& in);
-
   std::shared_ptr<const HnswData> Load(const SubReader& segment) const;
 
   const HnswHeader& Header() const noexcept { return _meta.header; }

@@ -51,18 +51,6 @@ std::vector<float> NormalizedQuery(std::span<const float> query,
 
 }  // namespace
 
-HnswHeader HnswIndex::ReadHeader(IndexInput& in) {
-  HnswHeader h;
-  h.d = static_cast<uint32_t>(in.ReadI32());
-  h.metric = static_cast<VectorMetric>(in.ReadI32());
-  h.quant = static_cast<VectorQuantization>(in.ReadI32());
-  h.ef_construction = static_cast<uint32_t>(in.ReadI32());
-  h.record_size = static_cast<uint32_t>(in.ReadI32());
-  h.rows = static_cast<uint64_t>(in.ReadI64());
-  h.rotated = in.ReadByte() != 0;
-  return h;
-}
-
 std::shared_ptr<const HnswData> HnswIndex::Load(
   const SubReader& segment) const {
   absl::call_once(_once, [&] {
@@ -72,7 +60,7 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
     }
     in->Seek(_meta.offset);
     auto data = std::make_shared<HnswData>();
-    data->graph = HnswGraph::Deserialize(*in, _meta.stored_offsets);
+    data->graph = HnswGraph::Deserialize(*in);
     const auto read_floats = [&](std::vector<float>& out, size_t count) {
       out.resize(count);
       if (count != 0) {

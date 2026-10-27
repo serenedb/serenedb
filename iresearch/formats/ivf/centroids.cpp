@@ -431,9 +431,7 @@ void IVFHeader::Serialize(IndexOutput& out) const {
 CentroidsTree CentroidsTree::Deserialize(IndexInput& in,
                                          uint64_t root_byte_size) {
   const uint64_t start = in.Position();
-  if (root_byte_size != 0) {
-    in.Prefetch(start, root_byte_size);
-  }
+  in.Prefetch(start, root_byte_size);
   auto head = IVFHeader::Deserialize(in);
   const size_t level = static_cast<size_t>(in.ReadI64());
   const size_t n_total_pos = static_cast<size_t>(in.Position());
@@ -442,9 +440,7 @@ CentroidsTree CentroidsTree::Deserialize(IndexInput& in,
   auto nodes = CentroidsNode::Deserialize(in, level, head.d, {0}, {n_total});
   auto node = std::move(nodes.front());
   const size_t next_level_offset = static_cast<size_t>(in.Position());
-  if (root_byte_size != 0) {
-    in.Evict(start, root_byte_size);
-  }
+  in.Evict(start, root_byte_size);
   return {std::move(head), std::move(node), next_level_offset};
 }
 

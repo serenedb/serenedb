@@ -194,7 +194,7 @@ class HnswGraph {
   }
 
   void Serialize(DataOutput& out) const;
-  static HnswGraph Deserialize(IndexInput& in, bool stored_offsets);
+  static HnswGraph Deserialize(IndexInput& in);
 
  private:
   friend class HnswGraphWriter;

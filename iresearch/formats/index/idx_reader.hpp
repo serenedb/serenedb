@@ -75,7 +75,6 @@ struct HnswMeta {
   uint64_t offset = 0;
   uint64_t byte_size = 0;
   HnswHeader header;
-  bool stored_offsets = false;
 };
 
 inline constexpr std::string_view kIdxFormatExt = "idx";

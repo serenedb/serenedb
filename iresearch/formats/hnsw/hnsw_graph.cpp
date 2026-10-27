@@ -27,7 +27,6 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/debugging.hpp"
 
 namespace irs {
 namespace {
@@ -97,23 +96,18 @@ void HnswGraph::Serialize(DataOutput& out) const {
   out.WriteU32(_entry);
   out.WriteU32(_max_level);
   WriteArray(out, _levels);
-  SDB_IF_FAILURE("irs::OldAnnFormat") { WriteArray(out, _offsets); }
   WriteArray(out, _base);
   WriteArray(out, _upper);
 }
 
-HnswGraph HnswGraph::Deserialize(IndexInput& in, bool stored_offsets) {
+HnswGraph HnswGraph::Deserialize(IndexInput& in) {
   HnswGraph g;
   g._m = static_cast<uint32_t>(in.ReadI32());
   g._m0 = 2 * g._m;
   g._entry = static_cast<uint32_t>(in.ReadI32());
   g._max_level = static_cast<uint32_t>(in.ReadI32());
   ReadArray(in, g._levels);
-  if (stored_offsets) {
-    ReadArray(in, g._offsets);
-  } else {
-    g.ComputeOffsets();
-  }
+  g.ComputeOffsets();
   ReadArray(in, g._base);
   ReadArray(in, g._upper);
   return g;

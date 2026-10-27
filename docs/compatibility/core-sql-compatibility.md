@@ -440,11 +440,11 @@ An operator with a string literal on one side, as in `point '(1,2)' <-> '(3,4)'`
 | \|&>           | Yes           |         |
 | \<^            | Yes           |         |
 | >^             | Yes           |         |
-| ?#             | Yes           |         |
-| ?-             | Yes           |         |
-| ?\|            | Yes           |         |
-| ?-\|           | Yes           |         |
-| ?\|\|          | Yes           |         |
+| ?#             | No            |         |
+| ?-             | No            |         |
+| ?\|            | No            |         |
+| ?-\|           | No            |         |
+| ?\|\|          | No            |         |
 | ~=             | Yes           |         |
 | area           | Yes           |         |
 | center         | Yes           |         |

@@ -142,6 +142,39 @@ a	b
 t	t
 
 
+statement ok
+CREATE FUNCTION fno.two_rows(OUT a int, OUT b int) LANGUAGE sql AS 'SELECT * FROM (VALUES (1, 2), (3, 4)) t ORDER BY 1';
+
+
+query
+SELECT * FROM fno.two_rows();
+----
+a	b
+1	2
+
+
+statement ok
+CREATE FUNCTION fno.random_pair(OUT a float8, OUT b float8) LANGUAGE sql AS 'SELECT r, r FROM (SELECT random() AS r) s';
+
+
+query
+SELECT a = b AS same FROM fno.random_pair();
+----
+same
+t
+
+
+statement ok
+CREATE FUNCTION fno.record_subquery(OUT a int, OUT b int) LANGUAGE sql RETURN (SELECT ROW(1, 2));
+
+
+query
+SELECT * FROM fno.record_subquery();
+----
+a	b
+1	2
+
+
 query
 SELECT (fno.split(5)).*;
 ----

@@ -1747,32 +1747,23 @@ statement ok
 SELECT box '((0,2),(1,3))' >^ box '((0,0),(1,1))';
 
 # op_geo: ?#
-statement ok
+statement error
 SELECT box '((0,0),(2,2))' ?# box '((1,1),(3,3))';
 
 # op_geo: ?-
 statement error
 SELECT lseg '((0,0),(1,0))' ?- lseg '((0,2),(1,2))';
 
-statement ok
-SELECT ?- lseg '((0,0),(1,0))', point '(0,0)' ?- point '(1,0)';
-
 # op_geo: ?\|
 statement error
 SELECT lseg '((0,0),(0,1))' ?| lseg '((2,0),(2,1))';
-
-statement ok
-SELECT ?| lseg '((0,0),(0,1))', point '(0,0)' ?| point '(0,1)';
 
 # op_geo: ?-\|
 statement error
 SELECT point '(0,0)' ?-| lseg '((0,0),(1,0))';
 
-statement ok
-SELECT lseg '((0,0),(1,0))' ?-| lseg '((0,0),(0,1))';
-
 # op_geo: ?\|\|
-statement ok
+statement error
 SELECT lseg '((0,0),(0,1))' ?|| lseg '((2,0),(2,1))';
 
 # op_geo: ~=

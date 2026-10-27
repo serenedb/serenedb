@@ -1,5 +1,5 @@
 query
-SELECT string_agg(proname, ', ' ORDER BY proname) AS outside FROM pg_proc WHERE oid >= 16384 AND oid < 65536 OR oid >= 393216;
+SELECT string_agg(proname, ', ' ORDER BY proname) AS outside FROM pg_proc WHERE oid >= 16384 AND oid < 65536 OR oid >= 131072;
 ----
 outside
 NULL
@@ -15,7 +15,7 @@ NULL
 query
 SELECT count(*) FILTER (WHERE oid < 16384) > 0 AS postgres,
        count(*) FILTER (WHERE oid >= 16384 AND oid < 65536) AS outside,
-       count(*) FILTER (WHERE oid >= 65536 AND oid < 393216) > 0 AS serenedb
+       count(*) FILTER (WHERE oid >= 65536 AND oid < 131072) > 0 AS serenedb
 FROM pg_proc WHERE pronamespace IN (11, 13293);
 ----
 postgres	outside	serenedb
@@ -25,7 +25,7 @@ t	0	t
 query
 SELECT count(*) FILTER (WHERE oid < 16384) > 0 AS postgres,
        count(*) FILTER (WHERE oid >= 16384 AND oid < 65536) AS outside,
-       count(*) FILTER (WHERE oid >= 65536 AND oid < 393216) > 0 AS serenedb
+       count(*) FILTER (WHERE oid >= 65536 AND oid < 131072) > 0 AS serenedb
 FROM pg_proc WHERE pronamespace IN (11, 'information_schema'::regnamespace);
 ----
 postgres	outside	serenedb
@@ -59,25 +59,25 @@ proc	type	class	namespace	collation	am	opclass	language	authid	database
 
 
 query
-SELECT (SELECT count(*) FROM pg_proc WHERE pronamespace IN (11, 13293) AND oid >= 524288) AS proc,
-       (SELECT count(*) FROM pg_type WHERE typnamespace IN (11, 13293) AND oid >= 524288) AS type,
-       (SELECT count(*) FROM pg_class WHERE relnamespace IN (11, 13293) AND oid >= 524288) AS class,
-       (SELECT count(*) FROM pg_namespace WHERE nspname IN ('pg_catalog', 'information_schema', 'public') AND oid >= 524288) AS namespace,
-       (SELECT count(*) FROM pg_collation WHERE oid >= 524288) AS collation,
-       (SELECT count(*) FROM pg_am WHERE oid >= 524288) AS am,
-       (SELECT count(*) FROM pg_opclass WHERE oid >= 524288) AS opclass,
-       (SELECT count(*) FROM pg_language WHERE oid >= 524288) AS language,
-       (SELECT count(*) FROM pg_authid WHERE (rolname = 'postgres' OR rolname LIKE 'pg\_%') AND oid >= 524288) AS authid,
-       (SELECT count(*) FROM pg_database WHERE datname = 'postgres' AND oid >= 524288) AS database;
+SELECT (SELECT count(*) FROM pg_proc WHERE pronamespace IN (11, 13293) AND oid >= 262144) AS proc,
+       (SELECT count(*) FROM pg_type WHERE typnamespace IN (11, 13293) AND oid >= 262144) AS type,
+       (SELECT count(*) FROM pg_class WHERE relnamespace IN (11, 13293) AND oid >= 262144) AS class,
+       (SELECT count(*) FROM pg_namespace WHERE nspname IN ('pg_catalog', 'information_schema', 'public') AND oid >= 262144) AS namespace,
+       (SELECT count(*) FROM pg_collation WHERE oid >= 262144) AS collation,
+       (SELECT count(*) FROM pg_am WHERE oid >= 262144) AS am,
+       (SELECT count(*) FROM pg_opclass WHERE oid >= 262144) AS opclass,
+       (SELECT count(*) FROM pg_language WHERE oid >= 262144) AS language,
+       (SELECT count(*) FROM pg_authid WHERE (rolname = 'postgres' OR rolname LIKE 'pg\_%') AND oid >= 262144) AS authid,
+       (SELECT count(*) FROM pg_database WHERE datname = 'postgres' AND oid >= 262144) AS database;
 ----
 proc	type	class	namespace	collation	am	opclass	language	authid	database
 0	0	0	0	0	0	0	0	0	0
 
 
 query
-SELECT (SELECT count(*) FROM pg_proc WHERE pronamespace IN (11, 'information_schema'::regnamespace) AND oid >= 524288) AS proc,
-       (SELECT count(*) FROM pg_type WHERE typnamespace IN (11, 'information_schema'::regnamespace) AND oid >= 524288) AS type,
-       (SELECT count(*) FROM pg_class WHERE relnamespace IN (11, 'information_schema'::regnamespace) AND oid >= 524288) AS class;
+SELECT (SELECT count(*) FROM pg_proc WHERE pronamespace IN (11, 'information_schema'::regnamespace) AND oid >= 262144) AS proc,
+       (SELECT count(*) FROM pg_type WHERE typnamespace IN (11, 'information_schema'::regnamespace) AND oid >= 262144) AS type,
+       (SELECT count(*) FROM pg_class WHERE relnamespace IN (11, 'information_schema'::regnamespace) AND oid >= 262144) AS class;
 ----
 proc	type	class
 0	0	0
@@ -177,7 +177,7 @@ abs(integer)
 
 
 query
-SELECT count(*) FROM duckdb_functions() WHERE database_name = 'system' AND (function_oid < 393216 OR function_oid >= 524288);
+SELECT count(*) FROM duckdb_functions() WHERE database_name = 'system' AND (function_oid < 131072 OR function_oid >= 262144);
 ----
 count
 0
@@ -191,21 +191,21 @@ t
 
 
 query
-SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'system' AND (oid < 393216 OR oid >= 524288);
+SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'system' AND (oid < 131072 OR oid >= 262144);
 ----
 count
 0
 
 
 query
-SELECT count(*) FROM duckdb_views() WHERE database_name = 'system' AND (view_oid < 393216 OR view_oid >= 524288);
+SELECT count(*) FROM duckdb_views() WHERE database_name = 'system' AND (view_oid < 131072 OR view_oid >= 262144);
 ----
 count
 0
 
 
 query
-SELECT count(*) FROM duckdb_databases() WHERE NOT internal AND database_name NOT IN ('postgres') AND database_oid < 524288;
+SELECT count(*) FROM duckdb_databases() WHERE NOT internal AND database_name NOT IN ('postgres') AND database_oid < 262144;
 ----
 count
 0
@@ -317,7 +317,7 @@ CREATE ROLE system_oids_role;
 
 
 query
-SELECT kind, count(*) AS objects, bool_and(oid >= 524288) AS user_range
+SELECT kind, count(*) AS objects, bool_and(oid >= 262144) AS user_range
 FROM (SELECT 'relation' AS kind, oid FROM pg_class WHERE relnamespace = 'system_oids'::regnamespace
       UNION ALL SELECT 'type', oid FROM pg_type WHERE typnamespace = 'system_oids'::regnamespace
       UNION ALL SELECT 'function', oid FROM pg_proc WHERE pronamespace = 'system_oids'::regnamespace

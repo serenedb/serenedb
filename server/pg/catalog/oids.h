@@ -38,7 +38,7 @@ constexpr uint32_t WireOid(uint64_t oid) { return static_cast<uint32_t>(oid); }
 inline constexpr duckdb::idx_t kPublicGrantee = 0;
 
 inline constexpr duckdb::idx_t kMinSystem = 16384;
-inline constexpr duckdb::idx_t kMaxSystem = 524288;
+inline constexpr duckdb::idx_t kMaxSystem = 262144;
 
 #include "pg/catalog/generated/catalog_oids.gen.inc"
 

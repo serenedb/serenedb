@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serened shell` has other defaults for some options, such as `integer_division` (`false`), `question_mark_operators` (`false`), `preserve_identifier_case` (`preserve_case`) and the default schema (`main`).
+SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serened shell` has other defaults for some options, such as `integer_division` (`false`), `preserve_identifier_case` (`preserve_case`) and the default schema (`main`).
 
 The configuration options can be set using either the [`SET` statement](../sql/statements/set/index.md) or the [`PRAGMA` statement](../configuration/pragmas.md). They can be reset to their original values using the [`RESET` statement](../sql/statements/set/index.md#reset).
 
@@ -250,7 +250,6 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `max_execution_time` | The maximum execution time per query in milliseconds (0 = no limit). | `BIGINT` | `SESSION` | `0` |
 | `max_identifier_length` | Shows the maximum identifier length. SereneDB keeps longer identifiers in full. Read-only. | `INTEGER` | `SESSION` | `63` |
 | `max_index_keys` | Shows the maximum number of index keys. Clients read it as the bound of index and constraint key arrays, such as `pg_index.indkey` and `pg_constraint.conkey`. Read-only. | `INTEGER` | `SESSION` | `32` |
-| `question_mark_operators` | Whether `?#`, `?-`, `?\|`, `?-\|` and `?\|\|` are operators rather than a `?` parameter followed by an operator. | `BOOLEAN` | `SESSION` | `true` |
 | `regex_match_operator_semantics` | Deprecated. Configures whether regex match operators use partial or full string matching. | `VARCHAR` | `SESSION` | `partial` |
 | `role` | Sets the current role. | `VARCHAR` | `SESSION` | `none` |
 | `search_path` | Sets the default catalog search path as a comma-separated list of values | `VARCHAR` | `SESSION` | `"$user", public` |

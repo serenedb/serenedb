@@ -149,8 +149,6 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // DOUBLE. A client that wants DuckDB's reading can still SET this back per
   // session.
   config.SetOptionByName("integer_division", duckdb::Value::BOOLEAN(true));
-  config.SetOptionByName("question_mark_operators",
-                         duckdb::Value::BOOLEAN(true));
   config.SetOptionByName("show_behavior", duckdb::Value("SETTING"));
   config.SetOptionByName("autoinstall_known_extensions",
                          duckdb::Value::BOOLEAN(false));

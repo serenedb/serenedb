@@ -10,6 +10,7 @@ binary result format.
 
 from __future__ import annotations
 
+import select
 import socket
 import struct
 import time
@@ -202,6 +203,15 @@ def row_description(msgs):
                 cols.append((name, typoid, typmod))
             return cols
     return None
+
+
+def await_copied(poller, table, count):
+    deadline = time.time() + 10
+    while first_field(poller.run(
+            "select count(*) from pg_stat_progress_copy "
+            f"where relid = '{table}'::regclass and tuples_processed = {count}")) != b"1":
+        assert time.time() < deadline, f"COPY into {table} never took {count} rows"
+        time.sleep(0.05)
 
 
 def first_field(msgs):
@@ -476,9 +486,8 @@ def test_terminate_closes_a_client_that_is_not_reading(conn):
     try:
         pid = int(first_field(victim.run("select pg_backend_pid()")))
         victim.send("Q", _cstr("select repeat('x', 1000) from range(40000)"))
-        time.sleep(1)
+        assert select.select([victim.sock], [], [], 10)[0], "the result never started"
         assert "E" not in types(conn.run(f"select pg_terminate_backend({pid})"))
-        time.sleep(1)
         victim.sock.settimeout(10)
         while victim.sock.recv(1 << 20):
             pass
@@ -1312,6 +1321,32 @@ def test_copy_feeder_error_ends_the_copy(conn):
 
 
 @pytest.mark.usefixtures("own_server")
+def test_copy_takes_rows_while_the_client_waits(conn):
+    if "E" in types(conn.run("set sdb_faults='pause_copy_take_blocked'")):
+        pytest.skip("fault injection not enabled in this build")
+    c = WireConn()
+    try:
+        conn.run_ok("drop table if exists t_copy_taken")
+        conn.run_ok("create table t_copy_taken(a int)")
+        c.send("Q", _cstr("copy t_copy_taken from stdin"))
+        assert c.read_msg()[0] == "G"
+        deadline = time.time() + 10
+        while "E" in types(conn.run("set sdb_faults='-pause_copy_take_blocked:parked'")):
+            assert time.time() < deadline, "the COPY never waited for data"
+            time.sleep(0.05)
+        conn.run_ok("set sdb_faults='pause_copy_take_blocked:release'")
+        c.send("d", b"1\n2\n")
+        await_copied(conn, "t_copy_taken", 2)
+        c.send("c")
+        m = c.drain_to_ready()
+        assert tags(m) == [b"COPY 2\x00"], errors(m)
+    finally:
+        conn.run("reset sdb_faults")
+        c.close()
+        conn.run("drop table if exists t_copy_taken")
+
+
+@pytest.mark.usefixtures("own_server")
 def test_copy_feeder_wake_outlives_the_session(conn):
     if "E" in types(conn.run("set sdb_faults='copy_feeder_done_wake'")):
         pytest.skip("fault injection not enabled in this build")
@@ -1322,7 +1357,7 @@ def test_copy_feeder_wake_outlives_the_session(conn):
         c.send("Q", _cstr("copy t_copy_done_wake from stdin"))
         assert c.read_msg()[0] == "G"
         c.send("d", b"1\n")
-        time.sleep(0.5)
+        await_copied(conn, "t_copy_done_wake", 1)
         c.sock.close()
         deadline = time.time() + 10
         while first_field(conn.run(
@@ -1673,7 +1708,11 @@ def test_copy_fail_after_eod_marker_fails_the_copy(conn, options, data):
         conn.send("Q", _cstr(f"copy smoke_eod_fail from stdin{options}"))
         assert conn.read_msg()[0] == "G"
         conn.send("d", data)
-        time.sleep(0.5)
+        poller = WireConn()
+        try:
+            await_copied(poller, "smoke_eod_fail", 2)
+        finally:
+            poller.close()
         conn.send("f", _cstr("client gave up"))
         m = conn.drain_to_ready()
         assert sqlstates(m) == ["57014"], (tags(m), errors(m))
@@ -1694,7 +1733,7 @@ def test_copy_disconnect_after_eod_marker_loads_nothing(conn, options, data):
         c.send("Q", _cstr(f"copy smoke_eod_eof from stdin{options}"))
         assert c.read_msg()[0] == "G"
         c.send("d", data)
-        time.sleep(0.5)
+        await_copied(conn, "smoke_eod_eof", 2)
         c.sock.close()
         deadline = time.time() + 10
         while first_field(conn.run(

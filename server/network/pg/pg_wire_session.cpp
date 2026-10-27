@@ -1871,6 +1871,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
         co_return {};
       }
       co_await publish();
+      batches.Flush();
       co_await WaitCopyInput();
     }
     std::array<uint8_t, kHeader> head;
@@ -1902,6 +1903,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
             co_return {};
           }
           co_await publish();
+          batches.Flush();
           co_await WaitCopyInput();
         }
         const std::string_view chunk = this->_recv.Front();

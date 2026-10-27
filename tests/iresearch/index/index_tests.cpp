@@ -519,7 +519,7 @@ class IndexTestCase : public tests::IndexTestBase {
     // test creation of an empty writer
     {
       irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                         irs::MemoryIndexRoot()};
+                         TestEnv::MemoryRoot()};
       auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
       ASSERT_SQL_ERROR(
@@ -9100,7 +9100,7 @@ TEST_P(IndexTestCase, compact_progress) {
   // test default progress (false)
   {
     irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       irs::MemoryIndexRoot()};
+                       TestEnv::MemoryRoot()};
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -9134,7 +9134,7 @@ TEST_P(IndexTestCase, compact_progress) {
   // test always-false progress
   {
     irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       irs::MemoryIndexRoot()};
+                       TestEnv::MemoryRoot()};
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -9173,7 +9173,7 @@ TEST_P(IndexTestCase, compact_progress) {
   // test always-true progress
   {
     irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       irs::MemoryIndexRoot()};
+                       TestEnv::MemoryRoot()};
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
@@ -9220,7 +9220,7 @@ TEST_P(IndexTestCase, compact_progress) {
   for (size_t i = 1; i < progress_call_count; ++i) {
     size_t call_count = i;
     irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       irs::MemoryIndexRoot()};
+                       TestEnv::MemoryRoot()};
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     for (size_t size = 0; size < max_docs; ++size) {

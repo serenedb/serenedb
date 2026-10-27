@@ -117,7 +117,7 @@ std::string Key(uint64_t i) {
 struct Column {
   std::unique_ptr<duckdb::MemoryFileSystem> fs =
     std::make_unique<duckdb::MemoryFileSystem>();
-  irs::Directory dir{CsDb(), *fs, irs::MemoryIndexRoot()};
+  irs::Directory dir{CsDb(), *fs, "memory://bench"};
   std::unique_ptr<irs::ColReader> reader;
   std::unique_ptr<irs::ReadContext> ctx;
   const irs::ColumnReader* col = nullptr;

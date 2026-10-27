@@ -276,7 +276,7 @@ int GeoMain() {
     auto docs = ParseCorpus(kCorpus);
     std::vector<std::string> names;
 
-    irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+    irs::Directory dir{Db(), "memory://geo"};
     auto reader = BuildIndex(dir, docs, names);
     std::cout << "Indexed " << reader.docs_count() << " points across "
               << reader.size() << " segment(s).\n\n";

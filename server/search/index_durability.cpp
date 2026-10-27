@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -49,6 +50,11 @@ constexpr duckdb::field_id_t kFieldWalGeneration = 1;
 constexpr duckdb::field_id_t kFieldWalOffset = 2;
 constexpr duckdb::field_id_t kFieldManifest = 3;
 constexpr duckdb::field_id_t kFieldCheckpoint = 4;
+
+std::string MemoryRoot(const duckdb::AttachedDatabase& database,
+                       duckdb::idx_t oid) {
+  return absl::StrCat(duckdb::MemoryFileSystem::PREFIX, database.oid, "/", oid);
+}
 
 std::optional<std::string> StoragePath(
   duckdb::AttachedDatabase& database,
@@ -102,15 +108,16 @@ IndexDurability::IndexDurability(
   const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
   StorageOpen open)
   : IndexDurability{database, std::move(name),
-                    StoragePath(database, parent, oid, open)} {}
+                    StoragePath(database, parent, oid, open), oid} {}
 
 IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
                                  std::string name,
-                                 std::optional<std::string> path)
+                                 std::optional<std::string> path,
+                                 duckdb::idx_t oid)
   : _database{database.shared_from_this()},
     _name{std::move(name)},
     _files{irs::DuckDBEngine::Instance().instance(),
-           path ? *path : irs::MemoryIndexRoot()},
+           path ? *path : MemoryRoot(database, oid)},
     _absent{!path && !database.GetStorageManager().InMemory()} {}
 
 bool IndexDurability::Locate(const catalog::StorageDirectory& parent,

@@ -215,7 +215,7 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
   void TearDown() final { _data_writer.reset(); }
 
  protected:
-  irs::Directory _dir{TestDb(), irs::MemoryIndexRoot()};
+  irs::Directory _dir{TestDb(), "memory://sink_writer"};
   irs::IndexWriter::ptr _data_writer;
 };
 
@@ -931,7 +931,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
 }
 
 TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
-  irs::Directory dir{TestDb(), irs::MemoryIndexRoot()};
+  irs::Directory dir{TestDb(), "memory://sink_writer_flush"};
   irs::IndexWriterOptions options;
   options.db = &TestDb();
   options.reader_options.db = &TestDb();

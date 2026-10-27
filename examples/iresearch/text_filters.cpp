@@ -221,7 +221,7 @@ int TextFiltersMain() {
   // down the duckdb::DuckDB they were dispatching through.
   {
     std::vector<std::string> names;
-    irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+    irs::Directory dir{Db(), "memory://text_filters"};
     auto reader = BuildIndex(dir, names);
     std::cout << "Indexed " << reader.docs_count() << " docs across "
               << reader.size() << " segment(s).\n\n";

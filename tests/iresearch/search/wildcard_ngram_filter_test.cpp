@@ -295,7 +295,7 @@ TEST(WildcardNGramFilterTest, query) {
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
 
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
@@ -418,7 +418,7 @@ TEST(WildcardNGramFilterTest, without_matcher_returns_candidates) {
 
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
@@ -668,7 +668,7 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
   for (const auto n : {size_t{2}, size_t{3}}) {
     irs::analysis::WildcardTokenizer analyzer{nullptr, n};
     irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       irs::MemoryIndexRoot()};
+                       TestEnv::MemoryRoot()};
     {
       auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());

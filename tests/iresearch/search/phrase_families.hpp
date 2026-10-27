@@ -258,7 +258,7 @@ class FamilyIndex {
   }
 
   irs::Directory _dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+                      TestEnv::MemoryRoot()};
 
  private:
   irs::doc_id_t End(size_t segment) const {

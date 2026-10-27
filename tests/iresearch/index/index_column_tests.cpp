@@ -346,7 +346,7 @@ irs::ColumnWriter& OpenBlobColumnSmallRg(irs::ColWriter& w, irs::field_id id,
 // `MakeCsReader` finds nothing on disk -> nullptr. Repeated reads stay stable
 // (still nullptr each time).
 TEST_P(IndexColumnTestCase, read_empty_doc_attributes) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "empty";
 
   {
@@ -368,7 +368,7 @@ TEST_P(IndexColumnTestCase, read_empty_doc_attributes) {
 // payloads and validity, IsNullDoc reports the gap on "prefix", and the
 // access patterns (full scan + per-doc fetch) both produce the same data.
 TEST_P(IndexColumnTestCase, read_write_doc_attributes) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "basic";
   constexpr irs::field_id kNameId = 0;
   constexpr irs::field_id kPrefixId = 1;
@@ -536,7 +536,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes) {
 // exercises both the full-column scan and per-doc fetch paths on each
 // column. Reopens the reader to verify the file is self-sufficient.
 TEST_P(IndexColumnTestCase, read_write_doc_attributes_big) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "big";
   constexpr irs::field_id kIdId = 0;
   constexpr irs::field_id kLabelId = 1;
@@ -680,7 +680,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_big) {
 // IsNullDoc must be false for every written doc. Verifies the same shape
 // on a freshly-loaded reader.
 TEST_P(IndexColumnTestCase, read_write_doc_attributes_dense_column_dense_mask) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "dense_dense_mask";
   constexpr irs::field_id kId = 0;
   // 4096 docs / row_group_size=512 -> 8 row groups. This exercises the
@@ -780,7 +780,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_dense_column_dense_mask) {
 // payload shape (a serialised uint64_t).
 TEST_P(IndexColumnTestCase,
        read_write_doc_attributes_dense_column_dense_fixed_length) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "dense_fixed_length";
   constexpr irs::field_id kId = 0;
   constexpr uint64_t kDocsCount = 4096;
@@ -906,7 +906,7 @@ TEST_P(IndexColumnTestCase,
 // constant per row, exercising the codec choice for repeated values.
 TEST_P(IndexColumnTestCase,
        read_write_doc_attributes_dense_column_dense_fixed_offset) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "dense_fixed_offset";
   constexpr irs::field_id kId = 0;
   constexpr uint64_t kDocsCount = 4096;
@@ -1010,7 +1010,7 @@ TEST_P(IndexColumnTestCase,
 // string of `to_string(doc)`; mirror that.
 TEST_P(IndexColumnTestCase,
        read_write_doc_attributes_dense_column_dense_variable_length) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "dense_variable_length";
   constexpr irs::field_id kId = 0;
   constexpr uint64_t kDocsCount = 4096;
@@ -1114,7 +1114,7 @@ TEST_P(IndexColumnTestCase,
 // carry the column; the rest are null. Fixed 8-byte payload when present.
 TEST_P(IndexColumnTestCase,
        read_write_doc_attributes_sparse_column_dense_fixed_length) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "sparse_fixed_length";
   constexpr irs::field_id kId = 0;
   constexpr uint64_t kDocsCount = 4096;
@@ -1230,7 +1230,7 @@ TEST_P(IndexColumnTestCase,
 // column; when present the payload is a single constant 4-byte value.
 TEST_P(IndexColumnTestCase,
        read_write_doc_attributes_sparse_column_dense_fixed_offset) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "sparse_fixed_offset";
   constexpr irs::field_id kId = 0;
   constexpr uint64_t kDocsCount = 4096;
@@ -1340,7 +1340,7 @@ TEST_P(IndexColumnTestCase,
 // of 3 are absent), value width varies row-to-row.
 TEST_P(IndexColumnTestCase,
        read_write_doc_attributes_sparse_column_dense_variable_length) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "sparse_variable_length";
   constexpr irs::field_id kId = 0;
   constexpr uint64_t kDocsCount = 4096;
@@ -1447,7 +1447,7 @@ TEST_P(IndexColumnTestCase,
 // column, payload is empty (mask-only). Exercises mostly-null validity.
 TEST_P(IndexColumnTestCase,
        read_write_doc_attributes_sparse_column_sparse_mask) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "sparse_sparse_mask";
   constexpr irs::field_id kId = 0;
   constexpr uint64_t kDocsCount = 4096;
@@ -1555,7 +1555,7 @@ TEST_P(IndexColumnTestCase,
 // Mirror of the dense_mask test but with a few holes scattered through.
 TEST_P(IndexColumnTestCase,
        read_write_doc_attributes_sparse_column_dense_mask) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "sparse_dense_mask";
   constexpr irs::field_id kId = 0;
   constexpr uint64_t kDocsCount = 4096;
@@ -1663,7 +1663,7 @@ TEST_P(IndexColumnTestCase,
 // dense+variable_length test.
 TEST_P(IndexColumnTestCase,
        read_write_doc_attributes_sparse_column_sparse_variable_length) {
-  irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kSegment = "sparse_sparse_variable_length";
   constexpr irs::field_id kId = 0;
   constexpr uint64_t kDocsCount = 4096;

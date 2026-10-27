@@ -61,6 +61,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -71,7 +72,7 @@ namespace {
 class Columnstore2TestCase : public ::testing::TestWithParam<bool> {
  protected:
   irs::Directory _dir{::irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+                      TestEnv::MemoryRoot()};
   duckdb::DatabaseInstance& Db() {
     return ::irs::DuckDBEngine::Instance().instance();
   }

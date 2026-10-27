@@ -200,7 +200,8 @@ bool OfKind(const Object& object, std::string_view kind) {
 irs::Directory LoadIndex(duckdb::DatabaseInstance& db,
                          duckdb::MemoryFileSystem& fs,
                          std::span<const IndexFile> files) {
-  irs::Directory dir{db, fs, irs::MemoryIndexRoot()};
+  irs::Directory dir{db, fs,
+                     absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "docs")};
   for (const auto& file : files) {
     auto out = dir.Create(file.name);
     out->WriteData(file.bytes.data(), file.bytes.size());

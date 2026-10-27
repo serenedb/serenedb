@@ -23,7 +23,6 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
-#include <atomic>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/memory_file_system.hpp>
@@ -40,8 +39,6 @@
 
 namespace irs {
 namespace {
-
-constinit std::atomic<uint64_t> gMemoryIndexCount{0};
 
 duckdb::FileSystem& FileSystemOf(duckdb::DatabaseInstance& db,
                                  std::string_view root) {
@@ -302,12 +299,6 @@ void ForEach(const Directory& dir, size_t count,
       executor, [visit, i] { visit(i); }, "DirectoryForEach"));
   }
   executor.WorkOnTasks();
-}
-
-std::string MemoryIndexRoot() {
-  return absl::StrCat(
-    duckdb::MemoryFileSystem::PREFIX, "index/",
-    gMemoryIndexCount.fetch_add(1, std::memory_order_relaxed) + 1);
 }
 
 }  // namespace irs

@@ -38,7 +38,7 @@ constinit std::atomic<uint64_t> gLocalDirectories{0};
 
 std::shared_ptr<irs::Directory> MemoryDirectory(const TestBase*) {
   return std::make_shared<irs::Directory>(
-    irs::DuckDBEngine::Instance().instance(), irs::MemoryIndexRoot());
+    irs::DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot());
 }
 
 std::shared_ptr<irs::Directory> LocalDirectory(const TestBase* test) {

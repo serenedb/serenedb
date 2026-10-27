@@ -94,7 +94,7 @@ constexpr Shape kShapes[] = {
 struct Blk {
   std::unique_ptr<duckdb::MemoryFileSystem> fs =
     std::make_unique<duckdb::MemoryFileSystem>();
-  irs::Directory dir{CsDb(), *fs, irs::MemoryIndexRoot()};
+  irs::Directory dir{CsDb(), *fs, "memory://bench"};
   std::unique_ptr<irs::ColReader> reader;
   std::unique_ptr<irs::ReadContext> ctx;
   std::unique_ptr<duckdb::ColumnSegment> block;

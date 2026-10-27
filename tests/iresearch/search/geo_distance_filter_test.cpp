@@ -411,7 +411,7 @@ TEST(GeoDistanceFilterTest, query) {
   ])");
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   irs::DirectoryReader reader;
 
   // index data
@@ -922,7 +922,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
   ])");
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   irs::DirectoryReader reader;
 
   // index data

@@ -116,7 +116,7 @@ class IndexDurability {
 
  private:
   IndexDurability(duckdb::AttachedDatabase& database, std::string name,
-                  std::optional<std::string> path);
+                  std::optional<std::string> path, duckdb::idx_t oid);
 
   void SyncDirectory();
   void MarkPublished();

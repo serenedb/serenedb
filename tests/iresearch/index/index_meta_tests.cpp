@@ -39,7 +39,7 @@ using namespace irs;
 
 TEST(index_meta_tests, read_write) {
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   irs::IndexMetaWriter writer{
     [](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       EXPECT_EQ(42, position.offset);
@@ -130,7 +130,7 @@ TEST(index_meta_tests, last_generation) {
 
   // populate directory
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   for (auto& name : names) {
     auto out = dir.Create(name);
     ASSERT_FALSE(!out);
@@ -144,7 +144,7 @@ TEST(index_meta_tests, last_generation) {
 
 TEST(index_meta_tests, rejects_unknown_fields) {
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   const auto name = irs::index_meta::FileName(1);
   {
     auto out = dir.Create(name);
@@ -177,7 +177,7 @@ TEST(index_meta_tests, rejects_unknown_fields) {
 
 TEST(index_meta_tests, payload_is_read_whole) {
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   irs::IndexMetaWriter writer{
     [](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       out.WriteProperty<uint64_t>(0, "tick", position.offset);

@@ -116,6 +116,4 @@ class Directory {
 void ForEach(const Directory& dir, size_t count,
              absl::FunctionRef<void(size_t)> visit);
 
-std::string MemoryIndexRoot();
-
 }  // namespace irs

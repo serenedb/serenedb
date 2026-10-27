@@ -4906,7 +4906,7 @@ void WriteOneDocument(const irs::Directory& files) {
 TEST(DirectoryTest, memory_files_removed_with_last_copy) {
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& memory = db.GetMemoryFileSystem();
-  auto files = std::make_optional<irs::Directory>(db, irs::MemoryIndexRoot());
+  auto files = std::make_optional<irs::Directory>(db, TestEnv::MemoryRoot());
   ASSERT_EQ(irs::StorageKind::Memory, files->Kind());
   {
     auto out = files->Create("file");
@@ -4934,7 +4934,7 @@ TEST(DirectoryTest, memory_files_kept_by_reader) {
   irs::DirectoryReader reader;
   std::vector<std::string> paths;
   {
-    irs::Directory files{db, irs::MemoryIndexRoot()};
+    irs::Directory files{db, TestEnv::MemoryRoot()};
     WriteOneDocument(files);
     reader = irs::DirectoryReader{files, irs::tests::DefaultReaderOptions()};
     files.Visit(
@@ -4957,7 +4957,7 @@ TEST(DirectoryTest, compacted_memory_files_map_in_place) {
   constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& memory = db.GetMemoryFileSystem();
-  const irs::Directory files{db, irs::MemoryIndexRoot()};
+  const irs::Directory files{db, TestEnv::MemoryRoot()};
   std::vector<irs::byte_type> data(2 * kBlock + 17);
   for (uint64_t i = 0; i != data.size(); ++i) {
     data[i] = static_cast<irs::byte_type>(i * 31 + i / 251);
@@ -5006,7 +5006,7 @@ size_t MemoryFilesInBlocks(const irs::Directory& files,
 
 TEST(DirectoryTest, memory_segments_are_compacted_when_written) {
   auto& db = irs::DuckDBEngine::Instance().instance();
-  const irs::Directory files{db, irs::MemoryIndexRoot()};
+  const irs::Directory files{db, TestEnv::MemoryRoot()};
   ::tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                                 &::tests::GenericJsonFieldFactory);
   auto writer = irs::IndexWriter::Make(files, irs::kOmCreate,
@@ -5036,7 +5036,7 @@ TEST(DirectoryTest, memory_segments_without_memory_to_compact_stay_in_blocks) {
   }
   absl::Cleanup clear = [] { irs::ClearFailurePointsDebugging(); };
   auto& db = irs::DuckDBEngine::Instance().instance();
-  const irs::Directory files{db, irs::MemoryIndexRoot()};
+  const irs::Directory files{db, TestEnv::MemoryRoot()};
   ::tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                                 &::tests::GenericJsonFieldFactory);
   auto writer = irs::IndexWriter::Make(files, irs::kOmCreate,
@@ -5062,7 +5062,7 @@ TEST(DirectoryTest, memory_segments_without_memory_to_compact_stay_in_blocks) {
 TEST(DirectoryTest, private_memory) {
   auto& db = irs::DuckDBEngine::Instance().instance();
   duckdb::MemoryFileSystem fs;
-  const irs::Directory files{db, fs, irs::MemoryIndexRoot()};
+  const irs::Directory files{db, fs, TestEnv::MemoryRoot()};
   ASSERT_EQ(irs::StorageKind::Memory, files.Kind());
 
   constexpr std::string_view kData = "private memory bytes";
@@ -5114,7 +5114,7 @@ TEST(DirectoryTest, private_memory) {
 TEST(DirectoryTest, private_memory_open_missing_file) {
   duckdb::MemoryFileSystem fs;
   const irs::Directory files{irs::DuckDBEngine::Instance().instance(), fs,
-                             irs::MemoryIndexRoot()};
+                             TestEnv::MemoryRoot()};
   ASSERT_THROW(files.Open("missing", duckdb::MappedFileAccess::NORMAL),
                duckdb::IOException);
   ASSERT_THROW(files.ReadWhole("missing"), duckdb::IOException);
@@ -5124,8 +5124,8 @@ TEST(DirectoryTest, private_memory_roots_are_separate) {
   auto& db = irs::DuckDBEngine::Instance().instance();
   duckdb::MemoryFileSystem lhs_fs;
   duckdb::MemoryFileSystem rhs_fs;
-  const irs::Directory lhs{db, lhs_fs, irs::MemoryIndexRoot()};
-  const irs::Directory rhs{db, rhs_fs, irs::MemoryIndexRoot()};
+  const irs::Directory lhs{db, lhs_fs, TestEnv::MemoryRoot()};
+  const irs::Directory rhs{db, rhs_fs, TestEnv::MemoryRoot()};
   const auto write = [](const irs::Directory& files, std::string_view name,
                         uint32_t value) {
     auto out = files.Create(name);
@@ -5162,7 +5162,7 @@ TEST(DirectoryTest, private_memory_reader_outlives_files) {
   irs::DirectoryReader reader;
   {
     const irs::Directory files{irs::DuckDBEngine::Instance().instance(), fs,
-                               irs::MemoryIndexRoot()};
+                               TestEnv::MemoryRoot()};
     WriteOneDocument(files);
     reader = irs::DirectoryReader{files, irs::tests::DefaultReaderOptions()};
   }

@@ -96,7 +96,7 @@ duckdb::DatabaseInstance& CsDb() {
 struct Seg {
   std::unique_ptr<duckdb::MemoryFileSystem> fs =
     std::make_unique<duckdb::MemoryFileSystem>();
-  irs::Directory dir{CsDb(), *fs, irs::MemoryIndexRoot()};
+  irs::Directory dir{CsDb(), *fs, "memory://bench"};
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
   uint64_t rows = 0;
@@ -265,7 +265,7 @@ void IrsWriteSeal(benchmark::State& state, Shape shape, bool nullable) {
   const uint64_t n = Rows();
   for (auto _ : state) {
     duckdb::MemoryFileSystem fs;
-    irs::Directory dir{CsDb(), fs, irs::MemoryIndexRoot()};
+    irs::Directory dir{CsDb(), fs, "memory://bench"};
     irs::ColWriter w{dir, kSeg, CsDb()};
     auto& cw = w.OpenColumn(kField, type);
     uint64_t pos = 0;

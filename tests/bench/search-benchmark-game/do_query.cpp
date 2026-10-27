@@ -95,7 +95,7 @@ irs::Directory OpenIndex(std::string_view path, std::string_view memory) {
   if (memory.empty()) {
     return local;
   }
-  irs::Directory copy{db, irs::MemoryIndexRoot()};
+  irs::Directory copy{db, "memory://search-benchmark-game"};
   std::vector<std::string> names;
   local.Visit([&](std::string_view name) { names.emplace_back(name); });
   std::vector<irs::byte_type> buffer(1 << 20);

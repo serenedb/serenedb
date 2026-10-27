@@ -31,6 +31,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/resource_manager.hpp>
 #include <memory>
+#include <string>
 
 #define SOURCE_LOCATION (__FILE__ ":" IRS_TO_STRING(__LINE__))
 
@@ -58,6 +59,7 @@ class TestEnv {
 
   // returns path to resource with the specified name
   static std::filesystem::path resource(const std::string& name);
+  static std::string MemoryRoot();
 
   static uint32_t iteration();
 

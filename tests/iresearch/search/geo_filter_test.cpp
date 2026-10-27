@@ -265,7 +265,7 @@ TEST(GeoFilterTest, check_reads_the_stored_shape) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   irs::DirectoryReader reader;
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
@@ -417,7 +417,7 @@ TEST(GeoFilterTest, query) {
   ])");
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   irs::DirectoryReader reader;
 
   // index data
@@ -795,7 +795,7 @@ TEST(GeoFilterTest, checkScorer) {
   ])");
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   irs::DirectoryReader reader;
 
   // index data
@@ -1034,7 +1034,7 @@ TEST(GeoFilterTest, per_node_scorer_override) {
   ])");
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   irs::DirectoryReader reader;
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,

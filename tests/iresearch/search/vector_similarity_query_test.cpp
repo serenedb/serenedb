@@ -188,7 +188,7 @@ class VectorSimilarityQueryTest : public ::testing::Test {
 
   irs::doc_id_t _docs = 0;
   irs::Directory _dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+                      TestEnv::MemoryRoot()};
   irs::DirectoryReader _reader;
   irs::ByVectorSimilarity _filter;
   irs::ColumnArgsFetcher _fetcher;
@@ -467,7 +467,7 @@ class RerankExactDistancesTest
   }
 
   irs::Directory _dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+                      TestEnv::MemoryRoot()};
   irs::DirectoryReader _reader;
 };
 

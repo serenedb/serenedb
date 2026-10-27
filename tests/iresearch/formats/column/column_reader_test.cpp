@@ -55,6 +55,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "gtest/gtest.h"
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -106,7 +107,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripMultiColumnMultiRowGroup) {
   auto b_val = [](uint64_t g) { return static_cast<int64_t>(g) * 3; };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwA = w.OpenColumn(kA, duckdb::LogicalType::BIGINT,
@@ -175,7 +176,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripVarcharOverflow) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwS = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
@@ -247,7 +248,7 @@ TEST_F(ColumnReaderTest, DictFsstValidityAbsorbed) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwS = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
@@ -314,7 +315,7 @@ TEST_F(ColumnReaderTest, AllNullColumnMergedStatsHasNoNullFalse) {
   constexpr uint32_t kRgSize = 4096;
   constexpr irs::field_id kA = 1;
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwA = w.OpenColumn(kA, duckdb::LogicalType::BIGINT,
@@ -352,7 +353,7 @@ TEST_F(ColumnReaderTest, DictFsstReusedBatchAcrossChunks) {
     return v[g % 5];
   };
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cw = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
@@ -419,7 +420,7 @@ TEST_F(ColumnReaderTest, GatherSparseAndDenseAcrossRowGroups) {
   auto val = [](uint64_t g) { return static_cast<int64_t>(g); };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwA = w.OpenColumn(kA, duckdb::LogicalType::BIGINT,
@@ -662,7 +663,7 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
       auto set = con.Query("SET force_compression = '" + codec + "'");
       ASSERT_FALSE(set->HasError()) << set->GetError();
       irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                         irs::MemoryIndexRoot()};
+                         TestEnv::MemoryRoot()};
       WriteColumn(Db(), dir, kId, c.type, c.rows, 4096, c.value_of);
       irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
       const auto* col = r.Column(kId);
@@ -707,7 +708,7 @@ TEST_F(ColumnReaderTest, GatherFilterReleasesPassedBlocks) {
   auto set = con.Query("SET force_compression = 'dict_fsst'");
   ASSERT_FALSE(set->HasError()) << set->GetError();
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   WriteColumn(Db(), dir, kId, duckdb::LogicalType::VARCHAR, kRows, 4096,
               value_of);
   con.Query("SET force_compression = 'auto'");
@@ -816,7 +817,7 @@ TEST_F(ColumnReaderTest, NestedGathersMatchScan) {
       auto set = con.Query("SET force_compression = '" + codec + "'");
       ASSERT_FALSE(set->HasError()) << set->GetError();
       irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                         irs::MemoryIndexRoot()};
+                         TestEnv::MemoryRoot()};
       WriteColumn(Db(), dir, kId, c.type, c.rows, 4096, c.value_of);
       irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
       const auto* col = r.Column(kId);
@@ -857,7 +858,7 @@ TEST_F(ColumnReaderTest, PointFetchRow) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwA = w.OpenColumn(kA, duckdb::LogicalType::BIGINT, false, kRgSize);
@@ -945,7 +946,7 @@ void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
   constexpr uint32_t kRgSize = 8192;
   constexpr irs::field_id kField = 1;
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", db};
     auto& cw = w.OpenColumn(kField, c.type, false, kRgSize, c.codec);
@@ -1192,7 +1193,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripStruct) {
   auto b_val = [](uint64_t g) { return "v" + std::to_string(g); };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwT = w.OpenColumn(kT, stype, /*skip_validity=*/false, kRgSize);
@@ -1288,7 +1289,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripTuple) {
   auto y_val = [](uint64_t g) { return static_cast<double>(g) / 4; };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwT = w.OpenColumn(kT, ttype, false, kRgSize);
@@ -1377,7 +1378,7 @@ TEST_F(ColumnReaderTest, GatherStructAcrossRowGroups) {
   auto b_val = [](uint64_t g) { return "v" + std::to_string(g); };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwT = w.OpenColumn(kT, stype, /*skip_validity=*/false, kRgSize);
@@ -1459,7 +1460,7 @@ TEST_F(ColumnReaderTest, GatherStructDenseKeepsFieldsOnOneRow) {
       ASSERT_FALSE(set->HasError()) << set->GetError();
       auto s_valid = [&](uint64_t g) { return !nulls || g % 7 != 0; };
       irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                         irs::MemoryIndexRoot()};
+                         TestEnv::MemoryRoot()};
       {
         irs::ColWriter w{dir, "seg", Db()};
         auto& cw = w.OpenColumn(kT, stype, /*skip_validity=*/false, 4096);
@@ -1534,7 +1535,7 @@ TEST_F(ColumnReaderTest, ScanStructAfterNullBlockKeepsFieldsOnOneRow) {
     return "value_" + std::to_string(g) + "_padding";
   };
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cw = w.OpenColumn(kT, stype, /*skip_validity=*/false, 4096);
@@ -1600,7 +1601,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripArray) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwArr = w.OpenColumn(kArr, atype, /*skip_validity=*/false, kRgSize);
@@ -1686,7 +1687,7 @@ TEST_F(ColumnReaderTest, GatherArrayAcrossRowGroups) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwArr = w.OpenColumn(kArr, atype, /*skip_validity=*/false, kRgSize);
@@ -1752,7 +1753,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripList) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwL = w.OpenColumn(kL, ltype, /*skip_validity=*/false, kRgSize);
@@ -1854,7 +1855,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripNestedList) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwL = w.OpenColumn(kL, ltype, /*skip_validity=*/false, kRgSize);
@@ -1920,7 +1921,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripNestedArray) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwL = w.OpenColumn(kL, ltype, /*skip_validity=*/false, kRgSize);
@@ -1977,7 +1978,7 @@ TEST_F(ColumnReaderTest, ListGatherSparse) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "lseg", Db()};
     auto& cwL = w.OpenColumn(kL, ltype, /*skip_validity=*/false, kRgSize);
@@ -2118,7 +2119,7 @@ std::vector<duckdb::Value> ScanVariantAll(const irs::ColumnReader& col,
 TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
   SetShreddingSize(Db(), -1);
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   std::vector<duckdb::Value> expected;
   WriteVariantViaSql(Db(), dir, "vseg", /*id=*/30,
                      "SELECT i::VARIANT FROM range(200) t(i)", /*rg_size=*/64,
@@ -2137,7 +2138,7 @@ TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
 TEST_F(ColumnReaderTest, VariantRoundTripShredded) {
   SetShreddingSize(Db(), 0);
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   std::vector<duckdb::Value> expected;
   WriteVariantViaSql(Db(), dir, "vseg", /*id=*/31,
                      "SELECT {'a': i, 'b': ('v' || i)}::VARIANT "
@@ -2157,7 +2158,7 @@ TEST_F(ColumnReaderTest, VariantRoundTripShredded) {
 TEST_F(ColumnReaderTest, VariantNullAndLeftover) {
   SetShreddingSize(Db(), 0);
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   std::vector<duckdb::Value> expected;
   WriteVariantViaSql(Db(), dir, "vseg", /*id=*/32,
                      "SELECT CASE WHEN i % 3 = 0 THEN NULL "
@@ -2178,7 +2179,7 @@ TEST_F(ColumnReaderTest, VariantNullAndLeftover) {
 TEST_F(ColumnReaderTest, VariantGatherSparse) {
   SetShreddingSize(Db(), 0);
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   std::vector<duckdb::Value> expected;
   WriteVariantViaSql(
     Db(), dir, "vseg", /*id=*/33,
@@ -2227,7 +2228,7 @@ size_t PinnedSegments(const irs::ColumnReader::ScanState& s) {
 TEST_F(ColumnReaderTest, VariantGathersReleaseBlocks) {
   SetShreddingSize(Db(), -1);
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   std::vector<duckdb::Value> expected;
   WriteVariantViaSql(Db(), dir, "vseg", /*id=*/35,
                      "SELECT (SELECT string_agg(md5((i * 8 + j)::VARCHAR), '') "
@@ -2262,7 +2263,7 @@ TEST_F(ColumnReaderTest, VariantGathersReleaseBlocks) {
 TEST_F(ColumnReaderTest, VariantGatherDenseThenAppend) {
   SetShreddingSize(Db(), -1);
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   std::vector<duckdb::Value> expected;
   WriteVariantViaSql(Db(), dir, "vseg", 36,
                      "SELECT ('v' || i)::VARIANT FROM range(4000) t(i)", 1024,
@@ -2306,7 +2307,7 @@ TEST_F(ColumnReaderTest, HyperLogLogDistinctCount) {
   constexpr irs::field_id kA = 40;
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwA = w.OpenColumn(
@@ -2353,7 +2354,7 @@ TEST_F(ColumnReaderTest, NormColumnRoundTrip) {
   auto norm_val = [](uint64_t d) { return static_cast<uint32_t>(d * 13 + 1); };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& nw = w.OpenNormColumn(kN, kRgSize);
@@ -2392,7 +2393,7 @@ TEST_F(ColumnReaderTest, BlobPointReaderFetch) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwB = w.OpenColumn(kB, duckdb::LogicalType::BLOB,
@@ -2444,7 +2445,7 @@ TEST_F(ColumnReaderTest, ReproSparseTinyPointRead) {
   constexpr irs::field_id kName = 70;  // dense column written first
   constexpr irs::field_id kB = 71;     // sparse column
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto append_blob = [&](irs::ColumnWriter& cw, uint64_t row,
@@ -2502,7 +2503,7 @@ TEST_F(ColumnReaderTest, ReproMultiRowSparseAppend) {
   constexpr irs::field_id kVal = 90;
   constexpr irs::field_id kPk = 91;
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     // VARCHAR column read back through a (BLOB-buffer) BlobPointReader
@@ -2567,7 +2568,7 @@ TEST_F(ColumnReaderTest, ReproDensePkWithSparseSibling) {
   constexpr irs::field_id kPk = 81;   // dense dict_fsst
   const std::vector<std::string> pks = {"pk1", "pk2", "pk3", "pk4"};
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto put = [&](irs::ColumnWriter& cw, uint64_t row, std::string_view s,
@@ -2620,7 +2621,7 @@ TEST_F(ColumnReaderTest, ReproShortPkPointRead) {
   };
   constexpr irs::field_id kInt = 73;
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     // A BIGINT column written FIRST, so the BLOB column's bytes land at a
@@ -2673,7 +2674,7 @@ TEST_F(ColumnReaderTest, ReproShortPkPointRead) {
 // three must be present in the reader (footer round-trip of empty columns).
 TEST_F(ColumnReaderTest, ReproEmptyColumnsAroundData) {
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     w.OpenColumn(0, duckdb::LogicalType::BLOB);
@@ -2716,7 +2717,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripStructAllNullRowGroup) {
   auto b_val = [](uint64_t g) { return "v" + std::to_string(g); };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwT = w.OpenColumn(kT, stype, /*skip_validity=*/false, kRgSize);
@@ -2830,7 +2831,7 @@ std::vector<duckdb::Value> ExtractVariantPath(
 TEST_F(ColumnReaderTest, VariantExtractPath) {
   SetShreddingSize(Db(), 0);
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   const std::string obj = "{'a': (i * 0.5)::DOUBLE, 'b': 'v' || i}::VARIANT";
   std::vector<duckdb::Value> ignored;
   WriteVariantViaSql(Db(), dir, "vseg", /*id=*/34,
@@ -2864,7 +2865,7 @@ TEST_F(ColumnReaderTest, VariantExtractPath) {
 TEST_F(ColumnReaderTest, VariantExtractPathMixedShredding) {
   SetShreddingSize(Db(), 120);  // rgs: 128,128,128,116 -> tail unshredded
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   const std::string obj = "{'a': (i * 0.5)::DOUBLE, 'b': 'v' || i}::VARIANT";
   std::vector<duckdb::Value> ignored;
   WriteVariantViaSql(Db(), dir, "vseg", /*id=*/34,
@@ -2944,7 +2945,7 @@ TEST_F(ColumnReaderTest, VariantExtractPathMixedShredding) {
 TEST_F(ColumnReaderTest, VariantGatherKeepsLeafOfPassedRowGroup) {
   SetShreddingSize(Db(), 120);
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   const std::string prefix(24, 'x');
   std::vector<duckdb::Value> ignored;
   WriteVariantViaSql(
@@ -2983,7 +2984,7 @@ TEST_F(ColumnReaderTest, VariantGatherKeepsLeafOfPassedRowGroup) {
 TEST_F(ColumnReaderTest, VariantLeavesBeforeARowAreReleased) {
   SetShreddingSize(Db(), 120);
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   const std::string prefix(24, 'x');
   std::vector<duckdb::Value> ignored;
   WriteVariantViaSql(
@@ -3046,7 +3047,7 @@ TEST_F(ColumnReaderTest, SparseAppendNullPadding) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwA = w.OpenColumn(kA, duckdb::LogicalType::BIGINT,
@@ -3085,7 +3086,7 @@ TEST_F(ColumnReaderTest, DictFsstShortRepeatedStrings) {
   auto val = [](uint64_t g) -> std::string { return kVals[g % 4]; };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwS = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
@@ -3141,7 +3142,7 @@ TEST_F(ColumnReaderTest, DictFsstShortRepeatedStrings) {
 TEST_F(ColumnReaderTest, SparseDictFsstTinyRepro) {
   constexpr irs::field_id kS = 91;
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwS = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
@@ -3196,7 +3197,7 @@ TEST_F(ColumnReaderTest, SparseDictFsstTinyRepro) {
 TEST_F(ColumnReaderTest, ScanCountDictFsstNulls) {
   constexpr irs::field_id kS = 93;
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwS = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
@@ -3237,7 +3238,7 @@ TEST_F(ColumnReaderTest, ScanCountDictFsstNulls) {
 TEST_F(ColumnReaderTest, SparseGarbageNullAppendRepro) {
   constexpr irs::field_id kS = 92;
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwS = w.OpenColumn(kS, duckdb::LogicalType::BLOB,
@@ -3283,7 +3284,7 @@ TEST_F(ColumnReaderTest, TwoColumnSparsePrefixRepro) {
   constexpr irs::field_id kName = 0;
   constexpr irs::field_id kPrefix = 1;
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   auto put = [](irs::ColumnWriter& cw, uint64_t row, const std::string& s) {
     duckdb::Vector v{duckdb::LogicalType::BLOB, 1};
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v)[0] =
@@ -3334,7 +3335,7 @@ TEST_F(ColumnReaderTest, SparsePrefixEngineDbRepro) {
   auto& edb = ::irs::DuckDBEngine::Instance().instance();
   constexpr irs::field_id kPrefix = 1;
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", edb};
     auto& cw0 = w.OpenColumn(0, duckdb::LogicalType::BLOB, false, 1024);
@@ -3401,7 +3402,7 @@ TEST_F(ColumnReaderTest, VectorColumnAutoPicksFloatCodec) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     // Default compression arg == COMPRESSION_AUTO (the analyze tournament).
@@ -3464,7 +3465,7 @@ TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
   };
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cw = w.OpenColumn(kV, vtype, /*skip_validity=*/false, kRgSize,

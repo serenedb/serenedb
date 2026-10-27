@@ -35,8 +35,10 @@
 #include <absl/strings/str_cat.h>
 #include <signal.h>  // for signal(...)/raise(...)
 
+#include <atomic>
 #include <cerrno>
 #include <ctime>
+#include <duckdb/common/memory_file_system.hpp>
 #include <filesystem>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
@@ -104,6 +106,12 @@ uint32_t TestEnv::iteration() { return IterationTracker::gSIteration; }
 
 std::filesystem::path TestEnv::resource(const std::string& name) {
   return gResourceDir / name;
+}
+
+std::string TestEnv::MemoryRoot() {
+  static constinit std::atomic<uint64_t> count{0};
+  return absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "test/",
+                      count.fetch_add(1, std::memory_order_relaxed));
 }
 
 bool TestEnv::prepare() {

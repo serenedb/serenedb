@@ -1276,7 +1276,7 @@ TEST(InverterPipelineTest, DenseAfterExplicitDoc) {
 namespace {
 
 TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
-  Directory dir{DuckDBEngine::Instance().instance(), MemoryIndexRoot()};
+  Directory dir{DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot()};
   auto writer =
     IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
@@ -1380,7 +1380,7 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
 }
 
 TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {
-  Directory dir{DuckDBEngine::Instance().instance(), MemoryIndexRoot()};
+  Directory dir{DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot()};
   auto writer =
     IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
@@ -1484,7 +1484,7 @@ bool InsertNullIfAny(const IndexWriter::Document& doc, field_id id,
 }
 
 TEST(InverterEndToEndTest, NullBlockUvfAllValidMaskCreatesNoField) {
-  Directory dir{DuckDBEngine::Instance().instance(), MemoryIndexRoot()};
+  Directory dir{DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot()};
   auto writer =
     IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
@@ -1526,7 +1526,7 @@ TEST(InverterEndToEndTest, NullBlockUvfAllValidMaskCreatesNoField) {
 }
 
 TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
-  Directory dir{DuckDBEngine::Instance().instance(), MemoryIndexRoot()};
+  Directory dir{DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot()};
   auto writer =
     IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
@@ -2358,7 +2358,7 @@ TEST(InverterEndToEndTest, EmptyPositionalFieldWritesNoStreams) {
     IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;
 
   const auto run_case = [&](bool text_tokens) {
-    Directory dir{DuckDBEngine::Instance().instance(), MemoryIndexRoot()};
+    Directory dir{DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot()};
     auto writer =
       IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);

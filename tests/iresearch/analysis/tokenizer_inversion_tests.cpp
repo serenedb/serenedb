@@ -304,7 +304,7 @@ class IndexUnderTest {
   }
 
  private:
-  Directory _dir{DuckDBEngine::Instance().instance(), MemoryIndexRoot()};
+  Directory _dir{DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot()};
 };
 
 void WriteBlock(IndexWriter::Transaction& trx,

@@ -66,7 +66,7 @@ auto StoreName() {
 
 TEST(directory_reader_test, open_empty_directory) {
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
 
   // No index
   ASSERT_SQL_ERROR((irs::DirectoryReader{dir}), ERRCODE_UNDEFINED_FILE);
@@ -74,7 +74,7 @@ TEST(directory_reader_test, open_empty_directory) {
 
 TEST(directory_reader_test, open_empty_index) {
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
 
   // Create empty index
   {
@@ -96,7 +96,7 @@ TEST(directory_reader_test, term_ranges_span_segments) {
   constexpr irs::field_id kFirst = 8;
   constexpr irs::field_id kAbsent = 9;
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                        irs::tests::DefaultWriterOptions());
   const auto add = [&](std::string_view both, std::string_view first) {
@@ -160,7 +160,7 @@ TEST(directory_reader_test, open) {
   const tests::Document* doc9 = gen.next();
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
 
   // create index
   {
@@ -361,7 +361,7 @@ TEST(segment_reader_test, segment_reader_has) {
   // has none (default)
   {
     irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       irs::MemoryIndexRoot()};
+                       TestEnv::MemoryRoot()};
     irs::SegmentMeta expected;
     expected.name = "_1";
 
@@ -378,7 +378,7 @@ TEST(segment_reader_test, segment_reader_has) {
   // has column store
   {
     irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       irs::MemoryIndexRoot()};
+                       TestEnv::MemoryRoot()};
     irs::SegmentMeta expected;
     expected.name = "_1";
 
@@ -395,7 +395,7 @@ TEST(segment_reader_test, segment_reader_has) {
   // has document mask
   {
     irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       irs::MemoryIndexRoot()};
+                       TestEnv::MemoryRoot()};
     irs::SegmentMeta expected;
     expected.name = "_1";
 
@@ -421,7 +421,7 @@ TEST(segment_reader_test, segment_reader_has) {
   // has all
   {
     irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       irs::MemoryIndexRoot()};
+                       TestEnv::MemoryRoot()};
     irs::SegmentMeta expected;
     expected.name = "_1";
 
@@ -446,7 +446,7 @@ TEST(segment_reader_test, segment_reader_has) {
 
 TEST(segment_reader_test, open_invalid_segment) {
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
 
   /* open invalid segment */
   {
@@ -472,7 +472,7 @@ TEST(segment_reader_test, open) {
   const tests::Document* doc5 = gen.next();
 
   irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   irs::DirectoryReader writer_snapshot;
   {
     // open writer

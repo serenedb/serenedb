@@ -425,7 +425,7 @@ int BasicMain() {
     auto tokenizer = irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{});
 
-    irs::Directory dir{Db(), irs::MemoryIndexRoot()};
+    irs::Directory dir{Db(), "memory://basic"};
     irs::IndexWriterOptions options;
     options.db = &Db();
     options.reader_options.db = &Db();

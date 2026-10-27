@@ -55,6 +55,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -217,7 +218,7 @@ void ExpectPayloadEq(irs::bytes_view payload, irs::doc_id_t doc) {
 template<size_t N>
 void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "tmp_next";
   WriteRanges(db, dir, kName, ranges);
 
@@ -322,7 +323,7 @@ void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
 template<size_t N>
 void TestRwSeek(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "tmp_seek";
   WriteRanges(db, dir, kName, ranges);
 
@@ -386,7 +387,7 @@ template<size_t N>
 void TestRwSeekNext(duckdb::DatabaseInstance& db,
                     const RangeType (&ranges)[N]) {
   irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "tmp_seek_next";
   WriteRanges(db, dir, kName, ranges);
 
@@ -534,7 +535,7 @@ void TestRwSeekRandom(duckdb::DatabaseInstance& db,
                       const RangeType (&ranges)[N],
                       const SeekType (&seeks)[K]) {
   irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "tmp_seek_rand";
   WriteRanges(db, dir, kName, ranges);
 
@@ -643,7 +644,7 @@ void TestRwSeekRandom(duckdb::DatabaseInstance& db,
 // true, mirroring "next() past eof".
 TEST_P(SparseBitmapTestCase, read_write_empty) {
   irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
 
   // Shape (a): segment with no columns at all.
   constexpr std::string_view kName = "empty_seg";
@@ -798,7 +799,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
             irs::doc_limits::min() + (kStepCount - 1) * kStep);
 
   irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "sparse_blocks";
   {
     irs::ColWriter w{dir, kName, Db()};
@@ -1073,7 +1074,7 @@ TEST_P(SparseBitmapTestCase, rw_all_seek_random) {
 // is itself a row in row-group 0, doc 50 is the second).
 TEST_P(SparseBitmapTestCase, insert_erase) {
   irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     irs::MemoryIndexRoot()};
+                     TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "insert_erase";
   constexpr irs::doc_id_t kErasedDoc = 42;
   constexpr irs::doc_id_t kSurvivorEarlyA = 50;    // valid, same RG as 42

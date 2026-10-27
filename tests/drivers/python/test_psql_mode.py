@@ -519,22 +519,15 @@ def test_psql_default_host_localhost() -> None:
         f"default host wasn't localhost: stdout={r.stdout!r} stderr={r.stderr!r}"
 
 
-def test_psql_default_port_5432() -> None:
+def test_psql_default_port_5432(tmp_path) -> None:
     # Default port is 5432 -- assert it lands in the DSN even when no
     # server listens there (we never actually connect).
-    env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
+    env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb", "PGHOST": str(tmp_path)}
     env.pop("PGPORT", None)
-    # Print the planned ATTACH path. We use --echo so the synthesised
-    # -cmd is visible, but the easier route: trigger the connection and
-    # let DuckDB's IO Error echo back the DSN. Either way the port
-    # value lives in the error message.
-    env["PGHOST"] = "127.0.0.1"
     r = subprocess.run(
-        [SERENED_BIN, "psql", "-h", "127.0.0.1", "-c", "SELECT 1;"],
+        [SERENED_BIN, "psql", "-h", str(tmp_path), "-c", "SELECT 1;"],
         capture_output=True, text=True, timeout=20, env=env,
     )
-    # Server isn't running on 5432 in the test fixture (it's on 6161),
-    # so we expect failure and a port=5432 mention in the error.
     assert "port=5432" in (r.stdout + r.stderr), \
         f"default port wasn't 5432: stdout={r.stdout!r} stderr={r.stderr!r}"
 

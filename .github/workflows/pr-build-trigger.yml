@@ -32,7 +32,7 @@ jobs:
     steps:
       - name: Post build triggers comment
         if: github.event_name == 'pull_request_target'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const body = [
@@ -40,23 +40,33 @@ jobs:
               '### CI Triggers',
               '_Check **Trigger Jobs** to start. Optionally enable extra checks below._',
               '',
-              '#### Extra (optional, additive -- ASAN+TSAN functional run by default)',
-              '- [ ] All architectures (amd64 + arm64)',
+              '#### Extra (optional; every config runs the suites the diff selects, the sanitizers without DuckDB\'s and iresearch\'s)',
+              '- [ ] Dev only (the amd64 dev config alone; reports as "serenedb | dev only", which is not the merge check)',
+              '- [ ] All architectures (arm64 tests too; arm64 always builds)',
               '- [ ] Ignore diff, run everything',
-              '- [ ] Extra ASAN (full suite set under ASAN, not just ours + drivers)',
-              '- [ ] Extra TSAN (full suite set under TSAN, not just ours + drivers)',
+              '- [ ] DuckDB sanitizers (the DuckDB suites the diff selects in asan, tsan and msan too)',
+              '- [ ] iresearch sanitizers (the iresearch tests the diff selects in asan, tsan and msan too)',
+              '- [ ] Bugfix check (the changed tests must fail on the merge base)',
+              '- [ ] sqlite corpus (tests/sqllogic/any/pg/sqlite)',
               '- [ ] BigLake tests (sqllogic + recovery + stress against the real catalog)',
+              '- Flaky check runs: 1 (the tests the diff changes run this many times in every config; any failing run makes the test flaky)',
               '',
               '---',
               '- [ ] **Trigger Jobs**',
             ].join('\n');
 
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: body,
-            });
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 });
+            if (!comments.some(c => (c.body || '').startsWith('<!-- serenedb-ci-report -->'))) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number,
+                body: '<!-- serenedb-ci-report -->\n### CI results\n\nNo run yet: check **Trigger Jobs** in the comment below.',
+              });
+            }
+
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
 
             if (context.payload.action === 'labeled') {
               await github.rest.issues.removeLabel({
@@ -70,7 +80,7 @@ jobs:
       - name: Get PR info
         id: pr-info
         if: github.event_name == 'issue_comment'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const { data: pr } = await github.rest.pulls.get({
@@ -90,7 +100,7 @@ jobs:
           PR_SHA: ${{ steps.pr-info.outputs.sha }}
           BASE_REF: ${{ steps.pr-info.outputs.base_ref }}
           IS_FORK: ${{ steps.pr-info.outputs.is_fork }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const comment = context.payload.comment;
@@ -105,12 +115,16 @@ jobs:
 
             const allArch = isChecked('All architectures');
             const everything = isChecked('Ignore diff, run everything');
-            const extraAsan = isChecked('Extra ASAN');
-            const extraTsan = isChecked('Extra TSAN');
+            const bugfix = isChecked('Bugfix check');
+            const corpus = isChecked('sqlite corpus');
             const biglake = isChecked('BigLake tests');
+            const duckdbSanitizers = isChecked('DuckDB sanitizers');
+            const iresearchSanitizers = isChecked('iresearch sanitizers');
+            const devOnly = isChecked('Dev only');
+            const flakyRuns = Math.min(10, Math.max(1, Number(body.match(/Flaky check runs:\s*(\d+)/)?.[1] ?? 1)));
 
             const { owner, repo } = context.repo;
-            const statusContext = 'serenedb | build & test';
+            const statusContext = devOnly ? 'serenedb | dev only' : 'serenedb | build & test';
 
             await github.rest.repos.createCommitStatus({
               owner, repo, sha,
@@ -134,11 +148,13 @@ jobs:
               workflow_id: 'build-manual.yml',
               ref: dispatchRef,
               inputs: {
-                LOCATION: allArch ? 'all' : 'linux-amd64',
+                LOCATION: devOnly ? 'dev-only' : allArch ? 'all' : 'linux-amd64',
                 EVERYTHING: everything.toString(),
-                EXTRA_ASAN: extraAsan.toString(),
-                EXTRA_TSAN: extraTsan.toString(),
+                BUGFIX: bugfix.toString(),
+                CORPUS: corpus.toString(),
                 BIGLAKE: biglake.toString(),
+                DUCKDB_SANITIZERS: duckdbSanitizers.toString(),
+                IRESEARCH_SANITIZERS: iresearchSanitizers.toString(),
                 PR_SHA: sha,
                 PR_NUMBER: String(context.payload.issue.number),
                 BUILD_CONFIG: JSON.stringify({
@@ -146,6 +162,7 @@ jobs:
                   PR_SHA: sha,
                   PR_BRANCH: branch,
                   PR_STATUS_CONTEXT: statusContext,
+                  FLAKY_RUNS: flakyRuns,
                 }),
               },
             });
@@ -174,57 +191,20 @@ jobs:
             });
 
             const opts = [
+              allArch && 'all architectures',
+              biglake && 'biglake',
+              bugfix && 'bugfix',
+              corpus && 'corpus',
+              devOnly && 'dev only',
+              duckdbSanitizers && 'duckdb sanitizers',
               everything && 'everything',
-              extraAsan && 'extra-asan',
-              extraTsan && 'extra-tsan',
-              allArch && 'all arch',
+              iresearchSanitizers && 'iresearch sanitizers',
             ].filter(Boolean);
             const optsStr = opts.length > 0 ? opts.join(', ') : 'default';
-            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-            const latestEntry = `**Latest:** ${optsStr} | [View Run](${runUrl}) | ${timestamp}`;
-
-            // Update the original comment: uncheck "Trigger Jobs" and update results
-            let updatedBody = body.replace('- [x] **Trigger Jobs**', '- [ ] **Trigger Jobs**');
-
-            // Results are stored as JSON in a hidden HTML comment for reliable parsing
-            const dataRe = /<!-- ci-data:(.*?) -->/;
-            const dataMatch = updatedBody.match(dataRe);
-            const history = dataMatch ? JSON.parse(dataMatch[1]) : [];
-            history.push({ opts: optsStr, url: runUrl, time: timestamp });
-
-            // Build visible output
-            const latest = history[history.length - 1];
-            let resultsBlock = `\n\n**Latest:** ${latest.opts} · [View Run](${latest.url}) · ${latest.time}`;
-
-            if (history.length > 1) {
-              const oldRuns = history.slice(0, -1).reverse().map(r =>
-                `| ${r.opts} | [View Run](${r.url}) | ${r.time} |`
-              );
-              resultsBlock += [
-                '',
-                '',
-                '<details><summary>Previous runs</summary>',
-                '',
-                '| Options | Link | Time |',
-                '|---------|------|------|',
-                ...oldRuns,
-                '',
-                '</details>',
-              ].join('\n');
-            }
-
-            // Replace or append results section
-            const sectionRe = /\n\n<!-- ci-data:.*? -->[\s\S]*$/;
-            const newData = `\n\n<!-- ci-data:${JSON.stringify(history)} -->${resultsBlock}`;
-            if (sectionRe.test(updatedBody)) {
-              updatedBody = updatedBody.replace(sectionRe, newData);
-            } else {
-              updatedBody += newData;
-            }
-
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: comment.id,
-              body: updatedBody,
-            });
+            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16) + ' UTC';
+            const latest = `\n\n<!-- ci-latest -->**Latest:** ${optsStr} · [View Run](${runUrl}) · ${timestamp}`;
+            const section = /\n\n<!-- ci-(data:.*?|latest) -->[\s\S]*$/;
+            const { data: current } = await github.rest.issues.getComment({ owner, repo, comment_id: comment.id });
+            let updatedBody = current.body.replace('- [x] **Trigger Jobs**', '- [ ] **Trigger Jobs**');
+            updatedBody = section.test(updatedBody) ? updatedBody.replace(section, latest) : updatedBody + latest;
+            await github.rest.issues.updateComment({ owner, repo, comment_id: comment.id, body: updatedBody });

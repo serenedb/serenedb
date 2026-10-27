@@ -21,6 +21,8 @@ waiting for that fork PR to land. --allow-pending (the pre-commit hook)
 passes it; without the flag the script exits 3, which the PR's pre-commit
 job turns into a pending `pre-commit` status. --rev checks the gitlinks
 of a commit instead of the index, --base compares with another commit.
+--reachable only checks that every gitlink of the commit can be fetched
+from its URL, which the PR's pre-commit job does before anything else.
 
 Validation prefers the local submodule clone (pure git, works offline);
 without one (CI checks out with submodules: false) it falls back to the
@@ -28,11 +30,13 @@ GitHub compare API. If neither works the hook fails closed; bypass a
 known-good commit with SKIP=check-submodule-pointers.
 """
 import argparse
+import functools
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -204,12 +208,28 @@ def github_repo(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+@functools.cache
+def api_token() -> str | None:
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        return token
+    try:
+        res = subprocess.run(
+            ["gh", "auth", "token"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if res.returncode != 0:
+        return None
+    return res.stdout.strip() or None
+
+
 def api_get(path: str) -> tuple[int, object]:
     req = urllib.request.Request(
         f"https://api.github.com/{path}",
         headers={"Accept": "application/vnd.github+json"},
     )
-    token = os.environ.get("GITHUB_TOKEN")
+    token = api_token()
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     code = 0
@@ -356,7 +376,35 @@ def check(path: str, override_sha: str | None, rev: str | None) -> str:
     return status
 
 
+def reachable(rev: str | None) -> int:
+    out = git("ls-tree", "-r", rev or "HEAD")
+    if out is None:
+        print(f"cannot list the gitlinks of {rev or 'HEAD'}", file=sys.stderr)
+        return 1
+    failed = 0
+    with tempfile.TemporaryDirectory() as work:
+        git("init", "-q", work)
+        for line in out.splitlines():
+            meta, _, path = line.partition("\t")
+            _, kind, sha = meta.split()
+            if kind != "commit":
+                continue
+            url = git("config", "-f", ".gitmodules", "--get", f"submodule.{path}.url")
+            if not url:
+                print(f"{path} is a gitlink without a .gitmodules entry", file=sys.stderr)
+                failed = 1
+            elif git("-C", work, "fetch", "-q", "--depth", "1", "--filter=tree:0", url, sha) is None:
+                print(f"{path} points at {sha}, which {url} does not serve", file=sys.stderr)
+                failed = 1
+    return failed
+
+
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    "--reachable",
+    action="store_true",
+    help="only check that every gitlink of the commit can be fetched from its URL",
+)
 parser.add_argument("--path", help="check only this submodule path")
 parser.add_argument("--sha", help="validate this sha instead of the staged gitlink")
 parser.add_argument("--rev", help="check the gitlinks of this commit, not the index")
@@ -372,6 +420,8 @@ parser.add_argument(
 )
 args, _ = parser.parse_known_args()
 
+if args.reachable:
+    sys.exit(reachable(args.rev))
 if args.path:
     paths = [args.path]
 else:

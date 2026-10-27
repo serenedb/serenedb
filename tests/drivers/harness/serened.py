@@ -20,15 +20,6 @@ PROTO_V3 = 196608
 DEFAULT_START_TIMEOUT = 120.0
 
 
-def free_port():
-    s = socket.socket()
-    try:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-    finally:
-        s.close()
-
-
 def reserve_port():
     sock = socket.socket()
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

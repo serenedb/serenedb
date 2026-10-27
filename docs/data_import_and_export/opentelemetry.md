@@ -56,11 +56,7 @@ service:
 A successful export answers `200` with an empty `Export<Signal>ServiceResponse`
 (`{}`).
 
-The tables are created **at startup**, in the listener's database, when a
-listener serves `?api=otel` and the schema is not there yet — so a fresh database needs no setup step, and the
-first export lands in a schema that already exists. A server started without
-the `otel` API creates nothing, and an export against a missing schema answers
-`500` naming the absent relation rather than creating it behind your back.
+The tables are created **at startup**, in the listener's database, when a listener serves `?api=otel` and the schema is not there yet — so a fresh database needs no setup step, and the first export lands in a schema that already exists.
 
 To run a schema of your own — extra promoted columns, expression indexes over
 hot attribute paths — apply it before the first start; startup leaves an
@@ -71,13 +67,14 @@ naming the database, the schema and the column. Fix the table, or leave it
 alone and start with the built-in schema somewhere new: `db=` or `schema=` on
 the listener creates it, e.g. `--listen='http://0.0.0.0:4318?api=otel&schema=otel'`.
 
-A table dropped or changed after startup fails each export to it with `500`:
-`the OpenTelemetry schema is missing: …` for a dropped table, and
-`invalid OpenTelemetry schema: column … is …, expected …` for a changed one.
-Other failures follow the OTLP retry rules: rejected data (a constraint or a
-value the column cannot hold) answers `400`, which clients do not retry, and
-a transient server condition (a transaction conflict, out of memory, shutdown)
-answers `503`, which they do.
+With `create_schema=false` on the listener, startup creates nothing — no database, schema, table or index — and a schema that does not match is logged as a warning instead of stopping the server. The listener's database must exist. Create the tables whenever you like, for example from your own copy of `resources/otel/otel_schema.sql`; until the tables an export writes to exist and match, the export answers `503`, which clients retry, so no data is lost while the schema is being set up:
+
+```bash
+serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel&create_schema=false'
+psql -h 127.0.0.1 -p 7890 -U postgres -d postgres -f my_otel_schema.sql
+```
+
+A table dropped or changed after startup fails each export to it with `503` until it is fixed: `the OpenTelemetry schema is missing: …` for a dropped table, and `invalid OpenTelemetry schema: column … is …, expected …` for a changed one. Other failures follow the OTLP retry rules: rejected data (a constraint or a value the column cannot hold) answers `400`, which clients do not retry, and a transient server condition (a transaction conflict, out of memory, shutdown) answers `503`, which they do.
 
 Each export is written in one transaction, so a failed export stores nothing: a metrics export whose points span several `otel_metrics_*` tables is written to all of them or to none, and a client retry cannot duplicate the tables that succeeded the first time.
 

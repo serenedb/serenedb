@@ -2,20 +2,10 @@
 
 # Driver-test runner.
 #
-# Runs against any reachable PG endpoint. Two modes:
-#
-#   * Local debug: developer starts serened by hand
+# Runs against any reachable PG endpoint, such as a serened started by hand:
 #       ninja serened
 #       ./build/bin/serened /tmp/datadir --listen postgres://0.0.0.0:5432
 #       tests/drivers/run.sh --lang python
-#
-#   * Docker (CI):
-#       tests/drivers/run_in_docker.sh
-#     which brings up serened in compose and execs this script with
-#     --host serenedb-single.
-#
-# Mirrors the shape of tests/sqllogic/run.sh on purpose so contributors
-# transfer their knowledge.
 
 set -u
 

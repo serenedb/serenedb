@@ -80,7 +80,7 @@ EOF
 : "${BRFS_AZURITE_IMAGE:=mcr.microsoft.com/azure-storage/azurite}"
 : "${BRFS_TOXIPROXY_IMAGE:=ghcr.io/shopify/toxiproxy}"
 : "${BRFS_NETSHOOT_IMAGE:=nicolaka/netshoot}"
-: "${BRFS_PYTHON_IMAGE:=${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}}"
+: "${BRFS_PYTHON_IMAGE:=$(python3 "$ROOT/scripts/ci/ci.py" image)}"
 
 MINIO_NAME="${BRFS_PREFIX}-minio"
 AZURITE_NAME="${BRFS_PREFIX}-azurite"

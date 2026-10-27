@@ -30,8 +30,8 @@ SELECT count(*) FROM chrec.chtest.vedernikoff;
 count
 6
 
-# Crash serened mid-connection; run_serened_loop.sh restarts it on the same
-# datadir, triggering catalog load + foreign-server boot replay.
+# Crash serened mid-connection; the runner restarts it on the same datadir,
+# triggering catalog load + foreign-server boot replay.
 statement ok
 SET sdb_faults = 'crash_on_packet';
 

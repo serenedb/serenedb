@@ -1,0 +1,144 @@
+name: task | serenedb build
+
+on:
+  workflow_call:
+    inputs:
+      CONFIG:
+        description: "perf, dev, asan, tsan or msan (scripts/ci/config.sh)"
+        type: string
+        required: true
+      LOCATION:
+        description: "Runner label"
+        type: string
+        required: false
+        default: "linux-amd64"
+      TESTS:
+        description: "Plan the test shards for tests that follow the build"
+        type: boolean
+        required: false
+        default: false
+      TEST_ARGS:
+        description: "Extra scripts/ci/test.py arguments (suite selection, budgets)"
+        type: string
+        required: false
+        default: ""
+      BIGLAKE_TEST_ARGS:
+        description: "scripts/ci/test.py arguments of the biglake check: also plan its shards"
+        type: string
+        required: false
+        default: ""
+      PR_SHA:
+        description: "Commit SHA to check out (empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
+      PR_NUMBER:
+        description: "PR number, recorded with the results"
+        type: string
+        required: false
+        default: ""
+    outputs:
+      digest:
+        description: "Input digest of the build"
+        value: ${{ jobs.build.outputs.digest }}
+      shards:
+        description: "The test shards, as JSON"
+        value: ${{ jobs.build.outputs.shards }}
+      biglake_shards:
+        description: "The biglake check's shards, as JSON"
+        value: ${{ jobs.build.outputs.biglake_shards }}
+
+env:
+  SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
+  SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+  SDB_SHA: ${{ inputs.PR_SHA || github.sha }}
+  SDB_PR: ${{ inputs.PR_NUMBER }}
+  SDB_BRANCH: ${{ inputs.PR_NUMBER == '' && github.ref_name || '' }}
+
+jobs:
+  build:
+    name: build ${{ inputs.CONFIG }} (${{ inputs.LOCATION }})
+    runs-on:
+      - ${{ inputs.LOCATION }}
+    timeout-minutes: 300
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      shards: ${{ steps.plan.outputs.shards }}
+      biglake_shards: ${{ steps.plan.outputs.biglake_shards }}
+    steps:
+      - name: Reap containers left on this runner
+        run: |
+          echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
+          filter="label=serenedb.owner=ci-${RUNNER_NAME}"
+          docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
+          docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
+          docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
+          git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.PR_SHA || github.sha }}
+          fetch-depth: 1
+          submodules: true
+          clean: false
+
+      - name: Clean the checkout
+        run: |
+          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
+          git clean -ffdxq
+          git submodule foreach --quiet --recursive 'git clean -ffdxq'
+          git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
+
+      - name: Build
+        id: build
+        run: |
+          set -f
+          ./scripts/ci/build_bundle.sh "${{ inputs.CONFIG }}" ${{ inputs.TEST_ARGS }}
+
+      - name: Plan the test shards
+        id: plan
+        if: inputs.TESTS
+        env:
+          BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
+        run: |
+          set -f
+          source scripts/ci/config.sh
+          sdb_config "${{ inputs.CONFIG }}"
+          python3 scripts/ci/ci.py timing --config "$CONFIG" --arch "$ARCH" --out out/timing.json
+          bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "${{ steps.build.outputs.digest }}")
+          plan() {
+            docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+              -v "$PWD:$PWD" -w "$PWD" -v "$bundle:$bundle" "$BUILD_IMAGE" \
+              python3 scripts/ci/ci.py shards --build-dir "$bundle" --config "$CONFIG" \
+                --timing out/timing.json --cpus "$(nproc)" -- "$@"
+          }
+          shards=$(plan ${{ inputs.TEST_ARGS }})
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+          echo "shards: $shards"
+          if [[ -n "$BIGLAKE_TEST_ARGS" ]]; then
+            read -ra biglake_args <<< "$BIGLAKE_TEST_ARGS"
+            shards=$(plan "${biglake_args[@]}")
+            echo "biglake_shards=$shards" >> "$GITHUB_OUTPUT"
+            echo "biglake shards: $shards"
+          fi
+
+      - name: Keep the timing snapshot for the shards
+        if: inputs.TESTS
+        uses: actions/upload-artifact@v7
+        with:
+          name: timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
+          path: out/timing.json
+          retention-days: 3
+
+      - name: Upload the build logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-logs-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
+          path: out/logs/
+          retention-days: 14
+
+      - name: Reap containers of this job
+        if: always()
+        run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"

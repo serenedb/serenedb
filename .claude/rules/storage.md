@@ -36,4 +36,4 @@ A file with a DuckDB storage version (a plain `ATTACH`, `serened shell`) stays r
 - A SereneDB value of a stored upstream enum starts at 200 and is listed in `IsSereneDBEnumValue`.
 - A new layout or compression is chosen only when the version written is SereneDB's; objects there get no owners or privileges.
 
-`tests/duckdb/run.sh --suite interop` checks both directions against the official DuckDB image; the steps for such a change are in [tests/duckdb/README.md](../../tests/duckdb/README.md).
+`scripts/ci/test.py --suite duckdb --duckdb-suite interop` checks both directions against the official DuckDB image; the steps for such a change are in [tests/duckdb/README.md](../../tests/duckdb/README.md).

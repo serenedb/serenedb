@@ -1,3 +1,4 @@
+import glob
 import hashlib
 import os
 import re
@@ -5,6 +6,7 @@ import subprocess
 import sys
 
 PLACEHOLDER = "<recorded>"
+PART = "<part>"
 KEY_WIDTH = 16
 SQL_WIDTH = 100
 LITERAL_WIDTH = 24
@@ -52,6 +54,35 @@ def write(path, text):
     with open(temp, "w") as f:
         f.write(text)
     os.replace(temp, path)
+
+
+def parts(text):
+    return re.split(rf"^{re.escape(PART)}\n\n", text, flags=re.M)
+
+
+def part_path(target, k):
+    return f"{target[:-len('.gen.test')]}.{k}.gen.test"
+
+
+def written(target):
+    stem = target[:-len(".gen.test")]
+    found = [path for path in glob.glob(f"{glob.escape(stem)}.*.gen.test")
+             if path[len(stem) + 1:-len(".gen.test")].isdigit()]
+    return found + ([target] if os.path.exists(target) else [])
+
+
+def assembled(text, target):
+    pieces = parts(text)
+    if len(pieces) == 1:
+        with open(target) as f:
+            return f.read()
+    setup = len(blocks(pieces[0]))
+    out = []
+    for k in range(1, len(pieces)):
+        with open(part_path(target, k)) as f:
+            got = blocks(f.read())
+        out += (got[:setup] if k == 1 else []) + [[PART]] + got[setup:]
+    return join(out)
 
 
 def escape(text):
@@ -178,15 +209,21 @@ def main(command, generator, target):
     path = generator[:-len(".py")] + ".recorded"
     if command == "write":
         filled, missing = fill(text, load(path))
-        write(target, filled)
+        pieces = parts(filled)
+        outputs = ({target: filled} if len(pieces) == 1 else
+                   {part_path(target, k): pieces[0] + body
+                    for k, body in enumerate(pieces[1:], 1)})
+        for stale in set(written(target)) - set(outputs):
+            os.remove(stale)
+        for out, content in outputs.items():
+            write(out, content)
         if missing:
             print(f"{target}: {missing} queries have no value in {path}, "
-                  "record them with run.sh --override", file=sys.stderr)
+                  "record them with scripts/ci/test.py --override", file=sys.stderr)
         return
     if not any(spots(block) for block in blocks(text)):
         return
-    with open(target) as f:
-        records = record(text, f.read(), target)
+    records = record(text, assembled(text, target), target)
     if records is None:
         print(f"{target} wasn't overridden, {path} is unchanged",
               file=sys.stderr)

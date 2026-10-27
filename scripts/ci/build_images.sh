@@ -1,159 +1,95 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# --- Configuration ---
-REGISTRY="${DOCKER_REGISTRY:-serenedb}"
-PUSH_ENABLED=${PUSH_IMAGES_2_REGISTRY:-false}
-BUILDER_NAME="serenedb-builder"
-OWNER_LABEL=()
-if [ -n "${SDB_DOCKER_OWNER:-}" ]; then
-	OWNER_LABEL=(--label "serenedb.owner=$SDB_DOCKER_OWNER")
-fi
-
-# --- Validate push credentials early ---
-if [ "$PUSH_ENABLED" = "true" ]; then
-	if [ -z "${DOCKER_USERNAME:-}" ] || [ -z "${DOCKER_PASSWORD:-}" ]; then
-		echo "[-] Error: DOCKER_USERNAME and DOCKER_PASSWORD are required to push."
-		exit 1
-	fi
-fi
-
-# --- Detect Host Architecture ---
-RAW_ARCH=$(uname -m)
-case $RAW_ARCH in
-x86_64) HOST_PLATFORM="linux/amd64" ;;
-aarch64) HOST_PLATFORM="linux/arm64" ;;
+MODE=${1:-local}
+case "$MODE" in
+local | missing | arch | merge) ;;
 *)
-	echo "[-] Error: Unsupported architecture: $RAW_ARCH"
+	echo "usage: $0 [local|missing|arch|merge]" >&2
+	exit 2
+	;;
+esac
+
+case $(uname -m) in
+x86_64) ARCH=amd64 ;;
+aarch64) ARCH=arm64 ;;
+*)
+	echo "[-] Error: Unsupported architecture: $(uname -m)" >&2
 	exit 1
 	;;
 esac
 
-# --- Ensure no stale login interferes with anonymous pulls ---
-docker logout >/dev/null 2>&1 || true
-
-# --- Setup Build Environment ---
-echo "[*] Configuring Docker Buildx..."
-
-if docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
-	docker buildx rm "$BUILDER_NAME" >/dev/null
+if [[ "$MODE" == arch || "$MODE" == merge ]]; then
+	if [ -z "${DOCKER_USERNAME:-}" ] || [ -z "${DOCKER_PASSWORD:-}" ]; then
+		echo "[-] Error: DOCKER_USERNAME and DOCKER_PASSWORD are required to push." >&2
+		exit 1
+	fi
+	trap 'docker logout >/dev/null 2>&1 || true' EXIT
+	docker logout >/dev/null 2>&1 || true
 fi
-docker buildx create --name "$BUILDER_NAME" --use --driver-opt network=host >/dev/null
 
-CONTEXTS=(--build-context drivers=../../tests/drivers)
+login() {
+	docker login -u "$DOCKER_USERNAME" --password-stdin <<<"$DOCKER_PASSWORD" >/dev/null
+}
 
-# --- Build Loop ---
-for os in ubuntu; do
-	REPO="${REGISTRY}/serenedb-build-${os}"
-	DOCKERFILE="build-${os}.Dockerfile"
+BUILT=()
 
-	echo "----------------------------------------------------"
-	echo "[*] Processing $os..."
+BUILDER_READY=false
+builder() {
+	if [ "$BUILDER_READY" = true ]; then
+		return
+	fi
+	BUILDER_READY=true
+	docker buildx rm serenedb-builder >/dev/null 2>&1 || true
+	docker buildx create --name serenedb-builder --use --driver-opt network=host >/dev/null
+}
 
-	# 1. Build Probe (host arch, loaded locally for version extraction)
-	echo "    > Building local probe ($HOST_PLATFORM)..."
-	docker buildx build --load --platform "$HOST_PLATFORM" -t "${REPO}:probe" "${CONTEXTS[@]}" --file "${DOCKERFILE}" . >/dev/null
-
-	# 2. Extract Version Info
-	echo "    > Inspecting versions..."
-	CLANG_VER=$(docker run --rm "${OWNER_LABEL[@]}" "${REPO}:probe" clang++ --version | grep -Po " \K\d+\.\d+[\.\d+]*" | head -1)
-
-	case ${os} in
-	ubuntu)
-		OS_VER=$(docker run --rm "${OWNER_LABEL[@]}" "${REPO}:probe" cat /etc/os-release | grep -Po "VERSION=\"\K\d+\.\d+[\.\d]*")
+image() {
+	local image=$1
+	shift
+	if docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+		if [ "$MODE" != missing ]; then
+			echo "[*] ${image} is in the registry"
+		fi
+		return
+	fi
+	case "$MODE" in
+	missing)
+		echo "$image"
 		;;
-	alpine)
-		OS_VER=$(docker run --rm "${OWNER_LABEL[@]}" "${REPO}:probe" cat /etc/alpine-release | grep -Po "\d+\.\d+[\.\d+]*")
+	local)
+		builder
+		echo "[*] Building ${image} for linux/${ARCH}..."
+		docker buildx build --load --platform "linux/${ARCH}" -t "$image" "$@"
+		;;
+	arch)
+		builder
+		echo "[*] Building ${image}-${ARCH}..."
+		docker buildx build --load --platform "linux/${ARCH}" -t "${image}-${ARCH}" "$@"
+		BUILT+=("${image}-${ARCH}")
+		;;
+	merge)
+		BUILT+=("$image")
 		;;
 	esac
+}
 
-	IMAGE_TAG="${OS_VER}_clang-${CLANG_VER}_commit-$(git rev-parse --short HEAD)"
-	echo "    > Resolved Tag: ${IMAGE_TAG}"
+image "$(python3 ci.py image)" --build-context drivers=../../tests/drivers --file build-ubuntu.Dockerfile .
 
-	# 3. Multi-Arch Build & Push
-	if [ "$PUSH_ENABLED" = "true" ]; then
-		for arch in amd64 arm64; do
-			echo "    > Building linux/${arch}..."
-			docker buildx build \
-				--platform "linux/${arch}" \
-				-t "${REPO}:${IMAGE_TAG}-${arch}" \
-				--output "type=docker,dest=/tmp/${os}-${arch}.tar" \
-				"${CONTEXTS[@]}" \
-				--file "${DOCKERFILE}" .
-		done
-
-		echo "    > Loading images..."
-		for arch in amd64 arm64; do
-			docker load </tmp/${os}-${arch}.tar
-			rm -f "/tmp/${os}-${arch}.tar"
-		done
-
-		echo "[*] Logging in to Docker Hub as $DOCKER_USERNAME..."
-		echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-		trap 'docker logout' EXIT INT TERM
-
-		for arch in amd64 arm64; do
-			echo "    > Pushing ${REPO}:${IMAGE_TAG}-${arch}..."
-			docker push "${REPO}:${IMAGE_TAG}-${arch}"
-		done
-
-		TAGS=(--tag "${REPO}:${IMAGE_TAG}")
-		if [ "${TAG_LATEST:-false}" = "true" ]; then
-			TAGS+=(--tag "${REPO}:latest")
-		fi
-		if [ -n "${EXTRA_TAG:-}" ]; then
-			TAGS+=(--tag "${REPO}:${EXTRA_TAG//\//-}")
-		fi
-		echo "    > Creating manifests ${TAGS[*]}..."
-		docker buildx imagetools create \
-			"${TAGS[@]}" \
-			"${REPO}:${IMAGE_TAG}-amd64" \
-			"${REPO}:${IMAGE_TAG}-arm64"
-
-		echo "[+] SUCCESS: Pushed ${REPO}:${IMAGE_TAG}"
-
-		for arch in amd64 arm64; do
-			docker rmi "${REPO}:${IMAGE_TAG}-${arch}" >/dev/null 2>&1 || true
-		done
-	else
-		echo "[!] SKIP: Pushing disabled."
-	fi
-
-	# Cleanup local probe tag
-	docker rmi "${REPO}:probe" >/dev/null 2>&1 || true
-
-done
-
-# --- Test fixture images ---
 FIXTURES=../../tests/sqllogic/fixtures
-FIXTURE_IMAGES=()
-docker logout >/dev/null 2>&1 || true
 for fixture in ollama postgres; do
-	FIXTURE_IMAGE="${REGISTRY}/serenedb-test-${fixture}:$("${FIXTURES}/image_tag.sh" "${FIXTURES}/${fixture}")"
-	echo "[*] Building ${FIXTURE_IMAGE}..."
-	if [ "$PUSH_ENABLED" = "true" ]; then
-		for arch in amd64 arm64; do
-			docker buildx build --platform "linux/${arch}" -t "${FIXTURE_IMAGE}-${arch}" \
-				--output "type=docker,dest=/tmp/${fixture}-${arch}.tar" "${FIXTURES}/${fixture}"
-		done
-		FIXTURE_IMAGES+=("${FIXTURE_IMAGE}")
-	else
-		docker buildx build --platform "$HOST_PLATFORM" -t "${FIXTURE_IMAGE}" --load "${FIXTURES}/${fixture}"
-	fi
+	image "serenedb/serenedb-test-${fixture}:$("${FIXTURES}/image_tag.sh" "${FIXTURES}/${fixture}")" \
+		"${FIXTURES}/${fixture}"
 done
 
-if [ ${#FIXTURE_IMAGES[@]} -ne 0 ]; then
-	echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-	trap 'docker logout' EXIT INT TERM
-	for fixture_image in "${FIXTURE_IMAGES[@]}"; do
-		fixture="${fixture_image#"${REGISTRY}"/serenedb-test-}"
-		fixture="${fixture%%:*}"
-		for arch in amd64 arm64; do
-			docker load <"/tmp/${fixture}-${arch}.tar"
-			rm -f "/tmp/${fixture}-${arch}.tar"
-			docker push "${fixture_image}-${arch}"
-		done
-		docker buildx imagetools create --tag "${fixture_image}" "${fixture_image}-amd64" "${fixture_image}-arm64"
-		echo "[+] SUCCESS: Pushed ${fixture_image}"
+if [ ${#BUILT[@]} -ne 0 ]; then
+	login
+	for image in "${BUILT[@]}"; do
+		if [ "$MODE" = arch ]; then
+			docker push "$image"
+		else
+			docker buildx imagetools create --tag "$image" "${image}-amd64" "${image}-arm64"
+		fi
+		echo "[+] Pushed ${image}"
 	done
 fi

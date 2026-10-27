@@ -50,10 +50,10 @@
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/store/memory_file.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/containers/monotonic_buffer.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/fst/fst_builder.hpp"
@@ -208,16 +208,15 @@ struct IntrusiveList {
 
 // Block of terms
 struct Block : private util::Noncopyable {
-  struct PrefixedOutput final : DataOutput,
-                                Node<PrefixedOutput>,
+  struct PrefixedOutput final : Node<PrefixedOutput>,
                                 private util::Noncopyable {
     explicit PrefixedOutput(VolatileByteRef&& prefix) noexcept
       : Node<PrefixedOutput>{this}, prefix{std::move(prefix)} {}
 
-    void WriteByte(byte_type b) final { weight.PushBack(b); }
+    void WriteByte(byte_type b) { weight.PushBack(b); }
 
-    void WriteData(const byte_type* b, uint64_t len) final {
-      weight.PushBack(b, b + len);
+    void WriteVarint(uint64_t n) {
+      irs::WriteVarint(n, [&](byte_type b) { weight.PushBack(b); });
     }
 
     VolatileByteRef prefix;
@@ -416,11 +415,11 @@ void MergeBlocks(Blocks& blocks, OutputBuffer& buffer) {
 
   // will store just several bytes here
   out.WriteByte(static_cast<byte_type>(root_block.meta));  // block metadata
-  out.WriteV64(root_block.start);  // start pointer of the block
+  out.WriteVarint(root_block.start);  // start pointer of the block
 
   if (BlockMeta::Floor(root_block.meta)) {
     SDB_ASSERT(blocks.size() - 1 < std::numeric_limits<uint32_t>::max());
-    out.WriteV32(static_cast<uint32_t>(blocks.size() - 1));
+    out.WriteVarint(blocks.size() - 1);
     for (++it; it != blocks.end(); ++it) {
       const auto* block = &it->Block();
       SDB_ASSERT(block->label != Block::kInvalidLabel);
@@ -428,7 +427,7 @@ void MergeBlocks(Blocks& blocks, OutputBuffer& buffer) {
 
       const uint64_t start_delta = it->Block().start - root_block.start;
       out.WriteByte(static_cast<byte_type>(block->label & 0xFF));
-      out.WriteV64(start_delta);
+      out.WriteVarint(start_delta);
       out.WriteByte(static_cast<byte_type>(block->meta));
 
       root_index.Append(std::move(it->Block().index));
@@ -525,8 +524,8 @@ class FieldWriter::Impl {
 
   OutputBuffer _output_buffer;
   Blocks _blocks;
-  MemoryOutput _suffix;        // term suffix column (per-field scratch)
-  MemoryOutput _stats;         // term stats column (per-field scratch)
+  BytesOutput _suffix;         // term suffix column (per-field scratch)
+  BytesOutput _stats;          // term stats column (per-field scratch)
   IdxWriter* _idx{};           // destination .idx (set via SetIdxWriter)
   IndexOutput* _blocks_out{};  // borrowed from _idx->BlocksOut() at prepare()
   PostingsWriter _pw;          // postings writer
@@ -557,7 +556,7 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
   Block::BlockIndex index;
 
   _pw.BeginBlock();
-  _stats.stream.WriteV64(_inline.size());
+  _stats.WriteV64(_inline.size());
 
   for (; begin < end; ++begin) {
     auto& e = _stack[begin];
@@ -569,42 +568,32 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
     SDB_ASSERT(data.size() - prefix <= UINT32_C(0x7FFFFFFF));
     const uint32_t suf_size = static_cast<uint32_t>(data.size() - prefix);
 
-    _suffix.stream.WriteV32(
-      leaf ? suf_size : ((suf_size << 1) | static_cast<uint32_t>(type)));
-    _suffix.stream.WriteData(data.data() + prefix, suf_size);
+    _suffix.WriteV32(leaf ? suf_size
+                          : ((suf_size << 1) | static_cast<uint32_t>(type)));
+    _suffix.WriteData(data.data() + prefix, suf_size);
 
     if (EntryType::Term == type) {
       const auto& term = e.Term();
-      _pw.Encode(_stats.stream, term);
+      _pw.Encode(_stats, term);
       _inline.append(term.inline_data, term.inline_size);
     } else {
       SDB_ASSERT(EntryType::Block == type);
 
       // current block start pointer should be greater
       SDB_ASSERT(block_start > e.Block().start);
-      _suffix.stream.WriteV64(block_start - e.Block().start);
+      _suffix.WriteV64(block_start - e.Block().start);
       index.Append(std::move(e.Block().index));
     }
   }
 
-  const auto block_size = _suffix.stream.Position();
-
-  _suffix.stream.Flush();
-  _stats.stream.Flush();
-
-  _blocks_out->WriteV64(ShiftPack64(block_size, leaf));
-
-  auto copy = [this](const byte_type* b, size_t len) {
-    _blocks_out->WriteData(b, len);
-  };
-
-  _suffix.file.Visit(copy);
-
-  _blocks_out->WriteV64(static_cast<uint64_t>(_stats.stream.Position()));
-  _stats.file.Visit(copy);
-
-  _suffix.stream.Reset();
-  _stats.stream.Reset();
+  const auto suffix = _suffix.Bytes();
+  const auto stats = _stats.Bytes();
+  _blocks_out->WriteV64(ShiftPack64(suffix.size(), leaf));
+  _blocks_out->WriteData(suffix.data(), suffix.size());
+  _blocks_out->WriteV64(stats.size());
+  _blocks_out->WriteData(stats.data(), stats.size());
+  _suffix.Clear();
+  _stats.Clear();
 
   // add new block to the list of created blocks
   _blocks.emplace_back(bytes_view{_last_term.View().data(), prefix},
@@ -706,8 +695,6 @@ FieldWriter::Impl::Impl(bool compaction, IResourceManager& rm,
                         uint32_t min_block_size, uint32_t max_block_size)
   : _output_buffer{rm, 32},
     _blocks{ManagedTypedAllocator<Entry>{rm}},
-    _suffix{rm},
-    _stats{rm},
     _stack{ManagedTypedAllocator<Entry>{rm}},
     _fst_buf{new FstBuffer{rm}},
     _prefixes{kDefaultSize, 0},
@@ -733,8 +720,8 @@ void FieldWriter::Impl::prepare(const FlushState& state) {
 
   _pw.Prepare(state);
 
-  _suffix.Reset();
-  _stats.Reset();
+  _suffix.Clear();
+  _stats.Clear();
 }
 
 void FieldWriter::Impl::write(const BasicTermReader& reader) {

@@ -127,8 +127,9 @@ void AssertDescription(
 void AssertReadWrite(const irs::ParametricDescription& description) {
   irs::bstring buf;
   {
-    irs::BytesOutput out(buf);
+    irs::BytesOutput out;
     description.Write(out);
+    buf = out.Bytes();
     ASSERT_FALSE(buf.empty());
   }
   {

@@ -165,9 +165,9 @@ void IndexSegment::compute_features() {}
 
 void IndexSegment::insert_sorted(const Ifield* f) {
   if (f) {
-    _buf.clear();
-    irs::BytesOutput out{_buf};
+    irs::BytesOutput out;
     if (f->Write(out)) {
+      _buf = out.Bytes();
       _sort.emplace_back(std::move(_buf), doc(), _empty_count);
       _empty_count = 0;
     } else {
@@ -179,11 +179,11 @@ void IndexSegment::insert_sorted(const Ifield* f) {
 }
 
 void IndexSegment::insert_stored(const Ifield& f) {
-  _buf.clear();
-  irs::BytesOutput out{_buf};
+  irs::BytesOutput out;
   if (!f.Write(out)) {
     return;
   }
+  _buf = out.Bytes();
 
   const size_t id = _columns.size();
   EXPECT_LE(id, std::numeric_limits<irs::field_id>::max());

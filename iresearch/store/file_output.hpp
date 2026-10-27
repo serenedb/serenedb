@@ -56,7 +56,7 @@ class FileOutput final : public IndexOutput {
   uint32_t Checksum() final;
   void CloseImpl() final;
   void Release() noexcept;
-  void WriteDirect(const byte_type* b, size_t len) final;
+  void Overflow(const byte_type* data, size_t size) final;
   void WriteHandle(const byte_type* b, size_t len);
   void CacheBytes(const byte_type* b, size_t len) noexcept;
   void FinishCache(bool published) noexcept;

@@ -176,8 +176,7 @@ class FreqNormProducer {
     }
   }
 
-  template<typename Output>
-  static void Write(Entry entry, Output& out) {
+  static void Write(Entry entry, DataOutput& out) {
     // TODO(mbkkt) Compute difference second time looks unnecessary.
     SDB_ASSERT(entry.freq >= 1);
     out.WriteV32(entry.freq);

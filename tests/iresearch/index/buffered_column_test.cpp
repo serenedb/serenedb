@@ -37,10 +37,9 @@
 #include <iresearch/formats/column/norm_writer.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/store/directory.hpp>
-#include <iresearch/store/memory_file.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "memory_file_bytes.hpp"
+#include "memory_output.hpp"
 #include "tests_shared.hpp"
 
 namespace {

@@ -18,21 +18,36 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "iresearch/utils/bytes_output.hpp"
 
-#include <iresearch/store/memory_file.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/bytes_output.hpp>
-#include <iresearch/utils/string.hpp>
+#include <algorithm>
+#include <cstring>
 
-namespace tests {
+namespace irs {
+namespace {
 
-inline irs::bstring Bytes(irs::MemoryFile& file) {
-  irs::bstring bytes;
-  irs::BytesOutput out{bytes};
-  file.Visit(
-    [&](const irs::byte_type* b, size_t len) { out.WriteData(b, len); });
-  return bytes;
+constexpr size_t kMinCapacity = 64;
+
+}  // namespace
+
+void BytesOutput::Overflow(const byte_type* data, size_t size) {
+  const auto written = static_cast<size_t>(_pos - _begin);
+  const auto capacity = static_cast<size_t>(_end - _begin);
+  if (written + size > capacity) {
+    const auto grown = std::max({2 * capacity, written + size, kMinCapacity});
+    auto buf = std::make_unique_for_overwrite<byte_type[]>(grown);
+    if (written != 0) {
+      std::memcpy(buf.get(), _begin, written);
+    }
+    _buf = std::move(buf);
+    _begin = _buf.get();
+    _pos = _begin + written;
+    _end = _begin + grown;
+  }
+  if (size != 0) {
+    std::memcpy(_pos, data, size);
+    _pos += size;
+  }
 }
 
-}  // namespace tests
+}  // namespace irs

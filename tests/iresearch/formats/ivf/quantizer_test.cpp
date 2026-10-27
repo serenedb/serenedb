@@ -33,7 +33,6 @@
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/memory_file.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <limits>
@@ -44,7 +43,7 @@
 #include <utility>
 #include <vector>
 
-#include "memory_file_bytes.hpp"
+#include "memory_output.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;
@@ -64,10 +63,9 @@ score_t ScoreTol(score_t want) { return kScoreTol * (1.f + std::fabs(want)); }
 // The writer emits a u64 length prefix ahead of the blob, exactly as
 // IvfWriter::Flush stores it; strip it to get what MakeQuantizerStats sees.
 bstring SerializeStats(const QuantizerWriter& writer) {
-  bstring framed;
-  BytesOutput out{framed};
+  BytesOutput out;
   writer.Serialize(out);
-  return framed.substr(sizeof(uint64_t));
+  return bstring{out.Bytes().substr(sizeof(uint64_t))};
 }
 
 constexpr size_t kFastScanBbs = 32;

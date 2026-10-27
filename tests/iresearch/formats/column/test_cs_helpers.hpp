@@ -112,12 +112,12 @@ class BstringDataOutput final : public DataOutput {
  public:
   explicit BstringDataOutput(bstring& buf) noexcept : _buf{&buf} {}
 
-  void WriteByte(byte_type b) final { _buf->push_back(b); }
-  void WriteData(const byte_type* b, uint64_t len) final {
-    _buf->append(b, len);
+ private:
+  void Overflow(const byte_type* data, size_t size) final {
+    _buf->append(data, size);
+    _offset += size;
   }
 
- private:
   bstring* _buf;
 };
 

@@ -34,7 +34,6 @@
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/directory.hpp>
-#include <iresearch/store/memory_file.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <numeric>
@@ -43,7 +42,7 @@
 #include <utility>
 #include <vector>
 
-#include "memory_file_bytes.hpp"
+#include "memory_output.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;

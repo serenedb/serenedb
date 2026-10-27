@@ -171,7 +171,6 @@ add_executable(
     search/wildcard_ngram_filter_test.cpp
     store/directory_tests.cpp
     store/index_input_tests.cpp
-    store/memory_index_output_tests.cpp
     store/simulated_object_store_tests.cpp
     store/store_utils_tests.cpp
     utils/async_utils_tests.cpp
@@ -179,7 +178,6 @@ add_executable(
     utils/bit_utils_tests.cpp
     utils/bitset_tests.cpp
     utils/bitvector_tests.cpp
-    utils/container_utils_tests.cpp
     utils/crc_test.cpp
     utils/file_utils_tests.cpp
     utils/fst_builder_test.cpp

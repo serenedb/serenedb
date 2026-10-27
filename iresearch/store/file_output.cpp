@@ -56,11 +56,10 @@ IndexOutput::ptr FileOutput::Open(duckdb::FileSystem& fs,
 FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
                        const Directory::Observers& observers, bool remote,
                        duckdb::BlockCache* cache)
-  : IndexOutput{_buf, std::end(_buf)},
-    _handle{std::move(handle)},
-    _observers{observers},
-    _remote{remote} {
+  : _handle{std::move(handle)}, _observers{observers}, _remote{remote} {
   SDB_ASSERT(_handle);
+  _begin = _pos = _buf;
+  _end = std::end(_buf);
   if (!_remote) {
     return;
   }
@@ -84,10 +83,10 @@ FileOutput::~FileOutput() {
 }
 
 void FileOutput::Flush() {
-  if (Length() != 0) {
-    WriteHandle(_buf, Length());
+  if (_pos != _begin) {
+    WriteHandle(_begin, static_cast<size_t>(_pos - _begin));
   }
-  _pos = _buf;
+  _pos = _begin;
 }
 
 uint32_t FileOutput::Checksum() {
@@ -121,33 +120,37 @@ void FileOutput::CloseImpl() {
   }
 }
 
-void FileOutput::WriteDirect(const byte_type* b, size_t len) {
+void FileOutput::Overflow(const byte_type* data, size_t size) {
   auto remain = Remain();
-  SDB_ASSERT(len >= remain);
+  SDB_ASSERT(size >= remain);
   const auto option =
-    static_cast<size_t>(Length() != 0) * 2 + static_cast<size_t>(remain != 0);
+    static_cast<size_t>(_pos != _begin) * 2 + static_cast<size_t>(remain != 0);
   switch (option) {
     case 2 + 1:
-      WriteBuffer(b, remain);
-      b += remain;
-      len -= remain;
+      std::memcpy(_pos, data, remain);
+      _pos += remain;
+      data += remain;
+      size -= remain;
       [[fallthrough]];
     case 2 + 0:
       Flush();
       remain = Remain();
       [[fallthrough]];
     case 0 + 1:
-      if (remain <= len) {
-        const auto buffer_len = len % remain;
-        const auto direct_len = len - buffer_len;
-        WriteHandle(b, direct_len);
-        if (buffer_len == 0) {
+      if (remain <= size) {
+        const auto buffer_size = size % remain;
+        const auto direct_size = size - buffer_size;
+        WriteHandle(data, direct_size);
+        if (buffer_size == 0) {
           return;
         }
-        b += direct_len;
-        len = buffer_len;
+        data += direct_size;
+        size = buffer_size;
       }
-      WriteBuffer(b, len);
+      if (size != 0) {
+        std::memcpy(_pos, data, size);
+        _pos += size;
+      }
       break;
     default:
       SDB_UNREACHABLE();

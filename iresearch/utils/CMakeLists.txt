@@ -5,6 +5,7 @@ target_sources(
         async_utils.cpp
         attributes.cpp
         bit_packing.cpp
+        bytes_output.cpp
         conjunction_acceptor.cpp
         cpu_features.cpp
         crash_handler.cpp

@@ -40,12 +40,11 @@
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/store/directory.hpp"
-#include "iresearch/store/memory_file.hpp"
 #include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/duckdb_engine.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "memory_output.hpp"
 
 namespace {
 
@@ -272,9 +271,7 @@ struct PackedColumn {
       bytes += irs::NormSlotsSize(region) +
                (region.exceptions == 0 ? 0 : irs::NormTableSize(region));
     }
-    irs::BytesOutput sink{data};
-    file.Visit(
-      [&](const irs::byte_type* b, size_t len) { sink.WriteData(b, len); });
+    data = tests::Bytes(file);
     in = std::make_unique<irs::BytesViewInput>(data);
     column = std::make_unique<irs::NormColumnReader>(1, writer.Meta(), *in);
     reader = irs::MakePersistedNormReader(*column);

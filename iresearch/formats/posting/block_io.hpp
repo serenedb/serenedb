@@ -121,16 +121,14 @@ IRS_FORCE_INLINE void End(InputType& in, const byte_type* begin,
   }
 }
 
-template<typename Output>
-void WriteSlack(Output& out) {
+inline void WriteSlack(DataOutput& out) {
   static constexpr byte_type kZeros[block_codec::kInSlack]{};
   out.WriteData(kZeros, sizeof(kZeros));
 }
 
-template<typename Output>
-IRS_FORCE_INLINE void WriteTailDelta(uint32_t len, Output& out,
-                                     const uint32_t* in, uint32_t prev,
-                                     uint32_t* buf) {
+IRS_FORCE_INLINE inline void WriteTailDelta(uint32_t len, DataOutput& out,
+                                            const uint32_t* in, uint32_t prev,
+                                            uint32_t* buf) {
   SDB_ASSERT(1 <= len && len <= kBlock);
   SDB_ASSERT(std::is_sorted(in, in + len));
   SDB_ASSERT(std::adjacent_find(in, in + len) == in + len);
@@ -148,9 +146,8 @@ IRS_FORCE_INLINE inline uint32_t EncodeBlock(
                                   options);
 }
 
-template<typename Output>
-IRS_FORCE_INLINE void WriteTail(
-  uint32_t len, Output& out, const uint32_t* in, uint32_t* buf,
+IRS_FORCE_INLINE inline void WriteTail(
+  uint32_t len, DataOutput& out, const uint32_t* in, uint32_t* buf,
   const block_codec::EncodeOptions& options = {}) {
   SDB_ASSERT(1 <= len && len <= kBlock);
   auto* const bytes = reinterpret_cast<byte_type*>(buf);

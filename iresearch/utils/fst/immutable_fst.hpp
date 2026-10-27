@@ -86,7 +86,7 @@ class ImmutableByteFst : private util::Noncopyable {
                                                 IResourceManager& rm);
 
   template<typename Stats>
-  static bool Write(const VectorByteFst& fst, BufferedOutput& out,
+  static bool Write(const VectorByteFst& fst, DataOutput& out,
                     const Stats& stats);
 
   StateId Start() const noexcept { return _start; }
@@ -181,7 +181,7 @@ inline std::unique_ptr<ImmutableByteFst> ImmutableByteFst::Read(
 }
 
 template<typename Stats>
-bool ImmutableByteFst::Write(const VectorByteFst& fst, BufferedOutput& out,
+bool ImmutableByteFst::Write(const VectorByteFst& fst, DataOutput& out,
                              const Stats& stats) {
   static_assert(sizeof(StateId) == sizeof(uint32_t));
 

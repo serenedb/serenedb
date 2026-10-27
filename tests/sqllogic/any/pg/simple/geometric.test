@@ -450,7 +450,7 @@ INSERT INTO geo_points VALUES (1, '(0,0)'), (2, '(1,1)'), (3, '(3,4)'), (4, '(-1
 query
 SELECT a.id AS a, b.id AS b, a.p + b.p AS plus, a.p - b.p AS minus, a.p * b.p AS times, a.p <-> b.p AS dist,
        a.p << b.p AS l, a.p >> b.p AS r, a.p <^ b.p AS below, a.p >^ b.p AS above, a.p <<| b.p AS below2,
-       a.p |>> b.p AS above2, point_horiz(a.p, b.p) AS horiz, point_vert(a.p, b.p) AS vert, a.p ~= b.p AS same
+       a.p |>> b.p AS above2, a.p ?- b.p AS horiz, a.p ?| b.p AS vert, a.p ~= b.p AS same
 FROM geo_points a, geo_points b
 ORDER BY a.id, b.id;
 ----
@@ -520,7 +520,7 @@ INSERT INTO geo_lines VALUES (1, '{1,-1,0}'), (2, '{0,-1,2}'), (3, '{-1,0,3}'), 
 
 
 query
-SELECT a.id AS a, b.id AS b, line_intersect(a.l, b.l) AS intersects, line_parallel(a.l, b.l) AS parallel, line_perp(a.l, b.l) AS perp,
+SELECT a.id AS a, b.id AS b, a.l ?# b.l AS intersects, a.l ?|| b.l AS parallel, a.l ?-| b.l AS perp,
        a.l <-> b.l AS dist, a.l # b.l AS crossing
 FROM geo_lines a, geo_lines b
 ORDER BY a.id, b.id;
@@ -576,7 +576,7 @@ INSERT INTO geo_lsegs VALUES (1, '[(0,0),(2,2)]'), (2, '[(0,2),(2,0)]'), (3, '[(
 
 
 query
-SELECT a.id AS a, b.id AS b, lseg_intersect(a.s, b.s) AS intersects, lseg_parallel(a.s, b.s) AS parallel, lseg_perp(a.s, b.s) AS perp,
+SELECT a.id AS a, b.id AS b, a.s ?# b.s AS intersects, a.s ?|| b.s AS parallel, a.s ?-| b.s AS perp,
        a.s <-> b.s AS dist, a.s # b.s AS crossing, a.s ## b.s AS closest
 FROM geo_lsegs a, geo_lsegs b
 ORDER BY a.id, b.id;
@@ -635,7 +635,7 @@ query
 SELECT a.id AS a, b.id AS b, a.b && b.b AS overlap, a.b << b.b AS l, a.b &< b.b AS ol, a.b >> b.b AS r,
        a.b &> b.b AS orr, a.b <<| b.b AS below, a.b &<| b.b AS obelow, a.b |>> b.b AS above, a.b |&> b.b AS oabove,
        a.b <@ b.b AS inside, a.b @> b.b AS contains, a.b <^ b.b AS belowe, a.b >^ b.b AS abovee, a.b ~= b.b AS same,
-       box_overlap(a.b, b.b) AS intersects, a.b <-> b.b AS dist, a.b # b.b AS common
+       a.b ?# b.b AS intersects, a.b <-> b.b AS dist, a.b # b.b AS common
 FROM geo_boxes a, geo_boxes b
 ORDER BY a.id, b.id;
 ----
@@ -691,7 +691,7 @@ INSERT INTO geo_paths VALUES (1, '[(0,0),(2,0),(2,2)]'), (2, '((0,0),(2,0),(2,2)
 
 
 query
-SELECT a.id AS a, b.id AS b, path_inter(a.p, b.p) AS intersects, a.p <-> b.p AS dist, a.p + b.p AS joined
+SELECT a.id AS a, b.id AS b, a.p ?# b.p AS intersects, a.p <-> b.p AS dist, a.p + b.p AS joined
 FROM geo_paths a, geo_paths b
 ORDER BY a.id, b.id;
 ----
@@ -1075,7 +1075,7 @@ p	c	inside	contains	dist1	dist2
 
 
 query
-SELECT s.id AS s, l.id AS l, s.s <@ l.l AS inside, inter_sl(s.s, l.l) AS intersects, s.s <-> l.l AS dist1,
+SELECT s.id AS s, l.id AS l, s.s <@ l.l AS inside, s.s ?# l.l AS intersects, s.s <-> l.l AS dist1,
        l.l <-> s.s AS dist2, l.l ## s.s AS closest
 FROM geo_lsegs s, geo_lines l
 ORDER BY s.id, l.id;
@@ -1109,7 +1109,7 @@ s	l	inside	intersects	dist1	dist2	closest
 
 
 query
-SELECT s.id AS s, b.id AS b, s.s <@ b.b AS inside, inter_sb(s.s, b.b) AS intersects, s.s <-> b.b AS dist1,
+SELECT s.id AS s, b.id AS b, s.s <@ b.b AS inside, s.s ?# b.b AS intersects, s.s <-> b.b AS dist1,
        b.b <-> s.s AS dist2, s.s ## b.b AS closest
 FROM geo_lsegs s, geo_boxes b
 ORDER BY s.id, b.id;
@@ -1143,7 +1143,7 @@ s	b	inside	intersects	dist1	dist2	closest
 
 
 query
-SELECT l.id AS l, b.id AS b, inter_lb(l.l, b.b) AS intersects
+SELECT l.id AS l, b.id AS b, l.l ?# b.b AS intersects
 FROM geo_lines l, geo_boxes b
 ORDER BY l.id, b.id;
 ----

@@ -2729,8 +2729,8 @@ void RegisterPointFunctions(Functions& functions) {
   Add(functions, "|>>", Function<&PointAbove>());
   Operator(functions, "<^", "point_below", Function<&PointBelow>());
   Add(functions, "<<|", Function<&PointBelow>());
-  Add(functions, "point_vert", Function<&PointVertical>());
-  Add(functions, "point_horiz", Function<&PointHorizontal>());
+  Operator(functions, "?|", "point_vert", Function<&PointVertical>());
+  Operator(functions, "?-", "point_horiz", Function<&PointHorizontal>());
   Operator(functions, "~=", "point_eq", Function<&PointEq>());
   Add(functions, "point_ne", Function<&PointNe>());
   Operator(functions, "<@", "on_pl", Function<&PointOnLine>());
@@ -2756,9 +2756,9 @@ void RegisterLineFunctions(Functions& functions) {
   Add(functions, "ishorizontal", Function<&LineHorizontal>());
   Add(functions, "isparallel", Function<&LinesParallel>());
   Add(functions, "isperp", Function<&LinesPerpendicular>());
-  Add(functions, "line_intersect", Function<&LinesIntersect>());
-  Add(functions, "line_parallel", Function<&LinesParallel>());
-  Add(functions, "line_perp", Function<&LinesPerpendicular>());
+  Operator(functions, "?#", "line_intersect", Function<&LinesIntersect>());
+  Operator(functions, "?||", "line_parallel", Function<&LinesParallel>());
+  Operator(functions, "?-|", "line_perp", Function<&LinesPerpendicular>());
   Add(functions, "line_vertical", Function<&LineVertical>());
   Add(functions, "line_horizontal", Function<&LineHorizontal>());
   Add(functions, "line_eq", Function<&LinesEqual>());
@@ -2767,7 +2767,7 @@ void RegisterLineFunctions(Functions& functions) {
   Operator(functions, "<->", "dist_lp", Function<&LinePointDistance>());
   Operator(functions, "<->", "dist_ls", Function<&LineLsegDistance>());
   Operator(functions, "##", "close_ls", Function<&LineLsegClosest>());
-  Add(functions, "inter_lb", Function<&LineIntersectsBox>());
+  Operator(functions, "?#", "inter_lb", Function<&LineIntersectsBox>());
 }
 
 void RegisterLsegFunctions(Functions& functions) {
@@ -2779,9 +2779,9 @@ void RegisterLsegFunctions(Functions& functions) {
   Add(functions, "isparallel", Function<&LsegsParallel>());
   Add(functions, "isperp", Function<&LsegsPerpendicular>());
   Operator(functions, "@-@", "lseg_length", Function<&LsegLength>());
-  Add(functions, "lseg_intersect", Function<&LsegsIntersect>());
-  Add(functions, "lseg_parallel", Function<&LsegsParallel>());
-  Add(functions, "lseg_perp", Function<&LsegsPerpendicular>());
+  Operator(functions, "?#", "lseg_intersect", Function<&LsegsIntersect>());
+  Operator(functions, "?||", "lseg_parallel", Function<&LsegsParallel>());
+  Operator(functions, "?-|", "lseg_perp", Function<&LsegsPerpendicular>());
   Add(functions, "lseg_vertical", Function<&LsegVertical>());
   Add(functions, "lseg_horizontal", Function<&LsegHorizontal>());
   Add(functions, "lseg_eq", Function<&LsegsEqual>());
@@ -2804,8 +2804,8 @@ void RegisterLsegFunctions(Functions& functions) {
   Operator(functions, "##", "close_sb", Function<&LsegBoxClosest>());
   Operator(functions, "<@", "on_sl", Function<&LsegOnLine>());
   Operator(functions, "<@", "on_sb", Function<&LsegInBox>());
-  Add(functions, "inter_sl", Function<&LsegIntersectsLine>());
-  Add(functions, "inter_sb", Function<&LsegIntersectsBox>());
+  Operator(functions, "?#", "inter_sl", Function<&LsegIntersectsLine>());
+  Operator(functions, "?#", "inter_sb", Function<&LsegIntersectsBox>());
 }
 
 void RegisterBoxFunctions(Functions& functions) {
@@ -2821,6 +2821,7 @@ void RegisterBoxFunctions(Functions& functions) {
   Add(functions, "bound_box", Function<&BoundBox>());
   Operator(functions, "~=", "box_same", Function<&BoxSame>());
   Operator(functions, "&&", "box_overlap", Function<&BoxOverlap>());
+  Add(functions, "?#", Function<&BoxOverlap>());
   Operator(functions, "<<", "box_left", Function<&BoxLeft>());
   Operator(functions, "&<", "box_overleft", Function<&BoxOverLeft>());
   Operator(functions, ">>", "box_right", Function<&BoxRight>());
@@ -2861,7 +2862,7 @@ void RegisterPathFunctions(Functions& functions) {
   Add(functions, "popen", Function<&PathOpen>());
   Operator(functions, "@-@", "path_length", Function<&PathLength>());
   Operator(functions, "#", "path_npoints", Function<&PathPointCount>());
-  Add(functions, "path_inter", Function<&PathsIntersect>());
+  Operator(functions, "?#", "path_inter", Function<&PathsIntersect>());
   Operator(functions, "<->", "path_distance", Function<&PathDistance>());
   Operator(functions, "+", "path_add", Function<&PathConcat>());
   Operator(functions, "+", "path_add_pt", Function<&PathMap<&PointAdd>>());

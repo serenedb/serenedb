@@ -158,6 +158,21 @@ SELECT point '(1,2)' <-> '(3,4)';
 db error: ERROR: Could not choose a best candidate function for the function call "<->(point, STRING_LITERAL)". In order to select one, please add explicit type casts.<slt:ignore>
 
 
+statement ok
+PREPARE geometric_question_mark AS SELECT ?-1 AS a, ?||'b' AS b;
+
+
+query
+EXECUTE geometric_question_mark(5, 'a');
+----
+a	b
+4	ab
+
+
+statement ok
+DEALLOCATE geometric_question_mark;
+
+
 query
 SELECT point '(1,2)' <-> point '(3,4)' AS a, '(3,4)'::point <-> point '(1,2)' AS b;
 ----

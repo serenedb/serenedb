@@ -440,11 +440,11 @@ An operator with a string literal on one side, as in `point '(1,2)' <-> '(3,4)'`
 | \|&>           | Yes           |         |
 | \<^            | Yes           |         |
 | >^             | Yes           |         |
-| ?#             | No            |         |
-| ?-             | No            |         |
-| ?\|            | No            |         |
-| ?-\|           | No            |         |
-| ?\|\|          | No            |         |
+| ?#             | Yes           |         |
+| ?-             | Partial       | Between two values only: a leading `?` is a parameter, so `?- x` is written `line_horizontal(x)` or `lseg_horizontal(x)` |
+| ?\|            | Partial       | Between two values only: a leading `?` is a parameter, so `?\| x` is written `line_vertical(x)` or `lseg_vertical(x)` |
+| ?-\|           | Yes           |         |
+| ?\|\|          | Yes           |         |
 | ~=             | Yes           |         |
 | area           | Yes           |         |
 | center         | Yes           |         |

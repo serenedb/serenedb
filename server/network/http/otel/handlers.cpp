@@ -173,13 +173,14 @@ struct InsertOutcome {
 
 // https://opentelemetry.io/docs/specs/otlp/#failures-1
 InsertOutcome Failed(const duckdb::ErrorData& error) {
-  auto sql = network::pg::DuckErrorToSqlData(error);
+  auto sql = network::pg::ToSqlError(error);
   if (sql.errcode == ERRCODE_UNDEFINED_TABLE) {
-    return {HttpStatus::InternalError, kCodeInternal,
+    return {HttpStatus::ServiceUnavailable, kCodeUnavailable,
             absl::StrCat("the OpenTelemetry schema is missing: ", sql.errmsg)};
   }
   if (sql.errcode == ERRCODE_INVALID_TABLE_DEFINITION) {
-    return {HttpStatus::InternalError, kCodeInternal, std::move(sql.errmsg)};
+    return {HttpStatus::ServiceUnavailable, kCodeUnavailable,
+            std::move(sql.errmsg)};
   }
   char state[pg::kSqlStateSize];
   pg::UnpackSqlState(state, sql.errcode);
@@ -194,6 +195,13 @@ InsertOutcome Failed(const duckdb::ErrorData& error) {
             std::move(sql.errmsg)};
   }
   return {HttpStatus::InternalError, kCodeInternal, std::move(sql.errmsg)};
+}
+
+InsertOutcome NotPrepared(const duckdb::ErrorData& error) {
+  auto outcome = Failed(error);
+  outcome.status = HttpStatus::ServiceUnavailable;
+  outcome.code = kCodeUnavailable;
+  return outcome;
 }
 
 yaclib::Task<InsertOutcome> RunTransaction(RequestContext& ctx,
@@ -221,7 +229,7 @@ yaclib::Task<InsertOutcome> RunSourceInsert(
   const auto sql = InsertSql(schema, table, Signal::kSources[target]);
   auto prepared = network::PrepareCached(ctx, Signal::kSlots[target], sql);
   if (prepared.error) {
-    co_return Failed(*prepared.error);
+    co_return NotPrepared(*prepared.error);
   }
   auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
   connection.SetSideChannel(&request);

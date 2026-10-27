@@ -182,16 +182,34 @@ absl::Status EnsureSchema(std::string_view database, std::string_view schema) {
     SDB_INFO(STARTUP, "OpenTelemetry tables created in ", database, ".", schema,
              ": ", absl::StrJoin(created, ", "));
   }
-  auto status = creator.Check();
+  auto status = CheckSchema(database, schema);
   if (status.ok()) {
     return status;
   }
   return absl::FailedPreconditionError(absl::StrCat(
-    "database '", database,
-    "' does not match the built-in schema: ", status.message(),
+    status.message(),
     ". Fix the table, or start with the built-in schema elsewhere: set "
     "db=<new database> or schema=<new schema> on the ?api=otel listener, e.g. "
     "--listen='http://0.0.0.0:4318?api=otel&db=otel'"));
+}
+
+absl::Status CheckSchema(std::string_view database, std::string_view schema) {
+  std::string name;
+  duckdb::idx_t oid = 0;
+  if (!catalog::ReadDatabase(database,
+                             [&](const catalog::DatabaseCatalogEntry& entry) {
+                               name = entry.name.GetIdentifierName();
+                               oid = entry.oid;
+                             })) {
+    return absl::NotFoundError(
+      absl::StrCat("database '", database, "' does not exist"));
+  }
+  if (auto status = Creator{name, oid, schema}.Check(); !status.ok()) {
+    return absl::FailedPreconditionError(
+      absl::StrCat("database '", database,
+                   "' does not match the built-in schema: ", status.message()));
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace sdb::otel

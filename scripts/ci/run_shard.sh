@@ -77,6 +77,7 @@ docker run --rm --name "$name" \
 	-e SDB_DOCKER_OWNER -e SDB_CHECK -e SDB_SHA="${SDB_SHA:-}" -e SDB_PR="${SDB_PR:-}" -e SDB_BRANCH="${SDB_BRANCH:-}" \
 	-e SDB_RUN_ID="$SDB_RUN_ID" \
 	-e SDB_SERVICE_SOCKET_ROOT="$WORKSPACE/out/sockets" -e SDB_TEST_TMP_ROOT="$WORKSPACE/out/tmp" \
+	-e SDB_ICEBERG_DATA=/tmp/sdb-duckdb-iceberg \
 	"${pass[@]}" \
 	-v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
 	-v "$WORKSPACE/out/passwd:/etc/passwd:ro" -v "$WORKSPACE/out/group:/etc/group:ro" \

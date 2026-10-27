@@ -1070,7 +1070,6 @@ class BlockIterator : util::Noncopyable {
     DataBlock(DataBlock&& rhs) noexcept { *this = std::move(rhs); }
     DataBlock& operator=(DataBlock&& rhs) noexcept {
       if (this != &rhs) {
-        pinned = std::move(rhs.pinned);
         if (rhs.block.empty()) {
           begin = rhs.begin;
 #ifdef SDB_DEV
@@ -1089,15 +1088,6 @@ class BlockIterator : util::Noncopyable {
       return *this;
     }
 
-    void Reset(PinnedBytes&& bytes) noexcept {
-      block.clear();
-      pinned = std::move(bytes);
-      begin = pinned.bytes.data();
-#ifdef SDB_DEV
-      end = begin + pinned.bytes.size();
-#endif
-    }
-
     [[maybe_unused]] void AssertBlockBoundaries() {
 #ifdef SDB_DEV
       SDB_ASSERT(begin <= end);
@@ -1109,10 +1099,31 @@ class BlockIterator : util::Noncopyable {
     }
 
     Blockype block;
-    PinnedBytes pinned;
     const byte_type* begin{block.c_str()};
 #ifdef SDB_DEV
     const byte_type* end{begin};
+#endif
+  };
+
+  struct PinnedBlock {
+    void Reset(PinnedBytes&& bytes) noexcept {
+      pinned = std::move(bytes);
+      begin = pinned.bytes.data();
+#ifdef SDB_DEV
+      end = begin + pinned.bytes.size();
+#endif
+    }
+
+    [[maybe_unused]] void AssertBlockBoundaries() {
+#ifdef SDB_DEV
+      SDB_ASSERT(begin <= end);
+#endif
+    }
+
+    PinnedBytes pinned;
+    const byte_type* begin{};
+#ifdef SDB_DEV
+    const byte_type* end{};
 #endif
   };
 
@@ -1141,9 +1152,9 @@ class BlockIterator : util::Noncopyable {
   template<typename Reader>
   SeekResult ScanLeaf(Reader&& reader);
 
-  DataBlock _header;  // suffix block header
-  DataBlock _suffix;  // suffix data block
-  DataBlock _stats;   // stats data block
+  DataBlock _header;    // suffix block header
+  PinnedBlock _suffix;  // suffix data block
+  PinnedBlock _stats;   // stats data block
   PostingMeta _state;
   uint64_t _inline_next{};
   size_t _suffix_length{};  // last matched suffix length

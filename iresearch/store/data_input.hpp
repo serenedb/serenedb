@@ -262,13 +262,13 @@ class BasicInput {
     return Remain() >= count ? _pos : nullptr;
   }
 
-  PinnedBytes Pin(uint64_t count) {
+  IRS_FORCE_INLINE PinnedBytes Pin(uint64_t count) {
     const auto offset = Position();
     auto pinned = Pin(offset, count);
     Seek(offset + count);
     return pinned;
   }
-  PinnedBytes Pin(uint64_t offset, uint64_t count) const {
+  IRS_FORCE_INLINE PinnedBytes Pin(uint64_t offset, uint64_t count) const {
     if (!Whole()) {
       return _file->Pin(offset, count);
     }

@@ -53,12 +53,16 @@ constexpr duckdb::field_id_t kFieldManifest = 3;
 constexpr duckdb::field_id_t kFieldCheckpoint = 4;
 
 std::unique_lock<absl::Mutex> LockRefresh(absl::Mutex& mutex) {
+#ifdef SDB_FAULT_INJECTION
   std::unique_lock lock{mutex, std::try_to_lock};
   if (!lock.owns_lock()) {
     SDB_PARK_ONCE_ON_FAILURE("pause_index_refresh_lock_wait");
     lock.lock();
   }
   return lock;
+#else
+  return std::unique_lock{mutex};
+#endif
 }
 
 duckdb::shared_ptr<duckdb::AttachedDatabase> AttachedDatabaseById(

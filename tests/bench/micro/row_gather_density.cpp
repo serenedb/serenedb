@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>

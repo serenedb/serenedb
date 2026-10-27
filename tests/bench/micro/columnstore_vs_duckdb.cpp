@@ -42,6 +42,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/query_result_stream.hpp>
 #include <iresearch/formats/column/col_reader.hpp>

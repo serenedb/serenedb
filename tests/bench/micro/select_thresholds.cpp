@@ -43,6 +43,7 @@
 #include <cstdlib>
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/storage/table/column_segment.hpp>

@@ -1,0 +1,272 @@
+# UPDATE and DELETE on a search table run their sink on every thread the scan
+# below them offers. Eight INSERTs, each refreshed on its own, with compaction
+# off give the table eight segments, so with four threads the scan, and the DML
+# sink above it, run on four workers.
+#
+# Lives in the recovery suite: SET threads is process-wide, and this file needs
+# a server of its own for that, as well as for the crash at the end.
+
+control substitution on
+
+statement ok
+SET threads = 4;
+
+statement ok
+CREATE TABLE pud (a BIGINT, b TEXT)
+  WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+CREATE TABLE pud_plain (a BIGINT, b TEXT);
+
+statement ok
+INSERT INTO pud SELECT i, 'seed' || i FROM range(0, 1000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+statement ok
+INSERT INTO pud SELECT i, 'seed' || i FROM range(1000, 2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+statement ok
+INSERT INTO pud SELECT i, 'seed' || i FROM range(2000, 3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+statement ok
+INSERT INTO pud SELECT i, 'seed' || i FROM range(3000, 4000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+statement ok
+INSERT INTO pud SELECT i, 'seed' || i FROM range(4000, 5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+statement ok
+INSERT INTO pud SELECT i, 'seed' || i FROM range(5000, 6000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+statement ok
+INSERT INTO pud SELECT i, 'seed' || i FROM range(6000, 7000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+statement ok
+INSERT INTO pud SELECT i, 'seed' || i FROM range(7000, 8000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+statement ok
+INSERT INTO pud_plain SELECT i, 'seed' || i FROM range(8000) t(i);
+
+query
+SELECT count(DISTINCT row_group_id) AS segs FROM pragma_storage_info('pud');
+----
+segs
+8
+
+###############################################################################
+# 1. A parallel UPDATE of every row: each row replaced exactly once, none lost,
+#    none left stale. Every old segment is fully removed, so what is left are
+#    the segments the sink threads wrote -- more than the one a serial UPDATE
+#    would produce.
+###############################################################################
+
+statement count 8000
+UPDATE pud SET b = 'u1_' || a;
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+query
+SELECT count(*) AS n,
+       count(*) FILTER (WHERE b = 'u1_' || a) AS updated,
+       count(*) FILTER (WHERE b LIKE 'seed%') AS stale,
+       count(DISTINCT a) AS d
+FROM pud;
+----
+n	updated	stale	d
+8000	8000	0	8000
+
+query
+SELECT count(DISTINCT row_group_id) > 1 AS parallel FROM pragma_storage_info('pud');
+----
+parallel
+t
+
+statement ok
+UPDATE pud_plain SET b = 'u1_' || a;
+
+
+###############################################################################
+# 2. Duplicate matches spread over the sink threads: UPDATE ... FROM and
+#    DELETE ... USING still apply each matched row once.
+###############################################################################
+
+statement ok
+CREATE TABLE pud_src AS
+  SELECT i AS a FROM range(0, 8000, 2) t(i), range(3) r(j);
+
+statement count 4000
+UPDATE pud SET b = 'u2_' || pud.a FROM pud_src WHERE pud.a = pud_src.a;
+
+statement count 4000
+UPDATE pud_plain SET b = 'u2_' || pud_plain.a FROM pud_src WHERE pud_plain.a = pud_src.a;
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+query
+SELECT count(*) AS n, count(DISTINCT a) AS d, count(*) FILTER (WHERE b LIKE 'u2!_%' ESCAPE '!') AS updated FROM pud;
+----
+n	d	updated
+8000	8000	4000
+
+statement count 2000
+DELETE FROM pud USING pud_src WHERE pud.a = pud_src.a AND pud.a % 4 = 0;
+
+statement count 2000
+DELETE FROM pud_plain USING pud_src WHERE pud_plain.a = pud_src.a AND pud_plain.a % 4 = 0;
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+query
+SELECT (SELECT count(*) FROM (SELECT a, b FROM pud EXCEPT ALL SELECT a, b FROM pud_plain)) AS only_search,
+       (SELECT count(*) FROM (SELECT a, b FROM pud_plain EXCEPT ALL SELECT a, b FROM pud)) AS only_plain,
+       (SELECT count(*) FROM pud) AS n;
+----
+only_search	only_plain	n
+0	0	6000
+
+
+###############################################################################
+# 3. RETURNING collects the rows of every sink thread.
+###############################################################################
+
+statement ok
+CREATE TABLE pud_returned (a BIGINT, b TEXT);
+
+statement ok
+WITH u AS (UPDATE pud SET b = 'u3_' || a WHERE a % 2 = 1 RETURNING a, b)
+INSERT INTO pud_returned SELECT * FROM u;
+
+query
+SELECT count(*) AS n, count(DISTINCT a) AS d, count(*) FILTER (WHERE b = 'u3_' || a) AS ok FROM pud_returned;
+----
+n	d	ok
+4000	4000	4000
+
+statement ok
+UPDATE pud_plain SET b = 'u3_' || a WHERE a % 2 = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+statement ok
+DELETE FROM pud_returned;
+
+statement ok
+WITH d AS (DELETE FROM pud WHERE a % 8 = 2 RETURNING a, b)
+INSERT INTO pud_returned SELECT * FROM d;
+
+query
+SELECT count(*) AS n, count(DISTINCT a) AS d, count(*) FILTER (WHERE b = 'u2_' || a) AS ok FROM pud_returned;
+----
+n	d	ok
+1000	1000	1000
+
+statement ok
+DELETE FROM pud_plain WHERE a % 8 = 2;
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+query
+SELECT (SELECT count(*) FROM (SELECT a, b FROM pud EXCEPT ALL SELECT a, b FROM pud_plain)) AS only_search,
+       (SELECT count(*) FROM (SELECT a, b FROM pud_plain EXCEPT ALL SELECT a, b FROM pud)) AS only_plain;
+----
+only_search	only_plain
+0	0
+
+
+###############################################################################
+# 4. Inline writes buffered ahead of a parallel UPDATE in one transaction, and
+#    a parallel DELETE after it: the buffered rows, the sink threads' segments
+#    and the removals all land at commit.
+###############################################################################
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO pud VALUES (100001, 'ins1'), (100002, 'ins2');
+
+statement ok
+UPDATE pud SET b = 'u4_' || a WHERE a % 2 = 1;
+
+statement ok
+DELETE FROM pud WHERE a % 8 = 6;
+
+statement ok
+COMMIT;
+
+statement ok
+INSERT INTO pud_plain VALUES (100001, 'ins1'), (100002, 'ins2');
+
+statement ok
+UPDATE pud_plain SET b = 'u4_' || a WHERE a % 2 = 1 AND a < 100000;
+
+statement ok
+DELETE FROM pud_plain WHERE a % 8 = 6 AND a < 100000;
+
+statement ok
+VACUUM (REFRESH_TABLE) pud;
+
+query
+SELECT (SELECT count(*) FROM (SELECT a, b FROM pud EXCEPT ALL SELECT a, b FROM pud_plain)) AS only_search,
+       (SELECT count(*) FROM (SELECT a, b FROM pud_plain EXCEPT ALL SELECT a, b FROM pud)) AS only_plain,
+       (SELECT count(*) FROM pud) AS n;
+----
+only_search	only_plain	n
+0	0	4002
+
+
+###############################################################################
+# 5. Crash after the WAL commit of a parallel UPDATE: the record names the
+#    segments the sink threads flushed and carries the removals, and replay
+#    restores exactly the committed state.
+###############################################################################
+
+statement ok
+UPDATE pud_plain SET b = 'u5_' || a WHERE a < 100000;
+
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+statement error connection closed
+UPDATE pud SET b = 'u5_' || a WHERE a < 100000;
+
+# --- restart ---
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) pud;
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM (SELECT a, b FROM pud EXCEPT ALL SELECT a, b FROM pud_plain)) AS only_search,
+       (SELECT count(*) FROM (SELECT a, b FROM pud_plain EXCEPT ALL SELECT a, b FROM pud)) AS only_plain,
+       (SELECT count(*) FROM pud) AS n;
+----
+only_search	only_plain	n
+0	0	4002

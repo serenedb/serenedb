@@ -44,11 +44,17 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
     duckdb::RowIdHandling row_id_handling);
 
   bool IsSink() const final { return true; }
+  bool ParallelSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
+    duckdb::ExecutionContext& context) const final;
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;
+  duckdb::SinkCombineResultType Combine(
+    duckdb::ExecutionContext& context,
+    duckdb::OperatorSinkCombineInput& input) const final;
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
     duckdb::OperatorSinkFinalizeInput& input) const final;

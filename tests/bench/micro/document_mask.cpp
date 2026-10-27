@@ -1072,8 +1072,7 @@ void BmDeserializeFrozen(benchmark::State& state) {
   const auto blob = SerializeMask(mask.Set());
 
   for (auto _ : state) {
-    irs::BytesViewInput in{
-      irs::ViewCast<irs::byte_type>(std::string_view{blob})};
+    irs::IndexInput in{irs::ViewCast<irs::byte_type>(std::string_view{blob})};
     auto restored = irs::DocumentMask::ReadFrozen(in, blob.size());
     benchmark::DoNotOptimize(restored.Count());
   }

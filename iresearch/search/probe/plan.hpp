@@ -47,12 +47,10 @@ Result ResolvePostingDocs(const detail::PostingClause& posting, Make&& make) {
     return make.template operator()<SinglePostingDocs>(meta);
   }
   const auto& own = *posting.state.reader;
-  return detail::ResolveInput(
-    *detail::DocOf(own), [&]<typename Input> -> Result {
-      return make.template operator()<detail::PostingProbe<Input>>(
-        meta, *detail::DocOf(own), detail::LayoutOf(own),
-        detail::BoundsOf(own));
-    });
+  return ResolveInput(*detail::DocOf(own), [&]<typename Input> -> Result {
+    return make.template operator()<detail::PostingProbe<Input>>(
+      meta, *detail::DocOf(own), detail::LayoutOf(own), detail::BoundsOf(own));
+  });
 }
 
 template<typename Scoring>

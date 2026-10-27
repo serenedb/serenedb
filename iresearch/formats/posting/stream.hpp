@@ -64,7 +64,7 @@ class PostingsStream : public TermPostings {
       _max_in_leaf = doc;
     } else {
       if (meta.inline_size != 0) {
-        _inline_in.reset(meta.Inline());
+        _inline_in = InputType{meta.Inline()};
         _doc_in = &_inline_in;
       } else {
         if (!_file_in) {
@@ -129,9 +129,7 @@ class PostingsStream : public TermPostings {
  private:
   using Position = PositionImpl<IteratorTraits>;
 
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return static_cast<InputType&>(*_doc_in);
-  }
+  IRS_FORCE_INLINE InputType& In() const noexcept { return *_doc_in; }
 
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
@@ -168,8 +166,8 @@ class PostingsStream : public TermPostings {
     SlackBuf<uint32_t, doc_limits::kBlockSize, block_codec::kOutSlack>> _freqs;
   DocsBuf _docs;
   InputType _file_in;
-  BytesViewInput _inline_in;
-  IndexInput* _doc_in = nullptr;
+  InputType _inline_in;
+  InputType* _doc_in = nullptr;
   [[no_unique_address]] utils::Need<IteratorTraits::Position(), Position> _pos;
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;

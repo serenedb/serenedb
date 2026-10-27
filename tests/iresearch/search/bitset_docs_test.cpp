@@ -1131,8 +1131,7 @@ TEST(docs_mask_test, mask_round_trips_and_mutates) {
   const auto round_trip = [](const irs::DocumentMask& source) {
     std::string blob(source.FrozenSize(), '\0');
     source.WriteFrozen(blob.data());
-    irs::BytesViewInput in{
-      irs::ViewCast<irs::byte_type>(std::string_view{blob})};
+    irs::IndexInput in{irs::ViewCast<irs::byte_type>(std::string_view{blob})};
     return irs::DocumentMask::ReadFrozen(in, blob.size());
   };
 

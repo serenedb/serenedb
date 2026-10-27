@@ -363,17 +363,14 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
       nodes.emplace_back(node);
       continue;
     }
-    const uint64_t offset = layout.CentroidPos(start, d);
-    const size_t centroids_bytes = size * d * sizeof(float);
-    if (const byte_type* p = in.ReadStable(offset, centroids_bytes)) {
-      SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % alignof(float) == 0);
-      node.centroids =
-        std::span<const float>{reinterpret_cast<const float*>(p), size * d};
-    } else {
-      auto& buf = bufs.centroids.emplace_back(size * d);
-      in.ReadData(offset, reinterpret_cast<byte_type*>(buf.data()),
-                  centroids_bytes);
-      node.centroids = std::span<const float>{buf.data(), size * d};
+    auto pinned =
+      in.Pin(layout.CentroidPos(start, d), size * d * sizeof(float));
+    const auto* p = pinned.bytes.data();
+    SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % alignof(float) == 0);
+    node.centroids =
+      std::span<const float>{reinterpret_cast<const float*>(p), size * d};
+    if (pinned.pin.IsValid()) {
+      bufs.centroids.push_back(std::move(pinned.pin));
     }
     if (level > 0) {
       auto& off = bufs.child_offsets.emplace_back(size + 1);

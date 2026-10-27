@@ -164,7 +164,7 @@ size_t BuiltRootSize(const CentroidsBuilder& builder) {
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   return CentroidsTree::Deserialize(in, byte_size).RootSize();
 }
@@ -195,7 +195,7 @@ void ExpectQueriesRouteToTrueNn(const CentroidsBuilder& builder,
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
 
@@ -279,7 +279,7 @@ TEST(centroids_builder_test, multilevel_build_search_id_consistency) {
   }
 
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
 
@@ -319,7 +319,7 @@ TEST(centroids_builder_test, gathered_centroid_matches_search) {
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
 
@@ -368,7 +368,7 @@ TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
   }
 
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
 
@@ -457,7 +457,7 @@ TEST(centroids_builder_test, single_cluster_has_mean_centroid) {
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
   const std::span<const float> q{data.data(), d};
@@ -546,7 +546,7 @@ TEST(centroids_builder_test, cosine_multilevel_build_search_id_consistency) {
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
 
@@ -630,7 +630,7 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
   EXPECT_GE(tree.Levels(), 3u);
@@ -666,7 +666,7 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
 
@@ -873,7 +873,7 @@ TEST(centroids_node_test, beam_escapes_greedy_trap) {
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
   ASSERT_EQ(tree.Levels(), 3u);
@@ -939,7 +939,7 @@ TEST(centroids_node_test, full_nprobe_reaches_every_leaf_under_wide_root) {
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
   ASSERT_EQ(tree.Levels(), 3u);
@@ -981,7 +981,7 @@ TEST(centroids_builder_test, beam_recall_on_boundary_queries) {
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
   ASSERT_GE(tree.Levels(), 3u);
@@ -1208,7 +1208,7 @@ TEST(centroids_builder_test,
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
 
@@ -1271,7 +1271,7 @@ TEST(centroids_builder_test, root_fanout_capped_at_max_fanout) {
       out.Flush();
     }
     const auto file_bytes = tests::Bytes(file);
-    BytesViewInput in{file_bytes};
+    IndexInput in{file_bytes};
     in.Seek(offset);
     auto tree = CentroidsTree::Deserialize(in, byte_size);
     return std::pair{tree.Levels(), tree.RootSize()};

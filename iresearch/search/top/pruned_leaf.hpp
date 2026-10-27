@@ -72,7 +72,7 @@ class PrunedLeafBase {
   class NoBoundSource final : public ScoreBoundSource {
    public:
     Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
-    void Read(IndexInput& in, size_t size) final { in.Skip(size); }
+    void Read(bytes_view) final {}
     void Set(uint32_t, uint32_t) noexcept final {}
   };
 
@@ -152,8 +152,11 @@ class PrunedLeafBase {
       _cursor.Load(in);
       _root_score = BoundScore(_cursor.Index().Root());
     } else {
+      byte_type bound[std::numeric_limits<byte_type>::max() +
+                      bytes_io<uint32_t>::kMaxVSize];
       const auto size = in.ReadByte();
-      _bound_source->Read(in, size);
+      in.ReadData(bound, size);
+      _bound_source->Read({bound, size});
       _root_score = _bound_func.Score();
     }
     return false;

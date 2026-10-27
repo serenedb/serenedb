@@ -82,7 +82,7 @@ class PostingPrunedClause : public PrunedLeafBase<InputType, false> {
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) noexcept {
     SDB_ASSERT(slot < kScoreBlock);
-    if constexpr (InputType::kVolatileAlways) {
+    if constexpr (InputType::kSpan) {
       if (_lazy != nullptr) {
         DecodeFreqs();
       }
@@ -114,14 +114,14 @@ class PostingPrunedClause : public PrunedLeafBase<InputType, false> {
       block_io::ReadTailForFill(len, in, _enc.data, nullptr, _docs, prev);
     _left_in_list -= len;
     const auto* bitset = leaf.bitset;
-    if constexpr (!InputType::kVolatileAlways) {
+    if constexpr (!InputType::kSpan) {
       if (leaf.IsBitset()) {
         std::memcpy(std::begin(_docs), leaf.bitset,
                     size_t{leaf.words} * sizeof(uint64_t));
         bitset = reinterpret_cast<const UnalignedWord*>(std::begin(_docs));
       }
     }
-    if constexpr (InputType::kVolatileAlways) {
+    if constexpr (InputType::kSpan) {
       _lazy = in.Current();
       block_io::SkipTail(len, in);
     } else {

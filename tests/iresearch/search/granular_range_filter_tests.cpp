@@ -2014,7 +2014,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
       const auto doc = docs->Value();
       const auto bytes = values.Get(doc);
       irs::BytesViewInput in;
-      in.reset(bytes);
+      in = irs::BytesViewInput{bytes};
       actual.emplace(irs::ReadString<std::string>(in));
     }
     ASSERT_EQ(expected, actual);
@@ -2060,7 +2060,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
       const auto doc = docs->Value();
       const auto bytes = values.Get(doc);
       irs::BytesViewInput in;
-      in.reset(bytes);
+      in = irs::BytesViewInput{bytes};
       actual.emplace(irs::ReadString<std::string>(in));
     }
     ASSERT_EQ(expected, actual);
@@ -2109,7 +2109,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
       const auto doc = docs->Value();
       const auto bytes = values.Get(doc);
       irs::BytesViewInput in;
-      in.reset(bytes);
+      in = irs::BytesViewInput{bytes};
       actual.emplace(irs::ReadString<std::string>(in));
     }
     ASSERT_EQ(expected, actual);
@@ -2155,7 +2155,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
       const auto doc = docs->Value();
       const auto bytes = values.Get(doc);
       irs::BytesViewInput in;
-      in.reset(bytes);
+      in = irs::BytesViewInput{bytes};
       actual.emplace(irs::ReadString<std::string>(in));
     }
     ASSERT_EQ(expected, actual);

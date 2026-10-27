@@ -529,11 +529,12 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   auto& cache = duckdb::BlockCache::Get(Db());
   cache.Clear();
   irs::PrefetchPostingHeads(*only_query, 2);
-  EXPECT_FALSE(words.doc->Warm(long_list.doc_start, 1));
+  EXPECT_FALSE(words.doc->File()->Resident(long_list.doc_start, 1));
   irs::PrefetchPostingHeads(*terms_query, 2);
-  EXPECT_TRUE(words.doc->Warm(long_list.doc_start, 1));
-  EXPECT_TRUE(words.doc->Warm(long_list.doc_start + long_list.doc_delta, 1));
-  EXPECT_TRUE(words.doc->Warm(short_list.doc_start, 1));
+  EXPECT_TRUE(words.doc->File()->Resident(long_list.doc_start, 1));
+  EXPECT_TRUE(
+    words.doc->File()->Resident(long_list.doc_start + long_list.doc_delta, 1));
+  EXPECT_TRUE(words.doc->File()->Resident(short_list.doc_start, 1));
 
   irs::ByPhrase phrase;
   *phrase.mutable_field_id() = kText;
@@ -545,10 +546,10 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   const auto [text, quick] = meta(kText, "quick");
   ASSERT_NE(nullptr, text.pos);
   cache.Clear();
-  EXPECT_FALSE(text.pos->Warm(quick.pos_start, 1));
+  EXPECT_FALSE(text.pos->File()->Resident(quick.pos_start, 1));
   irs::PrefetchPostingHeads(*phrase_query, 1);
-  EXPECT_TRUE(text.doc->Warm(quick.doc_start, 1));
-  EXPECT_TRUE(text.pos->Warm(quick.pos_start, 1));
+  EXPECT_TRUE(text.doc->File()->Resident(quick.doc_start, 1));
+  EXPECT_TRUE(text.pos->File()->Resident(quick.pos_start, 1));
 
   irs::ByPrefix prefix;
   *prefix.mutable_field_id() = kWords;
@@ -556,9 +557,9 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
     irs::ViewCast<irs::byte_type>(std::string_view{"sh"});
   const auto prefix_query = prefix.PrepareSegment(segment, {});
   cache.Clear();
-  EXPECT_FALSE(words.doc->Warm(short_list.doc_start, 1));
+  EXPECT_FALSE(words.doc->File()->Resident(short_list.doc_start, 1));
   irs::PrefetchPostingHeads(*prefix_query, 1);
-  EXPECT_TRUE(words.doc->Warm(short_list.doc_start, 1));
+  EXPECT_TRUE(words.doc->File()->Resident(short_list.doc_start, 1));
 
   irs::ByPhrase variadic;
   *variadic.mutable_field_id() = kText;
@@ -568,10 +569,10 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
     irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
   const auto variadic_query = variadic.PrepareSegment(segment, {});
   cache.Clear();
-  EXPECT_FALSE(text.pos->Warm(quick.pos_start, 1));
+  EXPECT_FALSE(text.pos->File()->Resident(quick.pos_start, 1));
   irs::PrefetchPostingHeads(*variadic_query, 1);
-  EXPECT_TRUE(text.doc->Warm(quick.doc_start, 1));
-  EXPECT_TRUE(text.pos->Warm(quick.pos_start, 1));
+  EXPECT_TRUE(text.doc->File()->Resident(quick.doc_start, 1));
+  EXPECT_TRUE(text.pos->File()->Resident(quick.pos_start, 1));
 }
 
 TEST(ObjectStoreIndexTest, random_reads_fetch_only_their_blocks) {

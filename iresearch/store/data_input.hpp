@@ -22,16 +22,18 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstring>
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
-#include <iterator>
 #include <memory>
 #include <span>
 #include <string>
+#include <utility>
+#include <variant>
 
 #include "iresearch/utils/bytes_utils.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -45,6 +47,17 @@ struct ByteExtent {
 std::span<ByteExtent> CoalesceExtents(std::span<ByteExtent> extents,
                                       uint64_t gap) noexcept;
 
+struct PinnedBytes {
+  bytes_view bytes;
+  duckdb::BlockCachePin pin;
+};
+
+struct CursorBlock {
+  uint64_t start = 0;
+  duckdb::BlockCachePin pin;
+  duckdb::BlockCacheReadAhead ahead;
+};
+
 class InputFile {
  public:
   explicit InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping);
@@ -54,291 +67,354 @@ class InputFile {
   InputFile& operator=(const InputFile&) = delete;
 
   uint64_t Length() const noexcept { return _length; }
-  bool InBlocks() const noexcept { return _blocks != nullptr; }
-  bytes_view Bytes() const noexcept { return _bytes; }
   const std::string& Path() const noexcept;
+  bytes_view Span() const noexcept;
+  bytes_view Refill(uint64_t position, CursorBlock& block, bool ahead) const;
+  PinnedBytes Pin(uint64_t offset, uint64_t size) const;
 
-  duckdb::BlockCache& Cache() const noexcept { return *_cache; }
-  const duckdb::shared_ptr<duckdb::BlockCacheFile>& Blocks() const noexcept {
-    return _blocks;
-  }
-
-  void Prefetch(uint64_t offset, uint64_t count) const noexcept;
+  bool Hint(uint64_t offset, uint64_t size) const noexcept;
+  void Prefetch(uint64_t offset, uint64_t size) const noexcept;
   void PrefetchExtents(std::span<ByteExtent> extents) const noexcept;
-  bool Warm(uint64_t offset, uint64_t count) const noexcept;
-  void MarkWarm(uint64_t offset, uint64_t count) const noexcept;
-  bool Resident(uint64_t offset, uint64_t count) const noexcept;
+  bool Resident(uint64_t offset, uint64_t size) const noexcept;
   void Advise(duckdb::MappedFileAccess access) const noexcept;
 
  private:
-  bytes_view Window(uint64_t offset, uint64_t count) const noexcept;
-  uint64_t LastPage(uint64_t offset, uint64_t count) const noexcept;
+  struct MappedSpan {
+    std::unique_ptr<duckdb::MemoryMappedFile> mapping;
+    bytes_view bytes;
+    file_utils::ResidencyMap residency;
+  };
 
-  bytes_view _bytes;
+  struct CacheBlocks {
+    duckdb::BlockCache* cache;
+    duckdb::shared_ptr<duckdb::BlockCacheFile> blocks;
+  };
+
+  bool Warm(uint64_t offset, uint64_t size) const noexcept;
+  void MarkWarm(uint64_t offset, uint64_t size) const noexcept;
+  bytes_view SpanWindow(uint64_t offset, uint64_t size) const noexcept;
+
   uint64_t _length;
-  std::unique_ptr<duckdb::MemoryMappedFile> _mapping;
-  file_utils::ResidencyMap _residency;
-  duckdb::BlockCache* _cache = nullptr;
-  duckdb::shared_ptr<duckdb::BlockCacheFile> _blocks;
+  std::variant<MappedSpan, CacheBlocks> _kind;
 };
 
-class IndexInput {
+[[noreturn]] void ThrowPastEnd(const InputFile* file, uint64_t position,
+                               uint64_t length);
+
+template<bool Blocks>
+class BasicInput {
  public:
-  static constexpr bool kVolatileAlways = false;
+  static constexpr bool kSpan = !Blocks;
 
-  using iterator_category = std::forward_iterator_tag;
-  using value_type = byte_type;
-  using pointer = void;
-  using reference = void;
-  using difference_type = ptrdiff_t;
-
-  IndexInput() noexcept = default;
-  explicit IndexInput(bytes_view bytes) noexcept
+  BasicInput() noexcept = default;
+  explicit BasicInput(bytes_view bytes) noexcept
     : _begin{bytes.data()},
       _pos{bytes.data()},
-      _end{bytes.data() + bytes.size()},
-      _length{bytes.size()} {}
-  explicit IndexInput(const InputFile& file) noexcept;
-  IndexInput(const IndexInput& other) noexcept
+      _end{bytes.data() + bytes.size()} {}
+  explicit BasicInput(const InputFile& file) noexcept : _file{&file} {
+    const auto span = file.Span();
+    SDB_ASSERT(Blocks || span.size() == file.Length());
+    _begin = _pos = span.data();
+    _end = span.data() + span.size();
+  }
+  template<bool Other>
+  explicit BasicInput(const BasicInput<Other>& whole) noexcept
+    : _pos{whole.Current()}, _file{whole.File()} {
+    static_assert(Other && !Blocks);
+    const auto span = whole.Span();
+    SDB_ASSERT(!span.empty() || whole.Length() == 0);
+    _begin = span.data();
+    _end = span.data() + span.size();
+  }
+
+  BasicInput(const BasicInput&) noexcept
+    requires(!Blocks)
+  = default;
+  BasicInput(const BasicInput& other) noexcept
+    requires(Blocks)
     : _begin{other._begin},
       _pos{other._pos},
       _end{other._end},
-      _start{other._start},
-      _length{other._length},
       _file{other._file} {
-    if (!Whole()) {
-      _start = other.Position();
+    _block.start = other._block.start;
+    if (other._block.pin.IsValid()) {
+      _block.start = other.Position();
       _begin = _pos = _end = nullptr;
     }
   }
-  IndexInput(IndexInput&& other) noexcept = default;
-  IndexInput& operator=(const IndexInput& other) noexcept {
+  BasicInput(BasicInput&&) noexcept
+    requires(!Blocks)
+  = default;
+  BasicInput(BasicInput&& other) noexcept
+    requires(Blocks)
+    : _begin{std::exchange(other._begin, nullptr)},
+      _pos{std::exchange(other._pos, nullptr)},
+      _end{std::exchange(other._end, nullptr)},
+      _file{other._file},
+      _block{std::move(other._block)} {}
+  BasicInput& operator=(const BasicInput&) noexcept
+    requires(!Blocks)
+  = default;
+  BasicInput& operator=(const BasicInput& other) noexcept
+    requires(Blocks)
+  {
     if (this != &other) {
-      *this = IndexInput{other};
+      *this = BasicInput{other};
     }
     return *this;
   }
-  IndexInput& operator=(IndexInput&& other) noexcept = default;
+  BasicInput& operator=(BasicInput&&) noexcept
+    requires(!Blocks)
+  = default;
+  BasicInput& operator=(BasicInput&& other) noexcept
+    requires(Blocks)
+  {
+    if (this != &other) {
+      _begin = std::exchange(other._begin, nullptr);
+      _pos = std::exchange(other._pos, nullptr);
+      _end = std::exchange(other._end, nullptr);
+      _file = other._file;
+      _block = std::move(other._block);
+    }
+    return *this;
+  }
 
   explicit operator bool() const noexcept {
     return _file != nullptr || _begin != nullptr;
   }
-  bool Whole() const noexcept { return _file == nullptr || !_file->InBlocks(); }
 
   IRS_FORCE_INLINE byte_type ReadByte() {
-    if (_pos != _end) [[likely]] {
-      return *_pos++;
+    if constexpr (Blocks) {
+      if (_pos == _end) [[unlikely]] {
+        return ReadByteSlow();
+      }
     }
-    return ReadByteSlow();
+    SDB_ASSERT(_pos < _end);
+    return *_pos++;
   }
-
-  IRS_FORCE_INLINE uint64_t Position() const noexcept {
-    return _start + static_cast<uint64_t>(_pos - _begin);
-  }
-  uint64_t Length() const noexcept { return _length; }
-  bool IsEOF() const noexcept { return Position() >= _length; }
-
-  int16_t ReadI16() {
-    return Remain() < sizeof(uint16_t) ? irs::read<uint16_t>(*this)
-                                       : irs::read<uint16_t>(_pos);
-  }
-  int32_t ReadI32() {
-    return Remain() < sizeof(uint32_t) ? irs::read<uint32_t>(*this)
-                                       : irs::read<uint32_t>(_pos);
-  }
-  int64_t ReadI64() {
-    return Remain() < sizeof(uint64_t) ? irs::read<uint64_t>(*this)
-                                       : irs::read<uint64_t>(_pos);
-  }
-  uint32_t ReadV32() {
-    return Remain() < bytes_io<uint32_t>::kMaxVSize
-             ? irs::vread<uint32_t>(*this)
-             : irs::vread<uint32_t>(_pos);
-  }
-  uint64_t ReadV64() {
-    return Remain() < bytes_io<uint64_t>::kMaxVSize
-             ? irs::vread<uint64_t>(*this)
-             : irs::vread<uint64_t>(_pos);
-  }
-  void SkipV32() {
-    Remain() < bytes_io<uint32_t>::kMaxVSize ? irs::vskip<uint32_t>(*this)
-                                             : irs::vskip<uint32_t>(_pos);
-  }
-  void SkipV64() {
-    Remain() < bytes_io<uint64_t>::kMaxVSize ? irs::vskip<uint64_t>(*this)
-                                             : irs::vskip<uint64_t>(_pos);
-  }
-
-  IRS_FORCE_INLINE void Seek(uint64_t pos) {
-    if (pos >= _start && pos - _start <= static_cast<uint64_t>(_end - _begin))
-      [[likely]] {
-      _pos = _begin + (pos - _start);
-      return;
-    }
-    SeekOutside(pos);
-  }
-  void Skip(uint64_t count) { Seek(Position() + count); }
-
-  const byte_type* Current() const noexcept { return _pos; }
-  const byte_type* At(uint64_t offset) const noexcept {
-    return _begin + (offset - _start);
-  }
-  const byte_type* Peek(uint64_t count) const noexcept {
-    return Remain() >= count ? _pos : nullptr;
-  }
-
-  const byte_type* ReadVolatile(uint64_t count);
-  const byte_type* ReadVolatile(uint64_t offset, uint64_t count) {
-    Seek(offset);
-    return ReadVolatile(count);
-  }
-  const byte_type* ReadStable(uint64_t count);
-  const byte_type* ReadStable(uint64_t offset, uint64_t count) {
-    Seek(offset);
-    return ReadStable(count);
-  }
+  IRS_FORCE_INLINE int16_t ReadI16() { return ReadFixed<uint16_t>(); }
+  IRS_FORCE_INLINE int32_t ReadI32() { return ReadFixed<uint32_t>(); }
+  IRS_FORCE_INLINE int64_t ReadI64() { return ReadFixed<uint64_t>(); }
+  IRS_FORCE_INLINE uint32_t ReadV32() { return ReadVarint<uint32_t>(); }
+  IRS_FORCE_INLINE uint64_t ReadV64() { return ReadVarint<uint64_t>(); }
 
   IRS_FORCE_INLINE void ReadData(byte_type* b, uint64_t count) {
-    if (count <= Remain()) [[likely]] {
-      if (count != 0) [[likely]] {
-        std::memcpy(b, _pos, count);
-        _pos += count;
-      }
-      return;
+    if (count > Remain()) [[unlikely]] {
+      return ReadDataSlow(b, count);
     }
-    ReadDataSlow(b, count);
+    if (count != 0) [[likely]] {
+      std::memcpy(b, _pos, count);
+      _pos += count;
+    }
   }
   void ReadData(uint64_t offset, byte_type* b, uint64_t count) {
     Seek(offset);
     ReadData(b, count);
   }
 
-  uint32_t Checksum(uint64_t offset) const;
-
-  void Prefetch(uint64_t offset, uint64_t count) const noexcept;
-  void PrefetchExtents(std::span<ByteExtent> extents) const noexcept;
-  bool Resident(uint64_t offset, uint64_t count) const noexcept;
-  bool Warm(uint64_t offset, uint64_t count) const noexcept {
-    return _file != nullptr && _file->Warm(offset, count);
-  }
-  void MarkWarm(uint64_t offset, uint64_t count) const noexcept {
-    if (_file != nullptr) {
-      _file->MarkWarm(offset, count);
+  IRS_FORCE_INLINE uint64_t Position() const noexcept {
+    if constexpr (Blocks) {
+      return _block.start + static_cast<uint64_t>(_pos - _begin);
+    } else {
+      return static_cast<uint64_t>(_pos - _begin);
     }
   }
-  void Advise(duckdb::MappedFileAccess access) const noexcept {
-    if (_file != nullptr) {
-      _file->Advise(access);
+  uint64_t Length() const noexcept {
+    if constexpr (Blocks) {
+      if (_file != nullptr) {
+        return _file->Length();
+      }
+    }
+    return static_cast<uint64_t>(_end - _begin);
+  }
+  bool IsEOF() const noexcept { return Position() >= Length(); }
+
+  IRS_FORCE_INLINE void Seek(uint64_t position) {
+    if constexpr (Blocks) {
+      if (position >= _block.start &&
+          position - _block.start <= static_cast<uint64_t>(_end - _begin))
+        [[likely]] {
+        _pos = _begin + (position - _block.start);
+        return;
+      }
+      SeekOutside(position);
+    } else {
+      SDB_ASSERT(position <= Length());
+      _pos = _begin + position;
+    }
+  }
+  IRS_FORCE_INLINE void Skip(uint64_t count) {
+    if constexpr (Blocks) {
+      Seek(Position() + count);
+    } else {
+      SDB_ASSERT(count <= Remain());
+      _pos += count;
     }
   }
 
-  IRS_FORCE_INLINE byte_type operator*(this auto& self) {
-    return self.ReadByte();
-  }
-  IRS_FORCE_INLINE auto& operator++(this auto& self) noexcept { return self; }
-  IRS_FORCE_INLINE auto& operator++(this auto& self, int) noexcept {
-    return self;
+  const byte_type* Current() const noexcept { return _pos; }
+  const byte_type* Peek(uint64_t count) {
+    if constexpr (Blocks) {
+      if (_pos == _end) [[unlikely]] {
+        Refill(true);
+      }
+    }
+    return Remain() >= count ? _pos : nullptr;
   }
 
- protected:
+  PinnedBytes Pin(uint64_t count) {
+    const auto offset = Position();
+    auto pinned = Pin(offset, count);
+    Seek(offset + count);
+    return pinned;
+  }
+  PinnedBytes Pin(uint64_t offset, uint64_t count) const {
+    if (_file != nullptr) {
+      return _file->Pin(offset, count);
+    }
+    if (offset > Length() || count > Length() - offset) [[unlikely]] {
+      ThrowPastEnd(nullptr, offset, Length());
+    }
+    return {.bytes = {_begin + offset, count}};
+  }
+
+  bytes_view Span() const noexcept {
+    if (Whole()) {
+      return {_begin, static_cast<size_t>(_end - _begin)};
+    }
+    return {};
+  }
+  bool Whole() const noexcept {
+    if constexpr (Blocks) {
+      return !_block.pin.IsValid() && (_begin != _end || Length() == 0);
+    } else {
+      return true;
+    }
+  }
+  const InputFile* File() const noexcept { return _file; }
+
+ private:
   IRS_FORCE_INLINE uint64_t Remain() const noexcept {
     return static_cast<uint64_t>(_end - _pos);
   }
-  void Reset(bytes_view bytes) noexcept;
+
+  template<typename T>
+  IRS_FORCE_INLINE T ReadFixed() {
+    if constexpr (Blocks) {
+      if (Remain() < sizeof(T)) [[unlikely]] {
+        return ReadFixedSlow<T>();
+      }
+    }
+    return irs::read<T>(_pos);
+  }
+
+  template<typename T>
+  IRS_FORCE_INLINE T ReadVarint() {
+    if constexpr (Blocks) {
+      if (Remain() < bytes_io<T>::kMaxVSize) [[unlikely]] {
+        return ReadVarintSlow<T>();
+      }
+    }
+    return irs::vread<T>(_pos);
+  }
+
+  template<typename T>
+  IRS_NO_INLINE T ReadFixedSlow() {
+    byte_type buf[sizeof(T)];
+    ReadData(buf, sizeof(buf));
+    const byte_type* p = buf;
+    return irs::read<T>(p);
+  }
+
+  template<typename T>
+  IRS_NO_INLINE T ReadVarintSlow() {
+    byte_type buf[bytes_io<T>::kMaxVSize];
+    size_t size = 0;
+    do {
+      buf[size] = ReadByte();
+    } while ((buf[size++] & 0x80) != 0 && size != sizeof(buf));
+    const byte_type* p = buf;
+    return irs::vread<T>(p);
+  }
+
+  IRS_NO_INLINE byte_type ReadByteSlow() {
+    if (!Refill(true)) {
+      ThrowPastEnd(_file, Position(), Length());
+    }
+    return *_pos++;
+  }
+
+  IRS_NO_INLINE void ReadDataSlow(byte_type* b, uint64_t count) {
+    if constexpr (Blocks) {
+      if (_file != nullptr && !Whole()) {
+        if (const auto remain = Remain(); remain < count) {
+          _file->Prefetch(Position() + remain, count - remain);
+        }
+        while (count != 0) {
+          if (Remain() == 0 && !Refill(false)) {
+            break;
+          }
+          const auto chunk = std::min(count, Remain());
+          std::memcpy(b, _pos, chunk);
+          _pos += chunk;
+          b += chunk;
+          count -= chunk;
+        }
+        if (count == 0) {
+          return;
+        }
+      }
+    }
+    ThrowPastEnd(_file, Position(), Length());
+  }
+
+  void SeekOutside(uint64_t position) {
+    if (Whole()) {
+      _pos = _end;
+      return;
+    }
+    _block.pin.Reset();
+    _begin = _pos = _end = nullptr;
+    _block.start = position;
+  }
+
+  bool Refill(bool ahead) {
+    if constexpr (Blocks) {
+      if (_file == nullptr || Whole()) {
+        return false;
+      }
+      const auto position = Position();
+      if (position >= _file->Length()) {
+        return false;
+      }
+      const auto window = _file->Refill(position, _block, ahead);
+      _begin = window.data();
+      _end = window.data() + window.size();
+      _pos = _begin + (position - _block.start);
+      return _pos != _end;
+    } else {
+      return false;
+    }
+  }
 
   const byte_type* _begin = nullptr;
   const byte_type* _pos = nullptr;
   const byte_type* _end = nullptr;
-  uint64_t _start = 0;
-  uint64_t _length = 0;
-
- private:
-  struct BlockState {
-    ~BlockState();
-
-    duckdb::BlockCachePin pin;
-    duckdb::BlockCacheReadAhead read_ahead;
-    containers::FlatHashMap<uint64_t, duckdb::BlockCachePin> held;
-    bstring scratch;
-    bool pin_stable = false;
-  };
-
-  byte_type ReadByteSlow();
-  void ReadDataSlow(byte_type* b, uint64_t count);
-  void SeekOutside(uint64_t pos);
-  bool Refill(bool ahead);
-  BlockState& State();
-  bytes_view SpanWindow(uint64_t offset, uint64_t count) const noexcept;
-  void Window(uint64_t block, const byte_type* data, uint64_t size,
-              uint64_t position) noexcept;
-  void ReleasePin();
-  [[noreturn]] void ThrowPastEnd() const;
-
   const InputFile* _file = nullptr;
-  std::unique_ptr<BlockState> _state;
+  [[no_unique_address]] utils::Need<Blocks, CursorBlock> _block;
 };
 
-class BytesViewInput final : public IndexInput {
- public:
-  static constexpr bool kVolatileAlways = true;
+using BytesViewInput = BasicInput<false>;
+using IndexInput = BasicInput<true>;
 
-  BytesViewInput() noexcept = default;
-  explicit BytesViewInput(bytes_view bytes) noexcept : IndexInput{bytes} {}
-  explicit BytesViewInput(const IndexInput& whole) noexcept
-    : IndexInput{whole} {
-    SDB_ASSERT(Whole());
-  }
+static_assert(sizeof(BytesViewInput) == 4 * sizeof(void*));
 
-  IRS_FORCE_INLINE byte_type ReadByte() noexcept {
-    SDB_ASSERT(_pos < _end);
-    return *_pos++;
+template<typename F>
+auto ResolveInput(const IndexInput& in, F&& f) {
+  if (in.Whole()) {
+    return f.template operator()<BytesViewInput>();
   }
-  IRS_FORCE_INLINE uint64_t Position() const noexcept {
-    return static_cast<uint64_t>(_pos - _begin);
-  }
-
-  int16_t ReadI16() noexcept { return irs::read<uint16_t>(_pos); }
-  int32_t ReadI32() noexcept { return irs::read<uint32_t>(_pos); }
-  int64_t ReadI64() noexcept { return irs::read<uint64_t>(_pos); }
-  uint32_t ReadV32() noexcept { return irs::vread<uint32_t>(_pos); }
-  uint64_t ReadV64() noexcept { return irs::vread<uint64_t>(_pos); }
-  void SkipV32() noexcept { irs::vskip<uint32_t>(_pos); }
-  void SkipV64() noexcept { irs::vskip<uint64_t>(_pos); }
-
-  IRS_FORCE_INLINE void Seek(uint64_t pos) noexcept {
-    SDB_ASSERT(pos <= _length);
-    _pos = _begin + pos;
-  }
-  IRS_FORCE_INLINE void Skip(uint64_t count) noexcept {
-    SDB_ASSERT(_pos + count <= _end);
-    _pos += count;
-  }
-
-  IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t count) noexcept {
-    const auto* begin = _pos;
-    _pos = begin + count;
-    SDB_ASSERT(_pos <= _end);
-    return begin;
-  }
-  IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t offset,
-                                               uint64_t count) noexcept {
-    const auto* begin = _begin + offset;
-    _pos = begin + count;
-    SDB_ASSERT(_pos <= _end);
-    return begin;
-  }
-  IRS_FORCE_INLINE const byte_type* ReadVolatile(uint64_t count) noexcept {
-    return ReadStable(count);
-  }
-  IRS_FORCE_INLINE const byte_type* ReadVolatile(uint64_t offset,
-                                                 uint64_t count) noexcept {
-    return ReadStable(offset, count);
-  }
-
-  void reset(const byte_type* data, size_t size) noexcept {
-    Reset(bytes_view{data, size});
-  }
-  void reset(bytes_view ref) noexcept { reset(ref.data(), ref.size()); }
-};
+  return f.template operator()<IndexInput>();
+}
 
 }  // namespace irs

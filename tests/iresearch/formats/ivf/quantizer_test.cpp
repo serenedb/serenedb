@@ -208,12 +208,13 @@ class ClusterScorer {
   std::span<const byte_type> Read(size_t index, size_t count) {
     const uint64_t offset = _base + index * _setting.record_size;
     const size_t bytes = count * size_t{_setting.record_size};
-    if (const byte_type* p = _in.ReadVolatile(offset, bytes)) {
+    _in.Seek(offset);
+    if (const byte_type* p = _in.Peek(bytes)) {
       SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % _setting.alignment == 0);
       return {p, bytes};
     }
     _buf.resize(bytes);
-    _in.ReadData(offset, _buf.data(), bytes);
+    _in.ReadData(_buf.data(), bytes);
     return _buf;
   }
 

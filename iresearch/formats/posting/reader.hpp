@@ -231,14 +231,6 @@ auto PostingsReader::IteratorImpl(IndexFeatures field_features,
   }
 }
 
-auto ResolveInputType(const IndexInput& in, auto&& f) {
-  if (in.Whole()) {
-    return f.template operator()<BytesViewInput>();
-  } else {
-    return f.template operator()<IndexInput>();
-  }
-}
-
 inline TermPostings::ptr PostingsReader::Postings(
   IndexFeatures field_features, IndexFeatures required_features,
   const PostingMeta& meta, bool has_score_bounds,
@@ -250,7 +242,7 @@ inline TermPostings::ptr PostingsReader::Postings(
   return IteratorImpl(
     field_features, required_features,
     [&]<typename IteratorTraits, typename FieldTraits> -> TermPostings::ptr {
-      return ResolveInputType(
+      return ResolveInput(
         _doc_in, [&]<typename InputType> -> TermPostings::ptr {
           using Stream = PostingsStream<IteratorTraits, FieldTraits, InputType>;
           if (!reuse) {

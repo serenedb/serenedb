@@ -178,7 +178,7 @@ void Bm25TestCase::TestQueryNorms() {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -226,7 +226,7 @@ void Bm25TestCase::TestQueryNorms() {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -509,7 +509,7 @@ TEST_P(Bm25TestCase, test_phrase) {
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       irs::BytesViewInput in;
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
       sorted.emplace(score_value, irs::ReadString<std::string>(in));
     }
 
@@ -571,7 +571,7 @@ TEST_P(Bm25TestCase, test_phrase) {
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       irs::BytesViewInput in;
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
       sorted.emplace(score_value, irs::ReadString<std::string>(in));
     }
 
@@ -642,7 +642,7 @@ TEST_P(Bm25TestCase, test_query) {
 
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -751,7 +751,7 @@ TEST_P(Bm25TestCase, test_query) {
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
-        in.reset(values.Get(docs->Value()));
+        in = irs::BytesViewInput{values.Get(docs->Value())};
 
         auto str_seq = irs::ReadString<std::string>(in);
         auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -876,7 +876,7 @@ TEST_P(Bm25TestCase, test_query) {
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
-        in.reset(values.Get(docs->Value()));
+        in = irs::BytesViewInput{values.Get(docs->Value())};
 
         auto str_seq = irs::ReadString<std::string>(in);
         auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -990,7 +990,7 @@ TEST_P(Bm25TestCase, test_query) {
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
-        in.reset(values.Get(docs->Value()));
+        in = irs::BytesViewInput{values.Get(docs->Value())};
 
         auto str_seq = irs::ReadString<std::string>(in);
         auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1038,7 +1038,7 @@ TEST_P(Bm25TestCase, test_query) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1084,7 +1084,7 @@ TEST_P(Bm25TestCase, test_query) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1130,7 +1130,7 @@ TEST_P(Bm25TestCase, test_query) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1176,7 +1176,7 @@ TEST_P(Bm25TestCase, test_query) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1222,7 +1222,7 @@ TEST_P(Bm25TestCase, test_query) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1408,7 +1408,7 @@ TEST_P(Bm25TestCase, test_order) {
           irs::score_t score_value{};
           score.Score(&score_value, 1);
 
-          in.reset(values.Get(docs->Value()));
+          in = irs::BytesViewInput{values.Get(docs->Value())};
 
           auto str_seq = irs::ReadString<std::string>(in);
           seq = strtoull(str_seq.c_str(), nullptr, 10);

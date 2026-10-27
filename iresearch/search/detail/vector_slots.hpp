@@ -76,13 +76,20 @@ class VectorBlockReader {
   std::span<const byte_type> Read(size_t index, size_t count) {
     const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
     const size_t bytes = count * size_t{_record_size};
-    const byte_type* p = _in.ReadVolatile(offset, bytes);
+    _in.Seek(offset);
+    const byte_type* p = _in.Peek(bytes);
+    if (p == nullptr) {
+      _scratch.resize(bytes);
+      _in.ReadData(_scratch.data(), bytes);
+      p = _scratch.data();
+    }
     SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % _alignment == 0);
     return {p, bytes};
   }
 
  private:
   IndexInput _in;
+  std::vector<byte_type> _scratch;
   uint64_t _base = 0;
   uint32_t _record_size;
   uint32_t _alignment;

@@ -171,7 +171,7 @@ class PostingLeaf {
   }
 
  protected:
-  static constexpr bool kEnc = Shape.enc || !InputType::kVolatileAlways;
+  static constexpr bool kEnc = Shape.enc || !InputType::kSpan;
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
   static constexpr auto kBits = BitsRequired<uint64_t>();
 
@@ -214,7 +214,7 @@ class PostingLeaf {
 
   IRS_FORCE_INLINE const UnalignedWord* StableBitset(
     const block_io::FillLeaf& leaf) noexcept {
-    if constexpr (InputType::kVolatileAlways) {
+    if constexpr (InputType::kSpan) {
       return leaf.bitset;
     } else {
       if (!leaf.IsBitset()) {

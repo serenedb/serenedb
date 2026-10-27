@@ -95,7 +95,7 @@ inline SeekPostings::ptr MakeSeekPostings(const irs::PostingMeta& meta,
                                           irs::IndexFeatures layout,
                                           irs::IndexFeatures required,
                                           bool has_score_bounds) {
-  return irs::detail::ResolveInput(
+  return irs::ResolveInput(
     *handles.doc, [&]<typename Input> -> SeekPostings::ptr {
       if (irs::IndexFeatures::None == (required & irs::IndexFeatures::Pos)) {
         return irs::memory::make_managed<

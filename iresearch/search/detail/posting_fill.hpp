@@ -134,7 +134,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
     }
 
     [[maybe_unused]] const byte_type* at = nullptr;
-    if constexpr (InputType::kVolatileAlways) {
+    if constexpr (InputType::kSpan) {
       if (_left_in_list != 0) {
         at = In().Current();
       }
@@ -232,7 +232,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
   IRS_FORCE_INLINE block_io::FillLeaf ReadFill(const byte_type*& at,
                                                uint32_t len, doc_id_t base) {
     _hint.Advance(In(), In().Position());
-    if constexpr (InputType::kVolatileAlways) {
+    if constexpr (InputType::kSpan) {
       return block_io::FillView(In(), at, len, this->Holes(), _docs, base,
                                 len == this->_freq_len.value);
     } else {
@@ -242,7 +242,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
   }
 
   IRS_FORCE_INLINE void SkipFreqsAfterFill(uint32_t len) {
-    if constexpr (!InputType::kVolatileAlways) {
+    if constexpr (!InputType::kSpan) {
       SkipFreqs(len);
     }
   }
@@ -251,7 +251,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
     const auto len = std::min(_left_in_list, kBlock);
     _leaf_base = _last;
     [[maybe_unused]] const byte_type* at = nullptr;
-    if constexpr (InputType::kVolatileAlways) {
+    if constexpr (InputType::kSpan) {
       at = In().Current();
     }
     _leaf = ReadFill(at, len, _leaf_base);

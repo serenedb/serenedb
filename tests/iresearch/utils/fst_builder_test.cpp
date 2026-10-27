@@ -137,7 +137,7 @@ void AssertFstReadWrite(const std::string& resource) {
   out.stream.Flush();
   SimpleMemoryAccounter immutable_fst_memory;
   const auto bytes = tests::Bytes(out.file);
-  irs::BytesViewInput in{bytes};
+  irs::IndexInput in{bytes};
   std::unique_ptr<irs::immutable_byte_fst> read_fst(
     irs::immutable_byte_fst::Read(in, immutable_fst_memory));
   ASSERT_EQ(out.file.Length(), in.Position());

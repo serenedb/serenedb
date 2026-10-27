@@ -126,7 +126,7 @@ std::string FrozenBlob(const irs::DocumentMask& mask) {
 }
 
 irs::DocumentMask ReadFrozen(std::string_view blob) {
-  irs::BytesViewInput in{irs::ViewCast<irs::byte_type>(blob)};
+  irs::IndexInput in{irs::ViewCast<irs::byte_type>(blob)};
   return irs::DocumentMask::ReadFrozen(in, blob.size());
 }
 

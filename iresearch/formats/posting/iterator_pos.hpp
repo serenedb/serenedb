@@ -137,16 +137,19 @@ class PositionImpl final : public PosAttr {
 
   // prepares iterator to work
   void Prepare(const DocState& state) {
-    if (!_pos.Cursor()) {
-      _pos.Open(*state.pos_in);
+    const bool whole =
+      state.pos_in->Whole() &&
+      (!IteratorTraits::Offset() || (state.pay_in && state.pay_in->Whole()));
+    if (!_pos.Opened()) {
+      _pos.Open(*state.pos_in, whole);
     }
     _pos.hint.Arm(state.term_state->pos_start,
                   state.term_state->pos_start + PosExtent(*state.term_state));
     _enc_buf = state.enc_buf;
 
     if constexpr (IteratorTraits::Offset()) {
-      if (!_pay.Cursor()) {
-        _pay.Open(*state.pay_in);
+      if (!_pay.Opened()) {
+        _pay.Open(*state.pay_in, whole);
       }
       _pay.hint.Arm(state.term_state->pay_start,
                     state.term_state->pay_start + PayExtent(*state.term_state));
@@ -176,8 +179,8 @@ class PositionImpl final : public PosAttr {
 
  private:
   struct Stream {
-    void Open(const IndexInput& source) {
-      viewed = source.Whole();
+    void Open(const IndexInput& source, bool whole) {
+      viewed = whole;
       if (viewed) {
         view = BytesViewInput{source};
       } else {
@@ -185,19 +188,34 @@ class PositionImpl final : public PosAttr {
       }
     }
 
-    auto& Cursor(this auto& self) noexcept {
-      return self.viewed ? self.view : self.in;
+    bool Opened() const noexcept {
+      return viewed ? static_cast<bool>(view) : static_cast<bool>(in);
+    }
+
+    uint64_t Position() const noexcept {
+      return viewed ? view.Position() : in.Position();
+    }
+
+    void Advance(uint64_t at) {
+      if (viewed) {
+        hint.Advance(view, at);
+      } else {
+        hint.Advance(in, at);
+      }
+    }
+
+    void Seek(uint64_t at) {
+      if (viewed) {
+        view.Seek(at);
+      } else {
+        in.Seek(at);
+      }
     }
 
     void Load() {
-      hint.Advance(Cursor(), group);
-      if (viewed) {
-        header = view.ReadStable(group, PosGroup::kHeaderBytes);
-      } else {
-        in.Seek(group);
-        in.ReadData(copy, PosGroup::kHeaderBytes);
-        header = copy;
-      }
+      Advance(group);
+      Seek(group);
+      ReadHeader();
     }
 
     void Hop() {
@@ -207,29 +225,25 @@ class PositionImpl final : public PosAttr {
 
     void Step() {
       group = PosGroup::Next(group, header);
+      SDB_ASSERT(Position() == group);
+      ReadHeader();
+    }
+
+    void ReadHeader() {
       if (viewed) {
-        SDB_ASSERT(view.Position() == group);
-        header = view.ReadStable(PosGroup::kHeaderBytes);
+        header = view.Current();
+        view.Skip(PosGroup::kHeaderBytes);
       } else {
-        SDB_ASSERT(in.Position() == group);
         in.ReadData(copy, PosGroup::kHeaderBytes);
         header = copy;
       }
     }
 
     void SeekBlock(uint32_t block) {
-      const auto at =
-        group + PosGroup::kHeaderBytes + PosGroup::Start(header, block);
-      if (viewed) {
-        view.Seek(at);
-      } else {
-        in.Seek(at);
-      }
+      Seek(group + PosGroup::kHeaderBytes + PosGroup::Start(header, block));
     }
 
-    void Account() {
-      hint.Advance(Cursor(), viewed ? view.Position() : in.Position());
-    }
+    void Account() { Advance(Position()); }
 
     IndexInput in;
     BytesViewInput view;
@@ -335,10 +349,10 @@ class PositionImpl final : public PosAttr {
     if constexpr (IteratorTraits::Offset()) {
       _pay.Account();
     }
-    if (_pos.viewed && (!IteratorTraits::Offset() || PayView())) [[likely]] {
-      Decode<BytesViewInput>(_pos.view, PayView());
+    if (_pos.viewed) [[likely]] {
+      Decode(_pos.view, PayView());
     } else {
-      Decode<IndexInput>(_pos.Cursor(), PayIn());
+      Decode(_pos.in, PayIn());
     }
     ++_next;
   }
@@ -362,7 +376,7 @@ class PositionImpl final : public PosAttr {
 
   IRS_FORCE_INLINE IndexInput* PayIn() noexcept {
     if constexpr (IteratorTraits::Offset()) {
-      return &_pay.Cursor();
+      return &_pay.in;
     } else {
       return nullptr;
     }

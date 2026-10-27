@@ -330,14 +330,15 @@ void HitBatcher::CloseGroup() {
 }
 
 void HitBatcher::PrefetchColumns(uint64_t anchor, duckdb::idx_t span) {
-  if (!_prefetch || !_ctx || !_ctx->HasIn()) {
+  const auto* file = _ctx ? _ctx->In().File() : nullptr;
+  if (!_prefetch || file == nullptr) {
     return;
   }
   _extents.clear();
   for (const auto& c : _columns) {
     c.reader->CollectBlocks(anchor, anchor + span - 1, _extents);
   }
-  _ctx->In().PrefetchExtents(_extents);
+  file->PrefetchExtents(_extents);
 }
 
 void HitBatcher::ScatterGroup(uint64_t anchor, duckdb::idx_t span) {

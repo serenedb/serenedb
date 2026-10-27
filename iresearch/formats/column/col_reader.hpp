@@ -71,8 +71,8 @@ class ColReader final {
 
   IndexInput ReopenIn() const { return _ctx.In(); }
   void PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
-    if (_ctx.HasIn()) {
-      _ctx.In().PrefetchExtents(extents);
+    if (const auto* file = _ctx.In().File()) {
+      file->PrefetchExtents(extents);
     }
   }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }

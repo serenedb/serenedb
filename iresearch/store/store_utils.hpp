@@ -49,17 +49,13 @@ IRS_FORCE_INLINE inline void WriteZV32(DataOutput& out, int32_t v) {
   out.WriteV32(irs::ZigZagEncode32(v));
 }
 
-inline int32_t ReadZV32(IndexInput& in) {
-  return irs::ZigZagDecode32(in.ReadV32());
-}
+int32_t ReadZV32(auto& in) { return irs::ZigZagDecode32(in.ReadV32()); }
 
 IRS_FORCE_INLINE inline void WriteZV64(DataOutput& out, int64_t v) {
   out.WriteV64(irs::ZigZagEncode64(v));
 }
 
-inline int64_t ReadZV64(IndexInput& in) {
-  return irs::ZigZagDecode64(in.ReadV64());
-}
+int64_t ReadZV64(auto& in) { return irs::ZigZagDecode64(in.ReadV64()); }
 
 IRS_FORCE_INLINE inline void WriteStr(DataOutput& out, const char* s,
                                       size_t len) {
@@ -81,7 +77,7 @@ IRS_FORCE_INLINE inline void WriteStr(DataOutput& out, const StringType& str) {
 }
 
 template<typename StringType>
-inline StringType ReadString(IndexInput& in) {
+StringType ReadString(auto& in) {
   const size_t len = in.ReadV32();
 
   StringType str(len, 0);

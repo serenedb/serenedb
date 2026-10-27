@@ -69,7 +69,9 @@ class PostingHeads final : public PreparedStateVisitor {
       return;
     }
     for (auto& [in, extents] : _extents) {
-      in->PrefetchExtents(extents);
+      if (const auto* file = in->File()) {
+        file->PrefetchExtents(extents);
+      }
     }
   }
 

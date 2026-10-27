@@ -133,7 +133,7 @@ void AssertReadWrite(const irs::ParametricDescription& description) {
     ASSERT_FALSE(buf.empty());
   }
   {
-    irs::BytesViewInput in(buf);
+    irs::IndexInput in(buf);
     ASSERT_EQ(description, irs::ParametricDescription::Read(in));
   }
 }

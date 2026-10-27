@@ -61,6 +61,14 @@ namespace {
 
 using namespace irs;
 
+uint32_t Checksum(IndexInput in, uint64_t count) {
+  bstring bytes(std::min(count, in.Length() - in.Position()), byte_type{0});
+  in.ReadData(bytes.data(), bytes.size());
+  Crc32c crc;
+  crc.process_bytes(bytes.data(), bytes.size());
+  return crc.checksum();
+}
+
 class DirectoryTestCase : public ::tests::DirectoryTestCaseBase {};
 
 TEST_P(DirectoryTestCase, rename) {
@@ -3988,7 +3996,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
     EXPECT_FALSE(dup_file.IsEOF());
     EXPECT_EQ(expected_length, dup_file.Length());
 
-    const auto checksum = file.Checksum(file.Length());
+    const auto checksum = Checksum(file, file.Length());
     ASSERT_EQ(0, file.Position());
 
     {
@@ -4019,18 +4027,16 @@ TEST_P(DirectoryTestCase, smoke_store) {
         {
           file.Seek(0);
           ASSERT_EQ(0, file.Position());
-          const byte_type* internal_buf = file.ReadVolatile(1);
-          ASSERT_NE(nullptr, internal_buf);
+          const auto pinned = file.Pin(1);
           ASSERT_EQ(1, file.Position());
-          ASSERT_EQ(it->at(0), *internal_buf);
+          ASSERT_EQ(it->at(0), pinned.bytes[0]);
         }
 
         // random direct access
         {
-          const byte_type* internal_buf = file.ReadVolatile(0, 1);
-          ASSERT_NE(nullptr, internal_buf);
+          const auto pinned = file.Pin(0, 1);
           ASSERT_EQ(1, file.Position());
-          ASSERT_EQ(it->at(0), *internal_buf);
+          ASSERT_EQ(it->at(0), pinned.bytes[0]);
         }
       }
 
@@ -4048,38 +4054,16 @@ TEST_P(DirectoryTestCase, smoke_store) {
         // sequential direct access
         {
           file.Seek(fp - it->size());
-          const byte_type* internal_buf =
-            file.ReadStable(fp - it->size(), it->size());
-          ASSERT_NE(nullptr, internal_buf);
+          const auto pinned = file.Pin(it->size());
           ASSERT_EQ(file.Position(), fp);
-          ASSERT_EQ(bytes_view(internal_buf, it->size()), buf);
-        }
-
-        {
-          file.Seek(fp - it->size());
-          const byte_type* internal_buf =
-            file.ReadVolatile(fp - it->size(), it->size());
-          ASSERT_NE(nullptr, internal_buf);
-          ASSERT_EQ(file.Position(), fp);
-          ASSERT_EQ(bytes_view(internal_buf, it->size()), buf);
+          ASSERT_EQ(pinned.bytes, buf);
         }
 
         // random direct access
         {
-          const byte_type* internal_buf =
-            file.ReadStable(fp - it->size(), it->size());
-          ASSERT_NE(nullptr, internal_buf);
+          const auto pinned = file.Pin(fp - it->size(), it->size());
           ASSERT_EQ(file.Position(), fp);
-          ASSERT_EQ(bytes_view(internal_buf, it->size()), buf);
-        }
-
-        // random direct access
-        {
-          const byte_type* internal_buf =
-            file.ReadVolatile(fp - it->size(), it->size());
-          ASSERT_NE(nullptr, internal_buf);
-          ASSERT_EQ(file.Position(), fp);
-          ASSERT_EQ(bytes_view(internal_buf, it->size()), buf);
+          ASSERT_EQ(pinned.bytes, buf);
         }
       }
 
@@ -4157,8 +4141,8 @@ TEST_P(DirectoryTestCase, smoke_store) {
 
       in.ReadData(buf, 0);
       ASSERT_TRUE(in.IsEOF());
-      ASSERT_EQ(0, in.Checksum(0));
-      ASSERT_EQ(0, in.Checksum(42));
+      ASSERT_EQ(0, Checksum(in, 0));
+      ASSERT_EQ(0, Checksum(in, 42));
     }
 
     ASSERT_TRUE(dir.Remove("empty_file"));
@@ -4312,15 +4296,14 @@ TEST_P(DirectoryTestCase, reads_across_cache_blocks) {
   }
   EXPECT_EQ(2 * kBlock + 2, in.Position());
 
-  const auto* straddling = in.ReadVolatile(kBlock - 5, 10);
-  ASSERT_NE(nullptr, straddling);
-  EXPECT_EQ(expected(kBlock - 5, 10), irs::bytes_view(straddling, 10));
+  in.Seek(kBlock - 5);
+  const auto straddling = in.Pin(10);
+  EXPECT_EQ(expected(kBlock - 5, 10), straddling.bytes);
   EXPECT_EQ(kBlock + 5, in.Position());
 
   in.Seek(kBlock + 100);
-  const auto* inside = in.ReadVolatile(50);
-  ASSERT_NE(nullptr, inside);
-  EXPECT_EQ(expected(kBlock + 100, 50), irs::bytes_view(inside, 50));
+  const auto inside = in.Pin(50);
+  EXPECT_EQ(expected(kBlock + 100, 50), inside.bytes);
   EXPECT_EQ(kBlock + 150, in.Position());
 
   in.Seek(5);
@@ -4343,7 +4326,7 @@ TEST_P(DirectoryTestCase, reads_across_cache_blocks) {
   in.Seek(kBlock - 7);
   irs::Crc32c crc;
   crc.process_bytes(data.data() + kBlock - 7, 2 * kBlock);
-  EXPECT_EQ(crc.checksum(), in.Checksum(2 * kBlock));
+  EXPECT_EQ(crc.checksum(), Checksum(in, 2 * kBlock));
   EXPECT_EQ(kBlock - 7, in.Position());
 }
 
@@ -4385,16 +4368,9 @@ TEST_P(DirectoryTestCase, numbers_across_cache_blocks) {
   in.Skip(kBlock - 6);
   EXPECT_EQ(kU32, static_cast<uint32_t>(in.ReadI32()));
   EXPECT_TRUE(in.IsEOF());
-
-  in.Seek(kBlock - 2);
-  in.SkipV32();
-  EXPECT_EQ(kBlock + 3, in.Position());
-  in.Seek(2 * kBlock - 4);
-  in.SkipV64();
-  EXPECT_EQ(2 * kBlock + 6, in.Position());
 }
 
-TEST_P(DirectoryTestCase, stable_reads_follow_storage) {
+TEST_P(DirectoryTestCase, pins_hold_their_bytes_on_any_storage) {
   constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
   std::vector<irs::byte_type> data(2 * kBlock);
   for (uint64_t i = 0; i != data.size(); ++i) {
@@ -4410,20 +4386,14 @@ TEST_P(DirectoryTestCase, stable_reads_follow_storage) {
   const auto in_file = _dir->Open("stable", duckdb::MappedFileAccess::NORMAL);
   irs::IndexInput in{*in_file};
   ASSERT_FALSE(!in);
-  const auto* first = in.ReadStable(10, 100);
-  const auto* second = in.ReadStable(kBlock + 7, 30);
-  if (_dir->Kind() == irs::StorageKind::Remote) {
-    EXPECT_EQ(nullptr, first);
-    EXPECT_EQ(nullptr, second);
-    return;
-  }
-  ASSERT_NE(nullptr, first);
-  ASSERT_NE(nullptr, second);
-  EXPECT_EQ(kBlock + 37, in.Position());
-  EXPECT_EQ((irs::bytes_view{data.data() + 10, 100}),
-            (irs::bytes_view{first, 100}));
-  EXPECT_EQ((irs::bytes_view{data.data() + kBlock + 7, 30}),
-            (irs::bytes_view{second, 30}));
+  const auto first = in.Pin(10, 100);
+  const auto second = in.Pin(kBlock + 7, 30);
+  const auto across = in.Pin(kBlock - 3, 6);
+  EXPECT_EQ(0, in.Position());
+  EXPECT_EQ((irs::bytes_view{data.data() + 10, 100}), first.bytes);
+  EXPECT_EQ((irs::bytes_view{data.data() + kBlock + 7, 30}), second.bytes);
+  EXPECT_EQ((irs::bytes_view{data.data() + kBlock - 3, 6}), across.bytes);
+  EXPECT_ANY_THROW(in.Pin(2 * kBlock - 5, 6));
 }
 
 TEST_P(DirectoryTestCase, read_whole) {
@@ -4978,10 +4948,9 @@ TEST(DirectoryTest, compacted_memory_files_map_in_place) {
   irs::IndexInput mapped{*mapped_file};
   ASSERT_TRUE(mapped.Whole());
   ASSERT_EQ(data.size(), mapped.Length());
-  const auto* stable = mapped.ReadStable(0, data.size());
-  ASSERT_NE(nullptr, stable);
-  EXPECT_EQ((irs::bytes_view{data.data(), data.size()}),
-            (irs::bytes_view{stable, data.size()}));
+  const auto stable = mapped.Pin(0, data.size());
+  EXPECT_FALSE(stable.pin.IsValid());
+  EXPECT_EQ((irs::bytes_view{data.data(), data.size()}), stable.bytes);
   std::vector<irs::byte_type> read(data.size());
   blocks.ReadData(0, read.data(), read.size());
   EXPECT_EQ(data, read);
@@ -5088,18 +5057,16 @@ TEST(DirectoryTest, private_memory) {
   ASSERT_FALSE(!in);
   ASSERT_TRUE(in.Whole());
   ASSERT_EQ(data.size(), in.Length());
-  const auto* stable = in.ReadStable(0, data.size());
-  ASSERT_NE(nullptr, stable);
+  const auto stable = in.Pin(data.size());
   EXPECT_EQ(data.size(), in.Position());
   in.Seek(0);
   EXPECT_EQ(data.front(), in.ReadByte());
   const auto other_file = files.Open("file", duckdb::MappedFileAccess::NORMAL);
   irs::IndexInput other{*other_file};
   ASSERT_FALSE(!other);
-  const auto* other_stable = other.ReadStable(0, data.size());
-  ASSERT_NE(nullptr, other_stable);
-  EXPECT_EQ(data, irs::bytes_view(other_stable, data.size()));
-  EXPECT_EQ(data, irs::bytes_view(stable, data.size()));
+  const auto other_stable = other.Pin(0, data.size());
+  EXPECT_EQ(data, other_stable.bytes);
+  EXPECT_EQ(data, stable.bytes);
 
   files.Rename("file", "renamed");
   ASSERT_FALSE(files.Has("file"));

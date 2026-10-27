@@ -181,8 +181,8 @@ class TermCount : public Root {
     if (!_ranks) {
       const auto& own = *_posting.state.reader;
       const auto& doc = *detail::DocOf(own);
-      _ranks = detail::ResolveInput(
-        doc, [&]<typename Input> -> std::unique_ptr<RankSource> {
+      _ranks =
+        ResolveInput(doc, [&]<typename Input> -> std::unique_ptr<RankSource> {
           auto out = std::make_unique<RankSourceOf<Input>>();
           out->impl.Prepare(_posting.state.cookie, doc, detail::LayoutOf(own),
                             detail::BoundsOf(own), detail::FreqOf(own));

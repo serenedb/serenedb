@@ -33,35 +33,6 @@ using namespace irs;
 
 namespace tests::detail {
 
-class BytesInput : public IndexInput {
- public:
-  BytesInput() = default;
-  BytesInput(BytesInput&& rhs) noexcept;
-  BytesInput& operator=(BytesInput&& rhs) noexcept;
-
-  explicit BytesInput(bytes_view data);
-
- private:
-  bstring _buf;
-};
-
-BytesInput::BytesInput(bytes_view data) : _buf{data} { Reset(_buf); }
-
-BytesInput::BytesInput(BytesInput&& other) noexcept
-  : _buf{std::move(other._buf)} {
-  Reset(_buf);
-  other.Reset({});
-}
-
-BytesInput& BytesInput::operator=(BytesInput&& other) noexcept {
-  if (this != &other) {
-    _buf = std::move(other._buf);
-    Reset(_buf);
-    other.Reset({});
-  }
-  return *this;
-}
-
 void DeltaEncodeDecodeCore(size_t step, size_t count) {
   std::vector<size_t> values;
   values.reserve(count);
@@ -90,7 +61,7 @@ void ReadWriteCore(const std::vector<T>& src,
   std::for_each(src.begin(), src.end(),
                 [&out, &writer](const T& v) { writer(out, v); });
 
-  BytesInput in(out.Bytes());
+  IndexInput in{out.Bytes()};
   std::for_each(src.begin(), src.end(),
                 [&in, &reader](const T& v) { ASSERT_EQ(v, reader(in)); });
 }
@@ -103,7 +74,7 @@ void ReadWriteCoreNan(const std::function<T(IndexInput&)>& reader,
   writer(out, std::numeric_limits<T>::quiet_NaN());
   writer(out, std::numeric_limits<T>::signaling_NaN());
 
-  BytesInput in(out.Bytes());
+  IndexInput in{out.Bytes()};
   ASSERT_TRUE(std::isnan(reader(in)));
   ASSERT_TRUE(std::isnan(reader(in)));
 }
@@ -115,7 +86,7 @@ void ReadWriteCoreContainer(
   irs::BytesOutput out;
   writer(out, src);
 
-  BytesInput in(out.Bytes());
+  IndexInput in{out.Bytes()};
   const Cont read = reader(in);
   ASSERT_EQ(src, read);
 }
@@ -280,7 +251,7 @@ TEST(store_utils_tests, zvint_read_write) {
       -911728376,
       -10725017,
     },
-    irs::ReadZV32, irs::WriteZV32);
+    irs::ReadZV32<IndexInput>, irs::WriteZV32);
 }
 
 TEST(store_utils_tests, zvlong_read_write) {
@@ -294,7 +265,7 @@ TEST(store_utils_tests, zvlong_read_write) {
       -9184236868362391274LL,
       -91724962191921979LL,
     },
-    irs::ReadZV64, irs::WriteZV64);
+    irs::ReadZV64<IndexInput>, irs::WriteZV64);
 }
 
 TEST(store_utils_tests, std_string_read_write) {
@@ -307,7 +278,7 @@ TEST(store_utils_tests, std_string_read_write) {
       std::string("lazy p1230142hlds"),
       std::string("dob  sdofjasoufdsa"),
     },
-    irs::ReadString<std::string>, irs::WriteStr<std::string>);
+    irs::ReadString<std::string, IndexInput>, irs::WriteStr<std::string>);
 }
 
 TEST(store_utils_tests, bytes_read_write) {
@@ -319,7 +290,7 @@ TEST(store_utils_tests, bytes_read_write) {
       bstring(irs::ViewCast<byte_type>(std::string_view("102174174010"))),
       bstring(irs::ViewCast<byte_type>(std::string_view("0182ljdskfaof"))),
     },
-    irs::ReadString<bstring>, irs::WriteStr<bstring>);
+    irs::ReadString<bstring, IndexInput>, irs::WriteStr<bstring>);
 }
 
 TEST(store_utils_tests, ShiftPackunpack_32) {

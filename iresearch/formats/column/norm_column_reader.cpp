@@ -61,22 +61,22 @@ void NormRegion::Corrupt(doc_id_t doc) const {
 
 const byte_type* NormColumnReader::Map(IndexInput& in, uint64_t offset,
                                        uint64_t size) {
-  if (const auto* data = in.ReadStable(offset, size)) {
-    return data;
+  auto pinned = in.Pin(offset, size);
+  if (pinned.pin.IsValid()) {
+    _pins.push_back(std::move(pinned.pin));
   }
-  auto& owned =
-    _owned.emplace_back(std::make_unique_for_overwrite<byte_type[]>(size));
-  in.ReadData(offset, owned.get(), size);
-  return owned.get();
+  return pinned.bytes.data();
 }
 
 NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
                                    IndexInput& in)
   : _id{id}, _row_count{meta.row_count} {
-  for (const auto& m : meta.regions) {
-    if (m.bits != 0 && m.exceptions != 0) {
-      in.Prefetch(m.table_offset,
-                  (uint64_t{NormBuckets(m)} + m.overflow) * sizeof(uint32_t));
+  if (const auto* file = in.File()) {
+    for (const auto& m : meta.regions) {
+      if (m.bits != 0 && m.exceptions != 0) {
+        file->Prefetch(m.table_offset, (uint64_t{NormBuckets(m)} + m.overflow) *
+                                         sizeof(uint32_t));
+      }
     }
   }
   _regions.reserve(meta.regions.size());

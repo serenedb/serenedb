@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
@@ -35,8 +36,6 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-class IndexInput;
 
 inline constexpr uint32_t kNormWindowShift = 16;
 
@@ -139,7 +138,7 @@ class NormColumnReader final {
   std::vector<NormStats> _stats;
   std::vector<std::span<const byte_type>> _windows;
   file_utils::ResidencyMap _residency;
-  std::vector<std::unique_ptr<byte_type[]>> _owned;
+  std::vector<duckdb::BlockCachePin> _pins;
   uint64_t _row_count = 0;
   uint64_t _sum = 0;
   uint64_t _non_zero = 0;

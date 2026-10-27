@@ -60,7 +60,7 @@ IRS_FORCE_INLINE inline void PrefetchStream(const byte_type* at) noexcept {
 
 template<typename InputType>
 IRS_FORCE_INLINE InputType* View(InputType& in) noexcept {
-  if constexpr (InputType::kVolatileAlways) {
+  if constexpr (InputType::kSpan) {
     return &in;
   } else {
     return in.Whole() ? &in : nullptr;
@@ -117,7 +117,7 @@ IRS_FORCE_INLINE void End(InputType& in, const byte_type* begin,
                           const byte_type* end) noexcept {
   if (auto* view = View(in)) {
     PrefetchStream(end);
-    view->ReadStable(static_cast<uint64_t>(end - begin));
+    view->Skip(static_cast<uint64_t>(end - begin));
   }
 }
 
@@ -375,7 +375,7 @@ IRS_FORCE_INLINE inline FillLeaf FillView(BytesViewInput& view,
     end += Codec::ValuesBlockSize(end);
   }
   PrefetchStream(end);
-  view.ReadStable(static_cast<uint64_t>(end - at));
+  view.Skip(static_cast<uint64_t>(end - at));
   at = end;
   return leaf;
 }

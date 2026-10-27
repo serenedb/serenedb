@@ -35,12 +35,12 @@
 #include <vector>
 
 #include "iresearch/index/vector_distance.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 namespace irs {
 
 class DataOutput;
-class IndexInput;
 
 inline constexpr uint32_t kHnswInvalidNode =
   std::numeric_limits<uint32_t>::max();

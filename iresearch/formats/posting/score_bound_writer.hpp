@@ -331,17 +331,15 @@ class FreqNormSource final : public ScoreBoundSource {
     return nullptr;
   }
 
-  void Read(IndexInput& in, size_t size) final {
-    _freq = in.ReadV32();
-    // TODO(mbkkt) don't compute vsize here
-    const auto read = bytes_io<uint32_t>::vsize(_freq);
+  void Read(bytes_view bytes) final {
+    const auto* p = bytes.data();
+    _freq = vread<uint32_t>(p);
     // We need to always try to read norm, because we have compatibility
     // between BM25 in the index and TFIDF in the query
     [[maybe_unused]] auto norm = _freq;
-    SDB_ASSERT(read <= size);
-    if (read != size) {
-      // TODO(mbkkt) if (!kNorm) in.skip(read - size);
-      norm += in.ReadV32();
+    SDB_ASSERT(p <= bytes.data() + bytes.size());
+    if (p != bytes.data() + bytes.size()) {
+      norm += vread<uint32_t>(p);
     }
     if constexpr (kNorm) {
       _norm.value = norm;

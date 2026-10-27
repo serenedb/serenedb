@@ -53,7 +53,7 @@ Root::ptr Family::MakePosting(const irs::detail::PostingClause& posting,
           ctx, *value, std::forward<decltype(rest)>(rest)...);
       });
   }
-  return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+  return irs::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     auto root =
       memory::make_managed<Posting<Input, utils::Empty, utils::Empty>>(
         std::piecewise_construct, std::forward_as_tuple(),

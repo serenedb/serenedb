@@ -27,7 +27,6 @@
 #include <algorithm>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -53,54 +52,85 @@ std::span<ByteExtent> CoalesceExtents(std::span<ByteExtent> extents,
 }
 
 InputFile::InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping)
-  : _length{mapping->Size()}, _mapping{std::move(mapping)} {
+  : _length{mapping->Size()},
+    _kind{std::in_place_type<MappedSpan>, std::move(mapping)} {
   if (_length != 0) {
-    _bytes = {_mapping->GetData(0, _length), _length};
-    _residency.Reset(math::DivCeil64(_length, file_utils::kPage));
+    auto& span = *std::get_if<MappedSpan>(&_kind);
+    span.bytes = {span.mapping->GetData(0, _length), _length};
+    span.residency.Reset(math::DivCeil64(_length, file_utils::kPage));
   }
 }
 
 InputFile::InputFile(duckdb::BlockCache& cache,
                      duckdb::shared_ptr<duckdb::BlockCacheFile> blocks) noexcept
-  : _length{blocks->GetSize()}, _cache{&cache}, _blocks{std::move(blocks)} {}
+  : _length{blocks->GetSize()},
+    _kind{std::in_place_type<CacheBlocks>, &cache, std::move(blocks)} {}
 
 const std::string& InputFile::Path() const noexcept {
-  if (_mapping) {
-    return _mapping->GetPath();
+  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
+    return span->mapping->GetPath();
   }
-  return _blocks->GetPath();
+  return std::get_if<CacheBlocks>(&_kind)->blocks->GetPath();
 }
 
-bytes_view InputFile::Window(uint64_t offset, uint64_t count) const noexcept {
-  if (offset >= _bytes.size()) {
+bytes_view InputFile::Span() const noexcept {
+  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
+    return span->bytes;
+  }
+  return {};
+}
+
+bytes_view InputFile::Refill(uint64_t position, CursorBlock& block,
+                             bool ahead) const {
+  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
+  SDB_ASSERT(blocks != nullptr);
+  SDB_ASSERT(position < _length);
+  const auto number = position / duckdb::BlockCache::BLOCK_SIZE;
+  block.pin =
+    blocks->cache->PinInOrder(blocks->blocks, number, block.ahead, ahead);
+  block.start = number * duckdb::BlockCache::BLOCK_SIZE;
+  return {block.pin.Ptr(),
+          std::min<uint64_t>(block.pin.Size(), _length - block.start)};
+}
+
+PinnedBytes InputFile::Pin(uint64_t offset, uint64_t size) const {
+  if (offset > _length || size > _length - offset) [[unlikely]] {
+    ThrowPastEnd(this, offset, _length);
+  }
+  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
+    return {.bytes = span->bytes.substr(offset, size)};
+  }
+  if (size == 0) {
     return {};
   }
-  return {_bytes.data() + offset,
-          std::min<uint64_t>(count, _bytes.size() - offset)};
+  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
+  auto pin = blocks->cache->PinBytes(blocks->blocks, offset, size);
+  return {.bytes = {pin.Ptr(), size}, .pin = std::move(pin)};
 }
 
-uint64_t InputFile::LastPage(uint64_t offset, uint64_t count) const noexcept {
-  return (std::min<uint64_t>(offset + count, _length) - 1) / file_utils::kPage;
+bytes_view InputFile::SpanWindow(uint64_t offset,
+                                 uint64_t size) const noexcept {
+  const auto bytes = Span();
+  if (offset >= bytes.size()) {
+    return {};
+  }
+  return bytes.substr(offset, size);
 }
 
-void InputFile::Prefetch(uint64_t offset, uint64_t count) const noexcept {
-  if (_blocks) {
-    try {
-      _cache->Prefetch(_blocks, offset, count);
-    } catch (...) {
-    }
+void InputFile::Prefetch(uint64_t offset, uint64_t size) const noexcept {
+  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
+    span->mapping->Prefetch(offset, size);
     return;
   }
-  if (_mapping) {
-    _mapping->Prefetch(offset, count);
-    return;
+  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
+  try {
+    blocks->cache->Prefetch(blocks->blocks, offset, size);
+  } catch (...) {
   }
-  const auto window = Window(offset, count);
-  file_utils::Prefetch(window.data(), window.size());
 }
 
 void InputFile::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
-  if (_blocks) {
+  if (std::holds_alternative<CacheBlocks>(_kind)) {
     extents = CoalesceExtents(extents, duckdb::BlockCache::MERGE_GAP);
   }
   for (const auto& extent : extents) {
@@ -108,247 +138,71 @@ void InputFile::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
   }
 }
 
-bool InputFile::Warm(uint64_t offset, uint64_t count) const noexcept {
-  if (_blocks) {
-    return _cache->IsCached(*_blocks, offset, count);
+bool InputFile::Warm(uint64_t offset, uint64_t size) const noexcept {
+  if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
+    return blocks->cache->IsCached(*blocks->blocks, offset, size);
   }
-  if (!_mapping || count == 0 || offset >= _length) {
+  if (size == 0 || offset >= _length) {
     return false;
   }
-  return _residency.Valid(file_utils::ResidencyEpoch()) &&
-         _residency.Test(offset / file_utils::kPage, LastPage(offset, count));
+  const auto& residency = std::get_if<MappedSpan>(&_kind)->residency;
+  const auto last =
+    (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
+  return residency.Valid(file_utils::ResidencyEpoch()) &&
+         residency.Test(offset / file_utils::kPage, last);
 }
 
-void InputFile::MarkWarm(uint64_t offset, uint64_t count) const noexcept {
-  if (!_mapping || count == 0 || offset >= _length) {
+void InputFile::MarkWarm(uint64_t offset, uint64_t size) const noexcept {
+  const auto* span = std::get_if<MappedSpan>(&_kind);
+  if (span == nullptr || size == 0 || offset >= _length) {
     return;
   }
+  const auto last =
+    (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
   const auto epoch = file_utils::ResidencyEpoch();
-  if (_residency.Valid(epoch) || _residency.Adopt(epoch)) {
-    _residency.Set(offset / file_utils::kPage, LastPage(offset, count));
+  if (span->residency.Valid(epoch) || span->residency.Adopt(epoch)) {
+    span->residency.Set(offset / file_utils::kPage, last);
   }
 }
 
-bool InputFile::Resident(uint64_t offset, uint64_t count) const noexcept {
-  if (_blocks) {
-    return Warm(offset, count);
+bool InputFile::Resident(uint64_t offset, uint64_t size) const noexcept {
+  if (std::holds_alternative<CacheBlocks>(_kind)) {
+    return Warm(offset, size);
   }
-  const auto window = Window(offset, count);
+  const auto window = SpanWindow(offset, size);
   return !window.empty() &&
          file_utils::IsResident(window.data(), window.size());
+}
+
+bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
+  if (Warm(offset, size)) {
+    file_utils::PollResidency();
+    return false;
+  }
+  const bool fetch =
+    size <= file_utils::kPrefetchChunk || !Resident(offset, size);
+  if (fetch) {
+    Prefetch(offset, size);
+  }
+  MarkWarm(offset, size);
+  return fetch;
 }
 
 void InputFile::Advise(duckdb::MappedFileAccess access) const noexcept {
-  if (_mapping) {
-    _mapping->Advise(access);
+  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
+    span->mapping->Advise(access);
   }
 }
 
-IndexInput::BlockState::~BlockState() = default;
-
-IndexInput::IndexInput(const InputFile& file) noexcept
-  : _length{file.Length()}, _file{&file} {
-  if (!_file->InBlocks()) {
-    const auto bytes = _file->Bytes();
-    _begin = _pos = bytes.data();
-    _end = bytes.data() + bytes.size();
-  }
-}
-
-IndexInput::BlockState& IndexInput::State() {
-  if (!_state) {
-    _state = std::make_unique<BlockState>();
-  }
-  return *_state;
-}
-
-void IndexInput::Reset(bytes_view bytes) noexcept {
-  _state.reset();
-  _file = nullptr;
-  _begin = _pos = bytes.data();
-  _end = bytes.data() + bytes.size();
-  _start = 0;
-  _length = bytes.size();
-}
-
-void IndexInput::SeekOutside(uint64_t pos) {
-  if (Whole()) {
-    _pos = _end;
-    return;
-  }
-  ReleasePin();
-  _begin = _pos = _end = nullptr;
-  _start = pos;
-}
-
-void IndexInput::ReleasePin() {
-  if (!_state) {
-    return;
-  }
-  auto& state = *_state;
-  if (state.pin_stable) {
-    state.held.try_emplace(_start / duckdb::BlockCache::BLOCK_SIZE,
-                           std::move(state.pin));
-    state.pin_stable = false;
-  }
-  state.pin.Reset();
-}
-
-void IndexInput::Window(uint64_t block, const byte_type* data, uint64_t size,
-                        uint64_t position) noexcept {
-  _start = block * duckdb::BlockCache::BLOCK_SIZE;
-  _begin = data;
-  _end = _begin + std::min<uint64_t>(size, _length - _start);
-  _pos = _begin + (position - _start);
-}
-
-bool IndexInput::Refill(bool ahead) {
-  const auto position = Position();
-  if (Whole() || position >= _length) {
-    return false;
-  }
-  const auto& file = *_file;
-  const auto block = position / duckdb::BlockCache::BLOCK_SIZE;
-  const auto& blocks = file.Blocks();
-  auto& state = State();
-  if (blocks->IsUnbacked()) {
-    if (const auto it = state.held.find(block); it != state.held.end()) {
-      const auto* data = it->second.Ptr();
-      const auto size = it->second.Size();
-      ReleasePin();
-      Window(block, data, size, position);
-      return _pos != _end;
-    }
-  }
-  auto pin = file.Cache().PinInOrder(blocks, block, state.read_ahead, ahead);
-  ReleasePin();
-  state.pin = std::move(pin);
-  Window(block, state.pin.Ptr(), state.pin.Size(), position);
-  return _pos != _end;
-}
-
-byte_type IndexInput::ReadByteSlow() {
-  if (!Refill(true)) {
-    ThrowPastEnd();
-  }
-  return *_pos++;
-}
-
-const byte_type* IndexInput::ReadVolatile(uint64_t count) {
-  if (Remain() >= count || (Remain() == 0 && Refill(true) && Remain() >= count))
-    [[likely]] {
-    const auto* begin = _pos;
-    _pos += count;
-    return begin;
-  }
-  if (Whole()) {
-    ThrowPastEnd();
-  }
-  auto& scratch = State().scratch;
-  scratch.resize(count);
-  ReadData(scratch.data(), count);
-  return scratch.data();
-}
-
-const byte_type* IndexInput::ReadStable(uint64_t count) {
-  if (Whole()) {
-    if (Remain() < count) {
-      return nullptr;
-    }
-  } else if (!_file->Blocks()->IsUnbacked() ||
-             (Remain() == 0 && !Refill(true)) || Remain() < count) {
-    return nullptr;
-  } else if (_state && _state->pin.IsValid()) {
-    _state->pin_stable = true;
-  }
-  const auto* begin = _pos;
-  _pos += count;
-  return begin;
-}
-
-void IndexInput::ReadDataSlow(byte_type* b, uint64_t count) {
-  if (Whole()) {
-    ThrowPastEnd();
-  }
-  if (!_file->Blocks()->IsUnbacked()) {
-    Prefetch(Position() + Remain(), count - Remain());
-  }
-  while (count != 0) {
-    if (Remain() == 0 && !Refill(false)) {
-      ThrowPastEnd();
-    }
-    const auto chunk = std::min<uint64_t>(count, Remain());
-    std::memcpy(b, _pos, chunk);
-    _pos += chunk;
-    b += chunk;
-    count -= chunk;
-  }
-}
-
-uint32_t IndexInput::Checksum(uint64_t offset) const {
-  Crc32c crc;
-  if (Whole()) {
-    crc.process_bytes(_pos, std::min<uint64_t>(offset, Remain()));
-    return crc.checksum();
-  }
-  IndexInput copy{*this};
-  const auto end = std::min<uint64_t>(Position() + offset, _length);
-  while (copy.Position() < end) {
-    if (copy.Remain() == 0 && !copy.Refill(true)) {
-      break;
-    }
-    const auto chunk = std::min<uint64_t>(end - copy.Position(), copy.Remain());
-    crc.process_bytes(copy._pos, chunk);
-    copy._pos += chunk;
-  }
-  return crc.checksum();
-}
-
-bytes_view IndexInput::SpanWindow(uint64_t offset,
-                                  uint64_t count) const noexcept {
-  if (offset >= _length) {
-    return {};
-  }
-  return {_begin + offset, std::min<uint64_t>(count, _length - offset)};
-}
-
-void IndexInput::Prefetch(uint64_t offset, uint64_t count) const noexcept {
-  if (_file != nullptr) {
-    _file->Prefetch(offset, count);
-    return;
-  }
-  const auto window = SpanWindow(offset, count);
-  file_utils::Prefetch(window.data(), window.size());
-}
-
-void IndexInput::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
-  if (_file != nullptr) {
-    _file->PrefetchExtents(extents);
-    return;
-  }
-  for (const auto& extent : extents) {
-    Prefetch(extent.offset, extent.size);
-  }
-}
-
-bool IndexInput::Resident(uint64_t offset, uint64_t count) const noexcept {
-  if (_file != nullptr) {
-    return _file->Resident(offset, count);
-  }
-  const auto window = SpanWindow(offset, count);
-  return !window.empty() &&
-         file_utils::IsResident(window.data(), window.size());
-}
-
-void IndexInput::ThrowPastEnd() const {
-  if (_file != nullptr) {
+void ThrowPastEnd(const InputFile* file, uint64_t position, uint64_t length) {
+  if (file != nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                    ERR_MSG("read past the end of '", _file->Path(),
-                            "' at offset ", Position(), " of ", _length));
+                    ERR_MSG("read past the end of '", file->Path(),
+                            "' at offset ", position, " of ", length));
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
                   ERR_MSG("read past the end of an in-memory buffer at offset ",
-                          Position(), " of ", _length));
+                          position, " of ", length));
 }
 
 }  // namespace irs

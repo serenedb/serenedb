@@ -254,7 +254,7 @@ struct MainColumn {
 struct PackedColumn {
   irs::MemoryFile file{irs::IResourceManager::gNoop};
   irs::bstring data;
-  std::unique_ptr<irs::BytesViewInput> in;
+  std::unique_ptr<irs::IndexInput> in;
   std::unique_ptr<irs::NormColumnReader> column;
   irs::NormReader::ptr reader;
   size_t bytes = 0;
@@ -272,7 +272,7 @@ struct PackedColumn {
                (region.exceptions == 0 ? 0 : irs::NormTableSize(region));
     }
     data = tests::Bytes(file);
-    in = std::make_unique<irs::BytesViewInput>(data);
+    in = std::make_unique<irs::IndexInput>(data);
     column = std::make_unique<irs::NormColumnReader>(1, writer.Meta(), *in);
     reader = irs::MakePersistedNormReader(*column);
   }

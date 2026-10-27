@@ -82,7 +82,7 @@ struct TermCollector;
 struct ScoreBoundSource : AttributeProvider {
   using ptr = std::unique_ptr<ScoreBoundSource>;
 
-  virtual void Read(IndexInput& in, size_t size) = 0;
+  virtual void Read(bytes_view bytes) = 0;
 
   virtual void Set(uint32_t freq, uint32_t norm) = 0;
 };

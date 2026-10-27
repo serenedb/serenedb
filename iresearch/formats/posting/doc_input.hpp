@@ -34,8 +34,8 @@
 
 namespace irs {
 
-template<typename Metas>
-void PrefetchDocExtents(const IndexInput& in, Metas&& metas) {
+template<typename Input, typename Metas>
+void PrefetchDocExtents(const Input& in, Metas&& metas) {
   std::vector<ByteExtent> extents;
   for (const PostingMeta& meta : metas) {
     if (const auto extent = DocExtent(meta); extent != 0) {

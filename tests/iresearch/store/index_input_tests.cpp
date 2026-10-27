@@ -37,7 +37,7 @@ irs::byte_type ExpectedByte(uint64_t offset) {
 
 class IndexInputTest : public TestBase {};
 
-TEST_F(IndexInputTest, stable_reads_outlive_evictions) {
+TEST_F(IndexInputTest, pins_outlive_evictions) {
   duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance(),
                            4 * kBlock};
   cache.SetSpill((test_dir() / "spill").string(), 0);
@@ -50,31 +50,33 @@ TEST_F(IndexInputTest, stable_reads_outlive_evictions) {
   }
   cache.SetUnbackedSize(*file, kBlocks * kBlock);
 
-  {
-    const irs::InputFile blocks{cache, file};
-    irs::IndexInput in{blocks};
-    std::vector<const irs::byte_type*> stable;
-    for (uint64_t pass = 0; pass != 2; ++pass) {
-      for (uint64_t block = 0; block != kBlocks; ++block) {
-        const auto* data = in.ReadStable(block * kBlock + 100, kRead);
-        ASSERT_NE(nullptr, data);
-        stable.push_back(data);
-      }
+  const irs::InputFile blocks{cache, file};
+  irs::IndexInput in{blocks};
+  std::vector<irs::PinnedBytes> pinned;
+  for (uint64_t pass = 0; pass != 2; ++pass) {
+    for (uint64_t block = 0; block != kBlocks; ++block) {
+      in.Seek(block * kBlock + 100);
+      auto bytes = in.Pin(kRead);
+      ASSERT_EQ(kRead, bytes.bytes.size());
+      EXPECT_EQ(block * kBlock + 100 + kRead, in.Position());
+      pinned.push_back(std::move(bytes));
     }
-    for (uint64_t i = 0; i != stable.size(); ++i) {
-      const auto offset = i % kBlocks * kBlock + 100;
-      for (uint64_t j = 0; j != kRead; ++j) {
-        ASSERT_EQ(ExpectedByte(offset + j), stable[i][j]) << i << " " << j;
-      }
+  }
+  for (uint64_t i = 0; i != pinned.size(); ++i) {
+    const auto offset = i % kBlocks * kBlock + 100;
+    for (uint64_t j = 0; j != kRead; ++j) {
+      ASSERT_EQ(ExpectedByte(offset + j), pinned[i].bytes[j]) << i << " " << j;
     }
+  }
 
-    in.Seek(kBlock - 10);
-    EXPECT_EQ(nullptr, in.ReadStable(20));
-    EXPECT_EQ(kBlock - 10, in.Position());
+  const auto across = in.Pin(kBlock - 10, 20);
+  ASSERT_EQ(20, across.bytes.size());
+  for (uint64_t j = 0; j != 20; ++j) {
+    ASSERT_EQ(ExpectedByte(kBlock - 10 + j), across.bytes[j]) << j;
   }
 }
 
-TEST_F(IndexInputTest, volatile_reads_across_blocks_keep_alignment) {
+TEST_F(IndexInputTest, pins_across_blocks_keep_alignment) {
   duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance(),
                            4 * kBlock};
   cache.SetSpill((test_dir() / "spill").string(), 0);
@@ -89,15 +91,64 @@ TEST_F(IndexInputTest, volatile_reads_across_blocks_keep_alignment) {
 
   constexpr uint64_t kAlign = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
   const irs::InputFile blocks{cache, file};
-  irs::IndexInput in{blocks};
+  const irs::IndexInput in{blocks};
   for (const uint64_t count : {kAlign + 4, 4 * kAlign}) {
     const auto offset = kBlock - kAlign;
-    const auto* data = in.ReadVolatile(offset, count);
+    const auto pinned = in.Pin(offset, count);
+    const auto* data = pinned.bytes.data();
     ASSERT_EQ(0, reinterpret_cast<uintptr_t>(data) % kAlign) << count;
     for (uint64_t j = 0; j != count; ++j) {
       ASSERT_EQ(ExpectedByte(offset + j), data[j]) << count << " " << j;
     }
   }
+}
+
+TEST_F(IndexInputTest, peek_refills_an_empty_window_and_reads_cross_blocks) {
+  duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance(),
+                           4 * kBlock};
+  cache.SetSpill((test_dir() / "spill").string(), 0);
+  auto file = cache.CreateUnbackedFile("memory://block_input_test/peek");
+  for (uint64_t block = 0; block != 3; ++block) {
+    auto pin = cache.CreateBlock(*file, block);
+    for (uint64_t i = 0; i != kBlock; ++i) {
+      pin.GetDataMutable()[i] = ExpectedByte(block * kBlock + i);
+    }
+  }
+  cache.SetUnbackedSize(*file, 3 * kBlock);
+
+  const irs::InputFile blocks{cache, file};
+  irs::IndexInput in{blocks};
+  ASSERT_FALSE(in.Whole());
+  in.Seek(kBlock + 10);
+  const auto* inside = in.Peek(kRead);
+  ASSERT_NE(nullptr, inside);
+  EXPECT_EQ(ExpectedByte(kBlock + 10), inside[0]);
+  EXPECT_EQ(kBlock + 10, in.Position());
+
+  in.Seek(2 * kBlock - 5);
+  EXPECT_EQ(nullptr, in.Peek(kRead));
+  irs::byte_type across[kRead];
+  in.ReadData(across, kRead);
+  for (uint64_t j = 0; j != kRead; ++j) {
+    ASSERT_EQ(ExpectedByte(2 * kBlock - 5 + j), across[j]) << j;
+  }
+  EXPECT_EQ(2 * kBlock - 5 + kRead, in.Position());
+
+  in.Seek(3 * kBlock - 2);
+  EXPECT_ANY_THROW(in.ReadI32());
+}
+
+TEST_F(IndexInputTest, span_cursor_reads_a_whole_cursor_in_place) {
+  const irs::bstring bytes{irs::byte_type{1}, irs::byte_type{2},
+                           irs::byte_type{3}};
+  const irs::IndexInput whole{bytes};
+  ASSERT_TRUE(whole.Whole());
+  irs::BytesViewInput view{whole};
+  EXPECT_EQ(1, view.ReadByte());
+  EXPECT_EQ(1, view.Position());
+  EXPECT_EQ(3, view.Length());
+  EXPECT_EQ(bytes, irs::bstring{view.Span()});
+  EXPECT_ANY_THROW(view.Pin(2, 2));
 }
 
 }  // namespace

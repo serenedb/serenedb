@@ -81,14 +81,8 @@ void ReadContext::Reset(const ColReader& reader) {
 void ReadContext::ResetMapping() {
   _mapping.reset();
   _ranges.clear();
-  if (!_in) {
-    return;
-  }
-  const auto pos = _in.Position();
-  const auto len = _in.Length();
-  if (const byte_type* data = _in.ReadStable(0, len); data != nullptr) {
-    _mapping = duckdb::make_uniq<ColMapping>(data, len);
-    _in.Seek(pos);
+  if (const auto span = _in.Span(); !span.empty()) {
+    _mapping = duckdb::make_uniq<ColMapping>(span.data(), span.size());
   }
 }
 
@@ -100,8 +94,10 @@ duckdb::string_t ReadContext::ReadString(duckdb::Vector& result,
   uint32_t len;
   _in.ReadData(pos, reinterpret_cast<byte_type*>(&len), sizeof(len));
   len = absl::little_endian::Load32(reinterpret_cast<byte_type*>(&len));
-  if (const auto* body = _in.ReadStable(pos + sizeof(len), len)) {
-    return duckdb::string_t{reinterpret_cast<const char*>(body), len};
+  if (_in.Whole()) {
+    const auto body = _in.Pin(pos + sizeof(len), len);
+    return duckdb::string_t{reinterpret_cast<const char*>(body.bytes.data()),
+                            len};
   }
   auto out = duckdb::StringVector::EmptyString(result, len);
   _in.ReadData(pos + sizeof(len),
@@ -115,8 +111,10 @@ duckdb::const_data_ptr_t ReadContext::TryReadStable(duckdb::idx_t position,
   SDB_ENSURE(size <= _in.Length() && position <= _in.Length() - size,
              "ReadContext::TryReadStable: range [", position, ", ",
              position + size, ") out of bounds (length ", _in.Length(), ")");
-  return reinterpret_cast<duckdb::const_data_ptr_t>(
-    _in.ReadStable(position, size));
+  const auto span = _in.Span();
+  return span.empty()
+           ? nullptr
+           : reinterpret_cast<duckdb::const_data_ptr_t>(span.data() + position);
 }
 
 void ReadContext::Read(duckdb::idx_t position, duckdb::data_ptr_t target,

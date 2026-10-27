@@ -44,14 +44,6 @@ inline bool FreqOf(const TermReader& field) noexcept {
 }
 
 template<typename F>
-auto ResolveInput(const IndexInput& in, F&& f) {
-  if (in.Whole()) {
-    return f.template operator()<BytesViewInput>();
-  }
-  return f.template operator()<IndexInput>();
-}
-
-template<typename F>
 auto ResolveBool(bool value, F&& f) {
   if (value) {
     return f.template operator()<true>();

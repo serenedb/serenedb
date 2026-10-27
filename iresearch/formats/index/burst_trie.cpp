@@ -901,13 +901,8 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
     if (_inline_size == 0) {
       return;
     }
-    const auto bytes = _inline_size + block_codec::kInSlack;
-    _inline_region = in.ReadStable(_inline_offset, bytes);
-    if (_inline_region == nullptr) {
-      _inline_copy = std::make_unique_for_overwrite<byte_type[]>(bytes);
-      in.ReadData(_inline_offset, _inline_copy.get(), bytes);
-      _inline_region = _inline_copy.get();
-    }
+    _inline = in.Pin(_inline_offset, _inline_size + block_codec::kInSlack);
+    _inline_region = _inline.bytes.data();
   }
 
  private:
@@ -919,7 +914,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   uint64_t _inline_offset{};
   uint64_t _inline_size{};
   const byte_type* _inline_region{};
-  std::unique_ptr<byte_type[]> _inline_copy;
+  PinnedBytes _inline;
   bool _has_score_bounds{};
   FreqAttr _freq;
 };
@@ -1075,6 +1070,7 @@ class BlockIterator : util::Noncopyable {
     DataBlock(DataBlock&& rhs) noexcept { *this = std::move(rhs); }
     DataBlock& operator=(DataBlock&& rhs) noexcept {
       if (this != &rhs) {
+        pinned = std::move(rhs.pinned);
         if (rhs.block.empty()) {
           begin = rhs.begin;
 #ifdef SDB_DEV
@@ -1093,6 +1089,15 @@ class BlockIterator : util::Noncopyable {
       return *this;
     }
 
+    void Reset(PinnedBytes&& bytes) noexcept {
+      block.clear();
+      pinned = std::move(bytes);
+      begin = pinned.bytes.data();
+#ifdef SDB_DEV
+      end = begin + pinned.bytes.size();
+#endif
+    }
+
     [[maybe_unused]] void AssertBlockBoundaries() {
 #ifdef SDB_DEV
       SDB_ASSERT(begin <= end);
@@ -1104,6 +1109,7 @@ class BlockIterator : util::Noncopyable {
     }
 
     Blockype block;
+    PinnedBytes pinned;
     const byte_type* begin{block.c_str()};
 #ifdef SDB_DEV
     const byte_type* end{begin};
@@ -1192,38 +1198,14 @@ void BlockIterator::Load(IndexInput& in) {
   // read suffix block
   uint64_t block_size;
   _leaf = ShiftUnpack64(in.ReadV64(), block_size);
-
-  // try direct buffer access first
-  _suffix.begin = in.ReadStable(block_size);
-  _suffix.block.clear();
-
-  if (!_suffix.begin) {
-    _suffix.block.resize(block_size);
-    in.ReadData(_suffix.block.data(), block_size);
-    _suffix.begin = _suffix.block.c_str();
-  }
+  _suffix.Reset(in.Pin(block_size));
   _suffix_start = _suffix.begin;
   _suffix_end = _suffix.begin + block_size;
-#ifdef SDB_DEV
-  _suffix.end = _suffix.begin + block_size;
-#endif
   _suffix.AssertBlockBoundaries();
 
   // read stats block
   block_size = in.ReadV64();
-
-  // try direct buffer access first
-  _stats.begin = in.ReadStable(block_size);
-  _stats.block.clear();
-
-  if (!_stats.begin) {
-    _stats.block.resize(block_size);
-    in.ReadData(_stats.block.data(), block_size);
-    _stats.begin = _stats.block.c_str();
-  }
-#ifdef SDB_DEV
-  _stats.end = _stats.begin + block_size;
-#endif
+  _stats.Reset(in.Pin(block_size));
   _inline_next = vread<uint64_t>(_stats.begin);
   _stats.AssertBlockBoundaries();
 
@@ -2839,10 +2821,13 @@ class FieldReader::Impl {
       if (size == 0) {
         return;
       }
-      const auto& in = _owner->_terms_in;
+      const auto* file = _owner->_terms_in.File();
+      if (file == nullptr) {
+        return;
+      }
       for (uint64_t i = 0; i != kBlocksProbes; ++i) {
-        if (!in.Resident(_blocks_begin + size * i / kBlocksProbes, 1)) {
-          in.Prefetch(_blocks_begin, size);
+        if (!file->Resident(_blocks_begin + size * i / kBlocksProbes, 1)) {
+          file->Prefetch(_blocks_begin, size);
           return;
         }
       }
@@ -2941,7 +2926,9 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
       std::upper_bound(ends.begin(), ends.end(), field.BodyOffset());
     field.SetBlocksBegin(it == ends.begin() ? 0 : *std::prev(it));
   }
-  _terms_in.Advise(duckdb::MappedFileAccess::RANDOM);
+  if (const auto* file = _terms_in.File()) {
+    file->Advise(duckdb::MappedFileAccess::RANDOM);
+  }
 }
 
 const TermReader* FieldReader::Impl::field(field_id id) const {

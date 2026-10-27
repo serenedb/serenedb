@@ -85,11 +85,10 @@ auto ResolveClusters(const Query& query, Emit&& emit) {
                                           state.cookies.size() * state.d};
   const auto count = state.cookies.size();
 
-  return detail::ResolveInput(
-    *detail::DocOf(*state.reader), [&]<typename InputType>() {
-      return emit.template operator()<VectorCluster<InputType, Gate>>(count,
-                                                                      feed);
-    });
+  return ResolveInput(*detail::DocOf(*state.reader), [&]<typename InputType>() {
+    return emit.template operator()<VectorCluster<InputType, Gate>>(count,
+                                                                    feed);
+  });
 }
 
 template<typename Gate, bool Rescore, typename Query, typename Emit>

@@ -47,11 +47,11 @@ struct HoleBuf {
 };
 
 template<typename InputType>
-using NeedEnc = utils::Need<!InputType::kVolatileAlways, EncBuf>;
+using NeedEnc = utils::Need<!InputType::kSpan, EncBuf>;
 
 template<typename InputType, typename Enc>
 IRS_FORCE_INLINE uint32_t* EncOf(Enc& enc) noexcept {
-  if constexpr (InputType::kVolatileAlways) {
+  if constexpr (InputType::kSpan) {
     return nullptr;
   } else {
     return enc.data;

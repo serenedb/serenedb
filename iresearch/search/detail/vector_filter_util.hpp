@@ -56,18 +56,9 @@ inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
   CodebookUse use) {
   idx_in.Seek(ivf.QuantStatsOffset());
   const auto stats_size = static_cast<size_t>(idx_in.ReadI64());
-  std::span<const byte_type> stats;
-  bstring owned;
-  if (stats_size != 0) {
-    if (const byte_type* p = idx_in.ReadVolatile(stats_size)) {
-      stats = {p, stats_size};
-    } else {
-      owned.resize(stats_size);
-      idx_in.ReadData(owned.data(), stats_size);
-      stats = owned;
-    }
-  }
-  auto quant_stats = MakeQuantizerStats(quant, d, stats, metric);
+  const auto stats = idx_in.Pin(stats_size);
+  auto quant_stats = MakeQuantizerStats(
+    quant, d, std::span<const byte_type>{stats.bytes}, metric);
   if (!quant_stats) {
     return nullptr;
   }

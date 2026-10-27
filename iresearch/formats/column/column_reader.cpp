@@ -410,13 +410,13 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
 
 void ColumnReader::Readahead(size_t block, ReadContext& ctx,
                              ScanState* s) const noexcept {
-  if (ctx.RandomAccess()) {
+  const auto* file = ctx.In().File();
+  if (ctx.RandomAccess() || file == nullptr) {
     return;
   }
-  auto& in = ctx.In();
   const auto& first = _segments[block];
   if (s == nullptr) {
-    in.Prefetch(first.file_offset, first.byte_size);
+    file->Prefetch(first.file_offset, first.byte_size);
     return;
   }
   const bool sequential = block != 0 && s->opened_block + 1 == block;
@@ -424,7 +424,7 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   if (block < s->advised_end) {
     return;
   }
-  if (in.Resident(first.file_offset, first.byte_size)) {
+  if (file->Resident(first.file_offset, first.byte_size)) {
     s->advised_end = block + 1;
     return;
   }
@@ -432,7 +432,7 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   auto b = block;
   do {
     const auto& m = _segments[b++];
-    in.Prefetch(m.file_offset, m.byte_size);
+    file->Prefetch(m.file_offset, m.byte_size);
     const auto cost = std::max<uint64_t>(m.byte_size, file_utils::kPage);
     if (budget <= cost) {
       break;

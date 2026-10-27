@@ -223,7 +223,7 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
 
   [[maybe_unused]] const byte_type* at = nullptr;
   [[maybe_unused]] const byte_type* fetched = nullptr;
-  if constexpr (Input::kVolatileAlways) {
+  if constexpr (Input::kSpan) {
     at = in.Current();
     fetched = at;
   }
@@ -231,7 +231,7 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
   const auto read_leaf = [&]<size_t N>(uint32_t len,
                                        doc_id_t prev) IRS_FORCE_INLINE {
     const auto leaf = [&] IRS_FORCE_INLINE {
-      if constexpr (Input::kVolatileAlways) {
+      if constexpr (Input::kSpan) {
         const auto* const from = std::max(fetched, at);
         for (uint64_t offset = 0; offset != kFillPrefetch;
              offset += ABSL_CACHELINE_SIZE) {

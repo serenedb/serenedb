@@ -49,6 +49,7 @@
 #include <duckdb/parser/tableref/joinref.hpp>
 #include <duckdb/parser/tableref/subqueryref.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <stdexcept>
@@ -452,6 +453,7 @@ void ScanReplSource(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
         g.finished = true;
         break;
       }
+      SDB_PARK_ONCE_ON_FAILURE("pause_subscription_apply_drained");
       if (stream.Park(*input.interrupt_state)) {
         input.async_result = duckdb::AsyncResultType::BLOCKED;
         break;

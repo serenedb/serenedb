@@ -234,9 +234,6 @@ statement ok
 CALL postgres_execute('rpub_${__DATABASE__}', 'INSERT INTO rsub_items VALUES (101, ''after drop'', 1)');
 
 
-sleep 2s
-
-
 query
 SELECT count(*) AS n FROM rsub_items;
 ----

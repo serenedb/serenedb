@@ -95,7 +95,7 @@ class GtestBinary:
                 self.ctx.skips.append((uid, skip))
                 continue
             cost, timeout = plan(self.ctx, uid, 0.4)
-            planned.append((t, cost, timeout))
+            planned.append((t, cost, timeout, self.ctx.timing.expect(uid) is not None))
         units = []
         batch, batch_cost = [], 0.0
         target = BATCH_SECONDS * self.ctx.config.slowdown
@@ -104,20 +104,22 @@ class GtestBinary:
             nonlocal batch, batch_cost
             if not batch:
                 return
-            members = tuple(t for t, _, _ in batch)
+            members = tuple(t for t, _, _, _ in batch)
             uid = f"gtest:{self.label}:batch:{members[0]}+{len(members) - 1}"
             timeout = max(self.ctx.timeout_floor, 5 * batch_cost + 30 * self.ctx.config.slowdown,
-                          batch_cost + max(t for _, _, t in batch))
+                          batch_cost + max(t for _, _, t, _ in batch))
             units.append(Unit(uid, "gtest", self._run(members), cpus=1, mem_gb=1.0,
                               cost=batch_cost, timeout=timeout,
                               members=tuple(f"gtest:{self.label}:{m}" for m in members)))
             batch, batch_cost = [], 0.0
 
-        for t, cost, timeout in planned:
-            if batch and (batch_cost + cost > target or len(batch) >= BATCH_MAX):
+        for t, cost, timeout, timed in planned:
+            if batch and (not timed or batch_cost + cost > target or len(batch) >= BATCH_MAX):
                 flush()
-            batch.append((t, cost, timeout))
+            batch.append((t, cost, timeout, timed))
             batch_cost += cost
+            if not timed:
+                flush()
         flush()
         return units
 
@@ -150,7 +152,8 @@ class GtestBinary:
                         failures.append(t)
                 if res.stuck:
                     stuck = unfinished[-1] if unfinished else "?"
-                    outcome_members[f"gtest:{self.label}:{stuck}"] = (STUCK, res.duration,
+                    ran = max(0.0, res.duration - sum(seconds for _, seconds in results.values()))
+                    outcome_members[f"gtest:{self.label}:{stuck}"] = (STUCK, ran,
                                                                      "no result; stacks saved")
                     for t in remaining:
                         key = f"gtest:{self.label}:{t}"
@@ -210,6 +213,13 @@ def gtest_units(ctx, args, skips):
         return []
     required_binary(ctx.build.bin("serenedb-tests"), "serenedb-tests")
     return GtestBinary(ctx, "serenedb-tests", env={"LANG": "en_US"}).units(skips)
+
+
+def re2_units(ctx, args, skips):
+    if not ctx.build.gtests:
+        return []
+    required_binary(ctx.build.bin("re2-tests"), "re2-tests")
+    return GtestBinary(ctx, "re2-tests").units(skips)
 
 
 def iresearch_units(ctx, args, skips):

@@ -1,6 +1,9 @@
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "harness")]
@@ -10,6 +13,7 @@ from testlib import cli, scheduler  # noqa: E402
 from testlib.scheduler import (FAILED, INTERRUPTED, PASSED, SKIPPED, Outcome, Result,  # noqa: E402
                                Unit)
 from testlib.suites import duckdb, gtest  # noqa: E402
+from testlib.timing import Timing  # noqa: E402
 
 
 def unit(uid, members=(), fixtures=(), cost=1.0, cpus=1):
@@ -51,16 +55,34 @@ def test_a_changed_test_source_picks_the_compiled_tests_it_defines(monkeypatch, 
                  "gtest:serenedb-tests:Each/Param.Runs/0", "gtest:serenedb-tests:Typed/1.Holds")),
              unit("gtest:serenedb-tests:batch:Else.Fails+0", members=("gtest:serenedb-tests:Else.Fails",)),
              unit("duckdb:cpp:batch:Test a thing+0", members=("duckdb:cpp:Test a thing",)),
-             unit("re2:search_test")]
+             unit("gtest:re2-tests:batch:Search.Literal+1",
+                  members=("gtest:re2-tests:Search.Literal", "gtest:re2-tests:Set.Unanchored"))]
     files = {"tests/server/plain_test.cpp": "TEST(Plain, Works) {}\nTEST_P(Param, Runs) {}\n"
                                             "TYPED_TEST(Typed, Holds) {}\n",
              "third_party/duckdb/test/api/test_thing.cpp": 'TEST_CASE("Test a thing", "[api]") {}\n',
-             "third_party/re2/re2/testing/search_test.cc": ""}
+             "third_party/re2/re2/testing/search_test.cc": "TEST(Search, Literal) {}\n"}
     _, tests = changed(monkeypatch, tmp_path, files, units)
     assert tests == {"gtest:serenedb-tests:Plain.Works", "gtest:serenedb-tests:Each/Param.Runs/0",
-                     "gtest:serenedb-tests:Typed/1.Holds", "duckdb:cpp:Test a thing", "re2:search_test"}
+                     "gtest:serenedb-tests:Typed/1.Holds", "duckdb:cpp:Test a thing",
+                     "gtest:re2-tests:Search.Literal"}
     picked, _ = changed(monkeypatch, tmp_path, files, units, compiled=False)
     assert picked == []
+
+
+@pytest.mark.parametrize("config,args,targets", [
+    ("perf", [], "serened iresearch-examples serenedb-bench-micro search-benchmark-game"),
+    ("dev", [], "serened iresearch-examples serenedb-bench-micro search-benchmark-game "
+                "iresearch-load-tests iresearch-tests re2-tests serenedb-tests unittest"),
+    ("asan", ["--suite", "sqllogic", "--suite", "gtest", "--changed", "origin/main"],
+     "serened serenedb-tests"),
+    ("tsan", ["--suite", "gtest", "--suite", "re2", "--suite", "duckdb", "--duckdb-suite", "core"],
+     "serened re2-tests serenedb-tests unittest"),
+])
+def test_a_build_makes_only_the_binaries_of_the_suites_it_tests(config, args, targets):
+    script = 'source scripts/ci/config.sh && sdb_config "$@" && echo "${TARGETS[*]}"'
+    res = subprocess.run(["bash", "-c", script, "config.sh", config, *args], cwd=ROOT,
+                         capture_output=True, text=True, check=True)
+    assert res.stdout.strip() == targets
 
 
 def test_the_bugfix_check_fails_a_changed_test_that_did_not_run():
@@ -108,6 +130,17 @@ def test_test_durations_below_the_clock_resolution_are_not_zero():
         members, "duckdb:avro")
     assert out["duckdb:avro:test/sql/a.test"][0] == PASSED
     assert out["duckdb:avro:test/sql/a.test"][1] > 0
+
+
+def test_an_untimed_gtest_runs_alone_and_timed_ones_batch(monkeypatch):
+    timing = Timing({"gtest:b:A.timed": 1.0, "gtest:b:B.timed": 1.0})
+    ctx = SimpleNamespace(timing=timing, skips=[], timeout_floor=180.0,
+                          config=SimpleNamespace(slowdown=1.0),
+                          build=SimpleNamespace(bin=lambda name: Path("/bin") / name), base_env={})
+    monkeypatch.setattr(gtest, "list_tests", lambda *args: ["A.timed", "B.timed", "C.new", "D.new"])
+    units = gtest.GtestBinary(ctx, "b").units([])
+    assert [u.members for u in units] == [("gtest:b:A.timed", "gtest:b:B.timed"), ("gtest:b:C.new",),
+                                          ("gtest:b:D.new",)]
 
 
 def test_extension_test_ids_do_not_depend_on_the_checkout():

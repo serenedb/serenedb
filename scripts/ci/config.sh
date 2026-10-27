@@ -3,8 +3,28 @@
 BUILD_IMAGE=$(python3 "$(dirname "${BASH_SOURCE[0]}")/ci.py" image)
 export BUILD_IMAGE
 
+sdb_test_targets() {
+	local suites=()
+	while (($#)); do
+		[[ "$1" == --suite ]] && suites+=("$2") && shift
+		shift
+	done
+	((${#suites[@]})) || suites=(gtest iresearch iresearch-load duckdb re2)
+	local suite
+	for suite in "${suites[@]}"; do
+		case "$suite" in
+		gtest) echo serenedb-tests ;;
+		iresearch) echo iresearch-tests ;;
+		iresearch-load) echo iresearch-load-tests ;;
+		duckdb) echo unittest ;;
+		re2) echo re2-tests ;;
+		esac
+	done
+}
+
 sdb_config() {
 	CONFIG="$1"
+	shift
 	BUILDMODE=RelWithDebInfo
 	SDB_DEBUG_INFO=STACK
 	SDB_LTO=Off
@@ -16,15 +36,13 @@ sdb_config() {
 	SDB_GTEST=On
 	SDB_FAULT_INJECTION=On
 	EXTRA_CMAKE_FLAGS="-DSDB_BUILD_DUCKDB_UNITTESTS=ON"
-	TARGETS=(serened iresearch-examples serenedb-bench-micro search-benchmark-game
-		serenedb-tests iresearch-tests iresearch-load-tests unittest re2-tests)
+	TARGETS=(serened)
 	case "$CONFIG" in
 	perf)
 		SDB_DEV=Off
 		SDB_GTEST=Off
 		SDB_FAULT_INJECTION=Off
 		EXTRA_CMAKE_FLAGS="-DSDB_BUILD_DUCKDB_UNITTESTS=OFF"
-		TARGETS=(serened iresearch-examples serenedb-bench-micro search-benchmark-game)
 		;;
 	dev) SDB_COVERAGE=On ;;
 	asan) SANITIZERS=UndefinedAddress ;;
@@ -35,6 +53,12 @@ sdb_config() {
 		return 1
 		;;
 	esac
+	if [[ "$CONFIG" == perf || "$CONFIG" == dev ]]; then
+		TARGETS+=(iresearch-examples serenedb-bench-micro search-benchmark-game)
+	fi
+	if [[ "$SDB_GTEST" == On ]]; then
+		mapfile -t -O "${#TARGETS[@]}" TARGETS < <(sdb_test_targets "$@" | sort -u)
+	fi
 	BUILD_DIR="build_${CONFIG}"
 	ARCH="$(uname -m)"
 	BUILD_FLAGS="BUILDMODE=$BUILDMODE SDB_DEBUG_INFO=$SDB_DEBUG_INFO SDB_LTO=$SDB_LTO SDB_VTUNE=$SDB_VTUNE SDB_ALLOC=$SDB_ALLOC"

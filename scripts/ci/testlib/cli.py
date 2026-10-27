@@ -115,7 +115,7 @@ def build_units(ctx, args, suites, skips):
     if "drivers" in suites:
         units += drivers.driver_units(ctx, args, skips)
     if "re2" in suites:
-        units += drivers.re2_units(ctx, args, skips)
+        units += gtest.re2_units(ctx, args, skips)
     if "duckdb" in suites:
         units += duckdb.duckdb_units(ctx, args, skips)
     if "sqlsmith" in suites:
@@ -188,14 +188,12 @@ class ChangedTests:
                 self.ids[f"duckdb:{suite}:{'/'.join(parts[2:])}"].add(name)
         if not compiled or not name.endswith(CPP_SOURCES):
             return
-        if name.startswith("tests/"):
+        if name.startswith(("tests/", "third_party/re2/re2/testing/")):
             for case in _GTEST_CASE.findall((ROOT / name).read_text(errors="replace")):
                 self.gtest_cases[case].add(name)
         elif name.startswith("third_party/duckdb/test/"):
             for case in _CATCH_CASE.findall((ROOT / name).read_text(errors="replace")):
                 self.catch_cases[re.sub(r"\\(.)", r"\1", case)].add(name)
-        elif name.startswith("third_party/re2/re2/testing/"):
-            self.ids[f"re2:{Path(name).stem}"].add(name)
 
     def sources(self, uid):
         found = set(self.ids.get(uid, ()))

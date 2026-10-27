@@ -92,7 +92,9 @@ jobs:
 
       - name: Build
         id: build
-        run: ./scripts/ci/build_bundle.sh "${{ inputs.CONFIG }}"
+        run: |
+          set -f
+          ./scripts/ci/build_bundle.sh "${{ inputs.CONFIG }}" ${{ inputs.TEST_ARGS }}
 
       - name: Plan the test shards
         id: plan

@@ -1,9 +1,8 @@
 import re
-from pathlib import Path
 
 from ..scheduler import CRASHED, FAILED, PASSED, Outcome, Unit
 from ..servers import Server, ServerPool
-from . import gtest, plan, skipped
+from . import plan, skipped
 
 LANGS = ("python", "java", "js", "go", "rust", "php", "csharp", "c", "ruby", "r", "psql")
 CPUS = {"java": 4, "csharp": 2, "js": 2, "python": 3}
@@ -92,34 +91,6 @@ def _network_run(ctx):
         res = r.exec([ctx.root / "tests" / "drivers" / "network" / "run.sh"],
                      env={"SERENED": str(ctx.build.bin("serened"))})
         return r.outcome(res)
-
-    return run
-
-
-def re2_units(ctx, args, skips):
-    if not ctx.build.gtests:
-        return []
-    testfile = gtest.required_binary(ctx.build.dir / "third_party" / "re2" / "CTestTestfile.cmake",
-                                     "re2-tests")
-    units = []
-    for m in re.finditer(r'add_test\(\[=\[(\S+?)\]=\] "([^"]+)"((?: "[^"]*")*)\)',
-                         testfile.read_text()):
-        name, binary, rest = m.group(1), Path(m.group(2)), re.findall(r'"([^"]*)"', m.group(3))
-        local = gtest.required_binary(ctx.build.dir / "third_party" / "re2" / binary.name, "re2-tests")
-        uid = f"re2:{name}"
-        skip = skipped(skips, uid)
-        if skip:
-            ctx.skips.append((uid, skip))
-            continue
-        cost, timeout = plan(ctx, uid, 20.0)
-        units.append(Unit(uid, "re2", _plain_run([local, *rest]), cpus=1, mem_gb=1.0,
-                          cost=cost, timeout=timeout))
-    return units
-
-
-def _plain_run(argv):
-    def run(r):
-        return r.outcome(r.exec(argv))
 
     return run
 

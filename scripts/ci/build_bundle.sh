@@ -6,7 +6,7 @@ WORKSPACE="${WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 cd "$WORKSPACE"
 # shellcheck source=scripts/ci/config.sh
 source scripts/ci/config.sh
-sdb_config "$1"
+sdb_config "$@"
 
 : "${CCACHE_HOST_DIR:=/mnt/data/.ccache}"
 : "${CARGO_HOME_CACHE:=/mnt/data/.cargo-home-sqllogic}"

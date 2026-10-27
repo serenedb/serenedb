@@ -38,7 +38,7 @@ BUILD_INPUT_EXCEPTIONS = ("docs/*", "tests/sqllogic/sdb/pg/site_docs/*", "tests/
 SQLLOGIC_TEST_DIR = "tests/sqllogic/"
 BUNDLE_PATHS = (
     "bin/serened", "bin/serenedb-tests", "bin/iresearch-tests", "bin/iresearch-load-tests",
-    "third_party/duckdb/test/unittest", "third_party/re2/CTestTestfile.cmake", "CMakeCache.txt",
+    "bin/re2-tests", "third_party/duckdb/test/unittest", "CMakeCache.txt",
 )
 BUNDLE_CACHE = Path(os.environ.get("SDB_BUNDLE_CACHE", "/mnt/data/sdb-ci/bundles"))
 ARCHES = ("x86_64", "aarch64")
@@ -118,11 +118,7 @@ def cmd_image(args):
 
 def cmd_pack(args):
     build = Path(args.build_dir).resolve()
-    re2 = build / "third_party" / "re2"
     paths = [p for p in BUNDLE_PATHS if (build / p).exists()]
-    if re2.is_dir():
-        paths += [str((re2 / n).relative_to(build)) for n in sorted(os.listdir(re2))
-                  if n.endswith("_test") and (re2 / n).is_file()]
     runner = []
     if args.runner:
         source = Path(args.runner).resolve()
@@ -309,7 +305,7 @@ def cmd_update_timing(args):
         attempts = (f"SELECT unit, coalesce(run, concat(sha, ':', started)) AS r, duration AS d, "
                     f"started AS s FROM read_parquet([{store.quoted(files)}], union_by_name = true) "
                     f"WHERE coalesce(pr, '') = '{args.pr}' "
-                    f"AND status IN ('passed', 'failed', 'flaky', 'setup') "
+                    f"AND status IN ('passed', 'failed', 'flaky', 'stuck', 'setup') "
                     f"AND NOT wrapper AND duration > 0 AND coalesce(signature, '') <> 'budget'")
         runs = (f"SELECT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, sum(d) AS d, max(s) AS s "
                 f"FROM (SELECT unit, r, max(d) AS d, max(s) AS s FROM ({attempts}) GROUP BY ALL) "

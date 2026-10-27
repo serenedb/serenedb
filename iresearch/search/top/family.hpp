@@ -148,12 +148,6 @@ struct Family {
 
   static Result Make(const BooleanQuery& query, const Context& ctx);
 
-  static Result Make(const HnswQuery& query, const Context& ctx);
-
-  static Result Make(const KnnVectorQuery& query, const Context& ctx);
-
-  static Result Make(const ExactVectorQuery& query, const Context& ctx);
-
   static Result Make(const EmptyQueryBuilder&, const Context&) {
     return MakeEmpty();
   }

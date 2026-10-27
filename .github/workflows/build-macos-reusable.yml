@@ -1,9 +1,9 @@
 name: task | serenedb macos build & test
 
 # Native macOS (Apple Silicon) build + test. Unlike the Linux pipeline this does
-# NOT use Docker: it builds with Homebrew LLVM and runs sqllogic against a
-# locally-started serened. Reusable + manually dispatchable; wired into the
-# nightly schedule (jobs-schedule.yml).
+# NOT use Docker: it builds with LLVM's macOS release of LLVM_VERSION and runs
+# the gtests and the fast sqllogic tests with scripts/ci/test.py. Reusable +
+# manually dispatchable; wired into the nightly run (jobs-schedule.yml).
 on:
   workflow_call:
     inputs:
@@ -29,13 +29,12 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 180
     env:
-      SDB_PORT: "7777"
-      SDB_SSL_PORT: "7778"
+      LLVM_VERSION: "23.1.4"
       # ccache tuned for cross-run reuse (see below):
       #  - BASEDIR + NOHASHDIR: rewrite abs paths -> relative so hits survive
       #    checkout-path changes; the build's prefix maps keep outputs relative.
-      #  - COMPILERCHECK=content: brew re-lays-down llvm each run with a fresh
-      #    mtime; hashing the compiler by content avoids a full cache miss.
+      #  - COMPILERCHECK=content: the toolchain is unpacked anew on a cache
+      #    miss; hashing the compiler by content keeps the hits.
       #  - SLOPPINESS: don't invalidate on header timestamps / __DATE__/__TIME__.
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
@@ -53,26 +52,49 @@ jobs:
           submodules: true
           fetch-depth: 1
 
-      - name: Install toolchain (Homebrew)
+      - name: Cache LLVM
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.tool_cache }}/llvm-${{ env.LLVM_VERSION }}
+          key: llvm-${{ env.LLVM_VERSION }}-macos-arm64
+
+      - name: Install toolchain
         run: |
-          # NOTE: Homebrew's `llvm` formula does NOT include the lld linker --
-          # it's a separate `lld` formula. The build uses -fuse-ld=lld, so both
-          # are required.
-          brew install llvm lld bison bash ninja ccache pkg-config cmake
+          set -euo pipefail
+          brew install bison flex bash ninja ccache pkg-config cmake zstd flock
+          dir="$RUNNER_TOOL_CACHE/llvm-$LLVM_VERSION"
+          if [[ ! -x "$dir/bin/clang++" ]]; then
+            mkdir -p "$dir"
+            curl -fsSL --retry 3 "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/LLVM-$LLVM_VERSION-macOS-ARM64.tar.zst" |
+              zstd -dc --long=30 | tar -x -C "$dir" --strip-components=1
+          fi
+          "$dir/bin/clang++" --version
+          echo "LLVM_DIR=$dir" >> "$GITHUB_ENV"
+          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
 
       - name: Set up PATH
         run: |
-          # keg-only formulae + Homebrew bash 5 (run.sh re-execs to it)
-          echo "/opt/homebrew/opt/llvm/bin"  >> "$GITHUB_PATH"
-          echo "/opt/homebrew/opt/lld/bin"   >> "$GITHUB_PATH"
-          echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
-          echo "/opt/homebrew/bin"           >> "$GITHUB_PATH"
+          {
+            echo "$LLVM_DIR/bin"
+            echo "/opt/homebrew/opt/bison/bin"
+            echo "/opt/homebrew/opt/flex/bin"
+            echo "/opt/homebrew/bin"
+          } >> "$GITHUB_PATH"
+
+      - name: Packages that generate the iceberg fixture
+        run: |
+          set -euo pipefail
+          venv="$RUNNER_TEMP/fixture-venv"
+          python3 -m venv "$venv"
+          grep -E '^(pyiceberg|pyarrow|fastavro)' scripts/ci/test-data-requirements.txt |
+            xargs "$venv/bin/pip" install --quiet
+          echo "$venv/bin" >> "$GITHUB_PATH"
 
       # Cache rotates every run (unique key) and restores the newest prior match,
       # so it rolls forward night to night. Nightly runs on the default branch, so
       # its cache is also visible to every other branch.
-      - name: Cache ccache
-        uses: actions/cache@v4
+      - name: Restore ccache
+        uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}/.ccache
           key: ccache-macos15-${{ github.run_id }}
@@ -80,7 +102,7 @@ jobs:
             ccache-macos15-
 
       - name: Cache cargo (sqllogictest-rs runner)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -90,8 +112,8 @@ jobs:
             cargo-sqllogictest-macos15-
 
       # Mirrors the Linux CI build flags (scripts/ci/build.bash, `dev` config):
-      # RelWithDebInfo + STACK debug + no LTO + ccache. macOS deltas: Homebrew
-      # LLVM compiler, SDB_STATIC=Off (no static libc), SDB_ALLOC=SYS
+      # RelWithDebInfo + STACK debug + no LTO + ccache. macOS deltas: LLVM's
+      # macOS release, SDB_STATIC=Off (no static libc), SDB_ALLOC=SYS
       # (jemalloc unused on macOS; Linux CI uses JE).
       - name: Configure
         run: |
@@ -99,8 +121,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DSDB_DEBUG_INFO=STACK \
             -DSDB_LTO=Off \
-            -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
-            -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ \
+            -DCMAKE_C_COMPILER="$LLVM_DIR/bin/clang" \
+            -DCMAKE_CXX_COMPILER="$LLVM_DIR/bin/clang++" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_ASM_COMPILER_LAUNCHER=ccache \
@@ -115,52 +137,21 @@ jobs:
             -DSDB_SANITIZE=
 
       - name: Build
-        run: ninja -C build serened serenedb-tests
+        run: ninja -k 0 -C build serened serenedb-tests
+
+      - name: Save ccache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-macos15-${{ github.run_id }}
 
       - name: ccache stats
         if: always()
         run: ccache -s
 
-      - name: Google Test
-        run: |
-          set -euo pipefail
-          ./build/bin/serenedb-tests
-
-      # Fast sqllogic: *.test only (no .test_slow), serenedb's own tests (sqlite
-      # subtree skipped), both pg-wire engines. No Docker -- start serened
-      # locally, mirroring the compose serenedb-single service, then drive the
-      # existing run_sdb_tests.sh wrapper (SKIP_SLOW_TESTS=true -> --fast).
-      - name: Fast sqllogic (*.test)
-        run: |
-          set -uo pipefail
-          mkdir -p out/logs
-          DATADIR="$(mktemp -d)/datadir"
-          CERT="${GITHUB_WORKSPACE}/resources/ca.pem"
-          POSTGRES_PASSWORD=postgres ./build/bin/serened "$DATADIR" \
-            --listen "postgres://0.0.0.0:${SDB_PORT},postgres://0.0.0.0:${SDB_SSL_PORT}?sslmode=require&cert=${CERT}&key=${CERT}" \
-            --auth_timeout=600s \
-            > out/logs/serened.log 2>&1 &
-          SDB_PID=$!
-
-          # wait for the port to accept connections (or serened to die)
-          for _ in $(seq 1 60); do
-            if ! kill -0 "$SDB_PID" 2>/dev/null; then
-              echo "serened exited during startup:" >&2
-              cat out/logs/serened.log >&2 || true
-              exit 1
-            fi
-            nc -z 127.0.0.1 "${SDB_PORT}" && break
-            sleep 1
-          done
-
-          rc=0
-          SKIP_SLOW_TESTS=true SDB_SQLLOGIC_SCOPE=ours \
-            bash tests/sqllogic/run_sdb_tests.sh \
-              --host 127.0.0.1 --single-port "${SDB_PORT}" \
-              --single-port-ssl "${SDB_SSL_PORT}" || rc=$?
-
-          kill "$SDB_PID" 2>/dev/null || true
-          exit $rc
+      - name: Tests
+        run: python3 scripts/ci/test.py --build-dir build --suite gtest --suite sqllogic --fast
 
       - name: Upload logs
         if: always()

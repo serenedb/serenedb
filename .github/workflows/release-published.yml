@@ -1,0 +1,29 @@
+name: auto | release published
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    name: Tag the published release latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Retag the release's images
+        env:
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          if [[ "$latest" != "$TAG" ]]; then
+            echo "$TAG is not the repository's latest release ($latest): latest stays"
+            exit 0
+          fi
+          version="${TAG#v}"
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker buildx imagetools create -t serenedb/serenedb:latest "serenedb/serenedb:${version}"

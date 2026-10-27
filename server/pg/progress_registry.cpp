@@ -196,6 +196,31 @@ void ProgressRegistry::ForgetDatabase(int64_t datid) {
   _ended_stats.erase(datid);
 }
 
+ProgressRegistration::ProgressRegistration(
+  std::shared_ptr<ProgressSource> source)
+  : _source{std::move(source)} {
+  ProgressRegistry::Instance().Register(_source);
+}
+
+ProgressRegistration& ProgressRegistration::operator=(
+  ProgressRegistration&& other) noexcept {
+  if (this != &other) {
+    Close();
+    _source = std::move(other._source);
+  }
+  return *this;
+}
+
+ProgressRegistration::~ProgressRegistration() { Close(); }
+
+void ProgressRegistration::Close() noexcept {
+  if (_source) {
+    _source->Detach();
+    ProgressRegistry::Instance().Unregister(_source.get());
+    _source.reset();
+  }
+}
+
 size_t ProgressRegistry::OtherSessions(int64_t datid, int32_t pid,
                                        absl::Duration wait) const {
   const auto count = [&] {

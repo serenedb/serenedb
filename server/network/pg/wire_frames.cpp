@@ -742,6 +742,16 @@ irs::pg::SqlErrorData ToSqlError(const std::exception& exception) {
                                .errmsg = exception.what()};
 }
 
+irs::pg::SqlErrorData ToSqlError(const duckdb::ErrorData& error) {
+  try {
+    error.Throw();
+  } catch (const irs::SqlException& e) {
+    return e.error();
+  } catch (...) {
+  }
+  return DuckErrorToSqlData(error);
+}
+
 void WriteEmptyFrame(message::Buffer& out, char type) {
   message::Writer w{out};
   auto* data = w.Alloc(kFrameHeader);

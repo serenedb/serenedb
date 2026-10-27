@@ -3,14 +3,15 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-import socket
 import subprocess
+import tempfile
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import psycopg
 import pytest
-from serened import listens_on  # type: ignore[import-untyped]
+from serened import listens_on, reserve_port  # type: ignore[import-untyped]
 
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
@@ -23,15 +24,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
 class _Server:
     def __init__(self, datadir: Path, listen: str | None = None) -> None:
-        self.port = _free_port()
+        self.reserved = reserve_port()
+        self.port = self.reserved.getsockname()[1]
         if listen is None:
             listen = f"postgres://127.0.0.1:{self.port}"
         self.log = datadir.parent / f"serened-{self.port}.log"
@@ -59,9 +55,17 @@ class _Server:
         if self.proc.poll() is None:
             self.proc.terminate()
             self.proc.wait(timeout=60)
+        self.reserved.close()
 
     def output(self) -> str:
         return self.log.read_text()
+
+
+@pytest.fixture
+def socket_dir() -> Iterator[Path]:
+    path = Path(tempfile.mkdtemp(prefix="sdb-", dir="/tmp"))
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def _run_until_ready(datadir: Path) -> _Server:
@@ -161,9 +165,9 @@ def test_second_instance_on_the_same_datadir(tmp_path: Path) -> None:
         first.stop()
 
 
-def test_unknown_unix_socket_group(tmp_path: Path) -> None:
+def test_unknown_unix_socket_group(tmp_path: Path, socket_dir: Path) -> None:
     server = _Server(tmp_path / "data",
-                     f"postgres://{tmp_path / 'sdb.sock'}"
+                     f"postgres://{socket_dir / 'sdb.sock'}"
                      "?group=sdb_no_such_group")
     try:
         assert server.proc.wait(timeout=60) != 0, server.output()
@@ -173,14 +177,13 @@ def test_unknown_unix_socket_group(tmp_path: Path) -> None:
         server.stop()
 
 
-def test_cleartext_password_on_a_unix_socket(tmp_path: Path) -> None:
-    sockets = tmp_path / "s"
-    sockets.mkdir()
-    server = _Server(tmp_path / "data", f"postgres://{sockets}?port=5432")
+def test_cleartext_password_on_a_unix_socket(tmp_path: Path,
+                                             socket_dir: Path) -> None:
+    server = _Server(tmp_path / "data", f"postgres://{socket_dir}?port=5432")
 
     def connect(**kwargs) -> psycopg.Connection:
-        return psycopg.connect(host=str(sockets), port=5432, dbname="postgres",
-                               **kwargs)
+        return psycopg.connect(host=str(socket_dir), port=5432,
+                               dbname="postgres", **kwargs)
 
     try:
         deadline = time.monotonic() + 60

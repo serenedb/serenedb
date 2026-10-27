@@ -176,6 +176,7 @@ const VectorScorerOptions& PrepareVectorScorer(
   const VectorScorerOptions& planned) {
   auto& vs = state.owned_vector_scorer.emplace(planned);
   RefreshVectorKnobs(vs, context);
+  vs.rescore_all = state.has_lookup_filter;
   if (vs.query_expr) {
     vs.query_vector = EvaluateQueryVector(context, vs);
   }
@@ -183,12 +184,8 @@ const VectorScorerOptions& PrepareVectorScorer(
              "a vector search has a query vector to search for");
   if (state.top_k) {
     if (vs.kind == irs::AnnKind::Hnsw) {
-      bool chosen_here = false;
-      const auto factor = AnnOversample(context, vs, chosen_here);
       const auto k = static_cast<double>(*state.top_k);
-      const double share = SegmentBeamShare(k, state.total_segments);
-      const double seg_pool = OversamplePool(factor, share);
-      vs.min_ef = ClampCandidates(seg_pool > 0.0 ? seg_pool : share, k,
+      vs.min_ef = ClampCandidates(SegmentBeamShare(k, state.total_segments), k,
                                   state.reader->live_docs_count());
     }
     vs.top_k = static_cast<uint32_t>(*state.top_k);
@@ -319,7 +316,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   state->needs_terms = !ss.offsets.requests.empty();
 
-  if (state->shape == ScanShape::TopK || state->shape == ScanShape::Stream) {
+  if (state->shape == ScanShape::TopK || state->shape == ScanShape::Ann ||
+      state->shape == ScanShape::Stream) {
     if (ss.score.text) {
       state->scorer_obj = search::MakeScorer(*ss.score.text);
     } else if (ss.score.order) {
@@ -371,6 +369,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   if (state->shape == ScanShape::TopK) {
     InitTopKGlobal(*state, context);
+  } else if (state->shape == ScanShape::Ann) {
+    InitAnnGlobal(*state, context);
   }
   return state;
 }
@@ -394,6 +394,13 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       auto l = duckdb::make_uniq<TopKLocalState>();
       l->worker = worker;
       InitTopKLocal(g, *l, input);
+      result = std::move(l);
+      break;
+    }
+    case ScanShape::Ann: {
+      auto l = duckdb::make_uniq<AnnLocalState>();
+      l->worker = worker;
+      InitAnnLocal(g, *l, input);
       result = std::move(l);
       break;
     }
@@ -442,6 +449,10 @@ void IResearchScanFunction(duckdb::ClientContext& context,
     case ScanShape::TopK:
       RunTopKScan(context, data, g, data.local_state->Cast<TopKLocalState>(),
                   out);
+      break;
+    case ScanShape::Ann:
+      RunAnnScan(context, data, g, data.local_state->Cast<AnnLocalState>(),
+                 out);
       break;
     case ScanShape::ColScan:
       RunColScan(context, data, g, data.local_state->Cast<ColScanLocalState>(),

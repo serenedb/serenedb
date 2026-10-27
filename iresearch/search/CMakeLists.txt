@@ -224,6 +224,10 @@ endif()
 target_sources(
     iresearch
     PRIVATE
+        ann/make.cpp
+        ann/make_exact.cpp
+        ann/make_hnsw.cpp
+        ann/make_ivf.cpp
         count/make_exact.cpp
         count/make_hnsw.cpp
         docs/make_exact.cpp
@@ -307,7 +311,4 @@ target_sources(
         scorers/raw_tf.cpp
         scorers/tfidf.cpp
         scorers/vector_similarity_scorer.cpp
-        top/make_exact.cpp
-        top/make_hnsw.cpp
-        top/make_ivf.cpp
 )

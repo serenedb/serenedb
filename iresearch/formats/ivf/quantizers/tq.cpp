@@ -334,6 +334,49 @@ class TurboQuantTables {
   TurboQuantCentroids _tc;
 };
 
+constexpr float kQjlSpread = 0.75551064f;
+
+struct TurboQuantRowTerms {
+  float scale = 0.f;
+  float gamma = 0.f;
+};
+
+struct TurboQuantMoments {
+  double q2 = 0.0;
+  double qs = 0.0;
+};
+
+TurboQuantMoments GaussianMoments(const float* cent, const float* bound,
+                                  uint32_t bits) noexcept {
+  constexpr double kInvSqrt2 = 0.70710678118654752440;
+  constexpr double kInvSqrt2Pi = 0.39894228040143267794;
+  const auto cdf = [](double x) { return 0.5 * std::erfc(-x * kInvSqrt2); };
+  const auto pdf = [](double x) {
+    return std::isinf(x) ? 0.0 : kInvSqrt2Pi * std::exp(-0.5 * x * x);
+  };
+  const size_t cells = size_t{1} << bits;
+  TurboQuantMoments m;
+  for (size_t c = 0; c < cells; ++c) {
+    const double lo =
+      c == 0 ? -std::numeric_limits<double>::infinity() : bound[c - 1];
+    const double hi =
+      c + 1 == cells ? std::numeric_limits<double>::infinity() : bound[c];
+    const double level = cent[c];
+    m.q2 += (cdf(hi) - cdf(lo)) * level * level;
+    m.qs += level * (pdf(lo) - pdf(hi));
+  }
+  return m;
+}
+
+float TurboQuantErrorScale(const TurboQuantCentroids& tc,
+                           const TurboQuantLayout& lay) noexcept {
+  const auto hi = GaussianMoments(tc.cent[0], tc.bound[0], lay.bits_hi);
+  const auto lo = GaussianMoments(tc.cent[1], tc.bound[1], lay.bits_lo);
+  const double q2 = 0.5 * (hi.q2 + lo.q2);
+  const double qs = 0.5 * (hi.qs + lo.qs);
+  return static_cast<float>(std::sqrt(std::max(0.0, q2 - qs * qs)));
+}
+
 struct TurboQuantInt8Seg {
   uint32_t bits = 0;
   uint32_t byte0 = 0;
@@ -856,6 +899,7 @@ class TurboQuantizerStats final : public QuantizerStats {
     }
     _lay = MakeTurboQuantLayout(d, bits, M == VectorMetric::L2Sqr, row_major);
     _tables = std::make_unique<TurboQuantTables>(_lay.rd, bits, hdr.seed);
+    _error_scale = TurboQuantErrorScale(_tables->Centroids(), _lay);
     const auto seed = static_cast<int64_t>(hdr.seed);
     _rotation.emplace(_lay.rd, ~seed);
     if (bits.full) {
@@ -888,9 +932,11 @@ class TurboQuantizerStats final : public QuantizerStats {
   }
   const TurboQuantRotation& Rotation() const noexcept { return *_rotation; }
   const TurboQuantRotation& Projection() const noexcept { return *_projection; }
+  float ErrorScale() const noexcept { return _error_scale; }
 
  private:
   TurboQuantLayout _lay;
+  float _error_scale = 0.f;
   bool _valid = false;
   std::array<byte_type, sizeof(TurboQuantStatsHeader) + 2> _key{};
   std::unique_ptr<TurboQuantTables> _tables;
@@ -1131,6 +1177,42 @@ class TurboQuantizerReader final : public QuantizerReader {
           return base + static_cast<size_t>(sub[k]) * record_size;
         },
         take, threshold, out + off);
+    }
+  }
+
+  void ScoreErrors(const byte_type* base, uint32_t record_size,
+                   std::span<const uint32_t> ids, std::span<score_t> /*scores*/,
+                   score_t* errors) final {
+    SDB_ASSERT(_lay.row_major);
+    Errors(
+      [&](size_t i) {
+        return RowTerms(base + static_cast<size_t>(ids[i]) * record_size);
+      },
+      ids.size(), errors);
+  }
+
+  void BlockErrors(std::span<const byte_type> block, std::span<score_t> scores,
+                   score_t* errors) final {
+    if (_lay.row_major) {
+      Errors(
+        [&](size_t i) { return RowTerms(block.data() + i * _lay.record_size); },
+        scores.size(), errors);
+      return;
+    }
+    const size_t group = _lay.GroupBytes();
+    const size_t n = scores.size();
+    for (size_t first = 0; first < n; first += kFastScanBbs) {
+      const auto* norms =
+        block.data() + first / kFastScanBbs * group + _lay.NormOffset();
+      const auto* gammas = norms + kFastScanBbs * sizeof(float);
+      Errors(
+        [&](size_t i) {
+          const size_t lane = i * sizeof(float);
+          return TurboQuantRowTerms{
+            .scale = LoadFloat(norms + lane),
+            .gamma = _lay.full ? LoadFloat(gammas + lane) : 0.f};
+        },
+        std::min(n - first, kFastScanBbs), errors + first);
     }
   }
 
@@ -1407,6 +1489,23 @@ class TurboQuantizerReader final : public QuantizerReader {
     }
   }
 
+  TurboQuantRowTerms RowTerms(const byte_type* r) const noexcept {
+    return {.scale = LoadFloat(r + _lay.RowNormOffset()),
+            .gamma = _lay.full ? LoadFloat(r + _lay.RowGammaOffset()) : 0.f};
+  }
+
+  template<typename Terms>
+  void Errors(Terms terms, size_t n, score_t* errors) const {
+    const float metric = M == VectorMetric::L2Sqr ? 2.f : 1.f;
+    const float unit = metric * _qc_norm * _inv_sqrt_rd;
+    const float mse = _cb->Stats().ErrorScale();
+    for (size_t i = 0; i < n; ++i) {
+      const TurboQuantRowTerms t = terms(i);
+      errors[i] = _lay.full ? unit * kQjlSpread * t.scale * t.gamma
+                            : unit * mse * t.scale;
+    }
+  }
+
   score_t ScoreFrom(float ip, size_t lane, const float* bias) const noexcept {
     if constexpr (M == VectorMetric::L2Sqr) {
       return -(_qc + bias[lane] - 2.f * ip);
@@ -1604,9 +1703,11 @@ class TurboQuantizerReader final : public QuantizerReader {
       return;
     }
     const std::span<const float> query = _cur->Query();
+    const float qc_sq = -ComputeDistance<VectorMetric::L2Sqr>(
+      query.data(), _cluster, static_cast<uint16_t>(query.size()));
+    _qc_norm = std::sqrt(std::max(0.f, qc_sq));
     if constexpr (M == VectorMetric::L2Sqr) {
-      _qc = -ComputeDistance<VectorMetric::L2Sqr>(
-        query.data(), _cluster, static_cast<uint16_t>(query.size()));
+      _qc = qc_sq;
     } else {
       _qc = ComputeDistance<VectorMetric::InnerProduct>(
         query.data(), _cluster, static_cast<uint16_t>(query.size()));
@@ -1624,6 +1725,7 @@ class TurboQuantizerReader final : public QuantizerReader {
   float _inv_sqrt_rd;
   float _qjl_coeff;
   float _qc = 0.f;
+  float _qc_norm = 0.f;
   float _cc = 0.f;
   std::vector<float> _pair_lut;
 #ifdef __AVX2__

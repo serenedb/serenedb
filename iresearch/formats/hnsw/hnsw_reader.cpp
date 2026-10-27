@@ -77,8 +77,8 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
     const auto read_floats = [&](std::vector<float>& out, size_t count) {
       out.resize(count);
       if (count != 0) {
-        in->ReadData(reinterpret_cast<byte_type*>(out.data()),
-                     count * sizeof(float));
+        ReadOnce(*in, reinterpret_cast<byte_type*>(out.data()),
+                 count * sizeof(float));
       }
     };
     const auto read_rotation = [&] {
@@ -114,7 +114,7 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
       data->codes.resize(static_cast<size_t>(_header.rows) *
                          _header.record_size);
       if (!data->codes.empty()) {
-        in->ReadData(data->codes.data(), data->codes.size());
+        ReadOnce(*in, data->codes.data(), data->codes.size());
       }
       if (_header.rotated) {
         read_rotation();

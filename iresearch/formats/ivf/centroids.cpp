@@ -39,6 +39,7 @@
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shuffle.hpp"
 
@@ -327,15 +328,15 @@ std::vector<CentroidsNode> CentroidsNode::Deserialize(
     in.Seek(layout.CentroidPos(start, d));
     node.centroids.resize(node.size * d);
     if (node.size != 0) {
-      in.ReadData(reinterpret_cast<byte_type*>(node.centroids.data()),
-                  node.size * sizeof(node.centroids[0]) * d);
+      ReadOnce(in, reinterpret_cast<byte_type*>(node.centroids.data()),
+               node.size * sizeof(node.centroids[0]) * d);
     }
 
     if (level > 0) {
       node.child_offsets.resize(node.size + 1);
       in.Seek(layout.OffsetsPos(start));
-      in.ReadData(reinterpret_cast<byte_type*>(node.child_offsets.data()),
-                  (node.size + 1) * sizeof(size_t));
+      ReadOnce(in, reinterpret_cast<byte_type*>(node.child_offsets.data()),
+               (node.size + 1) * sizeof(size_t));
     }
     nodes.emplace_back(std::move(node));
   }
@@ -355,6 +356,17 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
   nodes.reserve(starts.size());
   bufs.centroids.reserve(starts.size());
   bufs.child_offsets.reserve(starts.size());
+  for (auto&& [start, size] : std::views::zip(starts, sizes)) {
+    if (size == 0) {
+      continue;
+    }
+    file_utils::Hint(in, layout.CentroidPos(start, d),
+                     size * d * sizeof(float));
+    if (level > 0) {
+      file_utils::Hint(in, layout.OffsetsPos(start),
+                       (size + 1) * sizeof(size_t));
+    }
+  }
   for (auto&& [start, size] : std::views::zip(starts, sizes)) {
     CentroidsNodeView node;
     node.base = start;
@@ -445,11 +457,12 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     .child_offsets = std::span<const size_t>{_root.child_offsets},
     .base = 0,
     .size = _root.size};
+  std::vector<LayerBuffers> layers;
   std::vector<CentroidsNode::Candidate> leaves;
   irs::ResolveEnum<VectorMetric>(_head.metric, [&]<VectorMetric Metric>() {
-    CentroidsNode::Search<Metric>(
-      query, in, width, static_cast<bool>(out_centroids), _root.level,
-      std::span{&root_view, 1}, 0, _root.size, leaves);
+    CentroidsNode::Search<Metric>(query, in, width, _root.level,
+                                  std::span{&root_view, 1}, 0, _root.size,
+                                  layers, leaves);
     const auto k = std::min<size_t>(nprobe, leaves.size());
     const auto mid = leaves.begin() + k;
     const auto by_dist_desc = [](const CentroidsNode::Candidate& l,

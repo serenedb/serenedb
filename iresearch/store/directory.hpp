@@ -64,33 +64,12 @@ struct IndexLock : private util::Noncopyable {
 
 // Defines access patterns for data in a directory
 enum class IOAdvice : uint32_t {
-  // Indicates that caller has no advice to give about its access
-  // pattern for the data
-  NORMAL = 0,
-
   // Indicates that caller expects to access data sequentially
   SEQUENTIAL = 1,
 
   // Indicates that caller expects to access data in random order
   RANDOM = 2,
-
-  // Indicates that caller expects that data will not be accessed
-  // in the near future
-  READONCE = 4,
-
-  // Convenience value for READONCE | SEQUENTIAL
-  // explicitly required for MSVC2013
-  ReadonceSequential = 5,
-
-  // Convenience value for READONCE | RANDOM
-  // explicitly required for MSVC2013
-  ReadonceRandom = 6,
-
-  // File is opened for non-buffered reads
-  DirectRead = 8,
 };
-
-ENABLE_BITMASK_ENUM(IOAdvice);  // enable bitmap operations on the enum
 
 // Represents a flat directory of write once/read many files
 struct Directory : private util::Noncopyable {

@@ -604,14 +604,6 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     return index_field(ColumnIdByName(bind_data, name));
   };
 
-  const connector::StoredExpressionOf stored_expression =
-    [&](connector::ColumnId col_id) -> std::string_view {
-    if (!bind_data.relation.StoresExpression(col_id)) {
-      return {};
-    }
-    return config.FindKey(col_id)->normalized_expression;
-  };
-
   connector::ColumnGetter getter =
     [&](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<connector::SearchColumnInfo> {
@@ -631,7 +623,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       return std::nullopt;
     }
     const auto keys = config.FindExpressionKeys(connector::NormalizedExpression(
-      expr, bind_data.RelationId(), projected_ids, context, stored_expression));
+      expr, bind_data.RelationId(), projected_ids, context, &config));
     return finish_info(
       ExpressionColumnInfo(
         config, dicts, keys.term,
@@ -782,14 +774,14 @@ std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
   constexpr auto kAsc = duckdb::OrderType::ASCENDING;
   constexpr auto kDesc = duckdb::OrderType::DESCENDING;
   constexpr AnnFunctionInfo kL2Info{L2Sqr, kAsc, false, SqrtNeg};
-  constexpr AnnFunctionInfo kL2SqrInfo{L2Sqr, kAsc, false, Negate};
-  constexpr AnnFunctionInfo kL1Info{L1, kAsc, false, Negate};
+  constexpr AnnFunctionInfo kL2SqrInfo{L2Sqr, kAsc, false, ZeroMinus};
+  constexpr AnnFunctionInfo kL1Info{L1, kAsc, false, ZeroMinus};
   constexpr AnnFunctionInfo kCosineInfo{Cosine, kAsc, false, OneMinus};
   constexpr AnnFunctionInfo kCosineSimilarityInfo{Cosine, kDesc, false,
                                                   Identity};
   constexpr AnnFunctionInfo kIPInfo{InnerProduct, kDesc, false, Identity};
   constexpr AnnFunctionInfo kNegativeIPInfo{InnerProduct, kAsc, false, Negate};
-  constexpr AnnFunctionInfo kL1NormInfo{L1, kAsc, true, Negate};
+  constexpr AnnFunctionInfo kL1NormInfo{L1, kAsc, true, ZeroMinus};
   constexpr AnnFunctionInfo kL2NormInfo{L2Sqr, kAsc, true, SqrtNeg};
   static const irs::containers::FlatHashMap<std::string_view, AnnFunctionInfo>
     kFunctions{
@@ -994,6 +986,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .centroids_id = ann_info->centroids_id,
       .postings_id = ann_info->postings_id,
       .quant = ann_info->quant.kind,
+      .nb_bits = ann_info->quant.nb_bits,
       .kind = ann_info->kind,
       .ef_construction = ann_info->ef_construction,
       .posting_size = ann_info->posting_size,

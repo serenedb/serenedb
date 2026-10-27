@@ -1,11 +1,13 @@
 #!/bin/bash
 
-# Pushes pre-built Docker images to a registry and creates multi-arch manifests.
-# Expects images already loaded in the local daemon (via build_docker.bash).
+# Publishes the release image: joins the architectures' images, which the package jobs pushed under
+# <version>-<arch>, by their digests into one multi-platform image under the version tag and every
+# extra tag.
 #
 # Environment Configuration:
 #   DOCKER_TAG               Version tag (required)
 #   DOCKER_EXTRA_TAGS        Comma or space-separated list of additional tags
+#   IMAGE_DIGESTS            Space-separated digests of the architectures' images (required)
 #   DOCKER_REGISTRY          Registry URL (default: serenedb)
 #   DOCKER_USERNAME          Registry username (required)
 #   DOCKER_PASSWORD          Registry password (required)
@@ -29,24 +31,14 @@ error() {
 VERSION="$DOCKER_TAG"
 FULL_IMAGE_NAME="${DOCKER_REGISTRY}/${IMAGE_NAME}"
 
+read -r -a DIGESTS <<<"${IMAGE_DIGESTS:-}"
+[ ${#DIGESTS[@]} -gt 0 ] || error "IMAGE_DIGESTS is required"
 IFS=', ' read -r -a EXTRA_TAGS_ARRAY <<<"${DOCKER_EXTRA_TAGS:-}"
-
-# --- Detect which arch images are available in daemon ---
-AVAILABLE_ARCHES=()
-for arch in amd64 arm64; do
-	if docker image inspect "${FULL_IMAGE_NAME}:${VERSION}-${arch}" >/dev/null 2>&1; then
-		AVAILABLE_ARCHES+=("$arch")
-	fi
-done
-
-if [ ${#AVAILABLE_ARCHES[@]} -eq 0 ]; then
-	error "No images found in daemon. Run build_docker.bash first."
-fi
 
 log "=== SereneDB Docker Push ==="
 log "Version:  ${VERSION}"
 log "Image:    ${FULL_IMAGE_NAME}"
-log "Arches:   ${AVAILABLE_ARCHES[*]}"
+log "Digests:  ${DIGESTS[*]}"
 
 NEEDS_LOGOUT=""
 cleanup() {
@@ -71,16 +63,10 @@ else
 	NEEDS_LOGOUT="hub"
 fi
 
-# --- Push per-arch images ---
-for arch in "${AVAILABLE_ARCHES[@]}"; do
-	log "Pushing ${FULL_IMAGE_NAME}:${VERSION}-${arch}..."
-	docker push "${FULL_IMAGE_NAME}:${VERSION}-${arch}"
-done
-
-# --- Create and push multi-arch manifests ---
-MANIFEST_SOURCES=()
-for arch in "${AVAILABLE_ARCHES[@]}"; do
-	MANIFEST_SOURCES+=("${FULL_IMAGE_NAME}:${VERSION}-${arch}")
+# --- Join the architectures under every tag ---
+SOURCES=()
+for digest in "${DIGESTS[@]}"; do
+	SOURCES+=("${FULL_IMAGE_NAME}@${digest}")
 done
 
 ALL_TAGS=("${VERSION}")
@@ -93,11 +79,6 @@ TAG_ARGS=()
 for tag in "${ALL_TAGS[@]}"; do
 	TAG_ARGS+=(-t "${FULL_IMAGE_NAME}:${tag}")
 done
-docker buildx imagetools create "${TAG_ARGS[@]}" "${MANIFEST_SOURCES[@]}"
-
-# --- Cleanup arch-specific images ---
-for arch in "${AVAILABLE_ARCHES[@]}"; do
-	docker rmi "${FULL_IMAGE_NAME}:${VERSION}-${arch}" >/dev/null 2>&1 || true
-done
+docker buildx imagetools create "${TAG_ARGS[@]}" "${SOURCES[@]}"
 
 log "Push complete!"

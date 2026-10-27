@@ -149,3 +149,51 @@ t
 
 statement ok
 DROP MACRO mn_row
+
+statement ok
+SET statement_timeout = '10s'
+
+statement ok
+CREATE MACRO mn_dup0(a) AS a || a
+
+statement ok
+CREATE MACRO mn_dup1(a) AS mn_dup0(mn_dup0(a))
+
+statement ok
+CREATE MACRO mn_dup2(a) AS mn_dup1(mn_dup1(a))
+
+statement ok
+CREATE MACRO mn_dup3(a) AS mn_dup2(mn_dup2(a))
+
+statement ok
+CREATE MACRO mn_dup4(a) AS mn_dup3(mn_dup3(a))
+
+statement ok
+CREATE MACRO mn_dup5(a) AS mn_dup4(mn_dup4(a))
+
+query
+SELECT length(mn_dup4(s)) AS r FROM (VALUES ('ab')) t(s)
+----
+r
+131072
+
+statement ok
+RESET statement_timeout
+
+statement ok
+DROP MACRO mn_dup5
+
+statement ok
+DROP MACRO mn_dup4
+
+statement ok
+DROP MACRO mn_dup3
+
+statement ok
+DROP MACRO mn_dup2
+
+statement ok
+DROP MACRO mn_dup1
+
+statement ok
+DROP MACRO mn_dup0

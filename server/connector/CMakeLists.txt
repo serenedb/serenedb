@@ -22,6 +22,7 @@ target_sources(
         scan/geo_check.cpp
         scan/phrase_check.cpp
         scan/wildcard_check.cpp
+        scan/scan_ann.cpp
         scan/scan_barrier.cpp
         scan/scan_bind.cpp
         scan/scan_claim.cpp

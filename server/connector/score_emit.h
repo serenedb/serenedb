@@ -38,9 +38,10 @@ namespace sdb::connector {
 // distance kernels), so the emit is applied directly -- no negation here.
 enum class ScoreEmit : uint8_t {
   Identity,  // score        (cosine_similarity, inner_product)
-  SqrtNeg,   // sqrt(-score) (l2_distance / `<->` / l2_norm)
+  SqrtNeg,   // sqrt(0 - score) (l2_distance / `<->` / l2_norm)
   OneMinus,  // 1 - score    (cosine_distance)
-  Negate,    // -score       (l1, l2_sqr, negative_ip, l1_norm)
+  Negate,    // -score       (negative_ip)
+  ZeroMinus,
 };
 
 // Maps one raw "larger = nearer" score to its user-facing value. Single source
@@ -52,11 +53,13 @@ inline float ApplyScoreEmit(ScoreEmit emit, float score) {
     case ScoreEmit::Identity:
       return score;
     case ScoreEmit::SqrtNeg:
-      return std::sqrt(-score);
+      return std::sqrt(0.0F - score);
     case ScoreEmit::OneMinus:
       return 1.0F - score;
     case ScoreEmit::Negate:
       return -score;
+    case ScoreEmit::ZeroMinus:
+      return 0.0F - score;
   }
   SDB_UNREACHABLE();
 }
@@ -72,6 +75,7 @@ struct VectorScorerOptions {
   irs::field_id centroids_id = irs::field_limits::invalid();
   irs::field_id postings_id = irs::field_limits::invalid();
   irs::VectorQuantization quant = irs::VectorQuantization::None;
+  uint32_t nb_bits = 0;
   irs::AnnKind kind = irs::AnnKind::Ivf;
   uint32_t nprobe = 1;
   uint32_t min_search_fanout = 0;
@@ -81,6 +85,8 @@ struct VectorScorerOptions {
   uint32_t posting_size = 0;
   uint32_t min_ef = 0;
   uint32_t top_k = 0;
+  float rescore_width = 0.f;
+  bool rescore_all = false;
   irs::HnswFilterMode hnsw_filter_mode = irs::HnswFilterMode::Auto;
   irs::HnswColumnFilter hnsw_column_filter = irs::HnswColumnFilter::Auto;
   bool exact = false;
@@ -102,10 +108,9 @@ struct VectorScorerOptions {
       case ScoreEmit::OneMinus:
         return 1.0f - radius;
       case ScoreEmit::Negate:
-        return (metric == irs::VectorMetric::L2Sqr ||
-                metric == irs::VectorMetric::L1)
-                 ? radius
-                 : -radius;
+        return -radius;
+      case ScoreEmit::ZeroMinus:
+        return radius;
     }
     SDB_UNREACHABLE();
   }

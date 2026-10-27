@@ -57,7 +57,7 @@ void PrefetchDocExtents(const IndexInput& in, Metas&& metas) {
   uint64_t budget = kMaxPrefetch;
   for (size_t i = 0; i != n && budget != 0; ++i) {
     const auto size = std::min(ranges[i].second - ranges[i].first, budget);
-    Hint(in, ranges[i].first, size);
+    file_utils::Hint(in, ranges[i].first, size);
     budget -= size;
   }
 }

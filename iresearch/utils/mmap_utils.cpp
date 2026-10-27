@@ -36,9 +36,6 @@ namespace irs::mmap_utils {
 
 void MMapHandle::close() noexcept {
   if (_addr != MAP_FAILED) {
-    if (_dontneed) {
-      advise(IR_MADVICE_DONTNEED);
-    }
     munmap(_addr, _size);
   }
 
@@ -53,7 +50,6 @@ void MMapHandle::init() noexcept {
   _fd = -1;
   _addr = MAP_FAILED;
   _size = 0;
-  _dontneed = false;
 }
 
 void MMapHandle::open(const path_char_t* path) {

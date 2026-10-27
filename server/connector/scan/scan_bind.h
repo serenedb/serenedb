@@ -211,7 +211,7 @@ struct RelationSpec {
     return info && info->IsStored();
   }
   bool StoresExpression(ColumnId field) const noexcept {
-    return inverted_config && inverted_config->StoresExpression(field);
+    return inverted_config && !inverted_config->StoredExpression(field).empty();
   }
   catalog::IndexTokenizers ResolveTokenizers(
     duckdb::ClientContext& context) const {
@@ -300,11 +300,6 @@ std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind);
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind);
 
 double SegmentBeamShare(double k, size_t segments) noexcept;
-
-double AnnOversample(duckdb::ClientContext& context,
-                     const VectorScorerOptions& vs, bool& chosen_here);
-
-double OversamplePool(double factor, double count) noexcept;
 
 uint32_t ClampCandidates(double pool, double k, uint64_t live) noexcept;
 

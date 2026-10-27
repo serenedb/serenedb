@@ -69,8 +69,7 @@ SereneDBClientState& SereneDBClientState::Register(
   source->client_backend = client_backend;
   source->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
   source->ctx = &client_ctx;
-  registered.progress_source = source;
-  pg::ProgressRegistry::Instance().Register(std::move(source));
+  registered.progress_source = std::move(source);
   client_ctx.registered_state->Insert(kSereneDBClientStateKey,
                                       std::move(state));
   client_ctx.warning_handler = [](duckdb::ClientContext& ctx,
@@ -385,7 +384,8 @@ SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
   system.ctx = std::make_shared<ConnectionContext>(
     context, user, std::string_view{}, role, database, database_id, nullptr, 0,
     nullptr);
-  SereneDBClientState::Register(context, system.ctx, false);
+  system.progress = pg::ProgressRegistration{
+    SereneDBClientState::Register(context, system.ctx, false).progress_source};
   SetDefaultSearchPath(context, database);
   return system;
 }

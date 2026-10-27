@@ -30,7 +30,7 @@ import oracle
 import quarantine as quarantine_mod
 import quiesce
 import snapshot as snapshot_mod
-from iceberg_rest import IcebergRestFixture
+from services import IcebergRestFixture
 from serened import Serened
 from procutil import raise_open_files, reap_orphans
 from watchdog import ALIVE, WEDGED, Watchdog

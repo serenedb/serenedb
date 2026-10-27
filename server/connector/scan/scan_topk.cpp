@@ -21,11 +21,9 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <cmath>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/index/index_reader.hpp>
-#include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/top/make.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -34,100 +32,16 @@
 #include "connector/index_source_factory.h"
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
-#include "query/config.h"
 
 namespace sdb::connector {
 namespace {
 
-void SortByAddress(std::span<irs::ScoreDoc> hits) {
-  absl::c_sort(hits, [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
-    return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
-  });
-}
-
-bool BetterScore(const irs::ScoreDoc& l, const irs::ScoreDoc& r) noexcept {
-  if (l.score != r.score) {
-    return l.score > r.score;
-  }
-  return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
-}
-
-void RerankHits(ScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
-  SDB_ASSERT(g.vector_scorer != nullptr);
-  const auto& vs = *g.vector_scorer;
-  const std::span<const float> query{vs.query_vector};
-  const auto d = static_cast<uint32_t>(vs.query_vector.size());
-  size_t i = 0;
-  while (i < hits.size()) {
-    const uint32_t seg = hits[i].segment_idx;
-    size_t j = i + 1;
-    while (j < hits.size() && hits[j].segment_idx == seg) {
-      ++j;
-    }
-    const auto& sub = (*g.reader)[seg];
-    if (const auto* vec_col = sub.Column(vs.field_id); vec_col != nullptr) {
-      irs::RerankExactDistances(sub, *vec_col, d, query, vs.metric,
-                                hits.subspan(i, j - i));
-    }
-    i = j;
-  }
-}
-
-struct AnswerWorstFirst {
-  bool operator()(const irs::ScoreDoc& a, const irs::ScoreDoc& b) const {
-    return a.score > b.score;
-  }
-};
-
-void FlushSegmentPool(ScanGlobalState& g, TopKLocalState& l) {
-  if (!l.collector) {
-    return;
-  }
-  auto& c = *l.collector;
-  const size_t accepted = c.AcceptedCount();
-  if (accepted != 0) {
-    auto pool = l.hit_slice.first(accepted);
-    SortByAddress(pool);
-    RerankHits(g, pool);
-    const size_t k = *g.top_k;
-    if (l.answer.size() < k) {
-      l.answer.resize(k);
-    }
-    for (const auto& hit : pool) {
-      if (l.answer_size < k) {
-        l.answer[l.answer_size++] = hit;
-        std::push_heap(l.answer.begin(), l.answer.begin() + l.answer_size,
-                       AnswerWorstFirst{});
-      } else if (hit.score > l.answer.front().score) {
-        std::pop_heap(l.answer.begin(), l.answer.begin() + k,
-                      AnswerWorstFirst{});
-        l.answer[k - 1] = hit;
-        std::push_heap(l.answer.begin(), l.answer.begin() + k,
-                       AnswerWorstFirst{});
-      }
-    }
-  }
-  c.Restart(std::numeric_limits<irs::score_t>::lowest());
-}
-
 void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
   const auto& unit = l.unit;
   if (!l.collector) {
-    l.per_segment_rescore =
-      g.topk.rerank_pool != 0 && !g.has_lookup_filter && g.vector_scorer &&
-      g.vector_scorer->quant != irs::VectorQuantization::None;
-    l.collector.emplace(
-      l.per_segment_rescore ? l.segment_kth_score : g.topk.global_kth_score,
-      l.hit_slice);
+    l.collector.emplace(g.topk.global_kth_score, l.hit_slice);
   }
   auto& collector = *l.collector;
-  if (l.pool_seg != unit.seg) {
-    if (l.per_segment_rescore &&
-        l.pool_seg != std::numeric_limits<uint32_t>::max()) {
-      FlushSegmentPool(g, l);
-    }
-    l.pool_seg = unit.seg;
-  }
   collector.SetSegment(unit.seg);
   const auto range = g.RangeOf(unit);
   if (l.root_seg != unit.seg || range.begin < l.root_end) {
@@ -156,53 +70,15 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
 
 void PublishHits(ScanGlobalState& g, TopKLocalState& l) {
   auto& t = g.topk;
-  if (l.per_segment_rescore) {
-    FlushSegmentPool(g, l);
-    std::copy_n(l.answer.begin(), l.answer_size, l.hit_slice.begin());
-    t.accepted[l.worker].store(static_cast<uint32_t>(l.answer_size),
-                               std::memory_order_release);
-    return;
-  }
   auto hits = l.collector ? l.hit_slice.first(l.collector->AcceptedCount())
                           : l.hit_slice.first(0);
-  if (t.rerank_pool != 0 && g.vector_scorer != nullptr &&
-      g.vector_scorer->quant != irs::VectorQuantization::None) {
-    SortByAddress(hits);
-    RerankHits(g, hits);
-  }
-  if (!g.has_lookup_filter && hits.size() > t.limit) {
+  if (hits.size() > t.limit) {
     std::nth_element(hits.begin(), hits.begin() + t.limit, hits.end(),
-                     BetterScore);
+                     BetterScore{});
     hits = hits.first(t.limit);
   }
   t.accepted[l.worker].store(static_cast<uint32_t>(hits.size()),
                              std::memory_order_release);
-}
-
-std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
-  std::span<const irs::ScoreDoc> hits, uint64_t rg_size) {
-  std::vector<ScanGlobalState::TopKState::FetchUnit> units;
-  for (uint32_t i = 0; i < hits.size();) {
-    const auto seg = hits[i].segment_idx;
-    const auto rg = (hits[i].doc - irs::doc_limits::min()) / rg_size;
-    uint32_t j = i + 1;
-    while (j < hits.size() && j - i < STANDARD_VECTOR_SIZE &&
-           hits[j].segment_idx == seg &&
-           (hits[j].doc - irs::doc_limits::min()) / rg_size == rg) {
-      ++j;
-    }
-    units.push_back({.seg = seg, .first = i, .count = j - i});
-    i = j;
-  }
-  return units;
-}
-
-void PlanFetch(ScanGlobalState& g) {
-  auto& t = g.topk;
-  SortByAddress(t.answer);
-  t.fetch_units = FetchUnitsOf(t.answer, g.rg_size);
-  t.fetched.resize(t.fetch_units.size());
-  t.fetched_pk.resize(t.fetch_units.size());
 }
 
 void Merge(ScanGlobalState& g) {
@@ -217,12 +93,8 @@ void Merge(ScanGlobalState& g) {
   }
   std::span<irs::ScoreDoc> all{t.hits.data(), total};
   const auto want = static_cast<size_t>(t.limit);
-  if (g.has_lookup_filter) {
-    absl::c_sort(all, BetterScore);
-    t.ranked = all;
-    all = all.first(std::min<size_t>(all.size(), t.verify_first));
-  } else if (all.size() > want) {
-    std::nth_element(all.begin(), all.begin() + want, all.end(), BetterScore);
+  if (all.size() > want) {
+    std::nth_element(all.begin(), all.begin() + want, all.end(), BetterScore{});
     all = all.first(want);
   }
   t.answer.assign(all.begin(), all.end());
@@ -288,13 +160,10 @@ void AppendBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
   tmp.Reset();
 }
 
-struct FetchedHits {
-  duckdb::unique_ptr<duckdb::DataChunk> chunk;
-  std::unique_ptr<duckdb::Vector> pk;
-};
+}  // namespace
 
 FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
-                      TopKLocalState& l, uint32_t seg,
+                      RankedLocalState& l, uint32_t seg,
                       std::span<const irs::ScoreDoc> hits, bool rebind) {
   const auto& t = g.topk;
   SDB_IF_FAILURE("TopKFetchBudget") {
@@ -319,8 +188,6 @@ FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
   SDB_ASSERT(appended == hits.size());
   return {.chunk = std::move(chunk), .pk = std::move(pk)};
 }
-
-}  // namespace
 
 void AppendHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
                 FetchLocalState& l, duckdb::DataChunk& tmp, uint32_t seg,
@@ -377,7 +244,7 @@ void AppendHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
 namespace {
 
 void FetchUnit(duckdb::ClientContext& ctx, ScanGlobalState& g,
-               TopKLocalState& l, uint32_t index) {
+               RankedLocalState& l, uint32_t index) {
   auto& t = g.topk;
   const auto& fu = t.fetch_units[index];
   auto fetched =
@@ -398,10 +265,8 @@ void EnsureIndexSource(duckdb::ClientContext& ctx, const ScanGlobalState& g,
   }
 }
 
-namespace {
-
 void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
-                     TopKLocalState& l, const duckdb::DataChunk& fetched,
+                     RankedLocalState& l, const duckdb::DataChunk& fetched,
                      duckdb::Vector& pk, std::span<const irs::ScoreDoc> hits,
                      duckdb::DataChunk& batch,
                      std::vector<irs::ScoreDoc>& row_hits) {
@@ -416,105 +281,10 @@ void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
   l.answer_chunk->Append(batch, duckdb::VectorAppendMode::ALLOW_RESIZE);
 }
 
-std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, TopKLocalState& l,
-                                       uint64_t per_segment) {
-  auto vs = *g.vector_scorer;
-  vs.exact = true;
-  const auto filter =
-    MakeVectorFilter(vs, g.ClaimedWhere(), vs.EffectiveRadius());
-  std::vector<irs::ScoreDoc> ranked;
-  std::atomic<irs::score_t> threshold;
-  for (const auto seg : g.segment_order) {
-    l.Classify(g, seg);
-    if (l.seg_cls.segment_dead) {
-      continue;
-    }
-    const auto& segment = (*g.reader)[seg];
-    const auto slots = std::min<uint64_t>(segment.docs_count(), per_segment);
-    if (slots == 0) {
-      continue;
-    }
-    const auto query = filter->PrepareSegment(segment, {});
-    const auto base = ranked.size();
-    ranked.resize(base + slots);
-    threshold.store(g.score_static_floor, std::memory_order_relaxed);
-    irs::LoserScoreCollector collector{
-      threshold, std::span<irs::ScoreDoc>{ranked}.subspan(base, slots)};
-    collector.SetSegment(seg);
-    l.score_fetcher.Clear();
-    auto root = irs::top::MakeRoot(
-      *query, {.scorer = *g.scorer_obj,
-               .fetcher = l.score_fetcher,
-               .table = BeginVerify(l.col_verify, segment, g, l),
-               .k = static_cast<uint32_t>(slots)});
-    EnsurePlanned(static_cast<bool>(root));
-    root->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
-    ranked.resize(base + collector.AcceptedCount());
-  }
-  absl::c_sort(ranked, BetterScore);
-  return ranked;
-}
-
-void FillShortAnswer(ScanGlobalState& g, TopKLocalState& l) {
-  auto& t = g.topk;
-  const auto* vs = g.vector_scorer;
-  if (t.answer.size() >= t.limit || g.has_lookup_filter || !vs ||
-      vs->kind != irs::AnnKind::Ivf || vs->exact ||
-      vs->radius != std::numeric_limits<float>::max()) {
-    return;
-  }
-  t.answer = RankExactly(g, l, t.limit);
-  t.answer.resize(std::min<size_t>(t.answer.size(), t.limit));
-  PlanFetch(g);
-}
-
-void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
-                TopKLocalState& l, std::vector<irs::ScoreDoc>& row_hits) {
-  const auto& t = g.topk;
-  const size_t want = t.limit;
-  auto ranked = t.ranked;
-  size_t verified = t.answer.size();
-  size_t step = std::max<size_t>(verified, want);
-  bool widened =
-    g.vector_scorer->exact || ranked.size() >= g.reader->live_docs_count();
-  std::vector<irs::ScoreDoc> exact;
-  std::vector<irs::ScoreDoc> hits;
-  duckdb::DataChunk batch;
-  batch.Initialize(ctx, g.projected_types);
-  while (row_hits.size() < want) {
-    if (verified == ranked.size()) {
-      if (widened) {
-        return;
-      }
-      widened = true;
-      exact = RankExactly(g, l, std::numeric_limits<uint64_t>::max());
-      ranked = exact;
-      verified = 0;
-      step = std::max<size_t>(step, want);
-      row_hits.clear();
-      l.answer_chunk->Reset();
-      continue;
-    }
-    step *= 4;
-    const auto take = std::min(ranked.size() - verified, step);
-    hits.assign(ranked.begin() + verified, ranked.begin() + verified + take);
-    verified += take;
-    SortByAddress(hits);
-    const auto units = FetchUnitsOf(hits, g.rg_size);
-    for (size_t u = 0; u < units.size(); ++u) {
-      const auto& unit = units[u];
-      const std::span<const irs::ScoreDoc> part{hits.data() + unit.first,
-                                                unit.count};
-      auto fetched = FetchHits(ctx, g, l, unit.seg, part,
-                               u == 0 || units[u - 1].seg != unit.seg);
-      MaterializeHits(ctx, g, l, *fetched.chunk, *fetched.pk, part, batch,
-                      row_hits);
-    }
-  }
-}
+namespace {
 
 void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
-                 TopKLocalState& l) {
+                 RankedLocalState& l) {
   auto& t = g.topk;
   const auto total = t.answer.size();
   l.answer_chunk = duckdb::make_uniq<duckdb::DataChunk>();
@@ -544,7 +314,7 @@ void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
   l.answer_order.resize(row_hits.size());
   std::iota(l.answer_order.begin(), l.answer_order.end(), 0);
   const auto better = [&](uint32_t a, uint32_t b) {
-    return BetterScore(row_hits[a], row_hits[b]);
+    return BetterScore{}(row_hits[a], row_hits[b]);
   };
   const auto want = static_cast<size_t>(t.limit);
   if (l.answer_order.size() > want) {
@@ -563,7 +333,7 @@ void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
   l.emit_sel.Initialize(l.emit_sel_data);
 }
 
-void EmitNext(TopKLocalState& l, duckdb::DataChunk& output) {
+void EmitNext(RankedLocalState& l, duckdb::DataChunk& output) {
   const auto remaining = l.answer_order.size() - l.emitted;
   const auto n = std::min<duckdb::idx_t>(remaining, STANDARD_VECTOR_SIZE);
   if (n == 0) {
@@ -579,79 +349,50 @@ void EmitNext(TopKLocalState& l, duckdb::DataChunk& output) {
 
 }  // namespace
 
-void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
-  auto& t = g.topk;
-  t.limit = *g.top_k;
-  t.offset = g.top_offset;
-  t.shared_fetch = g.has_lookup_filter || t.limit > STANDARD_VECTOR_SIZE;
-  const auto* vs = g.vector_scorer;
-  if (vs && !vs->exact &&
-      (vs->quant != irs::VectorQuantization::None || g.has_lookup_filter)) {
-    const auto k = static_cast<double>(*g.top_k);
-    bool chosen_here = false;
-    const auto factor = AnnOversample(context, *vs, chosen_here);
-    double pool = OversamplePool(factor, k);
-    if (g.has_lookup_filter) {
-      constexpr double kLookupFilterOverfetch = 4.0;
-      const double reachable =
-        vs->kind == irs::AnnKind::Hnsw
-          ? static_cast<double>(vs->ef_search)
-          : (chosen_here ? k * kLookupFilterOverfetch : 0.0);
-      pool = std::max(pool, std::max(k, reachable));
-    }
-    t.rerank_pool = pool == 0 ? 0
-                              : ClampCandidates(std::max(pool, k), k,
-                                                g.reader->live_docs_count());
-  }
-  t.pool = t.rerank_pool != 0 ? t.rerank_pool : static_cast<uint32_t>(*g.top_k);
-  if (vs && vs->exact && g.has_lookup_filter) {
-    g.workers = 1;
-    t.pool = static_cast<uint32_t>(
-      std::clamp<uint64_t>(g.reader->live_docs_count(), t.pool,
-                           std::numeric_limits<uint32_t>::max()));
-    t.verify_first = static_cast<uint32_t>(std::min<uint64_t>(
-      std::max<uint64_t>(uint64_t{4} * t.limit, STANDARD_VECTOR_SIZE),
-      std::numeric_limits<uint32_t>::max()));
-  }
-  t.hits.resize(size_t{g.workers} * t.pool);
-  t.accepted = std::make_unique<std::atomic_uint32_t[]>(g.workers);
-  for (uint32_t w = 0; w < g.workers; ++w) {
-    t.accepted[w].store(0, std::memory_order_relaxed);
-  }
+void SortByAddress(std::span<irs::ScoreDoc> hits) {
+  absl::c_sort(hits, [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+    return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
+  });
 }
 
-void InitTopKLocal(ScanGlobalState& g, TopKLocalState& l,
-                   duckdb::TableFunctionInitInput& input) {
-  SDB_ASSERT(l.worker < g.workers);
-  l.hit_slice = std::span<irs::ScoreDoc>{g.topk.hits}.subspan(
-    size_t{l.worker} * g.topk.pool, g.topk.pool);
-  BuildOffsetsEntries(l, input, g.Bind());
+std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
+  std::span<const irs::ScoreDoc> hits, uint64_t rg_size) {
+  std::vector<ScanGlobalState::TopKState::FetchUnit> units;
+  for (uint32_t i = 0; i < hits.size();) {
+    const auto seg = hits[i].segment_idx;
+    const auto rg = (hits[i].doc - irs::doc_limits::min()) / rg_size;
+    uint32_t j = i + 1;
+    while (j < hits.size() && j - i < STANDARD_VECTOR_SIZE &&
+           hits[j].segment_idx == seg &&
+           (hits[j].doc - irs::doc_limits::min()) / rg_size == rg) {
+      ++j;
+    }
+    units.push_back({.seg = seg, .first = i, .count = j - i});
+    i = j;
+  }
+  return units;
 }
 
-void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
-                 ScanGlobalState& g, TopKLocalState& l,
-                 duckdb::DataChunk& output) {
+void PlanFetch(ScanGlobalState& g) {
   auto& t = g.topk;
-  if (!RunPrepareStage(input, g, l)) {
-    return;
-  }
-  if (!l.published) {
-    while (NextLiveUnit(g, l)) {
-      CollectUnit(g, l);
-      FinishUnit(g, l);
-    }
-    PublishHits(g, l);
-    l.published = true;
-    t.published.fetch_add(1, std::memory_order_acq_rel);
-  }
+  SortByAddress(t.answer);
+  t.fetch_units = FetchUnitsOf(t.answer, g.rg_size);
+  t.fetched.resize(t.fetch_units.size());
+  t.fetched_pk.resize(t.fetch_units.size());
+}
+
+void RunAnswerStages(duckdb::ClientContext& ctx,
+                     duckdb::TableFunctionInput& input, ScanGlobalState& g,
+                     RankedLocalState& l, duckdb::DataChunk& output,
+                     absl::FunctionRef<void()> merge) {
+  auto& t = g.topk;
   if (!t.merge_barrier.Released()) {
     const bool collected =
       g.done_segments.load(std::memory_order_acquire) == g.live_segments &&
       t.published.load(std::memory_order_acquire) ==
         g.worker_count.load(std::memory_order_acquire);
     if (collected && !t.merge_taken.exchange(true, std::memory_order_acq_rel)) {
-      Merge(g);
-      FillShortAnswer(g, l);
+      merge();
       t.merge_barrier.Release(input);
     } else {
       if (!t.shared_fetch &&
@@ -688,6 +429,46 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
     return;
   }
   EmitNext(l, output);
+}
+
+void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& /*context*/) {
+  auto& t = g.topk;
+  t.limit = *g.top_k;
+  t.offset = g.top_offset;
+  t.shared_fetch = t.limit > STANDARD_VECTOR_SIZE;
+  const auto k = static_cast<double>(*g.top_k);
+  t.pool = ClampCandidates(k, k, g.reader->live_docs_count());
+  t.hits.resize(size_t{g.workers} * t.pool);
+  t.accepted = std::make_unique<std::atomic_uint32_t[]>(g.workers);
+  for (uint32_t w = 0; w < g.workers; ++w) {
+    t.accepted[w].store(0, std::memory_order_relaxed);
+  }
+}
+
+void InitTopKLocal(ScanGlobalState& g, TopKLocalState& l,
+                   duckdb::TableFunctionInitInput& input) {
+  SDB_ASSERT(l.worker < g.workers);
+  l.hit_slice = std::span<irs::ScoreDoc>{g.topk.hits}.subspan(
+    size_t{l.worker} * g.topk.pool, g.topk.pool);
+  BuildOffsetsEntries(l, input, g.Bind());
+}
+
+void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
+                 ScanGlobalState& g, TopKLocalState& l,
+                 duckdb::DataChunk& output) {
+  if (!RunPrepareStage(input, g, l)) {
+    return;
+  }
+  if (!l.published) {
+    while (NextLiveUnit(g, l)) {
+      CollectUnit(g, l);
+      FinishUnit(g, l);
+    }
+    PublishHits(g, l);
+    l.published = true;
+    g.topk.published.fetch_add(1, std::memory_order_acq_rel);
+  }
+  RunAnswerStages(ctx, input, g, l, output, [&] { Merge(g); });
 }
 
 }  // namespace sdb::connector

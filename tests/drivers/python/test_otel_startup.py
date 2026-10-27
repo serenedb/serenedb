@@ -9,13 +9,12 @@ from __future__ import annotations
 import http.client
 import json
 import os
-import socket
 import subprocess
-import time
 from pathlib import Path
 
 import psycopg
 import pytest
+from serened import Serened, reserve_port  # type: ignore[import-untyped]
 
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
@@ -28,46 +27,23 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _connect(port: int, deadline: float) -> psycopg.Connection:
-    while True:
-        try:
-            return psycopg.connect(
-                host="127.0.0.1", port=port, user="postgres", dbname="postgres",
-                autocommit=True,
-            )
-        except psycopg.OperationalError:
-            if time.monotonic() > deadline:
-                raise
-            time.sleep(0.2)
-
-
-def _break_schema(datadir: Path, statement: str) -> None:
-    port = _free_port()
-    server = subprocess.Popen(
-        [SERENED_BIN, str(datadir), f"--listen=postgres://127.0.0.1:{port}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+def _break_schema(tmp_path: Path, statement: str) -> None:
+    server = _Server(tmp_path)
     try:
-        with _connect(port, time.monotonic() + 60) as conn:
-            conn.execute(statement)
+        server.pg.execute(statement)
     finally:
-        server.terminate()
-        server.wait(timeout=60)
+        server.close()
 
 
-def _start_otel(datadir: Path) -> subprocess.CompletedProcess:
-    listen = (f"postgres://127.0.0.1:{_free_port()},"
-              f"http://127.0.0.1:{_free_port()}?api=otel")
-    return subprocess.run(
-        [SERENED_BIN, str(datadir), f"--listen={listen}"],
-        capture_output=True, text=True, timeout=60,
-    )
+def _start_otel(tmp_path: Path,
+                params: str = "api=otel") -> subprocess.CompletedProcess:
+    with reserve_port() as pg_sock, reserve_port() as http_sock:
+        listen = (f"postgres://127.0.0.1:{pg_sock.getsockname()[1]},"
+                  f"http://127.0.0.1:{http_sock.getsockname()[1]}?{params}")
+        return subprocess.run(
+            [SERENED_BIN, str(tmp_path / "data"), f"--listen={listen}"],
+            capture_output=True, text=True, timeout=60,
+        )
 
 
 def test_mistyped_column_refuses_startup(tmp_path: Path) -> None:
@@ -89,15 +65,13 @@ FIXTURES = (
 
 
 class _Server:
-    def __init__(self, datadir: Path, params: str):
-        self.pg_port, self.http_port = _free_port(), _free_port()
-        listen = (f"postgres://127.0.0.1:{self.pg_port},"
-                  f"http://127.0.0.1:{self.http_port}?{params}")
-        self.proc = subprocess.Popen(
-            [SERENED_BIN, str(datadir), f"--listen={listen}"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        self.pg = _connect(self.pg_port, time.monotonic() + 60)
+    def __init__(self, tmp_path: Path, params: str | None = None):
+        self.serened = Serened(SERENED_BIN, datadir=str(tmp_path / "data"),
+                               log_path=str(tmp_path / "serened.log"),
+                               http=params)
+        self.serened.start()
+        self.http_port = self.serened.http_port
+        self.pg = psycopg.connect(self.serened.dsn(), autocommit=True)
 
     def post(self, path: str, body: bytes, content_type: str) -> int:
         conn = http.client.HTTPConnection("127.0.0.1", self.http_port,
@@ -119,8 +93,9 @@ class _Server:
 
     def close(self) -> None:
         self.pg.close()
-        self.proc.terminate()
-        self.proc.wait(timeout=60)
+        stopped = self.serened.graceful_stop(timeout=60)
+        self.serened.stop()
+        assert stopped is not None, self.serened.log.tail(0)[-2000:]
 
 
 def test_schema_param_places_the_tables(tmp_path: Path) -> None:
@@ -147,6 +122,55 @@ def _indexes_of(server: _Server, table: str) -> list[str]:
     return [row[0] for row in server.pg.execute(
         "SELECT indexname FROM pg_indexes WHERE tablename = %s "
         "ORDER BY indexname", (table,)).fetchall()]
+
+
+def test_without_create_schema_exports_wait_for_the_tables(
+        tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel&create_schema=false")
+    try:
+        assert _otel_objects(server, "pg_tables") == 0
+        assert "Exports answer 503" in server.serened.log.tail(0)
+        logs = (FIXTURES / "logs/basic.json").read_bytes()
+        metrics = (FIXTURES / "metrics/mixed_batch.json").read_bytes()
+        assert server.post("/v1/logs", logs, "application/json") == 503
+        assert server.post("/v1/metrics", metrics, "application/json") == 503
+
+        sql = (FIXTURES.parent / "otel_schema.sql").read_text()
+        for statement in sql.split(";\n"):
+            if statement.strip():
+                server.pg.execute(statement)
+
+        assert server.post("/v1/logs", logs, "application/json") == 200
+        assert server.post("/v1/metrics", metrics, "application/json") == 200
+        assert server.count("otel_logs") > 0
+        assert server.count("otel_metrics_gauge") > 0
+    finally:
+        server.close()
+
+
+def test_without_create_schema_mistyped_column_answers_503(
+        tmp_path: Path) -> None:
+    _break_schema(
+        tmp_path,
+        'CREATE TABLE otel_logs ("timestamp" VARCHAR NOT NULL) '
+        "WITH (storage = 'search')",
+    )
+    server = _Server(tmp_path, "api=otel&create_schema=false")
+    try:
+        assert "invalid OpenTelemetry schema" in server.serened.log.tail(0)
+        body = (FIXTURES / "logs/basic.json").read_bytes()
+        assert server.post("/v1/logs", body, "application/json") == 503
+        assert _otel_objects(server, "pg_tables") == 1
+    finally:
+        server.close()
+
+
+def test_without_create_schema_missing_database_refuses_startup(
+        tmp_path: Path) -> None:
+    result = _start_otel(tmp_path, "api=otel&db=telemetry&create_schema=false")
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "database 'telemetry' does not exist" in output, output
 
 
 def test_missing_table_is_created_with_its_index(tmp_path: Path) -> None:
@@ -262,7 +286,7 @@ def test_failed_metrics_export_writes_no_table(tmp_path: Path) -> None:
         conn.request("POST", "/v1/metrics", body=body, headers=headers)
         response = conn.getresponse()
         response.read()
-        assert response.status == 500
+        assert response.status == 503
         for table in ("otel_metrics_gauge", "otel_metrics_sum",
                       "otel_metrics_histogram"):
             assert server.count(table) == 0, table

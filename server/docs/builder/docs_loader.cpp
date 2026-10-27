@@ -249,8 +249,10 @@ class Loader {
       _ctx{std::make_shared<ConnectionContext>(
         *_conn->context, irs::StaticStrings::kDefaultUser, std::string_view{},
         pg::kRootUser, database, database_id, nullptr, 0, nullptr)},
+      _progress{
+        connector::SereneDBClientState::Register(*_conn->context, _ctx, false)
+          .progress_source},
       _docs{docs} {
-    connector::SereneDBClientState::Register(*_conn->context, _ctx, false);
     connector::SetDefaultSearchPath(*_conn->context, database);
   }
 
@@ -346,6 +348,7 @@ class Loader {
 
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _ctx;
+  pg::ProgressRegistration _progress;
   std::span<const Doc> _docs;
 };
 

@@ -45,7 +45,11 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             HnswSearchLimits limits, score_t boost, QueryBuilder::ptr&& inner,
             AnnQueryCache* cache);
 
-  std::vector<ScoreDoc> RunSearch(detail::TableFilter* table = nullptr) const;
+  std::vector<ScoreDoc> RunSearch(
+    detail::TableFilter* table = nullptr,
+    std::vector<score_t>* spreads = nullptr) const;
+
+  ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
 
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }
 
@@ -68,6 +72,9 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
 
   void ScanColumn(HnswSearchScratch& scratch) const;
 
+  void Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
+             std::vector<score_t>& spreads) const;
+
   std::shared_ptr<const HnswData> _data;
   mutable std::shared_ptr<const QuantizerCodebook> _codebook;
   mutable std::shared_ptr<const PanoramaQuery> _panorama;
@@ -80,6 +87,8 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   uint32_t _d;
   uint32_t _record_size;
   uint32_t _ef;
+  uint32_t _top_k;
+  float _rescore_width;
   score_t _threshold;
   size_t _max_results;
   score_t _boost;

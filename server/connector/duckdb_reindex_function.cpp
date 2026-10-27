@@ -231,8 +231,9 @@ class PassConnection {
       _ctx{std::make_shared<ConnectionContext>(
         *_conn.context, caller.user(), caller.SystemUser(), caller.GetRoleId(),
         target.database, target.database_id, nullptr, caller.GetBackendPid(),
-        nullptr)} {
-    SereneDBClientState::Register(*_conn.context, _ctx, false);
+        nullptr)},
+      _progress{SereneDBClientState::Register(*_conn.context, _ctx, false)
+                  .progress_source} {
     _conn.context->config.user_settings = context.config.user_settings;
   }
   ~PassConnection() {
@@ -286,6 +287,7 @@ class PassConnection {
   ConnectionContext& _caller;
   duckdb::Connection _conn;
   std::shared_ptr<ConnectionContext> _ctx;
+  pg::ProgressRegistration _progress;
 };
 
 bool CollectDeadRowPks(duckdb::ClientContext& context,
@@ -1054,9 +1056,9 @@ class ReindexSession {
       _ctx{std::make_shared<ConnectionContext>(
         *_conn.context, user, std::string_view{}, role_id, database,
         database_id, nullptr, backend_pid, nullptr)},
-      _sink{std::move(sink)} {
-    SereneDBClientState::Register(*_conn.context, _ctx, false);
-  }
+      _progress{SereneDBClientState::Register(*_conn.context, _ctx, false)
+                  .progress_source},
+      _sink{std::move(sink)} {}
   ~ReindexSession() {
     _ctx->ConsumeNotices([&](auto& notice) { _sink(notice); });
   }
@@ -1070,6 +1072,7 @@ class ReindexSession {
  private:
   duckdb::Connection _conn;
   std::shared_ptr<ConnectionContext> _ctx;
+  pg::ProgressRegistration _progress;
   NoticeSink _sink;
 };
 

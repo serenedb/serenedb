@@ -1,105 +1,166 @@
-name: auto | nightly
+name: serenedb | nightly
+
+run-name: "serenedb | nightly [${{ (github.event_name == 'schedule' || inputs.PUBLISH) && 'publish' || 'no publish' }}]"
 
 on:
   schedule:
-    - cron: '0 5 * * *'
-    - cron: '0 1 * * 1'
-    - cron: '0 1 * * 2'
-    - cron: '0 1 * * 3'
-    - cron: '0 1 * * 4'
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
-      COVERAGE:
-        description: "run the coverage build (never scheduled: too long for the nightly)"
+      PUBLISH:
+        description: 'When everything is green: replace the draft release and push the images (version and nightly tags)'
         type: boolean
-        required: false
+        default: false
+      CORPUS:
+        description: 'Also run the sqlite corpus (tests/sqllogic/any/pg/sqlite)'
+        type: boolean
         default: false
 
+permissions:
+  statuses: write
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+env:
+  SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
+
 jobs:
-  coverage:
-    if: github.event_name == 'workflow_dispatch' && inputs.COVERAGE
-    uses: ./.github/workflows/build-reusable.yml
+  image:
+    uses: ./.github/workflows/build-images.yml
     with:
-      LOCATION: linux-amd64
-      CONFIG: coverage
-      IRESEARCH: true
-      DUCKDB_SUITES: "core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop"
-      SQLITE: true
-      SQLSMITH: true
-      FUZZ_QUERIES: "10000"
-      FUZZ_PARALLEL: "4"
+      REF: ${{ github.sha }}
     secrets: inherit
 
-  everything:
-    if: github.event.schedule == '0 5 * * *'
-    uses: ./.github/workflows/build-reusable.yml
+  perf:
+    needs: image
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: perf
+      TEST_ARGS: --fuzz-seconds 3600 --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
+    secrets: inherit
+
+  dev:
+    needs: image
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: dev
+      TEST_ARGS: --fuzz-seconds 3600 --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
+    secrets: inherit
+
+  asan:
+    needs: image
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: asan
+      TEST_ARGS: --fuzz-seconds 3600 --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
+    secrets: inherit
+
+  tsan:
+    needs: image
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: tsan
+      TEST_ARGS: --fuzz-seconds 3600 --stress-profile soak-tsan ${{ inputs.CORPUS && '--corpus' || '' }}
+    secrets: inherit
+
+  msan:
+    needs: image
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: msan
+      TEST_ARGS: --fuzz-seconds 3600 --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
+    secrets: inherit
+
+  perf-arm64:
+    needs: image
+    uses: ./.github/workflows/build.yml
+    with:
+      CONFIG: perf
+      LOCATION: linux-arm64
+    secrets: inherit
+
+  dev-arm64:
+    needs: image
+    uses: ./.github/workflows/build.yml
+    with:
+      CONFIG: dev
+      LOCATION: linux-arm64
+    secrets: inherit
+
+  validate-pg:
+    name: validate pg
+    needs: image
+    uses: ./.github/workflows/validate-pg-tests.yml
     with:
       LOCATION: linux-amd64
-      CONFIG: dev
-      IRESEARCH: true
-      RE2: true
-      DUCKDB_SUITES: "core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop"
-      SQLITE: true
-      SQLSMITH: true
-      STRESS: true
-      STRESS_PROFILE: soak
+      CORPUS: ${{ inputs.CORPUS }}
     secrets: inherit
 
   macos:
-    if: github.event.schedule == '0 5 * * *'
     uses: ./.github/workflows/build-macos-reusable.yml
 
-  release-check:
-    if: github.event.schedule == '0 5 * * *'
-    uses: ./.github/workflows/make-package.yml
+  release:
+    needs: [perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, validate-pg, macos]
+    uses: ./.github/workflows/release.yml
     with:
-      LOCATION: linux-amd64
       RTA: required
-      UPLOAD_ARTIFACTS: false
-
-  sanitizer:
-    # Explicit allowlist, not "not the 5am cron": any newly added schedule would
-    # otherwise silently start running a sanitizer build.
-    if: >-
-      github.event.schedule == '0 1 * * 1' ||
-      github.event.schedule == '0 1 * * 2' ||
-      github.event.schedule == '0 1 * * 3' ||
-      github.event.schedule == '0 1 * * 4'
-    uses: ./.github/workflows/build-reusable.yml
-    with:
-      LOCATION: linux-amd64
-      CONFIG: >-
-        ${{ github.event.schedule == '0 1 * * 1' && 'msan'
-         || github.event.schedule == '0 1 * * 2' && 'asan'
-         || github.event.schedule == '0 1 * * 3' && 'ubsan'
-         || 'tsan' }}
-      # RUN_EXTRA: nightly sanitizers run the full in-scope set, not just ours + drivers.
-      RUN_EXTRA: true
-      IRESEARCH: true
-      DUCKDB_SUITES: "core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop"
-      SQLITE: true
-      SQLSMITH: true
-      FUZZ_QUERIES: "10000"
-      FUZZ_PARALLEL: "4"
-      STRESS: true
-      # The thread-sanitizer night gets the profile with the longer client
-      # deadlines; instrumented ops are far slower and would otherwise read as
-      # stalls.
-      STRESS_PROFILE: >-
-        ${{ github.event.schedule == '0 1 * * 4' && 'soak-tsan' || 'soak' }}
+      PUSH_IMAGES_2_REGISTRY: ${{ github.event_name == 'schedule' || inputs.PUBLISH }}
+      CREATE_GITHUB_RELEASE: ${{ github.event_name == 'schedule' || inputs.PUBLISH }}
+      DOCKER_EXTRA_TAGS: ${{ (github.event_name == 'schedule' || inputs.PUBLISH) && 'nightly' || '' }}
     secrets: inherit
 
-  notify:
-    needs: [coverage, everything, release-check, sanitizer]
-    if: always() && !cancelled()
+  timing:
+    name: learn the timings
+    needs: [perf, dev, asan, tsan, msan]
+    if: ${{ !cancelled() }}
+    runs-on:
+      - linux-amd64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          clean: false
+      - name: Update the timing store
+        run: |
+          for config in perf dev asan tsan msan; do
+            python3 scripts/ci/ci.py update-timing --config "$config" --arch x86_64
+          done
+
+  report:
+    name: Report Status
+    needs: [image, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, validate-pg, macos, release, timing]
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
-          submodules: false
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
+      - name: Fetch the results
+        uses: actions/download-artifact@v8
+        with:
+          pattern: results-*
+          path: results
+      - name: Write the report
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/ci/report.py --results results --out report.md
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: report
+          path: |
+            report.md
+            report.json
+          if-no-files-found: ignore
+          retention-days: 90
       - name: Send notification
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
@@ -107,10 +168,10 @@ jobs:
           TG_THREAD_ID_MAIN: "51"
           TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-          BRANCH: main
+          BRANCH: ${{ github.ref_name }}
           JOB_STATUS: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
           ACTOR: ${{ github.event_name == 'schedule' && 'scheduled' || github.actor }}
-          RUN_NAME: "auto | nightly"
+          RUN_NAME: "serenedb | nightly"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/send_notification.bash

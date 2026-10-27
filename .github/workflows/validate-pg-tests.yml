@@ -13,16 +13,21 @@ on:
         type: string
         required: false
         default: ""
-      BUILD_IMAGE:
-        description: "Build image (empty = serenedb/serenedb-build-ubuntu:latest)"
+      PR_NUMBER:
+        description: "PR number, recorded with the results"
         type: string
         required: false
         default: ""
-      PG_TESTS:
-        description: "Newline list of changed pg tests (relative to tests/sqllogic/); empty = run all"
-        type: string
+      CHANGED:
+        description: "Only the pg tests the diff against main changes"
+        type: boolean
         required: false
-        default: ""
+        default: false
+      CORPUS:
+        description: "Also validate the sqlite corpus (tests/sqllogic/any/pg/sqlite)"
+        type: boolean
+        required: false
+        default: false
   workflow_call:
     inputs:
       LOCATION:
@@ -35,28 +40,35 @@ on:
         type: string
         required: false
         default: ""
-      BUILD_IMAGE:
-        description: "Build image (empty = serenedb/serenedb-build-ubuntu:latest)"
+      PR_NUMBER:
+        description: "PR number, recorded with the results"
         type: string
         required: false
         default: ""
-      PG_TESTS:
-        description: "Newline list of changed pg tests (relative to tests/sqllogic/); empty = run all"
-        type: string
+      CHANGED:
+        description: "Only the pg tests the diff against main changes"
+        type: boolean
         required: false
-        default: ""
+        default: false
+      CORPUS:
+        description: "Also validate the sqlite corpus (tests/sqllogic/any/pg/sqlite)"
+        type: boolean
+        required: false
+        default: false
 
 env:
-  WORKSPACE: ${{ github.workspace }}
-  BUILD_IMAGE: ${{ inputs.BUILD_IMAGE || 'serenedb/serenedb-build-ubuntu:latest' }}
-  CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
-  CARGO_HOME_CACHE: /mnt/data/.cargo-home-sqllogic
+  SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
+  SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+  SDB_SHA: ${{ inputs.PR_SHA || github.sha }}
+  SDB_PR: ${{ inputs.PR_NUMBER }}
+  SDB_BRANCH: ${{ inputs.PR_NUMBER == '' && github.ref_name || '' }}
 
 jobs:
   validate:
     name: "validate-pg-tests"
     runs-on:
       - ${{ inputs.LOCATION }}
+    timeout-minutes: 240
     permissions:
       contents: read
 
@@ -68,6 +80,7 @@ jobs:
           docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
           docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
           docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
+          git config --global --add safe.directory '*'
 
       - name: Checkout
         uses: actions/checkout@v7
@@ -75,55 +88,45 @@ jobs:
           ref: ${{ inputs.PR_SHA || github.sha }}
           fetch-depth: 1
           submodules: false
-          clean: true
+          clean: false
 
-      - name: Checkout test submodules
-        run: git submodule update --init --depth=1 third_party/sqllogictest-rs
-
-      - name: Prepare
+      - name: Clean the checkout
         run: |
-          mkdir -p out/logs
-          mkdir -p "${HOME}/.cache/serenedb-cargo-target"
-          for i in 1 2 3; do
-            docker pull "${BUILD_IMAGE}" && break
-            echo "Pull attempt $i failed, retrying in 10s..."
-            sleep 10
-          done
+          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
+          git clean -ffdxq
+          git submodule update --init --depth=1 third_party/sqllogictest-rs
+          git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
 
-      - name: Run PG validation tests
+      - name: Run the pg tests against PostgreSQL
+        env:
+          CHANGED: ${{ inputs.CHANGED }}
+          CORPUS: ${{ inputs.CORPUS }}
         run: |
-          export DOCKER_UID="$(id -u)"
-          export DOCKER_GID="$(id -g)"
-          export SQLLOGIC_DIR="${WORKSPACE}/tests/sqllogic"
-          export PG_CHANGED_TESTS="${{ inputs.PG_TESTS }}"
-          export PG_FIXTURE_IMAGE="serenedb/serenedb-test-postgres:$(tests/sqllogic/fixtures/image_tag.sh tests/sqllogic/fixtures/postgres)"
+          args=(--suite postgres --relabel 0)
+          [[ "$CHANGED" != true ]] || args+=(--changed origin/main --only-changed)
+          [[ "$CORPUS" != true ]] || args+=(--corpus)
+          SDB_CHECK=pg ./scripts/ci/run_shard.sh perf - 1/1 - "${args[@]}"
 
-          cd tests/sqllogic
-          PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
-
-          cleanup() {
-            docker compose -p "${PREFIX}" -f docker-compose.validate-pg-tests.yml down --volumes --remove-orphans
-          }
-          trap cleanup EXIT INT TERM
-
-          docker compose \
-            -p "${PREFIX}" \
-            -f docker-compose.validate-pg-tests.yml \
-            up \
-            --attach tests \
-            --exit-code-from tests \
-            --remove-orphans
-
-      - name: Upload test results
-        if: always() && !cancelled()
+      - name: Keep the results
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: validate-pg-results-${{ inputs.LOCATION }}-${{ github.run_number }}
+          name: results-pg-${{ inputs.LOCATION }}
           path: |
-            out/logs/*
-            tests/sqllogic/*.xml
+            out/test-*/results.jsonl
+            out/test-*/summary.txt
+            out/test-*/meta.json
           if-no-files-found: ignore
           retention-days: 30
+
+      - name: Keep the failures
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: failure-pg-${{ inputs.LOCATION }}
+          path: out/failure-*.tar.zst
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Reap containers of this job
         if: always()

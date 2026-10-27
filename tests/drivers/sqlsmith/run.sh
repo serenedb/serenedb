@@ -109,10 +109,22 @@ if [[ -n "$LOG_TO" ]]; then
 	log_to_args=(--log-to="$LOG_TO")
 fi
 
+STATEMENT_TIMEOUT="${SDB_FUZZ_STATEMENT_TIMEOUT:-10s}"
+if command -v psql >/dev/null 2>&1; then
+	psql "$DSN" -q -c "SET GLOBAL statement_timeout = '$STATEMENT_TIMEOUT'" >>"$SEED_LOG" 2>&1 ||
+		echo "[sqlsmith] WARN: could not set statement_timeout=$STATEMENT_TIMEOUT" >&2
+fi
+
+budget=()
+if [[ -n "${SDB_FUZZ_SECONDS:-}" ]]; then
+	budget=(timeout --signal=TERM "$SDB_FUZZ_SECONDS")
+	echo "[sqlsmith] time budget ${SDB_FUZZ_SECONDS}s, statement_timeout $STATEMENT_TIMEOUT"
+fi
+
 start=$(date +%s)
 declare -a PIDS=()
 for ((i = 0; i < PARALLEL; i++)); do
-	sqlsmith \
+	"${budget[@]}" sqlsmith \
 		--target="$DSN" \
 		--max-queries="$MAX_QUERIES" \
 		--seed="${INSTANCE_SEEDS[$i]}" \
@@ -155,6 +167,7 @@ n_nonzero=0
 for pid in "${PIDS[@]}"; do
 	wait "$pid"
 	rc=$?
+	[[ ${#budget[@]} -gt 0 && "$rc" -eq 124 ]] && rc=0
 	INSTANCE_EXITS+=("$rc")
 	if [[ "$rc" -ne 0 ]]; then
 		((n_nonzero++))

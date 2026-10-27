@@ -28,7 +28,7 @@ if python3 -c 'import fastavro, pyarrow, pyiceberg' 2>/dev/null; then
 else
 	docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} \
 		-u "$(id -u):$(id -g)" -e HOME=/tmp -e ICE_FIXTURE_WORK=/tmp/ice_fixture_work \
-		-v "$REPO:/serenedb" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}" \
+		-v "$REPO:/serenedb" "$(python3 "$REPO/scripts/ci/ci.py" image)" \
 		python3 /serenedb/scripts/gen_iceberg_fixture.py
 fi
 touch "$STAMP"

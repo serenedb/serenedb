@@ -1,0 +1,162 @@
+import subprocess
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "harness")]
+
+import ci  # noqa: E402
+from testlib import cli, scheduler  # noqa: E402
+from testlib.scheduler import (FAILED, INTERRUPTED, PASSED, SKIPPED, Outcome, Result,  # noqa: E402
+                               Unit)
+from testlib.suites import duckdb, gtest  # noqa: E402
+from testlib.timing import Timing  # noqa: E402
+
+
+def unit(uid, members=(), fixtures=(), cost=1.0, cpus=1):
+    return Unit(uid, uid.split(":")[0], None, members=members, fixtures=fixtures, cost=cost,
+                cpus=cpus)
+
+
+def changed(monkeypatch, tmp_path, files, units, compiled=True):
+    for name, text in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(cli, "changed_files", lambda base: sorted(files))
+    return cli.changed_units(units, "origin/main", compiled)
+
+
+def test_a_changed_test_picks_its_units_in_every_suite(monkeypatch, tmp_path):
+    units = [unit("sqllogic:pg-wire-simple:sdb/a.test"), unit("postgres:pg-wire-simple:pg/b.test"),
+             unit("recovery:recovery/c.test"), unit("sqllogic:pg-wire-simple:sdb/other.test"),
+             unit("duckdb:core:batch:test/sql/x.test+1",
+                  members=("duckdb:core:test/sql/x.test", "duckdb:core:test/sql/y.test")),
+             unit("duckdb:avro:batch:test/sql/x.test+0", members=("duckdb:avro:test/sql/x.test",)),
+             unit("network:hba"), unit("drivers:python"), unit("drivers:java")]
+    picked, tests = changed(monkeypatch, tmp_path, {
+        "tests/sqllogic/sdb/a.test": "", "tests/sqllogic/pg/b.test": "",
+        "tests/sqllogic/recovery/c.test": "", "third_party/duckdb/test/sql/x.test": "",
+        "tests/drivers/network/run.sh": "", "tests/drivers/spec/select.yaml": "",
+        "tests/drivers/harness/services.py": ""}, units)
+    assert tests == {"sqllogic:pg-wire-simple:sdb/a.test", "postgres:pg-wire-simple:pg/b.test",
+                     "recovery:recovery/c.test", "duckdb:core:test/sql/x.test", "network:hba",
+                     "drivers:python", "drivers:java"}
+    assert len(picked) == 7
+
+
+def test_a_changed_test_source_picks_the_compiled_tests_it_defines(monkeypatch, tmp_path):
+    units = [unit("gtest:serenedb-tests:batch:Plain.Works+3", members=(
+                 "gtest:serenedb-tests:Plain.Works", "gtest:serenedb-tests:Plain.Other",
+                 "gtest:serenedb-tests:Each/Param.Runs/0", "gtest:serenedb-tests:Typed/1.Holds")),
+             unit("gtest:serenedb-tests:batch:Else.Fails+0", members=("gtest:serenedb-tests:Else.Fails",)),
+             unit("duckdb:cpp:batch:Test a thing+0", members=("duckdb:cpp:Test a thing",)),
+             unit("gtest:re2-tests:batch:Search.Literal+1",
+                  members=("gtest:re2-tests:Search.Literal", "gtest:re2-tests:Set.Unanchored"))]
+    files = {"tests/server/plain_test.cpp": "TEST(Plain, Works) {}\nTEST_P(Param, Runs) {}\n"
+                                            "TYPED_TEST(Typed, Holds) {}\n",
+             "third_party/duckdb/test/api/test_thing.cpp": 'TEST_CASE("Test a thing", "[api]") {}\n',
+             "third_party/re2/re2/testing/search_test.cc": "TEST(Search, Literal) {}\n"}
+    _, tests = changed(monkeypatch, tmp_path, files, units)
+    assert tests == {"gtest:serenedb-tests:Plain.Works", "gtest:serenedb-tests:Each/Param.Runs/0",
+                     "gtest:serenedb-tests:Typed/1.Holds", "duckdb:cpp:Test a thing",
+                     "gtest:re2-tests:Search.Literal"}
+    picked, _ = changed(monkeypatch, tmp_path, files, units, compiled=False)
+    assert picked == []
+
+
+@pytest.mark.parametrize("config,args,targets", [
+    ("perf", [], "serened iresearch-examples serenedb-bench-micro search-benchmark-game"),
+    ("dev", [], "serened iresearch-examples serenedb-bench-micro search-benchmark-game "
+                "iresearch-load-tests iresearch-tests re2-tests serenedb-tests unittest"),
+    ("asan", ["--suite", "sqllogic", "--suite", "gtest", "--changed", "origin/main"],
+     "serened serenedb-tests"),
+    ("tsan", ["--suite", "gtest", "--suite", "re2", "--suite", "duckdb", "--duckdb-suite", "core"],
+     "serened re2-tests serenedb-tests unittest"),
+])
+def test_a_build_makes_only_the_binaries_of_the_suites_it_tests(config, args, targets):
+    script = 'source scripts/ci/config.sh && sdb_config "$@" && echo "${TARGETS[*]}"'
+    res = subprocess.run(["bash", "-c", script, "config.sh", config, *args], cwd=ROOT,
+                         capture_output=True, text=True, check=True)
+    assert res.stdout.strip() == targets
+
+
+def test_the_bugfix_check_fails_a_changed_test_that_did_not_run():
+    sched = scheduler.Scheduler.__new__(scheduler.Scheduler)
+    sched.results = [Result("a", "sqllogic", PASSED, 1, 0, 0), Result("b", "sqllogic", FAILED, 1, 0, 0),
+                     Result("c", "duckdb", SKIPPED, 0, 0, 0, "no result: the batch timed out"),
+                     Result("d", "sqllogic", FAILED, 1, 0, 0)]
+    sched.invert({"a", "b", "c"})
+    assert [r.status for r in sched.results] == [FAILED, PASSED, FAILED, SKIPPED]
+
+
+def test_a_unit_joins_the_shard_that_starts_its_fixture_unless_that_shard_is_far_ahead():
+    def plan(plain_cost):
+        units = [unit("plain:0", cost=plain_cost), unit("plain:1", cost=650.0),
+                 *(unit(f"iceberg:{i}", fixtures=("duckdb:iceberg",), cost=50.0) for i in range(2))]
+        shards = [{u.id for u in cli.shard(units, i, 2, lambda f: 600.0)} for i in range(2)]
+        assert shards[0] | shards[1] == {u.id for u in units} and not shards[0] & shards[1]
+        return [sorted(s & {"iceberg:0", "iceberg:1"}) for s in shards]
+
+    assert plan(650.0) == [["iceberg:0", "iceberg:1"], []]
+    assert plan(2000.0) == [[], ["iceberg:0", "iceberg:1"]]
+
+
+def test_shards_balance_cpu_seconds():
+    units = [unit("wide", cost=100.0, cpus=4), *(unit(f"narrow:{i}", cost=100.0) for i in range(4))]
+    shards = [{u.id for u in cli.shard(units, i, 2)} for i in range(2)]
+    assert {"wide"} in shards
+
+
+def test_a_failure_after_the_run_was_interrupted_is_not_a_failure():
+    out = scheduler._interrupted_outcome(Outcome(FAILED, "exit None", members={
+        "m:a": (PASSED, 1.0, ""), "m:b": (FAILED, 0.0, "exit None")}))
+    assert out.status == INTERRUPTED
+    assert out.members == {"m:a": (PASSED, 1.0, ""), "m:b": (INTERRUPTED, 0.0, "the run was interrupted")}
+    assert scheduler._interrupted_outcome(Outcome(PASSED)).status == PASSED
+
+
+def test_test_durations_below_the_clock_resolution_are_not_zero():
+    results, _ = gtest.parse_log("[ RUN      ] A.b\n[       OK ] A.b (0 ms)\n")
+    assert results["A.b"][1] > 0
+    members = [("/w/third_party/duckdb_avro/test/sql/a.test", "test/sql/a.test")]
+    out, _, _ = duckdb._parse_events(
+        "[1/1] (100%): /w/third_party/duckdb_avro/test/sql/a.test took 0.000s\n"
+        '[TEST_EVENT] {"event":"end","name":"/w/third_party/duckdb_avro/test/sql/a.test","status":"ok"}\n',
+        members, "duckdb:avro")
+    assert out["duckdb:avro:test/sql/a.test"][0] == PASSED
+    assert out["duckdb:avro:test/sql/a.test"][1] > 0
+
+
+def test_an_untimed_gtest_runs_alone_and_timed_ones_batch(monkeypatch):
+    timing = Timing({"gtest:b:A.timed": 1.0, "gtest:b:B.timed": 1.0})
+    ctx = SimpleNamespace(timing=timing, skips=[], timeout_floor=180.0,
+                          config=SimpleNamespace(slowdown=1.0),
+                          build=SimpleNamespace(bin=lambda name: Path("/bin") / name), base_env={})
+    monkeypatch.setattr(gtest, "list_tests", lambda *args: ["A.timed", "B.timed", "C.new", "D.new"])
+    units = gtest.GtestBinary(ctx, "b").units([])
+    assert [u.members for u in units] == [("gtest:b:A.timed", "gtest:b:B.timed"), ("gtest:b:C.new",),
+                                          ("gtest:b:D.new",)]
+
+
+def test_extension_test_ids_do_not_depend_on_the_checkout():
+    ctx = SimpleNamespace(root=Path("/somewhere/serenedb"))
+    assert duckdb._relative(ctx, "avro", "/somewhere/serenedb/third_party/duckdb_avro/test/sql/a.test") \
+        == "test/sql/a.test"
+    assert duckdb._relative(ctx, "core", "test/sql/a.test") == "test/sql/a.test"
+
+
+def test_timing_learns_main_or_a_calibration_pr():
+    main = "40278761535-1-dev-x86_64-1of3.parquet"
+    pr = "40278761535-1-pr1880-dev-x86_64-1of3.parquet"
+    other = "40278761535-1-pr1932-dev-x86_64-1of3.parquet"
+
+    def learns(pr_number):
+        return [ci._learns_from(name, SimpleNamespace(pr=pr_number)) for name in (main, pr, other)]
+
+    assert learns("") == [True, False, False]
+    assert learns("1880") == [False, True, False]

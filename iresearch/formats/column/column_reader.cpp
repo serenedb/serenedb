@@ -61,6 +61,7 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -339,8 +340,10 @@ BlockWindow ColumnReader::Locate(uint64_t row,
     }
   }
   SDB_ASSERT(row < _row_count);
-  const auto it = std::upper_bound(_offsets.begin(), _offsets.end(), row);
-  const auto rg = static_cast<size_t>(it - _offsets.begin()) - 1;
+  const auto it =
+    BranchlessPartitionPoint(_offsets.data(), _offsets.size(),
+                             [row](uint64_t offset) { return offset <= row; });
+  const auto rg = static_cast<size_t>(it - _offsets.data()) - 1;
   return BlockWindow{rg, _offsets[rg], _offsets[rg + 1]};
 }
 

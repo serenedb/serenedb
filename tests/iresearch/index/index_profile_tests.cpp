@@ -112,8 +112,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     std::atomic<size_t>& writer_commit_count =
       commit_count ? *commit_count : local_writer_commit_count;
     auto thread_count = (std::max)((size_t)1, num_insert_threads);
-    auto total_threads = thread_count + num_update_threads;
-    irs::async_utils::ThreadPool<> thread_pool(total_threads);
+    std::vector<std::jthread> threads;
     std::mutex mutex;
     // notification only for the first update task, so at least one
     // update would execute after an insert
@@ -132,9 +131,9 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
       // register insertion jobs
       for (size_t i = 0; i < thread_count; ++i) {
-        thread_pool.run([&mutex, &writer, thread_count, i, writer_batch_size,
-                         &parsed_docs_count, &writer_commit_count, &inserts,
-                         this] {
+        threads.emplace_back([&mutex, &writer, thread_count, i,
+                              writer_batch_size, &parsed_docs_count,
+                              &writer_commit_count, &inserts, this] {
           {
             // wait for all threads to be registered
             std::lock_guard lock(mutex);
@@ -213,9 +212,10 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
       // register update jobs
       for (size_t i = 0; i < num_update_threads; ++i) {
-        thread_pool.run([&mutex, &writer, num_update_threads, i, update_skip,
-                         writer_batch_size, &writer_commit_count, &inserts,
-                         &update_docs_count, this] {
+        threads.emplace_back([&mutex, &writer, num_update_threads, i,
+                              update_skip, writer_batch_size,
+                              &writer_commit_count, &inserts,
+                              &update_docs_count, this] {
           {
             // wait for all threads to be registered
             std::lock_guard lock(mutex);
@@ -332,7 +332,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       }
     }
 
-    thread_pool.stop();
+    threads.clear();
 
     // ensure all data have been committed
     {
@@ -391,22 +391,21 @@ class IndexProfileTestCase : public tests::IndexTestBase {
                                         size_t cleanup_interval) {
     auto* directory = &dir();
     std::atomic<bool> working(true);
-    irs::async_utils::ThreadPool<> thread_pool(1);
 
-    thread_pool.run([cleanup_interval, directory, &working]() -> void {
+    std::jthread cleaner{[cleanup_interval, directory, &working]() -> void {
       while (working.load()) {
         irs::DirectoryCleaner::clean(*directory);
         std::this_thread::sleep_for(
           std::chrono::milliseconds(cleanup_interval));
       }
-    });
+    }};
 
     {
       irs::Finally finalizer = [&working]() noexcept { working = false; };
       ProfileBulkIndex(num_threads, 0, batch_size);
     }
 
-    thread_pool.stop();
+    cleaner.join();
   }
 
   void ProfileBulkIndexDedicatedCommit(size_t insert_threads,
@@ -420,11 +419,11 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     options.segment_count_max = 8;  // match original implementation or may run
                                     // out of file handles (e.g. MacOS/Travis)
 
-    irs::async_utils::ThreadPool<> thread_pool(commit_threads);
+    std::vector<std::jthread> threads;
     auto writer = open_writer(irs::kOmCreate, std::move(options));
 
     for (size_t i = 0; i < commit_threads; ++i) {
-      thread_pool.run(
+      threads.emplace_back(
         [commit_interval, &working, &writer, &writer_commit_count, this] {
           while (working.load()) {
             {
@@ -444,7 +443,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       ProfileBulkIndex(insert_threads, 0, 0, writer, &writer_commit_count);
     }
 
-    thread_pool.stop();
+    threads.clear();
   }
 
   void ProfileBulkIndexDedicatedCompact(size_t num_threads, size_t batch_size,
@@ -453,27 +452,27 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
     auto options = irs::tests::DefaultWriterOptions();
     std::atomic<bool> working(true);
-    irs::async_utils::ThreadPool<> thread_pool(2);
 
     options.segment_count_max = 8;  // match original implementation or may run
                                     // out of file handles (e.g. MacOS/Travis)
 
     auto writer = open_writer(irs::kOmCreate, std::move(options));
 
-    thread_pool.run([compact_interval, &working, &writer, &policy]() -> void {
-      while (working.load()) {
-        writer->Compact(policy);
-        std::this_thread::sleep_for(
-          std::chrono::milliseconds(compact_interval));
-      }
-    });
+    std::jthread compactor{
+      [compact_interval, &working, &writer, &policy]() -> void {
+        while (working.load()) {
+          writer->Compact(policy);
+          std::this_thread::sleep_for(
+            std::chrono::milliseconds(compact_interval));
+        }
+      }};
 
     {
       irs::Finally finalizer = [&working]() noexcept { working = false; };
       ProfileBulkIndex(num_threads, 0, batch_size, writer);
     }
 
-    thread_pool.stop();
+    compactor.join();
     // ensure there are no compaction-pending segments
     // left in 'compacting_segments_' before applying the final compaction
     {

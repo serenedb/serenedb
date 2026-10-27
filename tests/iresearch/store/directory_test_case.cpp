@@ -29,13 +29,13 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/async_utils.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/network_utils.hpp>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "tests_param.hpp"
@@ -372,7 +372,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
     auto in = _dir->open("test_async", irs::IOAdvice::RANDOM);
     std::mutex in_mtx;
     std::mutex mutex;
-    irs::async_utils::ThreadPool<> pool(16);
+    std::vector<std::jthread> threads;
 
     ASSERT_FALSE(!in);
     in = in->Reopen();
@@ -381,8 +381,8 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
     {
       std::lock_guard lock(mutex);
 
-      for (auto i = pool.threads(); i; --i) {
-        pool.run([&in, &in_mtx, &mutex]() -> void {
+      for (size_t i = 0; i < 16; ++i) {
+        threads.emplace_back([&in, &in_mtx, &mutex]() -> void {
           IndexInput::ptr input;
 
           {
@@ -404,7 +404,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
       }
     }
 
-    pool.stop();
+    threads.clear();
   }
 }
 

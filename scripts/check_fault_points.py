@@ -11,8 +11,8 @@ in .pre-commit-config.yaml):
 
   2. Test -> Source: every fault NAME activated in a recovery .test must be
      defined in C++ source (SDB_IF_FAILURE / SDB_WAIT_ON_FAILURE /
-     SDB_PARK_ONCE_ON_FAILURE / WaitWhileFailurePointDebugging /
-     ParkOnceOnFailurePointDebugging string literal in server/ or iresearch/).
+     SDB_PARK_ONCE_ON_FAILURE / FaultPoints::WaitWhileArmed /
+     FaultPoints::ParkOnce string literal in server/, iresearch/ or DuckDB).
      A park-once point NAME also defines NAME:parked and NAME:release, the
      names a test polls and arms to observe and release the parked thread.
 
@@ -27,7 +27,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 RECOVERY_DIR = "tests/sqllogic/recovery"
-SOURCE_DIRS = ("server", "iresearch")
+SOURCE_DIRS = ("server", "iresearch", "third_party/duckdb/src", "third_party/duckdb/extension")
 TEST_DIR = "tests"
 
 TEST_EXTS = (".test", ".test_slow")
@@ -46,15 +46,15 @@ SET_FAULT = re.compile(
 SET_FAULT_HEAD = re.compile(r"SET\s+(?:(?:LOCAL|SESSION)\s+)?sdb_faults\b", re.IGNORECASE)
 
 # Source-side definitions: SDB_IF_FAILURE("NAME") / SDB_WAIT_ON_FAILURE("NAME")
-# / WaitWhile...("NAME").
+# / FaultPoints::WaitWhileArmed("NAME").
 SOURCE_DEF = re.compile(
     r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|SDB_PARK_ONCE_ON_FAILURE|'
-    r'WaitWhileFailurePointDebugging|ParkOnceOnFailurePointDebugging)'
+    r'FaultPoints::WaitWhileArmed|FaultPoints::ParkOnce)'
     r'\s*\(\s*"([^"]+)"'
 )
 # Park-once definitions, whose companion names are defined along with them.
 PARK_DEF = re.compile(
-    r'(?:SDB_PARK_ONCE_ON_FAILURE|ParkOnceOnFailurePointDebugging)'
+    r'(?:SDB_PARK_ONCE_ON_FAILURE|FaultPoints::ParkOnce)'
     r'\s*\(\s*"([^"]+)"'
 )
 PARK_SUFFIXES = (":parked", ":release")
@@ -62,8 +62,8 @@ PARK_SUFFIXES = (":parked", ":release")
 # or a SET sdb_faults activation).
 TESTNET_LITERAL = re.compile(
     r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|SDB_PARK_ONCE_ON_FAILURE|'
-    r'AddFailurePointDebugging|ShouldFailDebugging|'
-    r'WaitWhileFailurePointDebugging|ParkOnceOnFailurePointDebugging)'
+    r'FaultPoints::Arm|FaultPoints::Armed|'
+    r'FaultPoints::WaitWhileArmed|FaultPoints::ParkOnce)'
     r'\s*\(\s*"([^"]+)"'
 )
 # Python driver tests activate faults through f-strings (`SET sdb_faults =
@@ -190,8 +190,8 @@ def main():
         errors.append(
             f"{loc}: fault '{name}' is activated by a test but is not defined in "
             "C++ source (no SDB_IF_FAILURE/SDB_WAIT_ON_FAILURE/"
-            "SDB_PARK_ONCE_ON_FAILURE/WaitWhileFailurePointDebugging/"
-            "ParkOnceOnFailurePointDebugging literal in server/ or iresearch/)"
+            "SDB_PARK_ONCE_ON_FAILURE/FaultPoints::WaitWhileArmed/"
+            "FaultPoints::ParkOnce literal in server/, iresearch/ or DuckDB)"
         )
 
     # ----- check #3: source -> test -----

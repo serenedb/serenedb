@@ -28,6 +28,7 @@
 #include <fast_float/fast_float.h>
 
 #include <cstdint>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <ranges>
 #include <shared_mutex>
@@ -49,7 +50,6 @@
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/async.hpp"
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"

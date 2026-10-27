@@ -32,6 +32,7 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/function/table/table_scan.hpp>
@@ -64,7 +65,6 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <filesystem>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>

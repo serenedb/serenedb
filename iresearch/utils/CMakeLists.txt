@@ -7,7 +7,6 @@ target_sources(
         conjunction_acceptor.cpp
         cpu_features.cpp
         crash_handler.cpp
-        debugging.cpp
         directory_utils.cpp
         duckdb_engine.cpp
         file_utils_ext.cpp

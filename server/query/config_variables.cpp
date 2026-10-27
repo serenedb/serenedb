@@ -31,13 +31,13 @@
 #include <cmath>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serializer.hpp>
@@ -557,23 +557,24 @@ constexpr std::pair<std::string_view, VariableDescription>
           RequireFaultSuperuser(ctx);
           auto s = value.ToString();
           if (s.starts_with('-')) {
-            if (!irs::RemoveFailurePointDebugging(
-                  std::string_view{s}.substr(1))) {
+            if (!duckdb::FaultPoints::Disarm(std::string_view{s}.substr(1))) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' not set"));
             }
           } else {
-            if (!irs::AddFailurePointDebugging(s)) {
+            if (!duckdb::FaultPoints::Arm(s)) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' already set"));
             }
+            SDB_WARN(GENERAL, "activating intentional failure point '", s,
+                     "'. the server will misbehave!");
           }
-          auto points = irs::GetFailurePointsDebugging();
+          auto points = duckdb::FaultPoints::List();
           value = duckdb::Value(absl::StrJoin(points, ","));
         },
         [](duckdb::ClientContext& ctx, duckdb::SetScope) {
           RequireFaultSuperuser(ctx);
-          irs::ClearFailurePointsDebugging();
+          duckdb::FaultPoints::Clear();
         },
         // SESSION scope, though the registry behind it is process-global: it
         // is the only scope that works. GLOBAL is refused inside a

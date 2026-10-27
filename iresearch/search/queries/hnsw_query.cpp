@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <duckdb/common/fault_points.hpp>
 #include <numeric>
 #include <optional>
 #include <span>
@@ -34,7 +35,6 @@
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 

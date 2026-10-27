@@ -218,6 +218,24 @@ t
 
 
 query
+SELECT xmlagg(x ORDER BY y) AS a, xmlagg(x ORDER BY y) FILTER (WHERE y = 1) AS b
+FROM (VALUES (''::xml, 1), ('<a/>'::xml, 2)) t(x, y);
+----
+a	b
+<a/>	(empty)
+
+
+query
+SELECT a FROM (
+  SELECT y, xmlagg(x) OVER (ORDER BY y ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS a
+  FROM (SELECT y, CASE WHEN y < 40 THEN ''::xml ELSE '<a/>'::xml END AS x FROM generate_series(1, 42) AS g(y)) t
+) w WHERE y = 42;
+----
+a
+<a/><a/><a/>
+
+
+query
 SELECT pg_typeof('<a/>'::xml) AS a, '<a/>'::xml::varchar AS b, ('<a/>'::xml)::text || 'x' AS c,
        '<a/>'::text::xml AS d, CAST('<b/>' AS xml) AS e;
 ----

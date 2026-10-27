@@ -815,7 +815,7 @@ struct XmlAgg {
     const auto capacity = std::min<size_t>(duckdb::NextPowerOfTwo(size),
                                            duckdb::string_t::MAX_STRING_SIZE);
     auto* data = reinterpret_cast<char*>(allocator.Allocate(capacity));
-    std::memcpy(data, state.data, state.size);
+    absl::c_copy(std::string_view{state.data, state.size}, data);
     state.data = data;
     state.capacity = static_cast<uint32_t>(capacity);
   }
@@ -837,7 +837,7 @@ struct XmlAgg {
     }
     state.is_set = true;
     Reserve(state, allocator, state.size + xml.size());
-    std::memcpy(state.data + state.size, xml.data(), xml.size());
+    absl::c_copy(xml, state.data + state.size);
     state.size += static_cast<uint32_t>(xml.size());
   }
 

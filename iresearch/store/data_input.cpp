@@ -85,12 +85,16 @@ bytes_view InputFile::Refill(uint64_t position, CursorBlock& block,
   const auto* blocks = std::get_if<CacheBlocks>(&_kind);
   SDB_ASSERT(blocks != nullptr);
   SDB_ASSERT(position < _length);
+  if (!block.pinned) {
+    block.pinned = std::make_unique<CursorPin>();
+  }
+  auto& pinned = *block.pinned;
   const auto number = position / duckdb::BlockCache::BLOCK_SIZE;
-  block.pin =
-    blocks->cache->PinInOrder(blocks->blocks, number, block.ahead, ahead);
+  pinned.pin =
+    blocks->cache->PinInOrder(blocks->blocks, number, pinned.ahead, ahead);
   block.start = number * duckdb::BlockCache::BLOCK_SIZE;
-  return {block.pin.Ptr(),
-          std::min<uint64_t>(block.pin.Size(), _length - block.start)};
+  return {pinned.pin.Ptr(),
+          std::min<uint64_t>(pinned.pin.Size(), _length - block.start)};
 }
 
 PinnedBytes InputFile::Pin(uint64_t offset, uint64_t size) const {

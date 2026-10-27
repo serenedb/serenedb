@@ -52,10 +52,14 @@ struct PinnedBytes {
   duckdb::BlockCachePin pin;
 };
 
-struct CursorBlock {
-  uint64_t start = 0;
+struct CursorPin {
   duckdb::BlockCachePin pin;
   duckdb::BlockCacheReadAhead ahead;
+};
+
+struct CursorBlock {
+  uint64_t start = 0;
+  std::unique_ptr<CursorPin> pinned;
 };
 
 class InputFile {
@@ -137,7 +141,7 @@ class BasicInput {
       _end{other._end},
       _file{other._file} {
     _block.start = other._block.start;
-    if (other._block.pin.IsValid()) {
+    if (other._block.pinned) {
       _block.start = other.Position();
       _begin = _pos = _end = nullptr;
     }
@@ -286,7 +290,7 @@ class BasicInput {
   }
   bool Whole() const noexcept {
     if constexpr (Blocks) {
-      return !_block.pin.IsValid() && (_begin != _end || Length() == 0);
+      return !_block.pinned && (_begin != _end || Length() == 0);
     } else {
       return true;
     }
@@ -373,7 +377,9 @@ class BasicInput {
       _pos = _end;
       return;
     }
-    _block.pin.Reset();
+    if (_block.pinned) {
+      _block.pinned->pin.Reset();
+    }
     _begin = _pos = _end = nullptr;
     _block.start = position;
   }

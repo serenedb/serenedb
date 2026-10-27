@@ -34,7 +34,7 @@ def test_a_changed_test_picks_its_units_in_every_suite(monkeypatch, tmp_path):
                   members=("duckdb:core:test/sql/x.test", "duckdb:core:test/sql/y.test")),
              unit("duckdb:avro:batch:test/sql/x.test+0", members=("duckdb:avro:test/sql/x.test",)),
              unit("network:hba"), unit("drivers:python"), unit("drivers:java")]
-    picked, tests, claimed = changed(monkeypatch, tmp_path, {
+    picked, tests = changed(monkeypatch, tmp_path, {
         "tests/sqllogic/sdb/a.test": "", "tests/sqllogic/pg/b.test": "",
         "tests/sqllogic/recovery/c.test": "", "third_party/duckdb/test/sql/x.test": "",
         "tests/drivers/network/run.sh": "", "tests/drivers/spec/select.yaml": "",
@@ -43,7 +43,6 @@ def test_a_changed_test_picks_its_units_in_every_suite(monkeypatch, tmp_path):
                      "recovery:recovery/c.test", "duckdb:core:test/sql/x.test", "network:hba",
                      "drivers:python", "drivers:java"}
     assert len(picked) == 7
-    assert "tests/drivers/harness/services.py" not in claimed
 
 
 def test_a_changed_test_source_picks_the_compiled_tests_it_defines(monkeypatch, tmp_path):
@@ -57,10 +56,10 @@ def test_a_changed_test_source_picks_the_compiled_tests_it_defines(monkeypatch, 
                                             "TYPED_TEST(Typed, Holds) {}\n",
              "third_party/duckdb/test/api/test_thing.cpp": 'TEST_CASE("Test a thing", "[api]") {}\n',
              "third_party/re2/re2/testing/search_test.cc": ""}
-    _, tests, _ = changed(monkeypatch, tmp_path, files, units)
+    _, tests = changed(monkeypatch, tmp_path, files, units)
     assert tests == {"gtest:serenedb-tests:Plain.Works", "gtest:serenedb-tests:Each/Param.Runs/0",
                      "gtest:serenedb-tests:Typed/1.Holds", "duckdb:cpp:Test a thing", "re2:search_test"}
-    picked, _, _ = changed(monkeypatch, tmp_path, files, units, compiled=False)
+    picked, _ = changed(monkeypatch, tmp_path, files, units, compiled=False)
     assert picked == []
 
 
@@ -118,15 +117,13 @@ def test_extension_test_ids_do_not_depend_on_the_checkout():
     assert duckdb._relative(ctx, "core", "test/sql/a.test") == "test/sql/a.test"
 
 
-def test_timing_learns_main_a_calibration_pr_or_every_pr():
+def test_timing_learns_main_or_a_calibration_pr():
     main = "40278761535-1-dev-x86_64-1of3.parquet"
     pr = "40278761535-1-pr1880-dev-x86_64-1of3.parquet"
     other = "40278761535-1-pr1932-dev-x86_64-1of3.parquet"
 
-    def learns(**kwargs):
-        args = SimpleNamespace(**{"from_prs": False, "pr": "", **kwargs})
-        return [ci._learns_from(name, args) for name in (main, pr, other)]
+    def learns(pr_number):
+        return [ci._learns_from(name, SimpleNamespace(pr=pr_number)) for name in (main, pr, other)]
 
-    assert learns() == [True, False, False]
-    assert learns(pr="1880") == [False, True, False]
-    assert learns(from_prs=True) == [False, True, True]
+    assert learns("") == [True, False, False]
+    assert learns("1880") == [False, True, False]

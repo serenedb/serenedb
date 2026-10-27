@@ -113,7 +113,7 @@ fi
 if [[ $rc -ne 0 ]]; then
 	docker run --rm --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE/out" "$BUILD_IMAGE" \
 		tar -I 'zstd -T0 -3' -cf "failure-$run_name.tar.zst" \
-		--exclude=profiles --exclude=attribution --exclude=attribution.parquet --exclude=shard.profdata \
+		--exclude=profiles --exclude=shard.profdata \
 		--exclude='*/data.*' "${out#out/}" || true
 fi
 exit $rc

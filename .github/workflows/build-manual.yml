@@ -15,7 +15,7 @@ on:
           - all
           - dev-only
       EVERYTHING:
-        description: 'Ignore the diff and the coverage mapping: run everything'
+        description: 'Ignore the diff: run everything'
         type: boolean
         default: false
       BUGFIX:
@@ -199,7 +199,7 @@ jobs:
 
   coverage:
     name: coverage dev (linux-amd64)
-    needs: [prepare, dev]
+    needs: dev
     if: ${{ !cancelled() && needs.dev.outputs.digest != '' }}
     runs-on:
       - linux-amd64
@@ -228,13 +228,9 @@ jobs:
       - name: Coverage of the change
         env:
           SHARDS: ${{ needs.dev.outputs.shards }}
-          TEST_ARGS: ${{ needs.prepare.outputs.test_args }} --changed origin/main --repeat 3
-          EVERYTHING: ${{ inputs.EVERYTHING }}
         run: |
-          args=()
-          [[ "$EVERYTHING" != true ]] || args+=(--everything)
           python3 scripts/ci/ci.py coverage-report --config dev --digest "${{ needs.dev.outputs.digest }}" \
-            --run "$SDB_RUN_ID" --base origin/main --test-args "$TEST_ARGS" "${args[@]}" \
+            --run "$SDB_RUN_ID" --base origin/main \
             --shards "$(python3 -c 'import json, os; print(len(json.loads(os.environ["SHARDS"])))')"
           cat out/coverage-*/summary.txt >> "$GITHUB_STEP_SUMMARY"
 
@@ -248,15 +244,6 @@ jobs:
             out/coverage-*/coverage.json
           if-no-files-found: ignore
           retention-days: 30
-
-      - name: Keep the test selection report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: selection-dev-linux-amd64
-          path: out/coverage-dev/selection.json
-          if-no-files-found: ignore
-          retention-days: 14
 
   bugfix:
     name: bugfix check
@@ -345,11 +332,6 @@ jobs:
         with:
           pattern: coverage-*
           path: coverage
-      - name: Fetch the selection report
-        uses: actions/download-artifact@v8
-        with:
-          pattern: selection-*
-          path: selection
       - name: Write the report
         id: report
         env:
@@ -359,7 +341,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REPORT_SHA: ${{ inputs.PR_SHA || github.sha }}
           REPORT_INPUTS: ${{ toJSON(inputs) }}
-        run: python3 scripts/ci/report.py --results results --coverage coverage --selection selection --out report.md
+        run: python3 scripts/ci/report.py --results results --coverage coverage --out report.md
       - name: Upload the report
         if: always()
         uses: actions/upload-artifact@v7

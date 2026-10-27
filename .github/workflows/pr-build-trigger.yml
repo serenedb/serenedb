@@ -43,7 +43,7 @@ jobs:
               '#### Extra (optional; every config runs the suites the diff selects, the sanitizers without DuckDB\'s and iresearch\'s)',
               '- [ ] Dev only (the amd64 dev config alone; reports as "serenedb | dev only", which is not the merge check)',
               '- [ ] All architectures (arm64 tests too; arm64 always builds)',
-              '- [ ] Ignore diff and coverage mapping, run everything',
+              '- [ ] Ignore diff, run everything',
               '- [ ] DuckDB sanitizers (the DuckDB suites the diff selects in asan, tsan and msan too)',
               '- [ ] iresearch sanitizers (the iresearch tests the diff selects in asan, tsan and msan too)',
               '- [ ] Bugfix check (the changed tests must fail on the merge base)',
@@ -113,7 +113,7 @@ jobs:
             const isChecked = (label) => body.includes(`- [x] ${label}`);
 
             const allArch = isChecked('All architectures');
-            const everything = isChecked('Ignore diff and coverage mapping, run everything');
+            const everything = isChecked('Ignore diff, run everything');
             const bugfix = isChecked('Bugfix check');
             const corpus = isChecked('sqlite corpus');
             const biglake = isChecked('BigLake tests');

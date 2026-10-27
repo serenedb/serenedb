@@ -139,18 +139,6 @@ def jsonl_to_parquet(src, dest):
           f"TO '{dest}' (FORMAT parquet, COMPRESSION zstd)", src.parent)
 
 
-def attribution_parquet(src, dest):
-    src, dest = Path(src).resolve(), Path(dest).resolve()
-    index = (f"read_json('{src}/index.jsonl', format = 'newline_delimited', columns = {{'n': 'INTEGER', "
-             f"'unit': 'VARCHAR', 'status': 'VARCHAR', 'members': 'VARCHAR[]'}})")
-    shell(f"COPY (SELECT i.unit, i.status, f.function, NULL::VARCHAR AS member FROM read_csv("
-          f"'{src}/*.txt', columns = {{'function': 'VARCHAR'}}, header = false, delim = '\\t', "
-          f"quote = '', escape = '', filename = true) f JOIN {index} i "
-          f"ON regexp_extract(f.filename, '([0-9]+)\\.txt$', 1)::INTEGER = i.n "
-          f"UNION ALL SELECT unit, status, NULL::VARCHAR, unnest(members) FROM {index}) "
-          f"TO '{dest}' (FORMAT parquet, COMPRESSION zstd)", dest.parent)
-
-
 def timing_snapshot(work, sources, dest):
     units, priors = {}, {}
     if sources:

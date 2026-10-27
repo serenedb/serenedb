@@ -21,7 +21,7 @@ def driver_units(ctx, args, skips):
             ctx.skips.append((uid, skip))
             continue
         cost, timeout = plan(ctx, uid, 120.0)
-        own = ctx.attribute or lang in OWN_SERVER
+        own = lang in OWN_SERVER
         units.append(Unit(uid, "drivers", _driver_run(ctx, lang, own), cpus=CPUS.get(lang, 2),
                           mem_gb=2.0, fixtures=() if own else ("driver-servers",),
                           cost=cost, timeout=timeout))
@@ -57,8 +57,7 @@ def _driver_run(ctx, lang, own):
     def run(r):
         crash = None
         if own:
-            server = Server(ctx, r.dir / "server",
-                            profile_dir=r.profile_dir if ctx.attribute else None, **SERVER).start()
+            server = Server(ctx, r.dir / "server", **SERVER).start()
             r.stack_pids = lambda: (server.pid(),)
             try:
                 res = _run_lang(ctx, r, lang, server)

@@ -22,7 +22,7 @@ def git(*args, cwd=ROOT):
                           check=True).stdout
 
 
-def changed_lines(base, deletions=False):
+def changed_lines(base):
     lines = defaultdict(set)
 
     def collect(diff, prefix=""):
@@ -38,8 +38,6 @@ def changed_lines(base, deletions=False):
                 if m:
                     start, count = int(m.group(1)), int(m.group(2) or 1)
                     lines[current].update(range(start, start + count))
-                    if deletions and not count:
-                        lines[current].update({max(start, 1), start + 1})
 
     merge_base = git("merge-base", base, "HEAD").strip()
     collect(git("diff", "-U0", "--no-renames", "--diff-filter=AM", merge_base, "HEAD"))
@@ -246,11 +244,9 @@ def main():
     summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0], "mcdc": [0, 0]}
     details = []
     uncovered_ranges = {}
-    regions = {}
-    if sources:
-        regions = {normalize(k): v for k, v in parse_json(export("text", args.profdata,
-                                                                  args.objects, sources)).items()}
     if reported:
+        regions = {normalize(k): v for k, v in parse_json(export("text", args.profdata,
+                                                                  args.objects, reported)).items()}
         report = {normalize(k): v for k, v in parse_lcov(export("lcov", args.profdata, args.objects,
                                                                   reported)).items()}
         for path in sorted(reported):
@@ -320,9 +316,6 @@ def main():
     (out / "summary.txt").write_text(text + "\n")
     (out / "coverage.json").write_text(json.dumps({"summary": summary, "uncovered": details},
                                                   indent=1))
-    (out / "spans.json").write_text(json.dumps(
-        {path: sorted({(s, e, raw) for s, e, _, raw in regions[path]["functions"]})
-         for path in sorted(regions) if path in changed}))
     print(text)
 
 

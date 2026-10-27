@@ -409,6 +409,14 @@ class IndexWriter : private util::Noncopyable {
     return _tick.fetch_add(queries, std::memory_order_relaxed) + queries;
   }
 
+  // The highest tick handed out so far. A bound read here before a publish
+  // starts covers exactly the transactions that publish will carry, since a
+  // transaction takes its tick before it registers on the flush context the
+  // publish then waits for.
+  uint64_t LastTick() const noexcept {
+    return _tick.load(std::memory_order_relaxed);
+  }
+
   CompactionResult Compact(const CompactionPolicy& policy,
                            const IndexFieldOptions* field_options = nullptr,
                            const MergeWriter::FlushProgress& progress = {});

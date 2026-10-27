@@ -55,6 +55,7 @@
 #include "connector/column_id.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
+#include "search/search_pending_delta.h"
 #include "search/store_stats.h"
 #include "search/writer_generations.h"
 
@@ -146,8 +147,17 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   irs::SegmentReader OpenFlushedSegment(const irs::SegmentMeta& meta) const;
 
+  // Rows committed into this table but not yet published, which the reader
+  // above cannot show either way: its inserts are missing from it and its
+  // removals are still live in it.
+  PendingDelta& Delta() noexcept { return _delta; }
+
   void Clear(const irs::SourcePosition& position) {
     _durability.Clear(*_writer, position);
+    // A publication that replaces the index rather than adding to it, and one
+    // the prune bound never sees: it bypasses RefreshUnsafe entirely. Every
+    // pending generation describes rows this clear has just killed.
+    _delta.Clear();
   }
 
   uint64_t NextTick(uint64_t count) noexcept {
@@ -319,6 +329,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   WriterGenerations _writers;
   std::atomic<bool> _build_in_flight{false};
+  PendingDelta _delta;
 
   // Delete log. The open flag is atomic so the commit path can skip the mutex
   // entirely when no build is running, which is the normal case.

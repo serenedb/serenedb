@@ -303,25 +303,7 @@ class RowKeySource final : public KeySource {
  public:
   RowKeySource(duckdb::ColumnDataCollection& rows,
                std::span<const primary_key::KeySlot> slots, size_t seed)
-    : _seed_index{seed} {
-    for (auto& chunk : rows.Chunks()) {
-      for (duckdb::idx_t row = 0; row != chunk.size(); ++row) {
-        KeyTerms key(slots.size());
-        for (size_t i = 0; i != slots.size(); ++i) {
-          const SearchColumnInfo info{.field_id = slots[i].column,
-                                      .logical_type = slots[i].type};
-          irs::TermClause clause;
-          const auto status = SetupTermClause(
-            clause, info, chunk.GetValue(slots[i].input_col_idx, row));
-          if (!status.ok()) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                            ERR_MSG(status.message()));
-          }
-          key[i] = std::move(clause.term);
-        }
-        _keys.push_back(std::move(key));
-      }
-    }
+    : _keys{EncodeRowKeys(rows, slots)}, _seed_index{seed} {
     absl::c_sort(_keys, [seed](const KeyTerms& lhs, const KeyTerms& rhs) {
       if (lhs[seed] != rhs[seed]) {
         return lhs[seed] < rhs[seed];
@@ -406,6 +388,32 @@ std::unique_ptr<KeySource> MakeRowKeySource(
 }
 
 }  // namespace
+
+std::vector<KeyTerms> EncodeRowKeys(
+  duckdb::ColumnDataCollection& rows,
+  std::span<const primary_key::KeySlot> slots) {
+  std::vector<KeyTerms> keys;
+  keys.reserve(rows.Count());
+  for (auto& chunk : rows.Chunks()) {
+    for (duckdb::idx_t row = 0; row != chunk.size(); ++row) {
+      KeyTerms key(slots.size());
+      for (size_t i = 0; i != slots.size(); ++i) {
+        const SearchColumnInfo info{.field_id = slots[i].column,
+                                    .logical_type = slots[i].type};
+        irs::TermClause clause;
+        const auto status = SetupTermClause(
+          clause, info, chunk.GetValue(slots[i].input_col_idx, row));
+        if (!status.ok()) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                          ERR_MSG(status.message()));
+        }
+        key[i] = std::move(clause.term);
+      }
+      keys.push_back(std::move(key));
+    }
+  }
+  return keys;
+}
 
 std::optional<KeyTerms> FindDuplicateKey(
   std::span<const irs::SubReader* const> segments,

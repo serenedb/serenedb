@@ -201,8 +201,13 @@ void SearchTable::StartTasks() {
 ResultWithTime SearchTable::RefreshUnsafe(
   bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
   const auto begin = std::chrono::steady_clock::now();
-  auto result =
-    _durability.Refresh(*_writer, wait, progress, code, [] {}, [] {});
+  // Read before the publish begins, applied once its reader is installed: a
+  // transaction at or below this tick registered on the flush context before
+  // the publish swapped it, so the publish waited for it and its rows are in
+  // the new reader. Anything newer keeps its generation.
+  const uint64_t bound = _writer ? _writer->LastTick() : 0;
+  auto result = _durability.Refresh(
+    *_writer, wait, progress, code, [] {}, [&] { _delta.Prune(bound); });
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)

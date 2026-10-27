@@ -36,6 +36,7 @@
 #include "connector/column_id.h"
 #include "connector/primary_key.h"
 #include "connector/search_key_index.h"
+#include "connector/search_key_unique.h"
 #include "connector/search_unique_probe.h"
 #include "search/search_table_changes.h"
 
@@ -69,6 +70,11 @@ struct SearchShardWrites {
   duckdb::unique_ptr<duckdb::StorageLockKey> checkpoint_lock;
   uint64_t first_tick = 0;
   irs::SourcePosition position;
+  // The keys of rows this transaction leaves in an unflushed iresearch
+  // transaction, taken at PrepareCommit because the buffer that holds their
+  // values is emptied there. Rows that reached a segment are not among them:
+  // the delta names those segments and reads their dictionaries instead.
+  std::vector<connector::KeyTerms> pending_keys;
 };
 
 // Holds a query::Transaction's search-table (TableEngine::Search) state and
@@ -182,6 +188,11 @@ class SearchTableTransaction {
   // The shard's exclusive buffer transaction, created on first overrun.
   irs::IndexWriter::Transaction& EnsureBufferTransaction(
     const std::shared_ptr<SearchTable>& shard);
+
+  // Hands this transaction's rows and removals to the shard's delta, so that a
+  // concurrent certifier can see them for as long as the reader cannot.
+  void InstallPendingDelta(SearchShardWrites& w, duckdb::idx_t table_id,
+                           uint64_t tick) noexcept;
 
   irs::containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,

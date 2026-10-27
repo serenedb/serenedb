@@ -503,3 +503,97 @@ statement error
 INSERT INTO pkg5 SELECT i, i % 500 FROM range(0, 20000) t(i);
 ----
 db error: ERROR: Duplicate key on column "a" violates primary key constraint.
+
+
+# ---------------------------------------------------------------------------
+# Below: conflicts against state an earlier transaction COMMITTED but no
+# refresh has PUBLISHED. Those rows are durable and in no reader at all, so a
+# probe consulting only the reader is wrong in both directions -- it cannot
+# see an insert, and it still sees a row a delete has removed.
+# refresh_interval=0 holds that window open instead of racing the loop.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE pkdelta (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', refresh_interval=0, compaction_interval=0);
+
+
+# pkdelta1. Committed, never published.
+statement ok
+INSERT INTO pkdelta VALUES (1, 'a');
+
+statement error
+INSERT INTO pkdelta VALUES (1, 'b');
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+# A key nothing holds is still admitted while the window is open.
+statement ok
+INSERT INTO pkdelta VALUES (2, 'c');
+
+
+# pkdelta2. The same keys after the publish moves them into the reader: the answer
+#       does not change, and nothing is counted twice.
+statement ok
+VACUUM (REFRESH_TABLE) pkdelta;
+
+statement error
+INSERT INTO pkdelta VALUES (1, 'd');
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+query
+SELECT id, s FROM pkdelta ORDER BY id;
+----
+id	s
+1	a
+2	c
+
+
+# pkdelta3. A committed-but-unpublished DELETE frees its key: the reader still
+#       shows the row, so only the recorded rowid says it is gone.
+statement ok
+DELETE FROM pkdelta WHERE id = 1;
+
+statement ok
+INSERT INTO pkdelta VALUES (1, 'e');
+
+statement ok
+VACUUM (REFRESH_TABLE) pkdelta;
+
+query
+SELECT id, s FROM pkdelta ORDER BY id;
+----
+id	s
+1	e
+2	c
+
+
+# pkdelta4. The same window at a size that drives the rows through segments rather
+#       than the row buffer.
+statement ok
+CREATE TABLE pkdeltab (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', refresh_interval=0, compaction_interval=0);
+
+statement ok
+INSERT INTO pkdeltab SELECT i, i % 500 FROM range(0, 20000) t(i);
+
+statement error
+INSERT INTO pkdeltab VALUES (12345, 'dup');
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+statement ok
+INSERT INTO pkdeltab VALUES (20000, 'new');
+
+statement ok
+VACUUM (REFRESH_TABLE) pkdeltab;
+
+query
+SELECT count(*) AS n FROM pkdeltab;
+----
+n
+20001

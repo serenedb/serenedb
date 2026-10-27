@@ -26,18 +26,27 @@
 
 namespace sdb::connector {
 
+// "Does this key already exist outside the current transaction?" over the two
+// tiers a certifier cannot see from one reader: what the published reader
+// holds, and what committed transactions have left unpublished. Rows of the
+// second tier arrive as whole segments where their transaction flushed them
+// and as bare keys where it did not; `deleted_rowids` spans both tiers, since
+// a removal is invisible in the reader until the same publish applies it.
 class UniqueProbe {
  public:
-  UniqueProbe(const irs::DirectoryReader& reader,
-              std::span<const irs::field_id> key_fields,
-              std::span<const int64_t> deleted_rowids);
+  UniqueProbe(
+    const irs::DirectoryReader& reader,
+    std::span<const irs::SubReader* const> unpublished_segments,
+    std::span<const std::vector<irs::bstring>* const> unpublished_keys,
+    std::span<const irs::field_id> key_fields,
+    std::span<const int64_t> deleted_rowids);
 
   bool Exists(std::span<const irs::bstring> key_terms);
 
   // Whether any segment holds `term` for key column `field`, ignoring deletes.
   // A false rules the term out without reading a posting list; a true still
   // needs `Exists` to settle it.
-  bool MayHold(size_t field, irs::bytes_view term) const;
+  bool MayHold(size_t field, irs::bytes_view term);
 
  private:
   struct Segment {
@@ -47,7 +56,19 @@ class UniqueProbe {
     irs::DocumentMaskBuilder deleted;
   };
 
+  void AddSegment(const irs::SubReader& sub,
+                  std::span<const irs::field_id> key_fields,
+                  std::span<const int64_t> deleted_rowids);
+
+  // Unpublished keys indexed by key column, built on the first MayHold for
+  // that column: the column the walk leads with is chosen after the probe is
+  // constructed, and for a composite key the others are never asked.
+  std::span<const irs::bytes_view> ColumnTerms(size_t field);
+
   std::vector<Segment> _segments;
+  std::vector<const std::vector<irs::bstring>*> _keys;
+  std::vector<std::vector<irs::bytes_view>> _column_terms;
+  std::vector<bool> _column_indexed;
   std::vector<irs::doc_id_t> _hits;
   std::vector<irs::doc_id_t> _next;
 };

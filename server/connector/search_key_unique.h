@@ -35,6 +35,14 @@ namespace sdb::connector {
 // A whole primary key: one term per key column, in key-column order.
 using KeyTerms = std::vector<irs::bstring>;
 
+// Every row's key, encoded with the sink's own encoder. A key that outlives
+// its transaction -- a commit handing its unflushed rows to the pending delta
+// -- must carry the same bytes a later probe looks for, which is why this and
+// the walk below share one encoder rather than each having its own.
+std::vector<KeyTerms> EncodeRowKeys(
+  duckdb::ColumnDataCollection& rows,
+  std::span<const primary_key::KeySlot> slots);
+
 // The key that two live positions of this transaction share, if any: either two
 // positions among `segments` and `rows` -- the transaction contradicting itself
 // -- or one of those and one `probe` finds in published state. `rows` is the

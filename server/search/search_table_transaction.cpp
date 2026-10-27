@@ -276,8 +276,33 @@ void SearchTableTransaction::CertifyKeys(
     deleted.insert(deleted.end(), op.delete_rows.begin(), op.delete_rows.end());
   }
 
-  connector::UniqueProbe probe{shard->GetDirectoryReader(), key_fields,
-                               deleted};
+  // One pair: the delta is read under the lock a refresh prunes it with, and
+  // the reader is taken inside that lock. Taking them apart would let a
+  // refresh land in between and leave this certifier with the reader from
+  // before it beside the delta from after -- missing exactly the keys the
+  // refresh moved from one to the other.
+  irs::DirectoryReader reader;
+  const auto generations =
+    shard->Delta().Snapshot([&] { reader = shard->GetDirectoryReader(); });
+
+  std::vector<const irs::SubReader*> unpublished;
+  std::vector<const connector::KeyTerms*> unpublished_keys;
+  for (const auto& generation : generations) {
+    for (const auto& segment : generation->segments) {
+      unpublished.push_back(&segment);
+    }
+    for (const auto& key : generation->keys) {
+      unpublished_keys.push_back(&key);
+    }
+    // A removal of this tier is as invisible as an insert of it: the reader
+    // still shows the row, and only the publish that applies the removal
+    // stops it doing so.
+    deleted.insert(deleted.end(), generation->removed.begin(),
+                   generation->removed.end());
+  }
+
+  connector::UniqueProbe probe{reader, unpublished, unpublished_keys,
+                               key_fields, deleted};
 
   std::vector<irs::SegmentReader> readers;
   if (const auto writes = _writes.find(shard->GetTableId());
@@ -395,6 +420,16 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
             std::make_unique<irs::IndexWriter::Transaction>(
               w.shard->GetTransaction()));
         }
+        // Last point at which the values are readable: the replay below hands
+        // the rows to iresearch, which publishes them only at a later refresh,
+        // and nothing between the two can name them. A pooled segment cannot
+        // be opened the way a flushed one can, so the keys have to travel.
+        if (entry.HasBufferedRows()) {
+          if (const auto slots = connector::primary_key::KeySlots(*w.table);
+              !slots.empty()) {
+            w.pending_keys = connector::EncodeRowKeys(*entry.collection, slots);
+          }
+        }
         ReplayBuffer(*w.shard, entry, *w.transactions.back(), context);
       }
     }
@@ -429,7 +464,37 @@ void SearchTableTransaction::Stage(const irs::SourcePosition& position,
     w.first_tick = w.shard->NextTick(queries) - queries;
     w.position = position;
     w.shard->MarkStaged(position);
+    InstallPendingDelta(w, table_id, w.first_tick + queries);
   }
+}
+
+void SearchTableTransaction::InstallPendingDelta(SearchShardWrites& w,
+                                                 duckdb::idx_t table_id,
+                                                 uint64_t tick) noexcept {
+  auto generation = std::make_shared<PendingGeneration>();
+  generation->tick = tick;
+  generation->keys = std::move(w.pending_keys);
+
+  if (const auto changes = _changes.find(table_id); changes != _changes.end()) {
+    for (const auto& op : changes->second.ops) {
+      generation->removed.insert(generation->removed.end(),
+                                 op.delete_rows.begin(), op.delete_rows.end());
+    }
+  }
+
+  for (const auto& trx : w.transactions) {
+    for (const auto& flushed : trx->Flushed()) {
+      // Opened now rather than pinned by name: a segment this commit flushed
+      // is unreferenced until the publish adopts it, so the cleaner may unlink
+      // the file meanwhile, and an open reader survives that where a filename
+      // would not.
+      if (auto reader = w.shard->OpenFlushedSegment(flushed.meta)) {
+        generation->segments.push_back(std::move(reader));
+      }
+    }
+  }
+
+  w.shard->Delta().Install(std::move(generation));
 }
 
 void SearchTableTransaction::Publish(duckdb::idx_t database) noexcept {

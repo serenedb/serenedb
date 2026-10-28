@@ -1,0 +1,5 @@
+[clang]
+source:*/third_party/re2/*=allow
+source:*/third_party/duckdb/*=allow
+source:*/third_party/*=skip
+source:/usr/*=skip

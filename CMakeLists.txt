@@ -408,11 +408,22 @@ elseif(SDB_USE_PGO)
 endif()
 
 if(SDB_COVERAGE)
+    file(
+        SHA256 ${CMAKE_SOURCE_DIR}/scripts/coverage/profile.list
+        SDB_COVERAGE_LIST
+    )
+    string(SUBSTRING ${SDB_COVERAGE_LIST} 0 16 SDB_COVERAGE_LIST)
+    set(SDB_COVERAGE_LIST
+        ${CMAKE_BINARY_DIR}/coverage-${SDB_COVERAGE_LIST}.list
+    )
+    configure_file(scripts/coverage/profile.list ${SDB_COVERAGE_LIST} COPYONLY)
     set(SDB_COVERAGE_FLAGS
         -fprofile-instr-generate
         -fcoverage-mapping
         -fcoverage-mcdc
         "SHELL:-Xclang -fmcdc-max-conditions=8"
+        "SHELL:-mllvm -system-headers-coverage"
+        -fprofile-list=${SDB_COVERAGE_LIST}
         -Wno-pgo-coverage
         "SHELL:-mllvm -enable-single-byte-coverage=true"
         "SHELL:-mllvm -conditional-counter-update"

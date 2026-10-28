@@ -21,7 +21,7 @@ Build and launch: `CONTRIBUTING.md`. Topic rules: `.claude/rules/`, each page lo
 
 ## Done
 
-- A change is done when the same PR has its tests ([testing.md](.claude/rules/testing.md)) and, for anything users can see, its `docs/` page ([docs.md](.claude/rules/docs.md)).
+- A change is done when the same PR has its tests ([testing.md](.claude/rules/testing.md)) covering every changed line ([ci.md](.claude/rules/ci.md)) and, for anything users can see, its `docs/` page ([docs.md](.claude/rules/docs.md)).
 
 ## Running things
 

@@ -8,14 +8,12 @@ from pg_catalog import claims  # noqa: E402
 
 # Green relations whose content cannot be produced by a self-contained fixture.
 EXEMPT = {
-    # CREATE SERVER validates connectivity, so populating this one needs a
-    # reachable remote database.
-    "pg_foreign_server",
     # A subscription lists its tables only once it has reached its publisher.
     "pg_subscription_rel",
 }
 
 FIXTURE = [
+    "DROP SERVER IF EXISTS stc_srv",
     "DROP SUBSCRIPTION IF EXISTS stc_sub",
     "DROP TEXT SEARCH DICTIONARY IF EXISTS stc_dict",
     "DROP SCHEMA IF EXISTS stc_s CASCADE",
@@ -52,9 +50,11 @@ FIXTURE = [
     "INSERT INTO stc_child VALUES (1, 1, 5, 'n', 'ok')",
     "CREATE SUBSCRIPTION stc_sub CONNECTION 'host=localhost dbname=stc' PUBLICATION stc_pub "
     "WITH (connect = false, slot_name = NONE)",
+    "CREATE SERVER stc_srv FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path ':memory:')",
 ]
 
 TEARDOWN = [
+    "DROP SERVER IF EXISTS stc_srv",
     "DROP SUBSCRIPTION IF EXISTS stc_sub",
     "DEALLOCATE stc_prep",
     "DROP TEXT SEARCH DICTIONARY IF EXISTS stc_dict",

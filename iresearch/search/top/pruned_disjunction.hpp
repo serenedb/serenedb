@@ -85,7 +85,7 @@ class PrunedDisjunction : public Root {
       for (;;) {
         UpdateWindowScores(window_min, window_max);
         if (!Split(collector.ScoreThreshold())) {
-          window_min = window_max;
+          window_min = SkipAlone(window_max, collector.ScoreThreshold());
           goto outer;
         }
         const doc_id_t next = ComputeOuterWindow(window_min);
@@ -207,6 +207,26 @@ class PrunedDisjunction : public Root {
       entry.max_score = entry.leaf.MaxScore(max - 1);
       entry.ratio = static_cast<double>(entry.max_score) / entry.cost;
     }
+  }
+
+  doc_id_t SkipAlone(doc_id_t min, score_t threshold) {
+    Entry* alone = nullptr;
+    doc_id_t first = doc_limits::eof();
+    doc_id_t second = doc_limits::eof();
+    for (auto& entry : _entries) {
+      const auto doc = std::max(entry.leaf.Value(), min);
+      if (doc < first) {
+        second = first;
+        first = doc;
+        alone = &entry;
+      } else if (doc < second) {
+        second = doc;
+      }
+    }
+    if (alone == nullptr || first == second) {
+      return first;
+    }
+    return alone->leaf.SkipNonCompetitive(first, second, threshold);
   }
 
   bool Split(score_t score_threshold) {

@@ -1,6 +1,7 @@
 target_sources(
     iresearch
     PRIVATE
+        ann/make.cpp
         count/make.cpp
         count/make_boolean.cpp
         count/make_boolean_negation.cpp
@@ -224,7 +225,6 @@ endif()
 target_sources(
     iresearch
     PRIVATE
-        ann/make.cpp
         ann/make_exact.cpp
         ann/make_hnsw.cpp
         ann/make_ivf.cpp

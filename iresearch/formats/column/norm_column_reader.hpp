@@ -106,6 +106,7 @@ class NormColumnReader final {
   size_t RegionCount() const noexcept { return _regions.size(); }
   size_t WindowCount() const noexcept { return _windows.size(); }
   size_t PageCount() const noexcept { return _pages; }
+  bool Paged() const noexcept { return _paged; }
 
   const NormRegion& Region(size_t i) const noexcept {
     SDB_ASSERT(i < _regions.size());
@@ -143,6 +144,7 @@ class NormColumnReader final {
   uint64_t _sum = 0;
   uint64_t _non_zero = 0;
   size_t _pages = 0;
+  bool _paged = false;
 };
 
 }  // namespace irs

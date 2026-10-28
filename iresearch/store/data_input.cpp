@@ -54,10 +54,13 @@ std::span<ByteExtent> CoalesceExtents(std::span<ByteExtent> extents,
 InputFile::InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping)
   : _length{mapping->Size()},
     _kind{std::in_place_type<MappedSpan>, std::move(mapping)} {
+  auto& span = *std::get_if<MappedSpan>(&_kind);
+  span.paged = span.mapping->OnDiskFile();
   if (_length != 0) {
-    auto& span = *std::get_if<MappedSpan>(&_kind);
     span.bytes = {span.mapping->GetData(0, _length), _length};
-    span.residency.Reset(math::DivCeil64(_length, file_utils::kPage));
+    if (span.paged) {
+      span.residency.Reset(math::DivCeil64(_length, file_utils::kPage));
+    }
   }
 }
 
@@ -78,6 +81,11 @@ bytes_view InputFile::Span() const noexcept {
     return span->bytes;
   }
   return {};
+}
+
+bool InputFile::Paged() const noexcept {
+  const auto* span = std::get_if<MappedSpan>(&_kind);
+  return span && span->paged;
 }
 
 bytes_view InputFile::Refill(uint64_t position, CursorBlock& block,
@@ -170,15 +178,20 @@ void InputFile::MarkWarm(uint64_t offset, uint64_t size) const noexcept {
 }
 
 bool InputFile::Resident(uint64_t offset, uint64_t size) const noexcept {
-  if (std::holds_alternative<CacheBlocks>(_kind)) {
+  const auto* span = std::get_if<MappedSpan>(&_kind);
+  if (!span) {
     return Warm(offset, size);
   }
   const auto window = SpanWindow(offset, size);
   return !window.empty() &&
-         file_utils::IsResident(window.data(), window.size());
+         (!span->paged || file_utils::IsResident(window.data(), window.size()));
 }
 
 bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
+  if (const auto* span = std::get_if<MappedSpan>(&_kind);
+      span && !span->paged) {
+    return false;
+  }
   if (Warm(offset, size)) {
     file_utils::PollResidency();
     return false;

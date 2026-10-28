@@ -457,12 +457,13 @@ class NormReaderBase : public NormReader {
   score_t _avg;
 };
 
-template<bool Multi>
+template<bool Multi, bool Paged>
 class PersistedNormReader : public NormReaderBase {
  public:
   explicit PersistedNormReader(const NormColumnReader& column) noexcept
     : NormReaderBase{column} {
     SDB_ASSERT(Multi || column.RegionCount() == 1);
+    SDB_ASSERT(Paged == column.Paged());
     Position(column.Region(0));
   }
 
@@ -481,7 +482,7 @@ class PersistedNormReader : public NormReaderBase {
         Position(_column->Locate(doc));
       }
     }
-    Touched(&doc, 1);
+    Track(&doc, 1);
     return ReadOne(doc);
   }
 
@@ -497,6 +498,12 @@ class PersistedNormReader : public NormReaderBase {
   }
 
  private:
+  IRS_FORCE_INLINE void Track(const doc_id_t* docs, size_t n) noexcept {
+    if constexpr (Paged) {
+      Touched(docs, n);
+    }
+  }
+
   IRS_FORCE_INLINE void Fetch(const doc_id_t* docs, uint32_t* values,
                               size_t n) {
     SDB_ASSERT(std::is_sorted(docs, docs + n));
@@ -507,7 +514,7 @@ class PersistedNormReader : public NormReaderBase {
         return;
       }
     }
-    Touched(docs, n);
+    Track(docs, n);
     Read(docs, values, n);
   }
 
@@ -521,7 +528,7 @@ class PersistedNormReader : public NormReaderBase {
       while (j != n && docs[j] < _region->end_doc) {
         ++j;
       }
-      Touched(docs + i, j - i);
+      Track(docs + i, j - i);
       Read(docs + i, values + i, j - i);
       i = j;
     }
@@ -531,10 +538,14 @@ class PersistedNormReader : public NormReaderBase {
 inline memory::managed_ptr<NormReader> MakePersistedNormReader(
   const NormColumnReader& column) {
   SDB_ASSERT(column.RegionCount() > 0);
-  if (column.RegionCount() == 1) {
-    return memory::make_managed<PersistedNormReader<false>>(column);
-  }
-  return memory::make_managed<PersistedNormReader<true>>(column);
+  const auto make = [&]<bool Paged> -> memory::managed_ptr<NormReader> {
+    if (column.RegionCount() == 1) {
+      return memory::make_managed<PersistedNormReader<false, Paged>>(column);
+    }
+    return memory::make_managed<PersistedNormReader<true, Paged>>(column);
+  };
+  return column.Paged() ? make.template operator()<true>()
+                        : make.template operator()<false>();
 }
 
 }  // namespace irs

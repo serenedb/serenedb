@@ -77,6 +77,7 @@ class InputFile {
   uint64_t Length() const noexcept { return _length; }
   const std::string& Path() const noexcept;
   bytes_view Span() const noexcept;
+  bool Paged() const noexcept;
   bytes_view Refill(uint64_t position, CursorBlock& block, bool ahead) const;
   PinnedBytes Pin(uint64_t offset, uint64_t size) const;
 
@@ -91,6 +92,7 @@ class InputFile {
     std::unique_ptr<duckdb::MemoryMappedFile> mapping;
     bytes_view bytes;
     file_utils::ResidencyMap residency;
+    bool paged = false;
   };
 
   struct CacheBlocks {

@@ -72,6 +72,7 @@ NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
                                    IndexInput& in)
   : _id{id}, _row_count{meta.row_count} {
   if (const auto* file = in.File()) {
+    _paged = file->Paged();
     for (const auto& m : meta.regions) {
       if (m.bits != 0 && m.exceptions != 0) {
         file->Prefetch(m.table_offset, (uint64_t{NormBuckets(m)} + m.overflow) *
@@ -142,7 +143,9 @@ NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
                  " are corrupt at ", k);
     }
   }
-  _residency.Reset(_pages);
+  if (_paged) {
+    _residency.Reset(_pages);
+  }
 }
 
 const NormRegion& NormColumnReader::Locate(doc_id_t doc) const noexcept {

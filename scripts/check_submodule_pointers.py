@@ -2,9 +2,9 @@
 """Pre-commit hook: validate third_party submodule gitlinks.
 
 Every gitlink the change sets is checked: the ones that differ from the
-merge base with origin/main (all of them when there is none, as in a
-shallow CI checkout), except the EXCLUDED paths (submodules whose remote
-we do not control and so cannot carry our version branches). Each must
+merge base with origin/main (all of them when there is none), except the
+EXCLUDED paths (submodules whose remote we do not control and so cannot
+carry our version branches). Each must
   1. be reachable from one of the fork's version branches (vYYYY.MM.DD),
      i.e. the fork-side PR is merged -- not a feature-branch head, and
   2. not be older than origin/main's gitlink: its newest containing
@@ -21,8 +21,8 @@ waiting for that fork PR to land. --allow-pending (the pre-commit hook)
 passes it; without the flag the script exits 3, which the PR's pre-commit
 job turns into a pending `pre-commit` status. --rev checks the gitlinks
 of a commit instead of the index, --base compares with another commit.
---reachable only checks that every gitlink of the commit can be fetched
-from its URL, which the PR's pre-commit job does before anything else.
+--reachable also checks that every gitlink, changed or not, can be
+fetched from its URL, all of them at once.
 
 Validation prefers the local submodule clone (pure git, works offline);
 without one (CI checks out with submodules: false) it falls back to the
@@ -30,6 +30,7 @@ GitHub compare API. If neither works the hook fails closed; bypass a
 known-good commit with SKIP=check-submodule-pointers.
 """
 import argparse
+import concurrent.futures
 import functools
 import json
 import os
@@ -58,22 +59,33 @@ def git(*args: str, cwd: str | None = None) -> str | None:
     return proc.stdout.strip()
 
 
+def gitlinks(rev: str | None) -> list[tuple[str, str]] | None:
+    out = git("ls-tree", "-r", rev) if rev else git("ls-files", "-s")
+    if out is None:
+        return None
+    links = []
+    for line in out.splitlines():
+        meta, _, path = line.partition("\t")
+        fields = meta.split()
+        if fields[0] == "160000":
+            links.append((path, fields[2] if rev else fields[1]))
+    return links
+
+
 def checked_paths(rev: str | None, base: str | None) -> list[str] | None:
-    if base:
-        if rev:
-            out = git("diff-tree", "-r", "--no-renames", base, rev)
-        else:
-            out = git("diff-index", "--cached", "--no-renames", base)
-        mode_field = 1
+    if not base:
+        links = gitlinks(rev)
+        return None if links is None else [p for p, _ in links if p not in EXCLUDED]
+    if rev:
+        out = git("diff-tree", "-r", "--no-renames", base, rev)
     else:
-        out = git("ls-tree", "-r", rev) if rev else git("ls-files", "-s")
-        mode_field = 0
+        out = git("diff-index", "--cached", "--no-renames", base)
     if out is None:
         return None
     paths = []
     for line in out.splitlines():
         meta, _, path = line.partition("\t")
-        if meta.split()[mode_field] == "160000" and path not in EXCLUDED:
+        if meta.split()[1] == "160000" and path not in EXCLUDED:
             paths.append(path)
     return paths
 
@@ -376,34 +388,43 @@ def check(path: str, override_sha: str | None, rev: str | None) -> str:
     return status
 
 
-def reachable(rev: str | None) -> int:
-    out = git("ls-tree", "-r", rev or "HEAD")
-    if out is None:
-        print(f"cannot list the gitlinks of {rev or 'HEAD'}", file=sys.stderr)
-        return 1
-    failed = 0
-    with tempfile.TemporaryDirectory() as work:
-        git("init", "-q", work)
-        for line in out.splitlines():
-            meta, _, path = line.partition("\t")
-            _, kind, sha = meta.split()
-            if kind != "commit":
-                continue
-            url = git("config", "-f", ".gitmodules", "--get", f"submodule.{path}.url")
-            if not url:
-                print(f"{path} is a gitlink without a .gitmodules entry", file=sys.stderr)
-                failed = 1
-            elif git("-C", work, "fetch", "-q", "--depth", "1", "--filter=tree:0", url, sha) is None:
-                print(f"{path} points at {sha}, which {url} does not serve", file=sys.stderr)
-                failed = 1
-    return failed
+def unreachable(work: str, path: str, sha: str, rev: str | None) -> str | None:
+    url = submodule_url(path, rev)
+    if not url:
+        return f"{path} is a gitlink without a .gitmodules entry"
+    fetch = ["fetch", "-q", "--depth", "1", "--filter=tree:0", url, sha]
+    if git("init", "-q", work) is None or git("-C", work, *fetch) is None:
+        return f"{path} points at {sha}, which {url} does not serve"
+    return None
+
+
+def reachable(rev: str | None) -> bool:
+    links = gitlinks(rev)
+    if links is None:
+        print(f"cannot list the gitlinks of {rev or 'the index'}", file=sys.stderr)
+        return False
+    if not links:
+        return True
+    with (
+        tempfile.TemporaryDirectory() as work,
+        concurrent.futures.ThreadPoolExecutor(len(links)) as pool,
+    ):
+        errors = list(
+            pool.map(
+                lambda i: unreachable(os.path.join(work, str(i)), *links[i], rev),
+                range(len(links)),
+            )
+        )
+    for error in filter(None, errors):
+        print(error, file=sys.stderr)
+    return not any(errors)
 
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
     "--reachable",
     action="store_true",
-    help="only check that every gitlink of the commit can be fetched from its URL",
+    help="also check that every gitlink of the commit can be fetched from its URL",
 )
 parser.add_argument("--path", help="check only this submodule path")
 parser.add_argument("--sha", help="validate this sha instead of the staged gitlink")
@@ -420,8 +441,6 @@ parser.add_argument(
 )
 args, _ = parser.parse_known_args()
 
-if args.reachable:
-    sys.exit(reachable(args.rev))
 if args.path:
     paths = [args.path]
 else:
@@ -430,8 +449,9 @@ else:
     if paths is None:
         print(f"cannot list the gitlinks of {args.rev or 'the index'}", file=sys.stderr)
         sys.exit(1)
+fetchable = not args.reachable or reachable(args.rev)
 results = [check(path, args.sha, args.rev) for path in paths]
-if "fail" in results:
+if not fetchable or "fail" in results:
     sys.exit(1)
 if "pending" in results and not args.allow_pending:
     sys.exit(3)

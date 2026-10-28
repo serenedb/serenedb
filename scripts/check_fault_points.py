@@ -156,7 +156,8 @@ def main():
                 errors.append(
                     f"{loc}: fault '{name}' is missing from DUCKDB_PARK_FAULTS in "
                     "scripts/check_fault_points.py, which CI's pre-commit reads "
-                    "instead of DuckDB's sources (it checks out no submodules)"
+                    "instead of DuckDB's sources when the change leaves the duckdb "
+                    "gitlink alone"
                 )
         for name in sorted(DUCKDB_PARK_FAULTS - duckdb_parks):
             errors.append(

@@ -99,7 +99,7 @@ repos:
         language: python
         entry: python3 scripts/generate_system_table_claims.py --check
         pass_filenames: false
-        files: (system_table_claims\.test|generate_system_table_claims\.py)$
+        always_run: true
       - id: check-llm-symbols
         name: Check LLM Unicode symbols
         language: python
@@ -114,12 +114,8 @@ repos:
         name: Check fault-injection points (tests <-> source)
         language: python
         entry: python3 scripts/check_fault_points.py
-        # Cross-references the whole tree (a source change must be validated
-        # against all tests and vice versa), so the script scans the trees
-        # itself instead of the staged files -- but only when a file that can
-        # affect the result changed.
-        files: \.(test|test_slow|cpp|cc|c|hpp|hh|h|ipp|tpp|py)$
         pass_filenames: false
+        always_run: true
       - id: check-substitution-directive
         name: Check sqllogic substitution directive
         language: python
@@ -186,5 +182,5 @@ repos:
         language: python
         additional_dependencies: [pytest==9.1.1]
         entry: python3 -m pytest -q -p no:cacheprovider scripts/ci/tests
-        files: ^(scripts/(ci/(ci\.py|report\.py|build_images\.sh|testlib/|tests/)|coverage/diff\.py|check_submodule_pointers\.py)|\.github/workflows/simple\.yml)
+        files: ^(scripts/(ci/|coverage/|check_submodule_pointers\.py$|duckdb_family\.sh$)|tests/drivers/harness/|\.github/workflows/simple\.yml$)
         pass_filenames: false

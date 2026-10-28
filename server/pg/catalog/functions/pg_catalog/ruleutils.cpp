@@ -279,7 +279,7 @@ Definition ConstraintDefinition(const Session& session, int64_t oid) {
       return ForeignKeyDefinition(
         session, table, constraint.Cast<duckdb::ForeignKeyConstraint>());
     case duckdb::ConstraintType::INVALID:
-      SDB_UNREACHABLE();
+      return std::nullopt;
   }
 }
 

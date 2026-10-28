@@ -111,6 +111,47 @@ void RegisterInputs(duckdb::CastFunctionSet& casts,
   }
 }
 
+struct StorageCastData final : duckdb::BoundCastData {
+  StorageCastData(duckdb::LogicalType storage, duckdb::BoundCastInfo convert,
+                  duckdb::cast_function_t check)
+    : storage{std::move(storage)}, convert{std::move(convert)}, check{check} {}
+
+  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
+    return duckdb::make_uniq<StorageCastData>(storage, convert.Copy(), check);
+  }
+
+  duckdb::LogicalType storage;
+  duckdb::BoundCastInfo convert;
+  duckdb::cast_function_t check;
+};
+
+struct StorageCastState final : duckdb::FunctionLocalState {
+  duckdb::unique_ptr<duckdb::FunctionLocalState> convert;
+};
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> InitStorageCast(
+  duckdb::CastLocalStateParameters& parameters) {
+  auto state = duckdb::make_uniq<StorageCastState>();
+  const auto& convert = parameters.cast_data->Cast<StorageCastData>().convert;
+  if (convert.HasInitLocalState()) {
+    duckdb::CastLocalStateParameters child{parameters, convert.GetCastData()};
+    state->convert = convert.InitLocalState(child);
+  }
+  return state;
+}
+
+bool StorageCast(duckdb::Vector& source, duckdb::Vector& result,
+                 duckdb::idx_t count, duckdb::CastParameters& parameters) {
+  const auto& data = parameters.cast_data->Cast<StorageCastData>();
+  duckdb::Vector storage{data.storage, count};
+  duckdb::CastParameters convert{
+    parameters, data.convert.GetCastData(),
+    parameters.local_state->Cast<StorageCastState>().convert.get()};
+  const bool converted = data.convert.Cast(source, storage, count, convert);
+  duckdb::CastParameters check{parameters, nullptr, nullptr};
+  return data.check(storage, result, count, check) && converted;
+}
+
 }  // namespace
 
 TextInput::TextInput(duckdb::ClientContext& context,
@@ -242,6 +283,39 @@ void ReplaceTextInput(duckdb::CastFunctionSet& casts,
     [&](const duckdb::LogicalType& source) {
       return casts.ImplicitCastCost(nullptr, source, type);
     });
+}
+
+duckdb::BoundCastInfo BindStorageCast(duckdb::BindCastInput& input,
+                                      const duckdb::LogicalType& source,
+                                      const duckdb::LogicalType& target,
+                                      duckdb::cast_function_t check) {
+  auto storage = target.WithAlias("");
+  auto convert = input.GetCastFunction(source, storage);
+  return {StorageCast,
+          duckdb::make_uniq<StorageCastData>(std::move(storage),
+                                             std::move(convert), check),
+          InitStorageCast};
+}
+
+void RegisterStorageCasts(duckdb::CastFunctionSet& casts,
+                          const duckdb::LogicalType& storage,
+                          const duckdb::LogicalType& type,
+                          duckdb::cast_function_t check,
+                          duckdb::bind_cast_function_t bind) {
+  casts.RegisterCastFunction(storage, type, check, -1);
+  auto sources =
+    storage.id() == duckdb::LogicalTypeId::LIST
+      ? std::vector{duckdb::LogicalType::LIST(duckdb::LogicalType::ANY),
+                    duckdb::LogicalType::ARRAY(duckdb::LogicalType::ANY,
+                                               duckdb::optional_idx{})}
+      : std::vector{
+          duckdb::LogicalType::STRUCT({{"any", duckdb::LogicalType::ANY}}),
+          duckdb::LogicalType::TUPLE({duckdb::LogicalType::ANY})};
+  sources.push_back(duckdb::LogicalType::JSON());
+  sources.push_back(duckdb::LogicalType::VARIANT());
+  for (const auto& source : sources) {
+    casts.RegisterCastFunction(source, type, bind, -1);
+  }
 }
 
 }  // namespace sdb::pg

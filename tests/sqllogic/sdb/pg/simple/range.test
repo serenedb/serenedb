@@ -121,6 +121,43 @@ SELECT CAST({'nonempty': true, 'lower_finite': true, 'lower': 5, 'lower_exclusiv
 db error: ERROR: range lower bound must be less than or equal to range upper bound
 
 
+statement error
+SELECT CAST({'nonempty': true, 'lower_finite': true, 'lower': 5::BIGINT, 'lower_exclusive': false, 'upper_infinite': false,
+             'upper': 1::BIGINT, 'upper_inclusive': false} AS int4range);
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound
+
+
+statement error
+SELECT ROW(true, true, 9, false, false, 5, false)::int4range;
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound
+
+
+statement error
+SELECT '{"nonempty": true, "lower_finite": true, "lower": 9, "lower_exclusive": false, "upper_infinite": false,
+         "upper": 5, "upper_inclusive": false}'::json::int4range;
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound
+
+
+statement error
+SELECT ({'nonempty': true, 'lower_finite': true, 'lower': 9, 'lower_exclusive': false, 'upper_infinite': false,
+         'upper': 5, 'upper_inclusive': false}::VARIANT)::int4range;
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound
+
+
+query
+SELECT CAST({'nonempty': true, 'lower_finite': true, 'lower': 1::BIGINT, 'lower_exclusive': true, 'upper_infinite': false,
+             'upper': 5::BIGINT, 'upper_inclusive': true} AS int4range) AS a,
+       ROW(true, true, 1, false, false, 5, false)::int4range AS b,
+       '[1,5)'::int4range::int8range AS c;
+----
+a	b	c
+[2,6)	[1,5)	[1,5)
+
+
 statement ok
 SET TimeZone = 'UTC'
 

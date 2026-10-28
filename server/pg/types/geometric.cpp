@@ -499,9 +499,13 @@ bool LineContainsPoint(const Line& line, const Point& point) {
 
 double LineClosestPoint(Point* result, const Line& line, const Point& point) {
   Point closest{};
-  const bool crossed =
-    LineIntersect(&closest, LineFromSlope(point, LineInverseSlope(line)), line);
-  SDB_ASSERT(crossed);
+  if (!LineIntersect(&closest, LineFromSlope(point, LineInverseSlope(line)),
+                     line)) {
+    if (result) {
+      *result = point;
+    }
+    return kNaN;
+  }
   if (result) {
     *result = closest;
   }
@@ -541,7 +545,14 @@ bool LinesEqual(const Line& l1, const Line& l2) {
       std::isnan(l2.a) || std::isnan(l2.b) || std::isnan(l2.c)) [[unlikely]] {
     return FloatEq(l1.a, l2.a) && FloatEq(l1.b, l2.b) && FloatEq(l1.c, l2.c);
   }
-  const auto ratio = FpZero(l2.a) ? Div(l1.b, l2.b) : Div(l1.a, l2.a);
+  double ratio = 1.0;
+  if (!FpZero(l2.a)) {
+    ratio = Div(l1.a, l2.a);
+  } else if (!FpZero(l2.b)) {
+    ratio = Div(l1.b, l2.b);
+  } else if (!FpZero(l2.c)) {
+    ratio = Div(l1.c, l2.c);
+  }
   return FpEq(l1.a, Mul(ratio, l2.a)) && FpEq(l1.b, Mul(ratio, l2.b)) &&
          FpEq(l1.c, Mul(ratio, l2.c));
 }
@@ -2644,7 +2655,7 @@ void RegisterType(duckdb::CastFunctionSet& casts) {
   RegisterTextInput(casts, type, TextToGeometric<K>, InitInput);
   casts.RegisterCastFunction(type, duckdb::LogicalType::VARCHAR,
                              BindGeometricToText<K>, 50);
-  casts.RegisterCastFunction(StorageType(K), type, StorageToGeometric<K>, -1);
+  RegisterStorageCast<StorageToGeometric<K>>(casts, StorageType(K), type);
 }
 
 duckdb::BoundCastInfo BindTextToBoxes(duckdb::BindCastInput& input,

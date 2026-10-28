@@ -122,6 +122,7 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
     case CHANGE_OWNERSHIP:
       return "ALTER SEQUENCE";
     case ALTER_SCALAR_FUNCTION:
+    case ALTER_TABLE_FUNCTION:
       return "ALTER FUNCTION";
     case SET_COMMENT:
     case SET_COLUMN_COMMENT:
@@ -151,10 +152,9 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       }
       return permissions.revoke ? "REVOKE" : "GRANT";
     }
-    case ALTER_TABLE_FUNCTION:
     case INVALID:
     case REPLACE_DEFINITION:
-      SDB_UNREACHABLE();
+      return "ALTER";
   }
   SDB_UNREACHABLE();
 }

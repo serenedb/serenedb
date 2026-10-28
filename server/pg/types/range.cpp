@@ -165,8 +165,8 @@ void RegisterRangeType(duckdb::CastFunctionSet& casts, Functions& functions) {
   const auto& varchar = duckdb::LogicalType::VARCHAR;
   RegisterTextInput(casts, range, BindTextToRange<Traits>);
   casts.RegisterCastFunction(range, varchar, BindRangeToText, 50);
-  casts.RegisterCastFunction(RangeStorageType(element), range,
-                             StorageToRange<Traits>, -1);
+  RegisterStorageCast<StorageToRange<Traits>>(casts, RangeStorageType(element),
+                                              range);
 
   for (auto constructor : {
          duckdb::ScalarFunction{

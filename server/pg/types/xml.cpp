@@ -108,7 +108,8 @@ const xmlChar* AsXmlChars(std::string_view text) {
 }
 
 std::string_view AsView(const xmlChar* text) {
-  return reinterpret_cast<const char*>(text);
+  return text ? std::string_view{reinterpret_cast<const char*>(text)}
+              : std::string_view{};
 }
 
 void SkipXmlSpace(std::string_view& text) {
@@ -592,8 +593,15 @@ void EvaluateXpath(XmlParser& parser, std::string_view path,
   if (!context) {
     ThrowOutOfMemory();
   }
+  bool failed = false;
   xmlXPathSetErrorHandler(
-    context.get(), [](void*, const xmlError*) {}, nullptr);
+    context.get(),
+    [](void* data, const xmlError* error) {
+      if (error->level >= XML_ERR_ERROR) {
+        *static_cast<bool*>(data) = true;
+      }
+    },
+    &failed);
   context->node = reinterpret_cast<xmlNode*>(doc.get());
   for (const auto& space : spaces) {
     const std::string name{space.name};
@@ -608,19 +616,20 @@ void EvaluateXpath(XmlParser& parser, std::string_view path,
   const std::string expression{path};
   const std::unique_ptr<xmlXPathCompExpr, XmlFree<xmlXPathFreeCompExpr>>
     compiled{xmlXPathCtxtCompile(context.get(), AsXmlChars(expression))};
-  if (!compiled) {
+  if (!compiled || failed) {
     XpathError("invalid XPath expression");
   }
   const std::unique_ptr<xmlXPathObject, XmlFree<xmlXPathFreeObject>> object{
     xmlXPathCompiledEval(compiled.get(), context.get())};
-  if (!object) {
+  if (!object || failed) {
     XpathError("could not create XPath object");
   }
   switch (object->type) {
     case XPATH_NODESET:
-      SDB_ASSERT(object->nodesetval);
-      for (int i = 0; i < object->nodesetval->nodeNr; ++i) {
-        emit(NodeToXml(object->nodesetval->nodeTab[i]));
+      if (object->nodesetval) {
+        for (int i = 0; i < object->nodesetval->nodeNr; ++i) {
+          emit(NodeToXml(object->nodesetval->nodeTab[i]));
+        }
       }
       return;
     case XPATH_BOOLEAN:
@@ -632,8 +641,13 @@ void EvaluateXpath(XmlParser& parser, std::string_view path,
     case XPATH_STRING:
       emit(EscapeXml(AsView(object->stringval)));
       return;
-    default:
-      SDB_UNREACHABLE();
+    case XPATH_UNDEFINED:
+    case XPATH_USERS:
+    case XPATH_XSLT_TREE:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("xpath expression result type ", static_cast<int>(object->type),
+                " is unsupported"));
   }
 }
 

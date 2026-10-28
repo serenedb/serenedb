@@ -102,4 +102,27 @@ void ReplaceTextInput(duckdb::CastFunctionSet& casts,
                       const duckdb::LogicalType& type,
                       duckdb::cast_function_t input);
 
+duckdb::BoundCastInfo BindStorageCast(duckdb::BindCastInput& input,
+                                      const duckdb::LogicalType& source,
+                                      const duckdb::LogicalType& target,
+                                      duckdb::cast_function_t check);
+
+void RegisterStorageCasts(duckdb::CastFunctionSet& casts,
+                          const duckdb::LogicalType& storage,
+                          const duckdb::LogicalType& type,
+                          duckdb::cast_function_t check,
+                          duckdb::bind_cast_function_t bind);
+
+template<duckdb::cast_function_t Check>
+void RegisterStorageCast(duckdb::CastFunctionSet& casts,
+                         const duckdb::LogicalType& storage,
+                         const duckdb::LogicalType& type) {
+  RegisterStorageCasts(
+    casts, storage, type, Check,
+    [](duckdb::BindCastInput& input, const duckdb::LogicalType& source,
+       const duckdb::LogicalType& target) {
+      return BindStorageCast(input, source, target, Check);
+    });
+}
+
 }  // namespace sdb::pg

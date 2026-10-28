@@ -452,9 +452,8 @@ void RegisterMultirangeType(duckdb::CastFunctionSet& casts,
   casts.RegisterCastFunction(multirange, duckdb::LogicalType::VARCHAR,
                              BindMultirangeToText, 50);
   casts.RegisterCastFunction(range, multirange, RangeToMultirange<T>, -1);
-  casts.RegisterCastFunction(
-    duckdb::LogicalType::LIST(RangeStorageType(element)), multirange,
-    StorageToMultirange<Traits>, -1);
+  RegisterStorageCast<StorageToMultirange<Traits>>(
+    casts, duckdb::LogicalType::LIST(RangeStorageType(element)), multirange);
 
   duckdb::ScalarFunction constructor{
     {},      multirange, ConstructMultirange<Traits>, nullptr, nullptr,

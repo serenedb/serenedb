@@ -179,13 +179,15 @@ std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
   return it->second.GetValue<uint64_t>();
 }
 
-const BuiltinType* FindAliasedType(const duckdb::LogicalType& type) {
+const BuiltinType* FindAliasedType(const duckdb::LogicalType& type,
+                                   auto accept) {
   if (!type.HasAlias()) {
     return nullptr;
   }
   const auto& alias = type.GetTypeInfo().alias;
   for (const auto& schema : kSystemNamespaces) {
-    if (const auto* row = FindBuiltinType(schema.oid, alias)) {
+    if (const auto* row = FindBuiltinType(schema.oid, alias);
+        row && accept(*row)) {
       return row;
     }
   }
@@ -276,8 +278,9 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
         if (IsRegdictionary(type)) {
           return make(kRegdictionary);
         }
-        SDB_ASSERT(IsRegcollation(type));
-        return make(kRegcollation);
+        if (IsRegcollation(type)) {
+          return make(kRegcollation);
+        }
       }
       return make(kInt8);
     case UBIGINT:
@@ -288,8 +291,9 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
         if (IsMacaddr(type)) {
           return make(kMacaddr);
         }
-        SDB_ASSERT(IsMacaddr8(type));
-        return make(kMacaddr8);
+        if (IsMacaddr8(type)) {
+          return make(kMacaddr8);
+        }
       }
       return make(kNumeric);
     case HUGEINT:
@@ -326,6 +330,8 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
       return make(kFloat4);
     case DOUBLE:
       return make(kFloat8);
+    case CHAR:
+      return make(kText);
     case BLOB:
       return make(kBytea);
     case INTERVAL:
@@ -402,7 +408,8 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
         return {static_cast<uint32_t>(in_array ? TypeArrayOid(*oid) : *oid), -1,
                 -1};
       }
-      if (const auto* row = FindAliasedType(type)) {
+      if (const auto* row = FindAliasedType(
+            type, [](const BuiltinType& row) { return row.type != 'p'; })) {
         return make(*row);
       }
       return make(kRecord);
@@ -415,7 +422,8 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
       if (IsOidvector(type)) {
         return make(kOidvector);
       }
-      if (const auto* row = FindAliasedType(type)) {
+      if (const auto* row = FindAliasedType(
+            type, [](const BuiltinType& row) { return row.type == 'm'; })) {
         return make(*row);
       }
       return element(duckdb::ListType::GetChildType(type));

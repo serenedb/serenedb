@@ -981,7 +981,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .metric = info.metric,
       .score_emit = info.score_emit,
       .natural_order = info.order,
-      .ann_id = ann_info->field_id,
+      .ann_id = ann_info->index_id,
       .quant = ann_info->quant.kind,
       .nb_bits = ann_info->quant.nb_bits,
       .kind = ann_info->kind,

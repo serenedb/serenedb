@@ -191,7 +191,7 @@ NormColumnWriter& ColWriter::StreamNormColumn(field_id id) {
 }
 
 AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
-  if (auto it = _ann_by_id.find(info.field_id); it != _ann_by_id.end()) {
+  if (auto it = _ann_by_id.find(info.index_id); it != _ann_by_id.end()) {
     auto& existing = *it->second;
     SDB_ASSERT(existing.info == info && existing.column_id == column_id,
                "ColWriter::AttachAnn: re-attach with mismatched AnnInfo on "
@@ -217,7 +217,7 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   }
   entry->info = std::move(info);
   auto& back = *_ann_writers.emplace_back(std::move(entry));
-  _ann_by_id.emplace(back.info.field_id, &back);
+  _ann_by_id.emplace(back.info.index_id, &back);
   return *back.writer;
 }
 

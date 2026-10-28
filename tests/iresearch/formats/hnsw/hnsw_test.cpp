@@ -52,10 +52,10 @@ inline constexpr irs::field_id kVec = 1;
 inline constexpr uint32_t kDim = 8;
 
 void SetAnn(irs::IndexWriterOptions& opts, irs::AnnInfo ann) {
-  opts.anns[ann.column_id].push_back(ann.field_id);
+  opts.anns[ann.column_id].push_back(ann.index_id);
   opts.column_options = [ann = std::move(ann)](irs::field_id id) {
     irs::ColumnOptions col;
-    if (id == ann.field_id) {
+    if (id == ann.index_id) {
       col.ann_info = ann;
     }
     return col;
@@ -69,7 +69,7 @@ irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
   auto opts = irs::tests::DefaultWriterOptions();
   SetAnn(opts, irs::AnnInfo{
                  .kind = irs::AnnKind::Hnsw,
-                 .field_id = kVec,
+                 .index_id = kVec,
                  .column_id = kVec,
                  .d = static_cast<int>(d),
                  .metric = metric,
@@ -1460,7 +1460,7 @@ TEST_P(HnswBuildWorkersTest, BuildTakesWorkersAsTheyFreeUp) {
   auto opts = irs::tests::DefaultWriterOptions();
   SetAnn(opts, irs::AnnInfo{
                  .kind = irs::AnnKind::Hnsw,
-                 .field_id = kVec,
+                 .index_id = kVec,
                  .column_id = kVec,
                  .d = kDim,
                  .metric = irs::VectorMetric::L2Sqr,
@@ -1518,7 +1518,7 @@ TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
     auto opts = irs::tests::DefaultWriterOptions();
     SetAnn(opts, irs::AnnInfo{
                    .kind = irs::AnnKind::Hnsw,
-                   .field_id = kVec,
+                   .index_id = kVec,
                    .column_id = kVec,
                    .d = static_cast<int>(kD),
                    .metric = irs::VectorMetric::L2Sqr,

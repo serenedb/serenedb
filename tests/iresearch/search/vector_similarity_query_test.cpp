@@ -76,7 +76,7 @@ irs::IndexWriterOptions MakeWriterOptions(
     if (id == kVec) {
       col.compression = compression;
       col.ann_info = irs::AnnInfo{
-        .field_id = kVec,
+        .index_id = kVec,
         .column_id = kVec,
         .d = kDim,
         .metric = irs::VectorMetric::L2Sqr,

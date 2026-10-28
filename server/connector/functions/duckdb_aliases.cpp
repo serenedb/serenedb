@@ -193,11 +193,7 @@ void AliasViews(duckdb::DatabaseInstance& db) {
 
 void RegisterScalarAlias(duckdb::ExtensionLoader& loader,
                          std::string_view source_name, std::string_view alias) {
-  auto entry = loader.TryGetFunction(duckdb::Identifier{source_name});
-  if (!entry) {
-    return;
-  }
-  auto& source = entry->Cast<duckdb::ScalarFunctionCatalogEntry>();
+  auto& source = loader.GetFunction(duckdb::Identifier{source_name});
   auto functions = source.functions;
   functions.SetName(duckdb::Identifier{alias});
 

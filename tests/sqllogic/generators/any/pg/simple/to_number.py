@@ -116,7 +116,7 @@ REJECTED = [
     "to_number('CM', 'RNRN')",
     "to_number('', 'RN')",
 ] + [f"to_number('{roman}', 'RN')" for roman in (
-    "12", "XD", "XM", "viv", "DCCCD", "XIXL", "MCCM", "MMMM", "VV", "IL", "VIX", "LXC", "DCM",
+    "12", "XD", "XM", "viv", "DCCCD", "XIXL", "MCCM", "MMMM", "VV", "VX", "IL", "VIX", "LXC", "DCM",
     "MMMDCM", "CLXC", "qiv", " ")]
 
 t = Test("to_number, from PostgreSQL's numeric tests: each text read with its format, every Roman "

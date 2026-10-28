@@ -1393,7 +1393,7 @@ duckdb::unique_ptr<duckdb::FunctionData> JsonObjectFromTextBind(
   duckdb::BindScalarFunctionInput& input) {
   const auto text = input.TryGetConstant(0);
   bool rows = false;
-  if (text && !text->IsNull()) {
+  if (text) {
     const auto value = text->DefaultCastAs(duckdb::LogicalType::VARCHAR);
     const auto literal =
       absl::StripLeadingAsciiWhitespace(duckdb::StringValue::Get(value));

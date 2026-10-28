@@ -549,20 +549,23 @@ constexpr NumKeyword kNumKeywords[] = {
   {"th", NumKey::kOrdinalLower}, {"v", NumKey::kMultiplier},
 };
 
-using KeywordIndex = std::array<int16_t, kKeywordIndexSize>;
+struct KeywordRange {
+  uint16_t begin = 0;
+  uint16_t end = 0;
+};
+
+using KeywordIndex = std::array<KeywordRange, kKeywordIndexSize>;
 
 template<typename Keyword, size_t N>
-constexpr KeywordIndex BuildKeywordIndex(const Keyword (&keywords)[N]) {
+consteval KeywordIndex BuildKeywordIndex(const Keyword (&keywords)[N]) {
   KeywordIndex index;
-  for (auto& position : index) {
-    position = -1;
-  }
   for (size_t i = 0; i < N; ++i) {
-    auto& position =
+    auto& range =
       index[static_cast<unsigned char>(keywords[i].name.front()) - ' '];
-    if (position < 0) {
-      position = static_cast<int16_t>(i);
+    if (range.begin == range.end) {
+      range.begin = static_cast<uint16_t>(i);
     }
+    range.end = static_cast<uint16_t>(i + 1);
   }
   return index;
 }
@@ -577,12 +580,8 @@ const Keyword* SearchKeyword(std::string_view str, const Keyword (&keywords)[N],
   if (c <= ' ' || c >= '~') {
     return nullptr;
   }
-  const auto position = index[c - ' '];
-  if (position < 0) {
-    return nullptr;
-  }
-  for (auto i = static_cast<size_t>(position);
-       i < N && keywords[i].name.front() == str.front(); ++i) {
+  const auto [begin, end] = index[c - ' '];
+  for (auto i = begin; i < end; ++i) {
     if (str.starts_with(keywords[i].name)) {
       return &keywords[i];
     }
@@ -694,7 +693,7 @@ void PrepareNumDesc(NumDesc& num, NumKey id) {
       num.zero_end = num.pre + num.post;
       break;
     case NumKey::kBlank:
-      if (num.pre == 0 && num.post == 0 && !num.Has(kNumZero)) {
+      if (num.pre == 0 && num.post == 0) {
         num.flag |= kNumBlank;
       }
       break;
@@ -723,7 +722,7 @@ void PrepareNumDesc(NumDesc& num, NumKey id) {
         num.lsign = LocaleSign::kPre;
         num.pre_lsign_num = num.pre;
         num.flag |= kNumLocaleSign;
-      } else if (num.lsign == LocaleSign::kNone) {
+      } else {
         num.lsign = LocaleSign::kPost;
         num.flag |= kNumLocaleSign;
       }
@@ -865,10 +864,12 @@ ParsedFormat<Keyword> ParseFormat(std::string_view str) {
       str.remove_prefix(1);
     }
     auto type = NodeType::kChar;
-    if (kDateTime && IsSeparatorChar(str.front())) {
-      type = NodeType::kSeparator;
-    } else if (absl::ascii_isspace(str.front())) {
+    if (absl::ascii_isspace(str.front())) {
       type = NodeType::kSpace;
+    } else if constexpr (kDateTime) {
+      if (IsSeparatorChar(str.front())) {
+        type = NodeType::kSeparator;
+      }
     }
     const auto length = CharLength(str);
     parsed.nodes.push_back(MakeCharNode<Keyword>(type, str.substr(0, length)));
@@ -1018,9 +1019,7 @@ void AppendMonth(std::string& out, const TmToChar& tm, bool is_interval,
                  std::span<const std::string_view> names,
                  LetterCase letter_case, size_t width) {
   RejectInterval(is_interval);
-  if (tm.tm_mon) {
-    AppendName(out, names[tm.tm_mon - 1], letter_case, width);
-  }
+  AppendName(out, names[tm.tm_mon - 1], letter_case, width);
 }
 
 void AppendDay(std::string& out, const TmToChar& tm, bool is_interval,
@@ -1376,10 +1375,8 @@ int32_t AdjustPartialYearTo2020(int32_t year) {
   if (year < 520) {
     return year + 2000;
   }
-  if (year < 1000) {
-    return year + 1000;
-  }
-  return year;
+  SDB_ASSERT(year < 1000);
+  return year + 1000;
 }
 
 void FromCharSetMode(TmFromChar& tmfc, DateMode mode) {
@@ -1626,8 +1623,8 @@ void DchFromChar(std::span<const DchNode> nodes, const char* in,
   for (size_t i = 0; i < nodes.size() && *s != '\0'; ++i) {
     const auto& node = nodes[i];
     if (!fx_mode &&
-        (node.type != NodeType::kAction || node.key->id != DchKey::kFx) &&
-        (node.type == NodeType::kAction || i == 0)) {
+        (node.type == NodeType::kAction ? node.key->id != DchKey::kFx
+                                        : i == 0)) {
       while (*s != '\0' && absl::ascii_isspace(*s)) {
         ++s;
         ++extra_skip;
@@ -1929,10 +1926,10 @@ void ApplyCentury(TmFromChar& tmfc, PgTm& tm, const char* text) {
     return;
   }
   if (__builtin_mul_overflow(tmfc.cc + 1, 100, &base) ||
-      __builtin_sub_overflow(base, tm.tm_year, &base) ||
-      __builtin_add_overflow(base, 1, &tm.tm_year)) {
+      __builtin_sub_overflow(base, tm.tm_year, &base)) {
     ThrowFieldOverflow(text);
   }
+  tm.tm_year = base + 1;
 }
 
 void ApplyDayOfYear(const TmFromChar& tmfc, PgTm& tm, int32_t& mask) {
@@ -2015,10 +2012,10 @@ ParsedDateTime DoToTimestamp(std::span<const DchNode> nodes, const char* text) {
       tmfc.cc = WrappingNegate(tmfc.cc);
     }
     if (__builtin_mul_overflow(tmfc.cc >= 0 ? tmfc.cc - 1 : tmfc.cc, 100,
-                               &tm.tm_year) ||
-        __builtin_add_overflow(tm.tm_year, 1, &tm.tm_year)) {
+                               &tm.tm_year)) {
       ThrowFieldOverflow(text);
     }
+    ++tm.tm_year;
     mask |= kFieldYear;
   }
   if (tmfc.j) {
@@ -2034,16 +2031,20 @@ ParsedDateTime DoToTimestamp(std::span<const DchNode> nodes, const char* text) {
                      tm.tm_mon, tm.tm_mday);
       }
       mask |= kFieldDate;
-    } else if (__builtin_sub_overflow(tmfc.ww, 1, &tmfc.ddd) ||
-               __builtin_mul_overflow(tmfc.ddd, 7, &tmfc.ddd) ||
-               __builtin_add_overflow(tmfc.ddd, 1, &tmfc.ddd)) {
-      ThrowFieldOverflow(text);
+    } else {
+      if (__builtin_sub_overflow(tmfc.ww, 1, &tmfc.ddd) ||
+          __builtin_mul_overflow(tmfc.ddd, 7, &tmfc.ddd)) {
+        ThrowFieldOverflow(text);
+      }
+      ++tmfc.ddd;
     }
   }
-  if (tmfc.w && (__builtin_sub_overflow(tmfc.w, 1, &tmfc.dd) ||
-                 __builtin_mul_overflow(tmfc.dd, 7, &tmfc.dd) ||
-                 __builtin_add_overflow(tmfc.dd, 1, &tmfc.dd))) {
-    ThrowFieldOverflow(text);
+  if (tmfc.w) {
+    if (__builtin_sub_overflow(tmfc.w, 1, &tmfc.dd) ||
+        __builtin_mul_overflow(tmfc.dd, 7, &tmfc.dd)) {
+      ThrowFieldOverflow(text);
+    }
+    ++tmfc.dd;
   }
   if (tmfc.dd) {
     tm.tm_mday = tmfc.dd;
@@ -2056,12 +2057,8 @@ ParsedDateTime DoToTimestamp(std::span<const DchNode> nodes, const char* text) {
   if (tmfc.ddd && (tm.tm_mon <= 1 || tm.tm_mday <= 1)) {
     ApplyDayOfYear(tmfc, tm, mask);
   }
-  if (tmfc.ms) {
-    int32_t millis = 0;
-    if (__builtin_mul_overflow(tmfc.ms, 1000, &millis) ||
-        __builtin_add_overflow(result.fsec, millis, &result.fsec)) {
-      ThrowFieldOverflow(text);
-    }
+  if (__builtin_mul_overflow(tmfc.ms, 1000, &result.fsec)) {
+    ThrowFieldOverflow(text);
   }
   if (__builtin_add_overflow(result.fsec, tmfc.us, &result.fsec)) {
     ThrowFieldOverflow(text);
@@ -2227,38 +2224,12 @@ int32_t RoundToInt32(DecimalNumber number) {
 }
 
 DecimalNumber NumericInput(std::string_view text) {
-  DecimalNumber number;
-  size_t i = 0;
-  while (i < text.size() && absl::ascii_isspace(text[i])) {
-    ++i;
-  }
-  if (i < text.size() && (text[i] == '+' || text[i] == '-')) {
-    number.negative = text[i] == '-';
-    ++i;
-  }
-  bool has_digits = false;
-  while (i < text.size() && absl::ascii_isdigit(text[i])) {
-    number.digits.push_back(text[i++]);
-    has_digits = true;
-  }
-  if (i < text.size() && text[i] == '.') {
-    ++i;
-    while (i < text.size() && absl::ascii_isdigit(text[i])) {
-      number.digits.push_back(text[i++]);
-      ++number.scale;
-      has_digits = true;
-    }
-  }
-  while (i < text.size() && absl::ascii_isspace(text[i])) {
-    ++i;
-  }
-  if (!has_digits || i != text.size()) {
+  if (!absl::c_any_of(text, absl::ascii_isdigit)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
       ERR_MSG("invalid input syntax for type numeric: \"", text, "\""));
   }
-  StripLeadingZeros(number);
-  return number;
+  return DecimalFromText(text.front() == '-' ? text : text.substr(1));
 }
 
 duckdb::hugeint_t DecimalToStorage(DecimalNumber number, uint8_t width,
@@ -2324,10 +2295,9 @@ int32_t RomanValue(char c) {
   return 0;
 }
 
-bool IsValidRomanSubtraction(char current, char next) {
-  return (current == 'I' && (next == 'V' || next == 'X')) ||
-         (current == 'X' && (next == 'L' || next == 'C')) ||
-         (current == 'C' && (next == 'D' || next == 'M'));
+bool IsValidRomanSubtraction(int32_t current, int32_t next) {
+  return (current == 1 || current == 10 || current == 100) &&
+         next <= current * 10;
 }
 
 struct RomanCounts {
@@ -2491,7 +2461,7 @@ class NumProcessor {
           }
           return true;
         }
-        if (!_num_in && _num.Has(kNumFillMode)) {
+        if (_num.Has(kNumFillMode)) {
           return false;
         }
         return *_inout_p == ',';
@@ -2542,13 +2512,14 @@ class NumProcessor {
         return false;
       case NumKey::kBlank:
       case NumKey::kIsoCurrency:
-      case NumKey::kEeee:
       case NumKey::kFillMode:
       case NumKey::kAngleBrackets:
       case NumKey::kSpell:
       case NumKey::kLocaleSign:
       case NumKey::kMultiplier:
         return false;
+      case NumKey::kEeee:
+        SDB_UNREACHABLE();
     }
   }
 
@@ -2621,7 +2592,7 @@ class NumProcessor {
           *_inout_p++ = ' ';
         }
         _sign_wrote = true;
-      } else if (_sign == '-') {
+      } else {
         *_inout_p++ = '-';
         _sign_wrote = true;
       }
@@ -2631,22 +2602,18 @@ class NumProcessor {
       if (!_num.Has(kNumFillMode)) {
         *_inout_p++ = ' ';
       }
-    } else if (_num.Has(kNumZero) && _num_curr < _out_pre_spaces &&
-               _num.zero_start <= _num_curr) {
+    } else if (_num.Has(kNumZero) && _num_curr < _out_pre_spaces) {
       *_inout_p++ = '0';
       _num_in = true;
     } else {
       if (*_number_p == '.') {
-        if (!_last_relevant || *_last_relevant != '.' ||
-            _num.Has(kNumFillMode)) {
-          *_inout_p++ = '.';
-        }
+        *_inout_p++ = '.';
       } else if (!_last_relevant || _number_p <= _last_relevant ||
                  id == NumKey::kZero) {
         if (IsPredecimalSpace()) {
           if (!_num.Has(kNumFillMode)) {
             *_inout_p++ = ' ';
-          } else if (_last_relevant && *_last_relevant == '.') {
+          } else if (*_last_relevant == '.') {
             *_inout_p++ = '0';
           }
         } else {
@@ -2675,9 +2642,6 @@ class NumProcessor {
 
   void ReadNumberPart(NumKey id) {
     bool is_read = false;
-    if (AtEnd()) {
-      return;
-    }
     if (*_inout_p == ' ') {
       ++_inout_p;
     }
@@ -2717,9 +2681,6 @@ class NumProcessor {
       *_number_p++ = '.';
       _read_dec = true;
       is_read = true;
-    }
-    if (AtEnd()) {
-      return;
     }
     if (*_number != ' ' || _read_pre + _read_post == 0) {
       return;
@@ -2791,8 +2752,8 @@ class NumProcessor {
       const char next = chars[i + 1];
       const int32_t next_value = values[i + 1];
       if (current_value < next_value) {
-        if (!IsValidRomanSubtraction(current, next) || repeat_count > 1 ||
-            counts.Rejects(next_value)) {
+        if (!IsValidRomanSubtraction(current_value, next_value) ||
+            repeat_count > 1 || counts.Rejects(next_value)) {
           return -1;
         }
         counts.Count(next);
@@ -2884,9 +2845,6 @@ std::string FormatFloat(double value, int32_t precision, FloatStyle style) {
   switch (style) {
     case FloatStyle::kFixed: {
       absl::StrAppendFormat(&out, "%.*f", digits, value);
-      if (precision > digits) {
-        out.append(precision - digits, '0');
-      }
       break;
     }
     case FloatStyle::kExponent: {
@@ -2986,11 +2944,10 @@ NumberText PrepareInt64(int64_t value, NumDesc& num) {
   }
   if (num.Has(kNumMulti)) {
     const double multiplier = std::rint(std::pow(10.0, num.multi));
-    const auto limit = static_cast<double>(std::numeric_limits<int64_t>::min());
-    if (!(multiplier >= limit && multiplier < -limit)) {
-      ThrowBigintOutOfRange();
-    }
-    if (__builtin_mul_overflow(value, static_cast<int64_t>(multiplier),
+    const auto limit =
+      -static_cast<double>(std::numeric_limits<int64_t>::min());
+    if (multiplier >= limit ||
+        __builtin_mul_overflow(value, static_cast<int64_t>(multiplier),
                                &value)) {
       ThrowBigintOutOfRange();
     }
@@ -3400,14 +3357,14 @@ duckdb::optional<duckdb::Value> BindTimeConstant(
 
 uint8_t ToNumberScale(duckdb::BindScalarFunctionInput& input) {
   const auto format = BindTimeConstant(input, 1);
-  if (!format || format->IsNull()) {
+  if (!format) {
     return kNumericDefaultScale;
   }
   const auto format_text = format->ToString();
   const auto parsed = ParseFormat<NumKeyword>(format_text);
   auto num = parsed.num;
   const auto value = BindTimeConstant(input, 0);
-  if (value && !value->IsNull() && !num.Has(kNumEeee) && !num.Has(kNumRoman)) {
+  if (value && !num.Has(kNumEeee) && !num.Has(kNumRoman)) {
     auto input_text = value->ToString();
     std::string number(format_text.size() * kNumMaxItemSize + 2, '\0');
     NumProcessor processor{num, false, number.data(), input_text.data(),
@@ -3723,7 +3680,7 @@ constexpr std::string_view SourceTypeName(ExtractSource source) {
     case ExtractSource::kInterval:
       return "interval";
   }
-  return {};
+  SDB_UNREACHABLE();
 }
 
 [[noreturn]] void ThrowUnitNotRecognized(std::string_view text,
@@ -3792,21 +3749,9 @@ std::optional<Extracted> CalendarField(DateUnit unit, int32_t year,
     case DateUnit::kDoy:
       return Whole(DateToJulian(year, month, day) - DateToJulian(year, 1, 1) +
                    1);
-    case DateUnit::kMicrosecond:
-    case DateUnit::kMillisecond:
-    case DateUnit::kSecond:
-    case DateUnit::kMinute:
-    case DateUnit::kHour:
-    case DateUnit::kJulian:
-    case DateUnit::kTimezone:
-    case DateUnit::kTimezoneHour:
-    case DateUnit::kTimezoneMinute:
-    case DateUnit::kEpoch:
-    case DateUnit::kReserved:
-    case DateUnit::kUnrecognized:
+    default:
       return std::nullopt;
   }
-  return std::nullopt;
 }
 
 std::optional<Extracted> ClockField(DateUnit unit, int64_t hour, int32_t minute,
@@ -4057,7 +4002,7 @@ std::optional<Extracted> ExtractFromInterval(FormattingState&,
     case DateUnit::kTimezoneMinute:
       ThrowUnitNotSupported(text, ExtractSource::kInterval);
   }
-  ThrowUnitNotSupported(text, ExtractSource::kInterval);
+  SDB_UNREACHABLE();
 }
 
 uint8_t ExtractScale(ExtractSource source, DateUnit unit) {
@@ -4081,15 +4026,16 @@ template<ExtractSource kSource>
 duckdb::unique_ptr<duckdb::FunctionData> BindExtract(
   duckdb::BindScalarFunctionInput& input) {
   auto scale = kSecondScale;
-  if (const auto unit = BindTimeConstant(input, 0); unit && !unit->IsNull()) {
+  if (const auto unit = BindTimeConstant(input, 0)) {
     scale = ExtractScale(kSource, DecodeDateUnit(unit->ToString()));
   }
   input.GetBoundFunction().SetReturnType(
     duckdb::LogicalType::DECIMAL(kNumericWidth, scale));
   if constexpr (kSource == ExtractSource::kTimestampTz) {
     return duckdb::ICUDateFunc::Bind(input);
+  } else {
+    return nullptr;
   }
-  return nullptr;
 }
 
 duckdb::hugeint_t ToScale(const Extracted& value, uint8_t scale) {
@@ -4120,11 +4066,6 @@ void ExtractFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   };
   auto& units = args.data[0];
   if (units.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
-    if (duckdb::ConstantVector::IsNull(units)) {
-      result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
-      duckdb::ConstantVector::SetNull(result, true);
-      return;
-    }
     const auto text =
       AsView(*duckdb::ConstantVector::GetData<duckdb::string_t>(units));
     const auto unit = DecodeDateUnit(text);

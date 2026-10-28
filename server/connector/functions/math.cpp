@@ -530,8 +530,7 @@ duckdb::LogicalType DecimalArgument(duckdb::BindScalarFunctionInput& input,
   uint8_t width = 0;
   uint8_t scale = 0;
   if (!input.GetArguments()[index]->GetReturnType().GetDecimalProperties(
-        width, scale) ||
-      width == 0) {
+        width, scale)) {
     width = kNumericWidth;
     scale = kNumericScale;
   }
@@ -598,9 +597,6 @@ duckdb::unique_ptr<duckdb::Expression> TrimScaleExpression(
   }
   const auto value =
     duckdb::ExpressionExecutor::EvaluateScalar(input.context, *child);
-  if (value.IsNull()) {
-    return std::move(child);
-  }
   const auto width = duckdb::DecimalType::GetWidth(value.type());
   const auto scale = duckdb::DecimalType::GetScale(value.type());
   const auto trimmed =
@@ -709,11 +705,6 @@ void DateSubtractInZoneFunction(duckdb::DataChunk& args,
   };
   auto& zone = args.data[2];
   if (zone.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
-    if (duckdb::ConstantVector::IsNull(zone)) {
-      result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
-      duckdb::ConstantVector::SetNull(result, true);
-      return;
-    }
     zones.SetTimeZone(calendar.GetCalendar(),
                       *duckdb::ConstantVector::GetData<duckdb::string_t>(zone));
     duckdb::BinaryExecutor::Execute<duckdb::timestamp_tz_t, duckdb::interval_t,

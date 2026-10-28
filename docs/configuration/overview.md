@@ -202,7 +202,7 @@ Planning, rewriting and the shape of query output.
 | `late_materialization_lookup_max_rows` | The maximum amount of rows in the LIMIT/TOP_N/SAMPLE for which a scan that can look up rows by their row id is late materialized through a `LOOKUP_JOIN`. `0` disables the `LOOKUP_JOIN`: late materialization then joins on the row ids, up to `late_materialization_max_rows`. | `UBIGINT` | `SESSION` | `2048` |
 | `late_materialization_max_rows` | The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization | `UBIGINT` | `SESSION` | `50` |
 | `match_recognize_max_states` | The maximum number of pattern states `MATCH_RECOGNIZE` explores for a single match before it refuses the pattern (0 = no limit). | `UBIGINT` | `SESSION` | `1000000` |
-| `max_expression_depth` | The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors. | `UBIGINT` | `SESSION` | `1000` |
+| `max_expression_depth` | The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors. Only a superuser can change it. | `UBIGINT` | `SESSION` | `1000` |
 | `max_streaming_buffer_size` | The maximum number of bytes a streaming query result buffers (e.g. 1GB). | `VARCHAR` | `SESSION` | `10.0 MiB` |
 | `merge_join_threshold` | The maximum number of rows on either table to choose a merge join | `UBIGINT` | `SESSION` | `1000` |
 | `nested_loop_join_threshold` | The maximum number of rows on either table to choose a nested loop join | `UBIGINT` | `SESSION` | `5` |

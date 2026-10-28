@@ -69,7 +69,7 @@ An update is reviewed patchset by patchset. Every fork whose upstream is in the 
 
 1. Build the update on `mbkkt/update-duckdb` (the recipe below) and force-push it while the update is in review.
 2. Force-push `mbkkt/update-duckdb-base` to the fork's boundary. The PR then shows exactly our patchset.
-3. Link every review PR from the serenedb PR of the update. Its gitlinks point at the `mbkkt/update-duckdb` heads while it is in review, so `check-submodule-pointers` fails until the next step.
+3. Link every review PR from the serenedb PR of the update. Its gitlinks point at the `mbkkt/update-duckdb` heads while it is in review, so the gitlink check of the PR's pre-commit job (`scripts/check_submodule_pointers.py`) fails until the next step.
 4. Before the serenedb PR merges, push each head as a new `vYYYY.MM.DD` branch, the date of the update, and move the gitlinks to it. A version branch is never force-pushed.
 
 | fork | review PR |
@@ -292,6 +292,8 @@ The `iceberg` suite runs most of duckdb_iceberg's tests against a live catalog: 
 - **Locally** they publish those host ports.
 
 Before the tests, [generate_iceberg_data.sh](generate_iceberg_data.sh) runs upstream's own data generators (`scripts/data_generators`, PySpark 4.0 with the Iceberg runtime jar checked into the submodule) twice: against the REST catalog (`fixture`), and into `data/generated/iceberg/spark-local` (`local`). Many tests compare what DuckDB writes with what Spark wrote, so the reference data comes from Spark itself. The build image carries PySpark, a Java 21 runtime for it (Spark 4.0's Hadoop does not run on newer Java) and the Ivy cache of the Spark packages, so nothing is downloaded. Its log is `out/test/services/iceberg-data.log`.
+
+Generating takes 8-12 minutes, so CI does it once per version of its inputs (the generators, this script, the build image and the service images) and keeps the result in the CI store: the REST catalog's sqlite file, the `warehouse` bucket and the generated files. The tables record absolute paths, so `run_shard.sh` gives every shard the same path for the generated files (`SDB_ICEBERG_DATA`, which the generators take as `ICEBERG_GENERATED_DIR`), and `data/generated` links to it. A shard that finds the archive restores it in seconds instead of running Spark; a local run outside `run_shard.sh` generates as before. The REST server always starts on an empty catalog, and the saved rows are copied into it once it is up: started on existing tables, Iceberg 1.10.1's JDBC catalog never closes the statement that found them, so one connection keeps a read lock and every write on the other fails with `SQLITE_BUSY` (fixed in Iceberg 1.11.0, for which no fixture image is published).
 
 The extension's tests outside the catalog directories run in batches like every suite. The catalog tests run as one unit, in upstream CI's order and with its `--order lex`: `catalog_test_config_setup` with upstream's `fixture.json`, then `catalog_custom_setup` (`FIXTURE_SERVER_AVAILABLE`). They share one REST catalog, its namespaces and its table names, so they run sequentially and in that order: some count the requests or namespaces an earlier test leaves behind. `http_proxy.test` reads the proxy's log from `third_party/duckdb_iceberg/mitmproxy.log`, which the fixture removes when it stops.
 

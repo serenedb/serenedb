@@ -62,6 +62,8 @@ def parse_args(argv):
                          "checking the submodule out when it is not")
     ap.add_argument("--biglake", action="store_true",
                     help="run the iceberg tests against Google BigLake (needs BIGLAKE_* env)")
+    ap.add_argument("--long-tests", action="store_true",
+                    help="also run the gtests too long for a PR run (SDB_LONG_TESTS)")
     ap.add_argument("--duckdb-suite", dest="duckdb_suites", action="append",
                     choices=duckdb.SUITES, help="DuckDB suite (repeatable; default: all)")
     ap.add_argument("--fuzz-seconds", type=float, default=300.0,
@@ -86,6 +88,8 @@ def parse_args(argv):
                     help="seconds the --repeat rounds may take")
     ap.add_argument("--only-changed", action="store_true",
                     help="run only the --changed units")
+    ap.add_argument("--postgres", choices=("all", "changed"),
+                    help="also run the postgres suite: all of it, or only its --changed tests")
     ap.add_argument("--expect-fail", action="store_true",
                     help="every unit must fail (a fix's tests against the build without it)")
     ap.add_argument("--list", action="store_true",
@@ -180,7 +184,12 @@ class ChangedTests:
         elif name.startswith("tests/sqllogic/"):
             self.scripts[os.path.realpath(ROOT / name)] = name
         elif name.startswith("tests/drivers/"):
-            for uid in DRIVER_DIRS.get(parts[2], (f"drivers:{parts[2]}",)):
+            uids = DRIVER_DIRS.get(parts[2])
+            if uids is None:
+                stem = parts[3].rsplit(".", 1)[0] if len(parts) == 4 else ""
+                uids = (f"drivers:{parts[2]}",
+                        f"drivers:{parts[2]}:{stem if stem.startswith('test_') else '*'}")
+            for uid in uids:
                 (self.globs if "*" in uid else self.ids)[uid].add(name)
         elif name.startswith("third_party/") and "/test/" in name and name.endswith(DUCKDB_TESTS):
             suite = DUCKDB_DIRS.get("/".join(parts[:2]))
@@ -196,7 +205,7 @@ class ChangedTests:
                 self.catch_cases[re.sub(r"\\(.)", r"\1", case)].add(name)
 
     def sources(self, uid):
-        found = set(self.ids.get(uid, ()))
+        found = set(self.ids.get(uid.partition("#")[0], ()))
         for glob, names in self.globs.items():
             if fnmatch.fnmatchcase(uid, glob):
                 found |= names
@@ -231,6 +240,11 @@ def changed_units(units, base, compiled=True):
     return picked, tests
 
 
+def keep_changed_postgres(units, changed):
+    picked = {u.id for u in changed}
+    return [u for u in units if u.suite != "postgres" or u.id in picked]
+
+
 def shard(units, index, count, startup=lambda fixture: 0.0):
     if count == 1:
         return units
@@ -252,6 +266,8 @@ def main(argv):
     args = parse_args(argv)
     budget_end = time.monotonic() + args.budget if args.budget else math.inf
     suites = args.suite or list(DEFAULT_SUITES)
+    if args.postgres and "postgres" not in suites:
+        suites = [*suites, "postgres"]
     if args.server and {"sqllogic", "postgres"} <= set(suites):
         raise SystemExit("--server serves either the sqllogic or the postgres suite, not both")
     if args.server and "recovery" in suites:
@@ -277,11 +293,14 @@ def main(argv):
     jobs = args.jobs or cpu_count()
     base_env = dict(os.environ)
     base_env["RESOURCES"] = str(ROOT / "resources")
+    if args.long_tests:
+        base_env["SDB_LONG_TESTS"] = "1"
     base_env["WORKSPACE"] = str(ROOT)
     if build.dir:
         base_env["BUILD_DIR"] = os.path.relpath(build.dir, ROOT)
         base_env["SERENED"] = str(build.bin("serened"))
         base_env["SDB_DRV_SERENED_BIN"] = str(build.bin("serened"))
+        base_env["SDB_FAULT_INJECTION"] = "1" if build.fault_injection else "0"
     base_env.setdefault("SDB_DOCKER_OWNER", f"test-py-{os.getpid()}")
     os.environ["SDB_DOCKER_OWNER"] = base_env["SDB_DOCKER_OWNER"]
     ctx = Context(root=ROOT, build=build, config=config, out_dir=out,
@@ -290,8 +309,8 @@ def main(argv):
                   base_env=base_env, budget_end=budget_end)
     skips = load_skips(ROOT, config.name)
     units = build_units(ctx, args, suites, skips)
-    if args.expect_fail and not args.changed:
-        raise SystemExit("--expect-fail needs --changed")
+    if (args.expect_fail or args.postgres == "changed") and not args.changed:
+        raise SystemExit("--expect-fail and --postgres changed need --changed")
     changed, changed_tests = (changed_units(units, args.changed, compiled=not args.expect_fail)
                               if args.changed else ([], set()))
     if args.expect_fail and not changed:
@@ -300,7 +319,9 @@ def main(argv):
                          "while gtest, DuckDB C++ and re2 tests are compiled into its binaries")
     if args.only_changed:
         units = changed
-    plan = hashlib.sha256("".join(sorted(f"{u.id}\t{u.cost!r}\n" for u in units)).encode()).hexdigest()
+    elif args.postgres == "changed":
+        units = keep_changed_postgres(units, changed)
+    plan =hashlib.sha256("".join(sorted(f"{u.id}\t{u.cost!r}\n" for u in units)).encode()).hexdigest()
     if args.plan and args.plan != plan:
         raise SystemExit(f"this shard planned other units than the build job (plan {plan[:12]}, "
                          f"not {args.plan[:12]}): the shards would run some units twice and others "

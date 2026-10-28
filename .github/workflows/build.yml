@@ -13,7 +13,7 @@ on:
         required: false
         default: "linux-amd64"
       TESTS:
-        description: "Plan the test shards for tests that follow the build"
+        description: "Test the build: this job runs a single shard itself, more go to test jobs"
         type: boolean
         required: false
         default: false
@@ -23,10 +23,15 @@ on:
         required: false
         default: ""
       BIGLAKE_TEST_ARGS:
-        description: "scripts/ci/test.py arguments of the biglake check: also plan its shards"
+        description: "scripts/ci/test.py arguments of the biglake check, a second test run on this build"
         type: string
         required: false
         default: ""
+      COVERAGE:
+        description: "Report the coverage of the change here when this job runs the tests itself"
+        type: boolean
+        required: false
+        default: false
       PR_SHA:
         description: "Commit SHA to check out (empty = workflow ref)"
         type: string
@@ -41,12 +46,15 @@ on:
       digest:
         description: "Input digest of the build"
         value: ${{ jobs.build.outputs.digest }}
+      remote:
+        description: "true when test jobs run the tests, on the bundle this job published"
+        value: ${{ jobs.build.outputs.remote }}
       shards:
-        description: "The test shards, as JSON"
+        description: "The names of the test runs the test jobs run, as JSON"
         value: ${{ jobs.build.outputs.shards }}
-      biglake_shards:
-        description: "The biglake check's shards, as JSON"
-        value: ${{ jobs.build.outputs.biglake_shards }}
+      runs:
+        description: "Each test run's shard, plan and check, by name, as JSON"
+        value: ${{ jobs.build.outputs.runs }}
 
 env:
   SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
@@ -60,11 +68,12 @@ jobs:
     name: build ${{ inputs.CONFIG }} (${{ inputs.LOCATION }})
     runs-on:
       - ${{ inputs.LOCATION }}
-    timeout-minutes: 300
+    timeout-minutes: 660
     outputs:
       digest: ${{ steps.build.outputs.digest }}
+      remote: ${{ steps.plan.outputs.remote }}
       shards: ${{ steps.plan.outputs.shards }}
-      biglake_shards: ${{ steps.plan.outputs.biglake_shards }}
+      runs: ${{ steps.plan.outputs.runs }}
     steps:
       - name: Reap containers left on this runner
         run: |
@@ -96,47 +105,95 @@ jobs:
           set -f
           ./scripts/ci/build_bundle.sh "${{ inputs.CONFIG }}" ${{ inputs.TEST_ARGS }}
 
-      - name: Plan the test shards
+      - name: Plan the tests, and publish the bundle when test jobs run them
         id: plan
         if: inputs.TESTS
         env:
           BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          LOCATION: ${{ inputs.LOCATION }}
         run: |
           set -f
           source scripts/ci/config.sh
           sdb_config "${{ inputs.CONFIG }}"
           python3 scripts/ci/ci.py timing --config "$CONFIG" --arch "$ARCH" --out out/timing.json
-          bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "${{ steps.build.outputs.digest }}")
+          bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "$DIGEST")
           plan() {
             docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
               -v "$PWD:$PWD" -w "$PWD" -v "$bundle:$bundle" "$BUILD_IMAGE" \
               python3 scripts/ci/ci.py shards --build-dir "$bundle" --config "$CONFIG" \
-                --timing out/timing.json --cpus "$(nproc)" -- "$@"
+                --timing out/timing.json --cpus "$(nproc)" "$@"
           }
-          shards=$(plan ${{ inputs.TEST_ARGS }})
-          echo "shards=$shards" >> "$GITHUB_OUTPUT"
-          echo "shards: $shards"
+          lists=("$(plan -- ${{ inputs.TEST_ARGS }})")
           if [[ -n "$BIGLAKE_TEST_ARGS" ]]; then
             read -ra biglake_args <<< "$BIGLAKE_TEST_ARGS"
-            shards=$(plan "${biglake_args[@]}")
-            echo "biglake_shards=$shards" >> "$GITHUB_OUTPUT"
-            echo "biglake shards: $shards"
+            lists+=("$(plan --check biglake -- "${biglake_args[@]}")")
+          fi
+          python3 scripts/ci/ci.py runs "${lists[@]}" --tsv out/runs.tsv | tee -a "$GITHUB_OUTPUT" out/runs.env
+          if grep -qx remote=true out/runs.env; then
+            python3 scripts/ci/ci.py publish --config "$CONFIG" --arch "$ARCH" --digest "$DIGEST"
+            python3 scripts/ci/ci.py upload out/timing.json "artifacts/timing-$CONFIG-$LOCATION/$SDB_RUN_ID/timing.json"
           fi
 
-      - name: Keep the timing snapshot for the shards
-        if: inputs.TESTS
+      - name: Run the tests
+        id: tests
+        if: steps.plan.outputs.remote == 'false'
+        env:
+          COVERAGE: ${{ inputs.COVERAGE }}
+          BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
+          SEARCHBENCH_S3_KEY_ID: ${{ secrets.SEARCHBENCH_S3_KEY_ID }}
+          SEARCHBENCH_S3_SECRET: ${{ secrets.SEARCHBENCH_S3_SECRET }}
+          BIGLAKE_PROJECT: ${{ secrets.BIGLAKE_PROJECT }}
+          BIGLAKE_CATALOG: ${{ secrets.BIGLAKE_CATALOG }}
+          BIGLAKE_CLIENT_EMAIL: ${{ secrets.BIGLAKE_CLIENT_EMAIL }}
+          BIGLAKE_PRIVATE_KEY: ${{ secrets.BIGLAKE_PRIVATE_KEY }}
+          BIGLAKE_PRIVATE_KEY_ID: ${{ secrets.BIGLAKE_PRIVATE_KEY_ID }}
+        run: |
+          set -f
+          read -ra biglake_args <<< "$BIGLAKE_TEST_ARGS"
+          rc=0
+          while IFS=$'\t' read -r name spec plan check; do
+            if [[ "$check" == biglake ]]; then
+              args=("${biglake_args[@]}")
+            else
+              args=(${{ inputs.TEST_ARGS }})
+            fi
+            echo "::group::$name"
+            SDB_CHECK="$check" ./scripts/ci/run_shard.sh "${{ inputs.CONFIG }}" "${{ steps.build.outputs.digest }}" \
+              "$spec" out/timing.json --budget 19800 --plan "$plan" "${args[@]}" || rc=1
+            echo "::endgroup::"
+          done < out/runs.tsv
+          if [[ "$COVERAGE" == true ]]; then
+            python3 scripts/ci/ci.py coverage-report --config "${{ inputs.CONFIG }}" \
+              --digest "${{ steps.build.outputs.digest }}" --run "$SDB_RUN_ID" --base origin/main --shards 1 || rc=1
+            cat out/coverage-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          fi
+          cat out/test-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          exit $rc
+
+      - name: Upload the results
+        if: ${{ always() && steps.tests.conclusion != 'skipped' }}
         uses: actions/upload-artifact@v7
         with:
-          name: timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: out/timing.json
-          retention-days: 3
+          name: results-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
+          path: |
+            out/test-*/results.jsonl
+            out/test-*/summary.txt
+            out/test-*/meta.json
+            out/coverage-*/summary.txt
+            out/coverage-*/coverage.json
+          if-no-files-found: ignore
+          retention-days: 14
 
-      - name: Upload the build logs
+      - name: Upload what failed
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: build-logs-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: out/logs/
+          name: failure-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
+          path: |
+            out/failure-*.tar.zst
+            out/logs/
+          if-no-files-found: ignore
           retention-days: 14
 
       - name: Reap containers of this job

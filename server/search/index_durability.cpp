@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -35,7 +36,6 @@
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -51,6 +51,19 @@ constexpr duckdb::field_id_t kFieldWalGeneration = 1;
 constexpr duckdb::field_id_t kFieldWalOffset = 2;
 constexpr duckdb::field_id_t kFieldManifest = 3;
 constexpr duckdb::field_id_t kFieldCheckpoint = 4;
+
+std::unique_lock<absl::Mutex> LockRefresh(absl::Mutex& mutex) {
+#ifdef SDB_FAULT_INJECTION
+  std::unique_lock lock{mutex, std::try_to_lock};
+  if (!lock.owns_lock()) {
+    SDB_PARK_ONCE_ON_FAILURE("pause_index_refresh_lock_wait");
+    lock.lock();
+  }
+  return lock;
+#else
+  return std::unique_lock{mutex};
+#endif
+}
 
 duckdb::shared_ptr<duckdb::AttachedDatabase> AttachedDatabaseById(
   duckdb::idx_t id) {
@@ -292,14 +305,14 @@ void IndexDurability::ReplaceSegments(
   std::span<const std::string_view> adopted_metas,
   absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
     removal_provider) {
-  std::unique_lock lock{_refresh_mutex};
+  auto lock = LockRefresh(_refresh_mutex);
   AwaitPendingSave(lock, writer);
   writer.ReplaceSegments(replaced, adopted_metas, removal_provider);
 }
 
 void IndexDurability::Clear(irs::IndexWriter& writer,
                             const irs::SourcePosition& position) {
-  absl::MutexLock lock{&_refresh_mutex};
+  const auto lock = LockRefresh(_refresh_mutex);
   SDB_ASSERT(_pending_checkpoint == 0);
   writer.Clear(position);
   MarkPublished();

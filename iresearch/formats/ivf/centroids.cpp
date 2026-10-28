@@ -428,7 +428,10 @@ void IVFHeader::Serialize(IndexOutput& out) const {
   out.WriteU32(d);
 }
 
-CentroidsTree CentroidsTree::Deserialize(IndexInput& in, uint64_t byte_size) {
+CentroidsTree CentroidsTree::Deserialize(IndexInput& in,
+                                         uint64_t root_byte_size) {
+  const uint64_t start = in.Position();
+  in.Prefetch(start, root_byte_size);
   auto head = IVFHeader::Deserialize(in);
   const size_t level = static_cast<size_t>(in.ReadI64());
   const size_t n_total_pos = static_cast<size_t>(in.Position());
@@ -437,6 +440,7 @@ CentroidsTree CentroidsTree::Deserialize(IndexInput& in, uint64_t byte_size) {
   auto nodes = CentroidsNode::Deserialize(in, level, head.d, {0}, {n_total});
   auto node = std::move(nodes.front());
   const size_t next_level_offset = static_cast<size_t>(in.Position());
+  in.Evict(start, root_byte_size);
   return {std::move(head), std::move(node), next_level_offset};
 }
 
@@ -553,10 +557,14 @@ CentroidsBuilder CentroidsBuilder::CreateFromSample(
 CentroidsSpan CentroidsBuilder::Serialize(IndexOutput& out) const {
   const IVFHeader head{.metric = _metric, .d = _d};
   const size_t offset = static_cast<size_t>(out.Position());
+  size_t root_end = 0;
   const auto span = [&] {
+    const auto end = static_cast<size_t>(out.Position());
     return CentroidsSpan{
       .offset = offset,
-      .byte_size = static_cast<size_t>(out.Position()) - offset};
+      .byte_size = end - offset,
+      .root_byte_size = (root_end != 0 ? root_end : end) - offset,
+    };
   };
   head.Serialize(out);
   if (_nodes.empty()) {
@@ -595,6 +603,9 @@ CentroidsSpan CentroidsBuilder::Serialize(IndexOutput& out) const {
   out.WriteU64(layers.size() - 1);
   std::vector<size_t> offsets;
   for (size_t p = 0; p < layers.size(); ++p) {
+    if (p == 1) {
+      root_end = static_cast<size_t>(out.Position());
+    }
     const auto& layer = layers[p];
     out.WriteU64(layer.rows);
     LayerLayout::PadBody(out);

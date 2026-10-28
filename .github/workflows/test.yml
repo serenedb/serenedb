@@ -7,11 +7,6 @@ on:
         description: "perf, dev, asan, tsan or msan (scripts/ci/config.sh)"
         type: string
         required: true
-      NAME:
-        description: "A second test run on CONFIG's build (biglake): names its artifacts and results"
-        type: string
-        required: false
-        default: ""
       LOCATION:
         description: "Runner label"
         type: string
@@ -22,11 +17,20 @@ on:
         type: string
         required: true
       SHARDS:
-        description: "The test shards the build planned, as JSON"
+        description: "The names of the test runs, as JSON"
+        type: string
+        required: true
+      RUNS:
+        description: "Each test run's shard, plan and check, by name, as JSON"
         type: string
         required: true
       TEST_ARGS:
         description: "Extra scripts/ci/test.py arguments (suite selection, budgets)"
+        type: string
+        required: false
+        default: ""
+      BIGLAKE_TEST_ARGS:
+        description: "scripts/ci/test.py arguments of the biglake check's runs"
         type: string
         required: false
         default: ""
@@ -50,9 +54,10 @@ env:
 
 jobs:
   test:
-    name: test ${{ inputs.CONFIG }} ${{ matrix.shard.name }} (${{ inputs.LOCATION }})
+    name: test ${{ inputs.CONFIG }} ${{ matrix.shard }} (${{ inputs.LOCATION }})
     runs-on:
       - ${{ inputs.LOCATION }}
+      - lan
     timeout-minutes: 360
     strategy:
       fail-fast: false
@@ -83,15 +88,12 @@ jobs:
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
           git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
 
-      - name: Fetch the timing snapshot
-        uses: actions/download-artifact@v8
-        with:
-          name: timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: out
-
       - name: Run the shard
         env:
-          SDB_CHECK: ${{ inputs.NAME }}
+          SDB_CHECK: ${{ fromJSON(inputs.RUNS)[matrix.shard].check }}
+          SPEC: ${{ fromJSON(inputs.RUNS)[matrix.shard].spec }}
+          PLAN: ${{ fromJSON(inputs.RUNS)[matrix.shard].plan }}
+          BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
           SEARCHBENCH_S3_KEY_ID: ${{ secrets.SEARCHBENCH_S3_KEY_ID }}
           SEARCHBENCH_S3_SECRET: ${{ secrets.SEARCHBENCH_S3_SECRET }}
           BIGLAKE_PROJECT: ${{ secrets.BIGLAKE_PROJECT }}
@@ -101,19 +103,24 @@ jobs:
           BIGLAKE_PRIVATE_KEY_ID: ${{ secrets.BIGLAKE_PRIVATE_KEY_ID }}
         run: |
           set -f
-          ./scripts/ci/run_shard.sh "${{ inputs.CONFIG }}" "${{ inputs.DIGEST }}" \
-            "${{ matrix.shard.spec }}" out/timing.json --budget 19800 --plan "${{ matrix.shard.plan }}" \
-            ${{ inputs.TEST_ARGS }}
-
-      - name: Summary
-        if: always()
-        run: cat out/test-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          python3 scripts/ci/ci.py download "artifacts/timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}" \
+            "$SDB_RUN_ID" timing out >/dev/null
+          if [[ "$SDB_CHECK" == biglake ]]; then
+            read -ra args <<< "$BIGLAKE_TEST_ARGS"
+          else
+            args=(${{ inputs.TEST_ARGS }})
+          fi
+          rc=0
+          ./scripts/ci/run_shard.sh "${{ inputs.CONFIG }}" "${{ inputs.DIGEST }}" "$SPEC" out/timing.json \
+            --budget 19800 --plan "$PLAN" "${args[@]}" || rc=$?
+          cat out/test-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          exit $rc
 
       - name: Upload the results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: results-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ matrix.shard.name }}
+          name: results-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ matrix.shard }}
           path: |
             out/test-*/results.jsonl
             out/test-*/summary.txt
@@ -125,7 +132,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: failure-${{ inputs.NAME || inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ matrix.shard.name }}
+          name: failure-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}-${{ matrix.shard }}
           path: out/failure-*.tar.zst
           if-no-files-found: ignore
           retention-days: 14

@@ -73,9 +73,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       test_args: ${{ steps.select.outputs.test_args }}
+      perf_test_args: ${{ steps.select.outputs.perf_test_args }}
       sanitizer_test_args: ${{ steps.select.outputs.sanitizer_test_args }}
-      pg: ${{ steps.classify.outputs.pg }}
-      everything: ${{ steps.classify.outputs.everything }}
+      images: ${{ steps.images.outputs.images }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -88,9 +88,18 @@ jobs:
         run: python3 scripts/ci/ci.py wait-check --repo "${{ github.repository }}" --sha "${{ inputs.PR_SHA }}" --name pre-commit
       - id: classify
         run: ./scripts/ci/classify-changes.sh origin/main
+      - name: Find the images the registry lacks
+        id: images
+        working-directory: ./scripts/ci
+        run: |
+          images=$(./build_images.sh missing | paste -sd' ')
+          echo "images=$images" >> "$GITHUB_OUTPUT"
+          echo "missing: ${images:-none}"
       - id: select
         env:
           EVERYTHING: ${{ inputs.EVERYTHING }}
+          ALL_SUITES: ${{ steps.classify.outputs.everything }}
+          PG: ${{ steps.classify.outputs.pg }}
           IRESEARCH: ${{ steps.classify.outputs.iresearch }}
           RE2: ${{ steps.classify.outputs.re2 }}
           DUCKDB_SUITES: ${{ steps.classify.outputs.duckdb_suites }}
@@ -112,11 +121,21 @@ jobs:
           if ((runs > 1)); then
             flaky="--changed origin/main --repeat $((runs - 1))"
           fi
-          echo "test_args=$(python3 scripts/ci/ci.py select-suites "${args[@]}") $flaky" >> "$GITHUB_OUTPUT"
-          echo "sanitizer_test_args=$(python3 scripts/ci/ci.py select-suites "${sanitizer[@]}") $flaky" >> "$GITHUB_OUTPUT"
+          perf=("${args[@]}")
+          if [[ "$EVERYTHING" == true || "$ALL_SUITES" == true ]]; then
+            perf+=(--postgres all)
+          elif [[ "$PG" == true ]]; then
+            perf+=(--postgres changed)
+          fi
+          {
+            echo "test_args=$(python3 scripts/ci/ci.py select-suites "${args[@]}") $flaky"
+            echo "perf_test_args=$(python3 scripts/ci/ci.py select-suites "${perf[@]}") $flaky"
+            echo "sanitizer_test_args=$(python3 scripts/ci/ci.py select-suites "${sanitizer[@]}") $flaky"
+          } >> "$GITHUB_OUTPUT"
 
   image:
     needs: prepare
+    if: needs.prepare.outputs.images != ''
     uses: ./.github/workflows/build-images.yml
     with:
       REF: ${{ inputs.PR_SHA || github.sha }}
@@ -124,29 +143,31 @@ jobs:
 
   perf:
     needs: [prepare, image]
-    if: inputs.LOCATION != 'dev-only'
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.LOCATION != 'dev-only' }}
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: perf
-      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+      TEST_ARGS: ${{ needs.prepare.outputs.perf_test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit
 
   dev:
     needs: [prepare, image]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' }}
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: dev
       TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
       BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE && '--biglake --suite sqllogic --suite recovery --suite stress --stress-profile biglake-reindex-smoke' || '' }}
+      COVERAGE: true
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit
 
   asan:
     needs: [prepare, image]
-    if: inputs.LOCATION != 'dev-only'
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.LOCATION != 'dev-only' }}
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: asan
@@ -157,7 +178,7 @@ jobs:
 
   tsan:
     needs: [prepare, image]
-    if: inputs.LOCATION != 'dev-only'
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.LOCATION != 'dev-only' }}
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: tsan
@@ -168,7 +189,7 @@ jobs:
 
   msan:
     needs: [prepare, image]
-    if: inputs.LOCATION != 'dev-only'
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.LOCATION != 'dev-only' }}
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: msan
@@ -179,7 +200,7 @@ jobs:
 
   perf-arm64:
     needs: [prepare, image]
-    if: inputs.LOCATION != 'dev-only'
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.LOCATION != 'dev-only' }}
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: perf
@@ -192,7 +213,7 @@ jobs:
 
   dev-arm64:
     needs: [prepare, image]
-    if: inputs.LOCATION != 'dev-only'
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.LOCATION != 'dev-only' }}
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: dev
@@ -206,9 +227,10 @@ jobs:
   coverage:
     name: coverage dev (linux-amd64)
     needs: dev
-    if: ${{ !cancelled() && needs.dev.outputs.digest != '' }}
+    if: ${{ !cancelled() && needs.dev.outputs.remote == 'true' }}
     runs-on:
       - linux-amd64
+      - lan
     timeout-minutes: 60
     env:
       SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
@@ -233,11 +255,11 @@ jobs:
 
       - name: Coverage of the change
         env:
-          SHARDS: ${{ needs.dev.outputs.shards }}
+          RUNS: ${{ needs.dev.outputs.runs }}
         run: |
           python3 scripts/ci/ci.py coverage-report --config dev --digest "${{ needs.dev.outputs.digest }}" \
             --run "$SDB_RUN_ID" --base origin/main \
-            --shards "$(python3 -c 'import json, os; print(len(json.loads(os.environ["SHARDS"])))')"
+            --shards "$(python3 -c 'import json, os; print(sum(not r["check"] for r in json.loads(os.environ["RUNS"]).values()))')"
           cat out/coverage-*/summary.txt >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the coverage
@@ -254,7 +276,7 @@ jobs:
   bugfix:
     name: bugfix check
     needs: [prepare, image]
-    if: inputs.BUGFIX && inputs.LOCATION != 'dev-only'
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.BUGFIX && inputs.LOCATION != 'dev-only' }}
     runs-on:
       - linux-amd64
     timeout-minutes: 240
@@ -301,22 +323,9 @@ jobs:
         if: always()
         run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"
 
-  validate-pg:
-    name: validate pg
-    needs: [prepare, image]
-    if: inputs.LOCATION != 'dev-only' && (inputs.EVERYTHING || needs.prepare.outputs.pg == 'true')
-    uses: ./.github/workflows/validate-pg-tests.yml
-    with:
-      LOCATION: linux-amd64
-      PR_SHA: ${{ inputs.PR_SHA }}
-      PR_NUMBER: ${{ inputs.PR_NUMBER }}
-      CHANGED: ${{ !inputs.EVERYTHING && needs.prepare.outputs.everything != 'true' }}
-      CORPUS: ${{ inputs.CORPUS }}
-    secrets: inherit
-
   report:
     name: Report Status
-    needs: [prepare, image, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, coverage, bugfix, validate-pg]
+    needs: [prepare, image, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, coverage, bugfix]
     if: always()
     runs-on: ubuntu-latest
     steps:

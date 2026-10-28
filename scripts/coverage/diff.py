@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import functools
 import json
 import re
 import subprocess
@@ -10,6 +11,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = re.compile(r"\.(c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|tpp|inc)$")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+ASSERTIONS = {"SDB_ASSERT", "SDB_VERIFY", "SDB_ENSURE", "SDB_UNREACHABLE", "D_ASSERT", "D_ASSERT_V",
+              "ALWAYS_ASSERT", "DUCKDB_DEBUG_VERIFY_GUARD", "DUCKDB_DEBUG_VERIFY_ENABLED"}
+UNREACHABLE = re.compile(r"\b(?:SDB_UNREACHABLE|std::unreachable|(?:std::)?abort)\(\)")
+IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+CODE, EXPANSION, MCDC_BRANCH = 0, 1, 6
 
 
 def is_test(path):
@@ -153,8 +159,7 @@ def parse_json(text):
     files = {}
     data = json.loads(text)["data"][0]
     for f in data["files"]:
-        files[f["filename"]] = {"mcdc": f.get("mcdc_records", []), "branches": f["branches"],
-                                "functions": []}
+        files[f["filename"]] = {"mcdc": {}, "functions": [], "excluded": set(), "code": []}
     names = demangle(sorted({fn["name"] for fn in data["functions"]}))
     for fn in data["functions"]:
         if not fn["regions"] or not fn["filenames"]:
@@ -164,7 +169,86 @@ def parse_json(text):
         if entry is not None:
             entry["functions"].append((body[0], body[2], names.get(fn["name"], fn["name"]),
                                        fn["name"]))
+        exclude_assertions(fn, files)
+        collect_mcdc(fn, files)
     return files
+
+
+def macro_at(path, line, column):
+    found = IDENTIFIER.match(source_text(path, line), column - 1)
+    return found.group(0) if found else ""
+
+
+def exclude_assertions(fn, files):
+    paths, regions = fn["filenames"], fn["regions"]
+    for r in regions:
+        entry = files.get(paths[r[5]])
+        if r[7] == CODE and entry is not None:
+            entry["code"].append(r)
+        if r[7] != EXPANSION:
+            continue
+        macro = macro_at(paths[r[5]], r[0], r[1])
+        if macro not in ASSERTIONS:
+            continue
+        expanded = {r[6]}
+        while nested := {e[6] for e in regions if e[7] == EXPANSION and e[5] in expanded} - expanded:
+            expanded |= nested
+        for e in regions:
+            if e[5] in expanded and paths[e[5]] in files:
+                files[paths[e[5]]]["excluded"].update(range(e[0], e[2] + 1))
+        if entry is None:
+            continue
+        entry["excluded"].update(range(r[0], r[2] + 1))
+        guarded = macro == "DUCKDB_DEBUG_VERIFY_GUARD" or (
+            macro == "DUCKDB_DEBUG_VERIFY_ENABLED"
+            and re.search(r"\bif\s*\(\s*$", source_text(paths[r[5]], r[0])[:r[1] - 1]))
+        after = [c for c in regions if c[7] == CODE and c[5] == r[5] and (c[0], c[1]) >= (r[2], r[3])]
+        if guarded and after:
+            block = min(after, key=lambda c: (c[0], c[1]))
+            if block[0] <= r[2] + 1:
+                entry["excluded"].update(range(block[0], block[2] + 1))
+
+
+def collect_mcdc(fn, files):
+    paths = fn["filenames"]
+    parents = {r[6]: r for r in fn["regions"] if r[7] == EXPANSION}
+    for record in fn.get("mcdc_records", []):
+        site, file_id, macros = None, record[6], []
+        while file_id in parents:
+            site = parents[file_id]
+            file_id = site[5]
+            macros.append(macro_at(paths[file_id], site[0], site[1]))
+        entry = files.get(paths[file_id])
+        if entry is None or ASSERTIONS.intersection(macros):
+            continue
+        key = (tuple(site[:4]) if site else None, tuple(record[:4]))
+        seen = entry["mcdc"].get(key)
+        if seen:
+            seen["shown"] = [a or b for a, b in zip(seen["shown"], record[9])]
+            seen["vectors"] += record[10]
+            continue
+        conditions = sorted(b for b in fn["branches"]
+                            if b[8] == MCDC_BRANCH and b[6] == record[6]
+                            and (record[0], record[1]) <= (b[0], b[1])
+                            and (b[2], b[3]) <= (record[2], record[3]))
+        entry["mcdc"][key] = {"decision": record[:4], "site": site[:4] if site else None,
+                              "conditions": conditions, "shown": list(record[9]),
+                              "vectors": list(record[10])}
+
+
+def unreachable(path, touched, code):
+    lines = set()
+    for no in touched:
+        for found in UNREACHABLE.finditer(source_text(path, no)):
+            point = (no, found.start() + 1)
+            inside = [c for c in code if (c[0], c[1]) <= point <= (c[2], c[3])]
+            if not inside:
+                continue
+            size = min((c[2] - c[0], c[3] - c[1]) for c in inside)
+            innermost = [c for c in inside if (c[2] - c[0], c[3] - c[1]) == size]
+            if all(c[4] == 0 for c in innermost):
+                lines.update(range(innermost[0][0], innermost[0][2] + 1))
+    return lines
 
 
 def enclosing(functions, no):
@@ -179,13 +263,6 @@ def snippet(path, line_start, col_start, line_end, col_end):
     return text[col_start - 1:]
 
 
-def mcdc_conditions(record, branches):
-    start, end = (record[0], record[1]), (record[2], record[3])
-    inside = sorted(b for b in branches
-                    if b[8] == 6 and start <= (b[0], b[1]) and (b[2], b[3]) <= end)
-    return inside
-
-
 def normalize(path):
     p = Path(path)
     if p.is_absolute():
@@ -196,15 +273,22 @@ def normalize(path):
     return str(Path(*[part for part in p.parts if part != "."]))
 
 
-def source_line(path, no):
+@functools.cache
+def source_lines(path):
     try:
         with open(ROOT / path, errors="replace") as fh:
-            for i, text in enumerate(fh, 1):
-                if i == no:
-                    return text.rstrip("\n")[:200]
+            return fh.read().splitlines()
     except OSError:
-        pass
-    return ""
+        return []
+
+
+def source_text(path, no):
+    lines = source_lines(path)
+    return lines[no - 1] if 0 < no <= len(lines) else ""
+
+
+def source_line(path, no):
+    return source_text(path, no)[:200]
 
 
 def ranges(numbers):
@@ -215,6 +299,59 @@ def ranges(numbers):
         else:
             out.append([n, n])
     return ",".join(f"{a}-{b}" if a != b else f"{a}" for a, b in out)
+
+
+def cover(path, touched, data, spans, summary, details):
+    skipped = spans["excluded"] | unreachable(path, touched, spans["code"])
+    touched = touched - skipped
+    missed = []
+    for no in sorted(touched & set(data["lines"])):
+        summary["lines"][1] += 1
+        if data["lines"][no] > 0:
+            summary["lines"][0] += 1
+        else:
+            missed.append(no)
+            details.append({"kind": "line", "file": path, "line": no,
+                            "function": enclosing(spans["functions"], no),
+                            "source": source_line(path, no)})
+    for no in sorted(touched & set(data["branches"])):
+        for idx, taken in enumerate(data["branches"][no]):
+            summary["branches"][1] += 1
+            if taken > 0:
+                summary["branches"][0] += 1
+            else:
+                details.append({"kind": "branch", "file": path, "line": no,
+                                "direction": "true" if idx % 2 == 0 else "false",
+                                "function": enclosing(spans["functions"], no),
+                                "source": source_line(path, no)})
+    for name, (start, count) in data["functions"].items():
+        if start in touched:
+            summary["functions"][1] += 1
+            if count > 0:
+                summary["functions"][0] += 1
+            else:
+                details.append({"kind": "function", "file": path, "line": start,
+                                "function": enclosing(spans["functions"], start) or name,
+                                "source": source_line(path, start)})
+    for m in spans["mcdc"].values():
+        decision = m["site"] or m["decision"]
+        if decision[0] in skipped or not touched & set(range(decision[0], decision[2] + 1)):
+            continue
+        for idx, shown in enumerate(m["shown"]):
+            summary["mcdc"][1] += 1
+            if shown:
+                summary["mcdc"][0] += 1
+                continue
+            where = m["site"] or (m["conditions"][idx] if idx < len(m["conditions"]) else decision)
+            details.append({
+                "kind": "mcdc", "file": path, "line": where[0], "column": where[1],
+                "condition": idx + 1,
+                "condition_source": snippet(path, *where[:4]),
+                "decision_source": snippet(path, *decision),
+                "function": enclosing(spans["functions"], decision[0]),
+                "test_vectors": [v for v in m["vectors"] if v.get("executed")],
+            })
+    return missed
 
 
 def main():
@@ -251,62 +388,11 @@ def main():
                                                                   reported)).items()}
         for path in sorted(reported):
             data = report.get(path)
-            if not data:
-                continue
-            spans = regions.get(path, {"mcdc": [], "branches": [], "functions": []})
-            touched = changed[path]
-            missed = []
-            for no in sorted(touched & set(data["lines"])):
-                summary["lines"][1] += 1
-                if data["lines"][no] > 0:
-                    summary["lines"][0] += 1
-                else:
-                    missed.append(no)
-                    details.append({"kind": "line", "file": path, "line": no,
-                                    "function": enclosing(spans["functions"], no),
-                                    "source": source_line(path, no)})
-            for no in sorted(touched & set(data["branches"])):
-                for idx, taken in enumerate(data["branches"][no]):
-                    summary["branches"][1] += 1
-                    if taken > 0:
-                        summary["branches"][0] += 1
-                    else:
-                        details.append({"kind": "branch", "file": path, "line": no,
-                                        "direction": "true" if idx % 2 == 0 else "false",
-                                        "function": enclosing(spans["functions"], no),
-                                        "source": source_line(path, no)})
-            for name, (start, count) in data["functions"].items():
-                if start in touched:
-                    summary["functions"][1] += 1
-                    if count > 0:
-                        summary["functions"][0] += 1
-                    else:
-                        details.append({"kind": "function", "file": path, "line": start,
-                                        "function": enclosing(spans["functions"], start) or name,
-                                        "source": source_line(path, start)})
-            seen = set()
-            for record in spans["mcdc"]:
-                decision = tuple(record[:4])
-                if decision in seen or not touched & set(range(record[0], record[2] + 1)):
-                    continue
-                seen.add(decision)
-                conditions = mcdc_conditions(record, spans["branches"])
-                for idx, shown in enumerate(record[9]):
-                    summary["mcdc"][1] += 1
-                    if shown:
-                        summary["mcdc"][0] += 1
-                        continue
-                    where = conditions[idx] if idx < len(conditions) else decision
-                    details.append({
-                        "kind": "mcdc", "file": path, "line": where[0], "column": where[1],
-                        "condition": idx + 1,
-                        "condition_source": snippet(path, *where[:4]),
-                        "decision_source": snippet(path, *decision),
-                        "function": enclosing(spans["functions"], record[0]),
-                        "test_vectors": [v for v in record[10] if v.get("executed")],
-                    })
-            if missed:
-                uncovered_ranges[path] = ranges(missed)
+            if data:
+                spans = regions.get(path, {"mcdc": {}, "functions": [], "excluded": set(), "code": []})
+                missed = cover(path, changed[path], data, spans, summary, details)
+                if missed:
+                    uncovered_ranges[path] = ranges(missed)
     text = (f"{args.label}: lines {summary['lines'][0]}/{summary['lines'][1]}, "
             f"functions {summary['functions'][0]}/{summary['functions'][1]}, "
             f"branches {summary['branches'][0]}/{summary['branches'][1]}, "

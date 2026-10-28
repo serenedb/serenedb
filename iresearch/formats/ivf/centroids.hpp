@@ -154,7 +154,7 @@ class CentroidsTree {
   CentroidsTree& operator=(const CentroidsTree&) = delete;
   CentroidsTree& operator=(CentroidsTree&&) = default;
 
-  static CentroidsTree Deserialize(IndexInput& in, uint64_t byte_size);
+  static CentroidsTree Deserialize(IndexInput& in, uint64_t root_byte_size);
 
   void Search(std::span<const float> query, IndexInput& in, uint32_t nprobe,
               std::vector<uint32_t>& out_ids, std::vector<float>* out_centroids,
@@ -166,11 +166,7 @@ class CentroidsTree {
   size_t Levels() const noexcept { return _root.level + 1; }
   size_t RootSize() const noexcept { return _root.size; }
 
-  void SetQuantStatsLocation(uint64_t offset, uint64_t byte_size) noexcept {
-    _stats_offset = offset;
-    _stats_byte_size = byte_size;
-  }
-  bool HasQuantStats() const noexcept { return _stats_byte_size != 0; }
+  void SetQuantStatsOffset(uint64_t offset) noexcept { _stats_offset = offset; }
   uint64_t QuantStatsOffset() const noexcept { return _stats_offset; }
 
  private:
@@ -178,12 +174,12 @@ class CentroidsTree {
   CentroidsNode _root;
   size_t _next_level_offset;
   uint64_t _stats_offset = 0;
-  uint64_t _stats_byte_size = 0;
 };
 
 struct CentroidsSpan {
   size_t offset = 0;
   size_t byte_size = 0;
+  size_t root_byte_size = 0;
 };
 
 struct AssignedCentroids {

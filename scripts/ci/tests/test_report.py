@@ -76,10 +76,21 @@ def test_a_failed_job_is_listed_only_when_its_test_lines_do_not_show_it():
 
 
 def test_a_failed_job_finds_its_arm64_and_check_results():
-    needs = {"perf-arm64": {"result": "failure"}, "validate-pg": {"result": "failure"},
+    needs = {"perf-arm64": {"result": "failure"}, "bugfix": {"result": "failure"},
              "tsan": {"result": "failure"}}
-    body, _ = report.build_report([shard("perf", "aarch64"), shard("perf", "x86_64", "pg")],
-                                  [unit("perf", "failed", "aarch64"), unit("perf", "failed", "x86_64", "pg")],
+    body, _ = report.build_report([shard("perf", "aarch64"), shard("dev", "x86_64", "bugfix")],
+                                  [unit("perf", "failed", "aarch64"), unit("dev", "failed", "x86_64", "bugfix")],
                                   needs, "https://example.com/runs/1")
-    assert "**perf-arm64**" not in body and "**validate-pg**" not in body
+    assert "**perf-arm64**" not in body and "**bugfix**" not in body
     assert "- ❌ **tsan**: failure before any test result" in body
+
+
+def test_the_coverage_comes_from_the_coverage_job_or_the_dev_results_and_never_a_test_summary(tmp_path):
+    results = tmp_path / "results" / "results-dev-linux-amd64"
+    (results / "test-dev-1of1").mkdir(parents=True)
+    (results / "test-dev-1of1" / "summary.txt").write_text("dev/x86_64 shard 1/1: 9 passed")
+    (results / "coverage-dev").mkdir()
+    (results / "coverage-dev" / "summary.txt").write_text("coverage dev/x86_64: 90% lines")
+    (results / "coverage-dev" / "coverage.json").write_text('{"uncovered": [{"kind": "line"}]}')
+    found = report.load_coverage("", str(tmp_path / "results"))
+    assert found == [{"summary": "coverage dev/x86_64: 90% lines", "uncovered": [{"kind": "line"}]}]

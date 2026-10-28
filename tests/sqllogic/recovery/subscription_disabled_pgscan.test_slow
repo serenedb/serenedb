@@ -77,7 +77,7 @@ connection after_crash
 statement ok
 CALL postgres_execute('rdis_${__DATABASE__}', 'INSERT INTO rsub_dis_rows SELECT g FROM generate_series(1, 100) g');
 
-sleep 2s
+sleep 1s
 
 onlyif serenedb
 connection after_crash

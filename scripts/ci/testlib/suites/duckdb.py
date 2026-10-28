@@ -1,17 +1,20 @@
+import hashlib
 import json
 import os
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import time
 import urllib.request
+from contextlib import closing
 from pathlib import Path
 
 import services
 from serened import reserve_port
 
-from .. import reports
+from .. import reports, store
 from ..scheduler import CRASHED, FAILED, PASSED, SKIPPED, STUCK, Fixture, Outcome, Unit
 from . import BELOW_RESOLUTION, Skip, plan, skipped
 
@@ -29,6 +32,7 @@ CORE_SERIAL = (
     "test/sql/storage/concurrent_checkpoint_index_in_memory.test_slow",
     "test/sql/storage/concurrent_checkpoint_writes_mid_write.test_slow",
 )
+ICEBERG_CATALOG = "iceberg_catalog.db"
 ICEBERG_SETUP = "test/sql/local/catalog_test_config_setup/"
 ICEBERG_CUSTOM = (
     "test/sql/local/catalog_custom_setup/",
@@ -390,10 +394,13 @@ def _iceberg_special(ctx, skips, tests):
     uid = "duckdb:iceberg:catalog"
     if not steps or skipped(skips, uid):
         return []
-    cost, timeout = plan(ctx, uid, 120.0)
+    members = tuple(f"duckdb:iceberg:{key}" for _, step, _, _ in steps for _, key in step)
+    planned = [plan(ctx, member, 0.5) for member in members]
+    cost = sum(c for c, _ in planned)
+    timeout = max(ctx.timeout_floor, 5 * cost + 60 * ctx.config.slowdown, max(t for _, t in planned))
     return [Unit(uid, "duckdb", _ordered_run(ctx, steps), cpus=2, mem_gb=4.0,
                  fixtures=("duckdb:iceberg", "duckdb:proxies"), cost=cost, timeout=timeout,
-                 members=tuple(f"duckdb:iceberg:{key}" for _, step, _, _ in steps for _, key in step))]
+                 members=members)]
 
 
 def _ordered_run(ctx, steps):
@@ -519,6 +526,8 @@ class PostgresFixture(_DockerFixture):
 S3_HOSTS = ("duckdb-minio.com", "test-bucket.duckdb-minio.com", "test-bucket-2.duckdb-minio.com",
             "test-bucket-public.duckdb-minio.com")
 SEAWEEDFS_IMAGE = "chrislusf/seaweedfs:4.47"
+AWS_CLI_IMAGE = "amazon/aws-cli:2.36.44"
+AWS_ENV = ["-e", "AWS_ACCESS_KEY_ID=admin", "-e", "AWS_SECRET_ACCESS_KEY=password", "-e", "AWS_REGION=us-east-1"]
 ICEBERG_IDENTITY = {"name": "iceberg", "credentials": [{"accessKey": "admin", "secretKey": "password"}],
                     "actions": ["Admin", "Read", "Write", "List", "Tagging"]}
 
@@ -670,31 +679,53 @@ class IcebergFixture(_DockerFixture):
             self.proxy_log.unlink(missing_ok=True)
 
     def start(self, ctx):
-        creds = ["-e", "AWS_ACCESS_KEY_ID=admin", "-e", "AWS_SECRET_ACCESS_KEY=password"]
         self.services.join("store", ctx.fixtures["duckdb:seaweedfs"].pod())
-        self.services.oneshot("s3-init", "amazon/aws-cli:2.36.44", ["-c",
+        self.services.oneshot("s3-init", AWS_CLI_IMAGE, ["-c",
                               "until aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://warehouse; "
                               "do sleep 1; done"],
-                              extra=[*creds, "-e", "AWS_REGION=us-east-1", "--entrypoint", "/bin/sh"],
-                              peer="store")
+                              extra=[*AWS_ENV, "--entrypoint", "/bin/sh"], peer="store")
+        ice = ctx.root / SUITE_DIRS["iceberg"]
+        work = ctx.out_dir / "services" / "duckdb-iceberg-data"
+        shutil.rmtree(work, ignore_errors=True)
+        (work / "generated").mkdir(parents=True)
+        (work / "catalog").mkdir()
+        (work / "catalog").chmod(0o777)
+        (work / "catalog" / ICEBERG_CATALOG).touch()
+        (work / "catalog" / ICEBERG_CATALOG).chmod(0o666)
+        fixed = os.environ.get("SDB_ICEBERG_DATA")
+        key = f"artifacts/duckdb-iceberg/{_iceberg_data_key(ctx, fixed)}.tar.zst"
+        cached = bool(fixed) and store.reachable() and self._restore(key, work)
         self.services.run("rest", services.ICEBERG_REST_IMAGE,
-                          extra=[*creds, "-e", "AWS_REGION=us-east-1",
-                                 "-e", "CATALOG_WAREHOUSE=s3://warehouse/",
+                          extra=[*AWS_ENV, "-e", "CATALOG_WAREHOUSE=s3://warehouse/",
                                  "-e", "CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO",
                                  "-e", "CATALOG_S3_ENDPOINT=http://127.0.0.1:9000",
-                                 "-e", "CATALOG_S3_PATH__STYLE__ACCESS=true"], peer="store")
+                                 "-e", "CATALOG_S3_PATH__STYLE__ACCESS=true",
+                                 "-e", f"CATALOG_URI=jdbc:sqlite:/catalog/{ICEBERG_CATALOG}",
+                                 "-v", f"{work / 'catalog'}:/catalog"], peer="store")
         services.wait_for("Iceberg REST", lambda: _http_ok("http://127.0.0.1:8181/v1/config"), 90)
-        log = ctx.out_dir / "services" / "iceberg-data.log"
-        log.parent.mkdir(parents=True, exist_ok=True)
-        with open(log, "ab") as fh:
-            res = subprocess.run([str(ctx.root / "tests" / "duckdb" / "generate_iceberg_data.sh"),
-                                  "fixture", "local"], stdout=fh, stderr=subprocess.STDOUT,
-                                 env=ctx.base_env, timeout=3600)
-        if res.returncode != 0:
-            raise RuntimeError(f"Iceberg data generation failed, see {log}")
+        if cached:
+            _load_catalog(work)
+        env = dict(ctx.base_env)
+        if fixed:
+            for link, target in ((Path(fixed), work / "generated"), (ice / "data" / "generated", Path(fixed))):
+                if link.is_symlink() or link.is_file():
+                    link.unlink()
+                shutil.rmtree(link, ignore_errors=True)
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(target)
+            env["ICEBERG_GENERATED_DIR"] = fixed
+        if not cached:
+            log = ctx.out_dir / "services" / "iceberg-data.log"
+            with open(log, "ab") as fh:
+                res = subprocess.run([str(ctx.root / "tests" / "duckdb" / "generate_iceberg_data.sh"),
+                                      "fixture", "local"], stdout=fh, stderr=subprocess.STDOUT,
+                                     env=env, timeout=3600)
+            if res.returncode != 0:
+                raise RuntimeError(f"Iceberg data generation failed, see {log}")
+            if fixed and store.reachable():
+                self._save(key, work)
         self._env = {"FIXTURE_SERVER_AVAILABLE": "1", "DUCKDB_ICEBERG_HAVE_GENERATED_DATA": "1"}
         if shutil.which("mitmdump"):
-            ice = ctx.root / SUITE_DIRS["iceberg"]
             conf = ctx.out_dir / "services" / "mitmproxy"
             self.proxy_log = ice / "mitmproxy.log"
             for port, extra, log in (
@@ -709,6 +740,63 @@ class IcebergFixture(_DockerFixture):
                 services.wait_for(f"mitmdump {port}", lambda p=port: services.tcp_open("127.0.0.1", p), 30, 0.5)
             self._env.update(ICEBERG_HTTP_PROXY="localhost:8878",
                              VENDED_CREDENTIAL_REFRESH_PROXY="http://127.0.0.1:19133")
+
+    def _sync(self, work, source, dest):
+        self.services.oneshot("s3-sync", AWS_CLI_IMAGE,
+                              ["--endpoint-url", "http://127.0.0.1:9000", "s3", "sync", "--only-show-errors",
+                               source, dest],
+                              extra=[*AWS_ENV, "-e", "HOME=/tmp", "--user", f"{os.getuid()}:{os.getgid()}",
+                                     "-v", f"{work}:/data"], peer="store", timeout=900)
+
+    def _restore(self, key, work):
+        archive = work / "data.tar.zst"
+        saved = work / "saved"
+        try:
+            if not store.get(key, archive):
+                return False
+            saved.mkdir()
+            subprocess.run(["tar", "--zstd", "-xf", str(archive), "-C", str(saved)], check=True,
+                           capture_output=True)
+        except (OSError, RuntimeError, subprocess.CalledProcessError):
+            shutil.rmtree(saved, ignore_errors=True)
+            return False
+        finally:
+            archive.unlink(missing_ok=True)
+        (saved / "generated").rename(work / "generated")
+        self._sync(work, "/data/saved/warehouse", "s3://warehouse")
+        return True
+
+    def _save(self, key, work):
+        self._sync(work, "s3://warehouse", "/data/warehouse")
+        archive = work / "data.tar.zst"
+        subprocess.run(["tar", "--zstd", "-cf", str(archive), "-C", str(work), "generated", "catalog",
+                        "warehouse"], check=True, capture_output=True)
+        try:
+            store.put(key, archive)
+        finally:
+            archive.unlink(missing_ok=True)
+
+
+def _load_catalog(work):
+    with closing(sqlite3.connect(work / "catalog" / ICEBERG_CATALOG, timeout=30)) as db:
+        db.execute("ATTACH ? AS saved", (str(work / "saved" / "catalog" / ICEBERG_CATALOG),))
+        with db:
+            for table in ("iceberg_tables", "iceberg_namespace_properties"):
+                db.execute(f"INSERT INTO {table} SELECT * FROM saved.{table}")
+    shutil.rmtree(work / "saved")
+
+
+def _iceberg_data_key(ctx, fixed):
+    digest = hashlib.sha256(f"{fixed}\0{services.ICEBERG_REST_IMAGE}\0{SEAWEEDFS_IMAGE}\0".encode())
+    generators = ctx.root / SUITE_DIRS["iceberg"] / "scripts" / "data_generators"
+    inputs = sorted(p for p in generators.rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+    inputs += [ctx.root / "tests" / "duckdb" / "generate_iceberg_data.sh",
+               ctx.root / "scripts" / "ci" / "build-ubuntu.Dockerfile",
+               ctx.root / "scripts" / "ci" / "test-data-requirements.txt"]
+    for path in inputs:
+        digest.update(f"{path.relative_to(ctx.root)}\0".encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:32]
 
 
 class SecretsFixture(Fixture):

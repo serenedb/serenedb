@@ -22,13 +22,17 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
+
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string_view>
 
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -116,6 +120,12 @@ inline constexpr VectorMetric EffectiveQuantMetric(
   return metric == VectorMetric::Cosine ? VectorMetric::InnerProduct : metric;
 }
 
+enum class FieldKind : uint8_t {
+  None = 0,
+  Index,
+  Column,
+};
+
 enum class AnnKind : uint8_t {
   Ivf = 0,
   Hnsw,
@@ -149,8 +159,8 @@ struct AnnInfo {
 
   AnnKind kind = AnnKind::Ivf;
 
-  field_id centroids_id = field_limits::invalid();
-  field_id postings_id = field_limits::invalid();
+  irs::field_id field_id = field_limits::invalid();
+  irs::field_id column_id = field_limits::invalid();
 
   // dimensionality of the data
   int d = 0;
@@ -180,17 +190,26 @@ using ColumnOptionsProvider = std::function<ColumnOptions(field_id)>;
 
 using NormColumnIdProvider = std::function<field_id(field_id)>;
 
+using AnnFieldsByColumn =
+  containers::FlatHashMap<field_id, absl::InlinedVector<field_id, 1>>;
+
 // Per-column encoding config the writer consults at flush + merge time. The
 // host supplies one per operation, so a long-lived writer is never coupled to
 // its mutable metadata.
 class IndexFieldOptions {
  public:
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  AnnFieldsByColumn anns;
+
+  std::span<const field_id> AnnFields(field_id column) const noexcept {
+    const auto it = anns.find(column);
+    return it == anns.end() ? std::span<const field_id>{} : it->second;
+  }
 
   virtual ~IndexFieldOptions() = default;
   virtual ColumnOptions GetColumnOptions(field_id id) const = 0;
   virtual field_id GetNormColumnId(field_id id) const = 0;
-  virtual bool HasField(field_id) const { return true; }
+  virtual FieldKind GetFieldKind(field_id) const { return FieldKind::Index; }
 
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --
@@ -216,10 +235,11 @@ class FunctionFieldOptions final : public IndexFieldOptions {
  public:
   FunctionFieldOptions(ColumnOptionsProvider column_options,
                        NormColumnIdProvider norm_column_id,
-                       uint32_t row_group_size) noexcept
+                       uint32_t row_group_size, AnnFieldsByColumn anns) noexcept
     : _column_options{std::move(column_options)},
       _norm_column_id{std::move(norm_column_id)} {
     this->row_group_size = row_group_size;
+    this->anns = std::move(anns);
   }
 
   ColumnOptions GetColumnOptions(field_id id) const final {

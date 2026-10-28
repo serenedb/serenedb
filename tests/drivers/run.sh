@@ -400,10 +400,10 @@ for lang in "${langs[@]}"; do
 	# Every per-lang runner exits 0 when its toolchain is missing, so a driver
 	# dropping out of the build image would otherwise read as a pass. A lang we
 	# were asked to run that produced no test at all is a failure, not a skip.
-	# Only checked for an unfiltered run: --types / --driver can legitimately
-	# select nothing. sqlsmith has no junit glob, so it is never checked.
+	# Only checked for an unfiltered run: --types / --driver / SDB_DRV_PY_ONLY can
+	# legitimately select nothing. sqlsmith has no junit glob, so it is never checked.
 	if [[ -n "${lang_junit_glob[$lang]:-}" && "${tests:-0}" -eq 0 &&
-		"${args[types]}" == ".*" && -z "${args[driver]}" ]]; then
+		"${args[types]}" == ".*" && -z "${args[driver]}" && -z "${SDB_DRV_PY_ONLY:-}" ]]; then
 		echo "[drivers] ERROR: $lang ran no tests -- toolchain or driver missing?" >&2
 		status=FAIL
 		final_exit=1

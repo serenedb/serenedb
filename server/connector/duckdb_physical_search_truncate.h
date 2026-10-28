@@ -31,8 +31,7 @@ class SereneDBSearchTruncate final : public duckdb::PhysicalOperator {
  public:
   SereneDBSearchTruncate(duckdb::PhysicalPlan& plan,
                          const catalog::SearchTableEntry& table,
-                         duckdb::idx_t estimated_cardinality,
-                         bool clears_shard);
+                         duckdb::idx_t estimated_cardinality);
 
   bool IsSource() const final { return true; }
   duckdb::SourceResultType GetDataInternal(
@@ -41,7 +40,6 @@ class SereneDBSearchTruncate final : public duckdb::PhysicalOperator {
 
  private:
   const catalog::SearchTableEntry& _table;
-  bool _clears_shard;
 };
 
 }  // namespace sdb::connector

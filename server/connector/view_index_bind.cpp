@@ -120,12 +120,25 @@ duckdb::ColumnBinding CarryUp(duckdb::LogicalOperator& op,
 
 }  // namespace
 
+bool IndexNameTaken(duckdb::ClientContext& context,
+                    const duckdb::CreateIndexInfo& info,
+                    duckdb::CatalogEntry& relation) {
+  if (info.on_conflict != duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
+    return false;
+  }
+  auto& schema = relation.ParentSchema(context);
+  return schema.GetNameHolder(schema.GetCatalogTransaction(context),
+                              duckdb::CatalogType::INDEX_ENTRY,
+                              info.GetIndexName()) != nullptr;
+}
+
 duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::ViewCatalogEntry& view,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
   auto& context = binder.context;
   auto info = TakeInfo(stmt);
+  const bool taken = IndexNameTaken(context, *info, view);
   if (info->index_type != catalog::kInvertedIndexTypeName) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("plain indexes on views are not supported; use an "
@@ -158,7 +171,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
         file_index.emplace(i, slot);
       }
     }
-    if (!info->manifest && IsFilePkSpec(fp->pk_spec)) {
+    if (!taken && !info->manifest && IsFilePkSpec(fp->pk_spec)) {
       info->manifest = std::make_shared<search::FileManifest>(CaptureManifest(
         context, leaf->bind_data->Cast<duckdb::MultiFileBindData>()));
     }
@@ -282,7 +295,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("partial indexes are not supported on a search-backed table"));
   }
-  if (GetSereneDBContext(context).SearchTxn().HasWritesFor(table.oid)) {
+  if (!IndexNameTaken(context, *info, table) &&
+      GetSereneDBContext(context).SearchTxn().HasWritesFor(table.oid)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
       ERR_MSG("CREATE INDEX on a search-backed table cannot run in a "

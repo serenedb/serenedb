@@ -182,7 +182,7 @@ are still stored and retrievable; they are read with a columnstore scan.
 
 ### Your own indexes
 
-The shipped indexes are a default, not part of the schema: ingest checks the tables' columns, never their indexes. Startup creates each missing table together with its shipped index, and leaves a table that exists as it is, indexes included, so an index of your own survives restarts. To use your own, drop the shipped index and create yours.
+The shipped indexes are a default, not part of the schema: ingest checks the tables' columns, never their indexes. Startup creates each missing table together with its shipped index, and leaves a table that exists as it is, indexes included, so an index of your own survives restarts. To use your own, replace the shipped index with [`CREATE OR REPLACE INDEX`](../sql/statements/create_index/index.md#create-or-replace-index).
 
 A table without an index still answers every query with a columnstore scan, which skips the parts of the table whose `"timestamp"` range a filter rules out, but it has no full-text search with `@@`, no BM25 and no facets, and an equality lookup such as `trace_id = '…'` reads the whole column.
 
@@ -193,15 +193,13 @@ CREATE TEXT SEARCH DICTIONARY otel_words AS
     split_by_non_alpha(case := 'lower', break := 'alnum')
     WITH (frequency, position, norm);
 
-DROP INDEX otel_logs_idx;
-
-CREATE INDEX otel_logs_idx ON otel_logs USING inverted (
+CREATE OR REPLACE INDEX otel_logs_idx ON otel_logs USING inverted (
     "timestamp", body otel_words, severity_text, severity_number,
     service_name, event_name, trace_id
 );
 ```
 
-An index created on a table that already holds rows indexes those rows too, which rewrites the table: on a large table, replace the index before the first export, or in a quiet period. Between the `DROP INDEX` and the `CREATE INDEX`, `@@` search on the table is unavailable.
+The replacing index indexes the rows already in the table, which rewrites the table: on a large table, replace the index before the first export, or in a quiet period. Until the replace commits, queries keep using the shipped index, so `@@` search stays available throughout; if the new index fails to build, the shipped one stays.
 
 ## Timestamps
 
@@ -231,10 +229,10 @@ Attributes are stored in two tiers:
   and filterable with `->>` (a columnstore scan).
 
 A deployment that knows its hot attribute paths can promote them to index speed
-with an expression index, added in the same `CREATE INDEX` statement:
+with an expression index, added to the index that replaces the shipped one:
 
 ```sql
-CREATE INDEX otel_logs_idx ON otel_logs USING inverted (
+CREATE OR REPLACE INDEX otel_logs_idx ON otel_logs USING inverted (
     "timestamp", body otel_body_dict, severity_text, severity_number,
     service_name, event_name, trace_id,
     (log_attributes ->> 'http.status_code')

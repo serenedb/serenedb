@@ -66,7 +66,7 @@ messages are on the page each row links to.
 | [`split_by_non_alpha(value, case := 'none', break := 'ascii')`](./split_by_non_alpha.md) | Runs of word characters, everything else a separator; `break` picks them: ASCII letters and digits, those plus every byte from `0x80` up, letters and digits or letters alone in any script, or everything but whitespace |
 | [`split_by_pattern(value, pattern, group := -1)`](./split_by_pattern.md) | Match or split with an RE2 regular expression |
 | [`expand_path(value, delimiter := '/', replacement := '', reverse := false, skip := 0)`](./expand_path.md) | The cumulative prefixes of a delimited path |
-| [`normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc')`](./normalize_tokens.md) | Unicode normalization, locale-aware case conversion or full case folding, and accent stripping of each token |
+| [`normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc', keep_marks := [])`](./normalize_tokens.md) | Unicode normalization, locale-aware case conversion or full case folding, and accent stripping of each token |
 | [`stem_words(value, locale := '')`](./stem_words.md) | The Snowball stem of each token for the language of `locale`, which has no usable default |
 | [`remove_stopwords(value, stopwords := [], stopwords_path := '', hex := false)`](./remove_stopwords.md) | Drop the listed tokens |
 | [`filter_tokens(value, min_length := 0, max_length := 0)`, `filter_tokens(tokens, lambda x: <predicate>)`](./filter_tokens.md) | Drop the tokens outside a range of character lengths, or those a lambda rejects |

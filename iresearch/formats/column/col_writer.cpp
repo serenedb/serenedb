@@ -148,8 +148,10 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   auto& cw =
     OpenColumnInternal(id, std::move(type), opts.skip_validity, row_group_size,
                        opts.compression, opts.hyperloglog);
-  if (opts.ann_info) {
-    AttachAnn(id, *opts.ann_info);
+  if (_field_options) {
+    for (const auto ann : _field_options->AnnFields(id)) {
+      AttachAnn(id, *_field_options->GetColumnOptions(ann).ann_info);
+    }
   }
   return cw;
 }
@@ -189,9 +191,9 @@ NormColumnWriter& ColWriter::StreamNormColumn(field_id id) {
 }
 
 AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
-  if (auto it = _ann_by_id.find(column_id); it != _ann_by_id.end()) {
+  if (auto it = _ann_by_id.find(info.field_id); it != _ann_by_id.end()) {
     auto& existing = *it->second;
-    SDB_ASSERT(existing.info == info,
+    SDB_ASSERT(existing.info == info && existing.column_id == column_id,
                "ColWriter::AttachAnn: re-attach with mismatched AnnInfo on "
                "column ",
                column_id);
@@ -215,7 +217,7 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   }
   entry->info = std::move(info);
   auto& back = *_ann_writers.emplace_back(std::move(entry));
-  _ann_by_id.emplace(column_id, &back);
+  _ann_by_id.emplace(back.info.field_id, &back);
   return *back.writer;
 }
 

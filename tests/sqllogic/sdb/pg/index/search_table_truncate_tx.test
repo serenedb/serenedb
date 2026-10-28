@@ -102,3 +102,81 @@ SELECT count(*) AS autocommit_truncated FROM tt;
 ----
 autocommit_truncated
 0
+
+statement ok
+INSERT INTO tt VALUES (8, 'h'), (9, 'i');
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+statement ok
+PREPARE tt_truncate AS TRUNCATE tt;
+
+statement ok
+BEGIN;
+
+statement ok
+EXECUTE tt_truncate;
+
+statement ok
+INSERT INTO tt VALUES (10, 'j');
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+query
+SELECT id, r FROM tt ORDER BY id;
+----
+id	r
+10	j
+
+statement ok
+INSERT INTO tt VALUES (11, 'k');
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+statement ok
+BEGIN;
+
+statement ok
+EXECUTE tt_truncate;
+
+statement ok
+DELETE FROM tt WHERE id = 11;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+query
+SELECT count(*) AS prepared_truncated FROM tt;
+----
+prepared_truncated
+0
+
+statement ok
+INSERT INTO tt VALUES (12, 'l');
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+statement ok
+EXECUTE tt_truncate;
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+query
+SELECT count(*) AS prepared_autocommit_truncated FROM tt;
+----
+prepared_autocommit_truncated
+0
+
+statement ok
+DEALLOCATE tt_truncate;

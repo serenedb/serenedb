@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
@@ -34,13 +35,11 @@
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <shared_mutex>
 #include <span>
 #include <string>
 #include <utility>
@@ -68,7 +67,6 @@ struct SearchInsertGlobalState final : duckdb::GlobalSinkState {
   std::vector<ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
   duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;
-  std::shared_lock<std::shared_mutex> table_lock;
   uint64_t write_buffer_max_bytes = 0;
 
   std::atomic<bool> has_local_state = false;
@@ -132,8 +130,6 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->search_table = table->Storage();
   state->catalog = &table->catalog;
   state->table_id = table->oid;
-  state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
-  SDB_PARK_ONCE_ON_FAILURE("pause_search_insert_after_table_lock");
   // Before any sink reads the shard's index config, so a rebuild can tell
   // that this transaction predates a config it publishes.
   conn_ctx.SearchTxn().RegisterWriter(state->search_table, *table);
@@ -287,9 +283,6 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
 
   if (_ctas_info) {
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
-  }
-  if (gstate.table_lock.owns_lock()) {
-    gstate.table_lock.unlock();
   }
   return duckdb::SinkFinalizeType::READY;
 }

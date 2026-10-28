@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -97,6 +98,9 @@ SereneDBClientState& SereneDBClientState::Register(
       if (IsUnchangeableSetting(name)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
                         ERR_MSG("parameter \"", name, "\" cannot be changed"));
+      }
+      if (new_value) {
+        RequireSuperuserToSet(ctx, name);
       }
       // Resolve AUTOMATIC against the setting's target scope so the downstream
       // check works uniformly regardless of how the user wrote the SET.
@@ -298,7 +302,7 @@ void SereneDBClientState::TransactionCommit(
   if (std::exchange(_query_in_transaction, false)) {
     progress_source->xact_commit.fetch_add(1, std::memory_order_relaxed);
   }
-  _connection_ctx->Commit();
+  _connection_ctx->Commit(transaction.global_transaction_id);
   _connection_ctx->RefreshCatalogEpoch(transaction);
   if (transaction.ModifiedDatabase()) {
     catalog::ClusterOf(*context.db).MaybeCompactCatalogLog();
@@ -311,7 +315,7 @@ void SereneDBClientState::TransactionRollback(
   if (std::exchange(_query_in_transaction, false)) {
     progress_source->xact_rollback.fetch_add(1, std::memory_order_relaxed);
   }
-  _connection_ctx->Rollback();
+  _connection_ctx->Rollback(transaction.global_transaction_id);
   _connection_ctx->RefreshCatalogEpoch(transaction);
 }
 

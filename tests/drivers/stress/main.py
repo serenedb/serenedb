@@ -71,11 +71,7 @@ def preflight(dsn):
         with c.cursor() as cur:
             cur.execute("SELECT version()")
             info["server_version"] = cur.fetchone()[0][:120]
-            try:
-                cur.execute("RESET sdb_faults")
-                info["fault_injection"] = True
-            except Exception:
-                info["fault_injection"] = False
+            info["fault_injection"] = os.environ.get("SDB_FAULT_INJECTION", "1") != "0"
             try:
                 cur.execute("SELECT count(*) FROM sdb_catalog_sets()")
                 info["catalog_sets_rows"] = cur.fetchone()[0]

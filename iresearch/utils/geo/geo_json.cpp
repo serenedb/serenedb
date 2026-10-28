@@ -30,12 +30,12 @@
 #include <s2/util/coding/coder.h>
 
 #include <algorithm>
+#include <iresearch/utils/assert.hpp>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/geo/geo_params.hpp"
 #include "iresearch/utils/geo/s2/multi_point_region.hpp"
 #include "iresearch/utils/geo/s2/multi_polyline_region.hpp"

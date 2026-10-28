@@ -25,9 +25,9 @@ def step_index(marker):
     return next(i for i, line in enumerate(step_lines()) if marker in line)
 
 
-def gitlink_step_script():
+def step_script(name):
     lines = step_lines()
-    start = step_index("name: Check submodule gitlinks")
+    start = step_index(f"name: {name}")
     run = next(i for i in range(start, len(lines)) if lines[i].strip() == "run: |")
     indent = len(lines[run]) - len(lines[run].lstrip()) + 2
     body = []
@@ -38,12 +38,13 @@ def gitlink_step_script():
     return "\n".join(body) + "\n"
 
 
-def test_the_job_fetches_every_gitlink_before_the_hooks_and_reports_pending_after_them():
-    reachable = step_index("check_submodule_pointers.py --reachable")
-    hooks = step_index("uses: pre-commit/action")
-    gitlinks = step_index("name: Check submodule gitlinks")
-    assert reachable < hooks < gitlinks
-    assert "SKIP: check-submodule-pointers" in "\n".join(step_lines()[hooks:gitlinks])
+def test_one_gitlink_check_runs_before_the_hooks_and_the_family_checks_around_them():
+    gitlinks = step_index("check_submodule_pointers.py --reachable --rev HEAD --base HEAD^1")
+    fetch = step_index("duckdb_family.sh fetch HEAD^1")
+    hooks = step_index("name: Run the hooks")
+    check = step_index("duckdb_family.sh check HEAD^1")
+    assert gitlinks < fetch < hooks < check
+    assert "".join(step_lines()).count("check_submodule_pointers.py") == 1
 
 
 @pytest.fixture()
@@ -58,7 +59,7 @@ def gate(tmp_path):
                   'if [[ "$*" == *"/status --jq"* ]]; then printf "%s\\n" $STUB_CONTEXTS; fi\n')
     gh.chmod(0o755)
     script = tmp_path / "step.sh"
-    script.write_text(gitlink_step_script())
+    script.write_text(step_script("Check submodule gitlinks"))
 
     def run(rc, line="", from_fork="false", contexts="", head_sha="abc123"):
         log = tmp_path / "gh.log"
@@ -107,6 +108,49 @@ def test_landed_gitlinks_post_nothing_when_no_status_is_pending(gate):
     rc, log = gate(0, contexts="")
     assert rc == 0
     assert "statuses/abc123" not in log
+
+
+@pytest.mark.parametrize("event, changed, all_files", [
+    ("pull_request", "server/a.cpp", False),
+    ("pull_request", "scripts/ci/ci.py", False),
+    ("pull_request", ".pre-commit-config.yaml", True),
+    ("pull_request", "scripts/check_banned_calls.py", True),
+    ("pull_request", ".clang-format", True),
+    ("pull_request", "iresearch/.clang-format", True),
+    ("pull_request", ".github/actionlint.yaml", True),
+    ("push", "server/a.cpp", True),
+])
+def test_the_hooks_see_the_change_staged_and_every_file_only_when_their_rules_change_or_on_main(
+        tmp_path, event, changed, all_files):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    for name in ("README", changed):
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(name)
+        subprocess.run(["git", "add", name], cwd=repo, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit",
+                        "-q", "-m", name], cwd=repo, check=True)
+    head, base = subprocess.run(["git", "rev-parse", "HEAD", "HEAD^1"], cwd=repo, check=True,
+                                capture_output=True, text=True).stdout.split()
+    stub = tmp_path / "home" / ".cache" / "pre-commit-venv" / "bin" / "pre-commit"
+    stub.parent.mkdir(parents=True)
+    stub.write_text('#!/bin/bash\n[[ "$1" == run ]] || exit 0\n'
+                    'echo "$* | $(git rev-parse HEAD) | $(git diff --cached --name-only)" > "$PRE_COMMIT_LOG"\n')
+    stub.chmod(0o755)
+    log = tmp_path / "pre-commit.log"
+    script = tmp_path / "step.sh"
+    script.write_text(step_script("Run the hooks on the change, staged over HEAD^1"))
+    env = dict(os.environ, HOME=str(tmp_path / "home"), EVENT=event, PRE_COMMIT_LOG=str(log))
+    subprocess.run(["bash", "-eo", "pipefail", str(script)], cwd=repo, env=env, check=True,
+                   capture_output=True)
+    args = "run --show-diff-on-failure --color=always" + (" --all-files" if all_files else "")
+    assert log.read_text().strip() == f"{args} | {base} | {changed}"
+    after = subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True,
+                           text=True).stdout
+    assert after == ""
+    assert subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True,
+                          text=True).stdout.strip() == head
 
 
 def check_runs(ci, monkeypatch, answers):

@@ -32,6 +32,7 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/function/table/table_scan.hpp>
@@ -64,7 +65,6 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <filesystem>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -86,6 +86,7 @@
 #include "connector/duckdb_physical_search_insert.h"
 #include "connector/duckdb_physical_search_truncate.h"
 #include "connector/duckdb_physical_search_update.h"
+#include "connector/inverted_index_bind.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "connector/view_index_bind.h"
@@ -251,7 +252,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   }
   if (op.is_truncate) {
     return planner.Make<connector::SereneDBSearchTruncate>(
-      *entry, op.estimated_cardinality, context.transaction.IsAutoCommit());
+      *entry, op.estimated_cardinality);
   }
   auto& del = planner.Make<connector::SereneDBSearchDelete>(
     *entry, std::move(op.expressions), op.types, op.estimated_cardinality,
@@ -376,14 +377,13 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
       info.parsed_expressions.erase(info.parsed_expressions.begin() + i);
     }
   }
-  for (const auto& opclass : info.column_opclasses) {
-    if (opclass.empty() || opclass == kIncludedKind || opclass == kIVFKind ||
-        opclass == kHNSWKind) {
+  for (size_t i = 0; i < info.column_opclasses.size(); ++i) {
+    if (info.column_opclasses[i].empty() || info.column_opclass_options[i]) {
       continue;
     }
-    auto entry = duckdb::Catalog::GetEntry<TokenizerCatalogEntry>(
-      binder.context, duckdb::QualifiedName::Parse(opclass),
-      duckdb::OnEntryNotFound::RETURN_NULL);
+    auto entry = connector::ResolveOpclassTokenizer(
+      binder.context, table.ParentSchema(binder.context),
+      info.column_opclasses[i]);
     if (entry && &entry->ParentCatalog() == this) {
       info.dependencies.AddDependency(*entry);
     }

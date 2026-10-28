@@ -65,7 +65,7 @@ void DatabaseCatalogEntry::OnDrop() {
 }
 
 void DatabaseCatalogEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
-  if (prev_entry.type == duckdb::CatalogType::INVALID) {
+  if (CreatedObject(prev_entry)) {
     _directory->MarkDropped();
   }
 }

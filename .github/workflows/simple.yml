@@ -8,23 +8,18 @@ on:
 jobs:
   pre-commit:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       statuses: write
+    env:
+      PRE_COMMIT_VERSION: 4.7.0
     steps:
     - uses: actions/checkout@v7
       with:
-        fetch-depth: 1
+        fetch-depth: 2
         submodules: false
         clean: false
-    - name: Every gitlink can be fetched
-      run: python3 scripts/check_submodule_pointers.py --reachable
-    - uses: actions/setup-python@v7
-    # No floating v3 tag -- only specific versions published
-    - uses: pre-commit/action@v3.0.1
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-        SKIP: check-submodule-pointers
     - name: Check submodule gitlinks
       shell: bash
       env:
@@ -35,7 +30,7 @@ jobs:
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         rc=0
-        python3 scripts/check_submodule_pointers.py 2>&1 | tee gitlinks.log || rc=$?
+        python3 scripts/check_submodule_pointers.py --reachable --rev HEAD --base HEAD^1 2>&1 | tee gitlinks.log || rc=$?
         [[ $rc == 0 || $rc == 3 ]] || exit 1
         [[ -n "$HEAD_SHA" ]] || exit $rc
         if [[ $rc == 3 ]]; then
@@ -53,3 +48,44 @@ jobs:
         fi
         gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=$state -f context=pre-commit \
           -f description="${description:0:140}" -f target_url="$RUN_URL" >/dev/null
+    - name: Fetch the DuckDB family the change moves
+      id: family
+      shell: bash
+      run: |
+        scripts/duckdb_family.sh fetch HEAD^1
+        [[ ! -e third_party/duckdb/.git ]] || echo fetched=true >> "$GITHUB_OUTPUT"
+    - name: Python version
+      id: python
+      run: echo "version=$(python3 -c 'import platform; print(platform.python_version())')" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cache/pre-commit
+          ~/.cache/pre-commit-venv
+        key: pre-commit-${{ runner.os }}-${{ runner.arch }}-python${{ steps.python.outputs.version }}-${{ env.PRE_COMMIT_VERSION }}-${{ hashFiles('.pre-commit-config.yaml') }}
+    - uses: actions/cache@v6
+      if: steps.family.outputs.fetched
+      with:
+        path: ~/.cache/serenedb-duckdb
+        key: duckdb-family-${{ runner.os }}-${{ runner.arch }}-python${{ steps.python.outputs.version }}-${{ hashFiles('third_party/duckdb/Makefile', 'third_party/duckdb/api_spec/pyproject.toml') }}
+    - name: Run the hooks on the change, staged over HEAD^1
+      shell: bash
+      env:
+        EVENT: ${{ github.event_name }}
+      run: |
+        venv=~/.cache/pre-commit-venv
+        "$venv/bin/pre-commit" --version 2>/dev/null ||
+          { python3 -m venv --clear "$venv" && "$venv/bin/pip" install -q "pre-commit==$PRE_COMMIT_VERSION"; }
+        changed=$(git diff --name-only HEAD^1 HEAD)
+        all=()
+        if [[ "$EVENT" == push ]] || grep -qE '^(\.[^/]+|\.github/actionlint\.yaml|scripts/[^/]+|.+/\.clang-format)$' <<<"$changed"; then
+          all=(--all-files)
+        fi
+        head=$(git rev-parse HEAD)
+        trap 'git reset -q --soft "$head"' EXIT
+        git reset -q --soft HEAD^1
+        echo "pre-commit run ${all[*]}"
+        "$venv/bin/pre-commit" run --show-diff-on-failure --color=always "${all[@]}"
+    - name: Check the DuckDB family the change moves
+      if: steps.family.outputs.fetched
+      run: scripts/duckdb_family.sh check HEAD^1

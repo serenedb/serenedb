@@ -28,13 +28,14 @@ statement async ok
 SELECT * FROM serenedb_reindex('rsd_idx');
 
 connection default
-sleep 2s
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_reindex_before_pass:parked';
 
 statement ok
 COPY (SELECT i AS id, 'doc ' || i AS body FROM range(8, 10) t(i)) TO '${__TEST_DIR__}/rsd_a.parquet' (FORMAT parquet);
 
 statement ok
-SET sdb_faults = '-pause_reindex_before_pass';
+SET sdb_faults = 'pause_reindex_before_pass:release';
 
 wait
 

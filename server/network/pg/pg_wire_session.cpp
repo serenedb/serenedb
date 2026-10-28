@@ -31,6 +31,7 @@
 #include <cstring>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -40,7 +41,6 @@
 #include <duckdb/parser/statement/multi_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
@@ -1874,6 +1874,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
         co_return {};
       }
       co_await publish();
+      batches.Flush();
       co_await WaitCopyInput();
     }
     std::array<uint8_t, kHeader> head;
@@ -1905,6 +1906,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
             co_return {};
           }
           co_await publish();
+          batches.Flush();
           co_await WaitCopyInput();
         }
         const std::string_view chunk = this->_recv.Front();

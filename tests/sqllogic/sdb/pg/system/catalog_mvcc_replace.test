@@ -1494,15 +1494,18 @@ db error: ERROR: Catalog write-write conflict on create with "cmr_s_pk_seq"
 
 # The search table depends on its schema and on its key sequence.
 connection s2
-statement error Catalog write-write conflict on alter with "cmr_s"
+statement error
 DROP TABLE cmr_s
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_s"
 
 
 connection s2
 statement error
 ALTER TABLE cmr_s RENAME TO cmr_s_other
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_s"
+db error: ERROR: search table "cmr_s" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s1
@@ -1635,8 +1638,10 @@ DROP TABLE cmr_sr
 
 
 connection s1
-statement error Catalog write-write conflict on alter with "cmr_sr"
+statement error
 CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_sr"
 
 
 connection s2
@@ -1655,8 +1660,10 @@ ALTER TABLE cmr_sr RENAME TO cmr_sr_other
 
 
 connection s1
-statement error Catalog write-write conflict on alter with "cmr_sr"
+statement error
 CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_sr"
 
 
 connection s2

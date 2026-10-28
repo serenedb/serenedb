@@ -29,6 +29,11 @@ class Test:
     def part(self):
         self._lines += [PART, ""]
 
+    def parts(self, items, size):
+        for start in range(0, len(items), size):
+            self.part()
+            yield items[start:start + size]
+
     def section(self, title):
         self._lines += textwrap.wrap(title, 78, initial_indent="# --- ",
                                      subsequent_indent="# ")
@@ -58,6 +63,13 @@ class Test:
 
     def refresh(self, table):
         self.statement(f"VACUUM (REFRESH_TABLE) {table}")
+
+    def query(self, sql, columns, rows=1):
+        self._lines += ["query", sql, "----", "\t".join(columns),
+                        *(["\t".join([RECORDED] * len(columns))] * rows), ""]
+
+    def error(self, sql, message):
+        self._lines += [f"statement error {message}", sql, ""]
 
     def same_rows(self, actual, expected):
         self._lines += [

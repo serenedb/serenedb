@@ -49,6 +49,16 @@ def test_a_changed_test_picks_its_units_in_every_suite(monkeypatch, tmp_path):
     assert len(picked) == 7
 
 
+def test_a_changed_driver_test_picks_its_file_and_a_helper_every_file_of_its_language(
+        monkeypatch, tmp_path):
+    files = [unit(f"drivers:python:{name}") for name in ("test_copy", "test_progress", "cli_help")]
+    units = [*files, unit("drivers:java")]
+    picked, _ = changed(monkeypatch, tmp_path, {"tests/drivers/python/test_copy.py": ""}, units)
+    assert picked == files[:1]
+    picked, _ = changed(monkeypatch, tmp_path, {"tests/drivers/python/conftest.py": ""}, units)
+    assert picked == files
+
+
 def test_a_changed_test_source_picks_the_compiled_tests_it_defines(monkeypatch, tmp_path):
     units = [unit("gtest:serenedb-tests:batch:Plain.Works+3", members=(
                  "gtest:serenedb-tests:Plain.Works", "gtest:serenedb-tests:Plain.Other",
@@ -148,6 +158,34 @@ def test_extension_test_ids_do_not_depend_on_the_checkout():
     assert duckdb._relative(ctx, "avro", "/somewhere/serenedb/third_party/duckdb_avro/test/sql/a.test") \
         == "test/sql/a.test"
     assert duckdb._relative(ctx, "core", "test/sql/a.test") == "test/sql/a.test"
+
+
+def test_only_the_changed_postgres_tests_run_beside_every_other_suite(monkeypatch, tmp_path):
+    units = [unit("postgres:pg-wire-simple:pg/a.test"), unit("postgres:pg-wire-simple:pg/b.test"),
+             unit("sqllogic:pg-wire-simple:sdb/c.test"), unit("recovery:recovery/d.test")]
+    picked, _ = changed(monkeypatch, tmp_path, {"tests/sqllogic/pg/a.test": ""}, units)
+    assert cli.keep_changed_postgres(units, picked) == [units[0], units[2], units[3]]
+
+
+@pytest.mark.parametrize("postgres,expected", [
+    (None, ""), ("changed", "--postgres changed --changed origin/main"), ("all", "--postgres all")])
+def test_select_suites_adds_the_postgres_validation(capsys, postgres, expected):
+    ci.cmd_select_suites(SimpleNamespace(corpus=False, everything=True, iresearch=False, re2=False,
+                                         duckdb_suites="", no_duckdb=False, postgres=postgres))
+    assert capsys.readouterr().out.strip() == expected
+
+
+def test_a_single_shard_runs_in_the_build_job_and_more_go_to_test_jobs():
+    def shards(count, check=""):
+        prefix = f"{check}-" if check else ""
+        return [{"spec": f"{i}/{count}", "name": f"{prefix}{i}of{count}", "plan": f"p{check}",
+                 "check": check} for i in range(1, count + 1)]
+
+    one = ci.plan_runs(shards(1), shards(1, "biglake"))
+    assert one["inline"] and one["names"] == ["1of1", "biglake-1of1"]
+    assert one["runs"]["biglake-1of1"] == {"spec": "1/1", "plan": "pbiglake", "check": "biglake"}
+    three = ci.plan_runs(shards(3))
+    assert not three["inline"] and three["names"] == ["1of3", "2of3", "3of3"]
 
 
 def test_timing_learns_main_or_a_calibration_pr():

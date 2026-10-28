@@ -629,7 +629,7 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // validate terms async
     {
-      irs::async_utils::ThreadPool<> pool(thread_count);
+      std::vector<std::jthread> threads;
 
       {
         std::lock_guard lock(mutex);
@@ -638,7 +638,7 @@ class IndexTestCase : public tests::IndexTestBase {
           auto& act_terms = actual_terms;
           auto& exp_terms = expected_terms[i];
 
-          pool.run([&mutex, &act_terms, &exp_terms]() -> void {
+          threads.emplace_back([&mutex, &act_terms, &exp_terms]() -> void {
             {
               // wait for all threads to be registered
               std::lock_guard lock(mutex);
@@ -659,7 +659,7 @@ class IndexTestCase : public tests::IndexTestBase {
         }
       }
 
-      pool.stop();
+      threads.clear();
     }
 
     // validate docs async
@@ -672,7 +672,7 @@ class IndexTestCase : public tests::IndexTestBase {
           ASSERT_EQ(expected_term_itrs[i]->value(), actual_term_itr->value());
         }
 
-        irs::async_utils::ThreadPool<> pool(thread_count);
+        std::vector<std::jthread> threads;
 
         {
           std::lock_guard lock(mutex);
@@ -681,64 +681,65 @@ class IndexTestCase : public tests::IndexTestBase {
             auto& act_term_itr = actual_term_itr;
             auto& exp_term_itr = expected_term_itrs[i];
 
-            pool.run([&mutex, &act_term_itr, &exp_term_itr]() -> void {
-              constexpr irs::IndexFeatures kFeatures =
-                irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-                irs::IndexFeatures::Offs;
-              std::unique_ptr<tests::PostingsCursor> act_docs_itr;
-              std::unique_ptr<tests::PostingsCursor> exp_docs_itr;
+            threads.emplace_back(
+              [&mutex, &act_term_itr, &exp_term_itr]() -> void {
+                constexpr irs::IndexFeatures kFeatures =
+                  irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
+                  irs::IndexFeatures::Offs;
+                std::unique_ptr<tests::PostingsCursor> act_docs_itr;
+                std::unique_ptr<tests::PostingsCursor> exp_docs_itr;
 
-              {
-                // wait for all threads to be registered
-                std::lock_guard lock(mutex);
+                {
+                  // wait for all threads to be registered
+                  std::lock_guard lock(mutex);
 
-                // iterators are not thread-safe
-                act_docs_itr =
-                  tests::Docs(act_term_itr->postings(kFeatures), kFeatures);
-                exp_docs_itr =
-                  tests::Docs(exp_term_itr->postings(kFeatures), kFeatures);
-              }
-
-              auto* actual_pos = act_docs_itr->Positions();
-              auto* expected_pos = exp_docs_itr->Positions();
-              ASSERT_FALSE(!actual_pos);
-              ASSERT_FALSE(!expected_pos);
-
-              while (!irs::doc_limits::eof(act_docs_itr->Next())) {
-                ASSERT_TRUE(!irs::doc_limits::eof(exp_docs_itr->Next()));
-                ASSERT_EQ(exp_docs_itr->Value(), act_docs_itr->Value());
-                ASSERT_EQ(exp_docs_itr->GetFreq(), act_docs_itr->GetFreq());
-
-                auto* expected_offs = irs::get<irs::OffsAttr>(*expected_pos);
-                auto* actual_offs = irs::get<irs::OffsAttr>(*actual_pos);
-                ASSERT_FALSE(!expected_offs);
-                ASSERT_FALSE(!actual_offs);
-
-                auto* expected_pay = irs::get<irs::PayAttr>(*expected_pos);
-                auto* actual_pay = irs::get<irs::PayAttr>(*actual_pos);
-                if (expected_pay) {
-                  ASSERT_FALSE(!actual_pay);
+                  // iterators are not thread-safe
+                  act_docs_itr =
+                    tests::Docs(act_term_itr->postings(kFeatures), kFeatures);
+                  exp_docs_itr =
+                    tests::Docs(exp_term_itr->postings(kFeatures), kFeatures);
                 }
 
-                while (actual_pos->next()) {
-                  ASSERT_TRUE(expected_pos->next());
-                  ASSERT_EQ(expected_pos->value(), actual_pos->value());
-                  ASSERT_EQ(expected_offs->start, actual_offs->start);
-                  ASSERT_EQ(expected_offs->end, actual_offs->end);
+                auto* actual_pos = act_docs_itr->Positions();
+                auto* expected_pos = exp_docs_itr->Positions();
+                ASSERT_FALSE(!actual_pos);
+                ASSERT_FALSE(!expected_pos);
+
+                while (!irs::doc_limits::eof(act_docs_itr->Next())) {
+                  ASSERT_TRUE(!irs::doc_limits::eof(exp_docs_itr->Next()));
+                  ASSERT_EQ(exp_docs_itr->Value(), act_docs_itr->Value());
+                  ASSERT_EQ(exp_docs_itr->GetFreq(), act_docs_itr->GetFreq());
+
+                  auto* expected_offs = irs::get<irs::OffsAttr>(*expected_pos);
+                  auto* actual_offs = irs::get<irs::OffsAttr>(*actual_pos);
+                  ASSERT_FALSE(!expected_offs);
+                  ASSERT_FALSE(!actual_offs);
+
+                  auto* expected_pay = irs::get<irs::PayAttr>(*expected_pos);
+                  auto* actual_pay = irs::get<irs::PayAttr>(*actual_pos);
                   if (expected_pay) {
-                    ASSERT_EQ(expected_pay->value, actual_pay->value);
+                    ASSERT_FALSE(!actual_pay);
                   }
+
+                  while (actual_pos->next()) {
+                    ASSERT_TRUE(expected_pos->next());
+                    ASSERT_EQ(expected_pos->value(), actual_pos->value());
+                    ASSERT_EQ(expected_offs->start, actual_offs->start);
+                    ASSERT_EQ(expected_offs->end, actual_offs->end);
+                    if (expected_pay) {
+                      ASSERT_EQ(expected_pay->value, actual_pay->value);
+                    }
+                  }
+
+                  ASSERT_FALSE(expected_pos->next());
                 }
 
-                ASSERT_FALSE(expected_pos->next());
-              }
-
-              ASSERT_FALSE(!irs::doc_limits::eof(exp_docs_itr->Next()));
-            });
+                ASSERT_FALSE(!irs::doc_limits::eof(exp_docs_itr->Next()));
+              });
           }
         }
 
-        pool.stop();
+        threads.clear();
       }
 
       for (size_t i = 0; i < thread_count; ++i) {
@@ -2015,8 +2016,9 @@ TEST_P(IndexTestCase, europarl_docs_automaton) {
 }
 
 TEST_P(IndexTestCase, europarl_docs_big) {
-  if (dynamic_cast<irs::FSDirectory*>(&dir()) != nullptr) {
-    GTEST_SKIP() << "too long for our CI";
+  if (dynamic_cast<irs::FSDirectory*>(&dir()) &&
+      !std::getenv("SDB_LONG_TESTS")) {
+    GTEST_SKIP() << "too long for a PR run: test.py --long-tests runs it";
   }
   {
     tests::EuroparlDocTemplate doc;
@@ -2027,9 +2029,9 @@ TEST_P(IndexTestCase, europarl_docs_big) {
 }
 
 TEST_P(IndexTestCase, europarl_docs_big_automaton) {
-#ifdef SDB_DEV
-  GTEST_SKIP() << "too long for our CI";
-#endif
+  if (!std::getenv("SDB_LONG_TESTS")) {
+    GTEST_SKIP() << "too long for a PR run: test.py --long-tests runs it";
+  }
 
   {
     tests::EuroparlDocTemplate doc;

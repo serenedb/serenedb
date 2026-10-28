@@ -6,6 +6,21 @@ set -u
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
+drivers=(psycopg3 psycopg2 asyncpg)
+parallel=(test_psql_mode)
+extras=(test_copy test_shell_copy test_pgwire_raw test_search_params test_search_range_params test_dictionary_chains test_es_api test_mcp_api test_otel_api test_otel_startup test_docs_build test_sqlalchemy test_http_session test_http_concurrent_ingest test_http_raw test_http_timeouts test_absl_internal_flags test_commit_aborted_tag test_ddl_command_tags test_failed_checkpoint_marker test_search_wal_corrupt_ranges test_missing_database test_startup test_prepared_alter_rebind test_procedure_body_concurrent test_progress test_drop_database_sessions)
+checks=(cli_help otel_fixtures otel_schema)
+
+if [[ -n "${SDB_DRV_PY_LIST:-}" ]]; then
+	printf '%s\n' "${parallel[@]}" "${drivers[@]/#/test_}" "${extras[@]}" "${checks[@]}"
+	exit 0
+fi
+
+only="${SDB_DRV_PY_ONLY:-}"
+mine() {
+	[[ -z "$only" || "$1" == "$only" ]]
+}
+
 if ! command -v python3 >/dev/null 2>&1; then
 	echo "[python] python3 not found" >&2
 	exit 1
@@ -34,14 +49,11 @@ if [[ "${SDB_DRV_DEBUG:-false}" == "true" ]]; then
 else
 	pytest_args=(-q)
 fi
-drivers=(psycopg3 psycopg2 asyncpg)
-parallel=(test_psql_mode)
-extras=(test_copy test_shell_copy test_pgwire_raw test_search_params test_search_range_params test_dictionary_chains test_es_api test_mcp_api test_otel_api test_otel_startup test_docs_build test_sqlalchemy test_http_session test_http_concurrent_ingest test_http_raw test_http_timeouts test_absl_internal_flags test_commit_aborted_tag test_ddl_command_tags test_failed_checkpoint_marker test_search_wal_corrupt_ranges test_missing_database test_startup test_prepared_alter_rebind test_procedure_body_concurrent test_progress test_drop_database_sessions)
 
 declare -A parallel_pid=() parallel_log=()
 for name in "${parallel[@]}"; do
 	test_file="${SCRIPT_DIR}/${name}.py"
-	[[ -f "$test_file" ]] || continue
+	mine "$name" && [[ -f "$test_file" ]] || continue
 	parallel_log[$name]="$(mktemp)"
 	python3 -m pytest "${pytest_args[@]}" \
 		--junitxml="${JUNIT}/tests-drivers-python-${name}-junit.xml" \
@@ -52,7 +64,7 @@ done
 for driver in "${drivers[@]}"; do
 	# D1 ships psycopg3 only; psycopg2 and asyncpg are present in D3.
 	test_file="${SCRIPT_DIR}/test_${driver}.py"
-	[[ -f "$test_file" ]] || continue
+	mine "test_${driver}" && [[ -f "$test_file" ]] || continue
 	echo "[python][$driver] running"
 	if ! python3 -m pytest "${pytest_args[@]}" \
 		--junitxml="${JUNIT}/tests-drivers-python-${driver}-junit.xml" \
@@ -63,7 +75,7 @@ done
 
 for extra in "${extras[@]}"; do
 	test_file="${SCRIPT_DIR}/${extra}.py"
-	[[ -f "$test_file" ]] || continue
+	mine "$extra" && [[ -f "$test_file" ]] || continue
 	echo "[python][$extra] running"
 	python3 -m pytest "${pytest_args[@]}" \
 		--junitxml="${JUNIT}/tests-drivers-python-${extra}-junit.xml" \
@@ -88,25 +100,31 @@ done
 # CLI help reference: parse `serened --help` and diff against the committed
 # fixture (consumed by the docs site). Drift fails the suite. Skips cleanly
 # when the binary isn't present. Regenerate with: cli_help.py override.
-echo "[python][cli_help] check"
-if ! python3 "${SCRIPT_DIR}/cli_help.py" check; then
-	final=1
+if mine cli_help; then
+	echo "[python][cli_help] check"
+	if ! python3 "${SCRIPT_DIR}/cli_help.py" check; then
+		final=1
+	fi
 fi
 
 # OTLP protobuf fixtures: the committed .pb files must match what the
 # official opentelemetry-proto bindings produce from the .json sources,
 # so the server's decoder is checked against an independent encoder.
 # Regenerate with: scripts/otel/fixtures.py generate.
-echo "[python][otel_fixtures] check"
-if ! python3 "${SCRIPT_DIR}/../../../scripts/otel/fixtures.py" check; then
-	final=1
+if mine otel_fixtures; then
+	echo "[python][otel_fixtures] check"
+	if ! python3 "${SCRIPT_DIR}/../../../scripts/otel/fixtures.py" check; then
+		final=1
+	fi
 fi
 
 # The sqllogic include must match the canonical OTel DDL it is generated from.
 # Regenerate with: scripts/otel/schema.py generate.
-echo "[python][otel_schema] check"
-if ! python3 "${SCRIPT_DIR}/../../../scripts/otel/schema.py" check; then
-	final=1
+if mine otel_schema; then
+	echo "[python][otel_schema] check"
+	if ! python3 "${SCRIPT_DIR}/../../../scripts/otel/schema.py" check; then
+		final=1
+	fi
 fi
 
 exit "$final"

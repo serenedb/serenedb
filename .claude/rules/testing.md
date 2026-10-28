@@ -31,7 +31,7 @@ paths:
 
 ## Running
 
-- `scripts/ci/test.py --build-dir <build>` runs the suites as CI does: every test as a unit in one queue over the machine, the servers and services the units need, a watchdog that saves every thread's stack on a hang, and a summary in `out/test/summary.txt` (every unit in `out/test/results.jsonl`, a failed unit's logs under `out/test/units/`). `--suite` and repeated `--test '<unit glob>'` scope it, `--list` prints the units it would run, `--fast` skips `.test_slow` files, `--corpus` adds the sqlite corpus. It is the only test runner.
+- `scripts/ci/test.py --build-dir <build>` runs the suites as CI does: every test as a unit in one queue over the machine, the servers and services the units need, a watchdog that saves every thread's stack on a hang, and a summary in `out/test/summary.txt` (every unit in `out/test/results.jsonl`, a failed unit's logs under `out/test/units/`). `--suite` and repeated `--test '<unit glob>'` scope it, `--list` prints the units it would run, `--fast` skips `.test_slow` files, `--corpus` adds the sqlite corpus, `--long-tests` the gtests too long for a PR run. It is the only test runner.
 - `--server <host>:<port>` runs the sqllogic units against a server you started (CLAUDE.md, "Local smoke server"), for an edit-run loop; `--override` rewrites the files with the results, on one wire engine, and records the generated tests' values.
 - `--suite postgres` runs the tests under `pg/` and `any/pg/` against PostgreSQL; `--suite cancellation` cancels queries of random sqllogic files at random moments, on both wire engines, and checks that serened keeps answering; every run picks its files and moments anew, and `SDB_CANCEL_SEED=<seed>` replays the run whose log names that seed.
 - The sqlite corpus (`tests/sqllogic/any/pg/sqlite`) is a submodule nothing clones by default: `test.py --corpus` checks it out and runs it, and CI does only when a run asks for it ([ci.md](ci.md)).
@@ -52,6 +52,6 @@ scripts/ci/test.py --suite sqllogic --server 127.0.0.1:<port> --test 'sqllogic:*
 
 ## When you change ...
 
-- **A python driver test file:** add it to the list in `tests/drivers/python/run.sh`, or nothing runs it.
+- **A python driver test file:** add it to the list in `tests/drivers/python/run.sh`, or nothing runs it. A test that arms fault points carries `@pytest.mark.faults` (a test that only adapts takes the `faults` fixture): `test.py` passes the build's `SDB_FAULT_INJECTION`, and without it the marked tests skip, without asking the server.
 - **A driver's dependency manifest:** the CI image installs from it ([ci.md](ci.md), "CI images").
 - **The OpenTelemetry schema** (`resources/otel/otel_schema.sql`): `scripts/otel/schema.py generate`; its conformance fixtures: `scripts/otel/fixtures.py generate`.

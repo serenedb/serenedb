@@ -27,12 +27,14 @@
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/formats/hnsw/hnsw_reader.hpp>
+#include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <numeric>
 #include <random>
@@ -49,28 +51,32 @@ namespace {
 inline constexpr irs::field_id kVec = 1;
 inline constexpr uint32_t kDim = 8;
 
+void SetAnn(irs::IndexWriterOptions& opts, irs::AnnInfo ann) {
+  opts.anns[ann.column_id].push_back(ann.field_id);
+  opts.column_options = [ann = std::move(ann)](irs::field_id id) {
+    irs::ColumnOptions col;
+    if (id == ann.field_id) {
+      col.ann_info = ann;
+    }
+    return col;
+  };
+}
+
 irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
                                           irs::VectorQuantization quant,
                                           uint32_t nb_bits = 0,
                                           uint32_t d = kDim) {
   auto opts = irs::tests::DefaultWriterOptions();
-  opts.column_options = [metric, quant, nb_bits,
-                         d](irs::field_id id) -> irs::ColumnOptions {
-    irs::ColumnOptions col;
-    if (id == kVec) {
-      col.ann_info = irs::AnnInfo{
-        .kind = irs::AnnKind::Hnsw,
-        .centroids_id = kVec,
-        .postings_id = kVec,
-        .d = static_cast<int>(d),
-        .metric = metric,
-        .quant = {.kind = quant, .nb_bits = nb_bits},
-        .m = 8,
-        .ef_construction = 64,
-      };
-    }
-    return col;
-  };
+  SetAnn(opts, irs::AnnInfo{
+                 .kind = irs::AnnKind::Hnsw,
+                 .field_id = kVec,
+                 .column_id = kVec,
+                 .d = static_cast<int>(d),
+                 .metric = metric,
+                 .quant = {.kind = quant, .nb_bits = nb_bits},
+                 .m = 8,
+                 .ef_construction = 64,
+               });
   return opts;
 }
 
@@ -150,8 +156,8 @@ irs::ByVectorSimilarity MakeKnnFilter(const std::vector<float>& query,
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query = query;
-  opts.centroids_id = kVec;
-  opts.postings_id = kVec;
+  opts.column_id = kVec;
+  opts.ann_id = kVec;
   opts.metric = metric;
   opts.quant = quant;
   opts.nprobe = ef;
@@ -197,6 +203,35 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
   }
   return docs;
 }
+
+class ZeroDupInput final : public irs::BytesViewInput {
+ public:
+  explicit ZeroDupInput(irs::bstring bytes)
+    : _bytes{std::move(bytes)}, _zeros(_bytes.size(), 0) {
+    reset(_bytes);
+  }
+
+  ptr Dup() const final {
+    return std::make_unique<irs::BytesViewInput>(_zeros);
+  }
+
+ private:
+  irs::bstring _bytes;
+  irs::bstring _zeros;
+};
+
+class ZeroDupDirectory final : public tests::DirectoryMock {
+ public:
+  using tests::DirectoryMock::DirectoryMock;
+
+  irs::IndexInput::ptr open(std::string_view name,
+                            irs::IOAdvice advice) const final {
+    auto in = tests::DirectoryMock::open(name, advice);
+    irs::bstring bytes(in->Length(), 0);
+    in->ReadData(0, bytes.data(), bytes.size());
+    return std::make_unique<ZeroDupInput>(std::move(bytes));
+  }
+};
 
 // (quant, nb_bits, recall floor). TurboQuant needs its bit width spelled out --
 // TQ accepts 1-5 -- and estimates a shorter code than the scalar quantizers
@@ -534,6 +569,29 @@ TEST_P(HnswIndexTest, QueryVectorFindsItself) {
     found += std::ranges::find(got, self) != got.end() ? 1 : 0;
   }
   EXPECT_EQ(12U, found);
+}
+
+TEST_P(HnswIndexTest, OpenReadsTheHeaderFromTheFooter) {
+  constexpr size_t kRows = 200;
+  const auto vecs = MakeVectors(kRows, 17);
+  irs::MemoryDirectory dir;
+  auto reader = BuildIndex(dir, vecs, Metric(), Quant(), NbBits());
+  ASSERT_NE(nullptr, reader);
+  const auto& segment = (*reader)[0];
+  const auto& built =
+    static_cast<const irs::HnswIndex&>(*segment.Ann(kVec)).Header();
+
+  ZeroDupDirectory zeroed{dir};
+  const irs::IdxReader idx{zeroed, segment.Meta().name, nullptr};
+  const auto& header =
+    static_cast<const irs::HnswIndex&>(*idx.Ann(kVec)).Header();
+  EXPECT_EQ(kDim, header.d);
+  EXPECT_EQ(Metric(), header.metric);
+  EXPECT_EQ(Quant(), header.quant);
+  EXPECT_EQ(64U, header.ef_construction);
+  EXPECT_EQ(kRows, header.rows);
+  EXPECT_EQ(built.record_size, header.record_size);
+  EXPECT_EQ(built.rotated, header.rotated);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -1400,22 +1458,16 @@ TEST_P(HnswBuildWorkersTest, BuildTakesWorkersAsTheyFreeUp) {
     .executor = pool.Get(), .acquire = acquire, .release = release};
 
   auto opts = irs::tests::DefaultWriterOptions();
-  opts.column_options = [quant](irs::field_id id) -> irs::ColumnOptions {
-    irs::ColumnOptions col;
-    if (id == kVec) {
-      col.ann_info = irs::AnnInfo{
-        .kind = irs::AnnKind::Hnsw,
-        .centroids_id = kVec,
-        .postings_id = kVec,
-        .d = kDim,
-        .metric = irs::VectorMetric::L2Sqr,
-        .quant = quant,
-        .m = 8,
-        .ef_construction = 64,
-      };
-    }
-    return col;
-  };
+  SetAnn(opts, irs::AnnInfo{
+                 .kind = irs::AnnKind::Hnsw,
+                 .field_id = kVec,
+                 .column_id = kVec,
+                 .d = kDim,
+                 .metric = irs::VectorMetric::L2Sqr,
+                 .quant = quant,
+                 .m = 8,
+                 .ef_construction = 64,
+               });
   opts.ann_env = &env;
 
   irs::MemoryDirectory dir;
@@ -1464,22 +1516,16 @@ TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
   const auto vecs = MakeVectors(kRows, 17, kD);
   const auto link_quality = [&](irs::AnnInfo::Quantizer quant) {
     auto opts = irs::tests::DefaultWriterOptions();
-    opts.column_options = [quant](irs::field_id id) -> irs::ColumnOptions {
-      irs::ColumnOptions col;
-      if (id == kVec) {
-        col.ann_info = irs::AnnInfo{
-          .kind = irs::AnnKind::Hnsw,
-          .centroids_id = kVec,
-          .postings_id = kVec,
-          .d = static_cast<int>(kD),
-          .metric = irs::VectorMetric::L2Sqr,
-          .quant = quant,
-          .m = 8,
-          .ef_construction = 64,
-        };
-      }
-      return col;
-    };
+    SetAnn(opts, irs::AnnInfo{
+                   .kind = irs::AnnKind::Hnsw,
+                   .field_id = kVec,
+                   .column_id = kVec,
+                   .d = static_cast<int>(kD),
+                   .metric = irs::VectorMetric::L2Sqr,
+                   .quant = quant,
+                   .m = 8,
+                   .ef_construction = 64,
+                 });
     irs::MemoryDirectory dir;
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
     EXPECT_NE(nullptr, writer);

@@ -57,20 +57,27 @@ t.write()
 
 `same_rows(actual, expected)` checks that two queries return the same rows and
 records how many they return; `same_scores(actual, expected)` checks that two
-queries give each `id` the same `s`. `t.rng` is seeded with `seed`, so a
-generator writes the same cases on every run.
+queries give each `id` the same `s`; `query(sql, columns, rows)` checks any
+query by its recorded answer; `error(sql, message)` expects a statement to fail
+with that message. `t.rng` is seeded with `seed`, so a generator writes the same
+cases on every run. `temporal_gen` holds the shapes of the temporal tests (a key
+grouped, a predicate counted) and their rounds, which run every shape with an
+optimizer off and on and compare the results.
 
 A generator whose test would run longer than about 20 s splits it with
 `t.part()`: everything before the first `t.part()` is shared, and each part
 becomes `<path>.<k>.gen.test` with that setup and what follows its
-`t.part()`, so a part builds only the tables and indexes it checks.
+`t.part()`, so a part builds only the tables and indexes it checks;
+`t.parts(items, size)` gives each slice of `size` items a part of its own.
 
 Where only the server knows the answer, such as a row count, a generator prints
 `<recorded>`. `test.py` fills those cells from `generators/<path>.recorded`, and
 `test.py --override` records them there, as values or, for a query that fails,
-as its exact error, which the test then expects in the block form. A value is
-keyed by a hash of its query's SQL, with `.2`, `.3` for repeats of the same SQL,
-and shows the start of that SQL, so a review sees which query changed. Adding,
+as its exact error, which the test then expects in the block form. A line holds
+the hash of a query's SQL, with `.2`, `.3` for repeats of the same SQL, then its
+values separated by tabs, or `error` and the message;
+`generated.py show <generator> [<hash>...]` prints those queries with their
+answers, so a review sees which query changed. Adding,
 removing or reordering queries adds or removes only their lines; a query with no
 recorded value keeps `<recorded>` and fails until `test.py --override` records
 it. A query that fails where the `.recorded` file has values or another error is

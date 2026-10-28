@@ -40,7 +40,7 @@ jobs:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: perf
-      TEST_ARGS: --fuzz-seconds 3600 --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
+      TEST_ARGS: --fuzz-seconds 3600 --stress-profile soak --postgres all ${{ inputs.CORPUS && '--corpus' || '' }}
     secrets: inherit
 
   dev:
@@ -91,20 +91,11 @@ jobs:
       LOCATION: linux-arm64
     secrets: inherit
 
-  validate-pg:
-    name: validate pg
-    needs: image
-    uses: ./.github/workflows/validate-pg-tests.yml
-    with:
-      LOCATION: linux-amd64
-      CORPUS: ${{ inputs.CORPUS }}
-    secrets: inherit
-
   macos:
     uses: ./.github/workflows/build-macos-reusable.yml
 
   release:
-    needs: [perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, validate-pg, macos]
+    needs: [perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, macos]
     uses: ./.github/workflows/release.yml
     with:
       RTA: required
@@ -119,6 +110,7 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on:
       - linux-amd64
+      - lan
     steps:
       - uses: actions/checkout@v7
         with:
@@ -132,7 +124,7 @@ jobs:
 
   report:
     name: Report Status
-    needs: [image, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, validate-pg, macos, release, timing]
+    needs: [image, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, macos, release, timing]
     if: always()
     runs-on: ubuntu-latest
     steps:

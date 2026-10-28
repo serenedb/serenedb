@@ -1,0 +1,216 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE tod AS SELECT TIMESTAMP '2025-03-25 00:00:00' + INTERVAL (i * 37) MINUTE AS ts, (TIMESTAMP '2025-03-25 00:00:00' + INTERVAL (i * 37) MINUTE)::TIMESTAMPTZ AS tstz, (TIMESTAMP '2025-03-25 00:00:00' + INTERVAL (i * 37) MINUTE)::TIME AS tm, i AS v FROM range(20000) t(i);
+
+statement ok
+INSERT INTO tod VALUES (NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE msn AS SELECT TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i) MILLISECOND AS ts, (TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i) MILLISECOND)::TIMESTAMPTZ AS tstz, i AS v FROM range(20000) t(i);
+
+statement ok
+INSERT INTO msn VALUES (NULL, NULL, -1);
+
+query
+EXPLAIN SELECT strftime(tstz, '%H:%M') AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ strftime(__internal_date_trunc_unbucket(#0, 60000000, 0), '%H:%M'), │
+│ #1                                                                  │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴──────────────────────────────────╮
+│ Groups: #0                                                          │
+│ Aggregates: count_star()                                            │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴──────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_icu_time_of_day_bucket(tstz, 60000000)                   │
+│ ~20,001 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴──────────────────────────────────╮
+│ Table: tod                                                          │
+│ Type: Sequential Scan                                               │
+│ Projections: tstz                                                   │
+│ ~20,001 rows                                                        │
+╰─────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(ts, '%H') AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────╮
+│ Projections:                                                       │
+│ strftime(__internal_date_trunc_unbucket(#0, 3600000000, 0), '%H'), │
+│ #1                                                                 │
+│ ~10,000 rows                                                       │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴─────────────────────────────────╮
+│ Groups: #0                                                         │
+│ Aggregates: count_star()                                           │
+│ ~10,000 rows                                                       │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴─────────────────────────────────╮
+│ Projections:                                                       │
+│ __internal_time_of_day_bucket(ts, 3600000000)                      │
+│ ~20,001 rows                                                       │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴─────────────────────────────────╮
+│ Table: tod                                                         │
+│ Type: Sequential Scan                                              │
+│ Projections: ts                                                    │
+│ ~20,001 rows                                                       │
+╰────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(ts, '%I') AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: tod               │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('hour', tstz)::TIME AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────╮
+│ Projections:                                                     │
+│ CAST(__internal_date_trunc_unbucket(#0, 3600000000, 0) AS TIME), │
+│ #1                                                               │
+│ ~10,000 rows                                                     │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────┴────────────────────────────────╮
+│ Groups: #0                                                       │
+│ Aggregates: count_star()                                         │
+│ ~10,000 rows                                                     │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ PROJECTION ────────────────────┴────────────────────────────────╮
+│ Projections:                                                     │
+│ __internal_icu_time_of_day_bucket(tstz, 3600000000)              │
+│ ~20,001 rows                                                     │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────┴────────────────────────────────╮
+│ Table: tod                                                       │
+│ Type: Sequential Scan                                            │
+│ Projections: tstz                                                │
+│ ~20,001 rows                                                     │
+╰──────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '15 minutes', tm) AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────╮
+│ Projections:                                           │
+│ __internal_date_trunc_unbucket_time(#0, 900000000, 0), │
+│ #1                                                     │
+│ ~10,000 rows                                           │
+╰────────────────────────────┬───────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────┴───────────────────────────╮
+│ Groups: #0                                             │
+│ Aggregates: count_star()                               │
+│ ~10,000 rows                                           │
+╰────────────────────────────┬───────────────────────────╯
+╭─ PROJECTION ───────────────┴───────────────────────────╮
+│ Projections:                                           │
+│ __internal_date_trunc_bucket(tm, 900000000, 0)         │
+│ ~20,001 rows                                           │
+╰────────────────────────────┬───────────────────────────╯
+╭─ SEQ_SCAN ─────────────────┴───────────────────────────╮
+│ Table: tod                                             │
+│ Type: Sequential Scan                                  │
+│ Projections: tm                                        │
+│ ~20,001 rows                                           │
+╰────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '7 minutes', tm) AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: tod               │
+│ Type: Sequential Scan    │
+│ Projections: tm          │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('millisecond', ts) AS b, count(*) AS c FROM msn GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────╮
+│ Projections:                                 │
+│ __internal_date_trunc_unbucket(#0, 1000, 0), │
+│ #1                                           │
+│ ~10,000 rows                                 │
+╰───────────────────────┬──────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────────────────╮
+│ Groups: #0                                   │
+│ Aggregates: count_star()                     │
+│ ~10,000 rows                                 │
+╰───────────────────────┬──────────────────────╯
+╭─ PROJECTION ──────────┴──────────────────────╮
+│ Projections:                                 │
+│ __internal_date_trunc_bucket(ts, 1000, 0)    │
+│ ~20,001 rows                                 │
+╰───────────────────────┬──────────────────────╯
+╭─ SEQ_SCAN ────────────┴──────────────────────╮
+│ Table: msn                                   │
+│ Type: Sequential Scan                        │
+│ Projections: ts                              │
+│ ~20,001 rows                                 │
+╰──────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '1 day', tstz, 'America/Havana', TIMESTAMPTZ '2025-01-01 05:00:00+00') AS b, count(*) AS c FROM tod GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                                               │
+│ time_bucket('1 day'::INTERVAL, __internal_icu_date_trunc_unbucket('time_bucket_day', #0, 1, 20089), 'America/Havana', '2025-01-01 05:00:00+00'::TIMESTAMP WITH TIME ZONE), │
+│ #1                                                                                                                                                                         │
+│ ~10,000 rows                                                                                                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────╮
+│ Groups: #0                                                                                                                                                                 │
+│ Aggregates: count_star()                                                                                                                                                   │
+│ ~10,000 rows                                                                                                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                                               │
+│ __internal_icu_date_trunc_bucket('time_bucket_day', tstz, 1, 20089)                                                                                                        │
+│ ~20,001 rows                                                                                                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────╮
+│ Table: tod                                                                                                                                                                 │
+│ Type: Sequential Scan                                                                                                                                                      │
+│ Projections: tstz                                                                                                                                                          │
+│ ~20,001 rows                                                                                                                                                               │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

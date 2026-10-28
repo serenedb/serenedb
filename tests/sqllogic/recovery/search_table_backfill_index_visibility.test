@@ -37,7 +37,8 @@ connection default
 statement error
 CREATE INDEX biv_id_idx ON biv USING inverted (tag, id);
 ----
-db error: ERROR: an index build is already running on search table <slt:ignore>
+db error: ERROR: search table "biv" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection default

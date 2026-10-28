@@ -1,0 +1,78 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sio_stem AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8')
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sio_plain AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE sio (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+
+statement ok
+CREATE INDEX sio_z_stem ON sio USING inverted (body sio_stem);
+
+
+statement ok
+CREATE INDEX sio_a_plain ON sio USING inverted (body sio_plain);
+
+
+statement ok
+INSERT INTO sio VALUES (1, 'running fast'), (2, 'run home');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sio;
+
+
+query
+SELECT id FROM sio WHERE body @@ 'run' ORDER BY id;
+----
+id
+1
+2
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+statement ok
+CREATE TABLE sio_rewrite (x INT);
+
+
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM sio WHERE body @@ 'run' ORDER BY id;
+----
+id
+1
+2
+
+
+connection after_crash
+query
+SELECT id FROM sio_a_plain WHERE body @@ 'run' ORDER BY id;
+----
+id
+2

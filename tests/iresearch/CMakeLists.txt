@@ -164,7 +164,6 @@ add_executable(
     store/directory_test_case.cpp
     store/memory_index_output_tests.cpp
     store/store_utils_tests.cpp
-    utils/async_utils_tests.cpp
     utils/bit_packing_tests.cpp
     utils/bit_utils_tests.cpp
     utils/bitset_tests.cpp
@@ -194,7 +193,6 @@ add_executable(
     utils/simd_utils_test.cpp
     utils/std_test.cpp
     utils/string_tests.cpp
-    utils/thread_pool_test.cpp
     utils/utf8_path_tests.cpp
     utils/utf8_utils_test.cpp
     utils/wildcard_utils_test.cpp

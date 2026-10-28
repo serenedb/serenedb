@@ -1,11 +1,13 @@
+import os
 import re
+import subprocess
 
 from ..scheduler import CRASHED, FAILED, PASSED, Outcome, Unit
 from ..servers import Server, ServerPool
 from . import plan, skipped
 
 LANGS = ("python", "java", "js", "go", "rust", "php", "csharp", "c", "ruby", "r", "psql")
-CPUS = {"java": 4, "csharp": 2, "js": 2, "python": 3}
+CPUS = {"java": 4, "csharp": 2, "js": 2}
 OWN_SERVER = ("psql",)
 HTTP_TOKEN = "drivers-ci-token"
 TRUST_HBA = "host all all 0.0.0.0/0 trust\nhost all all ::0/0 trust\nlocal all all trust\n"
@@ -21,15 +23,34 @@ def driver_units(ctx, args, skips):
             continue
         cost, timeout = plan(ctx, uid, 120.0)
         own = lang in OWN_SERVER
-        units.append(Unit(uid, "drivers", _driver_run(ctx, lang, own), cpus=CPUS.get(lang, 2),
-                          mem_gb=2.0, fixtures=() if own else ("driver-servers",),
-                          cost=cost, timeout=timeout))
+        fixtures = () if own else ("driver-servers",)
+        if lang != "python":
+            units.append(Unit(uid, "drivers", _driver_run(ctx, lang, own, ""), cpus=CPUS.get(lang, 2),
+                              mem_gb=2.0, fixtures=fixtures, cost=cost, timeout=timeout))
+            continue
+        files = _python_files(ctx)
+        for name in files:
+            fid = f"{uid}:{name}"
+            skip = skipped(skips, fid)
+            if skip:
+                ctx.skips.append((fid, skip))
+                continue
+            file_cost, file_timeout = plan(ctx, fid, cost / ctx.config.slowdown / len(files))
+            units.append(Unit(fid, "drivers", _driver_run(ctx, lang, own, name),
+                              cpus=CPUS.get(lang, 2), mem_gb=2.0, fixtures=fixtures,
+                              cost=file_cost, timeout=file_timeout))
     uid = "network:hba"
     if not skipped(skips, uid):
         cost, timeout = plan(ctx, uid, 30.0)
         units.append(Unit(uid, "network", _network_run(ctx), cpus=2, mem_gb=1.0, cost=cost,
                           timeout=timeout))
     return units
+
+
+def _python_files(ctx):
+    res = subprocess.run([ctx.root / "tests" / "drivers" / "python" / "run.sh"], capture_output=True,
+                         text=True, check=True, env={**os.environ, "SDB_DRV_PY_LIST": "1"})
+    return res.stdout.split()
 
 
 def _summary_line(text, lang):
@@ -40,7 +61,7 @@ def _summary_line(text, lang):
     return ""
 
 
-def _run_lang(ctx, r, lang, server):
+def _run_lang(ctx, r, lang, server, only):
     shared = ctx.out_dir / "drivers-shared"
     shared.mkdir(exist_ok=True)
     return r.exec([ctx.root / "tests" / "drivers" / "run.sh", "--lang", lang,
@@ -49,17 +70,18 @@ def _run_lang(ctx, r, lang, server):
                    "--junit", str(r.dir / "junit")],
                   env={"SDB_DRV_HTTP_PORT": str(server.http_port),
                        "SDB_DRV_HTTP_TOKEN": HTTP_TOKEN,
-                       "SDB_DRV_SHARED_DIR": str(shared)})
+                       "SDB_DRV_SHARED_DIR": str(shared),
+                       "SDB_DRV_PY_ONLY": only})
 
 
-def _driver_run(ctx, lang, own):
+def _driver_run(ctx, lang, own, only):
     def run(r):
         crash = None
         if own:
             server = Server(ctx, r.dir / "server", **SERVER).start()
             r.stack_pids = lambda: (server.pid(),)
             try:
-                res = _run_lang(ctx, r, lang, server)
+                res = _run_lang(ctx, r, lang, server, only)
             finally:
                 stop = server.stop()
             out = r.outcome(res, san_dirs=(server.san_dir,))
@@ -69,7 +91,7 @@ def _driver_run(ctx, lang, own):
             pool = r.fixture("driver-servers")
             i, generation = pool.acquire()
             try:
-                res = _run_lang(ctx, r, lang, pool.watch(r, i))
+                res = _run_lang(ctx, r, lang, pool.watch(r, i), only)
             finally:
                 pool.release(i)
             out = r.outcome(res)

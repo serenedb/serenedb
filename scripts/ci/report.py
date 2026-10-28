@@ -13,7 +13,7 @@ from testlib.scheduler import BAD
 MARKER = "<!-- serenedb-ci-report -->"
 HISTORY = re.compile(r"<!-- ci-history:(.*?) -->")
 ORDER = ("perf", "dev", "asan", "tsan", "msan")
-CHECK_JOBS = {"validate-pg": "pg", "bugfix": "bugfix"}
+CHECK_JOBS = {"bugfix": "bugfix"}
 COVERAGE_ROWS = 40
 KEEP_RUNS = 30
 
@@ -51,11 +51,9 @@ def _duration(seconds):
     return f"{h}h{m:02d}m" if h else f"{m}m{s:02d}s"
 
 
-def load_coverage(coverage_dir):
-    if not coverage_dir:
-        return []
+def load_coverage(*dirs):
     found = []
-    for path in sorted(Path(coverage_dir).glob("**/summary.txt")):
+    for path in sorted(p for d in dirs if d for p in Path(d).glob("**/coverage-*/summary.txt")):
         details = path.with_name("coverage.json")
         uncovered = json.loads(details.read_text())["uncovered"] if details.is_file() else []
         found.append({"summary": path.read_text().strip(), "uncovered": uncovered})
@@ -147,7 +145,8 @@ def build_report(metas, rows, needs, run_url, coverage=(), subject=""):
                       *(uncovered_row(d) for d in uncovered[:COVERAGE_ROWS])]
             if len(uncovered) > COVERAGE_ROWS:
                 lines.append(f"\n... and {len(uncovered) - COVERAGE_ROWS} more in the "
-                             "`coverage-dev-linux-amd64` artifact")
+                             "`coverage.json` of the `coverage-dev-linux-amd64` artifact, or of "
+                             "`results-dev-linux-amd64` when dev ran one shard")
             lines += ["", "</details>"]
     if signatures:
         lines += ["", f"**Sanitizer reports** ({len(signatures)})", ""]
@@ -236,7 +235,8 @@ def main():
     run_url = os.environ.get("RUN_URL", "")
     sha = os.environ.get("REPORT_SHA", "")[:9]
     options = run_options(json.loads(os.environ.get("REPORT_INPUTS", "{}") or "{}"))
-    body, summary = build_report(metas, rows, needs, run_url, load_coverage(args.coverage),
+    body, summary = build_report(metas, rows, needs, run_url,
+                                 load_coverage(args.coverage, args.results),
                                  " · ".join(s for s in (sha and f"`{sha}`", options) if s))
     Path(args.out).write_text(body)
     Path(args.out).with_suffix(".json").write_text(json.dumps(summary, indent=1))

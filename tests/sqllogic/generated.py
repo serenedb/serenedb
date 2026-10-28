@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 PLACEHOLDER = "<recorded>"
+ROWS = "<recorded rows>"
 PART = "<part>"
 KEY_WIDTH = 16
 NEW_ERRORS = "SDB_RECORD_NEW_ERRORS"
@@ -31,7 +32,11 @@ def join(parts):
 
 def spots(block):
     return [(i, j) for i, line in enumerate(block)
-            for j, cell in enumerate(line.split("\t")) if cell == PLACEHOLDER]
+            for j, cell in enumerate(line.split("\t")) if cell in (PLACEHOLDER, ROWS)]
+
+
+def table(block):
+    return block.index(ROWS) if ROWS in block else None
 
 
 def head(block):
@@ -101,22 +106,42 @@ def unescape(text):
                   text)
 
 
-def load(path):
-    try:
-        with open(path) as f:
-            lines = f.read().split("\n")
-    except FileNotFoundError:
-        return {}
+def parse(text):
     records = {}
-    for line in lines:
+    for line in text.split("\n"):
+        if line.startswith("\t"):
+            records[key][1].append(line[1:])
+            continue
         if not line:
             continue
-        key, _, rest = line.partition("\t")
-        if rest.startswith("error\t"):
+        key, tab, rest = line.partition("\t")
+        if not tab:
+            records[key] = ("rows", [])
+        elif rest.startswith("error\t"):
             records[key] = ("error", unescape(rest[len("error\t"):]))
         else:
             records[key] = ("values", rest.split("\t"))
     return records
+
+
+def load(path):
+    try:
+        with open(path) as f:
+            return parse(f.read())
+    except FileNotFoundError:
+        return {}
+
+
+def dump(records):
+    lines = []
+    for key, (kind, value) in records.items():
+        if kind == "rows":
+            lines.append("\n\t".join([key, *value]))
+        elif kind == "error":
+            lines.append(f"{key}\terror\t{escape(value)}")
+        else:
+            lines.append("\t".join([key, *value]))
+    return "\n".join(lines) + "\n"
 
 
 def fill(text, records):
@@ -138,6 +163,10 @@ def fill(text, records):
             start = head(block)
             sql = block[start + 1:block.index("----")]
             out.append([*block[:start], "query error", *sql, "----", *values.split("\n"), ""])
+            continue
+        if kind == "rows":
+            line = table(block)
+            out.append(block[:line] + values + block[line + 1:])
             continue
         filled = list(block)
         for (i, j), value in zip(places, values):
@@ -181,6 +210,15 @@ def record(text, overridden, target, previous, engine, shared):
             records[key] = ("error", error)
             ran = True
             continue
+        line = table(expected)
+        if line is not None:
+            if ROWS in actual:
+                if key in previous:
+                    records[key] = previous[key]
+                continue
+            records[key] = ("rows", actual[line:])
+            ran = True
+            continue
         values = []
         for i, j in places:
             cells = actual[i].split("\t") if i < len(actual) else []
@@ -218,7 +256,8 @@ def show(generator, keys):
             continue
         kind, value = records.get(key, ("missing", None))
         answer = ("not recorded" if kind == "missing" else
-                  f"error: {value}" if kind == "error" else "\t".join(value))
+                  f"error: {value}" if kind == "error" else
+                  "\n".join(value) if kind == "rows" else "\t".join(value))
         print(f"{key}\t{answer}\n{sql}\n")
 
 
@@ -257,12 +296,7 @@ def main(command, generator, target, engine="serenedb"):
         sys.exit(f"{target} has queries that fail where {path} recorded "
                  f"something else; check them and record with "
                  f"{NEW_ERRORS}=1:\n" + "\n".join(fresh))
-    lines = []
-    for key, (kind, value) in records.items():
-        rest = (f"error\t{escape(value)}" if kind == "error"
-                else "\t".join(value))
-        lines.append(f"{key}\t{rest}")
-    write(path, "\n".join(lines) + "\n")
+    write(path, dump(records))
 
 
 if __name__ == "__main__":

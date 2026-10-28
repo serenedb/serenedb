@@ -57,11 +57,14 @@ t.write()
 
 `same_rows(actual, expected)` checks that two queries return the same rows and
 records how many they return; `same_scores(actual, expected)` checks that two
-queries give each `id` the same `s`; `query(sql, columns, rows)` checks any
-query by its recorded answer of `rows` rows, or by `rows` themselves when the
-generator knows the answer; `error(sql, message)` expects a statement to fail
-with that message; `statement(sql, onlyif="postgres")` runs a statement on one
-engine only, such as a PostgreSQL setting SereneDB doesn't have. `t.rng` is
+queries give each `id` the same `s`; `query(sql)` checks any query by its
+whole recorded answer, header and rows, or by its error;
+`query(sql, columns, rows)` by its recorded answer of `rows` rows under that
+header, by every row it returns for `rows=None`, or by `rows` themselves when
+the generator knows the answer; `error(sql, message)` expects a statement to
+fail with that message;
+`onlyif=`/`skipif=` on each of them runs it on one engine only, such as a
+PostgreSQL setting SereneDB doesn't have. `t.rng` is
 seeded with `seed`, so a generator writes the same
 cases on every run. `temporal_gen` holds the shapes of the temporal tests (a key
 grouped, a predicate counted) and their rounds, which run every shape with an
@@ -78,7 +81,8 @@ Where only the server knows the answer, such as a row count, a generator prints
 `test.py --override` records them there, as values or, for a query that fails,
 as its exact error, which the test then expects in the block form. A line holds
 the hash of a query's SQL, with `.2`, `.3` for repeats of the same SQL, then its
-values separated by tabs, or `error` and the message;
+values separated by tabs, or `error` and the message; a recorded answer of
+whole rows follows its hash line, a row per line indented by a tab;
 `generated.py show <generator> [<hash>...]` prints those queries with their
 answers, so a review sees which query changed. Adding,
 removing or reordering queries adds or removes only their lines; a query with no
@@ -91,7 +95,10 @@ test next to the generated one, like `sdb/pg/index/phrase_deferred_plans.test`.
 A generator under `generators/any/pg/` writes a test both wire runs and
 PostgreSQL run (`test.py --suite postgres`), as a file under `any/pg/` is.
 Record its values with `test.py --suite postgres --override`: PostgreSQL's
-answers are the ones SereneDB has to match.
+answers are the ones SereneDB has to match. A difference SereneDB keeps is a
+`skipif serenedb` query next to the same query `onlyif serenedb`: the
+postgres run records the first, `test.py --suite sqllogic --override` records
+only the second.
 
 ## Recovery Tests
 

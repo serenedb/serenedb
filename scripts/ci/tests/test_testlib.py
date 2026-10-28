@@ -97,6 +97,22 @@ def test_a_shared_generator_records_each_side_of_a_difference_from_its_own_engin
         shared: ("values", ["9"]), sdb_side: ("values", ["3"])}
 
 
+def test_a_query_records_its_whole_answer_one_row_per_line():
+    text = ("query\nSELECT 1\n----\n<recorded rows>\n\n"
+            "query\nSELECT 2\n----\na\tb\n<recorded rows>\n\n"
+            "query\nSELECT 3\n----\na\n<recorded rows>\n")
+    whole, rows, none = (key for key, _ in generated.recorded(text))
+    overridden = ("query\nSELECT 1\n----\nx\n1\n\n"
+                  "query\nSELECT 2\n----\na\tb\n1\tx\n2\ty\n\n"
+                  "query\nSELECT 3\n----\na\n")
+    records = generated.record(text, overridden, "t", {}, "serenedb", False)
+    assert records == {whole: ("rows", ["x", "1"]), rows: ("rows", ["1\tx", "2\ty"]),
+                       none: ("rows", [])}
+    assert generated.dump(records) == f"{whole}\n\tx\n\t1\n{rows}\n\t1\tx\n\t2\ty\n{none}\n"
+    assert generated.parse(generated.dump(records)) == records
+    assert generated.fill(text, records) == (overridden, 0)
+
+
 def test_a_changed_driver_test_picks_its_file_and_a_helper_every_file_of_its_language(
         monkeypatch, tmp_path):
     files = [unit(f"drivers:python:{name}") for name in ("test_copy", "test_progress", "cli_help")]

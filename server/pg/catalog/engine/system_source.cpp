@@ -334,8 +334,8 @@ bool SystemScan::Triggered(const duckdb::TableCatalogEntry& table) const {
   return triggered.contains(table.oid);
 }
 
-SystemEntries SystemScan::Resolve(const CatalogSetSource& source) const {
-  SystemEntries result;
+SystemListed SystemScan::Resolve(const CatalogSetSource& source) const {
+  SystemListed result;
   if (const auto* index = Choose(source.indexes, 1)) {
     const auto& filter = *FilterOf(index->column);
     result.keys = {.names = filter.texts.Keys(),
@@ -344,30 +344,34 @@ SystemEntries SystemScan::Resolve(const CatalogSetSource& source) const {
     return result;
   }
   auto& catalog = CatalogOf(_context, _database, source.catalog);
-  result.listed = SetOf(SnapshotsOf(_context, _database, source.catalog),
-                        catalog.GetCatalogSet(source.type));
+  result.set = SetOf(SnapshotsOf(_context, _database, source.catalog),
+                     catalog.GetCatalogSet(source.type));
   return result;
+}
+
+void SystemScan::VisitKey(
+  const SystemListed& listed, size_t key,
+  absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) const {
+  const auto& keys = listed.keys;
+  const auto& source = *keys.set;
+  auto& catalog = CatalogOf(_context, _database, source.catalog);
+  const auto transaction = catalog.GetCatalogTransaction(_context);
+  auto entry =
+    key < keys.names.size()
+      ? catalog.GetCatalogSet(source.type)
+          .GetEntry(transaction, duckdb::Identifier{keys.names[key]})
+      : catalog.GetOidIndex().GetVisible(
+          static_cast<duckdb::idx_t>(keys.oids[key - keys.names.size()]),
+          transaction.view);
+  if (entry && entry->type == source.type) {
+    visit(*entry);
+  }
 }
 
 void SystemScan::VisitKey(
   const SystemEntries& entries, size_t key,
   absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) const {
   const auto& keys = entries.keys;
-  if (const auto* source = keys.set) {
-    auto& catalog = CatalogOf(_context, _database, source->catalog);
-    const auto transaction = catalog.GetCatalogTransaction(_context);
-    auto entry =
-      key < keys.names.size()
-        ? catalog.GetCatalogSet(source->type)
-            .GetEntry(transaction, duckdb::Identifier{keys.names[key]})
-        : catalog.GetOidIndex().GetVisible(
-            static_cast<duckdb::idx_t>(keys.oids[key - keys.names.size()]),
-            transaction.view);
-    if (entry && entry->type == source->type) {
-      visit(*entry);
-    }
-    return;
-  }
   const bool dependents = key >= keys.Count();
   if (dependents) {
     key -= keys.Count();

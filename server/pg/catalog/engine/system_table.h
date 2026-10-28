@@ -382,8 +382,12 @@ struct SystemKeys {
   size_t Count() const noexcept { return names.size() + oids.size(); }
 };
 
+struct SystemListed {
+  SystemSet set;
+  SystemKeys keys;
+};
+
 struct SystemEntries {
-  SystemSet listed;
   SystemKeys keys;
   std::vector<duckdb::SchemaCatalogEntry*> schemas;
   absl::InlinedVector<duckdb::CatalogType, 8> sets;
@@ -585,8 +589,10 @@ class SystemScan {
   }
 
   SystemEntries Resolve(const CatalogSource& source) const;
-  SystemEntries Resolve(const CatalogSetSource& source) const;
+  SystemListed Resolve(const CatalogSetSource& source) const;
   void VisitKey(const SystemEntries& entries, size_t key,
+                absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) const;
+  void VisitKey(const SystemListed& listed, size_t key,
                 absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) const;
   SystemSet MemberSet(duckdb::SchemaCatalogEntry& schema,
                       duckdb::CatalogType type,
@@ -1153,25 +1159,16 @@ class SystemCursor<SystemArray<Row, Holder>> final {
   size_t _next = 0;
 };
 
-template<>
-class SystemCursor<SystemEntries> final {
+class SystemKeyCursor final {
  public:
-  explicit SystemCursor(SystemEntries entries) : _entries{std::move(entries)} {}
-
-  template<typename T>
-  bool Run(T& table) {
-    const auto listed = _entries.listed.entries;
-    for (; _next < listed.size(); ++_next) {
-      if (table.Step([&] { Dispatch(table, *listed[_next]); })) {
-        return true;
-      }
-    }
-    const auto& keys = _entries.keys;
+  template<typename T, typename Entries>
+  bool Run(T& table, const Entries& entries) {
+    const auto& keys = entries.keys;
     const bool distinct = keys.Count() > 1 || keys.dependents;
     for (const auto steps = keys.dependents ? 2 * keys.Count() : keys.Count();
          _key < steps; ++_key) {
       if (table.Step([&] {
-            table.VisitKey(_entries, _key, [&](duckdb::CatalogEntry& entry) {
+            table.VisitKey(entries, _key, [&](duckdb::CatalogEntry& entry) {
               if (!distinct || Fresh(entry)) {
                 Dispatch(table, entry);
               }
@@ -1179,6 +1176,51 @@ class SystemCursor<SystemEntries> final {
           })) {
         return true;
       }
+    }
+    return false;
+  }
+
+ private:
+  bool Fresh(const duckdb::CatalogEntry& entry) {
+    const auto [it, inserted] = _seen.try_emplace(&entry, _key);
+    return inserted || it->second == _key;
+  }
+
+  size_t _key = 0;
+  irs::containers::FlatHashMap<const duckdb::CatalogEntry*, size_t> _seen;
+};
+
+template<>
+class SystemCursor<SystemListed> final {
+ public:
+  explicit SystemCursor(SystemListed listed) : _listed{std::move(listed)} {}
+
+  template<typename T>
+  bool Run(T& table) {
+    const auto entries = _listed.set.entries;
+    for (; _next < entries.size(); ++_next) {
+      if (table.Step([&] { Dispatch(table, *entries[_next]); })) {
+        return true;
+      }
+    }
+    return _keys.Run(table, _listed);
+  }
+
+ private:
+  SystemListed _listed;
+  size_t _next = 0;
+  SystemKeyCursor _keys;
+};
+
+template<>
+class SystemCursor<SystemEntries> final {
+ public:
+  explicit SystemCursor(SystemEntries entries) : _entries{std::move(entries)} {}
+
+  template<typename T>
+  bool Run(T& table) {
+    if (_keys.Run(table, _entries)) {
+      return true;
     }
     for (; _schema < _entries.schemas.size(); ++_schema, _slot = 0) {
       for (; _slot < _entries.sets.size(); ++_slot, _pos = 0, _set = {}) {
@@ -1278,21 +1320,14 @@ class SystemCursor<SystemEntries> final {
     return false;
   }
 
-  bool Fresh(const duckdb::CatalogEntry& entry) {
-    const auto [it, inserted] = _seen.try_emplace(&entry, _key);
-    return inserted || it->second == _key;
-  }
-
   static constexpr size_t kPrefetchAhead = 8;
 
   SystemEntries _entries;
-  size_t _next = 0;
-  size_t _key = 0;
+  SystemKeyCursor _keys;
   size_t _schema = 0;
   size_t _slot = 0;
   size_t _pos = 0;
   SystemSet _set;
-  irs::containers::FlatHashMap<const duckdb::CatalogEntry*, size_t> _seen;
 };
 
 template<typename Source>

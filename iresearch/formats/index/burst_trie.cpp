@@ -1106,11 +1106,11 @@ class BlockIterator : util::Noncopyable {
   };
 
   struct PinnedBlock {
-    void Reset(PinnedBytes&& bytes) noexcept {
-      pinned = std::move(bytes);
-      begin = pinned.bytes.data();
+    IRS_FORCE_INLINE void Reset(PinnedBytes&& bytes) noexcept {
+      pin = std::move(bytes.pin);
+      begin = bytes.bytes.data();
 #ifdef SDB_DEV
-      end = begin + pinned.bytes.size();
+      end = begin + bytes.bytes.size();
 #endif
     }
 
@@ -1120,7 +1120,7 @@ class BlockIterator : util::Noncopyable {
 #endif
     }
 
-    PinnedBytes pinned;
+    duckdb::BlockCachePin pin;
     const byte_type* begin{};
 #ifdef SDB_DEV
     const byte_type* end{};

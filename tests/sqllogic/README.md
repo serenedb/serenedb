@@ -86,6 +86,11 @@ recorded only with `SDB_RECORD_NEW_ERRORS=1` set; without it `--override` lists
 those queries and leaves the file unchanged. Query plans go into a committed
 test next to the generated one, like `sdb/pg/index/phrase_deferred_plans.test`.
 
+A generator under `generators/any/pg/` writes a test both wire runs and
+PostgreSQL run (`test.py --suite postgres`), as a file under `any/pg/` is.
+Record its values with `test.py --suite postgres --override`: PostgreSQL's
+answers are the ones SereneDB has to match.
+
 ## Recovery Tests
 
 Recovery tests intentionally crash serened (via `SET sdb_faults = '...'`) and

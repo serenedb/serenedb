@@ -230,7 +230,7 @@ class ChangedTests:
 
 def generated_sources(units):
     base = ROOT / "tests" / "sqllogic"
-    return {os.path.realpath(base / source.group(1)) for u in units if u.suite == "sqllogic"
+    return {os.path.realpath(base / source.group(1)) for u in units if u.suite in ("sqllogic", "postgres")
             and (source := _GENERATED.match(u.id.split(":", 2)[-1].split("#", 1)[0]))}
 
 
@@ -361,7 +361,7 @@ def main(argv):
                 sched.repeat(changed, args.repeat, args.repeat_budget)
     finally:
         sched.stop_fixtures()
-    if args.override and "sqllogic" in suites:
+    if args.override:
         sqllogic.generated_tests(ctx, "record", only=generated_sources(units))
     if args.expect_fail:
         sched.invert(changed_tests)

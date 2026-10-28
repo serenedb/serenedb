@@ -256,6 +256,7 @@ def sqllogic_units(ctx, args, skips):
 
 def postgres_units(ctx, args, skips):
     base = sqllogic_dir(ctx)
+    generated_tests(ctx, "write")
     if args.corpus:
         check_out_corpus(ctx)
     units = []

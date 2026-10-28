@@ -63,6 +63,21 @@ def test_override_records_only_the_generators_whose_tests_ran(monkeypatch, tmp_p
     assert recorded == [str(base / "generators" / "sdb" / "a.py")]
 
 
+def test_override_records_a_shared_generator_from_its_postgres_run(monkeypatch, tmp_path):
+    base = tmp_path / "tests" / "sqllogic"
+    (base / "generators" / "any" / "pg").mkdir(parents=True)
+    (base / "generators" / "any" / "pg" / "m.py").write_text("")
+    (base / "any" / "pg").mkdir(parents=True)
+    (base / "pg").mkdir()
+    (base / "pg" / "any").symlink_to("../any/pg/")
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    recorded = []
+    monkeypatch.setattr(sqllogic.subprocess, "run", lambda cmd, **_: recorded.append(cmd[3]))
+    units = [unit("postgres:pg-wire-simple:pg/any/m.gen.test")]
+    sqllogic.generated_tests(SimpleNamespace(root=tmp_path), "record", only=cli.generated_sources(units))
+    assert recorded == [str(base / "generators" / "any" / "pg" / "m.py")]
+
+
 def test_a_changed_driver_test_picks_its_file_and_a_helper_every_file_of_its_language(
         monkeypatch, tmp_path):
     files = [unit(f"drivers:python:{name}") for name in ("test_copy", "test_progress", "cli_help")]

@@ -33,6 +33,20 @@ def test_assertions_verification_and_unreachable_code_are_not_coverage_targets(m
     ]
 
 
+def test_each_uncovered_instantiation_is_listed_under_its_own_name(monkeypatch):
+    plain = {"_Z1fIiEvv": "void f<int>()", "_Z1fIlEvv": "void f<long>()"}
+    monkeypatch.setattr(diff, "demangle", lambda names: {n: plain.get(n, n) for n in names})
+    data = diff.parse_lcov("SF:x.cpp\nFN:3,x.cpp:_Z1fIiEvv\nFN:3,_Z1fIlEvv\n"
+                           "FNDA:0,x.cpp:_Z1fIiEvv\nFNDA:0,_Z1fIlEvv\nend_of_record\n")["x.cpp"]
+    spans = {"mcdc": {}, "functions": [(3, 5, "void f<int>()", "_Z1fIiEvv")], "excluded": set(),
+             "code": []}
+    summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0], "mcdc": [0, 0]}
+    details = []
+    diff.cover("x.cpp", {3}, data, spans, summary, details)
+    names = diff.readable({d["function"] for d in details})
+    assert sorted(names[d["function"]] for d in details) == ["void f<long>()", "x.cpp:void f<int>()"]
+
+
 @pytest.mark.parametrize("path,test", [
     ("tests/server/connector/pg_progress_registry_test.cpp", True),
     ("resources/tests/iresearch/europarl.subset.txt", True),

@@ -15,6 +15,7 @@ ASSERTIONS = {"SDB_ASSERT", "SDB_VERIFY", "SDB_ENSURE", "SDB_UNREACHABLE", "D_AS
               "ALWAYS_ASSERT", "DUCKDB_DEBUG_VERIFY_GUARD", "DUCKDB_DEBUG_VERIFY_ENABLED"}
 UNREACHABLE = re.compile(r"\b(?:SDB_UNREACHABLE|std::unreachable|(?:std::)?abort)\(\)")
 IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+INTERNAL = re.compile(r"^([^:]+:)(_Z.*)$")
 CODE, EXPANSION, MCDC_BRANCH = 0, 1, 6
 
 
@@ -153,6 +154,12 @@ def demangle(names):
                          text=True)
     out = res.stdout.splitlines() if res.returncode == 0 else names
     return dict(zip(names, out))
+
+
+def readable(names):
+    parts = {n: m.groups() if (m := INTERNAL.match(n)) else ("", n) for n in names}
+    plain = demangle(sorted({symbol for _, symbol in parts.values()}))
+    return {n: prefix + plain.get(symbol, symbol) for n, (prefix, symbol) in parts.items()}
 
 
 def parse_json(text):
@@ -331,8 +338,7 @@ def cover(path, touched, data, spans, summary, details):
                 summary["functions"][0] += 1
             else:
                 details.append({"kind": "function", "file": path, "line": start,
-                                "function": enclosing(spans["functions"], start) or name,
-                                "source": source_line(path, start)})
+                                "function": name, "source": source_line(path, start)})
     for m in spans["mcdc"].values():
         decision = m["site"] or m["decision"]
         if decision[0] in skipped or not touched & set(range(decision[0], decision[2] + 1)):
@@ -393,6 +399,10 @@ def main():
                 missed = cover(path, changed[path], data, spans, summary, details)
                 if missed:
                     uncovered_ranges[path] = ranges(missed)
+    names = readable({d["function"] for d in details if d["kind"] == "function"})
+    for d in details:
+        if d["kind"] == "function":
+            d["function"] = names[d["function"]]
     text = (f"{args.label}: lines {summary['lines'][0]}/{summary['lines'][1]}, "
             f"functions {summary['functions'][0]}/{summary['functions'][1]}, "
             f"branches {summary['branches'][0]}/{summary['branches'][1]}, "

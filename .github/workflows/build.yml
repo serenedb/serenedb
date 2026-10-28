@@ -99,6 +99,13 @@ jobs:
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
           git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
 
+      - name: Build and push the images this architecture lacks
+        working-directory: ./scripts/ci
+        env:
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+        run: ./build_images.sh arch
+
       - name: Build
         id: build
         run: |

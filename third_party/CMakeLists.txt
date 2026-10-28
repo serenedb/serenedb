@@ -695,6 +695,15 @@ if(TARGET iceberg_planning_scan_plan)
 endif()
 if(TARGET libpq)
     target_compile_options(libpq PRIVATE -w)
+    if(SDB_COVERAGE)
+        target_compile_options(
+            libpq
+            PRIVATE
+                -fno-profile-instr-generate
+                -fno-coverage-mapping
+                -fno-coverage-mcdc
+        )
+    endif()
 endif()
 
 if(TARGET duckdb_shell)

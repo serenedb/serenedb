@@ -822,7 +822,13 @@ class SystemScan {
        using V = std::remove_cvref_t<decltype(std::declval<SystemScan&>().Value(
          std::get<I>(Shape.columns).get,
          std::declval<typename T::Context&>()))>;
-       if constexpr (kSystemCheckable<typename SystemOptional<V>::Type>) {
+       constexpr auto kPhysical = T::kSql.columns[T::kColumns[I]].physical;
+       if constexpr (kSystemCheckable<typename SystemOptional<V>::Type> &&
+                     (kPhysical == duckdb::PhysicalType::VARCHAR ||
+                      kPhysical == duckdb::PhysicalType::BOOL ||
+                      kPhysical == duckdb::PhysicalType::INT16 ||
+                      kPhysical == duckdb::PhysicalType::INT32 ||
+                      kPhysical == duckdb::PhysicalType::INT64)) {
          return &Write<Shape, I, true>;
        } else {
          return nullptr;

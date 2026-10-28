@@ -276,6 +276,8 @@ def main(argv):
         suites = [*suites, "postgres"]
     if args.server and {"sqllogic", "postgres"} <= set(suites):
         raise SystemExit("--server serves either the sqllogic or the postgres suite, not both")
+    if args.override and {"sqllogic", "postgres"} <= set(suites):
+        raise SystemExit("--override records either the sqllogic or the postgres suite, not both")
     if args.server and "recovery" in suites:
         raise SystemExit("recovery units restart their own servers: run them without --server")
     needs_build = [s for s in suites if s != "postgres" and not (s == "sqllogic" and args.server)]
@@ -362,7 +364,8 @@ def main(argv):
     finally:
         sched.stop_fixtures()
     if args.override:
-        sqllogic.generated_tests(ctx, "record", only=generated_sources(units))
+        sqllogic.generated_tests(ctx, "record", only=generated_sources(units),
+                                 engine="postgres" if "postgres" in suites else "serenedb")
     if args.expect_fail:
         sched.invert(changed_tests)
     results = sched.results

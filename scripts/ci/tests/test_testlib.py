@@ -6,9 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "harness")]
+sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "harness"),
+                str(ROOT / "tests" / "sqllogic")]
 
 import ci  # noqa: E402
+import generated  # noqa: E402
 from testlib import cli, scheduler  # noqa: E402
 from testlib.scheduler import (FAILED, INTERRUPTED, PASSED, SKIPPED, Outcome, Result,  # noqa: E402
                                Unit)
@@ -76,6 +78,23 @@ def test_override_records_a_shared_generator_from_its_postgres_run(monkeypatch, 
     units = [unit("postgres:pg-wire-simple:pg/any/m.gen.test")]
     sqllogic.generated_tests(SimpleNamespace(root=tmp_path), "record", only=cli.generated_sources(units))
     assert recorded == [str(base / "generators" / "any" / "pg" / "m.py")]
+
+
+def test_a_shared_generator_records_each_side_of_a_difference_from_its_own_engine():
+    text = ("query\nSELECT 1\n----\na\n<recorded>\n\n"
+            "skipif serenedb\nquery\nSELECT 2\n----\na\n<recorded>\n\n"
+            "onlyif serenedb\nquery\nSELECT 2\n----\na\n<recorded>\n")
+    shared, pg_side, sdb_side = (key for key, _ in generated.recorded(text))
+    postgres = text.replace("SELECT 1\n----\na\n<recorded>", "SELECT 1\n----\na\n1").replace(
+        "skipif serenedb\nquery\nSELECT 2\n----\na\n<recorded>", "skipif serenedb\nquery\nSELECT 2\n----\na\n2")
+    first = generated.record(text, postgres, "t", {}, "postgres", True)
+    assert first == {shared: ("values", ["1"]), pg_side: ("values", ["2"])}
+    serenedb = text.replace("SELECT 1\n----\na\n<recorded>", "SELECT 1\n----\na\n9").replace(
+        "onlyif serenedb\nquery\nSELECT 2\n----\na\n<recorded>", "onlyif serenedb\nquery\nSELECT 2\n----\na\n3")
+    assert generated.record(text, serenedb, "t", first, "serenedb", True) == {
+        shared: ("values", ["1"]), pg_side: ("values", ["2"]), sdb_side: ("values", ["3"])}
+    assert generated.record(text, serenedb, "t", {}, "serenedb", False) == {
+        shared: ("values", ["9"]), sdb_side: ("values", ["3"])}
 
 
 def test_a_changed_driver_test_picks_its_file_and_a_helper_every_file_of_its_language(

@@ -34,13 +34,22 @@ def spots(block):
             for j, cell in enumerate(line.split("\t")) if cell == PLACEHOLDER]
 
 
+def head(block):
+    return 1 if block[0].startswith(("onlyif ", "skipif ")) else 0
+
+
+def owner(block, shared):
+    return "postgres" if shared and block[0] != "onlyif serenedb" else "serenedb"
+
+
 def recorded(text):
     seen = {}
     out = []
     for block in blocks(text):
         if not spots(block):
             continue
-        sql = "\n".join(block[1:block.index("----")])
+        start = head(block)
+        sql = "\n".join(block[:start] + block[start + 1:block.index("----")])
         key = hashlib.sha256(sql.encode()).hexdigest()[:KEY_WIDTH]
         seen[key] = seen.get(key, 0) + 1
         out.append((key if seen[key] == 1 else f"{key}.{seen[key]}", sql))
@@ -126,8 +135,9 @@ def fill(text, records):
             continue
         kind, values = found
         if kind == "error":
-            sql = block[1:block.index("----")]
-            out.append(["query error", *sql, "----", *values.split("\n"), ""])
+            start = head(block)
+            sql = block[start + 1:block.index("----")]
+            out.append([*block[:start], "query error", *sql, "----", *values.split("\n"), ""])
             continue
         filled = list(block)
         for (i, j), value in zip(places, values):
@@ -139,45 +149,57 @@ def fill(text, records):
 
 
 def error_of(block):
-    if block[0] == "query error":
+    start = head(block)
+    if block[start] == "query error":
         return "\n".join(block[block.index("----") + 1:])
-    if block[0].startswith("query error "):
-        return unescape(block[0][len("query error "):])
+    if block[start].startswith("query error "):
+        return unescape(block[start][len("query error "):])
     return None
 
 
-def record(text, overridden, target):
+def record(text, overridden, target, previous, engine, shared):
     want, got = blocks(text), blocks(overridden)
     if len(want) != len(got):
         sys.exit(f"{target} doesn't follow its generator")
     keys = iter(key for key, _ in recorded(text))
     records = {}
+    ran = False
     for expected, actual in zip(want, got):
         places = spots(expected)
         if not places:
             continue
         key = next(keys)
-        if expected[1] != actual[1]:
-            sys.exit(f"{target} doesn't follow its generator at {expected[1]}")
+        sql = expected[head(expected) + 1]
+        if sql != actual[head(actual) + 1]:
+            sys.exit(f"{target} doesn't follow its generator at {sql}")
+        if owner(expected, shared) != engine:
+            if key in previous:
+                records[key] = previous[key]
+            continue
         error = error_of(actual)
         if error is not None:
             records[key] = ("error", error)
+            ran = True
             continue
         values = []
         for i, j in places:
             cells = actual[i].split("\t") if i < len(actual) else []
             value = cells[j] if j < len(cells) else ""
             if value == PLACEHOLDER:
-                return None
+                break
             if not value:
-                sys.exit(f"{target} can't record an empty value at "
-                         f"{expected[1]}")
+                sys.exit(f"{target} can't record an empty value at {sql}")
             values.append(value)
-        if len(values) > 1 and values[0] == "error":
-            sys.exit(f"{target} can't record 'error' as the first of "
-                     f"several values at {expected[1]}")
-        records[key] = ("values", values)
-    return records
+        else:
+            if len(values) > 1 and values[0] == "error":
+                sys.exit(f"{target} can't record 'error' as the first of "
+                         f"several values at {sql}")
+            records[key] = ("values", values)
+            ran = True
+            continue
+        if key in previous:
+            records[key] = previous[key]
+    return records if ran else None
 
 
 def generate(generator):
@@ -200,9 +222,11 @@ def show(generator, keys):
         print(f"{key}\t{answer}\n{sql}\n")
 
 
-def main(command, generator, target):
+def main(command, generator, target, engine="serenedb"):
     text = generate(generator)
     path = generator[:-len(".py")] + ".recorded"
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generators")
+    shared = os.path.relpath(os.path.abspath(generator), base).split(os.sep)[0] == "any"
     if command == "write":
         filled, missing = fill(text, load(path))
         pieces = parts(filled)
@@ -219,13 +243,13 @@ def main(command, generator, target):
         return
     if not any(spots(block) for block in blocks(text)):
         return
-    records = record(text, assembled(text, target), target)
+    previous = load(path)
+    records = record(text, assembled(text, target), target, previous, engine, shared)
     if records is None:
         print(f"{target} wasn't overridden, {path} is unchanged",
               file=sys.stderr)
         return
     queries = dict(recorded(text))
-    previous = load(path)
     fresh = [f"{key}\t{queries[key]}\n  {value}"
              for key, (kind, value) in records.items()
              if kind == "error" and previous.get(key) != (kind, value)]

@@ -68,6 +68,13 @@ n
 1
 
 
+query ok retry 120 backoff 250ms
+SELECT count(pid) AS n FROM pg_stat_subscription WHERE subname = 'rpk_sub';
+----
+n
+0
+
+
 query ok
 SELECT count(*) AS n FROM rpk_rows;
 ----

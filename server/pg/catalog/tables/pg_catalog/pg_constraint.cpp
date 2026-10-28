@@ -47,20 +47,19 @@ struct ConstraintRow {
 };
 
 struct ForeignKeyRow : ConstraintRow {
-  mutable std::optional<duckdb::optional_ptr<const duckdb::TableCatalogEntry>>
-    target = std::nullopt;
+  mutable duckdb::optional_ptr<const duckdb::TableCatalogEntry> target =
+    nullptr;
 
-  duckdb::optional_ptr<const duckdb::TableCatalogEntry> Target(
-    const SystemScan& scan) const {
+  const duckdb::TableCatalogEntry& Target(const SystemScan& scan) const {
     if (!target) {
-      target = ReferencedTable(scan.Transaction(), table,
-                               As<duckdb::ForeignKeyConstraint>());
+      target = &ReferencedTable(scan.Transaction(), table,
+                                As<duckdb::ForeignKeyConstraint>());
     }
     return *target;
   }
 
   auto Referenced(const SystemScan& scan) const {
-    return Attnums(Target(scan)->GetColumns(),
+    return Attnums(Target(scan).GetColumns(),
                    As<duckdb::ForeignKeyConstraint>().info.pk_keys);
   }
 };
@@ -133,17 +132,13 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
     Col<"confmatchtype">([](const auto&) { return 's'; }),
     Col<"connoinherit">([](const auto&) { return true; }),
     Col<"confrelid">([](const ForeignKeyRow& row, SystemScan& scan) {
-      const auto target = row.Target(scan);
-      return target ? target->oid : duckdb::idx_t{0};
+      return row.Target(scan).oid;
     }),
     Col<"confkey">([](const ForeignKeyRow& row, SystemScan& scan) {
-      return row.Target(scan) ? std::optional{row.Referenced(scan)}
-                              : std::nullopt;
+      return row.Referenced(scan);
     }),
     Col<"conindid">([](const ForeignKeyRow& row, SystemScan& scan) {
-      const auto target = row.Target(scan);
-      const auto* key =
-        target ? ReferencedKey(*target, row.Referenced(scan)) : nullptr;
+      const auto* key = ReferencedKey(row.Target(scan), row.Referenced(scan));
       return key ? key->index_oid : duckdb::idx_t{0};
     }),
     Col<"conkey">([](const ForeignKeyRow& row) {

@@ -258,14 +258,16 @@ duckdb::optional_ptr<const duckdb::TableCatalogEntry> SiblingTable(
   return &entry->Cast<duckdb::TableCatalogEntry>();
 }
 
-duckdb::optional_ptr<const duckdb::TableCatalogEntry> ReferencedTable(
+const duckdb::TableCatalogEntry& ReferencedTable(
   duckdb::CatalogTransaction transaction,
   const duckdb::TableCatalogEntry& table,
   const duckdb::ForeignKeyConstraint& fk) {
   if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
-    return &table;
+    return table;
   }
-  return SiblingTable(transaction, table, fk.info.table);
+  const auto target = SiblingTable(transaction, table, fk.info.table);
+  SDB_ASSERT(target);
+  return *target;
 }
 
 SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,

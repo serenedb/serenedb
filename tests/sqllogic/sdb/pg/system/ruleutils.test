@@ -177,6 +177,43 @@ aliased	partly	unioned
 SELECT 1 AS x, CAST('a' AS text) AS y;	SELECT a, b AS renamed FROM rs.t;	(SELECT 1 AS u) UNION ALL (SELECT 2);
 
 
+statement ok
+CREATE VIEW rs.v_star (x) AS SELECT * FROM rs.t;
+
+
+statement ok
+CREATE VIEW rs.v_by_name (x, y) AS SELECT a, b FROM rs.t UNION ALL BY NAME SELECT b, a FROM rs.t;
+
+
+statement ok
+CREATE TABLE rs.nested (s STRUCT(p integer, q integer), n integer);
+
+
+statement ok
+CREATE VIEW rs.v_unnest (x, y, z) AS SELECT unnest(s), n FROM rs.nested;
+
+
+query
+SELECT pg_get_viewdef('rs.v_star'::regclass) AS star,
+       pg_get_viewdef('rs.v_by_name'::regclass) AS by_name,
+       pg_get_viewdef('rs.v_unnest'::regclass) AS unnested;
+----
+star	by_name	unnested
+SELECT * FROM (SELECT * FROM rs.t) AS v_star(x);	SELECT * FROM ((SELECT a, b FROM rs.t) UNION ALL BY NAME (SELECT b, a FROM rs.t)) AS v_by_name(x, y);	SELECT * FROM (SELECT unnest(s), n FROM rs.nested) AS v_unnest(x, y, z);
+
+
+query
+SELECT c.relname, string_agg(a.attname, ',' ORDER BY a.attnum) AS columns
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relnamespace = 'rs'::regnamespace AND c.relname IN ('v_star', 'v_by_name', 'v_unnest') AND a.attnum > 0
+GROUP BY c.relname ORDER BY c.relname;
+----
+relname	columns
+v_by_name	x,y
+v_star	x,a,b,c,Odd Col
+v_unnest	x,y,z
+
+
 query
 SELECT definition FROM pg_views WHERE schemaname = 'rs' AND viewname = 'v_alias';
 ----
@@ -219,6 +256,41 @@ FROM information_schema.triggers WHERE trigger_schema = 'rs' ORDER BY trigger_na
 trigger_name	action_statement	action_condition
 t_ins	INSERT INTO rs.audit (VALUES ("new".a))	NULL
 t_upd	INSERT INTO rs.audit (VALUES (0))	NULL
+
+
+statement ok
+CREATE TABLE rs.watched (a integer);
+
+
+statement ok
+CREATE TABLE rs.watched_rows (a integer);
+
+
+statement ok
+CREATE TRIGGER w_del AFTER DELETE ON rs.watched_rows FOR EACH ROW INSERT INTO rs.audit VALUES (OLD.a);
+
+
+statement ok
+CREATE TRIGGER w_new AFTER INSERT ON rs.watched REFERENCING NEW TABLE AS fresh FOR EACH STATEMENT INSERT INTO rs.audit SELECT a FROM fresh;
+
+
+statement ok
+CREATE TRIGGER w_old AFTER DELETE ON rs.watched REFERENCING OLD TABLE AS gone FOR EACH STATEMENT INSERT INTO rs.audit SELECT a FROM gone;
+
+
+statement ok
+CREATE TRIGGER w_both AFTER UPDATE ON rs.watched REFERENCING OLD TABLE AS "Old Rows" NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO rs.audit SELECT a FROM new_rows;
+
+
+query
+SELECT tgname, pg_get_triggerdef(oid) AS def FROM pg_trigger
+WHERE tgrelid IN ('rs.watched'::regclass, 'rs.watched_rows'::regclass) ORDER BY tgname;
+----
+tgname	def
+w_both	CREATE TRIGGER w_both AFTER UPDATE ON rs.watched REFERENCING OLD TABLE AS "Old Rows" NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO rs.audit SELECT a FROM new_rows
+w_del	CREATE TRIGGER w_del AFTER DELETE ON rs.watched_rows FOR EACH ROW INSERT INTO rs.audit (VALUES ("old".a))
+w_new	CREATE TRIGGER w_new AFTER INSERT ON rs.watched REFERENCING NEW TABLE AS fresh FOR EACH STATEMENT INSERT INTO rs.audit SELECT a FROM fresh
+w_old	CREATE TRIGGER w_old AFTER DELETE ON rs.watched REFERENCING OLD TABLE AS gone FOR EACH STATEMENT INSERT INTO rs.audit SELECT a FROM gone
 
 
 statement ok

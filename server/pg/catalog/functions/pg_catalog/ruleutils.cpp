@@ -72,8 +72,7 @@ namespace {
 using Definition = std::optional<std::string>;
 
 template<typename T>
-const T* TypedEntry(const Session& session, duckdb::CatalogType type,
-                    int64_t oid) {
+T* TypedEntry(const Session& session, duckdb::CatalogType type, int64_t oid) {
   auto entry = EntryByOid(session, static_cast<uint64_t>(oid));
   if (!entry) {
     entry = TemporaryEntryByOid(session, static_cast<uint64_t>(oid));
@@ -153,8 +152,8 @@ std::string Options(
   });
 }
 
-const duckdb::ViewCatalogEntry* UserView(const Session& session, int64_t oid) {
-  const auto* view = TypedEntry<duckdb::ViewCatalogEntry>(
+duckdb::ViewCatalogEntry* UserView(const Session& session, int64_t oid) {
+  auto* view = TypedEntry<duckdb::ViewCatalogEntry>(
     session, duckdb::CatalogType::VIEW_ENTRY, oid);
   if (!view) {
     return nullptr;
@@ -167,27 +166,37 @@ const duckdb::ViewCatalogEntry* UserView(const Session& session, int64_t oid) {
   return view;
 }
 
-std::string ViewQuery(const duckdb::ViewCatalogEntry& view) {
+std::string ViewQuery(const Session& session, duckdb::ViewCatalogEntry& view) {
   if (view.aliases.empty()) {
     return view.query->ToString();
   }
   auto query = view.query->node->Copy();
   auto* node = query.get();
+  bool by_name = false;
   while (node->type == duckdb::QueryNodeType::SET_OPERATION_NODE) {
-    node = node->Cast<duckdb::SetOperationNode>().children[0].get();
+    const auto& set = node->Cast<duckdb::SetOperationNode>();
+    by_name |= set.setop_type == duckdb::SetOperationType::UNION_BY_NAME;
+    node = set.children[0].get();
   }
-  if (node->type == duckdb::QueryNodeType::SELECT_NODE) {
-    auto& targets = node->Cast<duckdb::SelectNode>().select_list;
-    if (absl::c_none_of(targets, [](const auto& target) {
-          return target->GetExpressionType() == duckdb::ExpressionType::STAR;
-        })) {
-      for (size_t i = 0; i < std::min(targets.size(), view.aliases.size());
-           ++i) {
-        if (targets[i]->GetName().GetIdentifierName() !=
-            view.aliases[i].GetIdentifierName()) {
-          targets[i]->SetAlias(view.aliases[i]);
-        }
-      }
+  auto& targets = node->Cast<duckdb::SelectNode>().select_list;
+  const auto columns = ViewColumns(*session.context, view);
+  if (by_name || !columns || targets.size() != columns->names.size() ||
+      absl::c_any_of(targets, [](const auto& target) {
+        return target->GetExpressionType() == duckdb::ExpressionType::STAR;
+      })) {
+    return absl::StrCat(
+      "SELECT * FROM (", query->ToString(), ") AS ",
+      QuoteIdentifier(view.name.GetIdentifierName()), "(",
+      absl::StrJoin(view.aliases, ", ",
+                    [](std::string* out, const duckdb::Identifier& alias) {
+                      out->append(QuoteIdentifier(alias.GetIdentifierName()));
+                    }),
+      ")");
+  }
+  for (size_t i = 0; i < view.aliases.size(); ++i) {
+    if (targets[i]->GetName().GetIdentifierName() !=
+        view.aliases[i].GetIdentifierName()) {
+      targets[i]->SetAlias(view.aliases[i]);
     }
   }
   return query->ToString();
@@ -197,11 +206,11 @@ Definition ViewDefinition(const Session& session, int64_t oid) {
   if (const auto* system = FindSystemView(oid)) {
     return absl::StrCat(system->info->query->ToString(), ";");
   }
-  const auto* view = UserView(session, oid);
+  auto* view = UserView(session, oid);
   if (!view) {
     return std::nullopt;
   }
-  return absl::StrCat(ViewQuery(*view), ";");
+  return absl::StrCat(ViewQuery(session, *view), ";");
 }
 
 Definition RuleDefinition(const Session& session, int64_t oid, bool pretty) {
@@ -210,9 +219,9 @@ Definition RuleDefinition(const Session& session, int64_t oid, bool pretty) {
   if (const auto* system = FindSystemView(oid)) {
     relation = RelationName(session, system->schema, system->name, !pretty);
     query = system->info->query->ToString();
-  } else if (const auto* view = UserView(session, oid)) {
+  } else if (auto* view = UserView(session, oid)) {
     relation = RelationName(session, *view, !pretty);
-    query = ViewQuery(*view);
+    query = ViewQuery(session, *view);
   } else {
     return std::nullopt;
   }
@@ -223,7 +232,7 @@ Definition RuleDefinition(const Session& session, int64_t oid, bool pretty) {
 std::string ForeignKeyDefinition(const Session& session,
                                  const duckdb::TableCatalogEntry& table,
                                  const duckdb::ForeignKeyConstraint& fk) {
-  const auto target = ReferencedTable(*session.transaction, table, fk);
+  const auto& target = ReferencedTable(*session.transaction, table, fk);
   const auto columns = [](const duckdb::TableCatalogEntry& owner,
                           std::span<const duckdb::PhysicalIndex> keys) {
     return absl::StrJoin(keys, ", ",
@@ -231,22 +240,9 @@ std::string ForeignKeyDefinition(const Session& session,
                            out->append(ColumnName(owner, key));
                          });
   };
-  std::string pk_columns;
-  std::string target_name;
-  if (target) {
-    pk_columns = columns(*target, fk.info.pk_keys);
-    target_name = RelationName(session, *target, false);
-  } else {
-    pk_columns =
-      absl::StrJoin(fk.pk_columns, ", ",
-                    [](std::string* out, const duckdb::Identifier& name) {
-                      out->append(QuoteIdentifier(name.GetIdentifierName()));
-                    });
-    target_name = QualifiedOutName(fk.info.schema.GetIdentifierName(),
-                                   fk.info.table.GetIdentifierName());
-  }
   return absl::StrCat("FOREIGN KEY (", columns(table, fk.info.fk_keys),
-                      ") REFERENCES ", target_name, "(", pk_columns, ")");
+                      ") REFERENCES ", RelationName(session, target, false),
+                      "(", columns(target, fk.info.pk_keys), ")");
 }
 
 Definition ConstraintDefinition(const Session& session, int64_t oid) {
@@ -283,7 +279,7 @@ Definition ConstraintDefinition(const Session& session, int64_t oid) {
       return ForeignKeyDefinition(
         session, table, constraint.Cast<duckdb::ForeignKeyConstraint>());
     case duckdb::ConstraintType::INVALID:
-      return std::nullopt;
+      SDB_UNREACHABLE();
   }
 }
 

@@ -413,16 +413,13 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     if (!Allows<"deptype">('n')) {
       return;
     }
-    const auto target = ReferencedTable(Transaction(), table, fk);
-    if (!target) {
-      return;
-    }
-    const auto referenced = Attnums(target->GetColumns(), fk.info.pk_keys);
-    if (const auto* key = ReferencedKey(*target, referenced)) {
+    const auto& target = ReferencedTable(Transaction(), table, fk);
+    const auto referenced = Attnums(target.GetColumns(), fk.info.pk_keys);
+    if (const auto* key = ReferencedKey(target, referenced)) {
       Depend(kPgConstraintTable, fk.oid, 0, kPgClassTable, key->index_oid, 0,
              'n');
     }
-    Columns(fk.oid, *target, referenced, 'n');
+    Columns(fk.oid, target, referenced, 'n');
   }
 
   void Attrdef(const duckdb::TableCatalogEntry& table,

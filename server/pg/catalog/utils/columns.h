@@ -160,7 +160,7 @@ duckdb::optional_ptr<const duckdb::TableCatalogEntry> SiblingTable(
   duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& member,
   const duckdb::Identifier& name);
 
-duckdb::optional_ptr<const duckdb::TableCatalogEntry> ReferencedTable(
+const duckdb::TableCatalogEntry& ReferencedTable(
   duckdb::CatalogTransaction transaction,
   const duckdb::TableCatalogEntry& table,
   const duckdb::ForeignKeyConstraint& fk);

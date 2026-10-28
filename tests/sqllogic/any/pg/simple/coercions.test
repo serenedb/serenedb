@@ -164,6 +164,13 @@ Candidate macros:
 	coerce_to_oid(x oid)
 
 
+query
+SELECT coerce_to_oid(1);
+----
+coerce_to_oid
+1
+
+
 # reg* -> oid coercions all exist in PG
 query
 SELECT coerce_to_oid(1259::regclass);

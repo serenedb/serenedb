@@ -23,6 +23,7 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
+#include <cmath>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
@@ -620,6 +621,25 @@ duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
     duckdb::Value::BIGINT(oid).WithType(REGTYPE()));
 }
 
+int32_t AscendingWidthBucket(double operand, double low, double high,
+                             int32_t count) {
+  if (operand < low) {
+    return 0;
+  }
+  if (operand >= high) {
+    int32_t bucket = 0;
+    if (__builtin_add_overflow(count, 1, &bucket)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                      ERR_MSG("integer out of range"));
+    }
+    return bucket;
+  }
+  const auto quotient = std::isinf(high - low)
+                          ? (operand / 2 - low / 2) / (high / 2 - low / 2)
+                          : (operand - low) / (high - low);
+  return std::min(static_cast<int32_t>(count * quotient), count - 1) + 1;
+}
+
 void WidthBucketFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                          duckdb::Vector& result) {
   duckdb::GenericExecutor::ExecuteQuaternary<
@@ -633,21 +653,28 @@ void WidthBucketFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       if (count.val <= 0) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_WIDTH_BUCKET_FUNCTION),
-          ERR_MSG("count must be greater than 0"));
+          ERR_MSG("count must be greater than zero"));
       }
-      if (low.val >= high.val) {
+      if (std::isnan(operand.val) || std::isnan(low.val) ||
+          std::isnan(high.val)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_WIDTH_BUCKET_FUNCTION),
-          ERR_MSG("lower bound must be less than upper bound"));
+          ERR_MSG("operand, lower bound, and upper bound cannot be NaN"));
       }
-      if (operand.val < low.val) {
-        return {0};
+      if (std::isinf(low.val) || std::isinf(high.val)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_WIDTH_BUCKET_FUNCTION),
+          ERR_MSG("lower and upper bounds must be finite"));
       }
-      if (operand.val >= high.val) {
-        return {count.val + 1};
+      if (low.val == high.val) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_WIDTH_BUCKET_FUNCTION),
+          ERR_MSG("lower bound cannot equal upper bound"));
       }
-      return {static_cast<int32_t>(
-        (operand.val - low.val) / (high.val - low.val) * count.val + 1)};
+      return {
+        low.val < high.val
+          ? AscendingWidthBucket(operand.val, low.val, high.val, count.val)
+          : AscendingWidthBucket(-operand.val, -low.val, -high.val, count.val)};
     });
 }
 
@@ -663,9 +690,18 @@ duckdb::unique_ptr<duckdb::FunctionData> WidthBucketThresholdsBind(
   duckdb::LogicalType common;
   if (!duckdb::LogicalType::TryGetMaxLogicalType(input.GetClientContext(),
                                                  operand, element, common)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
-                    ERR_MSG("function width_bucket(", operand.ToString(), ", ",
-                            element.ToString(), "[]) does not exist"));
+    const auto session = MakeSession(&input.GetClientContext());
+    const auto operand_name =
+      FormatTypeOut(session, CatalogTypeOid(operand), std::nullopt);
+    const auto thresholds_name = FormatTypeOut(
+      session, CatalogTypeOid(input.GetArguments()[1]->GetReturnType()),
+      std::nullopt);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+      ERR_MSG("function width_bucket(", pg::AsView(operand_name), ", ",
+              pg::AsView(thresholds_name), ") does not exist"),
+      ERR_HINT("No function matches the given name and argument types. You "
+               "might need to add explicit type casts."));
   }
   auto& function = input.GetBoundFunction();
   function.GetArguments()[0] = common;

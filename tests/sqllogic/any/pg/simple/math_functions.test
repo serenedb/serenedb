@@ -381,6 +381,85 @@ db error: ERROR: thresholds must be one-dimensional array
 
 
 query
+SELECT width_bucket(NULL::int, ARRAY[1, 2]) AS null_operand, width_bucket(5, NULL::int[]) AS null_thresholds;
+----
+null_operand	null_thresholds
+NULL	NULL
+
+
+statement error
+SELECT width_bucket(1, ARRAY['a']);
+----
+db error: ERROR: function width_bucket(integer, text[]) does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+
+
+query
+SELECT width_bucket(5.35, 0.024, 10.06, 5) AS inside, width_bucket(-1, 0, 10, 5) AS below, width_bucket(10, 0, 10, 5) AS at_end,
+       width_bucket(5, 10, 0, 5) AS descending, width_bucket(11, 10, 0, 5) AS above_descending,
+       width_bucket(0, 10, 0, 5) AS at_descending_end, width_bucket(0.5e-30, -1, 1e-30, 10) AS rounds_to_last,
+       width_bucket(1e308, -1e308, 1.5e308, 4) AS huge_bounds, width_bucket(-1e308, 1e308, -1.5e308, 4) AS huge_descending,
+       width_bucket('infinity', 0, 10, 5) AS infinite_operand, width_bucket(5, 10, 0, 2147483647) AS wide;
+----
+inside	below	at_end	descending	above_descending	at_descending_end	rounds_to_last	huge_bounds	huge_descending	infinite_operand	wide
+3	0	6	3	0	6	10	4	4	6	1073741824
+
+
+statement error
+SELECT width_bucket(1, 0, 10, 0);
+----
+db error: ERROR: count must be greater than zero
+
+
+statement error
+SELECT width_bucket('NaN', 0, 10, 5);
+----
+db error: ERROR: operand, lower bound, and upper bound cannot be NaN
+
+
+statement error
+SELECT width_bucket(1, 'NaN', 10, 5);
+----
+db error: ERROR: operand, lower bound, and upper bound cannot be NaN
+
+
+statement error
+SELECT width_bucket(1, 0, 'NaN', 5);
+----
+db error: ERROR: operand, lower bound, and upper bound cannot be NaN
+
+
+statement error
+SELECT width_bucket(1, '-infinity', 10, 5);
+----
+db error: ERROR: lower and upper bounds must be finite
+
+
+statement error
+SELECT width_bucket(1, 0, 'infinity', 5);
+----
+db error: ERROR: lower and upper bounds must be finite
+
+
+statement error
+SELECT width_bucket(1, 5, 5, 5);
+----
+db error: ERROR: lower bound cannot equal upper bound
+
+
+statement error
+SELECT width_bucket(100, 0, 10, 2147483647);
+----
+db error: ERROR: integer out of range
+
+
+statement error
+SELECT width_bucket(-100, 10, 0, 2147483647);
+----
+db error: ERROR: integer out of range
+
+
+query
 SELECT random_normal(10, 0) AS fixed, random_normal() IS NOT NULL AS standard, random_normal(5) IS NOT NULL AS mean_only;
 ----
 fixed	standard	mean_only

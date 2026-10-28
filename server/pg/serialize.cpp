@@ -392,15 +392,23 @@ struct GeometryBinCore {
   }
 };
 
-template<WrapContext InContainer, typename T>
-IRS_FORCE_INLINE void EnumTextLabel(
-  SerializationContext& ctx, const duckdb::RecursiveUnifiedVectorFormat& vdata,
+IRS_FORCE_INLINE duckdb::string_t EnumLabel(
+  const duckdb::LogicalType& type, const duckdb::UnifiedVectorFormat& unified,
   duckdb::idx_t idx) {
-  const auto ordinal =
-    duckdb::UnifiedVectorFormat::GetData<T>(vdata.unified)[idx];
-  const auto label = duckdb::EnumType::GetString(vdata.logical_type, ordinal);
-  EmitTextItem<InContainer>(ctx,
-                            std::string_view{label.GetData(), label.GetSize()});
+  switch (duckdb::EnumType::GetPhysicalType(type)) {
+    using enum duckdb::PhysicalType;
+    case UINT8:
+      return duckdb::EnumType::GetString(
+        type, duckdb::UnifiedVectorFormat::GetData<uint8_t>(unified)[idx]);
+    case UINT16:
+      return duckdb::EnumType::GetString(
+        type, duckdb::UnifiedVectorFormat::GetData<uint16_t>(unified)[idx]);
+    case UINT32:
+      return duckdb::EnumType::GetString(
+        type, duckdb::UnifiedVectorFormat::GetData<uint32_t>(unified)[idx]);
+    default:
+      SDB_UNREACHABLE();
+  }
 }
 
 template<WrapContext InContainer>
@@ -408,47 +416,18 @@ struct EnumTextCore {
   IRS_FORCE_INLINE static void Render(
     SerializationContext& ctx,
     const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    switch (duckdb::EnumType::GetPhysicalType(vdata.logical_type)) {
-      using enum duckdb::PhysicalType;
-      case UINT8:
-        return EnumTextLabel<InContainer, uint8_t>(ctx, vdata, idx);
-      case UINT16:
-        return EnumTextLabel<InContainer, uint16_t>(ctx, vdata, idx);
-      case UINT32:
-        return EnumTextLabel<InContainer, uint32_t>(ctx, vdata, idx);
-      default:
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        ERR_MSG("Unsupported ENUM physical type"));
-    }
+    const auto label = EnumLabel(vdata.logical_type, vdata.unified, idx);
+    EmitTextItem<InContainer>(
+      ctx, std::string_view{label.GetData(), label.GetSize()});
   }
 };
-
-template<typename T>
-IRS_FORCE_INLINE void EnumBinLabel(
-  SerializationContext& ctx, const duckdb::RecursiveUnifiedVectorFormat& vdata,
-  duckdb::idx_t idx) {
-  const auto ordinal =
-    duckdb::UnifiedVectorFormat::GetData<T>(vdata.unified)[idx];
-  const auto label = duckdb::EnumType::GetString(vdata.logical_type, ordinal);
-  ctx.writer->Write(std::string_view{label.GetData(), label.GetSize()});
-}
 
 struct EnumBinCore {
   IRS_FORCE_INLINE static void Render(
     SerializationContext& ctx,
     const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    switch (duckdb::EnumType::GetPhysicalType(vdata.logical_type)) {
-      using enum duckdb::PhysicalType;
-      case UINT8:
-        return EnumBinLabel<uint8_t>(ctx, vdata, idx);
-      case UINT16:
-        return EnumBinLabel<uint16_t>(ctx, vdata, idx);
-      case UINT32:
-        return EnumBinLabel<uint32_t>(ctx, vdata, idx);
-      default:
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        ERR_MSG("Unsupported ENUM physical type"));
-    }
+    const auto label = EnumLabel(vdata.logical_type, vdata.unified, idx);
+    ctx.writer->Write(std::string_view{label.GetData(), label.GetSize()});
   }
 };
 
@@ -1386,12 +1365,19 @@ bool RecordHasArrayTrigger(SerializationContext& ctx,
                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row);
 
+std::string RenderTsqueryRow(const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                             duckdb::idx_t row);
+
 template<WrapContext InContainer>
 bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
                     duckdb::idx_t row) {
   static_assert(InContainer == WrapContext::Array ||
                 InContainer == WrapContext::Record);
+  const auto idx = vdata.unified.sel->get_index(row);
+  if (!vdata.unified.validity.RowIsValid(idx)) {
+    return false;
+  }
   using enum duckdb::LogicalTypeId;
   switch (type.id()) {
     case BIGINT:
@@ -1400,7 +1386,7 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
           RegOut(*ctx.caches->session, *kind,
                  static_cast<uint64_t>(
                    duckdb::UnifiedVectorFormat::GetDataUnsafe<int64_t>(
-                     vdata.unified)[vdata.unified.sel->get_index(row)]));
+                     vdata.unified)[idx]));
         return RecordItemNeedsQuoting(text) ||
                ArrayItemNeedQuotesAndEscape(text);
       }
@@ -1409,7 +1395,7 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
       return IsMoney(type) &&
              MoneyTextCore::NeedsQuoting(
                duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::hugeint_t>(
-                 vdata.unified)[vdata.unified.sel->get_index(row)]);
+                 vdata.unified)[idx]);
     case DATE:
     case BOOLEAN:
     case TINYINT:
@@ -1428,6 +1414,7 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
     case TIME_TZ:
     case UUID:
     case BIT:
+    case GEOMETRY:
       return false;
     case TIMESTAMP_SEC:
     case TIMESTAMP_MS:
@@ -1436,22 +1423,28 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
     case TIMESTAMP_TZ:
     case TIMESTAMP_TZ_NS:
       return duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::timestamp_t>(
-               vdata.unified)[vdata.unified.sel->get_index(row)]
+               vdata.unified)[idx]
         .IsFinite();
     case STRUCT:
       if (IsInetOrCidr(type)) {
         return false;
       }
-      return !IsRange(type) ||
-             !(ReadRangeFlags(vdata, vdata.unified.sel->get_index(row)) &
-               kRangeEmpty);
+      if (IsRange(type)) {
+        return !(ReadRangeFlags(vdata, idx) & kRangeEmpty);
+      }
+      if (connector::IsTSQueryStructType(type)) {
+        const auto text = RenderTsqueryRow(vdata, idx);
+        return RecordItemNeedsQuoting(text) ||
+               ArrayItemNeedQuotesAndEscape(text);
+      }
+      return true;
     case BLOB: {
       if (ctx.bytea_output == ByteaOutput::Hex) {
         return true;
       }
       const auto& raw =
         duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
-          vdata.unified)[vdata.unified.sel->get_index(row)];
+          vdata.unified)[idx];
       const std::string_view v{raw.GetData(), raw.GetSize()};
       return absl::c_any_of(v,
                             [](char c) { return !absl::ascii_isprint(c); }) ||
@@ -1462,7 +1455,7 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
     case INTERVAL: {
       const auto interval =
         duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::interval_t>(
-          vdata.unified)[vdata.unified.sel->get_index(row)];
+          vdata.unified)[idx];
       auto str = duckdb::Interval::ToString(interval);
       std::string_view v{str};
       return RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
@@ -1471,7 +1464,7 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
     case VARCHAR: {
       const auto& raw =
         duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
-          vdata.unified)[vdata.unified.sel->get_index(row)];
+          vdata.unified)[idx];
       std::string_view v{raw.GetData(), raw.GetSize()};
       if (IsXml(type)) {
         const auto xml = XmlOut(v);
@@ -1483,26 +1476,9 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
       return RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
     }
     case ENUM: {
-      auto idx = vdata.unified.sel->get_index(row);
-      auto check = [&](auto ord) {
-        const auto& label = duckdb::EnumType::GetString(type, ord);
-        std::string_view v{label.GetData(), label.GetSize()};
-        return RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
-      };
-      switch (duckdb::EnumType::GetPhysicalType(type)) {
-        using enum duckdb::PhysicalType;
-        case UINT8:
-          return check(
-            duckdb::UnifiedVectorFormat::GetData<uint8_t>(vdata.unified)[idx]);
-        case UINT16:
-          return check(
-            duckdb::UnifiedVectorFormat::GetData<uint16_t>(vdata.unified)[idx]);
-        case UINT32:
-          return check(
-            duckdb::UnifiedVectorFormat::GetData<uint32_t>(vdata.unified)[idx]);
-        default:
-          return true;
-      }
+      const auto label = EnumLabel(type, vdata.unified, idx);
+      const std::string_view v{label.GetData(), label.GetSize()};
+      return RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
     }
     case ARRAY:
     case LIST:
@@ -1510,36 +1486,8 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
       if (IsInt2vector(type) || IsOidvector(type)) {
         return GetArraySlice(vdata, row).size != 1;
       }
-      if (IsMultirange(type)) {
-        return InContainer == WrapContext::Array ||
-               GetArraySlice(vdata, row).size != 0;
-      }
-      // Rendered `{...}`. `{`/`}` are array triggers (always wraps inside an
-      // array). For records: walk the singleton path -- any size>1 contributes
-      // `,` (record trigger), size 0 collapses to `{}` (no trigger), else
-      // recurse to the leaf and ask the same question there.
-      if constexpr (InContainer == WrapContext::Array) {
-        return true;
-      } else {
-        static_assert(InContainer == WrapContext::Record);
-        const auto* cur = &vdata;
-        duckdb::idx_t cur_row = row;
-        while (true) {
-          if (!IsArrayDimension(cur->logical_type)) {
-            return NeedsQuotingIn<WrapContext::Record>(ctx, cur->logical_type,
-                                                       *cur, cur_row);
-          }
-          auto [array_size, array_offset] = GetArraySlice(*cur, cur_row);
-          if (array_size > 1) {
-            return true;
-          }
-          if (array_size == 0) {
-            return false;
-          }
-          cur = &cur->children[0];
-          cur_row = array_offset;
-        }
-      }
+      SDB_ASSERT(InContainer == WrapContext::Array || IsMultirange(type));
+      return true;
     default:
       return true;
   }
@@ -1554,12 +1502,8 @@ bool RecordHasArrayTrigger(SerializationContext& ctx,
     // 0 fields -> '()' (no trigger). N>1 -> ',' is always present.
     return children.size() > 1;
   }
-  const auto& child = vdata.children[0];
-  if (!child.unified.validity.RowIsValid(child.unified.sel->get_index(row))) {
-    return false;  // '()' for the lone NULL field
-  }
-  return NeedsQuotingIn<WrapContext::Array>(ctx, children[0].second, child,
-                                            row);
+  return NeedsQuotingIn<WrapContext::Array>(ctx, children[0].second,
+                                            vdata.children[0], row);
 }
 
 ArrayWrap ArrayWrapOf(
@@ -1593,6 +1537,7 @@ ArrayWrap ArrayWrapOf(
     case TIME_TZ:
     case UUID:
     case BIT:
+    case GEOMETRY:
       return ArrayWrap::Never;
     default:
       return ArrayWrap::ByValue;
@@ -2175,6 +2120,10 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
   return has_null;
 }
 
+template<typename Core>
+bool ArrayNeedsQuotingInRecord(SerializationContext& ctx, const RUVF& vdata,
+                               duckdb::idx_t row);
+
 template<typename Core, uint64_t ElementOID, VarFormat Format,
          WrapContext InContainer>
 struct OneDimArrayCore {
@@ -2197,17 +2146,7 @@ struct OneDimArrayCore {
         // Wrap the rendered '{...}' as a record field iff its content has any
         // record trigger char ('(', ')', ',', '"', '\\', whitespace) or is
         // empty. '{' / '}' are NOT record triggers.
-        const bool needs_wrap = [&] {
-          if (array_size == 0) {
-            return false;  // bare '{}'
-          }
-          if (array_size > 1) {
-            return true;  // ',' between elements
-          }
-          return NeedsQuotingIn<WrapContext::Record>(
-            context, child_vdata.logical_type, child_vdata, array_offset);
-        }();
-        if (needs_wrap) {
+        if (ArrayNeedsQuotingInRecord<Core>(context, vdata, row)) {
           WriteWrapped<WrapContext::Record>(context, emit_inside);
         } else {
           emit_inside();
@@ -2302,6 +2241,35 @@ IRS_FORCE_INLINE bool IsDimensionOf(const duckdb::LogicalType& type) {
            id == duckdb::LogicalTypeId::LIST ||
            id == duckdb::LogicalTypeId::MAP;
   }
+}
+
+template<typename Core>
+bool ArrayNeedsQuotingInRecord(SerializationContext& ctx, const RUVF& vdata,
+                               duckdb::idx_t row) {
+  const auto [array_size, array_offset] = GetSliceResolved(vdata, row);
+  if constexpr (*ArrayDelim<Core>::kValue == ',') {
+    if (array_size > 1) {
+      return true;
+    }
+  }
+  const auto& child = vdata.children[0];
+  if (IsDimensionOf<Core>(child.logical_type)) {
+    for (duckdb::idx_t i = 0; i < array_size; ++i) {
+      const auto child_row = child.unified.sel->get_index(array_offset + i);
+      if (child.unified.validity.RowIsValid(child_row) &&
+          ArrayNeedsQuotingInRecord<Core>(ctx, child, child_row)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  for (duckdb::idx_t i = 0; i < array_size; ++i) {
+    if (NeedsQuotingIn<WrapContext::Record>(ctx, child.logical_type, child,
+                                            array_offset + i)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 template<typename Core>
@@ -2401,17 +2369,7 @@ struct MultiDimArrayCore {
       };
 
       if constexpr (InContainer == WrapContext::Record) {
-        const bool needs_wrap = [&] {
-          if (array_size == 0) {
-            return false;  // bare '{}' (or '{...}' with no triggers).
-          }
-          if (array_size > 1) {
-            return true;  // ',' between elements
-          }
-          return NeedsQuotingIn<WrapContext::Record>(
-            context, child_vdata.logical_type, child_vdata, array_offset);
-        }();
-        if (needs_wrap) {
+        if (ArrayNeedsQuotingInRecord<Core>(context, vdata, row)) {
           WriteWrapped<WrapContext::Record>(context, emit_inside);
         } else {
           emit_inside();

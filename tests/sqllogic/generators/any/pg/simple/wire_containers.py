@@ -39,12 +39,12 @@ TYPES = [
     ("uuid", ["'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'"]),
     ("json", ["'{\"a\": 1}'", "'[1, 2]'", "'\"s\"'"], {"json_array": {"empty", "nested"}}),
     ("bit(3)", ["B'101'", "B'000'"]),
-    ("varbit", ["B'1'", "B''"], {"empty_bit": VALUED - {"single"}}),
+    ("varbit", ["B'1'", "B''"], {"empty_bit": VALUED}),
     ("inet", ["'192.168.0.1'", "'::1/128'"]),
     ("cidr", ["'10.0.0.0/8'"]),
     ("macaddr", ["'08:00:2b:01:02:03'"]),
     ("macaddr8", ["'08:00:2b:01:02:03:04:05'"]),
-    ("money", ["'12.34'", "'-1'"]),
+    ("money", ["'12.34'", "'-1'", "'-1234.56'"]),
     ("point", ["'(1,2)'", "'(-1.5,0)'"]),
     ("line", ["'{1,2,3}'"]),
     ("lseg", ["'[(1,2),(3,4)]'"]),
@@ -71,6 +71,7 @@ TYPES = [
     ("xml", ["'<a>1</a>'", "'<?xml version=\"1.0\"?><b/>'"]),
     ("wire_mood", ["'sad'", "'happy'"], {}, {"nested", "nested_matrix"}),
     ("wire_wide", ["'l1'", "'l300'"], {}, {"nested", "nested_matrix"}),
+    ("wire_huge", ["'l1'", "'l65536'"], {}, {"nested", "nested_matrix"}),
     ("wire_pair", ["ROW(1, 'a b')", "ROW(NULL, 'x')"], {}, {"nested", "nested_matrix"}),
 ]
 
@@ -101,6 +102,8 @@ t.statement("SET TimeZone = 'UTC'")
 t.statement("CREATE TYPE wire_mood AS ENUM ('sad', 'ok', 'happy')")
 labels = ", ".join(f"'l{i}'" for i in range(1, 301))
 t.statement(f"CREATE TYPE wire_wide AS ENUM ({labels})")
+labels = ", ".join(f"'l{i}'" for i in range(1, 65537))
+t.statement(f"CREATE TYPE wire_huge AS ENUM ({labels})")
 t.statement("CREATE TYPE wire_pair AS (x int, y text)")
 
 for name, values, *rest in TYPES:
@@ -114,10 +117,12 @@ for name, values, *rest in TYPES:
         "matrix": f"SELECT ARRAY[ARRAY[{first}, {second}], ARRAY[{second}, {first}]] AS a",
         "empty": f"SELECT '{{}}'::{name}[] AS a",
         "record": f"SELECT ROW({', '.join(cast)}, NULL::{name}) AS r",
-        "nested": f"SELECT ROW(ARRAY[{first}, {second}], ARRAY[{first}], '{{}}'::{name}[]) AS r",
+        "nested": f"SELECT ROW(ARRAY[{first}, {second}], ARRAY[{first}], ARRAY[{second}], "
+                  f"ARRAY[NULL::{name}], ARRAY[NULL::{name}, NULL], '{{}}'::{name}[]) AS r",
         "nested_matrix": f"SELECT ROW(ARRAY[ARRAY[{first}, {second}], ARRAY[{second}, {first}]], "
-                         f"ARRAY[ARRAY[{first}]]) AS r",
-        "single": f"SELECT ARRAY[ROW({first}), ROW(NULL::{name})] AS a",
+                         f"ARRAY[ARRAY[{first}]], ARRAY[ARRAY[{first}, {second}]], "
+                         f"ARRAY[ARRAY[NULL::{name}]]) AS r",
+        "single": f"SELECT ARRAY[ROW({first}), ROW({second}), ROW(NULL::{name})] AS a",
         "pair": f"SELECT ARRAY[ROW({first}, {second})] AS a",
     }
     for shape, sql in shapes.items():
@@ -171,8 +176,10 @@ t.section("Records with no fields and nested containers.")
 t.query("SELECT ROW() AS r, ARRAY[ROW()] AS a")
 t.query("SELECT ARRAY[ARRAY[ARRAY[1, 2], ARRAY[3, 4]], ARRAY[ARRAY[5, 6], ARRAY[7, 8]]] AS a")
 t.query("SELECT ROW(ROW(1, 'a b'), ARRAY[ROW(2, 'c')]) AS r")
+t.query("SELECT ARRAY[ROW(ARRAY[1, 2]), ROW('{}'::int[]), ROW(ARRAY[3])] AS a")
 
 t.statement("DROP TYPE wire_pair")
+t.statement("DROP TYPE wire_huge")
 t.statement("DROP TYPE wire_wide")
 t.statement("DROP TYPE wire_mood")
 t.statement("RESET TimeZone")

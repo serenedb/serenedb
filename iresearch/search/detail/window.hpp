@@ -185,10 +185,10 @@ template<bool Keep, typename Leaf>
 uint32_t SiftByFill(Leaf& leaf, const doc_id_t* in, uint32_t n, doc_id_t* out) {
   uint64_t words[kWindowWords];
   uint32_t kept = 0;
+  const doc_id_t stop = n != 0 ? in[n - 1] + 1 : 0;
   for (uint32_t i = 0; i != n;) {
     const auto min = in[i];
-    const auto max = doc_limits::eof() - min > kWindowDocs ? min + kWindowDocs
-                                                           : doc_limits::eof();
+    const auto max = stop - min > kWindowDocs ? min + kWindowDocs : stop;
     const auto count = WindowWords(min, max);
     for (size_t w = 0; w != count; ++w) {
       words[w] = 0;

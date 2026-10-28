@@ -12,6 +12,10 @@ COLUMN = re.compile(r'^\s*(\w+) = (\w+)( FORCE NOT NULL| FORCE NULL)?\s*,?$')
 INDEX = re.compile(
     r'^declare (unique )?index \w+ \d+ on (\w+) using \w+\((.*)\)$')
 KEYWORD = re.compile(r'^PG_KEYWORD\("(\w+)", \w+, (\w+), \w+\)', re.M)
+CATALOG_MACRO = re.compile(r'^CATALOG\((\w+),\d+,(\w+)\)', re.M)
+CLASS_CASE = re.compile(r'^\t\tcase (\w+RelationId):', re.M)
+PROPERTY_CLASS = re.compile(r'\{\s*"[^"]*",\s*(\w+RelationId),')
+ACL_CLASS_ALIAS = re.compile(r'\(classId == (\w+RelationId)\) \?')
 
 
 def path(*parts):
@@ -130,10 +134,33 @@ def substitute(text):
                   lambda match: replacements[match.group(1)], text)
 
 
-def bki():
-    headers = re.findall(r"'(pg_\w+\.h)'", re.search(
+def catalog_headers():
+    return re.findall(r"'(pg_\w+\.h)'", re.search(
         r'catalog_headers = \[(.*?)\]',
         read('src', 'include', 'catalog', 'meson.build'), re.S).group(1))
+
+
+def function_body(text, signature):
+    start = text.index('\n' + signature + '\n')
+    return text[start:text.index('\n}\n', start)]
+
+
+def object_classes():
+    relations = {macro: name for header in catalog_headers()
+                 for name, macro in CATALOG_MACRO.findall(
+                     read('src', 'include', 'catalog', header))}
+    text = read('src', 'backend', 'catalog', 'objectaddress.c')
+    described = CLASS_CASE.findall(function_body(
+        text, 'getObjectDescription(const ObjectAddress *object, bool missing_ok)'))
+    properties = text[text.index('ObjectProperty[] =\n'):]
+    with_acl = (PROPERTY_CLASS.findall(properties[:properties.index('\n};\n')]) +
+                ACL_CLASS_ALIAS.findall(function_body(text, 'pg_get_acl(PG_FUNCTION_ARGS)')))
+    return ([relations[macro] for macro in described],
+            [relations[macro] for macro in with_acl])
+
+
+def bki():
+    headers = catalog_headers()
     with tempfile.TemporaryDirectory() as out:
         subprocess.run(
             ['perl', '-I', path('src', 'backend', 'catalog'),

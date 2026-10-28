@@ -11,6 +11,9 @@ hand, from the PostgreSQL source in third_party/postgres:
                                    views, information_schema, privileges
   src/bin/initdb/initdb.c          the privileges initdb sets itself
   src/include/parser/kwlist.h      keywords
+  src/backend/catalog/objectaddress.c
+                                   the object classes pg_describe_object,
+                                   pg_identify_object and pg_get_acl accept
 
 PostgreSQL numbers the objects initdb creates while it runs, so the source
 holds no OIDs for them; they are numbered here in the order the SQL files

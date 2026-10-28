@@ -218,6 +218,17 @@ def relations(gen, coded, types):
     return sorted(out, key=lambda relation: relation[1:3])
 
 
+def object_classes(gen):
+    lines = []
+    for const, names in zip(('kObjectClasses', 'kAclClasses'),
+                            source.object_classes()):
+        lines.append(f'inline constexpr std::array {const}{{')
+        lines += [f'  {relation_constant("pg_catalog", name)}Table,'
+                  for name in sorted(set(names))]
+        lines.append('};')
+    gen.write('object_classes.gen.inc', lines)
+
+
 def generate(gen, constants, all_types):
     types = Types(gen, all_types.values())
     reserved = [word for word, category in source.keywords()
@@ -280,6 +291,7 @@ def generate(gen, constants, all_types):
     tables.append('};')
     gen.write('catalog_oids.gen.inc', oids)
     gen.write('tables.gen.inc', tables)
+    object_classes(gen)
     for schema, name in coded:
         if (schema, name) not in known:
             raise SystemExit(f'tables/{schema}/{name}.cpp names no catalog '

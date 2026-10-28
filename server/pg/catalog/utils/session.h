@@ -50,8 +50,7 @@ struct SessionTemporary {
 };
 
 struct RegOutRecent {
-  uint64_t oid = 0;
-  uint8_t kind = 0;
+  uint64_t key = 0;
   std::string_view text;
 };
 

@@ -207,6 +207,17 @@ std::optional<Relation> FindRelation(const Session& session, uint64_t oid) {
   return std::nullopt;
 }
 
+std::optional<Relation> RowTypeOwner(const Session& session, uint64_t oid) {
+  auto relation = FindRelation(session, RowTypeRelation(oid));
+  if (!relation || !relation->entry || relation->key ||
+      relation->entry->internal ||
+      (relation->entry->type != duckdb::CatalogType::TABLE_ENTRY &&
+       relation->entry->type != duckdb::CatalogType::VIEW_ENTRY)) {
+    return std::nullopt;
+  }
+  return relation;
+}
+
 ObjectName NameOf(duckdb::CatalogTransaction transaction,
                   const Relation& relation) {
   if (relation.key) {
@@ -360,7 +371,7 @@ std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
     if (oid & kRowArrayTypeOidBit) {
       return std::nullopt;
     }
-    const auto relation = FindRelation(session, RowTypeRelation(oid));
+    const auto relation = RowTypeOwner(session, oid);
     if (!relation) {
       return std::nullopt;
     }

@@ -150,17 +150,15 @@ IRS_NO_INLINE uint64_t UserRelationOid(const Session& session,
   const duckdb::Identifier identifier{name};
   for (const auto type : kRelationSets) {
     if (const auto member =
-          FindMember(*session.transaction, schema, type, identifier);
-        member && !member->internal) {
+          FindMember(*session.transaction, schema, type, identifier)) {
       return member->oid;
     }
   }
   if (const auto member =
         FindMember(*session.transaction, schema,
                    duckdb::CatalogType::TYPE_ENTRY, identifier);
-      member && !member->internal &&
-      duckdb::StructType::IsStruct(
-        member->Cast<duckdb::TypeCatalogEntry>().user_type)) {
+      member && duckdb::StructType::IsStruct(
+                  member->Cast<duckdb::TypeCatalogEntry>().user_type)) {
     return member->oid;
   }
   const auto key = FindKeyIndex(*session.context, schema, name);
@@ -184,8 +182,7 @@ uint64_t TemporaryRelationOid(const Session& session, std::string_view name) {
   for (const auto type : kRelationSets) {
     if (const auto member =
           FindMember(session.temporary->transaction, session.temporary->schema,
-                     type, identifier);
-        member && !member->internal) {
+                     type, identifier)) {
       return member->oid;
     }
   }
@@ -226,8 +223,7 @@ const duckdb::MacroCatalogEntry* FindMacro(const Session& session,
   if (!entry || CatalogClassOid(entry->type) != kPgProcTable) {
     return nullptr;
   }
-  const auto& macro = entry->Cast<duckdb::MacroCatalogEntry>();
-  return macro.macros.empty() ? nullptr : &macro;
+  return &entry->Cast<duckdb::MacroCatalogEntry>();
 }
 
 namespace {
@@ -252,8 +248,7 @@ std::optional<NameList> SplitNames(std::string_view text) {
   while (true) {
     std::string name;
     if (text[pos] == '"') {
-      if (!duckdb::StringUtil::TryParseQuotedString(text, pos, name) ||
-          name.empty()) {
+      if (!duckdb::StringUtil::TryParseQuotedString(text, pos, name)) {
         return std::nullopt;
       }
     } else {
@@ -375,8 +370,7 @@ std::vector<Token> Tokenize(std::string_view text) {
       tokens.emplace_back(
         Token{.kind = TokenKind::Word,
               .text = absl::AsciiStrToLower(text.substr(start, pos - start))});
-    } else if (absl::ascii_isdigit(c) || (c == '-' && pos + 1 < text.size() &&
-                                          absl::ascii_isdigit(text[pos + 1]))) {
+    } else if (absl::ascii_isdigit(c)) {
       const auto start = pos++;
       while (pos < text.size() && absl::ascii_isdigit(text[pos])) {
         ++pos;
@@ -397,7 +391,7 @@ std::vector<Token> Tokenize(std::string_view text) {
 struct ParsedType {
   NameList names;
   bool keyword = false;
-  std::vector<int32_t> typmods;
+  std::vector<std::string> typmods;
   bool array = false;
 };
 
@@ -471,6 +465,26 @@ class TypeParser {
     return value;
   }
 
+  std::string Typmod() {
+    if (AcceptSymbol('-')) {
+      const auto& token = Peek(0);
+      if (token.kind == TokenKind::Word || token.kind == TokenKind::Quoted) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("type modifiers must be simple constants or identifiers"));
+      }
+      if (token.kind != TokenKind::Number) {
+        ThrowSyntaxError(token);
+      }
+      return absl::StrCat("-", _tokens[_pos++].text);
+    }
+    const auto& token = Peek(0);
+    if (token.kind == TokenKind::End || token.kind == TokenKind::Symbol) {
+      ThrowSyntaxError(token);
+    }
+    return std::move(_tokens[_pos++].text);
+  }
+
   std::string ExpectName() {
     const auto& token = Peek(0);
     if (token.kind != TokenKind::Word && token.kind != TokenKind::Quoted) {
@@ -484,7 +498,7 @@ class TypeParser {
   }
 
   ParsedType Simple() {
-    if (Peek(0).kind == TokenKind::Word && !IsSymbol(1, '.')) {
+    if (Peek(0).kind == TokenKind::Word) {
       if (auto type = KeywordType()) {
         return std::move(*type);
       }
@@ -530,23 +544,30 @@ class TypeParser {
     }
     if (word == "decimal" || word == "dec" || word == "numeric") {
       ++_pos;
-      return WithTypmods(Keyword("numeric"));
+      auto type = Keyword("numeric");
+      Typmods(type);
+      return type;
     }
     if (word == "varchar") {
       ++_pos;
-      return WithTypmods(Keyword("varchar"));
+      auto type = Keyword("varchar");
+      Length(type);
+      return type;
     }
     if (word == "bit") {
       ++_pos;
-      return Varying("bit", "varbit");
+      return Varying("bit", "varbit", false);
     }
     if (word == "character" || word == "char" || word == "nchar") {
       ++_pos;
-      return Varying("bpchar", "varchar");
+      return Varying("bpchar", "varchar", true);
     }
-    if (word == "national" && (IsWord(1, "character") || IsWord(1, "char"))) {
+    if (word == "national") {
+      if (!IsWord(1, "character") && !IsWord(1, "char")) {
+        ThrowSyntaxError(Peek(1));
+      }
       _pos += 2;
-      return Varying("bpchar", "varchar");
+      return Varying("bpchar", "varchar", true);
     }
     if (word == "timestamp" || word == "time") {
       ++_pos;
@@ -581,28 +602,33 @@ class TypeParser {
       ERR_MSG("precision for type float must be less than 54 bits"));
   }
 
-  ParsedType WithTypmods(ParsedType type) {
-    Typmods(type);
+  ParsedType Varying(std::string_view fixed, std::string_view varying,
+                     bool length) {
+    const bool is_varying = AcceptWord("varying");
+    auto type = Keyword(is_varying ? varying : fixed);
+    if (length) {
+      Length(type);
+    } else {
+      Typmods(type);
+    }
+    if (type.typmods.empty() && !is_varying) {
+      type.typmods.emplace_back("1");
+    }
     return type;
   }
 
-  ParsedType Varying(std::string_view fixed, std::string_view varying) {
-    const bool is_varying = AcceptWord("varying");
-    auto type = WithTypmods(Keyword(is_varying ? varying : fixed));
-    if (type.typmods.empty() && !is_varying) {
-      type.typmods.emplace_back(1);
-    }
-    return type;
+  bool AcceptZone(std::string_view word) {
+    return IsWord(1, "time") && AcceptWord(word);
   }
 
   ParsedType Datetime(bool timestamp) {
-    std::vector<int32_t> typmods;
+    std::vector<std::string> typmods;
     if (AcceptSymbol('(')) {
-      typmods.emplace_back(ExpectNumber());
+      typmods.emplace_back(absl::StrCat(ExpectNumber()));
       ExpectSymbol(')');
     }
-    const bool zone = AcceptWord("with");
-    if (zone || AcceptWord("without")) {
+    const bool zone = AcceptZone("with");
+    if (zone || AcceptZone("without")) {
       ExpectWord("time");
       ExpectWord("zone");
     }
@@ -626,19 +652,13 @@ class TypeParser {
     return it - kIntervalFields.begin();
   }
 
-  static bool IntervalRangeAllowed(size_t first, size_t last) {
-    if (kIntervalFields[first].mask == kIntervalYear) {
-      return kIntervalFields[last].mask == kIntervalMonth;
-    }
-    return kIntervalFields[first].mask != kIntervalMonth && last > first;
-  }
-
   ParsedType Interval() {
     auto type = Keyword("interval");
     if (AcceptSymbol('(')) {
       const auto precision = ExpectNumber();
       ExpectSymbol(')');
-      type.typmods = {kIntervalFullRange, precision};
+      type.typmods = {absl::StrCat(kIntervalFullRange),
+                      absl::StrCat(precision)};
       return type;
     }
     const auto first = IntervalField();
@@ -647,9 +667,13 @@ class TypeParser {
     }
     ++_pos;
     auto last = *first;
-    if (AcceptWord("to")) {
+    const auto first_mask = kIntervalFields[*first].mask;
+    if (first_mask != kIntervalMonth && first_mask != kIntervalSecond &&
+        AcceptWord("to")) {
       const auto to = IntervalField();
-      if (!to || !IntervalRangeAllowed(*first, *to)) {
+      if (!to || (first_mask == kIntervalYear
+                    ? kIntervalFields[*to].mask != kIntervalMonth
+                    : *to <= *first)) {
         ThrowSyntaxError(Peek(0));
       }
       ++_pos;
@@ -659,12 +683,19 @@ class TypeParser {
     for (auto i = *first; i <= last; ++i) {
       mask |= kIntervalFields[i].mask;
     }
-    type.typmods.emplace_back(mask);
+    type.typmods.emplace_back(absl::StrCat(mask));
     if (kIntervalFields[last].mask == kIntervalSecond && AcceptSymbol('(')) {
-      type.typmods.emplace_back(ExpectNumber());
+      type.typmods.emplace_back(absl::StrCat(ExpectNumber()));
       ExpectSymbol(')');
     }
     return type;
+  }
+
+  void Length(ParsedType& type) {
+    if (AcceptSymbol('(')) {
+      type.typmods.emplace_back(absl::StrCat(ExpectNumber()));
+      ExpectSymbol(')');
+    }
   }
 
   void Typmods(ParsedType& type) {
@@ -672,7 +703,7 @@ class TypeParser {
       return;
     }
     do {
-      type.typmods.emplace_back(ExpectNumber());
+      type.typmods.emplace_back(Typmod());
     } while (AcceptSymbol(','));
     ExpectSymbol(')');
   }
@@ -688,7 +719,7 @@ class TypeParser {
     }
     while (AcceptSymbol('[')) {
       if (Peek(0).kind == TokenKind::Number) {
-        ++_pos;
+        ExpectNumber();
       }
       ExpectSymbol(']');
       type.array = true;
@@ -774,10 +805,39 @@ int32_t IntervalTypmod(std::span<const int32_t> typmods) {
   return (range << 16) | std::min(precision, kMaxTimePrecision);
 }
 
-int32_t TypmodIn(uint64_t oid, std::span<const int32_t> typmods,
+int32_t TypmodValue(std::string_view text) {
+  int32_t value = 0;
+  if (absl::SimpleAtoi(text, &value)) {
+    return value;
+  }
+  if (absl::c_all_of(absl::StripPrefix(text, "-"), absl::ascii_isdigit)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+      ERR_MSG("value \"", text, "\" is out of range for type integer"));
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+    ERR_MSG("invalid input syntax for type integer: \"", text, "\""));
+}
+
+constexpr std::array kTypmodTypes{kBpchar,      kVarchar, kBit,    kVarbit,
+                                  kNumeric,     kTime,    kTimetz, kTimestamp,
+                                  kTimestamptz, kInterval};
+
+int32_t TypmodIn(uint64_t oid, std::span<const std::string> texts,
                  std::string_view display) {
-  if (typmods.empty()) {
+  if (texts.empty()) {
     return -1;
+  }
+  if (!absl::c_linear_search(kTypmodTypes, oid)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("type modifier is not allowed for type \"", display, "\""));
+  }
+  std::vector<int32_t> typmods;
+  typmods.reserve(texts.size());
+  for (const auto& text : texts) {
+    typmods.emplace_back(TypmodValue(text));
   }
   if (oid == kBpchar) {
     return LengthTypmod(typmods, "char", kMaxAttrSize, kVarHdrSz);
@@ -800,12 +860,8 @@ int32_t TypmodIn(uint64_t oid, std::span<const int32_t> typmods,
   if (oid == kTimestamp || oid == kTimestamptz) {
     return TimeTypmod(typmods, "TIMESTAMP", oid == kTimestamptz);
   }
-  if (oid == kInterval) {
-    return IntervalTypmod(typmods);
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_SYNTAX_ERROR),
-    ERR_MSG("type modifier is not allowed for type \"", display, "\""));
+  SDB_ASSERT(oid == kInterval);
+  return IntervalTypmod(typmods);
 }
 
 uint64_t FindTypeIn(const Session& session, std::string_view schema,
@@ -1422,10 +1478,6 @@ std::optional<uint64_t> CollationIn(const Session& session,
     return std::nullopt;
   }
   const auto object = Deconstruct(session, *names);
-  if (!object.schema.empty() &&
-      !SchemaOid(session, object.schema, soft_error)) {
-    return std::nullopt;
-  }
   if (object.schema.empty() ||
       object.schema == irs::StaticStrings::kPgCatalogSchema) {
     const auto collations = BuiltinCollations();
@@ -1487,8 +1539,6 @@ std::optional<uint64_t> DictionaryIn(const Session& session,
         oid != kInvalidOid) {
       return oid;
     }
-  } else if (!SchemaOid(session, object.schema, soft_error)) {
-    return std::nullopt;
   } else if (auto entry = FindInSchema(session, object.schema,
                                        duckdb::CatalogType::TOKENIZER_ENTRY,
                                        object.name)) {
@@ -1564,13 +1614,21 @@ bool IsNumericOid(std::string_view text) {
 std::optional<uint64_t> ParseOid(std::string_view text,
                                  irs::pg::SqlErrorData* soft_error) {
   uint64_t oid = 0;
-  if (fast_float::from_chars(text.data(), text.data() + text.size(), oid).ec ==
-        std::errc::result_out_of_range ||
-      oid > std::numeric_limits<uint32_t>::max()) {
+  const auto* end = text.data() + text.size();
+  const auto parsed = fast_float::from_chars(
+    text.data(), end, oid, text.size() > 1 && text.front() == '0' ? 8 : 10);
+  if (parsed.ec == std::errc::result_out_of_range ||
+      (parsed.ptr == end && oid > std::numeric_limits<uint32_t>::max())) {
     return Miss(soft_error,
                 SQL_ERROR_DATA(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                                ERR_MSG("value \"", text,
                                        "\" is out of range for type oid")));
+  }
+  if (parsed.ptr != end) {
+    return Miss(soft_error,
+                SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                               ERR_MSG("invalid input syntax for type oid: \"",
+                                       text, "\"")));
   }
   return oid;
 }
@@ -1599,9 +1657,7 @@ std::string TypeIdentity(const Session& session, uint64_t oid) {
 std::string ProcIdentity(const Session& session, uint64_t oid) {
   const auto builtins = GetBuiltinFunctions(*session.context);
   const auto info = FindProc(session, *builtins, oid);
-  if (!info) {
-    return absl::StrCat(oid);
-  }
+  SDB_ASSERT(info);
   return absl::StrCat(QualifiedOutName(info->schema, info->name), "(",
                       absl::StrJoin(ArgTypes(info->args), ",",
                                     [&](std::string* out, duckdb::idx_t arg) {
@@ -1699,7 +1755,8 @@ OutText RegText(const Session& session, RegKind kind, uint64_t oid) {
 }
 
 IRS_NO_INLINE std::string_view CacheRegOut(const Session& session, RegKind kind,
-                                           uint64_t oid, RegOutRecent& recent) {
+                                           uint64_t oid, uint64_t key,
+                                           RegOutRecent& recent) {
   if (session.reg_out.size() >= kRegOutLimit) {
     session.reg_out.clear();
     session.reg_out_texts.clear();
@@ -1713,7 +1770,7 @@ IRS_NO_INLINE std::string_view CacheRegOut(const Session& session, RegKind kind,
     it->second = built ? session.reg_out_texts.emplace_back(std::move(*built))
                        : *std::get_if<std::string_view>(&text);
   }
-  recent = {.oid = oid, .kind = tag, .text = it->second};
+  recent = {.key = key, .text = it->second};
   return it->second;
 }
 
@@ -1723,14 +1780,13 @@ std::string_view RegOut(const Session& session, RegKind kind, uint64_t oid) {
   if (oid == kInvalidOid) {
     return kind == RegKind::Oper || kind == RegKind::Operator ? "0" : "-";
   }
-  const auto tag = std::to_underlying(kind);
-  auto& recent = session.reg_out_recent[((oid ^ (uint64_t{tag} << 56)) *
-                                         uint64_t{0x9E3779B97F4A7C15}) >>
-                                        58];
-  if (recent.oid == oid && recent.kind == tag) {
+  const auto key = oid ^ (uint64_t{std::to_underlying(kind)} << 56);
+  auto& recent =
+    session.reg_out_recent[(key * uint64_t{0x9E3779B97F4A7C15}) >> 58];
+  if (recent.key == key) {
     return recent.text;
   }
-  return CacheRegOut(session, kind, oid, recent);
+  return CacheRegOut(session, kind, oid, key, recent);
 }
 
 std::optional<uint64_t> RegIn(const Session& session, RegKind kind,
@@ -1809,18 +1865,15 @@ std::optional<bool> RelationIsVisible(const Session& session, uint64_t oid) {
 
 namespace {
 
-std::optional<duckdb::optional_ptr<duckdb::CatalogEntry>> ArrayElementEntry(
+duckdb::optional_ptr<duckdb::CatalogEntry> ArrayElementEntry(
   const Session& session, uint64_t oid) {
   if (oid & kRowTypeOidBit) {
-    const auto relation = FindRelation(session, RowTypeRelation(oid));
-    if (!relation) {
-      return std::nullopt;
-    }
-    return relation->entry;
+    const auto relation = RowTypeOwner(session, oid);
+    return relation ? relation->entry : nullptr;
   }
   const auto element = EntryByOid(session, TypeElementOid(oid));
   if (!element || element->type != duckdb::CatalogType::TYPE_ENTRY) {
-    return std::nullopt;
+    return nullptr;
   }
   return element;
 }
@@ -1839,9 +1892,8 @@ std::optional<bool> TypeIsVisible(const Session& session, uint64_t oid) {
   if (!element) {
     return std::nullopt;
   }
-  return *element &&
-         FindVisibleType(session,
-                         ArrayTypeName(*session.transaction, **element)) == oid;
+  return FindVisibleType(session,
+                         ArrayTypeName(*session.transaction, *element)) == oid;
 }
 
 std::optional<bool> FunctionIsVisible(const Session& session, uint64_t oid) {

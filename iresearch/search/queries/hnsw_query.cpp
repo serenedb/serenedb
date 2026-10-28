@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <duckdb/common/fault_points.hpp>
 #include <numeric>
 #include <optional>
@@ -639,10 +640,14 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
             plan.read_cost + static_cast<double>(_index_only_postings) <
               static_cast<double>(_inner->Postings()));
   };
+  const auto expected = [rest = table ? table->Share() : 1.0](uint64_t count) {
+    return static_cast<uint64_t>(
+      std::llround(static_cast<double>(count) * rest));
+  };
   uint64_t most = docs_count;
   bool by_columns = false;
   if (columns && reads(_inner->EstimateMax())) {
-    matches = _inner->EstimateMatches();
+    matches = expected(_inner->EstimateMatches());
     by_columns = reads(matches);
     if (by_columns) {
       SDB_IF_FAILURE("irs::HnswReadsColumns") {
@@ -655,13 +660,13 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   }
   if (!by_columns) {
     if (!inner) {
-      matches = docs_count;
+      matches = expected(docs_count);
     } else if (!table && inner->Kind() == QueryKind::Boolean &&
                inner->EstimateMin() != inner->EstimateMax()) {
       probe.emplace(detail::MakeDocSet(inner, docs_count, nullptr));
       matches = most = probe->Count();
     } else {
-      matches = inner->EstimateMatches();
+      matches = expected(inner->EstimateMatches());
       most = inner->EstimateMax();
     }
   }

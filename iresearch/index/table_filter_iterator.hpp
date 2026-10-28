@@ -96,6 +96,7 @@ struct ColFilterSpec {
   std::span<const irs::field_id> row_fields;
   std::span<const duckdb::LogicalType> row_types;
   std::span<ColFilterLeaf> row_leaves;
+  double share = detail::kUnknownShare;
 };
 
 // Per-worker cache of duckdb filter-evaluation state, keyed by the pushed

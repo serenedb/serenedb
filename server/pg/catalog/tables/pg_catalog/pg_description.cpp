@@ -70,11 +70,28 @@ class PgDescription final : public SystemTableScan<kPgDescriptionSql> {
                                    Col<"objsubid">(&Description::objsubid),
                                    Col<"description">(&Description::text));
 
-  void Row(const duckdb::CatalogEntry& entry) {
-    if (const auto classoid = CatalogClassOid(entry.type);
-        classoid != kInvalidOid) {
-      Comment(classoid, entry.oid, 0, entry.comment);
-    }
+  void Row(const duckdb::SchemaCatalogEntry& schema) {
+    Comment(kPgNamespaceTable, schema.oid, 0, schema.comment);
+  }
+
+  void Row(const duckdb::IndexCatalogEntry& index) {
+    Comment(kPgClassTable, index.oid, 0, index.comment);
+  }
+
+  void Row(const duckdb::SequenceCatalogEntry& sequence) {
+    Comment(kPgClassTable, sequence.oid, 0, sequence.comment);
+  }
+
+  void Row(const duckdb::TypeCatalogEntry& type) {
+    Comment(kPgTypeTable, type.oid, 0, type.comment);
+  }
+
+  void Row(const duckdb::MacroCatalogEntry& macro) {
+    Comment(kPgProcTable, macro.oid, 0, macro.comment);
+  }
+
+  void Row(const catalog::TokenizerCatalogEntry& tokenizer) {
+    Comment(kPgTsDictTable, tokenizer.oid, 0, tokenizer.comment);
   }
 
   void Row(const duckdb::TableCatalogEntry& table) {

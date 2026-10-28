@@ -174,6 +174,7 @@ add_executable(
     utils/file_utils_tests.cpp
     utils/fst_builder_test.cpp
     utils/fst_string_weight_test.cpp
+    utils/huge_page_allocator_test.cpp
     utils/json_leaf_test.cpp
     utils/levenshtein_utils_test.cpp
     utils/lower_bound_test.cpp

@@ -39,6 +39,7 @@
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/huge_page_allocator.hpp"
 namespace irs {
 
 class DataOutput;
@@ -301,10 +302,10 @@ class HnswGraph {
     return _offsets[node] + uint64_t{level - 1} * _m;
   }
 
-  std::vector<uint8_t> _levels;
-  std::vector<uint64_t> _offsets;
-  std::vector<uint32_t> _base;
-  std::vector<uint32_t> _upper;
+  HugePageVector<uint8_t> _levels;
+  HugePageVector<uint64_t> _offsets;
+  HugePageVector<uint32_t> _base;
+  HugePageVector<uint32_t> _upper;
   uint32_t _entry = kHnswInvalidNode;
   uint32_t _max_level = 0;
   uint32_t _m = kHnswDefaultM;

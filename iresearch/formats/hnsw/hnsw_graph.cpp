@@ -31,8 +31,8 @@
 namespace irs {
 namespace {
 
-template<typename T>
-void WriteArray(DataOutput& out, const std::vector<T>& v) {
+template<typename T, typename A>
+void WriteArray(DataOutput& out, const std::vector<T, A>& v) {
   out.WriteU64(v.size());
   if (!v.empty()) {
     out.WriteData(reinterpret_cast<const byte_type*>(v.data()),
@@ -40,8 +40,8 @@ void WriteArray(DataOutput& out, const std::vector<T>& v) {
   }
 }
 
-template<typename T>
-void ReadArray(IndexInput& in, std::vector<T>& v) {
+template<typename T, typename A>
+void ReadArray(IndexInput& in, std::vector<T, A>& v) {
   const auto size = static_cast<size_t>(in.ReadI64());
   v.resize(size);
   if (size != 0) {

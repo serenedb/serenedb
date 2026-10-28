@@ -61,7 +61,7 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
     in->Seek(_meta.offset);
     auto data = std::make_shared<HnswData>();
     data->graph = HnswGraph::Deserialize(*in);
-    const auto read_floats = [&](std::vector<float>& out, size_t count) {
+    const auto read_floats = [&](auto& out, size_t count) {
       out.resize(count);
       if (count != 0) {
         ReadOnce(*in, reinterpret_cast<byte_type*>(out.data()),

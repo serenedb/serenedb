@@ -31,17 +31,18 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
+#include "iresearch/utils/huge_page_allocator.hpp"
 
 namespace irs {
 
 struct HnswData {
   HnswGraph graph;
-  std::vector<float> vectors;
+  HugePageVector<float> vectors;
   std::shared_ptr<const std::vector<float>> rotation;
   std::shared_ptr<const HnswByteBasis> byte_rotation;
-  std::vector<float> norms;
-  std::vector<float> tails;
-  bstring codes;
+  HugePageVector<float> norms;
+  HugePageVector<float> tails;
+  HugePageVector<byte_type> codes;
   std::vector<float> centroid;
   std::shared_ptr<const QuantizerStats> stats;
 };

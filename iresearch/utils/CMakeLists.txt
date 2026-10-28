@@ -10,6 +10,7 @@ target_sources(
         directory_utils.cpp
         duckdb_engine.cpp
         file_utils_ext.cpp
+        huge_page_allocator.cpp
         index_utils.cpp
         levenshtein_default_pdp.cpp
         levenshtein_utils.cpp

@@ -22,6 +22,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <array>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -29,6 +30,8 @@
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <optional>
 #include <span>
@@ -63,6 +66,91 @@ struct ObjectAddress {
   uint64_t classid;
   uint64_t objid;
   int32_t objsubid;
+};
+
+constexpr std::array kObjectClasses{
+  kPgAmTable,
+  kPgAmopTable,
+  kPgAmprocTable,
+  kPgAttrdefTable,
+  kPgAuthidTable,
+  kPgAuthMembersTable,
+  kPgCastTable,
+  kPgClassTable,
+  kPgCollationTable,
+  kPgConstraintTable,
+  kPgConversionTable,
+  kPgDatabaseTable,
+  kPgDefaultAclTable,
+  kPgEventTriggerTable,
+  kPgExtensionTable,
+  kPgForeignDataWrapperTable,
+  kPgForeignServerTable,
+  kPgLanguageTable,
+  kPgLargeobjectTable,
+  kPgNamespaceTable,
+  kPgOpclassTable,
+  kPgOperatorTable,
+  kPgOpfamilyTable,
+  kPgParameterAclTable,
+  kPgPolicyTable,
+  kPgProcTable,
+  kPgPublicationNamespaceTable,
+  kPgPublicationRelTable,
+  kPgPublicationTable,
+  kPgRewriteTable,
+  kPgStatisticExtTable,
+  kPgSubscriptionTable,
+  kPgTablespaceTable,
+  kPgTransformTable,
+  kPgTriggerTable,
+  kPgTsConfigTable,
+  kPgTsDictTable,
+  kPgTsParserTable,
+  kPgTsTemplateTable,
+  kPgTypeTable,
+  kPgUserMappingTable,
+};
+
+constexpr std::array kAclClasses{
+  kPgAmTable,
+  kPgAmopTable,
+  kPgAmprocTable,
+  kPgAuthidTable,
+  kPgAuthMembersTable,
+  kPgCastTable,
+  kPgClassTable,
+  kPgCollationTable,
+  kPgConstraintTable,
+  kPgConversionTable,
+  kPgDatabaseTable,
+  kPgDefaultAclTable,
+  kPgEventTriggerTable,
+  kPgExtensionTable,
+  kPgForeignDataWrapperTable,
+  kPgForeignServerTable,
+  kPgLanguageTable,
+  kPgLargeobjectMetadataTable,
+  kPgLargeobjectTable,
+  kPgNamespaceTable,
+  kPgOpclassTable,
+  kPgOperatorTable,
+  kPgOpfamilyTable,
+  kPgPolicyTable,
+  kPgProcTable,
+  kPgPublicationTable,
+  kPgRewriteTable,
+  kPgStatisticExtTable,
+  kPgSubscriptionTable,
+  kPgTablespaceTable,
+  kPgTransformTable,
+  kPgTriggerTable,
+  kPgTsConfigTable,
+  kPgTsDictTable,
+  kPgTsParserTable,
+  kPgTsTemplateTable,
+  kPgTypeTable,
+  kPgUserMappingTable,
 };
 
 ObjectIdentity Missing(std::string type) {
@@ -386,6 +474,10 @@ ObjectIdentity IdentifyDatabase(const Session& session, uint64_t oid) {
 std::optional<ObjectIdentity> IdentifyObject(const Session& session,
                                              const ObjectAddress& address) {
   const auto [classid, objid, objsubid] = address;
+  if (!absl::c_linear_search(kObjectClasses, classid)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("unsupported object class: ", classid));
+  }
   if (classid == kPgClassTable) {
     return IdentifyRelation(session, objid, objsubid);
   }
@@ -435,6 +527,10 @@ std::optional<std::span<const duckdb::AclItem>> ObjectAcl(
   const Session& session, const ObjectAddress& address) {
   using enum duckdb::CatalogType;
   const auto [classid, objid, objsubid] = address;
+  if (!absl::c_linear_search(kAclClasses, classid)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("unrecognized class ID: ", classid));
+  }
   if (classid == kPgClassTable) {
     const auto relation = RelationByOid(session, objid);
     if (!relation || relation->key ||

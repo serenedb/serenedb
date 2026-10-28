@@ -143,7 +143,7 @@ duckdb::unique_ptr<duckdb::FunctionData> WorkersBind(
 }
 
 void LoadStats(duckdb::ClientContext&, duckdb::DataChunk& input,
-               std::vector<SubscriptionStats>& rows) {
+               std::vector<std::optional<SubscriptionStats>>& rows) {
   irs::containers::FlatHashMap<duckdb::idx_t, Engine::SubStats> stats;
   if (auto* engine = Engine::gInstance) {
     stats = engine->Stats();
@@ -152,6 +152,7 @@ void LoadStats(duckdb::ClientContext&, duckdb::DataChunk& input,
   for (duckdb::idx_t row = 0; row < input.size(); ++row) {
     const auto subid = subids[row];
     if (!subid.IsValid()) {
+      rows.emplace_back();
       continue;
     }
     const auto id = static_cast<duckdb::idx_t>(subid.GetValue());
@@ -162,7 +163,7 @@ void LoadStats(duckdb::ClientContext&, duckdb::DataChunk& input,
   }
 }
 
-void WriteStats(std::span<const SubscriptionStats> rows,
+void WriteStats(std::span<const std::optional<SubscriptionStats>> rows,
                 duckdb::DataChunk& output) {
   const auto count = rows.size();
   auto subids = duckdb::FlatVector::Writer<int64_t>(output.data[0], count);
@@ -174,7 +175,16 @@ void WriteStats(std::span<const SubscriptionStats> rows,
   }
   auto resets =
     duckdb::FlatVector::Writer<duckdb::timestamp_tz_t>(output.data[10], count);
-  for (const auto& [subid, stats] : rows) {
+  for (const auto& row : rows) {
+    if (!row) {
+      subids.WriteNull();
+      for (auto& counter : counters) {
+        counter.WriteNull();
+      }
+      resets.WriteNull();
+      continue;
+    }
+    const auto& [subid, stats] = *row;
     subids.WriteValue(static_cast<int64_t>(subid));
     const uint64_t values[] = {stats.apply_error_count,
                                stats.sync_error_count,
@@ -274,10 +284,14 @@ void RegisterSubscriptionFunctions(duckdb::ExtensionLoader& loader) {
                                 InitRows<Worker>};
   workers.in_out_function = RowsInOut<Worker, &LoadWorkers, &WriteWorkers>;
   RegisterTable(loader, pg_catalog, std::move(workers));
-  duckdb::TableFunction stats{
-    "pg_stat_get_subscription_stats", {OID()}, nullptr, StatsBind, nullptr,
-    InitRows<SubscriptionStats>};
-  stats.in_out_function = RowsInOut<SubscriptionStats, &LoadStats, &WriteStats>;
+  duckdb::TableFunction stats{"pg_stat_get_subscription_stats",
+                              {OID()},
+                              nullptr,
+                              StatsBind,
+                              nullptr,
+                              InitRows<std::optional<SubscriptionStats>>};
+  stats.in_out_function =
+    RowsInOut<std::optional<SubscriptionStats>, &LoadStats, &WriteStats>;
   RegisterTable(loader, pg_catalog, std::move(stats));
   RegisterTable(loader, pg_catalog,
                 duckdb::TableFunction{"pg_show_replication_origin_status",

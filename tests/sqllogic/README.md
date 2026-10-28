@@ -60,7 +60,9 @@ records how many they return; `same_scores(actual, expected)` checks that two
 queries give each `id` the same `s`; `query(sql, columns, rows)` checks any
 query by its recorded answer of `rows` rows, or by `rows` themselves when the
 generator knows the answer; `error(sql, message)` expects a statement to fail
-with that message. `t.rng` is seeded with `seed`, so a generator writes the same
+with that message; `statement(sql, onlyif="postgres")` runs a statement on one
+engine only, such as a PostgreSQL setting SereneDB doesn't have. `t.rng` is
+seeded with `seed`, so a generator writes the same
 cases on every run. `temporal_gen` holds the shapes of the temporal tests (a key
 grouped, a predicate counted) and their rounds, which run every shape with an
 optimizer off and on and compare the results.

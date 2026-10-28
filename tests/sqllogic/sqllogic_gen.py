@@ -39,7 +39,8 @@ class Test:
                                      subsequent_indent="# ")
         self._lines.append("")
 
-    def statement(self, sql):
+    def statement(self, sql, onlyif=None):
+        self._lines += [f"onlyif {onlyif}"] if onlyif else []
         self._lines += ["statement ok", sql, ""]
 
     def dictionary(self, name, definition):

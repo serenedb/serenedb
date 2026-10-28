@@ -77,9 +77,11 @@ class HnswVisited {
       if (_words.size() < Words()) {
         _words.assign(Words(), 0);
       }
-    } else if (_slots.empty()) {
-      _slots.assign(kHnswVisitedSlots, 0);
-      _shift = 64 - std::countr_zero(kHnswVisitedSlots);
+    } else if (const auto slots =
+                 std::bit_ceil(std::max(kHnswVisitedSlots, 2 * visits));
+               _slots.size() < slots) {
+      _slots.assign(slots, 0);
+      _shift = 64 - std::countr_zero(slots);
     }
   }
 

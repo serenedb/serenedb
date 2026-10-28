@@ -20,6 +20,7 @@ SWITCH = re.compile(r"\s*switch\b")
 CASE = re.compile(r"\s*(?:case\b|default\s*:)")
 FOREVER = re.compile(r"\s*(?:\}\s*)?while\s*\(\s*true\s*\)")
 BRACE = re.compile(r"\s*\};?\s*$")
+USING = re.compile(r"\s*using\b[^;]*;\s*$")
 CODE, EXPANSION, MCDC_BRANCH = 0, 1, 6
 
 
@@ -319,7 +320,8 @@ def cover(path, touched, data, spans, summary, details):
     touched = touched - skipped
     missed = []
     for no in sorted(touched & set(data["lines"])):
-        if BRACE.match(source_text(path, no)):
+        text = source_text(path, no)
+        if BRACE.match(text) or USING.match(text):
             continue
         summary["lines"][1] += 1
         if data["lines"][no] > 0:

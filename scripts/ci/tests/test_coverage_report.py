@@ -118,6 +118,22 @@ def test_a_closing_brace_and_the_exit_of_an_endless_loop_are_not_coverage_target
     assert details == []
 
 
+def test_a_using_declaration_is_not_a_coverage_target(monkeypatch, tmp_path):
+    (tmp_path / "e.cpp").write_text("int f(E e) {\n  switch (e) {\n    using enum E;\n    case kA:\n"
+                                    "      return 1;\n    default:\n      return 2;\n  }\n}\n")
+    monkeypatch.setattr(diff, "ROOT", tmp_path)
+    diff.source_lines.cache_clear()
+    data = diff.parse_lcov("SF:e.cpp\nDA:1,1\nDA:2,1\nDA:3,0\nDA:4,1\nDA:5,1\nDA:6,1\nDA:7,1\n"
+                           "end_of_record\n")["e.cpp"]
+    spans = {"mcdc": {}, "functions": [], "excluded": set(), "code": []}
+    summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0], "mcdc": [0, 0]}
+    details = []
+    diff.cover("e.cpp", set(range(1, 10)), data, spans, summary, details)
+    diff.source_lines.cache_clear()
+    assert summary["lines"] == [6, 6]
+    assert details == []
+
+
 @pytest.mark.parametrize("path,test", [
     ("tests/server/connector/pg_progress_registry_test.cpp", True),
     ("resources/tests/iresearch/europarl.subset.txt", True),

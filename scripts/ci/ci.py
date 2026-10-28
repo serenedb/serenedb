@@ -300,8 +300,7 @@ def cmd_update_timing(args):
             return
         old = tmp / "old.parquet"
         key = timing_key(args.config, args.arch)
-        have_old = store.get(key, old) and "seen" in {
-            r["name"] for r in store.shell(f"SELECT name FROM parquet_schema('{old}')", tmp)}
+        have_old = store.get(key, old)
         attempts = (f"SELECT unit, coalesce(run, concat(sha, ':', started)) AS r, duration AS d, "
                     f"started AS s FROM read_parquet([{store.quoted(files)}], union_by_name = true) "
                     f"WHERE coalesce(pr, '') = '{args.pr}' "

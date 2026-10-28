@@ -31,6 +31,25 @@ db error: ERROR: value "70000" is out of range for type smallint<slt:ignore>
 
 
 query
+SELECT '-1 2'::int2vector AS a, '-32768 32767'::int2vector AS b;
+----
+a	b
+-1 2	-32768 32767
+
+
+statement error
+SELECT '-32769'::int2vector;
+----
+db error: ERROR: value "-32769" is out of range for type smallint
+
+
+statement error
+SELECT '99999999999999999999'::int2vector;
+----
+db error: ERROR: value "99999999999999999999" is out of range for type smallint
+
+
+query
 SELECT '1 2'::int2vector::text AS a, '23 25'::oidvector::text AS b, ''::int2vector::text AS d;
 ----
 a	b	d

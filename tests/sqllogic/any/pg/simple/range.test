@@ -1,3 +1,5 @@
+control substitution on
+
 query
 SELECT '[1,5)'::int4range AS a, '(1,5]'::int4range AS b, '[1,5]'::int4range AS c, '(1,5)'::int4range AS d,
        'empty'::int4range AS e, '(,5)'::int4range AS f, '[1,)'::int4range AS g, '(,)'::int4range AS h,
@@ -300,3 +302,83 @@ a	b
 
 statement ok
 RESET TimeZone
+
+
+statement error
+SELECT int8range(9223372036854775807, NULL, '(]');
+----
+db error: ERROR: bigint out of range
+
+
+statement error
+SELECT int8range(1, 9223372036854775807, '[]');
+----
+db error: ERROR: bigint out of range
+
+
+statement error
+SELECT int4range(2147483647, NULL, '(]');
+----
+db error: ERROR: integer out of range
+
+
+statement error
+SELECT int4range(1, 5, '[x');
+----
+db error: ERROR: invalid range bound flags
+HINT: Valid values are "[]", "[)", "(]", and "()".
+
+
+query
+SELECT '[1,\3)'::int4range AS a, '[\1,3)'::int4range AS b, '("2020-01-01","2020-01-03"]'::daterange AS c;
+----
+a	b	c
+[1,3)	[1,3)	[2020-01-02,2020-01-04)
+
+
+statement error
+SELECT '[1,3\'::int4range;
+----
+db error: ERROR: malformed range literal: "[1,3\"
+DETAIL: Unexpected end of input.
+
+
+statement error
+SELECT '[1'::int4range;
+----
+db error: ERROR: malformed range literal: "[1"
+DETAIL: Unexpected end of input.
+
+
+statement error
+SELECT '[1)'::int4range;
+----
+db error: ERROR: malformed range literal: "[1)"
+DETAIL: Missing comma after lower bound.
+
+
+statement error
+SELECT '[1,2) x'::int4range;
+----
+db error: ERROR: malformed range literal: "[1,2) x"
+DETAIL: Junk after right parenthesis or bracket.
+
+
+statement error (invalid input syntax for type integer: "3""|Could not convert string '3"' to INT32)
+SELECT '[1,"3""")'::int4range;
+
+
+statement ok
+COPY (SELECT '[5,1)' AS r) TO '${__TEST_DIR__}/range_reversed.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE range_reversed (r int4range);
+
+
+statement error (range lower bound must be less than or equal to range upper bound|COPY FROM: invalid input for column 1)
+COPY range_reversed FROM '${__TEST_DIR__}/range_reversed.txt' (FORMAT text);
+
+
+statement ok
+DROP TABLE range_reversed;

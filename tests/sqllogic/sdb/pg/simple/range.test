@@ -119,3 +119,33 @@ SELECT CAST({'nonempty': true, 'lower_finite': true, 'lower': 5, 'lower_exclusiv
              'upper': 1, 'upper_inclusive': false} AS int4range);
 ----
 db error: ERROR: range lower bound must be less than or equal to range upper bound
+
+
+statement ok
+SET TimeZone = 'UTC'
+
+
+query
+SELECT CAST({'nonempty': true, 'lower_finite': true, 'lower': 5000000000, 'lower_exclusive': true, 'upper_infinite': false,
+             'upper': 6000000000, 'upper_inclusive': true} AS int8range) AS a,
+       CAST({'nonempty': true, 'lower_finite': true, 'lower': TIMESTAMPTZ '2020-01-01 10:00:00+00', 'lower_exclusive': false,
+             'upper_infinite': true, 'upper': TIMESTAMPTZ '2020-01-02 00:00:00+00', 'upper_inclusive': false} AS tstzrange) AS b;
+----
+a	b
+[5000000001,6000000001)	["2020-01-01 10:00:00+00",)
+
+
+statement ok
+RESET TimeZone
+
+
+statement error
+SELECT daterange('5881580-07-10', NULL, '(]');
+----
+db error: ERROR: date out of range
+
+
+statement error
+SELECT daterange('2020-01-01', '5881580-07-10', '[]');
+----
+db error: ERROR: date out of range

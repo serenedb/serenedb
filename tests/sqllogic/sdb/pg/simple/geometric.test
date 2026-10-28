@@ -10,6 +10,15 @@ t	t	t	t	(2,2),(0,0)
 
 
 query
+SELECT i, TRY_CAST(x AS point) AS p FROM (VALUES (1, '(1,2'), (2, '(3,4)'), (3, '(5,6')) t(i, x) ORDER BY i;
+----
+i	p
+1	NULL
+2	(3,4)
+3	NULL
+
+
+query
 SELECT CAST({'x': 1::DOUBLE, 'y': 2::DOUBLE} AS point) AS a,
        CAST({'high_x': 0::DOUBLE, 'high_y': 0::DOUBLE, 'low_x': 2::DOUBLE, 'low_y': 2::DOUBLE} AS box) AS b,
        CAST({'x': 1::DOUBLE, 'y': 2::DOUBLE, 'radius': 3::DOUBLE} AS circle) AS c,
@@ -48,10 +57,11 @@ db error: ERROR: invalid number of points in external "polygon" value
 
 query
 SELECT CAST({'x': NULL::DOUBLE, 'y': 2::DOUBLE} AS point) IS NULL AS a,
-       CAST({'points': [{'x': 0::DOUBLE, 'y': NULL::DOUBLE}]} AS polygon) IS NULL AS b;
+       CAST({'points': [{'x': 0::DOUBLE, 'y': NULL::DOUBLE}]} AS polygon) IS NULL AS b,
+       CAST({'points': [{'x': 0::DOUBLE, 'y': 0::DOUBLE}, NULL]} AS polygon) IS NULL AS c;
 ----
-a	b
-t	t
+a	b	c
+t	t	t
 
 
 statement ok

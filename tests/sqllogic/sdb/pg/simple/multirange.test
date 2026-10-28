@@ -121,3 +121,42 @@ SELECT CAST([{'nonempty': true, 'lower_finite': true, 'lower': 5, 'lower_exclusi
 ----
 a
 {[1,7)}
+
+
+statement ok
+SET TimeZone = 'UTC'
+
+
+query
+SELECT CAST([{'nonempty': true, 'lower_finite': true, 'lower': 7000000000, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 8000000000, 'upper_inclusive': false},
+             {'nonempty': true, 'lower_finite': true, 'lower': 5000000000, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 7000000000, 'upper_inclusive': false}] AS int8multirange) AS a,
+       CAST([{'nonempty': true, 'lower_finite': false, 'lower': TIMESTAMPTZ '2020-01-01 10:00:00+00', 'lower_exclusive': false,
+              'upper_infinite': false, 'upper': TIMESTAMPTZ '2020-01-02 00:00:00+00', 'upper_inclusive': true}] AS tstzmultirange) AS b;
+----
+a	b
+{[5000000000,8000000000)}	{(,"2020-01-02 00:00:00+00"]}
+
+
+statement ok
+RESET TimeZone
+
+
+statement error
+SELECT CAST([{'nonempty': true, 'lower_finite': true, 'lower': 1, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 3, 'upper_inclusive': false},
+             {'nonempty': true, 'lower_finite': true, 'lower': 5, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 1, 'upper_inclusive': false}] AS int4multirange);
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound
+
+
+query
+SELECT TRY_CAST([{'nonempty': true, 'lower_finite': true, 'lower': 1, 'lower_exclusive': false, 'upper_infinite': false,
+                  'upper': 3, 'upper_inclusive': false},
+                 {'nonempty': true, 'lower_finite': true, 'lower': 5, 'lower_exclusive': false, 'upper_infinite': false,
+                  'upper': 1, 'upper_inclusive': false}] AS int4multirange) IS NULL AS a;
+----
+a
+t

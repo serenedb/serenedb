@@ -401,3 +401,44 @@ SELECT multirange_type_and_text('{[5,7), [1,3)}'::int4multirange) AS v;
 ----
 v
 int4multirange {[1,3),[5,7)}
+
+
+query
+SELECT '{[1,\3)}'::int4multirange AS a, '{["\1",3)}'::int4multirange AS b, '{["1",3), ["5" , "7")}'::int4multirange AS c;
+----
+a	b	c
+{[1,3)}	{[1,3)}	{[1,3),[5,7)}
+
+
+statement error
+SELECT ''::int4multirange;
+----
+db error: ERROR: malformed multirange literal: ""
+DETAIL: Missing left brace.
+
+
+statement error
+SELECT '   '::int4multirange;
+----
+db error: ERROR: malformed multirange literal: "   "
+DETAIL: Missing left brace.
+
+
+statement error
+SELECT '{["1"'::int4multirange;
+----
+db error: ERROR: malformed multirange literal: "{["1""
+DETAIL: Unexpected end of input.
+
+
+statement error (invalid input syntax for type integer: "1""|Could not convert string '1"' to INT32)
+SELECT '{["1""",3)}'::int4multirange;
+
+
+query
+SELECT bool_and(m = int4multirange(int4range(greatest(i - 40, 1), i + 1))) AS a, count(*) AS n
+FROM (SELECT i, range_agg(int4range(i, i + 1)) OVER (ORDER BY i ROWS BETWEEN 40 PRECEDING AND CURRENT ROW) AS m
+      FROM generate_series(1, 100) AS i) t;
+----
+a	n
+t	100

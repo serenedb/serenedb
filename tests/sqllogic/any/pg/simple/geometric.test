@@ -1,3 +1,5 @@
+control substitution on
+
 skipif serenedb
 query
 SELECT '(1,2)'::point AS a, ' ( 1.5 , -2 ) '::point AS b, '3,4'::point AS c, point '(-0, 1e20)' AS d,
@@ -1345,3 +1347,357 @@ DROP TABLE geo_polygons;
 
 statement ok
 DROP TABLE geo_circles;
+
+
+query
+SELECT point '(Infinity,0)' + point '(1,0)' AS a, point '(1,0)' + point '(Infinity,0)' AS b,
+       point '(Infinity,0)' - point '(1,0)' AS c, point '(1,0)' - point '(-Infinity,0)' AS d,
+       point '(Infinity,1)' * point '(2,0)' AS e, point '(2,0)' * point '(Infinity,1)' AS f,
+       point '(NaN,0)' / point '(0,0)' AS g, point '(Infinity,0)' / point '(2,0)' AS h,
+       circle '<(0,0),1>' / point '(Infinity,0)' AS i;
+----
+a	b	c	d	e	f	g	h	i
+(Infinity,0)	(Infinity,0)	(Infinity,0)	(Infinity,0)	(Infinity,NaN)	(Infinity,NaN)	(NaN,NaN)	(Infinity,NaN)	<(NaN,NaN),0>
+
+
+statement error
+SELECT point '(1e308,0)' + point '(1e308,0)';
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT point '(1e308,0)' - point '(-1e308,0)';
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT point '(1e308,1e308)' / point '(1e-10,0)';
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT circle '<(0,0),1e-300>' / point '(1e100,0)';
+----
+db error: ERROR: value out of range: underflow
+
+
+statement error
+SELECT point '(1.5e308,1.5e308)' <-> point '(0,0)';
+----
+db error: ERROR: value out of range: overflow
+
+
+query
+SELECT point '(Infinity,0)' <-> point '(0,0)' AS a, point '(0,Infinity)' <-> point '(0,0)' AS b,
+       point '(NaN,0)' <-> point '(0,0)' AS c, point '(0,NaN)' <-> point '(0,0)' AS d;
+----
+a	b	c	d
+Infinity	Infinity	NaN	NaN
+
+
+query
+SELECT point '(NaN,1)' ~= point '(NaN,1)' AS a, point '(NaN,1)' ~= point '(1,1)' AS b, point '(1,NaN)' ~= point '(1,1)' AS c,
+       point '(1,1)' ~= point '(NaN,1)' AS d, point '(1,1)' ~= point '(1,NaN)' AS e, point '(1,NaN)' ~= point '(2,NaN)' AS f,
+       point '(1,NaN)' ~= point '(1,NaN)' AS g;
+----
+a	b	c	d	e	f	g
+t	f	f	f	f	f	t
+
+
+query
+SELECT box '(NaN,1),(0,0)' AS a, box '(0,1),(NaN,0)' AS b, box '(1,NaN),(0,0)' AS c, box '(1,0),(0,NaN)' AS d,
+       box(point '(NaN,0)', point '(1,1)') AS e, box(point '(1,0)', point '(NaN,1)') AS f,
+       box(point '(0,NaN)', point '(1,1)') AS g, box(point '(0,1)', point '(1,NaN)') AS h;
+----
+a	b	c	d	e	f	g	h
+(NaN,1),(0,0)	(NaN,1),(0,0)	(1,NaN),(0,0)	(1,NaN),(0,0)	(NaN,1),(1,0)	(NaN,1),(1,0)	(1,NaN),(0,1)	(1,NaN),(0,1)
+
+
+query
+SELECT circle_ne(circle '<(0,0),1>', circle '<(5,5),1>') AS a, circle_ne(circle '<(0,0),1>', circle '<(0,0),1.0000000001>') AS b,
+       circle_ne(circle '<(0,0),1>', circle '<(0,0),2>') AS c, circle '<(0,0),NaN>' ~= circle '<(0,0),NaN>' AS d,
+       circle '<(0,0),NaN>' ~= circle '<(0,0),1>' AS e, circle '<(0,0),1>' ~= circle '<(0,0),NaN>' AS f;
+----
+a	b	c	d	e	f
+f	f	t	t	f	f
+
+
+query
+SELECT lseg_gt(lseg '[(0,0),(2,2)]', lseg '[(0,0),(1,1)]') AS a, lseg_le(lseg '[(0,0),(1,1)]', lseg '[(0,0),(1,1)]') AS b,
+       box_le(box '(1,1),(0,0)', box '(2,2),(0,0)') AS c, box_gt(box '(2,2),(0,0)', box '(1,1),(0,0)') AS d,
+       box_ge(box '(1,1),(0,0)', box '(2,2),(0,0)') AS e, circle_lt(circle '<(0,0),1>', circle '<(0,0),2>') AS f,
+       circle_le(circle '<(0,0),2>', circle '<(0,0),1>') AS g, circle_gt(circle '<(0,0),2>', circle '<(0,0),1>') AS h,
+       circle_ge(circle '<(0,0),1>', circle '<(5,5),1>') AS i, path_n_le(path '[(0,0)]', path '[(0,0),(1,1)]') AS j,
+       path_n_gt(path '[(0,0)]', path '[(0,0),(1,1)]') AS k, path_n_ge(path '((0,0),(1,1))', path '[(0,0),(1,1)]') AS l;
+----
+a	b	c	d	e	f	g	h	i	j	k	l
+t	t	t	t	f	t	f	t	t	t	f	t
+
+
+query
+SELECT line '{1,1e-6,0}' ?# line '{2,2e-6,5}' AS a, line '{1,1e-6,0}' ?|| line '{2,2e-6,5}' AS b,
+       line '{1,1e-6,0}' # line '{2,2e-6,5}' AS c, line '{1e-6,1,0}' ?|| line '{1.0000001e-6,1e-6,5}' AS d,
+       line '{2e-6,-1,0}' ?|| line '{1e-6,-1,5}' AS e;
+----
+a	b	c	d	e
+f	t	NULL	t	t
+
+
+query
+SELECT line '{NaN,0,1}' <-> line '{1,0,0}' AS a, line '{2e-6,-1,0}' <-> line '{1e-6,-1,5}' AS b,
+       line '{1,0,0}' <-> line '{NaN,0,3}' AS c, line '{1e-6,1,0}' <-> line '{1.0000001e-6,1e-6,5}' AS d;
+----
+a	b	c	d
+NaN	4.99999999999	3	4.9999999999975
+
+
+query
+SELECT line_eq(line '{NaN,1,0}', line '{NaN,1,0}') AS a, line_eq(line '{NaN,1,0}', line '{1,1,0}') AS b,
+       line_eq(line '{NaN,1,0}', line '{NaN,2,0}') AS c, line_eq(line '{NaN,1,0}', line '{NaN,1,5}') AS d,
+       line_eq(line '{1,NaN,0}', line '{1,NaN,0}') AS e, line_eq(line '{1,1,NaN}', line '{1,1,NaN}') AS f,
+       line_eq(line '{1,1,0}', line '{NaN,1,0}') AS g, line_eq(line '{1,1,0}', line '{1,NaN,0}') AS h,
+       line_eq(line '{1,1,0}', line '{1,1,NaN}') AS i, line_eq(line '{0,-1,2}', line '{0,-2,4}') AS j,
+       line_eq(line '{1,-1,0}', line '{0,-1,2}') AS k, line_eq(line '{1,-1,0}', line '{1,1,0}') AS l,
+       line_eq(line '{1,-1,0}', line '{1,-1,5}') AS m;
+----
+a	b	c	d	e	f	g	h	i	j	k	l	m
+t	f	f	f	t	t	f	f	f	t	f	f	f
+
+
+query
+SELECT lseg_eq(lseg '[(0,0),(1,1)]', lseg '[(1,0),(1,1)]') AS a, lseg_eq(lseg '[(0,0),(1,1)]', lseg '[(0,0),(2,2)]') AS b,
+       lseg_ne(lseg '[(0,0),(1,1)]', lseg '[(1,0),(1,1)]') AS c, lseg_ne(lseg '[(0,0),(1,1)]', lseg '[(0,0),(2,2)]') AS d,
+       lseg_ne(lseg '[(0,0),(1,1)]', lseg '[(0,0),(1,1)]') AS e, box '(2,2),(0,0)' ~= box '(2,2),(1,1)' AS f;
+----
+a	b	c	d	e	f
+f	f	t	t	f	f
+
+
+query
+SELECT point '(NaN,1)' ## line '{1,-1,0}' AS a, point '(NaN,1)' ## lseg '[(0,0),(1,1)]' AS b,
+       point '(NaN,1)' ## box '(1,1),(0,0)' AS c, lseg '[(NaN,0),(1,1)]' ## box '(1,1),(0,0)' AS d;
+----
+a	b	c	d
+NULL	NULL	NULL	(1,1)
+
+
+statement error
+SELECT polygon(100000000, circle '<(0,0),1>');
+----
+db error: ERROR: invalid memory alloc request size 1600000040
+
+
+statement error
+SELECT polygon(2147483647, circle '<(0,0),1>');
+----
+db error: ERROR: too many points requested
+
+
+query
+SELECT polygon '((1,0),(-1,0),(0,1))' @> point '(0,0)' AS a, polygon '((-1,0),(-2,0),(-2,1))' @> point '(0,0)' AS b,
+       polygon '((0,0),(2,0),(2,2))' @> point '(1,1)' AS c, polygon '((-1,-1),(1,1),(1,-1))' @> point '(0,0)' AS d,
+       polygon '((-2,0),(-1,0),(-1,1),(-2,1))' @> point '(0,0)' AS e, polygon '((-1,0),(1,0),(1,1),(-1,1))' @> point '(0,0)' AS f,
+       polygon '((1,0),(-1,0),(-1,1),(1,1))' @> point '(0.5,0)' AS g, box(polygon '((0,2),(1,0),(2,2))') AS h,
+       box(polygon '((0,2),(1,0),(2,3),(-1,1))') AS i;
+----
+a	b	c	d	e	f	g	h	i
+t	f	t	t	f	t	t	(2,2),(0,0)	(2,3),(-1,0)
+
+
+query
+SELECT polygon '((0,0),(4,0),(4,1),(1,1),(1,4),(0,4))' && polygon '((2,2),(3,2),(3,3),(2,3))' AS a,
+       polygon '((2,2),(3,2),(3,3),(2,3))' && polygon '((0,0),(4,0),(4,1),(1,1),(1,4),(0,4))' AS b;
+----
+a	b
+f	f
+
+
+statement error (stack depth limit exceeded)
+WITH saw AS (
+  SELECT ('(' || string_agg('(' || i || ',' || CASE WHEN i % 2 = 0 THEN -1 ELSE 1 END || ')', ',' ORDER BY i) ||
+          ',(20000,-10),(0,-10))')::polygon AS g
+  FROM generate_series(0, 20000) AS i)
+SELECT g @> polygon '((0.9,-5),(0.9,0),(19999.9,0),(19999.9,-5))' AS a FROM saw;
+
+
+statement ok
+CREATE TABLE geo_shapes (id int, g polygon);
+
+
+statement ok
+INSERT INTO geo_shapes VALUES (1, '((0,0),(4,0),(4,4),(0,4))'), (2, '((0,0),(4,0),(4,4),(2,2),(0,4))'),
+  (3, '((0,1),(2,1),(2,3),(0,3))'), (4, '((0,2),(2,0),(2,4))'), (5, '((1,2),(3,2),(3,1),(1,1))'),
+  (6, '((4,4),(0,4),(0,0),(4,0))'), (7, '((4,4),(6,4),(6,6),(4,6))'), (8, '((1,1))'), (9, '((0,0),(4,4))'),
+  (10, '((0,0),(2,1),(4,0),(3,2),(4,4),(2,3),(0,4),(1,2))'), (11, '((-10,-10),(10,-10),(10,10),(-10,10))'),
+  (12, '((0,0),(2,0),(4,0),(4,4),(0,4))'), (13, '((1,0),(3,0),(3,1),(1,1))'), (14, '((2,2),(4,0),(4,4))'),
+  (15, '((0,0),(4,4),(0,4))'), (16, '((1,3),(2,2),(3,3),(2,4))'), (17, '((0,0),(0,1),(1,1),(1,0))'),
+  (18, '((0,0),(1,0),(1,1),(0,1))'), (19, '((1,1),(1,0),(0,0),(0,1))'), (20, '((0,0),(2,0),(2,2))');
+
+
+query
+SELECT a.id AS a, string_agg(CASE WHEN a.g @> b.g THEN 't' ELSE 'f' END, '' ORDER BY b.id) AS contains,
+       string_agg(CASE WHEN a.g && b.g THEN 't' ELSE 'f' END, '' ORDER BY b.id) AS overlaps,
+       string_agg(CASE WHEN a.g ~= b.g THEN 't' ELSE 'f' END, '' ORDER BY b.id) AS same
+FROM geo_shapes a, geo_shapes b GROUP BY a.id ORDER BY a.id;
+----
+a	contains	overlaps	same
+1	ttttttftttfttttttttt	tttttttttttttttttttt	tfffftffffffffffffff
+2	ftfftffttfffttfftttt	tttttttttttttttttttt	ftffffffffffffffffff
+3	fftfffftffffffffffff	ttttttfttttttttttttt	fftfffffffffffffffff
+4	ffftffftffffffffffff	ttttttfttttttttttttt	ffftffffffffffffffff
+5	fffftfftffffffffffff	ttttttfttttttttttttt	fffftfffffffffffffff
+6	ttttttftttfttttttttt	tttttttttttttttttttt	tfffftffffffffffffff
+7	fffffftfffffffffffff	ttfffttfttttfttfffff	fffffftfffffffffffff
+8	ffffffftffffffffffff	ttttttfttttttftftttt	ffffffftffffffffffff
+9	fffffffttfffffffffff	tttttttttttttttttttt	fffffffftfffffffffff
+10	fffftfftttffffffffff	tttttttttttttttttttt	ffffffffftffffffffff
+11	tttttttttttttttttttt	tttttttttttttttttttt	fffffffffftfffffffff
+12	ttttttftttfttttttttt	tttttttttttttttttttt	ffffffffffftffffffff
+13	ffffffftfffftfffffff	ttttttfttttttttftttt	fffffffffffftfffffff
+14	ffffffffffffftffffff	tttttttfttttttttffft	ffffffffffffftffffff
+15	fffffffttfffffttffff	tttttttttttttttttttt	fffffffffffffftfffff
+16	ffffffffffffffftffff	ttttttffttttftttffft	ffffffffffffffftffff
+17	ffffffftfffffffftttf	ttttttfttttttftftttt	fffffffffffffffftttf
+18	ffffffftfffffffftttf	ttttttfttttttftftttt	fffffffffffffffftttf
+19	ffffffftfffffffftttf	ttttttfttttttftftttt	fffffffffffffffftttf
+20	ffffffftffffffffffft	ttttttfttttttttttttt	ffffffffffffffffffft
+
+
+query
+SELECT pg_input_is_valid('(x,1)', 'point') AS a, pg_input_is_valid('(1 2)', 'point') AS b,
+       pg_input_is_valid('((1,2),(3,4)]', 'lseg') AS c, pg_input_is_valid('[(1,2),(3,4)]x', 'lseg') AS d,
+       pg_input_is_valid('(1,2),(3,4)x', 'box') AS e, pg_input_is_valid('{x,1,2}', 'line') AS f,
+       pg_input_is_valid('{1 2,3}', 'line') AS g, pg_input_is_valid('{1,x,2}', 'line') AS h,
+       pg_input_is_valid('{1,2,x}', 'line') AS i, pg_input_is_valid('{1,2,3', 'line') AS j,
+       pg_input_is_valid('[(1,2)', 'line') AS k, pg_input_is_valid('[(1,2),(3,4)]x', 'line') AS l,
+       pg_input_is_valid('(1,2,3,4', 'path') AS m, pg_input_is_valid('[(1,2),(3,4)]x', 'path') AS n,
+       pg_input_is_valid('((1,2),(3,4))x', 'polygon') AS o, pg_input_is_valid('<(1,x),3>', 'circle') AS p,
+       pg_input_is_valid('<(1,2),x>', 'circle') AS q;
+----
+a	b	c	d	e	f	g	h	i	j	k	l	m	n	o	p	q
+f	f	f	f	f	f	f	f	f	f	f	f	f	f	f	f	f
+
+
+statement error
+SELECT '(1 2)'::point;
+----
+db error: ERROR: invalid input syntax for type point: "(1 2)"
+
+
+query
+SELECT '( (1,2),(3,4))'::lseg AS a, '( (1,2),(3,4))'::box AS b, '( (1,2),(3,4))'::path AS c;
+----
+a	b	c
+[(1,2),(3,4)]	(3,4),(1,2)	((1,2),(3,4))
+
+
+query
+SELECT i, point(x, y) AS p FROM (VALUES (1, 1::float8, 2::float8), (2, 3, NULL), (3, NULL, 4)) t(i, x, y) ORDER BY i;
+----
+i	p
+1	(1,2)
+2	NULL
+3	NULL
+
+
+statement ok
+CREATE TABLE geo_bin_src (id int, p point, l line, s lseg, b box, a path, g polygon, c circle);
+
+
+statement ok
+INSERT INTO geo_bin_src VALUES
+  (1, '(1,2)', '{1,-1,0}', '[(0,0),(1,1)]', '(1,1),(0,0)', '[(0,0),(1,1),(2,0)]', '((0,0),(1,1),(1,0))', '<(0,0),1>'),
+  (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+  (3, '(-1.5,NaN)', '{0,1,-1e-300}', '[(1,1),(1,1)]', '(-1,-1),(-1,-1)', '((0,0))', '((7,8))', '<(1,1),0>');
+
+
+statement ok
+COPY geo_bin_src TO '${__TEST_DIR__}/geo_bin.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE geo_bin_dst (id int, p point, l line, s lseg, b box, a path, g polygon, c circle);
+
+
+statement ok
+COPY geo_bin_dst FROM '${__TEST_DIR__}/geo_bin.bin' (FORMAT binary);
+
+
+query
+SELECT * FROM geo_bin_dst ORDER BY id;
+----
+id	p	l	s	b	a	g	c
+1	(1,2)	{1,-1,0}	[(0,0),(1,1)]	(1,1),(0,0)	[(0,0),(1,1),(2,0)]	((0,0),(1,1),(1,0))	<(0,0),1>
+2	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+3	(-1.5,NaN)	{0,1,-1e-300}	[(1,1),(1,1)]	(-1,-1),(-1,-1)	((0,0))	((7,8))	<(1,1),0>
+
+
+statement ok
+CREATE TABLE geo_bin_one (p point, l line, a path, g polygon, c circle);
+
+
+statement ok
+COPY (SELECT '\x3ff0000000000000'::bytea) TO '${__TEST_DIR__}/geo_bin_short_point.bin' (FORMAT binary);
+
+
+statement error (insufficient data left in message|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (p) FROM '${__TEST_DIR__}/geo_bin_short_point.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x000000000000000000000000000000003ff0000000000000'::bytea) TO '${__TEST_DIR__}/geo_bin_zero_line.bin' (FORMAT binary);
+
+
+statement error (invalid line specification: A and B cannot both be zero|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (l) FROM '${__TEST_DIR__}/geo_bin_zero_line.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x00000000000000000000000000000000bff0000000000000'::bytea) TO '${__TEST_DIR__}/geo_bin_negative_circle.bin' (FORMAT binary);
+
+
+statement error (invalid radius in external "circle" value|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (c) FROM '${__TEST_DIR__}/geo_bin_negative_circle.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x'::bytea) TO '${__TEST_DIR__}/geo_bin_empty_path.bin' (FORMAT binary);
+
+
+statement error (no data left in message|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (a) FROM '${__TEST_DIR__}/geo_bin_empty_path.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x010000'::bytea) TO '${__TEST_DIR__}/geo_bin_short_path.bin' (FORMAT binary);
+
+
+statement error (insufficient data left in message|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (a) FROM '${__TEST_DIR__}/geo_bin_short_path.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x00000000'::bytea) TO '${__TEST_DIR__}/geo_bin_no_points.bin' (FORMAT binary);
+
+
+statement error (invalid number of points in external "polygon" value|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (g) FROM '${__TEST_DIR__}/geo_bin_no_points.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x7fffffff'::bytea) TO '${__TEST_DIR__}/geo_bin_many_points.bin' (FORMAT binary);
+
+
+statement error (invalid number of points in external "polygon" value|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (g) FROM '${__TEST_DIR__}/geo_bin_many_points.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x0000000200000000000000000000000000000000'::bytea) TO '${__TEST_DIR__}/geo_bin_missing_point.bin' (FORMAT binary);
+
+
+statement error (insufficient data left in message|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (g) FROM '${__TEST_DIR__}/geo_bin_missing_point.bin' (FORMAT binary);

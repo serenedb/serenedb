@@ -1,3 +1,5 @@
+control substitution on
+
 query
 SELECT '08:00:2b:01:02:03'::macaddr AS colon,
        '08-00-2b-01-02-03'::macaddr AS dash,
@@ -128,4 +130,87 @@ macaddr	macaddr8
 
 
 statement ok
+COPY mac_t TO '${__TEST_DIR__}/mac_t.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE mac_bin (id INT, m macaddr, m8 macaddr8);
+
+
+statement ok
+COPY mac_bin FROM '${__TEST_DIR__}/mac_t.bin' (FORMAT binary);
+
+
+query
+SELECT id, m, m8 FROM mac_bin ORDER BY id;
+----
+id	m	m8
+1	08:00:2b:01:02:03	08:00:2b:01:02:03:04:05
+2	00:00:00:00:00:01	NULL
+3	NULL	00:00:00:00:00:00:00:01
+4	ff:ff:ff:ff:ff:ff	ff:ff:ff:ff:ff:ff:ff:ff
+
+
+statement ok
+COPY (SELECT '\x08002b010203'::bytea) TO '${__TEST_DIR__}/mac_six.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE mac_one (m8 macaddr8);
+
+
+statement ok
+COPY mac_one FROM '${__TEST_DIR__}/mac_six.bin' (FORMAT binary);
+
+
+query
+SELECT m8 FROM mac_one;
+----
+m8
+08:00:2b:ff:fe:01:02:03
+
+
+statement ok
+COPY (SELECT '\x08002b0102'::bytea) TO '${__TEST_DIR__}/mac_five.bin' (FORMAT binary);
+
+
+statement error (no data left in message|COPY FROM: invalid binary value in column 1)
+COPY mac_bin (m) FROM '${__TEST_DIR__}/mac_five.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x08002b01020304'::bytea) TO '${__TEST_DIR__}/mac_seven.bin' (FORMAT binary);
+
+
+statement error (no data left in message|COPY FROM: invalid binary value in column 1)
+COPY mac_one FROM '${__TEST_DIR__}/mac_seven.bin' (FORMAT binary);
+
+
+statement ok
 DROP TABLE mac_t;
+
+
+query
+SELECT pg_input_is_valid('08:00:2b:01:02:0g', 'macaddr') AS a, pg_input_is_valid('08:00:2b:01:02: ', 'macaddr') AS b,
+       pg_input_is_valid('08002b01020', 'macaddr') AS c, pg_input_is_valid('0xz8:00:2b:01:02:03', 'macaddr') AS d,
+       pg_input_is_valid('08:00:2b:01:02:03:04:05:06', 'macaddr8') AS e, pg_input_is_valid('08:00:2b:01:02:0g', 'macaddr8') AS f,
+       pg_input_is_valid('08:00:2b:01:02:03 x', 'macaddr8') AS g, pg_input_is_valid('08:00:2b:01:02:03:04:05 x', 'macaddr8') AS h,
+       pg_input_is_valid('08:00:2b:01 02:03', 'macaddr8') AS i, pg_input_is_valid('   ', 'macaddr8') AS j;
+----
+a	b	c	d	e	f	g	h	i	j
+f	f	t	f	f	f	f	f	f	f
+
+
+query
+SELECT '+8:0:2b:1:2:3'::macaddr AS a, '0x08:0X00:2b:01:02:03'::macaddr AS b, '08:00:2b:01:02:03  '::macaddr AS c,
+       '  08:00:2b:01:02:03:04:05'::macaddr8 AS d, '08:00:2b:01:02:03  '::macaddr8 AS e,
+       '08:00:2b:01:02:03:04:05 '::macaddr8 AS f;
+----
+a	b	c	d	e	f
+08:00:2b:01:02:03	08:00:2b:01:02:03	08:00:2b:01:02:03	08:00:2b:01:02:03:04:05	08:00:2b:ff:fe:01:02:03	08:00:2b:01:02:03:04:05
+
+
+statement error
+SELECT '-1:0:2b:1:2:3'::macaddr;
+----
+db error: ERROR: invalid octet value in "macaddr" value: "-1:0:2b:1:2:3"

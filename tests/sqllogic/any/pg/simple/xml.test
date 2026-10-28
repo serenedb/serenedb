@@ -311,3 +311,170 @@ oid	proname	args
 3049	xpath_exists	text, xml, text[]
 3050	xpath_exists	text, xml
 3813	xmltext	text
+
+
+query
+SELECT '<?xml1?><a/>'::xml AS a, '<?xml.?><a/>'::xml AS b, '<?xml-a?><a/>'::xml AS c, '<?xml_a?><a/>'::xml AS d,
+       '<?xml:a?><a/>'::xml AS e, '<?xml〇?><a/>'::xml AS f, '<?xml·?><a/>'::xml AS g, '<?xmla?><a/>'::xml AS h,
+       ('<?xml' || chr(768) || '?><a/>')::xml::text = '<?xml' || chr(768) || '?><a/>' AS i,
+       '<?xml-stylesheet href="a"?><a/>'::xml AS j;
+----
+a	b	c	d	e	f	g	h	i	j
+<?xml1?><a/>	<?xml.?><a/>	<?xml-a?><a/>	<?xml_a?><a/>	<?xml:a?><a/>	<?xml〇?><a/>	<?xml·?><a/>	<?xmla?><a/>	t	<?xml-stylesheet href="a"?><a/>
+
+
+query
+SELECT pg_input_is_valid('<?xml', 'xml') AS a, pg_input_is_valid('<?xml version "1.0"?><a/>', 'xml') AS b,
+       pg_input_is_valid('<?xml version=1.0?><a/>', 'xml') AS c, pg_input_is_valid('<?xml version="1.0?><a/>', 'xml') AS d,
+       pg_input_is_valid('<?xml version="1.0" encoding?><a/>', 'xml') AS e,
+       pg_input_is_valid('<?xml version="1.0"encoding="UTF-8"?><a/>', 'xml') AS f,
+       pg_input_is_valid('<?xml version="ü"?><a/>', 'xml') AS g,
+       pg_input_is_valid('<?xml' || chr(1) || 'version="1.0"?><a/>', 'xml') AS h,
+       pg_input_is_valid('<?xml version="1.0" standalone="maybe"?><a/>', 'xml') AS i,
+       pg_input_is_valid('<?xml version="1.0"standalone="yes"?><a/>', 'xml') AS j;
+----
+a	b	c	d	e	f	g	h	i	j
+f	f	f	f	f	f	f	f	f	f
+
+
+query
+SELECT '<?xml version=''1.0'' encoding="UTF-8"?><a/>'::xml AS a, E'<?xml\tversion="1.0"\r\n?><a/>'::xml AS b,
+       E'<?xml version="1.0"\n?>\n<a/>'::xml AS c;
+----
+a	b	c
+<a/>	<a/>	<a/>
+
+
+query
+SELECT '<![CDATA[x]]>'::xml AS a, '<!-- c --><?pi x?><a/>'::xml AS b, '<?a:b x?><r/>'::xml AS c,
+       '<!DOCTYPE a SYSTEM "x.dtd"><a>&e;</a>'::xml AS d;
+----
+a	b	c	d
+<![CDATA[x]]>	<!-- c --><?pi x?><a/>	<?a:b x?><r/>	<!DOCTYPE a SYSTEM "x.dtd"><a>&e;</a>
+
+
+query
+SELECT pg_input_is_valid('<!-- a -- b -->', 'xml') AS a, pg_input_is_valid('<!-- x', 'xml') AS b,
+       pg_input_is_valid('<?pi', 'xml') AS c, pg_input_is_valid('<!-- a --x><b/>', 'xml') AS d;
+----
+a	b	c	d
+f	f	f	f
+
+
+statement ok
+SET xmloption = document
+
+
+query
+SELECT '<!DOCTYPE a SYSTEM "x.dtd"><a>&e;</a>'::xml AS a;
+----
+a
+<!DOCTYPE a SYSTEM "x.dtd"><a>&e;</a>
+
+
+statement ok
+RESET xmloption
+
+
+query
+SELECT replace((xpath('/', '<a/>'::xml))[1]::text, E'\n', '|') AS a, xpath('1 = 2', '<a/>'::xml) AS b,
+       xpath('string(/a)', '<a>x&gt;y&#13;z</a>'::xml) AS c;
+----
+a	b	c
+<?xml version="1.0" encoding="UTF-8"?>|<a/>|	{false}	{x&gt;y&#x0d;z}
+
+
+statement error
+SELECT xpath('/a', '<a/>'::xml, ARRAY[ARRAY['', 'u']]);
+----
+db error: ERROR: could not register XML namespace with name "" and URI "u"
+
+
+statement error (invalid XPath expression)
+SELECT xpath_exists('/a[', '<a/>'::xml);
+
+
+statement error (invalid XPath expression)
+SELECT xpath('/a[', '<a/>'::xml, ARRAY[ARRAY['x', 'u']]);
+
+
+statement error (invalid XPath expression)
+SELECT xpath_exists('/a[', '<a/>'::xml, ARRAY[ARRAY['x', 'u']]);
+
+
+statement error (could not create XPath object)
+SELECT xpath('foo()', '<a/>'::xml);
+
+
+statement error (could not create XPath object)
+SELECT xpath('$x', '<a/>'::xml);
+
+
+statement error (could not create XPath object)
+SELECT xpath('/x:a', '<a/>'::xml);
+
+
+statement error
+SELECT xpath('/a', '<a/>'::xml, ARRAY[ARRAY['x', NULL]]);
+----
+db error: ERROR: neither namespace name nor URI may be null
+
+
+statement error
+SELECT xpath('/a', '<a/>'::xml, ARRAY[ARRAY[NULL, 'u']]);
+----
+db error: ERROR: neither namespace name nor URI may be null
+
+
+statement ok
+CREATE TABLE xml_args (id int, p text, x xml, ns text[][]);
+
+
+statement ok
+INSERT INTO xml_args VALUES (1, '/a', '<a/>', ARRAY[ARRAY['x', 'u']]), (2, NULL, '<a/>', ARRAY[ARRAY['x', 'u']]),
+  (3, '/a', NULL, ARRAY[ARRAY['x', 'u']]), (4, '/a', '<a/>', NULL), (5, '/x:a', '<x:a xmlns:x="u"/>', ARRAY[ARRAY['x', 'u']]);
+
+
+query
+SELECT id, xpath(p, x, ns) AS a, xpath_exists(p, x, ns) AS b FROM xml_args ORDER BY id;
+----
+id	a	b
+1	{<a/>}	t
+2	NULL	NULL
+3	NULL	NULL
+4	NULL	NULL
+5	{"<x:a xmlns:x=\\"u\\"/>"}	t
+
+
+query
+SELECT id, xpath(p, x) AS a, xpath_exists(p, x) AS b FROM xml_args WHERE id < 5 ORDER BY id;
+----
+id	a	b
+1	{<a/>}	t
+2	NULL	NULL
+3	NULL	NULL
+4	{<a/>}	t
+
+
+query
+SELECT id, xpath(p, x, ns) AS a FROM xml_args WHERE id <> 2 ORDER BY id;
+----
+id	a
+1	{<a/>}
+3	NULL
+4	NULL
+5	{"<x:a xmlns:x=\\"u\\"/>"}
+
+
+statement ok
+DROP TABLE xml_args;
+
+
+query
+SELECT xmlconcat('<?xml version="1.0" standalone="yes"?><a/>', '<?xml version="1.0" standalone="no"?><b/>') AS a,
+       xmlconcat('<?xml version="1.0"?><a/>', '<?xml version="1.1"?><b/>') AS b,
+       xmlconcat('<?xml version="1.0" standalone="yes"?><a/>', '<?xml version="1.1" standalone="yes"?><b/>') AS c,
+       xmlconcat('<?xml version="1.0" standalone="no"?><a/>', '<?xml version="1.0" standalone="no"?><b/>') AS d;
+----
+a	b	c	d
+<?xml version="1.0" standalone="no"?><a/><b/>	<a/><b/>	<?xml version="1.0" standalone="yes"?><a/><b/>	<?xml version="1.0" standalone="no"?><a/><b/>

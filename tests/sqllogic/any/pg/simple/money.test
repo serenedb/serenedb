@@ -311,3 +311,67 @@ NULL	1
 
 statement ok
 DROP TABLE money_t;
+
+
+query
+SELECT 2::int2 * '$1'::money AS a, 2 * '$1'::money AS b, 2::int8 * '$1'::money AS c, 1.5::float4 * '$1'::money AS d,
+       1.5::float8 * '$1'::money AS e, '$1'::money / -1 AS f, '$1'::money / -1::int2 AS g, '$1'::money / -1::int8 AS h,
+       sum('$1'::money) AS i
+FROM generate_series(1, 3);
+----
+a	b	c	d	e	f	g	h	i
+$2.00	$2.00	$2.00	$1.50	$1.50	-$1.00	-$1.00	-$1.00	$3.00
+
+
+statement error
+SELECT '$1'::money * -1e30::float8;
+----
+db error: ERROR: money out of range
+
+
+statement error
+SELECT '$1'::money * 1e308::float8;
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT '$1'::money * 'Infinity'::float8;
+----
+db error: ERROR: money out of range
+
+
+statement error
+SELECT '-92233720368547758.08'::money / -1;
+----
+db error: ERROR: money out of range
+
+
+statement error
+SELECT '92233720368547758070'::money;
+----
+db error: ERROR: value "92233720368547758070" is out of range for type money
+
+
+statement error
+SELECT '92233720368547759'::money;
+----
+db error: ERROR: value "92233720368547759" is out of range for type money
+
+
+statement error
+SELECT '92233720368547758.085'::money;
+----
+db error: ERROR: value "92233720368547758.085" is out of range for type money
+
+
+statement error
+SELECT '1.2.3'::money;
+----
+db error: ERROR: invalid input syntax for type money: "1.2.3"
+
+
+statement error
+SELECT '1.23x'::money;
+----
+db error: ERROR: invalid input syntax for type money: "1.23x"

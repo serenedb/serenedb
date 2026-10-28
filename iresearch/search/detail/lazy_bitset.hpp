@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <bit>
-#include <cmath>
 #include <cstdint>
 #include <utility>
 
@@ -165,29 +164,6 @@ class LazyBitset {
       return 0;
     }
     return CountBitRange(_set.Words(), 0, end - kMin);
-  }
-
-  uint64_t EstimateCount(uint32_t windows) {
-    const auto end = _set.End();
-    if (end <= kMin) {
-      return 0;
-    }
-    const uint64_t total = end - kMin;
-    const uint64_t want =
-      std::min<uint64_t>(total, uint64_t{windows} * kWindowDocs);
-    Reach(kMin + static_cast<doc_id_t>(want));
-    const uint64_t filled = _filled - kMin;
-    if (filled == 0) {
-      return 0;
-    }
-    const uint64_t seen = CountBitRange(_set.Words(), 0, filled);
-    if (filled >= total || seen == 0) {
-      return seen;
-    }
-    const auto share = static_cast<double>(seen) / static_cast<double>(filled);
-    const auto est = static_cast<uint64_t>(
-      std::ceil(share * static_cast<double>(total) * 1.125));
-    return std::min<uint64_t>(est, total);
   }
 
   bool Contains(doc_id_t doc) {

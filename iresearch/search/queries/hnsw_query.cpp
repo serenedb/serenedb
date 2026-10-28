@@ -350,8 +350,6 @@ inline constexpr double kPointReadFoldRatio = 32;
 
 inline constexpr double kVectorPointReadFoldRatio = 456;
 
-inline constexpr uint32_t kCountSampleWindows = 8;
-
 inline constexpr uint64_t kHnswColumnScanShare = 16;
 
 inline constexpr double kWalkCandidateOverhead = 192;
@@ -641,35 +639,31 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
             plan.read_cost + static_cast<double>(_index_only_postings) <
               static_cast<double>(_inner->Postings()));
   };
-  bool bounded = true;
+  uint64_t most = docs_count;
   bool by_columns = false;
   if (columns && reads(_inner->EstimateMax())) {
-    if (table || _inner->Kind() == QueryKind::Boolean) {
-      probe.emplace(detail::MakeDocSet(_index_only.get(), docs_count, columns));
-      matches = probe->EstimateCount(kCountSampleWindows);
-      bounded = probe->Filled() >= probe->End();
-    } else {
-      matches = _inner->EstimateMax();
-    }
+    matches = _inner->EstimateMatches();
     by_columns = reads(matches);
     if (by_columns) {
       SDB_IF_FAILURE("irs::HnswReadsColumns") {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
+      most = _inner->EstimateMax();
       inner = _index_only.get();
       table = columns;
-    } else {
-      probe.reset();
-      bounded = true;
     }
   }
-  if (!by_columns && (table || inner->Kind() == QueryKind::Boolean)) {
-    probe.emplace(detail::MakeDocSet(inner, docs_count, table));
-    matches =
-      table ? probe->EstimateCount(kCountSampleWindows) : probe->Count();
-    bounded = probe->Filled() >= probe->End();
-  } else if (!by_columns) {
-    matches = inner->EstimateMax();
+  if (!by_columns) {
+    if (!inner) {
+      matches = docs_count;
+    } else if (!table && inner->Kind() == QueryKind::Boolean &&
+               inner->EstimateMin() != inner->EstimateMax()) {
+      probe.emplace(detail::MakeDocSet(inner, docs_count, nullptr));
+      matches = most = probe->Count();
+    } else {
+      matches = inner->EstimateMatches();
+      most = inner->EstimateMax();
+    }
   }
   const auto plan = PlanHnswFilter(_filter_mode, _column_filter, graph, record,
                                    _ef, matches, table);
@@ -685,8 +679,8 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     std::min(1.0, static_cast<double>(matches) /
                     static_cast<double>(std::max<uint64_t>(1, graph.Size())));
   const auto walked = [&](bool complete) {
-    return complete && (scratch.nearest.size() >= _ef ||
-                        (bounded && scratch.nearest.size() >= matches));
+    return complete &&
+           (scratch.nearest.size() >= _ef || scratch.nearest.size() >= most);
   };
   const auto run = [&](const auto& acc) {
     bool done = false;

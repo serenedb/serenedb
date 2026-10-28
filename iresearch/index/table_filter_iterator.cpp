@@ -395,6 +395,7 @@ void ColFilterChain::FinishBind() {
       }
     }
   }
+  _point_reads = ClassifyPointReads();
 }
 
 template<bool Keep>
@@ -681,7 +682,7 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
   return w;
 }
 
-detail::PointRead ColFilterChain::PointReads() const noexcept {
+detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
   const auto zstd = [](const irs::ColumnReader& reader) {
     return absl::c_any_of(reader.DataBlocks(), [](const auto& block) {
       return block.codec->type == duckdb::CompressionType::COMPRESSION_ZSTD;

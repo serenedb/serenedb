@@ -132,7 +132,19 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
   const auto id = static_cast<duckdb::block_id_t>(_ranges.size());
   _ranges.emplace_back(offset, size);
   ++_live_handles;
-  return RegisterBlock(id);
+  auto handle = RegisterBlock(id);
+  if (Maps(offset,
+           duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(
+             size))) {
+    auto& memory = handle->GetMemory();
+    memory.SetMemoryUsage(0);
+    memory.SetDestroyBufferUpon(duckdb::DestroyBufferUpon::UNPIN);
+  }
+  return handle;
+}
+
+bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
+  return _mapping && offset % 8 == 0 && offset + size <= _mapping->Size();
 }
 
 void ReadContext::UnregisterBlock(duckdb::block_id_t id) {
@@ -159,8 +171,7 @@ void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
              "ReadContext::Read: unregistered block ", block.id);
   const auto [offset, size] = _ranges[id];
   SDB_ASSERT(block.Size() >= size, "block buffer sector-rounds up");
-  if (_mapping && offset % 8 == 0 &&
-      offset + block.Size() <= _mapping->Size()) {
+  if (Maps(offset, block.Size())) {
     block.Read(context, *_mapping, offset);
     return;
   }

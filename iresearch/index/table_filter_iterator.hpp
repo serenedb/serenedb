@@ -255,7 +255,7 @@ class ColFilterChain {
   duckdb::idx_t FilterDocs(irs::doc_id_t* docs, irs::score_t* scores,
                            duckdb::idx_t n);
 
-  detail::PointRead PointReads() const noexcept;
+  detail::PointRead PointReads() const noexcept { return _point_reads; }
 
   bool AdmitRow(uint64_t row);
 
@@ -336,10 +336,12 @@ class ColFilterChain {
                            duckdb::SelectionVector& sel,
                            duckdb::idx_t survivors);
   bool AdmitRows(uint64_t row);
+  detail::PointRead ClassifyPointReads() const noexcept;
 
   std::vector<Col> _cols;
   std::vector<Row> _rows;
   std::optional<DenseRange> _dense;
+  detail::PointRead _point_reads = detail::PointRead::None;
   duckdb::SelectionVector _row_sel{STANDARD_VECTOR_SIZE};
   // FilterDocs' block-run selection. FilterSelection repoints `_sel` to a
   // buffer sized to the entering survivor count, so every block rebinds it to

@@ -22,21 +22,7 @@
 
 #include <absl/algorithm/container.h>
 
-#include "pg/types/cast.h"
-#include "pg/types/logical.h"
-
 namespace sdb::pg {
-namespace {
-
-std::optional<irs::pg::SqlErrorData> ParseChar(std::string_view text,
-                                               duckdb::string_t& value) {
-  char buffer[kCharText];
-  value = duckdb::string_t{
-    buffer, static_cast<uint32_t>(WriteChar(CharIn(text), buffer))};
-  return std::nullopt;
-}
-
-}  // namespace
 
 uint8_t CharIn(std::string_view text) {
   if (text.size() == kCharText && text[0] == '\\' &&
@@ -61,10 +47,6 @@ size_t WriteChar(uint8_t value, char* buffer) {
   buffer[2] = static_cast<char>('0' + ((value >> 3) & 7));
   buffer[3] = static_cast<char>('0' + (value & 7));
   return kCharText;
-}
-
-void RegisterChar(duckdb::CastFunctionSet& casts) {
-  ReplaceTextInput(casts, CHAR(), TextInputCast<duckdb::string_t, ParseChar>);
 }
 
 }  // namespace sdb::pg

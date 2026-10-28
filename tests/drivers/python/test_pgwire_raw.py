@@ -597,20 +597,6 @@ def test_char_oid18_binary_result(conn, query, value):
     assert first_field(m) == value
 
 
-@pytest.mark.parametrize(
-    "param, text",
-    [(b"abc", b"a"), (b"\\101", b"A"), (b"\xc3\xa9", b"\\303"), (b"", b"")],
-)
-def test_char_oid18_text_param(conn, param, text):
-    conn.parse("", "select $1::text", oids=(18,))
-    conn.bind("", "", params=(param,))
-    conn.execute("")
-    conn.sync()
-    m = conn.drain_to_ready()
-    assert "E" not in types(m), errors(m)
-    assert first_field(m) == text
-
-
 GEOMETRIC_PARAMS = [
     (600, b"(1,2)", struct.pack("!dd", 1, 2), b"(1,2)"),
     (601, b"[(1,2),(3,4)]", struct.pack("!dddd", 1, 2, 3, 4), b"[(1,2),(3,4)]"),

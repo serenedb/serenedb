@@ -892,15 +892,6 @@ struct CharBin {
   }
 };
 
-struct CharText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    char buffer[kCharText];
-    sink.Varchar({buffer, WriteChar(CharIn(data), buffer)});
-    return true;
-  }
-};
-
 struct VarcharText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
@@ -2404,7 +2395,7 @@ DeserializationFunction<Sink> GetDeserialization(
     case VARCHAR:
     case CHAR:
       if (IsChar(type)) {
-        return SelectDecoder<CharBin, CharText, Sink>(binary);
+        return SelectDecoder<CharBin, VarcharText, Sink>(binary);
       }
       if (IsXml(type)) {
         return SelectDecoder<XmlIn, XmlIn, Sink>(binary);

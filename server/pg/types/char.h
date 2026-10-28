@@ -22,7 +22,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <duckdb/function/cast/cast_function_set.hpp>
 #include <string_view>
 
 namespace sdb::pg {
@@ -31,7 +30,5 @@ inline constexpr size_t kCharText = sizeof("\\377") - 1;
 
 uint8_t CharIn(std::string_view text);
 size_t WriteChar(uint8_t value, char* buffer);
-
-void RegisterChar(duckdb::CastFunctionSet& casts);
 
 }  // namespace sdb::pg

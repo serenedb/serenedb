@@ -15,6 +15,7 @@ GLOBAL = {"pg_authid", "pg_auth_members", "pg_database", "pg_db_role_setting",
           "pg_default_acl", "pg_shdepend", "pg_foreign_server"}
 LIVE = {"sdb_progress"}
 STABLE = {"sdb_metrics": "metric, description, relation_id"}
+SCOPED = {"pg_shdepend": "refobjid IN ('spd_role'::regrole, 'spd_member'::regrole)"}
 
 FIXTURE = [
     "CREATE SCHEMA spd_s",
@@ -103,6 +104,32 @@ SHAPES = [
     "oid NOT IN ('spd_parent'::regclass)", "oid > 0 AND oid < 16384", "oid = 1259::hugeint",
     "oid = 1259.5", "relhasindex", "NOT relhasindex", "relhasindex IS NOT NULL",
     "pg_table_is_visible(oid)", "pg_table_is_visible((oid + 0)::oid)",
+    "starts_with(relname, relkind::text)", "starts_with(relname, '')",
+    "starts_with(lower(relname), 'spd')", "starts_with(TRY_CAST(relname AS integer)::text, '1')",
+    "prefix(relname, 'spd_p')", "starts_with(relname, 'spd_p') AND relname > 'spd_p'",
+    "starts_with(relname, 'spd_p') AND relname >= 'spd_p'",
+    "relname > 'spd_p' AND starts_with(relname, 'spd_p')",
+    "starts_with(relname, 'spd_p') AND relname < 'spd_q'",
+    "starts_with(relname, 'spd_p') AND relname <= 'spd_q'",
+    "relname IS DISTINCT FROM 'spd_parent'", "relname IS NOT DISTINCT FROM 'spd_parent'",
+    "(relname >= 'spd_c' AND relname <= 'spd_d') OR relname = 'spd_parent'",
+    "lower(relname) IN ('spd_parent', 'x')", "relname > 'spd' AND relname LIKE '%par%'",
+    "NOT (relname IS NOT NULL AND relname = 'spd_parent')", "relname IS NOT NULL",
+    "starts_with(relname, relname)", "starts_with(relname, 'spd_p') AND relname < 'spd_z'",
+    "starts_with(relname, 'spd_p') AND relname > 'spd_a'",
+    "lower(relname) IN ('spd_parent', 'x', 'y', 'z')", "reltuples >= 0",
+    "reltuples >= 0 AND reltuples < 1e9", "relnatts IS NOT NULL",
+    "relname IS DISTINCT FROM NULL", "relname IS NOT DISTINCT FROM NULL",
+]
+UNFOLDED_SHAPES = [
+    "relname = NULL", "relnatts = NULL", "relname IN ('spd_parent', NULL)",
+    "relname NOT IN ('spd_parent', NULL)", "relname NOT IN ('spd_parent', NULL, NULL)",
+    "NOT (relname IS NOT NULL AND relname = 'spd_parent')",
+]
+OTHER_SHAPES = [
+    ("information_schema.columns", "character_maximum_length IS NOT NULL"),
+    ("information_schema.columns", "column_default IS NOT NULL"),
+    ("pg_catalog.pg_proc", "starts_with(prosrc, 'abs')"),
 ]
 
 
@@ -139,7 +166,9 @@ def predicates(column, kind, element, not_null, key, oids, names):
     return found + ([f"{name} IS NULL"] if not_null == "false" else [])
 
 
-def compare(t, shown, source, predicate):
+def compare(t, shown, source, predicate, scope=None):
+    if scope:
+        predicate = f"({predicate}) AND ({scope})"
     pushed = f"SELECT {shown} FROM {source} WHERE {predicate}"
     scanned = (f"SELECT {shown} FROM (SELECT * FROM {source} LIMIT 1000000000) "
                f"WHERE {predicate}")
@@ -152,16 +181,18 @@ def check(t, name, source, columns, oids, names):
     shown = STABLE.get(name, "*")
     for column in columns:
         for predicate in predicates(*column, oids, names):
-            compare(t, shown, source, predicate)
+            compare(t, shown, source, predicate, SCOPED.get(name))
 
 
 t = Test("A filter a system relation evaluates while it scans returns the rows the same "
          "filter keeps from the unfiltered scan, for every column a filter can be pushed "
          "into, against a fixture with an object of every kind, and every key column looks "
          "up each of those objects by its oid or name; pg_class also takes every shape of "
-         "filter a scan can capture or must leave alone. sdb_progress shows operations as "
-         "they run and sdb_metrics counts them, so the first is left out and the second "
-         "compared on the columns that stay put while a statement runs.")
+         "filter a scan can capture or must leave alone, with the expression rewriter on and "
+         "off. sdb_progress shows operations as they run and sdb_metrics counts them, so the "
+         "first is left out and the second compared on the columns that stay put while a "
+         "statement runs; pg_shdepend reads other databases' objects as they commit (#1999), "
+         "so it is compared on the rows of this file's own roles.")
 for sql in FIXTURE:
     t.statement(sql)
 local = [r for r in relations() if r[0] not in GLOBAL]
@@ -174,6 +205,13 @@ t.part()
 t.section("Filter shapes on pg_catalog.pg_class")
 for shape in SHAPES:
     compare(t, "*", "pg_catalog.pg_class", shape)
+for source, shape in OTHER_SHAPES:
+    compare(t, "*", source, shape)
+t.section("Filter shapes the expression rewriter would fold")
+t.statement("SET disabled_optimizers = 'expression_rewriter'")
+for shape in UNFOLDED_SHAPES:
+    compare(t, "*", "pg_catalog.pg_class", shape)
+t.statement("RESET disabled_optimizers")
 for sql in TEARDOWN:
     t.statement(sql)
 t.part()

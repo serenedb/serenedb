@@ -41,23 +41,24 @@ namespace sdb::pg {
 namespace {
 
 bool IsNumber(const duckdb::LogicalType& type) {
-  return type.id() == duckdb::LogicalTypeId::BOOLEAN ||
-         (type.IsIntegral() &&
-          type.InternalType() != duckdb::PhysicalType::UINT64 &&
-          duckdb::GetTypeIdSize(type.InternalType()) <= sizeof(int64_t));
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::BOOLEAN:
+    case duckdb::LogicalTypeId::SMALLINT:
+    case duckdb::LogicalTypeId::INTEGER:
+    case duckdb::LogicalTypeId::BIGINT:
+      return true;
+    default:
+      return false;
+  }
 }
 
 template<typename T>
-std::optional<T> Constant(const duckdb::Value& value) {
+T Constant(const duckdb::Value& value) {
   if constexpr (std::is_same_v<T, std::string>) {
-    if (value.type().id() != duckdb::LogicalTypeId::VARCHAR) {
-      return std::nullopt;
-    }
+    SDB_ASSERT(value.type().id() == duckdb::LogicalTypeId::VARCHAR);
     return duckdb::StringValue::Get(value);
   } else {
-    if (!IsNumber(value.type())) {
-      return std::nullopt;
-    }
+    SDB_ASSERT(IsNumber(value.type()));
     return value.GetValue<int64_t>();
   }
 }
@@ -85,17 +86,17 @@ std::optional<SystemRange> RangeOf(const duckdb::Expression& expr) {
   }
   const auto& function = expr.Cast<duckdb::BoundFunctionExpression>();
   const auto& name = function.Function().GetName();
-  const auto& children = function.GetChildren();
-  if ((name != "prefix" && name != "starts_with" && name != "^@") ||
-      children.size() != 2) {
+  if (name != "prefix" && name != "starts_with" && name != "^@") {
     return std::nullopt;
   }
+  const auto& children = function.GetChildren();
+  SDB_ASSERT(children.size() == 2);
   const auto* column = children[0].get();
   if (duckdb::BoundCastExpression::IsCast(*column)) {
     const auto& cast = column->Cast<duckdb::BoundFunctionExpression>();
+    SDB_ASSERT(cast.GetReturnType().id() == duckdb::LogicalTypeId::VARCHAR);
     if (duckdb::BoundCastExpression::SourceType(cast).id() !=
-          duckdb::LogicalTypeId::VARCHAR ||
-        cast.GetReturnType().id() != duckdb::LogicalTypeId::VARCHAR) {
+        duckdb::LogicalTypeId::VARCHAR) {
       return std::nullopt;
     }
     column = &duckdb::BoundCastExpression::Child(cast);
@@ -118,10 +119,10 @@ std::optional<bool> BooleanOf(const duckdb::Expression& expr) {
   const auto& operand =
     negated ? *expr.Cast<duckdb::BoundOperatorExpression>().GetChildren()[0]
             : expr;
-  if (!duckdb::ExpressionFilter::IsSimpleFilterColumnRef(operand) ||
-      operand.GetReturnType().id() != duckdb::LogicalTypeId::BOOLEAN) {
+  if (!duckdb::ExpressionFilter::IsSimpleFilterColumnRef(operand)) {
     return std::nullopt;
   }
+  SDB_ASSERT(operand.GetReturnType().id() == duckdb::LogicalTypeId::BOOLEAN);
   return !negated;
 }
 
@@ -201,18 +202,12 @@ bool Restrict(SystemCondition<T>& condition, duckdb::ExpressionType type,
 
 template<typename T>
 bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
-  using enum duckdb::ExpressionClass;
-  if (expr.GetExpressionClass() == BOUND_OPERATOR &&
-      (expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_IN ||
-       expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_NOT_IN)) {
+  if (expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_IN) {
     const auto& children =
       expr.Cast<duckdb::BoundOperatorExpression>().GetChildren();
-    if (children.empty() ||
-        !duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0])) {
+    if (!duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0])) {
       return false;
     }
-    const bool excluded =
-      expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_NOT_IN;
     std::vector<T> set;
     for (const auto& child : std::span{children}.subspan(1)) {
       if (child->GetExpressionType() !=
@@ -221,23 +216,11 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
       }
       const auto& value =
         child->Cast<duckdb::BoundConstantExpression>().GetValue();
-      if (value.IsNull()) {
-        if (excluded) {
-          return false;
-        }
-        continue;
+      if (!value.IsNull()) {
+        set.emplace_back(Constant<T>(value));
       }
-      auto constant = Constant<T>(value);
-      if (!constant) {
-        return false;
-      }
-      set.emplace_back(std::move(*constant));
     }
-    if (excluded) {
-      absl::c_move(set, std::back_inserter(condition.excluded));
-    } else {
-      Intersect(condition.keys, std::move(set));
-    }
+    Intersect(condition.keys, std::move(set));
     return true;
   }
   if (duckdb::BoundComparisonExpression::IsComparison(expr)) {
@@ -251,19 +234,17 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
     auto value = Constant<T>(*constant);
     return value && Restrict(condition, type, std::move(*value));
   }
-  if (expr.GetExpressionClass() == BOUND_CONJUNCTION &&
-      expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
-    return absl::c_all_of(
-      expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren(),
-      [&](const duckdb::unique_ptr<duckdb::Expression>& child) {
-        return Capture(*child, condition);
-      });
-  }
-  if (expr.GetExpressionClass() == BOUND_CONJUNCTION &&
-      expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_OR) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONJUNCTION) {
+    const auto& children =
+      expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren();
+    if (expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
+      return absl::c_all_of(
+        children, [&](const duckdb::unique_ptr<duckdb::Expression>& child) {
+          return Capture(*child, condition);
+        });
+    }
     std::vector<T> set;
-    for (const auto& child :
-         expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+    for (const auto& child : children) {
       SystemCondition<T> branch;
       if (!Capture(*child, branch) || !branch.KeysOnly()) {
         return false;
@@ -344,9 +325,7 @@ struct SystemClaim {
 
 SystemClaim Claim(const SystemTable& table, duckdb::column_t column,
                   const duckdb::Expression& expr, SystemFilter& compiled) {
-  if (column >= table.Columns().LogicalColumnCount()) {
-    return {.claimed = false, .visibility = false};
-  }
+  SDB_ASSERT(column < table.Columns().LogicalColumnCount());
   if (const auto& visibility = table.Visibility();
       visibility && visibility->column == column &&
       IsVisibility(expr, *visibility)) {
@@ -439,15 +418,14 @@ void SystemScan::Compile(duckdb::column_t column,
     *duckdb::ExpressionFilter::GetExpressionFilter(filter, "SystemScan").expr;
   SystemFilter compiled;
   const auto claim = Claim(_table, column, expr, compiled);
-  if (claim.visibility && !_session) {
+  if (claim.visibility) {
+    SDB_ASSERT(!_session);
     _session.emplace(MakeSession(&_context));
   }
   const bool optional =
     duckdb::ExpressionFilter::IsRootOptionalExpression(expr);
   SDB_ASSERT(claim.claimed || optional);
-  if (column >= _table.Columns().LogicalColumnCount()) {
-    return;
-  }
+  SDB_ASSERT(column < _table.Columns().LogicalColumnCount());
   const auto& meta = _table.Sql().columns[column];
   Finish(meta, compiled);
   if (const auto& type =

@@ -96,7 +96,7 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
         row.table, *row.As<duckdb::CheckConstraint>().expression));
     }),
     Col<"conbin">([](const ConstraintRow& row) {
-      return row.As<duckdb::CheckConstraint>().expression->ToString();
+      return ExpressionText(*row.As<duckdb::CheckConstraint>().expression);
     }));
 
   static constexpr auto kNotNull = Shape<kSql, const ConstraintRow>(

@@ -265,7 +265,8 @@ Definition ConstraintDefinition(const Session& session, int64_t oid) {
     case duckdb::ConstraintType::CHECK:
       return absl::StrCat(
         "CHECK (",
-        constraint.Cast<duckdb::CheckConstraint>().expression->ToString(), ")");
+        ExpressionText(*constraint.Cast<duckdb::CheckConstraint>().expression),
+        ")");
     case duckdb::ConstraintType::NOT_NULL:
       return absl::StrCat(
         "NOT NULL ",

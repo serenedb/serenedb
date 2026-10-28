@@ -1026,3 +1026,18 @@ SELECT COUNT(*) >= 0 FROM information_schema.user_mappings
 ----
 ?column?
 t
+
+
+statement ok
+PREPARE sv_gap AS SELECT $2::int;
+
+
+query
+SELECT array_to_string(parameter_types, ',') AS parameter_types FROM pg_prepared_statements WHERE name = 'sv_gap';
+----
+parameter_types
+unknown
+
+
+statement ok
+DEALLOCATE sv_gap;

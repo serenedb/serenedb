@@ -143,6 +143,10 @@ OTHER_SHAPES = [
     ("pg_catalog.pg_proc", "(procost = 1 OR procost = 100) AND (procost = 25 OR procost = 1)"),
     ("pg_catalog.pg_depend", "deptype = 'i'"), ("pg_catalog.pg_depend", "deptype = 'a'"),
     ("pg_catalog.pg_depend", "deptype = 'n'"),
+    ("pg_catalog.pg_attrdef", "adrelid <> 'spd_child'::regclass"),
+    ("pg_catalog.pg_constraint", "conrelid <> 'spd_child'::regclass"),
+    ("pg_catalog.pg_description", "objoid <> 'spd_v'::regclass"),
+    ("pg_catalog.pg_index", "indexrelid <> 'spd_idx'::regclass"),
 ]
 UNFOLDED_OTHER_SHAPES = [
     ("information_schema.columns", "NOT (column_default IS NOT DISTINCT FROM 'x')"),

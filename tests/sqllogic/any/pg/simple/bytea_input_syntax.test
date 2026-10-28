@@ -74,3 +74,9 @@ statement error
 SELECT '\400'::bytea
 ----
 db error: ERROR: invalid input syntax for type bytea
+
+
+statement error
+SELECT '\x123'::bytea
+----
+db error: ERROR: invalid hexadecimal data: odd number of digits

@@ -171,3 +171,15 @@ DROP SCHEMA fnp CASCADE;
 
 statement ok
 DROP TYPE fnp_feeling;
+
+
+statement ok
+CREATE FUNCTION fnp_one(a int) RETURNS int LANGUAGE sql AS 'SELECT a';
+
+
+statement error (DISTINCT specified, but fnp_one is not an aggregate function|"DISTINCT", "FILTER", and "ORDER BY" are only applicable)
+SELECT fnp_one(DISTINCT 1);
+
+
+statement ok
+DROP FUNCTION fnp_one;

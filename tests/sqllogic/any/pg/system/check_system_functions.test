@@ -229,3 +229,13 @@ SELECT pg_cancel_backend(0) AS cancel_missing,
 ----
 cancel_missing	terminate_missing	cancel_null	terminate_null
 f	f	t	t
+
+
+query
+SELECT pg_cancel_backend(p) IS NULL AS cancel, pg_terminate_backend(p) IS NULL AS terminate,
+       width_bucket(p, ARRAY[1, 2, 3]) IS NULL AS bucket, current_setting(n, true) IS NULL AS setting,
+       pg_input_error_info(n, 'integer') IS NULL AS error_info
+FROM (VALUES (NULL::int, NULL::text)) v(p, n);
+----
+cancel	terminate	bucket	setting	error_info
+t	t	t	t	t

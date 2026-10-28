@@ -94,3 +94,17 @@ SELECT (TIMESTAMPTZ '2020-01-01 00:00+00', INTERVAL '2 days') OVERLAPS (TIMESTAM
 ----
 a	b	c	d
 t	t	t	NULL
+
+
+statement error (syntax error|wrong number of parameters on left side of OVERLAPS expression)
+SELECT () OVERLAPS (DATE '2020-01-01', DATE '2020-01-02');
+
+
+statement error (syntax error|wrong number of parameters on right side of OVERLAPS expression)
+SELECT (DATE '2020-01-01', DATE '2020-01-10') OVERLAPS ();
+
+
+statement error
+SELECT (DATE '2020-01-01', DATE '2020-01-10') OVERLAPS ROW();
+----
+db error: ERROR: wrong number of parameters on right side of OVERLAPS expression

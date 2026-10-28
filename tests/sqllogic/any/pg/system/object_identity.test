@@ -468,10 +468,12 @@ db error: ERROR: unrecognized class ID: 1
 
 query
 SELECT (pg_identify_object('pg_type'::regclass, 1, 0)).type AS type,
-       pg_get_acl('pg_type'::regclass, 1, 0) IS NULL AS no_acl;
+       pg_get_acl('pg_type'::regclass, 1, 0) IS NULL AS no_acl,
+       pg_get_acl('pg_proc'::regclass, 0, 0) IS NULL AS no_function,
+       (pg_identify_object('pg_class'::regclass, 'pg_class'::regclass, 999)).type AS missing_column;
 ----
-type	no_acl
-type	t
+type	no_acl	no_function	missing_column
+type	t	t	table column
 
 
 statement ok

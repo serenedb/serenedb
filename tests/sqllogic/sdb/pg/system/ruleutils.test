@@ -362,4 +362,16 @@ t	t	t
 
 
 statement ok
+CREATE MACRO rs.with_default(a := 7) AS a;
+
+
+query
+SELECT pg_get_function_arg_default('rs.with_default'::regproc, 1) AS first,
+       pg_get_function_arg_default('rs.with_default'::regproc, 5) IS NULL AS out_of_range;
+----
+first	out_of_range
+7	t
+
+
+statement ok
 DROP SCHEMA rs CASCADE;

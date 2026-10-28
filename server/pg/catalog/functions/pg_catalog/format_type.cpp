@@ -24,6 +24,8 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 
 #include "pg/catalog/functions/functions.h"
@@ -35,9 +37,16 @@ namespace sdb::pg {
 
 const IntervalRange* FindIntervalRange(int32_t typmod) {
   const auto range = (typmod >> 16) & kIntervalFullRange;
+  if (range == kIntervalFullRange) {
+    return nullptr;
+  }
   const auto it = absl::c_find_if(
     kIntervalRanges, [&](const IntervalRange& r) { return r.mask == range; });
-  return it == kIntervalRanges.end() ? nullptr : &*it;
+  if (it == kIntervalRanges.end()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("invalid INTERVAL typmod: 0x", absl::Hex(typmod)));
+  }
+  return &*it;
 }
 
 std::optional<int32_t> CharMaxLength(int64_t typid, int32_t typmod) {

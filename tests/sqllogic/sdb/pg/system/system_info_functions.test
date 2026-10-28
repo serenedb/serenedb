@@ -103,3 +103,59 @@ DROP TABLE sif_docs;
 
 statement ok
 DROP TABLE sif_rows;
+
+
+statement ok
+CREATE TABLE sif_search (id int PRIMARY KEY, body text) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO sif_search VALUES (1, 'a');
+
+
+statement ok
+CREATE TABLE sif_inverted (id int, body text);
+
+
+statement ok
+CREATE INDEX sif_inverted_idx ON sif_inverted USING inverted (id, body);
+
+
+query
+SELECT pg_relation_size('sif_search') >= 0 AS search_table, pg_relation_size('sif_search_pkey') AS search_key,
+       pg_indexes_size('sif_inverted') >= 0 AS inverted, pg_total_relation_size('sif_inverted') >= 0 AS total;
+----
+search_table	search_key	inverted	total
+t	0	t	t
+
+
+statement ok
+CREATE TABLE sif_trigger_log (v int);
+
+
+statement ok
+CREATE TRIGGER sif_trigger AFTER INSERT ON sif_inverted FOR EACH ROW INSERT INTO sif_trigger_log VALUES (NEW.id);
+
+
+query
+SELECT count(*) AS internal FROM pg_depend
+WHERE objid = (SELECT oid FROM pg_trigger WHERE tgname = 'sif_trigger') AND deptype = 'i';
+----
+internal
+0
+
+
+statement ok
+DROP TRIGGER sif_trigger ON sif_inverted;
+
+
+statement ok
+DROP TABLE sif_trigger_log;
+
+
+statement ok
+DROP TABLE sif_inverted;
+
+
+statement ok
+DROP TABLE sif_search;

@@ -524,3 +524,10 @@ SELECT xpath('/a', '<a xmlns:p="relative"/>') AS a;
 ----
 a
 {"<a xmlns:p=\\"relative\\"/>"}
+
+
+query
+SELECT xmlagg('<a/>'::xml) AS a FROM generate_series(1, 3);
+----
+a
+<a/><a/><a/>

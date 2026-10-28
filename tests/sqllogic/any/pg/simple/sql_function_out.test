@@ -275,3 +275,22 @@ column1	column2
 
 statement ok
 DROP SCHEMA fno CASCADE;
+
+
+statement ok
+CREATE FUNCTION fno_array(OUT a int[]) RETURNS int[] LANGUAGE sql AS 'SELECT ARRAY[1]';
+
+
+query
+SELECT fno_array() AS a;
+----
+a
+{1}
+
+
+statement ok
+DROP FUNCTION fno_array;
+
+
+statement error (column "nosuch" does not exist|Referenced column "nosuch" not found)
+SELECT (nosuch).* FROM (SELECT 1) t;

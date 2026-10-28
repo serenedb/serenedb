@@ -305,8 +305,49 @@ SELECT * FROM pg_sequence_parameters('sif_seq_plain'::regclass);
 db error: ERROR: permission denied for sequence sif_seq_plain
 
 
+statement error
+SELECT pg_tablespace_size('pg_global');
+----
+db error: ERROR: permission denied for tablespace pg_global
+
+
 statement ok
 RESET ROLE;
+
+
+query
+SELECT pg_sequence_last_value(x) IS NULL AS last_value, pg_relation_size(x, 'main') IS NULL AS size
+FROM (VALUES (NULL::regclass)) v(x);
+----
+last_value	size
+t	t
+
+
+query
+SELECT d.* FROM (VALUES (NULL::regclass)) v(x), pg_get_sequence_data(x) d;
+----
+last_value	is_called
+NULL	NULL
+
+
+query
+SELECT p.start_value IS NULL AS start_value, p.cycle_option IS NULL AS cycle_option
+FROM (VALUES (NULL::regclass)) v(x), pg_sequence_parameters(x) p;
+----
+start_value	cycle_option
+t	t
+
+
+statement error
+SELECT pg_size_bytes('100000000000000000000');
+----
+db error: ERROR: bigint out of range
+
+
+statement error
+SELECT pg_size_bytes('1e9999999999');
+----
+db error: ERROR: value overflows numeric format
 
 
 # pg_size_bytes

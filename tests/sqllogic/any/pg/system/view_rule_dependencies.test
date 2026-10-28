@@ -127,4 +127,16 @@ pg_type	0	vrd.gen	0	i
 
 
 statement ok
+CREATE TABLE vrd.nonconst (a bigint DEFAULT nextval('vrd.s2' || ''));
+
+
+query
+SELECT count(*) AS deps FROM pg_depend
+WHERE refobjid = 'vrd.s2'::regclass AND objid IN (SELECT oid FROM pg_attrdef WHERE adrelid = 'vrd.nonconst'::regclass);
+----
+deps
+0
+
+
+statement ok
 DROP SCHEMA vrd CASCADE;

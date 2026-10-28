@@ -267,3 +267,34 @@ DROP TABLE ru_temp;
 
 statement ok
 DROP SCHEMA ru CASCADE;
+
+
+statement ok
+CREATE TABLE ru_qualified (a int CHECK (ru_qualified.a > 0));
+
+
+statement ok
+CREATE TABLE ru_self (id int PRIMARY KEY, parent int REFERENCES ru_self (id));
+
+
+query
+SELECT pg_get_constraintdef(oid) AS def, pg_get_expr(conbin, conrelid) AS bin
+FROM pg_constraint WHERE conrelid = 'ru_qualified'::regclass AND contype = 'c';
+----
+def	bin
+CHECK ((a > 0))	(a > 0)
+
+
+query
+SELECT confrelid::regclass AS referenced FROM pg_constraint WHERE conrelid = 'ru_self'::regclass AND contype = 'f';
+----
+referenced
+ru_self
+
+
+statement ok
+DROP TABLE ru_self;
+
+
+statement ok
+DROP TABLE ru_qualified;

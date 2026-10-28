@@ -763,6 +763,11 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
     if (s.scored > budget) {
       return false;
     }
+    if constexpr (requires { accept.Stalled(); }) {
+      if (accept.Stalled()) {
+        return false;
+      }
+    }
   }
   return true;
 }

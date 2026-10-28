@@ -294,6 +294,15 @@ void BuildRowFilters(ScanGlobalState& state, const ScanBindData& bind_data) {
   }
 }
 
+void BuildDualFilters(ScanGlobalState& state,
+                      std::span<const RowFilter> duals) {
+  for (const auto& dual : duals) {
+    auto& cf = state.dual_filters.emplace_back();
+    cf.field = dual.columns.front();
+    BindExpressionFilter(cf, *dual.filter, dual.types.front());
+  }
+}
+
 void AddDeferredColumnFilter(ScanGlobalState& state,
                              DeferredColumnFilter&& deferred) {
   using ColFilter = ScanGlobalState::ColFilter;
@@ -431,9 +440,17 @@ void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
                         const ScanBindData& bind_data) {
   auto built = BuildDeferredFilter(context, bind_data, *state.snapshot);
   state.owned_where = std::move(built.filter);
+  state.owned_index_only = std::move(built.index_only);
   state.owned_where_scorers = std::move(built.scorers);
   for (auto& column_filter : built.column_filters) {
     AddDeferredColumnFilter(state, std::move(column_filter));
+  }
+  for (auto& dual : built.dual_filters) {
+    const auto& owned =
+      state.deferred_filters.emplace_back(std::move(dual.filter));
+    auto& cf = state.dual_filters.emplace_back();
+    cf.field = dual.column;
+    BindExpressionFilter(cf, *owned, std::move(dual.type));
   }
   state.deferred_checks = std::move(built.checks);
   AddDeferredChecks(state, state.deferred_checks);
@@ -553,6 +570,7 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   BuildRowFilters(state, bind_data);
   if (!bind_data.plan_cache.deferred) {
     AddDeferredChecks(state, bind_data.search.deferred);
+    BuildDualFilters(state, bind_data.search.duals);
   }
 }
 

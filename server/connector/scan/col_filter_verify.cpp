@@ -93,17 +93,18 @@ uint64_t ColFilterVerify::CountAndClear(irs::doc_id_t base, uint64_t* mask,
   return static_cast<uint64_t>(_chain.CountMask(base, mask, words));
 }
 
-void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
-                               irs::ColFilterStateCache& states,
-                               irs::ColFilterClassification& out,
-                               bool prepare_leaves) {
+void ClassifySegmentColFilters(
+  const irs::SubReader& seg, ScanGlobalState& g,
+  std::span<const ScanGlobalState::ColFilter> filters,
+  irs::ColFilterStateCache& states, irs::ColFilterClassification& out,
+  bool prepare_leaves) {
   out.segment_dead = false;
   out.active.clear();
-  if (g.col_filters.empty()) {
+  if (filters.empty()) {
     return;
   }
   const auto* col_reader = seg.GetColReader();
-  for (const auto& cf : g.col_filters) {
+  for (const auto& cf : filters) {
     irs::ColFilterSpec spec{
       .field = cf.field,
       .filter = cf.filter,
@@ -191,7 +192,8 @@ void ScanLocalState::Classify(ScanGlobalState& g, uint32_t seg) {
   if (classified_seg == seg) {
     return;
   }
-  ClassifySegmentColFilters((*g.reader)[seg], g, filter_states, seg_cls, true);
+  ClassifySegmentColFilters((*g.reader)[seg], g, g.col_filters, filter_states,
+                            seg_cls, true);
   classified_seg = seg;
 }
 
@@ -200,6 +202,25 @@ irs::detail::TableFilter* BeginVerify(ColFilterVerify& verify,
                                       ScanGlobalState& g, ScanLocalState& l) {
   verify.Begin(seg, l.seg_cls.active, *g.client_context, l.filter_states);
   return verify.Empty() ? nullptr : &verify;
+}
+
+irs::detail::TableFilter* BeginColumnVerify(const irs::SubReader& seg,
+                                            ScanGlobalState& g,
+                                            AnnLocalState& l) {
+  if (g.dual_filters.empty()) {
+    return nullptr;
+  }
+  ClassifySegmentColFilters(seg, g, g.dual_filters, l.filter_states, l.dual_cls,
+                            true);
+  if (l.dual_cls.segment_dead) {
+    return nullptr;
+  }
+  l.column_specs.assign(l.dual_cls.active.begin(), l.dual_cls.active.end());
+  l.column_specs.insert(l.column_specs.end(), l.seg_cls.active.begin(),
+                        l.seg_cls.active.end());
+  l.column_verify.Begin(seg, l.column_specs, *g.client_context,
+                        l.filter_states);
+  return l.column_verify.Empty() ? nullptr : &l.column_verify;
 }
 
 }  // namespace sdb::connector

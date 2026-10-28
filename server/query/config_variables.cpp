@@ -835,12 +835,15 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_hnsw_column_filter",
       {
         LogicalTypeId::VARCHAR,
-        "How an HNSW graph walk answers a predicate only the columnstore can: "
-        "'fold' evaluates it over the whole segment before the walk; 'read' "
-        "reads the columns of each row the walk reaches; 'auto' reads while "
-        "the walk is expected to reach few enough rows for that to cost less "
-        "than the fold, weighing what one read costs in the columns' "
-        "encodings. Default 'auto'.",
+        "How an HNSW graph walk answers a predicate the columnstore can "
+        "evaluate: 'fold' evaluates one only the columnstore answers over the "
+        "whole segment before the walk, and takes one the index answers from "
+        "the index; 'read' reads the columns of each row the walk reaches, "
+        "including for predicates the index answers; 'auto' reads while the "
+        "walk is expected to reach few enough rows for that to cost less than "
+        "the fold, or than the index where the index answers the predicate, "
+        "weighing what one read costs in the columns' encodings. Default "
+        "'auto'.",
         [] { return duckdb::Value{"auto"}; },
         OneOfEnum<irs::HnswColumnFilter, "sdb_hnsw_column_filter">,
       },

@@ -387,16 +387,19 @@ void ScanBindData::AppendSummary(
     out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
                                  *search.filter, name_of, kind_of)));
   }
+  const auto rows_text = [](std::span<const RowFilter> rows) {
+    return absl::StrJoin(rows | std::views::transform([](const RowFilter& row) {
+                           return duckdb::ExpressionFilter::GetExpressionFilter(
+                                    *row.filter, "AppendSummary")
+                             .expr->ToString();
+                         }),
+                         "\n");
+  };
+  if (!search.duals.empty()) {
+    out.insert("Index or Column Filter", rows_text(search.duals));
+  }
   if (!search.row_filters.empty()) {
-    out.insert(
-      "Row Filter",
-      absl::StrJoin(
-        search.row_filters | std::views::transform([](const RowFilter& row) {
-          return duckdb::ExpressionFilter::GetExpressionFilter(*row.filter,
-                                                               "AppendSummary")
-            .expr->ToString();
-        }),
-        "\n"));
+    out.insert("Row Filter", rows_text(search.row_filters));
   }
   if (!search.deferred.empty()) {
     out.insert("Table Filter", duckdb::ExplainValue(TableFilterNode(

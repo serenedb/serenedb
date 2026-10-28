@@ -597,6 +597,120 @@ def test_char_oid18_binary_result(conn, query, value):
     assert first_field(m) == value
 
 
+@pytest.mark.parametrize(
+    "param, text",
+    [(b"abc", b"a"), (b"\\101", b"A"), (b"\xc3\xa9", b"\\303"), (b"", b"")],
+)
+def test_char_oid18_text_param(conn, param, text):
+    conn.parse("", "select $1::text", oids=(18,))
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == text
+
+
+GEOMETRIC_PARAMS = [
+    (600, b"(1,2)", struct.pack("!dd", 1, 2), b"(1,2)"),
+    (601, b"[(1,2),(3,4)]", struct.pack("!dddd", 1, 2, 3, 4), b"[(1,2),(3,4)]"),
+    (
+        602,
+        b"((1,2),(3,4))",
+        struct.pack("!Bidddd", 1, 2, 1, 2, 3, 4),
+        b"((1,2),(3,4))",
+    ),
+    (603, b"(1,2),(3,4)", struct.pack("!dddd", 3, 4, 1, 2), b"(3,4),(1,2)"),
+    (604, b"((1,2),(3,4))", struct.pack("!idddd", 2, 1, 2, 3, 4), b"((1,2),(3,4))"),
+    (628, b"{1,2,3}", struct.pack("!ddd", 1, 2, 3), b"{1,2,3}"),
+    (718, b"<(1,2),3>", struct.pack("!ddd", 1, 2, 3), b"<(1,2),3>"),
+]
+
+
+@pytest.mark.parametrize("oid, text_param, binary_param, text", GEOMETRIC_PARAMS)
+@pytest.mark.parametrize("binary", [False, True])
+def test_geometric_param(conn, oid, text_param, binary_param, text, binary):
+    conn.parse("", "select $1::text", oids=(oid,))
+    if binary:
+        conn.bind("", "", params=(binary_param,), formats=(1,))
+    else:
+        conn.bind("", "", params=(text_param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == text
+
+
+@pytest.mark.parametrize(
+    "oid, sqlstate, message",
+    [
+        (3, "XX000", "cache lookup failed for type 3"),
+        (2970, "0A000", "type txid_snapshot is not supported"),
+    ],
+)
+def test_parse_param_oid_without_a_type(conn, oid, sqlstate, message):
+    conn.parse("", "select $1", oids=(oid,))
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == [sqlstate], errors(m)
+    assert errors(m)[0]["M"] == message
+
+
+def check_user_type_params(conn, name, in_transaction):
+    conn.run_ok(f"create type {name} as enum ('sad', 'ok')")
+    conn.run_ok(f"create table {name}_table (a int)")
+    try:
+        oid, array = (
+            int(v)
+            for v in all_fields(
+                conn.run_ok(
+                    f"select oid, typarray from pg_type where typname = '{name}'"
+                )
+            )
+        )
+        table = int(
+            first_field(conn.run_ok(f"select '{name}_table'::regclass::oid"))
+        )
+        for type_oid, param, text in (
+            (oid, b"ok", b"ok"),
+            (array, b"{sad,ok}", b"{sad,ok}"),
+        ):
+            if in_transaction:
+                conn.run_ok("begin")
+            conn.parse("", "select $1", oids=(type_oid,))
+            conn.bind("", "", params=(param,))
+            conn.execute("")
+            conn.sync()
+            m = conn.drain_to_ready()
+            if in_transaction:
+                conn.run_ok("commit")
+            assert "E" not in types(m), errors(m)
+            assert first_field(m) == text
+        for missing in (table, 1000000000):
+            if in_transaction:
+                conn.run_ok("begin")
+            conn.parse("", "select $1", oids=(missing,))
+            conn.sync()
+            m = conn.drain_to_ready()
+            if in_transaction:
+                conn.run("rollback")
+            assert sqlstates(m) == ["XX000"], errors(m)
+            assert errors(m)[0]["M"] == f"cache lookup failed for type {missing}"
+    finally:
+        conn.run("rollback")
+        conn.run(f"drop table if exists {name}_table")
+        conn.run(f"drop type if exists {name}")
+
+
+def test_parse_param_oid_of_user_types_in_transaction(conn):
+    check_user_type_params(conn, "raw_param_mood_txn", True)
+
+
+def test_parse_param_oid_of_user_types(conn):
+    check_user_type_params(conn, "raw_param_mood", False)
+
+
 def test_parse_param_oid_unknown_is_inferred(conn):
     conn.parse("", "select $1::int4 + 1", oids=(705,))
     conn.bind("", "", params=(b"41",))

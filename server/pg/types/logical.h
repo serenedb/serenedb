@@ -23,6 +23,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/decimal.hpp>
 #include <duckdb/inet/inet_type.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <string_view>
 
@@ -39,8 +40,8 @@ namespace sdb::pg {
 #define DECLARE_PG_TYPE(UPPER, Name, alias_str, BaseTypeId)       \
   inline constexpr std::string_view k##Name##Alias = alias_str;   \
   inline bool Is##Name(const duckdb::LogicalType& type) {         \
-    return type.id() == duckdb::LogicalTypeId::BaseTypeId &&      \
-           type.GetTypeInfo().alias == alias_str;                 \
+    SDB_ASSERT(type.id() == duckdb::LogicalTypeId::BaseTypeId);   \
+    return type.GetTypeInfo().alias == alias_str;                 \
   }                                                               \
   inline duckdb::LogicalType UPPER() {                            \
     return duckdb::LogicalType(duckdb::LogicalTypeId::BaseTypeId) \
@@ -82,10 +83,13 @@ DECLARE_PG_TYPE(ANYARRAY,       Anyarray,       "anyarray",        VARCHAR)
 DECLARE_PG_TYPE(PG_NDISTINCT,   PgNdistinct,    "pg_ndistinct",    VARCHAR)
 DECLARE_PG_TYPE(PG_DEPENDENCIES, PgDependencies, "pg_dependencies", VARCHAR)
 DECLARE_PG_TYPE(PG_MCV_LIST,    PgMcvList,      "pg_mcv_list",     VARCHAR)
+// clang-format on
+
 // PG pseudo-type `void`: functions declared RETURNS VOID still need a
 // representable result type. We back it with SQLNULL.
-DECLARE_PG_TYPE(VOID,           Void,           "void",            SQLNULL)
-// clang-format on
+inline duckdb::LogicalType VOID() {
+  return duckdb::LogicalType(duckdb::LogicalTypeId::SQLNULL).WithAlias("void");
+}
 
 // 32-bit OID-family types: backed by BIGINT in DuckDB for storage, but travel
 // as 4-byte unsigned OID on the PG wire (typsend = oidsend / typreceive =
@@ -98,14 +102,8 @@ inline const irs::containers::FlatHashSet<std::string_view> kOidLikeAliases = {
 };
 
 inline bool IsOidLike(const duckdb::LogicalType& type) {
-  // All OID-family types are BIGINT-backed; reject everything else before the
-  // one alias lookup. A single GetAlias() + hash-set probe replaces 14
-  // GetAlias()+compare calls (this runs per value on the bind/COPY decode
-  // path).
-  if (type.id() != duckdb::LogicalTypeId::BIGINT) {
-    return false;
-  }
-  return kOidLikeAliases.contains(type.GetAlias());
+  SDB_ASSERT(type.id() == duckdb::LogicalTypeId::BIGINT);
+  return kOidLikeAliases.contains(type.GetTypeInfo().alias);
 }
 
 inline bool IsRegLike(const duckdb::LogicalType& type) {
@@ -129,8 +127,8 @@ inline duckdb::LogicalType CTID() {
 inline constexpr std::string_view kMoneyAlias = "money";
 
 inline bool IsMoney(const duckdb::LogicalType& type) {
-  return type.id() == duckdb::LogicalTypeId::DECIMAL &&
-         type.GetTypeInfo().alias == kMoneyAlias;
+  SDB_ASSERT(type.id() == duckdb::LogicalTypeId::DECIMAL);
+  return type.GetTypeInfo().alias == kMoneyAlias;
 }
 
 inline duckdb::LogicalType MONEY() {

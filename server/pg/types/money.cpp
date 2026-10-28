@@ -164,10 +164,8 @@ void AppendNumberWords(std::string& out, int64_t value) {
       absl::StrAppend(&out, kSmall[value / 100], " hundred ", tens(tu), " ",
                       kSmall[tu % 10]);
     }
-  } else if (value % 10 == 0 && tu > 10) {
+  } else if (value % 10 == 0) {
     absl::StrAppend(&out, tens(tu));
-  } else if (tu < 20) {
-    absl::StrAppend(&out, kSmall[tu]);
   } else {
     absl::StrAppend(&out, tens(tu), " ", kSmall[tu % 10]);
   }

@@ -478,3 +478,49 @@ SELECT xmlconcat('<?xml version="1.0" standalone="yes"?><a/>', '<?xml version="1
 ----
 a	b	c	d
 <?xml version="1.0" standalone="no"?><a/><b/>	<a/><b/>	<?xml version="1.0" standalone="yes"?><a/><b/>	<?xml version="1.0" standalone="no"?><a/><b/>
+
+
+query
+SELECT '<!DOCTYPE a><a xml:id="1a"/>'::xml AS a, xml_is_well_formed_document('<a xml:id="1a"/>') AS b,
+       '<!DOCTYPE a [<!ATTLIST a xml:id CDATA #IMPLIED>]><a xml:id="x"/>'::xml AS c, '<p:a/>'::xml AS d,
+       '<a xmlns:p=""/>'::xml AS e, '<a><b xml:id="x"/><c xml:id="x"/></a>'::xml AS f;
+----
+a	b	c	d	e	f
+<!DOCTYPE a><a xml:id="1a"/>	t	<!DOCTYPE a [<!ATTLIST a xml:id CDATA #IMPLIED>]><a xml:id="x"/>	<p:a/>	<a xmlns:p=""/>	<a><b xml:id="x"/><c xml:id="x"/></a>
+
+
+statement error
+SELECT xpath('/a', '<a xml:id="1a"/>');
+----
+db error: ERROR: could not parse XML document<slt:ignore>
+
+
+statement error
+SELECT xpath_exists('/a', '<!DOCTYPE a [<!ATTLIST a xml:id CDATA #IMPLIED>]><a xml:id="x"/>');
+----
+db error: ERROR: could not parse XML document<slt:ignore>
+
+
+statement error
+SELECT xpath('/a', '<p:a/>');
+----
+db error: ERROR: could not parse XML document<slt:ignore>
+
+
+statement error
+SELECT xpath('/a', '<a><b xml:id="x"/><c xml:id="x"/></a>');
+----
+db error: ERROR: could not parse XML document<slt:ignore>
+
+
+statement error
+SELECT xpath('/a', '<a xmlns:p=""/>');
+----
+db error: ERROR: could not parse XML document<slt:ignore>
+
+
+query
+SELECT xpath('/a', '<a xmlns:p="relative"/>') AS a;
+----
+a
+{"<a xmlns:p=\\"relative\\"/>"}

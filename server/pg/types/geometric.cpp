@@ -50,6 +50,7 @@
 #include "pg/types/cast.h"
 #include "pg/types/float.h"
 #include "pg/types/function.h"
+#include "query/config.h"
 
 #pragma clang fp contract(off)
 
@@ -180,10 +181,6 @@ double Hypot(double x, double y) {
   if (std::isinf(result)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                     ERR_MSG("value out of range: overflow"));
-  }
-  if (result == 0.0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-                    ERR_MSG("value out of range: underflow"));
   }
   return result;
 }
@@ -502,13 +499,9 @@ bool LineContainsPoint(const Line& line, const Point& point) {
 
 double LineClosestPoint(Point* result, const Line& line, const Point& point) {
   Point closest{};
-  if (!LineIntersect(&closest, LineFromSlope(point, LineInverseSlope(line)),
-                     line)) {
-    if (result) {
-      *result = point;
-    }
-    return kNaN;
-  }
+  const bool crossed =
+    LineIntersect(&closest, LineFromSlope(point, LineInverseSlope(line)), line);
+  SDB_ASSERT(crossed);
   if (result) {
     *result = closest;
   }
@@ -548,14 +541,7 @@ bool LinesEqual(const Line& l1, const Line& l2) {
       std::isnan(l2.a) || std::isnan(l2.b) || std::isnan(l2.c)) [[unlikely]] {
     return FloatEq(l1.a, l2.a) && FloatEq(l1.b, l2.b) && FloatEq(l1.c, l2.c);
   }
-  double ratio = 1.0;
-  if (!FpZero(l2.a)) {
-    ratio = Div(l1.a, l2.a);
-  } else if (!FpZero(l2.b)) {
-    ratio = Div(l1.b, l2.b);
-  } else if (!FpZero(l2.c)) {
-    ratio = Div(l1.c, l2.c);
-  }
+  const auto ratio = FpZero(l2.a) ? Div(l1.b, l2.b) : Div(l1.a, l2.a);
   return FpEq(l1.a, Mul(ratio, l2.a)) && FpEq(l1.b, Mul(ratio, l2.b)) &&
          FpEq(l1.c, Mul(ratio, l2.c));
 }
@@ -568,8 +554,7 @@ double LineDistance(const Line& l1, const Line& l2) {
   if (!FpZero(l1.a) && !std::isnan(l1.a) && !FpZero(l2.a) &&
       !std::isnan(l2.a)) {
     ratio = Div(l1.a, l2.a);
-  } else if (!FpZero(l1.b) && !std::isnan(l1.b) && !FpZero(l2.b) &&
-             !std::isnan(l2.b)) {
+  } else if (!FpZero(l1.b) && !FpZero(l2.b)) {
     ratio = Div(l1.b, l2.b);
   }
   return Div(std::fabs(Sub(l1.c, Mul(ratio, l2.c))), Hypot(l1.a, l1.b));
@@ -1084,11 +1069,12 @@ int LsegCrossing(double x, double y, double prev_x, double prev_y) {
     }
     return 0;
   }
-  const int y_sign = FpGt(y, 0.0) ? 1 : -1;
+  const bool above = FpGt(y, 0.0);
+  const int y_sign = above ? 1 : -1;
   if (FpZero(prev_y)) {
     return FpLt(prev_x, 0.0) ? 0 : y_sign;
   }
-  if ((y_sign < 0 && FpLt(prev_y, 0.0)) || (y_sign > 0 && FpGt(prev_y, 0.0))) {
+  if (above ? FpGt(prev_y, 0.0) : FpLt(prev_y, 0.0)) {
     return 0;
   }
   if (FpGe(x, 0.0) && FpGt(prev_x, 0.0)) {
@@ -1101,7 +1087,7 @@ int LsegCrossing(double x, double y, double prev_x, double prev_y) {
   if (FpZero(z)) {
     return kPointOnPolygon;
   }
-  if ((y_sign < 0 && FpLt(z, 0.0)) || (y_sign > 0 && FpGt(z, 0.0))) {
+  if (above ? FpGt(z, 0.0) : FpLt(z, 0.0)) {
     return 0;
   }
   return 2 * y_sign;
@@ -1786,9 +1772,7 @@ class Input {
   }
 
   bool Fail(irs::pg::SqlErrorData error) {
-    if (!_error) {
-      _error = std::move(error);
-    }
+    _error = std::move(error);
     return false;
   }
 
@@ -1846,22 +1830,21 @@ class Input {
   }
 
   bool Points(bool open_allowed, std::span<Point> points, bool& open) {
-    int depth = 0;
     SkipSpaces();
     open = Peek() == '[';
+    bool delimited = open;
     if (open) {
       if (!open_allowed) {
         return Fail();
       }
-      ++depth;
       ++_pos;
     } else if (Peek() == '(') {
       auto next = _pos + 1;
       while (absl::ascii_isspace(static_cast<unsigned char>(At(next)))) {
         ++next;
       }
-      if (At(next) == '(' || _text.rfind('(') == _pos) {
-        ++depth;
+      delimited = At(next) == '(' || _text.rfind('(') == _pos;
+      if (delimited) {
         _pos = next;
       }
     }
@@ -1871,12 +1854,10 @@ class Input {
       }
       Consume(',');
     }
-    while (depth > 0) {
-      if (Peek() != ')' && (Peek() != ']' || !open || depth != 1)) {
+    if (delimited) {
+      if (!Consume(')') && (!open || !Consume(']'))) {
         return Fail();
       }
-      --depth;
-      ++_pos;
       SkipSpaces();
     }
     return true;
@@ -2022,11 +2003,8 @@ std::optional<irs::pg::SqlErrorData> Parse(std::string_view text,
 std::optional<irs::pg::SqlErrorData> Parse(std::string_view text,
                                            Circle& circle) {
   Input input{text, kCircleAlias};
-  int depth = 0;
   input.SkipSpaces();
-  if (input.Consume('<') || input.DoubleParenthesis()) {
-    ++depth;
-  }
+  const bool delimited = input.Consume('<') || input.DoubleParenthesis();
   if (!input.Pair(circle.center)) {
     return input.TakeError();
   }
@@ -2037,13 +2015,10 @@ std::optional<irs::pg::SqlErrorData> Parse(std::string_view text,
   if (circle.radius < 0.0) {
     return input.TakeError();
   }
-  while (depth > 0) {
-    if (!input.Consume(')') && (depth != 1 || !input.Consume('>'))) {
-      return input.TakeError();
-    }
-    --depth;
-    input.SkipSpaces();
+  if (delimited && !input.Consume(')') && !input.Consume('>')) {
+    return input.TakeError();
   }
+  input.SkipSpaces();
   if (!input.AtEnd()) {
     return input.TakeError();
   }
@@ -2496,14 +2471,9 @@ template<Geometric K>
 duckdb::BoundCastInfo BindGeometricToText(duckdb::BindCastInput& input,
                                           const duckdb::LogicalType&,
                                           const duckdb::LogicalType&) {
-  int8_t extra_float_digits = 1;
-  duckdb::Value value;
-  if (input.context &&
-      input.context->TryGetCurrentSetting("extra_float_digits", value)) {
-    extra_float_digits = static_cast<int8_t>(value.GetValue<int32_t>());
-  }
   return {GeometricToText<K>,
-          duckdb::make_uniq<TextCastData>(extra_float_digits)};
+          duckdb::make_uniq<TextCastData>(static_cast<int8_t>(
+            GetSignedIntSetting(*input.context, "extra_float_digits")))};
 }
 
 bool HasNullField(const duckdb::RecursiveUnifiedVectorFormat& value,

@@ -46,6 +46,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <span>
 #include <vector>
@@ -64,14 +65,6 @@ using connector::AsView;
 constexpr std::array<std::string_view, 2> kXmlOptions{"content", "document"};
 constexpr std::string_view kDefaultVersion = "1.0";
 constexpr std::string_view kDeclarationStart = "<?xml";
-
-constexpr std::array kNamespaceErrors{
-  XML_WAR_NS_URI,           XML_ERR_NS_DECL_ERROR,
-  XML_WAR_NS_URI_RELATIVE,  XML_WAR_NS_COLUMN,
-  XML_NS_ERR_XML_NAMESPACE, XML_NS_ERR_UNDEFINED_NAMESPACE,
-  XML_NS_ERR_QNAME,         XML_NS_ERR_ATTRIBUTE_REDEFINED,
-  XML_NS_ERR_EMPTY,
-};
 
 constexpr int kBaseOptions = XML_PARSE_IGNORE_ENC | XML_PARSE_NO_SYS_CATALOG;
 constexpr int kDocumentOptions =
@@ -115,8 +108,7 @@ const xmlChar* AsXmlChars(std::string_view text) {
 }
 
 std::string_view AsView(const xmlChar* text) {
-  return text ? std::string_view{reinterpret_cast<const char*>(text)}
-              : std::string_view{};
+  return reinterpret_cast<const char*>(text);
 }
 
 void SkipXmlSpace(std::string_view& text) {
@@ -293,15 +285,13 @@ class XmlParser {
   }
 
   bool WellFormed(std::string_view text, XmlOption option) {
-    _failed = false;
-    _detail.clear();
+    Start(XML_ERR_FATAL);
     return option == XmlOption::Document ? WellFormedDocument(text)
                                          : WellFormedContent(text);
   }
 
   XmlDoc ReadDocument(std::string_view text) {
-    _failed = false;
-    _detail.clear();
+    Start(XML_ERR_ERROR);
     xmlCtxtReset(_context.get());
     xmlCtxtSetOptions(_context.get(), kBaseOptions);
     XmlDoc doc{xmlCtxtParseDocument(_context.get(), NewInput(text))};
@@ -314,17 +304,17 @@ class XmlParser {
   const std::string& Detail() const { return _detail; }
 
  private:
+  void Start(xmlErrorLevel min_level) {
+    _min_level = min_level;
+    _failed = false;
+    _detail.clear();
+  }
+
   static void NoteError(void* data, const xmlError* error) {
-    if (error->level < XML_ERR_ERROR ||
-        error->code == XML_WAR_UNDECLARED_ENTITY ||
-        absl::c_linear_search(kNamespaceErrors, error->code)) {
-      return;
-    }
-    if (error->domain != XML_FROM_PARSER && error->domain != XML_FROM_NONE &&
-        error->domain != XML_FROM_MEMORY && error->domain != XML_FROM_IO) {
-      return;
-    }
     auto& parser = *static_cast<XmlParser*>(data);
+    if (error->level < parser._min_level) {
+      return;
+    }
     if (!parser._failed && error->message) {
       parser._detail =
         absl::StrCat("line ", error->line, ": ",
@@ -337,7 +327,7 @@ class XmlParser {
     xmlCtxtReset(_context.get());
     xmlCtxtSetOptions(_context.get(), kDocumentOptions);
     const XmlDoc doc{xmlCtxtParseDocument(_context.get(), NewInput(text))};
-    return doc && !_failed;
+    return static_cast<bool>(doc);
   }
 
   bool WellFormedContent(std::string_view text) {
@@ -363,11 +353,11 @@ class XmlParser {
     xmlFreeNodeList(xmlCtxtParseContent(_context.get(), NewInput(content),
                                         reinterpret_cast<xmlNode*>(doc.get()),
                                         0));
-    return !(xmlCtxtGetStatus(_context.get()) & XML_STATUS_NOT_WELL_FORMED) &&
-           !_failed;
+    return !(xmlCtxtGetStatus(_context.get()) & XML_STATUS_NOT_WELL_FORMED);
   }
 
   std::unique_ptr<xmlParserCtxt, XmlFree<xmlFreeParserCtxt>> _context;
+  xmlErrorLevel _min_level = XML_ERR_FATAL;
   bool _failed = false;
   std::string _detail;
 };
@@ -429,9 +419,9 @@ bool TextToXml(duckdb::Vector& source, duckdb::Vector& result,
 duckdb::BoundCastInfo BindTextToXml(duckdb::BindCastInput& input,
                                     const duckdb::LogicalType&,
                                     const duckdb::LogicalType&) {
-  const auto option =
-    input.context ? CurrentXmlOption(*input.context) : XmlOption::Content;
-  return {TextToXml, duckdb::make_uniq<XmlCastData>(option), InitXmlInput};
+  return {TextToXml,
+          duckdb::make_uniq<XmlCastData>(CurrentXmlOption(*input.context)),
+          InitXmlInput};
 }
 
 bool XmlToJson(duckdb::Vector& source, duckdb::Vector& result,
@@ -539,6 +529,9 @@ std::string EscapeXml(std::string_view text) {
 std::string NodeToXml(xmlNode* node) {
   if (node->type == XML_ATTRIBUTE_NODE || node->type == XML_TEXT_NODE) {
     const XmlString text{xmlXPathCastNodeToString(node)};
+    if (!text) {
+      ThrowOutOfMemory();
+    }
     return EscapeXml(AsView(text.get()));
   }
   const std::unique_ptr<xmlBuffer, XmlFree<xmlBufferFree>> buffer{
@@ -587,9 +580,7 @@ void EvaluateXpath(XmlParser& parser, std::string_view path,
   if (path.empty()) {
     XpathError("empty XPath expression");
   }
-  if (const auto decl = ParseXmlDecl(xml)) {
-    xml.remove_prefix(decl->length);
-  }
+  xml.remove_prefix(ParseXmlDecl(xml).value_or(XmlDecl{}).length);
   const auto doc = parser.ReadDocument(xml);
   if (!doc) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_XML_DOCUMENT),
@@ -601,11 +592,8 @@ void EvaluateXpath(XmlParser& parser, std::string_view path,
   if (!context) {
     ThrowOutOfMemory();
   }
-  bool failed = false;
   xmlXPathSetErrorHandler(
-    context.get(),
-    [](void* data, const xmlError*) { *static_cast<bool*>(data) = true; },
-    &failed);
+    context.get(), [](void*, const xmlError*) {}, nullptr);
   context->node = reinterpret_cast<xmlNode*>(doc.get());
   for (const auto& space : spaces) {
     const std::string name{space.name};
@@ -620,20 +608,19 @@ void EvaluateXpath(XmlParser& parser, std::string_view path,
   const std::string expression{path};
   const std::unique_ptr<xmlXPathCompExpr, XmlFree<xmlXPathFreeCompExpr>>
     compiled{xmlXPathCtxtCompile(context.get(), AsXmlChars(expression))};
-  if (!compiled || failed) {
+  if (!compiled) {
     XpathError("invalid XPath expression");
   }
   const std::unique_ptr<xmlXPathObject, XmlFree<xmlXPathFreeObject>> object{
     xmlXPathCompiledEval(compiled.get(), context.get())};
-  if (!object || failed) {
+  if (!object) {
     XpathError("could not create XPath object");
   }
   switch (object->type) {
     case XPATH_NODESET:
-      if (object->nodesetval) {
-        for (int i = 0; i < object->nodesetval->nodeNr; ++i) {
-          emit(NodeToXml(object->nodesetval->nodeTab[i]));
-        }
+      SDB_ASSERT(object->nodesetval);
+      for (int i = 0; i < object->nodesetval->nodeNr; ++i) {
+        emit(NodeToXml(object->nodesetval->nodeTab[i]));
       }
       return;
     case XPATH_BOOLEAN:
@@ -645,26 +632,17 @@ void EvaluateXpath(XmlParser& parser, std::string_view path,
     case XPATH_STRING:
       emit(EscapeXml(AsView(object->stringval)));
       return;
-    case XPATH_UNDEFINED:
-    case XPATH_USERS:
-    case XPATH_XSLT_TREE:
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INTERNAL_ERROR),
-        ERR_MSG("xpath expression result type ", static_cast<int>(object->type),
-                " is unsupported"));
+    default:
+      SDB_UNREACHABLE();
   }
 }
 
 using NamespaceArrays = duckdb::VectorIterator<
   duckdb::VectorListType<duckdb::VectorListType<duckdb::string_t>>>;
 
-std::vector<XmlNamespace> NamespacesOf(const NamespaceArrays& arrays,
-                                       duckdb::idx_t row) {
+std::vector<XmlNamespace> NamespacesOf(
+  const NamespaceArrays::ValueEntry& entry) {
   std::vector<XmlNamespace> spaces;
-  const auto entry = arrays[row];
-  if (!entry.IsValid()) {
-    return spaces;
-  }
   for (const auto pair : entry.GetChildValues()) {
     if (!pair.IsValid() || pair.GetListLength() != 2) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_EXCEPTION),
@@ -708,14 +686,18 @@ void XpathFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   for (duckdb::idx_t row = 0; row < count; ++row) {
     const auto path = paths[row];
     const auto document = documents[row];
-    if (!path.IsValid() || !document.IsValid() ||
-        (arrays && !(*arrays)[row].IsValid())) {
+    if (!path.IsValid() || !document.IsValid()) {
       writer.WriteNull();
       continue;
     }
     std::vector<XmlNamespace> spaces;
-    if (arrays) {
-      spaces = NamespacesOf(*arrays, row);
+    if constexpr (kNamespaces) {
+      const auto entry = (*arrays)[row];
+      if (!entry.IsValid()) {
+        writer.WriteNull();
+        continue;
+      }
+      spaces = NamespacesOf(entry);
     }
     if constexpr (kExists) {
       bool found = false;
@@ -960,12 +942,9 @@ XmlText XmlOut(std::string_view xml) {
   if (!xml.starts_with(kDeclarationStart)) {
     return {{}, xml};
   }
-  const auto decl = ParseXmlDecl(xml);
-  if (!decl) {
-    return {{}, xml};
-  }
-  XmlText out{PrintXmlDecl(decl->version, decl->standalone),
-              xml.substr(decl->length)};
+  const auto decl = ParseXmlDecl(xml).value_or(XmlDecl{});
+  XmlText out{PrintXmlDecl(decl.version, decl.standalone),
+              xml.substr(decl.length)};
   if (out.declaration.empty() && out.body.starts_with('\n')) {
     out.body.remove_prefix(1);
   }

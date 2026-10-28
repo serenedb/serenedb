@@ -107,9 +107,7 @@ void RegisterInputs(duckdb::CastFunctionSet& casts,
     casts.RegisterCastFunction(source, type, cast(), text_cost(source));
   }
   for (const auto string : kStringAliases) {
-    if (const auto source = string(); source != type) {
-      casts.RegisterCastFunction(source, type, cast(), -1);
-    }
+    casts.RegisterCastFunction(string(), type, cast(), -1);
   }
 }
 

@@ -209,7 +209,7 @@ int CompareBoundValues(const Bound<T>& left, const Bound<T>& right) {
 template<typename T>
 int CompareBounds(const Bound<T>& left, const Bound<T>& right) {
   const auto cmp = CompareBoundValues(left, right);
-  if (cmp != 0 || left.infinite || right.infinite) {
+  if (cmp != 0 || left.infinite) {
     return cmp;
   }
   if (left.inclusive == right.inclusive) {
@@ -313,10 +313,8 @@ bool BoundsContain(const Bound<T>& outer_lower, const Bound<T>& outer_upper,
 template<typename T>
 bool BoundsOverlap(const Bound<T>& lower1, const Bound<T>& upper1,
                    const Bound<T>& lower2, const Bound<T>& upper2) {
-  return (CompareBounds(lower1, lower2) >= 0 &&
-          CompareBounds(lower1, upper2) <= 0) ||
-         (CompareBounds(lower2, lower1) >= 0 &&
-          CompareBounds(lower2, upper1) <= 0);
+  return CompareBounds(lower1, upper2) <= 0 &&
+         CompareBounds(lower2, upper1) <= 0;
 }
 
 template<typename T>
@@ -410,9 +408,11 @@ Range<typename Traits::Element> Union(
   if (right.empty) {
     return left;
   }
-  if (kStrict && !Overlaps(left, right) && !Adjacent(left, right)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_EXCEPTION),
-                    ERR_MSG("result of range union would not be contiguous"));
+  if constexpr (kStrict) {
+    if (!Overlaps(left, right) && !Adjacent(left, right)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_EXCEPTION),
+                      ERR_MSG("result of range union would not be contiguous"));
+    }
   }
   return Make<Traits>({
     .lower =
@@ -468,7 +468,7 @@ Range<typename Traits::Element> Minus(
   if (lower_lower >= 0 && upper_upper <= 0) {
     return EmptyRange<typename Traits::Element>();
   }
-  if (lower_lower <= 0 && upper_lower >= 0 && upper_upper <= 0) {
+  if (lower_lower <= 0 && upper_upper <= 0) {
     return Make<Traits>(
       {.lower = left.lower, .upper = Flip(right.lower), .empty = false});
   }

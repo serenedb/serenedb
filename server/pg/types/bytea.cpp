@@ -34,6 +34,7 @@
 #include "pg/deserialize.h"
 #include "pg/serialize.h"
 #include "pg/types/cast.h"
+#include "query/config.h"
 
 namespace sdb::pg {
 namespace {
@@ -103,11 +104,8 @@ struct ByteaOutCastData final : public duckdb::BoundCastData {
 
 bool ByteaToText(duckdb::Vector& source, duckdb::Vector& result,
                  duckdb::idx_t count, duckdb::CastParameters& parameters) {
-  bool use_escape = false;
-  if (parameters.cast_data) {
-    use_escape = parameters.cast_data->Cast<ByteaOutCastData>().use_escape;
-  }
-
+  const auto use_escape =
+    parameters.cast_data->Cast<ByteaOutCastData>().use_escape;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     source, result, count, [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view value{input.GetData(), input.GetSize()};
@@ -130,16 +128,10 @@ bool ByteaToText(duckdb::Vector& source, duckdb::Vector& result,
 duckdb::BoundCastInfo BindByteaToText(duckdb::BindCastInput& input,
                                       const duckdb::LogicalType&,
                                       const duckdb::LogicalType&) {
-  bool use_escape = false;
-  if (input.context) {
-    duckdb::Value value;
-    if (input.context->TryGetCurrentSetting("bytea_output", value)) {
-      auto str = duckdb::StringUtil::Lower(value.ToString());
-      use_escape = (str == "escape");
-    }
-  }
-  return duckdb::BoundCastInfo(ByteaToText,
-                               duckdb::make_uniq<ByteaOutCastData>(use_escape));
+  const auto output = magic_enum::enum_value<ByteaOutput>(GetEnumSetting(
+    *input.context, "bytea_output", magic_enum::enum_names<ByteaOutput>()));
+  return duckdb::BoundCastInfo(ByteaToText, duckdb::make_uniq<ByteaOutCastData>(
+                                              output == ByteaOutput::Escape));
 }
 
 void RegisterCasts(duckdb::CastFunctionSet& casts) {

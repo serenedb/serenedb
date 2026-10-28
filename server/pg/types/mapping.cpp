@@ -179,15 +179,13 @@ std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
   return it->second.GetValue<uint64_t>();
 }
 
-const BuiltinType* FindAliasedType(const duckdb::LogicalType& type,
-                                   auto accept) {
+const BuiltinType* FindAliasedType(const duckdb::LogicalType& type) {
   if (!type.HasAlias()) {
     return nullptr;
   }
   const auto& alias = type.GetTypeInfo().alias;
   for (const auto& schema : kSystemNamespaces) {
-    if (const auto* row = FindBuiltinType(schema.oid, alias);
-        row && accept(*row)) {
+    if (const auto* row = FindBuiltinType(schema.oid, alias)) {
       return row;
     }
   }
@@ -225,7 +223,7 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
     case USMALLINT:
       return make(kInt4);
     case INTEGER:
-      if (domain_oid && aliased() && IsCardinalNumber(type)) {
+      if (domain_oid && IsCardinalNumber(type)) {
         return make(kCardinalNumber);
       }
       return make(kInt4);
@@ -278,9 +276,8 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
         if (IsRegdictionary(type)) {
           return make(kRegdictionary);
         }
-        if (IsRegcollation(type)) {
-          return make(kRegcollation);
-        }
+        SDB_ASSERT(IsRegcollation(type));
+        return make(kRegcollation);
       }
       return make(kInt8);
     case UBIGINT:
@@ -291,9 +288,8 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
         if (IsMacaddr(type)) {
           return make(kMacaddr);
         }
-        if (IsMacaddr8(type)) {
-          return make(kMacaddr8);
-        }
+        SDB_ASSERT(IsMacaddr8(type));
+        return make(kMacaddr8);
       }
       return make(kNumeric);
     case HUGEINT:
@@ -301,7 +297,7 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
     case BIGNUM:
       return make(kNumeric);
     case DECIMAL:
-      if (aliased() && IsMoney(type)) {
+      if (IsMoney(type)) {
         return make(kMoney);
       }
       typmod = NumericTypmod(duckdb::DecimalType::GetWidth(type),
@@ -318,7 +314,7 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
     case TIMESTAMP_NS:
       return make(kTimestamp);
     case TIMESTAMP_TZ:
-      if (domain_oid && aliased() && IsTimeStamp(type)) {
+      if (domain_oid && IsTimeStamp(type)) {
         return make(kTimeStamp);
       }
       return make(kTimestamptz);
@@ -330,8 +326,6 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
       return make(kFloat4);
     case DOUBLE:
       return make(kFloat8);
-    case CHAR:
-      return make(kText);
     case BLOB:
       return make(kBytea);
     case INTERVAL:
@@ -408,8 +402,7 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
         return {static_cast<uint32_t>(in_array ? TypeArrayOid(*oid) : *oid), -1,
                 -1};
       }
-      if (const auto* row = FindAliasedType(
-            type, [](const BuiltinType& row) { return row.type != 'p'; })) {
+      if (const auto* row = FindAliasedType(type)) {
         return make(*row);
       }
       return make(kRecord);
@@ -422,8 +415,7 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
       if (IsOidvector(type)) {
         return make(kOidvector);
       }
-      if (const auto* row = FindAliasedType(
-            type, [](const BuiltinType& row) { return row.type == 'm'; })) {
+      if (const auto* row = FindAliasedType(type)) {
         return make(*row);
       }
       return element(duckdb::ListType::GetChildType(type));
@@ -435,22 +427,22 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
       return make(kVariant);
     case UNION:
       return make(kUnion);
-    case SQLNULL:
-    case INVALID:
-    case UNKNOWN:
-    case ANY:
-    case UNBOUND:
-    case TEMPLATE:
-    case TYPE:
-    case STRING_LITERAL:
-    case INTEGER_LITERAL:
-    case POINTER:
-    case VALIDITY:
-    case TABLE:
-    case LEGACY_AGGREGATE_STATE:
-    case LAMBDA:
+    default:
       return {kUnknown, -1, -1};
   }
+}
+
+duckdb::LogicalType UserType(const Session& session, uint64_t oid) {
+  if (auto entry = EntryByOid(session, oid);
+      entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
+    return entry->Cast<duckdb::TypeCatalogEntry>().user_type;
+  }
+  if (const auto element = ArrayElementOid(session, oid);
+      element != kInvalidOid) {
+    return duckdb::LogicalType::LIST(UserType(session, element));
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                  ERR_MSG("cache lookup failed for type ", oid));
 }
 
 }  // namespace
@@ -485,30 +477,19 @@ duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("type ", builtin->name, " is not supported"));
   }
-  const auto session = MakeSession(&context);
-  if (auto entry = EntryByOid(session, oid);
-      entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
-    return entry->Cast<duckdb::TypeCatalogEntry>().user_type;
-  }
-  if (const auto element = ArrayElementOid(session, oid);
-      element != kInvalidOid) {
-    return duckdb::LogicalType::LIST(Oid2Type(element, context));
-  }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                  ERR_MSG("cache lookup failed for type ", oid));
+  duckdb::LogicalType type;
+  context.RunFunctionInTransaction(
+    [&] { type = UserType(MakeSession(&context), oid); }, false);
+  return type;
 }
 
 std::span<const PgTypeMapping> PgTypeMappings() {
-#ifdef SDB_DEV
-  static const bool kRoundTrips =
-    absl::c_all_of(kMappings, [](const PgTypeMapping& mapping) {
-      const auto logical = mapping.logical();
-      const auto* back =
-        FindMapping(static_cast<int32_t>(CatalogTypeOid(logical)));
-      return back && back->logical() == logical;
-    });
-  SDB_ASSERT(kRoundTrips);
-#endif
+  SDB_ASSERT(absl::c_all_of(kMappings, [](const PgTypeMapping& mapping) {
+    const auto logical = mapping.logical();
+    const auto* back =
+      FindMapping(static_cast<int32_t>(CatalogTypeOid(logical)));
+    return back && back->logical() == logical;
+  }));
   return kMappings;
 }
 
@@ -517,11 +498,9 @@ duckdb::LogicalType BuiltinLogicalType(const BuiltinType& type) {
     return mapping->logical();
   }
   if (type.IsArray()) {
-    if (const auto* element = FindBuiltinType(type.elem)) {
-      auto child = BuiltinLogicalType(*element);
-      if (child.id() != TypeId::INVALID) {
-        return duckdb::LogicalType::LIST(std::move(child));
-      }
+    auto child = BuiltinLogicalType(*FindBuiltinType(type.elem));
+    if (child.id() != TypeId::INVALID) {
+      return duckdb::LogicalType::LIST(std::move(child));
     }
   }
   return TypeId::INVALID;

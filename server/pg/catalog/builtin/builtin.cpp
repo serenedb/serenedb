@@ -135,6 +135,10 @@ static_assert([] {
 
 constexpr auto kTypeIndex = OidIndex<uint16_t>(kAllTypes);
 
+static_assert(absl::c_all_of(kAllTypes, [](const BuiltinType& type) {
+  return !type.IsArray() || FindByOid(kAllTypes, kTypeIndex, type.elem);
+}));
+
 const std::vector<BuiltinCollation>& Collations() {
   static const auto kAll = [] {
     auto& db = irs::DuckDBEngine::Instance().instance();

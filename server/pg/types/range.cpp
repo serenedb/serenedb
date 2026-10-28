@@ -49,21 +49,17 @@ duckdb::BoundCastInfo BindTextToRange(duckdb::BindCastInput& input,
 }
 
 void AppendBound(std::string& out, std::string_view value) {
-  const bool quote =
-    value.empty() || absl::c_any_of(value, [](char c) {
-      return c == '"' || c == '\\' || c == '(' || c == ')' || c == '[' ||
-             c == ']' || c == ',' ||
-             absl::ascii_isspace(static_cast<unsigned char>(c));
-    });
+  SDB_ASSERT(!value.empty() && !absl::c_any_of(value, [](char c) {
+    return c == '"' || c == '\\' || c == '(' || c == ')' || c == '[' ||
+           c == ']' || c == ',';
+  }));
+  const bool quote = absl::c_any_of(value, [](char c) {
+    return absl::ascii_isspace(static_cast<unsigned char>(c));
+  });
   if (quote) {
     out.push_back('"');
   }
-  for (const char c : value) {
-    if (c == '"' || c == '\\') {
-      out.push_back(c);
-    }
-    out.push_back(c);
-  }
+  out.append(value);
   if (quote) {
     out.push_back('"');
   }

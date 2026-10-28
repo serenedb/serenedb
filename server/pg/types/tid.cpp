@@ -69,8 +69,8 @@ std::optional<irs::pg::SqlErrorData> TryParseTid(std::string_view text,
     return error();
   }
   const auto block = ParseNumber(text, coords[0]);
-  if (block.out_of_range || block.end == text.size() ||
-      text[block.end] != ',') {
+  SDB_ASSERT(block.end < text.size());
+  if (block.out_of_range || text[block.end] != ',') {
     return error();
   }
   const auto block_value =

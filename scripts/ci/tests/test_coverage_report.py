@@ -62,6 +62,30 @@ def test_a_switch_counts_only_whether_each_case_ran(monkeypatch, tmp_path):
     assert [(d["line"], d["direction"]) for d in details] == [(5, "true")]
 
 
+def test_a_decision_that_recorded_no_test_vector_is_not_counted(monkeypatch, tmp_path):
+    (tmp_path / "m.cpp").write_text("int f(int k) {\n  return k == 1 || k == 2 ? 0 : 1;\n}\n"
+                                    "int g(int k) {\n  if (k == 1 || k == 2) {\n    return 0;\n"
+                                    "  }\n  return 1;\n}\n")
+    monkeypatch.setattr(diff, "ROOT", tmp_path)
+    diff.source_lines.cache_clear()
+    data = diff.parse_lcov("SF:m.cpp\nend_of_record\n")["m.cpp"]
+    executed = {"executed": True, "conditions": [False, False], "result": False}
+    spans = {"functions": [], "excluded": set(), "code": [], "mcdc": {
+        "ternary": {"decision": [2, 10, 2, 26], "site": None,
+                    "conditions": [[2, 10, 2, 16], [2, 20, 2, 26]], "shown": [False, False],
+                    "vectors": []},
+        "if": {"decision": [5, 7, 5, 23], "site": None,
+               "conditions": [[5, 7, 5, 13], [5, 17, 5, 23]], "shown": [False, False],
+               "vectors": [executed]},
+    }}
+    summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0], "mcdc": [0, 0]}
+    details = []
+    diff.cover("m.cpp", set(range(1, 10)), data, spans, summary, details)
+    diff.source_lines.cache_clear()
+    assert summary["mcdc"] == [0, 2]
+    assert [(d["line"], d["condition"]) for d in details] == [(5, 1), (5, 2)]
+
+
 def test_an_unreachable_marker_excludes_only_what_leads_to_it(monkeypatch, tmp_path):
     (tmp_path / "u.cpp").write_text("int Kind(int k) {\n  switch (k) {\n    case 0:\n      return 1;\n"
                                     "  }\n  SDB_UNREACHABLE();\n}\nvoid Stub() {\n"

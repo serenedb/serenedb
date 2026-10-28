@@ -354,6 +354,8 @@ def cover(path, touched, data, spans, summary, details):
         decision = m["site"] or m["decision"]
         if decision[0] in skipped or not touched & set(range(decision[0], decision[2] + 1)):
             continue
+        if not any(vector.get("executed") for vector in m["vectors"]):
+            continue
         for idx, shown in enumerate(m["shown"]):
             summary["mcdc"][1] += 1
             if shown:

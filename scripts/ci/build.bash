@@ -100,6 +100,7 @@ export CC=/usr/local/bin/clang
 export CXX=/usr/local/bin/clang++
 
 print_banner "BUILDING TARGETS" "${TARGETS[*]}"
+ccache -z >/dev/null
 ninja "${TARGETS[@]}" 2>&1 | tee -a /serenedb/out/logs/make_${LOG_SUFFIX}.log || exit 1
 ccache -s | tee -a /serenedb/out/logs/ccache_${LOG_SUFFIX}.log
 

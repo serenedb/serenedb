@@ -30,6 +30,7 @@
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
@@ -192,11 +193,48 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
                                   irs::ByVectorSimilarity& filter,
                                   size_t k = 128) {
   irs::VectorSimilarityScorer scorer;
+  irs::StatsArena stats_arena{duckdb::Allocator::DefaultAllocator()};
+  irs::PreparedCollector collector_tree{filter, scorer, stats_arena, 1};
+  std::vector<irs::QueryBuilder::ptr> queries;
+  queries.reserve(reader.size());
+  for (auto& segment : reader) {
+    queries.emplace_back(
+      irs::PrepareMasked(filter, segment, {.collector = collector_tree.Get()}));
+  }
+  collector_tree.Finish();
+
   std::vector<irs::ScoreDoc> hits(k);
-  const auto count =
-    irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{hits});
+  std::atomic<irs::score_t> score_threshold{
+    std::numeric_limits<irs::score_t>::lowest()};
+  irs::LoserScoreCollector collector{score_threshold, std::span{hits}};
+  irs::ColumnArgsFetcher fetcher;
+  uint32_t seg_idx = 0;
+  for (auto& query : queries) {
+    fetcher.Clear();
+    collector.SetSegment(seg_idx++);
+    if (!query) {
+      continue;
+    }
+    auto ann = irs::ann::MakeRoot(*query, {
+                                            .scorer = scorer,
+                                            .fetcher = fetcher,
+                                            .k = static_cast<uint32_t>(k),
+                                          });
+    EXPECT_TRUE(ann);
+    if (!ann) {
+      continue;
+    }
+    irs::ann::SharedFloor floor{static_cast<uint32_t>(k)};
+    irs::ann::Collector candidates{floor, static_cast<uint32_t>(k)};
+    ann->Run(candidates);
+    for (const auto& hit : candidates.Flush()) {
+      collector.Add(hit.score, hit.doc);
+    }
+  }
+  collector.SortHits();
+
   std::vector<irs::doc_id_t> docs;
-  const auto n = std::min<size_t>(count, k);
+  const auto n = std::min<size_t>(collector.TotalMatches(), k);
   docs.reserve(n);
   for (size_t i = 0; i < n; ++i) {
     docs.push_back(hits[i].doc);

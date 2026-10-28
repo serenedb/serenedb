@@ -3,24 +3,6 @@ DROP FUNCTION IF EXISTS meepo_lang_clone(int4);
 
 
 query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute
-WHERE attrelid = 'pg_language'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-oid	oid	t
-lanname	name	t
-lanowner	oid	t
-lanispl	boolean	t
-lanpltrusted	boolean	t
-lanplcallfoid	oid	t
-laninline	oid	t
-lanvalidator	oid	t
-lanacl	aclitem[]	f
-
-
-query
 SELECT oid, lanname, lanispl, lanpltrusted, lanplcallfoid, laninline, lanvalidator, lanvalidator::regproc::text AS validator, lanacl IS NULL AS no_acl
 FROM pg_language
 WHERE lanname IN ('internal', 'sql')

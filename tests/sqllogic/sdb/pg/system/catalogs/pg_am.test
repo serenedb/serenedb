@@ -3,19 +3,6 @@ DROP TABLE IF EXISTS sven_am_cleave;
 
 
 query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute
-WHERE attrelid = 'pg_am'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-oid	oid	t
-amname	name	t
-amhandler	regproc	t
-amtype	"char"	t
-
-
-query
 SELECT oid, amname, amtype FROM pg_am WHERE oid = 2;
 ----
 oid	amname	amtype

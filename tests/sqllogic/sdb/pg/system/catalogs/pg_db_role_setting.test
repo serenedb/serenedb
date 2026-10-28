@@ -10,25 +10,6 @@ statement ok
 DROP ROLE IF EXISTS invoker_drs_exort;
 
 
-query
-SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
-FROM pg_class WHERE oid = 'pg_db_role_setting'::regclass;
-----
-oid	relname	relkind	nsp	relnatts
-2964	pg_db_role_setting	r	pg_catalog	3
-
-
-query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute WHERE attrelid = 'pg_db_role_setting'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-setdatabase	oid	t
-setrole	oid	t
-setconfig	text[]	f
-
-
 statement ok
 CREATE ROLE invoker_drs_quas;
 

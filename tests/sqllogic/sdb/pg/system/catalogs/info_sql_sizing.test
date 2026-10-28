@@ -7,28 +7,6 @@ CREATE ROLE sven_sql_sizing_cleave LOGIN PASSWORD 'sven_sql_sizing_pw';
 
 
 query
-SELECT c.relkind, n.nspname, c.relnatts
-FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE c.relname = 'sql_sizing';
-----
-relkind	nspname	relnatts
-r	information_schema	4
-
-
-query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute
-WHERE attrelid = 'information_schema.sql_sizing'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-sizing_id	information_schema.cardinal_number	f
-sizing_name	information_schema.character_data	f
-supported_value	information_schema.cardinal_number	f
-comments	information_schema.character_data	f
-
-
-query
 SELECT count(*) AS sizings, count(supported_value) AS with_value, count(comments) AS with_comments
 FROM information_schema.sql_sizing;
 ----
@@ -74,13 +52,6 @@ WHERE sizing_id = 10005;
 ----
 sizing_name	supported_value
 MAXIMUM IDENTIFIER LENGTH	63
-
-
-query
-SELECT has_table_privilege('sven_sql_sizing_cleave', 'information_schema.sql_sizing', 'SELECT') AS can_read;
-----
-can_read
-t
 
 
 connection sven_sql_sizing user=sven_sql_sizing_cleave password=sven_sql_sizing_pw

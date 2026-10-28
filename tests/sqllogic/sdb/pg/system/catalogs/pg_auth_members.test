@@ -14,29 +14,6 @@ statement ok
 DROP ROLE IF EXISTS meepo_aum_prime;
 
 
-query
-SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
-FROM pg_class WHERE oid = 'pg_auth_members'::regclass;
-----
-oid	relname	relkind	nsp	relnatts
-1261	pg_auth_members	r	pg_catalog	7
-
-
-query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute WHERE attrelid = 'pg_auth_members'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-oid	oid	t
-roleid	oid	t
-member	oid	t
-grantor	oid	t
-admin_option	boolean	t
-inherit_option	boolean	t
-set_option	boolean	t
-
-
 statement ok
 CREATE ROLE meepo_aum_prime LOGIN PASSWORD 'divided_we_stand';
 

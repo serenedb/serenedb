@@ -134,9 +134,9 @@ TEARDOWN = [
 ]
 
 CAUSES = {
-    "operators": 1981,
-    "collations": 1982,
-    "text_search": 1221,
+    "operators": "pg_operator is empty, so regoper, regoperator and their to_reg* functions resolve no operator",
+    "collations": "PostgreSQL's ucs_basic, pg_c_utf8, pg_unicode_fast and unicode collations are missing",
+    "text_search": "SereneDB's full-text search has no tsvector, tsquery or text search configurations",
     "keywords": "SereneDB looks up a type name PostgreSQL's grammar reserves as a keyword, "
                 "since some of its own types are named so, as union is",
 }

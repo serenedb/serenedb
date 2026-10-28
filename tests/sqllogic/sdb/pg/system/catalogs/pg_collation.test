@@ -3,27 +3,6 @@ DROP TABLE IF EXISTS invoker_col_spells;
 
 
 query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute
-WHERE attrelid = 'pg_collation'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-oid	oid	t
-collname	name	t
-collnamespace	oid	t
-collowner	oid	t
-collprovider	"char"	t
-collisdeterministic	boolean	t
-collencoding	integer	t
-collcollate	text	f
-collctype	text	f
-colllocale	text	f
-collicurules	text	f
-collversion	text	f
-
-
-query
 SELECT oid, collname, collnamespace::regnamespace::text AS nsp, collprovider, collisdeterministic, collencoding, collcollate, collctype, colllocale IS NULL AS no_locale, collicurules IS NULL AS no_rules, collversion IS NULL AS no_version
 FROM pg_collation
 WHERE oid IN (100, 950, 951)

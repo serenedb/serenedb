@@ -15,33 +15,6 @@ CREATE TABLE invoker_quas (wex int, exort int);
 
 
 query
-SELECT oid, relkind, relnatts, relisshared, relpersistence, reltype
-FROM pg_class
-WHERE relname = 'pg_statistic_ext';
-----
-oid	relkind	relnatts	relisshared	relpersistence	reltype
-3381	r	9	f	p	10031
-
-
-query
-SELECT attname, atttypid, attnotnull
-FROM pg_attribute
-WHERE attrelid = 'pg_statistic_ext'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	atttypid	attnotnull
-oid	26	t
-stxrelid	26	t
-stxname	19	t
-stxnamespace	26	t
-stxowner	26	t
-stxkeys	22	t
-stxstattarget	21	f
-stxkind	1002	t
-stxexprs	194	f
-
-
-query
 SELECT attname, format_type(atttypid, atttypmod) AS type
 FROM pg_attribute
 WHERE attrelid = 'pg_statistic_ext'::regclass AND attnum > 0 AND attname <> 'stxkeys'
@@ -75,13 +48,6 @@ query
 SELECT stxname FROM pg_statistic_ext WHERE oid = 0;
 ----
 stxname
-
-
-query
-SELECT has_table_privilege('invoker_statistic_ext_orb', 'pg_statistic_ext', 'SELECT') AS can_read;
-----
-can_read
-t
 
 
 connection invoker_statistic_ext user=invoker_statistic_ext_orb password=invoker_statistic_ext_pw

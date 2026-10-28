@@ -7,27 +7,6 @@ DROP ROLE IF EXISTS roshan_ini_cheese;
 
 
 query
-SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
-FROM pg_class WHERE oid = 'pg_init_privs'::regclass;
-----
-oid	relname	relkind	nsp	relnatts
-3394	pg_init_privs	r	pg_catalog	5
-
-
-query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute WHERE attrelid = 'pg_init_privs'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-objoid	oid	t
-classoid	oid	t
-objsubid	integer	t
-privtype	"char"	t
-initprivs	aclitem[]	t
-
-
-query
 SELECT count(*) >= 0 AS readable FROM pg_init_privs;
 ----
 readable

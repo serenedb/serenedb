@@ -15,40 +15,6 @@ DROP ROLE IF EXISTS chopa_dat_courier;
 
 
 query
-SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
-FROM pg_class WHERE oid = 'pg_database'::regclass;
-----
-oid	relname	relkind	nsp	relnatts
-1262	pg_database	r	pg_catalog	18
-
-
-query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute WHERE attrelid = 'pg_database'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-oid	oid	t
-datname	name	t
-datdba	oid	t
-encoding	integer	t
-datlocprovider	"char"	t
-datistemplate	boolean	t
-datallowconn	boolean	t
-dathasloginevt	boolean	t
-datconnlimit	integer	t
-datfrozenxid	xid	t
-datminmxid	xid	t
-dattablespace	oid	t
-datcollate	text	t
-datctype	text	t
-datlocale	text	f
-daticurules	text	f
-datcollversion	text	f
-datacl	aclitem[]	f
-
-
-query
 SELECT oid, datname, datdba::regrole::text AS owner, pg_encoding_to_char(encoding) AS encoding,
        datlocprovider, datistemplate, datallowconn, datconnlimit, dattablespace
 FROM pg_database WHERE datname = 'postgres';

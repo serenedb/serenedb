@@ -2134,6 +2134,258 @@ a3be8dcd6f8ca24e
 	views	is_trigger_updatable	information_schema.yes_or_no	f
 	views	is_trigger_deletable	information_schema.yes_or_no	f
 	views	is_trigger_insertable_into	information_schema.yes_or_no	f
+a836261cc8d6dff0
+	nsp	rel	oid	relkind	relnatts	relisshared	relpersistence	rowtype	typtype	linked	array_type
+	information_schema	_pg_foreign_data_wrappers	NULL	v	7	f	p	_pg_foreign_data_wrappers	c	t	__pg_foreign_data_wrappers
+	information_schema	_pg_foreign_servers	NULL	v	9	f	p	_pg_foreign_servers	c	t	__pg_foreign_servers
+	information_schema	_pg_foreign_table_columns	NULL	v	4	f	p	_pg_foreign_table_columns	c	t	__pg_foreign_table_columns
+	information_schema	_pg_foreign_tables	NULL	v	7	f	p	_pg_foreign_tables	c	t	__pg_foreign_tables
+	information_schema	_pg_user_mappings	NULL	v	7	f	p	_pg_user_mappings	c	t	__pg_user_mappings
+	information_schema	administrable_role_authorizations	NULL	v	3	f	p	administrable_role_authorizations	c	t	_administrable_role_authorizations
+	information_schema	applicable_roles	NULL	v	3	f	p	applicable_roles	c	t	_applicable_roles
+	information_schema	attributes	NULL	v	31	f	p	attributes	c	t	_attributes
+	information_schema	character_sets	NULL	v	8	f	p	character_sets	c	t	_character_sets
+	information_schema	check_constraint_routine_usage	NULL	v	6	f	p	check_constraint_routine_usage	c	t	_check_constraint_routine_usage
+	information_schema	check_constraints	NULL	v	4	f	p	check_constraints	c	t	_check_constraints
+	information_schema	collation_character_set_applicability	NULL	v	6	f	p	collation_character_set_applicability	c	t	_collation_character_set_applicability
+	information_schema	collations	NULL	v	4	f	p	collations	c	t	_collations
+	information_schema	column_column_usage	NULL	v	5	f	p	column_column_usage	c	t	_column_column_usage
+	information_schema	column_domain_usage	NULL	v	7	f	p	column_domain_usage	c	t	_column_domain_usage
+	information_schema	column_options	NULL	v	6	f	p	column_options	c	t	_column_options
+	information_schema	column_privileges	NULL	v	8	f	p	column_privileges	c	t	_column_privileges
+	information_schema	column_udt_usage	NULL	v	7	f	p	column_udt_usage	c	t	_column_udt_usage
+	information_schema	columns	NULL	v	44	f	p	columns	c	t	_columns
+	information_schema	constraint_column_usage	NULL	v	7	f	p	constraint_column_usage	c	t	_constraint_column_usage
+	information_schema	constraint_table_usage	NULL	v	6	f	p	constraint_table_usage	c	t	_constraint_table_usage
+	information_schema	data_type_privileges	NULL	v	5	f	p	data_type_privileges	c	t	_data_type_privileges
+	information_schema	domain_constraints	NULL	v	8	f	p	domain_constraints	c	t	_domain_constraints
+	information_schema	domain_udt_usage	NULL	v	6	f	p	domain_udt_usage	c	t	_domain_udt_usage
+	information_schema	domains	NULL	v	27	f	p	domains	c	t	_domains
+	information_schema	element_types	NULL	v	28	f	p	element_types	c	t	_element_types
+	information_schema	enabled_roles	NULL	v	1	f	p	enabled_roles	c	t	_enabled_roles
+	information_schema	foreign_data_wrapper_options	NULL	v	4	f	p	foreign_data_wrapper_options	c	t	_foreign_data_wrapper_options
+	information_schema	foreign_data_wrappers	NULL	v	5	f	p	foreign_data_wrappers	c	t	_foreign_data_wrappers
+	information_schema	foreign_server_options	NULL	v	4	f	p	foreign_server_options	c	t	_foreign_server_options
+	information_schema	foreign_servers	NULL	v	7	f	p	foreign_servers	c	t	_foreign_servers
+	information_schema	foreign_table_options	NULL	v	5	f	p	foreign_table_options	c	t	_foreign_table_options
+	information_schema	foreign_tables	NULL	v	5	f	p	foreign_tables	c	t	_foreign_tables
+	information_schema	information_schema_catalog_name	NULL	v	1	f	p	information_schema_catalog_name	c	t	_information_schema_catalog_name
+	information_schema	key_column_usage	NULL	v	9	f	p	key_column_usage	c	t	_key_column_usage
+	information_schema	parameters	NULL	v	32	f	p	parameters	c	t	_parameters
+	information_schema	referential_constraints	NULL	v	9	f	p	referential_constraints	c	t	_referential_constraints
+	information_schema	role_column_grants	NULL	v	8	f	p	role_column_grants	c	t	_role_column_grants
+	information_schema	role_routine_grants	NULL	v	10	f	p	role_routine_grants	c	t	_role_routine_grants
+	information_schema	role_table_grants	NULL	v	8	f	p	role_table_grants	c	t	_role_table_grants
+	information_schema	role_udt_grants	NULL	v	7	f	p	role_udt_grants	c	t	_role_udt_grants
+	information_schema	role_usage_grants	NULL	v	8	f	p	role_usage_grants	c	t	_role_usage_grants
+	information_schema	routine_column_usage	NULL	v	10	f	p	routine_column_usage	c	t	_routine_column_usage
+	information_schema	routine_privileges	NULL	v	10	f	p	routine_privileges	c	t	_routine_privileges
+	information_schema	routine_routine_usage	NULL	v	6	f	p	routine_routine_usage	c	t	_routine_routine_usage
+	information_schema	routine_sequence_usage	NULL	v	9	f	p	routine_sequence_usage	c	t	_routine_sequence_usage
+	information_schema	routine_table_usage	NULL	v	9	f	p	routine_table_usage	c	t	_routine_table_usage
+	information_schema	routines	NULL	v	82	f	p	routines	c	t	_routines
+	information_schema	schemata	NULL	v	7	f	p	schemata	c	t	_schemata
+	information_schema	sequences	NULL	v	12	f	p	sequences	c	t	_sequences
+	information_schema	sql_features	NULL	r	7	f	p	sql_features	c	t	_sql_features
+	information_schema	sql_implementation_info	NULL	r	5	f	p	sql_implementation_info	c	t	_sql_implementation_info
+	information_schema	sql_parts	NULL	r	5	f	p	sql_parts	c	t	_sql_parts
+	information_schema	sql_sizing	NULL	r	4	f	p	sql_sizing	c	t	_sql_sizing
+	information_schema	table_constraints	NULL	v	11	f	p	table_constraints	c	t	_table_constraints
+	information_schema	table_privileges	NULL	v	8	f	p	table_privileges	c	t	_table_privileges
+	information_schema	tables	NULL	v	12	f	p	tables	c	t	_tables
+	information_schema	transforms	NULL	v	8	f	p	transforms	c	t	_transforms
+	information_schema	triggered_update_columns	NULL	v	7	f	p	triggered_update_columns	c	t	_triggered_update_columns
+	information_schema	triggers	NULL	v	17	f	p	triggers	c	t	_triggers
+	information_schema	udt_privileges	NULL	v	7	f	p	udt_privileges	c	t	_udt_privileges
+	information_schema	usage_privileges	NULL	v	8	f	p	usage_privileges	c	t	_usage_privileges
+	information_schema	user_defined_types	NULL	v	29	f	p	user_defined_types	c	t	_user_defined_types
+	information_schema	user_mapping_options	NULL	v	5	f	p	user_mapping_options	c	t	_user_mapping_options
+	information_schema	user_mappings	NULL	v	3	f	p	user_mappings	c	t	_user_mappings
+	information_schema	view_column_usage	NULL	v	7	f	p	view_column_usage	c	t	_view_column_usage
+	information_schema	view_routine_usage	NULL	v	6	f	p	view_routine_usage	c	t	_view_routine_usage
+	information_schema	view_table_usage	NULL	v	6	f	p	view_table_usage	c	t	_view_table_usage
+	information_schema	views	NULL	v	10	f	p	views	c	t	_views
+	pg_catalog	pg_aggregate	2600	r	22	f	p	pg_aggregate	c	t	_pg_aggregate
+	pg_catalog	pg_aios	NULL	v	15	f	p	pg_aios	c	t	_pg_aios
+	pg_catalog	pg_am	2601	r	4	f	p	pg_am	c	t	_pg_am
+	pg_catalog	pg_amop	2602	r	9	f	p	pg_amop	c	t	_pg_amop
+	pg_catalog	pg_amproc	2603	r	6	f	p	pg_amproc	c	t	_pg_amproc
+	pg_catalog	pg_attrdef	2604	r	4	f	p	pg_attrdef	c	t	_pg_attrdef
+	pg_catalog	pg_attribute	1249	r	25	f	p	pg_attribute	c	t	_pg_attribute
+	pg_catalog	pg_auth_members	1261	r	7	t	p	pg_auth_members	c	t	_pg_auth_members
+	pg_catalog	pg_authid	1260	r	12	t	p	pg_authid	c	t	_pg_authid
+	pg_catalog	pg_available_extension_versions	NULL	v	9	f	p	pg_available_extension_versions	c	t	_pg_available_extension_versions
+	pg_catalog	pg_available_extensions	NULL	v	4	f	p	pg_available_extensions	c	t	_pg_available_extensions
+	pg_catalog	pg_backend_memory_contexts	NULL	v	10	f	p	pg_backend_memory_contexts	c	t	_pg_backend_memory_contexts
+	pg_catalog	pg_cast	2605	r	6	f	p	pg_cast	c	t	_pg_cast
+	pg_catalog	pg_class	1259	r	34	f	p	pg_class	c	t	_pg_class
+	pg_catalog	pg_collation	3456	r	12	f	p	pg_collation	c	t	_pg_collation
+	pg_catalog	pg_config	NULL	v	2	f	p	pg_config	c	t	_pg_config
+	pg_catalog	pg_constraint	2606	r	28	f	p	pg_constraint	c	t	_pg_constraint
+	pg_catalog	pg_conversion	2607	r	8	f	p	pg_conversion	c	t	_pg_conversion
+	pg_catalog	pg_cursors	NULL	v	6	f	p	pg_cursors	c	t	_pg_cursors
+	pg_catalog	pg_database	1262	r	18	t	p	pg_database	c	t	_pg_database
+	pg_catalog	pg_db_role_setting	2964	r	3	t	p	pg_db_role_setting	c	t	_pg_db_role_setting
+	pg_catalog	pg_default_acl	826	r	5	f	p	pg_default_acl	c	t	_pg_default_acl
+	pg_catalog	pg_depend	2608	r	7	f	p	pg_depend	c	t	_pg_depend
+	pg_catalog	pg_description	2609	r	4	f	p	pg_description	c	t	_pg_description
+	pg_catalog	pg_enum	3501	r	4	f	p	pg_enum	c	t	_pg_enum
+	pg_catalog	pg_event_trigger	3466	r	7	f	p	pg_event_trigger	c	t	_pg_event_trigger
+	pg_catalog	pg_extension	3079	r	8	f	p	pg_extension	c	t	_pg_extension
+	pg_catalog	pg_file_settings	NULL	v	7	f	p	pg_file_settings	c	t	_pg_file_settings
+	pg_catalog	pg_foreign_data_wrapper	2328	r	7	f	p	pg_foreign_data_wrapper	c	t	_pg_foreign_data_wrapper
+	pg_catalog	pg_foreign_server	1417	r	8	f	p	pg_foreign_server	c	t	_pg_foreign_server
+	pg_catalog	pg_foreign_table	3118	r	3	f	p	pg_foreign_table	c	t	_pg_foreign_table
+	pg_catalog	pg_group	NULL	v	3	f	p	pg_group	c	t	_pg_group
+	pg_catalog	pg_hba_file_rules	NULL	v	11	f	p	pg_hba_file_rules	c	t	_pg_hba_file_rules
+	pg_catalog	pg_ident_file_mappings	NULL	v	7	f	p	pg_ident_file_mappings	c	t	_pg_ident_file_mappings
+	pg_catalog	pg_index	2610	r	21	f	p	pg_index	c	t	_pg_index
+	pg_catalog	pg_indexes	NULL	v	5	f	p	pg_indexes	c	t	_pg_indexes
+	pg_catalog	pg_inherits	2611	r	4	f	p	pg_inherits	c	t	_pg_inherits
+	pg_catalog	pg_init_privs	3394	r	5	f	p	pg_init_privs	c	t	_pg_init_privs
+	pg_catalog	pg_language	2612	r	9	f	p	pg_language	c	t	_pg_language
+	pg_catalog	pg_largeobject	2613	r	3	f	p	pg_largeobject	c	t	_pg_largeobject
+	pg_catalog	pg_largeobject_metadata	2995	r	3	f	p	pg_largeobject_metadata	c	t	_pg_largeobject_metadata
+	pg_catalog	pg_locks	NULL	v	16	f	p	pg_locks	c	t	_pg_locks
+	pg_catalog	pg_matviews	NULL	v	7	f	p	pg_matviews	c	t	_pg_matviews
+	pg_catalog	pg_namespace	2615	r	4	f	p	pg_namespace	c	t	_pg_namespace
+	pg_catalog	pg_opclass	2616	r	9	f	p	pg_opclass	c	t	_pg_opclass
+	pg_catalog	pg_operator	2617	r	15	f	p	pg_operator	c	t	_pg_operator
+	pg_catalog	pg_opfamily	2753	r	5	f	p	pg_opfamily	c	t	_pg_opfamily
+	pg_catalog	pg_parameter_acl	6243	r	3	t	p	pg_parameter_acl	c	t	_pg_parameter_acl
+	pg_catalog	pg_partitioned_table	3350	r	8	f	p	pg_partitioned_table	c	t	_pg_partitioned_table
+	pg_catalog	pg_policies	NULL	v	8	f	p	pg_policies	c	t	_pg_policies
+	pg_catalog	pg_policy	3256	r	8	f	p	pg_policy	c	t	_pg_policy
+	pg_catalog	pg_prepared_statements	NULL	v	8	f	p	pg_prepared_statements	c	t	_pg_prepared_statements
+	pg_catalog	pg_prepared_xacts	NULL	v	5	f	p	pg_prepared_xacts	c	t	_pg_prepared_xacts
+	pg_catalog	pg_proc	1255	r	30	f	p	pg_proc	c	t	_pg_proc
+	pg_catalog	pg_publication	6104	r	10	f	p	pg_publication	c	t	_pg_publication
+	pg_catalog	pg_publication_namespace	6237	r	3	f	p	pg_publication_namespace	c	t	_pg_publication_namespace
+	pg_catalog	pg_publication_rel	6106	r	5	f	p	pg_publication_rel	c	t	_pg_publication_rel
+	pg_catalog	pg_publication_tables	NULL	v	5	f	p	pg_publication_tables	c	t	_pg_publication_tables
+	pg_catalog	pg_range	3541	r	7	f	p	pg_range	c	t	_pg_range
+	pg_catalog	pg_replication_origin	6000	r	2	t	p	pg_replication_origin	c	t	_pg_replication_origin
+	pg_catalog	pg_replication_origin_status	NULL	v	4	f	p	pg_replication_origin_status	c	t	_pg_replication_origin_status
+	pg_catalog	pg_replication_slots	NULL	v	21	f	p	pg_replication_slots	c	t	_pg_replication_slots
+	pg_catalog	pg_rewrite	2618	r	8	f	p	pg_rewrite	c	t	_pg_rewrite
+	pg_catalog	pg_roles	NULL	v	13	f	p	pg_roles	c	t	_pg_roles
+	pg_catalog	pg_rules	NULL	v	4	f	p	pg_rules	c	t	_pg_rules
+	pg_catalog	pg_seclabel	3596	r	5	f	p	pg_seclabel	c	t	_pg_seclabel
+	pg_catalog	pg_seclabels	NULL	v	8	f	p	pg_seclabels	c	t	_pg_seclabels
+	pg_catalog	pg_sequence	2224	r	8	f	p	pg_sequence	c	t	_pg_sequence
+	pg_catalog	pg_sequences	NULL	v	11	f	p	pg_sequences	c	t	_pg_sequences
+	pg_catalog	pg_settings	NULL	v	17	f	p	pg_settings	c	t	_pg_settings
+	pg_catalog	pg_shadow	NULL	v	9	f	p	pg_shadow	c	t	_pg_shadow
+	pg_catalog	pg_shdepend	1214	r	7	t	p	pg_shdepend	c	t	_pg_shdepend
+	pg_catalog	pg_shdescription	2396	r	3	t	p	pg_shdescription	c	t	_pg_shdescription
+	pg_catalog	pg_shmem_allocations	NULL	v	4	f	p	pg_shmem_allocations	c	t	_pg_shmem_allocations
+	pg_catalog	pg_shmem_allocations_numa	NULL	v	3	f	p	pg_shmem_allocations_numa	c	t	_pg_shmem_allocations_numa
+	pg_catalog	pg_shseclabel	3592	r	4	t	p	pg_shseclabel	c	t	_pg_shseclabel
+	pg_catalog	pg_stat_activity	NULL	v	22	f	p	pg_stat_activity	c	t	_pg_stat_activity
+	pg_catalog	pg_stat_all_indexes	NULL	v	9	f	p	pg_stat_all_indexes	c	t	_pg_stat_all_indexes
+	pg_catalog	pg_stat_all_tables	NULL	v	30	f	p	pg_stat_all_tables	c	t	_pg_stat_all_tables
+	pg_catalog	pg_stat_archiver	NULL	v	7	f	p	pg_stat_archiver	c	t	_pg_stat_archiver
+	pg_catalog	pg_stat_bgwriter	NULL	v	4	f	p	pg_stat_bgwriter	c	t	_pg_stat_bgwriter
+	pg_catalog	pg_stat_checkpointer	NULL	v	11	f	p	pg_stat_checkpointer	c	t	_pg_stat_checkpointer
+	pg_catalog	pg_stat_database	NULL	v	30	f	p	pg_stat_database	c	t	_pg_stat_database
+	pg_catalog	pg_stat_database_conflicts	NULL	v	8	f	p	pg_stat_database_conflicts	c	t	_pg_stat_database_conflicts
+	pg_catalog	pg_stat_gssapi	NULL	v	5	f	p	pg_stat_gssapi	c	t	_pg_stat_gssapi
+	pg_catalog	pg_stat_io	NULL	v	20	f	p	pg_stat_io	c	t	_pg_stat_io
+	pg_catalog	pg_stat_progress_analyze	NULL	v	13	f	p	pg_stat_progress_analyze	c	t	_pg_stat_progress_analyze
+	pg_catalog	pg_stat_progress_basebackup	NULL	v	6	f	p	pg_stat_progress_basebackup	c	t	_pg_stat_progress_basebackup
+	pg_catalog	pg_stat_progress_cluster	NULL	v	12	f	p	pg_stat_progress_cluster	c	t	_pg_stat_progress_cluster
+	pg_catalog	pg_stat_progress_copy	NULL	v	11	f	p	pg_stat_progress_copy	c	t	_pg_stat_progress_copy
+	pg_catalog	pg_stat_progress_create_index	NULL	v	16	f	p	pg_stat_progress_create_index	c	t	_pg_stat_progress_create_index
+	pg_catalog	pg_stat_progress_vacuum	NULL	v	15	f	p	pg_stat_progress_vacuum	c	t	_pg_stat_progress_vacuum
+	pg_catalog	pg_stat_recovery_prefetch	NULL	v	10	f	p	pg_stat_recovery_prefetch	c	t	_pg_stat_recovery_prefetch
+	pg_catalog	pg_stat_replication	NULL	v	20	f	p	pg_stat_replication	c	t	_pg_stat_replication
+	pg_catalog	pg_stat_replication_slots	NULL	v	10	f	p	pg_stat_replication_slots	c	t	_pg_stat_replication_slots
+	pg_catalog	pg_stat_slru	NULL	v	9	f	p	pg_stat_slru	c	t	_pg_stat_slru
+	pg_catalog	pg_stat_ssl	NULL	v	8	f	p	pg_stat_ssl	c	t	_pg_stat_ssl
+	pg_catalog	pg_stat_subscription	NULL	v	11	f	p	pg_stat_subscription	c	t	_pg_stat_subscription
+	pg_catalog	pg_stat_subscription_stats	NULL	v	12	f	p	pg_stat_subscription_stats	c	t	_pg_stat_subscription_stats
+	pg_catalog	pg_stat_sys_indexes	NULL	v	9	f	p	pg_stat_sys_indexes	c	t	_pg_stat_sys_indexes
+	pg_catalog	pg_stat_sys_tables	NULL	v	30	f	p	pg_stat_sys_tables	c	t	_pg_stat_sys_tables
+	pg_catalog	pg_stat_user_functions	NULL	v	6	f	p	pg_stat_user_functions	c	t	_pg_stat_user_functions
+	pg_catalog	pg_stat_user_indexes	NULL	v	9	f	p	pg_stat_user_indexes	c	t	_pg_stat_user_indexes
+	pg_catalog	pg_stat_user_tables	NULL	v	30	f	p	pg_stat_user_tables	c	t	_pg_stat_user_tables
+	pg_catalog	pg_stat_wal	NULL	v	5	f	p	pg_stat_wal	c	t	_pg_stat_wal
+	pg_catalog	pg_stat_wal_receiver	NULL	v	15	f	p	pg_stat_wal_receiver	c	t	_pg_stat_wal_receiver
+	pg_catalog	pg_stat_xact_all_tables	NULL	v	12	f	p	pg_stat_xact_all_tables	c	t	_pg_stat_xact_all_tables
+	pg_catalog	pg_stat_xact_sys_tables	NULL	v	12	f	p	pg_stat_xact_sys_tables	c	t	_pg_stat_xact_sys_tables
+	pg_catalog	pg_stat_xact_user_functions	NULL	v	6	f	p	pg_stat_xact_user_functions	c	t	_pg_stat_xact_user_functions
+	pg_catalog	pg_stat_xact_user_tables	NULL	v	12	f	p	pg_stat_xact_user_tables	c	t	_pg_stat_xact_user_tables
+	pg_catalog	pg_statio_all_indexes	NULL	v	7	f	p	pg_statio_all_indexes	c	t	_pg_statio_all_indexes
+	pg_catalog	pg_statio_all_sequences	NULL	v	5	f	p	pg_statio_all_sequences	c	t	_pg_statio_all_sequences
+	pg_catalog	pg_statio_all_tables	NULL	v	11	f	p	pg_statio_all_tables	c	t	_pg_statio_all_tables
+	pg_catalog	pg_statio_sys_indexes	NULL	v	7	f	p	pg_statio_sys_indexes	c	t	_pg_statio_sys_indexes
+	pg_catalog	pg_statio_sys_sequences	NULL	v	5	f	p	pg_statio_sys_sequences	c	t	_pg_statio_sys_sequences
+	pg_catalog	pg_statio_sys_tables	NULL	v	11	f	p	pg_statio_sys_tables	c	t	_pg_statio_sys_tables
+	pg_catalog	pg_statio_user_indexes	NULL	v	7	f	p	pg_statio_user_indexes	c	t	_pg_statio_user_indexes
+	pg_catalog	pg_statio_user_sequences	NULL	v	5	f	p	pg_statio_user_sequences	c	t	_pg_statio_user_sequences
+	pg_catalog	pg_statio_user_tables	NULL	v	11	f	p	pg_statio_user_tables	c	t	_pg_statio_user_tables
+	pg_catalog	pg_statistic	2619	r	31	f	p	pg_statistic	c	t	_pg_statistic
+	pg_catalog	pg_statistic_ext	3381	r	9	f	p	pg_statistic_ext	c	t	_pg_statistic_ext
+	pg_catalog	pg_statistic_ext_data	3429	r	6	f	p	pg_statistic_ext_data	c	t	_pg_statistic_ext_data
+	pg_catalog	pg_stats	NULL	v	17	f	p	pg_stats	c	t	_pg_stats
+	pg_catalog	pg_stats_ext	NULL	v	15	f	p	pg_stats_ext	c	t	_pg_stats_ext
+	pg_catalog	pg_stats_ext_exprs	NULL	v	17	f	p	pg_stats_ext_exprs	c	t	_pg_stats_ext_exprs
+	pg_catalog	pg_subscription	6100	r	18	t	p	pg_subscription	c	t	_pg_subscription
+	pg_catalog	pg_subscription_rel	6102	r	4	f	p	pg_subscription_rel	c	t	_pg_subscription_rel
+	pg_catalog	pg_tables	NULL	v	8	f	p	pg_tables	c	t	_pg_tables
+	pg_catalog	pg_tablespace	1213	r	5	t	p	pg_tablespace	c	t	_pg_tablespace
+	pg_catalog	pg_timezone_abbrevs	NULL	v	3	f	p	pg_timezone_abbrevs	c	t	_pg_timezone_abbrevs
+	pg_catalog	pg_timezone_names	NULL	v	4	f	p	pg_timezone_names	c	t	_pg_timezone_names
+	pg_catalog	pg_transform	3576	r	5	f	p	pg_transform	c	t	_pg_transform
+	pg_catalog	pg_trigger	2620	r	19	f	p	pg_trigger	c	t	_pg_trigger
+	pg_catalog	pg_ts_config	3602	r	5	f	p	pg_ts_config	c	t	_pg_ts_config
+	pg_catalog	pg_ts_config_map	3603	r	4	f	p	pg_ts_config_map	c	t	_pg_ts_config_map
+	pg_catalog	pg_ts_dict	3600	r	6	f	p	pg_ts_dict	c	t	_pg_ts_dict
+	pg_catalog	pg_ts_parser	3601	r	8	f	p	pg_ts_parser	c	t	_pg_ts_parser
+	pg_catalog	pg_ts_template	3764	r	5	f	p	pg_ts_template	c	t	_pg_ts_template
+	pg_catalog	pg_type	1247	r	32	f	p	pg_type	c	t	_pg_type
+	pg_catalog	pg_user	NULL	v	9	f	p	pg_user	c	t	_pg_user
+	pg_catalog	pg_user_mapping	1418	r	4	f	p	pg_user_mapping	c	t	_pg_user_mapping
+	pg_catalog	pg_user_mappings	NULL	v	6	f	p	pg_user_mappings	c	t	_pg_user_mappings
+	pg_catalog	pg_views	NULL	v	4	f	p	pg_views	c	t	_pg_views
+	pg_catalog	pg_wait_events	NULL	v	3	f	p	pg_wait_events	c	t	_pg_wait_events
+7efac5336ae4483e
+	nsp	rel	some_columns
+	information_schema	_pg_foreign_data_wrappers	f
+	information_schema	_pg_foreign_servers	f
+	information_schema	_pg_foreign_table_columns	f
+	information_schema	_pg_foreign_tables	f
+	information_schema	_pg_user_mappings	f
+	information_schema	sql_parts	f
+	information_schema	transforms	f
+	pg_catalog	pg_aios	f
+	pg_catalog	pg_authid	f
+	pg_catalog	pg_backend_memory_contexts	f
+	pg_catalog	pg_config	f
+	pg_catalog	pg_file_settings	f
+	pg_catalog	pg_hba_file_rules	f
+	pg_catalog	pg_ident_file_mappings	f
+	pg_catalog	pg_largeobject	f
+	pg_catalog	pg_replication_origin_status	f
+	pg_catalog	pg_shadow	f
+	pg_catalog	pg_shmem_allocations	f
+	pg_catalog	pg_shmem_allocations_numa	f
+	pg_catalog	pg_statistic	f
+	pg_catalog	pg_statistic_ext_data	f
+	pg_catalog	pg_subscription	t
+	pg_catalog	pg_user_mapping	f
+81e851d2d10d566b
+	nsp	rel	some_columns
+e988433e6c74aa79
+	nsp	rel	some_columns
+	pg_catalog	pg_foreign_server	f
+a84d63e33388b4cb
+	nsp	rel	col
+	pg_catalog	pg_subscription	subconninfo
+3e48d2449eaf9302
+	oid	spcname	spcowner	spcacl	spcoptions
+	1663	pg_default	postgres	NULL	NULL
+	1664	pg_global	postgres	NULL	NULL
 2c9abf308761b3ea
 	oid	nspname	nspowner	nspacl
 	app	app	postgres	conf_reader=U/postgres,postgres=UC/postgres

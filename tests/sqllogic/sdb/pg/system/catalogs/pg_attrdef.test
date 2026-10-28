@@ -21,16 +21,6 @@ relname	relkind	relnatts	nsp
 pg_attrdef	r	4	pg_catalog
 
 
-query
-SELECT attname, atttypid::regtype::text AS typ, attnotnull FROM pg_attribute WHERE attrelid = 'pg_attrdef'::regclass AND attnum > 0 ORDER BY attnum;
-----
-attname	typ	attnotnull
-oid	oid	t
-adrelid	oid	t
-adnum	smallint	t
-adbin	pg_node_tree	t
-
-
 statement ok
 CREATE TABLE tango_adf_tree (id int, hp int DEFAULT 115, name text, regen numeric DEFAULT 7.5, eaten bool DEFAULT false, born timestamp DEFAULT now(), dbl int GENERATED ALWAYS AS (hp * 2) STORED, plain int, sum int DEFAULT 1 + 2);
 

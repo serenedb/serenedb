@@ -3,37 +3,6 @@ DROP FUNCTION IF EXISTS roshan_agg_bash(int4);
 
 
 query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute
-WHERE attrelid = 'pg_aggregate'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-aggfnoid	regproc	t
-aggkind	"char"	t
-aggnumdirectargs	smallint	t
-aggtransfn	regproc	t
-aggfinalfn	regproc	t
-aggcombinefn	regproc	t
-aggserialfn	regproc	t
-aggdeserialfn	regproc	t
-aggmtransfn	regproc	t
-aggminvtransfn	regproc	t
-aggmfinalfn	regproc	t
-aggfinalextra	boolean	t
-aggmfinalextra	boolean	t
-aggfinalmodify	"char"	t
-aggmfinalmodify	"char"	t
-aggsortop	oid	t
-aggtranstype	oid	t
-aggtransspace	integer	t
-aggmtranstype	oid	t
-aggmtransspace	integer	t
-agginitval	text	f
-aggminitval	text	f
-
-
-query
 SELECT
   (SELECT count(*) FROM pg_aggregate a WHERE NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = a.aggfnoid AND p.prokind = 'a')) AS orphans,
   (SELECT count(*) FROM pg_proc p WHERE p.prokind = 'a' AND NOT EXISTS (SELECT 1 FROM pg_aggregate a WHERE a.aggfnoid = p.oid)) AS missing,

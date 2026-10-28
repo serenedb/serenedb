@@ -10,27 +10,6 @@ statement ok
 DROP ROLE IF EXISTS techies_dac_spleen;
 
 
-query
-SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
-FROM pg_class WHERE oid = 'pg_default_acl'::regclass;
-----
-oid	relname	relkind	nsp	relnatts
-826	pg_default_acl	r	pg_catalog	5
-
-
-query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute WHERE attrelid = 'pg_default_acl'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-oid	oid	t
-defaclrole	oid	t
-defaclnamespace	oid	t
-defaclobjtype	"char"	t
-defaclacl	aclitem[]	t
-
-
 statement ok
 CREATE ROLE techies_dac_squee;
 

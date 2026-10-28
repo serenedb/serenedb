@@ -1,26 +1,31 @@
 from sqllogic_gen import Test
 
 CAUSES = {
-    "aggregate_type": 1435,
-    "catalog_content": 1975,
-    "deparse": 1970,
+    "aggregate_type": "Aggregates over integers and numeric return other types than PostgreSQL's",
+    "catalog_content": "SereneDB lacks catalog content PostgreSQL has: builtin object descriptions, every SQL "
+                       "feature, the column types of system views",
+    "deparse": "Deparsed definitions differ: defaults lose their casts, checks print IN and BETWEEN, views "
+               "print count_star()",
     "duckdb_types": "SereneDB has types PostgreSQL lacks: geometry, union, variant",
-    "fk_operators": 1973,
-    "group_by": 1974,
+    "fk_operators": "pg_constraint leaves foreign key operators NULL and pg_depend lacks a default's dependency "
+                    "on its type",
+    "group_by": "GROUP BY a table alias that is also an output column name is rejected",
     "index_am": "SereneDB indexes use access methods of their own",
-    "index_desc": 1445,
-    "null_array": 1977,
-    "numeric": 762,
-    "owner": 1971,
-    "pgonly": (1426, 1439, 1443, 1455, 613),
-    "quoted_keywords": 1972,
+    "index_desc": "CREATE INDEX drops DESC",
+    "null_array": "NULL || array is NULL where PostgreSQL returns the array",
+    "numeric": "A bare numeric is DECIMAL(18,3)",
+    "owner": "The bootstrap superuser has oid 16384, not 10, and public belongs to postgres, not "
+             "pg_database_owner",
+    "pgonly": "Identity columns, referential actions, PL/pgSQL, DDL ORMs emit and jsonb are not supported",
+    "quoted_keywords": "quote_ident, regclass and regtype quote words only DuckDB reserves",
     "ri_triggers": "SereneDB checks foreign keys without internal triggers",
-    "serial_sequence": 1976,
-    "system_columns": 202,
-    "text_search": 1221,
+    "serial_sequence": "serial creates a bigint sequence where PostgreSQL creates an integer one",
+    "server_credentials": "pg_foreign_server shows options that carry credentials, so only a superuser reads it",
+    "system_columns": "Tables lack PostgreSQL's system columns",
+    "text_search": "SereneDB's full-text search has no tsvector, tsquery or text search configurations",
     "toast": "SereneDB has no TOAST tables",
-    "typmod": 1434,
-    "updatable_views": 1901,
+    "typmod": "Type modifiers are dropped or rejected",
+    "updatable_views": "Views are not updatable",
 }
 
 MAIN = ("app", "public")
@@ -192,6 +197,9 @@ t.statement("GRANT SELECT ON customers TO conf_reader")
 t.statement("GRANT SELECT, INSERT ON orders TO conf_reader")
 t.statement("GRANT SELECT ON app.order_totals TO conf_reader")
 
+UNMATCHED = "('sdb_progress', 'sdb_metrics', 'sdb_settings', 'pg_stat_progress_create_table_as')"
+
+
 def shape(namespace, differing=""):
     return f'''SELECT c.relname::text AS rel, a.attname::text AS col,
   pg_catalog.format_type(a.atttypid, a.atttypmod) AS coltype, a.attnotnull AS not_null
@@ -200,7 +208,7 @@ JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = '{namespace}' AND c.relkind IN ('r', 'v', 'm', 'p', 'f')
   AND a.attnum > 0 AND NOT a.attisdropped
-  AND c.relname NOT IN ('sdb_progress', 'sdb_metrics', 'sdb_settings', 'pg_stat_progress_create_table_as'){differing}
+  AND c.relname NOT IN {UNMATCHED}{differing}
 ORDER BY c.relname::text COLLATE "C", a.attnum'''
 
 
@@ -210,6 +218,36 @@ check(shape("pg_catalog", """
     ('pg_stat_io', 'write_bytes'), ('pg_stat_ssl', 'client_serial'), ('pg_stat_subscription', 'latest_end_lsn'),
     ('pg_stat_subscription', 'received_lsn'), ('pg_stat_wal', 'wal_bytes'))"""), "catalog_content")
 check(shape("information_schema"))
+
+SYSTEM_RELATIONS = f"""WHERE c.relnamespace IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)
+  AND c.relkind IN ('r', 'v') AND c.relname NOT IN {UNMATCHED}"""
+SYSTEM_ORDER = 'ORDER BY c.relnamespace::regnamespace::text COLLATE "C", c.relname::text COLLATE "C"'
+check(f'''SELECT c.relnamespace::regnamespace::text AS nsp, c.relname::text AS rel,
+  CASE WHEN c.relkind = 'r' AND c.relnamespace = 'pg_catalog'::regnamespace THEN c.oid END AS oid, c.relkind,
+  c.relnatts, c.relisshared, c.relpersistence, t.typname::text AS rowtype, t.typtype, t.typrelid = c.oid AS linked,
+  a.typname::text AS array_type
+FROM pg_catalog.pg_class c
+LEFT JOIN pg_catalog.pg_type t ON t.oid = c.reltype
+LEFT JOIN pg_catalog.pg_type a ON a.oid = t.typarray
+{SYSTEM_RELATIONS}
+{SYSTEM_ORDER}''')
+check(f'''SELECT c.relnamespace::regnamespace::text AS nsp, c.relname::text AS rel,
+  pg_catalog.has_any_column_privilege('conf_reader', c.oid, 'SELECT') AS some_columns
+FROM pg_catalog.pg_class c
+{SYSTEM_RELATIONS}
+  AND NOT pg_catalog.has_table_privilege('conf_reader', c.oid, 'SELECT')
+  AND c.relname::text @NOT IN ('pg_foreign_server')
+{SYSTEM_ORDER}''', "server_credentials")
+check(f'''SELECT c.relnamespace::regnamespace::text AS nsp, c.relname::text AS rel, a.attname::text AS col
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0
+{SYSTEM_RELATIONS}
+  AND pg_catalog.has_any_column_privilege('conf_reader', c.oid, 'SELECT')
+  AND NOT pg_catalog.has_column_privilege('conf_reader', c.oid, a.attnum, 'SELECT')
+{SYSTEM_ORDER}, a.attnum''')
+check(f"""SELECT oid, spcname, pg_catalog.pg_get_userbyid(spcowner) AS spcowner, {acl("spcacl")}, spcoptions
+FROM pg_catalog.pg_tablespace
+ORDER BY oid""")
 check(f'''SELECT oid::regnamespace::text AS oid, nspname, pg_catalog.pg_get_userbyid(nspowner) AS nspowner, {acl("nspacl")}
 FROM pg_catalog.pg_namespace
 WHERE (oid IN {oids(MAIN)} OR nspname IN ('pg_catalog', 'public', 'information_schema'))

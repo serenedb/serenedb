@@ -1,11 +1,11 @@
 from sqllogic_gen import Test
 
 CAUSES = {
-    "typmod": 1434,
-    "numeric": 762,
-    "json_array": 1983,
-    "empty_bit": 1984,
-    "text_search": 1221,
+    "typmod": "Type modifiers are dropped or rejected",
+    "numeric": "A bare numeric is DECIMAL(18,3)",
+    "json_array": "json[] reads and prints text as one JSON array instead of an array literal",
+    "empty_bit": "An empty bit string becomes B'0'",
+    "text_search": "SereneDB's full-text search has no tsvector, tsquery or text search configurations",
 }
 
 VALUED = {"array", "matrix", "record", "nested", "nested_matrix", "single", "pair"}

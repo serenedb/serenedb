@@ -1,22 +1,4 @@
 query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute
-WHERE attrelid = 'pg_opclass'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-oid	oid	t
-opcmethod	oid	t
-opcname	name	t
-opcnamespace	oid	t
-opcowner	oid	t
-opcfamily	oid	t
-opcintype	oid	t
-opcdefault	boolean	t
-opckeytype	oid	t
-
-
-query
 SELECT o.opcname, a.amname, o.opcnamespace::regnamespace::text AS nsp, o.opcintype, o.opcdefault, o.opckeytype
 FROM pg_opclass o JOIN pg_am a ON a.oid = o.opcmethod
 ORDER BY o.opcname;

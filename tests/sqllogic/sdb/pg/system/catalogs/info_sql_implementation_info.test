@@ -7,29 +7,6 @@ CREATE ROLE rubick_sql_impl_steal LOGIN PASSWORD 'rubick_sql_impl_pw';
 
 
 query
-SELECT c.relkind, n.nspname, c.relnatts
-FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE c.relname = 'sql_implementation_info';
-----
-relkind	nspname	relnatts
-r	information_schema	5
-
-
-query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute
-WHERE attrelid = 'information_schema.sql_implementation_info'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-implementation_info_id	information_schema.character_data	f
-implementation_info_name	information_schema.character_data	f
-integer_value	information_schema.cardinal_number	f
-character_value	information_schema.character_data	f
-comments	information_schema.character_data	f
-
-
-query
 SELECT count(*) AS infos, count(integer_value) AS with_integer, count(character_value) AS with_character
 FROM information_schema.sql_implementation_info;
 ----
@@ -67,13 +44,6 @@ WHERE implementation_info_name = 'DBMS NAME';
 ----
 character_value
 SereneDB
-
-
-query
-SELECT has_table_privilege('rubick_sql_impl_steal', 'information_schema.sql_implementation_info', 'SELECT') AS can_read;
-----
-can_read
-t
 
 
 connection rubick_sql_impl user=rubick_sql_impl_steal password=rubick_sql_impl_pw

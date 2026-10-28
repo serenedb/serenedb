@@ -7,29 +7,6 @@ CREATE ROLE techies_sql_parts_mine LOGIN PASSWORD 'techies_sql_parts_pw';
 
 
 query
-SELECT c.relkind, n.nspname, c.relnatts
-FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE c.relname = 'sql_parts';
-----
-relkind	nspname	relnatts
-r	information_schema	5
-
-
-query
-SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
-FROM pg_attribute
-WHERE attrelid = 'information_schema.sql_parts'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	type	attnotnull
-feature_id	information_schema.character_data	f
-feature_name	information_schema.character_data	f
-is_supported	information_schema.yes_or_no	f
-is_verified_by	information_schema.character_data	f
-comments	information_schema.character_data	f
-
-
-query
 SELECT count(*) AS parts FROM information_schema.sql_parts;
 ----
 parts
@@ -62,13 +39,6 @@ WHERE feature_id = '2';
 ----
 feature_name	is_supported
 Foundation (SQL/Foundation)	NO
-
-
-query
-SELECT has_table_privilege('techies_sql_parts_mine', 'information_schema.sql_parts', 'SELECT') AS can_read;
-----
-can_read
-f
 
 
 connection techies_sql_parts user=techies_sql_parts_mine password=techies_sql_parts_pw

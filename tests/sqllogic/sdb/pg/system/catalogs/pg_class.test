@@ -281,13 +281,6 @@ pg_tables	v	t	pg_catalog
 
 
 query
-SELECT relname, reltype::regtype::text AS reltype FROM pg_class WHERE oid = 'pg_settings'::regclass;
-----
-relname	reltype
-pg_settings	pg_settings
-
-
-query
 SELECT relname, relkind FROM pg_class
 WHERE relnamespace = 'information_schema'::regnamespace AND relname IN ('columns', 'tables')
 ORDER BY relname;

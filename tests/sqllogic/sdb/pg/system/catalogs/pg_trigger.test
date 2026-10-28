@@ -7,43 +7,6 @@ DROP TABLE IF EXISTS zeus_trg_log;
 
 
 query
-SELECT oid, relkind, relnatts, relisshared, reltype, relnamespace::regnamespace::text AS nsp
-FROM pg_class
-WHERE relname = 'pg_trigger';
-----
-oid	relkind	relnatts	relisshared	reltype	nsp
-2620	r	19	f	10037	pg_catalog
-
-
-query
-SELECT attname, atttypid, attnotnull
-FROM pg_attribute
-WHERE attrelid = 'pg_catalog.pg_trigger'::regclass AND attnum > 0
-ORDER BY attnum;
-----
-attname	atttypid	attnotnull
-oid	26	t
-tgrelid	26	t
-tgparentid	26	t
-tgname	19	t
-tgfoid	26	t
-tgtype	21	t
-tgenabled	18	t
-tgisinternal	16	t
-tgconstrrelid	26	t
-tgconstrindid	26	t
-tgconstraint	26	t
-tgdeferrable	16	t
-tginitdeferred	16	t
-tgnargs	21	t
-tgattr	22	t
-tgargs	17	t
-tgqual	194	f
-tgoldtable	19	f
-tgnewtable	19	f
-
-
-query
 SELECT attname, format_type(atttypid, atttypmod) AS type
 FROM pg_attribute
 WHERE attrelid = 'pg_catalog.pg_trigger'::regclass AND attnum > 0 AND attname <> 'tgattr'

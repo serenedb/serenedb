@@ -25,8 +25,10 @@
 #include <bit>
 #include <iresearch/search/count/root.hpp>
 #include <iresearch/search/detail/table_filter.hpp>
+#include <iresearch/search/detail/window.hpp>
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iterator>
 #include <memory>
@@ -87,6 +89,23 @@ bool Has(std::string_view term, doc_id_t i) {
   return false;
 }
 
+struct Phrase {
+  std::string_view first;
+  std::string_view second;
+};
+
+bool Has(const Phrase& phrase, doc_id_t i) {
+  const auto* const first = absl::c_find_if(
+    kSpecs, [&](const Spec& spec) { return spec.term == phrase.first; });
+  const auto* const second = absl::c_find_if(
+    kSpecs, [&](const Spec& spec) { return spec.term == phrase.second; });
+  if (first >= second || !first->has(i) || !second->has(i)) {
+    return false;
+  }
+  return std::none_of(first + 1, second,
+                      [&](const Spec& spec) { return spec.has(i); });
+}
+
 bool Visible(doc_id_t doc) noexcept { return doc % 3 != 0; }
 
 class EveryThirdOut final : public irs::detail::TableFilter {
@@ -142,9 +161,20 @@ irs::TermClause Clause(std::string_view value) {
           .term = irs::bstring{irs::ViewCast<irs::byte_type>(value)}};
 }
 
+irs::Filter::ptr PhraseOf(const Phrase& phrase) {
+  auto filter = std::make_unique<irs::ByPhrase>();
+  *filter->mutable_field_id() = kBodyId;
+  for (const auto term : {phrase.first, phrase.second}) {
+    filter->mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::bstring{irs::ViewCast<irs::byte_type>(term)};
+  }
+  return filter;
+}
+
 struct Shape {
   std::vector<std::string_view> must;
   std::vector<std::string_view> must_not;
+  std::vector<Phrase> must_not_phrases;
 };
 
 class BooleanWindowTest : public tests::IndexTestBase {
@@ -170,7 +200,8 @@ class BooleanWindowTest : public tests::IndexTestBase {
 
   void Check(const Shape& shape) {
     SCOPED_TRACE(absl::StrCat("+", absl::StrJoin(shape.must, " +"), " -",
-                              absl::StrJoin(shape.must_not, " -")));
+                              absl::StrJoin(shape.must_not, " -"), " phrases ",
+                              shape.must_not_phrases.size()));
     irs::BooleanFilter filter;
     for (const auto term : shape.must) {
       filter.Add(Clause(term), irs::Occur::Must);
@@ -178,11 +209,15 @@ class BooleanWindowTest : public tests::IndexTestBase {
     for (const auto term : shape.must_not) {
       filter.Add(Clause(term), irs::Occur::MustNot);
     }
+    for (const auto& phrase : shape.must_not_phrases) {
+      filter.Add(PhraseOf(phrase), irs::Occur::MustNot);
+    }
     std::vector<doc_id_t> expected;
     for (doc_id_t i = 0; i != kDocs; ++i) {
-      const auto has = [&](std::string_view term) { return Has(term, i); };
+      const auto has = [&](const auto& clause) { return Has(clause, i); };
       if (absl::c_all_of(shape.must, has) &&
-          absl::c_none_of(shape.must_not, has)) {
+          absl::c_none_of(shape.must_not, has) &&
+          absl::c_none_of(shape.must_not_phrases, has)) {
         expected.push_back(irs::doc_limits::min() + i);
       }
     }
@@ -314,6 +349,72 @@ TEST_P(BooleanWindowTest, exclusions) {
          {{"mid", "half"}, {"sparse"}},
        }) {
     Check(shape);
+  }
+}
+
+TEST_P(BooleanWindowTest, phrase_exclusions) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {{"cluster"}, {}, {{"half", "dense"}}},
+         {{"cluster"}, {}, {{"mid", "cluster"}}},
+         {{"sparse"}, {}, {{"dense", "mid"}}},
+         {{"mid", "half"}, {}, {{"dense", "mid"}}},
+         {{"cluster", "dense"},
+          {"rare"},
+          {{"half", "dense"}, {"mid", "sparse"}}},
+       }) {
+    Check(shape);
+  }
+}
+
+TEST_P(BooleanWindowTest, sifting_leaves_the_next_window_intact) {
+  Build();
+  auto reader = open_reader();
+  ASSERT_EQ(1, reader.size());
+  const Phrase phrase{"half", "dense"};
+  auto filter = PhraseOf(phrase);
+  auto query = irs::PrepareMasked(*filter, reader[0], {});
+  ASSERT_NE(nullptr, query);
+  const auto member = [&](doc_id_t doc) {
+    return Has(phrase, doc - irs::doc_limits::min());
+  };
+  const auto batch = [](doc_id_t from, doc_id_t to, doc_id_t step) {
+    std::vector<doc_id_t> docs;
+    for (auto doc = from; doc < to; doc += step) {
+      docs.push_back(doc);
+    }
+    return docs;
+  };
+  for (const bool keep : {false, true}) {
+    SCOPED_TRACE(keep);
+    auto node = query->PlanFill({}, irs::ScoreMergeType::Noop);
+    ASSERT_NE(nullptr, node);
+    doc_id_t from = irs::doc_limits::min();
+    for (const doc_id_t step : {7, 3, 11}) {
+      auto docs = batch(from, from + 20000, step);
+      const auto last = docs.back();
+      std::vector<doc_id_t> expected;
+      for (const auto doc : docs) {
+        if (member(doc) == keep) {
+          expected.push_back(doc);
+        }
+      }
+      const auto n = keep ? node->Keep(docs.data(), docs.size(), docs.data())
+                          : node->Drop(docs.data(), docs.size(), docs.data());
+      docs.resize(n);
+      ASSERT_EQ(expected, docs);
+
+      const auto min = last + 1;
+      const auto max = min + irs::detail::kWindowDocs;
+      uint64_t words[irs::detail::kWindowWords]{};
+      node->FillOr(min, max, words);
+      for (auto doc = min; doc != max; ++doc) {
+        const auto offset = doc - min;
+        ASSERT_EQ(member(doc), irs::CheckBit(words[offset / 64], offset % 64))
+          << doc;
+      }
+      from = max;
+    }
   }
 }
 

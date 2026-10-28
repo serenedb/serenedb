@@ -42,6 +42,18 @@ TEST(HugePageAllocatorTest, GrowthAcrossHugePageKeepsContents) {
   }
 }
 
+TEST(HugePageAllocatorTest, ValuesGivenAreConstructed) {
+  irs::HugePageVector<uint32_t> v(kHugePage, 5);
+  EXPECT_EQ(5, v.front());
+  EXPECT_EQ(5, v.back());
+  v.assign(3, 9);
+  EXPECT_EQ((irs::HugePageVector<uint32_t>{9, 9, 9}), v);
+  v.resize(kHugePage, 4);
+  EXPECT_EQ(9, v[2]);
+  EXPECT_EQ(4, v[3]);
+  EXPECT_EQ(4, v.back());
+}
+
 #ifdef __linux__
 TEST(HugePageAllocatorTest, LargeArraysStartOnHugePage) {
   irs::HugePageVector<uint8_t> large(kHugePage, 1);

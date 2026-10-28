@@ -21,12 +21,10 @@
 #pragma once
 
 #include <cstddef>
-#include <memory>
+#include <new>
 #include <vector>
 
 namespace irs {
-
-#ifdef __linux__
 
 void* AllocateHugePages(size_t bytes);
 void FreeHugePages(void* p, size_t bytes) noexcept;
@@ -48,16 +46,14 @@ struct HugePageAllocator {
 
   void deallocate(T* p, size_t n) noexcept { FreeHugePages(p, n * sizeof(T)); }
 
+  template<typename U>
+  void construct(U* p) {
+    ::new (static_cast<void*>(p)) U;
+  }
+
   friend bool operator==(const HugePageAllocator&,
                          const HugePageAllocator&) = default;
 };
-
-#else
-
-template<typename T>
-using HugePageAllocator = std::allocator<T>;
-
-#endif
 
 template<typename T>
 using HugePageVector = std::vector<T, HugePageAllocator<T>>;

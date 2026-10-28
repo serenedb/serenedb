@@ -41,7 +41,7 @@ EXCLUDED_ROOTS = {
     REPO_ROOT / "out",
     REPO_ROOT / "logs",
     REPO_ROOT / "serenedb-data",
-    REPO_ROOT / "serene-ui" / "node_modules",
+    REPO_ROOT / "apps" / "serene-ui" / "node_modules",
 }
 
 SRC_EXTS = {".cpp", ".cc", ".cxx", ".c"}

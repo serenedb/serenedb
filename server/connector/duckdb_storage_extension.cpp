@@ -25,6 +25,7 @@
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -36,7 +37,6 @@
 #include <duckdb/storage/table/index_entry.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <filesystem>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>

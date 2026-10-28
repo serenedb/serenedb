@@ -33,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
 #include "search/search_table_changes.h"
 
@@ -129,15 +130,21 @@ class SearchTableTransaction {
                          const duckdb::Identifier& table_name,
                          bool clears_shard);
 
+  struct PinnedSearchTable {
+    std::shared_ptr<irs::DirectoryReader> reader;
+    std::shared_ptr<const catalog::InvertedIndexConfig> config;
+  };
+
   template<typename Factory>
-  std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(
-    duckdb::idx_t database_id, duckdb::idx_t shard_id, Factory&& make_reader) {
-    auto& reader =
+  const PinnedSearchTable& EnsureSearchTable(duckdb::idx_t database_id,
+                                             duckdb::idx_t shard_id,
+                                             Factory&& make) {
+    auto& pinned =
       _readers.try_emplace(std::pair{database_id, shard_id}).first->second;
-    if (!reader) {
-      reader = std::make_shared<irs::DirectoryReader>(make_reader());
+    if (!pinned.reader) {
+      pinned = make();
     }
-    return reader;
+    return pinned;
   }
 
   bool Empty() const noexcept { return _writes.empty(); }
@@ -173,7 +180,7 @@ class SearchTableTransaction {
 
   irs::containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
-                               std::shared_ptr<irs::DirectoryReader>>
+                               PinnedSearchTable>
     _readers;
   LocalTableChanges _changes;
 };

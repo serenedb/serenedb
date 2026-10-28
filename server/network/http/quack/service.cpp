@@ -32,11 +32,11 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/read_stream.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <functional>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -189,6 +189,7 @@ class Session final : public TransportBase,
                                  _task->Account());
     _conn = std::move(sql.conn);
     _ctx = std::move(sql.context);
+    _progress = std::move(sql.progress);
     std::move(unregister).Cancel();
   }
 
@@ -302,6 +303,7 @@ class Session final : public TransportBase,
   const uint64_t _cancel_key;
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _ctx;
+  sdb::pg::ProgressRegistration _progress;
   absl::Mutex _mu;
   std::deque<duckdb::unique_ptr<duckdb::QuackStatementRunner>> _queue
     ABSL_GUARDED_BY(_mu);

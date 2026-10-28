@@ -1,0 +1,417 @@
+# A transaction that changes a search table's indexes or definition holds the
+# table until it ends: another transaction's CREATE [OR REPLACE] INDEX, DROP
+# INDEX, ALTER TABLE or DROP TABLE on it is refused meanwhile. Reads, writes
+# and other tables go on.
+
+statement ok
+CREATE TABLE lc (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+INSERT INTO lc SELECT i, 'fox ' || i FROM generate_series(1, 200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) lc
+
+
+statement ok
+CREATE INDEX lc_x ON lc USING inverted (body)
+
+
+# --- CREATE INDEX holds the table until COMMIT ---
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement ok
+CREATE INDEX lc_a ON lc USING inverted (body, id)
+
+
+connection b
+statement error
+CREATE INDEX lc_b ON lc USING inverted (id)
+----
+db error: ERROR: search table "lc" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection b
+statement error
+CREATE OR REPLACE INDEX lc_x ON lc USING inverted (body, id)
+----
+db error: ERROR: search table "lc" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection b
+statement error
+DROP INDEX lc_x
+----
+db error: ERROR: search table "lc" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection b
+statement error
+ALTER TABLE lc SET (refresh_interval = 500)
+----
+db error: ERROR: search table "lc" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection b
+statement error
+DROP TABLE lc
+----
+db error: ERROR: search table "lc" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection b
+statement ok
+INSERT INTO lc VALUES (1001, 'wolf')
+
+
+connection b
+statement ok
+VACUUM (REFRESH_TABLE) lc
+
+
+connection b
+query
+SELECT count(*) AS n FROM lc
+----
+n
+201
+
+
+connection b
+statement ok
+CREATE TABLE lc_other (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search')
+
+
+connection b
+statement ok
+CREATE INDEX lc_other_idx ON lc_other USING inverted (body)
+
+
+connection a
+statement ok
+COMMIT
+
+
+connection b
+statement ok
+CREATE INDEX lc_b ON lc USING inverted (id)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) lc
+
+
+query
+SELECT (SELECT count(*) FROM lc_a WHERE body = 'wolf') AS wolf_a,
+       (SELECT count(*) FROM lc_b WHERE id = 1001) AS wolf_b,
+       (SELECT count(*) FROM lc_x WHERE body = 'fox 7') AS fox_x
+----
+wolf_a	wolf_b	fox_x
+1	1	1
+
+
+# --- ROLLBACK releases it, and the replaced index keeps its definition ---
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement ok
+CREATE OR REPLACE INDEX lc_x ON lc USING inverted (body, id)
+
+
+connection b
+statement error
+CREATE INDEX lc_c ON lc USING inverted (body)
+----
+db error: ERROR: search table "lc" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection a
+statement ok
+ROLLBACK
+
+
+connection b
+statement ok
+CREATE INDEX lc_c ON lc USING inverted (body)
+
+
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'lc_x'
+----
+def
+CREATE INDEX lc_x ON public.lc USING inverted (body)
+
+
+query
+SELECT count(*) AS n FROM lc_x WHERE body = 'fox 7'
+----
+n
+1
+
+
+# --- ALTER TABLE holds it ---
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement ok
+ALTER TABLE lc SET (refresh_interval = 700)
+
+
+connection b
+statement error
+CREATE INDEX lc_d ON lc USING inverted (body)
+----
+db error: ERROR: search table "lc" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection b
+statement error
+ALTER TABLE lc SET (refresh_interval = 900)
+----
+db error: ERROR: search table "lc" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection a
+statement ok
+COMMIT
+
+
+query
+SELECT reloptions[1] AS refresh FROM pg_class WHERE relname = 'lc'
+----
+refresh
+refresh_interval=700
+
+
+# --- DROP INDEX holds it ---
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement ok
+DROP INDEX lc_c
+
+
+connection b
+statement error
+CREATE INDEX lc_e ON lc USING inverted (body)
+----
+db error: ERROR: search table "lc" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection a
+statement ok
+COMMIT
+
+
+connection b
+statement ok
+CREATE INDEX lc_e ON lc USING inverted (body)
+
+
+# --- One transaction makes several changes ---
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement ok
+CREATE INDEX lc_f ON lc USING inverted (body)
+
+
+connection a
+statement ok
+CREATE OR REPLACE INDEX lc_f ON lc USING inverted (body, id)
+
+
+connection a
+statement ok
+ALTER TABLE lc SET (refresh_interval = 800)
+
+
+connection a
+statement ok
+DROP INDEX lc_e
+
+
+connection a
+statement ok
+COMMIT
+
+
+# --- A failed statement keeps the table held until the transaction ends ---
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement error
+CREATE INDEX lc_bad ON lc USING inverted ((body::INT))
+----
+db error: ERROR: Could not convert string <slt:ignore> to INT32
+
+
+connection b
+statement error
+CREATE INDEX lc_g ON lc USING inverted (body)
+----
+db error: ERROR: search table "lc" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection a
+statement ok
+ROLLBACK
+
+
+connection b
+statement ok
+CREATE INDEX lc_g ON lc USING inverted (body)
+
+
+# --- A statement outside a transaction block holds it only while it runs ---
+
+connection a
+statement ok
+CREATE INDEX lc_h ON lc USING inverted (body)
+
+
+connection b
+statement ok
+CREATE INDEX lc_i ON lc USING inverted (body)
+
+
+query
+SELECT string_agg(indexname, ',' ORDER BY indexname) AS indexes FROM pg_indexes WHERE tablename = 'lc'
+----
+indexes
+lc_a,lc_b,lc_f,lc_g,lc_h,lc_i,lc_pkey,lc_x
+
+
+statement ok
+VACUUM (REFRESH_TABLE) lc
+
+
+query
+SELECT (SELECT count(*) FROM lc_f WHERE body = 'wolf') AS f,
+       (SELECT count(*) FROM lc_g WHERE body = 'wolf') AS g,
+       (SELECT count(*) FROM lc_i WHERE body = 'fox 9') AS i
+----
+f	g	i
+1	1	1
+
+
+# --- A cascaded drop is held like a direct one ---
+
+statement ok
+CREATE SCHEMA lcs
+
+
+statement ok
+CREATE TABLE lcs.t (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search')
+
+
+statement ok
+CREATE INDEX lcs_t_x ON lcs.t USING inverted (body)
+
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement ok
+CREATE INDEX lcs_t_a ON lcs.t USING inverted (id)
+
+
+connection b
+statement error
+DROP SCHEMA lcs CASCADE
+----
+db error: ERROR: search table "t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection a
+statement ok
+COMMIT
+
+
+connection b
+statement ok
+DROP SCHEMA lcs CASCADE
+
+
+# --- CREATE INDEX IF NOT EXISTS of a taken name does not hold the table ---
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement ok
+CREATE INDEX lc_j ON lc USING inverted (body)
+
+
+connection b
+statement ok
+CREATE INDEX IF NOT EXISTS lc_x ON lc USING inverted (body, id)
+
+
+connection a
+statement ok
+COMMIT
+
+
+connection b
+statement ok
+BEGIN
+
+
+connection b
+statement ok
+CREATE INDEX IF NOT EXISTS lc_x ON lc USING inverted (body, id)
+
+
+connection a
+statement ok
+CREATE INDEX lc_k ON lc USING inverted (body)
+
+
+connection b
+statement ok
+COMMIT

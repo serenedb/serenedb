@@ -1,3 +1,4 @@
+import glob
 import hashlib
 import os
 import re
@@ -5,9 +6,8 @@ import subprocess
 import sys
 
 PLACEHOLDER = "<recorded>"
+PART = "<part>"
 KEY_WIDTH = 16
-SQL_WIDTH = 100
-LITERAL_WIDTH = 24
 NEW_ERRORS = "SDB_RECORD_NEW_ERRORS"
 
 
@@ -54,6 +54,35 @@ def write(path, text):
     os.replace(temp, path)
 
 
+def parts(text):
+    return re.split(rf"^{re.escape(PART)}\n\n", text, flags=re.M)
+
+
+def part_path(target, k):
+    return f"{target[:-len('.gen.test')]}.{k}.gen.test"
+
+
+def written(target):
+    stem = target[:-len(".gen.test")]
+    found = [path for path in glob.glob(f"{glob.escape(stem)}.*.gen.test")
+             if path[len(stem) + 1:-len(".gen.test")].isdigit()]
+    return found + ([target] if os.path.exists(target) else [])
+
+
+def assembled(text, target):
+    pieces = parts(text)
+    if len(pieces) == 1:
+        with open(target) as f:
+            return f.read()
+    setup = len(blocks(pieces[0]))
+    out = []
+    for k in range(1, len(pieces)):
+        with open(part_path(target, k)) as f:
+            got = blocks(f.read())
+        out += (got[:setup] if k == 1 else []) + [[PART]] + got[setup:]
+    return join(out)
+
+
 def escape(text):
     return text.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t")
 
@@ -61,23 +90,6 @@ def escape(text):
 def unescape(text):
     return re.sub(r"\\(.)", lambda m: {"n": "\n", "t": "\t"}.get(m[1], m[1]),
                   text)
-
-
-def excerpts(sqls):
-    queries = [sql.replace("\n", " ").replace("\t", " ") for sql in sqls]
-    prefix = os.path.commonprefix(queries) if len(queries) > 1 else ""
-    while prefix and (prefix.count("'") % 2 or not prefix.endswith(" ")):
-        prefix = prefix[:-1]
-    out = []
-    for sql in queries:
-        parts = sql[len(prefix):].split("'")
-        parts[1::2] = [part if len(part) <= LITERAL_WIDTH
-                       else part[:LITERAL_WIDTH - 3] + "..."
-                       for part in parts[1::2]]
-        sql = "'".join(parts)
-        out.append(sql if len(sql) <= SQL_WIDTH
-                   else sql[:SQL_WIDTH - 3] + "...")
-    return out
 
 
 def load(path):
@@ -90,11 +102,11 @@ def load(path):
     for line in lines:
         if not line:
             continue
-        key, _, rest = line.split("\t", 2)
+        key, _, rest = line.partition("\t")
         if rest.startswith("error\t"):
             records[key] = ("error", unescape(rest[len("error\t"):]))
         else:
-            records[key] = ("values", rest.split(" "))
+            records[key] = ("values", rest.split("\t"))
     return records
 
 
@@ -157,9 +169,13 @@ def record(text, overridden, target):
             value = cells[j] if j < len(cells) else ""
             if value == PLACEHOLDER:
                 return None
-            if not value or len(value.split()) != 1:
-                sys.exit(f"{target} can't record {value!r} at {expected[1]}")
+            if not value:
+                sys.exit(f"{target} can't record an empty value at "
+                         f"{expected[1]}")
             values.append(value)
+        if len(values) > 1 and values[0] == "error":
+            sys.exit(f"{target} can't record 'error' as the first of "
+                     f"several values at {expected[1]}")
         records[key] = ("values", values)
     return records
 
@@ -173,29 +189,44 @@ def generate(generator):
                           stdout=subprocess.PIPE, text=True).stdout
 
 
+def show(generator, keys):
+    records = load(generator[:-len(".py")] + ".recorded")
+    for key, sql in recorded(generate(generator)):
+        if keys and key not in keys:
+            continue
+        kind, value = records.get(key, ("missing", None))
+        answer = ("not recorded" if kind == "missing" else
+                  f"error: {value}" if kind == "error" else "\t".join(value))
+        print(f"{key}\t{answer}\n{sql}\n")
+
+
 def main(command, generator, target):
     text = generate(generator)
     path = generator[:-len(".py")] + ".recorded"
     if command == "write":
         filled, missing = fill(text, load(path))
-        write(target, filled)
+        pieces = parts(filled)
+        outputs = ({target: filled} if len(pieces) == 1 else
+                   {part_path(target, k): pieces[0] + body
+                    for k, body in enumerate(pieces[1:], 1)})
+        for stale in set(written(target)) - set(outputs):
+            os.remove(stale)
+        for out, content in outputs.items():
+            write(out, content)
         if missing:
             print(f"{target}: {missing} queries have no value in {path}, "
-                  "record them with run.sh --override", file=sys.stderr)
+                  "record them with scripts/ci/test.py --override", file=sys.stderr)
         return
     if not any(spots(block) for block in blocks(text)):
         return
-    with open(target) as f:
-        records = record(text, f.read(), target)
+    records = record(text, assembled(text, target), target)
     if records is None:
         print(f"{target} wasn't overridden, {path} is unchanged",
               file=sys.stderr)
         return
-    queries = recorded(text)
-    shown = dict(zip((key for key, _ in queries),
-                     excerpts([sql for _, sql in queries])))
+    queries = dict(recorded(text))
     previous = load(path)
-    fresh = [f"{key}\t{shown[key]}\n  {value}"
+    fresh = [f"{key}\t{queries[key]}\n  {value}"
              for key, (kind, value) in records.items()
              if kind == "error" and previous.get(key) != (kind, value)]
     if fresh and os.environ.get(NEW_ERRORS) != "1":
@@ -205,10 +236,13 @@ def main(command, generator, target):
     lines = []
     for key, (kind, value) in records.items():
         rest = (f"error\t{escape(value)}" if kind == "error"
-                else " ".join(value))
-        lines.append(f"{key}\t{shown[key]}\t{rest}")
+                else "\t".join(value))
+        lines.append(f"{key}\t{rest}")
     write(path, "\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:])
+    if sys.argv[1] == "show":
+        show(sys.argv[2], set(sys.argv[3:]))
+    else:
+        main(*sys.argv[1:])

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from serened import reserve_port
 
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
@@ -35,12 +36,6 @@ _CLEAN_EXITS = (0, -15) + ((66,) if os.environ.get("TSAN_OPTIONS") else ())
 
 ENDLESS = "SELECT count(*) FROM range(10000000000000) a"
 BEARER = "quack-test-bearer-token"
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def _wait_tcp(port: int, deadline: float) -> None:
@@ -67,8 +62,21 @@ def _connect(port: int, deadline: float) -> psycopg.Connection:
             time.sleep(0.2)
 
 
+class Ports:
+    def __init__(self, count: int):
+        self.reserved = [reserve_port() for _ in range(count)]
+
+    def __iter__(self):
+        return (sock.getsockname()[1] for sock in self.reserved)
+
+    def close(self) -> None:
+        for sock in self.reserved:
+            sock.close()
+
+
 class Server:
-    def __init__(self, path: Path, listen: str, *flags: str):
+    def __init__(self, path: Path, ports: Ports, listen: str, *flags: str):
+        self.ports = ports
         self.proc = subprocess.Popen(
             [SERENED_BIN, str(path), f"--listen={listen}", *flags],
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
@@ -77,18 +85,21 @@ class Server:
     def stop(self) -> None:
         self.proc.terminate()
         _, stderr = self.proc.communicate(timeout=60)
+        self.ports.close()
         assert self.proc.returncode in _CLEAN_EXITS, stderr.decode(
             errors="replace")
 
 
 @pytest.fixture(scope="module")
 def servers(tmp_path_factory: pytest.TempPathFactory):
-    pg_a, pg_b, quack_b = _free_port(), _free_port(), _free_port()
-    b = Server(tmp_path_factory.mktemp("b"),
+    ports_b, ports_a = Ports(2), Ports(1)
+    (pg_b, quack_b), (pg_a,) = ports_b, ports_a
+    b = Server(tmp_path_factory.mktemp("b"), ports_b,
                f"postgres://127.0.0.1:{pg_b},"
                f"http://127.0.0.1:{quack_b}?api=quack",
                "--http_body_timeout=1s", f"--auth_bearer_token={BEARER}")
-    a = Server(tmp_path_factory.mktemp("a"), f"postgres://127.0.0.1:{pg_a}")
+    a = Server(tmp_path_factory.mktemp("a"), ports_a,
+               f"postgres://127.0.0.1:{pg_a}")
     try:
         deadline = time.monotonic() + 60
         conn_b = _connect(pg_b, deadline)
@@ -201,8 +212,9 @@ def test_no_self_connection(servers) -> None:
 
 
 def test_no_self_connection_on_every_interface(tmp_path: Path) -> None:
-    pg_port, quack_port = _free_port(), _free_port()
-    server = Server(tmp_path, f"postgres://127.0.0.1:{pg_port},"
+    ports = Ports(2)
+    pg_port, quack_port = ports
+    server = Server(tmp_path, ports, f"postgres://127.0.0.1:{pg_port},"
                     f"http://0.0.0.0:{quack_port}?api=quack")
     try:
         with _connect(pg_port, time.monotonic() + 60) as conn:
@@ -567,16 +579,16 @@ def test_heartbeat_keeps_the_session(servers) -> None:
         conn_a.execute("DETACH hb")
 
 
+@pytest.mark.faults
 def test_remote_statement_leaves_the_worker_free(servers,
                                                 tmp_path: Path) -> None:
     _, conn_b, quack_b, _ = servers
     # B answers a PREPARE only once its rows are there, as a DuckDB server does
-    try:
-        conn_b.execute("SET sdb_faults = 'quack_prepare_answers_late'")
-    except psycopg.Error:
-        pytest.skip("needs SDB_FAULT_INJECTION")
-    pg_c = _free_port()
-    c = Server(tmp_path, f"postgres://127.0.0.1:{pg_c}", "--cpu_threads=1")
+    conn_b.execute("SET sdb_faults = 'quack_prepare_answers_late'")
+    ports = Ports(1)
+    (pg_c,) = ports
+    c = Server(tmp_path, ports, f"postgres://127.0.0.1:{pg_c}",
+               "--cpu_threads=1")
     try:
         deadline = time.monotonic() + 60
         with _connect(pg_c, deadline) as slow, _connect(pg_c, deadline) as fast:
@@ -604,8 +616,9 @@ def test_remote_statement_leaves_the_worker_free(servers,
 def test_lease_limit(servers, tmp_path: Path) -> None:
     _, conn_b, quack_b, _ = servers
     conn_b.execute("SET quack_max_heartbeat_timeout = 2")
-    pg_c = _free_port()
-    c = Server(tmp_path, f"postgres://127.0.0.1:{pg_c}")
+    ports = Ports(1)
+    (pg_c,) = ports
+    c = Server(tmp_path, ports, f"postgres://127.0.0.1:{pg_c}")
     try:
         with _connect(pg_c, time.monotonic() + 60) as conn_c:
             conn_c.execute(f"ATTACH 'quack:127.0.0.1:{quack_b}' AS b "

@@ -31,6 +31,7 @@
 #include <cstring>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
@@ -39,7 +40,6 @@
 #include <duckdb/parser/statement/multi_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
@@ -487,6 +487,7 @@ bool PgWireSession<Kind>::SetupConnection() {
     static_cast<int32_t>(_cancel_key >> 32), _cancel);
   _client_state =
     &connector::SereneDBClientState::Register(*_conn->context, _connection_ctx);
+  _progress = sdb::pg::ProgressRegistration{_client_state->progress_source};
   _client_state->protocol_state = &_proto;
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
   client_config.get_result_collector = MakeWireCollector;
@@ -1822,6 +1823,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
         co_return {};
       }
       co_await publish();
+      batches.Flush();
       co_await WaitCopyInput();
     }
     std::array<uint8_t, kHeader> head;
@@ -1853,6 +1855,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
             co_return {};
           }
           co_await publish();
+          batches.Flush();
           co_await WaitCopyInput();
         }
         const std::string_view chunk = this->_recv.Front();

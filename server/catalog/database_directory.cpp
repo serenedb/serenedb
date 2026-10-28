@@ -27,8 +27,8 @@
 
 #include <cerrno>
 #include <cstring>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>

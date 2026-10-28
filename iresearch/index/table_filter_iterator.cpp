@@ -279,9 +279,9 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
       row.chunk = &states.Chunk(context, *spec.filter, spec.row_types);
       for (const auto field : spec.row_fields) {
         const auto* column = col_reader.Column(field);
+        SDB_ASSERT(column);
         row.readers.push_back(column);
-        row.scans.push_back(column ? column->InitScan(ctx)
-                                   : irs::ColumnReader::ScanState{});
+        row.scans.push_back(column->InitScan(ctx));
       }
       row.points.resize(row.readers.size());
       row.leaves = spec.row_leaves;
@@ -607,9 +607,7 @@ duckdb::idx_t ColFilterChain::FilterRows(uint64_t anchor, duckdb::idx_t span,
     for (size_t j = 0; j < row.readers.size(); ++j) {
       auto& vector = chunk.data[j];
       const auto* reader = row.readers[j];
-      if (!reader) {
-        duckdb::FlatVector::ValidityMutable(vector).SetAllInvalid(survivors);
-      } else if (span <= STANDARD_VECTOR_SIZE) {
+      if (span <= STANDARD_VECTOR_SIZE) {
         reader->GatherDense(row.scans[j], anchor, sel, survivors, span, vector);
       } else {
         reader->GatherScatter(row.scans[j], anchor, sel, survivors, vector, 0);
@@ -634,10 +632,6 @@ bool ColFilterChain::AdmitRows(uint64_t row) {
     for (size_t j = 0; j < r.readers.size(); ++j) {
       auto& vector = chunk.data[j];
       const auto* reader = r.readers[j];
-      if (!reader) {
-        duckdb::FlatVector::SetNull(vector, 0, true);
-        continue;
-      }
       if (!r.points[j]) {
         r.points[j] = std::make_unique<irs::ColumnReader::PointReader>(
           *_col_reader, *reader);
@@ -708,7 +702,10 @@ detail::PointRead ColFilterChain::PointReads() const noexcept {
   }
   for (const auto& r : _rows) {
     for (const auto* reader : r.readers) {
-      if (reader && zstd(*reader)) {
+      if (reader->Type().IsNested()) {
+        return detail::PointRead::None;
+      }
+      if (zstd(*reader)) {
         read = detail::PointRead::Vector;
       }
     }
@@ -905,9 +902,7 @@ void ColFilterChain::Rewind(irs::ReadContext& ctx) {
   }
   for (auto& r : _rows) {
     for (size_t j = 0; j < r.readers.size(); ++j) {
-      if (r.readers[j]) {
-        r.scans[j] = r.readers[j]->InitScan(ctx);
-      }
+      r.scans[j] = r.readers[j]->InitScan(ctx);
     }
   }
 }

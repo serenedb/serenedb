@@ -460,6 +460,7 @@ class PgWireSession
   // Owned by _conn's registered_state; cached here to skip the keyed registry
   // lookup on every query. Valid for the connection's lifetime.
   connector::SereneDBClientState* _client_state = nullptr;
+  sdb::pg::ProgressRegistration _progress;
   // Reused across queries (Reset per query); see MakeWireContext.
   std::shared_ptr<WireSinkContext> _wire_ctx;
   // True while a COPY FROM STDIN feeder owns the recv consumer role: RecvLoop

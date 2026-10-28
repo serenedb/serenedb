@@ -139,8 +139,6 @@ class IvfWriter final : public AnnWriter {
 
   AnnKind Kind() const noexcept final { return AnnKind::Ivf; }
 
-  field_id ColumnId() const noexcept final { return _info.centroids_id; }
-
   bool Empty() const noexcept final { return !_built; }
 
   yaclib::Task<> Compute(const ColumnReader& col, ReadContext& ctx,
@@ -155,7 +153,6 @@ class IvfWriter final : public AnnWriter {
 
  private:
   struct Result {
-    field_id postings_id;
     std::unique_ptr<QuantizerWriter> qw;
     BuiltIvf data;
   };

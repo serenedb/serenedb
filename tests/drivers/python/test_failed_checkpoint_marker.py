@@ -22,10 +22,13 @@ def _have_binary() -> bool:
     return Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)
 
 
-pytestmark = pytest.mark.skipif(
-    not _have_binary(),
-    reason=f"serened binary not found or not executable: {SERENED_BIN}",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not _have_binary(),
+        reason=f"serened binary not found or not executable: {SERENED_BIN}",
+    ),
+    pytest.mark.faults,
+]
 
 
 def _connect(server: Serened) -> psycopg.Connection:
@@ -53,7 +56,7 @@ def test_failed_checkpoint_marker_survives_second_crash(tmp_path: Path) -> None:
             papich.execute("BEGIN")
             papich.execute("SELECT count(*) FROM donsimon_runs").fetchone()
             pudge.execute("INSERT INTO donsimon_runs VALUES (800, 'second')")
-            pudge.execute("SET debug_checkpoint_sleep_ms = 4000")
+            pudge.execute("SET sdb_faults = 'pause_checkpoint'")
 
             def checkpoint() -> None:
                 try:
@@ -64,10 +67,15 @@ def test_failed_checkpoint_marker_survives_second_crash(tmp_path: Path) -> None:
 
             checkpointer = threading.Thread(target=checkpoint, daemon=True)
             checkpointer.start()
-            time.sleep(0.6)
-            started = time.monotonic()
+            deadline = time.monotonic() + 30
+            while True:
+                try:
+                    pudge.execute("SET sdb_faults = '-pause_checkpoint:parked'")
+                    break
+                except psycopg.Error:
+                    assert time.monotonic() < deadline, "the CHECKPOINT never parked"
+                    time.sleep(0.05)
             pudge.execute("INSERT INTO donsimon_runs SELECT i, 'during' FROM range(801, 900) r(i)")
-            assert time.monotonic() - started < 2.0
             server.kill()
             checkpointer.join()
         finally:

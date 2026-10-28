@@ -76,7 +76,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mt_s
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -119,7 +119,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mt_s
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -162,7 +162,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mt_s
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -193,7 +193,7 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(101, 110) s(i)
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -222,7 +222,7 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(111, 120) s(i)
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -251,7 +251,7 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(121, 130) s(i)
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -321,7 +321,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mt_t
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -364,7 +364,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mt_t
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -407,7 +407,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mt_t
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -438,7 +438,7 @@ statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(101, 110) s(i)
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -467,7 +467,7 @@ statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(111, 120) s(i)
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -496,7 +496,7 @@ statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(121, 130) s(i)
 
 
-sleep 1s
+sleep 300ms
 
 
 query

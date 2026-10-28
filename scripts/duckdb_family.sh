@@ -45,6 +45,21 @@
 #   --check compares with the existing regen: commit, or, when HEAD is not one, checks that the
 #   generators change nothing.
 #
+# scripts/duckdb_family.sh fetch [<rev>]
+#   Fetches what checking a change against <rev> (default: the merge base with origin/main) needs, by
+#   SHA from the .gitmodules URLs: every submodule whose gitlink HEAD moves, with the first-parent
+#   commits down to <rev>'s gitlink when it is among them, and, when the change moves a gitlink or
+#   touches duckdb_clickhouse, duckdb, whose format.py, Makefile and generators the checks run. A
+#   submodule that is not checked out is checked out at HEAD's gitlink; one that is gets only the
+#   commits it lacks.
+#
+# scripts/duckdb_family.sh check [<rev>]
+#   Fetches as fetch does, then checks the fork commits the change's gitlinks move over, as CI's
+#   pre-commit job does: every first-parent one is formatted on its own (format --check --range), and
+#   duckdb's regen: commit is current (regen --check, with duckdb at HEAD's gitlink). A gitlink that
+#   moves to a commit not descending from the old one, as a DuckDB update does, gets no range check:
+#   tests/duckdb/README.md checks an update's series.
+#
 # Tools live under ~/.cache/serenedb-duckdb: DuckDB's Makefile creates its format venv (clang_format
 # 11.0.1, black 24, cmake-format), its capigen venv and the generator dependencies there, the format
 # venv gets the typos version of the Makefile's spell_tools target, and uv, which capi_v2_regen.sh
@@ -52,6 +67,7 @@
 
 set -euo pipefail
 
+SELF=$(realpath "${BASH_SOURCE[0]}")
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 THIRD_PARTY="$REPO_ROOT/third_party"
 DUCKDB="$THIRD_PARTY/duckdb"
@@ -168,19 +184,17 @@ format_dir() {
 		done
 		return $status
 	elif is_intree "$dir"; then
-		local files status=0 file
+		local revision=HEAD
 		if [[ "$scope" == staged ]]; then
-			files=$(git -C "$REPO_ROOT" diff --cached --name-only --diff-filter=d --relative="third_party/$dir" HEAD)
-		else
-			files=$({
-				git -C "$REPO_ROOT" diff --name-only --diff-filter=d --relative="third_party/$dir" HEAD
-				git -C "$path" ls-files --others --exclude-standard
-			} | sort -u)
+			if git -C "$REPO_ROOT" diff --cached --quiet HEAD -- "third_party/$dir"; then
+				return 0
+			fi
+			revision=--staged
+		elif git -C "$REPO_ROOT" diff --quiet HEAD -- "third_party/$dir"; then
+			return 0
 		fi
-		for file in $files; do
-			run_format_py "$dir" "$path" "$file" "${action[@]}" || status=1
-		done
-		return $status
+		GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.relative GIT_CONFIG_VALUE_0=true \
+			run_format_py "$dir" "$path" "$revision" "${action[@]}"
 	elif [[ "$scope" == staged ]]; then
 		if [[ -z "$(git -C "$path" diff --cached --name-only)" ]]; then
 			return 0
@@ -356,12 +370,119 @@ regen() {
 	git -C "$DUCKDB" log -1 --stat --format='%h %s' "$commit" | tail -n 3
 }
 
+gitlink() {
+	git -C "$REPO_ROOT" ls-tree "$1" -- "third_party/$2" | awk '$1 == "160000" { print $3 }'
+}
+
+first_parent_depth() {
+	local probe
+	probe=$(mktemp -d)
+	trap "rm -rf '$probe'" EXIT
+	git -C "$probe" init -q
+	git -C "$probe" fetch -q --no-tags --filter=tree:0 --depth=512 "$1" "$3" || die "cannot fetch $3 from $1"
+	git -C "$probe" rev-list --first-parent "$3" | awk -v old="$2" '$0 == old { print NR }'
+}
+
+fetch_dir() {
+	local dir=$1 new=$2 old=${3:-}
+	local path="$THIRD_PARTY/$dir" url depth=1 checkout=""
+	url=$(git -C "$REPO_ROOT" config -f .gitmodules --get "submodule.third_party/$dir.url") ||
+		die "third_party/$dir has no url in .gitmodules"
+	if [[ ! -e "$path/.git" ]]; then
+		mkdir -p "$path"
+		git -C "$path" init -q
+	fi
+	if ! git -C "$path" rev-parse --verify --quiet HEAD >/dev/null; then
+		checkout=1
+	elif git -C "$path" cat-file -e "$new^{commit}" 2>/dev/null &&
+		{ [[ -z "$old" || "$(git -C "$path" rev-parse --is-shallow-repository)" == false ]] ||
+			git -C "$path" merge-base --is-ancestor "$old" "$new" 2>/dev/null; }; then
+		return 0
+	elif [[ "$(git -C "$path" rev-parse --is-shallow-repository)" == false ]]; then
+		git -C "$path" fetch -q --no-tags "$url" "$new" || die "cannot fetch $new from $url"
+		return 0
+	fi
+	if [[ -n "$old" ]]; then
+		depth=$(first_parent_depth "$url" "$old" "$new")
+		[[ -n "$depth" ]] || depth=2
+	fi
+	git -C "$path" fetch -q --no-tags --depth="$depth" "$url" "$new" || die "cannot fetch $new from $url"
+	if [[ -n "$checkout" ]]; then
+		git -C "$path" checkout -q --detach "$new"
+	fi
+}
+
+moved=()
+olds=()
+news=()
+
+fetch_change() {
+	local rev=$1 dir old new i
+	git -C "$REPO_ROOT" rev-parse --verify --quiet "$rev^{commit}" >/dev/null || die "unknown revision $rev"
+	for dir in "${SUBMODULES[@]}"; do
+		old=$(gitlink "$rev" "$dir")
+		new=$(gitlink HEAD "$dir")
+		if [[ -n "$new" && "$new" != "$old" ]]; then
+			moved+=("$dir")
+			olds+=("$old")
+			news+=("$new")
+		fi
+	done
+	for i in "${!moved[@]}"; do
+		fetch_dir "${moved[i]}" "${news[i]}" "${olds[i]}"
+	done
+	if ((${#moved[@]})) || ! git -C "$REPO_ROOT" diff --quiet "$rev" HEAD -- third_party/duckdb_clickhouse; then
+		fetch_dir duckdb "$(gitlink HEAD duckdb)"
+	fi
+}
+
+check_change() {
+	local rev=$1 dir old new i status=0
+	fetch_change "$rev"
+	for i in "${!moved[@]}"; do
+		dir=${moved[i]} old=${olds[i]} new=${news[i]}
+		if [[ -n "$old" ]] && git -C "$THIRD_PARTY/$dir" merge-base --is-ancestor "$old" "$new" 2>/dev/null; then
+			"$SELF" format --check --range "$old..$new" "$dir" || status=1
+		else
+			echo "$dir: no range to check, $new does not descend from ${old:-a gitlink on $rev}" \
+				"(a DuckDB update: tests/duckdb/README.md checks its series)"
+		fi
+		if [[ "$dir" == duckdb ]]; then
+			[[ "$(git -C "$DUCKDB" rev-parse HEAD)" == "$new" ]] ||
+				die "third_party/duckdb is not at HEAD's gitlink $new: check it out to check its regen: commit"
+			"$SELF" regen --check || status=1
+		fi
+	done
+	return $status
+}
+
 [[ $# -ge 1 ]] || {
 	usage
 	exit 2
 }
 mode=$1
 shift
+if [[ "$mode" == fetch || "$mode" == check ]]; then
+	case "${1:-}" in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	-*) die "unknown option $1" ;;
+	esac
+	[[ $# -le 1 ]] || die "$mode takes one revision"
+	if [[ $# -eq 1 ]]; then
+		rev=$1
+	else
+		rev=$(git -C "$REPO_ROOT" merge-base HEAD origin/main) || die "no merge base with origin/main: pass a revision"
+	fi
+	if [[ "$mode" == fetch ]]; then
+		fetch_change "$rev"
+	else
+		check_change "$rev"
+	fi
+	exit
+fi
 check="" scope=changed range=""
 dirs=()
 files=()

@@ -432,7 +432,8 @@ bool CompoundFieldIterator::Next() {
   for (size_t i = 0, count = _field_iterators.size(); i != count; ++i) {
     auto& field_itr = _field_iterators[i];
     while (_field_options && field_itr.pos < field_itr.ids.size() &&
-           !_field_options->HasField(field_itr.ids[field_itr.pos])) {
+           _field_options->GetFieldKind(field_itr.ids[field_itr.pos]) !=
+             FieldKind::Index) {
       ++field_itr.pos;
     }
     if (field_itr.pos >= field_itr.ids.size()) {
@@ -481,7 +482,8 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
                       const IndexFieldOptions* field_options) {
   for (auto id : reader.field_ids()) {
     const auto* term_reader = reader.field(id);
-    if (!term_reader || (field_options && !field_options->HasField(id))) {
+    if (!term_reader || (field_options &&
+                         field_options->GetFieldKind(id) != FieldKind::Index)) {
       continue;
     }
     const auto& field_meta = term_reader->meta();
@@ -837,7 +839,8 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   }
   auto ann_writers = col_writer->TakeAnnWriters();
   if (segment.docs_count != 0) {
-    col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);
+    col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db,
+                                             IOAdvice::SEQUENTIAL);
     norm_provider.reader = col_reader.get();
   }
   std::optional<ReadContext> ivf_ctx;

@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -68,8 +69,7 @@ SereneDBClientState& SereneDBClientState::Register(
   source->database = registered._connection_ctx->GetDatabase();
   source->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
   source->ctx = &client_ctx;
-  registered.progress_source = source;
-  pg::ProgressRegistry::Instance().Register(std::move(source));
+  registered.progress_source = std::move(source);
   client_ctx.registered_state->Insert(kSereneDBClientStateKey,
                                       std::move(state));
   client_ctx.warning_handler = [](duckdb::ClientContext& ctx,
@@ -97,6 +97,9 @@ SereneDBClientState& SereneDBClientState::Register(
       if (IsUnchangeableSetting(name)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
                         ERR_MSG("parameter \"", name, "\" cannot be changed"));
+      }
+      if (new_value) {
+        RequireSuperuserToSet(ctx, name);
       }
       // Resolve AUTOMATIC against the setting's target scope so the downstream
       // check works uniformly regardless of how the user wrote the SET.
@@ -296,7 +299,7 @@ void SereneDBClientState::TransactionCommit(
     }
   }
   tls_committing_ctx = nullptr;
-  _connection_ctx->Commit();
+  _connection_ctx->Commit(transaction.global_transaction_id);
   _connection_ctx->RefreshCatalogEpoch(transaction);
   if (transaction.ModifiedDatabase()) {
     catalog::ClusterOf(*context.db).MaybeCompactCatalogLog();
@@ -306,7 +309,7 @@ void SereneDBClientState::TransactionCommit(
 void SereneDBClientState::TransactionRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   tls_committing_ctx = nullptr;
-  _connection_ctx->Rollback();
+  _connection_ctx->Rollback(transaction.global_transaction_id);
   _connection_ctx->RefreshCatalogEpoch(transaction);
 }
 
@@ -377,7 +380,8 @@ SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
   auto& context = *system.conn->context;
   system.ctx = std::make_shared<ConnectionContext>(
     context, user, role, database, database_id, nullptr, 0, nullptr);
-  SereneDBClientState::Register(context, system.ctx);
+  system.progress = pg::ProgressRegistration{
+    SereneDBClientState::Register(context, system.ctx).progress_source};
   SetDefaultSearchPath(context, database);
   return system;
 }

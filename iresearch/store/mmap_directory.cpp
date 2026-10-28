@@ -34,27 +34,18 @@ using mmap_utils::MMapHandle;
 // Converts the specified IOAdvice to corresponding posix madvice
 inline int GetPosixMadvice(IOAdvice advice) {
   switch (advice) {
-    case IOAdvice::NORMAL:
-    case IOAdvice::DirectRead:
-      return IR_MADVICE_NORMAL;
     case IOAdvice::SEQUENTIAL:
       return IR_MADVICE_SEQUENTIAL;
     case IOAdvice::RANDOM:
-      return IR_MADVICE_RANDOM;
-    case IOAdvice::READONCE:
-      return IR_MADVICE_NORMAL;
-    case IOAdvice::ReadonceSequential:
-      return IR_MADVICE_SEQUENTIAL;
-    case IOAdvice::ReadonceRandom:
       return IR_MADVICE_RANDOM;
   }
 
   SDB_ERROR(
     IRESEARCH,
     absl::StrCat("madvice '", static_cast<uint32_t>(advice),
-                 "' is not valid (RANDOM|SEQUENTIAL), fallback to NORMAL"));
+                 "' is not valid (RANDOM|SEQUENTIAL), fallback to RANDOM"));
 
-  return IR_MADVICE_NORMAL;
+  return IR_MADVICE_RANDOM;
 }
 
 std::shared_ptr<MMapHandle> OpenHandle(const path_char_t* file, IOAdvice advice,
@@ -70,13 +61,11 @@ std::shared_ptr<MMapHandle> OpenHandle(const path_char_t* file, IOAdvice advice,
 
   const int padvice = GetPosixMadvice(advice);
 
-  if (IR_MADVICE_NORMAL != padvice && !handle->advise(padvice)) {
+  if (!handle->advise(padvice)) {
     SDB_ERROR(IRESEARCH,
               absl::StrCat("Failed to madvise input file, path: ",
                            file_utils::ToStr(file), ", error ", errno));
   }
-
-  handle->dontneed(bool(advice & IOAdvice::READONCE));
 
   return handle;
 }
@@ -156,10 +145,14 @@ class MMapIndexInput final : public BytesViewInput {
                          std::min<uint64_t>(count, _handle->size() - offset));
   }
 
-  void Advise(IOAdvice advice) noexcept final {
-    if (_handle) {
-      _handle->advise(GetPosixMadvice(advice));
+  void Evict(uint64_t offset, uint64_t count) const noexcept final {
+    if (!_handle || offset >= _handle->size()) {
+      return;
     }
+    count = std::min<uint64_t>(count, _handle->size() - offset);
+    file_utils::Evict(static_cast<const byte_type*>(_handle->addr()) + offset,
+                      count);
+    file_utils::Evict(static_cast<int>(_handle->fd()), offset, count);
   }
 
   bool Warm(uint64_t offset, uint64_t count) const noexcept final {
@@ -200,10 +193,6 @@ MMapDirectory::MMapDirectory(std::filesystem::path path,
 
 IndexInput::ptr MMapDirectory::open(std::string_view name,
                                     IOAdvice advice) const {
-  if (IOAdvice::DirectRead == (advice & IOAdvice::DirectRead)) {
-    return FSDirectory::open(name, advice);
-  }
-
   return std::make_unique<MMapIndexInput>(
     OpenHandle(path(), name, advice, *ResourceManager().file_descriptors));
 }

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/fault_points.hpp>
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
@@ -35,7 +36,6 @@
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting.hpp"
 #include "iresearch/search/top/walk.hpp"
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 

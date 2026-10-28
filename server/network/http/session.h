@@ -182,6 +182,7 @@ class HttpSession final
                                          _task->Account());
       _conn = std::move(sql.conn);
       _connection_ctx = std::move(sql.context);
+      _progress = std::move(sql.progress);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
@@ -329,6 +330,7 @@ class HttpSession final
       _cancel_token->ctx = nullptr;
     }
     _prepared = {};
+    _progress = {};
     _connection_ctx.reset();
     _conn.reset();
   }
@@ -374,6 +376,7 @@ class HttpSession final
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _connection_ctx;
+  sdb::pg::ProgressRegistration _progress;
   // Statements prepared on _conn; declared after it so they are destroyed
   // first.
   std::array<PreparedCache, kPreparedSlots> _prepared;

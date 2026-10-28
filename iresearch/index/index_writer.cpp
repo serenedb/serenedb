@@ -28,6 +28,7 @@
 #include <fast_float/fast_float.h>
 
 #include <cstdint>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <ranges>
 #include <shared_mutex>
@@ -49,7 +50,6 @@
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/async.hpp"
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -1358,7 +1358,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
   if (options.column_options || options.norm_column_id) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
       std::move(options.column_options), std::move(options.norm_column_id),
-      options.row_group_size);
+      options.row_group_size, std::move(options.anns));
   }
   if (options.cleanup_on_open) {
     // Remove non-index files from directory

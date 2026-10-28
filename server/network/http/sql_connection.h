@@ -28,12 +28,14 @@
 
 #include "network/cancel_registry.h"
 #include "pg/connection_context.h"
+#include "pg/progress_registry.h"
 
 namespace sdb::network::http {
 
 struct SqlConnection {
   duckdb::unique_ptr<duckdb::Connection> conn;
   std::shared_ptr<ConnectionContext> context;
+  sdb::pg::ProgressRegistration progress;
 };
 
 SqlConnection OpenSqlConnection(

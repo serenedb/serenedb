@@ -206,4 +206,18 @@ class ProgressRegistry {
     _sources;
 };
 
+class [[nodiscard]] ProgressRegistration {
+ public:
+  ProgressRegistration() = default;
+  explicit ProgressRegistration(std::shared_ptr<ProgressSource> source);
+  ProgressRegistration(ProgressRegistration&& other) noexcept = default;
+  ProgressRegistration& operator=(ProgressRegistration&& other) noexcept;
+  ~ProgressRegistration();
+
+ private:
+  void Close() noexcept;
+
+  std::shared_ptr<ProgressSource> _source;
+};
+
 }  // namespace sdb::pg

@@ -773,14 +773,14 @@ std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
   constexpr auto kAsc = duckdb::OrderType::ASCENDING;
   constexpr auto kDesc = duckdb::OrderType::DESCENDING;
   constexpr AnnFunctionInfo kL2Info{L2Sqr, kAsc, false, SqrtNeg};
-  constexpr AnnFunctionInfo kL2SqrInfo{L2Sqr, kAsc, false, Negate};
-  constexpr AnnFunctionInfo kL1Info{L1, kAsc, false, Negate};
+  constexpr AnnFunctionInfo kL2SqrInfo{L2Sqr, kAsc, false, ZeroMinus};
+  constexpr AnnFunctionInfo kL1Info{L1, kAsc, false, ZeroMinus};
   constexpr AnnFunctionInfo kCosineInfo{Cosine, kAsc, false, OneMinus};
   constexpr AnnFunctionInfo kCosineSimilarityInfo{Cosine, kDesc, false,
                                                   Identity};
   constexpr AnnFunctionInfo kIPInfo{InnerProduct, kDesc, false, Identity};
   constexpr AnnFunctionInfo kNegativeIPInfo{InnerProduct, kAsc, false, Negate};
-  constexpr AnnFunctionInfo kL1NormInfo{L1, kAsc, true, Negate};
+  constexpr AnnFunctionInfo kL1NormInfo{L1, kAsc, true, ZeroMinus};
   constexpr AnnFunctionInfo kL2NormInfo{L2Sqr, kAsc, true, SqrtNeg};
   static const irs::containers::FlatHashMap<std::string_view, AnnFunctionInfo>
     kFunctions{
@@ -955,10 +955,9 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   if (!irs::field_limits::valid(call_field_id)) {
     return nullptr;
   }
-  auto ann_info =
-    found->bind_data->relation.inverted_config->GetColumnOptions(call_field_id)
-      .ann_info;
-  if (!ann_info || ann_info->metric != info.metric) {
+  const auto* ann_info = found->bind_data->relation.inverted_config->FindAnn(
+    call_field_id, info.metric);
+  if (!ann_info) {
     return nullptr;
   }
 
@@ -982,8 +981,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .metric = info.metric,
       .score_emit = info.score_emit,
       .natural_order = info.order,
-      .centroids_id = ann_info->centroids_id,
-      .postings_id = ann_info->postings_id,
+      .ann_id = ann_info->index_id,
       .quant = ann_info->quant.kind,
       .nb_bits = ann_info->quant.nb_bits,
       .kind = ann_info->kind,

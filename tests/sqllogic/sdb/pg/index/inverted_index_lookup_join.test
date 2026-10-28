@@ -19,7 +19,7 @@ CREATE TEXT SEARCH DICTIONARY lj_words AS
     WITH (frequency, position, norm, offset);
 
 statement ok
-CREATE INDEX lj_idx ON lj_docs USING inverted (id, body lj_words, n) INCLUDE (n);
+CREATE INDEX lj_idx ON lj_docs USING inverted (id, body lj_words, n) INCLUDE (n) WITH (refresh_interval = 0);
 
 statement ok
 VACUUM (REFRESH_TABLE) lj_docs;

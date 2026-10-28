@@ -79,7 +79,8 @@ irs::analysis::Tokenizer::ptr MakeNorm(std::string_view locale,
     irs::analysis::NormalizingTokenizer::Options{
       .locale = duckdb::text::Locale::FromName(std::string(locale).c_str()),
       .case_convert = case_convert,
-    });
+    },
+    tests::Cache());
 }
 
 irs::analysis::Tokenizer::ptr MakeText(std::string_view locale,

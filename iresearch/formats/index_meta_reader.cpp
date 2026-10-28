@@ -67,7 +67,7 @@ bool LastFile(const Directory& dir, std::string_view prefix, std::string& out) {
 uint64_t ReadFile(const Directory& dir, std::string_view filename,
                   MetaPayloadReader& payload,
                   std::vector<IndexSegment>* segments) {
-  auto in = dir.open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
+  auto in = dir.open(filename, IOAdvice::RANDOM);
 
   uint64_t cnt = 0;
   format_utils::ReadFooter(

@@ -31,7 +31,6 @@
 #include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <optional>
-#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -59,7 +58,6 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
   std::vector<primary_key::PKColumn> old_pk_columns;
   std::optional<duckdb::RowIdDeduplicator> updated_rows;
 
-  std::shared_lock<std::shared_mutex> table_lock;
   uint64_t write_buffer_max_bytes = 0;
   duckdb::idx_t update_count = 0;
   // RETURNING only: the rows as this statement left them.
@@ -93,7 +91,6 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto& conn_ctx = GetSereneDBContext(context);
 
   state->search_table = _table.Storage();
-  state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
   conn_ctx.SearchTxn().RegisterWriter(state->search_table, _table);
 
   const auto& columns = _table.GetColumns();
@@ -233,9 +230,6 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& state = input.global_state.Cast<SearchUpdateGlobalState>();
   state.sdb_txn->SearchTxn().FlushBufferTransaction(_table.oid);
-  if (state.table_lock.owns_lock()) {
-    state.table_lock.unlock();
-  }
   return duckdb::SinkFinalizeType::READY;
 }
 

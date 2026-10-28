@@ -199,6 +199,8 @@ class HnswGraph {
  private:
   friend class HnswGraphWriter;
 
+  uint64_t ComputeOffsets();
+
   uint64_t Upper(uint32_t node, uint32_t level) const noexcept {
     SDB_ASSERT(level != 0);
     SDB_ASSERT(level < _levels[node]);

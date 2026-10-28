@@ -1,0 +1,128 @@
+# Inverted indexes on a regular table or a view each own their storage, so
+# transactions that create, replace or drop different indexes on the same
+# relation at the same time do not conflict.
+
+statement ok
+CREATE TABLE ic (id INT PRIMARY KEY, body TEXT)
+
+
+statement ok
+INSERT INTO ic SELECT i, 'fox ' || i FROM generate_series(1, 300) s(i)
+
+
+statement ok
+CREATE VIEW icv AS SELECT id, body FROM ic
+
+
+statement ok
+CREATE INDEX ic_x ON ic USING inverted (body)
+
+
+statement ok
+CREATE INDEX icv_x ON icv USING inverted (body)
+
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement ok
+CREATE INDEX ic_a ON ic USING inverted (body)
+
+
+connection a
+statement ok
+CREATE INDEX icv_a ON icv USING inverted (body)
+
+
+connection b
+statement ok
+BEGIN
+
+
+connection b
+statement ok
+CREATE INDEX ic_b ON ic USING inverted (body, id)
+
+
+connection b
+statement ok
+CREATE OR REPLACE INDEX ic_x ON ic USING inverted (body, id)
+
+
+connection b
+statement ok
+CREATE INDEX icv_b ON icv USING inverted (body, id)
+
+
+connection b
+statement ok
+DROP INDEX icv_x
+
+
+connection c
+statement ok
+CREATE INDEX ic_c ON ic USING inverted (id)
+
+
+connection c
+statement ok
+CREATE OR REPLACE INDEX ic_c ON ic USING inverted (id, body)
+
+
+connection c
+statement ok
+INSERT INTO ic VALUES (1001, 'wolf')
+
+
+connection a
+statement ok
+COMMIT
+
+
+connection b
+statement ok
+COMMIT
+
+
+query
+SELECT index_name, table_name, regexp_extract(regexp_replace(sql, ' WITH \(.*', ''), 'USING inverted \((.*)\)$', 1) AS keys
+FROM duckdb_indexes()
+WHERE database_name = current_database() AND table_name IN ('ic', 'icv') AND index_name <> 'ic_pkey'
+ORDER BY index_name
+----
+index_name	table_name	keys
+ic_a	ic	body
+ic_b	ic	body, id
+ic_c	ic	id, body
+ic_x	ic	body, id
+icv_a	icv	body
+icv_b	icv	body, id
+
+
+query
+SELECT (SELECT count(*) FROM ic_a WHERE body = 'fox 7') AS a,
+       (SELECT count(*) FROM ic_b WHERE body = 'fox 7') AS b,
+       (SELECT count(*) FROM ic_c WHERE id = 7) AS c,
+       (SELECT count(*) FROM ic_x WHERE body = 'fox 7') AS x,
+       (SELECT count(*) FROM icv_a WHERE body = 'fox 7') AS va,
+       (SELECT count(*) FROM icv_b WHERE body = 'fox 7') AS vb
+----
+a	b	c	x	va	vb
+1	1	1	1	1	1
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ic
+
+
+query
+SELECT (SELECT count(*) FROM ic_a WHERE body = 'wolf') AS a,
+       (SELECT count(*) FROM ic_b WHERE body = 'wolf') AS b,
+       (SELECT count(*) FROM ic_c WHERE id = 1001) AS c,
+       (SELECT count(*) FROM ic_x WHERE body = 'wolf') AS x
+----
+a	b	c	x
+1	1	1	1

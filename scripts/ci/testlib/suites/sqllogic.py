@@ -44,10 +44,12 @@ def runner_binary(ctx):
         return _runner_path
 
 
-def generated_tests(ctx, command):
+def generated_tests(ctx, command, only=None):
     base = sqllogic_dir(ctx)
     for generator in sorted((base / "generators").rglob("*.py")):
         rel = generator.relative_to(base / "generators")
+        if only is not None and os.path.realpath(base / rel.with_suffix("")) not in only:
+            continue
         target = base / rel.with_suffix(".gen.test")
         subprocess.run(["python3", str(base / "generated.py"), command, str(generator), str(target)],
                        check=True)

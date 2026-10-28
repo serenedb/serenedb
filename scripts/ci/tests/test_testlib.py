@@ -12,7 +12,7 @@ import ci  # noqa: E402
 from testlib import cli, scheduler  # noqa: E402
 from testlib.scheduler import (FAILED, INTERRUPTED, PASSED, SKIPPED, Outcome, Result,  # noqa: E402
                                Unit)
-from testlib.suites import duckdb, gtest  # noqa: E402
+from testlib.suites import duckdb, gtest, sqllogic  # noqa: E402
 from testlib.timing import Timing  # noqa: E402
 
 
@@ -47,6 +47,20 @@ def test_a_changed_test_picks_its_units_in_every_suite(monkeypatch, tmp_path):
                      "recovery:recovery/c.test", "duckdb:core:test/sql/x.test", "network:hba",
                      "drivers:python", "drivers:java"}
     assert len(picked) == 7
+
+
+def test_override_records_only_the_generators_whose_tests_ran(monkeypatch, tmp_path):
+    base = tmp_path / "tests" / "sqllogic"
+    for name in ("a", "b"):
+        (base / "generators" / "sdb").mkdir(parents=True, exist_ok=True)
+        (base / "generators" / "sdb" / f"{name}.py").write_text("")
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    recorded = []
+    monkeypatch.setattr(sqllogic.subprocess, "run", lambda cmd, **_: recorded.append(cmd[3]))
+    units = [unit("sqllogic:pg-wire-simple:sdb/a.2.gen.test"), unit("sqllogic:pg-wire-simple:sdb/c.test"),
+             unit("recovery:recovery/b.gen.test")]
+    sqllogic.generated_tests(SimpleNamespace(root=tmp_path), "record", only=cli.generated_sources(units))
+    assert recorded == [str(base / "generators" / "sdb" / "a.py")]
 
 
 def test_a_changed_driver_test_picks_its_file_and_a_helper_every_file_of_its_language(

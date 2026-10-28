@@ -280,7 +280,15 @@ class ServiceSet:
             if _docker("exec", name, "ollama", "show", m, check=False).returncode != 0:
                 raise RuntimeError(f"Ollama model {m} is not in {image}; add it to "
                                    "tests/sqllogic/fixtures/ollama/Dockerfile")
-        self.env.update(OLLAMA_HOST=self.host, OLLAMA_PORT=self._port(name, 11434),
+        port = self._port(name, 11434)
+        for path, body in (("/api/embed", {"model": model, "input": "warm", "keep_alive": -1}),
+                           ("/api/generate", {"model": chat, "prompt": "", "keep_alive": -1})):
+            request = urllib.request.Request(
+                f"http://{self.host}:{port}{path}", data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(request, timeout=600) as r:
+                r.read()
+        self.env.update(OLLAMA_HOST=self.host, OLLAMA_PORT=port,
                         OLLAMA_MODEL=model, OLLAMA_CHAT_MODEL=chat)
 
     def _start_kev(self):

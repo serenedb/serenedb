@@ -218,14 +218,14 @@ struct WalkFilterScratch {
 
 class WalkFilter {
  public:
-  WalkFilter(detail::TableFilter& table, doc_id_t docs_count,
+  WalkFilter(detail::TableFilter& table, doc_id_t docs_count, size_t visits,
              WalkFilterScratch& s)
     : _table{&table},
       _s{s},
       _docs_count{docs_count},
       _points{table.PointReads() != detail::PointRead::None} {
-    _s.known.Reset(docs_count);
-    _s.pass.Reset(docs_count);
+    _s.known.Reset(docs_count, visits);
+    _s.pass.Reset(docs_count, visits);
   }
 
   WalkFilter(const WalkFilter&) = delete;
@@ -614,7 +614,8 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   };
   if (plan.ask_per_hop) {
     WalkFilterScratch walk_scratch;
-    const WalkFilter walk_filter{*table, docs_count, walk_scratch};
+    const WalkFilter walk_filter{*table, docs_count,
+                                 HnswWalkVisits(_ef, graph.M0()), walk_scratch};
     const bool done =
       _inner ? run(InnerAndTableFilter{set, walk_filter, walk_scratch})
              : run(walk_filter);

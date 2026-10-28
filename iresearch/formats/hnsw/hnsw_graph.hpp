@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <absl/hash/hash.h>
 #include <faiss/utils/distances.h>
 
 #include <algorithm>
@@ -30,6 +31,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <pcg_random.hpp>
 #include <span>
 #include <vector>
@@ -56,27 +58,97 @@ inline constexpr uint32_t kHnswMaxLevel = std::numeric_limits<uint8_t>::max();
 inline constexpr size_t kHnswLinksPerLine = 64 / sizeof(uint32_t);
 inline constexpr uint64_t kHnswBuildSeed = 0x9E3779B97F4A7C15ULL;
 
+inline constexpr size_t kHnswVisitedSlots = 1024;
+
+inline size_t HnswWalkVisits(uint32_t ef, uint32_t m0) noexcept {
+  return size_t{ef} * m0;
+}
+
 class HnswVisited {
  public:
-  void Reset(size_t n) {
-    const size_t words = (n + 63) / 64;
-    if (_words.size() < words) {
-      _words.assign(words, 0);
-      _dirty.clear();
-      return;
+  void Reset(size_t n, size_t visits) {
+    _n = n;
+    Clear();
+    const auto bitset = Words() * sizeof(uint64_t);
+    _table = kHnswVisitedSlots * sizeof(uint32_t) < bitset &&
+             visits * std::hardware_constructive_interference_size < bitset;
+    _dense = !_table;
+    if (_dense) {
+      if (_words.size() < Words()) {
+        _words.assign(Words(), 0);
+      }
+    } else if (_slots.empty()) {
+      _slots.assign(kHnswVisitedSlots, 0);
+      _shift = 64 - std::countr_zero(kHnswVisitedSlots);
     }
-    Next();
   }
 
   void Next() noexcept {
+    Clear();
+    _dense = !_table;
+  }
+
+  bool TestAndSet(uint32_t id) {
+    SDB_ASSERT(id < _n);
+    if (_dense) {
+      return SetWord(id);
+    }
+    const auto mask = _slots.size() - 1;
+    for (auto i = Slot(id);; i = (i + 1) & mask) {
+      const auto key = _slots[i];
+      if (key == id + 1) {
+        return true;
+      }
+      if (key == 0) {
+        _slots[i] = id + 1;
+        _used.push_back(static_cast<uint32_t>(i));
+        if (_used.size() * 2 > _slots.size()) {
+          Grow();
+        }
+        return false;
+      }
+    }
+  }
+
+  bool Test(uint32_t id) const noexcept {
+    SDB_ASSERT(id < _n);
+    if (_dense) {
+      return ((_words[id / 64] >> (id % 64)) & 1) != 0;
+    }
+    if (_used.empty()) {
+      return false;
+    }
+    const auto mask = _slots.size() - 1;
+    for (auto i = Slot(id);; i = (i + 1) & mask) {
+      const auto key = _slots[i];
+      if (key == id + 1) {
+        return true;
+      }
+      if (key == 0) {
+        return false;
+      }
+    }
+  }
+
+  void Set(uint32_t id) { TestAndSet(id); }
+
+ private:
+  size_t Words() const noexcept { return (_n + 63) / 64; }
+
+  size_t Slot(uint32_t id) const noexcept { return absl::HashOf(id) >> _shift; }
+
+  void Clear() noexcept {
     for (const auto w : _dirty) {
       _words[w] = 0;
     }
     _dirty.clear();
+    for (const auto i : _used) {
+      _slots[i] = 0;
+    }
+    _used.clear();
   }
 
-  bool TestAndSet(uint32_t id) {
-    SDB_ASSERT(id / 64 < _words.size());
+  bool SetWord(uint32_t id) {
     auto& word = _words[id / 64];
     const auto bit = uint64_t{1} << (id % 64);
     if ((word & bit) != 0) {
@@ -89,23 +161,43 @@ class HnswVisited {
     return false;
   }
 
-  bool Test(uint32_t id) const noexcept {
-    SDB_ASSERT(id / 64 < _words.size());
-    return ((_words[id / 64] >> (id % 64)) & 1) != 0;
-  }
-
-  void Set(uint32_t id) {
-    SDB_ASSERT(id / 64 < _words.size());
-    auto& word = _words[id / 64];
-    if (word == 0) {
-      _dirty.push_back(id / 64);
+  void Grow() {
+    const auto size = _slots.size() * 2;
+    if (size * sizeof(uint32_t) >= Words() * sizeof(uint64_t)) {
+      if (_words.size() < Words()) {
+        _words.assign(Words(), 0);
+      }
+      for (const auto i : _used) {
+        SetWord(_slots[i] - 1);
+        _slots[i] = 0;
+      }
+      _used.clear();
+      _dense = true;
+      return;
     }
-    word |= uint64_t{1} << (id % 64);
+    std::vector<uint32_t> slots(size, 0);
+    _shift = 64 - std::countr_zero(size);
+    const auto mask = size - 1;
+    for (auto& used : _used) {
+      const auto key = _slots[used];
+      auto i = Slot(key - 1);
+      while (slots[i] != 0) {
+        i = (i + 1) & mask;
+      }
+      slots[i] = key;
+      used = static_cast<uint32_t>(i);
+    }
+    _slots = std::move(slots);
   }
 
- private:
   std::vector<uint64_t> _words;
   std::vector<uint32_t> _dirty;
+  std::vector<uint32_t> _slots;
+  std::vector<uint32_t> _used;
+  size_t _n = 0;
+  int _shift = 0;
+  bool _table = false;
+  bool _dense = true;
 };
 
 struct HnswCandidate {
@@ -710,11 +802,11 @@ HnswCandidate HnswGreedyDescent(const HnswGraph& graph, Dist& dist,
 }
 
 template<typename Dist>
-HnswCandidate HnswDescendToBase(const HnswGraph& graph, Dist& dist,
+HnswCandidate HnswDescendToBase(const HnswGraph& graph, Dist& dist, uint32_t ef,
                                 HnswSearchScratch& s) {
   const uint32_t entry = graph.EntryPoint();
   const uint32_t entry_top = graph.LevelOf(entry) - 1;
-  s.visited.Reset(graph.Size());
+  s.visited.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()));
   HnswCandidate cur{dist.One(entry), entry};
   if (entry_top > 0) {
     cur = HnswGreedyDescent(graph, dist, cur, entry_top, 0, s);
@@ -987,9 +1079,9 @@ bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
     return true;
   }
   if constexpr (kHnswHops<Walk>) {
-    s.visited_hop2.Reset(graph.Size());
+    s.visited_hop2.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()));
   }
-  const auto cur = HnswDescendToBase(graph, dist, s);
+  const auto cur = HnswDescendToBase(graph, dist, ef, s);
   s.frontier.assign(1, cur);
   if (accept(cur.node)) {
     s.nearest.assign(1, cur);
@@ -1015,9 +1107,9 @@ bool HnswSearchTopKFrom(const HnswGraph& graph, Dist& dist, uint32_t ef,
                         HnswSearchScratch& s, std::span<const uint32_t> seeds,
                         const Accept& accept, uint64_t budget) {
   HnswResetSearch(s);
-  s.visited.Reset(graph.Size());
+  s.visited.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()));
   if constexpr (kHnswHops<Walk>) {
-    s.visited_hop2.Reset(graph.Size());
+    s.visited_hop2.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()));
   }
   s.batch.clear();
   for (const auto node : seeds) {
@@ -1065,7 +1157,7 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
     found.clear();
     return;
   }
-  found.assign(1, HnswDescendToBase(graph, dist, s));
+  found.assign(1, HnswDescendToBase(graph, dist, kHnswDefaultEfSearch, s));
   HnswSearchLevel(graph, dist, 0, kHnswDefaultEfSearch, s);
 
   frontier.assign(found.begin(), found.end());

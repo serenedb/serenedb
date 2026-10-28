@@ -626,6 +626,43 @@ def test_char_oid18_text_param(conn, param, text):
     assert first_field(m) == text
 
 
+@pytest.mark.parametrize(
+    "oid, fmt, param, sqlstate",
+    [
+        (27, 0, b"abc", "22P02"),
+        (18, 1, b"ab", "22P03"),
+        (3904, 0, b"garbage", "22P02"),
+        (3904, 1, b"", "22P03"),
+        (3904, 1, b"\x02", "22P03"),
+        (3904, 1, b"\x02\xff\xff\xff\xfe", "22P03"),
+        (4451, 0, b"{garbage}", "22P02"),
+        (4451, 0, b"garbage", "22P02"),
+        (4451, 1, b"\x00\x00\x00", "22P03"),
+        (4451, 1, b"\xff\xff\xff\xff", "22P03"),
+        (4451, 1, b"\x00\x00\x00\x01", "22P03"),
+        (4451, 1, b"\x00\x00\x00\x01\xff\xff\xff\xfe", "22P03"),
+        (22, 0, b"a b", "22P02"),
+        (1007, 0, b"{{1,2},{3,4}}", "22P02"),
+    ],
+)
+def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
+    conn.parse("", "select $1::text", oids=(oid,))
+    conn.bind("", "", params=(param,), formats=(fmt,))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == [sqlstate]
+
+
+def test_int2vector_array_text_param(conn):
+    conn.parse("", "select array_to_string($1, ',')", oids=(1006,))
+    conn.bind("", "", params=(b'{"1 2","3"}',))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == b"1 2,3"
+
+
 GEOMETRIC_PARAMS = [
     (600, b"(1,2)", struct.pack("!dd", 1, 2), b"(1,2)"),
     (601, b"[(1,2),(3,4)]", struct.pack("!dddd", 1, 2, 3, 4), b"[(1,2),(3,4)]"),

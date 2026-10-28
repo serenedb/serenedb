@@ -159,3 +159,16 @@ DROP TABLE sif_inverted;
 
 statement ok
 DROP TABLE sif_search;
+
+
+query
+SELECT pg_input_is_valid('POINT(', 'geometry') AS valid;
+----
+valid
+f
+
+
+statement error
+SELECT ts_dict_count(relname), count(*) FROM pg_class;
+----
+db error: ERROR: ts_dict_count() requires an inverted index scan in the same sub-query

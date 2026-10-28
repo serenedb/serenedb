@@ -1,3 +1,5 @@
+control substitution on
+
 statement ok
 CREATE TABLE isf (a int, b int, c int);
 
@@ -36,6 +38,53 @@ statement error
 SELECT format_type(1186, 196608);
 ----
 db error: ERROR: invalid INTERVAL typmod: 0x30000
+
+
+statement ok
+CREATE TABLE isf_collated (a text COLLATE "default", b text COLLATE "POSIX");
+
+
+query
+SELECT attname, attcollation FROM pg_attribute WHERE attrelid = 'isf_collated'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname	attcollation
+a	100
+b	951
+
+
+statement ok
+CREATE ROLE isf_reader_${__DATABASE__};
+
+
+statement ok
+CREATE VIEW isf_view AS SELECT 1 AS a;
+
+
+statement ok
+SET ROLE isf_reader_${__DATABASE__};
+
+
+query
+SELECT count(*) AS visible FROM information_schema.columns WHERE table_name = 'isf_view';
+----
+visible
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP VIEW isf_view;
+
+
+statement ok
+DROP ROLE isf_reader_${__DATABASE__};
+
+
+statement ok
+DROP TABLE isf_collated;
 
 
 statement ok

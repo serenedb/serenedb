@@ -324,3 +324,53 @@ DROP ROLE roshan_shd_reader;
 
 statement ok
 DROP ROLE roshan_shd_owner;
+
+
+statement ok
+CREATE ROLE roshan_shd_job_owner;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO roshan_shd_job_owner;
+
+
+statement ok
+SET ROLE roshan_shd_job_owner;
+
+
+statement ok
+CREATE JOB roshan_shd_job AFTER 1 HOUR SUSPENDED AS SELECT 1;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT classid::regclass AS class, deptype FROM pg_shdepend WHERE refobjid = 'roshan_shd_job_owner'::regrole ORDER BY 1, 2;
+----
+class	deptype
+pg_namespace	a
+
+
+statement ok
+SET VARIABLE roshan_shd_job_oid = (SELECT job_oid FROM sdb_jobs() WHERE job_name = 'roshan_shd_job');
+
+
+query
+SELECT count(*) AS relations FROM pg_class WHERE oid = getvariable('roshan_shd_job_oid');
+----
+relations
+0
+
+
+statement ok
+DROP JOB roshan_shd_job;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM roshan_shd_job_owner;
+
+
+statement ok
+DROP ROLE roshan_shd_job_owner;

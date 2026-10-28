@@ -221,6 +221,10 @@ Result<Family> MakeWindowDisjunction(std::span<const Term> terms,
     });
 }
 
+template<typename Family>
+inline constexpr bool kWindowBatches =
+  requires { requires Family::kWindowBatches; };
+
 template<typename Family, typename Ctx>
 Result<Family> MakeWindowConjunction(std::span<const PostingClause> terms,
                                      std::span<const QueryBuilder::ptr> filters,
@@ -239,7 +243,7 @@ Result<Family> MakeWindowConjunction(std::span<const PostingClause> terms,
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
-  if (!DenseConjunction(terms, docs_count)) {
+  if (!kWindowBatches<Family> && !DenseConjunction(terms, docs_count)) {
     return {};
   }
   return MakeWindowOfTerms<Family, utils::Empty>(terms, *doc,
@@ -312,7 +316,8 @@ Result<Family> MakeWindowExclusion(
       const ExcludeCosts<PostingClause> costs{
         exclude_terms, exclude_filters, candidates,
         candidates,    docs_count,      ExcludeUse::PerDoc};
-      if (!costs.TakesWindowLead(
+      if (!kWindowBatches<Family> &&
+          !costs.TakesWindowLead(
             SegmentDoc(segment) != nullptr, Family::kWindowLeadDrains,
             Family::kSparseLeadCost, Family::kWindowLeadRefills, candidates)) {
         return {};
@@ -356,7 +361,7 @@ Result<Family> MakeWindowExclusion(
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
-  if (!DenseConjunction(terms, docs_count)) {
+  if (!kWindowBatches<Family> && !DenseConjunction(terms, docs_count)) {
     return {};
   }
   return BuildWindowExcludes<Result<Family>>(

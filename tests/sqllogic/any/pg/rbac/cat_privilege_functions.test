@@ -534,6 +534,34 @@ SELECT pg_has_role('pfn_reader', 'pfn_group', 'SELECT');
 db error: ERROR: unrecognized privilege type: "SELECT"
 
 
+query
+SELECT has_type_privilege('pfn_reader', 1::oid, 'USAGE') AS not_a_type,
+       has_type_privilege('pfn_reader', 'pfn_indexed'::regclass::oid, 'USAGE') AS relation_oid,
+       has_largeobject_privilege(12345::oid, 'SELECT') AS large_object,
+       acldefault(NULL, 10) AS null_type, acldefault('r', NULL) AS null_owner;
+----
+not_a_type	relation_oid	large_object	null_type	null_owner
+NULL	NULL	NULL	NULL	NULL
+
+
+statement error
+SELECT has_tablespace_privilege('pfn_nosuch', 'CREATE');
+----
+db error: ERROR: tablespace "pfn_nosuch" does not exist
+
+
+statement error
+SELECT acldefault('x', 10);
+----
+db error: ERROR: unrecognized object type abbreviation: x
+
+
+statement error
+SELECT has_table_privilege('pfn_table', 'TRUNCATE WITH GRANT');
+----
+db error: ERROR: unrecognized privilege type: "TRUNCATE WITH GRANT"
+
+
 statement ok
 DROP TABLE pfn_table;
 

@@ -713,6 +713,29 @@ SELECT pg_collation_for(1);
 db error: ERROR: collations are not supported by type integer
 
 
+query
+SELECT pg_collation_for(NULL) AS untyped;
+----
+untyped
+NULL
+
+
+skipif serenedb
+query
+SELECT pg_collation_for('abc') AS literal;
+----
+literal
+NULL
+
+
+onlyif serenedb
+query
+SELECT pg_collation_for('abc') AS literal;
+----
+literal
+"default"
+
+
 # pg_settings_get_flags
 
 skipif serenedb # SereneDB has no work_mem setting
@@ -952,7 +975,234 @@ db error: ERROR: invalid extension name: "a/b"
 DETAIL: Extension names must not contain directory separator characters.
 
 
+statement error
+SELECT * FROM pg_extension_update_paths('a-');
+----
+db error: ERROR: invalid extension name: "a-"
+DETAIL: Extension names must not begin or end with "-".
+
+
+statement ok
+CREATE TABLE sif_serial (a int UNIQUE, b serial);
+
+
+statement ok
+CREATE INDEX sif_serial_a ON sif_serial (a);
+
+
+statement ok
+CREATE TYPE sif_pair AS (x int);
+
+
+statement ok
+COMMENT ON TABLE sif_serial IS '';
+
+
+statement ok
+COMMENT ON COLUMN sif_serial.a IS 'column a';
+
+
+query
+SELECT obj_description('sif_role_${__DATABASE__}'::regrole::oid, 'pg_authid') AS role_described,
+       obj_description('sif_role_${__DATABASE__}'::regrole::oid) AS role_one_arg;
+----
+role_described	role_one_arg
+NULL	NULL
+
+
+query
+SELECT obj_description('sif_serial'::regclass, 'pg_class') AS empty_comment,
+       obj_description('sif_serial'::regclass, 'sif_nosuch') AS no_catalog, obj_description(0) AS zero,
+       col_description('sif_serial'::regclass, 1) AS a, col_description('sif_serial'::regclass, -1) AS negative,
+       col_description('sif_serial'::regclass, 0) AS table_comment, col_description('sif_serial'::regclass, 99) AS past_table,
+       col_description('sif_view'::regclass, 99) AS past_view, col_description('int4'::regtype::oid, 0) AS not_a_table;
+----
+empty_comment	no_catalog	zero	a	negative	table_comment	past_table	past_view	not_a_table
+NULL	NULL	NULL	column a	NULL	NULL	NULL	NULL	NULL
+
+
+query
+SELECT pg_get_serial_sequence('sif_serial', 'b') AS serial, pg_get_serial_sequence('pg_class', 'oid') AS system;
+----
+serial	system
+public.sif_serial_b_seq	NULL
+
+
+query
+SELECT pg_relation_is_updatable(0, false) AS zero, pg_relation_is_updatable('sif_plain'::regclass, false) AS plain,
+       pg_relation_is_updatable('sif_view'::regclass, false) AS view_rel,
+       pg_column_is_updatable('sif_plain'::regclass, 1::int2, false) AS plain_col,
+       pg_column_is_updatable('sif_plain'::regclass, 0::int2, false) AS system_col,
+       pg_column_is_updatable('sif_view'::regclass, 1::int2, false) AS view_col;
+----
+zero	plain	view_rel	plain_col	system_col	view_col
+0	28	0	t	f	f
+
+
+query
+SELECT pg_get_replica_identity_index('sif_serial') AS unique_only;
+----
+unique_only
+NULL
+
+
+statement error
+SELECT pg_get_replica_identity_index('sif_serial_a');
+----
+db error: ERROR: cannot open relation "sif_serial_a"
+DETAIL: This operation is not supported for indexes.
+
+
+statement error
+SELECT pg_get_replica_identity_index('sif_pair');
+----
+db error: ERROR: cannot open relation "sif_pair"
+DETAIL: This operation is not supported for composite types.
+
+
+query
+SELECT pg_basetype('sif_pair'::regtype) AS composite, pg_settings_get_flags(NULL) AS null_flags,
+       pg_settings_get_flags('sif_nosuch') AS unknown_flags;
+----
+composite	null_flags	unknown_flags
+sif_pair	NULL	NULL
+
+
+query
+SELECT pg_char_to_encoding('UTF-8') AS utf8, pg_char_to_encoding('unicode') AS unicode,
+       pg_char_to_encoding('sif_nosuch') AS unknown;
+----
+utf8	unicode	unknown
+6	6	-1
+
+
+query
+SELECT pg_stat_get_db_numbackends(oid) >= 1 AS backends FROM pg_database WHERE datname = current_database();
+----
+backends
+t
+
+
+query
+SELECT pg_stat_get_live_tuples(0) AS zero, pg_stat_get_live_tuples('sif_view'::regclass) AS view_rel;
+----
+zero	view_rel
+0	0
+
+
+query
+SELECT current_setting(name, true) AS setting
+FROM (VALUES (1, 'DateStyle'), (2, 'DateStyle'), (3, 'sif.nosuch'), (4, 'search_path')) AS t(i, name) ORDER BY i;
+----
+setting
+ISO, MDY
+ISO, MDY
+NULL
+"$user", public
+
+
+query
+SELECT current_setting('DateStyle', NULL) AS null_flag;
+----
+null_flag
+NULL
+
+
+statement error
+SELECT current_setting('sif_nosuch', false);
+----
+db error: ERROR: unrecognized configuration parameter "sif_nosuch"
+
+
+query
+SELECT pg_cancel_backend(NULL) AS cancel, pg_terminate_backend(NULL) AS terminate, pg_cancel_backend(0) AS not_a_backend;
+----
+cancel	terminate	not_a_backend
+NULL	NULL	f
+
+
+query
+SELECT pg_input_is_valid(input, type) AS valid
+FROM (VALUES (1, '1', 'int4'), (2, 'x', 'int4'), (3, 'x', 'text'), (4, '1', 'int4')) AS t(i, input, type) ORDER BY i;
+----
+valid
+t
+f
+t
+t
+
+
+query
+SELECT pg_input_error_info(NULL, 'int4') IS NULL AS null_input, pg_input_error_info('1', NULL) IS NULL AS null_type;
+----
+null_input	null_type
+t	t
+
+
+query
+SELECT pg_column_size(1.5::numeric(4,1)) AS n4, pg_column_size(1234567.89::numeric(9,2)) AS n9,
+       pg_column_size(1234567890123.45::numeric(18,2)) AS n18,
+       pg_column_size(12345678901234567890123.45::numeric(30,2)) AS n30,
+       pg_column_size(B'101') AS bit3, pg_column_size(ARRAY[B'101', B'1']) AS bits,
+       pg_column_size('192.168.0.1'::inet) AS v4, pg_column_size('::1'::inet) AS v6,
+       pg_column_size(ARRAY['10.0.0.0/8'::cidr, '::1/128'::cidr]) AS cidrs, pg_column_size(ARRAY[1::int2, 2::int2]) AS int2s;
+----
+n4	n9	n18	n30	bit3	bits	v4	v6	cidrs	int2s
+10	12	16	20	9	48	10	22	60	28
+
+
+query
+SELECT pg_column_size(ROW(1, 'a')) AS rec, pg_column_size(ROW(1, NULL::text)) AS rec_null,
+       pg_column_size(ROW('1 2'::int2vector)) AS rec_vector, pg_column_size(ROW(B'101', 'x')) AS rec_bit,
+       pg_column_size(ROW('{1,2}'::int[], 'abc'::text, 1.5::numeric)) AS rec_mixed,
+       pg_column_size(ARRAY[[1, 2], [3, 4]]) AS matrix, pg_column_size(ARRAY['ab', NULL, 'cde']) AS text_nulls,
+       pg_column_size(ARRAY[1.5::numeric, 2]) AS numerics, pg_column_size(ARRAY[]::int[]) AS empty;
+----
+rec	rec_null	rec_vector	rec_bit	rec_mixed	matrix	text_nulls	numerics	empty
+30	28	52	32	64	48	48	44	16
+
+
+query
+SELECT pg_column_size('{1,2,3}'::line) AS line, pg_column_size('<(1,2),3>'::circle) AS circle;
+----
+line	circle
+24	24
+
+
+skipif serenedb
+query
+SELECT pg_column_size('[(0,0),(1,0),(1,1)]'::path) AS path, pg_column_size('((0,0),(1,0),(1,1))'::polygon) AS polygon;
+----
+path	polygon
+64	88
+
+
+onlyif serenedb
+query
+SELECT pg_column_size('[(0,0),(1,0),(1,1)]'::path) AS path, pg_column_size('((0,0),(1,0),(1,1))'::polygon) AS polygon;
+----
+path	polygon
+176	168
+
+
+query
+SELECT pg_column_size(x) AS size FROM (VALUES (1, 1.5::numeric(4,1)), (2, NULL), (3, 22.5)) AS t(i, x) ORDER BY i;
+----
+size
+10
+NULL
+10
+
+
 # Cleanup
+
+statement ok
+DROP TYPE sif_pair;
+
+
+statement ok
+DROP TABLE sif_serial;
+
 
 statement ok
 DROP SEQUENCE sif_seq;

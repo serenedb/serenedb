@@ -577,6 +577,10 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
         return ObjectTarget{relation.permissions,
                             {columns->GetColumn(name).Acl()}};
       }
+    } else if (RelationType(relation) == CatalogType::SEQUENCE_ENTRY) {
+      if (absl::c_linear_search(kSequenceColumns, AsView(column))) {
+        return ObjectTarget{relation.permissions};
+      }
     } else if (RelationType(relation) == CatalogType::VIEW_ENTRY &&
                ViewAttnum(
                  *session.context,
@@ -612,12 +616,14 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
         {columns->GetColumn(duckdb::LogicalIndex(attnum - 1)).Acl()}};
     }
     duckdb::idx_t count = 0;
-    if (RelationType(relation) == CatalogType::VIEW_ENTRY) {
-      if (const auto info = ViewColumns(
-            *session.context,
-            relation.entry.get_mutable()->Cast<duckdb::ViewCatalogEntry>())) {
-        count = info->types.size();
-      }
+    if (RelationType(relation) == CatalogType::SEQUENCE_ENTRY) {
+      count = kSequenceColumns.size();
+    } else if (RelationType(relation) == CatalogType::VIEW_ENTRY) {
+      const auto info = ViewColumns(
+        *session.context,
+        relation.entry.get_mutable()->Cast<duckdb::ViewCatalogEntry>());
+      SDB_ASSERT(info);
+      count = info->types.size();
     }
     if (static_cast<duckdb::idx_t>(attnum) > count) {
       return std::nullopt;
@@ -745,12 +751,11 @@ struct ServerPrivileges : ObjectPrivileges<ServerPrivileges> {
   static constexpr bool kSuperuserFirst = true;
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
-    if (session.database) {
-      if (const auto entry =
-            session.database->GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
-              .GetEntry(*session.transaction, Identifier{name})) {
-        return entry->oid;
-      }
+    SDB_ASSERT(session.database);
+    if (const auto entry =
+          session.database->GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
+            .GetEntry(*session.transaction, Identifier{name})) {
+      return entry->oid;
     }
     ThrowUndefinedObject("server", name);
   }
@@ -839,7 +844,7 @@ struct LargeObjectPrivileges : ObjectPrivileges<LargeObjectPrivileges> {
 
   static bool Check(const auth::RoleClosure&, duckdb::idx_t,
                     const ObjectTarget&, const PrivilegeModes&) {
-    return false;
+    SDB_UNREACHABLE();
   }
 };
 
@@ -908,7 +913,7 @@ struct RolePrivileges {
   static bool Check(const auth::RoleClosure& closure, duckdb::idx_t member,
                     duckdb::idx_t role, const RolePrivMask& mask) {
     if (closure.is_superuser) {
-      return mask.usage || mask.member || mask.set || mask.admin;
+      return true;
     }
     if (member == role) {
       return mask.usage || mask.member || mask.set;
@@ -975,8 +980,10 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     if (target) {
       return F::Check(Closure(role), role, *target, modes);
     }
-    if (F::kSuperuserFirst && Closure(role).is_superuser) {
-      return true;
+    if constexpr (F::kSuperuserFirst) {
+      if (Closure(role).is_superuser) {
+        return true;
+      }
     }
     return duckdb::nullopt;
   }

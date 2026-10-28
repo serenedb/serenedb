@@ -75,25 +75,7 @@ duckdb::idx_t CatalogClassOid(duckdb::CatalogType type) {
       return kPgTsDictTable;
     case SUBSCRIPTION_ENTRY:
       return kPgSubscriptionTable;
-    case INVALID:
-    case PREPARED_STATEMENT:
-    case COLLATION_ENTRY:
-    case COORDINATE_SYSTEM_ENTRY:
-    case TRIGGER_ENTRY:
-    case JOB_ENTRY:
-    case REPLICATION_ORIGIN_ENTRY:
-    case TABLE_FUNCTION_ENTRY:
-    case SCALAR_FUNCTION_ENTRY:
-    case AGGREGATE_FUNCTION_ENTRY:
-    case PRAGMA_FUNCTION_ENTRY:
-    case COPY_FUNCTION_ENTRY:
-    case WINDOW_FUNCTION_ENTRY:
-    case DELETED_ENTRY:
-    case RENAMED_ENTRY:
-    case SECRET_ENTRY:
-    case SECRET_TYPE_ENTRY:
-    case SECRET_FUNCTION_ENTRY:
-    case DEPENDENCY_ENTRY:
+    default:
       return kInvalidOid;
   }
 }

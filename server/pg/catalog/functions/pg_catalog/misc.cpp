@@ -199,12 +199,9 @@ void ColDescriptionFunction(duckdb::DataChunk& args,
           result, columns.GetColumn(duckdb::LogicalIndex(index)).Comment());
       }
       if (entry->type == CatalogType::VIEW_ENTRY) {
-        auto& view = entry->Cast<duckdb::ViewCatalogEntry>();
-        const auto info = view.GetColumnInfo();
-        if (!info || index >= info->names.size()) {
-          return duckdb::nullopt;
-        }
-        return Comment(result, view.GetColumnComment(index));
+        return Comment(
+          result,
+          entry->Cast<duckdb::ViewCatalogEntry>().GetColumnComment(index));
       }
       return duckdb::nullopt;
     });
@@ -256,18 +253,13 @@ void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
       }
       const auto& column = columns.GetColumn(column_key);
       auto& catalog = relation->ParentCatalog();
-      auto dependency_manager = catalog.GetDependencyManager();
-      if (!dependency_manager) {
-        return duckdb::nullopt;
-      }
+      auto& dependency_manager = *catalog.GetDependencyManager();
       const auto transaction = catalog.GetCatalogTransaction(context);
       const duckdb::IdentifierEquality equals{catalog.IsCaseSensitive()};
       for (const auto& owned :
-           dependency_manager->OwnedEntries(transaction, *relation)) {
+           dependency_manager.OwnedEntries(transaction, *relation)) {
         const auto& sequence = owned.get();
-        if (sequence.type != CatalogType::SEQUENCE_ENTRY) {
-          continue;
-        }
+        SDB_ASSERT(sequence.type == CatalogType::SEQUENCE_ENTRY);
         const auto& schema = sequence.ParentSchema(transaction);
         const auto& owner =
           sequence.Cast<duckdb::SequenceCatalogEntry>().owner_column;
@@ -361,10 +353,8 @@ int64_t LiveTuples(const Session& session, int64_t oid) {
                                   ->GetStats()
                                   .numLiveDocs);
   }
-  if (table.IsDuckTable()) {
-    return static_cast<int64_t>(table.GetStorage().GetTotalRows());
-  }
-  return 0;
+  SDB_ASSERT(table.IsDuckTable());
+  return static_cast<int64_t>(table.GetStorage().GetTotalRows());
 }
 
 void LiveTuplesFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
@@ -785,8 +775,7 @@ duckdb::unique_ptr<duckdb::Expression> BindPgCollationFor(
   duckdb::FunctionBindExpressionInput& input) {
   const auto& type = input.children[0]->GetReturnType();
   duckdb::Value collation{duckdb::LogicalType::VARCHAR};
-  if (type.id() != duckdb::LogicalTypeId::SQLNULL &&
-      type.id() != duckdb::LogicalTypeId::STRING_LITERAL) {
+  if (type.id() != duckdb::LogicalTypeId::SQLNULL) {
     const auto session = MakeSession(&input.context);
     const auto oid = DescribeColumnType(type).collation;
     if (oid == kInvalidOid) {
@@ -883,13 +872,11 @@ void LoadTablespaceDatabases(duckdb::ClientContext& context,
       }
       continue;
     }
-    if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-      connection->AddNotice(SQL_ERROR_DATA(
-        ERR_CODE(ERRCODE_WARNING),
-        ERR_MSG(oid.GetValue() == static_cast<int64_t>(kPgGlobalTablespace)
-                  ? std::string{"global tablespace never has databases"}
-                  : absl::StrCat(oid.GetValue(), " is not a tablespace OID"))));
-    }
+    GetSereneDBContext(context).AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_WARNING),
+      ERR_MSG(oid.GetValue() == static_cast<int64_t>(kPgGlobalTablespace)
+                ? std::string{"global tablespace never has databases"}
+                : absl::StrCat(oid.GetValue(), " is not a tablespace OID"))));
   }
   absl::c_sort(rows);
 }

@@ -1,0 +1,105 @@
+statement ok
+CREATE TABLE sif_rows (a int);
+
+
+statement ok
+INSERT INTO sif_rows SELECT * FROM range(5);
+
+
+statement ok
+CREATE TABLE sif_docs (id int, body text) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO sif_docs VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sif_docs;
+
+
+query
+SELECT pg_stat_get_live_tuples('sif_rows'::regclass) AS duck, pg_stat_get_live_tuples('sif_docs'::regclass) AS search;
+----
+duck	search
+5	3
+
+
+query
+SELECT current_setting(name, true) IS NULL AS unset
+FROM (VALUES (1, 'azure_account_name'), (2, 'azure_account_name')) AS t(i, name) ORDER BY i;
+----
+unset
+t
+t
+
+
+statement ok
+CREATE TABLE sif_trigger_log (msg text);
+
+
+statement ok
+CREATE TRIGGER sif_trigger AFTER UPDATE ON sif_rows FOR EACH STATEMENT
+  INSERT INTO sif_trigger_log VALUES ('updated');
+
+
+query
+SELECT obj_description(oid) AS description FROM pg_trigger WHERE tgname = 'sif_trigger';
+----
+description
+NULL
+
+
+query
+SELECT pg_column_size(ARRAY[ARRAY[1], NULL]::int[][]) AS null_sub_array, pg_column_size(array_value(1, 2)) AS fixed_size,
+       pg_column_size(ARRAY[array_value(1, 2)]) AS fixed_size_nested, pg_column_size('1'::variant) AS variant,
+       pg_column_size(ARRAY['1'::variant]) AS variants, pg_column_size(ARRAY[map(['a'], [1])]) AS maps;
+----
+null_sub_array	fixed_size	fixed_size_nested	variant	variants	maps
+36	32	40	5	32	40
+
+
+statement ok
+CREATE SERVER sif_server FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path ':memory:');
+
+
+query
+SELECT obj_description(oid, 'pg_foreign_server') AS described, obj_description(oid) AS one_arg,
+       col_description(oid, 0) AS column_zero
+FROM pg_foreign_server WHERE srvname = 'sif_server';
+----
+described	one_arg	column_zero
+NULL	NULL	NULL
+
+
+statement ok
+DROP SERVER sif_server;
+
+
+query
+SELECT pg_basetype((-5)::regtype) AS negative;
+----
+negative
+NULL
+
+
+statement error
+SELECT pg_database_collation_actual_version(-1);
+----
+db error: ERROR: database with OID -1 does not exist
+
+
+statement ok
+DROP TRIGGER sif_trigger ON sif_rows;
+
+
+statement ok
+DROP TABLE sif_trigger_log;
+
+
+statement ok
+DROP TABLE sif_docs;
+
+
+statement ok
+DROP TABLE sif_rows;

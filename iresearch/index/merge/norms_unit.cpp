@@ -32,14 +32,11 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/merge/merge_order.hpp"
-#include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 namespace {
-
-using GenericDocsMask = DocsMask<MaskKind::Mixed>;
 
 struct NormPiece {
   const MergeSource* source;
@@ -52,20 +49,36 @@ constexpr size_t kNormMergeChunk = 64 * 1024;
 
 size_t KeepLive(GenericDocsMask& mask, doc_id_t first,
                 std::span<uint32_t> values) {
-  uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
   size_t kept = 0;
-  for (size_t at = 0; at < values.size();) {
-    const auto count = static_cast<uint32_t>(
-      std::min<size_t>(values.size() - at, detail::kWindowDocs));
-    const auto alive =
-      mask.FillLive(static_cast<doc_id_t>(first + at), count, live);
-    const auto* from = values.data() + at;
-    for (uint32_t i = 0; i != alive; ++i) {
-      values[kept++] = from[live[i]];
-    }
-    at += count;
-  }
+  VisitLive(mask, first, static_cast<doc_id_t>(first + values.size()),
+            [&](doc_id_t window, std::span<const uint32_t> live) {
+              const auto* from = values.data() + (window - first);
+              for (const auto offset : live) {
+                values[kept++] = from[offset];
+              }
+              return true;
+            });
   return kept;
+}
+
+std::vector<NormPiece> NormPieces(field_id id,
+                                  std::span<const MergeSource> sources) {
+  std::vector<NormPiece> pieces;
+  for (const auto& src : sources) {
+    const auto* reader = SourceNormColumn(src, id);
+    if (!reader) {
+      if (src.alive_count != 0) {
+        pieces.push_back(
+          {&src, nullptr, 0, NormStats{.rows = src.alive_count, .min = 0}});
+      }
+      continue;
+    }
+    SDB_ASSERT(reader->RowCount() == src.reader->docs_count());
+    for (size_t r = 0; r != reader->RegionCount(); ++r) {
+      pieces.push_back({&src, reader, r, reader->Stats(r)});
+    }
+  }
+  return pieces;
 }
 
 void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
@@ -145,21 +158,13 @@ void MergeOrderedNormColumn(ColWriter& col_writer, field_id id, field_id out_id,
                             std::span<const MergeSource> sources,
                             const MergeOrder& order) {
   NormStats planned;
+  for (const auto& piece : NormPieces(id, sources)) {
+    planned.Merge(piece.planned);
+  }
   std::vector<OrderedNormInput> inputs;
   inputs.reserve(sources.size());
   for (const auto& src : sources) {
-    const auto* reader = SourceNormColumn(src, id);
-    inputs.emplace_back(src, reader);
-    if (!reader) {
-      if (src.alive_count != 0) {
-        planned.Merge(NormStats{.rows = src.alive_count, .min = 0});
-      }
-      continue;
-    }
-    SDB_ASSERT(reader->RowCount() == src.reader->docs_count());
-    for (size_t r = 0; r != reader->RegionCount(); ++r) {
-      planned.Merge(reader->Stats(r));
-    }
+    inputs.emplace_back(src, SourceNormColumn(src, id));
   }
   auto& writer = col_writer.StreamNormColumn(out_id);
   writer.OpenRegion(planned);
@@ -222,21 +227,7 @@ void MergeNormColumn(ColWriter& col_writer, field_id id, field_id out_id,
     MergeOrderedNormColumn(col_writer, id, out_id, sources, *order);
     return;
   }
-  std::vector<NormPiece> pieces;
-  for (const auto& src : sources) {
-    const auto* reader = SourceNormColumn(src, id);
-    if (!reader) {
-      if (src.alive_count != 0) {
-        pieces.push_back(
-          {&src, nullptr, 0, NormStats{.rows = src.alive_count, .min = 0}});
-      }
-      continue;
-    }
-    SDB_ASSERT(reader->RowCount() == src.reader->docs_count());
-    for (size_t r = 0; r != reader->RegionCount(); ++r) {
-      pieces.push_back({&src, reader, r, reader->Stats(r)});
-    }
-  }
+  const auto pieces = NormPieces(id, sources);
   auto& writer = col_writer.StreamNormColumn(out_id);
   std::vector<uint32_t> values;
   for (size_t i = 0; i != pieces.size();) {

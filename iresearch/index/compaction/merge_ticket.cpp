@@ -20,7 +20,7 @@
 
 #include "iresearch/index/compaction/merge_ticket.hpp"
 
-#include <utility>
+#include <memory>
 
 #include "iresearch/index/directory_reader_impl.hpp"
 #include "iresearch/index/index_writer.hpp"
@@ -31,22 +31,12 @@ MergeTicket::MergeTicket() noexcept = default;
 
 MergeTicket::MergeTicket(IndexWriter& writer,
                          std::unique_ptr<State> state) noexcept
-  : _writer{&writer}, _state{std::move(state)} {}
+  : _state{state.release(), Release{&writer}} {}
 
-MergeTicket::MergeTicket(MergeTicket&& other) noexcept
-  : _writer{std::exchange(other._writer, nullptr)},
-    _state{std::move(other._state)} {}
-
-MergeTicket& MergeTicket::operator=(MergeTicket&& other) noexcept {
-  if (this != &other) {
-    Reset();
-    _writer = std::exchange(other._writer, nullptr);
-    _state = std::move(other._state);
-  }
-  return *this;
+void MergeTicket::Release::operator()(State* state) const noexcept {
+  writer->ReleaseTicket(*state);
+  std::default_delete<State>{}(state);
 }
-
-MergeTicket::~MergeTicket() { Reset(); }
 
 CompactionView MergeTicket::Candidates() const noexcept {
   if (!_state) {
@@ -57,15 +47,6 @@ CompactionView MergeTicket::Candidates() const noexcept {
 
 bool MergeTicket::Revoked() const noexcept {
   return _state && _state->revoked.load(std::memory_order_relaxed);
-}
-
-void MergeTicket::Reset() noexcept {
-  if (!_state) {
-    return;
-  }
-  _writer->ReleaseTicket(*_state);
-  _state.reset();
-  _writer = nullptr;
 }
 
 }  // namespace irs

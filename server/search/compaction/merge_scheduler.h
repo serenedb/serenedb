@@ -161,6 +161,10 @@ class MergeScheduler {
   static bool NoneRunningFor(const Relation* relation);
   absl::Time Now() const;
   void Drop(Queue& dropped) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  template<typename Pred>
+  void DropIf(Queue& dropped, Pred pred) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  template<typename Pred>
+  void StopIf(Pred pred) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   void UpdateGauges() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   void Pump();
   yaclib::Future<> Execute(Entry& entry);

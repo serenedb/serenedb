@@ -22,6 +22,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
+#include <utility>
 #include <vector>
 
 #include "iresearch/index/index_features.hpp"
@@ -159,5 +161,25 @@ class SortedPostings : public TermPostings {
   bool _has_freq = false;
   bool _has_pos = false;
 };
+
+template<typename Inputs>
+void RefillPostings(CompoundPostings::IteratorsT& itrs, Inputs& inputs,
+                    std::span<const size_t> group, IndexFeatures features) {
+  const auto* const empty = TermPostings::empty().get();
+  for (auto& entry : itrs) {
+    if (entry.it.get() != empty) {
+      inputs[entry.source].postings = std::move(entry.it);
+    }
+  }
+  itrs.clear();
+  itrs.reserve(group.size());
+  for (const auto i : group) {
+    auto& input = inputs[i];
+    SDB_ASSERT(input.it);
+    auto it = input.it->ReusePostings(features, std::move(input.postings));
+    SDB_ASSERT(it);
+    itrs.emplace_back(std::move(it), input.remap, i);
+  }
+}
 
 }  // namespace irs

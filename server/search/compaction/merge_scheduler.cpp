@@ -129,6 +129,26 @@ void MergeScheduler::Drop(Queue& dropped) {
   UpdateGauges();
 }
 
+template<typename Pred>
+void MergeScheduler::DropIf(Queue& dropped, Pred pred) {
+  for (auto& entry : _queue) {
+    if (pred(*entry)) {
+      dropped.emplace_back(std::move(entry));
+    }
+  }
+  std::erase(_queue, nullptr);
+  Drop(dropped);
+}
+
+template<typename Pred>
+void MergeScheduler::StopIf(Pred pred) {
+  for (const auto& [raw, entry] : _running) {
+    if (pred(*entry)) {
+      entry->stop.store(true, std::memory_order_relaxed);
+    }
+  }
+}
+
 void MergeScheduler::UpdateGauges() const {
   if (!_options.gauges) {
     return;
@@ -212,25 +232,13 @@ void MergeScheduler::Enqueue(const std::shared_ptr<Relation>& relation,
 void MergeScheduler::CancelQueued(const Relation& relation) {
   Queue dropped;
   absl::MutexLock lock{&_mutex};
-  dropped.reserve(_queue.size());
-  for (auto it = _queue.begin(); it != _queue.end();) {
-    if ((*it)->relation.get() != &relation) {
-      ++it;
-      continue;
-    }
-    dropped.emplace_back(std::move(*it));
-    it = _queue.erase(it);
-  }
-  Drop(dropped);
+  DropIf(dropped,
+         [&](const Entry& entry) { return entry.relation.get() == &relation; });
 }
 
 void MergeScheduler::StopRunning(const Relation& relation) {
   absl::MutexLock lock{&_mutex};
-  for (const auto& [raw, entry] : _running) {
-    if (entry->relation.get() == &relation) {
-      entry->stop.store(true, std::memory_order_relaxed);
-    }
-  }
+  StopIf([&](const Entry& entry) { return entry.relation.get() == &relation; });
 }
 
 MergeScheduler::Lease MergeScheduler::TakeOver(
@@ -239,21 +247,11 @@ MergeScheduler::Lease MergeScheduler::TakeOver(
   {
     absl::MutexLock lock{&_mutex};
     ++relation->_paused;
-    dropped.reserve(relation->_queued);
-    for (auto it = _queue.begin(); it != _queue.end();) {
-      if ((*it)->relation != relation) {
-        ++it;
-        continue;
-      }
-      dropped.emplace_back(std::move(*it));
-      it = _queue.erase(it);
-    }
-    Drop(dropped);
-    for (const auto& [raw, entry] : _running) {
-      if (entry->relation == relation) {
-        entry->stop.store(true, std::memory_order_relaxed);
-      }
-    }
+    const auto of_relation = [&](const Entry& entry) {
+      return entry.relation == relation;
+    };
+    DropIf(dropped, of_relation);
+    StopIf(of_relation);
     _mutex.Await(absl::Condition(&NoneRunningFor,
                                  static_cast<const Relation*>(relation.get())));
   }
@@ -295,9 +293,7 @@ void MergeScheduler::Interrupt() noexcept {
   _stopping = true;
   dropped.swap(_queue);
   Drop(dropped);
-  for (auto& [raw, entry] : _running) {
-    entry->stop.store(true, std::memory_order_relaxed);
-  }
+  StopIf([](const Entry&) { return true; });
 }
 
 void MergeScheduler::Stop() {
@@ -342,15 +338,7 @@ void MergeScheduler::Pump() {
       return;
     }
     SDB_IF_FAILURE("hold_merge_dispatch") { return; }
-    for (auto it = _queue.begin(); it != _queue.end();) {
-      if (!(*it)->job->Stale()) {
-        ++it;
-        continue;
-      }
-      stale.emplace_back(std::move(*it));
-      it = _queue.erase(it);
-    }
-    Drop(stale);
+    DropIf(stale, [](const Entry& entry) { return entry.job->Stale(); });
     const auto now = Now();
     const auto aging = absl::ToDoubleSeconds(_options.aging);
     for (;;) {

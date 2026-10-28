@@ -1549,7 +1549,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
                            const AnnBuildEnv* env, MergeExecutor* executor)
   -> yaclib::Future<CompactionResult> {
   auto owned = std::move(ticket);
-  SDB_ASSERT(owned._writer == this);
+  SDB_ASSERT(owned._state.get_deleter().writer == this);
   auto& state = *owned._state;
   auto& candidates = state.candidates;
   const bool registered = [&] {

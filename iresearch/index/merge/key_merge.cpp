@@ -36,7 +36,6 @@
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/log.hpp"
@@ -200,22 +199,19 @@ struct KeyOrder::State {
 
   void ConcatOrder() {
     doc_id_t next = doc_limits::min();
-    uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
     for (size_t i = 0; i != doc_map.size(); ++i) {
       const auto& reader = Reader(i);
       auto* const id_map = doc_map[i].remap.id_map.data();
       auto mask = MakeGenericDocsMask(reader);
       isolated[i] = next - doc_limits::min();
-      const auto end = LiveEnd(reader);
-      for (auto window = doc_limits::min(); window < end;) {
-        const auto count = std::min(end - window, detail::kWindowDocs);
-        const auto alive = mask.FillLive(window, count, live);
-        for (uint32_t k = 0; k != alive; ++k) {
-          order->Set(next - doc_limits::min(), i);
-          id_map[window + live[k]] = next++;
-        }
-        window += count;
-      }
+      VisitLive(mask, doc_limits::min(), LiveEnd(reader),
+                [&](doc_id_t window, std::span<const uint32_t> live) {
+                  for (const auto doc : live) {
+                    order->Set(next - doc_limits::min(), i);
+                    id_map[window + doc] = next++;
+                  }
+                  return true;
+                });
     }
     order->Finish();
   }
@@ -313,7 +309,6 @@ void KeyOrder::Expand(size_t partition,
   auto& s = *_state;
   SDB_ASSERT(partition < s.parts.size());
   auto& part = s.parts[partition];
-  uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
   for (const auto& run : runs) {
     if (run.input >= s.doc_map.size()) {
       part.failed = true;
@@ -332,22 +327,24 @@ void KeyOrder::Expand(size_t partition,
     const auto begin = static_cast<doc_id_t>(run.begin + doc_limits::min());
     const auto end = static_cast<doc_id_t>(begin + run.count);
     auto mask = MakeGenericDocsMask(*s.doc_map[input].reader);
-    for (auto window = begin; window < end;) {
-      const auto count = std::min<doc_id_t>(end - window, detail::kWindowDocs);
-      const auto alive = mask.FillLive(window, count, live);
-      for (uint32_t k = 0; k != alive; ++k) {
-        const auto doc = static_cast<doc_id_t>(window + live[k]);
-        if (remap.id_map[doc] != doc_limits::eof()) {
-          part.failed = true;
-          return;
+    const bool expanded = VisitLive(
+      mask, begin, end, [&](doc_id_t window, std::span<const uint32_t> live) {
+        for (const auto offset : live) {
+          const auto doc = static_cast<doc_id_t>(window + offset);
+          if (remap.id_map[doc] != doc_limits::eof()) {
+            return false;
+          }
+          s.order->Set(part.next, input);
+          remap.id_map[doc] =
+            static_cast<doc_id_t>(part.next + doc_limits::min());
+          span.first = std::min(span.first, part.next);
+          span.last = part.next++;
         }
-        s.order->Set(part.next, input);
-        remap.id_map[doc] =
-          static_cast<doc_id_t>(part.next + doc_limits::min());
-        span.first = std::min(span.first, part.next);
-        span.last = part.next++;
-      }
-      window += count;
+        return true;
+      });
+    if (!expanded) {
+      part.failed = true;
+      return;
     }
   }
 }

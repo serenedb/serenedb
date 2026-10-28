@@ -151,26 +151,12 @@ bool CompoundTermIterator<Postings>::next() {
 template<typename Postings>
 TermPostings::ptr CompoundTermIterator<Postings>::postings(
   IndexFeatures /*features*/) const {
-  auto add_iterators = [this](typename Postings::IteratorsT& itrs) {
-    const auto* const empty = TermPostings::empty().get();
-    for (auto& entry : itrs) {
-      if (entry.it.get() != empty) {
-        _term_iterators[entry.source].postings = std::move(entry.it);
-      }
-    }
-    itrs.clear();
-    itrs.reserve(_term_iterator_mask.size());
-    for (auto& itr_id : _term_iterator_mask) {
-      auto& term_itr = _term_iterators[itr_id];
-      SDB_ASSERT(term_itr.it);
-      auto it = term_itr.it->ReusePostings(Meta().index_features,
-                                           std::move(term_itr.postings));
-      SDB_ASSERT(it);
-      itrs.emplace_back(std::move(it), term_itr.remap, itr_id);
-    }
-  };
-
-  _doc_itr.Reset(add_iterators, Meta().index_features);
+  _doc_itr.Reset(
+    [this](typename Postings::IteratorsT& itrs) {
+      RefillPostings(itrs, _term_iterators, _term_iterator_mask,
+                     Meta().index_features);
+    },
+    Meta().index_features);
   return memory::to_managed<TermPostings>(_doc_itr);
 }
 

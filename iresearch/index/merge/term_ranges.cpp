@@ -115,6 +115,7 @@ class RangeWriter final : public RangeWriterBase {
   struct InputState {
     SeekTermIterator::ptr it;
     TermPostings::ptr postings;
+    const DocRemap* remap = nullptr;
     uint64_t next = 0;
     uint64_t group = 0;
   };
@@ -127,6 +128,7 @@ class RangeWriter final : public RangeWriterBase {
       return;
     }
     input.it = _sources[i].terms->iterator();
+    input.remap = _sources[i].remap;
     _keys[i]->SeekBefore(*input.it, row);
     input.next = row;
   }
@@ -175,24 +177,11 @@ class RangeWriter final : public RangeWriterBase {
     if (_postings.Aborted()) {
       return;
     }
-    auto add = [this](typename Postings::IteratorsT& itrs) {
-      const auto* const empty = TermPostings::empty().get();
-      for (auto& entry : itrs) {
-        if (entry.it.get() != empty) {
-          _inputs[entry.source].postings = std::move(entry.it);
-        }
-      }
-      itrs.clear();
-      itrs.reserve(_mask.size());
-      for (const auto i : _mask) {
-        auto& input = _inputs[i];
-        auto it = input.it->ReusePostings(_props.index_features,
-                                          std::move(input.postings));
-        SDB_ASSERT(it);
-        itrs.emplace_back(std::move(it), _sources[i].remap, i);
-      }
-    };
-    _postings.Reset(add, _props.index_features);
+    _postings.Reset(
+      [this](typename Postings::IteratorsT& itrs) {
+        RefillPostings(itrs, _inputs, _mask, _props.index_features);
+      },
+      _props.index_features);
     PostingMeta meta;
     _writer.Write(_postings, meta);
     if (meta.docs_count != 0) {

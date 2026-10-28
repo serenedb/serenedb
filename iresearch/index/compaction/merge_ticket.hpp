@@ -40,16 +40,13 @@ using CompactionView = std::span<const SubReader* const>;
 class MergeTicket {
  public:
   MergeTicket() noexcept;
-  MergeTicket(MergeTicket&& other) noexcept;
-  MergeTicket& operator=(MergeTicket&& other) noexcept;
-  ~MergeTicket();
 
   explicit operator bool() const noexcept { return static_cast<bool>(_state); }
 
   CompactionView Candidates() const noexcept;
   bool Revoked() const noexcept;
 
-  void Reset() noexcept;
+  void Reset() noexcept { _state.reset(); }
 
  private:
   friend class IndexWriter;
@@ -64,10 +61,15 @@ class MergeTicket {
     bool running = false;
   };
 
+  struct Release {
+    void operator()(State* state) const noexcept;
+
+    IndexWriter* writer = nullptr;
+  };
+
   MergeTicket(IndexWriter& writer, std::unique_ptr<State> state) noexcept;
 
-  IndexWriter* _writer = nullptr;
-  std::unique_ptr<State> _state;
+  std::unique_ptr<State, Release> _state;
 };
 
 }  // namespace irs

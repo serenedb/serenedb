@@ -98,6 +98,9 @@ SereneDBClientState& SereneDBClientState::Register(
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
                         ERR_MSG("parameter \"", name, "\" cannot be changed"));
       }
+      if (new_value) {
+        RequireSuperuserToSet(ctx, name);
+      }
       // Resolve AUTOMATIC against the setting's target scope so the downstream
       // check works uniformly regardless of how the user wrote the SET.
       if (scope == duckdb::SetScope::AUTOMATIC) {

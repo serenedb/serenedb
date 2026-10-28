@@ -1571,6 +1571,18 @@ bool IsUnchangeableSetting(std::string_view name) {
   return kUnchangeableSettings.contains(name);
 }
 
+const duckdb::case_insensitive_set_view_t kSuperuserSettings = {
+  "max_expression_depth",
+};
+
+void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name) {
+  if (kSuperuserSettings.contains(name)) {
+    RequireSuperuser(
+      ctx, name,
+      "Only roles with the SUPERUSER attribute may change this parameter.");
+  }
+}
+
 namespace {
 
 void TryRegister(duckdb::DBConfig& config, std::string_view name,

@@ -5,13 +5,16 @@ set -euo pipefail
 cd "$(dirname "$0")"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-clang++-23 -std=c++26 -O0 -fcoverage-compilation-dir=. -fprofile-instr-generate -fcoverage-mapping \
-	-fcoverage-mcdc -Xclang -fmcdc-max-conditions=8 -mllvm -enable-single-byte-coverage=true \
-	-mllvm -conditional-counter-update asserts.cpp -o "$tmp/asserts"
-LLVM_PROFILE_FILE="$tmp/asserts.profraw" "$tmp/asserts"
-llvm-profdata-23 merge -sparse "$tmp/asserts.profraw" -o "$tmp/asserts.profdata"
-{
-	llvm-cov-23 export -format=text -instr-profile="$tmp/asserts.profdata" "$tmp/asserts"
-	echo
-} >asserts.json
-llvm-cov-23 export -format=lcov -instr-profile="$tmp/asserts.profdata" "$tmp/asserts" >asserts.lcov
+for source in *.cpp; do
+	name=${source%.cpp}
+	clang++-23 -std=c++26 -O0 -fcoverage-compilation-dir=. -fprofile-instr-generate -fcoverage-mapping \
+		-fcoverage-mcdc -Xclang -fmcdc-max-conditions=8 -mllvm -enable-single-byte-coverage=true \
+		-mllvm -conditional-counter-update "$source" -o "$tmp/$name"
+	LLVM_PROFILE_FILE="$tmp/$name.profraw" "$tmp/$name"
+	llvm-profdata-23 merge -sparse "$tmp/$name.profraw" -o "$tmp/$name.profdata"
+	{
+		llvm-cov-23 export -format=text -instr-profile="$tmp/$name.profdata" "$tmp/$name"
+		echo
+	} >"$name.json"
+	llvm-cov-23 export -format=lcov -instr-profile="$tmp/$name.profdata" "$tmp/$name" >"$name.lcov"
+done

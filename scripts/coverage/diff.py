@@ -14,6 +14,8 @@ HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 ASSERTIONS = {"SDB_ASSERT", "SDB_VERIFY", "SDB_ENSURE", "SDB_UNREACHABLE", "D_ASSERT", "D_ASSERT_V",
               "ALWAYS_ASSERT", "DUCKDB_DEBUG_VERIFY_GUARD", "DUCKDB_DEBUG_VERIFY_ENABLED"}
 UNREACHABLE = re.compile(r"\b(?:SDB_UNREACHABLE|std::unreachable|(?:std::)?abort)\(\)")
+CASE_LABEL = re.compile(r"\s*(?:case\b|default\s*:)")
+SWITCH = re.compile(r"\s*switch\s*\(")
 IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
 CODE, EXPANSION, MCDC_BRANCH = 0, 1, 6
 
@@ -315,7 +317,11 @@ def cover(path, touched, data, spans, summary, details):
                             "function": enclosing(spans["functions"], no),
                             "source": source_line(path, no)})
     for no in sorted(touched & set(data["branches"])):
+        text = source_text(path, no)
+        unmeasured = {1} if CASE_LABEL.match(text) else {0, 1} if SWITCH.match(text) else set()
         for idx, taken in enumerate(data["branches"][no]):
+            if idx in unmeasured:
+                continue
             summary["branches"][1] += 1
             if taken > 0:
                 summary["branches"][0] += 1

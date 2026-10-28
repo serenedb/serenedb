@@ -1,0 +1,7 @@
+[clang]
+source:*/third_party/re2/*=allow
+source:*/third_party/duckdb*/*=allow
+source:*/third_party/database-connector/*=allow
+source:*/third_party/postgres/*=allow
+source:*/third_party/*=skip
+source:/usr/*=skip

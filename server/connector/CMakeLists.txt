@@ -17,6 +17,7 @@ target_sources(
         search_filter_printer.cpp
         duckdb_client_state.cpp
         duckdb_subscription.cpp
+        scan/col_filter_share.cpp
         scan/col_filter_verify.cpp
         scan/deferred_check.cpp
         scan/geo_check.cpp

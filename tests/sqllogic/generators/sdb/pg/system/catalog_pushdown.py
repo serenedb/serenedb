@@ -120,18 +120,37 @@ SHAPES = [
     "lower(relname) IN ('spd_parent', 'x', 'y', 'z')", "reltuples >= 0",
     "reltuples >= 0 AND reltuples < 1e9", "relnatts IS NOT NULL",
     "relname IS DISTINCT FROM NULL", "relname IS NOT DISTINCT FROM NULL",
+    "oid IS NOT DISTINCT FROM 'spd_parent'::regclass",
+    "relname IS NOT DISTINCT FROM 'spd_parent' OR relname = 'spd_child'",
+    "NOT (relname IS NOT DISTINCT FROM 'spd_parent')",
+    "NOT (lower(relname) IN ('spd_parent', 'x'))",
+    "relnamespace = 11 AND (relnatts < 2 OR relnatts > 30)", "lower(relname) IS NULL",
+    "relname >= 'spd_c' AND relname <= 'spd_s'",
+    "relname IS NOT DISTINCT FROM 'spd_parent' OR relname IS NOT DISTINCT FROM 'spd_child'",
 ]
 UNFOLDED_SHAPES = [
     "relname = NULL", "relnatts = NULL", "relname IN ('spd_parent', NULL)",
     "relname NOT IN ('spd_parent', NULL)", "relname NOT IN ('spd_parent', NULL, NULL)",
     "NOT (relname IS NOT NULL AND relname = 'spd_parent')",
+    "NOT (relname IS NOT DISTINCT FROM 'spd_parent')",
 ]
 OTHER_SHAPES = [
     ("information_schema.columns", "character_maximum_length IS NOT NULL"),
     ("information_schema.columns", "column_default IS NOT NULL"),
+    ("information_schema.columns", "NOT (column_default IS NOT DISTINCT FROM 'x')"),
     ("pg_catalog.pg_proc", "starts_with(prosrc, 'abs')"),
+    ("pg_catalog.pg_proc", "procost >= 1 AND procost < 50"),
+    ("pg_catalog.pg_proc", "(procost = 1 OR procost = 100) AND (procost = 25 OR procost = 1)"),
     ("pg_catalog.pg_depend", "deptype = 'i'"), ("pg_catalog.pg_depend", "deptype = 'a'"),
     ("pg_catalog.pg_depend", "deptype = 'n'"),
+]
+UNFOLDED_OTHER_SHAPES = [
+    ("information_schema.columns", "NOT (column_default IS NOT DISTINCT FROM 'x')"),
+]
+SERIALIZED_SHAPES = [
+    ("oid IN (1259, 1247)", "oid <> 1259 AND oid <> 1247"),
+    ("relname IN ('pg_class', 'pg_type')", "relname <> 'pg_class' AND relname <> 'pg_type'"),
+    ("oid IN (1259, NULL)", "NOT (oid = 1259 OR oid = NULL)"),
 ]
 
 
@@ -178,6 +197,17 @@ def compare(t, shown, source, predicate, scope=None):
             f"UNION ALL ({scanned} EXCEPT ALL {pushed}))", ["mismatches"], [[0]])
 
 
+def compare_not_in(t, shape, same):
+    source = "${__DATABASE__}.pg_catalog.pg_class"
+    pushed = f"SELECT oid, relname FROM {source} WHERE {shape}"
+    scanned = f"SELECT oid, relname FROM (SELECT * FROM {source} LIMIT 1000000000) WHERE {same}"
+    mismatches = (f"SELECT count(*) AS mismatches FROM (({pushed} EXCEPT ALL {scanned}) "
+                  f"UNION ALL ({scanned} EXCEPT ALL {pushed}))").replace("'", "''")
+    t.query(f"SELECT * FROM json_execute_serialized_sql(replace(json_serialize_sql("
+            f"'{mismatches}'), '\"COMPARE_IN\"', '\"COMPARE_NOT_IN\"'))",
+            ["mismatches"], [[0]])
+
+
 def check(t, name, source, columns, oids, names):
     t.section(source)
     shown = STABLE.get(name, "*")
@@ -191,9 +221,12 @@ t = Test("A filter a system relation evaluates while it scans returns the rows t
          "into, against a fixture with an object of every kind, and every key column looks "
          "up each of those objects by its oid or name; pg_class also takes every shape of "
          "filter a scan can capture or must leave alone, with the expression rewriter on and "
-         "off. sdb_progress shows operations as they run and sdb_metrics counts them, so the "
+         "off, and the NOT IN operator a deserialized statement keeps, compared inside one "
+         "deserialized statement on this file's database by name, since it runs on a "
+         "connection of its own. "
+         "sdb_progress shows operations as they run and sdb_metrics counts them, so the "
          "first is left out and the second compared on the columns that stay put while a "
-         "statement runs; pg_shdepend reads other databases' objects as they commit (#1999), "
+         "statement runs; pg_shdepend reads other databases' objects as they commit, "
          "so it is compared on the rows of this file's own roles.")
 for sql in FIXTURE:
     t.statement(sql)
@@ -213,7 +246,13 @@ t.section("Filter shapes the expression rewriter would fold")
 t.statement("SET disabled_optimizers = 'expression_rewriter'")
 for shape in UNFOLDED_SHAPES:
     compare(t, "*", "pg_catalog.pg_class", shape)
+for source, shape in UNFOLDED_OTHER_SHAPES:
+    compare(t, "*", source, shape)
 t.statement("RESET disabled_optimizers")
+t.section("Filter shapes of deserialized statements")
+t.control("substitution on")
+for shape, same in SERIALIZED_SHAPES:
+    compare_not_in(t, shape, same)
 for sql in TEARDOWN:
     t.statement(sql)
 t.part()

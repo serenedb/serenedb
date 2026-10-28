@@ -180,7 +180,10 @@ template<typename T>
 bool Restrict(SystemCondition<T>& condition, duckdb::ExpressionType type,
               T value) {
   using enum duckdb::ExpressionType;
-  if (type == COMPARE_EQUAL) {
+  if (type == COMPARE_NOT_DISTINCT_FROM) {
+    condition.not_null = true;
+    Intersect(condition.keys, std::vector<T>{std::move(value)});
+  } else if (type == COMPARE_EQUAL) {
     Intersect(condition.keys, std::vector<T>{std::move(value)});
   } else if (type == COMPARE_NOTEQUAL) {
     condition.excluded.emplace_back(std::move(value));
@@ -202,7 +205,9 @@ bool Restrict(SystemCondition<T>& condition, duckdb::ExpressionType type,
 
 template<typename T>
 bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
-  if (expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_IN) {
+  const auto type = expr.GetExpressionType();
+  if (type == duckdb::ExpressionType::COMPARE_IN ||
+      type == duckdb::ExpressionType::COMPARE_NOT_IN) {
     const auto& children =
       expr.Cast<duckdb::BoundOperatorExpression>().GetChildren();
     if (!duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0])) {
@@ -218,39 +223,48 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
         child->Cast<duckdb::BoundConstantExpression>().GetValue();
       if (!value.IsNull()) {
         set.emplace_back(Constant<T>(value));
+      } else if (type == duckdb::ExpressionType::COMPARE_NOT_IN) {
+        return false;
       }
     }
-    Intersect(condition.keys, std::move(set));
+    if (type == duckdb::ExpressionType::COMPARE_IN) {
+      Intersect(condition.keys, std::move(set));
+    } else {
+      absl::c_move(set, std::back_inserter(condition.excluded));
+    }
     return true;
   }
   if (duckdb::BoundComparisonExpression::IsComparison(expr)) {
-    auto type = duckdb::ExpressionType::INVALID;
+    auto comparison = duckdb::ExpressionType::INVALID;
     const auto constant =
       duckdb::ExpressionFilter::TryGetColumnConstantComparison(
-        expr.Cast<duckdb::BoundFunctionExpression>(), type);
+        expr.Cast<duckdb::BoundFunctionExpression>(), comparison);
     if (!constant) {
       return false;
     }
     auto value = Constant<T>(*constant);
-    return value && Restrict(condition, type, std::move(*value));
+    return value && Restrict(condition, comparison, std::move(*value));
   }
   if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONJUNCTION) {
     const auto& children =
       expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren();
-    if (expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
+    if (type == duckdb::ExpressionType::CONJUNCTION_AND) {
       return absl::c_all_of(
         children, [&](const duckdb::unique_ptr<duckdb::Expression>& child) {
           return Capture(*child, condition);
         });
     }
     std::vector<T> set;
+    bool not_null = true;
     for (const auto& child : children) {
       SystemCondition<T> branch;
       if (!Capture(*child, branch) || !branch.KeysOnly()) {
         return false;
       }
+      not_null = not_null && branch.not_null;
       absl::c_move(*branch.keys, std::back_inserter(set));
     }
+    condition.not_null = condition.not_null || not_null;
     Intersect(condition.keys, std::move(set));
     return true;
   }
@@ -280,7 +294,7 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
     (*null ? condition.null : condition.not_null) = true;
     return true;
   }
-  if (expr.GetExpressionType() == duckdb::ExpressionType::OPERATOR_NOT) {
+  if (type == duckdb::ExpressionType::OPERATOR_NOT) {
     const auto& child =
       *expr.Cast<duckdb::BoundOperatorExpression>().GetChildren()[0];
     bool nulls = false;

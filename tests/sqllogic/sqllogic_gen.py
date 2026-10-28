@@ -40,6 +40,9 @@ class Test:
                                      subsequent_indent="# ")
         self._lines.append("")
 
+    def control(self, setting):
+        self._lines += [f"control {setting}", ""]
+
     def _condition(self, onlyif, skipif):
         self._lines += [f"onlyif {onlyif}"] if onlyif else []
         self._lines += [f"skipif {skipif}"] if skipif else []

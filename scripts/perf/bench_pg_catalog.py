@@ -5,12 +5,19 @@ import os
 import re
 import statistics
 import subprocess
+import sys
 import time
 
 import psycopg
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TEST = os.path.normpath(os.path.join(HERE, "..", "..", "tests", "sqllogic", "any", "pg", "system", "catalog_conformance.test"))
+SQLLOGIC = os.path.normpath(os.path.join(HERE, "..", "..", "tests", "sqllogic"))
+GENERATOR = os.path.join(SQLLOGIC, "generators", "any", "pg", "system", "catalog_conformance.py")
+sys.path.insert(0, SQLLOGIC)
+
+import generated  # noqa: E402
+
+
 HZ = os.sysconf("SC_CLK_TCK")
 SCHEMA = "catbench"
 MARKER = f"{SCHEMA}.catbench_done"
@@ -103,14 +110,15 @@ def parse_args():
     ap.add_argument("--explain-floor", type=int, default=1000, help="scan rows always accepted by the EXPLAIN ANALYZE check")
     ap.add_argument("--explain-factor", type=float, default=4.0, help="scan rows accepted per result row")
     ap.add_argument("--regenerate", action="store_true", help="drop and rebuild the bench databases")
-    ap.add_argument("--test", default=TEST, help="sqllogic file whose statements are the setup and whose queries are timed")
+    ap.add_argument("--test", default=None, help="sqllogic file whose statements are the setup and whose queries are timed, "
+                                                 "by default the catalog conformance test")
     ap.add_argument("--json", default=None)
     return ap.parse_args()
 
 
-def parse_test(path):
+def parse_test(text):
     records = []
-    lines = open(path).read().split("\n")
+    lines = text.split("\n")
     i, skip, only = 0, set(), set()
     while i < len(lines):
         line = lines[i]
@@ -152,7 +160,12 @@ def query_name(record):
 
 
 def load_test(path, flt):
-    records = parse_test(path)
+    if path:
+        with open(path) as f:
+            text = f.read()
+    else:
+        text = generated.generate(GENERATOR)
+    records = parse_test(text)
     queries = [r for r in records if r["kind"] == "query"]
     first = records.index(queries[0]) if queries else len(records)
     last = records.index(queries[-1]) if queries else len(records)

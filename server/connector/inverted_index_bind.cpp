@@ -1038,10 +1038,12 @@ void ValidateInvertedIndexKey(std::string_view label,
   ValidateTermDictKey(label, type, opclass.name);
 }
 
+}  // namespace
+
 // An opclass names a dictionary of the index's own schema first -- the index
 // and its dictionary are created together and that schema need not be on the
 // reader's search path -- and otherwise resolves like any other name.
-duckdb::optional_ptr<const TokenizerCatalogEntry> ResolveOpclassTokenizer(
+duckdb::optional_ptr<TokenizerCatalogEntry> ResolveOpclassTokenizer(
   duckdb::ClientContext& context, duckdb::SchemaCatalogEntry& schema,
   std::string_view name) {
   duckdb::CatalogEntryRetriever retriever{context};
@@ -1055,6 +1057,8 @@ duckdb::optional_ptr<const TokenizerCatalogEntry> ResolveOpclassTokenizer(
   }
   return &dict->Cast<TokenizerCatalogEntry>();
 }
+
+namespace {
 
 // Folds one key's opclass into the field's config, drawing whatever sub-field
 // ids that opclass turns out to need from `next_id`. Merges: a column
@@ -1290,7 +1294,8 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
     duckdb::optional_ptr<const TokenizerCatalogEntry> dict;
     if (opclass.IsTokenizer()) {
       dict = ResolveOpclassTokenizer(context, entry.ParentSchema(context),
-                                     opclass.name);
+                                     opclass.name)
+               .get();
     }
 
     const auto [slot, fresh] = entries.try_emplace(record.field_id);

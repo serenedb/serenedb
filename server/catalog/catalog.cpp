@@ -86,6 +86,7 @@
 #include "connector/duckdb_physical_search_insert.h"
 #include "connector/duckdb_physical_search_truncate.h"
 #include "connector/duckdb_physical_search_update.h"
+#include "connector/inverted_index_bind.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "connector/view_index_bind.h"
@@ -361,14 +362,13 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
       info.parsed_expressions.erase(info.parsed_expressions.begin() + i);
     }
   }
-  for (const auto& opclass : info.column_opclasses) {
-    if (opclass.empty() || opclass == kIncludedKind || opclass == kIVFKind ||
-        opclass == kHNSWKind) {
+  for (size_t i = 0; i < info.column_opclasses.size(); ++i) {
+    if (info.column_opclasses[i].empty() || info.column_opclass_options[i]) {
       continue;
     }
-    auto entry = duckdb::Catalog::GetEntry<TokenizerCatalogEntry>(
-      binder.context, duckdb::QualifiedName::Parse(opclass),
-      duckdb::OnEntryNotFound::RETURN_NULL);
+    auto entry = connector::ResolveOpclassTokenizer(
+      binder.context, table.ParentSchema(binder.context),
+      info.column_opclasses[i]);
     if (entry && &entry->ParentCatalog() == this) {
       info.dependencies.AddDependency(*entry);
     }

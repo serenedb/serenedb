@@ -626,7 +626,8 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     set = detail::MakeDocSet(_inner.get(), docs_count, table);
   } else if (run(admit)) {
     return;
-  } else if (plan.two_hop && plan.walk == HnswWalk::TwoHop &&
+  } else if (((plan.two_hop && plan.walk == HnswWalk::TwoHop) ||
+              plan.walk == HnswWalk::Adaptive) &&
              scratch.scored < budget) {
     budget -= scratch.scored;
     const auto seeds = AdmittedSeeds(set, graph, 2 * _ef);

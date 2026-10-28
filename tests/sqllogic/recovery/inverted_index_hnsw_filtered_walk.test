@@ -62,3 +62,38 @@ SELECT count(*) FROM (
 ----
 count
 0
+
+
+statement ok
+CREATE TABLE corner_docs (id INTEGER PRIMARY KEY, far INTEGER, emb FLOAT[16]);
+
+
+statement ok
+INSERT INTO corner_docs
+  SELECT i, (list_sum(walk_vec(i)) > 8.8)::INTEGER, walk_vec(i) FROM range(20000) t(i);
+
+
+statement ok
+CREATE INDEX corner_docs_l2 ON corner_docs
+  USING inverted(id, far, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+VACUUM (REFRESH_TABLE) corner_docs;
+
+
+statement ok
+SET sdb_faults = 'irs::HnswFilteredScan';
+
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM corner_docs_l2 WHERE far = 1
+  ORDER BY emb <-> list_transform(range(16), j -> 0.0)::FLOAT[16] LIMIT 5) t;
+----
+count
+5
+
+
+statement ok
+SET sdb_faults = '-irs::HnswFilteredScan';

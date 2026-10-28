@@ -54,7 +54,7 @@ env:
 
 jobs:
   test:
-    name: test ${{ inputs.CONFIG }} (${{ inputs.LOCATION }})
+    name: test ${{ inputs.CONFIG }} ${{ matrix.shard }} (${{ inputs.LOCATION }})
     runs-on:
       - ${{ inputs.LOCATION }}
       - lan

@@ -401,11 +401,13 @@ void IvfWriter::Flush() {
   const uint64_t stats_offset = out.Position();
   _result.qw->Serialize(out);
   const uint64_t stats_byte_size = out.Position() - stats_offset;
-  _idx->AddIvf(_info.field_id,
-               IvfCentroidMeta{.tree_offset = tree_span.offset,
-                               .tree_byte_size = tree_span.byte_size,
-                               .stats_offset = stats_offset,
-                               .stats_byte_size = stats_byte_size});
+  _idx->AddIvf(_info.field_id, IvfCentroidMeta{
+                                 .tree_offset = tree_span.offset,
+                                 .tree_byte_size = tree_span.byte_size,
+                                 .stats_offset = stats_offset,
+                                 .stats_byte_size = stats_byte_size,
+                                 .root_byte_size = tree_span.root_byte_size,
+                               });
 }
 
 const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,

@@ -154,7 +154,7 @@ class CentroidsTree {
   CentroidsTree& operator=(const CentroidsTree&) = delete;
   CentroidsTree& operator=(CentroidsTree&&) = default;
 
-  static CentroidsTree Deserialize(IndexInput& in, uint64_t byte_size);
+  static CentroidsTree Deserialize(IndexInput& in, uint64_t root_byte_size);
 
   void Search(std::span<const float> query, IndexInput& in, uint32_t nprobe,
               std::vector<uint32_t>& out_ids, std::vector<float>* out_centroids,
@@ -184,6 +184,7 @@ class CentroidsTree {
 struct CentroidsSpan {
   size_t offset = 0;
   size_t byte_size = 0;
+  size_t root_byte_size = 0;
 };
 
 struct AssignedCentroids {

@@ -1430,13 +1430,15 @@ void HnswWriter::Flush() {
   auto& out = _idx->BlocksOut();
   const uint64_t offset = out.Position();
 
-  out.WriteU32(_d);
-  out.WriteU32(static_cast<uint32_t>(_info.metric));
-  out.WriteU32(static_cast<uint32_t>(_info.quant.kind));
-  out.WriteU32(_info.ef_construction);
-  out.WriteU32(_record_size);
-  out.WriteU64(_rows);
-  out.WriteByte(_rotation.empty() ? 0 : 1);
+  const HnswHeader header{
+    .d = _d,
+    .metric = _info.metric,
+    .quant = _info.quant.kind,
+    .ef_construction = _info.ef_construction,
+    .record_size = _record_size,
+    .rows = _rows,
+    .rotated = !_rotation.empty(),
+  };
   const auto write_floats = [&](std::span<const float> values) {
     out.WriteData(reinterpret_cast<const byte_type*>(values.data()),
                   values.size() * sizeof(float));
@@ -1456,8 +1458,11 @@ void HnswWriter::Flush() {
     write_floats(_qw ? _tails : _norms);
   }
 
-  _idx->AddHnsw(_info.field_id, HnswMeta{.offset = offset,
-                                         .byte_size = out.Position() - offset});
+  _idx->AddHnsw(_info.field_id, HnswMeta{
+                                  .offset = offset,
+                                  .byte_size = out.Position() - offset,
+                                  .header = header,
+                                });
 
   _vectors.clear();
   _vectors.shrink_to_fit();

@@ -34,16 +34,6 @@
 
 namespace irs {
 
-struct HnswHeader {
-  uint32_t d = 0;
-  VectorMetric metric = VectorMetric::L2Sqr;
-  VectorQuantization quant = VectorQuantization::None;
-  uint32_t ef_construction = 0;
-  uint32_t record_size = 0;
-  uint64_t rows = 0;
-  bool rotated = false;
-};
-
 struct HnswData {
   HnswGraph graph;
   std::vector<float> vectors;
@@ -65,18 +55,17 @@ struct HnswSearchLimits {
 
 class HnswIndex final : public AnnIndex {
  public:
-  HnswIndex(HnswHeader header, HnswMeta meta, field_id field,
-            HnswBases* bases) noexcept
-    : _header{header}, _meta{meta}, _field{field}, _bases{bases} {}
+  HnswIndex(HnswMeta meta, field_id field, HnswBases* bases) noexcept
+    : _meta{meta}, _field{field}, _bases{bases} {}
 
   AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }
 
-  uint32_t Dim() const noexcept final { return _header.d; }
+  uint32_t Dim() const noexcept final { return _meta.header.d; }
 
-  bool Empty() const noexcept final { return _header.rows == 0; }
+  bool Empty() const noexcept final { return _meta.header.rows == 0; }
 
   bool HasQuantStats() const noexcept final {
-    return _header.quant != VectorQuantization::None;
+    return _meta.header.quant != VectorQuantization::None;
   }
 
   bool SupportsFilter() const noexcept final { return true; }
@@ -98,11 +87,9 @@ class HnswIndex final : public AnnIndex {
                              std::span<const float> query,
                              VectorMetric metric) const final;
 
-  static HnswHeader ReadHeader(IndexInput& in);
-
   std::shared_ptr<const HnswData> Load(const SubReader& segment) const;
 
-  const HnswHeader& Header() const noexcept { return _header; }
+  const HnswHeader& Header() const noexcept { return _meta.header; }
 
  private:
   QueryBuilder::ptr PrepareSearch(const SubReader& segment,
@@ -111,7 +98,6 @@ class HnswIndex final : public AnnIndex {
                                   HnswSearchLimits limits,
                                   AnnQueryCache* cache) const;
 
-  HnswHeader _header;
   HnswMeta _meta;
   field_id _field;
   HnswBases* _bases;

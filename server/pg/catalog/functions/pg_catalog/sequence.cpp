@@ -21,7 +21,6 @@
 #include <absl/synchronization/mutex.h>
 
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
-#include <duckdb/common/operator/add.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -48,27 +47,8 @@ struct SequenceProgress {
   bool is_called;
 };
 
-int64_t NextAfter(const duckdb::SequenceData& data, int64_t value) {
-  int64_t next = 0;
-  const bool overflow =
-    !duckdb::TryAddOperator::Operation(value, data.increment, next);
-  if (data.cycle) {
-    if (overflow) {
-      return data.increment < 0 ? data.max_value : data.min_value;
-    }
-    if (next < data.min_value) {
-      return data.max_value;
-    }
-    return next > data.max_value ? data.min_value : next;
-  }
-  if (overflow) {
-    return data.increment < 0 ? data.min_value : data.max_value;
-  }
-  return next;
-}
-
 SequenceProgress ProgressOf(const duckdb::SequenceData& data) {
-  if (data.last_value && NextAfter(data, *data.last_value) == data.counter) {
+  if (data.last_value && data.Successor(*data.last_value) == data.counter) {
     return {.last_value = *data.last_value, .is_called = true};
   }
   return {.last_value = data.counter, .is_called = false};

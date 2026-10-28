@@ -18,6 +18,8 @@ IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
 INTERNAL = re.compile(r"^([^:]+:)(_Z.*)$")
 SWITCH = re.compile(r"\s*switch\b")
 CASE = re.compile(r"\s*(?:case\b|default\s*:)")
+FOREVER = re.compile(r"\s*(?:\}\s*)?while\s*\(\s*true\s*\)")
+BRACE = re.compile(r"\s*\};?\s*$")
 CODE, EXPANSION, MCDC_BRANCH = 0, 1, 6
 
 
@@ -256,7 +258,9 @@ def unreachable(path, touched, code):
             size = min((c[2] - c[0], c[3] - c[1]) for c in inside)
             innermost = [c for c in inside if (c[2] - c[0], c[3] - c[1]) == size]
             if all(c[4] == 0 for c in innermost):
-                lines.update(range(innermost[0][0], innermost[0][2] + 1))
+                region = innermost[0]
+                before = any((region[0], region[1]) < (c[0], c[1]) < point for c in code)
+                lines.update(range(no if before else region[0], region[2] + 1))
     return lines
 
 
@@ -315,6 +319,8 @@ def cover(path, touched, data, spans, summary, details):
     touched = touched - skipped
     missed = []
     for no in sorted(touched & set(data["lines"])):
+        if BRACE.match(source_text(path, no)):
+            continue
         summary["lines"][1] += 1
         if data["lines"][no] > 0:
             summary["lines"][0] += 1
@@ -326,7 +332,7 @@ def cover(path, touched, data, spans, summary, details):
     for no in sorted(touched & set(data["branches"])):
         text = source_text(path, no)
         for idx, taken in enumerate(data["branches"][no]):
-            if SWITCH.match(text) or (idx % 2 and CASE.match(text)):
+            if SWITCH.match(text) or (idx % 2 and (CASE.match(text) or FOREVER.match(text))):
                 continue
             summary["branches"][1] += 1
             if taken > 0:

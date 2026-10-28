@@ -21,7 +21,7 @@ def test_assertions_verification_and_unreachable_code_are_not_coverage_targets(m
     details = []
     diff.cover("asserts.cpp", set(range(1, 200)), data, spans, summary, details)
     diff.source_lines.cache_clear()
-    assert summary == {"lines": [14, 14], "functions": [3, 3], "branches": [4, 7], "mcdc": [0, 2]}
+    assert summary == {"lines": [10, 10], "functions": [3, 3], "branches": [4, 7], "mcdc": [0, 2]}
     assert sorted((d["kind"], d.get("direction") or d["condition"],
                    (d.get("condition_source") or d["source"]).strip()) for d in details) == [
         ("branch", "false", "if (x > 0 && y > 0) {"),
@@ -60,6 +60,38 @@ def test_a_switch_counts_only_whether_each_case_ran(monkeypatch, tmp_path):
     diff.source_lines.cache_clear()
     assert summary["branches"] == [1, 2]
     assert [(d["line"], d["direction"]) for d in details] == [(5, "true")]
+
+
+def test_an_unreachable_marker_excludes_only_what_leads_to_it(monkeypatch, tmp_path):
+    (tmp_path / "u.cpp").write_text("int Kind(int k) {\n  switch (k) {\n    case 0:\n      return 1;\n"
+                                    "  }\n  SDB_UNREACHABLE();\n}\nvoid Stub() {\n"
+                                    "  SDB_UNREACHABLE();\n}\n")
+    monkeypatch.setattr(diff, "ROOT", tmp_path)
+    diff.source_lines.cache_clear()
+    code = [[1, 17, 7, 2, 0, 0, 0, 0], [3, 5, 4, 15, 0, 0, 0, 0], [6, 20, 7, 2, 0, 0, 0, 0],
+            [8, 13, 10, 2, 0, 0, 0, 0]]
+    lines = diff.unreachable("u.cpp", set(range(1, 11)), code)
+    diff.source_lines.cache_clear()
+    assert lines == {6, 7, 8, 9, 10}
+
+
+def test_a_closing_brace_and_the_exit_of_an_endless_loop_are_not_coverage_targets(monkeypatch,
+                                                                                  tmp_path):
+    (tmp_path / "b.cpp").write_text("int f(int x) {\n  while (true) {\n    if (x > 3) {\n"
+                                    "      return x;\n    }\n    ++x;\n  }\n}\n")
+    monkeypatch.setattr(diff, "ROOT", tmp_path)
+    diff.source_lines.cache_clear()
+    data = diff.parse_lcov("SF:b.cpp\nDA:2,1\nDA:3,1\nDA:4,1\nDA:5,0\nDA:6,1\nDA:7,1\nDA:8,0\n"
+                           "BRDA:2,0,0,1\nBRDA:2,0,1,0\nBRDA:3,0,0,1\nBRDA:3,0,1,1\n"
+                           "end_of_record\n")["b.cpp"]
+    spans = {"mcdc": {}, "functions": [], "excluded": set(), "code": []}
+    summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0], "mcdc": [0, 0]}
+    details = []
+    diff.cover("b.cpp", set(range(1, 9)), data, spans, summary, details)
+    diff.source_lines.cache_clear()
+    assert summary["lines"] == [4, 4]
+    assert summary["branches"] == [3, 3]
+    assert details == []
 
 
 @pytest.mark.parametrize("path,test", [

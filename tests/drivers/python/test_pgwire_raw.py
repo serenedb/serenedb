@@ -251,6 +251,21 @@ def conn():
     c.close()
 
 
+def test_query_of_a_vanished_client_ends(conn):
+    query = "SELECT i, repeat('x', 100) FROM range(3000000) t(i) ORDER BY i -- vanished"
+    victim = WireConn()
+    victim.send("Q", _cstr(query))
+    victim.sock.close()
+    probe = (
+        "SELECT count(*) FROM pg_stat_activity "
+        "WHERE query LIKE '%-- vanished' AND pid <> pg_backend_pid()"
+    )
+    deadline = time.monotonic() + 60
+    while first_field(conn.run_ok(probe)) != b"0":
+        assert time.monotonic() < deadline, "the query outlived its client"
+        time.sleep(0.2)
+
+
 def test_startup_rejects_missing_user():
     # PG requires a user name in the startup packet (SQLSTATE 28000); without it
     # the server must not silently fall back to a default user.

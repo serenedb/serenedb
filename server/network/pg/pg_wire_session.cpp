@@ -1530,8 +1530,8 @@ yaclib::Task<duckdb::QueryResultState> PgWireSession<Kind>::DriveQuery(
     }
   };
   for (;;) {
-    if (wire) {
-      DrainWire(*wire);
+    if (wire && !DrainWire(*wire)) {
+      _conn->context->Interrupt();
     }
     const auto status =
       pending.ExecuteTask([this] { this->_task->RequestRun(); });

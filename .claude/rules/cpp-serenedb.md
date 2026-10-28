@@ -77,7 +77,7 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 - **A new C++ file:** add it to its target in the nearest `CMakeLists.txt` (`scripts/find_unused_sources.py` lists the files nothing builds).
 - **A setting:** define it in `server/query/config_variables.cpp` and document it in the table in `docs/configuration/overview.md`.
 - **A serened flag:** `python3 tests/drivers/python/cli_help.py override --bin <build>/bin/serened` regenerates the CLI reference the docs render.
-- **What pg_catalog and information_schema support:** update `docs/compatibility/system-table-compatibility.md`, then run `python3 scripts/generate_pg_catalog.py`.
+- **What pg_catalog and information_schema support:** update `docs/compatibility/system-table-compatibility.md`; a test generated from it checks its claims.
 - **A type mapping in `server/pg/types/mapping.cpp`:** update `docs/compatibility/data-type-compatibility.md`, then run `python3 scripts/generate_pg_catalog.py`.
 - **Generated tables:** the unicode tables come from `scripts/generate_unicode_tables.py`; `server/pg/catalog/generated/` from `scripts/generate_pg_catalog.py`, which reads PostgreSQL's catalog sources in the `third_party/postgres` submodule.
 - **Anything written to disk:** [storage.md](storage.md).

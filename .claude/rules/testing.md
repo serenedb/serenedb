@@ -10,6 +10,7 @@ paths:
 
 - `tests/sqllogic/any/`: behaviour SereneDB shares with PostgreSQL. PostgreSQL is the ground truth: validate on real PostgreSQL before pinning (`scripts/ci/test.py --suite postgres --test 'postgres:*:pg/any/<file>.test'`, which runs the file against the image `tests/sqllogic/fixtures/postgres`); outcomes must match, error text may differ.
 - `tests/sqllogic/sdb/`: SereneDB only. `tests/sqllogic/pg/`: PostgreSQL only, validating the spec.
+- A test of many similar cases, or one derived from another file, is a generator under `tests/sqllogic/generators/`, whose output is never committed ([tests/sqllogic/README.md](../../tests/sqllogic/README.md), "Generated Tests").
 - `tests/sqllogic/recovery/`: a fresh serened per file, for crashes, restarts and anything server-wide ([sqllogic.md](sqllogic.md)).
 - `tests/server/<area>/`, `tests/iresearch/`: gtests, for isolated C++ logic a sqllogic test can't reach well.
 - `tests/drivers/<lang>/`: client drivers over the wire, on the shared spec in `tests/drivers/spec/`; `tests/drivers/psql/` pins psql's output; `tests/drivers/network/`: pg_hba matching.

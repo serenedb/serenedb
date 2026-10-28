@@ -65,8 +65,10 @@ class Test:
         self.statement(f"VACUUM (REFRESH_TABLE) {table}")
 
     def query(self, sql, columns, rows=1):
+        if isinstance(rows, int):
+            rows = [[RECORDED] * len(columns)] * rows
         self._lines += ["query", sql, "----", "\t".join(columns),
-                        *(["\t".join([RECORDED] * len(columns))] * rows), ""]
+                        *("\t".join(map(str, row)) for row in rows), ""]
 
     def error(self, sql, message):
         self._lines += [f"statement error {message}", sql, ""]

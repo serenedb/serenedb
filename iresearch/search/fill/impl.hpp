@@ -91,6 +91,14 @@ class Impl : public Node {
     }
   }
 
+  uint32_t Keep(const doc_id_t* in, uint32_t n, doc_id_t* out) final {
+    return Sift<true>(in, n, out);
+  }
+
+  uint32_t Drop(const doc_id_t* in, uint32_t n, doc_id_t* out) final {
+    return Sift<false>(in, n, out);
+  }
+
   detail::BitsetStorage* Folded() noexcept final {
     if constexpr (requires(Leaf& leaf) { leaf.Folded(); }) {
       return _leaf.Folded();
@@ -100,6 +108,19 @@ class Impl : public Node {
   }
 
  private:
+  template<bool Keep>
+  uint32_t Sift(const doc_id_t* in, uint32_t n, doc_id_t* out) {
+    if constexpr (Keep && requires { _leaf.Keep(in, n, out); }) {
+      return _leaf.Keep(in, n, out);
+    } else if constexpr (!Keep && requires { _leaf.Drop(in, n, out); }) {
+      return _leaf.Drop(in, n, out);
+    } else if constexpr (Producer<Leaf>) {
+      return detail::SiftByFill<Keep>(_leaf, in, n, out);
+    } else {
+      SDB_UNREACHABLE();
+    }
+  }
+
   [[no_unique_address]] utils::Need<Producer<Leaf> && !kRestricts,
                                     detail::Scratch> _own;
   Leaf _leaf;
@@ -130,6 +151,16 @@ class Erased {
                                  uint64_t* IRS_RESTRICT mask,
                                  score_t* IRS_RESTRICT scores) {
     return _node->Fill(min, max, mask, scores);
+  }
+
+  IRS_FORCE_INLINE uint32_t Keep(const doc_id_t* in, uint32_t n,
+                                 doc_id_t* out) {
+    return _node->Keep(in, n, out);
+  }
+
+  IRS_FORCE_INLINE uint32_t Drop(const doc_id_t* in, uint32_t n,
+                                 doc_id_t* out) {
+    return _node->Drop(in, n, out);
   }
 
   IRS_FORCE_INLINE bool Valid() const noexcept { return _node != nullptr; }

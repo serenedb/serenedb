@@ -55,6 +55,14 @@ struct Node : memory::Managed {
     return FillOr(min, max, mask);
   }
 
+  virtual uint32_t Keep(const doc_id_t*, uint32_t, doc_id_t*) {
+    SDB_UNREACHABLE();
+  }
+
+  virtual uint32_t Drop(const doc_id_t*, uint32_t, doc_id_t*) {
+    SDB_UNREACHABLE();
+  }
+
   virtual detail::BitsetStorage* Folded() noexcept { return nullptr; }
 };
 

@@ -88,12 +88,6 @@ jobs:
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
           git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
 
-      - name: Fetch the timing snapshot
-        uses: actions/download-artifact@v8
-        with:
-          name: timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: out
-
       - name: Run the shard
         env:
           SDB_CHECK: ${{ fromJSON(inputs.RUNS)[matrix.shard].check }}
@@ -109,17 +103,18 @@ jobs:
           BIGLAKE_PRIVATE_KEY_ID: ${{ secrets.BIGLAKE_PRIVATE_KEY_ID }}
         run: |
           set -f
+          python3 scripts/ci/ci.py download "artifacts/timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}" \
+            "$SDB_RUN_ID" timing out >/dev/null
           if [[ "$SDB_CHECK" == biglake ]]; then
             read -ra args <<< "$BIGLAKE_TEST_ARGS"
           else
             args=(${{ inputs.TEST_ARGS }})
           fi
+          rc=0
           ./scripts/ci/run_shard.sh "${{ inputs.CONFIG }}" "${{ inputs.DIGEST }}" "$SPEC" out/timing.json \
-            --budget 19800 --plan "$PLAN" "${args[@]}"
-
-      - name: Summary
-        if: always()
-        run: cat out/test-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+            --budget 19800 --plan "$PLAN" "${args[@]}" || rc=$?
+          cat out/test-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          exit $rc
 
       - name: Upload the results
         if: always()

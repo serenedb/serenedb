@@ -83,3 +83,14 @@ def test_a_failed_job_finds_its_arm64_and_check_results():
                                   needs, "https://example.com/runs/1")
     assert "**perf-arm64**" not in body and "**bugfix**" not in body
     assert "- ❌ **tsan**: failure before any test result" in body
+
+
+def test_the_coverage_comes_from_the_coverage_job_or_the_dev_results_and_never_a_test_summary(tmp_path):
+    results = tmp_path / "results" / "results-dev-linux-amd64"
+    (results / "test-dev-1of1").mkdir(parents=True)
+    (results / "test-dev-1of1" / "summary.txt").write_text("dev/x86_64 shard 1/1: 9 passed")
+    (results / "coverage-dev").mkdir()
+    (results / "coverage-dev" / "summary.txt").write_text("coverage dev/x86_64: 90% lines")
+    (results / "coverage-dev" / "coverage.json").write_text('{"uncovered": [{"kind": "line"}]}')
+    found = report.load_coverage("", str(tmp_path / "results"))
+    assert found == [{"summary": "coverage dev/x86_64: 90% lines", "uncovered": [{"kind": "line"}]}]

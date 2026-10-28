@@ -105,12 +105,13 @@ jobs:
           set -f
           ./scripts/ci/build_bundle.sh "${{ inputs.CONFIG }}" ${{ inputs.TEST_ARGS }}
 
-      - name: Plan the tests
+      - name: Plan the tests, and publish the bundle when test jobs run them
         id: plan
         if: inputs.TESTS
         env:
           BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
           DIGEST: ${{ steps.build.outputs.digest }}
+          LOCATION: ${{ inputs.LOCATION }}
         run: |
           set -f
           source scripts/ci/config.sh
@@ -128,26 +129,17 @@ jobs:
             read -ra biglake_args <<< "$BIGLAKE_TEST_ARGS"
             lists+=("$(plan --check biglake -- "${biglake_args[@]}")")
           fi
-          python3 scripts/ci/ci.py runs "${lists[@]}" --tsv out/runs.tsv | tee -a "$GITHUB_OUTPUT"
-
-      - name: Publish the bundle for the test jobs
-        if: steps.plan.outputs.remote == 'true'
-        run: |
-          python3 scripts/ci/ci.py publish --config "${{ inputs.CONFIG }}" --arch "$(uname -m)" \
-            --digest "${{ steps.build.outputs.digest }}"
-
-      - name: Keep the timing snapshot for the test jobs
-        if: steps.plan.outputs.remote == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: timing-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: out/timing.json
-          retention-days: 3
+          python3 scripts/ci/ci.py runs "${lists[@]}" --tsv out/runs.tsv | tee -a "$GITHUB_OUTPUT" out/runs.env
+          if grep -qx remote=true out/runs.env; then
+            python3 scripts/ci/ci.py publish --config "$CONFIG" --arch "$ARCH" --digest "$DIGEST"
+            python3 scripts/ci/ci.py upload out/timing.json "artifacts/timing-$CONFIG-$LOCATION/$SDB_RUN_ID/timing.json"
+          fi
 
       - name: Run the tests
         id: tests
         if: steps.plan.outputs.remote == 'false'
         env:
+          COVERAGE: ${{ inputs.COVERAGE }}
           BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
           SEARCHBENCH_S3_KEY_ID: ${{ secrets.SEARCHBENCH_S3_KEY_ID }}
           SEARCHBENCH_S3_SECRET: ${{ secrets.SEARCHBENCH_S3_SECRET }}
@@ -171,29 +163,13 @@ jobs:
               "$spec" out/timing.json --budget 19800 --plan "$plan" "${args[@]}" || rc=1
             echo "::endgroup::"
           done < out/runs.tsv
+          if [[ "$COVERAGE" == true ]]; then
+            python3 scripts/ci/ci.py coverage-report --config "${{ inputs.CONFIG }}" \
+              --digest "${{ steps.build.outputs.digest }}" --run "$SDB_RUN_ID" --base origin/main --shards 1 || rc=1
+            cat out/coverage-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          fi
+          cat out/test-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
           exit $rc
-
-      - name: Coverage of the change
-        if: ${{ !cancelled() && inputs.COVERAGE && steps.tests.conclusion != 'skipped' }}
-        run: |
-          python3 scripts/ci/ci.py coverage-report --config "${{ inputs.CONFIG }}" \
-            --digest "${{ steps.build.outputs.digest }}" --run "$SDB_RUN_ID" --base origin/main --shards 1
-          cat out/coverage-*/summary.txt >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload the coverage
-        if: ${{ !cancelled() && inputs.COVERAGE && steps.tests.conclusion != 'skipped' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: |
-            out/coverage-*/summary.txt
-            out/coverage-*/coverage.json
-          if-no-files-found: ignore
-          retention-days: 30
-
-      - name: Summary
-        if: ${{ always() && steps.tests.conclusion != 'skipped' }}
-        run: cat out/test-*/summary.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
 
       - name: Upload the results
         if: ${{ always() && steps.tests.conclusion != 'skipped' }}
@@ -204,24 +180,20 @@ jobs:
             out/test-*/results.jsonl
             out/test-*/summary.txt
             out/test-*/meta.json
+            out/coverage-*/summary.txt
+            out/coverage-*/coverage.json
           if-no-files-found: ignore
           retention-days: 14
 
       - name: Upload what failed
-        if: ${{ failure() && steps.tests.conclusion == 'failure' }}
+        if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: failure-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: out/failure-*.tar.zst
+          path: |
+            out/failure-*.tar.zst
+            out/logs/
           if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Upload the build logs
-        if: ${{ failure() && steps.build.conclusion == 'failure' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: build-logs-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
-          path: out/logs/
           retention-days: 14
 
       - name: Reap containers of this job

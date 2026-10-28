@@ -223,27 +223,35 @@ IRS_FORCE_INLINE uint32_t ExcludeBlock(Excludes& excludes,
 }
 
 template<typename Excludes>
+IRS_FORCE_INLINE uint32_t DropExcluded(Excludes& excludes, const doc_id_t* in,
+                                       uint32_t n, doc_id_t* out) {
+  if constexpr (std::is_same_v<Excludes, utils::Empty>) {
+    if (in != out) {
+      std::copy_n(in, n, out);
+    }
+    return n;
+  } else if constexpr (requires { excludes.Drop(in, n, out); }) {
+    return excludes.Drop(in, n, out);
+  } else {
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i != n; ++i) {
+      const auto doc = in[i];
+      out[kept] = doc;
+      kept += static_cast<uint32_t>(!IsExcluded(excludes, doc));
+    }
+    return kept;
+  }
+}
+
+template<typename Excludes>
 IRS_FORCE_INLINE uint32_t CountExcluded(Excludes& excludes,
                                         const doc_id_t* docs, uint32_t len) {
   if constexpr (requires { excludes.CountMasked(docs, len); }) {
     return excludes.CountMasked(docs, len);
   }
   uint32_t excluded = 0;
-  if constexpr (requires { excludes.Words(); }) {
-    for (uint32_t i = 0; i != len; ++i) {
-      excluded += static_cast<uint32_t>(excludes.Test(docs[i]));
-    }
-  } else {
-    for (uint32_t i = 0; i != len;) {
-      const auto next = excludes.Probe(docs[i]);
-      if (next == docs[i]) {
-        ++excluded;
-        ++i;
-      } else {
-        i = static_cast<uint32_t>(
-          std::lower_bound(docs + i + 1, docs + len, next) - docs);
-      }
-    }
+  for (uint32_t i = 0; i != len; ++i) {
+    excluded += static_cast<uint32_t>(IsExcluded(excludes, docs[i]));
   }
   return excluded;
 }

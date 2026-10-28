@@ -192,18 +192,6 @@ class PositionImpl final : public PosAttr {
       return viewed ? static_cast<bool>(view) : static_cast<bool>(in);
     }
 
-    uint64_t Position() const noexcept {
-      return viewed ? view.Position() : in.Position();
-    }
-
-    void Advance(uint64_t at) {
-      if (viewed) {
-        hint.Advance(view, at);
-      } else {
-        hint.Advance(in, at);
-      }
-    }
-
     void Seek(uint64_t at) {
       if (viewed) {
         view.Seek(at);
@@ -213,9 +201,11 @@ class PositionImpl final : public PosAttr {
     }
 
     void Load() {
-      Advance(group);
-      Seek(group);
-      ReadHeader();
+      if (viewed) {
+        LoadFrom(view);
+      } else {
+        LoadFrom(in);
+      }
     }
 
     void Hop() {
@@ -225,16 +215,29 @@ class PositionImpl final : public PosAttr {
 
     void Step() {
       group = PosGroup::Next(group, header);
-      SDB_ASSERT(Position() == group);
-      ReadHeader();
+      if (viewed) {
+        SDB_ASSERT(view.Position() == group);
+        ReadHeader(view);
+      } else {
+        SDB_ASSERT(in.Position() == group);
+        ReadHeader(in);
+      }
     }
 
-    void ReadHeader() {
-      if (viewed) {
-        header = view.Current();
-        view.Skip(PosGroup::kHeaderBytes);
+    template<typename Input>
+    void LoadFrom(Input& input) {
+      hint.Advance(input, group);
+      input.Seek(group);
+      ReadHeader(input);
+    }
+
+    template<typename Input>
+    void ReadHeader(Input& input) {
+      if constexpr (Input::kSpan) {
+        header = input.Current();
+        input.Skip(PosGroup::kHeaderBytes);
       } else {
-        in.ReadData(copy, PosGroup::kHeaderBytes);
+        input.ReadData(copy, PosGroup::kHeaderBytes);
         header = copy;
       }
     }
@@ -243,7 +246,13 @@ class PositionImpl final : public PosAttr {
       Seek(group + PosGroup::kHeaderBytes + PosGroup::Start(header, block));
     }
 
-    void Account() { Advance(Position()); }
+    void Account() {
+      if (viewed) {
+        hint.Advance(view, view.Position());
+      } else {
+        hint.Advance(in, in.Position());
+      }
+    }
 
     IndexInput in;
     BytesViewInput view;

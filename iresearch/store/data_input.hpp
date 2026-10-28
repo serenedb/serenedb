@@ -52,6 +52,10 @@ struct PinnedBytes {
   duckdb::BlockCachePin pin;
 };
 
+struct SpanBytes {
+  bytes_view bytes;
+};
+
 struct CursorPin {
   duckdb::BlockCachePin pin;
   duckdb::BlockCacheReadAhead ahead;
@@ -109,6 +113,7 @@ template<bool Blocks>
 class BasicInput {
  public:
   static constexpr bool kSpan = !Blocks;
+  using Pinned = std::conditional_t<Blocks, PinnedBytes, SpanBytes>;
 
   BasicInput() noexcept = default;
   explicit BasicInput(bytes_view bytes) noexcept
@@ -266,20 +271,19 @@ class BasicInput {
     return Remain() >= count ? _pos : nullptr;
   }
 
-  IRS_FORCE_INLINE PinnedBytes Pin(uint64_t count) {
+  IRS_FORCE_INLINE Pinned Pin(uint64_t count) {
     const auto offset = Position();
     auto pinned = Pin(offset, count);
     Seek(offset + count);
     return pinned;
   }
-  IRS_FORCE_INLINE PinnedBytes Pin(uint64_t offset, uint64_t count) const {
-    if (!Whole()) {
-      return _file->Pin(offset, count);
+  IRS_FORCE_INLINE Pinned Pin(uint64_t offset, uint64_t count) const {
+    if constexpr (Blocks) {
+      if (!Whole()) {
+        return _file->Pin(offset, count);
+      }
     }
-    if (offset > Length() || count > Length() - offset) [[unlikely]] {
-      ThrowPastEnd(_file, offset, Length());
-    }
-    return {.bytes = {_begin + offset, count}};
+    return {.bytes = SpanAt(offset, count)};
   }
 
   bytes_view Span() const noexcept {
@@ -300,6 +304,14 @@ class BasicInput {
  private:
   IRS_FORCE_INLINE uint64_t Remain() const noexcept {
     return static_cast<uint64_t>(_end - _pos);
+  }
+
+  IRS_FORCE_INLINE bytes_view SpanAt(uint64_t offset, uint64_t count) const {
+    const auto length = static_cast<uint64_t>(_end - _begin);
+    if (offset > length || count > length - offset) [[unlikely]] {
+      ThrowPastEnd(_file, offset, Length());
+    }
+    return {_begin + offset, count};
   }
 
   template<typename T>

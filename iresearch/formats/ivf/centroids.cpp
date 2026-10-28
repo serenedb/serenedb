@@ -353,7 +353,9 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
   n_total = layout.n_total;
   std::vector<CentroidsNodeView> nodes;
   nodes.reserve(starts.size());
-  bufs.centroids.reserve(starts.size());
+  if (!in.Whole()) {
+    bufs.centroids.reserve(starts.size());
+  }
   bufs.child_offsets.reserve(starts.size());
   for (auto&& [start, size] : std::views::zip(starts, sizes)) {
     CentroidsNodeView node;

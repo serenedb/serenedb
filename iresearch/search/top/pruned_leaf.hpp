@@ -152,11 +152,15 @@ class PrunedLeafBase {
       _cursor.Load(in);
       _root_score = BoundScore(_cursor.Index().Root());
     } else {
-      byte_type bound[std::numeric_limits<byte_type>::max() +
-                      bytes_io<uint32_t>::kMaxVSize];
       const auto size = in.ReadByte();
-      in.ReadData(bound, size);
-      _bound_source->Read({bound, size});
+      if constexpr (InputType::kSpan) {
+        _bound_source->Read(in.Pin(size).bytes);
+      } else {
+        byte_type bound[std::numeric_limits<byte_type>::max() +
+                        bytes_io<uint32_t>::kMaxVSize];
+        in.ReadData(bound, size);
+        _bound_source->Read({bound, size});
+      }
       _root_score = _bound_func.Score();
     }
     return false;
@@ -413,7 +417,7 @@ class PrunedLeafBase {
   ScoreFunction _score;
   detail::LeafProvider _provider;
   detail::LeafRecipe _recipe;
-  BlockCursor _cursor;
+  BlockCursor<InputType> _cursor;
   GrowingHint _hint;
   ScoreFunction _bound_func;
   ScoreBoundSource::ptr _bound_source;

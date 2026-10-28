@@ -339,6 +339,7 @@ class BlockIndex {
   bool _narrow_bounds = false;
 };
 
+template<typename InputType>
 class BlockCursor {
  public:
   static constexpr uint64_t kPrefetchBytes = 4 * file_utils::kPage;
@@ -396,16 +397,14 @@ class BlockCursor {
 
   const BlockIndex& Index() const noexcept { return _index; }
 
-  template<typename Input>
-  const BlockIndex& Loaded(Input& in) {
+  const BlockIndex& Loaded(const InputType& in) {
     if (_pending) [[unlikely]] {
       Load(in);
     }
     return _index;
   }
 
-  template<typename Input>
-  uint32_t Seek(doc_id_t target, Input& in) {
+  uint32_t Seek(doc_id_t target, const InputType& in) {
     if (_pending) [[unlikely]] {
       Load(in);
     }
@@ -424,8 +423,7 @@ class BlockCursor {
     return _docs_count - b * doc_limits::kBlockSize;
   }
 
-  template<typename Input>
-  void Load(const Input& in) {
+  void Load(const InputType& in) {
     _pending = false;
     const auto blocks = BlockIndex::Blocks(_docs_count);
     const auto flags = in.Pin(_offs, 1).bytes[0];
@@ -445,7 +443,7 @@ class BlockCursor {
 
  private:
   BlockIndex _index;
-  PinnedBytes _bytes;
+  typename InputType::Pinned _bytes;
   uint64_t _doc_start = 0;
   uint64_t _pos_start = 0;
   uint64_t _pay_start = 0;

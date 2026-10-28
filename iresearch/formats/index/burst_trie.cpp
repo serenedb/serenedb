@@ -1114,6 +1114,14 @@ class BlockIterator : util::Noncopyable {
 #endif
     }
 
+    IRS_FORCE_INLINE void Reset(SpanBytes bytes) noexcept {
+      SDB_ASSERT(!pin.IsValid());
+      begin = bytes.bytes.data();
+#ifdef SDB_DEV
+      end = begin + bytes.bytes.size();
+#endif
+    }
+
     [[maybe_unused]] void AssertBlockBoundaries() {
 #ifdef SDB_DEV
       SDB_ASSERT(begin <= end);
@@ -1126,6 +1134,9 @@ class BlockIterator : util::Noncopyable {
     const byte_type* end{};
 #endif
   };
+
+  template<typename Input>
+  void LoadFrom(Input& in);
 
   template<typename Reader>
   void ReadEntryNonleaf(Reader&& reader);
@@ -1200,7 +1211,16 @@ void BlockIterator::Load(IndexInput& in) {
   if (!_dirty) {
     return;
   }
+  if (in.Whole()) {
+    BytesViewInput view{in};
+    LoadFrom(view);
+  } else {
+    LoadFrom(in);
+  }
+}
 
+template<typename Input>
+void BlockIterator::LoadFrom(Input& in) {
   in.Seek(_cur_start);
   if (ShiftUnpack32(in.ReadV32(), _ent_count)) {
     _sub_count = 0;  // no sub-blocks

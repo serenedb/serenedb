@@ -246,7 +246,7 @@ class PostingBatch {
   [[no_unique_address]] utils::Need<Scored, LeafScore> _score;
   [[no_unique_address]] utils::Need<Scored, LeafProvider> _provider;
   GrowingHint _hint;
-  BlockCursor _walk;
+  BlockCursor<InputType> _walk;
 };
 
 }  // namespace irs::detail

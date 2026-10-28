@@ -253,7 +253,7 @@ class PostingLeaf {
 
   IRS_FORCE_INLINE bool Armed() const noexcept { return _walk.Armed(); }
 
-  IRS_FORCE_INLINE BlockCursor& Walk() noexcept { return _walk; }
+  IRS_FORCE_INLINE BlockCursor<InputType>& Walk() noexcept { return _walk; }
 
   IRS_NO_INLINE void Land(doc_id_t min) {
     auto& walk = Walk();
@@ -540,7 +540,7 @@ class PostingLeaf {
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
   [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Grows,
                                     GrowingHint> _hint;
-  BlockCursor _walk;
+  BlockCursor<InputType> _walk;
 };
 
 }  // namespace irs::detail

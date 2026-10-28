@@ -260,7 +260,7 @@ class PostingPos {
   DocsBuf _docs;
   mutable InputType _in;
   Position _pos;
-  BlockCursor _cursor;
+  BlockCursor<InputType> _cursor;
   GrowingHint _hint;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _max_in_leaf = doc_limits::invalid();

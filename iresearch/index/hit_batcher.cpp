@@ -330,8 +330,11 @@ void HitBatcher::CloseGroup() {
 }
 
 void HitBatcher::PrefetchColumns(uint64_t anchor, duckdb::idx_t span) {
+  if (!_prefetch) {
+    return;
+  }
   const auto* file = _ctx ? _ctx->In().File() : nullptr;
-  if (!_prefetch || file == nullptr) {
+  if (!file) {
     return;
   }
   _extents.clear();

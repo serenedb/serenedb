@@ -110,6 +110,7 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on:
       - linux-amd64
+      - lan
     steps:
       - uses: actions/checkout@v7
         with:

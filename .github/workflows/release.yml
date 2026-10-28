@@ -144,6 +144,7 @@ jobs:
       (needs.build-amd64.outputs.packages_ok == 'true' || needs.build-arm64.outputs.packages_ok == 'true')
     runs-on:
       - linux-amd64
+      - lan
     permissions:
       contents: write
     env:

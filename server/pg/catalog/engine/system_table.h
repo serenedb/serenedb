@@ -78,15 +78,11 @@
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/role.h"
 #include "catalog/entry/subscription.h"
+#include "catalog/entry/tokenizer.h"
 #include "catalog/snapshot.h"
 #include "pg/catalog/utils/session.h"
 #include "pg/types/mapping.h"
 
-namespace sdb::catalog {
-
-class TokenizerCatalogEntry;
-
-}  // namespace sdb::catalog
 namespace sdb::pg {
 
 enum class SystemKey : uint8_t {
@@ -651,7 +647,7 @@ class SystemScan {
 
   template<const auto& Shape>
   bool Emit(typename SystemShapeOf<Shape>::Context& ctx) {
-    return Emit<Shape>(ctx, [](const Session&) { return true; });
+    return Emit<Shape>(ctx, nullptr);
   }
 
   template<const auto& Shape, typename Visible>
@@ -675,25 +671,29 @@ class SystemScan {
         return false;
       }
     }
-    if (_session && !visible(*_session)) {
-      return false;
+    if constexpr (!std::is_null_pointer_v<Visible>) {
+      if (_session && !visible(*_session)) {
+        return false;
+      }
     }
     if (_skip != 0) {
       --_skip;
       return true;
     }
-    if ((_needed & ~T::kProvided) != 0) {
-      [&]<uint32_t... C>(std::integer_sequence<uint32_t, C...>) {
-        (
-          [&] {
-            if constexpr (((T::kProvided >> C) & 1) == 0) {
-              if (((_needed >> C) & 1) != 0) {
-                PutDefault<T::kSql, C>();
+    if constexpr (T::kSize < T::kSql.columns.size()) {
+      if ((_needed & ~T::kProvided) != 0) {
+        [&]<uint32_t... C>(std::integer_sequence<uint32_t, C...>) {
+          (
+            [&] {
+              if constexpr (((T::kProvided >> C) & 1) == 0) {
+                if (((_needed >> C) & 1) != 0) {
+                  PutDefault<T::kSql, C>();
+                }
               }
-            }
-          }(),
-          ...);
-      }(std::make_integer_sequence<uint32_t, T::kSql.columns.size()>{});
+            }(),
+            ...);
+        }(std::make_integer_sequence<uint32_t, T::kSql.columns.size()>{});
+      }
     }
     if (const auto rest = _needed & ~_filtered & T::kProvided; rest != 0) {
       [&]<size_t... I>(std::index_sequence<I...>) {
@@ -1043,19 +1043,25 @@ class SystemTableScan : public SystemScan {
   }
 };
 
+template<typename T, typename Entry>
+concept Visits = requires(T& table, Entry& entry) { table.Row(entry); };
+
 template<typename Entry, typename T>
+  requires Visits<T, Entry>
 void Visit(T& table, duckdb::CatalogEntry& entry) {
 #ifdef SDB_DEV
   table.Visiting(entry.type);
 #endif
-  if constexpr (requires(Entry& typed) { table.Row(typed); }) {
-    table.Row(entry.Cast<Entry>());
-  } else if constexpr (requires { table.Row(entry); }) {
-    table.Row(entry);
-  }
+  table.Row(entry.Cast<Entry>());
 #ifdef SDB_DEV
   table.Visiting(duckdb::CatalogType::INVALID);
 #endif
+}
+
+template<typename Entry>
+void Visit(SystemScan&, duckdb::CatalogEntry&) {
+  static_assert(sizeof(Entry) > 0,
+                "dispatching an entry kind needs its definition");
 }
 
 template<typename T>
@@ -1182,9 +1188,11 @@ class SystemCursor<SystemEntries> final {
   template<typename T>
   bool Walk(T& table, duckdb::SchemaCatalogEntry& schema,
             duckdb::CatalogType type) {
-    if (type == duckdb::CatalogType::SCHEMA_ENTRY) {
-      return table.Step(
-        [&] { Visit<duckdb::SchemaCatalogEntry>(table, schema); });
+    if constexpr (Visits<T, duckdb::SchemaCatalogEntry>) {
+      if (type == duckdb::CatalogType::SCHEMA_ENTRY) {
+        return table.Step(
+          [&] { Visit<duckdb::SchemaCatalogEntry>(table, schema); });
+      }
     }
     const bool relations = type == duckdb::CatalogType::TABLE_ENTRY ||
                            type == duckdb::CatalogType::VIEW_ENTRY;
@@ -1194,32 +1202,52 @@ class SystemCursor<SystemEntries> final {
       _set = table.MemberSet(
         schema, type, _entries.prefix && !keyed ? &*_entries.prefix : nullptr);
     }
-    if (relations) {
-      return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
-        if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
-          Visit<duckdb::TableCatalogEntry>(table, entry);
-        } else {
-          Visit<duckdb::ViewCatalogEntry>(table, entry);
-        }
-      });
+    if constexpr (Visits<T, duckdb::TableCatalogEntry> ||
+                  Visits<T, duckdb::ViewCatalogEntry>) {
+      if (relations) {
+        return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
+          if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
+            Visit<duckdb::TableCatalogEntry>(table, entry);
+          } else {
+            Visit<duckdb::ViewCatalogEntry>(table, entry);
+          }
+        });
+      }
     }
-    if (type == duckdb::CatalogType::INDEX_ENTRY) {
-      return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
-        Visit<duckdb::IndexCatalogEntry>(table, entry);
-      });
+    if constexpr (Visits<T, duckdb::IndexCatalogEntry>) {
+      if (type == duckdb::CatalogType::INDEX_ENTRY) {
+        return Walk<duckdb::IndexCatalogEntry>(table, schema);
+      }
     }
-    if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
-      return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
-        Visit<duckdb::SequenceCatalogEntry>(table, entry);
-      });
+    if constexpr (Visits<T, duckdb::SequenceCatalogEntry>) {
+      if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
+        return Walk<duckdb::SequenceCatalogEntry>(table, schema);
+      }
     }
-    if (type == duckdb::CatalogType::TYPE_ENTRY) {
-      return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
-        Visit<duckdb::TypeCatalogEntry>(table, entry);
-      });
+    if constexpr (Visits<T, duckdb::TypeCatalogEntry>) {
+      if (type == duckdb::CatalogType::TYPE_ENTRY) {
+        return Walk<duckdb::TypeCatalogEntry>(table, schema);
+      }
     }
-    return Walk(table, schema,
-                [&](duckdb::CatalogEntry& entry) { Dispatch(table, entry); });
+    if constexpr (Visits<T, duckdb::MacroCatalogEntry>) {
+      if (type == duckdb::CatalogType::MACRO_ENTRY ||
+          type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+        return Walk<duckdb::MacroCatalogEntry>(table, schema);
+      }
+    }
+    if constexpr (Visits<T, catalog::TokenizerCatalogEntry>) {
+      if (type == duckdb::CatalogType::TOKENIZER_ENTRY) {
+        return Walk<catalog::TokenizerCatalogEntry>(table, schema);
+      }
+    }
+    SDB_UNREACHABLE();
+  }
+
+  template<typename Entry, typename T>
+  bool Walk(T& table, const duckdb::SchemaCatalogEntry& schema) {
+    return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
+      Visit<Entry>(table, entry);
+    });
   }
 
   template<typename T, typename V>

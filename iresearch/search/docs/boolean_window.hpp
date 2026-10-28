@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "iresearch/search/detail/boolean_window_base.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/docs/emit.hpp"
 #include "iresearch/search/docs/root.hpp"
@@ -42,6 +43,11 @@ class BooleanWindow : public Root {
   static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  static constexpr bool kBatches = kLead && requires(Lead& lead, doc_id_t doc) {
+    { lead.Sparse() } -> std::same_as<bool>;
+    lead.Rest(doc);
+    lead.Seek(doc);
+  };
   static_assert(kLead != kOptional);
   static_assert(kLead || !kOthers);
 
@@ -71,6 +77,16 @@ class BooleanWindow : public Root {
       if (_emit.Pending()) {
         return n;
       }
+      if constexpr (kBatches) {
+        for (; _at != _size; ++_at) {
+          const auto doc = _found[_at];
+          if (doc >= end) {
+            return n;
+          }
+          out[n] = doc;
+          n += static_cast<uint32_t>(doc >= begin);
+        }
+      }
       if constexpr (kOptional) {
         if (_optional.Exhausted()) {
           _spent = true;
@@ -78,6 +94,23 @@ class BooleanWindow : public Root {
       }
       if (_spent || _min >= end) {
         return n;
+      }
+      if constexpr (kBatches) {
+        _min = _lead.Seek(_min);
+        if (doc_limits::eof(_min)) {
+          _spent = true;
+          return n;
+        }
+        if (_min >= end) {
+          return n;
+        }
+        if (_lead.Sparse()) {
+          const auto rest = _lead.Rest(doc_limits::eof());
+          _at = 0;
+          _size = Sift(rest.data(), static_cast<uint32_t>(rest.size()));
+          _min = rest.back() + 1;
+          continue;
+        }
       }
       SDB_ASSERT(_min <= doc_limits::eof() - detail::kWindowDocs);
       const doc_id_t max = _min + detail::kWindowDocs;
@@ -94,8 +127,22 @@ class BooleanWindow : public Root {
   }
 
  private:
+  uint32_t Sift(const doc_id_t* in, uint32_t n) {
+    auto* const out = _found.data();
+    if constexpr (kOthers) {
+      n = _others.Keep(in, n, out);
+      in = out;
+    }
+    return detail::DropExcluded(_excludes, in, n, out);
+  }
+
   Emit _emit;
   detail::Scratch _mask{};
+  [[no_unique_address]] utils::Need<
+    kBatches,
+    SlackBuf<doc_id_t, doc_limits::kBlockSize, doc_limits::kDocsSlack>> _found;
+  uint32_t _at = 0;
+  uint32_t _size = 0;
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Others _others;
   [[no_unique_address]] Optional _optional;

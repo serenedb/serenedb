@@ -51,6 +51,7 @@ struct Family {
     return MakeShape<Walk, Node>(ctx, std::forward<Args>(args)...);
   }
 
+  static constexpr bool kWindowBatches = true;
   static constexpr bool kWindowNodes = true;
   static constexpr bool kWindowLeadDrains = false;
   static constexpr double kSparseLeadCost = 1.0;

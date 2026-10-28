@@ -137,6 +137,12 @@ Result<Family> MakeExclusion(const BooleanQuery& query, const Ctx& ctx,
                                       candidates, ctx);
         }
       }
+      if constexpr (kWindowBatches<Family>) {
+        if (auto windowed = MakeExclusionWindow<Family>(query, ctx, merge,
+                                                        absorbed, candidates)) {
+          return windowed;
+        }
+      }
       if (auto folded =
             MakeBitset<Family>({.must = must,
                                 .must_filters = must_filters,

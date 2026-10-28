@@ -133,18 +133,18 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
   _ranges.emplace_back(offset, size);
   ++_live_handles;
   auto handle = RegisterBlock(id);
-  if (Maps(offset,
-           duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(
-             size))) {
-    auto& memory = handle->GetMemory();
-    memory.SetMemoryUsage(0);
-    memory.SetDestroyBufferUpon(duckdb::DestroyBufferUpon::UNPIN);
+  if (Maps(offset, size)) {
+    handle->GetMemory().SetMemoryUsage(0);
   }
   return handle;
 }
 
 bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
-  return _mapping && offset % 8 == 0 && offset + size <= _mapping->Size();
+  return _mapping && offset % 8 == 0 &&
+         offset +
+             duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(
+               size) <=
+           _mapping->Size();
 }
 
 void ReadContext::UnregisterBlock(duckdb::block_id_t id) {
@@ -160,9 +160,15 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
     return BlockManager::CreateBlock(block_id, source_buffer);
   }
   SDB_ASSERT(source_buffer == nullptr);
-  return duckdb::make_uniq<duckdb::Block>(
-    *_allocator, block_id, static_cast<duckdb::idx_t>(_ranges[id].second),
-    /*block_header_size=*/0);
+  const auto [offset, size] = _ranges[id];
+  if (Maps(offset, size)) {
+    return duckdb::make_uniq<duckdb::Block>(*_allocator, block_id, *_mapping,
+                                            offset, size,
+                                            /*block_header_size=*/0);
+  }
+  return duckdb::make_uniq<duckdb::Block>(*_allocator, block_id,
+                                          static_cast<duckdb::idx_t>(size),
+                                          /*block_header_size=*/0);
 }
 
 void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {

@@ -88,6 +88,22 @@ NAMES = ["spd_parent", "spd_child", "spd_other", "spd_v", "spd_idx", "spd_seq", 
          "spd_rows", "spd_fn", "spd_dict", "spd_trg", "spd_parent_pkey", "spd_sub"]
 GLOBAL_OIDS = ["'spd_role'::regrole", "'spd_member'::regrole"]
 GLOBAL_NAMES = ["spd_role", "spd_member", "spd_srv"]
+SHAPES = [
+    "relname LIKE 'spd%'", "starts_with(relname, 'spd_p')", "relname ^@ 'spd_c'",
+    "relname::text LIKE 'spd%'", "relname LIKE ''", "starts_with(relname, chr(1114111))",
+    "relname IN ('spd_parent', 'spd_child', NULL)", "relname NOT IN ('spd_parent', NULL)",
+    "relname NOT IN ('spd_parent', 'spd_child')", "relname > 'spd_c' AND relname <= 'spd_s'",
+    "relname >= 'spd_parent' AND relname <= 'spd_parent'", "relname > 'spd_c' AND relname >= 'spd_c'",
+    "relname >= 'spd_c' AND relname > 'spd_c'", "relname < 'spd_s' AND relname < 'spd_p'",
+    "relname > 'spd_c' AND relname > 'spd_p'", "relname <= 'spd_s' AND relname < 'spd_s'",
+    "relname = 'spd_parent' OR relname = 'spd_child'", "relname = 'spd_parent' OR relname > 'spd_s'",
+    "NOT (relname = 'spd_parent')", "NOT (relname IN ('spd_parent', NULL))",
+    "NOT (relname > 'spd_c')", "NOT (relname IS NOT NULL)", "relname = NULL",
+    "relname IN (relname, 'x')", "relname = relname", "oid IN ('spd_parent'::regclass, NULL)",
+    "oid NOT IN ('spd_parent'::regclass)", "oid > 0 AND oid < 16384", "oid = 1259::hugeint",
+    "oid = 1259.5", "relhasindex", "NOT relhasindex", "relhasindex IS NOT NULL",
+    "pg_table_is_visible(oid)", "pg_table_is_visible((oid + 0)::oid)",
+]
 
 
 def relations():
@@ -123,22 +139,27 @@ def predicates(column, kind, element, not_null, key, oids, names):
     return found + ([f"{name} IS NULL"] if not_null == "false" else [])
 
 
+def compare(t, shown, source, predicate):
+    pushed = f"SELECT {shown} FROM {source} WHERE {predicate}"
+    scanned = (f"SELECT {shown} FROM (SELECT * FROM {source} LIMIT 1000000000) "
+               f"WHERE {predicate}")
+    t.query(f"SELECT count(*) AS mismatches FROM (({pushed} EXCEPT ALL {scanned}) "
+            f"UNION ALL ({scanned} EXCEPT ALL {pushed}))", ["mismatches"], [[0]])
+
+
 def check(t, name, source, columns, oids, names):
     t.section(source)
     shown = STABLE.get(name, "*")
     for column in columns:
         for predicate in predicates(*column, oids, names):
-            pushed = f"SELECT {shown} FROM {source} WHERE {predicate}"
-            scanned = (f"SELECT {shown} FROM (SELECT * FROM {source} LIMIT 1000000000) "
-                       f"WHERE {predicate}")
-            t.query(f"SELECT count(*) AS mismatches FROM (({pushed} EXCEPT ALL {scanned}) "
-                    f"UNION ALL ({scanned} EXCEPT ALL {pushed}))", ["mismatches"], [[0]])
+            compare(t, shown, source, predicate)
 
 
 t = Test("A filter a system relation evaluates while it scans returns the rows the same "
          "filter keeps from the unfiltered scan, for every column a filter can be pushed "
          "into, against a fixture with an object of every kind, and every key column looks "
-         "up each of those objects by its oid or name. sdb_progress shows operations as "
+         "up each of those objects by its oid or name; pg_class also takes every shape of "
+         "filter a scan can capture or must leave alone. sdb_progress shows operations as "
          "they run and sdb_metrics counts them, so the first is left out and the second "
          "compared on the columns that stay put while a statement runs.")
 for sql in FIXTURE:
@@ -149,6 +170,12 @@ for chunk in t.parts(local, 4):
         check(t, name, source, columns, OIDS, NAMES)
     for sql in TEARDOWN:
         t.statement(sql)
+t.part()
+t.section("Filter shapes on pg_catalog.pg_class")
+for shape in SHAPES:
+    compare(t, "*", "pg_catalog.pg_class", shape)
+for sql in TEARDOWN:
+    t.statement(sql)
 t.part()
 for sql in GLOBAL_FIXTURE:
     t.statement(sql)

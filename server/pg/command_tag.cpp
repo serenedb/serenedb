@@ -92,26 +92,9 @@ ObjectTags TagsOf(duckdb::CatalogType type, bool procedure) {
       return {"CREATE JOB", "DROP JOB", "ALTER JOB"};
     case SUBSCRIPTION_ENTRY:
       return {"CREATE SUBSCRIPTION", "DROP SUBSCRIPTION", "ALTER SUBSCRIPTION"};
-    case INVALID:
-    case PREPARED_STATEMENT:
-    case COLLATION_ENTRY:
-    case COORDINATE_SYSTEM_ENTRY:
-    case TABLE_FUNCTION_ENTRY:
-    case SCALAR_FUNCTION_ENTRY:
-    case AGGREGATE_FUNCTION_ENTRY:
-    case PRAGMA_FUNCTION_ENTRY:
-    case COPY_FUNCTION_ENTRY:
-    case WINDOW_FUNCTION_ENTRY:
-    case DELETED_ENTRY:
-    case RENAMED_ENTRY:
-    case SECRET_ENTRY:
-    case SECRET_TYPE_ENTRY:
-    case SECRET_FUNCTION_ENTRY:
-    case REPLICATION_ORIGIN_ENTRY:
-    case DEPENDENCY_ENTRY:
+    default:
       return {"CREATE", "DROP", "ALTER"};
   }
-  SDB_UNREACHABLE();
 }
 
 std::string_view DiscardTag(duckdb::DiscardTarget target) {
@@ -139,7 +122,6 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
     case CHANGE_OWNERSHIP:
       return "ALTER SEQUENCE";
     case ALTER_SCALAR_FUNCTION:
-    case ALTER_TABLE_FUNCTION:
       return "ALTER FUNCTION";
     case SET_COMMENT:
     case SET_COLUMN_COMMENT:
@@ -169,9 +151,10 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       }
       return permissions.revoke ? "REVOKE" : "GRANT";
     }
+    case ALTER_TABLE_FUNCTION:
     case INVALID:
     case REPLACE_DEFINITION:
-      return "ALTER";
+      SDB_UNREACHABLE();
   }
   SDB_UNREACHABLE();
 }

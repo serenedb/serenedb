@@ -375,6 +375,83 @@ database	rule	no_collation	no_tablespace
 database	rule	t	t
 
 
+query
+SELECT c AS catalog, pg_describe_object(c::regclass, 999999999, 0) AS described,
+       (pg_identify_object(c::regclass, 999999999, 0)).identity AS identity
+FROM (VALUES ('pg_attrdef'), ('pg_authid'), ('pg_class'), ('pg_constraint'), ('pg_namespace'), ('pg_proc'),
+             ('pg_trigger'), ('pg_type')) AS v(c)
+ORDER BY c;
+----
+catalog	described	identity
+pg_attrdef	NULL	NULL
+pg_authid	NULL	NULL
+pg_class	NULL	NULL
+pg_constraint	NULL	NULL
+pg_namespace	NULL	NULL
+pg_proc	NULL	NULL
+pg_trigger	NULL	NULL
+pg_type	NULL	NULL
+
+
+query
+SELECT (pg_identify_object('pg_tablespace'::regclass, 999999999, 0)).type AS tablespace,
+       (pg_identify_object('pg_proc'::regclass, 'pg_class'::regclass, 0)).type AS not_a_routine,
+       (pg_identify_object(NULL, 1, 0)).type AS null_class;
+----
+tablespace	not_a_routine	null_class
+tablespace	routine	NULL
+
+
+query
+SELECT pg_describe_object('pg_class'::regclass, 'ident_s.t'::regclass, 9) AS past_table,
+       pg_describe_object('pg_class'::regclass, 'ident_s.w'::regclass, 9) AS past_view,
+       pg_describe_object('pg_class'::regclass, 'ident_s.seq'::regclass, 1) AS sequence_column,
+       pg_describe_object('pg_class'::regclass, 'ident_s.seq'::regclass, 4) AS past_sequence;
+----
+past_table	past_view	sequence_column	past_sequence
+NULL	NULL	column last_value of sequence ident_s.seq	NULL
+
+
+query
+SELECT pg_describe_object(NULL, 1, 0) AS null_class, pg_describe_object('pg_class'::regclass, NULL, 0) AS null_object,
+       pg_describe_object('pg_class'::regclass, 1259, NULL) AS null_column;
+----
+null_class	null_object	null_column
+NULL	NULL	NULL
+
+
+skipif serenedb
+query
+SELECT pg_describe_object('pg_class'::regclass, 'ident_s.t'::regclass, -1) AS system_column;
+----
+system_column
+column ctid of table ident_s.t
+
+
+onlyif serenedb
+query
+SELECT pg_describe_object('pg_class'::regclass, 'ident_s.t'::regclass, -1) AS system_column;
+----
+system_column
+NULL
+
+
+statement ok
+CREATE PROCEDURE ident_s.p() LANGUAGE SQL AS 'SELECT 1';
+
+
+query
+SELECT pg_describe_object('pg_proc'::regclass, 'ident_s.p'::regproc, 0) AS described,
+       (pg_identify_object('pg_proc'::regclass, 'ident_s.p'::regproc, 0)).type AS type;
+----
+described	type
+function ident_s.p()	procedure
+
+
+statement ok
+DROP PROCEDURE ident_s.p;
+
+
 statement ok
 DROP SCHEMA ident_s CASCADE;
 

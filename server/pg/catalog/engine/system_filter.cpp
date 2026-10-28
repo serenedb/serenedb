@@ -142,10 +142,12 @@ bool IsVisibility(const duckdb::Expression& expr,
     return false;
   }
   const auto& function = expr.Cast<duckdb::BoundFunctionExpression>();
+  if (function.Function().GetName() != visibility.function) {
+    return false;
+  }
   const auto& children = function.GetChildren();
-  return function.Function().GetName() == visibility.function &&
-         children.size() == 1 &&
-         duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0]);
+  SDB_ASSERT(children.size() == 1);
+  return duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0]);
 }
 
 template<typename T>

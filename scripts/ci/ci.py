@@ -116,18 +116,60 @@ def cmd_image(args):
     print(image_name())
 
 
-def cmd_pack(args):
+def cached_bundle(config, arch, dig):
+    return BUNDLE_CACHE / f"{config}-{arch}-{dig}"
+
+
+def cmd_locate(args):
+    if (cached_bundle(args.config, args.arch, args.digest) / ".complete").is_file():
+        print("cache")
+    elif store.exists(bundle_name(args.config, args.arch, args.digest)):
+        print("store")
+    else:
+        print("none")
+
+
+def cmd_stage(args):
     build = Path(args.build_dir).resolve()
-    paths = [p for p in BUNDLE_PATHS if (build / p).exists()]
-    runner = []
+    files = [(build / p, p) for p in BUNDLE_PATHS if (build / p).exists()]
     if args.runner:
-        source = Path(args.runner).resolve()
-        runner = ["-C", str(source.parent), f"--transform=s,^{source.name}$,bin/sqllogictest,",
-                  source.name]
-    out = Path(args.out).resolve()
-    subprocess.run(["tar", "-C", str(build), "-I", "zstd -T0 -3", "-cf", str(out), *paths,
-                    *runner], check=True)
-    print(f"{out} {out.stat().st_size >> 20} MB")
+        files.append((Path(args.runner).resolve(), "bin/sqllogictest"))
+    shared_cache()
+    dest = cached_bundle(args.config, args.arch, args.digest)
+    tmp_dir = Path(tempfile.mkdtemp(dir=BUNDLE_CACHE, prefix=".stage-"))
+    try:
+        for source, rel in files:
+            (tmp_dir / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, tmp_dir / rel)
+        (tmp_dir / ".complete").write_text(args.digest)
+        tmp_dir.chmod(0o755)
+        if dest.exists():
+            shutil.rmtree(dest)
+        tmp_dir.rename(dest)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    print(dest)
+
+
+def cmd_publish(args):
+    name = bundle_name(args.config, args.arch, args.digest)
+    if store.exists(name):
+        print(f"{name} is in the store")
+        return
+    src = fetched(args.config, args.arch, args.digest)
+    tmp_dir = Path(tempfile.mkdtemp(dir=BUNDLE_CACHE, prefix=".publish-"))
+    try:
+        archive = tmp_dir / "bundle.tar.zst"
+        owner = os.environ.get("SDB_DOCKER_OWNER")
+        subprocess.run(["docker", "run", "--rm", *(["--label", f"serenedb.owner={owner}"] if owner else []),
+                        "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{BUNDLE_CACHE}:{BUNDLE_CACHE}",
+                        image_name(), "tar", "-C", str(src), "--exclude=./.complete",
+                        "-I", "zstd -T0 -3", "-cf", str(archive), "."], check=True)
+        start = time.monotonic()
+        store.put(name, archive)
+        print(f"stored {name} ({archive.stat().st_size >> 20} MB) in {time.monotonic() - start:.0f}s")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def shared_cache():
@@ -137,7 +179,7 @@ def shared_cache():
         BUNDLE_CACHE.chmod(0o1777)
 
 
-def fetch_bundle(config, arch, dig, dest, archive=None):
+def fetch_bundle(config, arch, dig, dest):
     dest = Path(dest)
     marker = dest / ".complete"
     if marker.is_file():
@@ -145,24 +187,20 @@ def fetch_bundle(config, arch, dig, dest, archive=None):
     shared_cache()
     tmp_dir = Path(tempfile.mkdtemp(dir=BUNDLE_CACHE, prefix=".fetch-"))
     try:
-        if archive:
-            archive = Path(archive).resolve()
-        else:
-            archive = tmp_dir / "bundle.tar.zst"
-            name = bundle_name(config, arch, dig)
-            print(f"downloading {name} from the store", file=sys.stderr, flush=True)
-            start = time.monotonic()
-            if not store.get(name, archive):
-                raise SystemExit(f"no bundle {name} in the store")
-            print(f"downloaded {archive.stat().st_size >> 20} MB in {time.monotonic() - start:.0f}s",
-                  file=sys.stderr, flush=True)
+        archive = tmp_dir / "bundle.tar.zst"
+        name = bundle_name(config, arch, dig)
+        print(f"downloading {name} from the store", file=sys.stderr, flush=True)
+        start = time.monotonic()
+        if not store.get(name, archive):
+            raise SystemExit(f"no bundle {name} in the store")
+        print(f"downloaded {archive.stat().st_size >> 20} MB in {time.monotonic() - start:.0f}s",
+              file=sys.stderr, flush=True)
         unpacked = tmp_dir / "unpacked"
         unpacked.mkdir()
         owner = os.environ.get("SDB_DOCKER_OWNER")
         start = time.monotonic()
         subprocess.run(["docker", "run", "--rm", *(["--label", f"serenedb.owner={owner}"] if owner else []),
                         "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{BUNDLE_CACHE}:{BUNDLE_CACHE}",
-                        "-v", f"{archive.parent}:{archive.parent}",
                         image_name(), "tar", "-C", str(unpacked), "-I", "zstd -T0",
                         "-xf", str(archive)], check=True)
         print(f"unpacked into {dest} in {time.monotonic() - start:.0f}s", file=sys.stderr, flush=True)
@@ -195,9 +233,9 @@ def prune_bundles(keep_days=2):
             pass
 
 
-def fetched(config, arch, dig, archive=None):
+def fetched(config, arch, dig):
     prune_bundles()
-    path = fetch_bundle(config, arch, dig, BUNDLE_CACHE / f"{config}-{arch}-{dig}", archive)
+    path = fetch_bundle(config, arch, dig, cached_bundle(config, arch, dig))
     try:
         os.utime(path)
     except PermissionError:
@@ -206,7 +244,7 @@ def fetched(config, arch, dig, archive=None):
 
 
 def cmd_fetch(args):
-    print(fetched(args.config, args.arch, args.digest, args.archive))
+    print(fetched(args.config, args.arch, args.digest))
 
 
 def cmd_upload(args):
@@ -255,9 +293,26 @@ def cmd_shards(args):
     cpus = args.cpus
     wall = total / cpus
     count = max(1, min(args.max_shards, round(wall / args.target_seconds + 0.5)))
-    print(json.dumps([{"spec": f"{i}/{count}", "name": f"{i}of{count}", "plan": plan}
-                      for i in range(1, count + 1)]))
+    prefix = f"{args.check}-" if args.check else ""
+    print(json.dumps([{"spec": f"{i}/{count}", "name": f"{prefix}{i}of{count}", "plan": plan,
+                       "check": args.check} for i in range(1, count + 1)]))
     print(f"{total:.0f}s of work, biggest unit {biggest:.0f}s, {count} shard(s)", file=sys.stderr)
+
+
+def plan_runs(main, *extra):
+    runs = [*main, *(r for shards in extra for r in shards)]
+    return {"inline": len(main) <= 1, "names": [r["name"] for r in runs],
+            "runs": {r["name"]: {k: v for k, v in r.items() if k != "name"} for r in runs}}
+
+
+def cmd_runs(args):
+    planned = plan_runs(*(json.loads(s) for s in args.shards))
+    if args.tsv:
+        Path(args.tsv).write_text("".join(
+            f"{name}\t{r['spec']}\t{r['plan']}\t{r['check']}\n" for name, r in planned["runs"].items()))
+    print(f"remote={str(not planned['inline']).lower()}")
+    print(f"shards={json.dumps(planned['names'])}")
+    print(f"runs={json.dumps(planned['runs'])}")
 
 
 def timing_key(config, arch):
@@ -339,6 +394,10 @@ def cmd_select_suites(args):
                 out += ["--duckdb-suite", s]
         if "core" in suites:
             out += ["--suite", "sqlsmith"]
+    if args.postgres == "all":
+        out += ["--postgres", "all"]
+    elif args.postgres == "changed":
+        out += ["--postgres", "changed", "--changed", "origin/main"]
     print(" ".join(out))
 
 
@@ -475,16 +534,27 @@ def main(argv):
     p.add_argument("--image", default="")
     p.add_argument("--rev", default="HEAD")
     p.set_defaults(fn=cmd_digest)
-    p = sub.add_parser("pack", help="pack what tests need from a build dir")
+    p = sub.add_parser("locate", help="print where a bundle is: cache (this box), store or none")
+    p.add_argument("--config", required=True)
+    p.add_argument("--arch", required=True)
+    p.add_argument("--digest", required=True)
+    p.set_defaults(fn=cmd_locate)
+    p = sub.add_parser("stage", help="put what tests need from a build dir into the local cache")
+    p.add_argument("--config", required=True)
+    p.add_argument("--arch", required=True)
+    p.add_argument("--digest", required=True)
     p.add_argument("--build-dir", required=True)
     p.add_argument("--runner", default="")
-    p.add_argument("--out", required=True)
-    p.set_defaults(fn=cmd_pack)
+    p.set_defaults(fn=cmd_stage)
+    p = sub.add_parser("publish", help="put a bundle of the local cache into the store")
+    p.add_argument("--config", required=True)
+    p.add_argument("--arch", required=True)
+    p.add_argument("--digest", required=True)
+    p.set_defaults(fn=cmd_publish)
     p = sub.add_parser("fetch", help="fetch and unpack a bundle into the local cache")
     p.add_argument("--config", required=True)
     p.add_argument("--arch", required=True)
     p.add_argument("--digest", required=True)
-    p.add_argument("--archive", help="unpack this local bundle instead of downloading it")
     p.set_defaults(fn=cmd_fetch)
     p = sub.add_parser("upload", help="put a file into the store")
     p.add_argument("src")
@@ -507,9 +577,16 @@ def main(argv):
     p.add_argument("--cpus", type=int, default=32)
     p.add_argument("--target-seconds", type=float, default=900.0)
     p.add_argument("--max-shards", type=int, default=64)
+    p.add_argument("--check", default="", help="a second test run on the build (biglake): names "
+                                               "its shards and labels their results")
     p.add_argument("test_args", nargs=argparse.REMAINDER,
                    help="test.py selection arguments after --")
     p.set_defaults(fn=cmd_shards)
+    p = sub.add_parser("runs", help="join a build's shard lists (main first) into the runs of its "
+                                    "tests, and say whether the build job runs them itself")
+    p.add_argument("shards", nargs="+", help="shard lists `shards` printed")
+    p.add_argument("--tsv", default="", help="also write the runs here, one per line")
+    p.set_defaults(fn=cmd_runs)
     p = sub.add_parser("timing", help="write the store's timing snapshot for a config as JSON")
     p.add_argument("--config", required=True)
     p.add_argument("--arch", required=True)
@@ -532,6 +609,9 @@ def main(argv):
     p.add_argument("--duckdb-suites", default="", help="comma-separated DuckDB suites")
     p.add_argument("--no-duckdb", action="store_true",
                    help="leave out DuckDB's suites the diff opens (sqlsmith still follows core)")
+    p.add_argument("--postgres", choices=("all", "changed"),
+                   help="also validate the pg/ and any/pg/ tests against PostgreSQL: all of them, or "
+                        "those the diff against origin/main changes")
     p.set_defaults(fn=cmd_select_suites)
     p = sub.add_parser("coverage-report", help="report the coverage of a change from a run's profiles")
     p.add_argument("--config", default="dev")

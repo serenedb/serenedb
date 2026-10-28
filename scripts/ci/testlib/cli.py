@@ -88,6 +88,8 @@ def parse_args(argv):
                     help="seconds the --repeat rounds may take")
     ap.add_argument("--only-changed", action="store_true",
                     help="run only the --changed units")
+    ap.add_argument("--postgres", choices=("all", "changed"),
+                    help="also run the postgres suite: all of it, or only its --changed tests")
     ap.add_argument("--expect-fail", action="store_true",
                     help="every unit must fail (a fix's tests against the build without it)")
     ap.add_argument("--list", action="store_true",
@@ -238,6 +240,11 @@ def changed_units(units, base, compiled=True):
     return picked, tests
 
 
+def keep_changed_postgres(units, changed):
+    picked = {u.id for u in changed}
+    return [u for u in units if u.suite != "postgres" or u.id in picked]
+
+
 def shard(units, index, count, startup=lambda fixture: 0.0):
     if count == 1:
         return units
@@ -259,6 +266,8 @@ def main(argv):
     args = parse_args(argv)
     budget_end = time.monotonic() + args.budget if args.budget else math.inf
     suites = args.suite or list(DEFAULT_SUITES)
+    if args.postgres and "postgres" not in suites:
+        suites = [*suites, "postgres"]
     if args.server and {"sqllogic", "postgres"} <= set(suites):
         raise SystemExit("--server serves either the sqllogic or the postgres suite, not both")
     if args.server and "recovery" in suites:
@@ -300,8 +309,8 @@ def main(argv):
                   base_env=base_env, budget_end=budget_end)
     skips = load_skips(ROOT, config.name)
     units = build_units(ctx, args, suites, skips)
-    if args.expect_fail and not args.changed:
-        raise SystemExit("--expect-fail needs --changed")
+    if (args.expect_fail or args.postgres == "changed") and not args.changed:
+        raise SystemExit("--expect-fail and --postgres changed need --changed")
     changed, changed_tests = (changed_units(units, args.changed, compiled=not args.expect_fail)
                               if args.changed else ([], set()))
     if args.expect_fail and not changed:
@@ -310,7 +319,9 @@ def main(argv):
                          "while gtest, DuckDB C++ and re2 tests are compiled into its binaries")
     if args.only_changed:
         units = changed
-    plan = hashlib.sha256("".join(sorted(f"{u.id}\t{u.cost!r}\n" for u in units)).encode()).hexdigest()
+    elif args.postgres == "changed":
+        units = keep_changed_postgres(units, changed)
+    plan =hashlib.sha256("".join(sorted(f"{u.id}\t{u.cost!r}\n" for u in units)).encode()).hexdigest()
     if args.plan and args.plan != plan:
         raise SystemExit(f"this shard planned other units than the build job (plan {plan[:12]}, "
                          f"not {args.plan[:12]}): the shards would run some units twice and others "

@@ -13,7 +13,7 @@ from testlib.scheduler import BAD
 MARKER = "<!-- serenedb-ci-report -->"
 HISTORY = re.compile(r"<!-- ci-history:(.*?) -->")
 ORDER = ("perf", "dev", "asan", "tsan", "msan")
-CHECK_JOBS = {"validate-pg": "pg", "bugfix": "bugfix"}
+CHECK_JOBS = {"bugfix": "bugfix"}
 COVERAGE_ROWS = 40
 KEEP_RUNS = 30
 

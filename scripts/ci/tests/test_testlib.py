@@ -160,6 +160,34 @@ def test_extension_test_ids_do_not_depend_on_the_checkout():
     assert duckdb._relative(ctx, "core", "test/sql/a.test") == "test/sql/a.test"
 
 
+def test_only_the_changed_postgres_tests_run_beside_every_other_suite(monkeypatch, tmp_path):
+    units = [unit("postgres:pg-wire-simple:pg/a.test"), unit("postgres:pg-wire-simple:pg/b.test"),
+             unit("sqllogic:pg-wire-simple:sdb/c.test"), unit("recovery:recovery/d.test")]
+    picked, _ = changed(monkeypatch, tmp_path, {"tests/sqllogic/pg/a.test": ""}, units)
+    assert cli.keep_changed_postgres(units, picked) == [units[0], units[2], units[3]]
+
+
+@pytest.mark.parametrize("postgres,expected", [
+    (None, ""), ("changed", "--postgres changed --changed origin/main"), ("all", "--postgres all")])
+def test_select_suites_adds_the_postgres_validation(capsys, postgres, expected):
+    ci.cmd_select_suites(SimpleNamespace(corpus=False, everything=True, iresearch=False, re2=False,
+                                         duckdb_suites="", no_duckdb=False, postgres=postgres))
+    assert capsys.readouterr().out.strip() == expected
+
+
+def test_a_single_shard_runs_in_the_build_job_and_more_go_to_test_jobs():
+    def shards(count, check=""):
+        prefix = f"{check}-" if check else ""
+        return [{"spec": f"{i}/{count}", "name": f"{prefix}{i}of{count}", "plan": f"p{check}",
+                 "check": check} for i in range(1, count + 1)]
+
+    one = ci.plan_runs(shards(1), shards(1, "biglake"))
+    assert one["inline"] and one["names"] == ["1of1", "biglake-1of1"]
+    assert one["runs"]["biglake-1of1"] == {"spec": "1/1", "plan": "pbiglake", "check": "biglake"}
+    three = ci.plan_runs(shards(3))
+    assert not three["inline"] and three["names"] == ["1of3", "2of3", "3of3"]
+
+
 def test_timing_learns_main_or_a_calibration_pr():
     main = "40278761535-1-dev-x86_64-1of3.parquet"
     pr = "40278761535-1-pr1880-dev-x86_64-1of3.parquet"

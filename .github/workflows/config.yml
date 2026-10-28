@@ -27,6 +27,11 @@ on:
         type: string
         required: false
         default: ""
+      COVERAGE:
+        description: "Report the coverage of the change; the build job does when it runs the tests itself"
+        type: boolean
+        required: false
+        default: false
       PR_SHA:
         description: "Commit SHA to check out (empty = workflow ref)"
         type: string
@@ -41,9 +46,12 @@ on:
       digest:
         description: "Input digest of the build"
         value: ${{ jobs.build.outputs.digest }}
-      shards:
-        description: "The test shards, as JSON"
-        value: ${{ jobs.build.outputs.shards }}
+      remote:
+        description: "true when test jobs ran the tests"
+        value: ${{ jobs.build.outputs.remote }}
+      runs:
+        description: "Each test run's shard, plan and check, by name, as JSON"
+        value: ${{ jobs.build.outputs.runs }}
 
 jobs:
   build:
@@ -54,35 +62,23 @@ jobs:
       TESTS: ${{ inputs.TESTS }}
       TEST_ARGS: ${{ inputs.TEST_ARGS }}
       BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
+      COVERAGE: ${{ inputs.COVERAGE }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit
 
   test:
     needs: build
-    if: inputs.TESTS
+    if: needs.build.outputs.remote == 'true'
     uses: ./.github/workflows/test.yml
     with:
       CONFIG: ${{ inputs.CONFIG }}
       LOCATION: ${{ inputs.LOCATION }}
       DIGEST: ${{ needs.build.outputs.digest }}
       SHARDS: ${{ needs.build.outputs.shards }}
+      RUNS: ${{ needs.build.outputs.runs }}
       TEST_ARGS: ${{ inputs.TEST_ARGS }}
-      PR_SHA: ${{ inputs.PR_SHA }}
-      PR_NUMBER: ${{ inputs.PR_NUMBER }}
-    secrets: inherit
-
-  biglake:
-    needs: build
-    if: inputs.TESTS && inputs.BIGLAKE_TEST_ARGS != ''
-    uses: ./.github/workflows/test.yml
-    with:
-      CONFIG: ${{ inputs.CONFIG }}
-      NAME: biglake
-      LOCATION: ${{ inputs.LOCATION }}
-      DIGEST: ${{ needs.build.outputs.digest }}
-      SHARDS: ${{ needs.build.outputs.biglake_shards }}
-      TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
+      BIGLAKE_TEST_ARGS: ${{ inputs.BIGLAKE_TEST_ARGS }}
       PR_SHA: ${{ inputs.PR_SHA }}
       PR_NUMBER: ${{ inputs.PR_NUMBER }}
     secrets: inherit

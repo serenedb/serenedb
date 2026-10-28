@@ -182,7 +182,12 @@ class ChangedTests:
         elif name.startswith("tests/sqllogic/"):
             self.scripts[os.path.realpath(ROOT / name)] = name
         elif name.startswith("tests/drivers/"):
-            for uid in DRIVER_DIRS.get(parts[2], (f"drivers:{parts[2]}",)):
+            uids = DRIVER_DIRS.get(parts[2])
+            if uids is None:
+                stem = parts[3].rsplit(".", 1)[0] if len(parts) == 4 else ""
+                uids = (f"drivers:{parts[2]}",
+                        f"drivers:{parts[2]}:{stem if stem.startswith('test_') else '*'}")
+            for uid in uids:
                 (self.globs if "*" in uid else self.ids)[uid].add(name)
         elif name.startswith("third_party/") and "/test/" in name and name.endswith(DUCKDB_TESTS):
             suite = DUCKDB_DIRS.get("/".join(parts[:2]))

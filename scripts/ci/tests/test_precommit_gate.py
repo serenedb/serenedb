@@ -45,7 +45,6 @@ def test_one_gitlink_check_runs_before_the_hooks_and_the_family_checks_around_th
     check = step_index("duckdb_family.sh check HEAD^1")
     assert gitlinks < fetch < hooks < check
     assert "".join(step_lines()).count("check_submodule_pointers.py") == 1
-    assert "SKIP: check-submodule-pointers" in "\n".join(step_lines()[hooks:check])
 
 
 @pytest.fixture()

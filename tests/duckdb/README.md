@@ -69,7 +69,7 @@ An update is reviewed patchset by patchset. Every fork whose upstream is in the 
 
 1. Build the update on `mbkkt/update-duckdb` (the recipe below) and force-push it while the update is in review.
 2. Force-push `mbkkt/update-duckdb-base` to the fork's boundary. The PR then shows exactly our patchset.
-3. Link every review PR from the serenedb PR of the update. Its gitlinks point at the `mbkkt/update-duckdb` heads while it is in review, so `check-submodule-pointers` fails until the next step.
+3. Link every review PR from the serenedb PR of the update. Its gitlinks point at the `mbkkt/update-duckdb` heads while it is in review, so the gitlink check of the PR's pre-commit job (`scripts/check_submodule_pointers.py`) fails until the next step.
 4. Before the serenedb PR merges, push each head as a new `vYYYY.MM.DD` branch, the date of the update, and move the gitlinks to it. A version branch is never force-pushed.
 
 | fork | review PR |

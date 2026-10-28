@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pre-commit hook: validate third_party submodule gitlinks.
+"""Validate third_party submodule gitlinks, as the PR's pre-commit job and scripts/land.sh do.
 
 Every gitlink the change sets is checked: the ones that differ from the
 merge base with origin/main (all of them when there is none), except the
@@ -17,17 +17,15 @@ satisfy rule 1.
 
 A gitlink that breaks rule 1 but is the head of an open fork PR into
 main's version branch or a newer one is pending, not failed: the PR is
-waiting for that fork PR to land. --allow-pending (the pre-commit hook)
-passes it; without the flag the script exits 3, which the PR's pre-commit
-job turns into a pending `pre-commit` status. --rev checks the gitlinks
+waiting for that fork PR to land: the script exits 3, which the PR's
+pre-commit job turns into a pending `pre-commit` status. --rev checks the gitlinks
 of a commit instead of the index, --base compares with another commit.
 --reachable also checks that every gitlink, changed or not, can be
 fetched from its URL, all of them at once.
 
 Validation prefers the local submodule clone (pure git, works offline);
 without one (CI checks out with submodules: false) it falls back to the
-GitHub compare API. If neither works the hook fails closed; bypass a
-known-good commit with SKIP=check-submodule-pointers.
+GitHub compare API. If neither works it fails closed.
 """
 import argparse
 import concurrent.futures
@@ -348,8 +346,7 @@ def check(path: str, override_sha: str | None, rev: str | None) -> str:
     heads = version_branches(url, pattern)
     if heads is None:
         print(
-            f"{path}: cannot list version branches on {url} (offline?); "
-            "rerun with network or SKIP=check-submodule-pointers",
+            f"{path}: cannot list version branches on {url} (offline?); rerun with network",
             file=sys.stderr,
         )
         return "fail"
@@ -363,15 +360,14 @@ def check(path: str, override_sha: str | None, rev: str | None) -> str:
             result = validate_api(repo, gitlink, main_sha, heads, fork_pr)
     except Unreachable as e:
         print(
-            f"{path}: {e}; rerun with network or SKIP=check-submodule-pointers",
+            f"{path}: {e}; rerun with network",
             file=sys.stderr,
         )
         return "fail"
     if result is None:
         print(
             f"{path}: cannot validate {gitlink} (no local clone and the "
-            "GitHub API is unreachable); rerun with network or "
-            "SKIP=check-submodule-pointers",
+            "GitHub API is unreachable); rerun with network",
             file=sys.stderr,
         )
         return "fail"
@@ -434,11 +430,6 @@ parser.add_argument(
     help="check only the gitlinks that differ from this commit "
     "(default: the merge base with origin/main)",
 )
-parser.add_argument(
-    "--allow-pending",
-    action="store_true",
-    help="pass a gitlink that is the head of an open fork PR",
-)
 args, _ = parser.parse_known_args()
 
 if args.path:
@@ -453,6 +444,6 @@ fetchable = not args.reachable or reachable(args.rev)
 results = [check(path, args.sha, args.rev) for path in paths]
 if not fetchable or "fail" in results:
     sys.exit(1)
-if "pending" in results and not args.allow_pending:
+if "pending" in results:
     sys.exit(3)
 sys.exit(0)

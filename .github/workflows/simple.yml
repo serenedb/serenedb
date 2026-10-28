@@ -71,7 +71,6 @@ jobs:
     - name: Run the hooks on the change, staged over HEAD^1
       shell: bash
       env:
-        SKIP: check-submodule-pointers
         EVENT: ${{ github.event_name }}
       run: |
         venv=~/.cache/pre-commit-venv

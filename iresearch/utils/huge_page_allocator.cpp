@@ -21,38 +21,33 @@
 #include "iresearch/utils/huge_page_allocator.hpp"
 
 #ifdef __linux__
+
 #include <sys/mman.h>
-#endif
 
 namespace irs {
-
-#ifdef __linux__
 namespace {
 
 constexpr size_t kHugePage = size_t{2} << 20;
 
 }  // namespace
-#endif
 
 void* AllocateHugePages(size_t bytes) {
-#ifdef __linux__
-  if (bytes >= kHugePage) {
-    auto* p = ::operator new(bytes, std::align_val_t{kHugePage});
-    ::madvise(p, bytes, MADV_HUGEPAGE);
-    return p;
+  if (bytes < kHugePage) {
+    return ::operator new(bytes);
   }
-#endif
-  return ::operator new(bytes);
+  auto* p = ::operator new(bytes, std::align_val_t{kHugePage});
+  ::madvise(p, bytes, MADV_HUGEPAGE);
+  return p;
 }
 
 void FreeHugePages(void* p, size_t bytes) noexcept {
-#ifdef __linux__
-  if (bytes >= kHugePage) {
-    ::operator delete(p, bytes, std::align_val_t{kHugePage});
+  if (bytes < kHugePage) {
+    ::operator delete(p, bytes);
     return;
   }
-#endif
-  ::operator delete(p, bytes);
+  ::operator delete(p, bytes, std::align_val_t{kHugePage});
 }
 
 }  // namespace irs
+
+#endif

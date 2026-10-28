@@ -330,31 +330,31 @@ static_assert(
     f.Prepare(std::span<const uint32_t>{});
   }, "InnerAndTableFilter::Prepare must match it too");
 
-inline constexpr long double kWalkShare = 0.25L;
+inline constexpr double kWalkShare = 0.25;
 
-long double HnswWalkNodes(uint64_t matches, uint32_t ef, uint32_t m0,
-                          uint64_t nodes) noexcept {
+double HnswWalkNodes(uint64_t matches, uint32_t ef, uint32_t m0,
+                     uint64_t nodes) noexcept {
   if (matches == 0) {
-    return static_cast<long double>(nodes);
+    return static_cast<double>(nodes);
   }
-  return kWalkShare * static_cast<long double>(ef) * m0 * nodes /
-         static_cast<long double>(matches);
+  return kWalkShare * static_cast<double>(ef) * m0 * nodes /
+         static_cast<double>(matches);
 }
 
-inline constexpr long double kProbeFoldRatio = 4096;
+inline constexpr double kProbeFoldRatio = 4096;
 
-inline constexpr long double kPointReadFoldRatio = 32;
+inline constexpr double kPointReadFoldRatio = 32;
 
-inline constexpr long double kVectorPointReadFoldRatio = 456;
+inline constexpr double kVectorPointReadFoldRatio = 456;
 
 inline constexpr uint32_t kCountSampleWindows = 8;
 
 inline constexpr uint64_t kHnswColumnScanShare = 16;
 
-inline constexpr long double kWalkCandidateOverhead = 192;
+inline constexpr double kWalkCandidateOverhead = 192;
 
-long double ScanCandidateCost(uint32_t record_size) noexcept {
-  const auto r = static_cast<long double>(record_size);
+double ScanCandidateCost(uint32_t record_size) noexcept {
+  const auto r = static_cast<double>(record_size);
   return r / (r + kWalkCandidateOverhead);
 }
 
@@ -371,19 +371,17 @@ uint32_t HnswCandidateBytes(uint32_t record_size, uint32_t d,
 inline constexpr uint64_t kTwoHopAdmittedNeighbours = 2;
 
 bool HnswBridgeRejected(uint32_t record_size, uint32_t m0) noexcept {
-  return static_cast<long double>(record_size) >
-         static_cast<long double>(m0) * sizeof(uint32_t) +
-           kWalkCandidateOverhead;
+  return static_cast<double>(record_size) >
+         static_cast<double>(m0) * sizeof(uint32_t) + kWalkCandidateOverhead;
 }
 
-long double HnswTwoHopShare(uint64_t matches, uint64_t nodes, uint32_t m0,
-                            uint32_t record_size) noexcept {
-  const auto p = std::min<long double>(
-    1, static_cast<long double>(matches) / static_cast<long double>(nodes));
+double HnswTwoHopShare(uint64_t matches, uint64_t nodes, uint32_t m0,
+                       uint32_t record_size) noexcept {
+  const auto p = std::min<double>(
+    1, static_cast<double>(matches) / static_cast<double>(nodes));
   const auto crossed =
-    static_cast<long double>(m0) * sizeof(uint32_t) + kWalkCandidateOverhead;
-  const auto scored =
-    static_cast<long double>(record_size) + kWalkCandidateOverhead;
+    static_cast<double>(m0) * sizeof(uint32_t) + kWalkCandidateOverhead;
+  const auto scored = static_cast<double>(record_size) + kWalkCandidateOverhead;
   return p + (1 - p) * crossed / scored;
 }
 
@@ -392,12 +390,12 @@ bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
   if (matches == 0 || nodes == 0) {
     return true;
   }
-  long double walk = HnswWalkNodes(matches, ef, m0, nodes);
+  double walk = HnswWalkNodes(matches, ef, m0, nodes);
   if (two_hop && matches * m0 >= kTwoHopAdmittedNeighbours * nodes) {
     walk *= HnswTwoHopShare(matches, nodes, m0, record_size);
   }
-  const long double scan =
-    static_cast<long double>(matches) * ScanCandidateCost(record_size);
+  const double scan =
+    static_cast<double>(matches) * ScanCandidateCost(record_size);
   return scan <= walk;
 }
 
@@ -406,7 +404,7 @@ struct HnswFilterPlan {
   HnswWalk walk = HnswWalk::Through;
   bool two_hop = false;
   bool ask_per_hop = false;
-  long double read_cost = 0;
+  double read_cost = 0;
 };
 
 HnswFilterPlan PlanHnswFilter(HnswFilterMode forced,
@@ -432,11 +430,10 @@ HnswFilterPlan PlanHnswFilter(HnswFilterMode forced,
                                               : kProbeFoldRatio;
   plan.read_cost =
     HnswWalkNodes(matches, ef, graph.M0(), graph.Size()) * probe_ratio;
-  plan.ask_per_hop =
-    table && mode == HnswFilterMode::Walk &&
-    (column_filter == HnswColumnFilter::Read ||
-     (column_filter == HnswColumnFilter::Auto &&
-      plan.read_cost <= static_cast<long double>(graph.Size())));
+  plan.ask_per_hop = table && mode == HnswFilterMode::Walk &&
+                     (column_filter == HnswColumnFilter::Read ||
+                      (column_filter == HnswColumnFilter::Auto &&
+                       plan.read_cost <= static_cast<double>(graph.Size())));
   switch (mode) {
     case HnswFilterMode::Walk:
       plan.walk = plan.two_hop && !plan.ask_per_hop ? HnswWalk::TwoHop
@@ -610,8 +607,8 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
                                      record, _ef, estimate, columns);
     return plan.ask_per_hop &&
            (_column_filter == HnswColumnFilter::Read ||
-            plan.read_cost + static_cast<long double>(_index_only_postings) <
-              static_cast<long double>(_inner->Postings()));
+            plan.read_cost + static_cast<double>(_index_only_postings) <
+              static_cast<double>(_inner->Postings()));
   };
   bool bounded = true;
   bool by_columns = false;

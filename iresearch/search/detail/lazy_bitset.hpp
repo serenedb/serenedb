@@ -184,10 +184,9 @@ class LazyBitset {
     if (filled >= total || seen == 0) {
       return seen;
     }
-    const auto share =
-      static_cast<long double>(seen) / static_cast<long double>(filled);
+    const auto share = static_cast<double>(seen) / static_cast<double>(filled);
     const auto est = static_cast<uint64_t>(
-      std::ceil(share * static_cast<long double>(total) * 1.125L));
+      std::ceil(share * static_cast<double>(total) * 1.125));
     return std::min<uint64_t>(est, total);
   }
 

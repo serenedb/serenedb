@@ -708,6 +708,9 @@ detail::PointRead ColFilterChain::PointReads() const noexcept {
   }
   for (const auto& r : _rows) {
     for (const auto* reader : r.readers) {
+      if (reader && reader->Type().IsNested()) {
+        return detail::PointRead::None;
+      }
       if (reader && zstd(*reader)) {
         read = detail::PointRead::Vector;
       }

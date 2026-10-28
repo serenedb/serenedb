@@ -1369,6 +1369,17 @@ std::string RenderTsqueryRow(const duckdb::RecursiveUnifiedVectorFormat& vdata,
                              duckdb::idx_t row);
 
 template<WrapContext InContainer>
+bool TextNeedsQuotingIn(std::string_view text) {
+  if constexpr (InContainer == WrapContext::Array) {
+    return RecordItemNeedsQuoting(text) ||
+           text.find_first_of("{}") != std::string_view::npos;
+  } else {
+    return ArrayItemNeedQuotesAndEscape(text) ||
+           text.find_first_of("()") != std::string_view::npos;
+  }
+}
+
+template<WrapContext InContainer>
 bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
                     duckdb::idx_t row) {
@@ -1387,8 +1398,7 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
                  static_cast<uint64_t>(
                    duckdb::UnifiedVectorFormat::GetDataUnsafe<int64_t>(
                      vdata.unified)[idx]));
-        return RecordItemNeedsQuoting(text) ||
-               ArrayItemNeedQuotesAndEscape(text);
+        return TextNeedsQuotingIn<InContainer>(text);
       }
       return IsTid(type);
     case DECIMAL:
@@ -1433,9 +1443,7 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
         return !(ReadRangeFlags(vdata, idx) & kRangeEmpty);
       }
       if (connector::IsTSQueryStructType(type)) {
-        const auto text = RenderTsqueryRow(vdata, idx);
-        return RecordItemNeedsQuoting(text) ||
-               ArrayItemNeedQuotesAndEscape(text);
+        return TextNeedsQuotingIn<InContainer>(RenderTsqueryRow(vdata, idx));
       }
       return true;
     case BLOB: {
@@ -1448,7 +1456,7 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
       const std::string_view v{raw.GetData(), raw.GetSize()};
       return absl::c_any_of(v,
                             [](char c) { return !absl::ascii_isprint(c); }) ||
-             RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
+             TextNeedsQuotingIn<InContainer>(v);
     }
     case TUPLE:
       return true;
@@ -1456,9 +1464,8 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
       const auto interval =
         duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::interval_t>(
           vdata.unified)[idx];
-      auto str = duckdb::Interval::ToString(interval);
-      std::string_view v{str};
-      return RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
+      return TextNeedsQuotingIn<InContainer>(
+        duckdb::Interval::ToString(interval));
     }
     case CHAR:
     case VARCHAR: {
@@ -1473,12 +1480,12 @@ bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
         }
         v = xml.body;
       }
-      return RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
+      return TextNeedsQuotingIn<InContainer>(v);
     }
     case ENUM: {
       const auto label = EnumLabel(type, vdata.unified, idx);
-      const std::string_view v{label.GetData(), label.GetSize()};
-      return RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
+      return TextNeedsQuotingIn<InContainer>(
+        std::string_view{label.GetData(), label.GetSize()});
     }
     case ARRAY:
     case LIST:

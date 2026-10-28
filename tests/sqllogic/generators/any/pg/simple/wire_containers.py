@@ -64,11 +64,13 @@ TYPES = [
     ("pg_lsn", ["'16/B374D848'"]),
     ("oid", ["1", "4294967295"]),
     ("xid", ["'1'", "'4294967295'"], {}, VALUED),
+    ("xid8", ["'1'", "'9223372036854775807'"], {}, VALUED),
     ("cid", ["'1'", "'4294967295'"], {}, VALUED),
     ("oidvector", ["'1 2'", "''"]),
     ("int2vector", ["'3 4'", "'5'"]),
     ("tsquery", ["'a & b'", "'c'"], {"text_search": VALUED}, VALUED),
-    ("xml", ["'<a>1</a>'", "'<?xml version=\"1.0\"?><b/>'"]),
+    ("xml", ["'<a>1</a>'", "'<?xml version=\"1.0\"?><b/>'",
+             "'<?xml version=\"1.0\" standalone=\"yes\"?><c/>'"]),
     ("wire_mood", ["'sad'", "'happy'"], {}, {"nested", "nested_matrix"}),
     ("wire_wide", ["'l1'", "'l300'"], {}, {"nested", "nested_matrix"}),
     ("wire_huge", ["'l1'", "'l65536'"], {}, {"nested", "nested_matrix"}),
@@ -139,6 +141,18 @@ for name, value in [("real", "1.1"), ("double precision", "0.1")]:
           f"ARRAY[ARRAY[{value}::{name}]] AS m, ROW({value}::{name}) AS r, "
           f"ROW(ARRAY[{value}::{name}], ARRAY[ARRAY[{value}::{name}]]) AS n")
 t.statement("RESET extra_float_digits")
+
+t.section("Text that needs quotes inside one container and not the other.")
+check("SELECT ARRAY[ROW('NULL'::text), ROW('null'::text), ROW('a{b'::text)] AS a, "
+      "ROW(ARRAY['a(b'::text], ARRAY['NULL'::text]) AS r")
+
+t.section("timestamptz in a time zone with a minutes offset.")
+t.statement("SET TimeZone = 'Asia/Kolkata'")
+check("SELECT ARRAY['2024-01-02 03:04:05+00'::timestamptz, NULL] AS a, "
+      "ROW('2024-01-02 03:04:05+00'::timestamptz) AS r, "
+      "ROW(ARRAY['2024-01-02 03:04:05+00'::timestamptz]) AS n, "
+      "ARRAY[ROW('2024-01-02 03:04:05+00'::timestamptz)] AS s", binary=False)
+t.statement("SET TimeZone = 'UTC'")
 
 t.section("Vectors at the top level.")
 check("SELECT '1 2'::oidvector AS o, '3 4'::int2vector AS i")

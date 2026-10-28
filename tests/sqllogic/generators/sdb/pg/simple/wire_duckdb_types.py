@@ -19,6 +19,14 @@ TYPES = [
     ("geometry", ["'POINT(1 2)'", "'LINESTRING(0 0, 1 1)'"], RECORDS),
 ]
 
+BINARY_MATRIX = {
+    "time_ns": "{{01:02:03.123456,23:59:59.999999},{23:59:59.999999,01:02:03.123456}}",
+    "timestamp_ns": "{{\"2024-01-02 03:04:05.123456\",infinity},"
+                    "{infinity,\"2024-01-02 03:04:05.123456\"}}",
+    "timestamptz_ns": "{{\"2024-01-02 03:04:05.123456+00\",-infinity},"
+                      "{-infinity,\"2024-01-02 03:04:05.123456+00\"}}",
+}
+
 t = Test("Arrays and records of the DuckDB types PostgreSQL lacks print as the PostgreSQL types "
          "they map to would: one- and two-dimensional arrays with NULL elements, empty arrays, "
          "records holding the type, arrays inside records and records inside arrays, and maps, "
@@ -47,6 +55,13 @@ for name, values, *rest in TYPES:
     }
     for shape, sql in shapes.items():
         t.query(sql, skipif="pg-wire-extended" if shape in text_only else None)
+    if name in BINARY_MATRIX:
+        t.query(shapes["matrix"], ["a"], [[BINARY_MATRIX[name]]], onlyif="pg-wire-extended")
+
+t.section("A type alias over ubigint.")
+t.statement("CREATE TYPE wire_ubigint AS ubigint")
+t.query("SELECT 5::wire_ubigint AS v, ARRAY[5::wire_ubigint, NULL] AS a, ROW(5::wire_ubigint) AS r")
+t.statement("DROP TYPE wire_ubigint")
 
 t.section("Maps and fixed-size arrays.")
 t.query("SELECT ARRAY[map(['a'], [1])] AS m, ROW(map(['a'], [1])) AS r, "
@@ -55,6 +70,7 @@ t.query("SELECT ROW(array_value(1, 2)) AS r, ARRAY[ROW(array_value(1, 2))] AS a,
         "ROW(ARRAY[array_value(1, 2)]) AS n, ROW(ARRAY[array_value(3)]) AS one")
 
 t.section("Empty and NULL sub-arrays, which PostgreSQL arrays cannot hold.")
+t.query("SELECT ARRAY[ARRAY[]::int[]] AS a, ARRAY['{}'::int[][]] AS b")
 t.query("SELECT ROW(ARRAY[ARRAY[]::int[]]) AS e, ROW(ARRAY[NULL::int[]]) AS n, "
         "ROW(ARRAY[ARRAY['a b'], NULL]) AS m", skipif="pg-wire-extended")
 

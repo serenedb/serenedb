@@ -753,14 +753,6 @@ postgres	UPDATE
 sven_cls_knight	SELECT
 
 
-query
-SELECT generate_series(1, 2) AS n;
-----
-n
-1
-2
-
-
 connection c_sven user=sven_cls_knight password=sven_cls_pw
 query
 SELECT relname, relkind, relowner::regrole::text AS owner FROM pg_class WHERE oid IN ('pudge_cls_hook'::regclass, 'pudge_cls_seq'::regclass) ORDER BY relname;

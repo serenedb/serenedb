@@ -153,15 +153,22 @@ NULL
 
 
 statement ok
+CREATE TABLE invoker_drs_gone AS SELECT oid FROM pg_authid WHERE rolname = 'invoker_drs_wex';
+
+
+statement ok
 DROP ROLE invoker_drs_wex;
 
 
 query
-SELECT count(*) FROM pg_db_role_setting s LEFT JOIN pg_authid a ON a.oid = s.setrole
-WHERE s.setrole <> 0 AND a.oid IS NULL;
+SELECT count(*) FROM pg_db_role_setting WHERE setrole IN (SELECT oid FROM invoker_drs_gone);
 ----
 count
 0
+
+
+statement ok
+DROP TABLE invoker_drs_gone;
 
 
 statement ok

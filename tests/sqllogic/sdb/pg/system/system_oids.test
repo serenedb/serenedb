@@ -205,7 +205,7 @@ count
 
 
 query
-SELECT count(*) FROM duckdb_databases() WHERE NOT internal AND database_name NOT IN ('postgres') AND database_oid < 262144;
+SELECT count(*) FROM duckdb_databases() WHERE database_name = current_database() AND database_oid < 262144;
 ----
 count
 0

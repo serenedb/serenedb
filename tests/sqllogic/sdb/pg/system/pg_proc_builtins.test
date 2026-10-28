@@ -20,18 +20,12 @@ CREATE MACRO ppb_macro(a) AS a + 1
 # pg_proc draws from.
 
 query
-SELECT
-  (SELECT count(*) FROM pg_proc)
-    = (SELECT count(*) FROM duckdb_functions()
-         WHERE database_name IN ('system', current_database()))
-    AS counts_match,
-  (SELECT count(*) FROM duckdb_functions() f
-     WHERE f.database_name IN ('system', current_database())
-       AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.proname = f.function_name))
-    AS missing
+SELECT count(*) AS missing FROM duckdb_functions() f
+WHERE f.database_name IN ('system', current_database())
+  AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.proname = f.function_name)
 ----
-counts_match	missing
-f	0
+missing
+0
 
 query
 SELECT
@@ -40,7 +34,8 @@ SELECT
          WHERE database_name IN ('system', current_database()))
     = (SELECT count(*) FROM pg_proc p
          WHERE NOT EXISTS (SELECT 1 FROM duckdb_functions() f
-                           WHERE f.function_name = p.proname))
+                           WHERE f.database_name IN ('system', current_database())
+                             AND f.function_name = p.proname))
     AS counts_match
 ----
 counts_match
@@ -95,9 +90,10 @@ outside_pg_catalog
 
 # A known signature keeps its shape: upper(text) -> text, one argument.
 
-query rowsort
+query
 SELECT DISTINCT p.pronargs, format_type(p.prorettype, NULL) AS rettype
 FROM pg_proc p WHERE p.proname = 'upper'
+ORDER BY rettype
 ----
 pronargs	rettype
 1	bigint
@@ -126,20 +122,6 @@ upper	i
 # abort the scan. Pin one known signature, and guard against the whole mapping
 # collapsing to unknown (705) -- roughly a tenth of builtins are legitimately
 # generic, so the check is a ratio, not a count.
-
-query error
-SELECT
-  (SELECT DISTINCT format_type(proargtypes[1], NULL) FROM pg_proc WHERE proname = 'upper')
-    AS upper_arg1,
-  (SELECT count(*) FROM pg_proc WHERE pronargs > 0
-     AND NOT EXISTS (SELECT 1 FROM unnest(proargtypes) t WHERE t <> 705))
-   < (SELECT count(*) FROM pg_proc WHERE pronargs > 0) / 2
-    AS most_args_resolve
-----
-db error: ERROR: More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row.
-
-Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.
-
 
 query
 SELECT

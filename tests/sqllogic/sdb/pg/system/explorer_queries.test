@@ -45,7 +45,7 @@ id	name
 
 # catalogs: list catalog schemas
 
-query ?? rowsort
+query
 SELECT
     n.oid AS id,
     s.schema_name as name
@@ -55,6 +55,7 @@ JOIN pg_namespace n
 WHERE (s.schema_name IN ('information_schema')
   OR s.schema_name LIKE 'pg_%')
   AND has_schema_privilege(current_user, s.schema_name, 'USAGE')
+ORDER BY id
 ----
 id	name
 11	pg_catalog
@@ -174,7 +175,7 @@ WHERE i.indrelid = (SELECT oid FROM pg_class WHERE relname = 'explorer_t1'));
 t
 
 
-query ?? rowsort
+query
 SELECT
     n.oid AS id,
         s.schema_name as name
@@ -183,7 +184,8 @@ SELECT
             ON n.nspname = s.schema_name
             WHERE (s.schema_name IN ('information_schema')
               OR s.schema_name LIKE 'pg_%')
-                AND has_schema_privilege(current_user, s.schema_name, 'USAGE');
+                AND has_schema_privilege(current_user, s.schema_name, 'USAGE')
+        ORDER BY id;
 ----
 id	name
 11	pg_catalog

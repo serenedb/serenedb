@@ -59,7 +59,7 @@ rngtypid	rngsubtype	rngmultitypid
 
 
 query
-SELECT rngtypid, rngsubtype, rngmultitypid FROM pg_range WHERE rngtypid IN (3904, 3906, 3926);
+SELECT rngtypid, rngsubtype, rngmultitypid FROM pg_range WHERE rngtypid IN (3904, 3906, 3926) ORDER BY rngtypid;
 ----
 rngtypid	rngsubtype	rngmultitypid
 3904	23	4451

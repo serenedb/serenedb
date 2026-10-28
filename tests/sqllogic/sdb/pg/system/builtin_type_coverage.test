@@ -126,7 +126,8 @@ query
 SELECT count(*) AS unreferenced
 FROM pg_proc p
 WHERE p.oid < 16384
-  AND p.proname NOT IN (SELECT function_name FROM duckdb_functions())
+  AND p.proname NOT IN (SELECT function_name FROM duckdb_functions()
+                        WHERE database_name IN ('system', current_database()))
   AND NOT EXISTS (
     SELECT 1 FROM pg_type t
     WHERE p.oid IN (t.typinput::oid, t.typoutput::oid, t.typreceive::oid,

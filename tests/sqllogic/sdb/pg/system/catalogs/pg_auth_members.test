@@ -162,6 +162,10 @@ meepo_aum_net	meepo_aum_clone	f
 
 connection default
 statement ok
+CREATE TABLE meepo_aum_gone AS SELECT oid FROM pg_authid WHERE rolname LIKE 'meepo\_aum\_%';
+
+
+statement ok
 DROP ROLE meepo_aum_net;
 
 
@@ -187,13 +191,15 @@ DROP ROLE meepo_aum_prime;
 
 
 query
-SELECT count(*) FROM pg_auth_members m
-LEFT JOIN pg_authid r ON r.oid = m.roleid
-LEFT JOIN pg_authid u ON u.oid = m.member
-WHERE r.oid IS NULL OR u.oid IS NULL;
+SELECT count(*) FROM pg_auth_members
+WHERE roleid IN (SELECT oid FROM meepo_aum_gone) OR member IN (SELECT oid FROM meepo_aum_gone);
 ----
 count
 0
+
+
+statement ok
+DROP TABLE meepo_aum_gone;
 
 
 statement ok

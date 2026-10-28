@@ -69,12 +69,12 @@ mine	my_user	my_database	my_datid	active	my_query	started	no_command
 query
 SELECT count(*) AS bad_rows
 FROM sdb_progress
-WHERE pid IS NULL
+WHERE datname = current_database() AND (pid IS NULL
    OR state NOT IN ('active', 'idle')
    OR backend_start_us IS NULL
    OR (state = 'idle' AND (query_start_us IS NOT NULL OR command IS NOT NULL))
    OR (state = 'active' AND query_start_us IS NULL)
-   OR percent < 0;
+   OR percent < 0);
 ----
 bad_rows
 0

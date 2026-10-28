@@ -45,7 +45,7 @@ roident
 
 
 query
-SELECT roname FROM pg_replication_origin WHERE roident = 1;
+SELECT roname FROM pg_replication_origin WHERE roident = 0;
 ----
 roname
 

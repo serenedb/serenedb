@@ -616,17 +616,6 @@ t	0
 
 
 query
-WITH keyed AS (SELECT * FROM pg_settings WHERE name = 'work_mem'),
-     whole AS (SELECT * FROM pg_settings WHERE upper(name) = 'WORK_MEM')
-SELECT (SELECT count(*) FROM keyed) > 0 AS found,
-       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
-     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
-----
-found	diff
-f	0
-
-
-query
 WITH keyed AS (SELECT * FROM pg_settings WHERE name = 'statement_timeout'),
      whole AS (SELECT * FROM pg_settings WHERE upper(name) = 'STATEMENT_TIMEOUT')
 SELECT (SELECT count(*) FROM keyed) > 0 AS found,

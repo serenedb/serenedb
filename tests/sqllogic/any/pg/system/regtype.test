@@ -329,3 +329,10 @@ FROM pg_proc p WHERE p.prorettype <> 'pg_catalog.trigger'::pg_catalog.regtype;
 ----
 non_trigger_functions
 t
+
+
+query
+SELECT '"any"'::regtype::text AS any_type, 0::regoper::text AS no_oper, 0::regoperator::text AS no_operator
+----
+any_type	no_oper	no_operator
+"any"	0	0

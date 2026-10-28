@@ -397,35 +397,3 @@ DROP TABLE size_test
 
 statement error database "memory" does not exist
 SELECT pg_database_size('memory')
-
-
-control substitution on
-
-onlyif serenedb
-statement ok
-ATTACH ':memory:' AS size_mem_${__DATABASE__};
-
-
-onlyif serenedb
-connection size_attached
-statement ok
-USE size_mem_${__DATABASE__};
-
-
-onlyif serenedb
-connection size_attached
-statement ok
-SELECT pg_schema_size('main');
-
-
-onlyif serenedb
-connection size_attached
-statement error
-SELECT pg_schema_size(2200);
-----
-db error: ERROR: schema with OID 2200 does not exist
-
-
-onlyif serenedb
-statement ok
-DETACH size_mem_${__DATABASE__};

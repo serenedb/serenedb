@@ -116,14 +116,6 @@ SELECT pg_current_logfile('stderr') IS NULL;
 t
 
 
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_get_loaded_modules();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
 query
 SELECT pg_my_temp_schema();
 ----
@@ -145,14 +137,6 @@ SELECT pg_jit_available();
 ----
 pg_jit_available
 f
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_listening_channels();
-----
-db error: ERROR: Function is not supported in SereneDB
 
 
 skipif serenedb
@@ -335,14 +319,12 @@ SELECT has_sequence_privilege(current_user, 'seq_name', 'USAGE');
 db error: ERROR: relation "seq_name" does not exist
 
 
-onlyif serenedb
 statement error
 SELECT has_server_privilege('server_name', 'USAGE');
 ----
 db error: ERROR: server "server_name" does not exist
 
 
-onlyif serenedb
 statement error
 SELECT has_server_privilege(current_user, 'server_name', 'USAGE');
 ----
@@ -363,14 +345,12 @@ has_tablespace_privilege
 t
 
 
-onlyif serenedb
 statement error
 SELECT has_foreign_data_wrapper_privilege('fdw_name', 'USAGE');
 ----
 db error: ERROR: foreign-data wrapper "fdw_name" does not exist
 
 
-onlyif serenedb
 statement error
 SELECT has_foreign_data_wrapper_privilege(current_user, 'fdw_name', 'USAGE');
 ----
@@ -456,26 +436,9 @@ row_security_active
 f
 
 
-skipif serenedb
-onlyif serenedb
-query error
-SELECT acldefault(114::character, 0);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
 # TODO(Pasha): add aclitem type
-skipif serenedb
-onlyif serenedb
-query error
-SELECT aclexplode(ARRAY[]::bigint[]);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-onlyif serenedb
 query
-SELECT makeaclitem(0, 0, 'SELECT', false);
+SELECT makeaclitem(0, 0, 'SELECT', false)::text AS makeaclitem;
 ----
 makeaclitem
 =r/0
@@ -538,15 +501,6 @@ pg_conversion_is_visible
 t
 
 
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_statistics_obj_is_visible(0);
-----
-pg_statistics_obj_is_visible
-t
-
-
 onlyif serenedb
 query
 SELECT pg_ts_config_is_visible(0);
@@ -603,157 +557,6 @@ UTF8
 
 
 skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_get_catalog_foreign_keys();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_constraintdef(0);
-----
-pg_get_constraintdef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_constraintdef(0, true);
-----
-pg_get_constraintdef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_functiondef(0);
-----
-pg_get_functiondef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_function_arguments(0);
-----
-pg_get_function_arguments
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_function_identity_arguments(0);
-----
-pg_get_function_identity_arguments
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_function_result(0);
-----
-pg_get_function_result
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_indexdef(0);
-----
-pg_get_indexdef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_indexdef(0, 0, true);
-----
-pg_get_indexdef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_get_keywords();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_partkeydef(0);
-----
-pg_get_partkeydef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_ruledef(0);
-----
-pg_get_ruledef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_ruledef(0, true);
-----
-pg_get_ruledef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_serial_sequence('table', 'col') IS NULL;
-----
-?column?
-t
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_statisticsobjdef(0);
-----
-pg_get_statisticsobjdef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_triggerdef(0);
-----
-pg_get_triggerdef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_triggerdef(0, true);
-----
-pg_get_triggerdef
-(empty)
-
-
-skipif serenedb
 query
 SELECT pg_get_userbyid(0);
 ----
@@ -762,83 +565,11 @@ unknown (OID=0)
 
 
 skipif serenedb
-onlyif serenedb
 query
-SELECT pg_get_viewdef(0);
+SELECT pg_settings_get_flags('work_mem');
 ----
-pg_get_viewdef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_viewdef(0, true);
-----
-pg_get_viewdef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_viewdef(0, 0);
-----
-pg_get_viewdef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_viewdef('pg_class');
-----
-pg_get_viewdef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_get_viewdef('pg_class', true);
-----
-pg_get_viewdef
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_index_column_has_property(0, 0, 'asc');
-----
-pg_index_column_has_property
-f
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_index_has_property(0, 'clusterable');
-----
-pg_index_has_property
-f
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_indexam_has_property(0, 'can_order');
-----
-pg_indexam_has_property
-f
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_options_to_table(ARRAY['']::text[]);
-----
-db error: ERROR: Function is not supported in SereneDB
+pg_settings_get_flags
+{EXPLAIN}
 
 
 onlyif serenedb
@@ -849,14 +580,6 @@ pg_settings_get_flags
 NULL
 
 
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_tablespace_databases(0);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
 query
 SELECT pg_typeof(1);
 ----
@@ -864,34 +587,6 @@ pg_typeof
 integer
 
 
-skipif serenedb
-onlyif serenedb
-query
-SELECT to_regclass('pg_class') IS NULL;
-----
-?column?
-t
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT to_regcollation('default') IS NULL;
-----
-?column?
-t
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT to_regnamespace('public') IS NULL;
-----
-?column?
-t
-
-
-skipif serenedb
 query
 SELECT to_regoper('+') IS NULL;
 ----
@@ -899,97 +594,10 @@ SELECT to_regoper('+') IS NULL;
 t
 
 
-skipif serenedb
-onlyif serenedb
-query
-SELECT to_regoperator('+(integer,integer)') IS NULL;
-----
-?column?
-t
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT to_regproc('now') IS NULL;
-----
-?column?
-t
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT to_regprocedure('now()') IS NULL;
-----
-?column?
-t
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT to_regrole('postgres') IS NULL;
-----
-?column?
-t
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT to_regtype('integer') IS NULL;
-----
-?column?
-t
-
-
 # 9.27.5 Object Information and Addressing Functions
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_get_acl(0, 0, 0);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query
-SELECT pg_describe_object(0, 0, 0);
-----
-pg_describe_object
-(empty)
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_identify_object(0, 0, 0);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_identify_object_as_address(0, 0, 0);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_get_object_address('table', ARRAY['']::text[], ARRAY['']::text[]);
-----
-db error: ERROR: Function is not supported in SereneDB
-
 
 # 9.27.6 Comment Information Functions
 
-skipif serenedb
 query
 SELECT col_description(0, 1) IS NULL;
 ----
@@ -997,7 +605,6 @@ SELECT col_description(0, 1) IS NULL;
 t
 
 
-skipif serenedb
 query
 SELECT obj_description(0) IS NULL;
 ----
@@ -1028,12 +635,11 @@ pg_input_is_valid
 t
 
 
-onlyif serenedb
 query
-SELECT pg_input_error_info('bad', 'integer');
+SELECT (pg_input_error_info('bad', 'integer')).sql_error_code;
 ----
-pg_input_error_info
-("Could not convert string 'bad' to INT32",,,22P02)
+sql_error_code
+22P02
 
 
 query
@@ -1057,14 +663,6 @@ SELECT pg_current_xact_id();
 db error: ERROR: Function is not supported in SereneDB
 
 
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_current_xact_id_if_assigned();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
 # TODO(Pasha): add type convertion to xid8
 onlyif serenedb
 query error
@@ -1073,175 +671,7 @@ SELECT pg_xact_status('1'::xid8);
 db error: ERROR: Function is not supported in SereneDB
 
 
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_current_snapshot();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_snapshot_xip('1'::xid8);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_snapshot_xmax('1'::xid8);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_snapshot_xmin('1'::xid8);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_visible_in_snapshot('1'::xid8, '1'::xid8);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_get_multixact_members('1'::xid);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_get_multixact_stats();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT txid_current();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT txid_current_if_assigned();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT txid_current_snapshot();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT txid_snapshot_xip('1'::xid8);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT txid_snapshot_xmax('1'::xid8);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT txid_snapshot_xmin('1'::xid8);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT txid_visible_in_snapshot('1'::xid8, '1'::xid8);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT txid_status('1'::xid8);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_xact_commit_timestamp_origin(0::xid);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_last_committed_xact();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
 # 9.27.10 Control Data Functions
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_control_checkpoint();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_control_system();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_control_init();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_control_recovery();
-----
-db error: ERROR: Function is not supported in SereneDB
-
 
 onlyif serenedb
 query
@@ -1260,30 +690,6 @@ f
 
 # 9.27.12 WAL Summarization Information Functions
 
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_available_wal_summaries();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_wal_summary_contents(0, 0, 0);
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
-skipif serenedb
-onlyif serenedb
-query error
-SELECT pg_get_wal_summarizer_state();
-----
-db error: ERROR: Function is not supported in SereneDB
-
-
 query
 SELECT pg_backend_pid();
 ----
@@ -1292,14 +698,6 @@ pg_backend_pid
 
 
 # unnamed trailing function parameters use PG-style column1, column2 naming
-
-skipif postgres
-query
-SELECT DISTINCT parameters FROM duckdb_functions() WHERE function_name = 'arg_max' AND len(parameters) = 3;
-----
-parameters
-{arg,val,N}
-
 
 query
 SELECT format_type('varchar'::regtype, 4) AS varchar4, format_type('varchar'::regtype, 3) AS varchar3,

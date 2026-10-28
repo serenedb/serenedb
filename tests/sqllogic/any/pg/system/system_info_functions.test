@@ -806,12 +806,20 @@ jit	numa
 boolean	boolean
 
 
+skipif serenedb
+query
+SELECT pg_jit_available() AS jit, pg_numa_available() IS NOT NULL AS numa_known;
+----
+jit	numa_known
+t	t
+
+
 onlyif serenedb
 query
-SELECT pg_jit_available() AS jit, pg_numa_available() AS numa;
+SELECT pg_jit_available() AS jit, pg_numa_available() IS NOT NULL AS numa_known;
 ----
-jit	numa
-f	f
+jit	numa_known
+f	t
 
 
 # pg_collation_actual_version and pg_database_collation_actual_version

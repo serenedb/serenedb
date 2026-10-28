@@ -105,7 +105,7 @@ enum class WrapContext : uint8_t {
 
 bool RecordItemNeedsQuoting(std::string_view s);
 template<WrapContext InContainer>
-bool NeedsQuotingIn(const duckdb::LogicalType& type,
+bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
                     duckdb::idx_t row);
 
@@ -703,13 +703,10 @@ struct ByteaEscapeTextCore {
     if constexpr (InContainer == WrapContext::None) {
       ByteaOutEscape(ctx, value);
     } else {
-      // Wrap iff the rendered escape form has a wrap-trigger char: empty,
-      // any source '\\' (becomes '\\' in the body), or any non-printable byte
-      // (becomes '\\nnn').
       const bool has_special =
-        value.empty() || absl::c_any_of(value, [](char c) {
-          return c == '\\' || !absl::ascii_isprint(c);
-        });
+        absl::c_any_of(value, [](char c) { return !absl::ascii_isprint(c); }) ||
+        (InContainer == WrapContext::Array ? ArrayItemNeedQuotesAndEscape(value)
+                                           : RecordItemNeedsQuoting(value));
       if (has_special) {
         WriteWrapped<InContainer>(ctx, [&] { ByteaOutEscape(ctx, value); });
       } else {
@@ -841,12 +838,14 @@ struct FloatTextCore {
 // array or record. Safe only for types whose textual form never contains
 // '"' or '\\' (timestamps, intervals) -- no internal escaping needed.
 template<WrapContext InContainer, typename Body>
-void WithWrapIfNested(SerializationContext& context, Body&& body) {
-  if constexpr (InContainer == WrapContext::None) {
-    body();
-  } else {
-    WriteWrapped<InContainer>(context, [&] { body(); });
+void WithWrapIfNested(SerializationContext& context, bool wrap, Body&& body) {
+  if constexpr (InContainer != WrapContext::None) {
+    if (wrap) {
+      WriteWrapped<InContainer>(context, [&] { body(); });
+      return;
+    }
   }
+  body();
 }
 
 template<WrapContext InContainer>
@@ -858,7 +857,8 @@ struct TimestampSecTextCore {
       timestamp.IsFinite()
         ? duckdb::Timestamp::FromEpochSeconds(timestamp.value)
         : duckdb::timestamp_t(timestamp.value));
-    WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(str); });
+    WithWrapIfNested<InContainer>(ctx, timestamp.IsFinite(),
+                                  [&] { ctx.writer->Write(str); });
   }
 };
 
@@ -868,7 +868,7 @@ struct TidTextCore {
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tid) {
     char buffer[kTidBufferSize];
     const std::string_view text{buffer, WriteTid(tid, buffer)};
-    WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(text); });
+    WithWrapIfNested<InContainer>(ctx, true, [&] { ctx.writer->Write(text); });
   }
 };
 
@@ -939,7 +939,8 @@ struct TimestampMsTextCore {
     auto str = duckdb::Timestamp::ToString(
       timestamp.IsFinite() ? duckdb::Timestamp::FromEpochMs(timestamp.value)
                            : duckdb::timestamp_t(timestamp.value));
-    WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(str); });
+    WithWrapIfNested<InContainer>(ctx, timestamp.IsFinite(),
+                                  [&] { ctx.writer->Write(str); });
   }
 };
 
@@ -978,7 +979,8 @@ struct TimestampTextCore {
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
                                       Value timestamp) {
     auto str = duckdb::Timestamp::ToString(timestamp);
-    WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(str); });
+    WithWrapIfNested<InContainer>(ctx, timestamp.IsFinite(),
+                                  [&] { ctx.writer->Write(str); });
   }
 };
 
@@ -998,7 +1000,7 @@ struct TimestampNsTextCore {
                                       Value timestamp) {
     duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
     const auto str = duckdb::StringCast::Operation(timestamp, heap);
-    WithWrapIfNested<InContainer>(ctx, [&] {
+    WithWrapIfNested<InContainer>(ctx, timestamp.IsFinite(), [&] {
       ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
     });
   }
@@ -1066,7 +1068,7 @@ struct TimestampTzTextCore {
       if (duckdb::TryAddOperator::Operation(
             ts.value, int64_t{offset_secs} * 1'000'000, local_us)) {
         auto str = duckdb::Timestamp::ToString(duckdb::timestamp_t{local_us});
-        WithWrapIfNested<InContainer>(ctx, [&] {
+        WithWrapIfNested<InContainer>(ctx, true, [&] {
           ctx.writer->Write(str);
           WriteTzOffsetSuffix(ctx, offset_secs);
         });
@@ -1074,7 +1076,7 @@ struct TimestampTzTextCore {
       }
     }
     auto str = duckdb::Timestamp::ToString(ts);
-    WithWrapIfNested<InContainer>(ctx, [&] {
+    WithWrapIfNested<InContainer>(ctx, ts.IsFinite(), [&] {
       ctx.writer->Write(str);
       if (ts.IsFinite()) {
         ctx.writer->Write("+00");
@@ -1104,7 +1106,7 @@ struct TimestampTzNsTextCore {
             tz.value, int64_t{offset_secs} * 1'000'000'000, local_ns)) {
         const auto str =
           duckdb::StringCast::Operation(duckdb::timestamp_ns_t{local_ns}, heap);
-        WithWrapIfNested<InContainer>(ctx, [&] {
+        WithWrapIfNested<InContainer>(ctx, true, [&] {
           ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
           WriteTzOffsetSuffix(ctx, offset_secs);
         });
@@ -1112,7 +1114,7 @@ struct TimestampTzNsTextCore {
       }
     }
     const auto str = duckdb::StringCast::Operation(tz, heap);
-    WithWrapIfNested<InContainer>(ctx, [&] {
+    WithWrapIfNested<InContainer>(ctx, tz.IsFinite(), [&] {
       ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
     });
   }
@@ -1266,12 +1268,12 @@ struct DateBinCore {
   }
 };
 
-template<RegKind Kind>
+template<RegKind Kind, WrapContext InContainer>
 struct RegTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx,
-                RegOut(*ctx.caches->session, Kind, static_cast<uint64_t>(oid)));
+    EmitTextItem<InContainer>(
+      ctx, RegOut(*ctx.caches->session, Kind, static_cast<uint64_t>(oid)));
   }
 };
 
@@ -1342,12 +1344,50 @@ bool RecordItemNeedsQuoting(std::string_view s) {
   return false;
 }
 
-bool RecordHasArrayTrigger(const duckdb::LogicalType& type,
+std::optional<RegKind> RegKindOf(const duckdb::LogicalType& type) {
+  if (IsRegtype(type)) {
+    return RegKind::Type;
+  }
+  if (IsRegclass(type)) {
+    return RegKind::Class;
+  }
+  if (IsRegnamespace(type)) {
+    return RegKind::Namespace;
+  }
+  if (IsRegproc(type)) {
+    return RegKind::Proc;
+  }
+  if (IsRegprocedure(type)) {
+    return RegKind::Procedure;
+  }
+  if (IsRegoper(type)) {
+    return RegKind::Oper;
+  }
+  if (IsRegoperator(type)) {
+    return RegKind::Operator;
+  }
+  if (IsRegrole(type)) {
+    return RegKind::Role;
+  }
+  if (IsRegconfig(type)) {
+    return RegKind::Config;
+  }
+  if (IsRegdictionary(type)) {
+    return RegKind::Dictionary;
+  }
+  if (IsRegcollation(type)) {
+    return RegKind::Collation;
+  }
+  return std::nullopt;
+}
+
+bool RecordHasArrayTrigger(SerializationContext& ctx,
+                           const duckdb::LogicalType& type,
                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row);
 
 template<WrapContext InContainer>
-bool NeedsQuotingIn(const duckdb::LogicalType& type,
+bool NeedsQuotingIn(SerializationContext& ctx, const duckdb::LogicalType& type,
                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
                     duckdb::idx_t row) {
   static_assert(InContainer == WrapContext::Array ||
@@ -1355,6 +1395,15 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
   using enum duckdb::LogicalTypeId;
   switch (type.id()) {
     case BIGINT:
+      if (const auto kind = RegKindOf(type)) {
+        const auto text =
+          RegOut(*ctx.caches->session, *kind,
+                 static_cast<uint64_t>(
+                   duckdb::UnifiedVectorFormat::GetDataUnsafe<int64_t>(
+                     vdata.unified)[vdata.unified.sel->get_index(row)]));
+        return RecordItemNeedsQuoting(text) ||
+               ArrayItemNeedQuotesAndEscape(text);
+      }
       return IsTid(type);
     case DECIMAL:
       return IsMoney(type) &&
@@ -1386,12 +1435,28 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
     case TIMESTAMP_NS:
     case TIMESTAMP_TZ:
     case TIMESTAMP_TZ_NS:
-      return true;
+      return duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::timestamp_t>(
+               vdata.unified)[vdata.unified.sel->get_index(row)]
+        .IsFinite();
     case STRUCT:
+      if (IsInetOrCidr(type)) {
+        return false;
+      }
       return !IsRange(type) ||
              !(ReadRangeFlags(vdata, vdata.unified.sel->get_index(row)) &
                kRangeEmpty);
-    case BLOB:
+    case BLOB: {
+      if (ctx.bytea_output == ByteaOutput::Hex) {
+        return true;
+      }
+      const auto& raw =
+        duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
+          vdata.unified)[vdata.unified.sel->get_index(row)];
+      const std::string_view v{raw.GetData(), raw.GetSize()};
+      return absl::c_any_of(v,
+                            [](char c) { return !absl::ascii_isprint(c); }) ||
+             RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
+    }
     case TUPLE:
       return true;
     case INTERVAL: {
@@ -1461,8 +1526,8 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
         duckdb::idx_t cur_row = row;
         while (true) {
           if (!IsArrayDimension(cur->logical_type)) {
-            return NeedsQuotingIn<WrapContext::Record>(cur->logical_type, *cur,
-                                                       cur_row);
+            return NeedsQuotingIn<WrapContext::Record>(ctx, cur->logical_type,
+                                                       *cur, cur_row);
           }
           auto [array_size, array_offset] = GetArraySlice(*cur, cur_row);
           if (array_size > 1) {
@@ -1480,7 +1545,8 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
   }
 }
 
-bool RecordHasArrayTrigger(const duckdb::LogicalType& type,
+bool RecordHasArrayTrigger(SerializationContext& ctx,
+                           const duckdb::LogicalType& type,
                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row) {
   const auto& children = duckdb::StructType::GetChildTypes(type);
@@ -1492,7 +1558,8 @@ bool RecordHasArrayTrigger(const duckdb::LogicalType& type,
   if (!child.unified.validity.RowIsValid(child.unified.sel->get_index(row))) {
     return false;  // '()' for the lone NULL field
   }
-  return NeedsQuotingIn<WrapContext::Array>(children[0].second, child, row);
+  return NeedsQuotingIn<WrapContext::Array>(ctx, children[0].second, child,
+                                            row);
 }
 
 ArrayWrap ArrayWrapOf(
@@ -1504,7 +1571,8 @@ ArrayWrap ArrayWrapOf(
   switch (type.id()) {
     using enum duckdb::LogicalTypeId;
     case BIGINT:
-      return IsTid(type) ? ArrayWrap::ByValue : ArrayWrap::Never;
+      return IsTid(type) || RegKindOf(type) ? ArrayWrap::ByValue
+                                            : ArrayWrap::Never;
     case DECIMAL:
       return IsMoney(type) ? ArrayWrap::ByValue : ArrayWrap::Never;
     case DATE:
@@ -1594,12 +1662,13 @@ struct RecordTextCore {
     };
 
     if constexpr (InContainer == WrapContext::Array) {
-      SDB_ASSERT(cache.array_wrap == ArrayWrap::ByValue ||
-                 RecordHasArrayTrigger(vdata.logical_type, vdata, row) ==
-                   (cache.array_wrap == ArrayWrap::Always));
+      SDB_ASSERT(
+        cache.array_wrap == ArrayWrap::ByValue ||
+        RecordHasArrayTrigger(context, vdata.logical_type, vdata, row) ==
+          (cache.array_wrap == ArrayWrap::Always));
       if (cache.array_wrap == ArrayWrap::Always ||
           (cache.array_wrap == ArrayWrap::ByValue &&
-           RecordHasArrayTrigger(vdata.logical_type, vdata, row))) {
+           RecordHasArrayTrigger(context, vdata.logical_type, vdata, row))) {
         WriteWrapped<WrapContext::Array>(context, emit_inside);
       } else {
         emit_inside();
@@ -1649,7 +1718,7 @@ struct RangeTextCore {
         cache.functions[child](context, vdata.children[child], row);
       }
     };
-    WithWrapIfNested<InContainer>(context, [&] {
+    WithWrapIfNested<InContainer>(context, true, [&] {
       context.writer->Write(flags & kRangeLowerInclusive ? "[" : "(");
       bound(kRangeLowerChild, kRangeLowerInfinite);
       context.writer->Write(",");
@@ -1701,7 +1770,7 @@ struct MultirangeTextCore {
         return;
       }
     }
-    WithWrapIfNested<InContainer>(context, emit);
+    WithWrapIfNested<InContainer>(context, true, emit);
   }
 };
 
@@ -1740,7 +1809,7 @@ struct GeometricTextCore {
                   InContainer == WrapContext::Array) {
       write();
     } else {
-      WithWrapIfNested<InContainer>(context, write);
+      WithWrapIfNested<InContainer>(context, true, write);
     }
   }
 };
@@ -2135,8 +2204,8 @@ struct OneDimArrayCore {
           if (array_size > 1) {
             return true;  // ',' between elements
           }
-          return NeedsQuotingIn<WrapContext::Record>(child_vdata.logical_type,
-                                                     child_vdata, array_offset);
+          return NeedsQuotingIn<WrapContext::Record>(
+            context, child_vdata.logical_type, child_vdata, array_offset);
         }();
         if (needs_wrap) {
           WriteWrapped<WrapContext::Record>(context, emit_inside);
@@ -2339,8 +2408,8 @@ struct MultiDimArrayCore {
           if (array_size > 1) {
             return true;  // ',' between elements
           }
-          return NeedsQuotingIn<WrapContext::Record>(child_vdata.logical_type,
-                                                     child_vdata, array_offset);
+          return NeedsQuotingIn<WrapContext::Record>(
+            context, child_vdata.logical_type, child_vdata, array_offset);
         }();
         if (needs_wrap) {
           WriteWrapped<WrapContext::Record>(context, emit_inside);
@@ -2424,7 +2493,8 @@ template<RegKind Kind>
 SerializationFunction MakeRegSerializer(VarFormat format,
                                         SerializationContext& context) {
   AttachSession(format, context);
-  return SelectFieldSerializer<RegTextCore<Kind>, RegTextCore<Kind>,
+  return SelectFieldSerializer<RegTextCore<Kind, WrapContext::None>,
+                               RegTextCore<Kind, WrapContext::Record>,
                                OidBinCore>(format, context);
 }
 
@@ -2472,8 +2542,8 @@ SerializationFunction MakeRegArraySerializer(VarFormat format,
                                              SerializationContext& context,
                                              ArrayKind kind) {
   AttachSession(format, context);
-  return MakeArraySerializer<RegTextCore<Kind>, OidBinCore, Oid>(format,
-                                                                 context, kind);
+  return MakeArraySerializer<RegTextCore<Kind, WrapContext::Array>, OidBinCore,
+                             Oid>(format, context, kind);
 }
 
 SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,

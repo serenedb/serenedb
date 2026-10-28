@@ -97,6 +97,25 @@ def test_a_shared_generator_records_each_side_of_a_difference_from_its_own_engin
         shared: ("values", ["9"]), sdb_side: ("values", ["3"])}
 
 
+def test_a_query_under_two_conditions_records_its_answer_and_its_error():
+    text = ("onlyif postgres\nskipif pg-wire-extended\nquery\nSELECT 1\n----\na\n<recorded>\n\n"
+            "onlyif serenedb\nskipif pg-wire-extended\nquery\nSELECT 1\n----\na\n<recorded>\n")
+    pg_side, sdb_side = (key for key, _ in generated.recorded(text))
+    assert pg_side != sdb_side
+    postgres = text.replace("pg-wire-extended\nquery\nSELECT 1\n----\na\n<recorded>",
+                            "pg-wire-extended\nquery\nSELECT 1\n----\na\n1", 1)
+    first = generated.record(text, postgres, "t", {}, "postgres", True)
+    assert first == {pg_side: ("values", ["1"])}
+    serenedb = ("onlyif postgres\nskipif pg-wire-extended\nquery\nSELECT 1\n----\na\n<recorded>\n\n"
+                "onlyif serenedb\nskipif pg-wire-extended\nquery error boom\nSELECT 1\n")
+    records = generated.record(text, serenedb, "t", first, "serenedb", True)
+    assert records == {pg_side: ("values", ["1"]), sdb_side: ("error", "boom")}
+    filled, missing = generated.fill(text, records)
+    assert missing == 0
+    assert filled.endswith("onlyif serenedb\nskipif pg-wire-extended\nquery error\nSELECT 1\n----\n"
+                           "boom\n\n")
+
+
 def test_a_query_records_its_whole_answer_one_row_per_line():
     text = ("query\nSELECT 1\n----\n<recorded rows>\n\n"
             "query\nSELECT 2\n----\na\tb\n<recorded rows>\n\n"

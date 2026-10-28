@@ -40,7 +40,7 @@ def table(block):
 
 
 def head(block):
-    return 1 if block[0].startswith(("onlyif ", "skipif ")) else 0
+    return next(i for i, line in enumerate(block) if not line.startswith(("onlyif ", "skipif ")))
 
 
 def owner(block, shared):

@@ -26,8 +26,6 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
-#include <duckdb/planner/expression/bound_reference_expression.hpp>
-#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/search/detail/table_filter.hpp>
 #include <limits>
@@ -243,16 +241,10 @@ std::optional<double> ShareOf(const duckdb::Expression& expr,
 
 }  // namespace
 
-double EstimateShare(const duckdb::TableFilter& filter,
+double EstimateShare(const duckdb::Expression& filter,
                      const duckdb::BaseStatistics& stats) {
-  const auto domain = DomainOf(stats);
-  if (filter.filter_type == duckdb::TableFilterType::EXPRESSION_FILTER) {
-    return ShareOf(*filter.Cast<duckdb::ExpressionFilter>().expr, stats, domain)
-      .value_or(irs::detail::kUnknownShare);
-  }
-  const auto expr =
-    filter.ToExpression(duckdb::BoundReferenceExpression{stats.GetType(), 0});
-  return ShareOf(*expr, stats, domain).value_or(irs::detail::kUnknownShare);
+  return ShareOf(filter, stats, DomainOf(stats))
+    .value_or(irs::detail::kUnknownShare);
 }
 
 }  // namespace sdb::connector

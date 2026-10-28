@@ -20,12 +20,12 @@
 
 #pragma once
 
-#include <duckdb/planner/table_filter.hpp>
+#include <duckdb/planner/expression.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 
 namespace sdb::connector {
 
-double EstimateShare(const duckdb::TableFilter& filter,
+double EstimateShare(const duckdb::Expression& filter,
                      const duckdb::BaseStatistics& stats);
 
 }  // namespace sdb::connector

@@ -35,9 +35,9 @@ void ColFilterVerify::Begin(const irs::SubReader& seg,
                             duckdb::ClientContext& context,
                             irs::ColFilterStateCache& states) {
   _chain.Clear();
+  _active = active;
   _score_filter = nullptr;
   _score_state = nullptr;
-  _share = 1.0;
   bool any_col = false;
   for (const auto& spec : active) {
     if (spec.is_score) {
@@ -45,7 +45,6 @@ void ColFilterVerify::Begin(const irs::SubReader& seg,
       _score_state = &states.State(context, *spec.filter);
     } else {
       any_col = true;
-      _share *= spec.share;
     }
   }
   if (!any_col) {
@@ -94,6 +93,17 @@ uint64_t ColFilterVerify::CountAndClear(irs::doc_id_t base, uint64_t* mask,
                                         uint32_t words) {
   SDB_ASSERT(_score_filter == nullptr);
   return static_cast<uint64_t>(_chain.CountMask(base, mask, words));
+}
+
+double ColFilterVerify::Share() const {
+  double share = 1.0;
+  for (const auto& spec : _active) {
+    if (spec.stats) {
+      share *= EstimateShare(
+        *spec.filter->Cast<duckdb::ExpressionFilter>().expr, *spec.stats);
+    }
+  }
+  return share;
 }
 
 void ClassifySegmentColFilters(
@@ -174,7 +184,6 @@ void ClassifySegmentColFilters(
         return;
       case duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE:
         if (spec.zonemap_only) {
-          spec.share = 1.0;
           out.active.push_back(spec);
         }
         break;
@@ -183,11 +192,10 @@ void ClassifySegmentColFilters(
           spec.filter = spec.not_null;
           spec.null_check = irs::NullCheckKind::IsNotNull;
         }
-        spec.share = 1.0;
         out.active.push_back(spec);
         break;
       case duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE:
-        spec.share = EstimateShare(*cf.filter, stats);
+        spec.stats = &stats;
         out.active.push_back(spec);
         break;
     }

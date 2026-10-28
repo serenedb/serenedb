@@ -24,8 +24,6 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
-#include <duckdb/planner/filter/constant_filter.hpp>
-#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/statistics/string_stats.hpp>
 #include <vector>
@@ -90,8 +88,8 @@ Expr Op(duckdb::ExpressionType type, Expr child) {
   return Op(type, std::move(children));
 }
 
-double Share(Expr expr, const duckdb::BaseStatistics& stats) {
-  return EstimateShare(duckdb::ExpressionFilter{std::move(expr)}, stats);
+double Share(const Expr& expr, const duckdb::BaseStatistics& stats) {
+  return EstimateShare(*expr, stats);
 }
 
 TEST(col_filter_share_test, ranges_interpolate_between_min_and_max) {
@@ -167,15 +165,6 @@ TEST(col_filter_share_test, unknown_predicates_keep_every_row) {
     Share(Conj(CONJUNCTION_AND, Cmp(COMPARE_LESSTHAN, Col(nullable), Num(50)),
                Op(OPERATOR_IS_NOT_NULL, Col(nullable))),
           nullable),
-    kEps);
-}
-
-TEST(col_filter_share_test, legacy_filters_estimate_through_their_expression) {
-  EXPECT_NEAR(
-    0.1,
-    EstimateShare(duckdb::LegacyConstantFilter{COMPARE_GREATERTHANOREQUALTO,
-                                               duckdb::Value::INTEGER(90)},
-                  Ints()),
     kEps);
 }
 

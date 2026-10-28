@@ -26,6 +26,8 @@
 #include <memory>
 #include <span>
 
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_features.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/types.hpp"
@@ -38,6 +40,9 @@ class IdxWriter;
 class TermRangeMerge;
 
 using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
+
+FieldProperties MergedFieldProperties(field_id id, IndexFeatures features,
+                                      const MergedNormIdMap& merged_norm_ids);
 
 class PostingsMerger {
  public:

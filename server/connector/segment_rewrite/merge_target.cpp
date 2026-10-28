@@ -91,7 +91,6 @@ MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
     RequireMaintain(context, *search);
     target.SetDatabase(*search);
     target._table = search->Storage();
-    target._relation_id = search->oid;
     target._name = QualifiedDisplayName(*search);
     target._options = target._table->Config();
     table = search;
@@ -117,12 +116,10 @@ MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
     }
     if (inverted->Storage()) {
       target._index = inverted->Storage();
-      target._relation_id = inverted->oid;
       target._name = QualifiedDisplayName(*inverted);
       target._options = inverted->Config();
     } else if (inverted->SearchStore() && owner) {
       target._table = inverted->SearchStore();
-      target._relation_id = owner->oid;
       target._name = QualifiedDisplayName(*owner);
       target._options = target._table->Config();
     }

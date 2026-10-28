@@ -125,7 +125,6 @@ set(IResearch_core_sources
     ./index/merge/merge_plan.cpp
     ./index/merge/merge_schedule.cpp
     ./index/merge/merged_postings.cpp
-    ./index/merge/merged_terms.cpp
     ./index/merge/norms_unit.cpp
     ./index/merge/postings_unit.cpp
     ./index/merge/term_keys.cpp

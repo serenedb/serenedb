@@ -617,7 +617,7 @@ struct ColumnMerger::State {
 
   struct OrderedInput {
     OrderedInput(const duckdb::LogicalType& type, bool fresh, uint32_t step)
-      : scratch{type}, fresh{fresh}, step{step} {}
+      : scratch{type, step}, fresh{fresh}, step{step}, pending_sel{step} {}
 
     duckdb::Vector& NextBatch() {
       if (fresh) {
@@ -635,7 +635,7 @@ struct ColumnMerger::State {
     const duckdb::Vector* batch = nullptr;
     const duckdb::sel_t* rows = nullptr;
     std::vector<duckdb::sel_t> kept;
-    duckdb::SelectionVector pending_sel{STANDARD_VECTOR_SIZE};
+    duckdb::SelectionVector pending_sel;
     uint64_t valued = 0;
     uint64_t live = 0;
     uint64_t window = 0;

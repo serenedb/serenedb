@@ -421,16 +421,9 @@ struct MergePlan::State {
       if (parts < 2) {
         continue;
       }
-      FieldProperties props;
-      props.index_features = field_meta_map[id];
-      if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
-        if (const auto it = merged_norm_ids.find(id);
-            it != merged_norm_ids.end()) {
-          props.norm = it->second;
-        }
-      }
       auto& range = term_ranges.emplace_back(std::make_unique<TermRangeMerge>(
-        id, props, std::move(inputs), static_cast<bool>(sort), progress));
+        id, MergedFieldProperties(id, field_meta_map[id], merged_norm_ids),
+        std::move(inputs), static_cast<bool>(sort), progress));
       range->Partition(
         parts,
         {.norms = &*norms, .scorer = scorer, .doc_count = segment.docs_count},

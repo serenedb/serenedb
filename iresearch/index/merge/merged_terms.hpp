@@ -137,7 +137,4 @@ class CompoundTermIterator : public TermOnlyIterator {
   ProgressTracker _progress;
 };
 
-extern template class CompoundTermIterator<CompoundPostings>;
-extern template class CompoundTermIterator<SortedPostings>;
-
 }  // namespace irs

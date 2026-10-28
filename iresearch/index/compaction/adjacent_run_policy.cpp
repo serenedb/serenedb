@@ -28,6 +28,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/merge/merge_plan.hpp"
 
 namespace irs {
@@ -53,7 +54,7 @@ Candidate Describe(const SubReader& segment, const SegmentRangeOf& range_of) {
                     static_cast<long double>(meta.docs_count);
   return {
     .segment = &segment,
-    .bytes = static_cast<long double>(meta.byte_size) * live,
+    .bytes = LiveBytes(meta),
     .live_docs = meta.live_docs_count,
     .deleted_share = 1 - live,
     .range = range_of(segment),

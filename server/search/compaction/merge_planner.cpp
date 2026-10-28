@@ -29,6 +29,7 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <magic_enum/magic_enum.hpp>
@@ -40,10 +41,6 @@
 
 namespace sdb::search {
 namespace {
-
-bool HasDeletes(const irs::SubReader& segment) noexcept {
-  return segment.live_docs_count() < segment.docs_count();
-}
 
 int64_t FirstRow(const irs::SubReader& segment) {
   const auto rowids = DescribeSegment(segment).rowids;
@@ -104,13 +101,11 @@ void PlanBackground(const irs::IndexReader& reader,
       "background compaction is disabled (compaction_interval = 0)");
   }
   irs::CompactingSegments picked;
-  const auto policy = MakeMergePolicy(settings);
   constexpr std::string_view kReason = "adjacent policy";
-  for (size_t merge = 0; merge < request.merges; ++merge) {
-    irs::Compaction candidates;
-    policy(candidates, reader, picked);
-    if (candidates.empty() ||
-        (candidates.size() == 1 && !HasDeletes(*candidates.front()))) {
+  for (const auto& candidates :
+       PickMerges(MakeMergePolicy(settings), reader, {}, request.merges)) {
+    if (candidates.size() == 1 &&
+        !irs::HasRemovals(candidates.front()->Meta())) {
       break;
     }
     for (const auto* candidate : candidates) {
@@ -240,7 +235,7 @@ void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
     taken += placed.live_docs;
   }
   const auto alone = [](const irs::Compaction& bucket) {
-    return bucket.size() == 1 && !HasDeletes(*bucket.front());
+    return bucket.size() == 1 && !irs::HasRemovals(bucket.front()->Meta());
   };
   if (checker) {
     std::vector<const irs::SubReader*> lone;
@@ -303,7 +298,7 @@ void PlanSegments(const irs::IndexReader& reader,
     }
   }
   SDB_ASSERT(!candidates.empty());
-  if (candidates.size() == 1 && !HasDeletes(*candidates.front())) {
+  if (candidates.size() == 1 && !irs::HasRemovals(candidates.front()->Meta())) {
     plan.notes.emplace_back(
       "a single segment without deletes has nothing to merge");
     return;
@@ -360,12 +355,7 @@ PlannedSegment DescribeSegment(const irs::SubReader& segment) {
 }
 
 uint64_t PlannedMerge::EstimatedOutputBytes() const noexcept {
-  if (docs == 0) {
-    return 0;
-  }
-  return static_cast<uint64_t>(static_cast<long double>(bytes) *
-                               static_cast<long double>(live_docs) /
-                               static_cast<long double>(docs));
+  return static_cast<uint64_t>(irs::LiveBytes(bytes, live_docs, docs));
 }
 
 MergeRoundPlan PlanMergeRound(const irs::IndexReader& reader,

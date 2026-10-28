@@ -18,11 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/index/merge/merged_terms.hpp"
+#pragma once
 
 #include <utility>
 
 #include "iresearch/formats/term_reader.hpp"
+#include "iresearch/index/merge/merged_terms.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -172,8 +173,5 @@ TermPostings::ptr CompoundTermIterator<Postings>::postings(
   _doc_itr.Reset(add_iterators, Meta().index_features);
   return memory::to_managed<TermPostings>(_doc_itr);
 }
-
-template class CompoundTermIterator<CompoundPostings>;
-template class CompoundTermIterator<SortedPostings>;
 
 }  // namespace irs

@@ -24,6 +24,7 @@
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 
+#include <iresearch/index/index_meta.hpp>
 #include <utility>
 
 #include "search/compaction/merge_planner.h"
@@ -81,12 +82,8 @@ MergeRegistry& MergeRegistry::Instance() {
 }
 
 uint64_t MergeRecord::EstimatedBytes() const noexcept {
-  if (stats.input_docs == 0) {
-    return 0;
-  }
-  return static_cast<uint64_t>(static_cast<long double>(stats.input_bytes) *
-                               static_cast<long double>(stats.input_live_docs) /
-                               static_cast<long double>(stats.input_docs));
+  return static_cast<uint64_t>(
+    irs::LiveBytes(stats.input_bytes, stats.input_live_docs, stats.input_docs));
 }
 
 uint64_t MergeRegistry::Queue(uint64_t relation_id,

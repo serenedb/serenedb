@@ -27,7 +27,9 @@
 #include <array>
 #include <duckdb/common/string_util.hpp>
 #include <iresearch/utils/enum_name.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <string_view>
 
 namespace sdb::connector {
 namespace {
@@ -101,7 +103,7 @@ void DescribeMerge(size_t number, const search::PlannedMerge& merge,
   }
 }
 
-std::string StepLabel(irs::MergeStep step) {
+std::string_view StepLabel(irs::MergeStep step) {
   switch (step) {
     case irs::MergeStep::Prepare:
       return "Prepare";
@@ -118,7 +120,7 @@ std::string StepLabel(irs::MergeStep step) {
     case irs::MergeStep::Commit:
       return "Commit";
   }
-  return std::string{irs::SnakeCaseName(step)};
+  SDB_UNREACHABLE();
 }
 
 }  // namespace

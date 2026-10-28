@@ -60,7 +60,6 @@ class MergeTarget {
   const std::string& Name() const noexcept { return _name; }
   const std::string& Database() const noexcept { return _database; }
   bool ReadOnly() const noexcept { return _read_only; }
-  uint64_t RelationId() const noexcept { return _relation_id; }
   bool IsIndex() const noexcept { return static_cast<bool>(_index); }
   bool Sorted() const noexcept;
   uint32_t RowGroupSize() const noexcept { return _options->row_group_size; }
@@ -90,7 +89,6 @@ class MergeTarget {
   std::string _name;
   std::string _database;
   bool _read_only = false;
-  uint64_t _relation_id = 0;
   std::shared_ptr<const catalog::InvertedIndexConfig> _options;
   std::shared_ptr<search::SearchTable> _table;
   std::shared_ptr<search::InvertedIndexStorage> _index;

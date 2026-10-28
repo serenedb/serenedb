@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <bit>
 #include <chrono>
 #include <mutex>
 #include <string_view>
@@ -36,6 +35,7 @@
 #include "iresearch/index/merge/merged_postings.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/log.hpp"
+#include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -384,11 +384,7 @@ void TermRangeMerge::ReleaseParts() noexcept {
 
 uint64_t TermRangeMerge::DocCount() const noexcept {
   std::lock_guard lock{_mutex};
-  uint64_t count = 0;
-  for (const auto word : _docs) {
-    count += static_cast<uint64_t>(std::popcount(word));
-  }
-  return count;
+  return math::Popcount(_docs.begin(), _docs.end());
 }
 
 }  // namespace irs

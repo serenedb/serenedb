@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -88,11 +89,7 @@ MergeEstimate EstimateMerge(irs::CompactionView candidates,
   for (const auto* candidate : candidates) {
     const auto& meta = candidate->Meta();
     estimate.bytes += meta.byte_size;
-    if (meta.docs_count != 0) {
-      rewrite += static_cast<long double>(meta.byte_size) *
-                 static_cast<long double>(meta.live_docs_count) /
-                 static_cast<long double>(meta.docs_count);
-    }
+    rewrite += irs::LiveBytes(meta);
   }
   estimate.rewrite_bytes = static_cast<uint64_t>(rewrite);
   const auto removed = estimate.segments > 1 ? estimate.segments - 1 : 1;

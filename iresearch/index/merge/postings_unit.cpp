@@ -36,7 +36,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/index/merge/merged_postings.hpp"
-#include "iresearch/index/merge/merged_terms.hpp"
+#include "iresearch/index/merge/merged_terms.tpp"
 #include "iresearch/index/merge/term_ranges.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
@@ -217,15 +217,8 @@ bool WriteFields(const irs::FlushState& flush_state,
       continue;
     }
 
-    FieldProperties props;
-    props.index_features = field_itr.Meta().index_features;
-
-    if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
-      const auto it = merged_norm_ids.find(field_itr.Meta().id);
-      if (it != merged_norm_ids.end()) {
-        props.norm = it->second;
-      }
-    }
+    const auto props = MergedFieldProperties(
+      fid, field_itr.Meta().index_features, merged_norm_ids);
 
     if (auto* range = RangeOf(ranges, fid)) {
       field_writer->write(fid, props, range->Parts(), range->DocCount());
@@ -249,6 +242,17 @@ bool WriteFields(const irs::FlushState& flush_state,
 }
 
 }  // namespace
+
+FieldProperties MergedFieldProperties(field_id id, IndexFeatures features,
+                                      const MergedNormIdMap& merged_norm_ids) {
+  FieldProperties props{.index_features = features};
+  if (IsSubsetOf(IndexFeatures::Norm, features)) {
+    if (const auto it = merged_norm_ids.find(id); it != merged_norm_ids.end()) {
+      props.norm = it->second;
+    }
+  }
+  return props;
+}
 
 struct PostingsMerger::Impl {
   using Fields = std::variant<CompoundFieldIterator<CompoundPostings>,

@@ -46,8 +46,6 @@ namespace irs {
 std::vector<uint32_t> FlushOrder(duckdb::DatabaseInstance& db,
                                  const SortSpec& spec, ColWriter& columns,
                                  uint64_t rows) {
-  std::vector<uint32_t> new2old(rows);
-  absl::c_iota(new2old, uint32_t{0});
   std::vector<const ColumnWriter*> keys;
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<duckdb::BoundOrderByNode> orders;
@@ -67,7 +65,7 @@ std::vector<uint32_t> FlushOrder(duckdb::DatabaseInstance& db,
     keys.push_back(column);
   }
   if (keys.empty() || rows < 2) {
-    return new2old;
+    return {};
   }
   const auto ordinal = types.size();
   types.push_back(duckdb::LogicalType::UINTEGER);
@@ -113,20 +111,20 @@ std::vector<uint32_t> FlushOrder(duckdb::DatabaseInstance& db,
   auto reader = sort->GetLocalSourceState(execution, *source);
   duckdb::DataChunk out;
   out.Initialize(context, {duckdb::LogicalType::UINTEGER});
-  uint64_t at = 0;
+  std::vector<uint32_t> new2old;
+  new2old.reserve(rows);
   while (true) {
     out.Reset();
     duckdb::OperatorSourceInput input{*source, *reader, interrupt};
     const auto result = sort->GetData(execution, out, input);
     const auto* sorted = duckdb::FlatVector::GetData<uint32_t>(out.data[0]);
-    SDB_ASSERT(at + out.size() <= rows);
-    std::copy_n(sorted, out.size(), new2old.begin() + at);
-    at += out.size();
+    SDB_ASSERT(new2old.size() + out.size() <= rows);
+    new2old.insert(new2old.end(), sorted, sorted + out.size());
     if (result == duckdb::SourceResultType::FINISHED) {
       break;
     }
   }
-  SDB_ASSERT(at == rows);
+  SDB_ASSERT(new2old.size() == rows);
   return new2old;
 }
 

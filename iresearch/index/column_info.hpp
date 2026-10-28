@@ -159,8 +159,8 @@ struct AnnInfo {
 
   AnnKind kind = AnnKind::Ivf;
 
-  irs::field_id field_id = field_limits::invalid();
-  irs::field_id column_id = field_limits::invalid();
+  field_id index_id = field_limits::invalid();
+  field_id column_id = field_limits::invalid();
 
   // dimensionality of the data
   int d = 0;

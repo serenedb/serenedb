@@ -247,6 +247,118 @@ def test_own_index_survives_restart(tmp_path: Path) -> None:
         server.close()
 
 
+OWN_LOGS_SCHEMA = (
+    "CREATE TEXT SEARCH DICTIONARY otel_words AS "
+    "split_by_non_alpha(case := 'lower', break := 'alnum') "
+    "WITH (frequency, position, norm)",
+    "CREATE TEXT SEARCH DICTIONARY otel_keyword AS keyword()",
+    """CREATE TABLE otel_logs (
+        "timestamp"         TIMESTAMP_NS NOT NULL,
+        observed_timestamp  TIMESTAMP_NS,
+        trace_id            VARCHAR,
+        span_id             VARCHAR,
+        trace_flags         INTEGER,
+        severity_text       VARCHAR,
+        severity_number     SMALLINT,
+        service_name        VARCHAR,
+        event_name          VARCHAR,
+        body                VARCHAR USING COMPRESSION zstd,
+        resource_schema_url VARCHAR,
+        scope_schema_url    VARCHAR,
+        scope_name          VARCHAR,
+        scope_version       VARCHAR,
+        resource_attributes JSON,
+        scope_attributes    JSON,
+        log_attributes      JSON
+    ) WITH (storage = 'search')""",
+    """CREATE INDEX otel_logs_idx ON otel_logs USING inverted (
+        "timestamp", body otel_words, severity_text, service_name, trace_id,
+        (log_attributes ->> 'error.type') otel_keyword
+    )""",
+)
+
+
+def test_own_schema_with_its_own_tokenizer_and_expression_index(
+        tmp_path: Path) -> None:
+    def export(records: list[tuple[str, str | None]]) -> bytes:
+        return json.dumps({"resourceLogs": [{"scopeLogs": [{"logRecords": [{
+            "timeUnixNano": str(1_700_000_000_000_000_000 + i),
+            "body": {"stringValue": body},
+            "attributes": [] if error is None else [
+                {"key": "error.type", "value": {"stringValue": error}}],
+        } for i, (body, error) in enumerate(records)]}]}]}).encode()
+
+    def bodies(server: _Server, where: str) -> list[str]:
+        return [row[0] for row in server.pg.execute(
+            f"SELECT body FROM otel_logs WHERE {where} ORDER BY body"
+        ).fetchall()]
+
+    server = _Server(tmp_path, "api=otel&create_schema=false")
+    try:
+        assert "Exports answer 503" in server.serened.log.tail(0)
+        for statement in OWN_LOGS_SCHEMA:
+            server.pg.execute(statement)
+        sql = (FIXTURES.parent / "otel_schema.sql").read_text()
+        for statement in sql.split(";\n"):
+            if statement.strip():
+                server.pg.execute(statement)
+        assert _otel_objects(server, "pg_tables") == 7
+
+        assert server.post("/v1/logs", export([
+            ("upstream reset: downstream_remote_disconnect",
+             "downstream_remote_disconnect"),
+            ("remote peer closed the stream", "remote"),
+            ("inventory lookup timed out", "timeout"),
+            ("order placed", None),
+        ]), "application/json") == 200
+        assert server.count("otel_logs") == 4
+    finally:
+        server.close()
+
+    restart = (tmp_path / "serened.log").stat().st_size
+    server = _Server(tmp_path, "api=otel&create_schema=false")
+    try:
+        assert "Exports answer 503" not in server.serened.log.tail(restart)
+        definition = server.pg.execute(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = 'otel_logs_idx'"
+        ).fetchone()[0]
+        assert "otel_words" in definition, definition
+        assert "otel_keyword" in definition, definition
+        assert server.post("/v1/logs", export([
+            ("payment gateway timed out", "timeout"),
+        ]), "application/json") == 200
+        assert server.count("otel_logs") == 5
+
+        assert bodies(server, "body @@ 'remote'") == [
+            "remote peer closed the stream",
+            "upstream reset: downstream_remote_disconnect"]
+        assert bodies(server, "body @@ 'disconnect'") == [
+            "upstream reset: downstream_remote_disconnect"]
+        assert bodies(
+            server,
+            "body @@ phraseto_tsquery('downstream_remote_disconnect')") == [
+            "upstream reset: downstream_remote_disconnect"]
+        assert bodies(
+            server,
+            "(log_attributes ->> 'error.type') @@ "
+            "'downstream_remote_disconnect'") == [
+            "upstream reset: downstream_remote_disconnect"]
+        assert bodies(
+            server, "(log_attributes ->> 'error.type') @@ 'remote'") == [
+            "remote peer closed the stream"]
+        assert server.pg.execute(
+            "SELECT log_attributes ->> 'error.type' AS error_type, count(*) "
+            "FROM otel_logs WHERE log_attributes ->> 'error.type' IS NOT NULL "
+            "GROUP BY ALL ORDER BY 2 DESC, 1").fetchall() == [
+            ("timeout", 2), ("downstream_remote_disconnect", 1),
+            ("remote", 1)]
+        assert server.pg.execute(
+            "SELECT DISTINCT compression FROM pragma_storage_info('otel_logs') "
+            "WHERE column_name = 'body'").fetchall() == [("ZSTD",)]
+    finally:
+        server.close()
+
+
 def test_single_worker_thread_does_not_deadlock(tmp_path: Path) -> None:
     server = _Server(tmp_path, "api=otel&api=es")
     try:

@@ -383,8 +383,8 @@ InvertedIndexConfig::InvertedIndexConfig(
     SDB_ASSERT(entry);
     if (const auto& ann = entry->column_options.ann_info) {
       auto& ids = anns[ann->column_id];
-      if (!absl::c_linear_search(ids, ann->field_id)) {
-        ids.push_back(ann->field_id);
+      if (!absl::c_linear_search(ids, ann->index_id)) {
+        ids.push_back(ann->index_id);
       }
     }
     if (key.normalized_expression.empty()) {

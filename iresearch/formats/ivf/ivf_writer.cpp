@@ -401,7 +401,7 @@ void IvfWriter::Flush() {
   const uint64_t stats_offset = out.Position();
   _result.qw->Serialize(out);
   const uint64_t stats_byte_size = out.Position() - stats_offset;
-  _idx->AddIvf(_info.field_id, IvfCentroidMeta{
+  _idx->AddIvf(_info.index_id, IvfCentroidMeta{
                                  .tree_offset = tree_span.offset,
                                  .tree_byte_size = tree_span.byte_size,
                                  .stats_offset = stats_offset,
@@ -417,7 +417,7 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
   }
   if (!_reader) {
     _reader = std::make_unique<IvfTermReader>(
-      _info.field_id, _result.data.cluster_docs, _result.data.cluster_offsets,
+      _info.index_id, _result.data.cluster_docs, _result.data.cluster_offsets,
       _result.qw.get(), col_reader.Column(_info.column_id), &ctx,
       _result.data.d, &_result.data.cluster_centroids,
       _info.metric == VectorMetric::Cosine);

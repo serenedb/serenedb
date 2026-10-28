@@ -16,6 +16,8 @@ ASSERTIONS = {"SDB_ASSERT", "SDB_VERIFY", "SDB_ENSURE", "SDB_UNREACHABLE", "D_AS
 UNREACHABLE = re.compile(r"\b(?:SDB_UNREACHABLE|std::unreachable|(?:std::)?abort)\(\)")
 IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
 INTERNAL = re.compile(r"^([^:]+:)(_Z.*)$")
+SWITCH = re.compile(r"\s*switch\b")
+CASE = re.compile(r"\s*(?:case\b|default\s*:)")
 CODE, EXPANSION, MCDC_BRANCH = 0, 1, 6
 
 
@@ -322,7 +324,10 @@ def cover(path, touched, data, spans, summary, details):
                             "function": enclosing(spans["functions"], no),
                             "source": source_line(path, no)})
     for no in sorted(touched & set(data["branches"])):
+        text = source_text(path, no)
         for idx, taken in enumerate(data["branches"][no]):
+            if SWITCH.match(text) or (idx % 2 and CASE.match(text)):
+                continue
             summary["branches"][1] += 1
             if taken > 0:
                 summary["branches"][0] += 1

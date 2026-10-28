@@ -21,10 +21,9 @@ def test_assertions_verification_and_unreachable_code_are_not_coverage_targets(m
     details = []
     diff.cover("asserts.cpp", set(range(1, 200)), data, spans, summary, details)
     diff.source_lines.cache_clear()
-    assert summary == {"lines": [14, 14], "functions": [3, 3], "branches": [4, 8], "mcdc": [0, 2]}
+    assert summary == {"lines": [14, 14], "functions": [3, 3], "branches": [4, 7], "mcdc": [0, 2]}
     assert sorted((d["kind"], d.get("direction") or d["condition"],
                    (d.get("condition_source") or d["source"]).strip()) for d in details) == [
-        ("branch", "false", "case 1:"),
         ("branch", "false", "if (x > 0 && y > 0) {"),
         ("branch", "false", "if (x > 0 && y > 0) {"),
         ("branch", "false", "return sdb::coverage::Work(argc, argc) == 1 ? 0 : 1;"),
@@ -45,6 +44,22 @@ def test_each_uncovered_instantiation_is_listed_under_its_own_name(monkeypatch):
     diff.cover("x.cpp", {3}, data, spans, summary, details)
     names = diff.readable({d["function"] for d in details})
     assert sorted(names[d["function"]] for d in details) == ["void f<long>()", "x.cpp:void f<int>()"]
+
+
+def test_a_switch_counts_only_whether_each_case_ran(monkeypatch, tmp_path):
+    (tmp_path / "s.cpp").write_text("int f(int x) {\n  switch (x) {\n    case 1:\n      return 1;\n"
+                                    "    default:\n      return 2;\n  }\n}\n")
+    monkeypatch.setattr(diff, "ROOT", tmp_path)
+    diff.source_lines.cache_clear()
+    data = diff.parse_lcov("SF:s.cpp\nBRDA:2,0,0,0\nBRDA:2,0,1,1\nBRDA:3,0,0,1\nBRDA:3,0,1,0\n"
+                           "BRDA:5,0,0,0\nBRDA:5,0,1,0\nend_of_record\n")["s.cpp"]
+    spans = {"mcdc": {}, "functions": [], "excluded": set(), "code": []}
+    summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0], "mcdc": [0, 0]}
+    details = []
+    diff.cover("s.cpp", {2, 3, 5}, data, spans, summary, details)
+    diff.source_lines.cache_clear()
+    assert summary["branches"] == [1, 2]
+    assert [(d["line"], d["direction"]) for d in details] == [(5, "true")]
 
 
 @pytest.mark.parametrize("path,test", [

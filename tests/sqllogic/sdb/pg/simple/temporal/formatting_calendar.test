@@ -1,0 +1,19 @@
+statement ok
+SET Calendar = 'japanese';
+
+statement ok
+SET TimeZone = 'America/New_York';
+
+query
+SELECT to_char(TIMESTAMPTZ '2012-12-12 12:00:00+00', 'YYYY-MM-DD HH24:MI:SS OF') AS a,
+       to_timestamp('2012-12-12 07:00', 'YYYY-MM-DD HH24:MI') AT TIME ZONE 'UTC' AS b,
+       pg_catalog.extract('hour', TIMESTAMPTZ '2012-12-12 12:00:00+00') AS c;
+----
+a	b	c
+2012-12-12 07:00:00 -05	2012-12-12 12:00:00	7
+
+statement ok
+RESET Calendar;
+
+statement ok
+SET TimeZone = 'UTC';

@@ -1,0 +1,402 @@
+statement ok
+SET TimeZone = 'UTC';
+
+query
+WITH v(t) AS (VALUES (TIMESTAMP '1997-02-10 17:32:01'), (to_date('0097-02-16 BC', 'YYYY-MM-DD BC') + TIME '07:32:01'), (TIMESTAMP '2000-12-31 00:00:00'), (TIMESTAMP '10000-01-01 12:00:00'))
+SELECT to_char(t, 'DAY Day day DY Dy dy MONTH Month month RM rm MON Mon mon FMRM FMrm') AS a FROM v ORDER BY t;
+----
+a
+TUESDAY   Tuesday   tuesday   TUE Tue tue FEBRUARY  February  february  II   ii   FEB Feb feb II ii
+MONDAY    Monday    monday    MON Mon mon FEBRUARY  February  february  II   ii   FEB Feb feb II ii
+SUNDAY    Sunday    sunday    SUN Sun sun DECEMBER  December  december  XII  xii  DEC Dec dec XII xii
+SATURDAY  Saturday  saturday  SAT Sat sat JANUARY   January   january   I    i    JAN Jan jan I i
+
+query
+WITH v(t) AS (VALUES (TIMESTAMP '1997-02-10 17:32:01'), (to_date('0097-02-16 BC', 'YYYY-MM-DD BC') + TIME '07:32:01'), (TIMESTAMP '2000-12-31 00:00:00'), (TIMESTAMP '2024-12-30 00:00:00'), (TIMESTAMP '10000-01-01 12:00:00'))
+SELECT to_char(t, 'Y,YYY YYYY YYY YY Y CC Q MM WW DDD DD D J IYYY IYY IY I IW IDDD ID') AS a,
+       to_char(t, 'FMY,YYY FMYYYY FMYYY FMYY FMY FMCC FMQ FMMM FMWW FMDDD FMDD FMD FMJ FMIYYY FMIW FMIDDD FMID') AS b
+FROM v ORDER BY t;
+----
+a	b
+0,097 0097 097 97 7 -01 1 02 07 047 16 3 1686042 0097 097 97 7 07 044 2	0,097 97 97 97 7 -1 1 2 7 47 16 3 1686042 97 7 44 2
+1,997 1997 997 97 7 20 1 02 06 041 10 2 2450490 1997 997 97 7 07 043 1	1,997 1997 997 97 7 20 1 2 6 41 10 2 2450490 1997 7 43 1
+2,000 2000 000 00 0 20 4 12 53 366 31 1 2451910 2000 000 00 0 52 364 7	2,000 2000 0 0 0 20 4 12 53 366 31 1 2451910 2000 52 364 7
+2,024 2024 024 24 4 21 4 12 53 365 30 2 2460675 2025 025 25 5 01 001 1	2,024 2024 24 24 4 21 4 12 53 365 30 2 2460675 2025 1 1 1
+10,000 10000 000 00 0 100 1 01 01 001 01 7 5373485 9999 999 99 9 52 363 6	10,000 10000 0 0 0 100 1 1 1 1 1 7 5373485 9999 52 363 6
+
+query
+WITH v(t) AS (VALUES (TIMESTAMP '1997-02-10 17:32:01'), (to_date('0097-02-16 BC', 'YYYY-MM-DD BC') + TIME '07:32:01'), (TIMESTAMP '2000-12-31 00:00:00'))
+SELECT to_char(t, 'YYYY A.D. YYYY a.d. YYYY B.C. YYYY b.c. AD ad BC bc') AS a,
+       to_char(t, 'HH:MI:SS A.M. a.m. P.M. p.m. AM am PM pm') AS b
+FROM v ORDER BY t;
+----
+a	b
+0097 B.C. 0097 b.c. 0097 B.C. 0097 b.c. BC bc BC bc	07:32:01 A.M. a.m. A.M. a.m. AM am AM am
+1997 A.D. 1997 a.d. 1997 A.D. 1997 a.d. AD ad AD ad	05:32:01 P.M. p.m. P.M. p.m. PM pm PM pm
+2000 A.D. 2000 a.d. 2000 A.D. 2000 a.d. AD ad AD ad	12:00:00 A.M. a.m. A.M. a.m. AM am AM am
+
+query
+WITH v(t) AS (VALUES (TIMESTAMP '2024-03-01 00:00:00'), (TIMESTAMP '2024-03-02 12:00:00'), (TIMESTAMP '2024-03-03 01:02:03'), (TIMESTAMP '2024-03-04 13:14:15'), (TIMESTAMP '2024-03-11 23:59:59'),
+                     (TIMESTAMP '2024-03-12 00:00:00'), (TIMESTAMP '2024-03-13 00:00:00'), (TIMESTAMP '2024-03-21 00:00:00'), (TIMESTAMP '2024-03-22 00:00:00'), (TIMESTAMP '2024-03-23 00:00:00'))
+SELECT to_char(t, 'DDTH DDth FMDDTH HH HH12 HH24 FMHH12 FMHH24 MI SS FMMI FMSS SSSS SSSSS') AS a FROM v ORDER BY t;
+----
+a
+01ST 01st 1ST 12 12 00 12 0 00 00 0 0 0 0
+02ND 02nd 2ND 12 12 12 12 12 00 00 0 0 43200 43200
+03RD 03rd 3RD 01 01 01 1 1 02 03 2 3 3723 3723
+04TH 04th 4TH 01 01 13 1 13 14 15 14 15 47655 47655
+11TH 11th 11TH 11 11 23 11 23 59 59 59 59 86399 86399
+12TH 12th 12TH 12 12 00 12 0 00 00 0 0 0 0
+13TH 13th 13TH 12 12 00 12 0 00 00 0 0 0 0
+21ST 21st 21ST 12 12 00 12 0 00 00 0 0 0 0
+22ND 22nd 22ND 12 12 00 12 0 00 00 0 0 0 0
+23RD 23rd 23RD 12 12 00 12 0 00 00 0 0 0 0
+
+query
+SELECT to_char(TIMESTAMP '2018-11-02 12:34:56.789012', 'YYYYTH YYYYth Jth IDTH DTH WWth Wth Qth MMth CCth HH24th MIth SSth MSth USth FF1th SSSSth IYYYth IWth IDDDth DDDth YYth Yth YYYth Y,YYYth') AS a;
+----
+a
+2018TH 2018th 2458425th 5TH 6TH 44th 1st 4th 11th 21st 12th 34th 56th 789th 789012th 7th 45296th 2018th 44th 306th 306th 18th 8th 018th 2,018th
+
+query
+SELECT to_char(d, 'FF1 FF2 FF3 FF4 FF5 FF6  ff1 ff2 ff3 ff4 ff5 ff6  MS US') AS a
+FROM (VALUES (TIMESTAMP '2018-11-02 12:34:56'), (TIMESTAMP '2018-11-02 12:34:56.78'), (TIMESTAMP '2018-11-02 12:34:56.78901')) v(d) ORDER BY d;
+----
+a
+0 00 000 0000 00000 000000  0 00 000 0000 00000 000000  000 000000
+7 78 780 7800 78000 780000  7 78 780 7800 78000 780000  780 780000
+7 78 789 7890 78901 789010  7 78 789 7890 78901 789010  789 789010
+
+query
+SELECT to_char(TIMESTAMP '2018-11-02 12:34:56', 'YYYY-MM-DD FX HH24:MI:SS') AS a,
+       to_char(TIMESTAMP '2018-11-02 12:34:56', 'YYYYFM') AS b,
+       to_char(TIMESTAMP '2018-11-02 12:34:56', 'YYYY "abc') AS c,
+       to_char(TIMESTAMP '2018-11-02 12:34:56', 'YYYY "a\"b" \"MM\" DD') AS d,
+       to_char(TIMESTAMP '2018-11-02', E'YYYY "x\\') AS e,
+       to_char(TIMESTAMP '2018-11-02', 'YYYY\') AS f,
+       to_char(TIMESTAMP '2018-11-02', 'YYYY\x') AS g,
+       to_char(TIMESTAMP '2018-11-02', 'YYYY~MM' || chr(127) || 'DD é') AS h,
+       to_char(TIMESTAMP '1997-02-10 17:32:01', E'"HH:MI:SS is" HH:MI:SS "\\"text between quote marks\\""') AS i,
+       to_char(TIMESTAMP '1997-02-10 17:32:01', 'HH24--text--MI--text--SS') AS j;
+----
+a	b	c	d	e	f	g	h	i	j
+2018-11-02  12:34:56	2018	2018 abc	2018 a"b "11" 02	2018 x\\	2018\\	2018\\x	2018~1102 é	HH:MI:SS is 05:32:01 "text between quote marks"	17--text--32--text--01
+
+query
+SELECT i, to_char(i * interval '1mon', 'rm') AS a, to_char(i * interval '1mon', 'RM') AS b, to_char(i * interval '1mon', 'FMRM') AS c, to_char(i * interval '1mon', 'Q') AS q
+FROM generate_series(-13, 13) i ORDER BY i;
+----
+i	a	b	c	q
+-13	xii 	XII 	XII	1
+-12	i   	I   	I	(empty)
+-11	ii  	II  	II	-3
+-10	iii 	III 	III	-2
+-9	iv  	IV  	IV	-2
+-8	v   	V   	V	-2
+-7	vi  	VI  	VI	-1
+-6	vii 	VII 	VII	-1
+-5	viii	VIII	VIII	-1
+-4	ix  	IX  	IX	0
+-3	x   	X   	X	0
+-2	xi  	XI  	XI	0
+-1	xii 	XII 	XII	1
+0	(empty)	(empty)	(empty)	(empty)
+1	i   	I   	I	1
+2	ii  	II  	II	1
+3	iii 	III 	III	1
+4	iv  	IV  	IV	2
+5	v   	V   	V	2
+6	vi  	VI  	VI	2
+7	vii 	VII 	VII	3
+8	viii	VIII	VIII	3
+9	ix  	IX  	IX	3
+10	x   	X   	X	4
+11	xi  	XI  	XI	4
+12	xii 	XII 	XII	(empty)
+13	i   	I   	I	1
+
+query
+SELECT to_char(INTERVAL '1 year 2 months 3 days 04:05:06.789', 'YYYY Y,YYY YYY YY Y CC MM DD DDD HH HH12 HH24 MI SS MS US SSSS WW W J Q IYYY') AS a,
+       to_char(INTERVAL '-1 year -2 months -3 days -04:05:06.789', 'YYYY Y,YYY YYY YY Y CC MM DD DDD HH HH12 HH24 MI SS MS US SSSS WW W J Q FMYYYY FMCC') AS b;
+----
+a	b
+0001 0,001 001 01 1 00 02 03 423 04 04 04 05 06 789 789000 14706 61 1 1721459 1 0001	-0001 0,-01 -001 -01 -1 00 -02 -3 -423 -04 -04 -04 -05 -06 -789 -789000 -14706 -59 1 1720599 0 -1 0
+
+query
+SELECT to_char(INTERVAL '250 years', 'CC FMCC') AS a,
+       to_char(INTERVAL '-250 years', 'CC FMCC') AS b,
+       to_char(INTERVAL '10000 years', 'CC FMCC') AS c,
+       to_char(INTERVAL '-10000 years', 'CC FMCC') AS d,
+       to_char(INTERVAL '9999 years', 'CC') AS e;
+----
+a	b	c	d	e
+02 2	-02 -2	100 100	-100 -100	99
+
+query
+SELECT to_char(TIME '13:14:15.123456', 'HH HH12 HH24 MI SS MS US SSSS AM am A.M. a.m. PM pm FF1 FF2 FF3 FF4 FF5 FF6') AS a,
+       to_char(TIME '00:00:00', 'HH12 AM') AS b;
+----
+a	b
+01 01 13 14 15 123 123456 47655 PM pm P.M. p.m. PM pm 1 12 123 1234 12345 123456	12 AM
+
+query
+SELECT to_char(INTERVAL '1 day', '') AS a,
+       to_char(TIME '01:00', '') AS b,
+       to_char(TIMESTAMPTZ '2020-01-01 00:00+00', '') AS c,
+       to_char(TIMESTAMP 'infinity', 'YYYY') AS d,
+       to_char(TIMESTAMPTZ '-infinity', 'YYYY') AS e,
+       to_char(TIMESTAMPTZ 'infinity', '') AS f,
+       to_char(TIMESTAMP '2020-01-01', '') AS g;
+----
+a	b	c	d	e	f	g
+NULL	NULL	NULL	NULL	NULL	NULL	NULL
+
+query
+SELECT to_char(t, f) AS a
+FROM (VALUES (TIMESTAMP '2020-01-02 03:04:05', 'YYYY'), (TIMESTAMP '2020-01-02 03:04:05', 'YYYY'), (TIMESTAMP '2021-01-02 03:04:05', 'MM/DD'), (TIMESTAMP '2022-01-02 03:04:05', 'HH24')) v(t, f)
+ORDER BY a;
+----
+a
+01/02
+03
+2020
+2020
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'TZ');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'tz');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'TZH');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'TZM');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'OF');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'A.D.');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'AD');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'a.d.');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'ad');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'Month');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'Mon');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'Day');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'Dy');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'D');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(INTERVAL '1 day', 'ID');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+statement error
+SELECT to_char(TIME '01:00', 'Month');
+----
+db error: ERROR: invalid format specification for an interval value
+HINT: Intervals are not tied to specific calendar dates.
+
+
+query
+SELECT to_char(TIMESTAMPTZ '2012-12-12 12:00:00+00', 'YYYY-MM-DD HH24:MI:SS TZ tz OF FMOF TZH:TZM') AS a;
+----
+a
+2012-12-12 12:00:00 UTC utc +00 +0 +00:00
+
+statement ok
+SET TimeZone = 'GMT';
+
+query
+SELECT to_char(TIMESTAMPTZ '2012-12-12 12:00:00+00', 'YYYY-MM-DD HH24:MI:SS TZ tz OF FMOF TZH:TZM') AS a;
+----
+a
+2012-12-12 12:00:00 GMT gmt +00 +0 +00:00
+
+statement ok
+SET TimeZone = 'Asia/Kathmandu';
+
+query
+SELECT to_char(TIMESTAMPTZ '2012-12-12 12:00:00+00', 'YYYY-MM-DD HH24:MI:SS TZ tz OF FMOF TZH:TZM') AS a;
+----
+a
+2012-12-12 17:45:00 +0545 +0545 +05:45 +5:45 +05:45
+
+statement ok
+SET TimeZone = 'America/Sao_Paulo';
+
+query
+SELECT to_char(TIMESTAMPTZ '2012-12-12 12:00:00+00', 'YYYY-MM-DD HH24:MI:SS TZ tz OF FMOF TZH:TZM') AS a;
+----
+a
+2012-12-12 10:00:00 -02 -02 -02 -2 -02:00
+
+statement ok
+SET TimeZone = 'Etc/GMT-14';
+
+query
+SELECT to_char(TIMESTAMPTZ '2012-12-12 12:00:00+00', 'YYYY-MM-DD HH24:MI:SS TZ tz OF FMOF TZH:TZM') AS a;
+----
+a
+2012-12-13 02:00:00 +14 +14 +14 +14 +14:00
+
+statement ok
+SET TimeZone = 'America/St_Johns';
+
+query
+SELECT to_char(TIMESTAMPTZ '2012-12-12 12:00:00+00', 'YYYY-MM-DD HH24:MI:SS OF FMOF TZH:TZM') AS a;
+----
+a
+2012-12-12 08:30:00 -03:30 -3:30 -03:30
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+SELECT to_char(t, 'YYYY-MM-DD HH24:MI:SS OF') AS a
+FROM (VALUES (TIMESTAMPTZ '2021-03-28 00:30:00+00'), (TIMESTAMPTZ '2021-03-28 01:30:00+00'), (TIMESTAMPTZ '2021-10-31 00:30:00+00'), (TIMESTAMPTZ '2021-10-31 01:30:00+00')) v(t)
+ORDER BY t;
+----
+a
+2021-03-28 01:30:00 +01
+2021-03-28 03:30:00 +02
+2021-10-31 02:30:00 +02
+2021-10-31 02:30:00 +01
+
+statement ok
+SET TimeZone = 'America/New_York';
+
+query
+SELECT to_char(t, 'YYYY-MM-DD HH24:MI:SS.US OF TZH:TZM') AS a
+FROM (VALUES (TIMESTAMPTZ '1800-01-01 00:00:00.0005+00'), (TIMESTAMPTZ '1800-01-01 00:00:00+00'), (TIMESTAMPTZ '2400-07-01 00:00:00.0005+00'), (TIMESTAMPTZ '2012-12-12 12:00:00+00')) v(t)
+ORDER BY t;
+----
+a
+1799-12-31 19:03:58.000000 -04:56 -04:56
+1799-12-31 19:03:58.000500 -04:56 -04:56
+2012-12-12 07:00:00.000000 -05 -05:00
+2400-06-30 20:00:00.000500 -04 -04:00
+
+onlyif postgres
+query
+SELECT to_char(TIMESTAMPTZ '1800-01-01 00:00:00+00', 'TZ') AS a;
+----
+a
+LMT
+
+skipif postgres
+query
+SELECT to_char(TIMESTAMPTZ '1800-01-01 00:00:00+00', 'TZ') AS a;
+----
+a
+-045602
+
+statement ok
+SET TimeZone = 'Etc/GMT-1';
+
+query
+SELECT to_char(TIMESTAMPTZ '294247-01-10 02:00:54.775807+00', 'YYYY-MM-DD HH24:MI:SS.US') AS a;
+----
+a
+294247-01-10 03:00:54.775807
+
+onlyif postgres
+query
+SELECT to_char(TIMESTAMPTZ '294247-01-10 04:00:54.775806+00', 'YYYY-MM-DD HH24:MI:SS.US') AS a,
+       to_char(TIMESTAMPTZ '294247-01-10 03:00:54.775807+00', 'YYYY-MM-DD HH24:MI:SS.US') AS b;
+----
+a	b
+294247-01-10 05:00:54.775806	294247-01-10 04:00:54.775807
+
+skipif postgres
+statement error
+SELECT to_char(TIMESTAMPTZ '294247-01-10 04:00:54.775806+00', 'YYYY-MM-DD HH24:MI:SS.US');
+----
+db error: ERROR: timestamp out of range
+
+
+skipif postgres
+statement error
+SELECT to_char(TIMESTAMPTZ '294247-01-10 03:00:54.775807+00', 'YYYY-MM-DD HH24:MI:SS.US');
+----
+db error: ERROR: timestamp out of range
+
+
+statement ok
+SET TimeZone = 'UTC';

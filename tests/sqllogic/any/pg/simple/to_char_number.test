@@ -1,0 +1,683 @@
+onlyif postgres
+statement ok
+SET lc_monetary = 'C';
+
+statement ok
+CREATE TABLE to_char_num (id int4, val numeric(38,10));
+
+statement ok
+INSERT INTO to_char_num VALUES (0, 0), (2, -34338492.215397047), (3, 4.31), (4, 7799461.4119), (5, 16397.038491), (6, 93901.57763026), (7, -83028485), (8, 74881), (9, -24926804.045047420);
+
+query
+SELECT id, to_char(val, '9G999G999G999G999G999') AS a, to_char(val, '9G999G999G999G999G999D999G999G999G999G999') AS b FROM to_char_num ORDER BY id;
+----
+id	a	b
+0	                     0	                      .000,000,000,000,000
+2	           -34,338,492	           -34,338,492.215,397,047,000,000
+3	                     4	                     4.310,000,000,000,000
+4	             7,799,461	             7,799,461.411,900,000,000,000
+5	                16,397	                16,397.038,491,000,000,000
+6	                93,902	                93,901.577,630,260,000,000
+7	           -83,028,485	           -83,028,485.000,000,000,000,000
+8	                74,881	                74,881.000,000,000,000,000
+9	           -24,926,804	           -24,926,804.045,047,420,000,000
+
+query
+SELECT id, to_char(val, '9999999999999999.999999999999999PR') AS a, to_char(val, '9999999999999999.999999999999999S') AS b, to_char(val, 'MI9999999999999999.999999999999999') AS c FROM to_char_num ORDER BY id;
+----
+id	a	b	c
+0	                 .000000000000000 	                .000000000000000+	                 .000000000000000
+2	        <34338492.215397047000000>	        34338492.215397047000000-	-        34338492.215397047000000
+3	                4.310000000000000 	               4.310000000000000+	                4.310000000000000
+4	          7799461.411900000000000 	         7799461.411900000000000+	          7799461.411900000000000
+5	            16397.038491000000000 	           16397.038491000000000+	            16397.038491000000000
+6	            93901.577630260000000 	           93901.577630260000000+	            93901.577630260000000
+7	        <83028485.000000000000000>	        83028485.000000000000000-	-        83028485.000000000000000
+8	            74881.000000000000000 	           74881.000000000000000+	            74881.000000000000000
+9	        <24926804.045047420000000>	        24926804.045047420000000-	-        24926804.045047420000000
+
+query
+SELECT id, to_char(val, 'FMS9999999999999999.999999999999999') AS a, to_char(val, 'FM9999999999999999.999999999999999THPR') AS b, to_char(val, 'SG9999999999999999.999999999999999th') AS c FROM to_char_num ORDER BY id;
+----
+id	a	b	c
+0	+0.	0.	+                .000000000000000
+2	-34338492.215397047	<34338492.215397047>	-        34338492.215397047000000
+3	+4.31	4.31	+               4.310000000000000
+4	+7799461.4119	7799461.4119	+         7799461.411900000000000
+5	+16397.038491	16397.038491	+           16397.038491000000000
+6	+93901.57763026	93901.57763026	+           93901.577630260000000
+7	-83028485.	<83028485.>	-        83028485.000000000000000
+8	+74881.	74881.	+           74881.000000000000000
+9	-24926804.04504742	<24926804.04504742>	-        24926804.045047420000000
+
+query
+SELECT id, to_char(val, '0999999999999999.999999999999999') AS a, to_char(val, 'S0999999999999999.999999999999999') AS b, to_char(val, 'FM0999999999999999.999999999999999') AS c FROM to_char_num ORDER BY id;
+----
+id	a	b	c
+0	 0000000000000000.000000000000000	+0000000000000000.000000000000000	0000000000000000.
+2	-0000000034338492.215397047000000	-0000000034338492.215397047000000	-0000000034338492.215397047
+3	 0000000000000004.310000000000000	+0000000000000004.310000000000000	0000000000000004.31
+4	 0000000007799461.411900000000000	+0000000007799461.411900000000000	0000000007799461.4119
+5	 0000000000016397.038491000000000	+0000000000016397.038491000000000	0000000000016397.038491
+6	 0000000000093901.577630260000000	+0000000000093901.577630260000000	0000000000093901.57763026
+7	-0000000083028485.000000000000000	-0000000083028485.000000000000000	-0000000083028485.
+8	 0000000000074881.000000000000000	+0000000000074881.000000000000000	0000000000074881.
+9	-0000000024926804.045047420000000	-0000000024926804.045047420000000	-0000000024926804.04504742
+
+query
+SELECT id, to_char(val, 'FM9999999999999999.099999999999999') AS a, to_char(val, 'FM9999999999990999.990999999999999') AS b, to_char(val, 'FM0999999999999999.999909999999999') AS c, to_char(val, 'FM9999999990999999.099999999999999') AS d FROM to_char_num ORDER BY id;
+----
+id	a	b	c	d
+0	.0	0000.000	0000000000000000.00000	0000000.0
+2	-34338492.215397047	-34338492.215397047	-0000000034338492.215397047	-34338492.215397047
+3	4.31	0004.310	0000000000000004.31000	0000004.31
+4	7799461.4119	7799461.4119	0000000007799461.41190	7799461.4119
+5	16397.038491	16397.038491	0000000000016397.038491	0016397.038491
+6	93901.57763026	93901.57763026	0000000000093901.57763026	0093901.57763026
+7	-83028485.0	-83028485.000	-0000000083028485.00000	-83028485.0
+8	74881.0	74881.000	0000000000074881.00000	0074881.0
+9	-24926804.04504742	-24926804.04504742	-0000000024926804.04504742	-24926804.04504742
+
+query
+SELECT id, to_char(val, 'L9999999999999999.099999999999999') AS a, to_char(val, 'FM9999999999999999.99999999999999') AS b, to_char(val, 'FM9999999999999999.999999999999999') AS c FROM to_char_num ORDER BY id;
+----
+id	a	b	c
+0	                  .000000000000000	0.	0.
+2	         -34338492.215397047000000	-34338492.215397047	-34338492.215397047
+3	                 4.310000000000000	4.31	4.31
+4	           7799461.411900000000000	7799461.4119	7799461.4119
+5	             16397.038491000000000	16397.038491	16397.038491
+6	             93901.577630260000000	93901.57763026	93901.57763026
+7	         -83028485.000000000000000	-83028485.	-83028485.
+8	             74881.000000000000000	74881.	74881.
+9	         -24926804.045047420000000	-24926804.04504742	-24926804.04504742
+
+query
+SELECT id, to_char(val, 'S 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 . 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9') AS a, to_char(val, 'FMS 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 . 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9') AS b FROM to_char_num ORDER BY id;
+----
+id	a	b
+0	                                 +. 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0	                +0 .                 
+2	                 -3 4 3 3 8 4 9 2 . 2 1 5 3 9 7 0 4 7 0 0 0 0 0 0 0 0	         -3 4 3 3 8 4 9 2 . 2 1 5 3 9 7 0 4 7        
+3	                               +4 . 3 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0	                +4 . 3 1               
+4	                   +7 7 9 9 4 6 1 . 4 1 1 9 0 0 0 0 0 0 0 0 0 0 0 0 0	          +7 7 9 9 4 6 1 . 4 1 1 9             
+5	                       +1 6 3 9 7 . 0 3 8 4 9 1 0 0 0 0 0 0 0 0 0 0 0	            +1 6 3 9 7 . 0 3 8 4 9 1           
+6	                       +9 3 9 0 1 . 5 7 7 6 3 0 2 6 0 0 0 0 0 0 0 0 0	            +9 3 9 0 1 . 5 7 7 6 3 0 2 6         
+7	                 -8 3 0 2 8 4 8 5 . 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0	         -8 3 0 2 8 4 8 5 .                 
+8	                       +7 4 8 8 1 . 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0	            +7 4 8 8 1 .                 
+9	                 -2 4 9 2 6 8 0 4 . 0 4 5 0 4 7 4 2 0 0 0 0 0 0 0 0 0	         -2 4 9 2 6 8 0 4 . 0 4 5 0 4 7 4 2         
+
+query
+SELECT id, to_char(val, E'99999 "text" 9999 "9999" 999 "\\"text between quote marks\\"" 9999') AS a, to_char(val, '999999SG9999999999') AS b, to_char(val, '9.999EEEE') AS c, to_char(val, 'FMRN') AS d FROM to_char_num ORDER BY id;
+----
+id	a	b	c	d
+0	      text      9999     "text between quote marks"     0	      +         0	 0.000e+00	###############
+2	      text    -3 9999 433 "text between quote marks" 8492	      -  34338492	-3.434e+07	###############
+3	      text      9999     "text between quote marks"     4	      +         4	 4.310e+00	IV
+4	      text      9999  779 "text between quote marks" 9461	      +   7799461	 7.799e+06	###############
+5	      text      9999    1 "text between quote marks" 6397	      +     16397	 1.640e+04	###############
+6	      text      9999    9 "text between quote marks" 3902	      +     93902	 9.390e+04	###############
+7	      text    -8 9999 302 "text between quote marks" 8485	      -  83028485	-8.303e+07	###############
+8	      text      9999    7 "text between quote marks" 4881	      +     74881	 7.488e+04	###############
+9	      text    -2 9999 492 "text between quote marks" 6804	      -  24926804	-2.493e+07	###############
+
+query
+SELECT id, to_char(val, '9.999EEEE') AS a, to_char(val::float4, '9.999EEEE') AS b, to_char(val, 'MI9999999999.99') AS c, to_char(val::float4, 'MI9999999999.99') AS d, to_char(val, 'MI99.99') AS e, to_char(val::float4, 'MI99.99') AS f
+FROM (VALUES (1, '0'::float8), (2, '-4.2'), (3, '4.2e9'), (4, '1.2e-5'), (5, 'inf'), (6, '-inf'), (7, 'nan')) v(id, val) ORDER BY id;
+----
+id	a	b	c	d	e	f
+1	 0.000e+00	 0.000e+00	           .00	           .00	   .00	   .00
+2	-4.200e+00	-4.200e+00	-         4.20	-         4.20	- 4.20	- 4.20
+3	 4.200e+09	 4.200e+09	 4200000000.00	 4200000000	 ##.##	 ##.
+4	 1.200e-05	 1.200e-05	           .00	           .00	   .00	   .00
+5	 #.#######	 #.#######	   Infinity	   Infinity	 ##.##	 ##.
+6	 #.#######	 #.#######	-  Infinity	-  Infinity	-##.##	-##.
+7	 #.#######	 #.#######	        NaN	        NaN	 ##.##	 ##.##
+
+query
+SELECT e, to_char(('1.2345e' || e)::numeric(38,10), '9.999EEEE') AS a, to_char(('-1.2345e' || e)::numeric(38,10), '9.99EEEE') AS b
+FROM (VALUES (-10), (-9), (-5), (-1), (0), (1), (5), (9), (20)) v(e) ORDER BY e;
+----
+e	a	b
+-10	 1.000e-10	-1.00e-10
+-9	 1.200e-09	-1.20e-09
+-5	 1.235e-05	-1.23e-05
+-1	 1.235e-01	-1.23e-01
+0	 1.235e+00	-1.23e+00
+1	 1.235e+01	-1.23e+01
+5	 1.235e+05	-1.23e+05
+9	 1.235e+09	-1.23e+09
+20	 1.235e+20	-1.23e+20
+
+query
+SELECT to_char('100'::numeric, 'FM999.9') AS a, to_char('100'::numeric, 'FM999.') AS b, to_char('100'::numeric, 'FM999') AS c, to_char('12345678901'::float8, 'FM9999999999D9999900000000000000000') AS d;
+----
+a	b	c	d
+100.	100	100	##########.####
+
+query
+SELECT to_char('100'::numeric, 'rn') AS a, to_char('1234'::numeric, 'rn') AS b, to_char('1235'::float4, 'rn') AS c, to_char('1236'::float8, 'rn') AS d, to_char('1237'::float8, 'fmrn') AS e,
+       to_char('100e9'::numeric(38,10), 'RN') AS f, to_char('100e9'::float4, 'RN') AS g, to_char('100e9'::float8, 'RN') AS h;
+----
+a	b	c	d	e	f	g	h
+              c	       mccxxxiv	        mccxxxv	       mccxxxvi	mccxxxvii	###############	###############	###############
+
+query
+SELECT to_char(1234.56::numeric, '99999V99') AS a, to_char(1234.56::float4, '99999V99') AS b, to_char(1234.56::float8, '99999V99') AS c;
+----
+a	b	c
+  123456	  123456	  123456
+
+query
+SELECT to_char('100'::numeric, 'foo999') AS a, to_char('100'::numeric, 'f\oo999') AS b, to_char('100'::numeric, 'f\\oo999') AS c, to_char('100'::numeric, 'f\"oo999') AS d, to_char('100'::numeric, 'f\\"oo999') AS e;
+----
+a	b	c	d	e
+foo 100	f\\oo 100	f\\\\oo 100	f"oo 100	f\\"oo 100
+
+query
+SELECT to_char('100'::numeric, 'f"ool"999') AS a, to_char('100'::numeric, 'f"\ool"999') AS b, to_char('100'::numeric, 'f"\\ool"999') AS c, to_char('100'::numeric, 'f"ool\"999') AS d, to_char('100'::numeric, 'f"ool\\"999') AS e;
+----
+a	b	c	d	e
+fool 100	fool 100	f\\ool 100	fool"999	fool\\ 100
+
+query
+SELECT q1, q2, to_char(q1, '9G999G999G999G999G999') AS a, to_char(q2, '9,999,999,999,999,999') AS b, to_char(q1, '9G999G999G999G999G999D999G999') AS c, to_char(q2, '9,999,999,999,999,999.999,999') AS d
+FROM (VALUES (123::int8, 456::int8), (123, 4567890123456789), (4567890123456789, 123), (4567890123456789, 4567890123456789), (4567890123456789, -4567890123456789)) v(q1, q2) ORDER BY q1, q2;
+----
+q1	q2	a	b	c	d
+123	456	                   123	                   456	                   123.000,000	                   456.000,000
+123	4567890123456789	                   123	 4,567,890,123,456,789	                   123.000,000	 4,567,890,123,456,789.000,000
+4567890123456789	-4567890123456789	 4,567,890,123,456,789	-4,567,890,123,456,789	 4,567,890,123,456,789.000,000	-4,567,890,123,456,789.000,000
+4567890123456789	123	 4,567,890,123,456,789	                   123	 4,567,890,123,456,789.000,000	                   123.000,000
+4567890123456789	4567890123456789	 4,567,890,123,456,789	 4,567,890,123,456,789	 4,567,890,123,456,789.000,000	 4,567,890,123,456,789.000,000
+
+query
+SELECT q1, q2, to_char(q1 * -1, '9999999999999999PR') AS a, to_char(q2 * -1, '9999999999999999.999PR') AS b, to_char(q1 * -1, '9999999999999999S') AS c, to_char(q2 * -1, 'S9999999999999999') AS d
+FROM (VALUES (123::int8, 456::int8), (123, 4567890123456789), (4567890123456789, 123), (4567890123456789, 4567890123456789), (4567890123456789, -4567890123456789)) v(q1, q2) ORDER BY q1, q2;
+----
+q1	q2	a	b	c	d
+123	456	             <123>	             <456.000>	             123-	             -456
+123	4567890123456789	             <123>	<4567890123456789.000>	             123-	-4567890123456789
+4567890123456789	-4567890123456789	<4567890123456789>	 4567890123456789.000 	4567890123456789-	+4567890123456789
+4567890123456789	123	<4567890123456789>	             <123.000>	4567890123456789-	             -123
+4567890123456789	4567890123456789	<4567890123456789>	<4567890123456789.000>	4567890123456789-	-4567890123456789
+
+query
+SELECT q2, to_char(q2, 'MI9999999999999999') AS a, to_char(q2, '9999999999999999PL') AS b, to_char(q2, 'FMS9999999999999999') AS c, to_char(q2, 'FM9999999999999999THPR') AS d, to_char(q2, 'SG9999999999999999th') AS e
+FROM (VALUES (456::int8), (4567890123456789), (123), (-4567890123456789)) v(q2) ORDER BY q2;
+----
+q2	a	b	c	d	e
+-4567890123456789	-4567890123456789	-4567890123456789 	-4567890123456789	<4567890123456789>	-4567890123456789
+123	              123	              123+	+123	123RD	+             123rd
+456	              456	              456+	+456	456TH	+             456th
+4567890123456789	 4567890123456789	 4567890123456789+	+4567890123456789	4567890123456789TH	+4567890123456789th
+
+query
+SELECT q2, to_char(q2, '0999999999999999') AS a, to_char(q2, 'S0999999999999999') AS b, to_char(q2, 'FM0999999999999999') AS c, to_char(q2, 'FM9999999999999999.000') AS d, to_char(q2, 'L9999999999999999.000') AS e, to_char(q2, 'FM9999999999999999.999') AS f
+FROM (VALUES (456::int8), (4567890123456789), (123), (-4567890123456789)) v(q2) ORDER BY q2;
+----
+q2	a	b	c	d	e	f
+-4567890123456789	-4567890123456789	-4567890123456789	-4567890123456789	-4567890123456789.000	 -4567890123456789.000	-4567890123456789.
+123	 0000000000000123	+0000000000000123	0000000000000123	123.000	               123.000	123.
+456	 0000000000000456	+0000000000000456	0000000000000456	456.000	               456.000	456.
+4567890123456789	 4567890123456789	+4567890123456789	4567890123456789	4567890123456789.000	  4567890123456789.000	4567890123456789.
+
+query
+SELECT q2, to_char(q2, 'S 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 . 9 9 9') AS a, to_char(q2, E'99999 "text" 9999 "9999" 999 "\\"text between quote marks\\"" 9999') AS b, to_char(q2, '999999SG9999999999') AS c, to_char(q2, 'FMRN') AS d
+FROM (VALUES (456::int8), (4567890123456789), (123), (-4567890123456789)) v(q2) ORDER BY q2;
+----
+q2	a	b	c	d
+-4567890123456789	 -4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 . 0 0 0	-45678 text 9012 9999 345 "text between quote marks" 6789	456789-0123456789	###############
+123	                           +1 2 3 . 0 0 0	      text      9999     "text between quote marks"   123	      +       123	CXXIII
+456	                           +4 5 6 . 0 0 0	      text      9999     "text between quote marks"   456	      +       456	CDLVI
+4567890123456789	 +4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 . 0 0 0	 45678 text 9012 9999 345 "text between quote marks" 6789	456789+0123456789	###############
+
+query
+SELECT to_char(1234, '9.99EEEE') AS a, to_char(1234::int8, '9.99eeee') AS b, to_char(-1234::int8, '9.99eeee') AS c, to_char(1234, '99999V99') AS d, to_char(1234::int8, '99999V99') AS e;
+----
+a	b	c	d	e
+ 1.23e+03	 1.23e+03	-1.23e+03	  123400	  123400
+
+query
+SELECT to_char(12, 'B99') AS a, to_char(12, '9B9') AS b, to_char(1.5, '.9B') AS c, to_char(12, '99C') AS d, to_char(12, '99SP') AS e, to_char(12, 'L99') AS f, to_char(-12, 'SG99') AS g, to_char(12, 'SG99') AS h, to_char(12, '99SG') AS i;
+----
+a	b	c	d	e	f	g	h	i
+ 12	 12	 .#	 12	 12	  12	-12	+12	12+
+
+query
+SELECT n, to_char(n, '9999th') AS a, to_char(n, '9999TH') AS b, to_char(n, 'FM9999th') AS c
+FROM (VALUES (1), (2), (3), (4), (11), (12), (13), (21), (101), (-1)) v(n) ORDER BY n;
+----
+n	a	b	c
+-1	   -1	   -1	-1
+1	    1st	    1ST	1st
+2	    2nd	    2ND	2nd
+3	    3rd	    3RD	3rd
+4	    4th	    4TH	4th
+11	   11th	   11TH	11th
+12	   12th	   12TH	12th
+13	   13th	   13TH	13th
+21	   21st	   21ST	21st
+101	  101st	  101ST	101st
+
+query
+SELECT n, to_char(n, 'RN') AS a, to_char(n, 'FMRN') AS b, to_char(n, 'rn') AS c
+FROM (VALUES (0), (-1), (1), (4), (9), (14), (40), (90), (400), (900), (1994), (3999), (4000)) v(n) ORDER BY n;
+----
+n	a	b	c
+-1	###############	###############	###############
+0	###############	###############	###############
+1	              I	I	              i
+4	             IV	IV	             iv
+9	             IX	IX	             ix
+14	            XIV	XIV	            xiv
+40	             XL	XL	             xl
+90	             XC	XC	             xc
+400	             CD	CD	             cd
+900	             CM	CM	             cm
+1994	        MCMXCIV	MCMXCIV	        mcmxciv
+3999	      MMMCMXCIX	MMMCMXCIX	      mmmcmxcix
+4000	###############	###############	###############
+
+query
+SELECT n, to_char(n, 'RN') AS a FROM (VALUES (0::int8), (3999), (2147483648), (-2147483649)) v(n) ORDER BY n;
+----
+n	a
+-2147483649	###############
+0	###############
+3999	      MMMCMXCIX
+2147483648	###############
+
+query
+SELECT id, to_char(n, 'RN') AS a, to_char(n::float4, 'RN') AS b
+FROM (VALUES (1, 0.4::float8), (2, 0.5), (3, 3999.4), (4, 3999.5), (5, 'NaN'), (6, 'Infinity'), (7, '-Infinity'), (8, 2147483647.0), (9, -2147483648.0), (10, -2147483649.0)) v(id, n) ORDER BY id;
+----
+id	a	b
+1	###############	###############
+2	###############	###############
+3	      MMMCMXCIX	      MMMCMXCIX
+4	###############	###############
+5	###############	###############
+6	###############	###############
+7	###############	###############
+8	###############	###############
+9	###############	###############
+10	###############	###############
+
+query
+SELECT id, to_char(n, 'RN') AS a FROM (VALUES (1, 0.4::numeric(38,10)), (2, 0.5), (3, 3999.4), (4, 3999.5), (5, 12345678901), (6, -12345678901), (7, 2147483647.5)) v(id, n) ORDER BY id;
+----
+id	a
+1	###############
+2	              I
+3	      MMMCMXCIX
+4	###############
+5	###############
+6	###############
+7	###############
+
+query
+SELECT n, to_char(n, '9.99EEEE') AS a, to_char(n, '9EEEE') AS b, to_char(n::int8, '9.999EEEE') AS c, to_char(n::float8, '9.99EEEE') AS d, to_char(n::numeric(38,10), '9.99EEEE') AS e
+FROM (VALUES (0), (1), (-1), (12345), (-1234567), (2147483647)) v(n) ORDER BY n;
+----
+n	a	b	c	d	e
+-1234567	-1.23e+06	-1e+06	-1.235e+06	-1.23e+06	-1.23e+06
+-1	-1.00e+00	-1e+00	-1.000e+00	-1.00e+00	-1.00e+00
+0	 0.00e+00	 0e+00	 0.000e+00	 0.00e+00	 0.00e+00
+1	 1.00e+00	 1e+00	 1.000e+00	 1.00e+00	 1.00e+00
+12345	 1.23e+04	 1e+04	 1.235e+04	 1.23e+04	 1.23e+04
+2147483647	 2.15e+09	 2e+09	 2.147e+09	 2.15e+09	 2.15e+09
+
+query
+SELECT id, to_char(n, '9.999EEEE') AS a, to_char(n, '99.9999999999999999999999999999999999EEEE') AS b, to_char(n::float4, '9.999EEEE') AS c
+FROM (VALUES (1, 0::float8), (2, 1.5e-10), (3, -4.2e30), (4, 'NaN'), (5, 'Infinity'), (6, '-Infinity')) v(id, n) ORDER BY id;
+----
+id	a	b	c
+1	 0.000e+00	 0.0000000000000000000000000000000000e+00	 0.000e+00
+2	 1.500e-10	 1.4999999999999999900248106175413253e-10	 1.500e-10
+3	-4.200e+30	-4.2000000000000000272204289802240000e+30	-4.200e+30
+4	 #.#######	 ##.######################################	 #.#######
+5	 #.#######	 ##.######################################	 #.#######
+6	 #.#######	 ##.######################################	 #.#######
+
+query
+SELECT n, to_char(n, '9999V99') AS a, to_char(n, '9V9999999999') AS b, to_char(n, '9V99999999999999999999') AS c FROM (VALUES (12), (-12), (0)) v(n) ORDER BY n;
+----
+n	a	b	c
+-12	  -1200	           0	                     0
+0	      0	           0	                     0
+12	   1200	           0	                     0
+
+query
+SELECT id, to_char(n, '9999V99') AS a, to_char(n, '9V999999999') AS b, to_char(n::float4, '9999V99') AS c FROM (VALUES (1, 12.345::float8), (2, -12.345), (3, 0)) v(id, n) ORDER BY id;
+----
+id	a	b	c
+1	   1234	 ##########	   1234
+2	  -1234	-##########	  -1234
+3	      0	          0	      0
+
+query
+SELECT id, to_char(n, '9999V99') AS a, to_char(n, '9V999999999') AS b FROM (VALUES (1, 12.345::numeric(10,3)), (2, -12.345), (3, 0)) v(id, n) ORDER BY id;
+----
+id	a	b
+1	   1235	 ##########
+2	  -1235	-##########
+3	      0	          0
+
+query
+SELECT id, to_char(n, 'FM99999999999999999999.999999999999999') AS a, to_char(n, '999999999999999999999.99') AS b FROM (VALUES (1, 1.5::float8), (2, 123456789012345678.0), (3, '1e20'), (4, 0.1)) v(id, n) ORDER BY id;
+----
+id	a	b
+1	1.5	                     1.50
+2	123456789012345680	    123456789012345680
+3	####################.	 100000000000000000000
+4	.1	                      .10
+
+query
+SELECT id, to_char(n, 'FM99999999999999999999.999999999999999') AS a, to_char(n, '999999999.99') AS b
+FROM (VALUES (1, 1.5::float4), (2, 12345678.0::float4), (3, '1e20'::float4), (4, 0.1::float4), (5, 123.456::float4)) v(id, n) ORDER BY id;
+----
+id	a	b
+1	1.5	         1.50
+2	12345678	  12345678
+3	####################.	 #########.
+4	.1	          .10
+5	123.456	       123.46
+
+query
+SELECT to_char(0, 'FM9.99') AS a, to_char(0.5, 'FM9.99') AS b, to_char(0.5, 'FM0.99') AS c, to_char(0, 'FM0.00') AS d, to_char(0::float8, 'FM9.99') AS e,
+       to_char(0.5::float8, 'FM9.99') AS f, to_char(-0.5, 'FM9.99') AS g, to_char(0, '9.99') AS h, to_char(0.5, '9.99') AS i;
+----
+a	b	c	d	e	f	g	h	i
+0.	.5	0.5	0.00	0.	.5	-.5	  .00	  .50
+
+query
+SELECT to_char('NaN'::float8, 'FM999.99') AS a, to_char('NaN'::float8, 'FM9.99') AS b, to_char('Infinity'::float8, 'FM99999999.99') AS c;
+----
+a	b	c
+NaN	#.##	Infinity
+
+query
+SELECT to_char(5, 'RN9') AS a, to_char(5, '9RN') AS b, to_char(5, 'FMRN99') AS c;
+----
+a	b	c
+              V	              V	V
+
+query
+SELECT to_char(5, 'FM9,999') AS a, to_char(5, 'FM9G999') AS b, to_char(5, 'RNth') AS c, to_char(1234, '99th') AS d,
+       to_char(5, 'FM9MI') AS e, to_char(-5, 'FM9PL') AS f, to_char(5, '9MI') AS g, to_char(-5, '9PL') AS h;
+----
+a	b	c	d	e	f	g	h
+5	5	              V	 ##	5	-5	5 	-5 
+
+query
+SELECT id, to_char(n, 'RN') AS a FROM (VALUES (1, -2147483649::numeric(38,10)), (2, 2147483648), (3, -2147483648.4)) v(id, n) ORDER BY id;
+----
+id	a
+1	###############
+2	###############
+3	###############
+
+query
+SELECT to_char(1.5::float8, '9.' || repeat('9', 400) || 'EEEE') = ' 1.5' || repeat('0', 399) || 'e+00' AS a,
+       to_char(7, '9.' || repeat('9', 400) || 'EEEE') = ' 7.' || repeat('0', 400) || 'e+00' AS b,
+       to_char(7::float4, '9.' || repeat('9', 400) || 'EEEE') = ' 7.' || repeat('0', 400) || 'e+00' AS c,
+       md5(to_char(5e-324::float8, '9.' || repeat('9', 400) || 'EEEE')) AS d;
+----
+a	b	c	d
+t	t	t	53d93142ed729c57fb1d91c09377a234
+
+query
+SELECT to_char(1, '') AS a, to_char(1::int8, '') AS b, to_char(1.5::float8, '') AS c, to_char(1.5, '') AS d, to_char(1.5::float4, '') AS e;
+----
+a	b	c	d	e
+(empty)	(empty)	(empty)	(empty)	(empty)
+
+query
+SELECT n, f, to_char(n, f) AS a FROM (VALUES (1, '999'), (1, '999'), (2, '0000'), (3, 'FM9th')) v(n, f) ORDER BY n, f;
+----
+n	f	a
+1	999	   1
+1	999	   1
+2	0000	 0002
+3	FM9th	3rd
+
+query
+SELECT id, to_char(n, '9.9') AS a, to_char(n, 'FM00.00') AS b FROM (VALUES (1, 1.25::numeric(4,2)), (2, -9.95)) v(id, n) ORDER BY id;
+----
+id	a	b
+1	 1.3	01.25
+2	-#.#	-09.95
+
+query
+SELECT id, to_char(n, '9999999.99') AS a, to_char(n, 'FM0000000.0') AS b FROM (VALUES (1, 1234567.25::numeric(9,2)), (2, -0.05)) v(id, n) ORDER BY id;
+----
+id	a	b
+1	 1234567.25	1234567.3
+2	       -.05	-0000000.1
+
+query
+SELECT id, to_char(n, '999999999999999.99') AS a FROM (VALUES (1, 1234567890123456.25::numeric(18,2)), (2, -0.05)) v(id, n) ORDER BY id;
+----
+id	a
+1	 ###############.##
+2	               -.05
+
+statement error
+SELECT to_char(1, '9.99EEEE9');
+----
+db error: ERROR: "EEEE" must be the last pattern used
+
+
+statement error
+SELECT to_char(1, '9.99EEEEEEEE');
+----
+db error: ERROR: cannot use "EEEE" twice
+
+
+statement error
+SELECT to_char(1, '9PR9');
+----
+db error: ERROR: "9" must be ahead of "PR"
+
+
+statement error
+SELECT to_char(1, '9PR0');
+----
+db error: ERROR: "0" must be ahead of "PR"
+
+
+statement error
+SELECT to_char(1, '9.9.9');
+----
+db error: ERROR: multiple decimal points
+
+
+statement error
+SELECT to_char(1, '9D9.9');
+----
+db error: ERROR: multiple decimal points
+
+
+statement error
+SELECT to_char(1, '9V9.9');
+----
+db error: ERROR: cannot use "V" and decimal point together
+
+
+statement error
+SELECT to_char(1, '9.9V9');
+----
+db error: ERROR: cannot use "V" and decimal point together
+
+
+statement error
+SELECT to_char(1, 'S9S');
+----
+db error: ERROR: cannot use "S" twice
+
+
+statement error
+SELECT to_char(1, 'PL9S');
+----
+db error: ERROR: cannot use "S" and "PL"/"MI"/"SG"/"PR" together
+
+
+statement error
+SELECT to_char(1, 'MI9S');
+----
+db error: ERROR: cannot use "S" and "PL"/"MI"/"SG"/"PR" together
+
+
+statement error
+SELECT to_char(1, '9PRS');
+----
+db error: ERROR: cannot use "S" and "PL"/"MI"/"SG"/"PR" together
+
+
+statement error
+SELECT to_char(1, 'S9MI');
+----
+db error: ERROR: cannot use "S" and "MI" together
+
+
+statement error
+SELECT to_char(1, 'S9PL');
+----
+db error: ERROR: cannot use "S" and "PL" together
+
+
+statement error
+SELECT to_char(1, 'S9SG');
+----
+db error: ERROR: cannot use "S" and "SG" together
+
+
+statement error
+SELECT to_char(1, 'S9PR');
+----
+db error: ERROR: cannot use "PR" and "S"/"PL"/"MI"/"SG" together
+
+
+statement error
+SELECT to_char(1, 'PL9PR');
+----
+db error: ERROR: cannot use "PR" and "S"/"PL"/"MI"/"SG" together
+
+
+statement error
+SELECT to_char(1, 'MI9PR');
+----
+db error: ERROR: cannot use "PR" and "S"/"PL"/"MI"/"SG" together
+
+
+statement error
+SELECT to_char(1, 'RNRN');
+----
+db error: ERROR: cannot use "RN" twice
+
+
+statement error
+SELECT to_char(1, 'B9.99EEEE');
+----
+db error: ERROR: "EEEE" is incompatible with other formats
+DETAIL: "EEEE" may only be used together with digit and decimal point patterns.
+
+
+statement error
+SELECT to_char(1, 'FM9.99EEEE');
+----
+db error: ERROR: "EEEE" is incompatible with other formats
+DETAIL: "EEEE" may only be used together with digit and decimal point patterns.
+
+
+statement error
+SELECT to_char(1, 'S9.99EEEE');
+----
+db error: ERROR: "EEEE" is incompatible with other formats
+DETAIL: "EEEE" may only be used together with digit and decimal point patterns.
+
+
+statement error
+SELECT to_char(1, '9.99PREEEE');
+----
+db error: ERROR: "EEEE" is incompatible with other formats
+DETAIL: "EEEE" may only be used together with digit and decimal point patterns.
+
+
+statement error
+SELECT to_char(1, 'MI9.99EEEE');
+----
+db error: ERROR: "EEEE" is incompatible with other formats
+DETAIL: "EEEE" may only be used together with digit and decimal point patterns.
+
+
+statement error
+SELECT to_char(1, 'PL9.99EEEE');
+----
+db error: ERROR: "EEEE" is incompatible with other formats
+DETAIL: "EEEE" may only be used together with digit and decimal point patterns.
+
+
+statement error
+SELECT to_char(1, 'RNEEEE');
+----
+db error: ERROR: "EEEE" is incompatible with other formats
+DETAIL: "EEEE" may only be used together with digit and decimal point patterns.
+
+
+statement error
+SELECT to_char(1, '9V9EEEE');
+----
+db error: ERROR: "EEEE" is incompatible with other formats
+DETAIL: "EEEE" may only be used together with digit and decimal point patterns.
+
+
+statement error
+SELECT to_char(1, '.RN');
+----
+db error: ERROR: "RN" is incompatible with other formats
+DETAIL: "RN" may only be used together with "FM".
+
+
+statement error
+SELECT to_char(5, 'RN0');
+----
+db error: ERROR: "RN" is incompatible with other formats
+DETAIL: "RN" may only be used together with "FM".
+
+
+statement error
+SELECT to_char(1, 'SRN');
+----
+db error: ERROR: "RN" is incompatible with other formats
+DETAIL: "RN" may only be used together with "FM".
+
+
+statement error
+SELECT to_char('NaN'::float8, '999th');
+----
+db error: ERROR: "NaN" is not a number
+
+
+statement error
+SELECT to_char('Infinity'::float8, '9999999999th');
+----
+db error: ERROR: "Infinity" is not a number
+
+
+statement error
+SELECT to_char(12::int8, '9V999999999999999999');
+----
+db error: ERROR: bigint out of range
+
+
+statement error
+SELECT to_char(12::int8, '9V99999999999999999999');
+----
+db error: ERROR: bigint out of range
+
+
+statement error
+SELECT to_char(9223372036854775807::int8, '9V9');
+----
+db error: ERROR: bigint out of range

@@ -1,0 +1,86 @@
+statement ok
+CREATE TYPE json_nested_pair AS (a int, b text);
+
+statement ok
+CREATE TYPE json_nested_docs AS (a json[]);
+
+statement ok
+CREATE TYPE json_nested_matrix AS (d text[][]);
+
+statement ok
+CREATE TYPE json_nested_pairs AS (p json_nested_pair[]);
+
+statement ok
+CREATE TYPE json_nested_inner AS (q json_nested_pair, w json);
+
+statement ok
+CREATE TYPE json_nested_outer AS (o json_nested_inner);
+
+query
+SELECT * FROM json_populate_record(NULL::json_nested_docs, '{"a": [{"x": 1}, 2, "s", null, [1, 2]]}');
+----
+a
+{"{\\"x\\": 1}",2,"\\"s\\"",NULL,"[1, 2]"}
+
+query
+SELECT * FROM json_populate_record(NULL::json_nested_pairs, '{"p": [{"a": 1, "b": "x"}, null, {"a": 2}]}');
+----
+p
+{"(1,x)",NULL,"(2,)"}
+
+query
+SELECT * FROM json_populate_record(NULL::json_nested_outer, '{"o": {"q": {"a": 5, "b": "y"}, "w": {"k": [1]}}}');
+----
+o
+("(5,y)","{""k"": [1]}")
+
+query
+SELECT count(*) AS n, sum(a) AS s FROM json_populate_recordset(NULL::json_nested_pair, (SELECT json_agg(json_build_object('a', i)) FROM generate_series(1, 3000) i));
+----
+n	s
+3000	4501500
+
+query
+SELECT count(*) AS n FROM json_array_elements((SELECT json_agg(i) FROM generate_series(1, 3000) i));
+----
+n
+3000
+
+statement error expected JSON array
+SELECT * FROM json_populate_record(NULL::json_nested_matrix, '{"d": [["x"], 1]}');
+
+statement error
+SELECT * FROM json_populate_record(NULL::json_nested_pairs, '{"p": [1]}');
+----
+db error: ERROR: cannot call populate_composite on a scalar
+
+
+statement error invalid input syntax for type json
+SELECT * FROM json_array_elements('[1, 2, ]');
+
+statement error invalid input syntax for type json
+SELECT * FROM json_array_elements_text('[1, 2, ]');
+
+statement error invalid input syntax for type json
+SELECT * FROM json_each_text('{"a": 1, }');
+
+statement error invalid input syntax for type json
+SELECT * FROM json_object_keys('{"a": 1, }');
+
+statement ok
+DROP TYPE json_nested_outer;
+
+statement ok
+DROP TYPE json_nested_inner;
+
+statement ok
+DROP TYPE json_nested_pairs;
+
+statement ok
+DROP TYPE json_nested_matrix;
+
+statement ok
+DROP TYPE json_nested_docs;
+
+statement ok
+DROP TYPE json_nested_pair;

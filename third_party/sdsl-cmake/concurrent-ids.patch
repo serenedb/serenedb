@@ -1,0 +1,28 @@
+diff --git a/include/sdsl/util.hpp b/include/sdsl/util.hpp
+--- a/include/sdsl/util.hpp
++++ b/include/sdsl/util.hpp
+@@ -238,10 +238,10 @@ class _id_helper
+ {
+     private:
+-        static uint64_t id;
++        static std::atomic<uint64_t> id;
+     public:
+         static uint64_t getId()
+         {
+-            return id++;
++            return id.fetch_add(1, std::memory_order_relaxed);
+         }
+ };
+ 
+diff --git a/lib/util.cpp b/lib/util.cpp
+--- a/lib/util.cpp
++++ b/lib/util.cpp
+@@ -35,7 +35,7 @@ namespace sdsl
+ namespace util
+ {
+ 
+-uint64_t _id_helper::id = 0;
++std::atomic<uint64_t> _id_helper::id{0};
+ 
+ std::string basename(std::string file)
+ {

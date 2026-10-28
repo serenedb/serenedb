@@ -1,0 +1,2120 @@
+{
+  "base_revision": "4c715787fd10325ce1ae5a2540b10d4c1dcecd42",
+  "source_state": "uncommitted experimental FM-index changes",
+  "build": {
+    "preset": "perf",
+    "SDB_STATIC": "OFF",
+    "SDB_ALLOC": "SYS",
+    "SDB_DEBUG_INFO": "STACK",
+    "SDB_LTO": "OFF",
+    "SDB_EMBEDDED_DOCS": "OFF"
+  },
+  "runs": [
+    {
+      "data": "/home/boffa/CLionProjects/serenedb/scripts/perf/results/fm-index/hits-spread.parquet",
+      "data_bytes": 5070607,
+      "data_sha256": "6507e7cb773469ed1da6e1a446ec75c971d0bbeab5ae4b67fddfae69d4695e03",
+      "uname": [
+        "Linux",
+        "boffa",
+        "6.18.33.2-microsoft-standard-WSL2",
+        "#1 SMP PREEMPT_DYNAMIC Thu Jun 18 21:54:43 UTC 2026",
+        "x86_64"
+      ],
+      "query_source": "https://github.com/ClickHouse/ClickBench/blob/a101cf89a316d3fffd77f54df065c67d07123681/clickhouse/queries.sql#L21-L24",
+      "attempts_per_query": 7,
+      "modes": [
+        {
+          "binary": "/home/boffa/CLionProjects/serenedb/build_fm_baseline/bin/serened",
+          "binary_sha256": "fd4788db075342d478527c849a40e2ff3dc033dbf9d9c0df41f69969d3252cb0",
+          "mode": "scan",
+          "queries": [
+            {
+              "name": "q21_url_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%google%'",
+              "first_ms": 10.514222005440388,
+              "warm_ms": [
+                6.00965200283099,
+                7.296577998204157,
+                7.712617996730842,
+                6.333225006528664,
+                6.16468999942299,
+                6.855325002106838
+              ],
+              "warm_median_ms": 6.594275004317751,
+              "returned_rows": 1,
+              "sha256": "3cd4e44bfae4eccabe4c7f9fe2d82805a299c3633a1d27999443f5b6020f8c65",
+              "count": 66
+            },
+            {
+              "name": "q22_url_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%google%' AND SearchPhrase <> ''",
+              "first_ms": 7.206565998785663,
+              "warm_ms": [
+                7.2533040001872,
+                6.777206996048335,
+                7.000094003160484,
+                6.908126000780612,
+                8.729043001949321,
+                7.046338992950041
+              ],
+              "warm_median_ms": 7.0232164980552625,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "q23_title_count",
+              "sql": "SELECT count(*) FROM hits WHERE Title LIKE '%Google%' AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+              "first_ms": 8.285495001473464,
+              "warm_ms": [
+                7.986035001522396,
+                8.096036995993927,
+                8.137614000588655,
+                8.019661996513605,
+                7.71513200015761,
+                7.746821996988729
+              ],
+              "warm_median_ms": 8.002848499018,
+              "returned_rows": 1,
+              "sha256": "d031a2f52c936db4b9052d4524fecb03b6b3be0e28a75fe2ddfd3d7ebc613c57",
+              "count": 16
+            },
+            {
+              "name": "q24_url_locate",
+              "sql": "SELECT id FROM hits WHERE URL LIKE '%google%' ORDER BY id",
+              "first_ms": 7.860994999646209,
+              "warm_ms": [
+                8.142402999510523,
+                6.571286998223513,
+                7.173581005190499,
+                6.5447109955130145,
+                6.35801900352817,
+                6.667181994998828
+              ],
+              "warm_median_ms": 6.6192344966111705,
+              "returned_rows": 66,
+              "sha256": "01e838fd396e1d659bad8b4bd2f36ea9f2bf758e8a7463b9fc8c4afd22262eff"
+            },
+            {
+              "name": "q23_title_locate",
+              "sql": "SELECT id FROM hits WHERE Title LIKE '%Google%' ORDER BY id",
+              "first_ms": 5.557696997129824,
+              "warm_ms": [
+                5.380686001444701,
+                5.461059001390822,
+                5.620195996016264,
+                5.284785002004355,
+                5.2538999952957965,
+                5.957618996035308
+              ],
+              "warm_median_ms": 5.420872501417762,
+              "returned_rows": 92,
+              "sha256": "8702e8e7443ef5fab374a9c72165b76782877063fcef332152e312ca19465a95"
+            },
+            {
+              "name": "control_dense_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%http%'",
+              "first_ms": 5.676131004292984,
+              "warm_ms": [
+                6.618494000576902,
+                6.007777999911923,
+                5.9432119960547425,
+                7.339472998864949,
+                5.9665029984898865,
+                6.5281490024062805
+              ],
+              "warm_median_ms": 6.267963501159102,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            },
+            {
+              "name": "control_absent_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%zzzzfmindexnotpresentzzzz%'",
+              "first_ms": 6.038669998815749,
+              "warm_ms": [
+                6.45990500197513,
+                6.644989000051282,
+                6.182598997838795,
+                6.789036997361109,
+                6.5482860009069555,
+                6.326435002847575
+              ],
+              "warm_median_ms": 6.504095501441043,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "control_prefix_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE 'http%'",
+              "first_ms": 6.187338003655896,
+              "warm_ms": [
+                5.938993002928328,
+                5.984396004350856,
+                7.02599899523193,
+                6.396065000444651,
+                6.301043002167717,
+                6.46802999835927
+              ],
+              "warm_median_ms": 6.348554001306184,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            }
+          ],
+          "index_build_seconds": 3.57002136297524e-07,
+          "before_queries": {
+            "VmHWM": 248483840,
+            "VmRSS": 248483840
+          },
+          "metrics": [],
+          "fm_index_serialized_bytes": 0,
+          "index_disk_bytes": 0,
+          "after_queries": {
+            "VmHWM": 271286272,
+            "VmRSS": 261619712
+          },
+          "database_directory_bytes": 13302
+        },
+        {
+          "binary": "/home/boffa/CLionProjects/serenedb/build_fm_baseline/bin/serened",
+          "binary_sha256": "fd4788db075342d478527c849a40e2ff3dc033dbf9d9c0df41f69969d3252cb0",
+          "mode": "keyword",
+          "queries": [
+            {
+              "name": "q21_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%')",
+              "first_ms": 2.4846879969118163,
+              "warm_ms": [
+                1.8549899978097528,
+                1.5382459969259799,
+                2.0654180043493398,
+                1.9927880057366565,
+                1.623764997930266,
+                1.550443994347006
+              ],
+              "warm_median_ms": 1.7393774978700094,
+              "returned_rows": 1,
+              "sha256": "3cd4e44bfae4eccabe4c7f9fe2d82805a299c3633a1d27999443f5b6020f8c65",
+              "count": 66
+            },
+            {
+              "name": "q22_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%') AND SearchPhrase <> ''",
+              "first_ms": 1.589589002833236,
+              "warm_ms": [
+                1.7034970005624928,
+                1.9102400037809275,
+                1.5526249990216456,
+                1.6386439965572208,
+                2.1382269987952895,
+                1.638861998799257
+              ],
+              "warm_median_ms": 1.6711794996808749,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "q23_title_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE Title @@ ts_like('%Google%') AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+              "first_ms": 2.4339080046047457,
+              "warm_ms": [
+                2.2355679975589737,
+                2.3409689965774305,
+                2.1593499986920506,
+                2.1706030020141043,
+                2.6517919977777638,
+                2.673356000741478
+              ],
+              "warm_median_ms": 2.288268497068202,
+              "returned_rows": 1,
+              "sha256": "d031a2f52c936db4b9052d4524fecb03b6b3be0e28a75fe2ddfd3d7ebc613c57",
+              "count": 16
+            },
+            {
+              "name": "q24_url_locate",
+              "sql": "SELECT id FROM hits_idx WHERE URL @@ ts_like('%google%') ORDER BY id",
+              "first_ms": 7.994302999577485,
+              "warm_ms": [
+                6.5725320018827915,
+                6.7184229992562905,
+                6.520880997413769,
+                6.775185000151396,
+                6.761406002624426,
+                7.139810993976425
+              ],
+              "warm_median_ms": 6.739914500940358,
+              "returned_rows": 66,
+              "sha256": "01e838fd396e1d659bad8b4bd2f36ea9f2bf758e8a7463b9fc8c4afd22262eff"
+            },
+            {
+              "name": "q23_title_locate",
+              "sql": "SELECT id FROM hits_idx WHERE Title @@ ts_like('%Google%') ORDER BY id",
+              "first_ms": 5.331458000000566,
+              "warm_ms": [
+                5.049412000516895,
+                5.240628001047298,
+                5.18541999917943,
+                5.043666002165992,
+                5.445228001917712,
+                5.0660940032685176
+              ],
+              "warm_median_ms": 5.125757001223974,
+              "returned_rows": 92,
+              "sha256": "8702e8e7443ef5fab374a9c72165b76782877063fcef332152e312ca19465a95"
+            },
+            {
+              "name": "control_dense_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%http%')",
+              "first_ms": 13.358264994167257,
+              "warm_ms": [
+                13.047731001279317,
+                12.748376000672579,
+                13.067013002000749,
+                13.570611001341604,
+                13.610509005957283,
+                13.475264997396152
+              ],
+              "warm_median_ms": 13.27113899969845,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            },
+            {
+              "name": "control_absent_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%zzzzfmindexnotpresentzzzz%')",
+              "first_ms": 1.8534370028646663,
+              "warm_ms": [
+                1.990847995330114,
+                1.8499540019547567,
+                1.94514800386969,
+                1.4758370016352274,
+                2.065567001409363,
+                1.6144250039360486
+              ],
+              "warm_median_ms": 1.8975510029122233,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "control_prefix_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('http%')",
+              "first_ms": 3.7071269980515353,
+              "warm_ms": [
+                3.64281699876301,
+                3.42807499691844,
+                3.939718000765424,
+                3.884608995576855,
+                3.9314950045081787,
+                3.696831001434475
+              ],
+              "warm_median_ms": 3.790719998505665,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            }
+          ],
+          "index_build_seconds": 0.07934257599845296,
+          "before_queries": {
+            "VmHWM": 290525184,
+            "VmRSS": 278876160
+          },
+          "metrics": [
+            [
+              "index_size",
+              "15211434"
+            ]
+          ],
+          "fm_index_serialized_bytes": 0,
+          "index_disk_bytes": 15211434,
+          "after_queries": {
+            "VmHWM": 301465600,
+            "VmRSS": 301465600
+          },
+          "database_directory_bytes": 15226726
+        },
+        {
+          "binary": "/home/boffa/CLionProjects/serenedb/build_fm_v1/bin/serened",
+          "binary_sha256": "59e03e72b2fc2774e396b146639f62619e5be27b7e9bc65295701d8ce4a799bf",
+          "mode": "fm",
+          "queries": [
+            {
+              "name": "q21_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%')",
+              "first_ms": 3820.9636690007756,
+              "warm_ms": [
+                26.077274000272155,
+                25.584871997125447,
+                28.002879000268877,
+                30.024161998881027,
+                27.473574999021366,
+                28.290936999837868
+              ],
+              "warm_median_ms": 27.73822699964512,
+              "returned_rows": 1,
+              "sha256": "3cd4e44bfae4eccabe4c7f9fe2d82805a299c3633a1d27999443f5b6020f8c65",
+              "fm_index_serialized_bytes": "3917860",
+              "count": 66
+            },
+            {
+              "name": "q22_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%') AND SearchPhrase <> ''",
+              "first_ms": 28.639292999287136,
+              "warm_ms": [
+                27.202519995626062,
+                26.63073199801147,
+                26.051442997413687,
+                26.02404299977934,
+                26.506802001676988,
+                29.066595998301636
+              ],
+              "warm_median_ms": 26.56876699984423,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "fm_index_serialized_bytes": "3917860",
+              "count": 0
+            },
+            {
+              "name": "q23_title_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE Title @@ ts_like('%Google%') AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+              "first_ms": 1935.7493450006586,
+              "warm_ms": [
+                15.233363999868743,
+                14.82567899802234,
+                16.184202002477832,
+                17.4254350058618,
+                16.29706099629402,
+                16.958025997155346
+              ],
+              "warm_median_ms": 16.240631499385927,
+              "returned_rows": 1,
+              "sha256": "d031a2f52c936db4b9052d4524fecb03b6b3be0e28a75fe2ddfd3d7ebc613c57",
+              "fm_index_serialized_bytes": "5832278",
+              "count": 16
+            },
+            {
+              "name": "q24_url_locate",
+              "sql": "SELECT id FROM hits_idx WHERE URL @@ ts_like('%google%') ORDER BY id",
+              "first_ms": 33.11383500113152,
+              "warm_ms": [
+                30.37544499966316,
+                30.58583600068232,
+                30.16306000063196,
+                24.195814999984577,
+                31.136388002778403,
+                26.119194000784773
+              ],
+              "warm_median_ms": 30.26925250014756,
+              "returned_rows": 66,
+              "sha256": "01e838fd396e1d659bad8b4bd2f36ea9f2bf758e8a7463b9fc8c4afd22262eff",
+              "fm_index_serialized_bytes": "5832278"
+            },
+            {
+              "name": "q23_title_locate",
+              "sql": "SELECT id FROM hits_idx WHERE Title @@ ts_like('%Google%') ORDER BY id",
+              "first_ms": 10.348424999392591,
+              "warm_ms": [
+                10.65391599695431,
+                9.939452997059561,
+                10.961593005049508,
+                10.523855999053922,
+                10.503408993827179,
+                10.242672993626911
+              ],
+              "warm_median_ms": 10.51363249644055,
+              "returned_rows": 92,
+              "sha256": "8702e8e7443ef5fab374a9c72165b76782877063fcef332152e312ca19465a95",
+              "fm_index_serialized_bytes": "5832278"
+            },
+            {
+              "name": "control_dense_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%http%')",
+              "first_ms": 13.301635997777339,
+              "warm_ms": [
+                12.732504001178313,
+                12.650967000809032,
+                12.4875300025451,
+                13.208256998041179,
+                13.263633001770359,
+                12.959720996150281
+              ],
+              "warm_median_ms": 12.846112498664297,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "fm_index_serialized_bytes": "5832278",
+              "count": 99824
+            },
+            {
+              "name": "control_absent_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%zzzzfmindexnotpresentzzzz%')",
+              "first_ms": 0.619423997704871,
+              "warm_ms": [
+                0.6051739983377047,
+                0.5652000036207028,
+                0.5773819939349778,
+                0.5623799952445552,
+                0.6260510053834878,
+                0.5506599991349503
+              ],
+              "warm_median_ms": 0.5712909987778403,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "fm_index_serialized_bytes": "5832278",
+              "count": 0
+            },
+            {
+              "name": "control_prefix_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('http%')",
+              "first_ms": 3.4487160010030493,
+              "warm_ms": [
+                3.8887090049684048,
+                3.590961998270359,
+                3.4749159967759624,
+                3.986395000538323,
+                3.859005999402143,
+                3.482248997897841
+              ],
+              "warm_median_ms": 3.724983998836251,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "fm_index_serialized_bytes": "5832278",
+              "count": 99824
+            }
+          ],
+          "index_build_seconds": 0.0657416350004496,
+          "before_queries": {
+            "VmHWM": 288477184,
+            "VmRSS": 283099136
+          },
+          "metrics": [
+            [
+              "fm_index_serialized_bytes",
+              "5832278"
+            ],
+            [
+              "index_size",
+              "15207593"
+            ]
+          ],
+          "fm_index_serialized_bytes": 5832278,
+          "index_disk_bytes": 15207593,
+          "after_queries": {
+            "VmHWM": 403144704,
+            "VmRSS": 355106816
+          },
+          "database_directory_bytes": 15222885
+        },
+        {
+          "binary": "/home/boffa/CLionProjects/serenedb/build_fm_baseline/bin/serened",
+          "binary_sha256": "fd4788db075342d478527c849a40e2ff3dc033dbf9d9c0df41f69969d3252cb0",
+          "mode": "ngram",
+          "queries": [
+            {
+              "name": "q21_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%')",
+              "first_ms": 3.4420849988237023,
+              "warm_ms": [
+                2.5656610014266334,
+                2.3003649985184893,
+                2.298457002325449,
+                2.234904000943061,
+                2.253580001706723,
+                2.2410270030377433
+              ],
+              "warm_median_ms": 2.276018502016086,
+              "returned_rows": 1,
+              "sha256": "3cd4e44bfae4eccabe4c7f9fe2d82805a299c3633a1d27999443f5b6020f8c65",
+              "count": 66
+            },
+            {
+              "name": "q22_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%') AND SearchPhrase <> ''",
+              "first_ms": 0.6163829966681078,
+              "warm_ms": [
+                0.6399249978130683,
+                0.7638460010639392,
+                0.631240000075195,
+                0.5935109948040918,
+                0.6046499984222464,
+                0.6144880026113242
+              ],
+              "warm_median_ms": 0.6228640013432596,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "q23_title_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE Title @@ ts_like('%Google%') AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+              "first_ms": 4.431160996318795,
+              "warm_ms": [
+                3.9863830024842173,
+                3.752272001293022,
+                3.879370000504423,
+                4.0829920035321265,
+                4.059800994582474,
+                4.087320005055517
+              ],
+              "warm_median_ms": 4.023091998533346,
+              "returned_rows": 1,
+              "sha256": "d031a2f52c936db4b9052d4524fecb03b6b3be0e28a75fe2ddfd3d7ebc613c57",
+              "count": 16
+            },
+            {
+              "name": "q24_url_locate",
+              "sql": "SELECT id FROM hits_idx WHERE URL @@ ts_like('%google%') ORDER BY id",
+              "first_ms": 13.519726999220438,
+              "warm_ms": [
+                12.998617996345274,
+                12.838121001550462,
+                14.739979000296444,
+                13.402256001427304,
+                13.208740994741675,
+                12.908410004456528
+              ],
+              "warm_median_ms": 13.103679495543474,
+              "returned_rows": 66,
+              "sha256": "01e838fd396e1d659bad8b4bd2f36ea9f2bf758e8a7463b9fc8c4afd22262eff"
+            },
+            {
+              "name": "q23_title_locate",
+              "sql": "SELECT id FROM hits_idx WHERE Title @@ ts_like('%Google%') ORDER BY id",
+              "first_ms": 7.852483002352528,
+              "warm_ms": [
+                7.6760169977205805,
+                7.50715599860996,
+                7.830353002646007,
+                7.443155001965351,
+                7.49535599607043,
+                9.625667000364047
+              ],
+              "warm_median_ms": 7.59158649816527,
+              "returned_rows": 92,
+              "sha256": "8702e8e7443ef5fab374a9c72165b76782877063fcef332152e312ca19465a95"
+            },
+            {
+              "name": "control_dense_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%http%')",
+              "first_ms": 11.396111993235536,
+              "warm_ms": [
+                10.361974003899377,
+                10.980806000588927,
+                10.808466002345085,
+                9.740888002852444,
+                9.570144000463188,
+                9.998674002417829
+              ],
+              "warm_median_ms": 10.180324003158603,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            },
+            {
+              "name": "control_absent_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%zzzzfmindexnotpresentzzzz%')",
+              "first_ms": 0.671467998472508,
+              "warm_ms": [
+                0.5517610043170862,
+                0.5675089996657334,
+                0.5097129978821613,
+                0.5281779958750121,
+                0.528334996488411,
+                0.47829099639784545
+              ],
+              "warm_median_ms": 0.5282564961817116,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "control_prefix_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('http%')",
+              "first_ms": 9.140205002040602,
+              "warm_ms": [
+                9.547863999614492,
+                9.894196002278477,
+                9.900862998620141,
+                10.330951001378708,
+                9.311180001532193,
+                9.424322997801937
+              ],
+              "warm_median_ms": 9.721030000946485,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            }
+          ],
+          "index_build_seconds": 0.34493696699792054,
+          "before_queries": {
+            "VmHWM": 392441856,
+            "VmRSS": 365010944
+          },
+          "metrics": [
+            [
+              "index_size",
+              "33140101"
+            ]
+          ],
+          "fm_index_serialized_bytes": 0,
+          "index_disk_bytes": 33140101,
+          "after_queries": {
+            "VmHWM": 392441856,
+            "VmRSS": 293113856
+          },
+          "database_directory_bytes": 33155478
+        }
+      ],
+      "machine": {
+        "cpu_model": "13th Gen Intel(R) Core(TM) i7-13620H",
+        "logical_cpus": 16,
+        "memory_total_bytes": 8165949440
+      },
+      "data_provenance": {
+        "source": "https://datasets.clickhouse.com/hits_compatible/athena/hits.parquet",
+        "source_rows": 99997497,
+        "sample_rows": 100000,
+        "selection": "prefixes of evenly spaced row groups",
+        "selected_row_groups": [
+          {
+            "row_group": 0,
+            "rows": 20000
+          },
+          {
+            "row_group": 56,
+            "rows": 20000
+          },
+          {
+            "row_group": 112,
+            "rows": 20000
+          },
+          {
+            "row_group": 168,
+            "rows": 20000
+          },
+          {
+            "row_group": 225,
+            "rows": 20000
+          }
+        ],
+        "columns": [
+          "URL",
+          "Title",
+          "SearchPhrase"
+        ],
+        "downloaded_bytes": 138263730,
+        "parquet_bytes": 5070607,
+        "sha256": "6507e7cb773469ed1da6e1a446ec75c971d0bbeab5ae4b67fddfae69d4695e03"
+      },
+      "variant": "RRR63, SA-order sampling 32, ISA sampling 64, CSA key extraction",
+      "threads": 2
+    },
+    {
+      "data": "/home/boffa/CLionProjects/serenedb/scripts/perf/results/fm-index/hits-spread.parquet",
+      "data_bytes": 5070607,
+      "data_sha256": "6507e7cb773469ed1da6e1a446ec75c971d0bbeab5ae4b67fddfae69d4695e03",
+      "uname": [
+        "Linux",
+        "boffa",
+        "6.18.33.2-microsoft-standard-WSL2",
+        "#1 SMP PREEMPT_DYNAMIC Thu Jun 18 21:54:43 UTC 2026",
+        "x86_64"
+      ],
+      "query_source": "https://github.com/ClickHouse/ClickBench/blob/a101cf89a316d3fffd77f54df065c67d07123681/clickhouse/queries.sql#L21-L24",
+      "attempts_per_query": 7,
+      "modes": [
+        {
+          "binary": "/home/boffa/CLionProjects/serenedb/build_fm_baseline/bin/serened",
+          "binary_sha256": "fd4788db075342d478527c849a40e2ff3dc033dbf9d9c0df41f69969d3252cb0",
+          "mode": "scan",
+          "queries": [
+            {
+              "name": "q21_url_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%google%'",
+              "first_ms": 10.584607000055257,
+              "warm_ms": [
+                7.653656997717917,
+                6.353940996632446,
+                7.59181800094666,
+                5.948464997345582,
+                7.547581997641828,
+                6.368787995597813
+              ],
+              "warm_median_ms": 6.958184996619821,
+              "returned_rows": 1,
+              "sha256": "3cd4e44bfae4eccabe4c7f9fe2d82805a299c3633a1d27999443f5b6020f8c65",
+              "count": 66
+            },
+            {
+              "name": "q22_url_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%google%' AND SearchPhrase <> ''",
+              "first_ms": 6.841185000666883,
+              "warm_ms": [
+                6.338797997159418,
+                6.793890999688301,
+                6.544866002514027,
+                6.702963997668121,
+                6.704182000248693,
+                7.16004799323855
+              ],
+              "warm_median_ms": 6.703572998958407,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "q23_title_count",
+              "sql": "SELECT count(*) FROM hits WHERE Title LIKE '%Google%' AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+              "first_ms": 8.359609004401136,
+              "warm_ms": [
+                7.76939099887386,
+                7.395325999823399,
+                7.337133996770717,
+                7.978474000992719,
+                7.905660000687931,
+                7.9948979982873425
+              ],
+              "warm_median_ms": 7.837525499780895,
+              "returned_rows": 1,
+              "sha256": "d031a2f52c936db4b9052d4524fecb03b6b3be0e28a75fe2ddfd3d7ebc613c57",
+              "count": 16
+            },
+            {
+              "name": "q24_url_locate",
+              "sql": "SELECT id FROM hits WHERE URL LIKE '%google%' ORDER BY id",
+              "first_ms": 6.165620005049277,
+              "warm_ms": [
+                6.225809003808536,
+                6.997841999691445,
+                6.444063001254108,
+                6.339309002214577,
+                7.159426000725944,
+                6.549493999045808
+              ],
+              "warm_median_ms": 6.496778500149958,
+              "returned_rows": 66,
+              "sha256": "01e838fd396e1d659bad8b4bd2f36ea9f2bf758e8a7463b9fc8c4afd22262eff"
+            },
+            {
+              "name": "q23_title_locate",
+              "sql": "SELECT id FROM hits WHERE Title LIKE '%Google%' ORDER BY id",
+              "first_ms": 5.780222003522795,
+              "warm_ms": [
+                5.657120993419085,
+                5.504431996087078,
+                5.642682997859083,
+                5.433653997897636,
+                5.50843700330006,
+                5.447600997285917
+              ],
+              "warm_median_ms": 5.506434499693569,
+              "returned_rows": 92,
+              "sha256": "8702e8e7443ef5fab374a9c72165b76782877063fcef332152e312ca19465a95"
+            },
+            {
+              "name": "control_dense_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%http%'",
+              "first_ms": 5.716624000342563,
+              "warm_ms": [
+                5.891692002478521,
+                6.670164999377448,
+                6.046062997484114,
+                6.014811995555647,
+                5.892676999792457,
+                5.880892000277527
+              ],
+              "warm_median_ms": 5.953744497674052,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            },
+            {
+              "name": "control_absent_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%zzzzfmindexnotpresentzzzz%'",
+              "first_ms": 6.136281001090538,
+              "warm_ms": [
+                6.177777002449147,
+                6.286832001933362,
+                6.461117998696864,
+                6.190015003085136,
+                6.581861001905054,
+                6.26588000159245
+              ],
+              "warm_median_ms": 6.276356001762906,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "control_prefix_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE 'http%'",
+              "first_ms": 6.264201001613401,
+              "warm_ms": [
+                6.11899999785237,
+                5.814039999677334,
+                5.984426003124099,
+                5.9049249975942075,
+                5.649586993968114,
+                6.345909998344723
+              ],
+              "warm_median_ms": 5.944675500359153,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            }
+          ],
+          "index_build_seconds": 2.3399479687213898e-07,
+          "before_queries": {
+            "VmHWM": 248467456,
+            "VmRSS": 248467456
+          },
+          "metrics": [],
+          "fm_index_serialized_bytes": 0,
+          "index_disk_bytes": 0,
+          "after_queries": {
+            "VmHWM": 270172160,
+            "VmRSS": 262569984
+          },
+          "database_directory_bytes": 13302
+        },
+        {
+          "binary": "/home/boffa/CLionProjects/serenedb/build_fm_baseline/bin/serened",
+          "binary_sha256": "fd4788db075342d478527c849a40e2ff3dc033dbf9d9c0df41f69969d3252cb0",
+          "mode": "keyword",
+          "queries": [
+            {
+              "name": "q21_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%')",
+              "first_ms": 2.6174559970968403,
+              "warm_ms": [
+                1.9575010010157712,
+                1.6317280023940839,
+                1.4922640039003454,
+                1.5306749992305413,
+                1.5793709972058423,
+                1.7074319985113107
+              ],
+              "warm_median_ms": 1.605549499799963,
+              "returned_rows": 1,
+              "sha256": "3cd4e44bfae4eccabe4c7f9fe2d82805a299c3633a1d27999443f5b6020f8c65",
+              "count": 66
+            },
+            {
+              "name": "q22_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%') AND SearchPhrase <> ''",
+              "first_ms": 1.775853001163341,
+              "warm_ms": [
+                1.8942419992526993,
+                1.6553589957766235,
+                1.573063993419055,
+                1.6051269994932227,
+                1.4715860015712678,
+                1.5948389991535805
+              ],
+              "warm_median_ms": 1.5999829993234016,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "q23_title_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE Title @@ ts_like('%Google%') AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+              "first_ms": 3.3910399943124503,
+              "warm_ms": [
+                3.0557360005332157,
+                2.4854270013747737,
+                2.652265000506304,
+                2.300000000104774,
+                2.322567001101561,
+                2.584219997515902
+              ],
+              "warm_median_ms": 2.534823499445338,
+              "returned_rows": 1,
+              "sha256": "d031a2f52c936db4b9052d4524fecb03b6b3be0e28a75fe2ddfd3d7ebc613c57",
+              "count": 16
+            },
+            {
+              "name": "q24_url_locate",
+              "sql": "SELECT id FROM hits_idx WHERE URL @@ ts_like('%google%') ORDER BY id",
+              "first_ms": 7.0408209940069355,
+              "warm_ms": [
+                6.374590004270431,
+                6.757911003660411,
+                6.485721001808997,
+                6.376083001669031,
+                7.281984995643143,
+                8.067088994721416
+              ],
+              "warm_median_ms": 6.621816002734704,
+              "returned_rows": 66,
+              "sha256": "01e838fd396e1d659bad8b4bd2f36ea9f2bf758e8a7463b9fc8c4afd22262eff"
+            },
+            {
+              "name": "q23_title_locate",
+              "sql": "SELECT id FROM hits_idx WHERE Title @@ ts_like('%Google%') ORDER BY id",
+              "first_ms": 5.270803994790185,
+              "warm_ms": [
+                5.371656006900594,
+                5.8608420004020445,
+                5.137414002092555,
+                5.1215479979873635,
+                5.14739199570613,
+                5.316083996149246
+              ],
+              "warm_median_ms": 5.231737995927688,
+              "returned_rows": 92,
+              "sha256": "8702e8e7443ef5fab374a9c72165b76782877063fcef332152e312ca19465a95"
+            },
+            {
+              "name": "control_dense_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%http%')",
+              "first_ms": 13.766832002147567,
+              "warm_ms": [
+                13.774564002233092,
+                12.846199002524372,
+                13.336187999811955,
+                13.0605669983197,
+                13.31733400002122,
+                13.751739003055263
+              ],
+              "warm_median_ms": 13.326760999916587,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            },
+            {
+              "name": "control_absent_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%zzzzfmindexnotpresentzzzz%')",
+              "first_ms": 2.184861004934646,
+              "warm_ms": [
+                2.4421540001640096,
+                1.949391000380274,
+                1.785050000762567,
+                1.6065449963207357,
+                1.5721599993412383,
+                1.5517060019192286
+              ],
+              "warm_median_ms": 1.6957974985416513,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "control_prefix_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('http%')",
+              "first_ms": 3.785906999837607,
+              "warm_ms": [
+                3.718867003044579,
+                3.9638460002606735,
+                3.640287999587599,
+                3.383810995728709,
+                4.06515299982857,
+                4.210608996800147
+              ],
+              "warm_median_ms": 3.8413565016526263,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            }
+          ],
+          "index_build_seconds": 0.05383092199917883,
+          "before_queries": {
+            "VmHWM": 290172928,
+            "VmRSS": 278495232
+          },
+          "metrics": [
+            [
+              "index_size",
+              "15211434"
+            ]
+          ],
+          "fm_index_serialized_bytes": 0,
+          "index_disk_bytes": 15211434,
+          "after_queries": {
+            "VmHWM": 301907968,
+            "VmRSS": 301907968
+          },
+          "database_directory_bytes": 15226726
+        },
+        {
+          "binary": "/home/boffa/CLionProjects/serenedb/build_fm_v2/bin/serened",
+          "binary_sha256": "b58ce3329f96db5de2d08a0f9eae163a169af422b3b9741df192140fb0c8b74f",
+          "mode": "fm",
+          "queries": [
+            {
+              "name": "q21_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%')",
+              "first_ms": 3548.764872000902,
+              "warm_ms": [
+                2.048107999144122,
+                1.7015150006045587,
+                1.5911079972283915,
+                2.0840020006289706,
+                1.6284150042338297,
+                1.5106930004549213
+              ],
+              "warm_median_ms": 1.6649650024191942,
+              "returned_rows": 1,
+              "sha256": "3cd4e44bfae4eccabe4c7f9fe2d82805a299c3633a1d27999443f5b6020f8c65",
+              "fm_index_serialized_bytes": 10549336,
+              "count": 66
+            },
+            {
+              "name": "q22_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%') AND SearchPhrase <> ''",
+              "first_ms": 1.8897919944720343,
+              "warm_ms": [
+                1.544257000205107,
+                1.6613230036455207,
+                1.5166259981924668,
+                2.1392319977167062,
+                1.9654030038509518,
+                1.575667003635317
+              ],
+              "warm_median_ms": 1.6184950036404189,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "fm_index_serialized_bytes": 10549336,
+              "count": 0
+            },
+            {
+              "name": "q23_title_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE Title @@ ts_like('%Google%') AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+              "first_ms": 2076.212795000174,
+              "warm_ms": [
+                3.58229799894616,
+                1.8232330039609224,
+                1.6721879946999252,
+                1.7763849973562174,
+                1.8674170059966855,
+                1.7525839939480647
+              ],
+              "warm_median_ms": 1.7998090006585699,
+              "returned_rows": 1,
+              "sha256": "d031a2f52c936db4b9052d4524fecb03b6b3be0e28a75fe2ddfd3d7ebc613c57",
+              "fm_index_serialized_bytes": 15126933,
+              "count": 16
+            },
+            {
+              "name": "q24_url_locate",
+              "sql": "SELECT id FROM hits_idx WHERE URL @@ ts_like('%google%') ORDER BY id",
+              "first_ms": 8.354700999916531,
+              "warm_ms": [
+                6.641460997343529,
+                7.522435000282712,
+                6.612140998186078,
+                6.365597000694834,
+                7.447550000506453,
+                6.708386004902422
+              ],
+              "warm_median_ms": 6.674923501122976,
+              "returned_rows": 66,
+              "sha256": "01e838fd396e1d659bad8b4bd2f36ea9f2bf758e8a7463b9fc8c4afd22262eff",
+              "fm_index_serialized_bytes": 15126933
+            },
+            {
+              "name": "q23_title_locate",
+              "sql": "SELECT id FROM hits_idx WHERE Title @@ ts_like('%Google%') ORDER BY id",
+              "first_ms": 6.156755000120029,
+              "warm_ms": [
+                5.317651004588697,
+                5.329173000063747,
+                6.324330999632366,
+                5.72145600017393,
+                5.8745290007209405,
+                5.636239999148529
+              ],
+              "warm_median_ms": 5.6788479996612296,
+              "returned_rows": 92,
+              "sha256": "8702e8e7443ef5fab374a9c72165b76782877063fcef332152e312ca19465a95",
+              "fm_index_serialized_bytes": 15126933
+            },
+            {
+              "name": "control_dense_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%http%')",
+              "first_ms": 13.37188899924513,
+              "warm_ms": [
+                13.288901995110791,
+                12.94305500050541,
+                13.528927003790159,
+                12.939813001139555,
+                12.968800998351071,
+                12.704192005912773
+              ],
+              "warm_median_ms": 12.95592799942824,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "fm_index_serialized_bytes": 15126933,
+              "count": 99824
+            },
+            {
+              "name": "control_absent_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%zzzzfmindexnotpresentzzzz%')",
+              "first_ms": 0.6562229973496869,
+              "warm_ms": [
+                0.6486310012405738,
+                0.7244879961945117,
+                0.6206250036484562,
+                0.6008380005368963,
+                0.6183150035212748,
+                0.5587600026046857
+              ],
+              "warm_median_ms": 0.6194700035848655,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "fm_index_serialized_bytes": 15126933,
+              "count": 0
+            },
+            {
+              "name": "control_prefix_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('http%')",
+              "first_ms": 3.8033380042179488,
+              "warm_ms": [
+                3.768839997064788,
+                4.420902994752396,
+                3.903379001712892,
+                3.8249680001172237,
+                4.008668998721987,
+                3.6440420008148067
+              ],
+              "warm_median_ms": 3.864173500915058,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "fm_index_serialized_bytes": 15126933,
+              "count": 99824
+            }
+          ],
+          "index_build_seconds": 0.04415245100244647,
+          "before_queries": {
+            "VmHWM": 289873920,
+            "VmRSS": 280739840
+          },
+          "metrics": [
+            [
+              "fm_index_serialized_bytes",
+              "15126933"
+            ],
+            [
+              "index_size",
+              "15211434"
+            ]
+          ],
+          "fm_index_serialized_bytes": 15126933,
+          "index_disk_bytes": 15211434,
+          "after_queries": {
+            "VmHWM": 403861504,
+            "VmRSS": 363593728
+          },
+          "database_directory_bytes": 15226726
+        },
+        {
+          "binary": "/home/boffa/CLionProjects/serenedb/build_fm_baseline/bin/serened",
+          "binary_sha256": "fd4788db075342d478527c849a40e2ff3dc033dbf9d9c0df41f69969d3252cb0",
+          "mode": "ngram",
+          "queries": [
+            {
+              "name": "q21_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%')",
+              "first_ms": 3.0537970014847815,
+              "warm_ms": [
+                2.171356994949747,
+                2.1987360014463775,
+                2.10610700014513,
+                2.3900290034362115,
+                2.225673997600097,
+                1.9910800037905574
+              ],
+              "warm_median_ms": 2.185046498198062,
+              "returned_rows": 1,
+              "sha256": "3cd4e44bfae4eccabe4c7f9fe2d82805a299c3633a1d27999443f5b6020f8c65",
+              "count": 66
+            },
+            {
+              "name": "q22_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%') AND SearchPhrase <> ''",
+              "first_ms": 0.7042450015433133,
+              "warm_ms": [
+                0.5662730036419816,
+                0.5341340001905337,
+                0.600660998316016,
+                0.8445420025964268,
+                0.554332000319846,
+                0.5647549987770617
+              ],
+              "warm_median_ms": 0.5655140012095217,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "q23_title_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE Title @@ ts_like('%Google%') AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+              "first_ms": 3.9718609987176023,
+              "warm_ms": [
+                4.123597995203454,
+                3.744046000065282,
+                3.903935998096131,
+                3.7892390027991496,
+                3.83269099984318,
+                3.562734003935475
+              ],
+              "warm_median_ms": 3.810965001321165,
+              "returned_rows": 1,
+              "sha256": "d031a2f52c936db4b9052d4524fecb03b6b3be0e28a75fe2ddfd3d7ebc613c57",
+              "count": 16
+            },
+            {
+              "name": "q24_url_locate",
+              "sql": "SELECT id FROM hits_idx WHERE URL @@ ts_like('%google%') ORDER BY id",
+              "first_ms": 12.72215299832169,
+              "warm_ms": [
+                12.391700998705346,
+                11.621222001849674,
+                12.33384200168075,
+                12.647208000998944,
+                12.64772200374864,
+                11.380880001524929
+              ],
+              "warm_median_ms": 12.362771500193048,
+              "returned_rows": 66,
+              "sha256": "01e838fd396e1d659bad8b4bd2f36ea9f2bf758e8a7463b9fc8c4afd22262eff"
+            },
+            {
+              "name": "q23_title_locate",
+              "sql": "SELECT id FROM hits_idx WHERE Title @@ ts_like('%Google%') ORDER BY id",
+              "first_ms": 8.115220996842254,
+              "warm_ms": [
+                7.433266997395549,
+                7.417863002046943,
+                7.047457998851314,
+                7.246021996252239,
+                7.632913999259472,
+                8.027727002627216
+              ],
+              "warm_median_ms": 7.425564999721246,
+              "returned_rows": 92,
+              "sha256": "8702e8e7443ef5fab374a9c72165b76782877063fcef332152e312ca19465a95"
+            },
+            {
+              "name": "control_dense_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%http%')",
+              "first_ms": 10.128447000170127,
+              "warm_ms": [
+                9.894476002955344,
+                9.456106003199238,
+                10.11320899851853,
+                9.426258002349641,
+                9.245572000509128,
+                9.824467000726145
+              ],
+              "warm_median_ms": 9.640286501962692,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            },
+            {
+              "name": "control_absent_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%zzzzfmindexnotpresentzzzz%')",
+              "first_ms": 0.5865790008101612,
+              "warm_ms": [
+                0.5472080010804348,
+                0.5485430010594428,
+                0.5577050033025444,
+                0.5191540039959364,
+                0.528091004525777,
+                0.5154949976713397
+              ],
+              "warm_median_ms": 0.5376495028031059,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "control_prefix_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('http%')",
+              "first_ms": 10.062358000141103,
+              "warm_ms": [
+                9.59473099646857,
+                9.453371007111855,
+                9.708719000627752,
+                10.57004599715583,
+                9.336230003100354,
+                9.988327001337893
+              ],
+              "warm_median_ms": 9.651724998548161,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            }
+          ],
+          "index_build_seconds": 0.3512689959970885,
+          "before_queries": {
+            "VmHWM": 392650752,
+            "VmRSS": 364904448
+          },
+          "metrics": [
+            [
+              "index_size",
+              "33140101"
+            ]
+          ],
+          "fm_index_serialized_bytes": 0,
+          "index_disk_bytes": 33140101,
+          "after_queries": {
+            "VmHWM": 392650752,
+            "VmRSS": 287924224
+          },
+          "database_directory_bytes": 33155478
+        }
+      ],
+      "machine": {
+        "cpu_model": "13th Gen Intel(R) Core(TM) i7-13620H",
+        "logical_cpus": 16,
+        "memory_total_bytes": 8165949440
+      },
+      "data_provenance": {
+        "source": "https://datasets.clickhouse.com/hits_compatible/athena/hits.parquet",
+        "source_rows": 99997497,
+        "sample_rows": 100000,
+        "selection": "prefixes of evenly spaced row groups",
+        "selected_row_groups": [
+          {
+            "row_group": 0,
+            "rows": 20000
+          },
+          {
+            "row_group": 56,
+            "rows": 20000
+          },
+          {
+            "row_group": 112,
+            "rows": 20000
+          },
+          {
+            "row_group": 168,
+            "rows": 20000
+          },
+          {
+            "row_group": 225,
+            "rows": 20000
+          }
+        ],
+        "columns": [
+          "URL",
+          "Title",
+          "SearchPhrase"
+        ],
+        "downloaded_bytes": 138263730,
+        "parquet_bytes": 5070607,
+        "sha256": "6507e7cb773469ed1da6e1a446ec75c971d0bbeab5ae4b67fddfae69d4695e03"
+      },
+      "variant": "RRR63, SA-order sampling 32, sparse ISA, FSST keys",
+      "threads": 2
+    },
+    {
+      "data": "/home/boffa/CLionProjects/serenedb/scripts/perf/results/fm-index/hits-spread.parquet",
+      "data_bytes": 5070607,
+      "data_sha256": "6507e7cb773469ed1da6e1a446ec75c971d0bbeab5ae4b67fddfae69d4695e03",
+      "uname": [
+        "Linux",
+        "boffa",
+        "6.18.33.2-microsoft-standard-WSL2",
+        "#1 SMP PREEMPT_DYNAMIC Thu Jun 18 21:54:43 UTC 2026",
+        "x86_64"
+      ],
+      "query_source": "https://github.com/ClickHouse/ClickBench/blob/a101cf89a316d3fffd77f54df065c67d07123681/clickhouse/queries.sql#L21-L24",
+      "attempts_per_query": 7,
+      "modes": [
+        {
+          "binary": "/home/boffa/CLionProjects/serenedb/build_fm_baseline/bin/serened",
+          "binary_sha256": "fd4788db075342d478527c849a40e2ff3dc033dbf9d9c0df41f69969d3252cb0",
+          "mode": "scan",
+          "queries": [
+            {
+              "name": "q21_url_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%google%'",
+              "first_ms": 9.369420004077256,
+              "warm_ms": [
+                7.252807998156641,
+                6.557925000379328,
+                5.910597996262368,
+                6.302232002781238,
+                6.509906001156196,
+                6.666993001999799
+              ],
+              "warm_median_ms": 6.533915500767762,
+              "returned_rows": 1,
+              "sha256": "3cd4e44bfae4eccabe4c7f9fe2d82805a299c3633a1d27999443f5b6020f8c65",
+              "count": 66
+            },
+            {
+              "name": "q22_url_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%google%' AND SearchPhrase <> ''",
+              "first_ms": 6.651062998571433,
+              "warm_ms": [
+                6.687752997095231,
+                6.8264410001575015,
+                6.771738000679761,
+                6.597027997486293,
+                6.2563900064560585,
+                6.502013005956542
+              ],
+              "warm_median_ms": 6.642390497290762,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "q23_title_count",
+              "sql": "SELECT count(*) FROM hits WHERE Title LIKE '%Google%' AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+              "first_ms": 8.347044997208286,
+              "warm_ms": [
+                7.64999399689259,
+                7.343163000768982,
+                8.153675000357907,
+                7.9470509954262525,
+                7.318173004023265,
+                7.067901999107562
+              ],
+              "warm_median_ms": 7.496578498830786,
+              "returned_rows": 1,
+              "sha256": "d031a2f52c936db4b9052d4524fecb03b6b3be0e28a75fe2ddfd3d7ebc613c57",
+              "count": 16
+            },
+            {
+              "name": "q24_url_locate",
+              "sql": "SELECT id FROM hits WHERE URL LIKE '%google%' ORDER BY id",
+              "first_ms": 6.406890999642201,
+              "warm_ms": [
+                6.248716999834869,
+                6.186734004586469,
+                7.028820000414271,
+                6.12453899520915,
+                7.173756996053271,
+                6.494198998552747
+              ],
+              "warm_median_ms": 6.371457999193808,
+              "returned_rows": 66,
+              "sha256": "01e838fd396e1d659bad8b4bd2f36ea9f2bf758e8a7463b9fc8c4afd22262eff"
+            },
+            {
+              "name": "q23_title_locate",
+              "sql": "SELECT id FROM hits WHERE Title LIKE '%Google%' ORDER BY id",
+              "first_ms": 5.501161998836324,
+              "warm_ms": [
+                5.392592000134755,
+                5.038940005761106,
+                6.7618460016092286,
+                5.9105570035171695,
+                5.852008005604148,
+                5.455386999528855
+              ],
+              "warm_median_ms": 5.6536975025665015,
+              "returned_rows": 92,
+              "sha256": "8702e8e7443ef5fab374a9c72165b76782877063fcef332152e312ca19465a95"
+            },
+            {
+              "name": "control_dense_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%http%'",
+              "first_ms": 5.739143998653162,
+              "warm_ms": [
+                5.537387005460914,
+                5.607740000414196,
+                5.849130000569858,
+                6.094436001149006,
+                5.716995998227503,
+                5.677826993633062
+              ],
+              "warm_median_ms": 5.697411495930282,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            },
+            {
+              "name": "control_absent_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%zzzzfmindexnotpresentzzzz%'",
+              "first_ms": 6.02816000173334,
+              "warm_ms": [
+                5.90133299556328,
+                6.393873001798056,
+                5.94656600151211,
+                5.98031299887225,
+                6.2499199993908405,
+                5.973622006422374
+              ],
+              "warm_median_ms": 5.976967502647312,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "control_prefix_count",
+              "sql": "SELECT count(*) FROM hits WHERE URL LIKE 'http%'",
+              "first_ms": 5.878231000679079,
+              "warm_ms": [
+                6.102229999669362,
+                5.872565001482144,
+                5.687760996806901,
+                5.687416000000667,
+                5.757687998993788,
+                5.700749999959953
+              ],
+              "warm_median_ms": 5.7292189994768705,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            }
+          ],
+          "index_build_seconds": 2.4199835024774075e-07,
+          "before_queries": {
+            "VmHWM": 248483840,
+            "VmRSS": 248483840
+          },
+          "metrics": [],
+          "fm_index_serialized_bytes": 0,
+          "index_disk_bytes": 0,
+          "after_queries": {
+            "VmHWM": 271130624,
+            "VmRSS": 262799360
+          },
+          "database_directory_bytes": 13302
+        },
+        {
+          "binary": "/home/boffa/CLionProjects/serenedb/build_fm_baseline/bin/serened",
+          "binary_sha256": "fd4788db075342d478527c849a40e2ff3dc033dbf9d9c0df41f69969d3252cb0",
+          "mode": "keyword",
+          "queries": [
+            {
+              "name": "q21_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%')",
+              "first_ms": 2.5245229990105145,
+              "warm_ms": [
+                1.921663002576679,
+                1.671842997893691,
+                1.5521729947067797,
+                1.7615920005482621,
+                1.4576500034308992,
+                1.5900689977570437
+              ],
+              "warm_median_ms": 1.6309559978253674,
+              "returned_rows": 1,
+              "sha256": "3cd4e44bfae4eccabe4c7f9fe2d82805a299c3633a1d27999443f5b6020f8c65",
+              "count": 66
+            },
+            {
+              "name": "q22_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%') AND SearchPhrase <> ''",
+              "first_ms": 1.9920830018236302,
+              "warm_ms": [
+                1.6323899981216528,
+                1.6231870031333528,
+                1.5069439978105947,
+                2.0857170020462945,
+                1.9594379991758615,
+                1.850938999268692
+              ],
+              "warm_median_ms": 1.7416644986951724,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "q23_title_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE Title @@ ts_like('%Google%') AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+              "first_ms": 2.746341997408308,
+              "warm_ms": [
+                2.50131799839437,
+                2.439199000946246,
+                2.396008996583987,
+                2.9348320022108965,
+                2.6922530014417134,
+                2.31918299687095
+              ],
+              "warm_median_ms": 2.470258499670308,
+              "returned_rows": 1,
+              "sha256": "d031a2f52c936db4b9052d4524fecb03b6b3be0e28a75fe2ddfd3d7ebc613c57",
+              "count": 16
+            },
+            {
+              "name": "q24_url_locate",
+              "sql": "SELECT id FROM hits_idx WHERE URL @@ ts_like('%google%') ORDER BY id",
+              "first_ms": 6.87412000115728,
+              "warm_ms": [
+                6.716771000355948,
+                7.310194996534847,
+                6.351090996759012,
+                6.593227000848856,
+                6.768913997802883,
+                6.718734999594744
+              ],
+              "warm_median_ms": 6.717752999975346,
+              "returned_rows": 66,
+              "sha256": "01e838fd396e1d659bad8b4bd2f36ea9f2bf758e8a7463b9fc8c4afd22262eff"
+            },
+            {
+              "name": "q23_title_locate",
+              "sql": "SELECT id FROM hits_idx WHERE Title @@ ts_like('%Google%') ORDER BY id",
+              "first_ms": 6.167113002447877,
+              "warm_ms": [
+                5.224180000368506,
+                5.533719006052706,
+                5.2649889985332265,
+                6.05041300150333,
+                5.528230998606887,
+                5.074494001746643
+              ],
+              "warm_median_ms": 5.396609998570057,
+              "returned_rows": 92,
+              "sha256": "8702e8e7443ef5fab374a9c72165b76782877063fcef332152e312ca19465a95"
+            },
+            {
+              "name": "control_dense_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%http%')",
+              "first_ms": 14.003188000060618,
+              "warm_ms": [
+                13.982251999550499,
+                13.3453090020339,
+                13.328544999239966,
+                13.503761001629755,
+                15.402122000523377,
+                13.584419000835624
+              ],
+              "warm_median_ms": 13.54409000123269,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            },
+            {
+              "name": "control_absent_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%zzzzfmindexnotpresentzzzz%')",
+              "first_ms": 2.305590001924429,
+              "warm_ms": [
+                1.8548799998825416,
+                1.772189003531821,
+                1.8008259939961135,
+                1.89230999967549,
+                1.7297840022365563,
+                1.6350930018234067
+              ],
+              "warm_median_ms": 1.7865074987639673,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "control_prefix_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('http%')",
+              "first_ms": 3.7447989961947314,
+              "warm_ms": [
+                3.7516269949264824,
+                3.9566030027344823,
+                3.820452002400998,
+                3.62846100324532,
+                3.5775989963440225,
+                3.6604239940061234
+              ],
+              "warm_median_ms": 3.706025494466303,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            }
+          ],
+          "index_build_seconds": 0.048917893996986095,
+          "before_queries": {
+            "VmHWM": 289517568,
+            "VmRSS": 280326144
+          },
+          "metrics": [
+            [
+              "index_size",
+              "15211434"
+            ]
+          ],
+          "fm_index_serialized_bytes": 0,
+          "index_disk_bytes": 15211434,
+          "after_queries": {
+            "VmHWM": 303464448,
+            "VmRSS": 303464448
+          },
+          "database_directory_bytes": 15226726
+        },
+        {
+          "binary": "/home/boffa/CLionProjects/serenedb/build_fm_v3/bin/serened",
+          "binary_sha256": "4604b3bfdeb75102e74f354964830f5ac546529cd2c993cc1f05e4615a9231df",
+          "mode": "fm",
+          "queries": [
+            {
+              "name": "q21_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%')",
+              "first_ms": 3639.3290999985766,
+              "warm_ms": [
+                1.964537994354032,
+                1.3281890060170554,
+                1.2042469970765524,
+                1.2755770003423095,
+                1.3980740041006356,
+                1.4514590002363548
+              ],
+              "warm_median_ms": 1.3631315050588455,
+              "returned_rows": 1,
+              "sha256": "3cd4e44bfae4eccabe4c7f9fe2d82805a299c3633a1d27999443f5b6020f8c65",
+              "fm_index_serialized_bytes": 10679569,
+              "count": 66
+            },
+            {
+              "name": "q22_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%') AND SearchPhrase <> ''",
+              "first_ms": 1.3455209991661832,
+              "warm_ms": [
+                1.2873759987996891,
+                1.468492999265436,
+                1.5209549965220504,
+                1.3386450009420514,
+                1.2167759996373206,
+                1.282878001802601
+              ],
+              "warm_median_ms": 1.3130104998708703,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "fm_index_serialized_bytes": 10679569,
+              "count": 0
+            },
+            {
+              "name": "q23_title_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE Title @@ ts_like('%Google%') AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+              "first_ms": 2045.375323999906,
+              "warm_ms": [
+                1.9806089985650033,
+                1.5724990007583983,
+                1.2949779993505217,
+                1.2520160016720183,
+                1.3464529984048568,
+                1.2734880001517013
+              ],
+              "warm_median_ms": 1.3207154988776892,
+              "returned_rows": 1,
+              "sha256": "d031a2f52c936db4b9052d4524fecb03b6b3be0e28a75fe2ddfd3d7ebc613c57",
+              "fm_index_serialized_bytes": 15331961,
+              "count": 16
+            },
+            {
+              "name": "q24_url_locate",
+              "sql": "SELECT id FROM hits_idx WHERE URL @@ ts_like('%google%') ORDER BY id",
+              "first_ms": 6.261053997150157,
+              "warm_ms": [
+                6.166056002257392,
+                5.985232004604768,
+                6.620709005801473,
+                6.4020200006780215,
+                6.887258998176549,
+                7.809900998836383
+              ],
+              "warm_median_ms": 6.511364503239747,
+              "returned_rows": 66,
+              "sha256": "01e838fd396e1d659bad8b4bd2f36ea9f2bf758e8a7463b9fc8c4afd22262eff",
+              "fm_index_serialized_bytes": 15331961
+            },
+            {
+              "name": "q23_title_locate",
+              "sql": "SELECT id FROM hits_idx WHERE Title @@ ts_like('%Google%') ORDER BY id",
+              "first_ms": 5.669785001373384,
+              "warm_ms": [
+                5.6367520010098815,
+                4.831965998164378,
+                4.815800995856989,
+                5.019209005695302,
+                4.920874998788349,
+                4.929075999825727
+              ],
+              "warm_median_ms": 4.924975499307038,
+              "returned_rows": 92,
+              "sha256": "8702e8e7443ef5fab374a9c72165b76782877063fcef332152e312ca19465a95",
+              "fm_index_serialized_bytes": 15331961
+            },
+            {
+              "name": "control_dense_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%http%')",
+              "first_ms": 13.54608000110602,
+              "warm_ms": [
+                13.132867999956943,
+                13.415497996902559,
+                14.086911003687419,
+                12.969199000508524,
+                14.102387001912575,
+                13.061957994068507
+              ],
+              "warm_median_ms": 13.274182998429751,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "fm_index_serialized_bytes": 15331961,
+              "count": 99824
+            },
+            {
+              "name": "control_absent_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%zzzzfmindexnotpresentzzzz%')",
+              "first_ms": 0.6410830028471537,
+              "warm_ms": [
+                0.6414320014300756,
+                0.5800269937026314,
+                0.5879780001123436,
+                0.5625770063488744,
+                0.5602279998129234,
+                0.5310940032359213
+              ],
+              "warm_median_ms": 0.5713020000257529,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "fm_index_serialized_bytes": 15331961,
+              "count": 0
+            },
+            {
+              "name": "control_prefix_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('http%')",
+              "first_ms": 3.8682369995513,
+              "warm_ms": [
+                3.746752998267766,
+                3.6329450012999587,
+                3.560328004823532,
+                4.309545001888182,
+                3.688267999677919,
+                3.7712199991801754
+              ],
+              "warm_median_ms": 3.7175104989728425,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "fm_index_serialized_bytes": 15331961,
+              "count": 99824
+            }
+          ],
+          "index_build_seconds": 0.04529478400218068,
+          "before_queries": {
+            "VmHWM": 289558528,
+            "VmRSS": 278302720
+          },
+          "metrics": [
+            [
+              "fm_index_serialized_bytes",
+              "15331961"
+            ],
+            [
+              "index_size",
+              "15211434"
+            ]
+          ],
+          "fm_index_serialized_bytes": 15331961,
+          "index_disk_bytes": 15211434,
+          "after_queries": {
+            "VmHWM": 403546112,
+            "VmRSS": 360964096
+          },
+          "database_directory_bytes": 15226726
+        },
+        {
+          "binary": "/home/boffa/CLionProjects/serenedb/build_fm_baseline/bin/serened",
+          "binary_sha256": "fd4788db075342d478527c849a40e2ff3dc033dbf9d9c0df41f69969d3252cb0",
+          "mode": "ngram",
+          "queries": [
+            {
+              "name": "q21_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%')",
+              "first_ms": 2.7908470001420937,
+              "warm_ms": [
+                2.090959998895414,
+                2.283769004861824,
+                2.1738869982073084,
+                2.220110000052955,
+                2.208901001722552,
+                2.0902260002912953
+              ],
+              "warm_median_ms": 2.19139399996493,
+              "returned_rows": 1,
+              "sha256": "3cd4e44bfae4eccabe4c7f9fe2d82805a299c3633a1d27999443f5b6020f8c65",
+              "count": 66
+            },
+            {
+              "name": "q22_url_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%') AND SearchPhrase <> ''",
+              "first_ms": 0.6937660000403412,
+              "warm_ms": [
+                0.5387710043578409,
+                0.5934790024184622,
+                0.6001910005579703,
+                0.6301659959717654,
+                0.669281005684752,
+                0.6061050007701851
+              ],
+              "warm_median_ms": 0.6031480006640777,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "q23_title_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE Title @@ ts_like('%Google%') AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+              "first_ms": 4.190725994703826,
+              "warm_ms": [
+                3.9510650021838956,
+                3.802004997851327,
+                3.7064640055177733,
+                3.684330004034564,
+                3.9160240048659034,
+                4.081639002833981
+              ],
+              "warm_median_ms": 3.8590145013586152,
+              "returned_rows": 1,
+              "sha256": "d031a2f52c936db4b9052d4524fecb03b6b3be0e28a75fe2ddfd3d7ebc613c57",
+              "count": 16
+            },
+            {
+              "name": "q24_url_locate",
+              "sql": "SELECT id FROM hits_idx WHERE URL @@ ts_like('%google%') ORDER BY id",
+              "first_ms": 11.302129001705907,
+              "warm_ms": [
+                12.187897998956032,
+                12.195679999422282,
+                11.734377003449481,
+                11.692134001350496,
+                11.564991997147445,
+                11.130993996630423
+              ],
+              "warm_median_ms": 11.713255502399988,
+              "returned_rows": 66,
+              "sha256": "01e838fd396e1d659bad8b4bd2f36ea9f2bf758e8a7463b9fc8c4afd22262eff"
+            },
+            {
+              "name": "q23_title_locate",
+              "sql": "SELECT id FROM hits_idx WHERE Title @@ ts_like('%Google%') ORDER BY id",
+              "first_ms": 7.55532699986361,
+              "warm_ms": [
+                7.553905001259409,
+                6.973105002543889,
+                7.626277001691051,
+                7.154764003644232,
+                7.00110800244147,
+                7.765777001623064
+              ],
+              "warm_median_ms": 7.35433450245182,
+              "returned_rows": 92,
+              "sha256": "8702e8e7443ef5fab374a9c72165b76782877063fcef332152e312ca19465a95"
+            },
+            {
+              "name": "control_dense_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%http%')",
+              "first_ms": 9.70541700371541,
+              "warm_ms": [
+                9.72154400369618,
+                10.080116997414734,
+                10.057163002784364,
+                9.461523004574701,
+                8.486393999191932,
+                9.785545997146983
+              ],
+              "warm_median_ms": 9.753545000421582,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            },
+            {
+              "name": "control_absent_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%zzzzfmindexnotpresentzzzz%')",
+              "first_ms": 0.6470579974120483,
+              "warm_ms": [
+                0.517232998390682,
+                0.5230090027907863,
+                0.6205099998624064,
+                0.5211199968471192,
+                0.5282299971440807,
+                0.5222610052442178
+              ],
+              "warm_median_ms": 0.5226350040175021,
+              "returned_rows": 1,
+              "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+              "count": 0
+            },
+            {
+              "name": "control_prefix_count",
+              "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('http%')",
+              "first_ms": 9.897625997837167,
+              "warm_ms": [
+                9.210176998749375,
+                9.905558996251784,
+                9.294064999266993,
+                9.535555000184104,
+                9.680160001153126,
+                9.316720002971124
+              ],
+              "warm_median_ms": 9.426137501577614,
+              "returned_rows": 1,
+              "sha256": "e22d80fbfb5c560003e5ead7c9d3add67560e7219993de7851315cf6c560293a",
+              "count": 99824
+            }
+          ],
+          "index_build_seconds": 0.3318634530005511,
+          "before_queries": {
+            "VmHWM": 390803456,
+            "VmRSS": 363327488
+          },
+          "metrics": [
+            [
+              "index_size",
+              "33140101"
+            ]
+          ],
+          "fm_index_serialized_bytes": 0,
+          "index_disk_bytes": 33140101,
+          "after_queries": {
+            "VmHWM": 390803456,
+            "VmRSS": 286846976
+          },
+          "database_directory_bytes": 33155478
+        }
+      ],
+      "machine": {
+        "cpu_model": "13th Gen Intel(R) Core(TM) i7-13620H",
+        "logical_cpus": 16,
+        "memory_total_bytes": 8165949440
+      },
+      "data_provenance": {
+        "source": "https://datasets.clickhouse.com/hits_compatible/athena/hits.parquet",
+        "source_rows": 99997497,
+        "sample_rows": 100000,
+        "selection": "prefixes of evenly spaced row groups",
+        "selected_row_groups": [
+          {
+            "row_group": 0,
+            "rows": 20000
+          },
+          {
+            "row_group": 56,
+            "rows": 20000
+          },
+          {
+            "row_group": 112,
+            "rows": 20000
+          },
+          {
+            "row_group": 168,
+            "rows": 20000
+          },
+          {
+            "row_group": 225,
+            "rows": 20000
+          }
+        ],
+        "columns": [
+          "URL",
+          "Title",
+          "SearchPhrase"
+        ],
+        "downloaded_bytes": 138263730,
+        "parquet_bytes": 5070607,
+        "sha256": "6507e7cb773469ed1da6e1a446ec75c971d0bbeab5ae4b67fddfae69d4695e03"
+      },
+      "variant": "RRR63, text-order sampling 32, sparse ISA, FSST keys",
+      "threads": 2
+    }
+  ]
+}

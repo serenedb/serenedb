@@ -73,6 +73,13 @@
 #include "iresearch/utils/string_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
+#ifdef SDB_FM_INDEX
+#include <absl/base/call_once.h>
+
+#include "iresearch/search/detail/fm_term_iterator.hpp"
+#include "iresearch/utils/fm_index.hpp"
+#endif
+
 namespace {
 
 using namespace irs;
@@ -2757,8 +2764,14 @@ class FieldReader::Impl {
   template<typename FST>
   class TermReaderImpl final : public TermReaderBase {
    public:
-    explicit TermReaderImpl(FieldReader::Impl& owner) noexcept
-      : _owner(&owner) {}
+    explicit TermReaderImpl(FieldReader::Impl& owner)
+      : _owner(&owner)
+#ifdef SDB_FM_INDEX
+        ,
+        _fm{std::make_unique<FmTerms>(owner._resource_manager)}
+#endif
+    {
+    }
     TermReaderImpl(TermReaderImpl&& rhs) = default;
     TermReaderImpl& operator=(TermReaderImpl&& rhs) = delete;
 
@@ -2887,6 +2900,30 @@ class FieldReader::Impl {
     }
 
     SeekTermIterator::ptr iterator(const RegexpAcceptor& a) const final {
+#ifdef SDB_FM_INDEX
+      if (const auto infix = a.RequiredInfix();
+          !infix.empty() &&
+          (a.LowerBound().empty() || a.LowerBound().front() == byte_type{0})) {
+        absl::call_once(_fm->once, [this] {
+          std::vector<std::string> terms;
+          terms.reserve(size());
+          auto it = iterator();
+          while (it->next()) {
+            terms.emplace_back(ViewCast<char>(it->value()));
+          }
+          auto index = std::make_unique<FmIndex>(terms);
+          const auto bytes = index->SizeInBytes();
+          _fm->memory.Increase(bytes);
+          _fm->bytes = bytes;
+          _fm->index = std::move(index);
+        });
+        const auto limit = std::max(size_t{1024}, size() / 4);
+        if (auto matches = _fm->index->Find(ViewCast<char>(infix), limit)) {
+          return memory::make_managed<FmTermIterator>(iterator(), *_fm->index,
+                                                      a, std::move(*matches));
+        }
+      }
+#endif
       return MakeAcceptorIterator(a);
     }
 
@@ -2909,12 +2946,27 @@ class FieldReader::Impl {
     }
 
    private:
+#ifdef SDB_FM_INDEX
+    struct FmTerms {
+      explicit FmTerms(IResourceManager& rm) : memory{rm} {}
+      ~FmTerms() { memory.DecreaseChecked(bytes); }
+
+      absl::once_flag once;
+      std::unique_ptr<FmIndex> index;
+      IResourceManager& memory;
+      size_t bytes{0};
+    };
+
+#endif
     static constexpr uint64_t kMaxBlocksPrefetch = uint64_t{256} << 20;
     static constexpr uint64_t kBlocksProbes = 4;
     static constexpr int kWideStart = 128;
 
     FieldReader::Impl* _owner;
     std::unique_ptr<FST> _fst;
+#ifdef SDB_FM_INDEX
+    std::unique_ptr<FmTerms> _fm;
+#endif
     uint64_t _blocks_begin{0};
     uint64_t _body_offset{0};
     uint64_t _body_end{0};

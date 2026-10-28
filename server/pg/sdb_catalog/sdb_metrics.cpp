@@ -37,6 +37,10 @@
 #include "search/search_table.h"
 #include "server/utils/metrics.h"
 
+#ifdef SDB_FM_INDEX
+#include "iresearch/utils/fm_index.hpp"
+#endif
+
 namespace sdb::pg {
 namespace {
 
@@ -98,6 +102,12 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
                         std::string_view{metrics::Description(gauge)});
     masks.emplace_back(kPerProcessMask);
   }
+
+#ifdef SDB_FM_INDEX
+  values.emplace_back("fm_index_serialized_bytes", irs::FmIndex::LiveBytes(),
+                      "serialized size of resident experimental FM indexes");
+  masks.emplace_back(kPerProcessMask);
+#endif
 
   const auto wal_first = values.size();
   auto& catalog =

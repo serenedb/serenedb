@@ -1,0 +1,3770 @@
+{
+  "data": "/home/boffa/CLionProjects/serenedb/scripts/perf/results/fm-index/hits-1m.parquet",
+  "data_bytes": 43041636,
+  "data_sha256": "9593b129bb4c2717b0c67f6b1bc64ea39d8dfd5be74471a96c9f640487e36806",
+  "uname": [
+    "Linux",
+    "boffa",
+    "6.18.33.2-microsoft-standard-WSL2",
+    "#1 SMP PREEMPT_DYNAMIC Thu Jun 18 21:54:43 UTC 2026",
+    "x86_64"
+  ],
+  "query_source": "https://github.com/ClickHouse/ClickBench/blob/a101cf89a316d3fffd77f54df065c67d07123681/clickhouse/queries.sql#L21-L24",
+  "attempts_per_query": 7,
+  "threads": 1,
+  "modes": [
+    {
+      "binary": "/home/boffa/CLionProjects/serenedb/build_fm_baseline/bin/serened",
+      "binary_sha256": "fd4788db075342d478527c849a40e2ff3dc033dbf9d9c0df41f69969d3252cb0",
+      "mode": "scan",
+      "queries": [
+        {
+          "name": "q21_url_count",
+          "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%google%'",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()               \u2502"
+            ],
+            [
+              "\u2502 ~1 row                                 \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 PROJECTION \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Projections: 42                        \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 READ_PARQUET \u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Function: READ_PARQUET                 \u2502"
+            ],
+            [
+              "\u2502 Column Filter: contains(URL, 'google') \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 112.45330800011288,
+          "warm_ms": [
+            97.7536720019998,
+            96.55280299921287,
+            95.21511299681151,
+            93.88715199747821,
+            102.71380600170232,
+            97.65730499930214
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 110.0,
+              "minor_faults": 17234,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 100.0,
+              "minor_faults": 4380,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 100.0,
+              "minor_faults": 1649,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 100.0,
+              "minor_faults": 350,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 132,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 3111,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 110.0,
+              "minor_faults": 1936,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 97.1050539992575,
+          "returned_rows": 1,
+          "sha256": "bafaaa8fdae600b93f70eafddbf3a9e2ffa1f7293171f4dc50e3c7587e1da3fc",
+          "count": 787
+        },
+        {
+          "name": "q22_url_count",
+          "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%google%' AND SearchPhrase <> ''",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()                \u2502"
+            ],
+            [
+              "\u2502 ~1 row                                  \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 PROJECTION \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Projections: 42                         \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                           \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 READ_PARQUET \u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Function: READ_PARQUET                  \u2502"
+            ],
+            [
+              "\u2502 Column Filter: contains(URL, 'google'), \u2502"
+            ],
+            [
+              "\u2502                SearchPhrase != ''       \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                           \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 80.38356900215149,
+          "warm_ms": [
+            78.82118699490093,
+            78.13786999759031,
+            76.69247799640289,
+            77.20108899957268,
+            75.53367000218714,
+            80.30777399835642
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 923,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 1572,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 70.0,
+              "minor_faults": 402,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 77.6694794985815,
+          "returned_rows": 1,
+          "sha256": "043f347c2cdc0d8ce70c38775d24e556c0290acf6d0c87a3a52aa85471cb8d02",
+          "count": 1
+        },
+        {
+          "name": "q23_title_count",
+          "sql": "SELECT count(*) FROM hits WHERE Title LIKE '%Google%' AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()       \u2502"
+            ],
+            [
+              "\u2502 ~1 row                         \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 PROJECTION \u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Projections: 42                \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                  \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 READ_PARQUET \u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Function: READ_PARQUET         \u2502"
+            ],
+            [
+              "\u2502 Column Filter:                 \u2502"
+            ],
+            [
+              "\u2502 NOT contains(URL, '.google.'), \u2502"
+            ],
+            [
+              "\u2502 contains(Title, 'Google'),     \u2502"
+            ],
+            [
+              "\u2502 SearchPhrase != ''             \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                  \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 67.112149001332,
+          "warm_ms": [
+            67.39652399846818,
+            73.98559500143165,
+            70.3029249998508,
+            75.69029199657962,
+            93.21276700211456,
+            67.27248800598318
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 70.0,
+              "minor_faults": 853,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 70.0,
+              "minor_faults": 2776,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 70.0,
+              "minor_faults": 8114,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 70.0,
+              "minor_faults": 1982,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 70.0,
+              "minor_faults": 2650,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 100.0,
+              "minor_faults": 2701,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 1378,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 72.14426000064122,
+          "returned_rows": 1,
+          "sha256": "2659a239ccad75d71ccea5625331b6ec5b64a7314d19262f5b24c6a6e51eebfc",
+          "count": 100
+        },
+        {
+          "name": "q24_url_locate",
+          "sql": "SELECT id FROM hits WHERE URL LIKE '%google%' ORDER BY id",
+          "plan": [
+            [
+              "\u256d\u2500 PROJECTION \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Projections: CAST(#0 AS BIGINT)        \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 ORDER_BY \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Order By: id ASC                       \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 PROJECTION \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Projections: CAST(#0 AS INTEGER)       \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 READ_PARQUET \u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Function: READ_PARQUET                 \u2502"
+            ],
+            [
+              "\u2502 Projections: file_row_number           \u2502"
+            ],
+            [
+              "\u2502 Column Filter: contains(URL, 'google') \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 96.11050400417298,
+          "warm_ms": [
+            96.2718800001312,
+            96.68094300286612,
+            96.28246299689636,
+            96.81760600506095,
+            96.539963997202,
+            97.36779899685644
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 218,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 100.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 100.0,
+              "minor_faults": 536,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 137,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 100.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 100.0,
+              "minor_faults": 35,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 471,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 96.61045350003405,
+          "returned_rows": 787,
+          "sha256": "813d0dce51360cda18f64c1839648e403ed620ace0f3111aacd4a101863a1d42"
+        },
+        {
+          "name": "q23_title_locate",
+          "sql": "SELECT id FROM hits WHERE Title LIKE '%Google%' ORDER BY id",
+          "plan": [
+            [
+              "\u256d\u2500 PROJECTION \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Projections: CAST(#0 AS BIGINT)          \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 ORDER_BY \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Order By: id ASC                         \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 PROJECTION \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Projections: CAST(#0 AS INTEGER)         \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 READ_PARQUET \u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Function: READ_PARQUET                   \u2502"
+            ],
+            [
+              "\u2502 Projections: file_row_number             \u2502"
+            ],
+            [
+              "\u2502 Column Filter: contains(Title, 'Google') \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 62.41682700056117,
+          "warm_ms": [
+            59.86418300017249,
+            60.52528699365212,
+            60.68894200143404,
+            61.74393399851397,
+            61.829364000004716,
+            63.795289999688976
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 82,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 11,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 894,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 61.216437999974005,
+          "returned_rows": 1074,
+          "sha256": "34cf2487a552a832f0c6f620646b0f0d0af610b69ef9e582f6c64cbf4676a185"
+        },
+        {
+          "name": "control_dense_count",
+          "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%http%'",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()             \u2502"
+            ],
+            [
+              "\u2502 ~1 row                               \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 PROJECTION \u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Projections: 42                      \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                        \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 READ_PARQUET \u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Function: READ_PARQUET               \u2502"
+            ],
+            [
+              "\u2502 Column Filter: contains(URL, 'http') \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                        \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 89.73610399698373,
+          "warm_ms": [
+            91.98475100129144,
+            90.66355200047838,
+            92.00806800072314,
+            89.99972799938405,
+            90.49570400384255,
+            92.4785739989602
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 514,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 100.0,
+              "minor_faults": 737,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 341,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 340,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 316,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 180,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 91.32415150088491,
+          "returned_rows": 1,
+          "sha256": "832b4334bdbf010a1f7f916e1f3add1cbd59e4c6b349852986d06cc414799c20",
+          "count": 999709
+        },
+        {
+          "name": "control_absent_count",
+          "sql": "SELECT count(*) FROM hits WHERE URL LIKE '%zzzzfmindexnotpresentzzzz%'",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()                   \u2502"
+            ],
+            [
+              "\u2502 ~1 row                                     \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 PROJECTION \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Projections: 42                            \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                              \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 READ_PARQUET \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Function: READ_PARQUET                     \u2502"
+            ],
+            [
+              "\u2502 Column Filter:                             \u2502"
+            ],
+            [
+              "\u2502 contains(URL, 'zzzzfmindexnotpresentzzzz') \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                              \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 96.2054160045227,
+          "warm_ms": [
+            96.73962399392622,
+            95.12871500191977,
+            94.17411199683556,
+            96.42014600103721,
+            95.86689499701606,
+            97.85623299831059
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 100.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 100.0,
+              "minor_faults": 432,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 182,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 199,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 110.0,
+              "minor_faults": 255,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 318,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 324,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 96.14352049902664,
+          "returned_rows": 1,
+          "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+          "count": 0
+        },
+        {
+          "name": "control_prefix_count",
+          "sql": "SELECT count(*) FROM hits WHERE URL LIKE 'http%'",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()     \u2502"
+            ],
+            [
+              "\u2502 ~1 row                       \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 PROJECTION \u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Projections: 42              \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 READ_PARQUET \u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Function: READ_PARQUET       \u2502"
+            ],
+            [
+              "\u2502 Column Filter: URL >= 'http' \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 88.51691000018036,
+          "warm_ms": [
+            86.23341399652418,
+            88.9016660003108,
+            88.28160099801607,
+            89.50338899740018,
+            89.62939099728828,
+            89.3573790017399
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 229,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 2,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 326,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 57,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 428,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 89.12952250102535,
+          "returned_rows": 1,
+          "sha256": "832b4334bdbf010a1f7f916e1f3add1cbd59e4c6b349852986d06cc414799c20",
+          "count": 999709
+        }
+      ],
+      "index_build_seconds": 5.780020728707314e-07,
+      "before_queries": {
+        "VmHWM": 248512512,
+        "VmRSS": 248512512
+      },
+      "metrics": [],
+      "fm_index_serialized_bytes": 0,
+      "index_disk_bytes": 0,
+      "after_queries": {
+        "VmHWM": 380235776,
+        "VmRSS": 365973504
+      },
+      "database_directory_bytes": 13294
+    },
+    {
+      "binary": "/home/boffa/CLionProjects/serenedb/build_fm_baseline/bin/serened",
+      "binary_sha256": "fd4788db075342d478527c849a40e2ff3dc033dbf9d9c0df41f69969d3252cb0",
+      "mode": "keyword",
+      "queries": [
+        {
+          "name": "q21_url_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%')",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star() \u2502"
+            ],
+            [
+              "\u2502 ~1 row                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx          \u2502"
+            ],
+            [
+              "\u2502 Index Filter:            \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e   \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string) \u2502   \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %google%  \u2502   \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f   \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only   \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 13.135708002664614,
+          "warm_ms": [
+            10.912092002399731,
+            10.695774995838292,
+            12.947167000675108,
+            11.743773000489455,
+            11.36626600055024,
+            11.218155006645247
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 1287,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 77,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 4,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 11.292210503597744,
+          "returned_rows": 1,
+          "sha256": "bafaaa8fdae600b93f70eafddbf3a9e2ffa1f7293171f4dc50e3c7587e1da3fc",
+          "count": 787
+        },
+        {
+          "name": "q22_url_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%') AND SearchPhrase <> ''",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()                                                               \u2502"
+            ],
+            [
+              "\u2502 ~1 row                                                                                 \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx                                                                        \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                                                                          \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Bool \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                                 \u2502"
+            ],
+            [
+              "\u2502            \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                               \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Must \u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Must Not \u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                 \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e               \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string) \u2502  \u256d\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %google%  \u2502  \u2502 Field: SearchPhrase(string) \u2502  \u2502 Field: SearchPhrase(null) \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2502 Values: ''                  \u2502  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502                         \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only                                                                 \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                                                                          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 10.71289000537945,
+          "warm_ms": [
+            11.017052005627193,
+            11.413514002924785,
+            11.040675999538507,
+            11.362399003701285,
+            10.991600996931084,
+            10.980436003592331
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 35,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 11.02886400258285,
+          "returned_rows": 1,
+          "sha256": "043f347c2cdc0d8ce70c38775d24e556c0290acf6d0c87a3a52aa85471cb8d02",
+          "count": 1
+        },
+        {
+          "name": "q23_title_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE Title @@ ts_like('%Google%') AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()                                                                                                                \u2502"
+            ],
+            [
+              "\u2502 ~1 row                                                                                                                                  \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx                                                                                                                         \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                                                                                                                           \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Bool \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                                                                \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                                                                                \u2502"
+            ],
+            [
+              "\u2502             \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                                              \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Must \u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Must Not \u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                               \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                                               \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                 \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e            \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: Title(string) \u2502  \u256d\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Terms \u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %Google%    \u2502  \u2502 Field: SearchPhrase(string) \u2502  \u2502 Field: URL(null) \u2502  \u2502 Field: SearchPhrase(null) \u2502  \u2502 Field: URL(string)  \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2502 Values: ''                  \u2502  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2502 Pattern: %.google.% \u2502 \u2502"
+            ],
+            [
+              "\u2502                           \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                       \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only                                                                                                                  \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                                                                                                                           \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 15.111476997844875,
+          "warm_ms": [
+            14.227929001208395,
+            13.881938997656107,
+            14.812464003625792,
+            13.589148002211004,
+            15.025020999019034,
+            14.53179200325394
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 298,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 1,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 2,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 14.379860502231168,
+          "returned_rows": 1,
+          "sha256": "2659a239ccad75d71ccea5625331b6ec5b64a7314d19262f5b24c6a6e51eebfc",
+          "count": 100
+        },
+        {
+          "name": "q24_url_locate",
+          "sql": "SELECT id FROM hits_idx WHERE URL @@ ts_like('%google%') ORDER BY id",
+          "plan": [
+            [
+              "\u256d\u2500 ORDER_BY \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Order By: id ASC       \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx        \u2502"
+            ],
+            [
+              "\u2502 Lookup: parquet        \u2502"
+            ],
+            [
+              "\u2502 Index Filter:          \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string) \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %google%  \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Projections: id        \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 66.91787599993404,
+          "warm_ms": [
+            62.65321200044127,
+            64.16257400269387,
+            68.31622999743558,
+            64.79758299974492,
+            64.48581700533396,
+            65.12071699398803
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 5325,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 70.0,
+              "minor_faults": 7,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 9,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 2,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 22,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 70.0,
+              "minor_faults": 1,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 64.64170000253944,
+          "returned_rows": 787,
+          "sha256": "813d0dce51360cda18f64c1839648e403ed620ace0f3111aacd4a101863a1d42"
+        },
+        {
+          "name": "q23_title_locate",
+          "sql": "SELECT id FROM hits_idx WHERE Title @@ ts_like('%Google%') ORDER BY id",
+          "plan": [
+            [
+              "\u256d\u2500 ORDER_BY \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Order By: id ASC         \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx          \u2502"
+            ],
+            [
+              "\u2502 Lookup: parquet          \u2502"
+            ],
+            [
+              "\u2502 Index Filter:            \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: Title(string) \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %Google%    \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Projections: id          \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 46.65002100227866,
+          "warm_ms": [
+            45.29862500203308,
+            47.32112000056077,
+            46.32915800175397,
+            47.908774999086745,
+            48.366629001975525,
+            48.46685600205092
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 50.0,
+              "minor_faults": 1633,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 1,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 50.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 5,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 50.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 47.61494749982376,
+          "returned_rows": 1074,
+          "sha256": "34cf2487a552a832f0c6f620646b0f0d0af610b69ef9e582f6c64cbf4676a185"
+        },
+        {
+          "name": "control_dense_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%http%')",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star() \u2502"
+            ],
+            [
+              "\u2502 ~1 row                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx          \u2502"
+            ],
+            [
+              "\u2502 Index Filter:            \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e   \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string) \u2502   \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %http%    \u2502   \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f   \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only   \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 133.5536629994749,
+          "warm_ms": [
+            124.023402997409,
+            124.39972999709425,
+            125.49156900058733,
+            123.56693599576829,
+            123.55807900166837,
+            122.61292600305751
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 140.0,
+              "minor_faults": 17639,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 120.0,
+              "minor_faults": 8188,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 120.0,
+              "minor_faults": 5758,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 130.0,
+              "minor_faults": 5758,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 120.0,
+              "minor_faults": 5758,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 120.0,
+              "minor_faults": 5758,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 130.0,
+              "minor_faults": 5758,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 123.79516949658864,
+          "returned_rows": 1,
+          "sha256": "832b4334bdbf010a1f7f916e1f3add1cbd59e4c6b349852986d06cc414799c20",
+          "count": 999709
+        },
+        {
+          "name": "control_absent_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%zzzzfmindexnotpresentzzzz%')",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()                 \u2502"
+            ],
+            [
+              "\u2502 ~1 row                                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx                          \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                            \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)                   \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %zzzzfmindexnotpresentzzzz% \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only                   \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 11.920115997781977,
+          "warm_ms": [
+            10.853386993403547,
+            11.21722399693681,
+            11.372948996722698,
+            10.959084000205621,
+            11.096477996034082,
+            11.037354997824878
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 11.06691649692948,
+          "returned_rows": 1,
+          "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+          "count": 0
+        },
+        {
+          "name": "control_prefix_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('http%')",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star() \u2502"
+            ],
+            [
+              "\u2502 ~1 row                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx          \u2502"
+            ],
+            [
+              "\u2502 Index Filter:            \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Starts With \u2500\u2500\u2500\u2500\u2500\u2500\u256e   \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string) \u2502   \u2502"
+            ],
+            [
+              "\u2502 \u2502 Prefix: http       \u2502   \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f   \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only   \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 36.16702100407565,
+          "warm_ms": [
+            36.32744100468699,
+            36.73456700198585,
+            37.4603840027703,
+            37.158785002247896,
+            38.61468900140608,
+            38.16182599985041
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 30.0,
+              "minor_faults": 5758,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 5758,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 30.0,
+              "minor_faults": 5758,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 5758,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 5758,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 5758,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 30.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 37.3095845025091,
+          "returned_rows": 1,
+          "sha256": "832b4334bdbf010a1f7f916e1f3add1cbd59e4c6b349852986d06cc414799c20",
+          "count": 999709
+        }
+      ],
+      "index_build_seconds": 0.7453874400016502,
+      "before_queries": {
+        "VmHWM": 519639040,
+        "VmRSS": 321626112
+      },
+      "metrics": [
+        [
+          "index_size",
+          "113427710"
+        ]
+      ],
+      "fm_index_serialized_bytes": 0,
+      "index_disk_bytes": 113427710,
+      "after_queries": {
+        "VmHWM": 519639040,
+        "VmRSS": 432644096
+      },
+      "database_directory_bytes": 113442929
+    },
+    {
+      "binary": "/home/boffa/CLionProjects/serenedb/build_fm_v3/bin/serened",
+      "binary_sha256": "4604b3bfdeb75102e74f354964830f5ac546529cd2c993cc1f05e4615a9231df",
+      "mode": "fm",
+      "queries": [
+        {
+          "name": "q21_url_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%')",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star() \u2502"
+            ],
+            [
+              "\u2502 ~1 row                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx          \u2502"
+            ],
+            [
+              "\u2502 Index Filter:            \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e   \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string) \u2502   \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %google%  \u2502   \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f   \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only   \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 78109.56924199854,
+          "warm_ms": [
+            6.057302001863718,
+            5.947609999566339,
+            5.67648700234713,
+            4.860598004597705,
+            4.774118999193888,
+            5.252398004813585
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 78100.0,
+              "minor_faults": 820439,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 5.464442503580358,
+          "returned_rows": 1,
+          "sha256": "bafaaa8fdae600b93f70eafddbf3a9e2ffa1f7293171f4dc50e3c7587e1da3fc",
+          "fm_index_serialized_bytes": 98739878,
+          "count": 787
+        },
+        {
+          "name": "q22_url_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%') AND SearchPhrase <> ''",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()                                                               \u2502"
+            ],
+            [
+              "\u2502 ~1 row                                                                                 \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx                                                                        \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                                                                          \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Bool \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                                 \u2502"
+            ],
+            [
+              "\u2502            \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                               \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Must \u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Must Not \u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                 \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e               \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string) \u2502  \u256d\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %google%  \u2502  \u2502 Field: SearchPhrase(string) \u2502  \u2502 Field: SearchPhrase(null) \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2502 Values: ''                  \u2502  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502                         \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only                                                                 \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                                                                          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 4.810911006643437,
+          "warm_ms": [
+            4.831803998968098,
+            5.371046005166136,
+            4.637345002265647,
+            4.3958969981758855,
+            4.825648000405636,
+            4.5127709963708185
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 7,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 4.731496501335641,
+          "returned_rows": 1,
+          "sha256": "043f347c2cdc0d8ce70c38775d24e556c0290acf6d0c87a3a52aa85471cb8d02",
+          "fm_index_serialized_bytes": 98739878,
+          "count": 1
+        },
+        {
+          "name": "q23_title_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE Title @@ ts_like('%Google%') AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()                                                                                                                \u2502"
+            ],
+            [
+              "\u2502 ~1 row                                                                                                                                  \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx                                                                                                                         \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                                                                                                                           \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Bool \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                                                                \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                                                                                \u2502"
+            ],
+            [
+              "\u2502             \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                                              \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Must \u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Must Not \u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                               \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                                               \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                 \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e            \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: Title(string) \u2502  \u256d\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Terms \u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %Google%    \u2502  \u2502 Field: SearchPhrase(string) \u2502  \u2502 Field: URL(null) \u2502  \u2502 Field: SearchPhrase(null) \u2502  \u2502 Field: URL(string)  \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2502 Values: ''                  \u2502  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2502 Pattern: %.google.% \u2502 \u2502"
+            ],
+            [
+              "\u2502                           \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                       \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only                                                                                                                  \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                                                                                                                           \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 13125.696585993865,
+          "warm_ms": [
+            3.6204690040904097,
+            3.0069400017964654,
+            3.058625996345654,
+            3.16862700128695,
+            2.7717199991457164,
+            3.0042230064282194
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 13140.0,
+              "minor_faults": 142798,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 1,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 3.0327829990710597,
+          "returned_rows": 1,
+          "sha256": "2659a239ccad75d71ccea5625331b6ec5b64a7314d19262f5b24c6a6e51eebfc",
+          "fm_index_serialized_bytes": 117375206,
+          "count": 100
+        },
+        {
+          "name": "q24_url_locate",
+          "sql": "SELECT id FROM hits_idx WHERE URL @@ ts_like('%google%') ORDER BY id",
+          "plan": [
+            [
+              "\u256d\u2500 ORDER_BY \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Order By: id ASC       \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx        \u2502"
+            ],
+            [
+              "\u2502 Lookup: parquet        \u2502"
+            ],
+            [
+              "\u2502 Index Filter:          \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string) \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %google%  \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Projections: id        \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 63.86358799500158,
+          "warm_ms": [
+            61.13669000478694,
+            61.41759699676186,
+            63.8780810040771,
+            61.730959998385515,
+            62.17840399767738,
+            59.897528000874445
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 70.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 50.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 70.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 70.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 61.57427849757369,
+          "returned_rows": 787,
+          "sha256": "813d0dce51360cda18f64c1839648e403ed620ace0f3111aacd4a101863a1d42",
+          "fm_index_serialized_bytes": 117375206
+        },
+        {
+          "name": "q23_title_locate",
+          "sql": "SELECT id FROM hits_idx WHERE Title @@ ts_like('%Google%') ORDER BY id",
+          "plan": [
+            [
+              "\u256d\u2500 ORDER_BY \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Order By: id ASC         \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx          \u2502"
+            ],
+            [
+              "\u2502 Lookup: parquet          \u2502"
+            ],
+            [
+              "\u2502 Index Filter:            \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: Title(string) \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %Google%    \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Projections: id          \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 46.802869997918606,
+          "warm_ms": [
+            45.51111000182573,
+            48.81746000319254,
+            47.528836999845225,
+            51.44095100695267,
+            56.07543899532175,
+            48.75849699601531
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 50.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 50.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 50.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 50.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 50.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 48.78797849960392,
+          "returned_rows": 1074,
+          "sha256": "34cf2487a552a832f0c6f620646b0f0d0af610b69ef9e582f6c64cbf4676a185",
+          "fm_index_serialized_bytes": 117375206
+        },
+        {
+          "name": "control_dense_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%http%')",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star() \u2502"
+            ],
+            [
+              "\u2502 ~1 row                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx          \u2502"
+            ],
+            [
+              "\u2502 Index Filter:            \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e   \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string) \u2502   \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %http%    \u2502   \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f   \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only   \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 138.59137499821372,
+          "warm_ms": [
+            133.14499200350838,
+            127.24492899724282,
+            124.8724180040881,
+            126.9572059973143,
+            126.00124200253049,
+            135.49401599448174
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 130.0,
+              "minor_faults": 12807,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 140.0,
+              "minor_faults": 6648,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 120.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 130.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 130.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 120.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 130.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 127.10106749727856,
+          "returned_rows": 1,
+          "sha256": "832b4334bdbf010a1f7f916e1f3add1cbd59e4c6b349852986d06cc414799c20",
+          "fm_index_serialized_bytes": 117375206,
+          "count": 999709
+        },
+        {
+          "name": "control_absent_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%zzzzfmindexnotpresentzzzz%')",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()                 \u2502"
+            ],
+            [
+              "\u2502 ~1 row                                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx                          \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                            \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Automaton \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)                   \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: %zzzzfmindexnotpresentzzzz% \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only                   \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 0.7422239941661246,
+          "warm_ms": [
+            0.7135999985621311,
+            0.5741380009567365,
+            0.5648379956255667,
+            0.5388790013967082,
+            0.6092539988458157,
+            0.5849290027981624
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 0.5795335018774495,
+          "returned_rows": 1,
+          "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+          "fm_index_serialized_bytes": 117375206,
+          "count": 0
+        },
+        {
+          "name": "control_prefix_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('http%')",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star() \u2502"
+            ],
+            [
+              "\u2502 ~1 row                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx          \u2502"
+            ],
+            [
+              "\u2502 Index Filter:            \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Starts With \u2500\u2500\u2500\u2500\u2500\u2500\u256e   \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string) \u2502   \u2502"
+            ],
+            [
+              "\u2502 \u2502 Prefix: http       \u2502   \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f   \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only   \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows            \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 41.43999500229256,
+          "warm_ms": [
+            46.78692999732448,
+            42.74278699449496,
+            45.42985899752239,
+            49.93044299772009,
+            45.38530599529622,
+            38.53618900029687
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 50.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 60.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 40.0,
+              "minor_faults": 5759,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 45.407582496409304,
+          "returned_rows": 1,
+          "sha256": "832b4334bdbf010a1f7f916e1f3add1cbd59e4c6b349852986d06cc414799c20",
+          "fm_index_serialized_bytes": 117375206,
+          "count": 999709
+        }
+      ],
+      "index_build_seconds": 0.7518205079977633,
+      "before_queries": {
+        "VmHWM": 520081408,
+        "VmRSS": 321888256
+      },
+      "metrics": [
+        [
+          "fm_index_serialized_bytes",
+          "117375206"
+        ],
+        [
+          "index_size",
+          "113427710"
+        ]
+      ],
+      "fm_index_serialized_bytes": 117375206,
+      "index_disk_bytes": 113427710,
+      "after_queries": {
+        "VmHWM": 1742348288,
+        "VmRSS": 651747328
+      },
+      "database_directory_bytes": 113442929
+    },
+    {
+      "binary": "/home/boffa/CLionProjects/serenedb/build_fm_baseline/bin/serened",
+      "binary_sha256": "fd4788db075342d478527c849a40e2ff3dc033dbf9d9c0df41f69969d3252cb0",
+      "mode": "ngram",
+      "queries": [
+        {
+          "name": "q21_url_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%')",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()        \u2502"
+            ],
+            [
+              "\u2502 ~1 row                          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx                 \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                   \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)          \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\A.*google.*\\z \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl                \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false              \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"google\"             \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: false               \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Table Filter:                   \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)          \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\A.*google.*\\z \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl                \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false              \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"google\"             \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: table filter        \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only          \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 23.809482998331077,
+          "warm_ms": [
+            21.892126998864114,
+            21.610534997307695,
+            22.512281997478567,
+            21.590657997876406,
+            21.922783002082724,
+            21.372752999013755
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 30.0,
+              "minor_faults": 747,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 1,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 629,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 44,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 30.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 12,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 21.751330998085905,
+          "returned_rows": 1,
+          "sha256": "bafaaa8fdae600b93f70eafddbf3a9e2ffa1f7293171f4dc50e3c7587e1da3fc",
+          "count": 787
+        },
+        {
+          "name": "q22_url_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%google%') AND SearchPhrase <> ''",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()                                                                        \u2502"
+            ],
+            [
+              "\u2502 ~1 row                                                                                          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx                                                                                 \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                                                                                   \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Bool \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                                 \u2502"
+            ],
+            [
+              "\u2502                \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                               \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Must \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Must Not \u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                 \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e               \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)          \u2502  \u256d\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\A.*google.*\\z \u2502  \u2502 Field: SearchPhrase(string) \u2502  \u2502 Field: SearchPhrase(null) \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl                \u2502  \u2502 Values: ''                  \u2502  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false              \u2502  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"google\"             \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: false               \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                                 \u2502"
+            ],
+            [
+              "\u2502 Table Filter:                                                                                   \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)          \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\A.*google.*\\z \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl                \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false              \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"google\"             \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: table filter        \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                                 \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only                                                                          \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                                                                                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 0.9191290009766817,
+          "warm_ms": [
+            0.7615759968757629,
+            0.6749769963789731,
+            0.6673600000794977,
+            0.8193239991669543,
+            0.6794720029574819,
+            0.6860200010123663
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 5,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 0.6827460019849241,
+          "returned_rows": 1,
+          "sha256": "043f347c2cdc0d8ce70c38775d24e556c0290acf6d0c87a3a52aa85471cb8d02",
+          "count": 1
+        },
+        {
+          "name": "q23_title_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE Title @@ ts_like('%Google%') AND URL NOT LIKE '%.google.%' AND SearchPhrase <> ''",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()                                                                        \u2502"
+            ],
+            [
+              "\u2502 ~1 row                                                                                          \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 FILTER \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Expression:                                                                                     \u2502"
+            ],
+            [
+              "\u2502 NOT contains(URL, '.google.')                                                                   \u2502"
+            ],
+            [
+              "\u2502 ~40,000 rows                                                                                    \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx                                                                                 \u2502"
+            ],
+            [
+              "\u2502 Lookup: parquet                                                                                 \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                                                                                   \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Bool \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                                 \u2502"
+            ],
+            [
+              "\u2502                \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                               \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Must \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Must Not \u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                 \u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e               \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: Title(string)        \u2502  \u256d\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e  \u256d\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\A.*Google.*\\z \u2502  \u2502 Field: SearchPhrase(string) \u2502  \u2502 Field: SearchPhrase(null) \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl                \u2502  \u2502 Values: ''                  \u2502  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false              \u2502  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"Google\"             \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: false               \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                                 \u2502"
+            ],
+            [
+              "\u2502 Table Filter:                                                                                   \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: Title(string)        \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\A.*Google.*\\z \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl                \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false              \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"Google\"             \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: table filter        \u2502                                                                 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f                                                                 \u2502"
+            ],
+            [
+              "\u2502 Projections: URL                                                                                \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                                                                                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 20.67876599903684,
+          "warm_ms": [
+            16.50082899868721,
+            16.029749996960163,
+            15.883654996287078,
+            16.139917002874427,
+            16.28218400583137,
+            16.12901999760652
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 30.0,
+              "minor_faults": 2456,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 13,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 20.0,
+              "minor_faults": 1,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 16.134468500240473,
+          "returned_rows": 1,
+          "sha256": "2659a239ccad75d71ccea5625331b6ec5b64a7314d19262f5b24c6a6e51eebfc",
+          "count": 100
+        },
+        {
+          "name": "q24_url_locate",
+          "sql": "SELECT id FROM hits_idx WHERE URL @@ ts_like('%google%') ORDER BY id",
+          "plan": [
+            [
+              "\u256d\u2500 ORDER_BY \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Order By: id ASC                \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx                 \u2502"
+            ],
+            [
+              "\u2502 Lookup: parquet                 \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                   \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)          \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\A.*google.*\\z \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl                \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false              \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"google\"             \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: false               \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Table Filter:                   \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)          \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\A.*google.*\\z \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl                \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false              \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"google\"             \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: table filter        \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Projections: id                 \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 127.61055100418162,
+          "warm_ms": [
+            124.93325400282629,
+            128.7291299959179,
+            122.9934150032932,
+            123.68530599633232,
+            125.84167800378054,
+            123.54804800270358
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 130.0,
+              "minor_faults": 3011,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 120.0,
+              "minor_faults": 288,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 150.0,
+              "minor_faults": 864,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 120.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 120.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 130.0,
+              "minor_faults": 107,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 120.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 124.3092799995793,
+          "returned_rows": 787,
+          "sha256": "813d0dce51360cda18f64c1839648e403ed620ace0f3111aacd4a101863a1d42"
+        },
+        {
+          "name": "q23_title_locate",
+          "sql": "SELECT id FROM hits_idx WHERE Title @@ ts_like('%Google%') ORDER BY id",
+          "plan": [
+            [
+              "\u256d\u2500 ORDER_BY \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Order By: id ASC                \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx                 \u2502"
+            ],
+            [
+              "\u2502 Lookup: parquet                 \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                   \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: Title(string)        \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\A.*Google.*\\z \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl                \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false              \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"Google\"             \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: false               \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Table Filter:                   \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: Title(string)        \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\A.*Google.*\\z \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl                \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false              \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"Google\"             \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: table filter        \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Projections: id                 \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                   \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 83.17292699939571,
+          "warm_ms": [
+            81.72810800169827,
+            84.6600730001228,
+            82.65164199838182,
+            84.88474299520021,
+            84.8034739974537,
+            85.79516100144247
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 1847,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 220,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 34,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 84.73177349878824,
+          "returned_rows": 1074,
+          "sha256": "34cf2487a552a832f0c6f620646b0f0d0af610b69ef9e582f6c64cbf4676a185"
+        },
+        {
+          "name": "control_dense_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%http%')",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()      \u2502"
+            ],
+            [
+              "\u2502 ~1 row                        \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx               \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                 \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)        \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\A.*http.*\\z \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl              \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false            \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"http\"             \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: false             \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Table Filter:                 \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)        \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\A.*http.*\\z \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl              \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false            \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"http\"             \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: table filter      \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only        \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                 \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 84.00358299695654,
+          "warm_ms": [
+            85.25741700577782,
+            85.4640739999013,
+            84.1668130015023,
+            84.92419599497225,
+            84.6026660001371,
+            85.60718600347172
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 358,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 85.09080650037504,
+          "returned_rows": 1,
+          "sha256": "832b4334bdbf010a1f7f916e1f3add1cbd59e4c6b349852986d06cc414799c20",
+          "count": 999709
+        },
+        {
+          "name": "control_absent_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('%zzzzfmindexnotpresentzzzz%')",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()                  \u2502"
+            ],
+            [
+              "\u2502 ~1 row                                    \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx                           \u2502"
+            ],
+            [
+              "\u2502 Index Filter:                             \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)                    \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern:                              \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 (?s)\\A.*zzzzfmindexnotpresentzzzz.*\\z \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl                          \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false                        \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"zzzzfmindexnotpresentzzzz\"    \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: false                         \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Table Filter:                             \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)                    \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern:                              \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 (?s)\\A.*zzzzfmindexnotpresentzzzz.*\\z \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl                          \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false                        \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"zzzzfmindexnotpresentzzzz\"    \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: table filter                  \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only                    \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows                             \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 0.7213159988168627,
+          "warm_ms": [
+            0.6386699969880283,
+            0.589868999668397,
+            0.6849890050943941,
+            0.5218389997025952,
+            0.642487000732217,
+            0.5295570008456707
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 3,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 0.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 10.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 0.6142694983282126,
+          "returned_rows": 1,
+          "sha256": "db407f11d7ede59abaab0e98e097ff2dae10a048207b801745d7199ef19c2387",
+          "count": 0
+        },
+        {
+          "name": "control_prefix_count",
+          "sql": "SELECT count(*) FROM hits_idx WHERE URL @@ ts_like('http%')",
+          "plan": [
+            [
+              "\u256d\u2500 UNGROUPED_AGGREGATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Aggregates: count_star()    \u2502"
+            ],
+            [
+              "\u2502 ~1 row                      \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ],
+            [
+              "\u256d\u2500 IRESEARCH_SCAN \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e"
+            ],
+            [
+              "\u2502 Index: hits_idx             \u2502"
+            ],
+            [
+              "\u2502 Index Filter:               \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)      \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\Ahttp.*\\z \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl            \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false          \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"\\x1fhttp\"       \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: false           \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Table Filter:               \u2502"
+            ],
+            [
+              "\u2502 \u256d\u2500 Wildcard NGram \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e \u2502"
+            ],
+            [
+              "\u2502 \u2502 Field: URL(string)      \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Pattern: (?s)\\Ahttp.*\\z \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Syntax: perl            \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Has Pos: false          \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Query: \"\\x1fhttp\"       \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2502 Verify: table filter    \u2502 \u2502"
+            ],
+            [
+              "\u2502 \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f \u2502"
+            ],
+            [
+              "\u2502 Output: row-count only      \u2502"
+            ],
+            [
+              "\u2502 ~200,000 rows               \u2502"
+            ],
+            [
+              "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
+            ]
+          ],
+          "first_ms": 82.66055700369179,
+          "warm_ms": [
+            84.65578199684387,
+            87.96930399694247,
+            87.62424400629243,
+            88.31456399639137,
+            86.76395999646047,
+            86.5056149996235
+          ],
+          "process_counters": [
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 3,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 90.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            },
+            {
+              "cpu_ms": 80.0,
+              "minor_faults": 0,
+              "major_faults": 0
+            }
+          ],
+          "warm_median_ms": 87.19410200137645,
+          "returned_rows": 1,
+          "sha256": "832b4334bdbf010a1f7f916e1f3add1cbd59e4c6b349852986d06cc414799c20",
+          "count": 999709
+        }
+      ],
+      "index_build_seconds": 5.337636250995274,
+      "before_queries": {
+        "VmHWM": 920330240,
+        "VmRSS": 905502720
+      },
+      "metrics": [
+        [
+          "index_size",
+          "279101030"
+        ]
+      ],
+      "fm_index_serialized_bytes": 0,
+      "index_disk_bytes": 279101030,
+      "after_queries": {
+        "VmHWM": 987410432,
+        "VmRSS": 383442944
+      },
+      "database_directory_bytes": 279116456
+    }
+  ],
+  "machine": {
+    "cpu_model": "13th Gen Intel(R) Core(TM) i7-13620H",
+    "logical_cpus": 16,
+    "memory_total_bytes": 8165949440
+  },
+  "data_provenance": {
+    "source": "https://datasets.clickhouse.com/hits_compatible/athena/hits.parquet",
+    "source_rows": 99997497,
+    "sample_rows": 1000000,
+    "selection": "prefixes of evenly spaced row groups",
+    "selected_row_groups": [
+      {
+        "row_group": 0,
+        "rows": 200000
+      },
+      {
+        "row_group": 56,
+        "rows": 200000
+      },
+      {
+        "row_group": 112,
+        "rows": 200000
+      },
+      {
+        "row_group": 168,
+        "rows": 200000
+      },
+      {
+        "row_group": 225,
+        "rows": 200000
+      }
+    ],
+    "columns": [
+      "URL",
+      "Title",
+      "SearchPhrase"
+    ],
+    "downloaded_bytes": 138263731,
+    "parquet_bytes": 43041636,
+    "sha256": "9593b129bb4c2717b0c67f6b1bc64ea39d8dfd5be74471a96c9f640487e36806"
+  }
+}

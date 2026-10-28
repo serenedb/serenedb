@@ -23,6 +23,12 @@ endif()
 
 add_library(iresearch STATIC parser/lucene_lexer.cpp parser/lucene_parser.cpp)
 
+if(SDB_FM_INDEX)
+    target_sources(iresearch PRIVATE utils/fm_index.cpp)
+    target_link_libraries(iresearch PUBLIC sdb_sdsl)
+    target_compile_definitions(iresearch PUBLIC SDB_FM_INDEX)
+endif()
+
 add_subdirectory(analysis)
 add_subdirectory(formats)
 add_subdirectory(index)

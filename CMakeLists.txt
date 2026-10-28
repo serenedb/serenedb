@@ -109,6 +109,12 @@ option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serened" ON)
 option(SDB_GTEST "build the gtest suites under tests/" OFF)
 
 option(
+    SDB_FM_INDEX
+    "experimental FM-index acceleration for substring searches"
+    OFF
+)
+
+option(
     IRESEARCH_BENCH
     "build only search-benchmark-game, against a minimal iresearch: no server, vector, geo, fastText or DuckDB extensions besides icu"
     OFF
@@ -597,6 +603,9 @@ link_libraries(
 
 set(CMAKE_SKIP_INSTALL_RULES TRUE)
 add_subdirectory(third_party EXCLUDE_FROM_ALL SYSTEM)
+if(SDB_FM_INDEX)
+    add_subdirectory(third_party/sdsl-cmake EXCLUDE_FROM_ALL SYSTEM)
+endif()
 set(CMAKE_SKIP_INSTALL_RULES FALSE)
 
 if(SDB_ALLOC STREQUAL "JE")

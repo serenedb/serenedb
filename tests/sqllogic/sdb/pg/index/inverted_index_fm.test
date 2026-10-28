@@ -1,0 +1,182 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY fm_keyword AS keyword()
+
+statement ok
+CREATE TABLE fm_terms (id INT, body VARCHAR)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+CREATE INDEX fm_terms_idx ON fm_terms USING inverted (id, body fm_keyword)
+
+statement ok
+INSERT INTO fm_terms VALUES
+    (1, 'banana'),
+    (2, 'bandana'),
+    (3, 'banana banana'),
+    (4, ''),
+    (5, NULL),
+    (6, 'ab'),
+    (7, 'cd'),
+    (8, '50% banana'),
+    (9, '50_ banana'),
+    (10, 'café banana'),
+    (11, 'BANANA')
+
+statement ok
+VACUUM (REFRESH_TABLE) fm_terms
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%ana%' ORDER BY id
+----
+id
+1
+2
+3
+8
+9
+10
+
+query
+SELECT count(*) FROM fm_terms_idx WHERE body LIKE '%ana%'
+----
+count
+6
+
+query
+SELECT COALESCE(MAX(value), 1) > 0 AS fm_ready
+FROM sdb_metrics WHERE metric = 'fm_index_serialized_bytes'
+----
+fm_ready
+t
+
+query
+EXPLAIN SELECT count(*) FROM fm_terms_idx WHERE body LIKE '%ana%'
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: fm_terms_idx      │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Automaton ─────────╮  │
+│ │ Field: body(string) │  │
+│ │ Pattern: %ana%      │  │
+│ ╰─────────────────────╯  │
+│ Output: row-count only   │
+│ ~2 rows                  │
+╰──────────────────────────╯
+
+query
+SELECT count(*) FROM fm_terms_idx WHERE body @@ ts_like('%ana%')
+----
+count
+6
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%banana%banana%' ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%bc%' ORDER BY id
+----
+id
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%\%%' ORDER BY id
+----
+id
+8
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%\_%' ORDER BY id
+----
+id
+9
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%fé%' ORDER BY id
+----
+id
+10
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%ana%' AND id > 7 ORDER BY id
+----
+id
+8
+9
+10
+
+query
+SELECT id FROM fm_terms_idx
+WHERE body LIKE '%ana%' AND body >= 'bandana' AND body < 'e'
+ORDER BY id
+----
+id
+2
+10
+
+statement ok
+INSERT INTO fm_terms VALUES (12, 'anagram'), (13, 'cabana')
+
+statement ok
+VACUUM (REFRESH_TABLE) fm_terms
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%ana%' ORDER BY id
+----
+id
+1
+2
+3
+8
+9
+10
+12
+13
+
+statement ok
+DELETE FROM fm_terms WHERE id IN (1, 3, 12)
+
+statement ok
+VACUUM (REFRESH_TABLE) fm_terms
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%ana%' ORDER BY id
+----
+id
+2
+8
+9
+10
+13
+
+statement ok
+VACUUM (COMPACT_TABLE) fm_terms
+
+query
+SELECT id FROM fm_terms_idx WHERE body LIKE '%ana%' ORDER BY id
+----
+id
+2
+8
+9
+10
+13
+
+statement ok
+INSERT INTO fm_terms VALUES (14, repeat('a', 2048))
+
+statement ok
+VACUUM (REFRESH_TABLE) fm_terms
+
+query
+SELECT id FROM fm_terms_idx WHERE body @@ ts_like('%aaa%') ORDER BY id
+----
+id
+14

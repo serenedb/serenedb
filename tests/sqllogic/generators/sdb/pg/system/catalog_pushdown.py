@@ -130,6 +130,8 @@ OTHER_SHAPES = [
     ("information_schema.columns", "character_maximum_length IS NOT NULL"),
     ("information_schema.columns", "column_default IS NOT NULL"),
     ("pg_catalog.pg_proc", "starts_with(prosrc, 'abs')"),
+    ("pg_catalog.pg_depend", "deptype = 'i'"), ("pg_catalog.pg_depend", "deptype = 'a'"),
+    ("pg_catalog.pg_depend", "deptype = 'n'"),
 ]
 
 

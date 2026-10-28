@@ -37,6 +37,7 @@
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
+#include <duckdb/parser/tableref/joinref.hpp>
 
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
@@ -60,44 +61,60 @@ bool NamesSequence(const duckdb::ParsedExpression& expression,
   return named;
 }
 
-struct RuleReferences {
+struct RuleScope {
+  size_t parent;
   std::vector<const duckdb::BaseTableRef*> tables;
   std::vector<const duckdb::ColumnRefExpression*> columns;
   std::vector<const duckdb::StarExpression*> stars;
+  std::vector<const duckdb::Identifier*> joined;
 };
 
-void CollectRule(duckdb::QueryNode& node, RuleReferences& references);
+constexpr size_t kNoScope = std::numeric_limits<size_t>::max();
+
+void CollectRule(duckdb::QueryNode& node, std::vector<RuleScope>& scopes,
+                 size_t scope);
 
 void CollectExpression(duckdb::ParsedExpression& expression,
-                       RuleReferences& references) {
+                       std::vector<RuleScope>& scopes, size_t scope) {
   const auto expression_class = expression.GetExpressionClass();
   if (expression_class == duckdb::ExpressionClass::COLUMN_REF) {
-    references.columns.emplace_back(
+    scopes[scope].columns.emplace_back(
       &expression.Cast<duckdb::ColumnRefExpression>());
   } else if (expression_class == duckdb::ExpressionClass::STAR) {
-    references.stars.emplace_back(&expression.Cast<duckdb::StarExpression>());
+    scopes[scope].stars.emplace_back(
+      &expression.Cast<duckdb::StarExpression>());
   } else if (expression_class == duckdb::ExpressionClass::SUBQUERY) {
+    scopes.push_back({.parent = scope});
     CollectRule(
       *expression.Cast<duckdb::SubqueryExpression>().SubqueryMutable()->node,
-      references);
+      scopes, scopes.size() - 1);
   }
   duckdb::ParsedExpressionIterator::EnumerateChildren(
     expression, [&](duckdb::ParsedExpression& child) {
-      CollectExpression(child, references);
+      CollectExpression(child, scopes, scope);
     });
 }
 
-void CollectRule(duckdb::QueryNode& node, RuleReferences& references) {
+void CollectRule(duckdb::QueryNode& node, std::vector<RuleScope>& scopes,
+                 size_t scope) {
   duckdb::ParsedExpressionIterator::EnumerateQueryNodeChildren(
     node,
     [&](duckdb::unique_ptr<duckdb::ParsedExpression>& child) {
-      CollectExpression(*child, references);
+      CollectExpression(*child, scopes, scope);
     },
     [&](duckdb::TableRef& ref) {
       if (ref.type == duckdb::TableReferenceType::BASE_TABLE) {
-        references.tables.emplace_back(&ref.Cast<duckdb::BaseTableRef>());
+        scopes[scope].tables.emplace_back(&ref.Cast<duckdb::BaseTableRef>());
+      } else if (ref.type == duckdb::TableReferenceType::JOIN) {
+        for (const auto& column : ref.Cast<duckdb::JoinRef>().using_columns) {
+          scopes[scope].joined.emplace_back(&column);
+        }
       }
     });
+}
+
+const duckdb::Identifier& Qualifier(const duckdb::BaseTableRef& table) {
+  return table.alias.empty() ? table.GetQualifiedName().Name() : table.alias;
 }
 
 constexpr SystemIndex kIndexes[] = {
@@ -181,17 +198,21 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     if (!Allows<"deptype">('n')) {
       return;
     }
-    RuleReferences references;
-    CollectRule(*view.query->node, references);
+    std::vector<RuleScope> scopes{{.parent = kNoScope}};
+    CollectRule(*view.query->node, scopes, 0);
+    std::vector<duckdb::CatalogEntry*> relations;
     ScanSubjects(view, [&](duckdb::CatalogEntry& object,
                            const duckdb::DependencyDependentFlags&) {
       if (object.type == duckdb::CatalogType::TABLE_ENTRY ||
           object.type == duckdb::CatalogType::VIEW_ENTRY) {
-        RuleRelation(view, object, references);
+        relations.push_back(&object);
       } else {
         Reference(kPgRewriteTable, view.oid, object, 'n');
       }
     });
+    for (auto* relation : relations) {
+      RuleRelation(view, *relation, scopes, relations);
+    }
   }
 
   void Row(duckdb::MacroCatalogEntry& macro) {
@@ -293,40 +314,101 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     }
   }
 
+  bool HasColumn(duckdb::CatalogEntry& relation,
+                 const duckdb::Identifier& column) {
+    if (relation.type == duckdb::CatalogType::TABLE_ENTRY) {
+      return relation.Cast<duckdb::TableCatalogEntry>().ColumnExists(column);
+    }
+    const auto columns =
+      ViewColumns(Context(), relation.Cast<duckdb::ViewCatalogEntry>());
+    return columns && absl::c_linear_search(columns->names, column);
+  }
+
   void RuleRelation(const duckdb::ViewCatalogEntry& view,
                     duckdb::CatalogEntry& relation,
-                    const RuleReferences& references) {
-    const auto& schema = relation.ParentSchema(Transaction()).name;
-    const auto names_relation = [&](const duckdb::BaseTableRef* table) {
+                    std::span<const RuleScope> scopes,
+                    std::span<duckdb::CatalogEntry* const> relations) {
+    const auto names = [&](const duckdb::CatalogEntry& entry,
+                           const duckdb::BaseTableRef* table) {
       const auto& name = table->GetQualifiedName();
-      return name.Name() == relation.name &&
-             (name.Schema().empty() || name.Schema() == schema);
+      return name.Name() == entry.name &&
+             (name.Schema().empty() ||
+              name.Schema() == entry.ParentSchema(Transaction()).name);
     };
-    if (absl::c_none_of(references.tables, names_relation)) {
+    const auto names_relation = [&](const duckdb::BaseTableRef* table) {
+      return names(relation, table);
+    };
+    const auto named = [&](const RuleScope& scope) {
+      return absl::c_any_of(scope.tables, names_relation);
+    };
+    if (absl::c_none_of(scopes, named)) {
       return;
     }
-    const auto qualifies = [&](const duckdb::Identifier& qualifier) {
-      return absl::c_any_of(
-        references.tables, [&](const duckdb::BaseTableRef* table) {
-          return names_relation(table) &&
-                 (table->alias.empty() ? table->GetQualifiedName().Name()
-                                       : table->alias) == qualifier;
-        });
-    };
-    const bool star = absl::c_any_of(
-      references.stars, [&](const duckdb::StarExpression* reference) {
-        return reference->RelationName().empty() ||
-               qualifies(reference->RelationName());
+    const auto has = [&](const duckdb::BaseTableRef* table,
+                         const duckdb::Identifier& column) {
+      return absl::c_any_of(relations, [&](duckdb::CatalogEntry* entry) {
+        return names(*entry, table) && HasColumn(*entry, column);
       });
+    };
+    const auto qualified = [&](size_t scope,
+                               const duckdb::Identifier& qualifier) {
+      for (; scope != kNoScope; scope = scopes[scope].parent) {
+        const auto& tables = scopes[scope].tables;
+        const auto it =
+          absl::c_find_if(tables, [&](const duckdb::BaseTableRef* table) {
+            return Qualifier(*table) == qualifier;
+          });
+        if (it != tables.end()) {
+          return names_relation(*it);
+        }
+      }
+      return false;
+    };
+    const auto unqualified = [&](size_t scope,
+                                 const duckdb::Identifier& column) {
+      for (; scope != kNoScope; scope = scopes[scope].parent) {
+        const auto& tables = scopes[scope].tables;
+        const auto binds = [&](const duckdb::BaseTableRef* table) {
+          return has(table, column);
+        };
+        if (absl::c_any_of(tables, binds)) {
+          return absl::c_any_of(tables, [&](const duckdb::BaseTableRef* table) {
+            return names_relation(table) && binds(table);
+          });
+        }
+      }
+      return false;
+    };
+    bool star = false;
+    for (size_t scope = 0; scope < scopes.size() && !star; ++scope) {
+      star = absl::c_any_of(
+        scopes[scope].stars, [&](const duckdb::StarExpression* reference) {
+          return reference->RelationName().empty()
+                   ? named(scopes[scope])
+                   : qualified(scope, reference->RelationName());
+        });
+    }
     const auto referenced = [&](const duckdb::Identifier& column) {
-      return star ||
-             absl::c_any_of(references.columns,
-                            [&](const duckdb::ColumnRefExpression* ref) {
-                              const auto& parts = ref->ColumnNames();
-                              return parts.back() == column &&
-                                     (parts.size() < 2 ||
-                                      qualifies(parts[parts.size() - 2]));
-                            });
+      if (star) {
+        return true;
+      }
+      for (size_t scope = 0; scope < scopes.size(); ++scope) {
+        if (absl::c_any_of(
+              scopes[scope].joined, [&](const duckdb::Identifier* name) {
+                return *name == column && unqualified(scope, column);
+              })) {
+          return true;
+        }
+        for (const auto* reference : scopes[scope].columns) {
+          const auto& parts = reference->ColumnNames();
+          if (parts.back() == column &&
+              (parts.size() < 2 ? unqualified(scope, column)
+                                : qualified(scope, parts[parts.size() - 2]))) {
+            return true;
+          }
+        }
+      }
+      return false;
     };
     bool any = false;
     const auto depend = [&](int32_t attnum) {

@@ -30,6 +30,7 @@
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/count/make.hpp>
+#include <iresearch/search/detail/vector_filter_util.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
@@ -155,7 +156,15 @@ void AssertQuantizedPath(const irs::SubReader& segment) {
   const auto* ann = segment.Ann(kVec);
   ASSERT_NE(nullptr, ann);
   ASSERT_FALSE(ann->Empty());
-  ASSERT_TRUE(ann->HasQuantStats());
+  ASSERT_EQ(irs::AnnKind::Ivf, ann->Kind());
+  auto idx_in = segment.ReopenAnn();
+  ASSERT_NE(nullptr, idx_in);
+  const std::vector<float> query(kDim, 0.f);
+  ASSERT_NE(nullptr,
+            irs::ReadQuantizerCodebook(
+              static_cast<const irs::IvfIndex*>(ann)->Tree(), *idx_in,
+              irs::VectorQuantization::SQ8, kDim, irs::VectorMetric::L2Sqr,
+              query, irs::CodebookUse::Search));
   const auto* postings = segment.field(kVec);
   ASSERT_NE(nullptr, postings);
   ASSERT_NE(irs::IndexFeatures::None,

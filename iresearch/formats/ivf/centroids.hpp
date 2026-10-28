@@ -166,11 +166,7 @@ class CentroidsTree {
   size_t Levels() const noexcept { return _root.level + 1; }
   size_t RootSize() const noexcept { return _root.size; }
 
-  void SetQuantStatsLocation(uint64_t offset, uint64_t byte_size) noexcept {
-    _stats_offset = offset;
-    _stats_byte_size = byte_size;
-  }
-  bool HasQuantStats() const noexcept { return _stats_byte_size != 0; }
+  void SetQuantStatsOffset(uint64_t offset) noexcept { _stats_offset = offset; }
   uint64_t QuantStatsOffset() const noexcept { return _stats_offset; }
 
  private:
@@ -178,7 +174,6 @@ class CentroidsTree {
   CentroidsNode _root;
   size_t _next_level_offset;
   uint64_t _stats_offset = 0;
-  uint64_t _stats_byte_size = 0;
 };
 
 struct CentroidsSpan {

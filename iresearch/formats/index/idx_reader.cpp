@@ -113,7 +113,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
             auto body = _impl->in->Dup();
             body->Seek(tree_offset);
             auto entry = CentroidsTree::Deserialize(*body, root_byte_size);
-            entry.SetQuantStatsLocation(stats_offset, stats_byte_size);
+            entry.SetQuantStatsOffset(stats_offset);
 
             const size_t idx = _impl->ann_entries.size();
             _impl->ann_entries.emplace_back(

@@ -64,10 +64,6 @@ class HnswIndex final : public AnnIndex {
 
   bool Empty() const noexcept final { return _meta.header.rows == 0; }
 
-  bool HasQuantStats() const noexcept final {
-    return _meta.header.quant != VectorQuantization::None;
-  }
-
   bool SupportsFilter() const noexcept final { return true; }
 
   bool SupportsRange() const noexcept final { return true; }

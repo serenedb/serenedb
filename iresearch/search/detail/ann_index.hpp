@@ -72,8 +72,6 @@ struct AnnIndex {
 
   virtual bool Empty() const noexcept = 0;
 
-  virtual bool HasQuantStats() const noexcept = 0;
-
   virtual bool SupportsFilter() const noexcept = 0;
 
   virtual bool SupportsRange() const noexcept = 0;

@@ -223,6 +223,26 @@ class PrunedLeafBase {
     return score;
   }
 
+  doc_id_t SkipNonCompetitive(doc_id_t target, doc_id_t limit,
+                              score_t threshold) {
+    if (!_cursor.Armed()) {
+      return target;
+    }
+    const auto& index = _cursor.Index();
+    const auto n = index.Size();
+    const auto b = index.Find(_cursor.Block(), target);
+    const auto first = FirstCompetitive(
+      index, b, threshold, [&](uint32_t r) { return RunScore(r); },
+      [&](uint32_t k) { return BlockScore(k); });
+    if (first == b) {
+      return target;
+    }
+    const auto next =
+      first == n ? limit : std::min(limit, index.Last(first - 1) + 1);
+    AdvanceBlock(next);
+    return next;
+  }
+
  protected:
   static constexpr uint32_t kNoBlock = std::numeric_limits<uint32_t>::max();
   static constexpr uint32_t kCachedBlocks = BlockIndex::kRun;

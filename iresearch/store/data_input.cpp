@@ -110,7 +110,7 @@ PinnedBytes InputFile::Pin(uint64_t offset, uint64_t size) const {
     ThrowPastEnd(this, offset, _length);
   }
   if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
-    return {.bytes = span->bytes.substr(offset, size)};
+    return {.bytes = {span->bytes.data() + offset, size}};
   }
   if (size == 0) {
     return {};
@@ -126,12 +126,15 @@ bytes_view InputFile::SpanWindow(uint64_t offset,
   if (offset >= bytes.size()) {
     return {};
   }
-  return bytes.substr(offset, size);
+  return {bytes.data() + offset,
+          std::min<uint64_t>(size, bytes.size() - offset)};
 }
 
 void InputFile::Prefetch(uint64_t offset, uint64_t size) const noexcept {
   if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
-    span->mapping->Prefetch(offset, size);
+    if (span->paged) {
+      span->mapping->Prefetch(offset, size);
+    }
     return;
   }
   const auto* blocks = std::get_if<CacheBlocks>(&_kind);
@@ -206,7 +209,7 @@ bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
 }
 
 void InputFile::Advise(duckdb::MappedFileAccess access) const noexcept {
-  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
+  if (const auto* span = std::get_if<MappedSpan>(&_kind); span && span->paged) {
     span->mapping->Advise(access);
   }
 }

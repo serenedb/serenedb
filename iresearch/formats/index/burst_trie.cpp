@@ -1208,9 +1208,7 @@ BlockIterator::BlockIterator(byte_weight&& header, size_t prefix) noexcept
 }
 
 void BlockIterator::Load(IndexInput& in) {
-  if (!_dirty) {
-    return;
-  }
+  SDB_ASSERT(_dirty);
   if (in.Whole()) {
     BytesViewInput view{in};
     LoadFrom(view);
@@ -1662,14 +1660,15 @@ class TermIteratorBase {
   IndexInput& TermsInput() const { return _terms_in; }
 
   void LoadBlock(BlockIterator& block) {
-    auto& in = TermsInput();
-    if (block.Dirty()) {
-      if (!_hinted) {
-        _hint.Arm(block.LoadStart(), in.Length());
-        _hinted = true;
-      }
-      _hint.Advance(in, block.LoadStart());
+    if (!block.Dirty()) {
+      return;
     }
+    auto& in = TermsInput();
+    if (!_hinted) {
+      _hint.Arm(block.LoadStart(), in.Length());
+      _hinted = true;
+    }
+    _hint.Advance(in, block.LoadStart());
     block.Load(in);
   }
 

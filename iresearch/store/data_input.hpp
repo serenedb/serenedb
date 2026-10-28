@@ -23,9 +23,11 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
+#include <iterator>
 #include <memory>
 #include <span>
 #include <string>
@@ -132,10 +134,10 @@ class BasicInput {
   explicit BasicInput(const BasicInput<Other>& whole) noexcept
     : _pos{whole.Current()}, _file{whole.File()} {
     static_assert(Other && !Blocks);
-    const auto span = whole.Span();
-    SDB_ASSERT(!span.empty() || whole.Length() == 0);
-    _begin = span.data();
-    _end = span.data() + span.size();
+    SDB_ASSERT(whole.Whole());
+    const auto window = whole.Window();
+    _begin = window.data();
+    _end = window.data() + window.size();
   }
 
   BasicInput(const BasicInput&) noexcept
@@ -242,10 +244,9 @@ class BasicInput {
 
   IRS_FORCE_INLINE void Seek(uint64_t position) {
     if constexpr (Blocks) {
-      if (position >= _block.start &&
-          position - _block.start <= static_cast<uint64_t>(_end - _begin))
-        [[likely]] {
-        _pos = _begin + (position - _block.start);
+      if (const auto offset = position - _block.start;
+          offset <= static_cast<uint64_t>(_end - _begin)) [[likely]] {
+        _pos = _begin + offset;
         return;
       }
       SeekOutside(position);
@@ -256,11 +257,18 @@ class BasicInput {
   }
   IRS_FORCE_INLINE void Skip(uint64_t count) {
     if constexpr (Blocks) {
-      Seek(Position() + count);
+      if (count <= Remain()) [[likely]] {
+        _pos += count;
+        return;
+      }
+      SeekOutside(Position() + count);
     } else {
-      SDB_ASSERT(count <= Remain());
-      _pos += count;
+      Consume(count);
     }
+  }
+  IRS_FORCE_INLINE void Consume(uint64_t count) noexcept {
+    SDB_ASSERT(count <= Remain());
+    _pos += count;
   }
 
   const byte_type* Current() const noexcept { return _pos; }
@@ -274,25 +282,38 @@ class BasicInput {
   }
 
   IRS_FORCE_INLINE Pinned Pin(uint64_t count) {
-    const auto offset = Position();
-    auto pinned = Pin(offset, count);
-    Seek(offset + count);
-    return pinned;
+    if constexpr (Blocks) {
+      if (_block.pinned || count > Remain()) [[unlikely]] {
+        return PinSlow(count);
+      }
+    } else if (count > Remain()) [[unlikely]] {
+      ThrowPastEnd(_file, Position(), Length());
+    }
+    const bytes_view bytes{_pos, count};
+    _pos += count;
+    return {.bytes = bytes};
   }
   IRS_FORCE_INLINE Pinned Pin(uint64_t offset, uint64_t count) const {
+    const auto length = static_cast<uint64_t>(_end - _begin);
     if constexpr (Blocks) {
-      if (!Whole()) {
-        return _file->Pin(offset, count);
+      if (_block.pinned || offset > length || count > length - offset)
+        [[unlikely]] {
+        return PinSlow(offset, count);
       }
+    } else if (offset > length || count > length - offset) [[unlikely]] {
+      ThrowPastEnd(_file, offset, length);
     }
-    return {.bytes = SpanAt(offset, count)};
+    return {.bytes = {_begin + offset, count}};
   }
 
   bytes_view Span() const noexcept {
     if (Whole()) {
-      return {_begin, static_cast<size_t>(_end - _begin)};
+      return Window();
     }
     return {};
+  }
+  bytes_view Window() const noexcept {
+    return {_begin, static_cast<size_t>(_end - _begin)};
   }
   bool Whole() const noexcept {
     if constexpr (Blocks) {
@@ -304,16 +325,21 @@ class BasicInput {
   const InputFile* File() const noexcept { return _file; }
 
  private:
+  struct Bytes {
+    using iterator_category = std::input_iterator_tag;
+    using value_type = byte_type;
+    using difference_type = std::ptrdiff_t;
+    using pointer = const byte_type*;
+    using reference = byte_type;
+
+    byte_type operator*() const { return in.ReadByte(); }
+    Bytes& operator++() noexcept { return *this; }
+
+    BasicInput& in;
+  };
+
   IRS_FORCE_INLINE uint64_t Remain() const noexcept {
     return static_cast<uint64_t>(_end - _pos);
-  }
-
-  IRS_FORCE_INLINE bytes_view SpanAt(uint64_t offset, uint64_t count) const {
-    const auto length = static_cast<uint64_t>(_end - _begin);
-    if (offset > length || count > length - offset) [[unlikely]] {
-      ThrowPastEnd(_file, offset, Length());
-    }
-    return {_begin + offset, count};
   }
 
   template<typename T>
@@ -338,21 +364,14 @@ class BasicInput {
 
   template<typename T>
   IRS_NO_INLINE T ReadFixedSlow() {
-    byte_type buf[sizeof(T)];
-    ReadData(buf, sizeof(buf));
-    const byte_type* p = buf;
-    return irs::read<T>(p);
+    Bytes bytes{*this};
+    return irs::read<T>(bytes);
   }
 
   template<typename T>
   IRS_NO_INLINE T ReadVarintSlow() {
-    byte_type buf[bytes_io<T>::kMaxVSize];
-    size_t size = 0;
-    do {
-      buf[size] = ReadByte();
-    } while ((buf[size++] & 0x80) != 0 && size != sizeof(buf));
-    const byte_type* p = buf;
-    return irs::vread<T>(p);
+    Bytes bytes{*this};
+    return irs::vread<T>(bytes);
   }
 
   IRS_NO_INLINE byte_type ReadByteSlow() {
@@ -362,14 +381,34 @@ class BasicInput {
     return *_pos++;
   }
 
+  IRS_NO_INLINE Pinned PinSlow(uint64_t count) {
+    if (Whole()) {
+      ThrowPastEnd(_file, Position(), Length());
+    }
+    auto pinned = _file->Pin(Position(), count);
+    Skip(count);
+    return pinned;
+  }
+
+  IRS_NO_INLINE Pinned PinSlow(uint64_t offset, uint64_t count) const {
+    if (Whole()) {
+      ThrowPastEnd(_file, offset, Length());
+    }
+    return _file->Pin(offset, count);
+  }
+
   IRS_NO_INLINE void ReadDataSlow(byte_type* b, uint64_t count) {
     if constexpr (Blocks) {
-      if (_file != nullptr && !Whole()) {
-        if (const auto remain = Remain(); remain < count) {
-          _file->Prefetch(Position() + remain, count - remain);
+      if (!Whole()) {
+        const auto at = Position();
+        const auto from = at + Remain();
+        const auto to = at + count;
+        if (from / duckdb::BlockCache::BLOCK_SIZE !=
+            (to - 1) / duckdb::BlockCache::BLOCK_SIZE) {
+          _file->Prefetch(from, to - from);
         }
-        while (count != 0) {
-          if (Remain() == 0 && !Refill(false)) {
+        do {
+          if (_pos == _end && !Refill(false)) {
             break;
           }
           const auto chunk = std::min(count, Remain());
@@ -377,7 +416,7 @@ class BasicInput {
           _pos += chunk;
           b += chunk;
           count -= chunk;
-        }
+        } while (count != 0);
         if (count == 0) {
           return;
         }
@@ -399,22 +438,18 @@ class BasicInput {
   }
 
   bool Refill(bool ahead) {
-    if constexpr (Blocks) {
-      if (_file == nullptr || Whole()) {
-        return false;
-      }
-      const auto position = Position();
-      if (position >= _file->Length()) {
-        return false;
-      }
-      const auto window = _file->Refill(position, _block, ahead);
-      _begin = window.data();
-      _end = window.data() + window.size();
-      _pos = _begin + (position - _block.start);
-      return _pos != _end;
-    } else {
+    if (Whole()) {
       return false;
     }
+    const auto position = Position();
+    if (position >= _file->Length()) {
+      return false;
+    }
+    const auto window = _file->Refill(position, _block, ahead);
+    _begin = window.data();
+    _end = window.data() + window.size();
+    _pos = _begin + (position - _block.start);
+    return _pos != _end;
   }
 
   const byte_type* _begin = nullptr;

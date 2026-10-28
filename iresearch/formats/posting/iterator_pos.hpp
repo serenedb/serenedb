@@ -137,20 +137,20 @@ class PositionImpl final : public PosAttr {
 
   // prepares iterator to work
   void Prepare(const DocState& state) {
-    const bool whole =
-      state.pos_in->Whole() &&
-      (!IteratorTraits::Offset() || (state.pay_in && state.pay_in->Whole()));
     if (!_pos.Opened()) {
-      _pos.Open(*state.pos_in, whole);
+      if constexpr (IteratorTraits::Offset()) {
+        const bool whole = state.pos_in->Whole() && state.pay_in->Whole();
+        _pos.Open(*state.pos_in, whole);
+        _pay.Open(*state.pay_in, whole);
+      } else {
+        _pos.Open(*state.pos_in, state.pos_in->Whole());
+      }
     }
     _pos.hint.Arm(state.term_state->pos_start,
                   state.term_state->pos_start + PosExtent(*state.term_state));
     _enc_buf = state.enc_buf;
 
     if constexpr (IteratorTraits::Offset()) {
-      if (!_pay.Opened()) {
-        _pay.Open(*state.pay_in, whole);
-      }
       _pay.hint.Arm(state.term_state->pay_start,
                     state.term_state->pay_start + PayExtent(*state.term_state));
     }
@@ -192,42 +192,25 @@ class PositionImpl final : public PosAttr {
       return viewed ? static_cast<bool>(view) : static_cast<bool>(in);
     }
 
-    void Seek(uint64_t at) {
-      if (viewed) {
-        view.Seek(at);
-      } else {
-        in.Seek(at);
-      }
-    }
-
+    template<auto Input>
     void Load() {
-      if (viewed) {
-        LoadFrom(view);
-      } else {
-        LoadFrom(in);
-      }
-    }
-
-    void Hop() {
-      group = PosGroup::Next(group, header);
-      Load();
-    }
-
-    void Step() {
-      group = PosGroup::Next(group, header);
-      if (viewed) {
-        SDB_ASSERT(view.Position() == group);
-        ReadHeader(view);
-      } else {
-        SDB_ASSERT(in.Position() == group);
-        ReadHeader(in);
-      }
-    }
-
-    template<typename Input>
-    void LoadFrom(Input& input) {
+      auto& input = this->*Input;
       hint.Advance(input, group);
       input.Seek(group);
+      ReadHeader(input);
+    }
+
+    template<auto Input>
+    void Hop() {
+      group = PosGroup::Next(group, header);
+      Load<Input>();
+    }
+
+    template<auto Input>
+    void Step() {
+      group = PosGroup::Next(group, header);
+      auto& input = this->*Input;
+      SDB_ASSERT(input.Position() == group);
       ReadHeader(input);
     }
 
@@ -242,16 +225,10 @@ class PositionImpl final : public PosAttr {
       }
     }
 
+    template<auto Input>
     void SeekBlock(uint32_t block) {
-      Seek(group + PosGroup::kHeaderBytes + PosGroup::Start(header, block));
-    }
-
-    void Account() {
-      if (viewed) {
-        hint.Advance(view, view.Position());
-      } else {
-        hint.Advance(in, in.Position());
-      }
+      (this->*Input)
+        .Seek(group + PosGroup::kHeaderBytes + PosGroup::Start(header, block));
     }
 
     IndexInput in;
@@ -293,22 +270,31 @@ class PositionImpl final : public PosAttr {
   }
 
   void Enter(uint64_t block) {
+    if (_pos.viewed) [[likely]] {
+      EnterFrom<&Stream::view>(block);
+    } else {
+      EnterFrom<&Stream::in>(block);
+    }
+  }
+
+  template<auto Input>
+  void EnterFrom(uint64_t block) {
     if (_pos.header == nullptr) {
-      _pos.Load();
+      _pos.template Load<Input>();
       if constexpr (IteratorTraits::Offset()) {
-        _pay.Load();
+        _pay.template Load<Input>();
       }
     }
     for (; block >= PosGroup::kBlocks; block -= PosGroup::kBlocks) {
-      _pos.Hop();
+      _pos.template Hop<Input>();
       if constexpr (IteratorTraits::Offset()) {
-        _pay.Hop();
+        _pay.template Hop<Input>();
       }
     }
     _next = static_cast<uint32_t>(block);
-    _pos.SeekBlock(_next);
+    _pos.template SeekBlock<Input>(_next);
     if constexpr (IteratorTraits::Offset()) {
-      _pay.SeekBlock(_next);
+      _pay.template SeekBlock<Input>(_next);
     }
   }
 
@@ -345,49 +331,38 @@ class PositionImpl final : public PosAttr {
   }
 
   void ReadBlock() {
+    if (_pos.viewed) [[likely]] {
+      ReadBlockFrom<&Stream::view>();
+    } else {
+      ReadBlockFrom<&Stream::in>();
+    }
+  }
+
+  template<auto Input>
+  IRS_FORCE_INLINE void ReadBlockFrom() {
     if (_pos.header == nullptr) [[unlikely]] {
-      Enter(_next);
+      EnterFrom<Input>(_next);
     } else if (_next == PosGroup::kBlocks) [[unlikely]] {
-      _pos.Step();
+      _pos.template Step<Input>();
       if constexpr (IteratorTraits::Offset()) {
-        _pay.Step();
+        _pay.template Step<Input>();
       }
       _next = 0;
     }
-    _pos.Account();
-    if constexpr (IteratorTraits::Offset()) {
-      _pay.Account();
-    }
-    if (_pos.viewed) [[likely]] {
-      Decode(_pos.view, PayView());
-    } else {
-      Decode(_pos.in, PayIn());
-    }
+    Decode<Input>();
     ++_next;
   }
 
-  template<typename Input>
-  IRS_FORCE_INLINE void Decode(Input& pos, Input* pay) {
+  template<auto Input>
+  IRS_FORCE_INLINE void Decode() {
+    auto& pos = _pos.*Input;
+    _pos.hint.Advance(pos, pos.Position());
     block_io::ReadBlock(pos, _enc_buf, _pos_deltas);
     if constexpr (IteratorTraits::Offset()) {
-      block_io::ReadBlock(*pay, _enc_buf, _offs_start_deltas);
-      block_io::ReadBlock(*pay, _enc_buf, _offs_lengths);
-    }
-  }
-
-  IRS_FORCE_INLINE BytesViewInput* PayView() noexcept {
-    if constexpr (IteratorTraits::Offset()) {
-      return _pay.viewed ? &_pay.view : nullptr;
-    } else {
-      return nullptr;
-    }
-  }
-
-  IRS_FORCE_INLINE IndexInput* PayIn() noexcept {
-    if constexpr (IteratorTraits::Offset()) {
-      return &_pay.in;
-    } else {
-      return nullptr;
+      auto& pay = _pay.*Input;
+      _pay.hint.Advance(pay, pay.Position());
+      block_io::ReadBlock(pay, _enc_buf, _offs_start_deltas);
+      block_io::ReadBlock(pay, _enc_buf, _offs_lengths);
     }
   }
 

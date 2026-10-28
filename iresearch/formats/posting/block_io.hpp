@@ -60,22 +60,19 @@ IRS_FORCE_INLINE inline void PrefetchStream(const byte_type* at) noexcept {
 
 template<typename InputType>
 IRS_FORCE_INLINE InputType* View(InputType& in) noexcept {
-  if constexpr (InputType::kSpan) {
-    return &in;
-  } else {
-    return in.Whole() ? &in : nullptr;
-  }
+  return in.Whole() ? &in : nullptr;
 }
 
+template<typename InputType>
+struct Encoded {
+  const byte_type* begin;
+  InputType* view;
+};
+
 template<typename InputType, typename Prefix, typename Size>
-const byte_type* Fetch(InputType& in, uint32_t* buf, Prefix&& prefix,
-                       Size&& size) {
+const byte_type* FetchStraddling(InputType& in, uint32_t* buf, Prefix&& prefix,
+                                 Size&& size) {
   SDB_ASSERT(buf != nullptr);
-  if (const auto* window =
-        in.Peek(block_codec::kMaxBlockBytes + block_codec::kInSlack)) {
-    in.Skip(size(window));
-    return window;
-  }
   auto* const data = reinterpret_cast<byte_type*>(buf);
   data[0] = in.ReadByte();
   data[1] = 0;
@@ -94,17 +91,24 @@ const byte_type* Fetch(InputType& in, uint32_t* buf, Prefix&& prefix,
 }
 
 template<typename InputType, typename Prefix, typename Size>
-IRS_FORCE_INLINE const byte_type* Begin(InputType& in, uint32_t* buf,
-                                        Prefix&& prefix, Size&& size) {
+IRS_FORCE_INLINE Encoded<InputType> Begin(InputType& in, uint32_t* buf,
+                                          Prefix&& prefix, Size&& size) {
   if (auto* view = View(in)) {
-    return view->Current();
+    return {view->Current(), view};
   }
-  return Fetch(in, buf, std::forward<Prefix>(prefix), std::forward<Size>(size));
+  if (const auto* window =
+        in.Peek(block_codec::kMaxBlockBytes + block_codec::kInSlack)) {
+    in.Consume(size(window));
+    return {window, nullptr};
+  }
+  return {FetchStraddling(in, buf, std::forward<Prefix>(prefix),
+                          std::forward<Size>(size)),
+          nullptr};
 }
 
 template<typename InputType>
-IRS_FORCE_INLINE const byte_type* BeginDelta(InputType& in, uint32_t* buf,
-                                             bool full, uint32_t len) {
+IRS_FORCE_INLINE Encoded<InputType> BeginDelta(InputType& in, uint32_t* buf,
+                                               bool full, uint32_t len) {
   return Begin(
     in, buf, [](uint32_t token) { return Codec::DeltaPrefix(token); },
     [full, len](const byte_type* p) {
@@ -113,11 +117,25 @@ IRS_FORCE_INLINE const byte_type* BeginDelta(InputType& in, uint32_t* buf,
 }
 
 template<typename InputType>
-IRS_FORCE_INLINE void End(InputType& in, const byte_type* begin,
+IRS_FORCE_INLINE void End(Encoded<InputType> encoded,
                           const byte_type* end) noexcept {
-  if (auto* view = View(in)) {
+  if (encoded.view) {
     PrefetchStream(end);
-    view->Skip(static_cast<uint64_t>(end - begin));
+    encoded.view->Consume(static_cast<uint64_t>(end - encoded.begin));
+  }
+}
+
+template<typename InputType, typename Prefix, typename Size>
+IRS_FORCE_INLINE void Pass(InputType& in, Prefix&& prefix, Size&& size) {
+  if (auto* view = View(in)) {
+    view->Consume(size(view->Current()));
+  } else if (const auto* window =
+               in.Peek(block_codec::kMaxBlockBytes + block_codec::kInSlack)) {
+    in.Consume(size(window));
+  } else {
+    uint32_t buf[kEncWords];
+    FetchStraddling(in, buf, std::forward<Prefix>(prefix),
+                    std::forward<Size>(size));
   }
 }
 
@@ -358,10 +376,10 @@ IRS_FORCE_INLINE FillLeaf ReadTailForFill(uint32_t len, InputType& in,
                                           uint32_t* buf, uint64_t* holes,
                                           uint32_t* out, uint32_t prev) {
   SDB_ASSERT(1 <= len && len <= kBlock);
-  const auto* const begin = BeginDelta(in, buf, len == kBlock, len);
+  const auto encoded = BeginDelta(in, buf, len == kBlock, len);
   const byte_type* end;
-  const auto leaf = FillAt(len, begin, holes, out, prev, end);
-  End(in, begin, end);
+  const auto leaf = FillAt(len, encoded.begin, holes, out, prev, end);
+  End(encoded, end);
   return leaf;
 }
 
@@ -375,7 +393,7 @@ IRS_FORCE_INLINE inline FillLeaf FillView(BytesViewInput& view,
     end += Codec::ValuesBlockSize(end);
   }
   PrefetchStream(end);
-  view.Skip(static_cast<uint64_t>(end - at));
+  view.Consume(static_cast<uint64_t>(end - at));
   at = end;
   return leaf;
 }
@@ -383,10 +401,10 @@ IRS_FORCE_INLINE inline FillLeaf FillView(BytesViewInput& view,
 template<typename InputType>
 IRS_FORCE_INLINE void ReadBlockDelta(InputType& in, uint32_t* buf,
                                      uint32_t* out, uint32_t prev) {
-  const auto* const begin = Begin(
+  const auto encoded = Begin(
     in, buf, [](uint32_t token) { return Codec::DeltaPrefix(token); },
     [](const byte_type* p) { return Codec::DeltaBlockSize(p); });
-  End(in, begin, Codec::DecodeDeltaBlock(begin, prev, out));
+  End(encoded, Codec::DecodeDeltaBlock(encoded.begin, prev, out));
 }
 
 template<typename InputType>
@@ -398,8 +416,8 @@ IRS_FORCE_INLINE void ReadTailDeltaAt(uint32_t len, InputType& in,
     ReadBlockDelta(in, buf, out, prev);
     return;
   }
-  const auto* const begin = BeginDelta(in, buf, false, len);
-  End(in, begin, Codec::DecodeDeltaTail(begin, len, prev, out));
+  const auto encoded = BeginDelta(in, buf, false, len);
+  End(encoded, Codec::DecodeDeltaTail(encoded.begin, len, prev, out));
 }
 
 template<typename InputType>
@@ -410,10 +428,10 @@ IRS_FORCE_INLINE void ReadTailDelta(uint32_t len, InputType& in, uint32_t* buf,
 
 template<uint32_t Add = 0, typename InputType>
 IRS_FORCE_INLINE void ReadBlock(InputType& in, uint32_t* buf, uint32_t* out) {
-  const auto* const begin = Begin(
+  const auto encoded = Begin(
     in, buf, [](uint32_t token) { return Codec::ValuesPrefix(token); },
     [](const byte_type* p) { return Codec::ValuesBlockSize(p); });
-  End(in, begin, Codec::DecodeValuesBlock<Add>(begin, out));
+  End(encoded, Codec::DecodeValuesBlock<Add>(encoded.begin, out));
 }
 
 template<uint32_t Add = 0, typename InputType>
@@ -424,23 +442,18 @@ IRS_FORCE_INLINE void ReadTail(uint32_t len, InputType& in, uint32_t* buf,
     ReadBlock<Add>(in, buf, out);
     return;
   }
-  const auto* const begin = Begin(
+  const auto encoded = Begin(
     in, buf, [](uint32_t token) { return Codec::ValuesPrefix(token); },
     [len](const byte_type* p) { return Codec::ValuesTailSize(p, len); });
-  End(in, begin,
-      Codec::DecodeValuesTail<Add>(begin, len, out + (kBlock - len)));
+  End(encoded,
+      Codec::DecodeValuesTail<Add>(encoded.begin, len, out + (kBlock - len)));
 }
 
 template<typename InputType>
 IRS_FORCE_INLINE void SkipBlock(InputType& in) {
-  if (auto* view = View(in)) {
-    view->Skip(Codec::ValuesBlockSize(view->Current()));
-  } else {
-    uint32_t buf[kEncWords];
-    Fetch(
-      in, buf, [](uint32_t token) { return Codec::ValuesPrefix(token); },
-      [](const byte_type* p) { return Codec::ValuesBlockSize(p); });
-  }
+  Pass(
+    in, [](uint32_t token) { return Codec::ValuesPrefix(token); },
+    [](const byte_type* p) { return Codec::ValuesBlockSize(p); });
 }
 
 template<typename InputType>
@@ -448,14 +461,11 @@ IRS_FORCE_INLINE void SkipTail(uint32_t len, InputType& in) {
   SDB_ASSERT(1 <= len && len <= kBlock);
   if (len == kBlock) {
     SkipBlock(in);
-  } else if (auto* view = View(in)) {
-    view->Skip(Codec::ValuesTailSize(view->Current(), len));
-  } else {
-    uint32_t buf[kEncWords];
-    Fetch(
-      in, buf, [](uint32_t token) { return Codec::ValuesPrefix(token); },
-      [len](const byte_type* p) { return Codec::ValuesTailSize(p, len); });
+    return;
   }
+  Pass(
+    in, [](uint32_t token) { return Codec::ValuesPrefix(token); },
+    [len](const byte_type* p) { return Codec::ValuesTailSize(p, len); });
 }
 
 }  // namespace irs::block_io

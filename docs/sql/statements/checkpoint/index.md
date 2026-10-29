@@ -10,7 +10,7 @@ import RailroadSource from './diagram.js';
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
-The `CHECKPOINT` statement synchronizes data in the write-ahead log (WAL) to the database data file.
+The `CHECKPOINT` statement synchronizes data in the write-ahead log (WAL) to the database data file. It requires a superuser.
 
 ## Examples
 

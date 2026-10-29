@@ -41,6 +41,7 @@
 #include <utility>
 #include <vector>
 
+#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/job.h"
 #include "scheduler/job_scheduler.h"
@@ -115,8 +116,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
   };
   for (auto& schema :
        duckdb::Catalog::GetAllSchemas(context, false, holds_jobs)) {
-    schema.get().Scan(
-      context, duckdb::CatalogType::JOB_ENTRY,
+    duckdb::Catalog::ScanListedEntries(
+      context, schema.get(), duckdb::CatalogType::JOB_ENTRY,
       [&](duckdb::CatalogEntry& entry) {
         result->entries.emplace_back(entry.Cast<catalog::JobCatalogEntry>());
       });
@@ -208,10 +209,23 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
     databases.insert(database->oid);
   }
+  const auto closure = auth::SessionClosure(context);
   for (auto& run : scheduler->GetHistory()) {
-    if (databases.contains(run.database_oid)) {
-      result->runs.emplace_back(std::move(run));
+    if (!databases.contains(run.database_oid)) {
+      continue;
     }
+    if (closure && !closure->is_superuser) {
+      auto job = duckdb::Catalog::GetEntry(
+        context,
+        duckdb::EntryLookupInfo{
+          duckdb::CatalogType::JOB_ENTRY,
+          duckdb::QualifiedName{run.catalog, run.schema, run.name}},
+        duckdb::OnEntryNotFound::RETURN_NULL);
+      if (!job || !context.CanSee(*job)) {
+        continue;
+      }
+    }
+    result->runs.emplace_back(std::move(run));
   }
   return result;
 }

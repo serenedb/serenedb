@@ -1,0 +1,12 @@
+statement error
+CREATE TEXT SEARCH DICTIONARY ior_ngrams AS generate_ngrams(min_gram := 4294967297, max_gram := 4294967298);
+----
+db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "min_gram": "4294967297"
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ior_ngrams AS generate_ngrams(min_gram := 1, max_gram := 2);
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ior_ngrams;

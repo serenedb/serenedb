@@ -450,8 +450,14 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
     asio_ns::error_code peer_ec;
-    const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
-    _peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
+    if (this->_proxied) {
+      const auto source =
+        asio_ns::ip::make_address(this->_proxy_source, peer_ec);
+      _peer_is_loopback = !peer_ec && source.is_loopback();
+    } else {
+      const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
+      _peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
+    }
     cpu = SessionMain();
     _handed_off = true;
     _task->Start();

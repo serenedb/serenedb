@@ -1,0 +1,153 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS efa_vedernikoff;
+
+
+statement ok
+CREATE ROLE efa_vedernikoff LOGIN PASSWORD 'efa_pw';
+
+
+statement ok
+COPY (SELECT 42 AS v) TO '${__TEST_DIR__}/efa_numbers.csv' (HEADER);
+
+
+query
+SELECT v FROM read_csv('${__TEST_DIR__}/efa_numbers.csv');
+----
+v
+42
+
+
+statement ok
+CREATE TABLE efa_sink (v integer);
+
+
+statement ok
+GRANT INSERT, SELECT ON efa_sink TO efa_vedernikoff;
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+SELECT v FROM read_csv('${__TEST_DIR__}/efa_numbers.csv');
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efa_numbers.csv"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+COPY efa_sink FROM '${__TEST_DIR__}/efa_numbers.csv' (HEADER);
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efa_numbers.csv"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+SELECT count(*) FROM glob('/etc/*');
+----
+db error: ERROR: permission denied to access "/etc/*"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+SELECT content FROM read_text('/etc/hostname');
+----
+db error: ERROR: permission denied to access "/etc/hostname"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+SELECT * FROM read_csv('http://127.0.0.1:1/efa.csv');
+----
+db error: ERROR: permission denied to access "http://127.0.0.1:1/efa.csv"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+SELECT count(*) AS listed FROM sql_auto_complete('SELECT * FROM ''/etc/host') WHERE suggestion LIKE 'host%';
+----
+db error: ERROR: permission denied to access "/etc"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+
+query
+SELECT count(*) > 0 AS listed FROM sql_auto_complete('SELECT * FROM ''/etc/host') WHERE suggestion LIKE 'host%';
+----
+listed
+t
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+query
+SELECT count(*) AS loaded FROM efa_sink;
+----
+loaded
+0
+
+
+statement ok
+COPY efa_sink FROM '${__TEST_DIR__}/efa_numbers.csv' (HEADER);
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+query
+SELECT v FROM efa_sink;
+----
+v
+42
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO efa_vedernikoff;
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+CREATE TEXT SEARCH DICTIONARY efa_stop AS split_text() | remove_stopwords(stopwords_path := '/etc/hostname');
+----
+db error: ERROR: permission denied to use option "stopwords_path"
+DETAIL: Only roles with the SUPERUSER attribute may reference server files.
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+CREATE TEXT SEARCH DICTIONARY efa_stop AS split_text() | remove_stopwords(stopwords_path := '/nonexistent/efa_words');
+----
+db error: ERROR: permission denied to use option "stopwords_path"
+DETAIL: Only roles with the SUPERUSER attribute may reference server files.
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+CREATE TEXT SEARCH DICTIONARY efa_model AS classify_text(model_location := '/etc/hostname');
+----
+db error: ERROR: permission denied to use option "model_location"
+DETAIL: Only roles with the SUPERUSER attribute may reference server files.
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement ok
+CREATE TEXT SEARCH DICTIONARY efa_inline AS split_text() | remove_stopwords(['the']);
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement ok
+DROP TEXT SEARCH DICTIONARY efa_inline;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM efa_vedernikoff;
+
+
+statement ok
+DROP TABLE efa_sink;
+
+
+statement ok
+DROP ROLE efa_vedernikoff;

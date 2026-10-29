@@ -1,0 +1,33 @@
+query
+SELECT ('[1, 2, 3]'::json -> (-9223372036854775808)::bigint) IS NULL AS missing;
+----
+missing
+t
+
+
+query
+SELECT ('[1, 2, 3]'::json ->> (-9223372036854775808)::bigint) IS NULL AS missing;
+----
+missing
+t
+
+
+query
+SELECT '[1, 2, 3]'::json -> (-3)::bigint AS first;
+----
+first
+1
+
+
+query
+SELECT ('[1, 2, 3]'::json -> (-4)::bigint) IS NULL AS missing;
+----
+missing
+t
+
+
+query
+SELECT ('[1, 2, 3]'::json -> 9223372036854775807::bigint) IS NULL AS missing;
+----
+missing
+t

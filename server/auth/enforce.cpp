@@ -41,6 +41,8 @@
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
+#include <duckdb/parser/parsed_data/bound_pragma_info.hpp>
+#include <duckdb/parser/parsed_data/create_foreign_server_info.hpp>
 #include <duckdb/parser/parsed_data/create_role_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_sequence_info.hpp>
@@ -51,6 +53,7 @@
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/logical_operator.hpp>
@@ -67,8 +70,10 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
+#include <duckdb/planner/operator/logical_pragma.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
+#include <duckdb/planner/operator/logical_vacuum.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
@@ -85,10 +90,12 @@
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/scan/scan_bind.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
+#include "query/config.h"
 
 namespace sdb::auth {
 namespace {
@@ -235,6 +242,253 @@ bool IsRename(const duckdb::AlterInfo& info) {
   return static_cast<bool>(info.GetNewName());
 }
 
+bool IsSuperuserFunction(std::string_view name) {
+  static const irs::containers::FlatHashSet<std::string_view> kFunctions = {
+    "checkpoint",
+    "clickhouse_clear_cache",
+    "clickhouse_configure_pool",
+    "clickhouse_execute",
+    "clickhouse_lookup",
+    "clickhouse_query",
+    "clickhouse_scan",
+    "clickhouse_scan_pushdown",
+    "create_external_resource",
+    "dbgen",
+    "deregister_external_resource",
+    "destroy_external_resource",
+    "disable_logging",
+    "dsdgen",
+    "duckdb_databases",
+    "duckdb_external_file_cache",
+    "duckdb_external_resource_types",
+    "duckdb_external_resources",
+    "duckdb_log_contexts",
+    "duckdb_logs",
+    "duckdb_secrets",
+    "duckdb_table_sample",
+    "duckdb_temporary_files",
+    "enable_logging",
+    "force_checkpoint",
+    "iceberg_to_ducklake",
+    "json_serialize_plan",
+    "pg_clear_cache",
+    "pg_show_replication_origin_status",
+    "postgres_attach",
+    "postgres_configure_pool",
+    "postgres_execute",
+    "postgres_lookup",
+    "postgres_query",
+    "postgres_scan",
+    "postgres_scan_pushdown",
+    "pragma_database_size",
+    "pragma_metadata_info",
+    "pragma_storage_info",
+    "register_external_resource",
+    "register_external_resource_type",
+    "sdb_databases",
+    "sdb_external_file_cache",
+    "sdb_external_resource_types",
+    "sdb_external_resources",
+    "sdb_log_contexts",
+    "sdb_logs",
+    "sdb_secrets",
+    "sdb_table_sample",
+    "sdb_temporary_files",
+    "truncate_duckdb_logs",
+    "truncate_sdb_logs",
+    "which_secret",
+  };
+  return kFunctions.contains(name);
+}
+
+bool IsFileFreeFunction(std::string_view name) {
+  static const irs::containers::FlatHashSet<std::string_view> kFunctions = {
+    "aclexplode",
+    "check_peg_parser",
+    "disable_profiling",
+    "docs",
+    "duckdb_approx_database_count",
+    "duckdb_available_metrics",
+    "duckdb_columns",
+    "duckdb_connection_count",
+    "duckdb_constraints",
+    "duckdb_coordinate_systems",
+    "duckdb_dependencies",
+    "duckdb_eviction_queues",
+    "duckdb_extension_repositories",
+    "duckdb_functions",
+    "duckdb_indexes",
+    "duckdb_keywords",
+    "duckdb_memory",
+    "duckdb_optimizers",
+    "duckdb_prepared_statements",
+    "duckdb_schemas",
+    "duckdb_secret_type_parameters",
+    "duckdb_secret_types",
+    "duckdb_sequences",
+    "duckdb_settings",
+    "duckdb_tables",
+    "duckdb_triggers",
+    "duckdb_types",
+    "duckdb_variables",
+    "duckdb_views",
+    "enable_profiling",
+    "es_bulk",
+    "es_bulk_source",
+    "es_cat_indices",
+    "es_create_index",
+    "es_doc",
+    "es_drop_index",
+    "es_mapping",
+    "es_refresh",
+    "execute_job",
+    "generate_series",
+    "icu_calendar_names",
+    "iresearch_scan",
+    "json_array_elements",
+    "json_array_elements_text",
+    "json_each",
+    "json_each_text",
+    "json_execute_serialized_sql",
+    "json_object_keys",
+    "json_populate_recordset",
+    "json_tree",
+    "object",
+    "objects",
+    "otel_parse_logs",
+    "otel_parse_metrics_exponential_histogram",
+    "otel_parse_metrics_gauge",
+    "otel_parse_metrics_histogram",
+    "otel_parse_metrics_sum",
+    "otel_parse_metrics_summary",
+    "otel_parse_traces",
+    "otel_source_logs",
+    "otel_source_metrics_exponential_histogram",
+    "otel_source_metrics_gauge",
+    "otel_source_metrics_histogram",
+    "otel_source_metrics_sum",
+    "otel_source_metrics_summary",
+    "otel_source_traces",
+    "pg_extension_update_paths",
+    "pg_prepared_statement",
+    "pg_show_all_settings",
+    "pg_stat_get_subscription",
+    "pg_stat_get_subscription_stats",
+    "pg_tablespace_databases",
+    "pg_timezone_names",
+    "pragma_collations",
+    "pragma_platform",
+    "pragma_show",
+    "pragma_table_info",
+    "pragma_user_agent",
+    "pragma_version",
+    "query",
+    "query_table",
+    "range",
+    "range_st",
+    "repeat",
+    "repeat_row",
+    "repl_src",
+    "sdb_approx_database_count",
+    "sdb_available_metrics",
+    "sdb_catalog_sets",
+    "sdb_columns",
+    "sdb_connection_count",
+    "sdb_constraints",
+    "sdb_coordinate_systems",
+    "sdb_deferred_catalog",
+    "sdb_dependencies",
+    "sdb_eviction_queues",
+    "sdb_extension_repositories",
+    "sdb_functions",
+    "sdb_indexes",
+    "sdb_job_runs",
+    "sdb_jobs",
+    "sdb_keywords",
+    "sdb_memory",
+    "sdb_optimizers",
+    "sdb_prepared_statements",
+    "sdb_schemas",
+    "sdb_secret_type_parameters",
+    "sdb_secret_types",
+    "sdb_sequences",
+    "sdb_settings",
+    "sdb_tables",
+    "sdb_triggers",
+    "sdb_types",
+    "sdb_variables",
+    "sdb_views",
+    "search",
+    "seq_scan",
+    "serenedb_reindex",
+    "serenedb_vacuum",
+    "sql_tokenize",
+    "summary",
+    "system_table_scan",
+    "test_all_types",
+    "test_vector_types",
+    "tpcds_answers",
+    "tpcds_queries",
+    "tpch_answers",
+    "tpch_queries",
+    "unnest",
+  };
+  return kFunctions.contains(name);
+}
+
+bool IsServerPragma(std::string_view name) {
+  static const irs::containers::FlatHashSet<std::string_view> kPragmas = {
+    "add_parquet_key",
+    "disable_checkpoint_on_shutdown",
+    "enable_checkpoint_on_shutdown",
+    "force_checkpoint",
+  };
+  return kPragmas.contains(name);
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> FindServer(
+  duckdb::ClientContext& context, const duckdb::Identifier& name) {
+  for (const auto& db :
+       duckdb::DatabaseManager::Get(*context.db).GetDatabases()) {
+    auto& catalog = db->GetCatalog();
+    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
+      continue;
+    }
+    auto& duck_catalog = catalog.Cast<duckdb::DuckCatalog>();
+    auto server =
+      duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
+        .GetEntry(duck_catalog.GetCatalogTransaction(context), name);
+    if (server) {
+      return server;
+    }
+  }
+  return nullptr;
+}
+
+bool CanUseDatabase(duckdb::ClientContext& context,
+                    const ConnectionContext& connection,
+                    const RoleClosure& closure, std::string_view name) {
+  if (name == connection.GetDatabase()) {
+    return true;
+  }
+  auto& cluster = catalog::ClusterOf(context);
+  auto database = cluster.GetCatalogSet(CatalogType::DATABASE_ENTRY)
+                    .GetEntry(cluster.GetCatalogTransaction(context),
+                              duckdb::Identifier{name});
+  return !database || closure.Can(CatalogType::DATABASE_ENTRY,
+                                  database->permissions, AclMode::Connect);
+}
+
+bool IsCreateDatabase(const duckdb::AttachInfo& info) {
+  if (!info.path.empty() || info.external_resource) {
+    return false;
+  }
+  const auto type = info.options.find("type");
+  return type != info.options.end() &&
+         absl::EqualsIgnoreCase(type->second.ToString(),
+                                catalog::SereneDBCatalog::kStorageType);
+}
+
 duckdb::LogicalOperator& StatementRoot(duckdb::LogicalOperator& root) {
   if ((root.type == LogicalOperatorType::LOGICAL_PREPARE ||
        root.type == LogicalOperatorType::LOGICAL_EXECUTE) &&
@@ -267,12 +521,15 @@ class Enforcer {
       _caller_closure{*_caller_closure_owner},
       _enforce{!_caller_closure.is_superuser} {}
 
-  void Run() {
+  bool Run() {
+    if (_enforce) {
+      CheckDatabaseConnect();
+    }
     CheckViews();
     Collect(_root);
     Check(_root);
     if (!_enforce) {
-      return;
+      return _files_authorized;
     }
     _props.RegisterDBRead(catalog::ClusterOf(_context), _context);
     CheckSchemaUsage();
@@ -282,6 +539,7 @@ class Enforcer {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied to COPY to a file"));
     }
+    return _files_authorized;
   }
 
  private:
@@ -393,6 +651,11 @@ class Enforcer {
             _currval = true;
           } else if (name == "setval") {
             _setval = true;
+          } else if (_enforce && name == "current_setting") {
+            CheckSettingRead(expr.Cast<duckdb::BoundFunctionExpression>());
+          } else if (_enforce && IsSuperuserFunction(name)) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                            ERR_MSG("permission denied for function ", name));
           }
           break;
         }
@@ -421,7 +684,13 @@ class Enforcer {
     switch (op.type) {
       case LogicalOperatorType::LOGICAL_GET: {
         auto& get = op.Cast<duckdb::LogicalGet>();
-        if (_enforce || PrincipalFor(get.table_index.index) != _caller) {
+        const auto principal = PrincipalFor(get.table_index.index);
+        if (!get.GetTable() &&
+            !IsFileFreeFunction(get.function.GetName().GetIdentifierName()) &&
+            !ClosureOf(principal).is_superuser) {
+          _files_authorized = false;
+        }
+        if (_enforce || principal != _caller) {
           CheckGet(get);
         }
         break;
@@ -500,6 +769,12 @@ class Enforcer {
         auto& create = op.Cast<duckdb::LogicalCreate>();
         Stamp(*create.info, CatalogType::FOREIGN_SERVER_ENTRY, nullptr);
         if (_enforce) {
+          const auto& fdw =
+            create.info->Cast<duckdb::CreateForeignServerInfo>().fdw_name;
+          if (fdw == "duckdb_fdw" || fdw == "serenedb_fdw") {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                            ERR_MSG("permission denied: superuser required"));
+          }
           RequireDatabasePrivilege(AclMode::Create);
         }
         break;
@@ -581,14 +856,19 @@ class Enforcer {
         PointAtCluster(info, info.GetCatalogType());
         break;
       }
-      case LogicalOperatorType::LOGICAL_ATTACH:
+      case LogicalOperatorType::LOGICAL_ATTACH: {
+        const auto& info = *op.Cast<duckdb::LogicalAttach>().info;
+        if (_enforce && !IsCreateDatabase(info)) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                          ERR_MSG("permission denied: superuser required"));
+        }
         if (_enforce && !_caller_closure.Has(catalog::RoleOption::CreateDb)) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                           ERR_MSG("permission denied to create database"));
         }
-        RequireDatabaseNotBeingCreated(
-          op.Cast<duckdb::LogicalAttach>().info->name);
+        RequireDatabaseNotBeingCreated(info.name);
         break;
+      }
       case LogicalOperatorType::LOGICAL_DETACH: {
         const auto name =
           op.Cast<duckdb::LogicalDetach>().info->name.GetIdentifierName();
@@ -597,7 +877,43 @@ class Enforcer {
                           ERR_MSG("cannot detach database \"", name,
                                   "\", use DROP DATABASE"));
         }
+        if (_enforce) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                          ERR_MSG("permission denied: superuser required"));
+        }
         break;
+      }
+      case LogicalOperatorType::LOGICAL_PRAGMA:
+        if (_enforce && IsServerPragma(op.Cast<duckdb::LogicalPragma>()
+                                         .info->function.GetName()
+                                         .GetIdentifierName())) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                          ERR_MSG("permission denied: superuser required"));
+        }
+        break;
+      case LogicalOperatorType::LOGICAL_VACUUM: {
+        auto& vacuum = op.Cast<duckdb::LogicalVacuum>();
+        if (!_enforce || !vacuum.table || Unowned(*vacuum.table)) {
+          break;
+        }
+        auto& info = vacuum.GetInfo();
+        if (!_caller_closure.Can(CatalogType::TABLE_ENTRY,
+                                 vacuum.table->permissions,
+                                 AclMode::Maintain)) {
+          _connection.AddNotice(SQL_ERROR_DATA(
+            ERR_CODE(ERRCODE_WARNING),
+            ERR_MSG("permission denied to ",
+                    info.options.vacuum ? "vacuum" : "analyze", " \"",
+                    info.ref->Cast<duckdb::BaseTableRef>()
+                      .Table()
+                      .GetIdentifierName(),
+                    "\", skipping it")));
+          vacuum.table = nullptr;
+          info.has_table = false;
+          info.columns.clear();
+          vacuum.children.clear();
+        }
+        return;
       }
       case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
         if (_enforce &&
@@ -609,12 +925,56 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_LOAD:
       case LogicalOperatorType::LOGICAL_UPDATE_EXTENSIONS:
       case LogicalOperatorType::LOGICAL_CREATE_SECRET:
+      case LogicalOperatorType::LOGICAL_CONNECT:
+      case LogicalOperatorType::LOGICAL_EXTERNAL_RESOURCE:
+      case LogicalOperatorType::LOGICAL_COPY_DATABASE:
         if (_enforce) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                           ERR_MSG("permission denied: superuser required"));
         }
         break;
-      default:
+      case LogicalOperatorType::LOGICAL_INVALID:
+      case LogicalOperatorType::LOGICAL_PROJECTION:
+      case LogicalOperatorType::LOGICAL_FILTER:
+      case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY:
+      case LogicalOperatorType::LOGICAL_WINDOW:
+      case LogicalOperatorType::LOGICAL_UNNEST:
+      case LogicalOperatorType::LOGICAL_LIMIT:
+      case LogicalOperatorType::LOGICAL_ORDER_BY:
+      case LogicalOperatorType::LOGICAL_TOP_N:
+      case LogicalOperatorType::LOGICAL_DISTINCT:
+      case LogicalOperatorType::LOGICAL_SAMPLE:
+      case LogicalOperatorType::LOGICAL_PIVOT:
+      case LogicalOperatorType::LOGICAL_CHUNK_GET:
+      case LogicalOperatorType::LOGICAL_DELIM_GET:
+      case LogicalOperatorType::LOGICAL_EXPRESSION_GET:
+      case LogicalOperatorType::LOGICAL_DUMMY_SCAN:
+      case LogicalOperatorType::LOGICAL_EMPTY_RESULT:
+      case LogicalOperatorType::LOGICAL_CTE_REF:
+      case LogicalOperatorType::LOGICAL_JOIN:
+      case LogicalOperatorType::LOGICAL_DELIM_JOIN:
+      case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
+      case LogicalOperatorType::LOGICAL_ANY_JOIN:
+      case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
+      case LogicalOperatorType::LOGICAL_POSITIONAL_JOIN:
+      case LogicalOperatorType::LOGICAL_ASOF_JOIN:
+      case LogicalOperatorType::LOGICAL_DEPENDENT_JOIN:
+      case LogicalOperatorType::LOGICAL_LOOKUP_JOIN:
+      case LogicalOperatorType::LOGICAL_UNION:
+      case LogicalOperatorType::LOGICAL_EXCEPT:
+      case LogicalOperatorType::LOGICAL_INTERSECT:
+      case LogicalOperatorType::LOGICAL_RECURSIVE_CTE:
+      case LogicalOperatorType::LOGICAL_MATERIALIZED_CTE:
+      case LogicalOperatorType::LOGICAL_SECURE_VIEW:
+      case LogicalOperatorType::LOGICAL_TRIGGER:
+      case LogicalOperatorType::LOGICAL_EXPLAIN:
+      case LogicalOperatorType::LOGICAL_PREPARE:
+      case LogicalOperatorType::LOGICAL_EXECUTE:
+      case LogicalOperatorType::LOGICAL_TRANSACTION:
+      case LogicalOperatorType::LOGICAL_SET:
+      case LogicalOperatorType::LOGICAL_RESET:
+      case LogicalOperatorType::LOGICAL_DISCONNECT:
+      case LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR:
         break;
     }
     for (auto& child : op.children) {
@@ -730,6 +1090,11 @@ class Enforcer {
   void CheckGet(duckdb::LogicalGet& get) {
     auto table = get.GetTable();
     if (!table) {
+      const auto& name = get.function.GetName().GetIdentifierName();
+      if (_enforce && IsSuperuserFunction(name)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("permission denied for function ", name));
+      }
       CheckIndexScan(get);
       return;
     }
@@ -862,6 +1227,53 @@ class Enforcer {
                   AclMode::Select)) {
         Denied(view);
       }
+    }
+  }
+
+  void CheckDatabaseConnect() {
+    const auto check = [&](const duckdb::Identifier& name) {
+      if (!CanUseDatabase(_context, _connection, _caller_closure,
+                          name.GetIdentifierName())) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("permission denied for database \"",
+                                name.GetIdentifierName(), "\""),
+                        ERR_DETAIL("User does not have CONNECT privilege."));
+      }
+    };
+    for (const auto& [name, identity] : _props.read_databases) {
+      check(name);
+    }
+    for (const auto& [name, modification] : _props.modified_databases) {
+      check(name);
+    }
+    for (const auto* entry : _props.resolved_entries) {
+      check(entry->ParentCatalog().GetName());
+    }
+  }
+
+  void CheckSettingRead(const duckdb::BoundFunctionExpression& function) {
+    const auto& children = function.GetChildren();
+    if (children.empty()) {
+      return;
+    }
+    const auto& key = *children[0];
+    if (key.GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
+      if (children.size() == 1) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+          ERR_MSG("must be superuser to examine a parameter by a computed "
+                  "name"));
+      }
+      return;
+    }
+    const auto& value = key.Cast<duckdb::BoundConstantExpression>().GetValue();
+    if (value.IsNull()) {
+      return;
+    }
+    const auto name = value.ToString();
+    if (!IsReadableSetting(_context, name)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("must be superuser to examine \"", name, "\""));
     }
   }
 
@@ -1085,6 +1497,10 @@ class Enforcer {
 
   void CheckDrop(const duckdb::DropInfo& info) {
     const auto& name = info.GetQualifiedName();
+    if (info.type == CatalogType::SECRET_ENTRY) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied: superuser required"));
+    }
     if (info.type == CatalogType::SCHEMA_ENTRY) {
       auto schema =
         duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name(),
@@ -1600,24 +2016,10 @@ class Enforcer {
                 duckdb::Identifier{name});
   }
   void RequireServerUsage(const duckdb::Identifier& name) {
-    for (const auto& db :
-         duckdb::DatabaseManager::Get(*_context.db).GetDatabases()) {
-      auto& catalog = db->GetCatalog();
-      if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-        continue;
-      }
-      auto& duck_catalog = catalog.Cast<duckdb::DuckCatalog>();
-      auto server =
-        duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
-          .GetEntry(duck_catalog.GetCatalogTransaction(_context), name);
-      if (!server) {
-        continue;
-      }
-      if (!_caller_closure.Can(CatalogType::FOREIGN_SERVER_ENTRY,
-                               server->permissions, AclMode::Usage)) {
-        Denied(*server);
-      }
-      return;
+    auto server = FindServer(_context, name);
+    if (server && !_caller_closure.Can(CatalogType::FOREIGN_SERVER_ENTRY,
+                                       server->permissions, AclMode::Usage)) {
+      Denied(*server);
     }
   }
 
@@ -1716,6 +2118,7 @@ class Enforcer {
                                irs::containers::FlatHashSet<duckdb::idx_t>>
     _projection_reads;
   bool _file_copy = false;
+  bool _files_authorized = true;
   bool _nextval = false;
   bool _currval = false;
   bool _setval = false;
@@ -1723,14 +2126,185 @@ class Enforcer {
 
 }  // namespace
 
-void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
+bool EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan) {
-  Enforcer{context, connection, binder, plan}.Run();
+  return Enforcer{context, connection, binder, plan}.Run();
 }
 
 bool Unowned(const duckdb::CatalogEntry& entry) {
-  return entry.permissions.owner == pg::kInvalidOid ||
-         (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
+  if (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly()) {
+    return true;
+  }
+  const bool serenedb_catalog =
+    entry.ParentCatalog().Compatibility() == duckdb::SqlCompatibility::POSTGRES;
+  return entry.permissions.owner == pg::kInvalidOid &&
+         (entry.internal || !serenedb_catalog);
+}
+
+namespace {
+
+bool ScopeAuthorized(duckdb::ClientContext& context, const RoleClosure& caller,
+                     const duckdb::ClientContext::FileAccessScope& scope) {
+  for (const duckdb::ViewCatalogEntry& view : scope.views) {
+    if (Unowned(view)) {
+      continue;
+    }
+    if (view.security_invoker) {
+      break;
+    }
+    return ClosureFor(&context, view.permissions.owner)->is_superuser;
+  }
+  return caller.is_superuser;
+}
+
+bool DatabaseVisible(duckdb::ClientContext& context,
+                     const ConnectionContext& connection,
+                     const RoleClosure& closure,
+                     duckdb::AttachedDatabase& database) {
+  if (database.GetCatalog().GetCatalogType() ==
+      catalog::SereneDBCatalog::kStorageType) {
+    return CanUseDatabase(context, connection, closure,
+                          database.GetName().GetIdentifierName());
+  }
+  if (database.IsSystem() || database.IsTemporary()) {
+    return true;
+  }
+  auto server = FindServer(context, database.GetName());
+  return !server || closure.Can(CatalogType::FOREIGN_SERVER_ENTRY,
+                                server->permissions, AclMode::Usage);
+}
+
+bool EntryVisible(duckdb::ClientContext& context,
+                  const ConnectionContext& connection,
+                  const RoleClosure& closure, duckdb::CatalogEntry& entry) {
+  if (entry.type == CatalogType::DATABASE_ENTRY) {
+    return CanUseDatabase(context, connection, closure,
+                          entry.name.GetIdentifierName());
+  }
+  auto& parent = entry.ParentCatalog();
+  if (parent.GetCatalogType() != catalog::ClusterCatalog::kStorageType &&
+      !DatabaseVisible(context, connection, closure, parent.GetAttached())) {
+    return false;
+  }
+  if (entry.internal || Unowned(entry)) {
+    return true;
+  }
+  const auto& perm = entry.permissions;
+  switch (entry.type) {
+    case CatalogType::SCHEMA_ENTRY:
+      return closure.CanAny(entry.type, perm, AclMode::Usage | AclMode::Create);
+    case CatalogType::TABLE_ENTRY:
+    case CatalogType::VIEW_ENTRY: {
+      constexpr auto kAny = AclMode::Select | AclMode::Insert |
+                            AclMode::Update | AclMode::Delete |
+                            AclMode::Truncate | AclMode::References |
+                            AclMode::Trigger | AclMode::Maintain;
+      if (closure.CanAny(CatalogType::TABLE_ENTRY, perm, kAny)) {
+        return true;
+      }
+      if (entry.type != CatalogType::TABLE_ENTRY) {
+        return false;
+      }
+      const auto acls = AllColumnAcls(entry.Cast<duckdb::TableCatalogEntry>());
+      return absl::c_any_of(
+        std::array{AclMode::Select, AclMode::Insert, AclMode::Update,
+                   AclMode::References},
+        [&](AclMode mode) { return closure.CanAnyColumn(perm, mode, acls); });
+    }
+    case CatalogType::SEQUENCE_ENTRY:
+      return closure.CanAny(entry.type, perm,
+                            AclMode::Usage | AclMode::Select | AclMode::Update);
+    case CatalogType::MACRO_ENTRY:
+    case CatalogType::TABLE_MACRO_ENTRY:
+      return closure.Can(entry.type, perm, AclMode::Execute);
+    case CatalogType::TYPE_ENTRY:
+      return closure.Can(entry.type, perm, AclMode::Usage);
+    case CatalogType::JOB_ENTRY:
+      return closure.Owns(perm.owner);
+    case CatalogType::INDEX_ENTRY: {
+      auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
+      auto relation =
+        index.GetRelation(index.catalog.GetCatalogTransaction(context));
+      return !relation || EntryVisible(context, connection, closure, *relation);
+    }
+    default:
+      return true;
+  }
+}
+
+}  // namespace
+
+bool CanSee(duckdb::ClientContext& context, duckdb::CatalogEntry& entry) {
+  const auto* connection = connector::GetSereneDBContextPtr(context);
+  if (!connection) {
+    return true;
+  }
+  const auto closure = ClosureFor(&context, connection->GetRoleId());
+  return closure->is_superuser ||
+         EntryVisible(context, *connection, *closure, entry);
+}
+
+bool CanSeeDatabase(duckdb::ClientContext& context,
+                    duckdb::AttachedDatabase& database) {
+  const auto* connection = connector::GetSereneDBContextPtr(context);
+  if (!connection) {
+    return true;
+  }
+  const auto closure = ClosureFor(&context, connection->GetRoleId());
+  return closure->is_superuser ||
+         DatabaseVisible(context, *connection, *closure, database);
+}
+
+void CheckEntryReference(duckdb::ClientContext& context,
+                         duckdb::CatalogEntry& entry) {
+  const auto* connection = connector::GetSereneDBContextPtr(context);
+  if (!connection) {
+    return;
+  }
+  const auto closure = ClosureFor(&context, connection->GetRoleId());
+  if (closure->is_superuser) {
+    return;
+  }
+  auto& database = entry.ParentCatalog().GetAttached();
+  if (!DatabaseVisible(context, *connection, *closure, database)) {
+    if (database.GetCatalog().GetCatalogType() ==
+        catalog::SereneDBCatalog::kStorageType) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied for database \"",
+                              database.GetName().GetIdentifierName(), "\""),
+                      ERR_DETAIL("User does not have CONNECT privilege."));
+    }
+    if (const auto server = FindServer(context, database.GetName())) {
+      Denied(*server);
+    }
+  }
+  if (!EntryVisible(context, *connection, *closure, entry)) {
+    Denied(entry);
+  }
+}
+
+void CheckFileAccess(duckdb::ClientContext& context, const std::string& path) {
+  if (path == "/dev/stdin" || path == "/dev/stdout") {
+    return;
+  }
+  const auto closure = SessionClosure(context);
+  if (!closure) {
+    return;
+  }
+  bool authorized = closure->is_superuser;
+  if (const auto scope = context.file_access_scope) {
+    authorized = scope->catalog || ScopeAuthorized(context, *closure, *scope);
+  } else if (const auto properties = context.ActiveStatementProperties();
+             properties && properties->file_access_authorized) {
+    authorized = *properties->file_access_authorized;
+  }
+  if (authorized) {
+    return;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied to access \"", path, "\""),
+                  ERR_DETAIL("Only roles with the SUPERUSER attribute may "
+                             "access server files and URLs."));
 }
 
 }  // namespace sdb::auth

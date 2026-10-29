@@ -55,6 +55,8 @@ Copy only the schema (catalog elements) but not any data:
 
 `COPY` moves data between SereneDB and external files. `COPY ... FROM` imports data into SereneDB from an external file. `COPY ... TO` writes data from SereneDB to an external file. The `COPY` command can be used for `CSV`, `PARQUET` and `JSON` files.
 
+Copying from or to a file on the server requires a superuser; `COPY ... FROM STDIN` and `COPY ... TO STDOUT` work for every role with the table privileges they need.
+
 ## `COPY ... FROM`
 
 `COPY ... FROM` imports data from an external file into an existing table. The data is appended to whatever data is in the table already. The amount of columns inside the file must match the amount of columns in the table `tbl`, and the contents of the columns must be convertible to the column types of the table. In case this is not possible, an error will be thrown.

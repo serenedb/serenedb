@@ -23,6 +23,8 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 
+#include <iresearch/utils/static_strings.hpp>
+
 #include "network/http/common.h"
 
 namespace sdb::network::http {
@@ -85,11 +87,7 @@ AuthResult HttpAuthenticator::Basic(std::string_view payload,
 
   const auto credential = _credentials->LookupCredential(user);
   if (!credential) {
-    // Same trust semantics as the pg session: a user without a configured
-    // credential is not challenged -- but ONLY over a local (loopback/unix)
-    // connection. A remote peer to a passwordless role is refused, so the
-    // loopback convenience never extends to the network.
-    if (is_loopback) {
+    if (is_loopback && user == irs::StaticStrings::kDefaultUser) {
       return {.context = {.user = std::string{user}}};
     }
     return {.status = HttpStatus::Unauthorized};

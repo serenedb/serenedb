@@ -1,0 +1,95 @@
+statement ok
+DROP DATABASE IF EXISTS essf_vault;
+
+
+statement ok
+DROP ROLE IF EXISTS essf_vedernikoff;
+
+
+statement ok
+CREATE ROLE essf_vedernikoff LOGIN PASSWORD 'essf_pw';
+
+
+statement ok
+CREATE DATABASE essf_vault;
+
+
+statement ok
+GRANT CREATE ON DATABASE essf_vault TO essf_vedernikoff;
+
+
+connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
+statement error
+CREATE SUBSCRIPTION essf_sub CONNECTION 'host=localhost dbname=mydb password=x sslkey=/etc/hostname' PUBLICATION essf_pub WITH (connect = false, slot_name = NONE);
+----
+db error: ERROR: permission denied to use server files in the connection string
+DETAIL: Only roles with the SUPERUSER attribute may use the passfile, service and SSL file options.
+
+
+connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
+statement error
+CREATE SUBSCRIPTION essf_sub CONNECTION 'host=localhost dbname=mydb password=x passfile=/etc/hostname' PUBLICATION essf_pub WITH (connect = false, slot_name = NONE);
+----
+db error: ERROR: permission denied to use server files in the connection string
+DETAIL: Only roles with the SUPERUSER attribute may use the passfile, service and SSL file options.
+
+
+connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
+statement error
+CREATE SUBSCRIPTION essf_sub CONNECTION 'service=essf_nowhere password=x' PUBLICATION essf_pub WITH (connect = false, slot_name = NONE);
+----
+db error: ERROR: permission denied to use server files in the connection string
+DETAIL: Only roles with the SUPERUSER attribute may use the passfile, service and SSL file options.
+
+
+connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
+statement error
+CREATE SUBSCRIPTION essf_sub CONNECTION 'host=localhost dbname=mydb password=x sslrootcert=/etc/hostname' PUBLICATION essf_pub WITH (connect = false, slot_name = NONE);
+----
+db error: ERROR: permission denied to use server files in the connection string
+DETAIL: Only roles with the SUPERUSER attribute may use the passfile, service and SSL file options.
+
+
+connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
+statement ok
+CREATE SUBSCRIPTION essf_sub CONNECTION 'host=localhost dbname=mydb password=x sslrootcert=system' PUBLICATION essf_pub WITH (connect = false, slot_name = NONE);
+
+
+connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
+statement error
+ALTER SUBSCRIPTION essf_sub CONNECTION 'host=localhost dbname=mydb password=x sslcert=/etc/hostname';
+----
+db error: ERROR: permission denied to use server files in the connection string
+DETAIL: Only roles with the SUPERUSER attribute may use the passfile, service and SSL file options.
+
+
+connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
+statement ok
+DROP SUBSCRIPTION essf_sub;
+
+
+connection c_vault_admin database=essf_vault
+statement ok
+CREATE SUBSCRIPTION essf_admin_sub CONNECTION 'host=localhost dbname=mydb sslkey=/nonexistent/essf.key' PUBLICATION essf_pub WITH (connect = false, slot_name = NONE);
+
+
+connection c_vault_admin database=essf_vault
+statement ok
+DROP SUBSCRIPTION essf_admin_sub;
+
+
+connection default
+query
+SELECT count(*) > 0 AS terminated FROM pg_stat_activity
+WHERE datname = 'essf_vault' AND pg_terminate_backend(pid);
+----
+terminated
+t
+
+
+statement ok retry 40 backoff 250ms
+DROP DATABASE essf_vault;
+
+
+statement ok
+DROP ROLE essf_vedernikoff;

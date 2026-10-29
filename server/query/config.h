@@ -80,7 +80,10 @@ int64_t ParseDurationMillis(std::string_view name, std::string_view text,
 
 bool IsUnchangeableSetting(std::string_view name);
 
-void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name);
+void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name,
+                           duckdb::SetScope scope, bool is_set);
+
+bool IsReadableSetting(duckdb::ClientContext& ctx, std::string_view name);
 
 class Config {
  public:

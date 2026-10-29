@@ -74,6 +74,7 @@
 #include <utility>
 #include <vector>
 
+#include "auth/role_closure.h"
 #include "catalog/entry/tokenizer.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
@@ -252,6 +253,17 @@ class CreateTSDictionaryOptions : public OptionsParser {
       }
     };
     if (OptionsParser::HasOption(Info.name)) {
+      if constexpr (&Info == &tokenizer_options::kStopwordsPath ||
+                    &Info == &tokenizer_options::kModelLocation) {
+        if (const auto closure = auth::SessionClosure(_context);
+            closure && !closure->is_superuser) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+            ERR_MSG("permission denied to use option \"", Info.name, "\""),
+            ERR_DETAIL("Only roles with the SUPERUSER attribute may "
+                       "reference server files."));
+        }
+      }
       auto raw = OptionsParser::EraseOptionOrDefault<Info>();
       if (!raw.empty()) {
         assign(field, std::move(raw));

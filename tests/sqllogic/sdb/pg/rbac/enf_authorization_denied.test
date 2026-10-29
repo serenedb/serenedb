@@ -119,7 +119,8 @@ connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
 COPY clickclack_vault TO '${__TEST_DIR__}/rbac_authorization_denied_never_written.csv';
 ----
-db error: ERROR: permission denied for table clickclack_vault
+db error: ERROR: permission denied to access "<slt:ignore>/rbac_authorization_denied_never_written.csv"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
 
 
 # ---- view-backed inverted index: an index defined ON a view is gated on the

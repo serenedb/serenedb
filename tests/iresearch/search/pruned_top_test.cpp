@@ -104,9 +104,10 @@ struct Shape {
   std::vector<std::string_view> must;
   std::vector<std::string_view> must_not;
   std::vector<std::vector<std::string_view>> any;
+  std::vector<std::string_view> should;
 };
 
-class PrunedConjunctionTest : public tests::IndexTestBase {
+class PrunedTopTest : public tests::IndexTestBase {
  protected:
   void Build() {
     irs::IndexWriterOptions options;
@@ -202,13 +203,20 @@ class PrunedConjunctionTest : public tests::IndexTestBase {
   void Check(const Shape& shape) {
     SCOPED_TRACE(absl::StrCat("+", absl::StrJoin(shape.must, " +"), " -",
                               absl::StrJoin(shape.must_not, " -"), " any ",
-                              shape.any.size()));
+                              shape.any.size(), " ",
+                              absl::StrJoin(shape.should, " ")));
     irs::BooleanFilter filter;
     for (const auto term : shape.must) {
       filter.Add(Clause(term), irs::Occur::Must);
     }
     for (const auto term : shape.must_not) {
       filter.Add(Clause(term), irs::Occur::MustNot);
+    }
+    for (const auto term : shape.should) {
+      filter.Add(Clause(term), irs::Occur::Should);
+    }
+    if (shape.must.empty() && shape.any.empty()) {
+      filter.SetMinShouldMatch(1);
     }
     for (const auto& terms : shape.any) {
       auto group = std::make_unique<irs::BooleanFilter>();
@@ -259,7 +267,7 @@ class PrunedConjunctionTest : public tests::IndexTestBase {
   irs::DirectoryReader _reader;
 };
 
-TEST_P(PrunedConjunctionTest, conjunctions_across_block_kinds) {
+TEST_P(PrunedTopTest, conjunctions_across_block_kinds) {
   Build();
   for (const auto& shape : std::vector<Shape>{
          {{"mid", "dense"}, {}},
@@ -282,7 +290,7 @@ TEST_P(PrunedConjunctionTest, conjunctions_across_block_kinds) {
   }
 }
 
-TEST_P(PrunedConjunctionTest, conjunctions_with_exclusions) {
+TEST_P(PrunedTopTest, conjunctions_with_exclusions) {
   Build();
   for (const auto& shape : std::vector<Shape>{
          {{"mid", "half"}, {"sparse"}},
@@ -294,7 +302,7 @@ TEST_P(PrunedConjunctionTest, conjunctions_with_exclusions) {
   }
 }
 
-TEST_P(PrunedConjunctionTest, single_terms_with_exclusions) {
+TEST_P(PrunedTopTest, single_terms_with_exclusions) {
   Build();
   for (const auto& shape : std::vector<Shape>{
          {{"rare"}, {"half"}},
@@ -308,7 +316,7 @@ TEST_P(PrunedConjunctionTest, single_terms_with_exclusions) {
   }
 }
 
-TEST_P(PrunedConjunctionTest, conjunctions_with_nested_disjunctions) {
+TEST_P(PrunedTopTest, conjunctions_with_nested_disjunctions) {
   Build();
   for (const auto& shape : std::vector<Shape>{
          {{"mid"}, {}, {{"half", "dense"}}},
@@ -320,9 +328,48 @@ TEST_P(PrunedConjunctionTest, conjunctions_with_nested_disjunctions) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(pruned_conjunction_test, PrunedConjunctionTest,
+TEST_P(PrunedTopTest, unions_across_block_kinds) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {.should = {"rare", "half"}},
+         {.should = {"sparse", "dense"}},
+         {.should = {"mid", "half", "dense"}},
+         {.should = {"run", "sparse"}},
+         {.should = {"holes", "mid"}},
+         {.should = {"single", "dense"}},
+         {.should = {"cluster", "half"}},
+         {.should = {"rare", "sparse", "mid", "dense", "half"}},
+         {.should = {"run", "holes", "cluster"}},
+       }) {
+    Check(shape);
+  }
+}
+
+TEST_P(PrunedTopTest, unions_with_exclusions) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {.must_not = {"mid"}, .should = {"sparse", "half"}},
+         {.must_not = {"holes"}, .should = {"rare", "dense", "run"}},
+         {.must_not = {"rare", "cluster"}, .should = {"mid", "dense"}},
+       }) {
+    Check(shape);
+  }
+}
+
+TEST_P(PrunedTopTest, required_terms_with_optional_ones) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {.must = {"mid"}, .should = {"half", "dense"}},
+         {.must = {"sparse"}, .should = {"rare", "cluster"}},
+         {.must = {"cluster", "dense"}, .should = {"half"}},
+       }) {
+    Check(shape);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(pruned_top_test, PrunedTopTest,
                          ::testing::Combine(::testing::Values(
                            &tests::Directory<&tests::MemoryDirectory>)),
-                         PrunedConjunctionTest::to_string);
+                         PrunedTopTest::to_string);
 
 }  // namespace

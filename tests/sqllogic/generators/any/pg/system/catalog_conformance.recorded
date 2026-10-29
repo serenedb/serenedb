@@ -6381,15 +6381,9 @@ be7a3d68766b0c92
 dc3dd2a9a4d5b9f1.2
 	oid	nspname	relname
 	customers	public	customers
-548e8200dbe15e12
-	relchecks	relkind	relhasindex	relhasrules	relhastriggers	relrowsecurity	relforcerowsecurity	relhasoids	relispartition	reltablespace	reloftype	relpersistence	relreplident	amname
-	0	r	t	f	t	f	f	f	f	0	(empty)	p	d	heap
-9c7c63e05f91f64d
-	array_to_string
-	(empty)
-bcc201e7b4352fed
-	array_to_string
-	NULL
+61b2546df464ccac
+	relchecks	relkind	relhasindex	relhasrules	relhastriggers	relrowsecurity	relforcerowsecurity	relhasoids	relispartition	array_to_string	reltablespace	reloftype	relpersistence	relreplident	amname
+	0	r	t	f	t	f	f	f	f	(empty)	0	(empty)	p	d	heap
 5364dda41598bb1c
 	attname	format_type	attnotnull	attcollation	attidentity	attgenerated	attstorage	attcompression	attstattarget	col_description
 	active	boolean	f	NULL	(empty)	(empty)	p	(empty)	NULL	NULL
@@ -6444,15 +6438,9 @@ ead408aada169250.2
 687720e1bc6e8d17
 	oid	nspname	relname
 	app.order_totals	app	order_totals
-4812e61bf148af33
-	relchecks	relkind	relhasindex	relhasrules	relhastriggers	relrowsecurity	relforcerowsecurity	relhasoids	relispartition	reltablespace	reloftype	relpersistence	relreplident	amname
-	0	v	f	t	f	f	f	f	f	0	(empty)	p	n	NULL
-f8d1242f33c2bb40
-	array_to_string
-	(empty)
-a7013e636dbbd8d3
-	array_to_string
-	NULL
+0146cae38a93d622
+	relchecks	relkind	relhasindex	relhasrules	relhastriggers	relrowsecurity	relforcerowsecurity	relhasoids	relispartition	array_to_string	reltablespace	reloftype	relpersistence	relreplident	amname
+	0	v	f	t	f	f	f	f	f	(empty)	0	(empty)	p	n	NULL
 8d9973d93c7247e2
 	attname	format_type	pg_get_expr	attnotnull	attcollation	attidentity	attgenerated	attstorage	col_description
 	customer_id	integer	NULL	f	NULL	(empty)	(empty)	p	NULL

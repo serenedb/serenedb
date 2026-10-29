@@ -5,6 +5,10 @@
 # query the moment a segment picks the columns or goes back to the index.
 
 statement ok
+SET threads = 1;
+
+
+statement ok
 CREATE MACRO route_vec(i) AS
   list_transform(range(16), j -> ((hash(i * 16 + j) % 10000) / 10000.0)::FLOAT)::FLOAT[16];
 

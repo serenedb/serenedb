@@ -196,6 +196,8 @@ IRS_FORCE_INLINE uint32_t ExcludeBlock(Excludes& excludes,
                                        uint32_t len) {
   if constexpr (requires { excludes.FilterBlock(docs, scores, len); }) {
     return excludes.FilterBlock(docs, scores, len);
+  } else if constexpr (requires { excludes.Drop(docs, scores, len); }) {
+    return excludes.Drop(docs, scores, len);
   } else {
     if (len == 0) {
       return len;

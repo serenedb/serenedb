@@ -70,15 +70,6 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
   format_utils::ReadFooter(
     *_impl->in, filename,
     [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
-      footer.ReadOptionalList(
-        kIdxFieldTermDict, "term_dict",
-        [&](duckdb::BinaryDeserializer::List&, duckdb::idx_t) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-            ERR_MSG("footer: '", filename,
-                    "' holds a term dictionary of an older release of "
-                    "SereneDB; rebuild the index"));
-        });
 #ifndef IRESEARCH_NO_VECTOR
       footer.ReadOptionalList(
         kIdxFieldIvf, "ivf",

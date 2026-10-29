@@ -34,7 +34,6 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
   using Base::_docs;
   using Base::_fetcher;
   using Base::_freqs;
-  using Base::_gather;
   using Base::_lazy;
   using Base::_leaf;
   using Base::_left_in_leaf;
@@ -158,26 +157,13 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
     const auto count = static_cast<uint32_t>(cand_docs.size());
     SDB_ASSERT(count != 0);
     Mask();
-    ABSL_CACHELINE_ALIGNED doc_id_t docs[kScoreBlock];
-    ABSL_CACHELINE_ALIGNED uint32_t slots[kScoreBlock];
+    ABSL_CACHELINE_ALIGNED doc_id_t docs[2 * kScoreBlock];
+    ABSL_CACHELINE_ALIGNED uint32_t slots[2 * kScoreBlock];
+    ABSL_CACHELINE_ALIGNED uint32_t freqs[2 * kScoreBlock];
     ABSL_CACHELINE_ALIGNED score_t scores[kScoreBlock];
-    _provider.freq.value = _gather;
+    _provider.freq.value = freqs;
     uint32_t out = 0;
-    for (uint32_t begin = 0; begin < count && !doc_limits::eof(_doc);
-         begin += kScoreBlock) {
-      const auto n = std::min<uint32_t>(count - begin, kScoreBlock);
-      const auto* const chunk = &cand_docs[begin];
-      uint32_t hits = 0;
-      Members(chunk, n,
-              [&](uint32_t i, bool hit, uint32_t freq) IRS_FORCE_INLINE {
-                docs[hits] = chunk[i];
-                slots[hits] = begin + i;
-                _gather[hits] = freq;
-                hits += static_cast<uint32_t>(hit);
-              });
-      if (hits == 0) {
-        continue;
-      }
+    const auto flush = [&](uint32_t hits) {
       _fetcher->Fetch(std::span<const doc_id_t>{docs, hits});
       if (hits == kScoreBlock) {
         _score.ScoreBlock(scores);
@@ -195,6 +181,29 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
           cand_scores[slots[j]] += scores[j];
         }
       }
+    };
+    uint32_t hits = 0;
+    for (uint32_t begin = 0; begin < count && !doc_limits::eof(_doc);
+         begin += kScoreBlock) {
+      const auto n = std::min<uint32_t>(count - begin, kScoreBlock);
+      const auto* const chunk = &cand_docs[begin];
+      Members(chunk, n,
+              [&](uint32_t i, bool hit, uint32_t freq) IRS_FORCE_INLINE {
+                docs[hits] = chunk[i];
+                slots[hits] = begin + i;
+                freqs[hits] = freq;
+                hits += static_cast<uint32_t>(hit);
+              });
+      if (hits >= kScoreBlock) {
+        flush(kScoreBlock);
+        hits -= kScoreBlock;
+        std::copy_n(docs + kScoreBlock, hits, docs);
+        std::copy_n(slots + kScoreBlock, hits, slots);
+        std::copy_n(freqs + kScoreBlock, hits, freqs);
+      }
+    }
+    if (hits != 0) {
+      flush(hits);
     }
     _provider.freq.value = _freqs.data;
     if (required) {

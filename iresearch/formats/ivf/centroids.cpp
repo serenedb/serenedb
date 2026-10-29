@@ -360,8 +360,8 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
     if (size == 0) {
       continue;
     }
-    file_utils::Hint(in, layout.CentroidPos(start, d),
-                     size * d * sizeof(float), false);
+    file_utils::Hint(in, layout.CentroidPos(start, d), size * d * sizeof(float),
+                     false);
     if (level > 0) {
       file_utils::Hint(in, layout.OffsetsPos(start),
                        (size + 1) * sizeof(size_t), false);

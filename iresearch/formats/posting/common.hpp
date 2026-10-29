@@ -119,8 +119,7 @@ inline uint64_t PayExtent(const PostingMeta& meta) noexcept {
 template<typename Input>
 void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
   if (const auto extent = DocExtent(meta); extent > file_utils::kPage) {
-    file_utils::Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch),
-                     false);
+    file_utils::Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch), false);
   }
 }
 
@@ -139,9 +138,9 @@ void PrefetchRanges(const Input& in,
   uint64_t budget = kMaxPrefetch;
   for (size_t i = 0; i != n && budget != 0; ++i) {
     const auto size = std::min(ranges[i].second - ranges[i].first, budget);
-    file_utils::Hint(in, ranges[i].first, size,
-                     n >= file_utils::kProbedBatch &&
-                       i < file_utils::kWarmProbes);
+    file_utils::Hint(
+      in, ranges[i].first, size,
+      n >= file_utils::kProbedBatch && i < file_utils::kWarmProbes);
     budget -= size;
   }
 }

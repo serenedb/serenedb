@@ -179,8 +179,8 @@ void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
   SDB_ASSERT(options.db);
   col_reader =
     std::make_unique<ColReader>(dir, meta.name, *options.db, IOAdvice::RANDOM);
-  idx_reader = std::make_unique<IdxReader>(dir, meta.name, options.hnsw_bases,
-                                           keep_terms);
+  idx_reader =
+    std::make_unique<IdxReader>(dir, meta.name, options.hnsw_bases, keep_terms);
 }
 
 }  // namespace irs

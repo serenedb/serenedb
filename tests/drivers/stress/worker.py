@@ -13,7 +13,7 @@ from rng import derive
 
 class WorkerStatus:
     __slots__ = ("worker_id", "op_kind", "started_at", "committed", "retries",
-                 "stalled", "finished", "cancel_sent", "cancel_pending")
+                 "stalled", "finished", "parked", "cancel_sent", "cancel_pending")
 
     def __init__(self, worker_id):
         self.worker_id = worker_id
@@ -23,6 +23,7 @@ class WorkerStatus:
         self.retries = 0
         self.stalled = False
         self.finished = False
+        self.parked = False
         self.cancel_sent = 0
         self.cancel_pending = False
 
@@ -167,10 +168,12 @@ class Worker(threading.Thread):
 
     def _loop(self):
         while not self.stop_event.is_set():
-            while self.pause_event.is_set() and not self.stop_event.is_set():
-                time.sleep(0.05)
-            if self.stop_event.is_set():
-                break
+            if self.pause_event.is_set():
+                self.status.parked = True
+                while self.pause_event.is_set() and not self.stop_event.is_set():
+                    time.sleep(0.05)
+                self.status.parked = False
+                continue
             op = self.pick(self.rng, self.state)
             self.op_kinds[op.kind] = self.op_kinds.get(op.kind, 0) + 1
             self._declare(op)

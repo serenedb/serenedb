@@ -17,6 +17,7 @@ paths:
 - `tests/drivers/stress/`: concurrency and soak profiles, and the harness's own pytest tests (`test_*.py`, the `stress:harness` unit); `tests/drivers/sqlsmith/` and `tests/drivers/fuzz/`: fuzzers.
 - `tests/bench/micro/`: microbenchmarks; `scripts/perf/`: end-to-end performance scripts. `tests/duckdb/`: DuckDB's and the extensions' own suites.
 - `third_party/re2/re2/testing/`: the re2 fork's own suites, whose exhaustive and random tests check every matching engine against a backtracking reference; CI runs them when `third_party/re2` or what it builds against changes.
+- `third_party/croaring/tests/`: the CRoaring fork's own cmocka tests, built against upstream cmocka in `third_party/cmocka`; CI runs them when `third_party/croaring` or its wiring changes.
 - `scripts/ci/tests/`: pytest tests of the CI scripts, which pre-commit runs when those scripts change.
 
 ## When a change needs one
@@ -41,6 +42,7 @@ paths:
 - Drivers: `tests/drivers/run.sh --port <port> --lang <lang>`, only for languages whose toolchain is installed; a skipped language is not a pass.
 - DuckDB suites: `test.py --suite duckdb --duckdb-suite <name>`; run `ninja unittest` first after a change. A suite's skip list holds only the SereneDB divergences that can't pass ([tests/duckdb/README.md](../../tests/duckdb/README.md)).
 - re2 fork suites, in a build with `SDB_GTEST`: `ninja re2-tests`, then `test.py --suite re2`.
+- CRoaring fork tests, in a build with `SDB_GTEST`: `ninja croaring-tests`, then `test.py --suite croaring`.
 - Coverage of a change, as CI's `dev` reports it: a build with `-DSDB_COVERAGE=On` (`cmake --preset clangd -B build_cov -DSDB_COVERAGE=On`), the tests through `test.py --build-dir build_cov`, then `scripts/coverage/diff.py --build-dir build_cov --profiles out/test/profiles --out out/coverage`; `--html` also renders the changed files. What the whole system leaves uncovered comes from the nightly ([ci.md](ci.md)): `scripts/coverage/nightly.py show <component or path>`.
 
 ```bash

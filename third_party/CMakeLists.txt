@@ -528,9 +528,47 @@ sdb_add_module(ada)
 ## croaring
 ################################################################################
 
-set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)
+set(ENABLE_ROARING_TESTS ${SDB_GTEST} CACHE BOOL "" FORCE)
+if(SDB_GTEST)
+    set(WITH_EXAMPLES OFF)
+    sdb_add_module(cmocka EXCLUDE_FROM_ALL NO_WARNINGS)
+    unset(WITH_EXAMPLES)
+    get_directory_property(
+        cmocka_version
+        DIRECTORY cmocka
+        DEFINITION cmocka_VERSION
+    )
+    include(CMakePackageConfigHelpers)
+    file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/cmocka-config.cmake "")
+    write_basic_package_version_file(
+        ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/cmocka-config-version.cmake
+        VERSION ${cmocka_version}
+        COMPATIBILITY SameMajorVersion
+    )
+endif()
 set(ROARING_USE_CPM OFF CACHE BOOL "" FORCE)
 sdb_add_module(croaring)
+if(ENABLE_ROARING_TESTS)
+    get_directory_property(
+        croaring_targets
+        DIRECTORY croaring/tests
+        BUILDSYSTEM_TARGETS
+    )
+    set(croaring_tests)
+    foreach(target IN LISTS croaring_targets)
+        get_target_property(type ${target} TYPE)
+        if(type STREQUAL "EXECUTABLE")
+            list(APPEND croaring_tests ${target})
+            target_compile_options(${target} PRIVATE -Wno-error)
+        endif()
+    endforeach()
+    set_target_properties(
+        ${croaring_tests}
+        PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/croaring-tests
+    )
+    add_custom_target(croaring-tests DEPENDS ${croaring_tests})
+endif()
 
 ################################################################################
 ## fmt

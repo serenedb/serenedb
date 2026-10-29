@@ -94,6 +94,7 @@ jobs:
           PG: ${{ steps.classify.outputs.pg }}
           IRESEARCH: ${{ steps.classify.outputs.iresearch }}
           RE2: ${{ steps.classify.outputs.re2 }}
+          CROARING: ${{ steps.classify.outputs.croaring }}
           DUCKDB_SUITES: ${{ steps.classify.outputs.duckdb_suites }}
           CORPUS: ${{ inputs.CORPUS }}
           DUCKDB_SANITIZERS: ${{ inputs.DUCKDB_SANITIZERS }}
@@ -104,6 +105,7 @@ jobs:
           [[ "$EVERYTHING" != true ]] || args+=(--everything)
           [[ "$CORPUS" != true ]] || args+=(--corpus)
           [[ "$RE2" != true ]] || args+=(--re2)
+          [[ "$CROARING" != true ]] || args+=(--croaring)
           sanitizer=("${args[@]}")
           [[ "$IRESEARCH" != true ]] || args+=(--iresearch)
           [[ "$IRESEARCH" != true || "$IRESEARCH_SANITIZERS" != true ]] || sanitizer+=(--iresearch)

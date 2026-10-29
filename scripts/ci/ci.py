@@ -39,7 +39,7 @@ BUILD_INPUT_EXCEPTIONS = ("docs/*", "tests/sqllogic/sdb/pg/site_docs/*", "tests/
 SQLLOGIC_TEST_DIR = "tests/sqllogic/"
 BUNDLE_PATHS = (
     "bin/serened", "bin/serenedb-tests", "bin/iresearch-tests", "bin/iresearch-load-tests",
-    "bin/re2-tests", "third_party/duckdb/test/unittest", "CMakeCache.txt",
+    "bin/re2-tests", "bin/croaring-tests", "third_party/duckdb/test/unittest", "CMakeCache.txt",
 )
 BUNDLE_CACHE = Path(os.environ.get("SDB_BUNDLE_CACHE", "/mnt/data/sdb-ci/bundles"))
 BUNDLE_MIN_FREE = 200 << 30
@@ -145,7 +145,10 @@ def cmd_stage(args):
     try:
         for source, rel in files:
             (tmp_dir / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, tmp_dir / rel)
+            if source.is_dir():
+                shutil.copytree(source, tmp_dir / rel)
+            else:
+                shutil.copy2(source, tmp_dir / rel)
         (tmp_dir / ".complete").write_text(args.digest)
         tmp_dir.chmod(0o755)
         if dest.exists():
@@ -448,6 +451,8 @@ def cmd_select_suites(args):
             out += ["--suite", "iresearch", "--suite", "iresearch-load"]
         if args.re2:
             out += ["--suite", "re2"]
+        if args.croaring:
+            out += ["--suite", "croaring"]
         suites = [s for s in args.duckdb_suites.split(",") if s]
         if suites and not args.no_duckdb:
             out += ["--suite", "duckdb"]
@@ -693,6 +698,7 @@ def main(argv):
     p.add_argument("--corpus", action="store_true", help="the sqlite corpus too")
     p.add_argument("--iresearch", action="store_true")
     p.add_argument("--re2", action="store_true")
+    p.add_argument("--croaring", action="store_true")
     p.add_argument("--duckdb-suites", default="", help="comma-separated DuckDB suites")
     p.add_argument("--no-duckdb", action="store_true",
                    help="leave out DuckDB's suites the diff opens (sqlsmith still follows core)")

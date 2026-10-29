@@ -1270,7 +1270,7 @@ TEST_P(TermDictTest, small_fields_are_copied_at_open) {
   }
 }
 
-TEST_P(TermDictTest, open_reads_the_head_once_and_evicts_it) {
+TEST_P(TermDictTest, open_takes_the_terms_from_the_footer) {
   std::vector<std::pair<int64_t, irs::doc_id_t>> values;
   for (irs::doc_id_t doc = 1; doc <= 50000; ++doc) {
     values.emplace_back(int64_t{doc} * 7, doc);
@@ -1286,16 +1286,24 @@ TEST_P(TermDictTest, open_reads_the_head_once_and_evicts_it) {
   Write(fields);
   CountingDirectory counting{dir()};
   Open(counting);
-  const auto& head = _idx->Terms();
-  ASSERT_NE(0, head.size);
-  const std::pair<uint64_t, uint64_t> extent{head.offset,
-                                             head.offset + head.size};
-  ASSERT_EQ(1, absl::c_count(counting.Prefetched(), extent));
-  ASSERT_EQ(1, absl::c_count(counting.Evicted(), extent));
+  ASSERT_TRUE(_idx->TakeTerms().fields.empty());
+  ASSERT_EQ(1, counting.Evicted().size());
+  const uint64_t footer = counting.Evicted().front().first;
+  size_t footer_reads = 0;
+  for (const auto& [begin, end] : counting.Prefetched()) {
+    if (begin == footer) {
+      ++footer_reads;
+    } else {
+      ASSERT_LE(end, footer);
+    }
+  }
+  ASSERT_EQ(1, footer_reads);
   const auto& ranged =
     static_cast<const irs::term_dict::TermReaderImpl&>(*Get(2));
   ASSERT_FALSE(ranged.RangeLevels().empty());
-  ASSERT_LE(head.offset + head.size, ranged.Owner().RangesBegin());
+  const auto& owner = ranged.Owner();
+  ASSERT_LT(owner.PageOffset(owner.BlockCount() - 1), owner.InlineBegin());
+  ASSERT_EQ(footer, owner.RangesBegin() + owner.RangesSize());
   for (const auto& field : fields) {
     SCOPED_TRACE(testing::Message("field ") << field.id);
     AssertField(*Get(field.id), field.entries);

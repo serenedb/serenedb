@@ -39,15 +39,9 @@ struct Footer {
   uint32_t data_expected_crc32c = 0;
 };
 
-using ObjectWriter = absl::FunctionRef<void(duckdb::BinarySerializer&)>;
-using ObjectReader = absl::FunctionRef<void(duckdb::BinaryDeserializer&)>;
-using FooterWriter = ObjectWriter;
+using FooterWriter = absl::FunctionRef<void(duckdb::BinarySerializer&)>;
 using FooterReader =
   absl::FunctionRef<void(duckdb::BinaryDeserializer&, uint64_t)>;
-
-void WriteObject(bstring& out, ObjectWriter write);
-
-void ReadObject(bytes_view data, std::string_view what, ObjectReader read);
 
 void WriteFooter(IndexOutput& out);
 

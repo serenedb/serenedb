@@ -43,6 +43,31 @@ namespace {
 constexpr duckdb::field_id_t kFieldDataCrc32c = 0;
 constexpr duckdb::field_id_t kFieldMeta = 1;
 
+void WriteObject(bstring& out, FooterWriter write) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer serializer{stream};
+  serializer.Begin();
+  write(serializer);
+  serializer.End();
+  out.assign(stream.GetData(), stream.GetPosition());
+}
+
+void ReadObject(bytes_view data, std::string_view what,
+                absl::FunctionRef<void(duckdb::BinaryDeserializer&)> read) {
+  duckdb::MemoryStream stream{const_cast<byte_type*>(data.data()), data.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  try {
+    deserializer.Begin();
+    read(deserializer);
+    deserializer.End();
+  } catch (const duckdb::SerializationException& e) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(what, " cannot be read: ", duckdb::ErrorData{e}.RawMessage(),
+              "; it was written by a newer release of SereneDB"));
+  }
+}
+
 void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
   const uint32_t data_crc32c = out.Checksum();
   bstring footer;
@@ -112,30 +137,6 @@ Footer ReadFooterImpl(IndexInput& in, std::string_view name,
 }
 
 }  // namespace
-
-void WriteObject(bstring& out, ObjectWriter write) {
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream};
-  serializer.Begin();
-  write(serializer);
-  serializer.End();
-  out.assign(stream.GetData(), stream.GetPosition());
-}
-
-void ReadObject(bytes_view data, std::string_view what, ObjectReader read) {
-  duckdb::MemoryStream stream{const_cast<byte_type*>(data.data()), data.size()};
-  duckdb::BinaryDeserializer deserializer{stream};
-  try {
-    deserializer.Begin();
-    read(deserializer);
-    deserializer.End();
-  } catch (const duckdb::SerializationException& e) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(what, " cannot be read: ", duckdb::ErrorData{e}.RawMessage(),
-              "; it was written by a newer release of SereneDB"));
-  }
-}
 
 void WriteFooter(IndexOutput& out) { WriteFooterImpl(out, nullptr); }
 

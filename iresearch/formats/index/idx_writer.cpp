@@ -51,7 +51,7 @@ struct IdxWriter::Impl {
   IndexOutput::ptr out;
   std::vector<IvfCentroidEntry> ivf_entries;
   std::vector<HnswEntry> hnsw_entries;
-  TermsHead terms;
+  term_dict::TermsMeta terms;
 };
 
 IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name)
@@ -87,13 +87,13 @@ void IdxWriter::AddHnsw(field_id id, HnswMeta meta) {
   _impl->hnsw_entries.push_back(HnswEntry{.id = id, .meta = std::move(meta)});
 }
 
-void IdxWriter::SetTerms(const TermsHead& head) noexcept {
-  _impl->terms = head;
+void IdxWriter::SetTerms(term_dict::TermsMeta terms) noexcept {
+  _impl->terms = std::move(terms);
 }
 
 bool IdxWriter::Empty() const noexcept {
   return _impl->ivf_entries.empty() && _impl->hnsw_entries.empty() &&
-         _impl->terms.size == 0;
+         _impl->terms.fields.empty();
 }
 
 void IdxWriter::Commit() {
@@ -145,13 +145,11 @@ void IdxWriter::Commit() {
           });
         });
     }
-    if (const auto& terms = _impl->terms; terms.size != 0) {
-      footer.WriteProperty<uint64_t>(kIdxFieldTermsHeadOffset,
-                                     "terms_head_offset", terms.offset);
-      footer.WriteProperty<uint64_t>(kIdxFieldTermsHeadSize, "terms_head_size",
-                                     terms.size);
-      footer.WriteProperty<uint32_t>(kIdxFieldTermsHeadCrc32c,
-                                     "terms_head_crc32c", terms.crc32c);
+    if (!_impl->terms.fields.empty()) {
+      footer.WriteObject(kIdxFieldTerms, "terms",
+                         [&](duckdb::BinarySerializer& terms) {
+                           term_dict::WriteTerms(terms, _impl->terms);
+                         });
     }
   });
   _impl->out.reset();

@@ -39,21 +39,21 @@
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
-#include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::term_dict {
 namespace {
 
-constexpr duckdb::field_id_t kHeadRestartInterval = 0;
-constexpr duckdb::field_id_t kHeadBlocks = 1;
-constexpr duckdb::field_id_t kHeadFirstPage = 2;
-constexpr duckdb::field_id_t kHeadSpans = 3;
-constexpr duckdb::field_id_t kHeadSeparators = 4;
-constexpr duckdb::field_id_t kHeadFsst = 5;
-constexpr duckdb::field_id_t kHeadInlineSize = 6;
-constexpr duckdb::field_id_t kHeadRangesSize = 7;
-constexpr duckdb::field_id_t kHeadFields = 8;
+constexpr duckdb::field_id_t kTermsRestartInterval = 0;
+constexpr duckdb::field_id_t kTermsBlocks = 1;
+constexpr duckdb::field_id_t kTermsFirstPage = 2;
+constexpr duckdb::field_id_t kTermsSpans = 3;
+constexpr duckdb::field_id_t kTermsSeparators = 4;
+constexpr duckdb::field_id_t kTermsFsst = 5;
+constexpr duckdb::field_id_t kTermsInlineOffset = 6;
+constexpr duckdb::field_id_t kTermsInlineSize = 7;
+constexpr duckdb::field_id_t kTermsRangesSize = 8;
+constexpr duckdb::field_id_t kTermsFields = 9;
 
 constexpr duckdb::field_id_t kSpanBlock = 0;
 constexpr duckdb::field_id_t kSpanExtraPages = 1;
@@ -736,6 +736,83 @@ PrefixIndex::PrefixIndex(std::vector<uint32_t> prefixes)
   }
 }
 
+void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms) {
+  out.WriteProperty<uint32_t>(kTermsRestartInterval, "restart_interval",
+                              kRestartInterval);
+  out.WritePropertyWithDefault<uint32_t>(kTermsBlocks, "blocks", terms.blocks,
+                                         0);
+  out.WritePropertyWithDefault<uint64_t>(kTermsFirstPage, "first_page",
+                                         terms.first_page, 0);
+  if (!terms.spans.empty()) {
+    out.WriteList(kTermsSpans, "spans", terms.spans.size(),
+                  [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                    list.WriteObject([&](duckdb::BinarySerializer& span) {
+                      span.WriteProperty<uint32_t>(kSpanBlock, "block",
+                                                   terms.spans[i].block);
+                      span.WriteProperty<uint32_t>(
+                        kSpanExtraPages, "extra_pages", terms.spans[i].extra);
+                    });
+                  });
+  }
+  WriteOptionalBytes(out, kTermsSeparators, "separators", terms.separators);
+  WriteOptionalBytes(out, kTermsFsst, "fsst_table", terms.fsst_table);
+  out.WritePropertyWithDefault<uint64_t>(kTermsInlineOffset, "inline_offset",
+                                         terms.inline_offset, 0);
+  out.WritePropertyWithDefault<uint64_t>(kTermsInlineSize, "inline_size",
+                                         terms.inline_size, 0);
+  out.WritePropertyWithDefault<uint64_t>(kTermsRangesSize, "ranges_size",
+                                         terms.ranges_size, 0);
+  out.WriteList(kTermsFields, "fields", terms.fields.size(),
+                [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                  list.WriteObject([&](duckdb::BinarySerializer& field) {
+                    WriteField(field, terms.fields[i], i);
+                  });
+                });
+}
+
+TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size) {
+  const auto restart =
+    in.ReadProperty<uint32_t>(kTermsRestartInterval, "restart_interval");
+  if (restart != kRestartInterval) {
+    Unsupported("restart interval", restart);
+  }
+  TermsMeta terms;
+  terms.blocks =
+    in.ReadPropertyWithExplicitDefault<uint32_t>(kTermsBlocks, "blocks", 0);
+  terms.first_page = in.ReadPropertyWithExplicitDefault<uint64_t>(
+    kTermsFirstPage, "first_page", 0);
+  in.ReadOptionalList(
+    kTermsSpans, "spans",
+    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& span) {
+        terms.spans.push_back({
+          .block = span.ReadProperty<uint32_t>(kSpanBlock, "block"),
+          .extra = span.ReadProperty<uint32_t>(kSpanExtraPages, "extra_pages"),
+        });
+      });
+    });
+  terms.separators = ReadOptionalBytes(in, kTermsSeparators, "separators");
+  terms.fsst_table = ReadOptionalBytes(in, kTermsFsst, "fsst_table");
+  terms.inline_offset = in.ReadPropertyWithExplicitDefault<uint64_t>(
+    kTermsInlineOffset, "inline_offset", 0);
+  terms.inline_size = in.ReadPropertyWithExplicitDefault<uint64_t>(
+    kTermsInlineSize, "inline_size", 0);
+  terms.ranges_size = in.ReadPropertyWithExplicitDefault<uint64_t>(
+    kTermsRangesSize, "ranges_size", 0);
+  in.ReadList(kTermsFields, "fields",
+              [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t i) {
+                list.ReadObject([&](duckdb::BinaryDeserializer& field) {
+                  terms.fields.push_back(ReadField(field, i));
+                });
+              });
+  if (terms.inline_offset > data_size ||
+      terms.inline_size > data_size - terms.inline_offset ||
+      terms.ranges_size > data_size - terms.inline_offset - terms.inline_size) {
+    Corrupted("inline postings");
+  }
+  return terms;
+}
+
 void FieldWriter::prepare(const FlushState& state) {
   SDB_ASSERT(_idx);
   Reset();
@@ -1081,47 +1158,21 @@ void FieldWriter::end() {
   Cut();
   _pw.End();
   if (!_heads.empty()) {
-    bstring head;
-    format_utils::WriteObject(head, [&](duckdb::BinarySerializer& out) {
-      out.WriteProperty<uint32_t>(kHeadRestartInterval, "restart_interval",
-                                  kRestartInterval);
-      out.WritePropertyWithDefault<uint32_t>(kHeadBlocks, "blocks", _blocks, 0);
-      out.WritePropertyWithDefault<uint64_t>(kHeadFirstPage, "first_page",
-                                             _first_page, 0);
-      if (!_spans.empty()) {
-        out.WriteList(
-          kHeadSpans, "spans", _spans.size(),
-          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-            list.WriteObject([&](duckdb::BinarySerializer& span) {
-              span.WriteProperty<uint32_t>(kSpanBlock, "block",
-                                           _spans[i].block);
-              span.WriteProperty<uint32_t>(kSpanExtraPages, "extra_pages",
-                                           _spans[i].extra);
-            });
-          });
-      }
-      WriteOptionalBytes(out, kHeadSeparators, "separators", _separators);
-      WriteOptionalBytes(out, kHeadFsst, "fsst_table", _fsst_table);
-      out.WritePropertyWithDefault<uint64_t>(kHeadInlineSize, "inline_size",
-                                             _inline.size(), 0);
-      out.WritePropertyWithDefault<uint64_t>(kHeadRangesSize, "ranges_size",
-                                             _range_regions.size(), 0);
-      out.WriteList(kHeadFields, "fields", _heads.size(),
-                    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                      list.WriteObject([&](duckdb::BinarySerializer& field) {
-                        WriteField(field, _heads[i], i);
-                      });
-                    });
-    });
     auto& out = *_out;
-    const uint64_t offset = out.Position();
-    out.WriteData(head.data(), head.size());
+    TermsMeta terms{
+      .blocks = _blocks,
+      .first_page = _first_page,
+      .spans = std::move(_spans),
+      .separators = std::move(_separators),
+      .fsst_table = std::move(_fsst_table),
+      .inline_offset = out.Position(),
+      .inline_size = _inline.size(),
+      .ranges_size = _range_regions.size(),
+      .fields = std::move(_heads),
+    };
     out.WriteData(_inline.data(), _inline.size());
     out.WriteData(_range_regions.data(), _range_regions.size());
-    Crc32c crc;
-    crc.process_bytes(head.data(), head.size());
-    _idx->SetTerms(
-      {.offset = offset, .size = head.size(), .crc32c = crc.checksum()});
+    _idx->SetTerms(std::move(terms));
   }
   Reset();
   _idx = nullptr;
@@ -1584,71 +1635,19 @@ void FieldReader::FillCopies() {
   _pending.shrink_to_fit();
 }
 
-Separators FieldReader::ReadHead(IndexInput& in, const TermsHead& extent,
-                                 std::vector<FieldHead>& fields) {
-  const uint64_t offset = extent.offset;
-  const uint64_t length = in.Length();
-  if (offset > length || extent.size > length - offset) {
-    Corrupted("head extent");
-  }
-  bstring copy;
-  const auto* data = MapAt(in, offset, extent.size, copy);
-  Crc32c crc;
-  crc.process_bytes(data, extent.size);
-  if (crc.checksum() != extent.crc32c) {
-    Corrupted("head checksum");
-  }
-
-  std::vector<SpanningBlock> spans;
-  std::string separators;
-  std::string table;
-  format_utils::ReadObject(
-    {data, extent.size}, "term dictionary",
-    [&](duckdb::BinaryDeserializer& head) {
-      const auto restart =
-        head.ReadProperty<uint32_t>(kHeadRestartInterval, "restart_interval");
-      if (restart != kRestartInterval) {
-        Unsupported("restart interval", restart);
-      }
-      _block_count = head.ReadPropertyWithExplicitDefault<uint32_t>(
-        kHeadBlocks, "blocks", 0);
-      _first_page = head.ReadPropertyWithExplicitDefault<uint64_t>(
-        kHeadFirstPage, "first_page", 0);
-      head.ReadOptionalList(
-        kHeadSpans, "spans",
-        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
-          list.ReadObject([&](duckdb::BinaryDeserializer& span) {
-            spans.push_back({
-              .block = span.ReadProperty<uint32_t>(kSpanBlock, "block"),
-              .extra =
-                span.ReadProperty<uint32_t>(kSpanExtraPages, "extra_pages"),
-            });
-          });
-        });
-      separators = head.ReadPropertyWithDefault<std::string>(kHeadSeparators,
-                                                             "separators");
-      table =
-        head.ReadPropertyWithDefault<std::string>(kHeadFsst, "fsst_table");
-      _inline_size = head.ReadPropertyWithExplicitDefault<uint64_t>(
-        kHeadInlineSize, "inline_size", 0);
-      _ranges_size = head.ReadPropertyWithExplicitDefault<uint64_t>(
-        kHeadRangesSize, "ranges_size", 0);
-      head.ReadList(
-        kHeadFields, "fields",
-        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t i) {
-          list.ReadObject([&](duckdb::BinaryDeserializer& field) {
-            fields.push_back(ReadField(field, i));
-          });
-        });
-    });
-
+Separators FieldReader::Bind(TermsMeta& terms) {
+  _block_count = terms.blocks;
+  _first_page = terms.first_page;
+  _inline_offset = terms.inline_offset;
+  _inline_size = terms.inline_size;
+  _ranges_size = terms.ranges_size;
   const auto blocks = _block_count;
-  if (spans.size() > blocks) {
+  if (terms.spans.size() > blocks) {
     Corrupted("block directory");
   }
-  _spans.reserve(spans.size());
+  _spans.reserve(terms.spans.size());
   uint64_t extra = 0;
-  for (const auto& span : spans) {
+  for (const auto& span : terms.spans) {
     extra += span.extra;
     if (span.extra == 0 || span.block >= blocks ||
         (!_spans.empty() && span.block <= _spans.back().block) ||
@@ -1658,35 +1657,28 @@ Separators FieldReader::ReadHead(IndexInput& in, const TermsHead& extent,
     _spans.push_back(
       {.block = span.block, .extra = static_cast<uint32_t>(extra)});
   }
-  if (blocks != 0 &&
-      (_first_page > offset / kPage || PageOffset(blocks - 1) >= offset)) {
+  if (blocks != 0 && (_first_page > _inline_offset / kPage ||
+                      PageOffset(blocks - 1) >= _inline_offset)) {
     Corrupted("block directory");
   }
 
   Separators decoded;
+  auto& separators = terms.separators;
   if (blocks != 0) {
     const auto size = separators.size();
-    separators.append(kSlack, '\0');
-    decoded = DecodeSeparators(
-      {reinterpret_cast<const byte_type*>(separators.data()), size},
-      blocks - 1);
+    separators.append(kSlack, byte_type{0});
+    decoded = DecodeSeparators({separators.data(), size}, blocks - 1);
   } else if (!separators.empty()) {
     Corrupted("separators");
   }
-  if (!table.empty()) {
+  if (const auto& table = terms.fsst_table; !table.empty()) {
     auto decoder = std::make_unique<duckdb_fsst_decoder_t>();
-    const auto consumed = duckdb_fsst_import(
-      decoder.get(), reinterpret_cast<const byte_type*>(table.data()),
-      table.size());
+    const auto consumed =
+      duckdb_fsst_import(decoder.get(), table.data(), table.size());
     if (consumed != table.size()) {
       Corrupted("FSST table");
     }
     _fsst = std::move(decoder);
-  }
-  _inline_offset = offset + extent.size;
-  if (_inline_size > length - _inline_offset ||
-      _ranges_size > length - _inline_offset - _inline_size) {
-    Corrupted("inline postings");
   }
   _bytes = _spans.capacity() * sizeof(SpanningBlock) +
            (_fsst ? sizeof(duckdb_fsst_decoder_t) : 0);
@@ -1698,20 +1690,19 @@ Separators FieldReader::ReadHead(IndexInput& in, const TermsHead& extent,
 
 void FieldReader::prepare(const ReaderState& state) {
   SDB_ASSERT(state.idx);
-  const auto& extent = state.idx->Terms();
+  auto terms = state.idx->TakeTerms();
   _in = state.idx->ReopenIn();
   if (!_in) {
-    SDB_ENSURE(extent.size == 0,
-               "term dictionary: a head but no `.idx` stream");
+    SDB_ENSURE(terms.fields.empty(),
+               "term dictionary: fields but no `.idx` stream");
     return;
   }
 
   _base = _in->ReadStable(0, _in->Length());
-  std::vector<FieldHead> heads;
+  const auto& heads = terms.fields;
   Separators separators;
-  if (extent.size != 0) {
-    _in->Prefetch(extent.offset, extent.size);
-    separators = ReadHead(*_in, extent, heads);
+  if (!heads.empty()) {
+    separators = Bind(terms);
   }
 
   IndexFeatures features = IndexFeatures::None;
@@ -1736,9 +1727,6 @@ void FieldReader::prepare(const ReaderState& state) {
     _keys.push_back(head.key);
   }
   FillCopies();
-  if (extent.size != 0) {
-    _in->Evict(extent.offset, extent.size);
-  }
 }
 
 const TermReader* FieldReader::field(FieldKey key) const {

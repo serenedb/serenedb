@@ -48,11 +48,11 @@ struct IdxReader::Impl {
   std::vector<std::pair<field_id, std::unique_ptr<AnnIndex>>> ann_entries;
   irs::containers::FlatHashMap<field_id, size_t> ann_by_id;
   std::vector<uint64_t> ann_ends;
-  TermsHead terms;
+  term_dict::TermsMeta terms;
 };
 
 IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
-                     HnswBases* hnsw_bases)
+                     HnswBases* hnsw_bases, bool keep_terms)
   : _impl{std::make_unique<Impl>()} {
   const auto filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
   bool exists = false;
@@ -68,7 +68,8 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
   _impl->in = dir.open(filename, IOAdvice::RANDOM);
 
   format_utils::ReadFooter(
-    *_impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+    *_impl->in, filename,
+    [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
       footer.ReadOptionalList(
         kIdxFieldTermDict, "term_dict",
         [&](duckdb::BinaryDeserializer::List&, duckdb::idx_t) {
@@ -139,13 +140,13 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
           });
         });
 #endif
-      auto& terms = _impl->terms;
-      terms.offset = footer.ReadPropertyWithExplicitDefault<uint64_t>(
-        kIdxFieldTermsHeadOffset, "terms_head_offset", 0);
-      terms.size = footer.ReadPropertyWithExplicitDefault<uint64_t>(
-        kIdxFieldTermsHeadSize, "terms_head_size", 0);
-      terms.crc32c = footer.ReadPropertyWithExplicitDefault<uint32_t>(
-        kIdxFieldTermsHeadCrc32c, "terms_head_crc32c", 0);
+      footer.ReadOptionalObject(
+        kIdxFieldTerms, "terms", [&](duckdb::BinaryDeserializer& terms) {
+          auto meta = term_dict::ReadTerms(terms, data_size);
+          if (keep_terms) {
+            _impl->terms = std::move(meta);
+          }
+        });
     });
 }
 
@@ -162,7 +163,9 @@ const AnnIndex* IdxReader::Ann(field_id id) const noexcept {
            : _impl->ann_entries[it->second].second.get();
 }
 
-const TermsHead& IdxReader::Terms() const noexcept { return _impl->terms; }
+term_dict::TermsMeta IdxReader::TakeTerms() noexcept {
+  return std::exchange(_impl->terms, {});
+}
 
 std::span<const uint64_t> IdxReader::AnnEnds() const noexcept {
   return _impl->ann_ends;

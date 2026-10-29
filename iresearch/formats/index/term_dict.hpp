@@ -36,6 +36,7 @@
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/index/term_dict_root.hpp"
 #include "iresearch/formats/posting/reader.hpp"
 #include "iresearch/formats/posting/writer.hpp"
@@ -116,36 +117,6 @@ struct BlockBuilder {
 };
 
 inline constexpr size_t kMaxRangeLevels = 8;
-
-struct FieldHead {
-  FieldKey key;
-  IndexFeatures features = IndexFeatures::None;
-  uint64_t term_count = 0;
-  uint64_t doc_count = 0;
-  uint64_t total_doc_freq = 0;
-  uint64_t total_term_freq = 0;
-  field_id norm = field_limits::invalid();
-  bool has_score_bounds = false;
-  bool ranges = false;
-  uint32_t ordinal = 0;
-  uint32_t width = 0;
-  bstring min;
-  bstring max;
-  bstring record;
-  bstring record_inline;
-  uint32_t first_block = 0;
-  uint32_t first_entry = 0;
-  uint32_t first_record = 0;
-  uint32_t last_block = 0;
-  uint32_t last_entry = 0;
-  uint64_t inline_base = 0;
-  uint64_t inline_size = 0;
-  uint64_t range_offset = 0;
-  uint64_t range_size = 0;
-  uint32_t range_prefix = 0;
-  std::vector<uint64_t> range_counts;
-  bstring prefixes;
-};
 
 inline constexpr size_t kTermPrefix = sizeof(uint32_t);
 inline constexpr uint32_t kNoLabel = 256;
@@ -256,11 +227,6 @@ class PrefixIndex {
   std::array<uint64_t, kRowWords> _firsts{};
   std::array<uint32_t, kNoLabel + 1> _buckets{};
   std::array<uint32_t, kNoLabel + 1> _pair_rows{};
-};
-
-struct SpanningBlock {
-  uint32_t block;
-  uint32_t extra;
 };
 
 class RangeWriter final {
@@ -571,8 +537,7 @@ class FieldReader final {
     std::array<const TermReaderImpl*, kTermDicts> dicts{};
   };
 
-  Separators ReadHead(IndexInput& in, const TermsHead& extent,
-                      std::vector<FieldHead>& fields);
+  Separators Bind(TermsMeta& terms);
   void FillCopies();
 
   std::deque<TermReaderImpl> _fields;

@@ -94,7 +94,7 @@ class SegmentReaderImpl final : public SubReader {
     std::unique_ptr<IdxReader> idx_reader;
 
     void Open(const Directory& dir, const SegmentMeta& meta,
-              const IndexReaderOptions& options);
+              const IndexReaderOptions& options, bool keep_terms);
   };
 
   FileRefs _refs;

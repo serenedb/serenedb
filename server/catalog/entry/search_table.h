@@ -175,8 +175,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   }
 
   bool NumbersRowsWith(const duckdb::CatalogEntry& sequence) const final {
-    return sequence.name == _pk_sequence &&
-           sequence.ParentSchemaName() == ParentSchemaName();
+    return sequence.name.GetIdentifierName() ==
+             _pk_sequence.GetIdentifierName() &&
+           sequence.ParentSchemaOid() == ParentSchemaOid();
   }
 
   duckdb::optional_ptr<duckdb::TableLogStorage> GetLogStorage() final {

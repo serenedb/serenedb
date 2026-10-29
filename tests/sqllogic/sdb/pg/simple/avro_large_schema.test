@@ -1,0 +1,27 @@
+control substitution on
+
+
+statement ok
+COPY (SELECT line FROM (SELECT 0 AS k, string_agg('c' || i, ',' ORDER BY i) AS line FROM range(1500) t(i) UNION ALL SELECT 1, string_agg(i::TEXT, ',' ORDER BY i) FROM range(1500) t(i)) ORDER BY k) TO '${__TEST_DIR__}/avro_large_schema.csv' (FORMAT csv, HEADER false, DELIMITER '|');
+
+
+statement ok
+COPY (SELECT * FROM read_csv('${__TEST_DIR__}/avro_large_schema.csv', header = true)) TO '${__TEST_DIR__}/avro_large_schema.avro' (FORMAT avro);
+
+
+query
+SELECT c0, c1499 FROM read_avro('${__TEST_DIR__}/avro_large_schema.avro');
+----
+c0	c1499
+0	1499
+
+
+statement ok
+COPY (SELECT 42 AS a) TO '${__TEST_DIR__}/avro_long_root_name.avro' (FORMAT avro, ROOT_NAME repeat('r', 70000));
+
+
+query
+SELECT a FROM read_avro('${__TEST_DIR__}/avro_long_root_name.avro');
+----
+a
+42

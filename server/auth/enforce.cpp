@@ -1192,7 +1192,7 @@ class Enforcer {
   }
 
   duckdb::idx_t GranteeId(std::string_view name) {
-    return name == "PUBLIC" ? duckdb::ACL_ID_PUBLIC : RoleId(name);
+    return name == "public" ? duckdb::ACL_ID_PUBLIC : RoleId(name);
   }
 
   duckdb::idx_t SchemaOwner(const duckdb::CreateSchemaInfo& info) {

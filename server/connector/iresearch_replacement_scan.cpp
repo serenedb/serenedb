@@ -23,11 +23,13 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/function/replacement_scan.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
+#include <duckdb/planner/binder.hpp>
 
 #include "connector/inverted_store_index.h"
 
@@ -37,8 +39,10 @@ namespace {
 duckdb::unique_ptr<duckdb::TableRef> IResearchReplacementScan(
   duckdb::ClientContext& context, duckdb::ReplacementScanInput& input,
   duckdb::optional_ptr<duckdb::ReplacementScanData> /*data*/) {
+  duckdb::CatalogEntryRetriever retriever{context};
   auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
-    context, input.name, duckdb::OnEntryNotFound::RETURN_NULL);
+    context, duckdb::Binder::BindTableName(retriever, input.name),
+    duckdb::OnEntryNotFound::RETURN_NULL);
   if (!index || !IsInvertedIndex(*index)) {
     return nullptr;
   }

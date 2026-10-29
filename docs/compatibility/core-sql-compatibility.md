@@ -618,8 +618,8 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | jsonb_insert | No |  |
 | json_strip_nulls | Yes |  |
 | jsonb_strip_nulls | No | Use `json_strip_nulls` |
-| json_extract_path | Yes | Single-arg form needs a cast; multi-arg works |
-| json_extract_path_text | Yes | Single-arg form needs a cast; multi-arg works |
+| json_extract_path | Yes |  |
+| json_extract_path_text | Yes |  |
 | json_path | No | No `jsonpath` type |
 
 #### Sequence Manipulation

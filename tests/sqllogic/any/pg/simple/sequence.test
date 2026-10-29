@@ -1047,3 +1047,22 @@ DROP SEQUENCE seq_bottom;
 
 statement ok
 DROP SEQUENCE seq_top;
+
+
+statement ok
+CREATE SEQUENCE seq_fold;
+
+
+query
+SELECT nextval('SEQ_FOLD') AS n, currval('Seq_Fold') AS c, setval('SEQ_FOLD', 10) AS s, nextval('public.SEQ_FOLD') AS p;
+----
+n	c	s	p
+1	1	10	11
+
+
+statement error (relation "SEQ_FOLD" does not exist|Sequence with name SEQ_FOLD does not exist)
+SELECT nextval('"SEQ_FOLD"');
+
+
+statement ok
+DROP SEQUENCE seq_fold;

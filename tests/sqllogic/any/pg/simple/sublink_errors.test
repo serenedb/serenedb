@@ -9,3 +9,11 @@ FROM
   VALUES ('pudge'), ('deadinside'), ('clickclack')
 ) AS lol(name)
 WHERE name NOT IN (VALUES ('pudge', 993), ('clickclack', 228));
+
+
+statement error syntax error at or near "\)"
+SELECT NULL IN ();
+
+
+statement error syntax error at or near "\)"
+SELECT 1 NOT IN ();

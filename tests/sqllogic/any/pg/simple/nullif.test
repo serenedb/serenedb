@@ -73,3 +73,40 @@ SELECT NULLIF('1', 1);
 ----
 nullif
 NULL
+
+
+query
+SELECT pg_typeof(NULLIF(53, 1.5)) AS t, NULLIF(53, 1.5) / 2 = 26.5 AS d, pg_typeof(NULLIF(1.5, 53)) AS u,
+       NULLIF(NULL::int, 1) AS n, pg_typeof(NULLIF('a'::text, 'a'::varchar)) AS s;
+----
+t	d	u	n	s
+numeric	t	numeric	NULL	text
+
+
+query
+SELECT NULLIF(5, 5.5) / 2 > 2.4 AS promoted, pg_typeof(NULLIF('7', 7)) AS t, NULLIF(1, NULL::int) AS kept;
+----
+promoted	t	kept
+t	integer	1
+
+
+statement ok
+PREPARE nullif_param AS SELECT NULLIF($1, 5) AS n;
+
+
+query
+EXECUTE nullif_param(5);
+----
+n
+NULL
+
+
+query
+EXECUTE nullif_param(6);
+----
+n
+6
+
+
+statement ok
+DEALLOCATE nullif_param;

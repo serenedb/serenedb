@@ -15,6 +15,7 @@ ENGINES = ("pg-wire-simple", "pg-wire-extended")
 PLANNED_EXITS = (0, 75)
 STATEFUL_SERVICES = ("minio", "azurite", "iceberg", "postgres", "clickhouse")
 INFERENCE_CPUS = {"svc:ollama": 8, "svc:kev": 8}
+INFERENCE_TIMEOUT = 900.0
 CORPUS = "any/sqlite/"
 CORPUS_SECONDS_PER_MB = 18.0
 PART_SECONDS = 10.0
@@ -239,7 +240,10 @@ def sqllogic_units(ctx, args, skips):
                 continue
             cost, timeout = plan(ctx, uid, default_seconds(path, rel))
             if CORPUS not in rel:
-                cpus = 1 + sum(INFERENCE_CPUS.get(f, 0) for f in fixtures)
+                inference = [f for f in fixtures if f in INFERENCE_CPUS]
+                cpus = 1 + sum(INFERENCE_CPUS[f] for f in inference)
+                if inference:
+                    timeout = max(timeout, INFERENCE_TIMEOUT)
                 units.append(Unit(uid, "sqllogic", _sqllogic_run(ctx, args, rel, engine), cpus=cpus,
                                   mem_gb=0.3, fixtures=pool + fixtures, shared=shared, cost=cost,
                                   timeout=timeout, group=f"sqllogic:{rel}"))

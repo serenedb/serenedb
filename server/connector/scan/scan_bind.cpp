@@ -569,10 +569,35 @@ DeferredBuild BuildDeferredFilter(
       context,
       optimizer::SubstituteParameters(e->Copy(), /*with_values=*/true));
   };
+  DeferredBuild out;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> index_only;
   conjuncts.reserve(claim.conjuncts.size() + claim.ranges.size());
+  const bool keeps_columns = scan.KeepsColumnForms();
+  const auto keep_column_form = [&](const duckdb::Expression& conjunct) {
+    const auto* ref = optimizer::SoleColumn(conjunct);
+    if (!ref) {
+      return false;
+    }
+    const auto it = claim.columns->find(MakeBindingKey(ref->Binding()));
+    if (it == claim.columns->end() || !it->second.column_stored) {
+      return false;
+    }
+    out.dual_filters.push_back(
+      {.column = it->second.column,
+       .type = ref->GetReturnType(),
+       .filter = duckdb::make_uniq<duckdb::ExpressionFilter>(
+         optimizer::ColumnFormOf(conjunct.Copy()))});
+    return true;
+  };
+  const auto to_index = [&](duckdb::unique_ptr<duckdb::Expression> conjunct) {
+    if (keeps_columns && !keep_column_form(*conjunct)) {
+      index_only.push_back(conjunct->Copy());
+    }
+    conjuncts.push_back(std::move(conjunct));
+  };
   for (const auto& e : claim.conjuncts) {
-    conjuncts.push_back(bound(e));
+    to_index(bound(e));
   }
   const ColumnGetter getter = [&](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<SearchColumnInfo> {
@@ -591,7 +616,6 @@ DeferredBuild BuildDeferredFilter(
     [](const duckdb::Expression&) -> std::optional<SearchColumnInfo> {
     return std::nullopt;
   };
-  DeferredBuild out;
   struct WideColumn {
     duckdb::LogicalType type;
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> parts;
@@ -640,7 +664,7 @@ DeferredBuild BuildDeferredFilter(
       if (probe_wide(range)) {
         to_column(std::move(range));
       } else {
-        conjuncts.push_back(std::move(range));
+        to_index(std::move(range));
       }
       continue;
     }
@@ -652,20 +676,14 @@ DeferredBuild BuildDeferredFilter(
       if (fits ? !*fits : probe_wide(range)) {
         to_column(std::move(range));
       } else {
-        conjuncts.push_back(std::move(range));
+        to_index(std::move(range));
       }
     }
   }
   for (auto& [column, typed] : wide) {
     auto& [type, parts] = typed;
     for (auto& part : parts) {
-      duckdb::ExpressionIterator::VisitExpressionMutable<
-        duckdb::BoundColumnRefExpression>(
-        part, [](duckdb::BoundColumnRefExpression& r,
-                 duckdb::unique_ptr<duckdb::Expression>& child) {
-          child = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
-            r.GetAlias(), r.GetReturnType(), 0ULL);
-        });
+      part = optimizer::ColumnFormOf(std::move(part));
     }
     duckdb::unique_ptr<duckdb::Expression> expr;
     if (parts.size() == 1) {
@@ -717,12 +735,30 @@ DeferredBuild BuildDeferredFilter(
   out.filter = std::shared_ptr<const irs::Filter>{std::move(filter)};
   out.scorers = std::move(scorers);
   out.checks = MakeChecks(std::move(deferral));
+  if (!out.dual_filters.empty() && !index_only.empty()) {
+    auto rest = std::make_unique<irs::BooleanFilter>();
+    FilterScorers rest_scorers;
+    if (MakeSearchFilter(*rest, index_only, getter, context, expr_getter,
+                         &rest_scorers)
+          .ok()) {
+      irs::Filter::ptr rest_filter = std::move(rest);
+      EnsureIncludeSides(*rest_filter);
+      irs::Optimize(rest_filter, {.scored = false,
+                                  .analyzed_fields = ctx.analyzed_fields,
+                                  .null_markers = &null_markers});
+      out.index_only = std::move(rest_filter);
+    } else {
+      out.dual_filters.clear();
+    }
+  }
   return out;
 }
 
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
-                                  float radius) {
+                                  float radius,
+                                  std::shared_ptr<const irs::Filter> index_only,
+                                  bool dual) {
   if (vs.exact) {
     auto f = std::make_unique<irs::ByVectorExact>();
     *f->mutable_field_id() = vs.field_id;
@@ -754,6 +790,8 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->rescore_width = vs.rescore_all || vs.top_k == 0 ? 0.f : vs.rescore_width;
   o->hnsw_filter_mode = vs.hnsw_filter_mode;
   o->hnsw_column_filter = vs.hnsw_column_filter;
+  o->index_only = std::move(index_only);
+  o->dual = dual;
   return f;
 }
 

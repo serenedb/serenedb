@@ -30,6 +30,7 @@ struct Context {
   const Scorer& scorer;
   ColumnArgsFetcher& fetcher;
   detail::TableFilter* table = nullptr;
+  detail::TableFilter* columns = nullptr;
   uint32_t k = 0;
 };
 

@@ -116,6 +116,7 @@ QUERY PLAN
 │ │ Field: num       │              │
 │ │ Range: <=40      │              │
 │ ╰──────────────────╯              │
+│ Index or Column Filter: num <= 40 │
 │ Score: l2_distance(emb, FLOAT[2]) │
 │ Top: 3                            │
 │ Projections: pk                   │
@@ -144,6 +145,8 @@ QUERY PLAN
 │ │ Field: num            │         │
 │ │ Range: >=1200, <=1240 │         │
 │ ╰───────────────────────╯         │
+│ Index or Column Filter:           │
+│ num BETWEEN 1200 AND 1240         │
 │ Score: l2_distance(emb, FLOAT[2]) │
 │ Top: 3                            │
 │ Projections: pk                   │
@@ -206,6 +209,8 @@ QUERY PLAN
 │ │ Field: num       │  │ Field: num       │ │
 │ │ Range: <10       │  │ Range: >1500     │ │
 │ ╰──────────────────╯  ╰──────────────────╯ │
+│ Index or Column Filter:                    │
+│ (num < 10) OR (num > 1500)                 │
 │ Score: l2_distance(emb, FLOAT[2])          │
 │ Top: 3                                     │
 │ Projections: pk                            │

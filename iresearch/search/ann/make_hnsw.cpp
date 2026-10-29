@@ -98,7 +98,7 @@ ann::Root::ptr HnswQuery::PlanAnn(const ann::Context& ctx) const {
   auto* const narrow =
     ctx.table && !ctx.table->Foldable() ? ctx.table : nullptr;
   std::vector<score_t> spreads;
-  auto hits = RunSearch(ctx.table, &spreads);
+  auto hits = RunSearch(ctx.table, ctx.columns, &spreads);
   if (hits.empty()) {
     return ann::MakeEmpty();
   }

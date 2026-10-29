@@ -36,6 +36,8 @@ enum class PointRead : uint8_t {
   Vector,
 };
 
+inline constexpr double kUnknownShare = 1.0;
+
 struct TableFilter {
   virtual ~TableFilter() = default;
 
@@ -54,6 +56,8 @@ struct TableFilter {
   virtual void Rewind() {}
 
   virtual PointRead PointReads() const noexcept { return PointRead::None; }
+
+  virtual double Share() const { return kUnknownShare; }
 
   virtual bool Admits(doc_id_t doc) {
     Rewind();

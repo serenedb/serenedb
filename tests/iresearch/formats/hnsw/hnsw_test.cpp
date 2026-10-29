@@ -1088,6 +1088,59 @@ TEST(HnswRandomLevelTest, UpperLevelShareMatchesRoundedDraw) {
   }
 }
 
+TEST(HnswVisitedTest, MembershipSurvivesGrowthAndTheSwitchToTheBitset) {
+  for (const uint32_t nodes : {1000U, 40000U, 30000000U}) {
+    for (const size_t visits : {size_t{0}, size_t{6000}, size_t{300000}}) {
+      irs::HnswVisited visited;
+      std::vector<bool> marked(nodes);
+      pcg32 rng{irs::kHnswBuildSeed};
+      visited.Reset(nodes, visits);
+      for (const size_t count :
+           {size_t{0}, size_t{10}, size_t{5000}, size_t{300000}, size_t{10}}) {
+        visited.Next();
+        std::vector<uint32_t> ids;
+        for (size_t i = 0; i < count; ++i) {
+          const auto id = absl::Uniform<uint32_t>(rng, 0, nodes);
+          ASSERT_EQ(visited.TestAndSet(id), marked[id])
+            << "nodes " << nodes << " visits " << visits << " count " << count
+            << " id " << id;
+          marked[id] = true;
+          ids.push_back(id);
+        }
+        for (const auto id : ids) {
+          ASSERT_TRUE(visited.Test(id)) << "nodes " << nodes << " id " << id;
+        }
+        for (size_t i = 0; i < 1000; ++i) {
+          const auto id = absl::Uniform<uint32_t>(rng, 0, nodes);
+          ASSERT_EQ(visited.Test(id), marked[id])
+            << "nodes " << nodes << " id " << id;
+        }
+        for (const auto id : ids) {
+          marked[id] = false;
+        }
+      }
+    }
+  }
+}
+
+TEST(HnswVisitedTest, ResetForgetsEveryMarkAcrossUniverses) {
+  irs::HnswVisited visited;
+  visited.Reset(30000000, 0);
+  for (uint32_t i = 0; i < 400000; ++i) {
+    visited.Set(i * 7);
+  }
+  visited.Reset(1000, 0);
+  for (uint32_t id = 0; id < 1000; ++id) {
+    ASSERT_FALSE(visited.Test(id)) << id;
+  }
+  visited.Set(999);
+  visited.Reset(30000000, 0);
+  ASSERT_FALSE(visited.Test(999));
+  ASSERT_FALSE(visited.Test(7000));
+  ASSERT_FALSE(visited.TestAndSet(7000));
+  ASSERT_TRUE(visited.Test(7000));
+}
+
 TEST(HnswSelectNeighborsTest, TransposedMatchesReference) {
   constexpr uint32_t kD = 6;
   constexpr size_t kNodes = 400;
@@ -1240,7 +1293,7 @@ void CheckWalkAsksPerHop() {
   writer.SetEntryPoint(entry);
   WalkDist build{.pts = &pts, .d = kD};
   irs::HnswBuildScratch scratch;
-  scratch.search.visited.Reset(kNodes);
+  scratch.search.visited.Reset(kNodes, irs::HnswWalkVisits(kEf, writer.M0()));
   for (uint32_t i = 0; i < kNodes; ++i) {
     if (i != entry) {
       build.SetQuery(i);
@@ -1340,7 +1393,7 @@ TEST(HnswWalkTest, AdaptiveCrossesOverWhereThePredicateAdmitsNothingNearby) {
   writer.SetEntryPoint(entry);
   WalkDist build{.pts = &pts, .d = kD};
   irs::HnswBuildScratch scratch;
-  scratch.search.visited.Reset(kNodes);
+  scratch.search.visited.Reset(kNodes, irs::HnswWalkVisits(kEf, writer.M0()));
   for (uint32_t i = 0; i < kNodes; ++i) {
     if (i != entry) {
       build.SetQuery(i);
@@ -1433,7 +1486,8 @@ TEST(HnswInsertTest, NodesInsertedTowardsTheGraphStayReachable) {
   writer.SetEntryPoint(entry);
   WalkDist build{.pts = &pts, .d = kD};
   irs::HnswBuildScratch scratch;
-  scratch.search.visited.Reset(kNodes);
+  scratch.search.visited.Reset(
+    kNodes, irs::HnswWalkVisits(irs::kHnswDefaultEfConstruction, writer.M0()));
   for (uint32_t i = 0; i < kNodes; ++i) {
     if (i != entry) {
       build.SetQuery(i);

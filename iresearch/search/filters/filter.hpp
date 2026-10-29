@@ -112,6 +112,7 @@ class QueryBuilder : public memory::Managed {
 
   const SubReader& Segment() const noexcept { return _segment; }
   QueryKind Kind() const noexcept { return _kind; }
+  uint32_t EstimateMin() const noexcept { return _estimate_min; }
   uint32_t EstimateMax() const noexcept { return _estimate_max; }
   uint32_t EstimateMatches() const noexcept { return _estimate_matches; }
   uint64_t Postings() const noexcept { return _postings; }
@@ -168,6 +169,7 @@ class QueryBuilder : public memory::Managed {
 
  protected:
   const SubReader& _segment;
+  uint32_t _estimate_min = 0;
   uint32_t _estimate_max = 0;
   uint32_t _estimate_matches = 0;
   uint64_t _postings = 0;

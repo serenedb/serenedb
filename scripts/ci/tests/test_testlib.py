@@ -236,6 +236,20 @@ def test_an_untimed_gtest_runs_alone_and_timed_ones_batch(monkeypatch):
                                           ("gtest:b:D.new",)]
 
 
+def test_an_inference_test_waits_for_the_shared_model_server(monkeypatch, tmp_path):
+    base = tmp_path / "tests" / "sqllogic" / "sdb"
+    base.mkdir(parents=True)
+    (base / "a.test").write_text("")
+    (base / "b_ollama.test_slow").write_text("")
+    monkeypatch.setattr(sqllogic.subprocess, "run", lambda *args, **kwargs: None)
+    ctx = SimpleNamespace(root=tmp_path, timing=Timing({}), skips=[], timeout_floor=180.0,
+                          config=SimpleNamespace(slowdown=1.0))
+    args = SimpleNamespace(server=None, corpus=False, fast=False, biglake=False, override=False)
+    units = {u.id: u for u in sqllogic.sqllogic_units(ctx, args, [])}
+    assert units["sqllogic:pg-wire-simple:sdb/a.test"].timeout == 180.0
+    assert units["sqllogic:pg-wire-simple:sdb/b_ollama.test_slow"].timeout == sqllogic.INFERENCE_TIMEOUT
+
+
 def test_extension_test_ids_do_not_depend_on_the_checkout():
     ctx = SimpleNamespace(root=Path("/somewhere/serenedb"))
     assert duckdb._relative(ctx, "avro", "/somewhere/serenedb/third_party/duckdb_avro/test/sql/a.test") \

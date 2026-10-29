@@ -535,8 +535,7 @@ uint64_t ResolveRemovals(
     settled.clear();
     RemoveTerms(unsettled, key_field, *target.reader,
                 [&](int64_t key, doc_id_t doc) {
-                  if (!masked.Contains(doc)) {
-                    target.removed->Add(doc);
+                  if (!masked.Contains(doc) && target.removed->Add(doc)) {
                     settled.emplace_back(key);
                   }
                 });

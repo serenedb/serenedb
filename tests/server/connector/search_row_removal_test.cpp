@@ -23,10 +23,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/wal_type.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <future>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
@@ -830,6 +832,51 @@ TEST_F(SearchRowRemovalTest, RowIdTermsReachAMergedInSegment) {
   Commit(irs::TermRemoval{victims}, victims);
   ASSERT_EQ(1, _writer->GetSnapshot().size());
   ExpectModel();
+}
+
+TEST_F(SearchRowRemovalTest, RowIdTermsPassACopyTheirCommitCarriesOut) {
+  for (int64_t round = 0; round != 8; ++round) {
+    const int64_t base = round * 10;
+    const std::vector<int64_t> keys{base, base + 1, base + 2, base + 3};
+    Insert(std::vector<int64_t>{base, base + 1, base + 2, base + 3, base + 4},
+           /*index_term=*/true);
+    Insert(std::vector<int64_t>{base + 5}, /*index_term=*/true);
+    std::promise<void> merging;
+    std::promise<void> resume;
+    std::atomic_bool parked{false};
+    irs::CompactionResult merged;
+    std::thread merge{[&, resumed = resume.get_future()] {
+      merged = _writer->Compact(FullMerge(), nullptr, [&] {
+        if (!parked.exchange(true)) {
+          merging.set_value();
+          resumed.wait();
+        }
+        return true;
+      });
+    }};
+    if (merging.get_future().wait_for(std::chrono::seconds{60}) !=
+        std::future_status::ready) {
+      merge.join();
+      FAIL() << "the merge never reached its progress callback";
+    }
+    Commit(irs::TermRemoval{keys}, keys);
+    for (const auto key : keys) {
+      Insert(std::vector<int64_t>{key}, /*index_term=*/true);
+    }
+    {
+      auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+      WriteRows(trx, std::vector<int64_t>{base + 6}, /*index_term=*/true);
+      EXPECT_TRUE(trx.Commit());
+    }
+    EXPECT_TRUE(_writer->RefreshBegin());
+    resume.set_value();
+    merge.join();
+    EXPECT_EQ(irs::CompactionError::Pending, merged.error);
+    _writer->RefreshFinish();
+    _model.insert(base + 6);
+    Commit(irs::TermRemoval{keys}, keys);
+    ExpectModel();
+  }
 }
 
 TEST_F(SearchRowRemovalTest, ValidAndPastTheEndPositionsInOneRemoval) {

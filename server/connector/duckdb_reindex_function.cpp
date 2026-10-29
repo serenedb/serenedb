@@ -31,6 +31,7 @@
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/permissions.hpp>
@@ -64,6 +65,7 @@
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/column_data_ref.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -1080,13 +1082,9 @@ class ReindexSession {
 
 ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
                                 const std::string& name,
-                                const std::string& schema_p,
+                                duckdb::vector<duckdb::Identifier> schema_path,
                                 const std::string& catalog_p) {
   auto& conn_ctx = GetSereneDBContext(context);
-  duckdb::vector<duckdb::Identifier> schema_path;
-  if (!schema_p.empty()) {
-    schema_path.emplace_back(schema_p);
-  }
   const auto target =
     ResolveTarget(context, conn_ctx, name, std::move(schema_path), catalog_p);
   const auto storage = target.index->Storage();
@@ -1204,8 +1202,12 @@ void ReindexExecute(duckdb::ClientContext& context,
     return;
   }
   auto& bind = input.bind_data->Cast<ReindexBindData>();
+  duckdb::vector<duckdb::Identifier> schema_path;
+  if (!bind.schema.empty()) {
+    schema_path.emplace_back(bind.schema);
+  }
   const auto outcome =
-    RunManualReindex(context, bind.name, bind.schema, bind.catalog);
+    RunManualReindex(context, bind.name, std::move(schema_path), bind.catalog);
   output.SetValue(0, 0, duckdb::Value(ActionName(outcome.action)));
   output.SetValue(1, 0, duckdb::Value::BIGINT(outcome.files_added));
   output.SetValue(2, 0, duckdb::Value::BIGINT(outcome.files_changed));
@@ -1217,10 +1219,26 @@ void ReindexExecute(duckdb::ClientContext& context,
 
 void ReindexPragma(duckdb::ClientContext& context,
                    const duckdb::FunctionParameters& parameters) {
-  ReindexBindData args;
-  FillReindexArgs(args, parameters.values);
+  duckdb::vector<duckdb::Identifier> path;
+  for (const auto& part : parameters.values) {
+    path.emplace_back(part.GetValue<std::string>());
+  }
+  duckdb::CatalogEntryRetriever retriever{context};
+  const auto name = duckdb::Binder::BindTableName(
+    retriever, duckdb::QualifiedName::FromPath(std::move(path)));
+  const auto& parts = name.Path();
+  const bool has_catalog =
+    parts.size() >= 3 && !duckdb::IsInvalidCatalog(parts.front());
+  duckdb::vector<duckdb::Identifier> schema_path;
+  for (size_t i = parts.size() >= 3 ? 1 : 0; i + 1 < parts.size(); ++i) {
+    if (!parts[i].empty()) {
+      schema_path.push_back(parts[i]);
+    }
+  }
   // PRAGMA / REINDEX statement form: silent, PG-style.
-  RunManualReindex(context, args.name, args.schema, args.catalog);
+  RunManualReindex(
+    context, name.Name().GetIdentifierName(), std::move(schema_path),
+    has_catalog ? parts.front().GetIdentifierName() : std::string{});
 }
 
 void ReindexByIdPragma(duckdb::ClientContext& context,

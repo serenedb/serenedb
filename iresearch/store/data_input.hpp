@@ -361,6 +361,15 @@ class BasicInput {
     if (_file == nullptr) {
       ThrowPastEnd(_file, Position(), Length());
     }
+    if (count <= Remain()) {
+      if (auto pin = _block.pinned->pin.Share(
+            static_cast<uint64_t>(_pos - _begin), count);
+          pin.IsValid()) {
+        const bytes_view bytes{_pos, count};
+        _pos += count;
+        return {.bytes = bytes, .pin = std::move(pin)};
+      }
+    }
     auto pinned = _file->Pin(Position(), count);
     Skip(count);
     return pinned;
@@ -369,6 +378,15 @@ class BasicInput {
   IRS_NO_INLINE Pinned PinSlow(uint64_t offset, uint64_t count) const {
     if (_file == nullptr) {
       ThrowPastEnd(_file, offset, Length());
+    }
+    if (_block.pinned && offset >= _block.start) {
+      const auto at = offset - _block.start;
+      const auto length = static_cast<uint64_t>(_end - _begin);
+      if (at <= length && count <= length - at) {
+        if (auto pin = _block.pinned->pin.Share(at, count); pin.IsValid()) {
+          return {.bytes = {_begin + at, count}, .pin = std::move(pin)};
+        }
+      }
     }
     return _file->Pin(offset, count);
   }

@@ -921,22 +921,10 @@ void PgWireSession<Kind>::WriteCommandTag(
 // is_loopback() sees the v4.
 template<SocketKind Kind>
 void PgWireSession<Kind>::CapturePeerAddress() {
-  if constexpr (Kind == SocketKind::Unix || Kind == SocketKind::Client) {
-    return;  // no IP; the gate treats a unix peer as local via is_local
-  } else {
-    asio_ns::error_code ec;
-    const auto endpoint = this->_socket.Lowest().remote_endpoint(ec);
-    if (ec) {
-      return;  // no usable peer: stays unspecified -> gate fails closed
+  if constexpr (Kind != SocketKind::Unix && Kind != SocketKind::Client) {
+    if (const auto address = this->ClientAddress()) {
+      _peer_addr = *address;
     }
-    const auto address = endpoint.address();
-    if (address.is_v6()) {
-      if (const auto v6 = address.to_v6(); v6.is_v4_mapped()) {
-        _peer_addr = asio_ns::ip::make_address_v4(asio_ns::ip::v4_mapped, v6);
-        return;
-      }
-    }
-    _peer_addr = address;
   }
 }
 

@@ -449,9 +449,8 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   auto writer = this->SendWriter();
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
-    asio_ns::error_code peer_ec;
-    const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
-    _peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
+    const auto client = this->ClientAddress();
+    _peer_is_loopback = client && client->is_loopback();
     cpu = SessionMain();
     _handed_off = true;
     _task->Start();

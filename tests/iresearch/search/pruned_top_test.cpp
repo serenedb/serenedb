@@ -173,7 +173,7 @@ class PrunedTopTest : public tests::IndexTestBase {
   }
 
   std::vector<irs::ScoreDoc> Top(const irs::Filter& filter, size_t k,
-                                 doc_id_t span) {
+                                 doc_id_t span, bool prune, uint64_t& total) {
     const auto queries = Prepare(filter);
     std::vector<irs::ScoreDoc> hits(k);
     std::atomic<irs::score_t> threshold{
@@ -186,7 +186,7 @@ class PrunedTopTest : public tests::IndexTestBase {
         irs::ColumnArgsFetcher fetcher;
         auto plan = queries[0]->PlanTop({.scorer = _scorer,
                                          .fetcher = fetcher,
-                                         .prune = true,
+                                         .prune = prune,
                                          .k = static_cast<uint32_t>(k)});
         if (!plan) {
           break;
@@ -196,6 +196,7 @@ class PrunedTopTest : public tests::IndexTestBase {
       }
     }
     collector.SortHits();
+    total = collector.TotalMatches();
     hits.resize(std::min(k, collector.AcceptedCount()));
     return hits;
   }
@@ -234,9 +235,16 @@ class PrunedTopTest : public tests::IndexTestBase {
     }
     absl::c_sort(ranked, std::greater<>{});
     for (const size_t k : {size_t{1}, size_t{10}, size_t{100}, size_t{1000}}) {
-      for (const doc_id_t span : {doc_id_t{kDocs}, doc_id_t{9973}}) {
-        SCOPED_TRACE(absl::StrCat("k ", k, " span ", span));
-        const auto hits = Top(filter, k, span);
+      for (const auto [span, prune] :
+           {std::pair{doc_id_t{kDocs}, true}, std::pair{doc_id_t{9973}, true},
+            std::pair{doc_id_t{kDocs}, false},
+            std::pair{doc_id_t{9973}, false}}) {
+        SCOPED_TRACE(absl::StrCat("k ", k, " span ", span, " prune ", prune));
+        uint64_t total = 0;
+        const auto hits = Top(filter, k, span, prune, total);
+        if (!prune) {
+          ASSERT_EQ(matches.size(), total);
+        }
         ASSERT_EQ(std::min(k, matches.size()), hits.size());
         if (hits.empty()) {
           continue;

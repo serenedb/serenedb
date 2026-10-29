@@ -68,8 +68,22 @@ Root::ptr MakePrunedConjunction(
                                           .fetcher = &ctx.fetcher,
                                           .boost = posting.boost});
     };
+    const auto docs = static_cast<doc_id_t>(segment.docs_count());
+    const uint64_t candidates =
+      uint64_t{terms.front().state.cookie.docs_count} *
+      irs::detail::kWindowDocs / std::max<doc_id_t>(docs, 1);
+    std::vector<size_t> joined;
+    joined.reserve(size - 1);
+    for (size_t i = 1; i != size; ++i) {
+      const uint64_t member = terms[i].state.cookie.docs_count;
+      if (!irs::detail::DensePosting(member, docs) ||
+          candidates * (docs - std::min<uint64_t>(member, docs)) / docs >
+            irs::detail::kWindowWords) {
+        joined.push_back(i);
+      }
+    }
     const auto member = [&](irs::detail::PostingFill<Input>& leaf, size_t i) {
-      const auto& posting = terms[i + 1];
+      const auto& posting = terms[joined[i]];
       const auto& own = *posting.state.reader;
       const auto& meta = posting.state.cookie;
       leaf.Prepare(meta, *doc, irs::detail::LayoutOf(own),
@@ -80,22 +94,22 @@ Root::ptr MakePrunedConjunction(
       [&]<typename Others, typename Members>(const auto& members) -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
         return MakeShape<PrunedConjunction, Lead, Others, Members,
-                         utils::Empty>(ctx, ctx.fetcher, size, init, members,
-                                       std::forward_as_tuple());
+                         utils::Empty>(ctx, ctx.fetcher, !ctx.prune, size, init,
+                                       members, std::forward_as_tuple());
       }
       const uint64_t lead = terms.front().state.cookie.docs_count;
       return irs::detail::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, lead, lead,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<PrunedConjunction, Lead, Others, Members, Exclude>(
-            ctx, ctx.fetcher, size, init, members,
+            ctx, ctx.fetcher, !ctx.prune, size, init, members,
             std::forward<decltype(negated)>(negated));
         });
     };
     using Fill = irs::detail::PostingFill<Input>;
-    const bool windowed = irs::detail::DenseConjunction(
-      terms, static_cast<doc_id_t>(segment.docs_count()));
-    const size_t others = size - 1;
+    const bool windowed =
+      !joined.empty() && irs::detail::DenseConjunction(terms, docs);
+    const size_t others = joined.size();
     const auto members = std::forward_as_tuple(others, member);
     if (size == 2) {
       if (windowed) {

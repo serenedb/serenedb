@@ -258,7 +258,6 @@ class Format15TestCase : public tests::FormatTestCase {
   struct ReadMeta {
     irs::PostingMeta meta;
     std::unique_ptr<irs::PostingsReader> reader;
-    std::unique_ptr<irs::byte_type[]> inline_bytes;
   };
 
   ReadMeta WriteReadMeta(irs::Directory& dir, DocsView docs,
@@ -363,9 +362,6 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
       irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
     EXPECT_EQ(expected_has_score_bounds, stats.has_score_bounds);
     writer.Encode(*out, posting_meta);
-    if (posting_meta.inline_size != 0) {
-      out->WriteData(posting_meta.inline_data, posting_meta.inline_size);
-    }
     writer.End();
   }
 
@@ -387,11 +383,6 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
 
   irs::PostingMeta read_meta;
   begin += reader->decode(begin, features, read_meta);
-  auto inline_bytes = std::make_unique<irs::byte_type[]>(
-    irs::PostingMeta::kInlineBytes + irs::block_codec::kInSlack);
-  std::memcpy(inline_bytes.get(), begin, read_meta.inline_size);
-  read_meta.inline_data = inline_bytes.get();
-  begin += read_meta.inline_size;
 
   {
     EXPECT_EQ(posting_meta.docs_count, read_meta.docs_count);
@@ -407,7 +398,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
 
   EXPECT_EQ(begin, in_data.data() + in_data.size());
 
-  return {read_meta, std::move(reader), std::move(inline_bytes)};
+  return {read_meta, std::move(reader)};
 }
 
 void Format15TestCase::AssertPostingsWalk(irs::PostingsReader& reader,
@@ -601,8 +592,7 @@ void Format15TestCase::AssertPostings(DocsView docs,
 
   auto dir = get_directory(*this);
   ASSERT_NE(nullptr, dir);
-  auto [meta, reader, inline_bytes] =
-    WriteReadMeta(*dir, docs, scorer_ptr, field_features);
+  auto [meta, reader] = WriteReadMeta(*dir, docs, scorer_ptr, field_features);
   ASSERT_NE(nullptr, reader);
 
   ASSERT_EQ((field_features & features), features);
@@ -649,8 +639,7 @@ void Format15TestCase::AssertPruned(DocsView docs, uint32_t threshold) {
 
   auto dir = get_directory(*this);
   ASSERT_NE(nullptr, dir);
-  auto [meta, reader, inline_bytes] =
-    WriteReadMeta(*dir, docs, scorer_ptr, kFreq);
+  auto [meta, reader] = WriteReadMeta(*dir, docs, scorer_ptr, kFreq);
   ASSERT_NE(nullptr, reader);
 
   irs::FieldMeta field_meta;

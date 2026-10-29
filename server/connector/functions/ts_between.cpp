@@ -337,8 +337,7 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
     SetLeafScorer(range, column_info);
     auto* range_opts = range.mutable_options();
     auto& rng = range_opts->range;
-    auto emit_bound = [&](const duckdb::Value& v,
-                          irs::ByGranularRangeOptions::terms& boundary,
+    auto emit_bound = [&](const duckdb::Value& v, irs::bstring& boundary,
                           irs::BoundType& bt, bool incl) {
       auto cast = v.type() == column_info.logical_type
                     ? v

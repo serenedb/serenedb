@@ -1,0 +1,159 @@
+statement ok
+CREATE TABLE sft (pk INTEGER PRIMARY KEY, d DOUBLE, r REAL)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX sft_idx ON sft USING inverted(pk, d, r);
+
+statement ok
+INSERT INTO sft SELECT i, i - 1000, (i - 1000)::REAL FROM range(2000) t(i);
+
+statement ok
+INSERT INTO sft VALUES
+  (5000, CAST('-0' AS DOUBLE), CAST('-0' AS REAL)),
+  (5002, 'NaN'::DOUBLE, 'NaN'::REAL),
+  (5003, -('NaN'::DOUBLE), -('NaN'::REAL)),
+  (5004, 'inf'::DOUBLE, 'inf'::REAL),
+  (5005, '-inf'::DOUBLE, '-inf'::REAL);
+
+statement ok
+VACUUM (REFRESH_TABLE) sft;
+
+query
+EXPLAIN SELECT pk FROM sft WHERE d = 0;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─╮
+│ Index: sft       │
+│ Lookup: search   │
+│ Index Filter:    │
+│ ╭─ Term ───╮     │
+│ │ Field: d │     │
+│ │ Value: 0 │     │
+│ ╰──────────╯     │
+│ Projections: pk  │
+│ ~401 rows        │
+╰──────────────────╯
+
+query
+EXPLAIN SELECT pk FROM sft WHERE d BETWEEN 0 AND 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────╮
+│ Index: sft           │
+│ Lookup: search       │
+│ Index Filter:        │
+│ ╭─ Granular Range ─╮ │
+│ │ Field: d         │ │
+│ │ Range: >=0, <=2  │ │
+│ ╰──────────────────╯ │
+│ Projections: pk      │
+│ ~401 rows            │
+╰──────────────────────╯
+
+query
+SELECT pk FROM sft WHERE d = 0 ORDER BY pk;
+----
+pk
+1000
+5000
+
+query
+SELECT pk FROM sft WHERE d = CAST('-0' AS DOUBLE) ORDER BY pk;
+----
+pk
+1000
+5000
+
+query
+SELECT pk FROM sft WHERE d IN (0, 1) ORDER BY pk;
+----
+pk
+1000
+1001
+5000
+
+query
+SELECT pk FROM sft WHERE d BETWEEN 0 AND 2 ORDER BY pk;
+----
+pk
+1000
+1001
+1002
+5000
+
+query
+SELECT pk FROM sft WHERE d > -2 AND d < 0 ORDER BY pk;
+----
+pk
+999
+
+query
+SELECT pk FROM sft WHERE d >= 998 ORDER BY pk;
+----
+pk
+1998
+1999
+5002
+5003
+5004
+
+query
+SELECT pk FROM sft WHERE d < -999 ORDER BY pk;
+----
+pk
+0
+5005
+
+query
+SELECT pk FROM sft WHERE d = 'NaN'::DOUBLE ORDER BY pk;
+----
+pk
+5002
+5003
+
+query
+SELECT pk FROM sft WHERE d > 'inf'::DOUBLE ORDER BY pk;
+----
+pk
+5002
+5003
+
+query
+SELECT pk FROM sft WHERE r = 0 ORDER BY pk;
+----
+pk
+1000
+5000
+
+query
+SELECT pk FROM sft WHERE r BETWEEN 0 AND 2 ORDER BY pk;
+----
+pk
+1000
+1001
+1002
+5000
+
+query
+SELECT pk FROM sft WHERE r > -2 AND r < 0 ORDER BY pk;
+----
+pk
+999
+
+query
+SELECT pk FROM sft WHERE r >= 998 ORDER BY pk;
+----
+pk
+1998
+1999
+5002
+5003
+5004
+
+query
+SELECT pk FROM sft WHERE r = 'NaN'::REAL ORDER BY pk;
+----
+pk
+5002
+5003

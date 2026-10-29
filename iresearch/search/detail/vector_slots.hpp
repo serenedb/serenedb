@@ -186,7 +186,7 @@ class RawVectorReader {
     }
     const uint64_t off = m.file_offset + (elem - w.begin) * sizeof(float);
     if (_read_ctx.HasIn()) {
-      file_utils::Hint(_read_ctx.In(), off, span);
+      file_utils::Hint(_read_ctx.In(), off, span, false);
     }
     const auto* q = _read_ctx.TryReadStable(off, span);
     if (!q) {
@@ -227,7 +227,7 @@ class RawVectorReader {
     }
     file_utils::Hint(_read_ctx.In(),
                      m.file_offset + (elem - w.begin) * sizeof(float),
-                     (end - elem) * sizeof(float));
+                     (end - elem) * sizeof(float), false);
   }
 
   const byte_type* ReadSome(doc_id_t first, size_t count, size_t& got) {

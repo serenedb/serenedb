@@ -27,49 +27,31 @@
 
 namespace irs {
 
-using numeric_utils::NumericTermCount;
-
-template<typename T, uint32_t Step = numeric_utils::kPrecisionStepDef,
-         typename ValueAt>
+template<typename T, typename ValueAt>
 void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
                              ValueAt&& value_at) {
-  namespace nu = numeric_utils;
-  using Enc = typename nu::NumericEncodeOf<T>::Traits;
-  using U = typename Enc::type;
-  constexpr uint32_t kBits = BitsRequired<U>();
-  constexpr uint32_t kTerms = NumericTermCount<T>(Step);
-  static_assert(1 + sizeof(U) <= duckdb::string_t::INLINE_LENGTH);
-
+  using U = typename numeric_utils::NumericEncodeOf<T>::Traits::type;
+  constexpr auto kSize =
+    static_cast<uint32_t>(numeric_utils::EncodedSize<U>(0) + 1);
+  static_assert(kSize <= duckdb::string_t::INLINE_LENGTH);
   for (size_t i = 0; i < count; ++i) {
-    const U payload =
-      nu::NumericEncodeOf<T>::Integral(value_at(i)) ^ (U{1} << (kBits - 1));
-    for (uint32_t s = 0; s < kTerms; ++s) {
-      const uint32_t shift = s * Step;
-      auto& slot = out[i * kTerms + s];
-      std::memset(&slot, 0, sizeof slot);
-      auto* p = reinterpret_cast<byte_type*>(&slot) + sizeof(uint32_t);
-      p[0] = static_cast<byte_type>(shift) + Enc::TYPE_MAGIC;
-      const U be = absl::big_endian::FromHost(
-        payload & (std::numeric_limits<U>::max() ^ ((U{1} << shift) - U{1})));
-      std::memcpy(p + 1, &be, sizeof(U));
-      const uint32_t n = static_cast<uint32_t>(nu::EncodedSize<U>(shift) + 1);
-      std::memcpy(&slot, &n, sizeof n);
-    }
+    out[i] = duckdb::string_t{kSize};
+    numeric_utils::EncodeNumericTerm<T>(
+      reinterpret_cast<byte_type*>(out[i].GetDataWriteable()), value_at(i));
   }
 }
 
-template<typename T, uint32_t Step = numeric_utils::kPrecisionStepDef>
+template<typename T>
 void AppendNumericTermsBlock(duckdb::string_t* out, std::span<const T> values) {
-  AppendNumericTermsBlock<T, Step>(
-    out, values.size(), [values](size_t i) noexcept { return values[i]; });
+  AppendNumericTermsBlock<T>(out, values.size(),
+                             [values](size_t i) noexcept { return values[i]; });
 }
 
-template<typename T, uint32_t Step = numeric_utils::kPrecisionStepDef>
+template<typename T>
 void AppendNumericTermsBlock(TokenBatch& batch, std::span<const T> values) {
-  constexpr uint32_t kTerms = NumericTermCount<T>(Step);
-  SDB_ASSERT(batch.count + values.size() * kTerms <= TokenBatch::kCapacity);
-  AppendNumericTermsBlock<T, Step>(batch.terms + batch.count, values);
-  batch.count += static_cast<uint32_t>(values.size()) * kTerms;
+  SDB_ASSERT(batch.count + values.size() <= TokenBatch::kCapacity);
+  AppendNumericTermsBlock<T>(batch.terms + batch.count, values);
+  batch.count += static_cast<uint32_t>(values.size());
 }
 
 }  // namespace irs

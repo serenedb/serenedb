@@ -27,6 +27,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/detail/search_range.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/string.hpp"
@@ -78,6 +79,30 @@ inline bstring UpperBoundOf(bytes_view prefix) {
     upper.pop_back();
   }
   return upper;
+}
+
+inline bstring RangeLower(bytes_view min, BoundType type) {
+  switch (type) {
+    case BoundType::Unbounded:
+      return {};
+    case BoundType::Inclusive:
+      return bstring{min};
+    case BoundType::Exclusive:
+      return AfterKey(min);
+  }
+  return {};
+}
+
+inline bstring RangeUpper(bytes_view max, BoundType type) {
+  switch (type) {
+    case BoundType::Unbounded:
+      return {};
+    case BoundType::Inclusive:
+      return AfterKey(max);
+    case BoundType::Exclusive:
+      return bstring{max};
+  }
+  return {};
 }
 
 class BoundedTermIterator : public SeekTermIterator {

@@ -20,6 +20,10 @@
 
 #pragma once
 
+#include <algorithm>
+#include <array>
+#include <span>
+
 #include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
@@ -137,17 +141,49 @@ class ColumnarTermReader final : public BasicTermReader,
  public:
   void Reset(const ScatteredField& scattered) {
     _it.Reset(scattered);
+    _scattered = &scattered;
     _min = _max = {};
+    _width = 0;
+    _bytes = 0;
     if (const auto nterms = scattered.TermCount()) {
       _min = AsBytesView(scattered.TermAt(0));
       _max = AsBytesView(scattered.TermAt(nterms - 1));
+      _width = static_cast<uint32_t>(_min.size());
+      for (size_t i = 0; i != nterms; ++i) {
+        const auto size = scattered.TermAt(i).GetSize();
+        _bytes += size;
+        if (size != _width) {
+          _width = 0;
+        }
+      }
     }
   }
 
   bytes_view(min)() const noexcept final { return _min; }
   bytes_view(max)() const noexcept final { return _max; }
+  uint32_t KeyWidth() const noexcept final { return _width; }
+
+  void SampleTerms(
+    uint64_t bytes,
+    absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final {
+    constexpr size_t kRun = 16;
+    const size_t nterms = _scattered ? _scattered->TermCount() : 0;
+    if (nterms == 0 || _bytes == 0) {
+      return;
+    }
+    const uint64_t runs = std::max<uint64_t>(1, bytes * nterms / _bytes / kRun);
+    const size_t stride = std::max<size_t>(kRun, nterms / runs);
+    std::array<bytes_view, kRun> run;
+    for (size_t i = 0; i < nterms; i += stride) {
+      const size_t n = std::min(kRun, nterms - i);
+      for (size_t j = 0; j != n; ++j) {
+        run[j] = AsBytesView(_scattered->TermAt(i + j));
+      }
+      visit({run.data(), n});
+    }
+  }
   const FieldMeta& Meta() const noexcept { return _it.Meta(); }
-  field_id id() const noexcept final { return Meta().id; }
+  FieldKey key() const noexcept final { return KeyOf(Meta()); }
   FieldProperties properties() const noexcept final { return Meta(); }
 
   irs::TermOnlyIterator::ptr iterator() const noexcept final {
@@ -156,8 +192,11 @@ class ColumnarTermReader final : public BasicTermReader,
 
  private:
   mutable ColumnarTermIterator _it;
+  const ScatteredField* _scattered = nullptr;
   bytes_view _min{};
   bytes_view _max{};
+  uint64_t _bytes = 0;
+  uint32_t _width = 0;
 };
 
 }  // namespace irs

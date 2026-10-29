@@ -43,9 +43,9 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/flush_state.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -371,10 +371,19 @@ class CompoundFieldIterator final : public BasicTermReader {
     return *_current_meta;
   }
 
-  field_id id() const noexcept final { return Meta().id; }
+  FieldKey key() const noexcept final { return KeyOf(Meta()); }
   FieldProperties properties() const noexcept final { return _props; }
   bytes_view min() const noexcept final { return _term_itr.MinTerm(); }
   bytes_view max() const noexcept final { return _term_itr.MaxTerm(); }
+  uint32_t KeyWidth() const noexcept final;
+  bool Ranges() const noexcept {
+    return absl::c_any_of(_field_iterator_mask, [](const auto& segment) {
+      return segment.reader->meta().ranges;
+    });
+  }
+  void SampleTerms(
+    uint64_t bytes,
+    absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final;
   TermOnlyIterator::ptr iterator() const final;
 
   bool Aborted() const {
@@ -467,6 +476,30 @@ bool CompoundFieldIterator::Next() {
   _synthesized_meta.id = _current_id;
   _current_meta = &_synthesized_meta;
   return true;
+}
+
+uint32_t CompoundFieldIterator::KeyWidth() const noexcept {
+  uint32_t width = 0;
+  for (const auto& segment : _field_iterator_mask) {
+    const auto source = segment.reader->KeyWidth();
+    if (source == 0 || (width != 0 && source != width)) {
+      return 0;
+    }
+    width = source;
+  }
+  return width;
+}
+
+void CompoundFieldIterator::SampleTerms(
+  uint64_t bytes,
+  absl::FunctionRef<void(std::span<const bytes_view>)> visit) const {
+  if (_field_iterator_mask.empty()) {
+    return;
+  }
+  const uint64_t share = bytes / _field_iterator_mask.size();
+  for (const auto& segment : _field_iterator_mask) {
+    segment.reader->SampleTerms(share, visit);
+  }
 }
 
 TermOnlyIterator::ptr CompoundFieldIterator::iterator() const {
@@ -662,30 +695,29 @@ struct MergedNormProvider final : public NormProvider {
 bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  CompoundFieldIterator& field_itr,
                  const MergedNormIdMap& merged_norm_ids,
-                 const MergeWriter::FlushProgress& progress,
-                 IResourceManager& rm, IdxWriter& idx,
+                 const MergeWriter::FlushProgress& progress, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra) {
   auto field_writer =
-    std::make_unique<burst_trie::FieldWriter>(/*compaction=*/true, rm);
+    std::make_unique<term_dict::FieldWriter>(/*compaction=*/true);
   field_writer->SetIdxWriter(idx);
   field_writer->prepare(flush_state);
 
   std::vector<const BasicTermReader*> sorted_extra(extra.begin(), extra.end());
   absl::c_sort(sorted_extra,
                [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
-                 return lhs->id() < rhs->id();
+                 return lhs->key() < rhs->key();
                });
   size_t ei = 0;
   const size_t en = sorted_extra.size();
 
   while (field_itr.Next()) {
-    const auto fid = field_itr.Meta().id;
-    while (ei < en && sorted_extra[ei]->id() < fid) {
+    const auto key = KeyOf(field_itr.Meta());
+    while (ei < en && sorted_extra[ei]->key() < key) {
       field_writer->write(*sorted_extra[ei]);
       ++ei;
     }
 
-    if (ei < en && sorted_extra[ei]->id() == fid) {
+    if (ei < en && sorted_extra[ei]->key() == key) {
       field_writer->write(*sorted_extra[ei]);
       ++ei;
       continue;
@@ -693,6 +725,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
 
     FieldProperties props;
     props.index_features = field_itr.Meta().index_features;
+    props.ranges = field_itr.Ranges();
 
     if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
       const auto it = merged_norm_ids.find(field_itr.Meta().id);
@@ -864,8 +897,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   };
   if (segment.docs_count != 0 &&
       !WriteFields(state, segment, fields_itr, merged_norm_ids,
-                   progress_callback, _readers.get_allocator().Manager(), idx,
-                   cluster_readers)) {
+                   progress_callback, idx, cluster_readers)) {
     co_return false;
   }
 

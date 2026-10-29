@@ -25,6 +25,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <memory>
+#include <span>
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -51,9 +52,14 @@ struct PostingsHandles {
 struct TermReader : public AttributeProvider {
   using ptr = std::unique_ptr<TermReader>;
   using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
+  using RangeVisitor = absl::FunctionRef<void(bytes_view, const PostingMeta&)>;
 
   // Returns an iterator over terms for a field.
   virtual SeekTermIterator::ptr iterator() const = 0;
+
+  virtual SeekTermIterator::ptr IteratorUntil(bytes_view) const {
+    return iterator();
+  }
 
   // Feeds `acceptor` the documents containing `term`, stopping when it returns
   // false. Bounds-checks against the field's term range first, and answers a
@@ -69,6 +75,12 @@ struct TermReader : public AttributeProvider {
   // no iterator at all -- which is what an exact-match filter wants, since it
   // has nowhere to walk to afterwards.
   virtual PostingMeta Lookup(bytes_view term) const = 0;
+
+  virtual void LookupBatch(std::span<const bytes_view> terms,
+                           std::span<PostingMeta> out) const;
+
+  virtual void VisitRange(bytes_view from, bytes_view to,
+                          RangeVisitor visit) const;
 
   virtual SeekTermIterator::ptr iterator(
     const RegexpAcceptor& acceptor) const = 0;
@@ -98,6 +110,11 @@ struct TermReader : public AttributeProvider {
 
   // Returns the most significant term.
   virtual bytes_view max() const = 0;
+
+  virtual uint32_t KeyWidth() const noexcept { return 0; }
+
+  virtual void SampleTerms(
+    uint64_t, absl::FunctionRef<void(std::span<const bytes_view>)>) const {}
 
   // Returns true if the field has per-block score bounds persisted.
   virtual bool HasScoreBounds() const = 0;

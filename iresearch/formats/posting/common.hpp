@@ -20,16 +20,19 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
 #include <functional>
 #include <span>
+#include <utility>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
@@ -116,7 +119,29 @@ inline uint64_t PayExtent(const PostingMeta& meta) noexcept {
 template<typename Input>
 void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
   if (const auto extent = DocExtent(meta); extent > file_utils::kPage) {
-    file_utils::Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch));
+    file_utils::Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch), false);
+  }
+}
+
+template<typename Input>
+void PrefetchRanges(const Input& in,
+                    std::span<std::pair<uint64_t, uint64_t>> ranges) {
+  absl::c_sort(ranges);
+  size_t n = 0;
+  for (const auto& range : ranges) {
+    if (n != 0 && range.first <= ranges[n - 1].second + file_utils::kPage) {
+      ranges[n - 1].second = std::max(ranges[n - 1].second, range.second);
+    } else {
+      ranges[n++] = range;
+    }
+  }
+  uint64_t budget = kMaxPrefetch;
+  for (size_t i = 0; i != n && budget != 0; ++i) {
+    const auto size = std::min(ranges[i].second - ranges[i].first, budget);
+    file_utils::Hint(
+      in, ranges[i].first, size,
+      n >= file_utils::kProbedBatch && i < file_utils::kWarmProbes);
+    budget -= size;
   }
 }
 
@@ -154,7 +179,7 @@ class GrowingHint {
       return;
     }
     const auto len = std::min(_window, _stop - from);
-    file_utils::Hint(in, from, len);
+    file_utils::Hint(in, from, len, false);
     _end = from + len;
     _window = std::min(2 * _window, kLast);
   }

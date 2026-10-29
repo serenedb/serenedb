@@ -20,13 +20,13 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
-
-#include <algorithm>
+#include <array>
+#include <cstring>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/store/store_utils.hpp"
@@ -42,30 +42,38 @@ void PrefetchDocExtents(const IndexInput& in, Metas&& metas) {
       ranges.emplace_back(meta.doc_start, meta.doc_start + extent);
     }
   }
-  if (ranges.empty()) {
-    return;
-  }
-  absl::c_sort(ranges);
-  size_t n = 0;
-  for (const auto& range : ranges) {
-    if (n != 0 && range.first <= ranges[n - 1].second + file_utils::kPage) {
-      ranges[n - 1].second = std::max(ranges[n - 1].second, range.second);
-    } else {
-      ranges[n++] = range;
-    }
-  }
-  uint64_t budget = kMaxPrefetch;
-  for (size_t i = 0; i != n && budget != 0; ++i) {
-    const auto size = std::min(ranges[i].second - ranges[i].first, budget);
-    file_utils::Hint(in, ranges[i].first, size);
-    budget -= size;
-  }
+  PrefetchRanges(in, ranges);
 }
+
+class InlineInput final : public BytesViewInput {
+ public:
+  InlineInput() = default;
+  explicit InlineInput(bytes_view data) noexcept { Assign(data); }
+  InlineInput(const InlineInput&) = delete;
+  InlineInput& operator=(const InlineInput&) = delete;
+
+  void Assign(bytes_view data) noexcept {
+    SDB_ASSERT(data.size() <= PostingMeta::kInlineBytes);
+    std::memcpy(_bytes.data(), data.data(), data.size());
+    reset(_bytes.data(), data.size());
+  }
+
+  ptr Dup() const final {
+    auto in =
+      std::make_unique<InlineInput>(bytes_view{_bytes.data(), Length()});
+    in->Seek(Position());
+    return in;
+  }
+
+ private:
+  std::array<byte_type, PostingMeta::kInlineBytes + block_codec::kInSlack>
+    _bytes{};
+};
 
 inline IndexInput::ptr OpenDocInput(const PostingMeta& meta,
                                     const IndexInput& doc_in) {
   if (meta.inline_size != 0) {
-    return std::make_unique<BytesViewInput>(meta.Inline());
+    return std::make_unique<InlineInput>(meta.Inline());
   }
   auto in = doc_in.Reopen();
   SDB_ASSERT(in);

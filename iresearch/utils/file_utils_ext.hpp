@@ -25,6 +25,7 @@
 
 #include <fcntl.h>  // open/_wopen
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <filesystem>
@@ -169,9 +170,33 @@ void InvalidateResidency() noexcept;
 void SyncResidency() noexcept;
 void PollResidency() noexcept;
 
+inline constexpr uint64_t kWarmProbes = 4;
+inline constexpr size_t kProbedBatch = 16;
+
 template<typename Input>
-void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
-  if (in.Warm(offset, size)) {
+bool StillWarm(const Input& in, uint64_t offset, uint64_t size,
+               bool probe) noexcept {
+  if (!in.Warm(offset, size)) {
+    return false;
+  }
+  if (!probe) {
+    return true;
+  }
+  const auto probes =
+    std::min<uint64_t>(kWarmProbes, (size + kPage - 1) / kPage);
+  for (uint64_t i = 0; i != probes; ++i) {
+    if (!in.Resident(offset + size * i / probes, 1)) {
+      InvalidateResidency();
+      return false;
+    }
+  }
+  return true;
+}
+
+template<typename Input>
+void Hint(const Input& in, uint64_t offset, uint64_t size,
+          bool probe) noexcept {
+  if (StillWarm(in, offset, size, probe)) {
     PollResidency();
     return;
   }

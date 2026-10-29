@@ -164,11 +164,14 @@ Document::Document(Document&& rhs) noexcept
     stored(std::move(rhs.stored)),
     sorted(std::move(rhs.sorted)) {}
 
+template<typename T>
+std::vector<irs::bstring> NumericBlockTerms(T value) {
+  irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+  return {irs::bstring{irs::numeric_utils::EncodeNumericTerm(buf, value)}};
+}
+
 std::optional<std::vector<irs::bstring>> LongField::BlockTerms() const {
-  std::vector<irs::bstring> terms;
-  irs::numeric_utils::ForEachNumericTerm(
-    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
-  return terms;
+  return NumericBlockTerms(_value);
 }
 
 bool LongField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
@@ -184,10 +187,7 @@ bool LongField::Write(irs::DataOutput& out) const {
 }
 
 std::optional<std::vector<irs::bstring>> IntField::BlockTerms() const {
-  std::vector<irs::bstring> terms;
-  irs::numeric_utils::ForEachNumericTerm(
-    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
-  return terms;
+  return NumericBlockTerms(_value);
 }
 
 bool IntField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
@@ -203,10 +203,7 @@ bool IntField::Write(irs::DataOutput& out) const {
 }
 
 std::optional<std::vector<irs::bstring>> DoubleField::BlockTerms() const {
-  std::vector<irs::bstring> terms;
-  irs::numeric_utils::ForEachNumericTerm(
-    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
-  return terms;
+  return NumericBlockTerms(_value);
 }
 
 bool DoubleField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
@@ -222,10 +219,7 @@ bool DoubleField::Write(irs::DataOutput& out) const {
 }
 
 std::optional<std::vector<irs::bstring>> FloatField::BlockTerms() const {
-  std::vector<irs::bstring> terms;
-  irs::numeric_utils::ForEachNumericTerm(
-    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
-  return terms;
+  return NumericBlockTerms(_value);
 }
 
 bool FloatField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {

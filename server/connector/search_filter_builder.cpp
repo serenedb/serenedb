@@ -816,23 +816,6 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
   return absl::OkStatus();
 }
 
-inline constexpr uint64_t kMaxRangeEdgeTerms = 1024;
-
-template<typename T>
-bool RangeEdgeTooWide(T value, ComparisonOp op) noexcept {
-  if constexpr (std::is_floating_point_v<T>) {
-    return true;
-  } else {
-    constexpr auto kBlock = uint64_t{1}
-                            << irs::numeric_utils::kPrecisionStepDef;
-    const auto low = static_cast<uint64_t>(value) & (kBlock - 1);
-    const uint64_t edge = (op == ComparisonOp::Ge || op == ComparisonOp::Gt)
-                            ? kBlock - low
-                            : low + 1;
-    return edge > kMaxRangeEdgeTerms;
-  }
-}
-
 inline constexpr double kMaxIndexRangeShare = 1.0 / 32;
 
 std::optional<double> RangeShare(const SearchColumnInfo& info, double lo,
@@ -847,7 +830,8 @@ std::optional<double> RangeShare(const SearchColumnInfo& info, double lo,
   }
   const auto from = std::max(lo, min);
   const auto to = std::min(hi, max);
-  return to < from ? 0.0 : (to - from + 1) / (max - min + 1);
+  const double one = info.logical_type.IsIntegral() ? 1 : 0;
+  return to < from ? 0.0 : (to - from + one) / (max - min + one);
 }
 
 }  // namespace
@@ -924,20 +908,12 @@ std::optional<ColumnRange> ColumnRangeOf(const duckdb::Expression& expr) {
 
 namespace {
 
-template<typename T>
-bool RangeTooWide(const SearchColumnInfo& info, T value, ComparisonOp op) {
-  if constexpr (std::is_floating_point_v<T>) {
-    return true;
-  } else {
-    constexpr auto kInf = std::numeric_limits<double>::infinity();
-    const auto v = static_cast<double>(value);
-    const bool lower = op == ComparisonOp::Ge || op == ComparisonOp::Gt;
-    if (const auto share =
-          RangeShare(info, lower ? v : -kInf, lower ? kInf : v)) {
-      return *share > kMaxIndexRangeShare;
-    }
-    return RangeEdgeTooWide(value, op);
-  }
+bool RangeTooWide(const SearchColumnInfo& info, double value, ComparisonOp op) {
+  constexpr auto kInf = std::numeric_limits<double>::infinity();
+  const bool lower = op == ComparisonOp::Ge || op == ComparisonOp::Gt;
+  const auto share =
+    RangeShare(info, lower ? value : -kInf, lower ? kInf : value);
+  return share && *share > kMaxIndexRangeShare;
 }
 
 absl::Status DeclineWideRange() {
@@ -1043,7 +1019,7 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
       bool wide = ctx.wide_ranges == WideRanges::DeclineAll;
       if (!wide) {
         WithNumericValue(type_id, *const_val, [&](auto v) {
-          wide = RangeTooWide(*column_info, v, op);
+          wide = RangeTooWide(*column_info, static_cast<double>(v), op);
         });
       }
       if (wide) {
@@ -1100,7 +1076,7 @@ absl::Status FromBetween(BoolTarget filter, const FilterContext& ctx,
       !lower_val->IsNull() && !upper_val->IsNull()) {
     const auto* column_info = FindColumnInfoForExpr(ctx, between_input);
     if (column_info && column_info->column_stored &&
-        column_info->logical_type.IsIntegral()) {
+        column_info->logical_type.IsNumeric()) {
       if (const auto share =
             RangeShare(*column_info, lower_val->GetValue<double>(),
                        upper_val->GetValue<double>())) {

@@ -21,12 +21,12 @@
 #include <absl/algorithm/container.h>
 
 #include "iresearch/formats/flush_state.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/index/inverter/columnar_readers.hpp"
 
 namespace irs {
 
-void FieldsInverter::Flush(burst_trie::FieldWriter& fw, FlushState& state,
+void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
                            std::span<const BasicTermReader* const> extra) {
   IndexFeatures index_features{IndexFeatures::None};
 
@@ -47,7 +47,7 @@ void FieldsInverter::Flush(burst_trie::FieldWriter& fw, FlushState& state,
 
   absl::c_sort(sorted_fields,
                [](const FieldInverter* lhs, const FieldInverter* rhs) noexcept {
-                 return lhs->Meta().id < rhs->Meta().id;
+                 return KeyOf(lhs->Meta()) < KeyOf(rhs->Meta());
                });
 
   ManagedVector<const BasicTermReader*> sorted_extra{
@@ -55,7 +55,7 @@ void FieldsInverter::Flush(burst_trie::FieldWriter& fw, FlushState& state,
   sorted_extra.assign(extra.begin(), extra.end());
   absl::c_sort(sorted_extra,
                [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
-                 return lhs->id() < rhs->id();
+                 return lhs->key() < rhs->key();
                });
 
   ScatterScratch scratch{_mem.rm};
@@ -70,7 +70,7 @@ void FieldsInverter::Flush(burst_trie::FieldWriter& fw, FlushState& state,
   while (fi < fn || ei < en) {
     const bool take_field =
       ei >= en ||
-      (fi < fn && sorted_fields[fi]->Meta().id < sorted_extra[ei]->id());
+      (fi < fn && KeyOf(sorted_fields[fi]->Meta()) < sorted_extra[ei]->key());
     if (take_field) {
       scattered.Reset(*sorted_fields[fi]);
       ++fi;

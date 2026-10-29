@@ -659,7 +659,7 @@ void BM_NumericPerValue(benchmark::State& state) {
 void RunNumericViaKeywords(benchmark::State& state,
                            const std::vector<int64_t>& vals) {
   auto mem = DefaultMemory();
-  constexpr uint32_t kMaxTerms = NumericTermCount<int64_t>();
+  constexpr uint32_t kMaxTerms = 1;
   for (auto _ : state) {
     FieldsInverter inv{mem};
     auto* field = inv.Emplace(1, IndexFeatures::None);
@@ -771,7 +771,7 @@ void BM_NumericBlockRuns(benchmark::State& state) {
   std::vector<int64_t> gathered;
   std::vector<doc_id_t> docs;
   std::vector<DocRun> runs;
-  constexpr uint32_t kMaxTerms = NumericTermCount<int64_t>();
+  constexpr uint32_t kMaxTerms = 1;
   for (auto _ : state) {
     FieldsInverter inv{mem};
     auto* field = inv.Emplace(1, IndexFeatures::None);

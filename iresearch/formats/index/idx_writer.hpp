@@ -26,7 +26,8 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/formats/index/idx_reader.hpp"  // TermDictMeta, kIdxFormat*
+#include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
 
@@ -49,7 +50,7 @@ class IdxWriter final {
 
   void AddHnsw(field_id id, HnswMeta meta);
 
-  void AddTermDictEntry(field_id id, TermDictMeta meta);
+  void SetTerms(term_dict::TermsMeta terms) noexcept;
 
   void Commit();
   void Rollback() noexcept;

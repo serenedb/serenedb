@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <cstring>
 #include <iresearch/utils/assert.hpp>
 
 #include "iresearch/formats/format_utils.hpp"
@@ -69,8 +70,16 @@ class PostingsReader final {
   // features - the set of features available for segment
   void prepare(const ReaderState& state, IndexFeatures features);
 
-  size_t decode(const byte_type* in, IndexFeatures field_features,
-                PostingMeta& state);
+  static size_t decode(const byte_type* in, IndexFeatures field_features,
+                       PostingMeta& state) {
+    return DecodeRecord<false>(in, field_features, state);
+  }
+
+  static size_t DecodeDetached(const byte_type* in,
+                               IndexFeatures field_features,
+                               PostingMeta& state) {
+    return DecodeRecord<true>(in, field_features, state);
+  }
 
   TermPostings::ptr Postings(IndexFeatures field_features,
                              IndexFeatures required_features,
@@ -82,6 +91,11 @@ class PostingsReader final {
   }
 
  private:
+  template<bool Detached>
+  IRS_FORCE_INLINE static size_t DecodeRecord(const byte_type* in,
+                                              IndexFeatures field_features,
+                                              PostingMeta& state);
+
   template<typename FieldTraits, typename Factory>
   static auto IteratorImpl(IndexFeatures enabled, Factory&& factory);
 
@@ -116,7 +130,8 @@ inline void PostingsReader::prepare(const ReaderState& state,
   }
 }
 
-IRS_FORCE_INLINE inline size_t PostingsReader::decode(
+template<bool Detached>
+IRS_FORCE_INLINE size_t PostingsReader::DecodeRecord(
   const byte_type* in, IndexFeatures features, PostingMeta& posting_meta) {
   const auto* p = in;
 
@@ -143,6 +158,15 @@ IRS_FORCE_INLINE inline size_t PostingsReader::decode(
     const auto size = *p++;
     SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
     posting_meta.inline_size = size;
+    if constexpr (Detached) {
+      const uint64_t at = posting_meta.inline_end == 0
+                            ? vread<uint64_t>(p)
+                            : posting_meta.inline_end;
+      posting_meta.inline_end = at + size;
+    } else {
+      std::memcpy(posting_meta.inline_data.data(), p, size);
+      p += size;
+    }
   } else {
     posting_meta.inline_size = 0;
     if (!single) {

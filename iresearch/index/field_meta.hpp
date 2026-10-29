@@ -23,7 +23,9 @@
 
 #pragma once
 
+#include <compare>
 #include <set>
+#include <utility>
 
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -33,6 +35,27 @@
 
 namespace irs {
 
+enum class TermDict : uint8_t {
+  Main = 0,
+  Numeric = 1,
+  Bool = 2,
+  Null = 3,
+};
+
+inline constexpr size_t kTermDicts = 4;
+
+struct FieldKey {
+  field_id id = field_limits::invalid();
+  TermDict dict = TermDict::Main;
+
+  auto operator<=>(const FieldKey&) const = default;
+};
+
+template<typename H>
+H AbslHashValue(H h, const FieldKey& key) {
+  return H::combine(std::move(h), key.id, key.dict);
+}
+
 struct FieldStats {
   // Total number of terms
   uint32_t len{};
@@ -41,6 +64,7 @@ struct FieldStats {
 struct FieldProperties {
   field_id norm{field_limits::invalid()};
   IndexFeatures index_features{IndexFeatures::None};
+  bool ranges = false;
 };
 
 struct FieldMeta : FieldProperties {
@@ -50,6 +74,11 @@ struct FieldMeta : FieldProperties {
   FieldMeta(field_id id, IndexFeatures index_features)
     : FieldProperties{.index_features = index_features}, id{id} {}
 
+  FieldMeta(FieldKey key, IndexFeatures index_features)
+    : FieldProperties{.index_features = index_features},
+      id{key.id},
+      dict{key.dict} {}
+
   FieldMeta() = default;
   FieldMeta(FieldMeta&& rhs) noexcept = default;
   FieldMeta& operator=(FieldMeta&& rhs) noexcept = default;
@@ -57,11 +86,17 @@ struct FieldMeta : FieldProperties {
   FieldMeta& operator=(const FieldMeta&) = default;
 
   bool operator==(const FieldMeta& rhs) const noexcept {
-    return index_features == rhs.index_features && id == rhs.id;
+    return index_features == rhs.index_features && id == rhs.id &&
+           dict == rhs.dict;
   }
 
   field_id id{field_limits::invalid()};
+  TermDict dict = TermDict::Main;
 };
+
+inline FieldKey KeyOf(const FieldMeta& meta) noexcept {
+  return {.id = meta.id, .dict = meta.dict};
+}
 
 static_assert(std::is_move_constructible_v<FieldMeta>);
 

@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <span>
 
 #include "iresearch/index/field_meta.hpp"
@@ -49,12 +51,17 @@ struct TermPayloadWriter {
 struct BasicTermReader : public memory::Managed {
   virtual TermOnlyIterator::ptr iterator() const = 0;
 
-  virtual field_id id() const = 0;
+  virtual FieldKey key() const = 0;
 
   virtual FieldProperties properties() const = 0;
 
   virtual bytes_view min() const = 0;
   virtual bytes_view max() const = 0;
+
+  virtual uint32_t KeyWidth() const noexcept { return 0; }
+
+  virtual void SampleTerms(
+    uint64_t, absl::FunctionRef<void(std::span<const bytes_view>)>) const {}
 
   virtual TermPayloadWriter* PayloadWriter() const { return nullptr; }
 };

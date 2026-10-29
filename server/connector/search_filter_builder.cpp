@@ -837,9 +837,7 @@ inline constexpr double kMaxIndexRangeShare = 1.0 / 32;
 
 std::optional<double> RangeShare(const SearchColumnInfo& info, double lo,
                                  double hi) {
-  if (!info.stats ||
-      !term_dict::IsNumeric(term_dict::Classify(info.logical_type.id())) ||
-      !duckdb::NumericStats::HasMinMax(*info.stats)) {
+  if (!info.stats || !duckdb::NumericStats::HasMinMax(*info.stats)) {
     return std::nullopt;
   }
   const auto number = [&](const duckdb::Value& value) {

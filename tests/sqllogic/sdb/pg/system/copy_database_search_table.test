@@ -41,3 +41,46 @@ DROP DATABASE cdst_src_${__DATABASE__};
 
 statement ok
 DROP DATABASE cdst_dst_${__DATABASE__};
+
+statement ok
+DROP DATABASE IF EXISTS cdst_seq_src_${__DATABASE__};
+
+statement ok
+DROP DATABASE IF EXISTS cdst_seq_dst_${__DATABASE__};
+
+statement ok
+CREATE DATABASE cdst_seq_src_${__DATABASE__};
+
+statement ok
+CREATE DATABASE cdst_seq_dst_${__DATABASE__};
+
+statement ok
+CREATE TABLE cdst_seq_src_${__DATABASE__}.public.cdst_serial (id SERIAL, v INT);
+
+statement ok
+CREATE TABLE cdst_seq_src_${__DATABASE__}.public.cdst_numbered (id INT, body TEXT) WITH (storage = 'search');
+
+statement ok
+COPY FROM DATABASE cdst_seq_src_${__DATABASE__} TO cdst_seq_dst_${__DATABASE__} (SCHEMA);
+
+query
+SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'cdst_seq_dst_${__DATABASE__}' ORDER BY 1;
+----
+sequence_name
+cdst_numbered_pk_seq
+cdst_serial_id_seq
+
+statement ok
+INSERT INTO cdst_seq_dst_${__DATABASE__}.public.cdst_serial (v) VALUES (5);
+
+query
+SELECT id, v FROM cdst_seq_dst_${__DATABASE__}.public.cdst_serial;
+----
+id	v
+1	5
+
+statement ok
+DROP DATABASE cdst_seq_src_${__DATABASE__};
+
+statement ok
+DROP DATABASE cdst_seq_dst_${__DATABASE__};

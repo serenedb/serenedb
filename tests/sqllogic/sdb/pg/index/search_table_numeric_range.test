@@ -286,3 +286,70 @@ SELECT pk FROM snr_t WHERE w = 750.0
 ----
 pk
 1500
+
+statement ok
+CREATE TABLE snr_n (pk INTEGER PRIMARY KEY, num INTEGER, emb FLOAT[2])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX snr_n_idx ON snr_n
+  USING inverted(pk, num, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO snr_n SELECT i, NULL, [i::FLOAT, 0]::FLOAT[2] FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) snr_n;
+
+statement ok
+SET disabled_optimizers = 'statistics_propagation';
+
+query
+SELECT pk FROM snr_n WHERE num <= 1500
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+
+query
+EXPLAIN SELECT pk FROM snr_n WHERE num <= 1500
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: snr_n                      │
+│ Lookup: search                    │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: pk                   │
+│ Column Filter: num <= 1500        │
+│ ~400 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT pk FROM snr_n WHERE num <= 40
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+
+query
+EXPLAIN SELECT pk FROM snr_n WHERE num <= 40
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: snr_n                      │
+│ Lookup: search                    │
+│ Index Filter:                     │
+│ ╭─ Granular Range ─╮              │
+│ │ Field: num       │              │
+│ │ Range: <=40      │              │
+│ ╰──────────────────╯              │
+│ Index or Column Filter: num <= 40 │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: pk                   │
+│ ~400 rows                         │
+╰───────────────────────────────────╯
+
+statement ok
+RESET disabled_optimizers;

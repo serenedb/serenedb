@@ -389,6 +389,11 @@ def test_startup_options_bad_value_is_fatal():
     assert [(e.get("S"), e.get("C")) for e in errors(m)] == [("FATAL", "22023")]
 
 
+def test_startup_parameter_bad_value_is_fatal():
+    m = _startup_collect({"statement_timeout": "nan"})
+    assert [(e.get("S"), e.get("C")) for e in errors(m)] == [("FATAL", "22023")]
+
+
 def test_startup_utf8_client_encoding_no_warning():
     # The matching encoding (UTF8 and its aliases) applies cleanly: connection up,
     # no client_encoding NoticeResponse.
@@ -701,6 +706,10 @@ def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
         ("select $1::regnamespace::text", b"pg_catalog", b"pg_catalog"),
         ("select $1::regproc::text", b"now", b"now"),
         ("select $1::regrole::text", b"-", b"-"),
+        ("select $1::regprocedure::text", b"now()", b"now()"),
+        ("select $1::regcollation::text", b'"C"', b'"C"'),
+        ("select $1::regconfig::text", b"-", b"-"),
+        ("select $1::regdictionary::text", b"-", b"-"),
     ],
 )
 def test_reg_text_param(conn, query, param, expected):
@@ -719,6 +728,22 @@ def test_reg_text_param_names_a_missing_object(conn):
     conn.execute("")
     conn.sync()
     assert sqlstates(conn.drain_to_ready()) == ["42P01"]
+
+
+@pytest.mark.parametrize(
+    "query, param, sqlstate",
+    [
+        ("select $1::regoper", b"@#@", "42883"),
+        ("select $1::regoperator", b"@#@(integer,integer)", "42883"),
+        ("select $1::regoperator", b"-", "22P02"),
+    ],
+)
+def test_reg_text_param_names_a_missing_operator(conn, query, param, sqlstate):
+    conn.parse("", query)
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == [sqlstate]
 
 
 def test_int2vector_array_text_param(conn):

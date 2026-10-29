@@ -529,6 +529,34 @@ db error: ERROR: invalid source encoding name "nosuch"
 
 
 statement error
+SELECT convert_from('\x41'::bytea, 'MULE_INTERNAL');
+----
+db error: ERROR: default conversion function for encoding "MULE_INTERNAL" to "UTF8" does not exist
+
+
+query
+SELECT id, convert_from(b, e) AS s FROM (VALUES (1, '\x41'::bytea, 'UTF8'), (2, '\x42'::bytea, 'UTF8'),
+  (3, '\x43e9'::bytea, 'LATIN1'), (4, '\x44'::bytea, 'SQL_ASCII')) t(id, b, e) ORDER BY id;
+----
+id	s
+1	A
+2	B
+3	Cé
+4	D
+
+
+query
+SELECT id, encode(convert_to(s, e), 'hex') AS h FROM (VALUES (1, 'A', 'UTF8'), (2, 'Bé', 'UTF8'),
+  (3, 'Cé', 'LATIN1'), (4, 'D', 'LATIN1')) t(id, s, e) ORDER BY id;
+----
+id	h
+1	41
+2	42c3a9
+3	43e9
+4	44
+
+
+statement error
 SELECT convert_to('x€', 'LATIN1');
 ----
 db error: ERROR: character with byte sequence 0xe2 0x82 0xac in encoding "UTF8" has no equivalent in encoding "LATIN1"

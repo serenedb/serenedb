@@ -543,3 +543,30 @@ SELECT (-2147483648)::int4 % (-1)::int4 AS i, (-9223372036854775808)::int8 % (-1
 ----
 i	b	s	p
 0	0	0	0
+
+
+statement ok
+SET extra_float_digits = 0;
+
+
+query
+SELECT (1::float8 / 3)::text AS a, (1::float4 / 3::float4)::text AS b, 1e15::float8::text AS c,
+       123456789::float4::text AS d;
+----
+a	b	c	d
+0.333333333333333	0.333333	1e+15	1.23457e+08
+
+
+statement ok
+SET extra_float_digits = -3;
+
+
+query
+SELECT (1::float8 / 3)::text AS a, (1::float4 / 3::float4)::text AS b;
+----
+a	b
+0.333333333333	0.333
+
+
+statement ok
+RESET extra_float_digits;

@@ -56,3 +56,43 @@ DROP INDEX rsd_idx;
 
 statement ok
 DROP VIEW rsd_v;
+
+statement ok
+CREATE VIEW rsd_dropped_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rsd_*.parquet');
+
+statement ok
+CREATE INDEX rsd_dropped_idx ON rsd_dropped_v USING inverted(id, body rsd_en);
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(10, 12) t(i)) TO '${__TEST_DIR__}/rsd_d.parquet' (FORMAT parquet);
+
+statement ok
+SET sdb_faults = 'pause_reindex_before_pass';
+
+connection reindexer
+statement async error
+SELECT * FROM serenedb_reindex('rsd_dropped_idx');
+----
+db error: ERROR: REINDEX: source index "rsd_dropped_idx" vanished mid-refresh
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_reindex_before_pass:parked';
+
+statement ok
+DROP INDEX rsd_dropped_idx;
+
+statement ok
+SET sdb_faults = 'pause_reindex_before_pass:release';
+
+wait
+
+query
+SELECT count(*) FROM pg_class WHERE relname = 'rsd_dropped_idx';
+----
+count
+0
+
+statement ok
+DROP VIEW rsd_dropped_v;

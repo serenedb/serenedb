@@ -314,4 +314,12 @@ id	constant_pattern	column_pattern
 
 
 statement ok
+INSERT INTO similar_substring VALUES (5, 'abc', 'a(b')
+
+
+statement error (parentheses \(\) not balanced|missing \))
+SELECT id, substring(s similar p escape '#') AS column_pattern FROM similar_substring ORDER BY id
+
+
+statement ok
 DROP TABLE similar_substring

@@ -427,7 +427,48 @@ n
 10
 
 statement ok
+CREATE TABLE ppr (pk INTEGER PRIMARY KEY, v INTEGER, s VARCHAR);
+
+statement ok
+CREATE INDEX ppr_idx ON ppr USING inverted(pk, v, s);
+
+statement ok
+INSERT INTO ppr SELECT i, i % 10, (i % 7)::VARCHAR FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ppr;
+
+statement ok
+PREPARE ppr_range(text) AS SELECT count(*) AS n FROM ppr_idx
+  WHERE v >= ltrim($1, 'x')::int;
+
+query
+EXECUTE ppr_range('x7');
+----
+n
+30
+
+query
+EXECUTE ppr_range('0');
+----
+n
+100
+
+statement ok
+PREPARE ppr_text(int) AS SELECT count(*) AS n FROM ppr_idx
+  WHERE s = $1::text;
+
+query
+EXECUTE ppr_text(5);
+----
+n
+14
+
+statement ok
 DEALLOCATE ALL;
+
+statement ok
+DROP TABLE ppr;
 
 statement ok
 DROP TABLE ppa;

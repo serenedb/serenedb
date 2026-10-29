@@ -1227,10 +1227,9 @@ void ReindexPragma(duckdb::ClientContext& context,
   const auto name = duckdb::Binder::BindTableName(
     retriever, duckdb::QualifiedName::FromPath(std::move(path)));
   const auto& parts = name.Path();
-  const bool has_catalog =
-    parts.size() >= 3 && !duckdb::IsInvalidCatalog(parts.front());
+  const bool has_catalog = parts.size() >= 3;
   duckdb::vector<duckdb::Identifier> schema_path;
-  for (size_t i = parts.size() >= 3 ? 1 : 0; i + 1 < parts.size(); ++i) {
+  for (size_t i = has_catalog ? 1 : 0; i + 1 < parts.size(); ++i) {
     if (!parts[i].empty()) {
       schema_path.push_back(parts[i]);
     }

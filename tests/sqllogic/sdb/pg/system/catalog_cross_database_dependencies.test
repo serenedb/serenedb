@@ -537,6 +537,37 @@ statement ok
 INSERT INTO cxd_def (a) VALUES (1)
 
 
+statement ok
+CREATE VIEW cxd_db.public.cxd_same AS SELECT 1 AS a
+
+
+statement ok
+CREATE VIEW cxd_same AS SELECT a FROM cxd_db.public.cxd_same
+
+
+query
+SELECT a FROM cxd_same
+----
+a
+1
+
+
+statement error
+DROP VIEW cxd_db.public.cxd_same
+----
+db error: ERROR: Cannot drop entry "cxd_same" because there are entries that depend on it.
+view "cxd_same" depends on view "cxd_same".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP VIEW cxd_same
+
+
+statement ok
+DROP VIEW cxd_db.public.cxd_same
+
+
 statement error
 DETACH cxd_db
 ----

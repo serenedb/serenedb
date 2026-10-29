@@ -17,3 +17,16 @@ SELECT NULL IN ();
 
 statement error syntax error at or near "\)"
 SELECT 1 NOT IN ();
+
+
+skipif serenedb
+statement error syntax error at or near "ROW"
+SELECT 1 IN ROW(1, 2);
+
+
+onlyif serenedb
+query
+SELECT 1 IN ROW(1, 2) AS member, 3 IN ROW(1, 2) AS outsider;
+----
+member	outsider
+t	f

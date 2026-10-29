@@ -29,3 +29,23 @@ t	t
 
 statement ok
 DROP TABLE collate_default_accents;
+
+
+statement ok
+CREATE TABLE collate_default_nullif(s VARCHAR COLLATE NOCASE);
+
+
+statement ok
+INSERT INTO collate_default_nullif VALUES ('A'), ('a'), ('b');
+
+
+query
+SELECT NULLIF(s, 'a') AS n, count(*) AS c FROM collate_default_nullif GROUP BY NULLIF(s, 'a') ORDER BY n NULLS FIRST;
+----
+n	c
+NULL	2
+b	1
+
+
+statement ok
+DROP TABLE collate_default_nullif;

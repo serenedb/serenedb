@@ -421,6 +421,38 @@ def test_number_on_keyword_compares_as_text(conn):
         _request(conn, "DELETE", f"/{name}")
 
 
+def test_boolean_on_keyword_and_number_on_text_compare_as_text(conn):
+    name = "drv_es_text_scalars"
+    _request(conn, "DELETE", f"/{name}")
+    status, _ = _request(conn, "PUT", f"/{name}", {
+        "mappings": {"properties": {
+            "code": {"type": "keyword"},
+            "word": {"type": "text"},
+            "flag": {"type": "boolean"}}}})
+    assert status == 200
+    try:
+        status, body = _bulk(
+            conn, name,
+            '{"index":{"_id":"1"}}\n{"code":"true","word":"7","flag":true}\n'
+            '{"index":{"_id":"2"}}\n{"code":"false","word":"42","flag":false}\n'
+            '{"index":{"_id":"3"}}\n{"code":"yes","word":"abc","flag":true}\n',
+            refresh=True)
+        assert status == 200 and body["errors"] is False, body
+        for query, expected in (
+            ({"term": {"code": True}}, ["1"]),
+            ({"term": {"code": {"value": False}}}, ["2"]),
+            ({"term": {"flag": True}}, ["1", "3"]),
+            ({"term": {"flag": {"value": False}}}, ["2"]),
+            ({"range": {"word": {"gte": 5}}}, ["1", "3"]),
+            ({"range": {"word": {"lt": 5}}}, ["2"]),
+        ):
+            status, body = _search(conn, name, {"query": query})
+            assert status == 200, (query, body)
+            assert sorted(h["_id"] for h in body["hits"]["hits"]) == expected, query
+    finally:
+        _request(conn, "DELETE", f"/{name}")
+
+
 def test_bulk_alternating_indexes(conn):
     names = [f"drv_es_alt_{i}" for i in range(3)]
     for name in names:
@@ -682,7 +714,7 @@ def test_search_bool(conn, corpus):
 ])
 @pytest.mark.parametrize("token", [
     "1abc", "9999/**/OR/**/TRUE", "-1/**/OR/**/TRUE", "01", "1.",
-    "1e", "1e+", "0x10", "1+1", "1e9999",
+    "1e", "1e+", "0x10", "1+1", "1e9999", "-",
     "100000000000000000000/**/OR/**/TRUE",
     "-9223372036854775809/**/OR/**/TRUE", "018446744073709551616",
 ])

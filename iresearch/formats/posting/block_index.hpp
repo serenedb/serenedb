@@ -430,11 +430,11 @@ class BlockCursor {
     const auto data = _offs + 1 + BlockIndex::Pad(_offs + 1);
     const auto bytes = BlockIndex::Bytes(blocks, _shape, flags);
     if constexpr (InputType::kContiguous) {
-      const auto extent = data + bytes - _offs;
-      if (const auto* file = in.File();
-          file && extent > kPrefetchBytes &&
-          !file->Resident(_offs + extent - 1, 1)) {
-        file->Prefetch(_offs, extent);
+      SDB_ASSERT(in.File());
+      const auto& file = *in.File();
+      if (const auto extent = data + bytes - _offs;
+          extent > kPrefetchBytes && !file.Resident(_offs + extent - 1, 1)) {
+        file.Prefetch(_offs, extent);
       }
     }
     _bytes = in.Pin(data, bytes);

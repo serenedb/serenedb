@@ -101,8 +101,8 @@ inline bool Hint(const InputFile& file, uint64_t offset,
 
 template<typename Input>
 bool Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
-  const auto* file = in.File();
-  return file != nullptr && file->Hint(offset, size);
+  SDB_ASSERT(in.File());
+  return in.File()->Hint(offset, size);
 }
 
 inline uint64_t DocExtent(const PostingMeta& meta) noexcept {

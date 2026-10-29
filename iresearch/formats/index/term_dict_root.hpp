@@ -95,10 +95,13 @@ IRS_FORCE_INLINE inline size_t PaddedMismatch(const byte_type* lhs,
                                               const byte_type* rhs,
                                               size_t size) noexcept {
   for (size_t i = 0; i < size; i += sizeof(uint64_t)) {
-    const uint64_t diff = absl::little_endian::Load64(lhs + i) ^
-                          absl::little_endian::Load64(rhs + i);
+    uint64_t diff = absl::little_endian::Load64(lhs + i) ^
+                    absl::little_endian::Load64(rhs + i);
+    if (const size_t left = size - i; left < sizeof(uint64_t)) {
+      diff &= (uint64_t{1} << (8 * left)) - 1;
+    }
     if (diff != 0) {
-      return std::min(size, i + std::countr_zero(diff) / 8);
+      return i + std::countr_zero(diff) / 8;
     }
   }
   return size;

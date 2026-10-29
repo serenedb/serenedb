@@ -2754,4 +2754,21 @@ TEST(TermDictRootTest, root_matches_upper_bound) {
   AssertRoots<ChosenRoot<true>>();
 }
 
+TEST(TermDictRootTest, padded_mismatch_ignores_bytes_past_size) {
+  for (size_t size = 0; size != 2 * sizeof(uint64_t); ++size) {
+    const irs::bstring key(size, irs::byte_type{'k'});
+    irs::term_dict::PaddedKey padded{key};
+    auto unpadded = std::make_unique_for_overwrite<irs::byte_type[]>(
+      size + irs::term_dict::kKeyPad);
+    std::memcpy(unpadded.get(), key.data(), size);
+    EXPECT_EQ(size, irs::term_dict::PaddedMismatch(unpadded.get(),
+                                                   padded.Data(), size));
+    if (size != 0) {
+      unpadded[size - 1] = irs::byte_type{'z'};
+      EXPECT_EQ(size - 1, irs::term_dict::PaddedMismatch(unpadded.get(),
+                                                         padded.Data(), size));
+    }
+  }
+}
+
 }  // namespace

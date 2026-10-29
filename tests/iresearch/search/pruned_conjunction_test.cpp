@@ -294,6 +294,20 @@ TEST_P(PrunedConjunctionTest, conjunctions_with_exclusions) {
   }
 }
 
+TEST_P(PrunedConjunctionTest, single_terms_with_exclusions) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {{"rare"}, {"half"}},
+         {{"sparse"}, {"dense", "mid"}},
+         {{"mid"}, {"half", "single"}},
+         {{"cluster"}, {"half", "run"}},
+         {{"sparse"}, {"holes", "cluster"}},
+         {{"half"}, {"sparse", "rare"}},
+       }) {
+    Check(shape);
+  }
+}
+
 TEST_P(PrunedConjunctionTest, conjunctions_with_nested_disjunctions) {
   Build();
   for (const auto& shape : std::vector<Shape>{

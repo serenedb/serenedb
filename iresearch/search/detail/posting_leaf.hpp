@@ -523,6 +523,68 @@ class PostingLeaf {
       target, [this](doc_id_t prev) IRS_FORCE_INLINE { ReadLeafDelta(prev); });
   }
 
+  template<bool Whole>
+  uint32_t Landings(const doc_id_t* in, uint32_t n, uint32_t* blocks) {
+    static_assert(Shape.cursor);
+    if (!_walk.Armed() || _walk.Pending() || n < 2 || in[n - 1] <= _last ||
+        (in[n - 1] - in[0]) / (n - 1) <= _last - _cursor.base) {
+      return 0;
+    }
+    const auto& index = _walk.Index();
+    const auto size = index.Size();
+    auto block = _walk.NextBlock(_left_in_list);
+    doc_id_t upper = _last;
+    uint32_t landings = 0;
+    for (uint32_t i = 0; i != n && landings != kBlock; ++i) {
+      if (in[i] <= upper) {
+        continue;
+      }
+      const auto next = block;
+      if (block == size || index.Last(block) < in[i]) {
+        block = index.Find(block, in[i]);
+      }
+      if (block == size) {
+        break;
+      }
+      blocks[landings++] = block;
+      if constexpr (InputType::kVolatileAlways) {
+        if (block != next) {
+          const auto* const at = In().At(_walk.BlockStart(block));
+          if constexpr (Whole) {
+            const auto end = block + 1 != size
+                               ? reinterpret_cast<uintptr_t>(
+                                   In().At(_walk.BlockStart(block + 1)))
+                               : reinterpret_cast<uintptr_t>(at) + 1;
+            for (auto line = reinterpret_cast<uintptr_t>(at) &
+                             ~uintptr_t{ABSL_CACHELINE_SIZE - 1};
+                 line < end; line += ABSL_CACHELINE_SIZE) {
+              __builtin_prefetch(reinterpret_cast<const void*>(line), 0, 2);
+            }
+          } else {
+            __builtin_prefetch(at, 0, 2);
+            __builtin_prefetch(at + ABSL_CACHELINE_SIZE, 0, 2);
+          }
+        }
+      }
+      upper = index.Last(block);
+      ++block;
+    }
+    return landings;
+  }
+
+  template<typename Read>
+  IRS_FORCE_INLINE void LandOn(uint32_t block, Read&& read) {
+    static_assert(Shape.cursor);
+    if (block == _walk.NextBlock(_left_in_list)) {
+      read(_last);
+      return;
+    }
+    _left_in_list = _walk.MoveTo(block);
+    const auto landing = _walk.Landing();
+    In().Seek(landing.doc_ptr);
+    read(landing.doc);
+  }
+
   struct FillRead {
     block_io::FillLeaf leaf;
     const UnalignedWord* bitset;

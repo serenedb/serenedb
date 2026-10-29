@@ -99,6 +99,41 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
     return _doc = target;
   }
 
+  uint32_t Drop(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
+                uint32_t n) {
+    uint32_t blocks[kBlock];
+    const auto landings =
+      n != 0 ? this->template Landings<false>(docs, n, blocks) : 0;
+    uint32_t landed = 0;
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i != n;) {
+      if (docs[i] > _last) {
+        if (landed != landings) {
+          this->LandOn(blocks[landed++],
+                       [this](doc_id_t prev)
+                         IRS_FORCE_INLINE { ReadLeaf(prev); });
+        } else if (!ReadTo(docs[i])) {
+          _doc = doc_limits::eof();
+          for (; i != n; ++i) {
+            docs[kept] = docs[i];
+            scores[kept] = scores[i];
+            ++kept;
+          }
+          return kept;
+        }
+      }
+      const auto last = _last;
+      do {
+        const auto doc = docs[i];
+        const bool member = Probe(doc) == doc;
+        docs[kept] = doc;
+        scores[kept] = scores[i];
+        kept += static_cast<uint32_t>(!member);
+      } while (++i != n && docs[i] <= last);
+    }
+    return kept;
+  }
+
  private:
   doc_id_t ProbeBitset(doc_id_t target) noexcept {
     SDB_ASSERT(target > _cursor.base);

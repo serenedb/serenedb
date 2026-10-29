@@ -170,7 +170,7 @@ void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
 }
 
 bool StoresPermissions(duckdb::Catalog& catalog) {
-  return !catalog.IsDuckCatalog() ||
+  return !catalog.IsDuckCatalog() || catalog.GetAttached().IsTemporary() ||
          duckdb::IsSereneDBStorageVersion(
            catalog.GetAttached().GetStorageManager().GetStorageVersion());
 }
@@ -1837,9 +1837,27 @@ class Enforcer {
   }
 
   void RequireSchemaCreate(const duckdb::SchemaCatalogEntry& schema) {
+    if (schema.ParentCatalog().GetAttached().IsTemporary()) {
+      RequireTemporaryCreate();
+      return;
+    }
     if (!_caller_closure.Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
                              AclMode::Create)) {
       Denied(schema);
+    }
+  }
+
+  void RequireTemporaryCreate() {
+    const auto current = duckdb::DatabaseManager::GetDefaultDatabase(_context);
+    const auto& name = current.GetIdentifierName();
+    auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, name);
+    if (database &&
+        !_caller_closure.Can(CatalogType::DATABASE_ENTRY, database->permissions,
+                             AclMode::CreateTemp)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied to create temporary tables in database \"",
+                name, "\""));
     }
   }
 

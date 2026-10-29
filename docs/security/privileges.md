@@ -43,6 +43,8 @@ Privileges are enforced on every query. Acting as the role, reading works and wr
 
 `CONNECT` on a database is checked when a session connects to it, when `USE` switches to it, and again whenever a statement reads or writes an object of that database by a qualified name, so revoking `CONNECT` also stops access from sessions connected to other databases. `pg_database_size`, `VACUUM` and `REINDEX` need `CONNECT` on the database they work on.
 
+`TEMPORARY` on the current database lets a role create temporary tables, views, sequences and types, including the temporary type a `PIVOT` without an `IN` list creates. Every role has it unless it is revoked from `PUBLIC`; without it, creating one reports `permission denied to create temporary tables in database "name"`. A temporary object belongs to the role that created it.
+
 ## Column privileges
 
 `SELECT`, `INSERT` and `UPDATE` can be restricted to specific columns. A column grant does not confer the table-level privilege:

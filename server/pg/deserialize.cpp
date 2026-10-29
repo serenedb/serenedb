@@ -1258,6 +1258,9 @@ struct RegText {
   template<typename Sink>
   static bool Decode(DeserializeContext& context, std::string_view data,
                      Sink& sink) {
+    if (NumberText<int64_t>::Decode(context, data, sink)) {
+      return true;
+    }
     SDB_ASSERT(context.client);
     uint64_t oid = kInvalidOid;
     context.client->RunFunctionInTransaction([&] {

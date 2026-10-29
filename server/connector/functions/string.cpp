@@ -1372,7 +1372,7 @@ std::string LikeEscapePattern(std::string_view pattern,
   result.reserve(pattern.size());
   bool afterescape = false;
   for (size_t i = 0; i != pattern.size();) {
-    if (!afterescape && !escape.empty() &&
+    if (!afterescape && !escape.empty() && pattern[i] == escape.front() &&
         pattern.substr(i).starts_with(escape)) {
       result += '\\';
       i += escape.size();

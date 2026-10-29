@@ -1,0 +1,178 @@
+statement ok
+DROP TABLE IF EXISTS edc_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS edc_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS edc_clickclack;
+
+
+statement ok
+CREATE ROLE edc_vedernikoff LOGIN PASSWORD 'edc_pw';
+
+
+statement ok
+CREATE ROLE edc_clickclack LOGIN PASSWORD 'edc_pw2';
+
+
+statement ok
+CREATE TABLE edc_ledger (id integer PRIMARY KEY, amount integer, note text);
+
+
+statement ok
+INSERT INTO edc_ledger VALUES (1, 10, 'one'), (2, 20, 'two');
+
+
+statement ok
+GRANT INSERT ON edc_ledger TO edc_vedernikoff;
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement error
+INSERT INTO edc_ledger VALUES (3, 30, 'three') ON CONFLICT (id) DO NOTHING;
+----
+db error: ERROR: permission denied for table edc_ledger
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement error
+INSERT INTO edc_ledger VALUES (1, 11, 'uno') ON CONFLICT (id) DO UPDATE SET amount = excluded.amount;
+----
+db error: ERROR: permission denied for table edc_ledger
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement error
+INSERT INTO edc_ledger VALUES (4, 40, 'four') RETURNING note;
+----
+db error: ERROR: permission denied for table edc_ledger
+
+
+statement ok
+REVOKE INSERT ON edc_ledger FROM edc_vedernikoff;
+
+
+statement ok
+GRANT UPDATE (amount) ON edc_ledger TO edc_vedernikoff;
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement ok
+UPDATE edc_ledger SET amount = 5;
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement error
+UPDATE edc_ledger SET amount = amount + 1;
+----
+db error: ERROR: permission denied for table edc_ledger
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement error
+UPDATE edc_ledger SET amount = 6 WHERE id = 1;
+----
+db error: ERROR: permission denied for table edc_ledger
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement error
+UPDATE edc_ledger SET note = 'x';
+----
+db error: ERROR: permission denied for table edc_ledger
+
+
+statement ok
+GRANT SELECT (id) ON edc_ledger TO edc_vedernikoff;
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement ok
+UPDATE edc_ledger SET amount = 6 WHERE id = 1;
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+query
+SELECT count(*) AS n FROM edc_ledger;
+----
+n
+2
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement error
+SELECT note FROM edc_ledger;
+----
+db error: ERROR: permission denied for table edc_ledger
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement error
+DELETE FROM edc_ledger WHERE id = 3;
+----
+db error: ERROR: permission denied for table edc_ledger
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement error
+TRUNCATE edc_ledger;
+----
+db error: ERROR: permission denied for table edc_ledger
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement error
+COMMENT ON TABLE edc_ledger IS 'mine now';
+----
+db error: ERROR: must be owner of table edc_ledger
+
+
+statement ok
+GRANT DELETE ON edc_ledger TO edc_vedernikoff;
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement ok
+DELETE FROM edc_ledger WHERE id = 3;
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement error
+DELETE FROM edc_ledger WHERE amount = 20;
+----
+db error: ERROR: permission denied for table edc_ledger
+
+
+connection c_edc user=edc_vedernikoff password=edc_pw
+statement ok
+GRANT DELETE ON edc_ledger TO edc_clickclack;
+
+
+query
+SELECT has_table_privilege('edc_clickclack', 'edc_ledger', 'DELETE') AS granted;
+----
+granted
+f
+
+
+query
+SELECT id, amount, note FROM edc_ledger ORDER BY id;
+----
+id	amount	note
+1	6	one
+2	5	two
+
+
+statement ok
+DROP TABLE edc_ledger;
+
+
+statement ok
+DROP ROLE edc_vedernikoff;
+
+
+statement ok
+DROP ROLE edc_clickclack;

@@ -52,7 +52,6 @@ bool ReportsInputErrors(const duckdb::LogicalType& type) {
     kRegdictionaryAlias,
     kRegroleAlias,
     kRegnamespaceAlias,
-    kOidAlias,
     kTidAlias,
     kPgLsnAlias,
     kMacaddrAlias,
@@ -167,6 +166,7 @@ TextInput::TextInput(duckdb::ClientContext& context,
     duckdb::CastLocalStateParameters parameters{context, _cast.GetCastData()};
     _state = _cast.InitLocalState(parameters);
   }
+  SDB_ASSERT(!_reports || _state);
 }
 
 bool TextInput::Cast(duckdb::string_t text, std::string* message) {

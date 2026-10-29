@@ -114,6 +114,8 @@ std::string KindName(CatalogType type) {
       return "sequence";
     case CatalogType::MACRO_ENTRY:
     case CatalogType::TABLE_MACRO_ENTRY:
+    case CatalogType::TABLE_FUNCTION_ENTRY:
+    case CatalogType::SCALAR_FUNCTION_ENTRY:
       return "function";
     case CatalogType::TYPE_ENTRY:
       return "type";
@@ -2188,6 +2190,11 @@ bool EntryVisible(duckdb::ClientContext& context,
   auto& parent = entry.ParentCatalog();
   if (parent.GetCatalogType() != catalog::ClusterCatalog::kStorageType &&
       !DatabaseVisible(context, connection, closure, parent.GetAttached())) {
+    return false;
+  }
+  if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY ||
+       entry.type == CatalogType::SCALAR_FUNCTION_ENTRY) &&
+      IsSuperuserFunction(entry.name.GetIdentifierName())) {
     return false;
   }
   if (entry.internal || Unowned(entry)) {

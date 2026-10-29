@@ -67,6 +67,28 @@ db error: ERROR: permission denied for function duckdb_table_sample
 
 connection c_ved user=esf_vedernikoff password=esf_pw
 statement error
+SELECT * FROM postgres_query('esf_no_such_server', 'SELECT 1');
+----
+db error: ERROR: permission denied for function postgres_query
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+query
+SELECT count(*) AS listed FROM duckdb_functions() WHERE function_name IN ('postgres_query', 'duckdb_secrets', 'which_secret');
+----
+listed
+0
+
+
+query
+SELECT count(DISTINCT function_name) AS listed FROM duckdb_functions() WHERE function_name IN ('postgres_query', 'duckdb_secrets', 'which_secret');
+----
+listed
+3
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
 SELECT count(*) FROM duckdb_secrets();
 ----
 db error: ERROR: permission denied for function duckdb_secrets

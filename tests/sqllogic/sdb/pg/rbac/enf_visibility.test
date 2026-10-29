@@ -107,6 +107,60 @@ db error: ERROR: permission denied for table evis_vault
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
+SELECT * FROM pragma_table_info('evis_vault');
+----
+db error: ERROR: permission denied for table evis_vault
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+PRAGMA table_info('evis_vault');
+----
+db error: ERROR: permission denied for table evis_vault
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+DESCRIBE evis_vault;
+----
+db error: ERROR: permission denied for table evis_vault
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+SHOW sdb_fault;
+----
+db error: ERROR: unrecognized configuration parameter "sdb_fault"
+
+Did you mean: "default_block_size"
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+query
+SELECT name FROM pragma_table_info('evis_granted');
+----
+name
+a
+
+
+statement ok
+CREATE VIEW evis_vault_columns AS SELECT name FROM pragma_table_info('evis_vault');
+
+
+statement ok
+GRANT SELECT ON evis_vault_columns TO evis_vedernikoff;
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+query
+SELECT name FROM evis_vault_columns;
+----
+name
+secret_code
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
 SELECT b FROM evis_granted;
 ----
 db error: ERROR: Referenced column "b" not found in FROM clause!
@@ -282,6 +336,10 @@ t
 
 statement ok
 DROP DATABASE evis_other_${__DATABASE__};
+
+
+statement ok
+DROP VIEW evis_vault_columns;
 
 
 statement ok

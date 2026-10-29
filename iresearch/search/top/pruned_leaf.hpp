@@ -572,8 +572,11 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
       return target <= _max_in_leaf;
     }
     const auto& index = _cursor.Index();
-    const auto block = index.Find(_cursor.NextBlock(_left_in_list), target);
-    if (block == index.Size()) {
+    auto block = _cursor.NextBlock(_left_in_list);
+    if (block < index.Size() && index.Last(block) < target) {
+      block = index.Find(block, target);
+    }
+    if (block >= index.Size()) {
       return false;
     }
     LandOn(block);

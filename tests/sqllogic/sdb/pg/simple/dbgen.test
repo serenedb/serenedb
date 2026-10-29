@@ -1,0 +1,29 @@
+statement ok
+CALL dbgen(sf = 0.01);
+
+query
+SELECT table_schema, count(*) AS tables FROM information_schema.tables WHERE table_catalog = current_database() AND table_schema = 'public' GROUP BY ALL
+----
+table_schema	tables
+public	8
+
+query
+SELECT count(*) FROM nation
+----
+count
+25
+
+statement ok
+CREATE SCHEMA gen;
+
+statement ok
+SET search_path = gen;
+
+statement ok
+CALL dsdgen(sf = 0.01);
+
+query
+SELECT count(*) FROM gen.call_center
+----
+count
+1

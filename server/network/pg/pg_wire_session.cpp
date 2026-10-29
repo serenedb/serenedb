@@ -50,6 +50,7 @@
 #include "network/pg/bind_decoder.h"
 #include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
+#include "network/pg/login.h"
 #include "network/pg/scram_messages.h"
 #include "network/pg/startup_request.h"
 #include "pg/copy_batch_builder.h"
@@ -924,14 +925,7 @@ void PgWireSession<Kind>::CapturePeerAddress() {
     if (ec) {
       return;  // no usable peer: stays unspecified -> gate fails closed
     }
-    const auto address = endpoint.address();
-    if (address.is_v6()) {
-      if (const auto v6 = address.to_v6(); v6.is_v4_mapped()) {
-        _peer_addr = asio_ns::ip::make_address_v4(asio_ns::ip::v4_mapped, v6);
-        return;
-      }
-    }
-    _peer_addr = address;
+    _peer_addr = NormalizePeerAddress(endpoint.address());
   }
 }
 
@@ -958,46 +952,11 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
 
   // Consult the HBA ruleset first: it decides trust / reject / which method,
   // for every connection, regardless of whether a stored credential exists.
-  const hba::MembershipFn is_member = [](std::string_view user,
-                                         std::string_view group) {
-    duckdb::idx_t user_oid = 0;
-    duckdb::idx_t group_oid = 0;
-    if (!catalog::ReadRole(user,
-                           [&](const catalog::RoleCatalogEntry& role) {
-                             user_oid = role.oid;
-                           }) ||
-        !catalog::ReadRole(group, [&](const catalog::RoleCatalogEntry& role) {
-          group_oid = role.oid;
-        })) {
-      return false;  // missing_ok: unknown login role or target group
-    }
-    // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
-    // membership set and does not implicitly include a superuser's non-members.
-    const auto closure = auth::ClosureFor(nullptr, user_oid);
-    return closure->IsMember(group_oid);
-  };
-
-  hba::ClientInfo client;
-  client.is_local = Kind == SocketKind::Unix;
-  client.is_ssl = this->_socket.IsTls();
-  client.is_gss = false;
-  if (!_peer_addr.is_unspecified()) {
-    if (_peer_addr.is_v4()) {
-      client.family = AF_INET;
-      const auto bytes = _peer_addr.to_v4().to_bytes();
-      std::copy(bytes.begin(), bytes.end(), client.addr.begin());
-    } else {
-      client.family = AF_INET6;
-      const auto bytes = _peer_addr.to_v6().to_bytes();
-      std::copy(bytes.begin(), bytes.end(), client.addr.begin());
-    }
-  }  // else: unix / no-IP -> family 0, addr zeroed (ClientInfo defaults)
-  client.is_replication = false;
-  client.user = UserName();
-  client.database = DatabaseName();
-
-  const auto ruleset = hba::GetHbaRuleset();
-  const hba::Decision decision = hba::Decide(*ruleset, client, is_member);
+  const hba::Decision decision =
+    DecideLogin({.address = _peer_addr,
+                 .is_local = Kind == SocketKind::Unix,
+                 .is_ssl = this->_socket.IsTls()},
+                UserName(), DatabaseName());
 
   using DKind = hba::Decision::Kind;
   hba::Method hba_method = hba::Method::ImplicitReject;
@@ -1084,14 +1043,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     co_return false;
   }
 
-  int64_t valid_until = 0;
-  catalog::ReadRole(UserName(), [&](const catalog::RoleCatalogEntry& role) {
-    if (role.HasValidUntil()) {
-      valid_until = role.ValidUntil();
-    }
-  });
-  if (valid_until != 0 &&
-      duckdb::Timestamp::GetCurrentTimestamp().value >= valid_until) {
+  if (PasswordExpired(UserName())) {
     WriteFatalResponse(
       this->_send,
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),

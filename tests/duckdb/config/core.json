@@ -56,6 +56,18 @@
       "paths": [
         "test/sql/function/operator/test_division_by_zero.test"
       ]
+    },
+    {
+      "reason": "serened serves quack from an HTTP listener (`?api=quack`), so the quack extension has no quack_serve to start a server from SQL, and every file below starts one in the test's own process. The quack suite (tests/duckdb/quack/run.sh) runs quack's own tests against a serened.",
+      "paths": [
+        "test/sql/attach/attach_to_external_resource.test",
+        "test/sql/attach/external_resource_lifecycle.test",
+        "test/sql/attach/external_resource_logging.test",
+        "test/sql/catalog/comment_on_column_remote_catalog.test",
+        "test/sql/connect/concurrent_connect_detach.test",
+        "test/sql/connect/connect_passthrough_quack.test",
+        "test/sql/connect/connect_quack.test"
+      ]
     }
   ]
 }

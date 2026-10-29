@@ -149,6 +149,8 @@ class Transport : public TransportBase {
     static_cast<Session*>(this)->OnStop();
   }
 
+  void Wake() final { _task->RequestRun(); }
+
  protected:
   // Kicks the send writer without waiting -- the hot path. Response bytes drain
   // to the socket concurrently with whatever the session does next.

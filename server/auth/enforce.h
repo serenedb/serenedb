@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/main/database.hpp>
 
 namespace duckdb {
 
@@ -40,5 +41,7 @@ void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan);
 
 bool Unowned(const duckdb::CatalogEntry& entry);
+
+void InstallQuackAccessCheck(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::auth

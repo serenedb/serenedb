@@ -23,11 +23,16 @@
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
 
+#include <chrono>
 #include <duckdb.hpp>
 #include <duckdb/catalog/default/default_functions.hpp>
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
+#include <duckdb/common/types/timestamp.hpp>
+#include <functional>
+#include <quack_storage.hpp>
 
+#include "auth/enforce.h"
 #include "catalog/boot.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_pg_binary_copy.h"
@@ -65,6 +70,7 @@
 #include "query/config_variable_names.h"
 #include "replication/functions.h"
 #include "replication/repl_source.h"
+#include "scheduler/background_scheduler.h"
 #include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
@@ -212,6 +218,14 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterAIFunctions(db);
 
   connector::RegisterSereneDBOptimizers(db);
+
+  auth::InstallQuackAccessCheck(db);
+  duckdb::QuackStorageExtensionInfo::GetState(db).scheduler =
+    [](duckdb::milliseconds delay, std::function<void()> task) {
+      if (auto* scheduler = BackgroundScheduler::gInstance) {
+        scheduler->RunAfter(delay, std::move(task));
+      }
+    };
 
   // The inverted index: its build plan and its store-side instance are
   // serenedb's. A plain CREATE INDEX is duckdb's ART end to end -- the bind

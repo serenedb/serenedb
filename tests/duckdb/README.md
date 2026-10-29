@@ -25,6 +25,7 @@ scripts/ci/test.py --build-dir build_clangd --suite duckdb                      
 scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite core     # just duckdb core
 scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite avro --duckdb-suite inet
 scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite interop  # DuckDB files against the official duckdb/duckdb image
+scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite quack    # quack's tests against a serened per file
 scripts/ci/test.py --build-dir build_clangd --suite duckdb --test '*test/sql/aggregate/*'
 ```
 
@@ -190,8 +191,8 @@ The skips fall into a few kinds, and the `reason` on every entry says which:
   are compiled into the server binary); the parser is one fixed grammar, with no
   parser, grammar or dialect extensions; `search_path` follows PostgreSQL; `//` on
   `DECIMAL` divides by IEEE 754 like `/`; httpfs is curl-only; spatial is built
-  without GEOS, GDAL, PROJ and its persistent RTREE index. Tests for those features
-  cannot pass and shouldn't.
+  without GEOS, GDAL, PROJ and its persistent RTREE index; quack has no server in
+  the engine (serened serves it). Tests for those features cannot pass and shouldn't.
 - **Needs a live third-party endpoint.** A test that reaches a public bucket
   without a `require-env` guard fails intermittently on the endpoint's answer, not
   on anything the fork does.
@@ -256,6 +257,8 @@ For each storage version in `INTEROP_STORAGE_VERSIONS` (`v1.0.0 v1.5.0`) and eac
 
 Each engine then opens its own copy of the file and runs [check.sql](interop/check.sql), the stage's `check_*.sql` and `use_*.sql`, a digest of every table and view, and `pragma_storage_info` of the compression tables. The two outputs must match byte for byte. The digest is the row count and the sum of `hash()` over the rows, because the engines print some values differently (a DOUBLE `0.0` is `0` in SereneDB). The copies are opened read-write with no checkpoint on shutdown: DuckDB 1.5 cannot open read-only a file whose log holds index data. `VANILLA_DUCKDB_TAG` (default `1.5.5`) picks the image, and `VANILLA_DUCKDB` a binary to use instead.
 
+The suite also checks the Quack protocol against a vanilla DuckDB whose `quack` extension speaks the version SereneDB does: `VANILLA_QUACK_DUCKDB_TAG` (default `2.0.0`) or `VANILLA_QUACK_DUCKDB`, whose `INSTALL quack` keeps the extension under `$BUILD_DIR/duckdb-<tag>/` too. `quack-vanilla-client` runs statements on a serened Quack listener through vanilla `quack_query`, and `quack-vanilla-server` attaches a vanilla `quack_serve` from `serened shell` to scan, query, create and insert there.
+
 The suite runs with every other suite when duckdb or a dependency they share changes, and alone when only `interop/` does.
 
 ### Changing the DuckDB on-disk format
@@ -296,6 +299,10 @@ Before the tests, [generate_iceberg_data.sh](generate_iceberg_data.sh) runs upst
 Generating takes 8-12 minutes, so CI does it once per version of its inputs (the generators, this script, the build image and the service images) and keeps the result in the CI store: the REST catalog's sqlite file, the `warehouse` bucket and the generated files. The tables record absolute paths, so `run_shard.sh` gives every shard the same path for the generated files (`SDB_ICEBERG_DATA`, which the generators take as `ICEBERG_GENERATED_DIR`), and `data/generated` links to it. A shard that finds the archive restores it in seconds instead of running Spark; a local run outside `run_shard.sh` generates as before. The REST server always starts on an empty catalog, and the saved rows are copied into it once it is up: started on existing tables, Iceberg 1.10.1's JDBC catalog never closes the statement that found them, so one connection keeps a read lock and every write on the other fails with `SQLITE_BUSY` (fixed in Iceberg 1.11.0, for which no fixture image is published).
 
 The extension's tests outside the catalog directories run in batches like every suite. The catalog tests run as one unit, in upstream CI's order and with its `--order lex`: `catalog_test_config_setup` with upstream's `fixture.json`, then `catalog_custom_setup` (`FIXTURE_SERVER_AVAILABLE`). They share one REST catalog, its namespaces and its table names, so they run sequentially and in that order: some count the requests or namespaces an earlier test leaves behind. `http_proxy.test` reads the proxy's log from `third_party/duckdb_iceberg/mitmproxy.log`, which the fixture removes when it stops.
+
+## The quack suite
+
+Upstream's quack tests start a server in the test's own process with `quack_serve`, which our quack extension does not have: serened serves quack from an HTTP listener. [quack/run.sh](quack/run.sh) therefore runs each file against a serened of its own, started with `--auth_bearer_token=asdf` (the token the tests attach with) in the extension's directory, where `unittest` runs the file too. The file reaches it through `QUACK_SERVER` (`--env-passthrough`). `test/template/quack_setup.test_template` attaches that serened on the server connection and `CONNECT`s to it, so the statements the tests run "on the server" run in serened. That connection is a quack session of its own, which a file that lists the server's sessions excludes with `WHERE connection_id <> '{harness}'`, and the files that started a server of their own include the template instead. The files that test starting, stopping or configuring a server from SQL, or depend on what serened does differently, are in [config/quack.json](config/quack.json).
 
 ## Traps
 

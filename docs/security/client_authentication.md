@@ -96,4 +96,5 @@ Whatever ruleset you install, the bootstrap superuser keeps its trusted local ac
 
 - [Database roles](roles.md) — the identities being authenticated
 - [ALTER ROLE](../sql/statements/alter_role/index.md) — passwords and expiry
+- [Quack API](../clients/quack.md#authentication) — the credentials a Quack client presents
 - [Security overview](index.md) — the model end to end

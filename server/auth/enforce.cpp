@@ -85,10 +85,12 @@
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/scan/scan_bind.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
+#include "quack_storage.hpp"
 
 namespace sdb::auth {
 namespace {
@@ -157,6 +159,24 @@ void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                   ERR_MSG("permission denied to ", verb, " role"),
                   ERR_DETAIL(detail));
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> ForeignServerOf(
+  duckdb::ClientContext& context, const duckdb::Identifier& name) {
+  for (const auto& db :
+       duckdb::DatabaseManager::Get(*context.db).GetDatabases()) {
+    auto& catalog = db->GetCatalog();
+    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
+      continue;
+    }
+    auto& duck_catalog = catalog.Cast<duckdb::DuckCatalog>();
+    if (auto server =
+          duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
+            .GetEntry(duck_catalog.GetCatalogTransaction(context), name)) {
+      return server;
+    }
+  }
+  return nullptr;
 }
 
 bool StoresPermissions(duckdb::Catalog& catalog) {
@@ -1600,24 +1620,10 @@ class Enforcer {
                 duckdb::Identifier{name});
   }
   void RequireServerUsage(const duckdb::Identifier& name) {
-    for (const auto& db :
-         duckdb::DatabaseManager::Get(*_context.db).GetDatabases()) {
-      auto& catalog = db->GetCatalog();
-      if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-        continue;
-      }
-      auto& duck_catalog = catalog.Cast<duckdb::DuckCatalog>();
-      auto server =
-        duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
-          .GetEntry(duck_catalog.GetCatalogTransaction(_context), name);
-      if (!server) {
-        continue;
-      }
-      if (!_caller_closure.Can(CatalogType::FOREIGN_SERVER_ENTRY,
-                               server->permissions, AclMode::Usage)) {
-        Denied(*server);
-      }
-      return;
+    auto server = ForeignServerOf(_context, name);
+    if (server && !_caller_closure.Can(CatalogType::FOREIGN_SERVER_ENTRY,
+                                       server->permissions, AclMode::Usage)) {
+      Denied(*server);
     }
   }
 
@@ -1731,6 +1737,34 @@ void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
 bool Unowned(const duckdb::CatalogEntry& entry) {
   return entry.permissions.owner == pg::kInvalidOid ||
          (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
+}
+
+void InstallQuackAccessCheck(duckdb::DatabaseInstance& db) {
+  duckdb::QuackStorageExtensionInfo::GetState(db).access_check =
+    [](duckdb::ClientContext& context, duckdb::QuackAccess access,
+       const duckdb::Identifier& catalog) {
+      auto* connection = connector::GetSereneDBContextPtr(context);
+      if (!connection) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("permission denied to use Quack"));
+      }
+      const auto closure = ClosureFor(&context, connection->GetRoleId());
+      if (access == duckdb::QuackAccess::ATTACHED) {
+        auto server = ForeignServerOf(context, catalog);
+        if (server && !closure->Can(CatalogType::FOREIGN_SERVER_ENTRY,
+                                    server->permissions, AclMode::Usage)) {
+          Denied(*server);
+        }
+        return;
+      }
+      if (!closure->is_superuser) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("must be superuser to ",
+                                access == duckdb::QuackAccess::CONNECT
+                                  ? "connect to a Quack server"
+                                  : "manage the Quack server"));
+      }
+    };
 }
 
 }  // namespace sdb::auth

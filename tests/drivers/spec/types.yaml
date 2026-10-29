@@ -255,21 +255,22 @@
   name: bit
   pg_typname: bit
   cast_sql: "$1::bit(8)"
-  # TODO: SereneDB - "invalid input syntax for bind parameter 1" on
-  # extended-mode binds. Simple-mode literal cast works server-side.
-  text: false
+  text: true
   binary: false
   array: false
   samples: ["10101010", null]
+  skip:
+    python_asyncpg: ["extended-text"]
 
 - oid: 1562
   name: varbit
   pg_typname: varbit
-  # TODO: SereneDB - same as bit above.
-  text: false
+  text: true
   binary: false
   array: false
   samples: ["", "1", "1010101010101", null]
+  skip:
+    python_asyncpg: ["extended-text"]
 
 # ---- uuid / json* / pg-lsn ----
 - oid: 2950
@@ -364,8 +365,6 @@
     js_postgres_js: ["extended-binary"]
 
 # ---- ranges ----
-# TODO: SereneDB - range types reject bind parameters; only simple-mode
-# literal casts work. Re-enable once extended-mode bind is supported.
 - oid: 3904
   name: int4range
   pg_typname: int4range

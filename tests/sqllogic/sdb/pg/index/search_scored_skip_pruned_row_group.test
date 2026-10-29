@@ -1,0 +1,66 @@
+statement ok
+SET threads = 1
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sspr_dict AS split_text_csv(' ')
+  WITH (frequency, position, norm)
+
+
+statement ok
+CREATE TABLE sspr_t (id INT PRIMARY KEY, body TEXT, g INT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+      row_group_size = 2048)
+
+
+statement ok
+CREATE INDEX sspr_idx ON sspr_t USING inverted (body sspr_dict)
+
+
+statement ok
+INSERT INTO sspr_t
+SELECT i,
+       CASE WHEN i < 1024 THEN 'a b c d' WHEN i < 6144 THEN 'a b c' ELSE 'a' END,
+       CASE WHEN i BETWEEN 2048 AND 4095 THEN 1 ELSE 0 END
+FROM range(8192) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sspr_t
+
+
+query
+SELECT count(*) AS n, max(id) AS hi, count(s) AS scored
+FROM (SELECT id, BM25(sspr_t.tableoid) AS s FROM sspr_t
+      WHERE body @@ ts_any(['a', 'b', 'c', 'd'], 3)) q
+----
+n	hi	scored
+6144	6143	6144
+
+
+query
+SELECT count(*) AS n, max(id) AS hi, count(s) AS scored
+FROM (SELECT id, BM25(sspr_t.tableoid) AS s FROM sspr_t
+      WHERE body @@ ts_any(['a', 'b', 'c', 'd'], 3) AND g = 0) q
+----
+n	hi	scored
+4096	6143	4096
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE f.s <> u.s) AS changed
+FROM (SELECT id, BM25(t1.tableoid) AS s FROM sspr_t t1
+      WHERE body @@ ts_any(['a', 'b']) AND g = 0) f
+JOIN (SELECT id, BM25(t2.tableoid) AS s FROM sspr_t t2
+      WHERE body @@ ts_any(['a', 'b'])) u USING (id)
+----
+n	changed
+6144	0
+
+
+statement ok
+DROP TABLE sspr_t
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sspr_dict

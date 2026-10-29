@@ -350,6 +350,45 @@ def test_startup_non_utf8_client_encoding_accepted_with_warning():
     assert "LATIN1" in warns[0]["M"] and "UTF8" in warns[0]["M"], warns
 
 
+def test_startup_options_apply_settings():
+    m = _startup_collect(
+        {
+            "options": r"-c statement_timeout=5000 --application-name=raw\ options"
+            r" -cIntervalStyle=iso_8601 -c DateStyle=SQL,\ DMY"
+        }
+    )
+    assert "Z" in types(m) and "E" not in types(m), errors(m)
+    status = dict(param_status(m))
+    assert status.get("application_name") == "raw options", status
+    assert status.get("IntervalStyle") == "iso_8601", status
+    assert status.get("DateStyle") == "SQL, DMY", status
+
+
+@pytest.mark.parametrize(
+    "options, message",
+    [
+        ("-x", "invalid command-line argument for server process: -x"),
+        (
+            "statement_timeout=1",
+            "invalid command-line argument for server process: statement_timeout=1",
+        ),
+        ("-c statement_timeout", "-c statement_timeout requires a value"),
+        ("--statement-timeout", "--statement-timeout requires a value"),
+        ("-c", "invalid command-line argument for server process: -c"),
+    ],
+)
+def test_startup_options_refuse_bad_switches(options, message):
+    m = _startup_collect({"options": options})
+    assert [(e.get("S"), e.get("C"), e.get("M")) for e in errors(m)] == [
+        ("FATAL", "42601", message)
+    ]
+
+
+def test_startup_options_bad_value_is_fatal():
+    m = _startup_collect({"options": "-c statement_timeout=nan"})
+    assert [(e.get("S"), e.get("C")) for e in errors(m)] == [("FATAL", "22023")]
+
+
 def test_startup_utf8_client_encoding_no_warning():
     # The matching encoding (UTF8 and its aliases) applies cleanly: connection up,
     # no client_encoding NoticeResponse.

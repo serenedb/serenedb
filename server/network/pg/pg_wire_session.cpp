@@ -531,37 +531,42 @@ bool PgWireSession<Kind>::SetupConnection() {
                               false);
   _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
 
-  for (const auto& [name, value] : _params) {
-    // user/database are consumed by the connection identity; replication and
-    // options are special startup parameters in PG (not GUCs) -- replication is
-    // already handled (replication-mode connections are refused), and routing
-    // either through the GUC layer wrongly rejects the whole connection.
-    if (name == "user" || name == "database" || name == "replication" ||
-        name == "options") {
-      continue;
-    }
+  const auto apply = [&](const std::string& name, const std::string& value) {
     try {
       _connection_ctx->SetSettingChecked(name, value, false);
     } catch (const duckdb::InternalException&) {
       _connection_ctx->SetSetting(name, value, false);
     } catch (const std::exception& exception) {
-      // A valid-but-non-UTF8 client_encoding (LATIN1, WIN1252, ...) is a normal
-      // startup GUC every PG client may send; serenedb is UTF8-only and cannot
-      // transcode, but refusing the whole connection over it is worse than PG,
-      // which accepts it. Keep the session on UTF8 (already reported in the
-      // startup burst) and warn the request was ignored.
       if (name == "client_encoding") {
         _connection_ctx->AddNotice(
           SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING),
                          ERR_MSG("client_encoding \"", value,
                                  "\" is not supported; using \"UTF8\"")));
-        continue;
+        return true;
       }
-      // Prologue boundary: no command loop yet, so convert here and close.
-      // Same ToSqlError funnel as the command loop -- keeps the real sqlstate /
-      // detail / hint instead of forcing 22023 + raw what(). A startup GUC
-      // failure aborts the connection, so PG reports it as FATAL, not ERROR.
       WriteFatalResponse(this->_send, ToSqlError(exception));
+      return false;
+    }
+    return true;
+  };
+  if (const auto options = _params.find("options"); options != _params.end()) {
+    std::vector<StartupSetting> settings;
+    if (auto error = ParseStartupOptions(options->second, settings)) {
+      WriteFatalResponse(this->_send, *error);
+      return false;
+    }
+    for (const auto& [name, value] : settings) {
+      if (!apply(name, value)) {
+        return false;
+      }
+    }
+  }
+  for (const auto& [name, value] : _params) {
+    if (name == "user" || name == "database" || name == "replication" ||
+        name == "options") {
+      continue;
+    }
+    if (!apply(name, value)) {
       return false;
     }
   }

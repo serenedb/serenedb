@@ -80,6 +80,7 @@ bool ReportsInputErrors(const duckdb::LogicalType& type) {
     kPathAlias,
     kPolygonAlias,
     kCircleAlias,
+    kAclitemAlias,
   };
   if (type.id() == duckdb::LogicalTypeId::BLOB) {
     return !type.HasAlias();

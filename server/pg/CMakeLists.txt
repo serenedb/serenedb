@@ -77,6 +77,7 @@ target_sources(
         copy_in_batches.cpp
         copy_batch_builder.cpp
         connection_context.cpp
+        types/aclitem.cpp
         types/bytea.cpp
         types/cast.cpp
         types/char.cpp

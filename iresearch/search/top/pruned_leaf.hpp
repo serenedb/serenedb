@@ -155,6 +155,9 @@ class PrunedLeafBase {
       const auto size = in.ReadByte();
       if constexpr (InputType::kContiguous) {
         _bound_source->Read(in.Pin(size).bytes);
+      } else if (const auto view = in.Peek(size); !view.empty()) {
+        _bound_source->Read(view);
+        in.Consume(size);
       } else {
         byte_type bound[std::numeric_limits<byte_type>::max() +
                         bytes_io<uint32_t>::kMaxVSize];

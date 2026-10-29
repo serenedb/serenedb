@@ -354,6 +354,19 @@ TEST(utf8_utils_test, find) {
   }
 }
 
+TEST(utf8_utils_test, general_category_of_the_last_code_points) {
+  static_assert(irs::utf8_utils::CharGeneralCategory(0xFFFE) == 0x436e);
+  static_assert(irs::utf8_utils::CharGeneralCategory(0xFFFF) == 0x436e);
+  static_assert(irs::utf8_utils::CharGeneralCategory(0x10FFFE) == 0x436e);
+  static_assert(irs::utf8_utils::CharGeneralCategory(0x10FFFF) == 0x436e);
+  static_assert(irs::utf8_utils::kInvalidChar32 > 0x1FFFFF);
+  static_assert(irs::utf8_utils::CharGeneralCategory(
+                  irs::utf8_utils::kInvalidChar32) == 0x436e);
+  for (const uint32_t c : {0xFFFFu, 0x10FFFFu}) {
+    EXPECT_EQ('C', irs::utf8_utils::CharPrimaryCategory(c)) << c;
+  }
+}
+
 TEST(utf8_utils_test, LengthFromChar32) {
   ASSERT_EQ(1, irs::utf8_utils::LengthFromChar32(0x7F));
   ASSERT_EQ(2, irs::utf8_utils::LengthFromChar32(0x7FF));
@@ -361,7 +374,7 @@ TEST(utf8_utils_test, LengthFromChar32) {
   ASSERT_EQ(4, irs::utf8_utils::LengthFromChar32(0x10000));
 
   // Intentionally don't handle this in `cp_length`
-  ASSERT_EQ(3,
+  ASSERT_EQ(4,
             irs::utf8_utils::LengthFromChar32(irs::utf8_utils::kInvalidChar32));
 }
 

@@ -53,7 +53,7 @@ The `EXPLAIN [ANALYZE]` statement allows exporting to several formats:
 
 -   `text` – default ASCII-art style output
 -   `graphviz` – produces a DOT output, which can be rendered with [Graphviz](https://graphviz.org/)
--   `html` – produces an HTML output, which can be rendered with [treeflex](https://dumptyd.github.io/treeflex/)
+-   `html` – produces an HTML output, which can be rendered with [treeflex](https://www.jsdelivr.com/package/npm/treeflex)
 -   `json` – produces a JSON output
 -   `mermaid` – produces a [Mermaid](https://mermaid.js.org/) flowchart
 

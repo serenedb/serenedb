@@ -61,7 +61,9 @@ namespace {
 
 using namespace irs;
 
-uint32_t Checksum(IndexInput in, uint64_t count) {
+uint32_t Checksum(const IndexInput& from, uint64_t count) {
+  IndexInput in{*from.File()};
+  in.Seek(from.Position());
   bstring bytes(std::min(count, in.Length() - in.Position()), byte_type{0});
   in.ReadData(bytes.data(), bytes.size());
   Crc32c crc;
@@ -208,12 +210,12 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
     ASSERT_TRUE(in1.IsEOF());
   }
 
-  // read data using dup
+  // read data using two cursors over one file
   {
     const auto in0_file = _dir->Open("test", duckdb::MappedFileAccess::NORMAL);
     irs::IndexInput in0{*in0_file};
     ASSERT_FALSE(!in0);
-    auto in1 = in0;
+    irs::IndexInput in1{*in0_file};
     ASSERT_FALSE(!in1);
     ASSERT_FALSE(in0.IsEOF());
     ASSERT_FALSE(in1.IsEOF());
@@ -273,7 +275,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
 
           {
             std::lock_guard lock(in_mtx);
-            input = in;  // make own copy
+            input = IndexInput{*in.File()};
           }
 
           {
@@ -3990,7 +3992,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
     EXPECT_EQ(0, file.Position());
     EXPECT_EQ(expected_length, file.Length());
 
-    auto dup_file = file;
+    irs::IndexInput dup_file{*opened};
     ASSERT_FALSE(!dup_file);
     ASSERT_EQ(0, dup_file.Position());
     EXPECT_FALSE(dup_file.IsEOF());
@@ -4331,7 +4333,8 @@ TEST_P(DirectoryTestCase, reads_across_cache_blocks) {
   EXPECT_TRUE(in.IsEOF());
 
   in.Seek(3 * kBlock - 3);
-  auto dup = in;
+  irs::IndexInput dup{*in.File()};
+  dup.Seek(in.Position());
   ASSERT_FALSE(!dup);
   for (auto* ptr : {&in, &dup}) {
     auto& input = *ptr;

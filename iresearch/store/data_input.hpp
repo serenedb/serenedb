@@ -139,18 +139,6 @@ class BasicInput {
   BasicInput(const BasicInput&) noexcept
     requires(Contiguous)
   = default;
-  BasicInput(const BasicInput& other) noexcept
-    requires(!Contiguous)
-    : _begin{other._begin},
-      _pos{other._pos},
-      _end{other._end},
-      _file{other._file} {
-    _block.start = other._block.start;
-    if (other._block.pinned) {
-      _block.start = other.Position();
-      _begin = _pos = _end = nullptr;
-    }
-  }
   BasicInput(BasicInput&&) noexcept
     requires(Contiguous)
   = default;
@@ -164,14 +152,6 @@ class BasicInput {
   BasicInput& operator=(const BasicInput&) noexcept
     requires(Contiguous)
   = default;
-  BasicInput& operator=(const BasicInput& other) noexcept
-    requires(!Contiguous)
-  {
-    if (this != &other) {
-      *this = BasicInput{other};
-    }
-    return *this;
-  }
   BasicInput& operator=(BasicInput&&) noexcept
     requires(Contiguous)
   = default;

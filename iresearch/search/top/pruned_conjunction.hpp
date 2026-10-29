@@ -49,14 +49,16 @@ class PrunedConjunction : public Root {
   static constexpr bool kMembers = !std::is_same_v<Members, utils::Empty>;
 
   template<typename Init, typename MembersArgs, typename ExcludesArgs>
-  PrunedConjunction(Table table, ColumnArgsFetcher& fetcher, size_t size,
-                    Init&& init, MembersArgs&& members, ExcludesArgs&& excludes)
+  PrunedConjunction(Table table, ColumnArgsFetcher& fetcher, bool exhaustive,
+                    size_t size, Init&& init, MembersArgs&& members,
+                    ExcludesArgs&& excludes)
     : _others{fetcher, size - 1,
               [&](auto& leaf, size_t i) { init(leaf, i + 1); }},
       _members{
         std::make_from_tuple<Members>(std::forward<MembersArgs>(members))},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+      _exhaustive{exhaustive},
       _admit{table} {
     SDB_ASSERT(size > 1);
     init(_lead, 0);
@@ -79,6 +81,15 @@ class PrunedConjunction : public Root {
   PrunedConjunction& operator=(PrunedConjunction&&) = delete;
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
+    if constexpr (kDocFirst) {
+      if (_exhaustive) {
+        Walk(_lead.Seek(min), max - 1, std::numeric_limits<score_t>::max(),
+             collector);
+        FlushBatch(collector);
+        _admit.Flush(collector);
+        return;
+      }
+    }
     for (auto doc = _lead.Seek(min); doc < max;) {
       const auto threshold = collector.ScoreThreshold();
       _others.AdvanceTo(doc);
@@ -265,8 +276,9 @@ class PrunedConjunction : public Root {
             continue;
           }
         }
-        _others.Probe(member);
-        Batch(member, _window_freqs[i], collector);
+        if (_others.Probe(member) == member) {
+          Batch(member, _window_freqs[i], collector);
+        }
       }
       irs::detail::Clear(_mask, irs::detail::WindowWords(min, max));
       doc = _lead.Value();
@@ -336,6 +348,7 @@ class PrunedConjunction : public Root {
   [[no_unique_address]] utils::Need<kDocFirst, std::array<Bucket, kBuckets>>
     _buckets;
   uint32_t _span = 1;
+  bool _exhaustive = false;
   [[no_unique_address]] Admit<Table> _admit;
 };
 

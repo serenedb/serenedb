@@ -145,7 +145,7 @@ struct ReindexOutcome {
 struct ReindexTarget {
   std::string name;
   std::string database;
-  std::string schema;
+  duckdb::vector<duckdb::Identifier> schema_path;
   duckdb::idx_t database_id;
   // Every pass reads the index's configuration and its storage off the entry,
   // which owns both.
@@ -155,11 +155,17 @@ struct ReindexTarget {
   duckdb::idx_t relation_id = 0;
 };
 
+duckdb::QualifiedName QualifiedIn(const ReindexTarget& target,
+                                  duckdb::Identifier name) {
+  return duckdb::QualifiedName::FromCatalogSchema(
+    duckdb::Identifier{target.database}, target.schema_path, std::move(name));
+}
+
 // Resolution plus every REINDEX precondition error.
 ReindexTarget ResolveTarget(duckdb::ClientContext& context,
                             ConnectionContext& conn_ctx,
                             const std::string& name,
-                            const std::string& schema_p,
+                            duckdb::vector<duckdb::Identifier> schema_path,
                             const std::string& catalog_p) {
   if (name.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -179,13 +185,11 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
       ERR_MSG("database \"", target.database, "\" does not exist"));
   }
   target.database_id = database->GetOid();
-  const duckdb::Identifier database_name{target.database};
+  target.schema_path = std::move(schema_path);
   auto index_entry = duckdb::Catalog::GetEntry(
     context,
-    duckdb::EntryLookupInfo{
-      duckdb::CatalogType::INDEX_ENTRY,
-      duckdb::QualifiedName{database_name, duckdb::Identifier{schema_p},
-                            duckdb::Identifier{name}}},
+    duckdb::EntryLookupInfo{duckdb::CatalogType::INDEX_ENTRY,
+                            QualifiedIn(target, duckdb::Identifier{name})},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!index_entry ||
       index_entry->Cast<duckdb::IndexCatalogEntry>().index_type != "inverted") {
@@ -193,11 +197,11 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
   target.index = &index_entry->Cast<catalog::InvertedIndexEntry>();
-  target.schema = target.index->ParentSchema(context).name.GetIdentifierName();
+  const auto transaction = target.index->catalog.GetCatalogTransaction(context);
+  target.schema_path = target.index->ParentSchemaPath(transaction);
   // Views and tables share one catalog set, so the type has to be checked
   // rather than assumed from the lookup that found the entry.
-  auto relation = target.index->GetRelation(
-    target.index->catalog.GetCatalogTransaction(context));
+  auto relation = target.index->GetRelation(transaction);
   if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -266,8 +270,8 @@ class PassConnection {
       info->where_clause = predicate->Copy();
     }
     info->table = duckdb::Identifier{target.relation_name};
-    info->SetSchema(duckdb::Identifier{target.schema});
-    info->SetCatalog(duckdb::Identifier{target.database});
+    info->SetQualifiedName(
+      QualifiedIn(target, info->GetQualifiedName().Name()));
     auto statement = duckdb::make_uniq<duckdb::CreateStatement>();
     statement->info = std::move(info);
     auto result = _conn.Query(std::move(statement));
@@ -303,9 +307,7 @@ bool CollectDeadRowPks(duckdb::ClientContext& context,
     duckdb::make_uniq<duckdb::ColumnRefExpression>(
       duckdb::Identifier{"row_number"}));
   auto table = duckdb::make_uniq<duckdb::BaseTableRef>();
-  table->SetQualifiedName(duckdb::Identifier{target.database},
-                          duckdb::Identifier{target.schema},
-                          duckdb::Identifier{target.name});
+  table->SetQualifiedName(QualifiedIn(target, duckdb::Identifier{target.name}));
   select->from_table = std::move(table);
   select->where_clause = std::move(condition);
   auto statement = duckdb::make_uniq<duckdb::SelectStatement>();
@@ -1081,8 +1083,12 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
                                 const std::string& schema_p,
                                 const std::string& catalog_p) {
   auto& conn_ctx = GetSereneDBContext(context);
+  duckdb::vector<duckdb::Identifier> schema_path;
+  if (!schema_p.empty()) {
+    schema_path.emplace_back(schema_p);
+  }
   const auto target =
-    ResolveTarget(context, conn_ctx, name, schema_p, catalog_p);
+    ResolveTarget(context, conn_ctx, name, std::move(schema_path), catalog_p);
   const auto storage = target.index->Storage();
   if (!storage) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -1124,7 +1130,7 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
     session.Begin();
     const auto current =
       ResolveTarget(session.Context(), session.Conn(), target.name,
-                    target.schema, target.database);
+                    target.schema_path, target.database);
     if (current.index->Storage() != storage) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("index \"", name, "\" does not exist"));
@@ -1235,7 +1241,6 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
   if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
     return;
   }
-  const duckdb::Identifier schema_ident = index->GetSchemaName();
   const auto storage = index->Cast<catalog::InvertedIndexEntry>().Storage();
   if (!storage) {
     return;
@@ -1247,7 +1252,6 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
   }
   auto& conn_ctx = GetSereneDBContext(context);
   const auto& index_name = index->name.GetIdentifierName();
-  const auto& schema_name = schema_ident.GetIdentifierName();
   const auto& database_name = catalog.GetName().GetIdentifierName();
   try {
     ReindexSession session{
@@ -1259,8 +1263,9 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
       conn_ctx.GetBackendPid(),
       [&](auto& notice) { conn_ctx.AddNotice(std::move(notice)); }};
     session.Begin();
-    const auto target = ResolveTarget(session.Context(), session.Conn(),
-                                      index_name, schema_name, database_name);
+    const auto target =
+      ResolveTarget(session.Context(), session.Conn(), index_name,
+                    index->ParentSchemaPath(trx), database_name);
     if (target.index->Storage() != storage) {
       return;
     }

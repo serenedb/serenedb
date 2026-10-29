@@ -453,10 +453,11 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   SDB_IF_FAILURE("connector::ScanBind") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  const duckdb::QualifiedName qualified{
-    duckdb::Identifier{input.inputs[0].GetValue<std::string>()},
-    duckdb::Identifier{input.inputs[1].GetValue<std::string>()},
-    duckdb::Identifier{input.inputs[2].GetValue<std::string>()}};
+  duckdb::vector<duckdb::Identifier> path;
+  for (const auto& part : duckdb::ListValue::GetChildren(input.inputs[0])) {
+    path.emplace_back(part.GetValue<std::string>());
+  }
+  const auto qualified = duckdb::QualifiedName::FromPath(std::move(path));
   auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
     context, qualified, duckdb::OnEntryNotFound::RETURN_NULL);
   if (!index || !IsInvertedIndex(*index)) {

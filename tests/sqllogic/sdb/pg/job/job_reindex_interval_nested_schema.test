@@ -70,6 +70,29 @@ schema_name	job_name	schedule
 jrins_inner	jrins_idx	AFTER INTERVAL '00:15:00'
 
 
+query
+SELECT count(*) FROM ${__DATABASE__}.jrins_outer.jrins_inner.jrins_idx;
+----
+count
+1
+
+
+statement count 1
+COPY (SELECT 2 AS id, 'arelav is skuf' AS body)
+TO '${__TEST_DIR__}/jrins_glob/f2.parquet' (FORMAT PARQUET);
+
+
+statement ok
+EXECUTE JOB ${__DATABASE__}.jrins_outer.jrins_inner.jrins_idx;
+
+
+query
+SELECT count(*) FROM ${__DATABASE__}.jrins_outer.jrins_inner.jrins_idx;
+----
+count
+2
+
+
 statement ok
 DROP SCHEMA jrins_outer CASCADE;
 

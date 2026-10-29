@@ -155,6 +155,36 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   // removals are still live in it.
   PendingDelta& Delta() noexcept { return _delta; }
 
+  // The published reader and the committed-but-unpublished generations beside
+  // it, taken as one pair. Apart, a refresh landing between them would leave
+  // the probe holding the reader from before beside the delta from after --
+  // missing exactly the keys the refresh moved across.
+  struct CertificationSources {
+    irs::DirectoryReader reader;
+    PendingDelta::Reading delta;
+  };
+
+  CertificationSources ReadCertificationSources() const {
+    CertificationSources sources;
+    sources.delta = _delta.Read([&] { sources.reader = GetDirectoryReader(); });
+    return sources;
+  }
+
+  // The same pair for a committer's pre-lock pass, which claims the tail above
+  // `certified` and arms a floor on it so its in-lock pass still finds what
+  // lands in between.
+  struct ClaimedSources {
+    irs::DirectoryReader reader;
+    PendingDelta::Claimed delta;
+  };
+
+  ClaimedSources ClaimCertificationSources(std::optional<uint64_t> certified) {
+    ClaimedSources sources;
+    sources.delta =
+      _delta.Claim(certified, [&] { sources.reader = GetDirectoryReader(); });
+    return sources;
+  }
+
   void Clear(const irs::SourcePosition& position) {
     _durability.Clear(*_writer, position);
     // A publication that replaces the index rather than adding to it, and one

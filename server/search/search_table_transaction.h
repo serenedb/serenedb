@@ -29,6 +29,7 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -38,6 +39,7 @@
 #include "connector/primary_key.h"
 #include "connector/search_key_index.h"
 #include "connector/search_key_unique.h"
+#include "search/search_pending_delta.h"
 #include "search/search_table_changes.h"
 
 namespace duckdb {
@@ -73,14 +75,43 @@ struct SearchShardWrites {
   // The keys of rows this transaction leaves in an unflushed iresearch
   // transaction, taken at PrepareCommit because the buffer that holds their
   // values is emptied there. Rows that reached a segment are not among them:
-  // the delta names those segments and reads their dictionaries instead.
+  // the delta carries those segments and reads their dictionaries instead.
   std::vector<connector::KeyTerms> pending_keys;
-  // Readers over the segments this transaction flushed, opened rather than
-  // pinned by name: such a segment is unreferenced until the publish adopts
-  // it, so the cleaner may unlink the file meanwhile, and an open reader
-  // survives that where a filename would not. Opened at PrepareCommit so that
-  // the install under DuckDB's commit lock stays free of file IO.
+  // Readers over the segments this transaction flushed. Opened at
+  // PrepareCommit, outside every lock, where the flushed set is already final:
+  // Stage only registers the transactions on the flush context, which never
+  // flushes. They serve the pre-lock pass, the pass under DuckDB's commit lock
+  // -- which must not open a file -- and then the delta generation, so every
+  // later certifier reads the segment through the reader this commit already
+  // had to open rather than opening its own.
   std::vector<irs::SegmentReader> flushed_segments;
+  // The table's key columns, empty when it has none. A search table's primary
+  // key is fixed at CREATE TABLE -- ALTER TABLE ADD PRIMARY KEY is refused --
+  // so this is settled for the table's life, and a table without one neither
+  // certifies nor leaves a generation behind for anyone else to certify
+  // against.
+  std::vector<connector::primary_key::KeySlot> pk_slots;
+  // How far into the delta's install order this transaction's statement-end
+  // probes have settled the question, unset until one runs. The lowest of
+  // them, since a key written by the first statement is only covered as far as
+  // that statement looked.
+  std::optional<uint64_t> certified_mark;
+  // Whether any statement asserted a key value of its own, rather than only
+  // putting back one it was already replacing. False for a transaction made
+  // entirely of UPDATEs that leave the key columns alone, which has no key to
+  // put to a probe at all.
+  bool asserts_new_keys = false;
+  // The rows such an UPDATE is replacing: it writes a new row carrying the key
+  // the old one had, so the key survives only as long as the old row is this
+  // transaction's to remove. Another transaction removing it first turns the
+  // rewrite into a resurrection of a key that transaction has released, which
+  // no key probe can see -- published state still shows the row, masked by
+  // this transaction's own delete set.
+  std::vector<RowRange> rewritten_rows;
+  // Armed by the pre-lock pass over what it read, released once the generation
+  // is installed: what keeps the tail the in-lock pass still has to read from
+  // being pruned in between.
+  PendingDelta::PruneFloor floor;
 };
 
 // Holds a query::Transaction's search-table (TableEngine::Search) state and
@@ -127,8 +158,27 @@ class SearchTableTransaction {
                std::span<const connector::primary_key::KeySlot> slots,
                duckdb::DataChunk& chunk, uint64_t pk_base);
 
+  // The statement-end probe: this statement's keys against everything
+  // published and everything committed but not yet published. Best effort by
+  // design -- it holds nothing back, so a commit landing after it is not
+  // covered -- but it is what attributes a conflict to the statement that
+  // caused it, and it is what leaves the commit passes a tail to read instead
+  // of the whole table.
+  //
+  // `new_keys` is false for a statement that can only put back key values the
+  // published state already holds at the rows it is replacing: an UPDATE whose
+  // SET list leaves the key columns alone. Such a statement skips the
+  // published tier, which is the expensive one, but not the delta.
   void CertifyKeys(const std::shared_ptr<SearchTable>& shard,
-                   std::span<const connector::primary_key::KeySlot> slots);
+                   std::span<const connector::primary_key::KeySlot> slots,
+                   bool new_keys);
+
+  // The pass under DuckDB's commit lock, before the WAL write and before the
+  // commit's point of no return: this transaction's keys against the
+  // generations installed since its pre-lock pass claimed the delta. That
+  // lock is what serializes two committers racing on one key, and throwing
+  // from here is what still rolls the loser back.
+  void CertifyTail(duckdb::idx_t database);
 
   // Bytes a flush would reclaim for `shard_id`; deletes are not counted.
   uint64_t BufferedBytes(duckdb::idx_t shard_id) const noexcept {
@@ -145,9 +195,11 @@ class SearchTableTransaction {
                    duckdb::ClientContext& context);
   void FlushBufferTransaction(duckdb::idx_t shard_id);
 
-  // Rowids to remove, in issue order with the buffered rows.
+  // Rowids to remove, in issue order with the buffered rows. `rewrite` marks
+  // them as rows an UPDATE is replacing with new ones carrying the same keys,
+  // which is what makes their removal by anyone else a conflict.
   void AddSearchDeletes(const std::shared_ptr<SearchTable>& shard,
-                        std::span<const int64_t> rows);
+                        std::span<const int64_t> rows, bool rewrite);
 
   void AddSearchTruncate(const std::shared_ptr<SearchTable>& shard,
                          const duckdb::Identifier& table_name,
@@ -199,6 +251,26 @@ class SearchTableTransaction {
   // concurrent certifier can see them for as long as the reader cannot.
   void InstallPendingDelta(SearchShardWrites& w, duckdb::idx_t table_id,
                            uint64_t tick) noexcept;
+
+  // The pre-lock pass, run from PrepareCommit: claims the delta's tail above
+  // what the statement-end probes settled, arms the floor on it, and puts this
+  // transaction's whole key set to what it claimed. Leaves the pass under the
+  // commit lock with only the concurrent window to read.
+  void CertifyCommit(SearchShardWrites& w, duckdb::idx_t table_id);
+
+  // The body both commit passes share: this transaction's keys -- its
+  // unflushed tail and the segments it flushed -- against `generations`, and
+  // against `reader` when the pass has to answer for the published tier too.
+  void CertifyAgainst(SearchShardWrites& w, duckdb::idx_t table_id,
+                      const irs::DirectoryReader* reader,
+                      std::span<const PendingGenerationPtr> generations);
+
+  // Refuses the commit if any of `generations` has already removed a row this
+  // transaction is rewriting, which would put its key back after the owner
+  // released it. Cheap enough to run on every pass: see `rewritten_rows`.
+  static void RefuseResurrection(
+    const SearchShardWrites& w,
+    std::span<const PendingGenerationPtr> generations);
 
   irs::containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,

@@ -43,10 +43,17 @@ std::vector<KeyTerms> EncodeRowKeys(
   duckdb::ColumnDataCollection& rows,
   std::span<const primary_key::KeySlot> slots);
 
+// The same, for a caller holding one chunk rather than a collection -- a WAL
+// record's rows arrive that way.
+void EncodeChunkKeys(duckdb::DataChunk& chunk,
+                     std::span<const primary_key::KeySlot> slots,
+                     std::vector<KeyTerms>& keys);
+
 // The key that two live positions of this transaction share, if any: either two
-// positions among `segments` and `rows` -- the transaction contradicting itself
-// -- or one of those and one `probe` finds in published state. `rows` is the
-// unflushed tail, null when there is none.
+// positions among `segments` and `keys` -- the transaction contradicting itself
+// -- or one of those and one `probe` finds in the tiers it holds. `keys` is the
+// unflushed tail, already encoded because a commit's row buffer is emptied
+// before it certifies.
 //
 // One key column leads the walk and the rest are read only where that one
 // already collides, so the column chosen to lead decides the cost; it is picked
@@ -54,7 +61,7 @@ std::vector<KeyTerms> EncodeRowKeys(
 // nothing outside needs to know which it was.
 std::optional<KeyTerms> FindDuplicateKey(
   std::span<const irs::SubReader* const> segments,
-  duckdb::ColumnDataCollection* rows,
-  std::span<const primary_key::KeySlot> slots, UniqueProbe& probe);
+  std::span<const KeyTerms> keys, std::span<const primary_key::KeySlot> slots,
+  UniqueProbe& probe);
 
 }  // namespace sdb::connector

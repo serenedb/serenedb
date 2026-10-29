@@ -179,7 +179,8 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     old_rows.push_back(old_pk_data[old_pk.sel->get_index(row)]);
   }
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, old_rows);
+  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, old_rows,
+                                               !_updates_key_columns);
 
   const uint64_t pk_base = gstate.generated_pk_seq->NextValues(
     duckdb::DuckTransaction::Get(context.client,
@@ -243,7 +244,8 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& state = input.global_state.Cast<SearchUpdateGlobalState>();
   state.sdb_txn->SearchTxn().FlushBufferTransaction(_table.oid);
-  state.sdb_txn->SearchTxn().CertifyKeys(state.search_table, state.pk_slots);
+  state.sdb_txn->SearchTxn().CertifyKeys(state.search_table, state.pk_slots,
+                                         _updates_key_columns);
   if (state.table_lock.owns_lock()) {
     state.table_lock.unlock();
   }

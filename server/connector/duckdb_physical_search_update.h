@@ -66,7 +66,11 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _expressions;
   bool _return_chunk = false;
   duckdb::RowIdHandling _row_id_handling;
-  [[maybe_unused]] bool _updates_key_columns = false;
+  // Whether the SET list touched a key column, captured before the bind
+  // widened it to every physical column. False means the statement rewrites
+  // rows without moving a key, which is what lets its probe leave the
+  // published tier alone.
+  bool _updates_key_columns = false;
 };
 
 }  // namespace sdb::connector

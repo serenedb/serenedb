@@ -36,8 +36,13 @@ namespace sdb::connector {
 // a removal is invisible in the reader until the same publish applies it.
 class UniqueProbe {
  public:
+  // `reader` is the published tier, null for a pass that has already settled
+  // its keys against it and is only catching up on what has been committed
+  // since. Leaving it out is the point of such a pass: adding the published
+  // segments is most of the cost of building a probe and all of the cost of
+  // consulting one.
   UniqueProbe(
-    const irs::DirectoryReader& reader,
+    const irs::DirectoryReader* reader,
     std::span<const irs::SubReader* const> unpublished_segments,
     std::span<const std::vector<irs::bstring>* const> unpublished_keys,
     std::span<const irs::field_id> key_fields,

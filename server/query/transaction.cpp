@@ -186,6 +186,12 @@ Transaction::SearchSlot& Transaction::EnsureIndexSlot(
   return result;
 }
 
+void Transaction::CertifySearch(duckdb::idx_t database) {
+  if (_search_txn) {
+    _search_txn->CertifyTail(database);
+  }
+}
+
 void Transaction::StageSearch(const irs::SourcePosition& position,
                               duckdb::idx_t database) noexcept {
   for (auto& [index_id, entry] : _search_transactions) {

@@ -1,0 +1,203 @@
+# An UPDATE whose SET list leaves the key columns alone asserts no key of its
+# own: it puts back, on a new row, the key the row it replaces already had. So
+# it runs no key probe at all (§4.3).
+#
+# What it does establish is that those rows are still its to replace. Another
+# transaction that removed one of them first has released that key, so putting
+# it back resurrects a key that transaction no longer owns -- or has already
+# given to a row of its own. That is a question about rowids, and asking it
+# directly catches both shapes; a key probe only ever saw the second.
+
+control substitution on
+
+statement ok
+CREATE DATABASE pkunch;
+
+
+statement ok
+CREATE TABLE pkunch.public.t (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', refresh_interval=0, compaction_interval=0);
+
+
+statement ok
+INSERT INTO pkunch.public.t VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pkunch.public.t;
+
+
+# The ordinary shape, with nobody else about: accepted, and it is this that
+# runs without consulting a single published segment.
+statement ok
+UPDATE pkunch.public.t SET s = 'a2' WHERE id = 1;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pkunch.public.t;
+
+
+query
+SELECT id, s FROM pkunch.public.t ORDER BY id;
+----
+id	s
+1	a2
+2	b
+
+
+# Now the race. `a` drops the row and claims its key again; `b` updates the
+# same row without touching the key. `b` is putting back a key `a` now owns,
+# and is rejected for it.
+#
+# The loser here is fully committed before the winner starts committing, so it
+# is the pre-lock pass that catches this. A conflict that only appears once the
+# commit lock is held comes back wrapped by DuckDB as "Failed to commit: ...";
+# see search_table_pk_concurrent_commit.test.
+connection a
+statement ok
+BEGIN;
+
+
+connection a
+statement ok
+DELETE FROM pkunch.public.t WHERE id = 1;
+
+
+connection a
+statement ok
+INSERT INTO pkunch.public.t VALUES (1, 'from_a');
+
+
+connection b
+statement ok
+BEGIN;
+
+
+connection b
+statement ok
+UPDATE pkunch.public.t SET s = 'from_b' WHERE id = 1;
+
+
+connection a
+statement ok
+COMMIT;
+
+
+connection b
+statement error
+COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent delete of a row being updated on search table <slt:ignore>
+
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) pkunch.public.t;
+
+
+query
+SELECT id, s FROM pkunch.public.t ORDER BY id;
+----
+id	s
+1	from_a
+2	b
+
+
+# And the same the other way round, so it is first-committer-wins and not an
+# artefact of which connection did which thing.
+connection b
+statement ok
+BEGIN;
+
+
+connection b
+statement ok
+UPDATE pkunch.public.t SET s = 'from_b2' WHERE id = 2;
+
+
+connection a
+statement ok
+BEGIN;
+
+
+connection a
+statement ok
+DELETE FROM pkunch.public.t WHERE id = 2;
+
+
+connection a
+statement ok
+INSERT INTO pkunch.public.t VALUES (2, 'from_a2');
+
+
+connection b
+statement ok
+COMMIT;
+
+
+connection a
+statement error
+COMMIT;
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+# The plain shape, which no key probe ever saw: `a` only removes the row, and
+# `b` rewrites it without touching the key. Nobody re-asserts anything, so
+# there is no duplicate to find -- and yet letting `b` through would resurrect
+# a row `a` deleted. Rejected on the same rowid check.
+statement ok
+INSERT INTO pkunch.public.t VALUES (3, 'c');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pkunch.public.t;
+
+
+connection a
+statement ok
+BEGIN;
+
+
+connection b
+statement ok
+BEGIN;
+
+
+connection a
+statement ok
+DELETE FROM pkunch.public.t WHERE id = 3;
+
+
+connection b
+statement ok
+UPDATE pkunch.public.t SET s = 'c2' WHERE id = 3;
+
+
+connection a
+statement ok
+COMMIT;
+
+
+connection b
+statement error
+COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent delete of a row being updated on search table <slt:ignore>
+
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) pkunch.public.t;
+
+
+query
+SELECT id, s FROM pkunch.public.t ORDER BY id;
+----
+id	s
+1	from_a
+2	from_b2
+
+
+statement ok
+DROP DATABASE pkunch;

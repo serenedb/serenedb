@@ -129,7 +129,10 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     rows.push_back(rowid_data[rowid.sel->get_index(row)]);
   }
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, rows);
+  // A DELETE puts no row back, so losing a race to remove the same rowid is
+  // not a conflict -- both wanted it gone.
+  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, rows,
+                                               /*rewrite=*/false);
 
   if (gstate.returned) {
     duckdb::DataChunk row;

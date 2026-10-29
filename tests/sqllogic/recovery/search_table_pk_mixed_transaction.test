@@ -1,0 +1,182 @@
+# What a primary-key conflict raised at commit does to the rest of the
+# transaction.
+#
+# The design document (§8.5) says the transactional writes survive it, because
+# it was written when the search commit was a leg of its own that ran after the
+# engine commit was already durable. #1396 folded the search WAL into the
+# DuckDB WAL and deleted that leg, and the pass that raises this conflict now
+# runs inside the commit, before the WAL write and before the point of no
+# return. So the whole transaction goes, which is what this pins.
+
+control substitution on
+
+statement ok
+CREATE DATABASE pkmixed;
+
+
+statement ok
+CREATE TABLE pkmixed.public.t (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', refresh_interval=0, compaction_interval=0);
+
+
+# An ordinary transactional table, in the same database, so the transaction
+# below writes both and still takes the plain single-database commit path.
+statement ok
+CREATE TABLE pkmixed.public.plain (id BIGINT, s TEXT);
+
+
+statement ok
+SET sdb_faults = 'pause_search_commit_after_certify';
+
+
+connection first
+statement ok
+BEGIN;
+
+
+connection first
+statement ok
+INSERT INTO pkmixed.public.plain VALUES (1, 'sibling');
+
+
+connection first
+statement ok
+INSERT INTO pkmixed.public.t VALUES (1, 'first');
+
+
+# The conflict cannot be raised here: no other transaction has committed the
+# key yet. It is raised by the commit, which parks past its pre-lock pass.
+connection first
+statement async error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Duplicate key on column "id" violates primary key constraint.
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_after_certify:parked';
+
+
+connection second
+statement ok
+INSERT INTO pkmixed.public.t VALUES (1, 'second');
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_after_certify:release';
+
+
+connection first
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pkmixed.public.t;
+
+
+# The winner's row is there.
+query
+SELECT id, s FROM pkmixed.public.t ORDER BY id;
+----
+id	s
+1	second
+
+
+# And the loser's write to the transactional table went with its transaction:
+# the rollback is the whole transaction, not the search leg of it.
+query
+SELECT count(*) AS n FROM pkmixed.public.plain;
+----
+n
+0
+
+
+# The same across two databases, which commits through two-phase commit rather
+# than the plain path: each database prepares under its own commit lock, and the
+# conflict is raised while the search database prepares. The decision record is
+# written only once every participant has prepared, so a participant that has
+# already prepared is rolled back with the rest.
+statement ok
+CREATE DATABASE pkmixed2;
+
+
+statement ok
+CREATE TABLE pkmixed2.public.plain (id BIGINT, s TEXT);
+
+
+statement ok
+SET sdb_faults = 'pause_search_commit_after_certify';
+
+
+connection first
+statement ok
+BEGIN;
+
+
+connection first
+statement ok
+INSERT INTO pkmixed2.public.plain VALUES (2, 'other database');
+
+
+connection first
+statement ok
+INSERT INTO pkmixed.public.t VALUES (2, 'first');
+
+
+connection first
+statement async error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Duplicate key on column "id" violates primary key constraint.
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_after_certify:parked';
+
+
+connection second
+statement ok
+INSERT INTO pkmixed.public.t VALUES (2, 'second');
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_after_certify:release';
+
+
+connection first
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pkmixed.public.t;
+
+
+query
+SELECT id, s FROM pkmixed.public.t ORDER BY id;
+----
+id	s
+1	second
+2	second
+
+
+query
+SELECT count(*) AS n FROM pkmixed2.public.plain;
+----
+n
+0
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+DROP DATABASE pkmixed;
+
+
+statement ok
+DROP DATABASE pkmixed2;

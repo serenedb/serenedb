@@ -65,6 +65,11 @@ class Transaction : public Config {
   // Pre-rollback counterpart -- restores all SET values.
   void PreRollback() noexcept { RollbackVariables(); }
 
+  // May throw: runs under the committing database's commit lock, before
+  // anything reaches the WAL and before the commit's point of no return, so a
+  // primary-key conflict it finds still rolls the transaction back.
+  void CertifySearch(duckdb::idx_t database);
+
   void StageSearch(const irs::SourcePosition& position,
                    duckdb::idx_t database) noexcept;
   void PublishSearch(duckdb::idx_t database) noexcept;

@@ -277,6 +277,12 @@ void SereneDBClientState::TransactionDurable(duckdb::AttachedDatabase& db,
 
 void SereneDBClientState::TransactionPreWalWrite(duckdb::AttachedDatabase& db,
                                                  duckdb::ClientContext&) {
+  // Ahead of the refresh below, which has side effects this must not follow:
+  // a throw from here is how a primary-key conflict rolls the commit back.
+  if (db.GetCatalog().GetCatalogType() ==
+      catalog::SereneDBCatalog::kStorageType) {
+    _connection_ctx->CertifySearch(db.oid);
+  }
   _connection_ctx->RefreshCreatedIndexes(db.oid);
 }
 

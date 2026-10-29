@@ -30,6 +30,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <numeric>
 #include <utility>
 
 #include "connector/search_filter_builder.hpp"
@@ -299,32 +300,36 @@ class SegmentKeySource final : public KeySource {
   std::vector<Pending> _pending;
 };
 
+// Reads its keys where they lie and orders an index instead of them, because a
+// commit puts the same key set to the probe twice -- once before it takes the
+// commit lock and once under it -- and the second pass cannot afford to copy
+// it. Only a key the walk actually collects is copied, which is one that
+// collided; the rest are never touched.
 class RowKeySource final : public KeySource {
  public:
-  RowKeySource(duckdb::ColumnDataCollection& rows,
-               std::span<const primary_key::KeySlot> slots, size_t seed)
-    : _keys{EncodeRowKeys(rows, slots)}, _seed_index{seed} {
-    absl::c_sort(_keys, [seed](const KeyTerms& lhs, const KeyTerms& rhs) {
-      if (lhs[seed] != rhs[seed]) {
-        return lhs[seed] < rhs[seed];
+  RowKeySource(std::span<const KeyTerms> keys, size_t seed)
+    : _keys{keys}, _seed_index{seed}, _order(keys.size()) {
+    absl::c_iota(_order, size_t{0});
+    absl::c_sort(_order, [keys, seed](size_t lhs, size_t rhs) {
+      if (keys[lhs][seed] != keys[rhs][seed]) {
+        return keys[lhs][seed] < keys[rhs][seed];
       }
-      return lhs < rhs;
+      return keys[lhs] < keys[rhs];
     });
   }
 
   bool Next() final {
     _begin = _end;
-    if (_begin == _keys.size()) {
+    if (_begin == _order.size()) {
       return false;
     }
-    while (_end != _keys.size() &&
-           _keys[_end][_seed_index] == _keys[_begin][_seed_index]) {
+    while (_end != _order.size() && Term(_end) == Term(_begin)) {
       ++_end;
     }
     return true;
   }
 
-  irs::bytes_view Seed() const final { return _keys[_begin][_seed_index]; }
+  irs::bytes_view Seed() const final { return Term(_begin); }
 
   size_t Count() const final { return _end - _begin; }
 
@@ -332,17 +337,20 @@ class RowKeySource final : public KeySource {
 
   void Collect(bool published, std::vector<Candidate>& out) final {
     for (size_t i = _begin; i != _end; ++i) {
-      // The walk never returns to a position, so the key travels rather than
-      // being copied.
-      out.push_back({.key = std::move(_keys[i]), .published = published});
+      out.push_back({.key = _keys[_order[i]], .published = published});
     }
   }
 
   void Finish(std::vector<Candidate>&) final {}
 
  private:
-  std::vector<KeyTerms> _keys;
+  const irs::bstring& Term(size_t position) const noexcept {
+    return _keys[_order[position]][_seed_index];
+  }
+
+  std::span<const KeyTerms> _keys;
   size_t _seed_index;
+  std::vector<size_t> _order;
   size_t _begin = 0;
   size_t _end = 0;
 };
@@ -381,13 +389,28 @@ std::unique_ptr<KeySource> MakeSegmentKeySource(
   return std::make_unique<SegmentKeySource>(segment, slots, seed, *seed_field);
 }
 
-std::unique_ptr<KeySource> MakeRowKeySource(
-  duckdb::ColumnDataCollection& rows,
-  std::span<const primary_key::KeySlot> slots, size_t seed) {
-  return std::make_unique<RowKeySource>(rows, slots, seed);
-}
-
 }  // namespace
+
+void EncodeChunkKeys(duckdb::DataChunk& chunk,
+                     std::span<const primary_key::KeySlot> slots,
+                     std::vector<KeyTerms>& keys) {
+  for (duckdb::idx_t row = 0; row != chunk.size(); ++row) {
+    KeyTerms key(slots.size());
+    for (size_t i = 0; i != slots.size(); ++i) {
+      const SearchColumnInfo info{.field_id = slots[i].column,
+                                  .logical_type = slots[i].type};
+      irs::TermClause clause;
+      const auto status = SetupTermClause(
+        clause, info, chunk.GetValue(slots[i].input_col_idx, row));
+      if (!status.ok()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG(status.message()));
+      }
+      key[i] = std::move(clause.term);
+    }
+    keys.push_back(std::move(key));
+  }
+}
 
 std::vector<KeyTerms> EncodeRowKeys(
   duckdb::ColumnDataCollection& rows,
@@ -395,30 +418,15 @@ std::vector<KeyTerms> EncodeRowKeys(
   std::vector<KeyTerms> keys;
   keys.reserve(rows.Count());
   for (auto& chunk : rows.Chunks()) {
-    for (duckdb::idx_t row = 0; row != chunk.size(); ++row) {
-      KeyTerms key(slots.size());
-      for (size_t i = 0; i != slots.size(); ++i) {
-        const SearchColumnInfo info{.field_id = slots[i].column,
-                                    .logical_type = slots[i].type};
-        irs::TermClause clause;
-        const auto status = SetupTermClause(
-          clause, info, chunk.GetValue(slots[i].input_col_idx, row));
-        if (!status.ok()) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                          ERR_MSG(status.message()));
-        }
-        key[i] = std::move(clause.term);
-      }
-      keys.push_back(std::move(key));
-    }
+    EncodeChunkKeys(chunk, slots, keys);
   }
   return keys;
 }
 
 std::optional<KeyTerms> FindDuplicateKey(
   std::span<const irs::SubReader* const> segments,
-  duckdb::ColumnDataCollection* rows,
-  std::span<const primary_key::KeySlot> slots, UniqueProbe& probe) {
+  std::span<const KeyTerms> keys, std::span<const primary_key::KeySlot> slots,
+  UniqueProbe& probe) {
   const auto seed = ChooseSeedField(segments, slots);
 
   std::vector<std::unique_ptr<KeySource>> sources;
@@ -428,8 +436,8 @@ std::optional<KeyTerms> FindDuplicateKey(
       sources.push_back(std::move(source));
     }
   }
-  if (rows != nullptr) {
-    sources.push_back(MakeRowKeySource(*rows, slots, seed));
+  if (!keys.empty()) {
+    sources.push_back(std::make_unique<RowKeySource>(keys, seed));
   }
 
   // The sources outlive the walk: a source that ran out still owns candidates

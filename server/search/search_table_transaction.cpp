@@ -282,15 +282,100 @@ void SearchTableTransaction::FlushBuffer(
   it->second.ClearBufferedRows();
 }
 
+void SearchTableTransaction::RefuseResurrection(
+  const SearchShardWrites& w,
+  std::span<const PendingGenerationPtr> generations) {
+  if (w.rewritten_rows.empty()) {
+    return;
+  }
+  const auto overlaps = [](const RowRange& lhs, const RowRange& rhs) {
+    return lhs.begin < rhs.end && rhs.begin < lhs.end;
+  };
+  // Ranges on both sides, and a statement rewrites a handful of runs at most,
+  // so this is a pair of short walks rather than anything per row.
+  for (const auto& generation : generations) {
+    for (const auto& removed : generation->removed) {
+      for (const auto& row : w.rewritten_rows) {
+        if (overlaps(removed, row)) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+            ERR_MSG("could not serialize access due to concurrent delete of a "
+                    "row being updated on search table ",
+                    w.shard->GetTableId()));
+        }
+      }
+    }
+  }
+}
+
 void SearchTableTransaction::CertifyKeys(
   const std::shared_ptr<SearchTable>& shard,
-  std::span<const connector::primary_key::KeySlot> slots) {
+  std::span<const connector::primary_key::KeySlot> slots, bool new_keys) {
   if (slots.empty()) {
     return;
   }
   const auto changes = _changes.find(shard->GetTableId());
   if (changes == _changes.end()) {
     return;
+  }
+
+  // What this statement wrote is what decides whether there is anything to
+  // probe for at all, so it is settled first, and from the flushed set rather
+  // than from readers over it: a statement that wrote no row leaves without
+  // opening a file.
+  // RegisterWriter runs from the operator's GetGlobalSinkState, before any
+  // chunk reaches the sink, so a shard with changes always has writes.
+  const auto writes = _writes.find(shard->GetTableId());
+  SDB_ASSERT(writes != _writes.end());
+  auto& w = writes->second;
+  bool flushed = false;
+  for (const auto& trx : w.transactions) {
+    flushed = flushed || !trx->Flushed().empty();
+  }
+
+  auto* rows = changes->second.collection.get();
+  if (rows != nullptr && rows->Count() == 0) {
+    rows = nullptr;
+  }
+  if (!flushed && rows == nullptr) {
+    return;
+  }
+
+  const auto sources = shard->ReadCertificationSources();
+  // The lowest mark across this transaction's statements: a key the first
+  // statement wrote is only answered for as far as that statement looked, so
+  // the commit passes have to start from there for all of them.
+  if (!w.certified_mark || sources.delta.mark < *w.certified_mark) {
+    w.certified_mark = sources.delta.mark;
+  }
+
+  // An UPDATE that leaves the key columns alone asserts no key of its own: it
+  // puts back, on a new row, the key the row it is replacing already had. So
+  // there is nothing to put to a key probe -- published state can only answer
+  // with those same rows, which this transaction's delete set masks.
+  //
+  // What it does have to establish is that those rows are still its to
+  // replace. Another transaction that removed one of them first has released
+  // that key, and may have given it to a row of its own; putting it back then
+  // resurrects a key somebody else owns. That is a question about rowids, not
+  // about keys, and answering it directly is both cheaper than a probe and
+  // wider than one -- a key probe only sees it when the other transaction
+  // happened to re-assert the key, and misses the plain case where it only
+  // removed the row.
+  if (!new_keys) {
+    RefuseResurrection(w, sources.delta.generations);
+    return;
+  }
+  w.asserts_new_keys = true;
+
+  std::vector<irs::SegmentReader> readers;
+  for (const auto& trx : w.transactions) {
+    for (const auto& segment : trx->Flushed()) {
+      // The transaction that flushed them is alive, and the directory it wrote
+      // them through references every file it created, so these need no
+      // holding off of the cleaner.
+      readers.push_back(shard->OpenFlushedSegment(segment.meta));
+    }
   }
 
   std::vector<irs::field_id> key_fields;
@@ -305,18 +390,9 @@ void SearchTableTransaction::CertifyKeys(
                    op.delete_ranges.end());
   }
 
-  // One pair: the delta is read under the lock a refresh prunes it with, and
-  // the reader is taken inside that lock. Taking them apart would let a
-  // refresh land in between and leave this certifier with the reader from
-  // before it beside the delta from after -- missing exactly the keys the
-  // refresh moved from one to the other.
-  irs::DirectoryReader reader;
-  const auto generations =
-    shard->Delta().Snapshot([&] { reader = shard->GetDirectoryReader(); });
-
   std::vector<const irs::SubReader*> unpublished;
   std::vector<const connector::KeyTerms*> unpublished_keys;
-  for (const auto& generation : generations) {
+  for (const auto& generation : sources.delta.generations) {
     for (const auto& segment : generation->segments) {
       unpublished.push_back(&segment);
     }
@@ -330,29 +406,9 @@ void SearchTableTransaction::CertifyKeys(
                    generation->removed.end());
   }
 
-  connector::UniqueProbe probe{reader, unpublished, unpublished_keys,
-                               key_fields, deleted};
-
-  std::vector<irs::SegmentReader> readers;
-  if (const auto writes = _writes.find(shard->GetTableId());
-      writes != _writes.end()) {
-    for (const auto& trx : writes->second.transactions) {
-      for (const auto& flushed : trx->Flushed()) {
-        auto reader = shard->OpenFlushedSegment(flushed.meta);
-        if (reader) {
-          readers.push_back(std::move(reader));
-        }
-      }
-    }
-  }
-
-  auto* rows = changes->second.collection.get();
-  if (rows != nullptr && rows->Count() == 0) {
-    rows = nullptr;
-  }
-  if (readers.empty() && rows == nullptr) {
-    return;
-  }
+  connector::UniqueProbe probe{new_keys ? &sources.reader : nullptr,
+                               unpublished, unpublished_keys, key_fields,
+                               deleted};
 
   std::vector<const irs::SubReader*> segments;
   segments.reserve(readers.size());
@@ -360,10 +416,91 @@ void SearchTableTransaction::CertifyKeys(
     segments.push_back(&reader);
   }
 
-  if (connector::FindDuplicateKey(segments, rows, slots, probe)) {
+  const auto keys = rows == nullptr ? std::vector<connector::KeyTerms>{}
+                                    : connector::EncodeRowKeys(*rows, slots);
+  if (connector::FindDuplicateKey(segments, keys, slots, probe)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
                     ERR_MSG("Duplicate key on column \"", slots[0].name,
                             "\" violates primary key constraint."));
+  }
+}
+
+void SearchTableTransaction::CertifyAgainst(
+  SearchShardWrites& w, duckdb::idx_t table_id,
+  const irs::DirectoryReader* reader,
+  std::span<const PendingGenerationPtr> generations) {
+  SDB_ASSERT(!w.pk_slots.empty());
+  if (reader == nullptr && generations.empty()) {
+    return;
+  }
+
+  RefuseResurrection(w, generations);
+  if (!w.asserts_new_keys) {
+    // Nothing of this transaction's claims a key: every row it wrote carries
+    // the key of a row it is replacing, and the check above is what answers
+    // for those. There is no key set to walk and no probe to build.
+    return;
+  }
+
+  std::vector<irs::field_id> key_fields;
+  key_fields.reserve(w.pk_slots.size());
+  for (const auto& slot : w.pk_slots) {
+    key_fields.push_back(slot.column);
+  }
+
+  std::vector<RowRange> deleted;
+  if (const auto changes = _changes.find(table_id); changes != _changes.end()) {
+    for (const auto& op : changes->second.ops) {
+      deleted.insert(deleted.end(), op.delete_ranges.begin(),
+                     op.delete_ranges.end());
+    }
+  }
+
+  std::vector<const irs::SubReader*> unpublished;
+  std::vector<const connector::KeyTerms*> unpublished_keys;
+  for (const auto& generation : generations) {
+    for (const auto& segment : generation->segments) {
+      unpublished.push_back(&segment);
+    }
+    for (const auto& key : generation->keys) {
+      unpublished_keys.push_back(&key);
+    }
+    deleted.insert(deleted.end(), generation->removed.begin(),
+                   generation->removed.end());
+  }
+
+  connector::UniqueProbe probe{reader, unpublished, unpublished_keys,
+                               key_fields, deleted};
+
+  std::vector<const irs::SubReader*> segments;
+  segments.reserve(w.flushed_segments.size());
+  for (const auto& segment : w.flushed_segments) {
+    segments.push_back(&segment);
+  }
+
+  if (connector::FindDuplicateKey(segments, w.pending_keys, w.pk_slots,
+                                  probe)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+                    ERR_MSG("Duplicate key on column \"", w.pk_slots[0].name,
+                            "\" violates primary key constraint."));
+  }
+}
+
+void SearchTableTransaction::CertifyCommit(SearchShardWrites& w,
+                                           duckdb::idx_t table_id) {
+  auto sources = w.shard->ClaimCertificationSources(w.certified_mark);
+  w.floor = std::move(sources.delta.floor);
+  CertifyAgainst(w, table_id,
+                 sources.delta.from_scratch ? &sources.reader : nullptr,
+                 sources.delta.generations);
+}
+
+void SearchTableTransaction::CertifyTail(duckdb::idx_t database) {
+  for (auto& [table_id, w] : _writes) {
+    if (!w.floor.Armed() || w.shard->GetDatabaseId() != database) {
+      continue;
+    }
+    CertifyAgainst(w, table_id, nullptr, w.shard->Delta().Extend(w.floor));
   }
 }
 
@@ -375,9 +512,13 @@ void SearchTableTransaction::FlushBufferTransaction(duckdb::idx_t shard_id) {
 }
 
 void SearchTableTransaction::AddSearchDeletes(
-  const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows) {
-  EnsureShardWrites(shard);
+  const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows,
+  bool rewrite) {
+  auto& w = EnsureShardWrites(shard);
   _changes[shard->GetTableId()].AppendDeletes(rows);
+  if (rewrite) {
+    AppendRowRanges(w.rewritten_rows, rows);
+  }
 }
 
 void SearchTableTransaction::AddSearchTruncate(
@@ -424,6 +565,7 @@ void SearchTableTransaction::Abort() noexcept {
 
 void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
   for (auto& [table_id, w] : _writes) {
+    w.pk_slots = connector::primary_key::KeySlots(*w.table);
     const auto it = _changes.find(table_id);
     if (it == _changes.end()) {
       continue;
@@ -453,11 +595,9 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
         // the rows to iresearch, which publishes them only at a later refresh,
         // and nothing between the two can name them. A pooled segment cannot
         // be opened the way a flushed one can, so the keys have to travel.
-        if (entry.HasBufferedRows()) {
-          if (const auto slots = connector::primary_key::KeySlots(*w.table);
-              !slots.empty()) {
-            w.pending_keys = connector::EncodeRowKeys(*entry.collection, slots);
-          }
+        if (entry.HasBufferedRows() && !w.pk_slots.empty()) {
+          w.pending_keys =
+            connector::EncodeRowKeys(*entry.collection, w.pk_slots);
         }
         ReplayBuffer(*w.shard, entry, *w.transactions.back(), context);
       }
@@ -477,19 +617,32 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
           .SharedCheckpointLock();
     }
   }
-  // Every insert this transaction makes is behind us, so the flushed set is
-  // final: Stage only registers the transactions on the flush context, which
-  // never flushes. Opening the readers here keeps the install that Stage does
-  // under DuckDB's commit lock free of file IO.
+  // A table with no primary key opens nothing and leaves no generation
+  // behind: the delta exists to be certified against, and nothing certifies
+  // against that table.
   for (auto& [table_id, w] : _writes) {
+    if (w.pk_slots.empty()) {
+      continue;
+    }
     for (const auto& trx : w.transactions) {
       for (const auto& flushed : trx->Flushed()) {
-        if (auto reader = w.shard->OpenFlushedSegment(flushed.meta)) {
-          w.flushed_segments.push_back(std::move(reader));
-        }
+        w.flushed_segments.push_back(w.shard->OpenFlushedSegment(flushed.meta));
       }
     }
+    // Deletes and truncates alone: this transaction asserts no key, so there
+    // is nothing to certify and no floor to arm. It still leaves a generation,
+    // which is how the rows it removed stay discounted until the publish
+    // applies them.
+    if (w.pending_keys.empty() && w.flushed_segments.empty()) {
+      continue;
+    }
+    CertifyCommit(w, table_id);
   }
+  // Between the pass that settles against everything committed and the one
+  // under the commit lock that settles against whatever committed since: the
+  // window the second pass exists for, and the only place a test can hold a
+  // committer open in it.
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_commit_after_certify");
 }
 
 void SearchTableTransaction::Stage(const irs::SourcePosition& position,
@@ -513,6 +666,14 @@ void SearchTableTransaction::Stage(const irs::SourcePosition& position,
 void SearchTableTransaction::InstallPendingDelta(SearchShardWrites& w,
                                                  duckdb::idx_t table_id,
                                                  uint64_t tick) noexcept {
+  if (w.pk_slots.empty()) {
+    return;
+  }
+  // Released once the generation is in: from here the delta itself carries
+  // what this transaction wrote, so there is nothing left for a prune to take
+  // away from it.
+  const absl::Cleanup release = [&w]() noexcept { w.floor.Release(); };
+
   auto generation = std::make_shared<PendingGeneration>();
   generation->tick = tick;
   generation->keys = std::move(w.pending_keys);

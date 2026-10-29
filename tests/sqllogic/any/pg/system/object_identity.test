@@ -467,6 +467,31 @@ db error: ERROR: unrecognized class ID: 1
 
 
 query
+SELECT * FROM pg_identify_object('pg_constraint'::regclass, 'pg_class'::regclass, 0)
+----
+type	schema	name	identity
+constraint	NULL	NULL	NULL
+
+query
+SELECT * FROM pg_identify_object('pg_attrdef'::regclass, 'pg_class'::regclass, 0)
+----
+type	schema	name	identity
+default value	NULL	NULL	NULL
+
+query
+SELECT * FROM pg_identify_object('pg_trigger'::regclass, 'pg_class'::regclass, 0)
+----
+type	schema	name	identity
+trigger	NULL	NULL	NULL
+
+query
+SELECT pg_get_acl(NULL, NULL, NULL) IS NULL AS null_acl, current_setting('ident_s.nosuch', true) IS NULL AS missing_setting
+----
+null_acl	missing_setting
+t	t
+
+
+query
 SELECT (pg_identify_object('pg_type'::regclass, 1, 0)).type AS type,
        pg_get_acl('pg_type'::regclass, 1, 0) IS NULL AS no_acl,
        pg_get_acl('pg_proc'::regclass, 0, 0) IS NULL AS no_function,

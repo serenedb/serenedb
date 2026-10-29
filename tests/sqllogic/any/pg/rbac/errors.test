@@ -41,10 +41,28 @@ DETAIL: Role names starting with "pg_" are reserved.
 
 
 statement error
+CREATE ROLE public;
+----
+db error: ERROR: role name "public" is reserved
+
+
+statement error
+CREATE ROLE "none";
+----
+db error: ERROR: role name "none" is reserved
+
+
+statement error
 ALTER ROLE err_other RENAME TO pg_err_other;
 ----
 db error: ERROR: role name "pg_err_other" is reserved
 DETAIL: Role names starting with "pg_" are reserved.
+
+
+statement error
+ALTER ROLE err_other RENAME TO "none";
+----
+db error: ERROR: role name "none" is reserved
 
 
 # ---- DROP ROLE ----

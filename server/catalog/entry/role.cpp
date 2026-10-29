@@ -39,10 +39,15 @@
 namespace sdb::catalog {
 
 void RequireUnreservedRoleName(const duckdb::Identifier& name) {
-  if (name.GetIdentifierName().starts_with("pg_")) {
+  const auto& text = name.GetIdentifierName();
+  if (text == irs::StaticStrings::kPublic || text == "none") {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_RESERVED_NAME),
+                    ERR_MSG("role name \"", text, "\" is reserved"));
+  }
+  if (text.starts_with("pg_")) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_RESERVED_NAME),
-      ERR_MSG("role name \"", name.GetIdentifierName(), "\" is reserved"),
+      ERR_MSG("role name \"", text, "\" is reserved"),
       ERR_DETAIL("Role names starting with \"pg_\" are reserved."));
   }
 }

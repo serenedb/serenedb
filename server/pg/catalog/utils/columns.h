@@ -156,7 +156,7 @@ std::vector<int16_t> ExpressionAttnums(
 
 std::string ExpressionText(const duckdb::ParsedExpression& expression);
 
-duckdb::optional_ptr<const duckdb::TableCatalogEntry> SiblingTable(
+const duckdb::TableCatalogEntry& SiblingTable(
   duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& member,
   const duckdb::Identifier& name);
 

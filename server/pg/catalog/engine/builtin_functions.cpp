@@ -71,7 +71,7 @@ constexpr auto Identity(const PgProcIdentity& row) {
 }
 
 static_assert(absl::c_is_sorted(kPgProcIdentities,
-                                [](const auto& lhs, const auto& rhs) {
+                                [](const auto& lhs, const auto& rhs) consteval {
                                   return Identity(lhs) < Identity(rhs);
                                 }));
 static_assert(absl::c_all_of(kPgProcIdentities, [](const auto& row) {

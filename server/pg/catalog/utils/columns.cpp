@@ -170,10 +170,7 @@ std::vector<int16_t> IndexAttnums(duckdb::ClientContext& context,
 IndexColumn IndexColumnAt(const duckdb::CatalogEntry& relation,
                           const duckdb::ViewColumnInfo* columns,
                           int16_t attnum) {
-  static const duckdb::LogicalType kExpression{duckdb::LogicalTypeId::VARCHAR};
-  if (attnum == 0) {
-    return {"expr", kExpression};
-  }
+  SDB_ASSERT(attnum != 0);
   const auto column = static_cast<duckdb::idx_t>(attnum - 1);
   if (relation.type == duckdb::CatalogType::VIEW_ENTRY) {
     return {columns->names[column].GetIdentifierName(), columns->types[column]};
@@ -247,15 +244,13 @@ std::string ExpressionText(const duckdb::ParsedExpression& expression) {
   return copy->ToString();
 }
 
-duckdb::optional_ptr<const duckdb::TableCatalogEntry> SiblingTable(
+const duckdb::TableCatalogEntry& SiblingTable(
   duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& member,
   const duckdb::Identifier& name) {
   auto entry = FindMember(transaction, member.ParentSchema(transaction),
                           duckdb::CatalogType::TABLE_ENTRY, name);
-  if (!entry || entry->type != duckdb::CatalogType::TABLE_ENTRY) {
-    return nullptr;
-  }
-  return &entry->Cast<duckdb::TableCatalogEntry>();
+  SDB_ASSERT(entry && entry->type == duckdb::CatalogType::TABLE_ENTRY);
+  return entry->Cast<duckdb::TableCatalogEntry>();
 }
 
 const duckdb::TableCatalogEntry& ReferencedTable(
@@ -265,9 +260,7 @@ const duckdb::TableCatalogEntry& ReferencedTable(
   if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
     return table;
   }
-  const auto target = SiblingTable(transaction, table, fk.info.table);
-  SDB_ASSERT(target);
-  return *target;
+  return SiblingTable(transaction, table, fk.info.table);
 }
 
 SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,
@@ -312,9 +305,7 @@ std::vector<std::string> RelationAttributeNames(const Session& session,
   const auto& index = relation.entry->Cast<duckdb::IndexCatalogEntry>();
   auto owner =
     index.GetRelation(index.catalog.GetCatalogTransaction(*session.context));
-  if (!owner) {
-    return names;
-  }
+  SDB_ASSERT(owner);
   const auto columns =
     owner->type == duckdb::CatalogType::VIEW_ENTRY
       ? ViewColumns(*session.context, owner->Cast<duckdb::ViewCatalogEntry>())

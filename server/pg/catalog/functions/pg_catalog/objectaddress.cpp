@@ -335,17 +335,14 @@ ObjectIdentity IdentifyTrigger(const Session& session, uint64_t oid) {
     return Missing("trigger");
   }
   const auto& trigger = entry->Cast<duckdb::TriggerCatalogEntry>();
-  const auto table =
+  const auto& table =
     SiblingTable(*session.transaction, trigger, trigger.base_table->Table());
-  if (!table) {
-    return Missing("trigger");
-  }
-  const auto [schema, table_name] = NameOf(*session.transaction, *table);
+  const auto [schema, table_name] = NameOf(*session.transaction, table);
   const auto& name = trigger.name.GetIdentifierName();
   return ObjectIdentity{
     .type = "trigger",
     .description = absl::StrCat("trigger ", name, " on table ",
-                                RegOut(session, RegKind::Class, table->oid)),
+                                RegOut(session, RegKind::Class, table.oid)),
     .identity = absl::StrCat(QuoteIdentifier(name), " on ",
                              QualifiedOutName(schema, table_name))};
 }

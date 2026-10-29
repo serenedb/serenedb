@@ -185,10 +185,8 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     if (!Allows<"deptype">('a') && !Allows<"deptype">('n')) {
       return;
     }
-    if (auto table =
-          SiblingTable(Transaction(), trigger, trigger.base_table->Table())) {
-      Trigger(*table, trigger);
-    }
+    Trigger(SiblingTable(Transaction(), trigger, trigger.base_table->Table()),
+            trigger);
   }
 
   void Row(duckdb::ViewCatalogEntry& view) {

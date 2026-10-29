@@ -91,9 +91,7 @@ Session MakeSession(duckdb::ClientContext* context) {
   auto schema =
     temporary.GetSchema(transaction, duckdb::Identifier::DefaultSchema(),
                         duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!schema) {
-    return session;
-  }
+  SDB_ASSERT(schema);
   for (const auto type : kRelationSets) {
     schema->Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type).Scan(
       transaction, [&](duckdb::CatalogEntry& entry) {

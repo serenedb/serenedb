@@ -442,11 +442,8 @@ Definition TriggerDefinition(const Session& session, int64_t oid, bool pretty) {
     return std::nullopt;
   }
   const auto& trigger = *found;
-  const auto table =
+  const auto& table =
     SiblingTable(*session.transaction, trigger, trigger.base_table->Table());
-  if (!table) {
-    return std::nullopt;
-  }
   auto definition = absl::StrCat(
     "CREATE TRIGGER ", QuoteIdentifier(trigger.name.GetIdentifierName()));
   switch (trigger.timing) {
@@ -479,7 +476,7 @@ Definition TriggerDefinition(const Session& session, int64_t oid, bool pretty) {
                       out->append(QuoteIdentifier(name.GetIdentifierName()));
                     }));
   }
-  absl::StrAppend(&definition, " ON ", RelationName(session, *table, !pretty));
+  absl::StrAppend(&definition, " ON ", RelationName(session, table, !pretty));
   if (!trigger.referencing_old_table.empty() ||
       !trigger.referencing_new_table.empty()) {
     absl::StrAppend(&definition, " REFERENCING");

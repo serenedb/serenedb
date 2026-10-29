@@ -24,6 +24,7 @@
 
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <iresearch/utils/assert.hpp>
 
 namespace sdb::pg {
 
@@ -185,9 +186,7 @@ void ProgressRegistry::Unregister(ProgressSource* source) {
 
 void ProgressRegistry::CollectTransactions(ProgressSource& source) {
   absl::MutexLock lock{&_mu};
-  if (_sources.contains(&source)) {
-    return;
-  }
+  SDB_ASSERT(!_sources.contains(&source));
   if (const auto it = _ended_stats.find(source.datid);
       it != _ended_stats.end()) {
     TakeTransactions(it->second, source);

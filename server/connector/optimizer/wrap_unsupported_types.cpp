@@ -61,6 +61,9 @@ bool NeedsClientCast(const duckdb::LogicalType& type) {
 }
 
 duckdb::LogicalType ClientCastTarget(const duckdb::LogicalType& type) {
+  if (!NeedsClientCast(type)) {
+    return type;
+  }
   switch (type.id()) {
     case duckdb::LogicalTypeId::VARIANT:
       return duckdb::LogicalType::JSON();

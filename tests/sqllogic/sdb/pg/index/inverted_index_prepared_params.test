@@ -407,6 +407,26 @@ n
 200
 
 statement ok
+PREPARE ppa_text_cast(text) AS SELECT count(*) AS n FROM ppa_idx
+  WHERE v = $1::int;
+
+query
+EXECUTE ppa_text_cast('3');
+----
+n
+10
+
+statement ok
+PREPARE ppa_text_concat(text) AS SELECT count(*) AS n FROM ppa_idx
+  WHERE v = ('' || $1)::int;
+
+query
+EXECUTE ppa_text_concat('4');
+----
+n
+10
+
+statement ok
 DEALLOCATE ALL;
 
 statement ok

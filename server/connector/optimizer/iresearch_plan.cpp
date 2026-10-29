@@ -444,6 +444,14 @@ bool TryClaimIResearchConjunctImpl(
     } catch (const irs::SqlException&) {
       deferred->declined_parameter = true;
       return false;
+    } catch (const duckdb::Exception& e) {
+      const auto type = duckdb::ErrorData{e}.Type();
+      if (type != duckdb::ExceptionType::CONVERSION &&
+          type != duckdb::ExceptionType::INVALID_INPUT) {
+        throw;
+      }
+      deferred->declined_parameter = true;
+      return false;
     }
     deferred->claim.conjuncts.push_back(conjunct->Copy());
     return true;
@@ -2064,6 +2072,20 @@ duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
       value = value.DefaultCastAs(param.GetReturnType());
     }
     return duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(value));
+  }
+  if (!with_values && duckdb::BoundCastExpression::IsCast(*expr)) {
+    auto& cast = expr->Cast<duckdb::BoundFunctionExpression>();
+    auto& child = duckdb::BoundCastExpression::ChildMutable(cast);
+    if (child->GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_PARAMETER) {
+      if (auto value = ShapeValue(duckdb::BoundCastExpression::TargetType(cast))
+                         .DefaultTryCastAs(child->GetReturnType());
+          value && !value->IsNull()) {
+        child =
+          duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(*value));
+        return expr;
+      }
+    }
   }
   duckdb::ExpressionIterator::EnumerateChildren(
     *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {

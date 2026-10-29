@@ -31,8 +31,7 @@ namespace {
 
 Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
   const auto merge = query.MergeType();
-  if (!ctx.prune || merge != ScoreMergeType::Sum ||
-      query.Absorbed(ctx.fetcher) != 0) {
+  if (merge != ScoreMergeType::Sum || query.Absorbed(ctx.fetcher) != 0) {
     return {};
   }
   const auto& segment = query.Segment();
@@ -44,6 +43,16 @@ Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
   const std::span exclude_filters = query.Queries(Occur::MustNot);
   const auto min_match = query.MinShouldMatch();
   const bool optional = !should.empty() || !should_filters.empty();
+  if (!ctx.prune) {
+    if (optional || !must_filters.empty() ||
+        !irs::detail::DenseConjunction(
+          must, static_cast<doc_id_t>(segment.docs_count()))) {
+      return {};
+    }
+    return MakePrunedConjunction(must, must_filters,
+                                 query.Uniformity(Occur::Must), excludes,
+                                 exclude_filters, segment, ctx, merge);
+  }
   if (must.empty() && must_filters.empty()) {
     if (!optional || min_match == 0) {
       return {};

@@ -40,8 +40,8 @@
 #include "backup/backup_label.h"
 #include "backup/backup_session.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
+#include "pg/types/logical.h"
 
 namespace sdb::connector {
 namespace {
@@ -71,7 +71,7 @@ void PgBackupStartFunction(duckdb::DataChunk& args,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG(kPgBackupStart, " requires a PG wire connection"));
   }
-  auto out = duckdb::FlatVector::Writer<int64_t>(result, args.size());
+  auto out = duckdb::FlatVector::Writer<uint64_t>(result, args.size());
   for (auto label : args.data[0].Values<duckdb::string_t>()) {
     if (!label.IsValid()) {
       out.WriteNull();
@@ -106,30 +106,29 @@ void PgBackupStartFunction(duckdb::DataChunk& args,
                        ERR_HINT("Check the database before relying on the "
                                 "backup.")));
     }
-    out.WriteValue(static_cast<int64_t>(start->lsn));
+    out.WriteValue(start->lsn);
   }
 }
 
 void PgWalfileNameFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                            duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
-    args.data[0], result, args.size(), [&](int64_t lsn) {
-      return duckdb::StringVector::AddString(
-        result, backup::WalFileName(static_cast<uint64_t>(lsn)));
+  duckdb::UnaryExecutor::Execute<uint64_t, duckdb::string_t>(
+    args.data[0], result, args.size(), [&](uint64_t lsn) {
+      return duckdb::StringVector::AddString(result, backup::WalFileName(lsn));
     });
 }
 
 void WriteFinishedBackups(duckdb::Vector& lsn, duckdb::Vector& labelfile,
                           duckdb::Vector& spcmapfile, duckdb::idx_t count,
                           const void* ownership) {
-  auto lsn_out = duckdb::FlatVector::Writer<int64_t>(lsn, count);
+  auto lsn_out = duckdb::FlatVector::Writer<uint64_t>(lsn, count);
   auto label_out =
     duckdb::FlatVector::Writer<duckdb::string_t>(labelfile, count);
   auto map_out =
     duckdb::FlatVector::Writer<duckdb::string_t>(spcmapfile, count);
   for (duckdb::idx_t i = 0; i < count; ++i) {
     const auto finished = backup::BackupSession::Instance().Finish(ownership);
-    lsn_out.WriteValue(static_cast<int64_t>(finished.lsn));
+    lsn_out.WriteValue(finished.lsn);
     label_out.WriteValue(
       duckdb::string_t{finished.label_file.data(),
                        static_cast<uint32_t>(finished.label_file.size())});

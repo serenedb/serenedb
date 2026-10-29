@@ -35,7 +35,7 @@
 #include <vector>
 
 #include "backup/pg_control.h"
-#include "pg/pg_lsn.h"
+#include "pg/types/pg_lsn.h"
 
 namespace sdb::backup {
 namespace {

@@ -43,7 +43,6 @@
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
-#include "pg/pg_lsn.h"
 #include "pg/sql_utils.h"
 #include "replication/conninfo.h"
 #include "replication/publisher_session.h"

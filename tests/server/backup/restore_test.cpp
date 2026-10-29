@@ -27,9 +27,10 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <duckdb/common/fault_points.hpp>
 #include <filesystem>
 #include <fstream>
-#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -144,8 +145,9 @@ class RestoreTest : public ::testing::Test {
     if (!arm()) {
       GTEST_SKIP() << "this build has no fault injection";
     }
-    EXPECT_EXIT(Prepare(), ::testing::ExitedWithCode(1), "");
-    irs::ClearFailurePointsDebugging();
+    EXPECT_EXIT(Prepare(),
+                ::testing::ExitedWithCode(irs::kPlannedCrashExitCode), "");
+    duckdb::FaultPoints::Clear();
     EXPECT_TRUE(Exists(_root / kBackupLabelFile));
 
     Prepare();
@@ -230,39 +232,34 @@ TEST_F(RestoreTest, ARestartedRestoreFinishes) {
 
 TEST_F(RestoreTest, ACrashAfterTheCatalogLogIsFinishedByTheNextBoot) {
   ExpectACrashedRestoreFinishes([] {
-    return irs::AddFailurePointDebugging("crash_in_restore_after_catalog_log");
+    return duckdb::FaultPoints::Arm("crash_in_restore_after_catalog_log");
   });
 }
 
 TEST_F(RestoreTest, ACrashAfterTheDatabaseWalsIsFinishedByTheNextBoot) {
   ExpectACrashedRestoreFinishes([] {
-    return irs::AddFailurePointDebugging(
-      "crash_in_restore_after_database_wals");
+    return duckdb::FaultPoints::Arm("crash_in_restore_after_database_wals");
   });
 }
 
 TEST_F(RestoreTest, ACrashAfterTheStoresIsFinishedByTheNextBoot) {
-  ExpectACrashedRestoreFinishes([] {
-    return irs::AddFailurePointDebugging("crash_in_restore_after_stores");
-  });
+  ExpectACrashedRestoreFinishes(
+    [] { return duckdb::FaultPoints::Arm("crash_in_restore_after_stores"); });
 }
 
 TEST_F(RestoreTest, ACrashAfterTheCleanupIsFinishedByTheNextBoot) {
-  ExpectACrashedRestoreFinishes([] {
-    return irs::AddFailurePointDebugging("crash_in_restore_after_cleanup");
-  });
+  ExpectACrashedRestoreFinishes(
+    [] { return duckdb::FaultPoints::Arm("crash_in_restore_after_cleanup"); });
 }
 
 TEST_F(RestoreTest, ACrashAfterTheControlFileIsFinishedByTheNextBoot) {
-  ExpectACrashedRestoreFinishes([] {
-    return irs::AddFailurePointDebugging("crash_in_restore_after_control");
-  });
+  ExpectACrashedRestoreFinishes(
+    [] { return duckdb::FaultPoints::Arm("crash_in_restore_after_control"); });
 }
 
 TEST_F(RestoreTest, ACrashBeforeTheLabelIsRetiredIsFinishedByTheNextBoot) {
-  ExpectACrashedRestoreFinishes([] {
-    return irs::AddFailurePointDebugging("crash_in_restore_before_retire");
-  });
+  ExpectACrashedRestoreFinishes(
+    [] { return duckdb::FaultPoints::Arm("crash_in_restore_before_retire"); });
 }
 
 TEST_F(RestoreTest, WithoutALabelOnlyTheLeftoverBackupDirectoryGoes) {

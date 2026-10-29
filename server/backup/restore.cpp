@@ -28,12 +28,12 @@
 
 #include <cerrno>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <filesystem>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>

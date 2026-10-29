@@ -385,12 +385,10 @@ uint64_t ArrayElementOid(const Session& session, uint64_t oid) {
 std::vector<ReplicationOrigin> ReplicationOrigins(
   duckdb::DatabaseInstance& db) {
   std::vector<ReplicationOrigin> origins;
-  for (const auto& database : duckdb::DatabaseManager::Get(db).GetDatabases()) {
-    auto& catalog = database->GetCatalog();
-    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-      continue;
-    }
-    catalog.Cast<duckdb::DuckCatalog>()
+  for (const auto& database :
+       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(db))) {
+    database->GetCatalog()
+      .Cast<duckdb::DuckCatalog>()
       .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
       .Scan([&](duckdb::CatalogEntry& entry) {
         origins.emplace_back(

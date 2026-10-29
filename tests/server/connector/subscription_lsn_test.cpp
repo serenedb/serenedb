@@ -25,7 +25,7 @@
 #include <exception>
 #include <optional>
 
-#include "pg/pg_lsn.h"
+#include "pg/commands/create_subscription.h"
 #include "replication/conninfo.h"
 
 namespace sdb {

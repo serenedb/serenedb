@@ -77,7 +77,6 @@
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
 #include "pg/types/mapping.h"
-#include "pg/types/pg_lsn.h"
 #include "replication/repl_source.h"
 #include "replication/settings.h"
 

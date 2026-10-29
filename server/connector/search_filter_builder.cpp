@@ -1407,7 +1407,7 @@ absl::Status FromFunctionExpression(
     return FromInetNetworkOp(filter, ctx, *inet);
   }
 
-  char escape_char = '\\';
+  std::string_view escape = "\\";
   if (name == "like_escape") {
     SDB_ASSERT(args.size() == 3);
     const auto* escape_val = TryGetConstant(*args[2]);
@@ -1421,7 +1421,7 @@ absl::Status FromFunctionExpression(
       return absl::InvalidArgumentError(
         "LIKE ESCAPE must be a single character");
     }
-    escape_char = escape_str.front();
+    escape = escape_str;
     args = args.subspan(0, 2);
     name = "~~";
   }
@@ -1446,7 +1446,7 @@ absl::Status FromFunctionExpression(
       auto validator = &IsKeywordAnalyzer;
 
       if (builder == &BuildTSLike) {
-        pattern = LikeEscapePattern(pattern, escape_char);
+        pattern = LikeEscapePattern(pattern, escape);
         if (LikePatternEndsWithEscape(pattern)) {
           return absl::InvalidArgumentError(
             "LIKE pattern must not end with escape character");

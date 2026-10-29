@@ -808,15 +808,17 @@ void LikeEscapeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t pattern, duckdb::string_t escape) -> duckdb::string_t {
-      std::string_view esc_sv{escape.GetData(), escape.GetSize()};
-      if (esc_sv.size() != 1) {
+      const auto escape_text = AsView(escape);
+      if (!escape_text.empty() &&
+          irs::utf8_utils::LengthFromChar8<1>(static_cast<irs::byte_type>(
+            escape_text.front())) != escape_text.size()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_ESCAPE_SEQUENCE),
-          ERR_MSG("invalid escape string: must be one character"));
+          ERR_MSG("invalid escape string"),
+          ERR_HINT("Escape string must be empty or one character."));
       }
-      auto out =
-        LikeEscapePattern({pattern.GetData(), pattern.GetSize()}, esc_sv[0]);
-      return duckdb::StringVector::AddString(result, out);
+      return duckdb::StringVector::AddString(
+        result, LikeEscapePattern(AsView(pattern), escape_text));
     });
 }
 
@@ -1361,22 +1363,26 @@ void UnistrFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 
 }  // namespace
 
-std::string LikeEscapePattern(std::string_view pattern, char escape_char) {
-  if (escape_char == '\\') {
+std::string LikeEscapePattern(std::string_view pattern,
+                              std::string_view escape) {
+  if (escape == "\\") {
     return std::string{pattern};
   }
   std::string result;
   result.reserve(pattern.size());
   bool afterescape = false;
-  for (char c : pattern) {
-    if (c == escape_char && !afterescape) {
+  for (size_t i = 0; i != pattern.size();) {
+    if (!afterescape && !escape.empty() &&
+        pattern.substr(i).starts_with(escape)) {
       result += '\\';
+      i += escape.size();
       afterescape = true;
       continue;
-    } else if (c == '\\' && !afterescape) {
+    }
+    if (pattern[i] == '\\' && !afterescape) {
       result += '\\';
     }
-    result += c;
+    result += pattern[i++];
     afterescape = false;
   }
   return result;

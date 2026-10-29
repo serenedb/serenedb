@@ -61,6 +61,24 @@ SET statement_timeout = '5 parsecs';
 db error: ERROR: invalid value for parameter "statement_timeout": "5 parsecs"<slt:ignore>
 
 
+statement error
+SET statement_timeout = 'nan';
+----
+db error: ERROR: invalid value for parameter "statement_timeout": "nan"
+
+
+statement error
+SET statement_timeout = 'inf';
+----
+db error: ERROR: invalid value for parameter "statement_timeout": "inf"
+
+
+statement error
+SET statement_timeout = '1e400';
+----
+db error: ERROR: invalid value for parameter "statement_timeout": "1e400"
+
+
 statement ok
 SET statement_timeout = '1s';
 

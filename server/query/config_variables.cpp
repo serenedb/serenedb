@@ -72,19 +72,14 @@ constexpr std::pair<std::string_view, double> kTimeUnits[] = {
 
 int64_t ParseDurationMillis(std::string_view name, std::string_view text,
                             double unitless_ms) {
-  const auto invalid = [&] {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("invalid value for parameter \"", name, "\": \"", text, "\""),
-      ERR_HINT("Valid units for this parameter are \"us\", "
-               "\"ms\", \"s\", \"min\", \"h\", and \"d\"."));
-  };
   const auto trimmed = absl::StripAsciiWhitespace(text);
   double number = 0;
   const auto [ptr, ec] = fast_float::from_chars(
     trimmed.data(), trimmed.data() + trimmed.size(), number);
-  if (ec != std::errc{}) {
-    invalid();
+  if (ec != std::errc{} || !std::isfinite(number)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"", name, "\": \"", text, "\""));
   }
   const auto unit = absl::StripLeadingAsciiWhitespace(
     trimmed.substr(static_cast<size_t>(ptr - trimmed.data())));
@@ -95,7 +90,11 @@ int64_t ParseDurationMillis(std::string_view name, std::string_view text,
         return time_unit.first == unit;
       });
     if (it == std::end(kTimeUnits)) {
-      invalid();
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("invalid value for parameter \"", name, "\": \"", text, "\""),
+        ERR_HINT("Valid units for this parameter are \"us\", "
+                 "\"ms\", \"s\", \"min\", \"h\", and \"d\"."));
     }
     scale = it->second;
   }

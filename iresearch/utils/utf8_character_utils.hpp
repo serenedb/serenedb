@@ -49,6 +49,11 @@ constexpr bool CharIsWhiteSpace(uint32_t c) noexcept {
 // Another helpful shit, is make this table S+-tree, it will be 10 times faster
 // https://en.algorithmica.org/hpc/data-structures/s-tree/
 
+static_assert(kSmallCategoryTable.back().codepoint ==
+              std::numeric_limits<uint16_t>::max());
+static_assert(kLargeCategoryTable.back().codepoint ==
+              std::numeric_limits<uint32_t>::max());
+
 template<typename V, typename Container>
 constexpr uint16_t CharCategoryImpl(V v, const Container& c) noexcept {
   const auto it = absl::c_lower_bound(c, Category<V>{v, 0});

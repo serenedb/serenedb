@@ -1126,6 +1126,15 @@ utf8	unicode	unknown
 
 
 query
+SELECT pg_char_to_encoding('Latin1') AS latin1, pg_encoding_to_char(8) AS name, pg_encoding_to_char(999) = '' AS unknown_name,
+       pg_encoding_max_length(0) AS ascii, pg_encoding_max_length(6) AS utf8, pg_encoding_max_length(8) AS single,
+       pg_encoding_max_length(999) IS NULL AS unknown_length;
+----
+latin1	name	unknown_name	ascii	utf8	single	unknown_length
+8	LATIN1	t	1	4	1	t
+
+
+query
 SELECT pg_stat_get_db_numbackends(oid) >= 1 AS backends FROM pg_database WHERE datname = current_database();
 ----
 backends

@@ -318,8 +318,8 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | sha512         | Yes           |                           |
 | substr         | Yes           |                           |
 | convert        | No            |                           |
-| convert_from   | Yes           |                           |
-| convert_to     | Yes           |                           |
+| convert_from   | Partial       | Converts from `UTF8`, `SQL_ASCII` and `LATIN1`; any other valid encoding raises `default conversion function ... does not exist` |
+| convert_to     | Partial       | Converts to `UTF8`, `SQL_ASCII` and `LATIN1`; any other valid encoding raises `default conversion function ... does not exist` |
 | encode         | Yes           |                           |
 | decode         | Yes           |                           |
 

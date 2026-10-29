@@ -440,8 +440,6 @@ constexpr SystemMacro kMacros[] = {
       BEGIN ATOMIC
         SELECT NULL::bigint, NULL::pg_lsn, NULL::pg_lsn WHERE false;
       END;)"},
-  // Always UTF-8 -> max 4 bytes per character. Argument ignored.
-  {"pg_catalog", "pg_encoding_max_length", "(encoding int4) AS 4"},
   {"pg_catalog", "pg_my_temp_schema", "() AS 0::oid"},
   {"pg_catalog", "make_interval",
    R"((years INTEGER := 0, months INTEGER := 0, weeks INTEGER := 0,

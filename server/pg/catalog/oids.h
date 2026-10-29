@@ -37,6 +37,10 @@ constexpr uint32_t WireOid(uint64_t oid) { return static_cast<uint32_t>(oid); }
 // pg_authid row can carry, which is what lets an acl item name "everybody".
 inline constexpr duckdb::idx_t kPublicGrantee = 0;
 
+inline constexpr int32_t kSqlAsciiEncoding = 0;
+inline constexpr int32_t kUtf8Encoding = 6;
+inline constexpr int32_t kLatin1Encoding = 8;
+
 inline constexpr duckdb::idx_t kMinSystem = 16384;
 inline constexpr duckdb::idx_t kMaxSystem = 262144;
 

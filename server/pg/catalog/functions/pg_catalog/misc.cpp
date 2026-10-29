@@ -22,6 +22,7 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
+#include <libpq-fe.h>
 
 #include <cmath>
 #include <duckdb/catalog/catalog.hpp>
@@ -88,6 +89,8 @@
 #include "pg/types/mapping.h"
 #include "search/search_table.h"
 #include "server/utils/build.h"
+
+extern "C" int pg_encoding_max_length(int encoding);
 
 namespace sdb::pg {
 namespace {
@@ -317,13 +320,11 @@ void StatementTimestampFunction(duckdb::DataChunk& args,
                    duckdb::count_t(args.size()));
 }
 
-constexpr int32_t kUtf8Encoding = 6;
-
 void PgEncodingToCharFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<int32_t, duckdb::string_t>(
     args.data[0], result, args.size(), [](int32_t encoding) {
-      return duckdb::string_t{encoding == kUtf8Encoding ? "UTF8" : ""};
+      return duckdb::string_t{pg_encoding_to_char(encoding)};
     });
 }
 
@@ -331,13 +332,20 @@ void PgCharToEncodingFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, int32_t>(
     args.data[0], result, args.size(), [](duckdb::string_t name) {
-      std::string clean;
-      for (const auto c : AsView(name)) {
-        if (absl::ascii_isalnum(c)) {
-          clean.push_back(absl::ascii_tolower(c));
-        }
+      return pg_char_to_encoding(std::string{AsView(name)}.c_str());
+    });
+}
+
+void PgEncodingMaxLengthFunction(duckdb::DataChunk& args,
+                                 duckdb::ExpressionState&,
+                                 duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<int32_t, int32_t>(
+    args.data[0], result, args.size(),
+    [](int32_t encoding) -> std::optional<int32_t> {
+      if (*pg_encoding_to_char(encoding) == '\0') {
+        return std::nullopt;
       }
-      return clean == "utf8" || clean == "unicode" ? kUtf8Encoding : -1;
+      return pg_encoding_max_length(encoding);
     });
 }
 
@@ -1430,6 +1438,9 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(
     loader, pg_catalog, "pg_char_to_encoding", CONSISTENT_WITHIN_QUERY, nullptr,
     {duckdb::ScalarFunction{{text}, int4, PgCharToEncodingFunction}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_encoding_max_length", CONSISTENT, nullptr,
+    {duckdb::ScalarFunction{{int4}, int4, PgEncodingMaxLengthFunction}});
   RegisterScalar(loader, pg_catalog, "pg_stat_get_live_tuples",
                  CONSISTENT_WITHIN_QUERY, InitSession,
                  {duckdb::ScalarFunction{{oid}, int8, LiveTuplesFunction}});

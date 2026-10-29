@@ -325,7 +325,8 @@ class BasicInput {
   IRS_FORCE_INLINE T ReadFixed() {
     if constexpr (!Contiguous) {
       if (Remain() < sizeof(T)) [[unlikely]] {
-        return ReadFixedSlow<T>();
+        Bytes bytes{*this};
+        return irs::read<T>(bytes);
       }
     }
     return irs::read<T>(_pos);
@@ -335,22 +336,11 @@ class BasicInput {
   IRS_FORCE_INLINE T ReadVarint() {
     if constexpr (!Contiguous) {
       if (Remain() < bytes_io<T>::kMaxVSize) [[unlikely]] {
-        return ReadVarintSlow<T>();
+        Bytes bytes{*this};
+        return irs::vread<T>(bytes);
       }
     }
     return irs::vread<T>(_pos);
-  }
-
-  template<typename T>
-  IRS_NO_INLINE T ReadFixedSlow() {
-    Bytes bytes{*this};
-    return irs::read<T>(bytes);
-  }
-
-  template<typename T>
-  IRS_NO_INLINE T ReadVarintSlow() {
-    Bytes bytes{*this};
-    return irs::vread<T>(bytes);
   }
 
   IRS_NO_INLINE bytes_view PeekSlow(uint64_t count) {

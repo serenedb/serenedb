@@ -687,6 +687,7 @@ def test_char_oid18_text_param(conn, param, text):
         (4451, 1, b"\x00\x00\x00\x01\xff\xff\xff\xfe", "22P03"),
         (22, 0, b"a b", "22P02"),
         (1007, 0, b"{{1,2},{3,4}}", "22P02"),
+        (1033, 0, b"garbage", "22P02"),
     ],
 )
 def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
@@ -695,6 +696,16 @@ def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
     conn.execute("")
     conn.sync()
     assert sqlstates(conn.drain_to_ready()) == [sqlstate]
+
+
+def test_aclitem_text_param_is_canonical(conn):
+    conn.parse("", "select $1::text", oids=(1033,))
+    conn.bind("", "", params=(b'"postgres"=r/postgres',))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == b"postgres=r/postgres"
 
 
 @pytest.mark.parametrize(

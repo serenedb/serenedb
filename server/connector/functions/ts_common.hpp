@@ -197,6 +197,16 @@ void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
 template<typename F>
 void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
                       F&& f) {
+  if (value.type().id() != type_id) {
+    std::string error;
+    auto cast = value.DefaultTryCastAs(duckdb::LogicalType{type_id}, &error);
+    if (!cast) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      ERR_MSG(error));
+    }
+    WithNumericValue(type_id, *cast, std::forward<F>(f));
+    return;
+  }
   switch (term_dict::Classify(type_id)) {
     case term_dict::Kind::NumericI32:
       f(value.GetValue<int32_t>());

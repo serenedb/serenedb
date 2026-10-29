@@ -2960,6 +2960,12 @@ id
 2
 4
 
+query
+SELECT id FROM tsq_rx_idx WHERE msg ~ '[a-z]([0-9]+$)' ORDER BY id;
+----
+id
+1
+
 statement ok
 PREPARE tsq_rx_quoted AS SELECT id FROM tsq_rx_idx WHERE msg ~ $1 ORDER BY id;
 
@@ -2968,6 +2974,12 @@ EXECUTE tsq_rx_quoted('[a-z]\Q1');
 ----
 id
 1
+
+statement error
+EXECUTE tsq_rx_quoted('(');
+----
+db error: ERROR: missing ): (
+
 
 statement ok
 DEALLOCATE tsq_rx_quoted;

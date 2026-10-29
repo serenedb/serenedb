@@ -1351,8 +1351,7 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSEndsWithLike(
 
 template<bool Start>
 bool AnchoredAtText(re2::Regexp* re) {
-  while (re->op() == re2::kRegexpCapture ||
-         (re->op() == re2::kRegexpConcat && re->nsub() > 0)) {
+  while (re->op() == re2::kRegexpCapture || re->op() == re2::kRegexpConcat) {
     re =
       re->sub()[Start || re->op() == re2::kRegexpCapture ? 0 : re->nsub() - 1];
   }
@@ -1362,10 +1361,14 @@ bool AnchoredAtText(re2::Regexp* re) {
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSRegexp(
   std::string_view literal) {
   const re2::RE2 parsed{literal, re2::RE2::Quiet};
+  if (!parsed.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(parsed.error()));
+  }
   const std::string_view head =
-    parsed.ok() && AnchoredAtText<true>(parsed.Regexp()) ? "(?:" : "(?s:.*)(?:";
+    AnchoredAtText<true>(parsed.Regexp()) ? "(?:" : "(?s:.*)(?:";
   const std::string_view tail =
-    parsed.ok() && AnchoredAtText<false>(parsed.Regexp()) ? ")" : ")(?s:.*)";
+    AnchoredAtText<false>(parsed.Regexp()) ? ")" : ")(?s:.*)";
   auto pattern = absl::StrCat(head, literal, tail);
   if (literal.contains("\\Q") && !re2::RE2{pattern, re2::RE2::Quiet}.ok()) {
     pattern = absl::StrCat(head, literal, "\\E", tail);

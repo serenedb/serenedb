@@ -65,6 +65,7 @@
 #include "connector/functions/ts_query_codec.h"
 #include "icu-datefunc.hpp"
 #include "icu-helpers.hpp"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/types/char.h"
 #include "pg/types/geometric.h"
 #include "pg/types/inet.h"
@@ -1252,6 +1253,50 @@ bool DefaultText::Decode<ValueSink>(DeserializeContext&, std::string_view data,
   return DeserializeTextDefaultInto(data, sink.type, sink.out);
 }
 
+template<RegKind Kind>
+struct RegText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& context, std::string_view data,
+                     Sink& sink) {
+    SDB_ASSERT(context.client);
+    uint64_t oid = kInvalidOid;
+    context.client->RunFunctionInTransaction([&] {
+      oid = *RegIn(MakeSession(context.client.get()), Kind, data, nullptr);
+    });
+    sink.Fixed(static_cast<int64_t>(oid));
+    return true;
+  }
+};
+
+template<typename Sink>
+DeserializationFunction<Sink> RegTextDecoder(RegKind kind) {
+  switch (kind) {
+    case RegKind::Proc:
+      return &RegText<RegKind::Proc>::template Decode<Sink>;
+    case RegKind::Procedure:
+      return &RegText<RegKind::Procedure>::template Decode<Sink>;
+    case RegKind::Oper:
+      return &RegText<RegKind::Oper>::template Decode<Sink>;
+    case RegKind::Operator:
+      return &RegText<RegKind::Operator>::template Decode<Sink>;
+    case RegKind::Class:
+      return &RegText<RegKind::Class>::template Decode<Sink>;
+    case RegKind::Type:
+      return &RegText<RegKind::Type>::template Decode<Sink>;
+    case RegKind::Collation:
+      return &RegText<RegKind::Collation>::template Decode<Sink>;
+    case RegKind::Config:
+      return &RegText<RegKind::Config>::template Decode<Sink>;
+    case RegKind::Dictionary:
+      return &RegText<RegKind::Dictionary>::template Decode<Sink>;
+    case RegKind::Role:
+      return &RegText<RegKind::Role>::template Decode<Sink>;
+    case RegKind::Namespace:
+      return &RegText<RegKind::Namespace>::template Decode<Sink>;
+  }
+  SDB_UNREACHABLE();
+}
+
 struct DefaultBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view, Sink&) {
@@ -2344,6 +2389,9 @@ DeserializationFunction<Sink> GetDeserialization(
         return IsOidLike(type)
                  ? &LoadBin<int64_t, uint32_t>::template Decode<Sink>
                  : &LoadBin<int64_t>::template Decode<Sink>;
+      }
+      if (const auto kind = RegKindOf(type)) {
+        return RegTextDecoder<Sink>(*kind);
       }
       return &NumberText<int64_t>::template Decode<Sink>;
     case UTINYINT:

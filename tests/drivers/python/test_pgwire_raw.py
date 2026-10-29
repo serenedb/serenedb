@@ -653,6 +653,35 @@ def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
     assert sqlstates(conn.drain_to_ready()) == [sqlstate]
 
 
+@pytest.mark.parametrize(
+    "query, param, expected",
+    [
+        ("select $1::regclass::text", b"pg_class", b"pg_class"),
+        ("select $1::regclass::text", b"1259", b"pg_class"),
+        ("select $1::regtype::text", b"integer", b"integer"),
+        ("select $1::regnamespace::text", b"pg_catalog", b"pg_catalog"),
+        ("select $1::regproc::text", b"now", b"now"),
+        ("select $1::regrole::text", b"-", b"-"),
+    ],
+)
+def test_reg_text_param(conn, query, param, expected):
+    conn.parse("", query)
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected
+
+
+def test_reg_text_param_names_a_missing_object(conn):
+    conn.parse("", "select $1::regclass")
+    conn.bind("", "", params=(b"raw_no_such_relation",))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == ["42P01"]
+
+
 def test_int2vector_array_text_param(conn):
     conn.parse("", "select array_to_string($1, ',')", oids=(1006,))
     conn.bind("", "", params=(b'{"1 2","3"}',))

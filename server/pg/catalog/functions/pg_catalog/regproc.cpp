@@ -1785,6 +1785,43 @@ std::string_view RegOut(const Session& session, RegKind kind, uint64_t oid) {
   return CacheRegOut(session, kind, oid, key, recent);
 }
 
+std::optional<RegKind> RegKindOf(const duckdb::LogicalType& type) {
+  if (IsRegtype(type)) {
+    return RegKind::Type;
+  }
+  if (IsRegclass(type)) {
+    return RegKind::Class;
+  }
+  if (IsRegnamespace(type)) {
+    return RegKind::Namespace;
+  }
+  if (IsRegproc(type)) {
+    return RegKind::Proc;
+  }
+  if (IsRegprocedure(type)) {
+    return RegKind::Procedure;
+  }
+  if (IsRegoper(type)) {
+    return RegKind::Oper;
+  }
+  if (IsRegoperator(type)) {
+    return RegKind::Operator;
+  }
+  if (IsRegrole(type)) {
+    return RegKind::Role;
+  }
+  if (IsRegconfig(type)) {
+    return RegKind::Config;
+  }
+  if (IsRegdictionary(type)) {
+    return RegKind::Dictionary;
+  }
+  if (IsRegcollation(type)) {
+    return RegKind::Collation;
+  }
+  return std::nullopt;
+}
+
 std::optional<uint64_t> RegIn(const Session& session, RegKind kind,
                               std::string_view text,
                               irs::pg::SqlErrorData* soft_error) {

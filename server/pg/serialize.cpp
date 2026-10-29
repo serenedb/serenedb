@@ -1323,43 +1323,6 @@ bool RecordItemNeedsQuoting(std::string_view s) {
   return false;
 }
 
-std::optional<RegKind> RegKindOf(const duckdb::LogicalType& type) {
-  if (IsRegtype(type)) {
-    return RegKind::Type;
-  }
-  if (IsRegclass(type)) {
-    return RegKind::Class;
-  }
-  if (IsRegnamespace(type)) {
-    return RegKind::Namespace;
-  }
-  if (IsRegproc(type)) {
-    return RegKind::Proc;
-  }
-  if (IsRegprocedure(type)) {
-    return RegKind::Procedure;
-  }
-  if (IsRegoper(type)) {
-    return RegKind::Oper;
-  }
-  if (IsRegoperator(type)) {
-    return RegKind::Operator;
-  }
-  if (IsRegrole(type)) {
-    return RegKind::Role;
-  }
-  if (IsRegconfig(type)) {
-    return RegKind::Config;
-  }
-  if (IsRegdictionary(type)) {
-    return RegKind::Dictionary;
-  }
-  if (IsRegcollation(type)) {
-    return RegKind::Collation;
-  }
-  return std::nullopt;
-}
-
 bool RecordHasArrayTrigger(SerializationContext& ctx,
                            const duckdb::LogicalType& type,
                            const duckdb::RecursiveUnifiedVectorFormat& vdata,

@@ -98,17 +98,25 @@ inline bytes_view FixedKey(const BlockView& view, uint32_t entry) noexcept {
   return {view.keys + uint64_t{entry} * view.stride, view.stride};
 }
 
-inline BlockView Parse(const byte_type* p) {
+inline BlockView Parse(const byte_type* p, const duckdb_fsst_decoder_t* fsst) {
   BlockView view{};
   const auto kind = static_cast<BlockKind>(*p++);
   view.fixed = kind == BlockKind::FixedStride;
   view.coded = kind == BlockKind::VarFsst;
+  if (view.coded && !fsst) [[unlikely]] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                    ERR_MSG("term dictionary: FSST-coded block in a segment "
+                            "without an FSST table"));
+  }
   view.count = vread<uint32_t>(p);
   if (kind == BlockKind::Var || kind == BlockKind::VarFsst) {
     view.restarts = vread<uint32_t>(p);
     view.width = *p++;
+    if (view.width != 1 && view.width != 2 && view.width != 4) [[unlikely]] {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                      ERR_MSG("term dictionary: column width ", view.width));
+    }
     const auto suffixes = vread<uint64_t>(p);
-    vskip<uint64_t>(p);
     view.head_skip = vread<uint32_t>(p);
     view.table = p;
     view.heads = p + kVarRestart * view.restarts;
@@ -123,7 +131,6 @@ inline BlockView Parse(const byte_type* p) {
   }
   if (view.fixed) {
     const auto groups = vread<uint32_t>(p);
-    vskip<uint64_t>(p);
     view.stride = vread<uint32_t>(p);
     view.prefix = vread<uint32_t>(p);
     view.table = p + view.prefix;
@@ -562,6 +569,13 @@ inline const byte_type* FieldRecords(const TermReaderImpl& field,
   return GroupStart(view, group);
 }
 
+struct ColdBlocks {
+  virtual void Reached(uint32_t block) = 0;
+
+ protected:
+  ~ColdBlocks() = default;
+};
+
 class Cursor {
  public:
   explicit Cursor(const TermReaderImpl& field) noexcept
@@ -571,6 +585,11 @@ class Cursor {
     _end = std::min(end, _field->Blocks());
     _eager = eager;
     _inline_state = InlineState::Armed;
+  }
+
+  void WatchCold(ColdBlocks& cold) noexcept {
+    _cold = &cold;
+    _probed = 0;
   }
 
   const TermReaderImpl& Field() const noexcept { return *_field; }
@@ -762,7 +781,10 @@ class Cursor {
     _entry = kNoEntry;
     _record = kNoEntry;
     _restart = 0;
-    _view = Parse(_field->Block(block, _buffer));
+    if (_cold) {
+      CheckCold(block);
+    }
+    _view = Parse(_field->Block(block, _buffer), _field->Fsst());
     _stop =
       block + 1 == _field->Blocks() ? _field->LastEntry() + 1 : _view.count;
     _block = block;
@@ -1085,6 +1107,19 @@ class Cursor {
     }
   }
 
+  void CheckCold(uint32_t block) {
+    const auto& in = _field->Owner().Input();
+    const uint64_t offset = _field->BlockOffset(block);
+    const uint64_t size = _field->BlockOffset(block + 1) - offset;
+    if (file_utils::StillWarm(in, offset, size,
+                              _probed < file_utils::kWarmProbes)) {
+      ++_probed;
+      return;
+    }
+    _cold->Reached(block);
+    in.MarkWarm(offset, size);
+  }
+
   void ReadAhead(uint32_t block) noexcept {
     const auto span =
       Slide(_blocks_ahead, uint64_t{block} + 1, _end, kLastWindow);
@@ -1149,6 +1184,8 @@ class Cursor {
     .size = file_utils::kPrefetchChunk,
   };
   uint32_t _end;
+  ColdBlocks* _cold = nullptr;
+  uint32_t _probed = 0;
   InlineState _inline_state = InlineState::Off;
   bool _eager = false;
 };

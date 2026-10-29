@@ -155,7 +155,7 @@ class TermsReader final : public irs::BasicTermReader {
     return irs::memory::make_managed<irs::TermOnlyIterator, TermsIterator>(
       *_terms);
   }
-  irs::field_id id() const final { return 1; }
+  irs::FieldKey key() const final { return {.id = 1}; }
   irs::FieldProperties properties() const final {
     return {.ranges = _ladder == Ladder::Adaptive};
   }
@@ -377,7 +377,7 @@ const Data& Load(const Shape& shape, Ladder ladder) {
     std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
   data->fields->prepare(irs::ReaderState{
     .dir = data->dir.get(), .meta = &kMeta, .idx = data->idx.get()});
-  data->field = data->fields->field(1);
+  data->field = data->fields->field({.id = 1});
   data->error = Validate(*data);
   gData = std::move(data);
   return *gData;

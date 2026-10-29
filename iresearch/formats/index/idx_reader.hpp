@@ -42,15 +42,10 @@ struct Directory;
 struct AnnIndex;
 struct IResourceManager;
 
-struct TermDictMeta {
-  IndexFeatures features{IndexFeatures::None};
-  uint64_t term_count{};
-  uint64_t doc_count{};
-  uint64_t total_doc_freq{};
-  uint64_t total_term_freq{};
-  bool has_score_bounds{false};
-  uint64_t body_offset{};
-  field_id norm{field_limits::invalid()};
+struct TermsHead {
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  uint32_t crc32c = 0;
 };
 
 struct IvfCentroidMeta {
@@ -70,9 +65,9 @@ inline constexpr std::string_view kIdxFormatExt = "idx";
 inline constexpr duckdb::field_id_t kIdxFieldTermDict = 0;
 inline constexpr duckdb::field_id_t kIdxFieldIvf = 1;
 inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
-inline constexpr duckdb::field_id_t kIdxFieldTerms = 3;
-inline constexpr duckdb::field_id_t kIdxFieldTermsBody = 4;
-inline constexpr duckdb::field_id_t kIdxFieldTermsHead = 5;
+inline constexpr duckdb::field_id_t kIdxFieldTermsHeadOffset = 3;
+inline constexpr duckdb::field_id_t kIdxFieldTermsHeadSize = 4;
+inline constexpr duckdb::field_id_t kIdxFieldTermsHeadCrc32c = 5;
 
 class IdxReader final {
  public:
@@ -86,9 +81,7 @@ class IdxReader final {
   bool HasAnn(field_id id) const noexcept;
   const AnnIndex* Ann(field_id id) const noexcept;
 
-  std::span<const std::pair<field_id, TermDictMeta>> TermDicts() const noexcept;
-  uint64_t TermsBody() const noexcept;
-  uint64_t TermsHead() const noexcept;
+  const TermsHead& Terms() const noexcept;
 
   std::span<const uint64_t> AnnEnds() const noexcept;
 

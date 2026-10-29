@@ -45,20 +45,13 @@ struct IvfCentroidEntry {
   IvfCentroidMeta meta;
 };
 
-struct TermDictEntry {
-  field_id id;
-  TermDictMeta meta;
-};
-
 struct IdxWriter::Impl {
   Directory* dir;
   std::string filename;
   IndexOutput::ptr out;
   std::vector<IvfCentroidEntry> ivf_entries;
   std::vector<HnswEntry> hnsw_entries;
-  std::vector<TermDictEntry> term_dict_entries;
-  uint64_t terms_body = 0;
-  uint64_t terms_head = 0;
+  TermsHead terms;
 };
 
 IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name)
@@ -94,19 +87,13 @@ void IdxWriter::AddHnsw(field_id id, HnswMeta meta) {
   _impl->hnsw_entries.push_back(HnswEntry{.id = id, .meta = std::move(meta)});
 }
 
-void IdxWriter::AddTermDictEntry(field_id id, TermDictMeta meta) {
-  _impl->term_dict_entries.push_back(
-    TermDictEntry{.id = id, .meta = std::move(meta)});
-}
-
-void IdxWriter::SetTermsBody(uint64_t offset, uint64_t head) noexcept {
-  _impl->terms_body = offset;
-  _impl->terms_head = head;
+void IdxWriter::SetTerms(const TermsHead& head) noexcept {
+  _impl->terms = head;
 }
 
 bool IdxWriter::Empty() const noexcept {
   return _impl->ivf_entries.empty() && _impl->hnsw_entries.empty() &&
-         _impl->term_dict_entries.empty();
+         _impl->terms.size == 0;
 }
 
 void IdxWriter::Commit() {
@@ -145,32 +132,13 @@ void IdxWriter::Commit() {
           });
         });
     }
-    if (!_impl->term_dict_entries.empty()) {
-      footer.WriteList(
-        kIdxFieldTerms, "terms", _impl->term_dict_entries.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          const auto& e = _impl->term_dict_entries[i];
-          list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            obj.WriteProperty<uint64_t>(0, "id", e.id);
-            obj.WriteProperty<uint32_t>(1, "features",
-                                        static_cast<uint32_t>(e.meta.features));
-            obj.WriteProperty<uint64_t>(2, "term_count", e.meta.term_count);
-            obj.WriteProperty<uint64_t>(3, "doc_count", e.meta.doc_count);
-            obj.WriteProperty<uint64_t>(4, "total_doc_freq",
-                                        e.meta.total_doc_freq);
-            obj.WriteProperty<uint64_t>(5, "total_term_freq",
-                                        e.meta.total_term_freq);
-            obj.WriteProperty<bool>(6, "has_score_bounds",
-                                    e.meta.has_score_bounds);
-            obj.WriteProperty<uint64_t>(7, "body_offset", e.meta.body_offset);
-            obj.WritePropertyWithDefault<uint64_t>(8, "norm", e.meta.norm,
-                                                   field_limits::invalid());
-          });
-        });
-      footer.WriteProperty<uint64_t>(kIdxFieldTermsBody, "terms_body",
-                                     _impl->terms_body);
-      footer.WriteProperty<uint64_t>(kIdxFieldTermsHead, "terms_head",
-                                     _impl->terms_head);
+    if (const auto& terms = _impl->terms; terms.size != 0) {
+      footer.WriteProperty<uint64_t>(kIdxFieldTermsHeadOffset,
+                                     "terms_head_offset", terms.offset);
+      footer.WriteProperty<uint64_t>(kIdxFieldTermsHeadSize, "terms_head_size",
+                                     terms.size);
+      footer.WriteProperty<uint32_t>(kIdxFieldTermsHeadCrc32c,
+                                     "terms_head_crc32c", terms.crc32c);
     }
   });
   _impl->out.reset();
@@ -180,9 +148,7 @@ void IdxWriter::Rollback() noexcept {
   _impl->out.reset();
   _impl->ivf_entries.clear();
   _impl->hnsw_entries.clear();
-  _impl->term_dict_entries.clear();
-  _impl->terms_body = 0;
-  _impl->terms_head = 0;
+  _impl->terms = {};
 }
 
 }  // namespace irs

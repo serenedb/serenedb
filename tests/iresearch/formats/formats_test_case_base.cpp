@@ -745,8 +745,8 @@ TEST_P(FormatTestCase, fields_read_write) {
     ASSERT_EQ(1, reader->size());
 
     // check terms
-    ASSERT_EQ(nullptr, reader->field(static_cast<irs::field_id>(999)));
-    auto term_reader = reader->field(field.id);
+    ASSERT_EQ(nullptr, reader->field({.id = 999}));
+    auto term_reader = reader->field({.id = field.id});
     ASSERT_NE(nullptr, term_reader);
     ASSERT_EQ(field.id, term_reader->meta().id);
     ASSERT_EQ(field.index_features, term_reader->meta().index_features);

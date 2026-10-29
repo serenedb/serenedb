@@ -105,7 +105,7 @@ class KeysReader final : public irs::BasicTermReader {
     return irs::memory::make_managed<irs::TermOnlyIterator, KeysIterator>(
       _keys);
   }
-  irs::field_id id() const final { return 1; }
+  irs::FieldKey key() const final { return {.id = 1}; }
   irs::FieldProperties properties() const final { return {}; }
   bytes_view min() const final { return _keys.front(); }
   bytes_view max() const final { return _keys.back(); }
@@ -194,7 +194,7 @@ void Open(Data& data) {
     std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
   data.fields->prepare(irs::ReaderState{
     .dir = data.dir.get(), .meta = &kMeta, .idx = data.idx.get()});
-  data.field = data.fields->field(1);
+  data.field = data.fields->field({.id = 1});
   const auto& impl =
     static_cast<const irs::term_dict::TermReaderImpl&>(*data.field);
   std::vector<bytes_view> separators;

@@ -45,19 +45,18 @@ constexpr duckdb::field_id_t kFieldMeta = 1;
 
 void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
   const uint32_t data_crc32c = out.Checksum();
-  duckdb::MemoryStream footer;
-  duckdb::BinarySerializer serializer{footer};
-  serializer.Begin();
-  serializer.WritePropertyWithDefault<uint32_t>(kFieldDataCrc32c, "data_crc32c",
-                                                data_crc32c, 0);
-  if (write != nullptr) {
-    serializer.WriteObject(kFieldMeta, "meta", *write);
-  }
-  serializer.End();
-  const auto size = footer.GetPosition();
+  bstring footer;
+  WriteObject(footer, [&](duckdb::BinarySerializer& serializer) {
+    serializer.WritePropertyWithDefault<uint32_t>(
+      kFieldDataCrc32c, "data_crc32c", data_crc32c, 0);
+    if (write != nullptr) {
+      serializer.WriteObject(kFieldMeta, "meta", *write);
+    }
+  });
+  const auto size = footer.size();
   SDB_ENSURE(size <= std::numeric_limits<uint32_t>::max(), "footer of ", size,
              " bytes does not fit its 32-bit length");
-  out.WriteData(footer.GetData(), size);
+  out.WriteData(footer.data(), size);
   out.WriteU32(out.Checksum());
   out.WriteU32(static_cast<uint32_t>(size));
 }
@@ -96,31 +95,47 @@ Footer ReadFooterImpl(IndexInput& in, std::string_view name,
       ERR_CODE(ERRCODE_INDEX_CORRUPTED),
       ERR_MSG("footer: '", name, "' does not match its checksum"));
   }
-  duckdb::MemoryStream stream{const_cast<byte_type*>(footer_data), footer_len};
-  duckdb::BinaryDeserializer deserializer{stream};
-  try {
-    deserializer.Begin();
-    footer.data_expected_crc32c =
-      deserializer.ReadPropertyWithExplicitDefault<uint32_t>(kFieldDataCrc32c,
-                                                             "data_crc32c", 0);
-    if (read != nullptr) {
-      deserializer.ReadObject(kFieldMeta, "meta",
-                              [&](duckdb::BinaryDeserializer& meta) {
-                                (*read)(meta, footer.data_len);
-                              });
-    }
-    deserializer.End();
-  } catch (const duckdb::SerializationException& e) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("footer: '", name, "' cannot be read: ",
-                            duckdb::ErrorData{e}.RawMessage(),
-                            "; it was written by a newer release of SereneDB"));
-  }
+  ReadObject({footer_data, footer_len}, absl::StrCat("footer: '", name, "'"),
+             [&](duckdb::BinaryDeserializer& deserializer) {
+               footer.data_expected_crc32c =
+                 deserializer.ReadPropertyWithExplicitDefault<uint32_t>(
+                   kFieldDataCrc32c, "data_crc32c", 0);
+               if (read != nullptr) {
+                 deserializer.ReadObject(kFieldMeta, "meta",
+                                         [&](duckdb::BinaryDeserializer& meta) {
+                                           (*read)(meta, footer.data_len);
+                                         });
+               }
+             });
   in.Evict(footer.data_len, footer_len);
   return footer;
 }
 
 }  // namespace
+
+void WriteObject(bstring& out, ObjectWriter write) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer serializer{stream};
+  serializer.Begin();
+  write(serializer);
+  serializer.End();
+  out.assign(stream.GetData(), stream.GetPosition());
+}
+
+void ReadObject(bytes_view data, std::string_view what, ObjectReader read) {
+  duckdb::MemoryStream stream{const_cast<byte_type*>(data.data()), data.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  try {
+    deserializer.Begin();
+    read(deserializer);
+    deserializer.End();
+  } catch (const duckdb::SerializationException& e) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(what, " cannot be read: ", duckdb::ErrorData{e}.RawMessage(),
+              "; it was written by a newer release of SereneDB"));
+  }
+}
 
 void WriteFooter(IndexOutput& out) { WriteFooterImpl(out, nullptr); }
 

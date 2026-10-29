@@ -51,7 +51,7 @@ struct TermPayloadWriter {
 struct BasicTermReader : public memory::Managed {
   virtual TermOnlyIterator::ptr iterator() const = 0;
 
-  virtual field_id id() const = 0;
+  virtual FieldKey key() const = 0;
 
   virtual FieldProperties properties() const = 0;
 

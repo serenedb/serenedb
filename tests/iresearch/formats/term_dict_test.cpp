@@ -58,6 +58,7 @@ struct Field {
   std::vector<Entry> entries;
   bool sample = true;
   bool ranges = false;
+  irs::TermDict dict = irs::TermDict::Main;
 };
 
 class OracleTerms final : public irs::TermIterator {
@@ -355,7 +356,9 @@ class EntriesReader final : public irs::BasicTermReader {
   irs::TermOnlyIterator::ptr iterator() const final {
     return irs::memory::to_managed<irs::TermOnlyIterator>(_it);
   }
-  irs::field_id id() const final { return _field->id; }
+  irs::FieldKey key() const final {
+    return {.id = _field->id, .dict = _field->dict};
+  }
   irs::FieldProperties properties() const final {
     return {.ranges = _field->ranges};
   }
@@ -439,8 +442,9 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       irs::ReaderState{.dir = &from, .meta = &_meta, .idx = _idx.get()});
   }
 
-  const irs::TermReader* Get(irs::field_id id) const {
-    return _reader->field(id);
+  const irs::TermReader* Get(irs::field_id id,
+                             irs::TermDict dict = irs::TermDict::Main) const {
+    return _reader->field({.id = id, .dict = dict});
   }
 
   static std::vector<irs::bstring> Probes(const std::vector<Entry>& entries) {
@@ -1282,20 +1286,68 @@ TEST_P(TermDictTest, open_reads_the_head_once_and_evicts_it) {
   Write(fields);
   CountingDirectory counting{dir()};
   Open(counting);
-  const uint64_t body = _idx->TermsBody();
-  const uint64_t head = _idx->TermsHead();
-  ASSERT_NE(0, head);
-  const std::pair<uint64_t, uint64_t> extent{body, body + head};
+  const auto& head = _idx->Terms();
+  ASSERT_NE(0, head.size);
+  const std::pair<uint64_t, uint64_t> extent{head.offset,
+                                             head.offset + head.size};
   ASSERT_EQ(1, absl::c_count(counting.Prefetched(), extent));
   ASSERT_EQ(1, absl::c_count(counting.Evicted(), extent));
   const auto& ranged =
     static_cast<const irs::term_dict::TermReaderImpl&>(*Get(2));
   ASSERT_FALSE(ranged.RangeLevels().empty());
-  ASSERT_LE(body + head, ranged.Owner().RangesBegin());
+  ASSERT_LE(head.offset + head.size, ranged.Owner().RangesBegin());
   for (const auto& field : fields) {
     SCOPED_TRACE(testing::Message("field ") << field.id);
     AssertField(*Get(field.id), field.entries);
   }
+}
+
+TEST_P(TermDictTest, several_dicts_under_one_field) {
+  std::vector<std::pair<int64_t, irs::doc_id_t>> values;
+  for (irs::doc_id_t doc = 1; doc <= 5000; ++doc) {
+    values.emplace_back(int64_t{doc} * 3, doc);
+  }
+  const Field fields[]{
+    {.id = 1, .entries = MakeEntries(Words(3000, 5))},
+    {.id = 1,
+     .entries = NumericEntries(std::move(values)),
+     .ranges = true,
+     .dict = irs::TermDict::Numeric},
+    {.id = 1,
+     .entries = MakeEntries({Bytes("\x00"), Bytes("\xFF")}),
+     .dict = irs::TermDict::Bool},
+    {.id = 1,
+     .entries = MakeEntries({irs::bstring{}}),
+     .dict = irs::TermDict::Null},
+    {.id = 2, .entries = MakeEntries(Words(3000, 6))},
+    {.id = 2,
+     .entries = MakeEntries({irs::bstring{}}),
+     .dict = irs::TermDict::Null},
+  };
+  Write(fields);
+  std::vector<irs::FieldKey> keys;
+  for (const auto& field : fields) {
+    keys.push_back({.id = field.id, .dict = field.dict});
+  }
+  ASSERT_EQ(keys, std::vector<irs::FieldKey>(_reader->field_keys().begin(),
+                                             _reader->field_keys().end()));
+  for (const auto& field : fields) {
+    SCOPED_TRACE(testing::Message("field ")
+                 << field.id << " dict " << static_cast<int>(field.dict));
+    const auto* reader = Get(field.id, field.dict);
+    ASSERT_NE(nullptr, reader);
+    ASSERT_EQ(field.id, reader->meta().id);
+    ASSERT_EQ(field.dict, reader->meta().dict);
+    ASSERT_EQ(field.ranges, reader->meta().ranges);
+    AssertField(*reader, field.entries);
+  }
+  ASSERT_EQ(nullptr, Get(2, irs::TermDict::Numeric));
+  ASSERT_EQ(nullptr, Get(2, irs::TermDict::Bool));
+  ASSERT_EQ(nullptr, Get(3));
+  const irs::RegexpAcceptor any{
+    irs::ViewCast<irs::byte_type>(std::string_view{".*"})};
+  AssertWalk(*Get(1), fields[0].entries, any);
+  AssertWalk(*Get(2), fields[4].entries, any);
 }
 
 TEST_P(TermDictTest, infix_walk_seeks_back_from_skipped_tail) {
@@ -1651,6 +1703,140 @@ TEST_P(TermDictTest, walks_read_ahead) {
     covered = std::max(covered, end);
   }
   ASSERT_EQ(impl.BlocksEnd(), covered);
+}
+
+TEST_P(TermDictTest, fuzzy_walk_prefetches_only_blocks_it_reads) {
+  std::mt19937 rng{7};
+  constexpr std::string_view kAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  std::vector<irs::bstring> keys;
+  for (size_t i = 0; i != 300000; ++i) {
+    irs::bstring key(4 + rng() % 7, 0);
+    for (auto& byte : key) {
+      byte = static_cast<irs::byte_type>(kAlphabet[rng() % kAlphabet.size()]);
+    }
+    keys.push_back(std::move(key));
+  }
+  const Field fields[]{{.id = 2, .entries = MakeEntries(std::move(keys))}};
+  Write(fields);
+  CountingDirectory counting{dir()};
+  Open(counting);
+  const auto* reader = Get(2);
+  ASSERT_NE(nullptr, reader);
+  ASSERT_GT(
+    static_cast<const irs::term_dict::TermReaderImpl&>(*reader).Blocks(), 500);
+  auto& prefetched = counting.Prefetched();
+  auto& offsets = counting.Offsets();
+  const auto description = irs::MakeParametricDescription(1, false);
+  for (const auto& target :
+       {fields[0].entries[fields[0].entries.size() / 3].key,
+        Bytes("connection")}) {
+    SCOPED_TRACE(testing::Message("target ")
+                 << irs::ViewCast<char>(irs::bytes_view{target}));
+    const irs::LevenshteinAcceptor acceptor{description, {}, target};
+    irs::file_utils::InvalidateResidency();
+    prefetched.clear();
+    offsets.clear();
+    auto it = reader->iterator(acceptor);
+    while (it->next()) {
+    }
+    ASSERT_FALSE(offsets.empty());
+    irs::containers::FlatHashSet<uint64_t> read;
+    for (const uint64_t at : offsets) {
+      read.insert(at / irs::file_utils::kPage);
+    }
+    size_t unread = 0;
+    for (const auto& [begin, end] : prefetched) {
+      for (uint64_t page = begin / irs::file_utils::kPage;
+           page * irs::file_utils::kPage < end; ++page) {
+        unread += !read.contains(page);
+      }
+    }
+    ASSERT_LE(unread, 4 + read.size() / 20);
+  }
+}
+
+TEST_P(TermDictTest, fuzzy_walks_skip_blocks_without_their_prefixes) {
+  std::mt19937 rng{11};
+  constexpr std::string_view kAlphabet = "abdefghijklmpqrstuvwxyz0123456789";
+  std::vector<irs::bstring> keys;
+  for (size_t i = 0; i != 200000; ++i) {
+    irs::bstring key(6 + rng() % 5, 0);
+    for (auto& byte : key) {
+      byte = static_cast<irs::byte_type>(kAlphabet[rng() % kAlphabet.size()]);
+    }
+    keys.push_back(std::move(key));
+  }
+  const Field fields[]{{.id = 2, .entries = MakeEntries(std::move(keys))}};
+  Write(fields);
+  CountingDirectory counting{dir()};
+  Open(counting);
+  const auto* reader = Get(2);
+  ASSERT_NE(nullptr, reader);
+  const auto& impl =
+    static_cast<const irs::term_dict::TermReaderImpl&>(*reader);
+  ASSERT_GT(impl.Blocks(), 300);
+  const auto description = irs::MakeParametricDescription(1, false);
+  const irs::LevenshteinAcceptor acceptor{description, {}, Bytes("connection")};
+  auto& offsets = counting.Offsets();
+  offsets.clear();
+  auto it = reader->iterator(acceptor);
+  ASSERT_FALSE(it->next());
+  irs::containers::FlatHashSet<uint64_t> read;
+  for (const uint64_t at : offsets) {
+    if (at >= impl.BlockOffset(0) && at < impl.BlocksEnd()) {
+      read.insert(at / irs::file_utils::kPage);
+    }
+  }
+  ASSERT_LE(read.size(), 2);
+}
+
+TEST_P(TermDictTest, walks_match_short_and_edge_byte_terms) {
+  std::mt19937 rng{13};
+  constexpr std::string_view kAlphabet[]{
+    {"\x00", 1}, "\x01", "a", "b", "\x7f", "\xc3\xa9", "\xef\xbf\xbf"};
+  std::vector<irs::bstring> keys;
+  for (size_t i = 0; i != 60000; ++i) {
+    irs::bstring key;
+    for (size_t n = 1 + rng() % 6; n != 0; --n) {
+      key.append(Bytes(kAlphabet[rng() % std::size(kAlphabet)]));
+    }
+    keys.push_back(std::move(key));
+  }
+  const Field fields[]{{.id = 2, .entries = MakeEntries(std::move(keys))}};
+  Write(fields);
+  const auto* reader = Get(2);
+  ASSERT_NE(nullptr, reader);
+  ASSERT_GT(
+    static_cast<const irs::term_dict::TermReaderImpl&>(*reader).Blocks(), 10);
+  const auto& entries = fields[0].entries;
+  for (const uint8_t distance : {1, 2}) {
+    const auto description = irs::MakeParametricDescription(distance, true);
+    for (size_t i = 0; i < entries.size(); i += entries.size() / 16) {
+      SCOPED_TRACE(testing::Message("target ")
+                   << i << " distance " << int{distance});
+      const irs::LevenshteinAcceptor acceptor{description, {}, entries[i].key};
+      std::vector<irs::bytes_view> expected;
+      for (const auto& entry : entries) {
+        if (acceptor.Matches(entry.key)) {
+          expected.emplace_back(entry.key);
+        }
+      }
+      auto it = reader->iterator(acceptor);
+      size_t found = 0;
+      for (; it->next(); ++found) {
+        ASSERT_LT(found, expected.size());
+        ASSERT_EQ(expected[found], it->value());
+      }
+      ASSERT_EQ(expected.size(), found);
+    }
+  }
+  for (const std::string_view pattern :
+       {"\\x00.*", "a\\x00.*", "\\x01\\x00\\x00.*", "..b.*", ".\\x7f.*", "ab",
+        "a", "\\x00"}) {
+    SCOPED_TRACE(testing::Message("pattern ") << pattern);
+    AssertWalk(*reader, entries,
+               irs::RegexpAcceptor{irs::ViewCast<irs::byte_type>(pattern)});
+  }
 }
 
 TEST_P(TermDictTest, batch_lookup_hints_before_reading) {

@@ -21,12 +21,17 @@
 #include "iresearch/formats/index/term_dict.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 
 #include <cstring>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <limits>
+#include <string>
 #include <string_view>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/store/store_utils.hpp"
@@ -34,14 +39,54 @@
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
+#include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::term_dict {
 namespace {
 
-constexpr uint8_t kFieldFixed = 1;
-constexpr uint8_t kFieldRanges = 2;
-constexpr uint8_t kFieldSingle = 4;
+constexpr duckdb::field_id_t kHeadRestartInterval = 0;
+constexpr duckdb::field_id_t kHeadBlocks = 1;
+constexpr duckdb::field_id_t kHeadFirstPage = 2;
+constexpr duckdb::field_id_t kHeadSpans = 3;
+constexpr duckdb::field_id_t kHeadSeparators = 4;
+constexpr duckdb::field_id_t kHeadFsst = 5;
+constexpr duckdb::field_id_t kHeadInlineSize = 6;
+constexpr duckdb::field_id_t kHeadRangesSize = 7;
+constexpr duckdb::field_id_t kHeadFields = 8;
+
+constexpr duckdb::field_id_t kSpanBlock = 0;
+constexpr duckdb::field_id_t kSpanExtraPages = 1;
+
+constexpr duckdb::field_id_t kFieldId = 0;
+constexpr duckdb::field_id_t kFieldDict = 1;
+constexpr duckdb::field_id_t kFieldOrdinal = 2;
+constexpr duckdb::field_id_t kFieldFeatures = 3;
+constexpr duckdb::field_id_t kFieldTermCount = 4;
+constexpr duckdb::field_id_t kFieldDocCount = 5;
+constexpr duckdb::field_id_t kFieldTotalDocFreq = 6;
+constexpr duckdb::field_id_t kFieldTotalTermFreq = 7;
+constexpr duckdb::field_id_t kFieldScoreBounds = 8;
+constexpr duckdb::field_id_t kFieldNorm = 9;
+constexpr duckdb::field_id_t kFieldWidth = 10;
+constexpr duckdb::field_id_t kFieldMin = 11;
+constexpr duckdb::field_id_t kFieldRecord = 12;
+constexpr duckdb::field_id_t kFieldRecordInline = 13;
+constexpr duckdb::field_id_t kFieldMax = 14;
+constexpr duckdb::field_id_t kFieldFirstBlock = 15;
+constexpr duckdb::field_id_t kFieldFirstEntry = 16;
+constexpr duckdb::field_id_t kFieldFirstRecord = 17;
+constexpr duckdb::field_id_t kFieldLastBlock = 18;
+constexpr duckdb::field_id_t kFieldLastEntry = 19;
+constexpr duckdb::field_id_t kFieldInlineBase = 20;
+constexpr duckdb::field_id_t kFieldInlineSize = 21;
+constexpr duckdb::field_id_t kFieldRanges = 22;
+constexpr duckdb::field_id_t kFieldRangeOffset = 23;
+constexpr duckdb::field_id_t kFieldRangeSize = 24;
+constexpr duckdb::field_id_t kFieldRangePrefix = 25;
+constexpr duckdb::field_id_t kFieldRangeCounts = 26;
+constexpr duckdb::field_id_t kFieldPrefixes = 27;
+
 constexpr uint32_t kShortPrefix = 0xF0;
 constexpr uint32_t kMediumPrefix = kShortPrefix + (0xFF - kShortPrefix) * 256;
 constexpr uint64_t kFsstSampleBytes = 32 << 10;
@@ -61,6 +106,190 @@ constexpr size_t kBatchTerms = 64;
 [[noreturn]] void Corrupted(std::string_view what, field_id id) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
                   ERR_MSG("term dictionary: bad ", what, " of field ", id));
+}
+
+[[noreturn]] void Unsupported(std::string_view what, uint64_t value) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("term dictionary: unknown ", what, " ", value,
+                          "; it was written by a newer release of SereneDB"));
+}
+
+void WriteBytes(duckdb::BinarySerializer& out, duckdb::field_id_t id,
+                const char* tag, bytes_view bytes) {
+  SDB_ENSURE(bytes.size() <= std::numeric_limits<uint32_t>::max(),
+             "term dictionary: ", tag, " of ", bytes.size(), " bytes");
+  out.WriteProperty<duckdb::string_t>(
+    id, tag,
+    duckdb::string_t{reinterpret_cast<const char*>(bytes.data()),
+                     static_cast<uint32_t>(bytes.size())});
+}
+
+void WriteOptionalBytes(duckdb::BinarySerializer& out, duckdb::field_id_t id,
+                        const char* tag, bytes_view bytes) {
+  if (!bytes.empty()) {
+    WriteBytes(out, id, tag, bytes);
+  }
+}
+
+bstring ToBytes(std::string_view value) {
+  return {reinterpret_cast<const byte_type*>(value.data()), value.size()};
+}
+
+bstring ReadBytes(duckdb::BinaryDeserializer& in, duckdb::field_id_t id,
+                  const char* tag) {
+  return ToBytes(in.ReadProperty<std::string>(id, tag));
+}
+
+bstring ReadOptionalBytes(duckdb::BinaryDeserializer& in, duckdb::field_id_t id,
+                          const char* tag) {
+  return ToBytes(in.ReadPropertyWithDefault<std::string>(id, tag));
+}
+
+void WriteField(duckdb::BinarySerializer& out, const FieldHead& head,
+                size_t index) {
+  out.WriteProperty<uint64_t>(kFieldId, "id", head.key.id);
+  out.WritePropertyWithDefault<uint8_t>(kFieldDict, "dict",
+                                        static_cast<uint8_t>(head.key.dict), 0);
+  out.WritePropertyWithDefault<uint32_t>(kFieldOrdinal, "ordinal", head.ordinal,
+                                         static_cast<uint32_t>(index));
+  out.WriteProperty<uint32_t>(kFieldFeatures, "features",
+                              static_cast<uint32_t>(head.features));
+  out.WriteProperty<uint64_t>(kFieldTermCount, "term_count", head.term_count);
+  out.WriteProperty<uint64_t>(kFieldDocCount, "doc_count", head.doc_count);
+  out.WriteProperty<uint64_t>(kFieldTotalDocFreq, "total_doc_freq",
+                              head.total_doc_freq);
+  out.WritePropertyWithDefault<uint64_t>(kFieldTotalTermFreq, "total_term_freq",
+                                         head.total_term_freq, 0);
+  out.WritePropertyWithDefault<bool>(kFieldScoreBounds, "has_score_bounds",
+                                     head.has_score_bounds, false);
+  out.WritePropertyWithDefault<uint64_t>(kFieldNorm, "norm", head.norm,
+                                         field_limits::invalid());
+  out.WritePropertyWithDefault<uint32_t>(kFieldWidth, "width", head.width, 0);
+  WriteBytes(out, kFieldMin, "min", head.min);
+  if (!head.record.empty()) {
+    WriteBytes(out, kFieldRecord, "record", head.record);
+    WriteOptionalBytes(out, kFieldRecordInline, "record_inline",
+                       head.record_inline);
+  } else {
+    WriteBytes(out, kFieldMax, "max", head.max);
+    out.WriteProperty<uint32_t>(kFieldFirstBlock, "first_block",
+                                head.first_block);
+    out.WritePropertyWithDefault<uint32_t>(kFieldFirstEntry, "first_entry",
+                                           head.first_entry, 0);
+    out.WritePropertyWithDefault<uint32_t>(kFieldFirstRecord, "first_record",
+                                           head.first_record, 0);
+    out.WriteProperty<uint32_t>(kFieldLastBlock, "last_block", head.last_block);
+    out.WriteProperty<uint32_t>(kFieldLastEntry, "last_entry", head.last_entry);
+    out.WritePropertyWithDefault<uint64_t>(kFieldInlineBase, "inline_base",
+                                           head.inline_base, 0);
+    out.WritePropertyWithDefault<uint64_t>(kFieldInlineSize, "inline_size",
+                                           head.inline_size, 0);
+  }
+  out.WritePropertyWithDefault<bool>(kFieldRanges, "ranges", head.ranges,
+                                     false);
+  if (!head.range_counts.empty()) {
+    out.WriteProperty<uint64_t>(kFieldRangeOffset, "range_offset",
+                                head.range_offset);
+    out.WriteProperty<uint64_t>(kFieldRangeSize, "range_size", head.range_size);
+    out.WritePropertyWithDefault<uint32_t>(kFieldRangePrefix, "range_prefix",
+                                           head.range_prefix, 0);
+    out.WriteList(kFieldRangeCounts, "range_counts", head.range_counts.size(),
+                  [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                    list.WriteElement(head.range_counts[i]);
+                  });
+  }
+  WriteOptionalBytes(out, kFieldPrefixes, "prefixes", head.prefixes);
+}
+
+FieldHead ReadField(duckdb::BinaryDeserializer& in, size_t index) {
+  FieldHead head;
+  head.key.id = in.ReadProperty<uint64_t>(kFieldId, "id");
+  const auto dict =
+    in.ReadPropertyWithExplicitDefault<uint8_t>(kFieldDict, "dict", 0);
+  if (dict >= kTermDicts) {
+    Unsupported("term dictionary kind", dict);
+  }
+  head.key.dict = static_cast<TermDict>(dict);
+  head.ordinal = in.ReadPropertyWithExplicitDefault<uint32_t>(
+    kFieldOrdinal, "ordinal", static_cast<uint32_t>(index));
+  const auto features = in.ReadProperty<uint32_t>(kFieldFeatures, "features");
+  if ((features & ~static_cast<uint32_t>(IndexFeatures::Max)) != 0) {
+    Unsupported("index features", features);
+  }
+  head.features = static_cast<IndexFeatures>(features);
+  head.term_count = in.ReadProperty<uint64_t>(kFieldTermCount, "term_count");
+  head.doc_count = in.ReadProperty<uint64_t>(kFieldDocCount, "doc_count");
+  head.total_doc_freq =
+    in.ReadProperty<uint64_t>(kFieldTotalDocFreq, "total_doc_freq");
+  head.total_term_freq = in.ReadPropertyWithExplicitDefault<uint64_t>(
+    kFieldTotalTermFreq, "total_term_freq", 0);
+  head.has_score_bounds = in.ReadPropertyWithExplicitDefault<bool>(
+    kFieldScoreBounds, "has_score_bounds", false);
+  head.norm = in.ReadPropertyWithExplicitDefault<uint64_t>(
+    kFieldNorm, "norm", field_limits::invalid());
+  head.width =
+    in.ReadPropertyWithExplicitDefault<uint32_t>(kFieldWidth, "width", 0);
+  head.min = ReadBytes(in, kFieldMin, "min");
+  head.record = ReadOptionalBytes(in, kFieldRecord, "record");
+  head.record_inline =
+    ReadOptionalBytes(in, kFieldRecordInline, "record_inline");
+  if (head.record.empty()) {
+    head.max = ReadBytes(in, kFieldMax, "max");
+    head.first_block =
+      in.ReadProperty<uint32_t>(kFieldFirstBlock, "first_block");
+    head.first_entry = in.ReadPropertyWithExplicitDefault<uint32_t>(
+      kFieldFirstEntry, "first_entry", 0);
+    head.first_record = in.ReadPropertyWithExplicitDefault<uint32_t>(
+      kFieldFirstRecord, "first_record", 0);
+    head.last_block = in.ReadProperty<uint32_t>(kFieldLastBlock, "last_block");
+    head.last_entry = in.ReadProperty<uint32_t>(kFieldLastEntry, "last_entry");
+    head.inline_base = in.ReadPropertyWithExplicitDefault<uint64_t>(
+      kFieldInlineBase, "inline_base", 0);
+    head.inline_size = in.ReadPropertyWithExplicitDefault<uint64_t>(
+      kFieldInlineSize, "inline_size", 0);
+  }
+  head.ranges =
+    in.ReadPropertyWithExplicitDefault<bool>(kFieldRanges, "ranges", false);
+  head.range_offset = in.ReadPropertyWithExplicitDefault<uint64_t>(
+    kFieldRangeOffset, "range_offset", 0);
+  head.range_size = in.ReadPropertyWithExplicitDefault<uint64_t>(
+    kFieldRangeSize, "range_size", 0);
+  head.range_prefix = in.ReadPropertyWithExplicitDefault<uint32_t>(
+    kFieldRangePrefix, "range_prefix", 0);
+  in.ReadOptionalList(
+    kFieldRangeCounts, "range_counts",
+    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      head.range_counts.push_back(list.ReadElement<uint64_t>());
+    });
+  head.prefixes = ReadOptionalBytes(in, kFieldPrefixes, "prefixes");
+  return head;
+}
+
+std::vector<uint32_t> DecodePrefixes(bytes_view encoded, field_id id) {
+  std::vector<uint32_t> prefixes;
+  prefixes.reserve(
+    absl::c_count_if(encoded, [](byte_type b) { return b < 0x80; }));
+  uint64_t value = 0;
+  for (const auto* p = encoded.data(); p != encoded.data() + encoded.size();) {
+    uint64_t delta = 0;
+    for (uint32_t shift = 0;; shift += 7) {
+      if (p == encoded.data() + encoded.size() || shift > 28) {
+        Corrupted("prefixes", id);
+      }
+      const byte_type b = *p++;
+      delta |= uint64_t{b & 0x7Fu} << shift;
+      if (b < 0x80) {
+        break;
+      }
+    }
+    value += delta;
+    if ((delta == 0 && !prefixes.empty()) ||
+        value > std::numeric_limits<uint32_t>::max()) {
+      Corrupted("prefixes", id);
+    }
+    prefixes.push_back(static_cast<uint32_t>(value));
+  }
+  return prefixes;
 }
 
 uint64_t VSize(uint64_t value) noexcept {
@@ -87,7 +316,7 @@ void AppendFieldPrefix(bstring& out, uint32_t ordinal) {
 uint64_t VarBytes(uint64_t count, uint64_t head_skip, uint32_t max,
                   uint64_t suffixes, uint64_t records) noexcept {
   const uint64_t restarts = (count + kRestartInterval - 1) / kRestartInterval;
-  return 2 + VSize(count) + VSize(restarts) + VSize(suffixes) + VSize(records) +
+  return 2 + VSize(count) + VSize(restarts) + VSize(suffixes) +
          VSize(head_skip) + (kVarRestart + kHeadBytes) * restarts +
          kRecordOffset * RecordGroups(count) +
          count * (2 * uint64_t{ColumnWidth(max)} + 2) + suffixes + records +
@@ -98,9 +327,9 @@ uint64_t FixedBytes(uint64_t count, uint64_t records, uint64_t width,
                     uint64_t prefix) noexcept {
   const uint64_t stride = width - prefix;
   const uint64_t groups = RecordGroups(count);
-  return 1 + VSize(count) + VSize(groups) + VSize(records) + VSize(stride) +
-         VSize(prefix) + prefix + (kRecordOffset + kHeadBytes) * groups +
-         count * stride + records + kSlack;
+  return 1 + VSize(count) + VSize(groups) + VSize(stride) + VSize(prefix) +
+         prefix + (kRecordOffset + kHeadBytes) * groups + count * stride +
+         records + kSlack;
 }
 
 bytes_view KeyAt(const BlockBuilder& block, size_t i) noexcept {
@@ -237,7 +466,6 @@ void Serialize(const BlockBuilder& block, bstring& page) {
     out.WriteV32(static_cast<uint32_t>(columns.restarts.size()));
     out.WriteByte(static_cast<byte_type>(width));
     out.WriteV64(columns.suffixes.size());
-    out.WriteV64(block.records.size());
     out.WriteV32(block.head_skip);
     for (const auto restart : columns.restarts) {
       out.WriteU16(restart);
@@ -260,7 +488,6 @@ void Serialize(const BlockBuilder& block, bstring& page) {
   } else {
     const uint32_t stride = block.width - block.prefix;
     out.WriteV32(static_cast<uint32_t>(block.record_starts.size()));
-    out.WriteV64(block.records.size());
     out.WriteV32(stride);
     out.WriteV32(block.prefix);
     out.WriteData(block.keys.data(), block.prefix);
@@ -305,13 +532,6 @@ const byte_type* MapAt(IndexInput& in, uint64_t offset, uint64_t size,
   copy.resize(size);
   in.ReadData(offset, copy.data(), size);
   return copy.data();
-}
-
-const byte_type* Map(IndexInput& in, uint64_t size, bstring& copy) {
-  const uint64_t offset = in.Position();
-  const auto* p = MapAt(in, offset, size, copy);
-  in.Seek(offset + size);
-  return p;
 }
 
 IndexInput& Reopened(BlockBuffer& buffer, const IndexInput& in) {
@@ -496,6 +716,26 @@ bytes_view FieldWriter::EncodeSuffix(bytes_view suffix) {
   return {out, out_length};
 }
 
+PrefixIndex::PrefixIndex(std::vector<uint32_t> prefixes)
+  : _prefixes{std::move(prefixes)} {
+  for (size_t i = 0; i != _prefixes.size(); ++i) {
+    const uint32_t first = _prefixes[i] >> 24;
+    const uint32_t pair = _prefixes[i] >> 16;
+    if (i == 0 || pair != _prefixes[i - 1] >> 16) {
+      _pair_starts.push_back(static_cast<uint32_t>(i));
+      _pairs[pair / 64] |= uint64_t{1} << (pair % 64);
+      ++_pair_rows[first + 1];
+    }
+    _firsts[first / 64] |= uint64_t{1} << (first % 64);
+    ++_buckets[first + 1];
+  }
+  _pair_starts.push_back(static_cast<uint32_t>(_prefixes.size()));
+  for (size_t i = 1; i != _buckets.size(); ++i) {
+    _buckets[i] += _buckets[i - 1];
+    _pair_rows[i] += _pair_rows[i - 1];
+  }
+}
+
 void FieldWriter::prepare(const FlushState& state) {
   SDB_ASSERT(_idx);
   Reset();
@@ -561,11 +801,17 @@ void FieldWriter::write(const BasicTermReader& reader) {
     }
   }
 
-  EndField(reader.id(), props, sum_dfreq, sum_tfreq, first_inline);
+  EndField(reader.key(), props, sum_dfreq, sum_tfreq, first_inline);
   ResetField();
 }
 
 void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
+  if (_width == 0) {
+    const auto prefix = TermPrefix(term);
+    if (_prefixes.empty() || _prefixes.back() != prefix) {
+      _prefixes.push_back(prefix);
+    }
+  }
   if (_terms++ == 0) {
     _min.assign(term);
     _single = meta;
@@ -735,17 +981,13 @@ void FieldWriter::WriteBlock(bytes_view block) {
   }
   const auto pages = static_cast<uint32_t>((block.size() + kPage - 1) / kPage);
   if (pages != 1) {
-    BytesOutput directory{_directory};
-    directory.WriteV32(_blocks - _last_span);
-    directory.WriteV32(pages - 1);
-    _last_span = _blocks;
-    ++_spans;
+    _spans.push_back({.block = _blocks, .extra = pages - 1});
   }
   _out->WriteData(block.data(), block.size());
   ++_blocks;
 }
 
-void FieldWriter::EndField(field_id id, const FieldProperties& props,
+void FieldWriter::EndField(FieldKey key, const FieldProperties& props,
                            uint64_t total_doc_freq, uint64_t total_term_freq,
                            uint64_t first_inline) {
   if (_ranges.Active()) {
@@ -756,61 +998,60 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
     return;
   }
 
-  const uint64_t offset = _fields.size();
-  BytesOutput out{_fields};
-  const bool single = _terms == 1;
-  out.WriteByte(static_cast<byte_type>((_width != 0 ? kFieldFixed : 0) |
-                                       (props.ranges ? kFieldRanges : 0) |
-                                       (single ? kFieldSingle : 0)));
-  out.WriteV32(_ordinal - 1);
-  if (_width != 0) {
-    out.WriteV32(_width);
-  }
-  WriteStr(out, _min);
-  if (single) {
+  auto& head = _heads.emplace_back();
+  head.key = key;
+  head.features = props.index_features;
+  head.term_count = _terms;
+  head.doc_count = stats.docs_count;
+  head.total_doc_freq = total_doc_freq;
+  head.total_term_freq = total_term_freq;
+  head.norm = props.norm;
+  head.has_score_bounds = stats.has_score_bounds;
+  head.ranges = props.ranges;
+  head.ordinal = _ordinal - 1;
+  head.width = _width;
+  head.min = _min;
+  if (_terms == 1) {
     _record.Clear();
     _pw.EncodeDetached(_record, _single, 0);
-    WriteStr(out, _record.View());
-    WriteStr(out, _single.Inline());
+    head.record = _record.View();
+    head.record_inline = _single.Inline();
+    return;
+  }
+  head.max = bytes_view{_key}.substr(_prefix_size);
+  head.first_block = _first_block;
+  head.first_entry = _first_entry;
+  head.first_record = _first_record;
+  head.last_block = _blocks;
+  head.last_entry = static_cast<uint32_t>(_block.ends.size() - 1);
+  if (_first_block == _blocks) {
+    head.inline_base = first_inline;
+    head.inline_size = _inline.size() - first_inline;
   } else {
-    const bytes_view max = bytes_view{_key}.substr(_prefix_size);
-    WriteStr(out, max);
-    out.WriteV32(_first_block);
-    out.WriteV32(_first_entry);
-    out.WriteV32(_first_record);
-    out.WriteV32(_blocks);
-    out.WriteV32(static_cast<uint32_t>(_block.ends.size() - 1));
-    if (_first_block == _blocks) {
-      out.WriteV64(first_inline);
-      out.WriteV64(_inline.size() - first_inline);
+    auto out = std::back_inserter(head.prefixes);
+    uint32_t last = 0;
+    for (const auto prefix : _prefixes) {
+      WriteVarint(prefix - last, out);
+      last = prefix;
     }
-    if (props.ranges) {
-      bstring region;
-      _ranges.Write(region, CommonPrefixLength(bytes_view{_min}, max));
-      out.WriteV64(_range_regions.size());
-      out.WriteV64(region.size());
+  }
+  if (props.ranges) {
+    bstring region;
+    const auto prefix =
+      CommonPrefixLength(bytes_view{_min}, bytes_view{head.max});
+    _ranges.Write(region, prefix, head.range_counts);
+    if (!head.range_counts.empty()) {
+      head.range_offset = _range_regions.size();
+      head.range_size = region.size();
+      head.range_prefix = static_cast<uint32_t>(prefix);
       _range_regions.append(region);
     }
   }
-
-  _entries.push_back({
-    .id = id,
-    .meta =
-      {
-        .features = props.index_features,
-        .term_count = _terms,
-        .doc_count = stats.docs_count,
-        .total_doc_freq = total_doc_freq,
-        .total_term_freq = total_term_freq,
-        .has_score_bounds = stats.has_score_bounds,
-        .body_offset = offset,
-        .norm = props.norm,
-      },
-  });
 }
 
 void FieldWriter::ResetField() noexcept {
   _ranges.Clear();
+  _prefixes.clear();
   _min.clear();
   _terms = 0;
   _first_block = kNoBlock;
@@ -825,108 +1066,124 @@ void FieldWriter::Reset() noexcept {
   _samples.clear();
   _sample_lengths.clear();
   _inline.clear();
-  _directory.clear();
+  _spans.clear();
   _separators.clear();
   _separator.clear();
   _last.clear();
-  _fields.clear();
   _range_regions.clear();
-  _entries.clear();
+  _heads.clear();
   _first_page = 0;
   _blocks = 0;
-  _spans = 0;
-  _last_span = 0;
   _ordinal = 0;
 }
 
 void FieldWriter::end() {
   Cut();
   _pw.End();
-  if (!_entries.empty()) {
+  if (!_heads.empty()) {
+    bstring head;
+    format_utils::WriteObject(head, [&](duckdb::BinarySerializer& out) {
+      out.WriteProperty<uint32_t>(kHeadRestartInterval, "restart_interval",
+                                  kRestartInterval);
+      out.WritePropertyWithDefault<uint32_t>(kHeadBlocks, "blocks", _blocks, 0);
+      out.WritePropertyWithDefault<uint64_t>(kHeadFirstPage, "first_page",
+                                             _first_page, 0);
+      if (!_spans.empty()) {
+        out.WriteList(
+          kHeadSpans, "spans", _spans.size(),
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+            list.WriteObject([&](duckdb::BinarySerializer& span) {
+              span.WriteProperty<uint32_t>(kSpanBlock, "block",
+                                           _spans[i].block);
+              span.WriteProperty<uint32_t>(kSpanExtraPages, "extra_pages",
+                                           _spans[i].extra);
+            });
+          });
+      }
+      WriteOptionalBytes(out, kHeadSeparators, "separators", _separators);
+      WriteOptionalBytes(out, kHeadFsst, "fsst_table", _fsst_table);
+      out.WritePropertyWithDefault<uint64_t>(kHeadInlineSize, "inline_size",
+                                             _inline.size(), 0);
+      out.WritePropertyWithDefault<uint64_t>(kHeadRangesSize, "ranges_size",
+                                             _range_regions.size(), 0);
+      out.WriteList(kHeadFields, "fields", _heads.size(),
+                    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                      list.WriteObject([&](duckdb::BinarySerializer& field) {
+                        WriteField(field, _heads[i], i);
+                      });
+                    });
+    });
     auto& out = *_out;
-    const uint64_t body = out.Position();
-    out.WriteV32(kRestartInterval);
-    out.WriteV32(_blocks);
-    if (_blocks != 0) {
-      out.WriteV64(_first_page);
-      out.WriteV32(_spans);
-      out.WriteData(_directory.data(), _directory.size());
-    }
-    out.WriteV64(_separators.size());
-    out.WriteData(_separators.data(), _separators.size());
-    WriteStr(out, bytes_view{_fsst_table});
-    out.WriteV64(_inline.size());
-    out.WriteV64(_range_regions.size());
-    const uint64_t fields = out.Position();
-    out.WriteData(_fields.data(), _fields.size());
-    const uint64_t head = out.Position() - body;
+    const uint64_t offset = out.Position();
+    out.WriteData(head.data(), head.size());
     out.WriteData(_inline.data(), _inline.size());
     out.WriteData(_range_regions.data(), _range_regions.size());
-    for (auto& entry : _entries) {
-      entry.meta.body_offset += fields;
-      _idx->AddTermDictEntry(entry.id, entry.meta);
-    }
-    _idx->SetTermsBody(body, head);
+    Crc32c crc;
+    crc.process_bytes(head.data(), head.size());
+    _idx->SetTerms(
+      {.offset = offset, .size = head.size(), .crc32c = crc.checksum()});
   }
   Reset();
   _idx = nullptr;
   _out = nullptr;
 }
 
-TermReaderImpl::TermReaderImpl(FieldReader& owner, field_id id,
-                               const TermDictMeta& meta, IndexInput& in,
-                               const Separators& separators)
+TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
+                               IndexInput& in, const Separators& separators)
   : _owner{&owner},
-    _meta{id, meta.features},
-    _terms{meta.term_count},
-    _docs{meta.doc_count},
-    _has_score_bounds{meta.has_score_bounds} {
-  _meta.norm = meta.norm;
+    _meta{head.key, head.features},
+    _terms{head.term_count},
+    _docs{head.doc_count},
+    _has_score_bounds{head.has_score_bounds} {
+  _meta.norm = head.norm;
+  _meta.ranges = head.ranges;
   const auto total =
-    IndexFeatures::None != (meta.features & IndexFeatures::Freq)
-      ? meta.total_term_freq
-      : meta.total_doc_freq;
+    IndexFeatures::None != (head.features & IndexFeatures::Freq)
+      ? head.total_term_freq
+      : head.total_doc_freq;
   SDB_ENSURE(total <= std::numeric_limits<uint32_t>::max(),
              "term dictionary: total frequency ", total,
              " exceeds uint32_t::max");
   _freq.value = static_cast<uint32_t>(total);
 
-  const auto corrupted = [&] { Corrupted("record", id); };
-  in.Seek(meta.body_offset);
-  const auto flags = in.ReadByte();
-  bstring prefix;
-  AppendFieldPrefix(prefix, in.ReadV32());
-  _prefix_size = static_cast<uint32_t>(prefix.size());
-  uint64_t bytes = 0;
-  if ((flags & kFieldFixed) != 0) {
-    _width = in.ReadV32();
+  const auto corrupted = [&] { Corrupted("record", head.key.id); };
+  if (head.width > kMaxStride ||
+      (!head.range_counts.empty() && head.record.size() != 0) ||
+      (!head.prefixes.empty() && (head.width != 0 || !head.record.empty()))) {
+    corrupted();
   }
-  _meta.ranges = (flags & kFieldRanges) != 0;
+  bstring prefix;
+  AppendFieldPrefix(prefix, head.ordinal);
+  _prefix_size = static_cast<uint32_t>(prefix.size());
+  _width = head.width;
+  uint64_t bytes = 0;
   _min_key.assign(prefix);
-  _min_key.append(ReadString<bstring>(in));
-  if ((flags & kFieldSingle) != 0) {
+  _min_key.append(head.min);
+  if (!head.record.empty()) {
     _max_key = _min_key;
     RecordBytes record{};
-    const auto size = in.ReadV32();
+    const auto size = head.record.size();
     if (size > kMaxRecordBytes) {
       corrupted();
     }
-    in.ReadData(record.bytes.data(), size);
-    if (PostingsReader::DecodeDetached(record.bytes.data(), meta.features,
+    std::memcpy(record.bytes.data(), head.record.data(), size);
+    if (PostingsReader::DecodeDetached(record.bytes.data(), head.features,
                                        _single) != size ||
-        in.ReadV32() != _single.inline_size) {
+        head.record_inline.size() != _single.inline_size) {
       corrupted();
     }
-    in.ReadData(_single.inline_data.data(), _single.inline_size);
+    std::memcpy(_single.inline_data.data(), head.record_inline.data(),
+                _single.inline_size);
   } else {
     _max_key.assign(prefix);
-    _max_key.append(ReadString<bstring>(in));
-    _first_block = in.ReadV32();
-    _first_entry = in.ReadV32();
-    _first_record = in.ReadV32();
-    const auto last_block = in.ReadV32();
-    _last_entry = in.ReadV32();
-    if (last_block < _first_block || last_block >= owner.BlockCount()) {
+    _max_key.append(head.max);
+    _first_block = head.first_block;
+    _first_entry = head.first_entry;
+    _first_record = head.first_record;
+    const auto last_block = head.last_block;
+    _last_entry = head.last_entry;
+    if (last_block < _first_block || last_block >= owner.BlockCount() ||
+        _max_key <= _min_key) {
       corrupted();
     }
     _blocks = last_block - _first_block + 1;
@@ -939,17 +1196,26 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, field_id id,
       }
       _root = Root{MakeSeparators(slice), _width != 0};
       bytes += _root.MemoryBytes();
+      if (!head.prefixes.empty()) {
+        _prefixes = std::make_unique<PrefixIndex>(
+          DecodePrefixes(head.prefixes, head.key.id));
+        bytes += _prefixes->MemoryBytes();
+      }
+    } else if (!head.prefixes.empty()) {
+      corrupted();
     } else {
-      _inline_base = in.ReadV64();
-      inline_size = in.ReadV64();
+      _inline_base = head.inline_base;
+      inline_size = head.inline_size;
       if (_inline_base > owner.InlineEnd() - owner.InlineBegin() ||
           inline_size >
             owner.InlineEnd() - owner.InlineBegin() - _inline_base) {
         corrupted();
       }
     }
-    if (_meta.ranges) {
-      bytes += ReadRanges(owner, in);
+    if (!head.range_counts.empty()) {
+      bytes += ReadRanges(owner, in, head);
+    } else if (head.range_size != 0) {
+      corrupted();
     }
     if (_blocks == 1) {
       _small = owner.CopyBlock(_first_block, in.Length());
@@ -965,34 +1231,34 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, field_id id,
   }
 }
 
-uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in) {
+uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
+                                    const FieldHead& head) {
   const auto corrupted = [&] { Corrupted("range levels", _meta.id); };
-  const auto offset = in.ReadV64();
-  const auto size = in.ReadV64();
+  const auto offset = head.range_offset;
+  const auto size = head.range_size;
+  const auto height = head.range_counts.size();
+  _range_prefix = head.range_prefix;
   if (size == 0 || offset > owner.RangesSize() ||
-      size > owner.RangesSize() - offset) {
+      size > owner.RangesSize() - offset || height > kMaxRangeLevels ||
+      _width == 0 || _range_prefix > _width ||
+      min().substr(0, _range_prefix) != max().substr(0, _range_prefix)) {
     corrupted();
   }
   const auto* p = owner.Load(in, owner.RangesBegin() + offset, size).data();
   const auto* const end = p + size;
-  const auto height = vread<uint32_t>(p);
-  if (height == 0) {
-    return 0;
-  }
-  _range_prefix = vread<uint32_t>(p);
-  if (height > kMaxRangeLevels || _width == 0 || _range_prefix > _width ||
-      min().substr(0, _range_prefix) != max().substr(0, _range_prefix)) {
-    corrupted();
-  }
   const uint64_t stride = _width - _range_prefix;
   _levels.reserve(height);
-  for (uint32_t k = 0; k != height; ++k) {
+  for (size_t k = 0; k != height; ++k) {
+    const auto count = head.range_counts[k];
+    if (count < 2 || count > std::numeric_limits<uint32_t>::max()) {
+      corrupted();
+    }
     RangeLevel level{};
-    level.count = static_cast<uint32_t>(vread<uint64_t>(p));
+    level.count = static_cast<uint32_t>(count);
     const uint64_t firsts = k == 0 ? 0 : level.count * sizeof(uint32_t);
     const uint64_t offsets = (uint64_t{level.count} + 1) * sizeof(uint32_t);
-    if (level.count < 2 || static_cast<uint64_t>(end - p) <
-                             level.count * stride + firsts + offsets) {
+    if (static_cast<uint64_t>(end - p) <
+        level.count * stride + firsts + offsets) {
       corrupted();
     }
     level.starts = p;
@@ -1141,7 +1407,7 @@ PostingMeta TermReaderImpl::Lookup(bytes_view term) const {
   const auto probe = padded.Assign(KeyPrefix(), term);
   const uint32_t block = BlockOf(padded.Key());
   BlockBuffer buffer;
-  const auto view = Parse(Block(block, buffer));
+  const auto view = Parse(Block(block, buffer), Fsst());
   const auto entry = Find(view, probe, Fsst());
   if (entry == kNoEntry) {
     return {};
@@ -1199,7 +1465,7 @@ void TermReaderImpl::LookupBatch(std::span<const bytes_view> terms,
     }
     if (blocks[i] != parsed) {
       parsed = blocks[i];
-      view = Parse(Block(parsed, buffer));
+      view = Parse(Block(parsed, buffer), Fsst());
     }
     const auto entry = Find(view, padded.Assign(KeyPrefix(), terms[i]), Fsst());
     if (entry == kNoEntry) {
@@ -1318,66 +1584,108 @@ void FieldReader::FillCopies() {
   _pending.shrink_to_fit();
 }
 
-Separators FieldReader::ReadBody(IndexInput& in, uint64_t offset,
-                                 uint64_t head) {
-  if (head == 0 || offset > in.Length() || head > in.Length() - offset) {
+Separators FieldReader::ReadHead(IndexInput& in, const TermsHead& extent,
+                                 std::vector<FieldHead>& fields) {
+  const uint64_t offset = extent.offset;
+  const uint64_t length = in.Length();
+  if (offset > length || extent.size > length - offset) {
     Corrupted("head extent");
   }
-  in.Seek(offset);
-  if (in.ReadV32() != kRestartInterval) {
-    Corrupted("restart interval");
-  }
-  const auto blocks = in.ReadV32();
-  _block_count = blocks;
-  if (blocks != 0) {
-    _first_page = in.ReadV64();
-    const auto spans = in.ReadV32();
-    if (spans > blocks) {
-      Corrupted("block directory");
-    }
-    _spans.reserve(spans);
-    uint64_t block = 0;
-    uint64_t extra = 0;
-    for (uint32_t i = 0; i != spans; ++i) {
-      const auto delta = in.ReadV32();
-      if (i != 0 && delta == 0) {
-        Corrupted("block directory");
-      }
-      block += delta;
-      extra += in.ReadV32();
-      if (block >= blocks || extra > std::numeric_limits<uint32_t>::max()) {
-        Corrupted("block directory");
-      }
-      _spans.push_back({
-        .block = static_cast<uint32_t>(block),
-        .extra = static_cast<uint32_t>(extra),
-      });
-    }
-    if (_first_page > offset / kPage || PageOffset(blocks - 1) >= offset) {
-      Corrupted("block directory");
-    }
-  }
-  const auto size = in.ReadV64();
   bstring copy;
-  const auto* encoded = Map(in, size, copy);
-  auto separators =
-    blocks == 0 ? Separators{} : DecodeSeparators({encoded, size}, blocks - 1);
-  if (const auto table = ReadString<bstring>(in); !table.empty()) {
+  const auto* data = MapAt(in, offset, extent.size, copy);
+  Crc32c crc;
+  crc.process_bytes(data, extent.size);
+  if (crc.checksum() != extent.crc32c) {
+    Corrupted("head checksum");
+  }
+
+  std::vector<SpanningBlock> spans;
+  std::string separators;
+  std::string table;
+  format_utils::ReadObject(
+    {data, extent.size}, "term dictionary",
+    [&](duckdb::BinaryDeserializer& head) {
+      const auto restart =
+        head.ReadProperty<uint32_t>(kHeadRestartInterval, "restart_interval");
+      if (restart != kRestartInterval) {
+        Unsupported("restart interval", restart);
+      }
+      _block_count = head.ReadPropertyWithExplicitDefault<uint32_t>(
+        kHeadBlocks, "blocks", 0);
+      _first_page = head.ReadPropertyWithExplicitDefault<uint64_t>(
+        kHeadFirstPage, "first_page", 0);
+      head.ReadOptionalList(
+        kHeadSpans, "spans",
+        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+          list.ReadObject([&](duckdb::BinaryDeserializer& span) {
+            spans.push_back({
+              .block = span.ReadProperty<uint32_t>(kSpanBlock, "block"),
+              .extra =
+                span.ReadProperty<uint32_t>(kSpanExtraPages, "extra_pages"),
+            });
+          });
+        });
+      separators = head.ReadPropertyWithDefault<std::string>(kHeadSeparators,
+                                                             "separators");
+      table =
+        head.ReadPropertyWithDefault<std::string>(kHeadFsst, "fsst_table");
+      _inline_size = head.ReadPropertyWithExplicitDefault<uint64_t>(
+        kHeadInlineSize, "inline_size", 0);
+      _ranges_size = head.ReadPropertyWithExplicitDefault<uint64_t>(
+        kHeadRangesSize, "ranges_size", 0);
+      head.ReadList(
+        kHeadFields, "fields",
+        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t i) {
+          list.ReadObject([&](duckdb::BinaryDeserializer& field) {
+            fields.push_back(ReadField(field, i));
+          });
+        });
+    });
+
+  const auto blocks = _block_count;
+  if (spans.size() > blocks) {
+    Corrupted("block directory");
+  }
+  _spans.reserve(spans.size());
+  uint64_t extra = 0;
+  for (const auto& span : spans) {
+    extra += span.extra;
+    if (span.extra == 0 || span.block >= blocks ||
+        (!_spans.empty() && span.block <= _spans.back().block) ||
+        extra > std::numeric_limits<uint32_t>::max()) {
+      Corrupted("block directory");
+    }
+    _spans.push_back(
+      {.block = span.block, .extra = static_cast<uint32_t>(extra)});
+  }
+  if (blocks != 0 &&
+      (_first_page > offset / kPage || PageOffset(blocks - 1) >= offset)) {
+    Corrupted("block directory");
+  }
+
+  Separators decoded;
+  if (blocks != 0) {
+    const auto size = separators.size();
+    separators.append(kSlack, '\0');
+    decoded = DecodeSeparators(
+      {reinterpret_cast<const byte_type*>(separators.data()), size},
+      blocks - 1);
+  } else if (!separators.empty()) {
+    Corrupted("separators");
+  }
+  if (!table.empty()) {
     auto decoder = std::make_unique<duckdb_fsst_decoder_t>();
-    const auto consumed =
-      duckdb_fsst_import(decoder.get(), table.data(), table.size());
-    if (consumed == DUCKDB_FSST_IMPORT_VERSION_MISMATCH ||
-        consumed == DUCKDB_FSST_IMPORT_OUT_OF_BOUNDS) {
+    const auto consumed = duckdb_fsst_import(
+      decoder.get(), reinterpret_cast<const byte_type*>(table.data()),
+      table.size());
+    if (consumed != table.size()) {
       Corrupted("FSST table");
     }
     _fsst = std::move(decoder);
   }
-  _inline_size = in.ReadV64();
-  _ranges_size = in.ReadV64();
-  _inline_offset = offset + head;
-  if (in.Position() > _inline_offset ||
-      _inline_size > in.Length() - _inline_offset ||
-      _ranges_size > in.Length() - _inline_offset - _inline_size) {
+  _inline_offset = offset + extent.size;
+  if (_inline_size > length - _inline_offset ||
+      _ranges_size > length - _inline_offset - _inline_size) {
     Corrupted("inline postings");
   }
   _bytes = _spans.capacity() * sizeof(SpanningBlock) +
@@ -1385,52 +1693,58 @@ Separators FieldReader::ReadBody(IndexInput& in, uint64_t offset,
   if (_bytes != 0) {
     _rm->Increase(_bytes);
   }
-  return separators;
+  return decoded;
 }
 
 void FieldReader::prepare(const ReaderState& state) {
   SDB_ASSERT(state.idx);
-  const auto entries = state.idx->TermDicts();
+  const auto& extent = state.idx->Terms();
   _in = state.idx->ReopenIn();
   if (!_in) {
-    SDB_ENSURE(entries.empty(), "term dictionary: ", entries.size(),
-               " fields but no `.idx` stream");
+    SDB_ENSURE(extent.size == 0,
+               "term dictionary: a head but no `.idx` stream");
     return;
   }
 
+  _base = _in->ReadStable(0, _in->Length());
+  std::vector<FieldHead> heads;
+  Separators separators;
+  if (extent.size != 0) {
+    _in->Prefetch(extent.offset, extent.size);
+    separators = ReadHead(*_in, extent, heads);
+  }
+
   IndexFeatures features = IndexFeatures::None;
-  for (const auto& [id, meta] : entries) {
-    features |= meta.features;
+  for (const auto& head : heads) {
+    features |= head.features;
   }
   _pr.prepare(state, features);
 
-  _base = _in->ReadStable(0, _in->Length());
-  const uint64_t body = state.idx->TermsBody();
-  const uint64_t head = state.idx->TermsHead();
-  Separators separators;
-  if (!entries.empty()) {
-    _in->Prefetch(body, head);
-    separators = ReadBody(*_in, body, head);
+  _keys.reserve(heads.size());
+  _by_id.reserve(heads.size());
+  for (size_t i = 0; i != heads.size(); ++i) {
+    const auto& head = heads[i];
+    if (i != 0 && (head.key <= heads[i - 1].key ||
+                   head.ordinal <= heads[i - 1].ordinal)) {
+      Corrupted("field order");
+    }
+    const auto& field = _fields.emplace_back(*this, head, *_in, separators);
+    _by_id[head.key.id].dicts[static_cast<size_t>(head.key.dict)] = &field;
+    if (_ids.empty() || _ids.back() != head.key.id) {
+      _ids.push_back(head.key.id);
+    }
+    _keys.push_back(head.key);
   }
-  _ids.reserve(entries.size());
-  _by_id.reserve(entries.size());
-  for (const auto& [id, meta] : entries) {
-    const auto& field = _fields.emplace_back(*this, id, meta, *_in, separators);
-    const auto [it, ok] = _by_id.emplace(id, &field);
-    SDB_ENSURE(ok, "term dictionary: duplicate field ", id);
-    _ids.push_back(id);
-  }
-  SDB_ENSURE(absl::c_is_sorted(_ids),
-             "term dictionary: fields are not sorted by id");
   FillCopies();
-  if (!entries.empty()) {
-    _in->Evict(body, head);
+  if (extent.size != 0) {
+    _in->Evict(extent.offset, extent.size);
   }
 }
 
-const TermReader* FieldReader::field(field_id id) const {
-  const auto it = _by_id.find(id);
-  return it == _by_id.end() ? nullptr : it->second;
+const TermReader* FieldReader::field(FieldKey key) const {
+  const auto it = _by_id.find(key.id);
+  return it == _by_id.end() ? nullptr
+                            : it->second.dicts[static_cast<size_t>(key.dict)];
 }
 
 }  // namespace irs::term_dict

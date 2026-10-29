@@ -283,18 +283,18 @@ void RangeWriter::Finish(uint64_t terms) {
   }
 }
 
-void RangeWriter::Write(bstring& region, size_t prefix) const {
+void RangeWriter::Write(bstring& region, size_t prefix,
+                        std::vector<uint64_t>& counts) const {
   region.clear();
-  BytesOutput out{region};
-  out.WriteV32(static_cast<uint32_t>(_height));
+  counts.clear();
   if (_height == 0) {
     return;
   }
-  out.WriteV32(static_cast<uint32_t>(prefix));
+  BytesOutput out{region};
   for (size_t level = 0; level != _height; ++level) {
     const auto& range = _levels[level];
     const size_t width = range.starts.size() / range.count;
-    out.WriteV64(range.count);
+    counts.push_back(range.count);
     for (uint32_t i = 0; i != range.count; ++i) {
       out.WriteData(range.starts.data() + i * width + prefix, width - prefix);
     }

@@ -183,7 +183,7 @@ class ColumnarTermReader final : public BasicTermReader,
     }
   }
   const FieldMeta& Meta() const noexcept { return _it.Meta(); }
-  field_id id() const noexcept final { return Meta().id; }
+  FieldKey key() const noexcept final { return KeyOf(Meta()); }
   FieldProperties properties() const noexcept final { return Meta(); }
 
   irs::TermOnlyIterator::ptr iterator() const noexcept final {

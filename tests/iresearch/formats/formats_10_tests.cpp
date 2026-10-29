@@ -759,7 +759,7 @@ TEST_P(Format10TestCase, ires336) {
   fr->prepare(
     irs::ReaderState{.dir = dir.get(), .meta = &meta, .idx = &idx_reader});
 
-  const auto* field = fr->field(field_meta.id);
+  const auto* field = fr->field({.id = field_meta.id});
   ASSERT_NE(nullptr, field);
   auto it = field->iterator();
   ASSERT_TRUE(it->seek(term));

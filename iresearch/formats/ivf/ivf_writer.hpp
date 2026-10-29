@@ -88,7 +88,7 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   ~IvfTermReader() final;
 
   TermOnlyIterator::ptr iterator() const final;
-  field_id id() const final { return _meta.id; }
+  FieldKey key() const final { return KeyOf(_meta); }
   FieldProperties properties() const final { return _meta; }
   bytes_view min() const final { return _min; }
   bytes_view max() const final { return _max; }

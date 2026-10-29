@@ -371,7 +371,7 @@ class CompoundFieldIterator final : public BasicTermReader {
     return *_current_meta;
   }
 
-  field_id id() const noexcept final { return Meta().id; }
+  FieldKey key() const noexcept final { return KeyOf(Meta()); }
   FieldProperties properties() const noexcept final { return _props; }
   bytes_view min() const noexcept final { return _term_itr.MinTerm(); }
   bytes_view max() const noexcept final { return _term_itr.MaxTerm(); }
@@ -703,19 +703,19 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
   std::vector<const BasicTermReader*> sorted_extra(extra.begin(), extra.end());
   absl::c_sort(sorted_extra,
                [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
-                 return lhs->id() < rhs->id();
+                 return lhs->key() < rhs->key();
                });
   size_t ei = 0;
   const size_t en = sorted_extra.size();
 
   while (field_itr.Next()) {
-    const auto fid = field_itr.Meta().id;
-    while (ei < en && sorted_extra[ei]->id() < fid) {
+    const auto key = KeyOf(field_itr.Meta());
+    while (ei < en && sorted_extra[ei]->key() < key) {
       field_writer->write(*sorted_extra[ei]);
       ++ei;
     }
 
-    if (ei < en && sorted_extra[ei]->id() == fid) {
+    if (ei < en && sorted_extra[ei]->key() == key) {
       field_writer->write(*sorted_extra[ei]);
       ++ei;
       continue;

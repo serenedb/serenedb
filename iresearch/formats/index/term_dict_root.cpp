@@ -31,6 +31,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/lower_bound.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::term_dict {
 namespace {
@@ -136,14 +137,24 @@ uint64_t HeadAt(bytes_view key, size_t skip) noexcept {
 }
 
 Separators DecodeSeparators(bytes_view encoded, size_t count) {
+  const auto corrupted = [] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                    ERR_MSG("term dictionary: bad separators"));
+  };
   Separators separators;
   separators.offsets.reserve(count + 1);
   const auto* p = encoded.data();
+  const auto* const end = p + encoded.size();
   size_t last = 0;
   for (size_t i = 0; i != count; ++i) {
+    if (p >= end) {
+      corrupted();
+    }
     const auto shared = vread<uint32_t>(p);
     const auto suffix = vread<uint32_t>(p);
-    SDB_ASSERT(shared <= last);
+    if (p > end || shared > last || suffix > static_cast<size_t>(end - p)) {
+      corrupted();
+    }
     auto& arena = separators.arena;
     const size_t start = arena.size();
     arena.resize(start + shared + suffix);
@@ -153,7 +164,9 @@ Separators DecodeSeparators(bytes_view encoded, size_t count) {
     last = shared + suffix;
     separators.offsets.push_back(static_cast<uint32_t>(arena.size()));
   }
-  SDB_ASSERT(p == encoded.data() + encoded.size());
+  if (p != end) {
+    corrupted();
+  }
   return separators;
 }
 

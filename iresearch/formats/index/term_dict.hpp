@@ -24,6 +24,7 @@
 #include <fsst.h>
 
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <deque>
 #include <iterator>
@@ -116,13 +117,160 @@ struct BlockBuilder {
 
 inline constexpr size_t kMaxRangeLevels = 8;
 
+struct FieldHead {
+  FieldKey key;
+  IndexFeatures features = IndexFeatures::None;
+  uint64_t term_count = 0;
+  uint64_t doc_count = 0;
+  uint64_t total_doc_freq = 0;
+  uint64_t total_term_freq = 0;
+  field_id norm = field_limits::invalid();
+  bool has_score_bounds = false;
+  bool ranges = false;
+  uint32_t ordinal = 0;
+  uint32_t width = 0;
+  bstring min;
+  bstring max;
+  bstring record;
+  bstring record_inline;
+  uint32_t first_block = 0;
+  uint32_t first_entry = 0;
+  uint32_t first_record = 0;
+  uint32_t last_block = 0;
+  uint32_t last_entry = 0;
+  uint64_t inline_base = 0;
+  uint64_t inline_size = 0;
+  uint64_t range_offset = 0;
+  uint64_t range_size = 0;
+  uint32_t range_prefix = 0;
+  std::vector<uint64_t> range_counts;
+  bstring prefixes;
+};
+
+inline constexpr size_t kTermPrefix = sizeof(uint32_t);
+inline constexpr uint32_t kNoLabel = 256;
+
+constexpr uint32_t TermPrefix(bytes_view term) noexcept {
+  uint32_t value = 0;
+  for (size_t i = 0; i != kTermPrefix; ++i) {
+    value = value << 8 | (i < term.size() ? term[i] : 0);
+  }
+  return value;
+}
+
+class PrefixIndex {
+ public:
+  explicit PrefixIndex(std::vector<uint32_t> prefixes);
+
+  size_t MemoryBytes() const noexcept {
+    return sizeof(*this) +
+           (_prefixes.capacity() + _pair_starts.capacity()) * sizeof(uint32_t);
+  }
+
+  uint32_t NextLabel(bytes_view head, uint32_t from,
+                     const uint32_t*& at) const noexcept {
+    if (head.empty()) {
+      from = NextBit(_firsts.data(), from);
+      if (from != kNoLabel) {
+        at = _prefixes.data() + _buckets[from];
+      }
+      return from;
+    }
+    const auto first = head[0];
+    if (head.size() == 1) {
+      from = NextBit(_pairs.data() + first * kRowWords, from);
+      if (from != kNoLabel) {
+        at = _prefixes.data() + _pair_starts[Rank(first, from)];
+      }
+      return from;
+    }
+    const auto second = head[1];
+    if (!HasBit(_pairs.data() + first * kRowWords, second)) {
+      return kNoLabel;
+    }
+    const auto pair = Rank(first, second);
+    const auto* begin = _prefixes.data() + _pair_starts[pair];
+    const auto* end = _prefixes.data() + _pair_starts[pair + 1];
+    const uint32_t shift = 8 * (kTermPrefix - 1 - head.size());
+    const uint32_t base = TermPrefix(head);
+    const uint32_t key = base | from << shift;
+    if (!at || at < begin || at > end || (at != begin && at[-1] >= key)) {
+      at = begin;
+    }
+    at = Gallop(at, end, key);
+    if (at == end || ((*at ^ base) >> shift >> 8) != 0) {
+      return kNoLabel;
+    }
+    return *at >> shift & 0xFF;
+  }
+
+ private:
+  static constexpr size_t kRowWords = kNoLabel / 64;
+
+  static bool HasBit(const uint64_t* row, uint32_t bit) noexcept {
+    return (row[bit / 64] >> (bit % 64) & 1) != 0;
+  }
+
+  static uint32_t NextBit(const uint64_t* row, uint32_t from) noexcept {
+    for (uint32_t word = from / 64; word < kRowWords; ++word) {
+      uint64_t bits = row[word];
+      if (word == from / 64) {
+        bits &= ~uint64_t{0} << (from % 64);
+      }
+      if (bits != 0) {
+        return word * 64 + static_cast<uint32_t>(std::countr_zero(bits));
+      }
+    }
+    return kNoLabel;
+  }
+
+  uint32_t Rank(uint32_t first, uint32_t second) const noexcept {
+    const auto* row = _pairs.data() + first * kRowWords;
+    uint32_t rank = _pair_rows[first];
+    for (uint32_t word = 0; word != second / 64; ++word) {
+      rank += static_cast<uint32_t>(std::popcount(row[word]));
+    }
+    const uint64_t below = (uint64_t{1} << (second % 64)) - 1;
+    return rank +
+           static_cast<uint32_t>(std::popcount(row[second / 64] & below));
+  }
+
+  static const uint32_t* Gallop(const uint32_t* at, const uint32_t* end,
+                                uint32_t key) noexcept {
+    if (at == end || *at >= key) {
+      return at;
+    }
+    size_t step = 1;
+    while (step < static_cast<size_t>(end - at) && at[step] < key) {
+      at += step;
+      step <<= 1;
+    }
+    const std::span rest{
+      at + 1, step < static_cast<size_t>(end - at) ? at + step + 1 : end};
+    return rest.data() + (absl::c_lower_bound(rest, key) - rest.begin());
+  }
+
+  std::vector<uint32_t> _prefixes;
+  std::vector<uint32_t> _pair_starts;
+  std::array<uint64_t, kRowWords * kNoLabel> _pairs{};
+  std::array<uint64_t, kRowWords> _firsts{};
+  std::array<uint32_t, kNoLabel + 1> _buckets{};
+  std::array<uint32_t, kNoLabel + 1> _pair_rows{};
+};
+
+struct SpanningBlock {
+  uint32_t block;
+  uint32_t extra;
+};
+
 class RangeWriter final {
  public:
   bool Active() const noexcept { return _pw != nullptr; }
   void Begin(PostingsWriter& pw);
   void Add(bytes_view term, const PostingMeta& meta);
   void Finish(uint64_t terms);
-  void Write(bstring& region, size_t prefix) const;
+  void Write(bstring& region, size_t prefix,
+             std::vector<uint64_t>& counts) const;
   void Clear() noexcept;
 
  private:
@@ -179,11 +327,6 @@ class FieldWriter final {
   void end();
 
  private:
-  struct Entry {
-    field_id id;
-    TermDictMeta meta;
-  };
-
   void SampleFsst(const BasicTermReader& reader);
   void TrainFsst();
   bytes_view EncodeSuffix(bytes_view suffix);
@@ -196,7 +339,7 @@ class FieldWriter final {
   void Seal();
   void Cut();
   void WriteBlock(bytes_view block);
-  void EndField(field_id id, const FieldProperties& props,
+  void EndField(FieldKey key, const FieldProperties& props,
                 uint64_t total_doc_freq, uint64_t total_term_freq,
                 uint64_t first_inline);
   void ResetField() noexcept;
@@ -213,13 +356,13 @@ class FieldWriter final {
   std::vector<size_t> _sample_lengths;
   bstring _coded;
   bstring _page;
-  bstring _directory;
+  std::vector<SpanningBlock> _spans;
   bstring _separators;
   bstring _separator;
   bstring _last;
-  bstring _fields;
   bstring _range_regions;
-  std::vector<Entry> _entries;
+  std::vector<FieldHead> _heads;
+  std::vector<uint32_t> _prefixes;
   bstring _key;
   bstring _min;
   PostingMeta _single;
@@ -228,8 +371,6 @@ class FieldWriter final {
   uint64_t _terms = 0;
   uint64_t _first_page = 0;
   uint32_t _blocks = 0;
-  uint32_t _spans = 0;
-  uint32_t _last_span = 0;
   uint32_t _width = 0;
   uint32_t _ordinal = 0;
   uint32_t _prefix_size = 0;
@@ -257,8 +398,8 @@ struct RangeLevel {
 
 class TermReaderImpl final : public TermReader {
  public:
-  TermReaderImpl(FieldReader& owner, field_id id, const TermDictMeta& meta,
-                 IndexInput& in, const Separators& separators);
+  TermReaderImpl(FieldReader& owner, const FieldHead& head, IndexInput& in,
+                 const Separators& separators);
   ~TermReaderImpl() final;
 
   SeekTermIterator::ptr iterator() const final;
@@ -329,6 +470,16 @@ class TermReaderImpl final : public TermReader {
   const byte_type* Block(size_t block, BlockBuffer& buffer) const;
   uint64_t BlockOffset(size_t block) const noexcept;
   uint64_t BlocksEnd() const noexcept { return BlockOffset(_blocks); }
+  bool Gates(bytes_view head) const noexcept {
+    return _prefixes && head.size() < kTermPrefix;
+  }
+  uint32_t NextLabel(bytes_view head, uint32_t from,
+                     const uint32_t*& at) const noexcept {
+    if (!Gates(head) || from >= kNoLabel) {
+      return from;
+    }
+    return _prefixes->NextLabel(head, from, at);
+  }
   std::span<const RangeLevel> RangeLevels() const noexcept { return _levels; }
   uint32_t RangePrefix() const noexcept { return _range_prefix; }
   uint64_t InlineBegin() const noexcept;
@@ -337,7 +488,8 @@ class TermReaderImpl final : public TermReader {
 
  private:
   bool Excludes(bytes_view term) const noexcept;
-  uint64_t ReadRanges(FieldReader& owner, IndexInput& in);
+  uint64_t ReadRanges(FieldReader& owner, IndexInput& in,
+                      const FieldHead& head);
 
   const FieldReader* _owner;
   FieldMeta _meta;
@@ -360,6 +512,7 @@ class TermReaderImpl final : public TermReader {
   FreqAttr _freq;
   Root _root;
   std::vector<RangeLevel> _levels;
+  std::unique_ptr<PrefixIndex> _prefixes;
   uint32_t _range_prefix = 0;
   uint64_t _root_bytes = 0;
 };
@@ -375,7 +528,8 @@ class FieldReader final {
   uint64_t CountMappedMemory() const;
   void prepare(const ReaderState& state);
 
-  const TermReader* field(field_id id) const;
+  const TermReader* field(FieldKey key) const;
+  std::span<const FieldKey> field_keys() const noexcept { return _keys; }
   std::span<const field_id> field_ids() const noexcept { return _ids; }
   size_t size() const noexcept { return _fields.size(); }
 
@@ -413,16 +567,17 @@ class FieldReader final {
     byte_type* data;
   };
 
-  struct SpanningBlock {
-    uint32_t block;
-    uint32_t extra;
+  struct Dicts {
+    std::array<const TermReaderImpl*, kTermDicts> dicts{};
   };
 
-  Separators ReadBody(IndexInput& in, uint64_t offset, uint64_t head);
+  Separators ReadHead(IndexInput& in, const TermsHead& extent,
+                      std::vector<FieldHead>& fields);
   void FillCopies();
 
   std::deque<TermReaderImpl> _fields;
-  containers::FlatHashMap<field_id, const TermReaderImpl*> _by_id;
+  containers::FlatHashMap<field_id, Dicts> _by_id;
+  std::vector<FieldKey> _keys;
   std::vector<field_id> _ids;
   PostingsReader _pr;
   IndexInput::ptr _in;

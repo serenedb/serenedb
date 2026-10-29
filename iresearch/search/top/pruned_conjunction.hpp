@@ -180,14 +180,14 @@ class PrunedConjunction : public Root {
     uint32_t dropped = 0;
     _lead.ForEachScoredBlock(last + 1, [&](doc_id_t* docs, uint32_t len,
                                            score_t* scores) {
+      if (const auto required = threshold - others_max; required > 0) {
+        const auto kept =
+          irs::detail::FilterScores(docs, scores, len, required);
+        dropped += len - kept;
+        seen += len - kept;
+        len = kept;
+      }
       if constexpr (kExcludes) {
-        if (const auto required = threshold - others_max; required > 0) {
-          const auto kept =
-            irs::detail::FilterScores(docs, scores, len, required);
-          dropped += len - kept;
-          seen += len - kept;
-          len = kept;
-        }
         len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
       }
       seen += len;

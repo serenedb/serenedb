@@ -303,10 +303,6 @@
   samples: ["null", "true", "42", "\"s\"", "[1,2,3]", "{\"k\":\"v\"}", null]
 
 # ---- regtypes (custom-exposed in SereneDB) ----
-# TODO: SereneDB - reg* types reject bind parameters in extended modes
-# ("invalid input syntax for bind parameter 1"). Simple mode works because
-# the cast happens server-side from a literal. Re-enable extended once the
-# reg*-In path accepts wire parameters.
 - oid: 2205
   name: regclass
   pg_typname: regclass
@@ -315,17 +311,17 @@
   array: false
   samples: ["pg_class", null]
   skip:
-    python_psycopg3: ["extended-text", "extended-binary"]
-    java_pgjdbc: ["extended-text", "extended-binary"]
-    go_pgx: ["extended-text", "extended-binary"]
-    go_libpq: ["extended-text", "extended-binary"]
-    rust_tokio_postgres: ["extended-text", "extended-binary"]
-    rust_sqlx: ["extended-text", "extended-binary"]
-    csharp_npgsql: ["extended-text", "extended-binary"]
-    php_pdo: ["extended-text", "extended-binary"]
-    python_asyncpg: ["extended-text", "extended-binary"]
-    js_pg: ["extended-text", "extended-binary"]
-    js_postgres_js: ["extended-text", "extended-binary"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-binary"]
+    js_pg: ["extended-binary"]
+    js_postgres_js: ["extended-binary"]
 
 - oid: 2206
   name: regtype
@@ -335,17 +331,17 @@
   array: false
   samples: ["int4", "text", "boolean", null]
   skip:
-    python_psycopg3: ["extended-text", "extended-binary"]
-    java_pgjdbc: ["extended-text", "extended-binary"]
-    go_pgx: ["extended-text", "extended-binary"]
-    go_libpq: ["extended-text", "extended-binary"]
-    rust_tokio_postgres: ["extended-text", "extended-binary"]
-    rust_sqlx: ["extended-text", "extended-binary"]
-    csharp_npgsql: ["extended-text", "extended-binary"]
-    php_pdo: ["extended-text", "extended-binary"]
-    python_asyncpg: ["extended-text", "extended-binary"]
-    js_pg: ["extended-text", "extended-binary"]
-    js_postgres_js: ["extended-text", "extended-binary"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-binary"]
+    js_pg: ["extended-binary"]
+    js_postgres_js: ["extended-binary"]
 
 - oid: 4089
   name: regnamespace
@@ -355,17 +351,17 @@
   array: false
   samples: ["public", "pg_catalog", null]
   skip:
-    python_psycopg3: ["extended-text", "extended-binary"]
-    java_pgjdbc: ["extended-text", "extended-binary"]
-    go_pgx: ["extended-text", "extended-binary"]
-    go_libpq: ["extended-text", "extended-binary"]
-    rust_tokio_postgres: ["extended-text", "extended-binary"]
-    rust_sqlx: ["extended-text", "extended-binary"]
-    csharp_npgsql: ["extended-text", "extended-binary"]
-    php_pdo: ["extended-text", "extended-binary"]
-    python_asyncpg: ["extended-text", "extended-binary"]
-    js_pg: ["extended-text", "extended-binary"]
-    js_postgres_js: ["extended-text", "extended-binary"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-binary"]
+    js_pg: ["extended-binary"]
+    js_postgres_js: ["extended-binary"]
 
 # ---- ranges ----
 # TODO: SereneDB - range types reject bind parameters; only simple-mode

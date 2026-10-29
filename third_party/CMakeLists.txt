@@ -569,6 +569,7 @@ if(ENABLE_ROARING_TESTS)
     set_target_properties(
         ${croaring_tests}
         PROPERTIES
+            C_STANDARD 23
             RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/croaring-tests
     )
     add_custom_target(croaring-tests DEPENDS ${croaring_tests})

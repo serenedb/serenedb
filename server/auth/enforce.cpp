@@ -33,6 +33,7 @@
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/function/scalar/sequence_utils.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -647,12 +648,11 @@ class Enforcer {
                                .Function()
                                .GetName()
                                .GetIdentifierName();
-          if (name == "nextval") {
-            _nextval = true;
-          } else if (name == "currval") {
-            _currval = true;
-          } else if (name == "setval") {
-            _setval = true;
+          if (name == "nextval" || name == "currval" || name == "setval") {
+            if (_enforce) {
+              CheckSequenceCall(expr.Cast<duckdb::BoundFunctionExpression>(),
+                                name);
+            }
           } else if (_enforce && name == "current_setting") {
             CheckSettingRead(expr.Cast<duckdb::BoundFunctionExpression>());
           } else if (_enforce && IsSuperuserFunction(name)) {
@@ -1253,6 +1253,31 @@ class Enforcer {
     }
   }
 
+  void CheckSequenceCall(const duckdb::BoundFunctionExpression& function,
+                         std::string_view name) {
+    const auto& bind = function.BindInfo();
+    if (!bind) {
+      return;
+    }
+    const auto& sequence = bind->Cast<duckdb::NextvalBindData>().sequence;
+    if (Unowned(sequence)) {
+      return;
+    }
+    const auto& permissions = sequence.permissions;
+    const bool allowed =
+      name == "nextval"
+        ? _caller_closure.CanAny(CatalogType::SEQUENCE_ENTRY, permissions,
+                                 AclMode::Usage | AclMode::Update)
+      : name == "currval"
+        ? _caller_closure.CanAny(CatalogType::SEQUENCE_ENTRY, permissions,
+                                 AclMode::Usage | AclMode::Select)
+        : _caller_closure.Can(CatalogType::SEQUENCE_ENTRY, permissions,
+                              AclMode::Update);
+    if (!allowed) {
+      Denied(sequence);
+    }
+  }
+
   void CheckSettingRead(const duckdb::BoundFunctionExpression& function) {
     const auto& children = function.GetChildren();
     if (children.empty()) {
@@ -1358,22 +1383,6 @@ class Enforcer {
           if (defines_relation &&
               !_caller_closure.Can(entry->type, entry->permissions,
                                    AclMode::Usage)) {
-            Denied(*entry);
-          }
-          break;
-        case CatalogType::SEQUENCE_ENTRY:
-          if (_nextval &&
-              !_caller_closure.CanAny(entry->type, entry->permissions,
-                                      AclMode::Usage | AclMode::Update)) {
-            Denied(*entry);
-          }
-          if (_currval &&
-              !_caller_closure.CanAny(entry->type, entry->permissions,
-                                      AclMode::Usage | AclMode::Select)) {
-            Denied(*entry);
-          }
-          if (_setval && !_caller_closure.Can(entry->type, entry->permissions,
-                                              AclMode::Update)) {
             Denied(*entry);
           }
           break;
@@ -2125,9 +2134,6 @@ class Enforcer {
     _projection_reads;
   bool _file_copy = false;
   bool _files_authorized = true;
-  bool _nextval = false;
-  bool _currval = false;
-  bool _setval = false;
 };
 
 }  // namespace

@@ -688,6 +688,8 @@ def test_char_oid18_text_param(conn, param, text):
         (22, 0, b"a b", "22P02"),
         (1007, 0, b"{{1,2},{3,4}}", "22P02"),
         (1033, 0, b"garbage", "22P02"),
+        (1033, 0, b"nobody_missing=r/postgres", "42704"),
+        (2205, 0, b"no_such_table_x", "42P01"),
     ],
 )
 def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):

@@ -244,16 +244,18 @@ Root::ptr MakeNestedPrunedConjunction(
     const auto build = [&]<typename Lead, typename Others>(
                          auto&& lead, auto&& others_args) -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
-        return MakeShape<PrunedConjunction, Lead, Others, utils::Empty>(
-          ctx, ctx.fetcher, size, std::piecewise_construct,
-          std::forward<decltype(lead)>(lead), others_args,
-          std::forward_as_tuple());
+        return MakeShape<PrunedConjunction, Lead, Others, utils::Empty,
+                         utils::Empty>(ctx, ctx.fetcher, size,
+                                       std::piecewise_construct,
+                                       std::forward<decltype(lead)>(lead),
+                                       others_args, std::forward_as_tuple());
       }
       const uint64_t lead_docs = clauses.front().docs;
       return irs::detail::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, lead_docs, lead_docs,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-          return MakeShape<PrunedConjunction, Lead, Others, Exclude>(
+          return MakeShape<PrunedConjunction, Lead, Others, utils::Empty,
+                           Exclude>(
             ctx, ctx.fetcher, size, std::piecewise_construct,
             std::forward<decltype(lead)>(lead), others_args,
             std::forward<decltype(negated)>(negated));

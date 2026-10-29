@@ -68,10 +68,8 @@ class PostingHeads final : public PreparedStateVisitor {
     if (_lists < min_lists) {
       return;
     }
-    for (auto& [in, extents] : _extents) {
-      if (const auto* file = in->File()) {
-        file->PrefetchExtents(extents);
-      }
+    for (auto& [file, extents] : _extents) {
+      file->PrefetchExtents(extents);
     }
   }
 
@@ -103,7 +101,7 @@ class PostingHeads final : public PreparedStateVisitor {
     }
   }
 
-  containers::FlatHashMap<const IndexInput*, std::vector<ByteExtent>> _extents;
+  containers::FlatHashMap<const InputFile*, std::vector<ByteExtent>> _extents;
   uint32_t _lists = 0;
 };
 

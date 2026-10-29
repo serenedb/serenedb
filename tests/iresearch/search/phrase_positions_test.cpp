@@ -18,11 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
+#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iresearch/analysis/text/term_view.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
@@ -31,6 +33,7 @@
 #include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/store/directory.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/string.hpp>
@@ -565,6 +568,60 @@ TEST(PhrasePositionsTest, interval_phrase_scale_agrees_with_reference) {
       EXPECT_FLOAT_EQ(expected.scale, out.scale);
     }
   }
+}
+
+TEST(PhrasePositionsTest, positions_left_in_cache_blocks) {
+  if (!irs::AddFailurePointDebugging("IndexWriter::CompactOutOfMemory")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  absl::Cleanup clear = [] { irs::ClearFailurePointsDebugging(); };
+  constexpr uint32_t kPairs = 1 << 20;
+  std::string text;
+  for (uint32_t i = 0; i != kPairs; ++i) {
+    text += "quick fox ";
+    for (uint32_t gap = 0; gap != i % 7; ++gap) {
+      text += "x ";
+    }
+  }
+  WhitespaceTokenizer whitespace;
+  const irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                           TestEnv::MemoryRoot()};
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+    Field field{.tokenizer = &whitespace, .value = text};
+    auto ctx = writer->GetBatch();
+    {
+      auto inserted = ctx.Insert();
+      ASSERT_TRUE(tests::InsertField(inserted, field));
+    }
+    ctx.Commit();
+    writer->RefreshCommit();
+  }
+  irs::ClearFailurePointsDebugging();
+  {
+    const irs::DirectoryReader flushed{dir, irs::tests::DefaultReaderOptions()};
+    for (const auto& segment : flushed.Meta().index_meta.segments) {
+      for (const auto& file : segment.meta.files) {
+        if (!file.ends_with(".pos")) {
+          dir.Compact(file);
+        }
+      }
+    }
+  }
+  const irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+  ASSERT_EQ(1, reader.size());
+  const auto handles = reader[0].field(kField)->Handles();
+  ASSERT_TRUE(handles.doc->Contiguous());
+  ASSERT_FALSE(handles.pos->Contiguous());
+  ASSERT_LT(4 * duckdb::BlockCache::BLOCK_SIZE, handles.pos->Length());
+
+  irs::ByPhrase filter;
+  *filter.mutable_field_id() = kField;
+  *filter.mutable_options() = Phrase("quick fox");
+  EXPECT_EQ(std::vector<irs::score_t>{kPairs},
+            Scores<tests::sort::FrequencyScore>(filter, reader));
 }
 
 TEST(PhrasePositionsTest, stacked_document_tokens) {

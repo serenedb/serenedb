@@ -45,12 +45,12 @@ class PlainFillScored {
 
   PlainFillScored() = default;
 
-  PlainFillScored(const PostingMeta& meta, const IndexInput& doc_in,
+  PlainFillScored(const PostingMeta& meta, const InputFile& doc_in,
                   IndexFeatures layout, bool has_score_bounds, bool has_freq) {
     Prepare(meta, doc_in, layout, has_score_bounds, has_freq);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                IndexFeatures layout, bool has_score_bounds, bool has_freq) {
     _leaf.Prepare(meta, doc_in, layout, has_score_bounds, has_freq);
   }
@@ -75,13 +75,13 @@ class ConstFillScored {
 
   ConstFillScored() = default;
 
-  ConstFillScored(const PostingMeta& meta, const IndexInput& doc_in,
+  ConstFillScored(const PostingMeta& meta, const InputFile& doc_in,
                   bool has_score_bounds, const SubReader& segment,
                   const TermReader& field, const ScoreArgs& args) {
     Prepare(meta, doc_in, has_score_bounds, segment, field, args);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                bool has_score_bounds, const SubReader& segment,
                const TermReader& field, const ScoreArgs& args) {
     _value = ConstantTermOf(segment, field, args);
@@ -110,7 +110,7 @@ class PlainCountScored {
 
   PlainCountScored() = default;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                IndexFeatures layout, bool has_score_bounds, bool has_freq) {
     _leaf.Prepare(meta, doc_in, layout, has_score_bounds, has_freq);
   }
@@ -151,7 +151,7 @@ class ConstCountScored {
 
   ConstCountScored() = default;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                bool has_score_bounds, const SubReader& segment,
                const TermReader& field, const ScoreArgs& args) {
     _value = ConstantTermOf(segment, field, args);
@@ -195,12 +195,12 @@ class PlainProbeScored {
 
   PlainProbeScored() = default;
 
-  PlainProbeScored(const PostingMeta& meta, const IndexInput& doc_in,
+  PlainProbeScored(const PostingMeta& meta, const InputFile& doc_in,
                    IndexFeatures layout, bool bounds) {
     Prepare(meta, doc_in, layout, bounds);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                IndexFeatures layout, bool bounds) {
     _docs_count = meta.docs_count;
     _leaf.Prepare(meta, doc_in, layout, bounds);

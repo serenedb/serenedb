@@ -46,8 +46,8 @@ class PostingsStream : public TermPostings {
  public:
   PostingsStream() noexcept {}
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               const IndexInput* pos_in, const IndexInput* pay_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
+               const InputFile* pos_in, const InputFile* pay_in,
                bool has_score_bounds) {
     SDB_ASSERT(meta.docs_count != 0);
 
@@ -127,7 +127,7 @@ class PostingsStream : public TermPostings {
   }
 
  private:
-  using Position = PositionImpl<IteratorTraits>;
+  using Position = PositionImpl<IteratorTraits, InputType>;
 
   IRS_FORCE_INLINE InputType& In() const noexcept { return *_doc_in; }
 

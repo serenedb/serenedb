@@ -4243,18 +4243,36 @@ TEST_P(DirectoryTestCase, input_type_follows_storage) {
     out->Close();
   }
 
-  const bool whole = _dir->Kind() == irs::StorageKind::Local;
+  const bool contiguous = _dir->Kind() == irs::StorageKind::Local;
 
   for (const auto access :
        {duckdb::MappedFileAccess::NORMAL, duckdb::MappedFileAccess::SEQUENTIAL,
         duckdb::MappedFileAccess::RANDOM}) {
     const auto in_file = _dir->Open("file", access);
+    EXPECT_EQ(contiguous, in_file->Contiguous());
     irs::IndexInput in{*in_file};
     ASSERT_FALSE(!in);
-    EXPECT_EQ(whole, in.Whole());
-    EXPECT_EQ(whole, irs::IndexInput{in}.Whole());
     EXPECT_EQ(42, in.ReadI32());
   }
+}
+
+TEST_P(DirectoryTestCase, checked_reads_resume_after_seeking_past_the_end) {
+  {
+    auto out = _dir->Create("file");
+    ASSERT_FALSE(!out);
+    for (uint32_t i = 0; i != 100; ++i) {
+      out->WriteU32(i);
+    }
+    out->Close();
+  }
+
+  const auto in_file = _dir->Open("file", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput in{*in_file};
+  in.Seek(in.Length() + 10);
+  EXPECT_ANY_THROW(in.ReadByte());
+  in.Seek(7 * sizeof(uint32_t));
+  EXPECT_EQ(7, in.ReadI32());
+  EXPECT_EQ(8, in.ReadI32());
 }
 
 TEST_P(DirectoryTestCase, reads_across_cache_blocks) {
@@ -4412,9 +4430,8 @@ TEST_P(DirectoryTestCase, read_whole) {
   const auto bytes = _dir->ReadWhole("file");
   EXPECT_EQ((irs::bytes_view{data.data(), data.size()}),
             irs::bytes_view{bytes});
-  irs::IndexInput in{bytes};
+  irs::BytesViewInput in{bytes};
   ASSERT_FALSE(!in);
-  EXPECT_TRUE(in.Whole());
   ASSERT_EQ(kSize, in.Length());
   irs::bstring buf(kSize, 0);
   in.ReadData(buf.data(), buf.size());
@@ -4423,7 +4440,6 @@ TEST_P(DirectoryTestCase, read_whole) {
 
   auto dup = in;
   ASSERT_FALSE(!dup);
-  EXPECT_TRUE(dup.Whole());
   dup.Seek(0);
   irs::bstring copy(kSize, 0);
   dup.ReadData(copy.data(), copy.size());
@@ -4939,14 +4955,14 @@ TEST(DirectoryTest, compacted_memory_files_map_in_place) {
     out->Close();
   }
   const auto blocks_file = files.Open("file", duckdb::MappedFileAccess::NORMAL);
+  ASSERT_FALSE(blocks_file->Contiguous());
   irs::IndexInput blocks{*blocks_file};
-  ASSERT_FALSE(blocks.Whole());
 
   files.Compact("file");
   EXPECT_FALSE(memory.GetBlockFile(files.Path("file")));
   const auto mapped_file = files.Open("file", duckdb::MappedFileAccess::NORMAL);
+  ASSERT_TRUE(mapped_file->Contiguous());
   irs::IndexInput mapped{*mapped_file};
-  ASSERT_TRUE(mapped.Whole());
   ASSERT_EQ(data.size(), mapped.Length());
   const auto stable = mapped.Pin(0, data.size());
   EXPECT_FALSE(stable.pin.IsValid());
@@ -4957,8 +4973,7 @@ TEST(DirectoryTest, compacted_memory_files_map_in_place) {
 
   files.Compact("file");
   EXPECT_TRUE(
-    irs::IndexInput{*files.Open("file", duckdb::MappedFileAccess::NORMAL)}
-      .Whole());
+    files.Open("file", duckdb::MappedFileAccess::NORMAL)->Contiguous());
 }
 
 size_t MemoryFilesInBlocks(const irs::Directory& files,
@@ -5053,9 +5068,9 @@ TEST(DirectoryTest, private_memory) {
   EXPECT_EQ(std::vector<std::string>{"file"}, names);
 
   const auto in_file = files.Open("file", duckdb::MappedFileAccess::NORMAL);
+  ASSERT_TRUE(in_file->Contiguous());
   irs::IndexInput in{*in_file};
   ASSERT_FALSE(!in);
-  ASSERT_TRUE(in.Whole());
   ASSERT_EQ(data.size(), in.Length());
   const auto stable = in.Pin(data.size());
   EXPECT_EQ(data.size(), in.Position());

@@ -171,7 +171,7 @@ class PostingLeaf {
   }
 
  protected:
-  static constexpr bool kEnc = Shape.enc || !InputType::kSpan;
+  static constexpr bool kEnc = Shape.enc || !InputType::kContiguous;
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
   static constexpr auto kBits = BitsRequired<uint64_t>();
 
@@ -214,7 +214,7 @@ class PostingLeaf {
 
   IRS_FORCE_INLINE const UnalignedWord* StableBitset(
     const block_io::FillLeaf& leaf) noexcept {
-    if constexpr (InputType::kSpan) {
+    if constexpr (InputType::kContiguous) {
       return leaf.bitset;
     } else {
       if (!leaf.IsBitset()) {
@@ -228,7 +228,7 @@ class PostingLeaf {
     }
   }
 
-  void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
+  void OpenInput(const PostingMeta& meta, const InputFile& doc_in,
                  bool bounds) {
     _in = OpenDocInput<InputType>(meta, doc_in);
     auto& in = In();

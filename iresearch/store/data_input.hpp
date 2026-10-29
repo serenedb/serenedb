@@ -78,7 +78,15 @@ class InputFile {
 
   uint64_t Length() const noexcept { return _length; }
   const std::string& Path() const noexcept;
-  bytes_view Span() const noexcept;
+  bool Contiguous() const noexcept {
+    return std::holds_alternative<MappedSpan>(_kind);
+  }
+  bytes_view Span() const noexcept {
+    if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
+      return span->bytes;
+    }
+    return {};
+  }
   bool Paged() const noexcept;
   bytes_view Refill(uint64_t position, CursorBlock& block, bool ahead) const;
   PinnedBytes Pin(uint64_t offset, uint64_t size) const;
@@ -102,8 +110,10 @@ class InputFile {
     duckdb::shared_ptr<duckdb::BlockCacheFile> blocks;
   };
 
-  bool Warm(uint64_t offset, uint64_t size) const noexcept;
-  void MarkWarm(uint64_t offset, uint64_t size) const noexcept;
+  bool Warm(const MappedSpan& span, uint64_t offset,
+            uint64_t size) const noexcept;
+  void MarkWarm(const MappedSpan& span, uint64_t offset,
+                uint64_t size) const noexcept;
   bytes_view SpanWindow(uint64_t offset, uint64_t size) const noexcept;
 
   uint64_t _length;
@@ -113,11 +123,11 @@ class InputFile {
 [[noreturn]] void ThrowPastEnd(const InputFile* file, uint64_t position,
                                uint64_t length);
 
-template<bool Blocks>
+template<bool Contiguous>
 class BasicInput {
  public:
-  static constexpr bool kSpan = !Blocks;
-  using Pinned = std::conditional_t<Blocks, PinnedBytes, SpanBytes>;
+  static constexpr bool kContiguous = Contiguous;
+  using Pinned = std::conditional_t<Contiguous, SpanBytes, PinnedBytes>;
 
   BasicInput() noexcept = default;
   explicit BasicInput(bytes_view bytes) noexcept
@@ -125,26 +135,17 @@ class BasicInput {
       _pos{bytes.data()},
       _end{bytes.data() + bytes.size()} {}
   explicit BasicInput(const InputFile& file) noexcept : _file{&file} {
+    SDB_ASSERT(!Contiguous || file.Contiguous());
     const auto span = file.Span();
-    SDB_ASSERT(Blocks || span.size() == file.Length());
     _begin = _pos = span.data();
     _end = span.data() + span.size();
   }
-  template<bool Other>
-  explicit BasicInput(const BasicInput<Other>& whole) noexcept
-    : _pos{whole.Current()}, _file{whole.File()} {
-    static_assert(Other && !Blocks);
-    SDB_ASSERT(whole.Whole());
-    const auto window = whole.Window();
-    _begin = window.data();
-    _end = window.data() + window.size();
-  }
 
   BasicInput(const BasicInput&) noexcept
-    requires(!Blocks)
+    requires(Contiguous)
   = default;
   BasicInput(const BasicInput& other) noexcept
-    requires(Blocks)
+    requires(!Contiguous)
     : _begin{other._begin},
       _pos{other._pos},
       _end{other._end},
@@ -156,20 +157,20 @@ class BasicInput {
     }
   }
   BasicInput(BasicInput&&) noexcept
-    requires(!Blocks)
+    requires(Contiguous)
   = default;
   BasicInput(BasicInput&& other) noexcept
-    requires(Blocks)
+    requires(!Contiguous)
     : _begin{std::exchange(other._begin, nullptr)},
       _pos{std::exchange(other._pos, nullptr)},
       _end{std::exchange(other._end, nullptr)},
       _file{other._file},
       _block{std::move(other._block)} {}
   BasicInput& operator=(const BasicInput&) noexcept
-    requires(!Blocks)
+    requires(Contiguous)
   = default;
   BasicInput& operator=(const BasicInput& other) noexcept
-    requires(Blocks)
+    requires(!Contiguous)
   {
     if (this != &other) {
       *this = BasicInput{other};
@@ -177,10 +178,10 @@ class BasicInput {
     return *this;
   }
   BasicInput& operator=(BasicInput&&) noexcept
-    requires(!Blocks)
+    requires(Contiguous)
   = default;
   BasicInput& operator=(BasicInput&& other) noexcept
-    requires(Blocks)
+    requires(!Contiguous)
   {
     if (this != &other) {
       _begin = std::exchange(other._begin, nullptr);
@@ -197,7 +198,7 @@ class BasicInput {
   }
 
   IRS_FORCE_INLINE byte_type ReadByte() {
-    if constexpr (Blocks) {
+    if constexpr (!Contiguous) {
       if (_pos == _end) [[unlikely]] {
         return ReadByteSlow();
       }
@@ -220,20 +221,23 @@ class BasicInput {
       _pos += count;
     }
   }
-  void ReadData(uint64_t offset, byte_type* b, uint64_t count) {
+  void ReadData(uint64_t offset, byte_type* b, uint64_t count)
+    requires(!Contiguous)
+  {
     Seek(offset);
     ReadData(b, count);
   }
 
   IRS_FORCE_INLINE uint64_t Position() const noexcept {
-    if constexpr (Blocks) {
-      return _block.start + static_cast<uint64_t>(_pos - _begin);
+    const auto offset = static_cast<uint64_t>(_pos - _begin);
+    if constexpr (Contiguous) {
+      return offset;
     } else {
-      return static_cast<uint64_t>(_pos - _begin);
+      return _block.start + offset;
     }
   }
   uint64_t Length() const noexcept {
-    if constexpr (Blocks) {
+    if constexpr (!Contiguous) {
       if (_file != nullptr) {
         return _file->Length();
       }
@@ -243,27 +247,23 @@ class BasicInput {
   bool IsEOF() const noexcept { return Position() >= Length(); }
 
   IRS_FORCE_INLINE void Seek(uint64_t position) {
-    if constexpr (Blocks) {
-      if (const auto offset = position - _block.start;
-          offset <= static_cast<uint64_t>(_end - _begin)) [[likely]] {
-        _pos = _begin + offset;
-        return;
-      }
-      SeekOutside(position);
-    } else {
+    if constexpr (Contiguous) {
       SDB_ASSERT(position <= Length());
       _pos = _begin + position;
+    } else if (const auto offset = position - _block.start;
+               offset <= static_cast<uint64_t>(_end - _begin)) [[likely]] {
+      _pos = _begin + offset;
+    } else {
+      SeekOutside(position);
     }
   }
   IRS_FORCE_INLINE void Skip(uint64_t count) {
-    if constexpr (Blocks) {
-      if (count <= Remain()) [[likely]] {
-        _pos += count;
-        return;
-      }
-      SeekOutside(Position() + count);
-    } else {
+    if constexpr (Contiguous) {
       Consume(count);
+    } else if (count <= Remain()) [[likely]] {
+      _pos += count;
+    } else {
+      SeekOutside(Position() + count);
     }
   }
   IRS_FORCE_INLINE void Consume(uint64_t count) noexcept {
@@ -271,23 +271,25 @@ class BasicInput {
     _pos += count;
   }
 
-  const byte_type* Current() const noexcept { return _pos; }
-  const byte_type* Peek(uint64_t count) {
-    if constexpr (Blocks) {
-      if (_pos == _end) [[unlikely]] {
-        Refill(true);
-      }
+  const byte_type* Current() const noexcept
+    requires(Contiguous)
+  {
+    return _pos;
+  }
+  const byte_type* Peek(uint64_t count)
+    requires(!Contiguous)
+  {
+    if (_pos == _end) [[unlikely]] {
+      Refill(true);
     }
     return Remain() >= count ? _pos : nullptr;
   }
 
   IRS_FORCE_INLINE Pinned Pin(uint64_t count) {
-    if constexpr (Blocks) {
-      if (_block.pinned || count > Remain()) [[unlikely]] {
-        return PinSlow(count);
-      }
-    } else if (count > Remain()) [[unlikely]] {
-      ThrowPastEnd(_file, Position(), Length());
+    if constexpr (Contiguous) {
+      SDB_ASSERT(count <= Remain());
+    } else if (_block.pinned || count > Remain()) [[unlikely]] {
+      return PinSlow(count);
     }
     const bytes_view bytes{_pos, count};
     _pos += count;
@@ -295,33 +297,15 @@ class BasicInput {
   }
   IRS_FORCE_INLINE Pinned Pin(uint64_t offset, uint64_t count) const {
     const auto length = static_cast<uint64_t>(_end - _begin);
-    if constexpr (Blocks) {
-      if (_block.pinned || offset > length || count > length - offset)
-        [[unlikely]] {
-        return PinSlow(offset, count);
-      }
-    } else if (offset > length || count > length - offset) [[unlikely]] {
-      ThrowPastEnd(_file, offset, length);
+    if constexpr (Contiguous) {
+      SDB_ASSERT(offset <= length && count <= length - offset);
+    } else if (_block.pinned || offset > length || count > length - offset)
+      [[unlikely]] {
+      return PinSlow(offset, count);
     }
     return {.bytes = {_begin + offset, count}};
   }
 
-  bytes_view Span() const noexcept {
-    if (Whole()) {
-      return Window();
-    }
-    return {};
-  }
-  bytes_view Window() const noexcept {
-    return {_begin, static_cast<size_t>(_end - _begin)};
-  }
-  bool Whole() const noexcept {
-    if constexpr (Blocks) {
-      return !_block.pinned && (_begin != _end || Length() == 0);
-    } else {
-      return true;
-    }
-  }
   const InputFile* File() const noexcept { return _file; }
 
  private:
@@ -344,7 +328,7 @@ class BasicInput {
 
   template<typename T>
   IRS_FORCE_INLINE T ReadFixed() {
-    if constexpr (Blocks) {
+    if constexpr (!Contiguous) {
       if (Remain() < sizeof(T)) [[unlikely]] {
         return ReadFixedSlow<T>();
       }
@@ -354,7 +338,7 @@ class BasicInput {
 
   template<typename T>
   IRS_FORCE_INLINE T ReadVarint() {
-    if constexpr (Blocks) {
+    if constexpr (!Contiguous) {
       if (Remain() < bytes_io<T>::kMaxVSize) [[unlikely]] {
         return ReadVarintSlow<T>();
       }
@@ -382,7 +366,7 @@ class BasicInput {
   }
 
   IRS_NO_INLINE Pinned PinSlow(uint64_t count) {
-    if (Whole()) {
+    if (_file == nullptr) {
       ThrowPastEnd(_file, Position(), Length());
     }
     auto pinned = _file->Pin(Position(), count);
@@ -391,15 +375,15 @@ class BasicInput {
   }
 
   IRS_NO_INLINE Pinned PinSlow(uint64_t offset, uint64_t count) const {
-    if (Whole()) {
+    if (_file == nullptr) {
       ThrowPastEnd(_file, offset, Length());
     }
     return _file->Pin(offset, count);
   }
 
   IRS_NO_INLINE void ReadDataSlow(byte_type* b, uint64_t count) {
-    if constexpr (Blocks) {
-      if (!Whole()) {
+    if constexpr (!Contiguous) {
+      if (_file != nullptr) {
         const auto at = Position();
         const auto from = at + Remain();
         const auto to = at + count;
@@ -426,7 +410,7 @@ class BasicInput {
   }
 
   void SeekOutside(uint64_t position) {
-    if (Whole()) {
+    if (_file == nullptr) {
       _pos = _end;
       return;
     }
@@ -438,11 +422,8 @@ class BasicInput {
   }
 
   bool Refill(bool ahead) {
-    if (Whole()) {
-      return false;
-    }
     const auto position = Position();
-    if (position >= _file->Length()) {
+    if (_file == nullptr || position >= _file->Length()) {
       return false;
     }
     const auto window = _file->Refill(position, _block, ahead);
@@ -456,17 +437,26 @@ class BasicInput {
   const byte_type* _pos = nullptr;
   const byte_type* _end = nullptr;
   const InputFile* _file = nullptr;
-  [[no_unique_address]] utils::Need<Blocks, CursorBlock> _block;
+  [[no_unique_address]] utils::Need<!Contiguous, CursorBlock> _block;
 };
 
-using BytesViewInput = BasicInput<false>;
-using IndexInput = BasicInput<true>;
+using BytesViewInput = BasicInput<true>;
+using IndexInput = BasicInput<false>;
 
 static_assert(sizeof(BytesViewInput) == 4 * sizeof(void*));
 
 template<typename F>
-auto ResolveInput(const IndexInput& in, F&& f) {
-  if (in.Whole()) {
+auto ResolveInput(const InputFile& file, F&& f) {
+  if (file.Contiguous()) {
+    return f.template operator()<BytesViewInput>();
+  }
+  return f.template operator()<IndexInput>();
+}
+
+template<typename F>
+auto ResolveInput(const InputFile& doc, const InputFile& pos,
+                  const InputFile* pay, F&& f) {
+  if (doc.Contiguous() && pos.Contiguous() && (!pay || pay->Contiguous())) {
     return f.template operator()<BytesViewInput>();
   }
   return f.template operator()<IndexInput>();

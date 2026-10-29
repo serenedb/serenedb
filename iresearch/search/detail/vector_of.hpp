@@ -43,7 +43,7 @@ struct ClusterFeed {
   bool has_centroids;
 
   using Args =
-    std::tuple<const PostingMeta&, const IndexInput&,
+    std::tuple<const PostingMeta&, const InputFile&,
                std::unique_ptr<QuantizerReader>, VectorBlockReader, uint32_t>;
 
   Args operator()(size_t c) const {
@@ -52,7 +52,7 @@ struct ClusterFeed {
     const float* centroid =
       has_centroids ? state->cluster_centroids.data() + c * state->d : nullptr;
     quantizer->StartCluster(centroid);
-    VectorBlockReader pay{state->payload, quantizer->BlockSetting()};
+    VectorBlockReader pay{*state->payload, quantizer->BlockSetting()};
     pay.Reset(state->pay_starts[c]);
     return Args{state->cookies[c], *detail::DocOf(*state->reader),
                 std::move(quantizer), std::move(pay), state->pay_lanes[c]};

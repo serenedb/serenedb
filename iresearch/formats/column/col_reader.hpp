@@ -69,10 +69,10 @@ class ColReader final {
   const NormColumnReader* NormColumn(field_id id) const noexcept;
   ReadContext& Ctx() noexcept { return _ctx; }
 
-  IndexInput ReopenIn() const { return _ctx.In(); }
+  const InputFile* File() const noexcept { return _file.get(); }
   void PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
-    if (const auto* file = _ctx.In().File()) {
-      file->PrefetchExtents(extents);
+    if (_file) {
+      _file->PrefetchExtents(extents);
     }
   }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }

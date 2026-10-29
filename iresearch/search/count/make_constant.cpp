@@ -60,7 +60,7 @@ class TermRange : public detail::PostingBatch<InputType, false> {
   using Base::SkipFreqs;
 
  public:
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                IndexFeatures layout, bool bounds, bool freq) {
     _docs_count = meta.docs_count;
     this->SetFreqLen(freq);

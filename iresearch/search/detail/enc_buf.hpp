@@ -47,11 +47,11 @@ struct HoleBuf {
 };
 
 template<typename InputType>
-using NeedEnc = utils::Need<!InputType::kSpan, EncBuf>;
+using NeedEnc = utils::Need<!InputType::kContiguous, EncBuf>;
 
 template<typename InputType, typename Enc>
 IRS_FORCE_INLINE uint32_t* EncOf(Enc& enc) noexcept {
-  if constexpr (InputType::kSpan) {
+  if constexpr (InputType::kContiguous) {
     return nullptr;
   } else {
     return enc.data;

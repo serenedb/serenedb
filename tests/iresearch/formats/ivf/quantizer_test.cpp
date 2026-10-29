@@ -116,7 +116,7 @@ uint64_t EncodeCluster(QuantizerWriter& writer, IndexOutput& out,
 bstring ReadPayload(MemoryFile& file, uint64_t start, uint64_t end) {
   bstring payload(end - start, 0);
   const auto file_bytes = tests::Bytes(file);
-  BytesViewInput in{file_bytes};
+  IndexInput in{file_bytes};
   in.ReadData(start, payload.data(), payload.size());
   return payload;
 }
@@ -221,7 +221,7 @@ class ClusterScorer {
   std::unique_ptr<QuantizerReader> _qr;
   PayloadBlockSetting _setting;
   bstring _bytes;
-  BytesViewInput _in;
+  IndexInput _in;
   std::vector<byte_type> _buf;
   uint64_t _base;
   size_t _lane0;
@@ -336,7 +336,7 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
   bstring stored(n * d * sizeof(float), 0);
   {
     const auto file_bytes = tests::Bytes(file);
-    BytesViewInput in{file_bytes};
+    IndexInput in{file_bytes};
     in.ReadData(pay_start, stored.data(), stored.size());
   }
   EXPECT_EQ(std::memcmp(stored.data(), points.data(), stored.size()), 0);

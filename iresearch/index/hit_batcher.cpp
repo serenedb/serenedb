@@ -333,7 +333,7 @@ void HitBatcher::PrefetchColumns(uint64_t anchor, duckdb::idx_t span) {
   if (!_prefetch) {
     return;
   }
-  const auto* file = _ctx ? _ctx->In().File() : nullptr;
+  const auto* file = _ctx ? _ctx->File() : nullptr;
   if (!file) {
     return;
   }

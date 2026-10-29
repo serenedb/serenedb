@@ -85,7 +85,7 @@ inline constexpr FoldEmit kFoldEmit<docs::Root::ptr>{0.0, 1.0, true};
 
 template<>
 inline docs::Root::ptr MakeBitsetNode<docs::Root::ptr>(BitsetBuckets&& buckets,
-                                                       const IndexInput& doc,
+                                                       const InputFile& doc,
                                                        doc_id_t docs_count,
                                                        TableFilter*) {
   return memory::make_managed<docs::BooleanBitset>(

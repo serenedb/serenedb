@@ -47,12 +47,12 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
  public:
   PostingProbe() = default;
 
-  PostingProbe(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingProbe(const PostingMeta& meta, const InputFile& doc_in,
                IndexFeatures layout, bool bounds) {
     Prepare(meta, doc_in, layout, bounds);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                IndexFeatures layout, bool bounds) {
     SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(FeaturesHaveFreq(layout));

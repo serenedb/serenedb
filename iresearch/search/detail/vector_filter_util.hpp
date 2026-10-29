@@ -81,10 +81,11 @@ inline bool PrepareVectorState(
     return false;
   }
 
-  auto idx_in = segment.ReopenAnn();
-  if (!idx_in) {
+  const auto* ann = segment.AnnFile();
+  if (!ann) {
     return false;
   }
+  IndexInput idx_in{*ann};
 
   const auto d = static_cast<uint32_t>(ivf.Dim());
 
@@ -116,7 +117,7 @@ inline bool PrepareVectorState(
     return false;
   }
 
-  state.payload = postings->ReopenPayload();
+  state.payload = postings->Handles().pay;
   if (!state.payload) {
     return false;
   }

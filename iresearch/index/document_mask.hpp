@@ -28,10 +28,10 @@
 #include <memory>
 #include <roaring/roaring.hh>
 
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -76,7 +76,7 @@ class DocumentMask final {
 
   friend bool operator==(const DocumentMask& lhs, const DocumentMask& rhs);
 
-  static DocumentMask ReadFrozen(IndexInput& in, uint64_t size);
+  static DocumentMask ReadFrozen(bytes_view bytes);
 
   size_t FrozenSize() const noexcept { return _set.getFrozenSizeInBytes(); }
 

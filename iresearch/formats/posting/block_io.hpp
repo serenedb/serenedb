@@ -59,14 +59,9 @@ IRS_FORCE_INLINE inline void PrefetchStream(const byte_type* at) noexcept {
 }
 
 template<typename InputType>
-IRS_FORCE_INLINE InputType* View(InputType& in) noexcept {
-  return in.Whole() ? &in : nullptr;
-}
-
-template<typename InputType>
 struct Encoded {
   const byte_type* begin;
-  InputType* view;
+  InputType* in;
 };
 
 template<typename InputType, typename Prefix, typename Size>
@@ -93,17 +88,16 @@ const byte_type* FetchStraddling(InputType& in, uint32_t* buf, Prefix&& prefix,
 template<typename InputType, typename Prefix, typename Size>
 IRS_FORCE_INLINE Encoded<InputType> Begin(InputType& in, uint32_t* buf,
                                           Prefix&& prefix, Size&& size) {
-  if (auto* view = View(in)) {
-    return {view->Current(), view};
+  if constexpr (InputType::kContiguous) {
+    return {in.Current(), &in};
+  } else if (const auto* window =
+               in.Peek(block_codec::kMaxBlockBytes + block_codec::kInSlack)) {
+    return {window, &in};
+  } else {
+    return {FetchStraddling(in, buf, std::forward<Prefix>(prefix),
+                            std::forward<Size>(size)),
+            nullptr};
   }
-  if (const auto* window =
-        in.Peek(block_codec::kMaxBlockBytes + block_codec::kInSlack)) {
-    in.Consume(size(window));
-    return {window, nullptr};
-  }
-  return {FetchStraddling(in, buf, std::forward<Prefix>(prefix),
-                          std::forward<Size>(size)),
-          nullptr};
 }
 
 template<typename InputType>
@@ -119,16 +113,18 @@ IRS_FORCE_INLINE Encoded<InputType> BeginDelta(InputType& in, uint32_t* buf,
 template<typename InputType>
 IRS_FORCE_INLINE void End(Encoded<InputType> encoded,
                           const byte_type* end) noexcept {
-  if (encoded.view) {
+  if constexpr (InputType::kContiguous) {
     PrefetchStream(end);
-    encoded.view->Consume(static_cast<uint64_t>(end - encoded.begin));
+  }
+  if (encoded.in) {
+    encoded.in->Consume(static_cast<uint64_t>(end - encoded.begin));
   }
 }
 
 template<typename InputType, typename Prefix, typename Size>
 IRS_FORCE_INLINE void Pass(InputType& in, Prefix&& prefix, Size&& size) {
-  if (auto* view = View(in)) {
-    view->Consume(size(view->Current()));
+  if constexpr (InputType::kContiguous) {
+    in.Consume(size(in.Current()));
   } else if (const auto* window =
                in.Peek(block_codec::kMaxBlockBytes + block_codec::kInSlack)) {
     in.Consume(size(window));

@@ -43,7 +43,7 @@ const AnnIndex* SegmentReader::Ann(field_id field) const {
   return _impl->Ann(field);
 }
 
-IndexInput SegmentReader::ReopenAnn() const { return _impl->ReopenAnn(); }
+const InputFile* SegmentReader::AnnFile() const { return _impl->AnnFile(); }
 
 const ColReader* SegmentReader::GetColReader() const {
   return _impl ? _impl->GetColReader() : nullptr;

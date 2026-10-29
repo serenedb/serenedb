@@ -135,7 +135,7 @@ inline bool PlanExcludeFills(const ExcludeFills& fills, BitsetBuckets& out) {
 inline bool TakeExclusionFold(const BitsetBuckets& buckets,
                               const ExcludeFills& fills, const FoldEmit& emit,
                               const ExcludeCosts<PostingClause>& exclusion,
-                              const IndexInput& doc, doc_id_t docs_count,
+                              const InputFile& doc, doc_id_t docs_count,
                               uint64_t candidates) noexcept {
   if (fills.children.empty() && buckets.masked == nullptr &&
       !buckets.NeedsSet() && !buckets.DenseLead(docs_count)) {

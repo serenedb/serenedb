@@ -42,7 +42,7 @@ class ReadContext final : public BlockManager,
  public:
   explicit ReadContext(duckdb::DatabaseInstance& db) noexcept;
   explicit ReadContext(const ColReader& reader, bool random_access = false);
-  ReadContext(duckdb::DatabaseInstance& db, IndexInput in);
+  ReadContext(duckdb::DatabaseInstance& db, const InputFile* file);
   ~ReadContext() final;
 
   ReadContext(const ReadContext&) = delete;
@@ -52,9 +52,7 @@ class ReadContext final : public BlockManager,
 
   void Reset(const ColReader& reader);
 
-  IndexInput& In() noexcept { return _in; }
-  const IndexInput& In() const noexcept { return _in; }
-  bool HasIn() const noexcept { return static_cast<bool>(_in); }
+  const InputFile* File() const noexcept { return _file; }
   bool RandomAccess() const noexcept { return _random_access; }
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
@@ -89,8 +87,9 @@ class ReadContext final : public BlockManager,
   duckdb::idx_t TotalBlocks() final;
 
  private:
-  void ResetMapping();
+  void ResetFile(const InputFile* file);
 
+  const InputFile* _file = nullptr;
   IndexInput _in;
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;

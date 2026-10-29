@@ -155,15 +155,12 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
 ColReader::ColReader(duckdb::DatabaseInstance& db,
                      std::string_view segment_name,
                      std::unique_ptr<InputFile> file)
-  : _db{&db},
-    _file{std::move(file)},
-    _ctx{db, _file ? IndexInput{*_file} : IndexInput{}} {
-  if (!_ctx.HasIn()) {
+  : _db{&db}, _file{std::move(file)}, _ctx{db, _file.get()} {
+  if (!_file) {
     return;
   }
-  IndexInput fin{_ctx.In()};
   format_utils::ReadFooter(
-    fin, FileName(segment_name),
+    *_file, FileName(segment_name),
     [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
       footer.Set<duckdb::DatabaseInstance&>(db);
       footer.ReadOptionalList(
@@ -186,7 +183,7 @@ ColReader::ColReader(duckdb::DatabaseInstance& db,
             const auto id =
               static_cast<field_id>(obj.ReadProperty<uint64_t>(0, "id"));
             auto column = std::make_unique<NormColumnReader>(
-              id, DeserializeNormMeta(obj, id, data_size), _ctx.In());
+              id, DeserializeNormMeta(obj, id, data_size), *_file);
             const bool ok = _norm_by_id.emplace(id, column.get()).second;
             SDB_ENSURE(ok, ".col footer: duplicate norm field_id ", id);
             _norm_columns.push_back(std::move(column));

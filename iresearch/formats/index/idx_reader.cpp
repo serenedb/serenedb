@@ -44,7 +44,6 @@ namespace irs {
 
 struct IdxReader::Impl {
   std::unique_ptr<InputFile> file;
-  IndexInput in;
   std::vector<std::pair<field_id, std::unique_ptr<AnnIndex>>> ann_entries;
   irs::containers::FlatHashMap<field_id, size_t> ann_by_id;
   std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
@@ -59,10 +58,9 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
   }
   const auto filename = FileName(segment_name, kIdxFormatExt);
   _impl->file = dir.Open(filename, duckdb::MappedFileAccess::SEQUENTIAL);
-  _impl->in = IndexInput{*_impl->file};
 
   format_utils::ReadFooter(
-    _impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+    *_impl->file, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
       footer.ReadOptionalList(
         kIdxFieldTermDict, "term_dict",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -102,7 +100,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
             _impl->ann_ends.push_back(tree_offset + tree_byte_size);
             _impl->ann_ends.push_back(stats_offset + stats_byte_size);
 
-            IndexInput body{_impl->in};
+            IndexInput body{*_impl->file};
             body.Seek(tree_offset);
             auto entry = CentroidsTree::Deserialize(body, tree_byte_size);
             entry.SetQuantStatsLocation(stats_offset, stats_byte_size);
@@ -122,7 +120,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
             const auto byte_size = obj.ReadProperty<uint64_t>(2, "byte_size");
             _impl->ann_ends.push_back(offset + byte_size);
 
-            IndexInput body{_impl->in};
+            IndexInput body{*_impl->file};
             body.Seek(offset);
             auto header = HnswIndex::ReadHeader(body);
 
@@ -160,6 +158,6 @@ std::span<const uint64_t> IdxReader::AnnEnds() const noexcept {
   return _impl->ann_ends;
 }
 
-IndexInput IdxReader::ReopenIn() const { return _impl->in; }
+const InputFile* IdxReader::File() const noexcept { return _impl->file.get(); }
 
 }  // namespace irs

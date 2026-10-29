@@ -429,7 +429,7 @@ class BlockCursor {
     const auto flags = in.Pin(_offs, 1).bytes[0];
     const auto data = _offs + 1 + BlockIndex::Pad(_offs + 1);
     const auto bytes = BlockIndex::Bytes(blocks, _shape, flags);
-    if constexpr (InputType::kSpan) {
+    if constexpr (InputType::kContiguous) {
       const auto extent = data + bytes - _offs;
       if (const auto* file = in.File();
           file && extent > kPrefetchBytes &&

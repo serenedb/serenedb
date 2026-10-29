@@ -31,7 +31,7 @@
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_features.hpp"
-#include "iresearch/store/data_input.hpp"  // IndexInput
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bytes_utils.hpp"  // bstring
@@ -87,7 +87,7 @@ class IdxReader final {
 
   std::span<const uint64_t> AnnEnds() const noexcept;
 
-  IndexInput ReopenIn() const;
+  const InputFile* File() const noexcept;
 
  private:
   struct Impl;

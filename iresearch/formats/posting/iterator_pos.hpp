@@ -30,13 +30,13 @@
 namespace irs {
 
 struct DocState {
-  const IndexInput* pos_in;
-  const IndexInput* pay_in;
+  const InputFile* pos_in;
+  const InputFile* pay_in;
   const PostingMeta* term_state;
   uint32_t* enc_buf;
 };
 
-template<typename IteratorTraits>
+template<typename IteratorTraits, typename InputType>
 class PositionImpl final : public PosAttr {
  public:
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -137,13 +137,10 @@ class PositionImpl final : public PosAttr {
 
   // prepares iterator to work
   void Prepare(const DocState& state) {
-    if (!_pos.Opened()) {
+    if (!_pos.in) {
+      _pos.in = InputType{*state.pos_in};
       if constexpr (IteratorTraits::Offset()) {
-        const bool whole = state.pos_in->Whole() && state.pay_in->Whole();
-        _pos.Open(*state.pos_in, whole);
-        _pay.Open(*state.pay_in, whole);
-      } else {
-        _pos.Open(*state.pos_in, state.pos_in->Whole());
+        _pay.in = InputType{*state.pay_in};
       }
     }
     _pos.hint.Arm(state.term_state->pos_start,
@@ -179,64 +176,42 @@ class PositionImpl final : public PosAttr {
 
  private:
   struct Stream {
-    void Open(const IndexInput& source, bool whole) {
-      viewed = whole;
-      if (viewed) {
-        view = BytesViewInput{source};
-      } else {
-        in = source;
-      }
-    }
-
-    bool Opened() const noexcept {
-      return viewed ? static_cast<bool>(view) : static_cast<bool>(in);
-    }
-
-    template<auto Input>
     void Load() {
-      auto& input = this->*Input;
-      hint.Advance(input, group);
-      input.Seek(group);
-      ReadHeader(input);
+      hint.Advance(in, group);
+      in.Seek(group);
+      ReadHeader();
     }
 
-    template<auto Input>
     void Hop() {
       group = PosGroup::Next(group, header);
-      Load<Input>();
+      Load();
     }
 
-    template<auto Input>
     void Step() {
       group = PosGroup::Next(group, header);
-      auto& input = this->*Input;
-      SDB_ASSERT(input.Position() == group);
-      ReadHeader(input);
+      SDB_ASSERT(in.Position() == group);
+      ReadHeader();
     }
 
-    template<typename Input>
-    void ReadHeader(Input& input) {
-      if constexpr (Input::kSpan) {
-        header = input.Current();
-        input.Skip(PosGroup::kHeaderBytes);
+    void ReadHeader() {
+      if constexpr (InputType::kContiguous) {
+        header = in.Current();
+        in.Consume(PosGroup::kHeaderBytes);
       } else {
-        input.ReadData(copy, PosGroup::kHeaderBytes);
+        in.ReadData(copy, PosGroup::kHeaderBytes);
         header = copy;
       }
     }
 
-    template<auto Input>
     void SeekBlock(uint32_t block) {
-      (this->*Input)
-        .Seek(group + PosGroup::kHeaderBytes + PosGroup::Start(header, block));
+      in.Seek(group + PosGroup::kHeaderBytes + PosGroup::Start(header, block));
     }
 
-    IndexInput in;
-    BytesViewInput view;
-    bool viewed = false;
+    InputType in;
     uint64_t group = 0;
     const byte_type* header = nullptr;
-    byte_type copy[PosGroup::kHeaderBytes];
+    [[no_unique_address]] utils::Need<!InputType::kContiguous,
+                                      byte_type[PosGroup::kHeaderBytes]> copy;
     GrowingHint hint;
   };
 
@@ -270,31 +245,22 @@ class PositionImpl final : public PosAttr {
   }
 
   void Enter(uint64_t block) {
-    if (_pos.viewed) [[likely]] {
-      EnterFrom<&Stream::view>(block);
-    } else {
-      EnterFrom<&Stream::in>(block);
-    }
-  }
-
-  template<auto Input>
-  void EnterFrom(uint64_t block) {
     if (_pos.header == nullptr) {
-      _pos.template Load<Input>();
+      _pos.Load();
       if constexpr (IteratorTraits::Offset()) {
-        _pay.template Load<Input>();
+        _pay.Load();
       }
     }
     for (; block >= PosGroup::kBlocks; block -= PosGroup::kBlocks) {
-      _pos.template Hop<Input>();
+      _pos.Hop();
       if constexpr (IteratorTraits::Offset()) {
-        _pay.template Hop<Input>();
+        _pay.Hop();
       }
     }
     _next = static_cast<uint32_t>(block);
-    _pos.template SeekBlock<Input>(_next);
+    _pos.SeekBlock(_next);
     if constexpr (IteratorTraits::Offset()) {
-      _pay.template SeekBlock<Input>(_next);
+      _pay.SeekBlock(_next);
     }
   }
 
@@ -331,35 +297,25 @@ class PositionImpl final : public PosAttr {
   }
 
   void ReadBlock() {
-    if (_pos.viewed) [[likely]] {
-      ReadBlockFrom<&Stream::view>();
-    } else {
-      ReadBlockFrom<&Stream::in>();
-    }
-  }
-
-  template<auto Input>
-  IRS_FORCE_INLINE void ReadBlockFrom() {
     if (_pos.header == nullptr) [[unlikely]] {
-      EnterFrom<Input>(_next);
+      Enter(_next);
     } else if (_next == PosGroup::kBlocks) [[unlikely]] {
-      _pos.template Step<Input>();
+      _pos.Step();
       if constexpr (IteratorTraits::Offset()) {
-        _pay.template Step<Input>();
+        _pay.Step();
       }
       _next = 0;
     }
-    Decode<Input>();
+    Decode();
     ++_next;
   }
 
-  template<auto Input>
   IRS_FORCE_INLINE void Decode() {
-    auto& pos = _pos.*Input;
+    auto& pos = _pos.in;
     _pos.hint.Advance(pos, pos.Position());
     block_io::ReadBlock(pos, _enc_buf, _pos_deltas);
     if constexpr (IteratorTraits::Offset()) {
-      auto& pay = _pay.*Input;
+      auto& pay = _pay.in;
       _pay.hint.Advance(pay, pay.Position());
       block_io::ReadBlock(pay, _enc_buf, _offs_start_deltas);
       block_io::ReadBlock(pay, _enc_buf, _offs_lengths);
@@ -386,7 +342,7 @@ class PositionImpl final : public PosAttr {
 };
 
 // use base PosAttr type for ancestors
-template<typename IteratorTraits>
-struct Type<PositionImpl<IteratorTraits>> : Type<PosAttr> {};
+template<typename IteratorTraits, typename InputType>
+struct Type<PositionImpl<IteratorTraits, InputType>> : Type<PosAttr> {};
 
 }  // namespace irs

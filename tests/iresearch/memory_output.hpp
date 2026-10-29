@@ -20,11 +20,14 @@
 
 #pragma once
 
+#include <duckdb/common/memory_mapped_file.hpp>
+#include <iresearch/store/data_input.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/resource_manager.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iterator>
+#include <memory>
 #include <utility>
 
 namespace irs {
@@ -99,6 +102,27 @@ namespace tests {
 
 inline irs::bstring Bytes(const irs::MemoryFile& file) {
   return irs::bstring{file.Bytes()};
+}
+
+class BytesMapping final : public duckdb::MemoryMappedFile {
+ public:
+  explicit BytesMapping(irs::bytes_view bytes)
+    : MemoryMappedFile{{},
+                       duckdb::FileOpenFlags::FILE_FLAGS_READ,
+                       const_cast<duckdb::data_ptr_t>(bytes.data()),
+                       static_cast<duckdb::idx_t>(bytes.size())} {}
+
+  void Sync() final {}
+  bool Trim(duckdb::idx_t /*offset*/, duckdb::idx_t /*length*/) final {
+    return false;
+  }
+  bool OnDiskFile() const final { return false; }
+  void Close() final {}
+};
+
+inline std::unique_ptr<irs::InputFile> OpenBytes(irs::bytes_view bytes) {
+  return std::make_unique<irs::InputFile>(
+    std::make_unique<BytesMapping>(bytes));
 }
 
 }  // namespace tests

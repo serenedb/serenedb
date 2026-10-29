@@ -117,8 +117,8 @@ TEST_F(IndexInputTest, peek_refills_an_empty_window_and_reads_cross_blocks) {
   cache.SetUnbackedSize(*file, 3 * kBlock);
 
   const irs::InputFile blocks{cache, file};
+  ASSERT_FALSE(blocks.Contiguous());
   irs::IndexInput in{blocks};
-  ASSERT_FALSE(in.Whole());
   in.Seek(kBlock + 10);
   const auto* inside = in.Peek(kRead);
   ASSERT_NE(nullptr, inside);
@@ -138,17 +138,18 @@ TEST_F(IndexInputTest, peek_refills_an_empty_window_and_reads_cross_blocks) {
   EXPECT_ANY_THROW(in.ReadI32());
 }
 
-TEST_F(IndexInputTest, span_cursor_reads_a_whole_cursor_in_place) {
+TEST_F(IndexInputTest, checked_cursor_over_bytes_stops_at_their_end) {
   const irs::bstring bytes{irs::byte_type{1}, irs::byte_type{2},
                            irs::byte_type{3}};
-  const irs::IndexInput whole{bytes};
-  ASSERT_TRUE(whole.Whole());
-  irs::BytesViewInput view{whole};
-  EXPECT_EQ(1, view.ReadByte());
-  EXPECT_EQ(1, view.Position());
-  EXPECT_EQ(3, view.Length());
-  EXPECT_EQ(bytes, irs::bstring{view.Span()});
-  EXPECT_ANY_THROW(view.Pin(2, 2));
+  irs::IndexInput in{bytes};
+  EXPECT_EQ(1, in.ReadByte());
+  EXPECT_EQ(1, in.Position());
+  EXPECT_EQ(3, in.Length());
+  EXPECT_EQ(3, in.Pin(2, 1).bytes[0]);
+  EXPECT_ANY_THROW(in.Pin(2, 2));
+  EXPECT_ANY_THROW(in.ReadI32());
+  in.Seek(5);
+  EXPECT_ANY_THROW(in.ReadByte());
 }
 
 }  // namespace

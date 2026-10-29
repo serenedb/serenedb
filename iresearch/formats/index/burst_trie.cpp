@@ -1209,8 +1209,8 @@ BlockIterator::BlockIterator(byte_weight&& header, size_t prefix) noexcept
 
 void BlockIterator::Load(IndexInput& in) {
   SDB_ASSERT(_dirty);
-  if (in.Whole()) {
-    BytesViewInput view{in};
+  if (const auto& file = *in.File(); file.Contiguous()) {
+    BytesViewInput view{file};
     LoadFrom(view);
   } else {
     LoadFrom(in);
@@ -1568,10 +1568,10 @@ class TermIteratorBase {
   using StateidT = typename FST::StateId;
 
   TermIteratorBase(const TermReaderBase& field, PostingsReader& postings,
-                   const IndexInput& terms_in, const FST& fst)
+                   const InputFile& terms, const FST& fst)
     : _field{&field},
       _postings{&postings},
-      _terms_in{terms_in},
+      _terms_in{terms},
       _fst{&fst},
       _matcher{&fst} {}
 
@@ -1981,8 +1981,8 @@ class AcceptorTermIterator : public SeekTermIterator,
   using State = typename A::State;
 
   AcceptorTermIterator(const TermReaderBase& field, PostingsReader& postings,
-                       const IndexInput& terms_in, const FST& fst, const A& a)
-    : Base{field, postings, terms_in, fst}, _a{&a} {
+                       const InputFile& terms, const FST& fst, const A& a)
+    : Base{field, postings, terms, fst}, _a{&a} {
     if constexpr (A::kHasPayload) {
       _pay.value = {&_payload, sizeof(typename A::PayloadType)};
     }
@@ -2638,10 +2638,8 @@ template<typename FST>
 class SingleTermLookup {
  public:
   SingleTermLookup(const TermReaderBase& field, PostingsReader& postings,
-                   const IndexInput& terms_in, const FST& fst) noexcept
-    : _terms_in{terms_in}, _postings{&postings}, _field{&field}, _fst{&fst} {
-    SDB_ASSERT(_terms_in);
-  }
+                   const InputFile& terms, const FST& fst) noexcept
+    : _terms_in{terms}, _postings{&postings}, _field{&field}, _fst{&fst} {}
 
   bool seek(bytes_view term);
 
@@ -2757,7 +2755,7 @@ class FieldReader::Impl {
 
     SeekTermIterator::ptr iterator() const final {
       return memory::make_managed<TermIteratorImpl<FST>>(
-        *this, _owner->_pr, _owner->_terms_in, *_fst);
+        *this, _owner->_pr, *_owner->_terms, *_fst);
     }
 
     PostingMeta Lookup(bytes_view term) const final {
@@ -2766,7 +2764,7 @@ class FieldReader::Impl {
         return {};
       }
 
-      SingleTermLookup<FST> it{*this, _owner->_pr, _owner->_terms_in, *_fst};
+      SingleTermLookup<FST> it{*this, _owner->_pr, *_owner->_terms, *_fst};
 
       if (!it.seek(term)) {
         return {};
@@ -2781,8 +2779,7 @@ class FieldReader::Impl {
       }
       bool fetching = false;
       VisitTermBlock(*_fst, term, [&](const BlockIterator& block) {
-        fetching |=
-          Hint(_owner->_terms_in, block.LoadStart(), file_utils::kPage);
+        fetching |= _owner->_terms->Hint(block.LoadStart(), file_utils::kPage);
         return true;
       });
       return fetching;
@@ -2794,7 +2791,7 @@ class FieldReader::Impl {
         return;
       }
 
-      SingleTermLookup<FST> it{*this, _owner->_pr, _owner->_terms_in, *_fst};
+      SingleTermLookup<FST> it{*this, _owner->_pr, *_owner->_terms, *_fst};
 
       if (!it.seek(term)) {
         return;
@@ -2829,7 +2826,7 @@ class FieldReader::Impl {
         PrefetchBlocks();
       }
       return memory::make_managed<AcceptorTermIterator<FST, A>>(
-        *this, _owner->_pr, _owner->_terms_in, *_fst, a);
+        *this, _owner->_pr, *_owner->_terms, *_fst, a);
     }
 
     template<typename A>
@@ -2851,13 +2848,10 @@ class FieldReader::Impl {
       if (size == 0) {
         return;
       }
-      const auto* file = _owner->_terms_in.File();
-      if (file == nullptr) {
-        return;
-      }
+      const auto& file = *_owner->_terms;
       for (uint64_t i = 0; i != kBlocksProbes; ++i) {
-        if (!file->Resident(_blocks_begin + size * i / kBlocksProbes, 1)) {
-          file->Prefetch(_blocks_begin, size);
+        if (!file.Resident(_blocks_begin + size * i / kBlocksProbes, 1)) {
+          file.Prefetch(_blocks_begin, size);
           return;
         }
       }
@@ -2877,11 +2871,6 @@ class FieldReader::Impl {
 
     SeekTermIterator::ptr iterator(const FuzzyConjunction& a) const final {
       return MakeAcceptorIterator(a);
-    }
-
-    IndexInput ReopenPayload() const final {
-      SDB_ASSERT(_owner);
-      return _owner->_pr.ReopenPayload();
     }
 
     PostingsHandles Handles() const noexcept final {
@@ -2908,7 +2897,7 @@ class FieldReader::Impl {
   absl::flat_hash_map<field_id, TermReader*> _id_to_field;
   std::vector<field_id> _sorted_ids;
   PostingsReader _pr;
-  IndexInput _terms_in;
+  const InputFile* _terms = nullptr;
   IResourceManager& _resource_manager;
 };
 
@@ -2921,8 +2910,8 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
   _fields.reserve(entries.size());
   _id_to_field.reserve(entries.size());
 
-  _terms_in = state.idx->ReopenIn();
-  if (!_terms_in) {
+  _terms = state.idx->File();
+  if (!_terms) {
     SDB_ENSURE(entries.empty(), "burst_trie: TermDicts span has ",
                entries.size(), " entries but `.idx` body stream is null");
     return;
@@ -2935,9 +2924,10 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
   _pr.prepare(state, features);
 
   _sorted_ids.reserve(entries.size());
+  IndexInput in{*_terms};
   for (const auto& [id, meta] : entries) {
     auto& field = _fields.emplace_back(*this);
-    field.PrepareFromMeta(id, meta, _terms_in);
+    field.PrepareFromMeta(id, meta, in);
     auto [it, ok] = _id_to_field.emplace(id, &field);
     SDB_ENSURE(ok, ".idx footer: duplicate term-dict field_id ", id);
     _sorted_ids.push_back(id);
@@ -2956,9 +2946,7 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
       std::upper_bound(ends.begin(), ends.end(), field.BodyOffset());
     field.SetBlocksBegin(it == ends.begin() ? 0 : *std::prev(it));
   }
-  if (const auto* file = _terms_in.File()) {
-    file->Advise(duckdb::MappedFileAccess::RANDOM);
-  }
+  _terms->Advise(duckdb::MappedFileAccess::RANDOM);
 }
 
 const TermReader* FieldReader::Impl::field(field_id id) const {

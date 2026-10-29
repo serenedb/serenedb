@@ -61,12 +61,11 @@ namespace irs::detail {
 
 class VectorBlockReader {
  public:
-  VectorBlockReader(const IndexInput& in,
+  VectorBlockReader(const InputFile& file,
                     const PayloadBlockSetting& setting) noexcept
-    : _in{in},
+    : _in{file},
       _record_size{setting.record_size},
       _alignment{setting.alignment} {
-    SDB_ASSERT(_in);
     SDB_ASSERT(std::has_single_bit(_alignment));
     SDB_ASSERT(_alignment <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
   }
@@ -286,7 +285,7 @@ class VectorCluster {
  public:
   static constexpr uint32_t kRun = doc_limits::kBlockSize;
 
-  VectorCluster(const PostingMeta& meta, const IndexInput& doc_in,
+  VectorCluster(const PostingMeta& meta, const InputFile& doc_in,
                 std::unique_ptr<QuantizerReader>&& quantizer,
                 VectorBlockReader&& payload, uint32_t lane)
     : _quantizer{std::move(quantizer)},

@@ -165,7 +165,7 @@ class PostingBatch {
 
   IRS_FORCE_INLINE uint32_t* Enc() noexcept { return EncOf<InputType>(_enc); }
 
-  void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
+  void OpenInput(const PostingMeta& meta, const InputFile& doc_in,
                  bool bounds) {
     _in = OpenDocInput<InputType>(meta, doc_in);
     auto& in = In();

@@ -524,8 +524,8 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
     out.Flush();
   }
   const auto corrupt_bytes = tests::Bytes(corrupt);
-  irs::IndexInput in{corrupt_bytes};
-  const irs::NormColumnReader column{1, meta, in};
+  const auto file = tests::OpenBytes(corrupt_bytes);
+  const irs::NormColumnReader column{1, meta, *file};
   const auto reader = irs::MakePersistedNormReader(column);
   EXPECT_EQ(reader->Get(irs::doc_limits::min() + 1), 2u);
   EXPECT_ANY_THROW(reader->Get(irs::doc_limits::min()));

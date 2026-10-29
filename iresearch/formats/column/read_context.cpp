@@ -53,14 +53,12 @@ ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
 ReadContext::ReadContext(const ColReader& reader, bool random_access)
   : ReadContext{reader.Database()} {
   _random_access = random_access;
-  _in = reader.ReopenIn();
-  ResetMapping();
+  ResetFile(reader.File());
 }
 
-ReadContext::ReadContext(duckdb::DatabaseInstance& db, IndexInput in)
+ReadContext::ReadContext(duckdb::DatabaseInstance& db, const InputFile* file)
   : ReadContext{db} {
-  _in = std::move(in);
-  ResetMapping();
+  ResetFile(file);
 }
 
 ReadContext::~ReadContext() {
@@ -72,14 +70,15 @@ void ReadContext::Reset(const ColReader& reader) {
   SDB_ASSERT(_db == &reader.Database(),
              "ReadContext::Reset: Database mismatch");
   SDB_ASSERT(_live_handles == 0, "ReadContext::Reset with live block handles");
-  _in = reader.ReopenIn();
-  ResetMapping();
+  ResetFile(reader.File());
 }
 
-void ReadContext::ResetMapping() {
+void ReadContext::ResetFile(const InputFile* file) {
+  _file = file;
+  _in = file ? IndexInput{*file} : IndexInput{};
   _mapping.reset();
   _ranges.clear();
-  if (const auto span = _in.Span(); !span.empty()) {
+  if (const auto span = file ? file->Span() : bytes_view{}; !span.empty()) {
     _mapping = duckdb::make_uniq<ColMapping>(span.data(), span.size());
   }
 }
@@ -88,13 +87,16 @@ duckdb::string_t ReadContext::ReadString(duckdb::Vector& result,
                                          duckdb::block_id_t block,
                                          int32_t offset) {
   SDB_ASSERT(offset == 0);
-  _in.Seek(static_cast<uint64_t>(block));
-  const auto len = static_cast<uint32_t>(_in.ReadI32());
   if (_mapping) {
-    const auto body = _in.Pin(len);
+    BytesViewInput in{*_file};
+    in.Seek(static_cast<uint64_t>(block));
+    const auto len = static_cast<uint32_t>(in.ReadI32());
+    const auto body = in.Pin(len);
     return duckdb::string_t{reinterpret_cast<const char*>(body.bytes.data()),
                             len};
   }
+  _in.Seek(static_cast<uint64_t>(block));
+  const auto len = static_cast<uint32_t>(_in.ReadI32());
   auto out = duckdb::StringVector::EmptyString(result, len);
   _in.ReadData(reinterpret_cast<byte_type*>(out.GetDataWriteable()), len);
   out.Finalize();
@@ -139,7 +141,7 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
 
 void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
   const auto id = static_cast<size_t>(block.id);
-  SDB_ENSURE(id < _ranges.size() && _in,
+  SDB_ENSURE(id < _ranges.size() && _file,
              "ReadContext::Read: unregistered block ", block.id);
   const auto [offset, size] = _ranges[id];
   SDB_ASSERT(block.Size() >= size, "block buffer sector-rounds up");

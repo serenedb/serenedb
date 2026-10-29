@@ -214,8 +214,8 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
 
   store.ResetRequests();
   const auto in_file = files.Open("segment", duckdb::MappedFileAccess::NORMAL);
+  ASSERT_FALSE(in_file->Contiguous());
   irs::IndexInput in{*in_file};
-  ASSERT_FALSE(in.Whole());
   for (uint32_t i = 0; i != 100000; ++i) {
     ASSERT_EQ(i, static_cast<uint32_t>(in.ReadI32()));
   }

@@ -41,16 +41,16 @@ template<typename InputType, bool Bounds, bool Offs = false>
 class PostingPos {
  public:
   using PosTraits = IteratorTraitsImpl<true, true, Offs>;
-  using Position = PositionImpl<PosTraits>;
+  using Position = PositionImpl<PosTraits, InputType>;
 
   static constexpr bool kOffsets = Offs;
   static constexpr bool kDefaultInit = true;
 
   PostingPos() = default;
 
-  explicit PostingPos(const PostingMeta& meta, const IndexInput& doc_in,
-                      IndexFeatures layout, const IndexInput& pos_in,
-                      const IndexInput* pay_in) {
+  explicit PostingPos(const PostingMeta& meta, const InputFile& doc_in,
+                      IndexFeatures layout, const InputFile& pos_in,
+                      const InputFile* pay_in) {
     Prepare(meta, doc_in, layout, pos_in, pay_in);
   }
 
@@ -59,9 +59,9 @@ class PostingPos {
   PostingPos(PostingPos&&) = delete;
   PostingPos& operator=(PostingPos&&) = delete;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               IndexFeatures layout, const IndexInput& pos_in,
-               const IndexInput* pay_in) {
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
+               IndexFeatures layout, const InputFile& pos_in,
+               const InputFile* pay_in) {
     SDB_ASSERT(meta.docs_count != 0);
     SDB_ASSERT(IsSubsetOf(IndexFeatures::Pos, layout));
     SDB_ASSERT(!Offs || IsSubsetOf(IndexFeatures::Offs, layout));

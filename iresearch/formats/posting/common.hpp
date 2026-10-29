@@ -35,6 +35,7 @@
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
@@ -92,6 +93,11 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
 }
 
 inline constexpr uint64_t kMaxPrefetch = uint64_t{16} << 20;
+
+inline bool Hint(const InputFile& file, uint64_t offset,
+                 uint64_t size) noexcept {
+  return file.Hint(offset, size);
+}
 
 template<typename Input>
 bool Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {

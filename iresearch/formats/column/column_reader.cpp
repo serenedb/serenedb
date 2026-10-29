@@ -410,7 +410,7 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
 
 void ColumnReader::Readahead(size_t block, ReadContext& ctx,
                              ScanState* s) const noexcept {
-  const auto* file = ctx.In().File();
+  const auto* file = ctx.File();
   if (ctx.RandomAccess() || file == nullptr) {
     return;
   }

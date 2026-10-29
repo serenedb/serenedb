@@ -23,6 +23,7 @@
 #include <absl/strings/str_cat.h>
 #include <roaring/containers/containers.h>
 
+#include <cstring>
 #include <roaring/roaring.hh>
 #include <utility>
 
@@ -174,7 +175,8 @@ bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
                                        &lhs._set.roaring, &rhs._set.roaring);
 }
 
-DocumentMask DocumentMask::ReadFrozen(IndexInput& in, uint64_t size) {
+DocumentMask DocumentMask::ReadFrozen(bytes_view bytes) {
+  const auto size = bytes.size();
   DocumentMask mask;
   mask._frozen.reset(
     static_cast<byte_type*>(roaring_aligned_malloc(kFrozenAlignment, size)));
@@ -184,7 +186,9 @@ DocumentMask DocumentMask::ReadFrozen(IndexInput& in, uint64_t size) {
       ERR_MSG("Failed to allocate a document mask of ", size, " byte(s)"));
   }
   auto* buf = mask._frozen.get();
-  in.ReadData(0, buf, size);
+  if (size != 0) {
+    std::memcpy(buf, bytes.data(), size);
+  }
 
   const auto* view = roaring::api::roaring_bitmap_frozen_view(
     reinterpret_cast<const char*>(buf), size);

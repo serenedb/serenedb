@@ -54,7 +54,7 @@ void PrefetchDocExtents(const Input& in, Metas&& metas) {
 }
 
 template<typename InputType>
-InputType OpenDocInput(const PostingMeta& meta, const IndexInput& doc_in) {
+InputType OpenDocInput(const PostingMeta& meta, const InputFile& doc_in) {
   if (meta.inline_size != 0) {
     return InputType{meta.Inline()};
   }

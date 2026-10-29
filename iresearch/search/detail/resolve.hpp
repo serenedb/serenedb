@@ -27,7 +27,7 @@
 
 namespace irs::detail {
 
-inline const IndexInput* DocOf(const TermReader& field) noexcept {
+inline const InputFile* DocOf(const TermReader& field) noexcept {
   return field.Handles().doc;
 }
 
@@ -79,9 +79,9 @@ auto ResolveArity(size_t count, F&& f) {
 }
 
 struct PhraseHandles {
-  const IndexInput* doc = nullptr;
-  const IndexInput* pos = nullptr;
-  const IndexInput* pay = nullptr;
+  const InputFile* doc = nullptr;
+  const InputFile* pos = nullptr;
+  const InputFile* pay = nullptr;
   IndexFeatures features = IndexFeatures::None;
   bool bounds = false;
 
@@ -94,7 +94,7 @@ struct PhraseHandles {
   }
 };
 
-inline const IndexInput* SegmentDoc(const SubReader& segment) {
+inline const InputFile* SegmentDoc(const SubReader& segment) {
   for (const auto id : segment.field_ids()) {
     const auto* reader = segment.field(id);
     if (reader == nullptr) {

@@ -66,10 +66,11 @@ HnswHeader HnswIndex::ReadHeader(IndexInput& in) {
 std::shared_ptr<const HnswData> HnswIndex::Load(
   const SubReader& segment) const {
   absl::call_once(_once, [&] {
-    auto in = segment.ReopenAnn();
-    if (!in) {
+    const auto* file = segment.AnnFile();
+    if (!file) {
       return;
     }
+    IndexInput in{*file};
     in.Seek(_meta.offset);
     IRS_IGNORE(ReadHeader(in));
     auto data = std::make_shared<HnswData>();

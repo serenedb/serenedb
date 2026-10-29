@@ -76,13 +76,6 @@ const std::string& InputFile::Path() const noexcept {
   return std::get_if<CacheBlocks>(&_kind)->blocks->GetPath();
 }
 
-bytes_view InputFile::Span() const noexcept {
-  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
-    return span->bytes;
-  }
-  return {};
-}
-
 bool InputFile::Paged() const noexcept {
   const auto* span = std::get_if<MappedSpan>(&_kind);
   return span && span->paged;
@@ -90,9 +83,12 @@ bool InputFile::Paged() const noexcept {
 
 bytes_view InputFile::Refill(uint64_t position, CursorBlock& block,
                              bool ahead) const {
-  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
-  SDB_ASSERT(blocks != nullptr);
   SDB_ASSERT(position < _length);
+  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
+    block.start = 0;
+    return span->bytes;
+  }
+  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
   if (!block.pinned) {
     block.pinned = std::make_unique<CursorPin>();
   }
@@ -153,58 +149,61 @@ void InputFile::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
   }
 }
 
-bool InputFile::Warm(uint64_t offset, uint64_t size) const noexcept {
-  if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
-    return blocks->cache->IsCached(*blocks->blocks, offset, size);
-  }
+bool InputFile::Warm(const MappedSpan& span, uint64_t offset,
+                     uint64_t size) const noexcept {
   if (size == 0 || offset >= _length) {
     return false;
   }
-  const auto& residency = std::get_if<MappedSpan>(&_kind)->residency;
   const auto last =
     (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
-  return residency.Valid(file_utils::ResidencyEpoch()) &&
-         residency.Test(offset / file_utils::kPage, last);
+  return span.residency.Valid(file_utils::ResidencyEpoch()) &&
+         span.residency.Test(offset / file_utils::kPage, last);
 }
 
-void InputFile::MarkWarm(uint64_t offset, uint64_t size) const noexcept {
-  const auto* span = std::get_if<MappedSpan>(&_kind);
-  if (span == nullptr || size == 0 || offset >= _length) {
+void InputFile::MarkWarm(const MappedSpan& span, uint64_t offset,
+                         uint64_t size) const noexcept {
+  if (size == 0 || offset >= _length) {
     return;
   }
   const auto last =
     (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
   const auto epoch = file_utils::ResidencyEpoch();
-  if (span->residency.Valid(epoch) || span->residency.Adopt(epoch)) {
-    span->residency.Set(offset / file_utils::kPage, last);
+  if (span.residency.Valid(epoch) || span.residency.Adopt(epoch)) {
+    span.residency.Set(offset / file_utils::kPage, last);
   }
 }
 
 bool InputFile::Resident(uint64_t offset, uint64_t size) const noexcept {
-  const auto* span = std::get_if<MappedSpan>(&_kind);
-  if (!span) {
-    return Warm(offset, size);
+  if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
+    return blocks->cache->IsCached(*blocks->blocks, offset, size);
   }
   const auto window = SpanWindow(offset, size);
   return !window.empty() &&
-         (!span->paged || file_utils::IsResident(window.data(), window.size()));
+         (!Paged() || file_utils::IsResident(window.data(), window.size()));
 }
 
 bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
-  if (const auto* span = std::get_if<MappedSpan>(&_kind);
-      span && !span->paged) {
+  if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
+    if (blocks->cache->IsCached(*blocks->blocks, offset, size)) {
+      return false;
+    }
+    Prefetch(offset, size);
+    return true;
+  }
+  const auto& span = *std::get_if<MappedSpan>(&_kind);
+  if (!span.paged) {
     return false;
   }
-  if (Warm(offset, size)) {
+  if (Warm(span, offset, size)) {
     file_utils::PollResidency();
     return false;
   }
   const bool fetch =
     size <= file_utils::kPrefetchChunk || !Resident(offset, size);
   if (fetch) {
-    Prefetch(offset, size);
+    span.mapping->Prefetch(offset, size);
   }
-  MarkWarm(offset, size);
+  MarkWarm(span, offset, size);
   return fetch;
 }
 

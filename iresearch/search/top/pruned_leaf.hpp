@@ -86,7 +86,7 @@ class PrunedLeafBase {
   PrunedLeafBase(PrunedLeafBase&&) = delete;
   PrunedLeafBase& operator=(PrunedLeafBase&&) = delete;
 
-  bool PrepareCommon(const PostingMeta& meta, const IndexInput& doc_in,
+  bool PrepareCommon(const PostingMeta& meta, const InputFile& doc_in,
                      IndexFeatures layout, const SubReader& segment,
                      const TermReader& field, const detail::ScoreArgs& args) {
     SDB_ASSERT(meta.docs_count != 0);
@@ -153,7 +153,7 @@ class PrunedLeafBase {
       _root_score = BoundScore(_cursor.Index().Root());
     } else {
       const auto size = in.ReadByte();
-      if constexpr (InputType::kSpan) {
+      if constexpr (InputType::kContiguous) {
         _bound_source->Read(in.Pin(size).bytes);
       } else {
         byte_type bound[std::numeric_limits<byte_type>::max() +

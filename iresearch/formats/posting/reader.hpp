@@ -34,15 +34,12 @@
 
 namespace irs {
 
-inline std::unique_ptr<InputFile> PrepareInput(std::string& str, IndexInput& in,
+inline std::unique_ptr<InputFile> PrepareInput(std::string& str,
                                                const ReaderState& state,
                                                std::string_view ext) {
-  SDB_ASSERT(!in);
   irs::FileName(str, state.meta->name, ext);
   auto file = state.dir->Open(str, duckdb::MappedFileAccess::RANDOM);
-  in = IndexInput{*file};
-
-  format_utils::ReadFooter(in, str);
+  format_utils::ReadFooter(*file, str);
   return file;
 }
 
@@ -51,9 +48,8 @@ inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 class PostingsReader final {
  public:
   PostingsHandles Handles() const noexcept {
-    return {.doc = _doc_in ? &_doc_in : nullptr,
-            .pos = _pos_in ? &_pos_in : nullptr,
-            .pay = _pay_in ? &_pay_in : nullptr};
+    return {
+      .doc = _doc_file.get(), .pos = _pos_file.get(), .pay = _pay_file.get()};
   }
 
   // features - the set of features available for segment
@@ -67,8 +63,6 @@ class PostingsReader final {
                              const PostingMeta& meta, bool has_score_bounds,
                              TermPostings::ptr reuse = {}) const;
 
-  IndexInput ReopenPayload() const { return _pay_in; }
-
  private:
   template<typename FieldTraits, typename Factory>
   static auto IteratorImpl(IndexFeatures enabled, Factory&& factory);
@@ -80,9 +74,6 @@ class PostingsReader final {
   std::unique_ptr<InputFile> _doc_file;
   std::unique_ptr<InputFile> _pos_file;
   std::unique_ptr<InputFile> _pay_file;
-  IndexInput _doc_in;
-  IndexInput _pos_in;
-  IndexInput _pay_in;
 };
 
 inline void PostingsReader::prepare(const ReaderState& state,
@@ -94,14 +85,14 @@ inline void PostingsReader::prepare(const ReaderState& state,
     (features & (IndexFeatures::Offs | IndexFeatures::Vec));
 
   // prepare document input
-  _doc_file = PrepareInput(buf, _doc_in, state, PostingsWriter::kDocExt);
+  _doc_file = PrepareInput(buf, state, PostingsWriter::kDocExt);
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    _pos_file = PrepareInput(buf, _pos_in, state, PostingsWriter::kPosExt);
+    _pos_file = PrepareInput(buf, state, PostingsWriter::kPosExt);
   }
 
   if (needs_pay) {
-    _pay_file = PrepareInput(buf, _pay_in, state, PostingsWriter::kPayExt);
+    _pay_file = PrepareInput(buf, state, PostingsWriter::kPayExt);
   }
 }
 
@@ -242,18 +233,21 @@ inline TermPostings::ptr PostingsReader::Postings(
   return IteratorImpl(
     field_features, required_features,
     [&]<typename IteratorTraits, typename FieldTraits> -> TermPostings::ptr {
-      return ResolveInput(
-        _doc_in, [&]<typename InputType> -> TermPostings::ptr {
-          using Stream = PostingsStream<IteratorTraits, FieldTraits, InputType>;
-          if (!reuse) {
-            reuse = memory::make_managed<Stream>();
-          }
-          SDB_ASSERT(dynamic_cast<Stream*>(reuse.get()) != nullptr);
-          const auto handles = Handles();
-          static_cast<Stream&>(*reuse).Prepare(meta, _doc_in, handles.pos,
-                                               handles.pay, has_score_bounds);
-          return std::move(reuse);
-        });
+      const auto make = [&]<typename InputType> -> TermPostings::ptr {
+        using Stream = PostingsStream<IteratorTraits, FieldTraits, InputType>;
+        if (!reuse) {
+          reuse = memory::make_managed<Stream>();
+        }
+        SDB_ASSERT(dynamic_cast<Stream*>(reuse.get()) != nullptr);
+        static_cast<Stream&>(*reuse).Prepare(meta, *_doc_file, _pos_file.get(),
+                                             _pay_file.get(), has_score_bounds);
+        return std::move(reuse);
+      };
+      if constexpr (IteratorTraits::Position()) {
+        return ResolveInput(*_doc_file, *_pos_file, _pay_file.get(), make);
+      } else {
+        return ResolveInput(*_doc_file, make);
+      }
     });
 }
 

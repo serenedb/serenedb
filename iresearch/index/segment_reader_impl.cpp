@@ -133,11 +133,11 @@ const AnnIndex* SegmentReaderImpl::Ann(field_id field) const {
   return _data->idx_reader->Ann(field);
 }
 
-IndexInput SegmentReaderImpl::ReopenAnn() const {
+const InputFile* SegmentReaderImpl::AnnFile() const {
   if (!_data || !_data->idx_reader) {
-    return {};
+    return nullptr;
   }
-  return _data->idx_reader->ReopenIn();
+  return _data->idx_reader->File();
 }
 
 lead::Node::ptr SegmentReaderImpl::docs_iterator() const {

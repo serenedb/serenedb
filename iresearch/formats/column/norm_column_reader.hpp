@@ -97,7 +97,8 @@ struct NormRegion {
 
 class NormColumnReader final {
  public:
-  NormColumnReader(field_id id, const NormColumnMeta& meta, IndexInput& in);
+  NormColumnReader(field_id id, const NormColumnMeta& meta,
+                   const InputFile& file);
 
   field_id Id() const noexcept { return _id; }
   uint64_t RowCount() const noexcept { return _row_count; }
@@ -132,7 +133,7 @@ class NormColumnReader final {
   void Decode(doc_id_t first, size_t n, uint32_t* values) const;
 
  private:
-  const byte_type* Map(IndexInput& in, uint64_t offset, uint64_t size);
+  const byte_type* Map(const InputFile& file, uint64_t offset, uint64_t size);
 
   field_id _id;
   std::vector<NormRegion> _regions;

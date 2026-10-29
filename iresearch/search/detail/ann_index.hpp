@@ -59,6 +59,8 @@ struct VectorFilterOptions {
   HnswFilterMode hnsw_filter_mode = HnswFilterMode::Auto;
   HnswColumnFilter hnsw_column_filter = HnswColumnFilter::Auto;
   std::shared_ptr<const Filter> inner;
+  std::shared_ptr<const Filter> index_only;
+  bool dual = false;
 
   bool operator==(const VectorFilterOptions& rhs) const noexcept = default;
 };

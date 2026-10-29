@@ -20,8 +20,6 @@
 
 #include "connector/optimizer/wrap_unsupported_types.h"
 
-#include <duckdb/main/config.hpp>
-#include <duckdb/main/database.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/bound_statement.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -137,6 +135,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> WrapPlan(
   return proj;
 }
 
+}  // namespace
+
 void WrapVariantOutputs(duckdb::PlannerExtensionInput& input,
                         duckdb::BoundStatement& statement) {
   if (!statement.plan) {
@@ -167,16 +167,6 @@ void WrapVariantOutputs(duckdb::PlannerExtensionInput& input,
   }
   statement.plan = std::move(wrapped);
   statement.types = std::move(new_types);
-}
-
-}  // namespace
-
-void RegisterWrapUnsupportedTypesExtension(duckdb::DatabaseInstance& db) {
-  duckdb::PlannerExtension::Register(
-    duckdb::DBConfig::GetConfig(db),
-    duckdb::PlannerExtension{
-      .post_bind_function = &WrapVariantOutputs,
-    });
 }
 
 }  // namespace sdb::optimizer

@@ -28,11 +28,11 @@
 
 #include "connector/column_id.h"
 #include "connector/functions/vector.h"
-#include "connector/pg_logical_types.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/scan/scan_function.h"
 #include "connector/search_filter_printer.hpp"
 #include "connector/term_dict.h"
+#include "pg/types/logical.h"
 #include "search/scorer_options.h"
 
 namespace sdb::connector {
@@ -387,16 +387,19 @@ void ScanBindData::AppendSummary(
     out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
                                  *search.filter, name_of, kind_of)));
   }
+  const auto rows_text = [](std::span<const RowFilter> rows) {
+    return absl::StrJoin(rows | std::views::transform([](const RowFilter& row) {
+                           return duckdb::ExpressionFilter::GetExpressionFilter(
+                                    *row.filter, "AppendSummary")
+                             .expr->ToString();
+                         }),
+                         "\n");
+  };
+  if (!search.duals.empty()) {
+    out.insert("Index or Column Filter", rows_text(search.duals));
+  }
   if (!search.row_filters.empty()) {
-    out.insert(
-      "Row Filter",
-      absl::StrJoin(
-        search.row_filters | std::views::transform([](const RowFilter& row) {
-          return duckdb::ExpressionFilter::GetExpressionFilter(*row.filter,
-                                                               "AppendSummary")
-            .expr->ToString();
-        }),
-        "\n"));
+    out.insert("Row Filter", rows_text(search.row_filters));
   }
   if (!search.deferred.empty()) {
     out.insert("Table Filter", duckdb::ExplainValue(TableFilterNode(

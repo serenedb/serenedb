@@ -305,7 +305,6 @@ db error: ERROR: return type mismatch in function declared to return date
 DETAIL: Actual return type is boolean.
 
 
-skipif postgres # TODO(mbkkt) same as pg error
 statement error
 CREATE FUNCTION i_return_wrong_scalar_type()
 RETURNS INTEGER
@@ -315,7 +314,7 @@ BEGIN ATOMIC
 END;
 ----
 db error: ERROR: return type mismatch in function declared to return integer
-DETAIL: Actual return type is boolean.
+DETAIL: Final statement must return exactly one column.
 
 
 statement error

@@ -1,7 +1,3 @@
-halt
-
-
-# Test each implicit coercion declared in pg_functions_registration.hpp
 # Pattern: CREATE FUNCTION accepting target type, call with source type
 # TINYINT (int1) and HUGEINT don't exist in standard PG - skipped
 
@@ -134,6 +130,7 @@ statement ok
 CREATE FUNCTION coerce_to_oid(x OID) RETURNS OID AS $$ SELECT x $$ LANGUAGE sql
 
 
+skipif serenedb
 query
 SELECT coerce_to_oid(1::integer);
 ----
@@ -141,8 +138,34 @@ coerce_to_oid
 1
 
 
+onlyif serenedb
+statement error
+SELECT coerce_to_oid(1::integer);
+----
+db error: ERROR: Macro coerce_to_oid() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_oid(x oid)
+
+
+skipif serenedb
 query
 SELECT coerce_to_oid(1::bigint);
+----
+coerce_to_oid
+1
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_oid(1::bigint);
+----
+db error: ERROR: Macro coerce_to_oid() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_oid(x oid)
+
+
+query
+SELECT coerce_to_oid(1);
 ----
 coerce_to_oid
 1
@@ -230,18 +253,12 @@ statement ok
 CREATE FUNCTION coerce_to_integer2(x INTEGER) RETURNS INTEGER AS $$ SELECT x $$ LANGUAGE sql
 
 
-query error
+statement error (function coerce_to_integer2\(oid\) does not exist|Macro coerce_to_integer2\(\) does not support the supplied arguments)
 SELECT coerce_to_integer2(1::oid);
-----
-db error: ERROR: function coerce_to_integer2(oid) does not exist
-HINT: No function matches the given name and argument types. You might need to add explicit type casts.
 
 
-query error
+statement error (function coerce_to_integer2\(regclass\) does not exist|Macro coerce_to_integer2\(\) does not support the supplied arguments)
 SELECT coerce_to_integer2(1259::regclass);
-----
-db error: ERROR: function coerce_to_integer2(regclass) does not exist
-HINT: No function matches the given name and argument types. You might need to add explicit type casts.
 
 
 statement ok
@@ -253,25 +270,16 @@ statement ok
 CREATE FUNCTION coerce_to_xid(x XID) RETURNS XID AS $$ SELECT x $$ LANGUAGE sql
 
 
-query error
+statement error (function coerce_to_xid\(integer\) does not exist|Macro coerce_to_xid\(\) does not support the supplied arguments)
 SELECT coerce_to_xid(1::integer);
-----
-db error: ERROR: function coerce_to_xid(integer) does not exist
-HINT: No function matches the given name and argument types. You might need to add explicit type casts.
 
 
-query error
+statement error (function coerce_to_xid\(bigint\) does not exist|Macro coerce_to_xid\(\) does not support the supplied arguments)
 SELECT coerce_to_xid(1::bigint);
-----
-db error: ERROR: function coerce_to_xid(bigint) does not exist
-HINT: No function matches the given name and argument types. You might need to add explicit type casts.
 
 
-query error
+statement error (function coerce_to_xid\(oid\) does not exist|Macro coerce_to_xid\(\) does not support the supplied arguments)
 SELECT coerce_to_xid(1::oid);
-----
-db error: ERROR: function coerce_to_xid(oid) does not exist
-HINT: No function matches the given name and argument types. You might need to add explicit type casts.
 
 
 statement ok
@@ -283,6 +291,7 @@ statement ok
 CREATE FUNCTION coerce_to_regclass(x REGCLASS) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
 
 
+skipif serenedb
 query
 SELECT coerce_to_regclass(1259::integer);
 ----
@@ -290,11 +299,30 @@ coerce_to_regclass
 1259
 
 
+onlyif serenedb
+statement error
+SELECT coerce_to_regclass(1259::integer);
+----
+db error: ERROR: Macro coerce_to_regclass() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regclass(x regclass)
+
+
+skipif serenedb
 query
 SELECT coerce_to_regclass(1259::bigint);
 ----
 coerce_to_regclass
 1259
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_regclass(1259::bigint);
+----
+db error: ERROR: Macro coerce_to_regclass() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regclass(x regclass)
 
 
 query
@@ -314,6 +342,7 @@ statement ok
 CREATE FUNCTION coerce_to_regtype(x REGTYPE) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
 
 
+skipif serenedb
 query
 SELECT coerce_to_regtype(23::integer);
 ----
@@ -321,11 +350,30 @@ coerce_to_regtype
 23
 
 
+onlyif serenedb
+statement error
+SELECT coerce_to_regtype(23::integer);
+----
+db error: ERROR: Macro coerce_to_regtype() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regtype(x regtype)
+
+
+skipif serenedb
 query
 SELECT coerce_to_regtype(23::bigint);
 ----
 coerce_to_regtype
 23
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_regtype(23::bigint);
+----
+db error: ERROR: Macro coerce_to_regtype() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regtype(x regtype)
 
 
 query
@@ -344,6 +392,7 @@ statement ok
 CREATE FUNCTION coerce_to_regnamespace(x REGNAMESPACE) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
 
 
+skipif serenedb
 query
 SELECT coerce_to_regnamespace(11::integer);
 ----
@@ -351,11 +400,30 @@ coerce_to_regnamespace
 11
 
 
+onlyif serenedb
+statement error
+SELECT coerce_to_regnamespace(11::integer);
+----
+db error: ERROR: Macro coerce_to_regnamespace() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regnamespace(x regnamespace)
+
+
+skipif serenedb
 query
 SELECT coerce_to_regnamespace(11::bigint);
 ----
 coerce_to_regnamespace
 11
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_regnamespace(11::bigint);
+----
+db error: ERROR: Macro coerce_to_regnamespace() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regnamespace(x regnamespace)
 
 
 query
@@ -374,6 +442,7 @@ statement ok
 CREATE FUNCTION coerce_to_regproc(x REGPROC) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
 
 
+skipif serenedb
 query
 SELECT coerce_to_regproc(43::integer);
 ----
@@ -381,11 +450,30 @@ coerce_to_regproc
 43
 
 
+onlyif serenedb
+statement error
+SELECT coerce_to_regproc(43::integer);
+----
+db error: ERROR: Macro coerce_to_regproc() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regproc(x regproc)
+
+
+skipif serenedb
 query
 SELECT coerce_to_regproc(43::bigint);
 ----
 coerce_to_regproc
 43
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_regproc(43::bigint);
+----
+db error: ERROR: Macro coerce_to_regproc() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regproc(x regproc)
 
 
 query
@@ -404,6 +492,7 @@ statement ok
 CREATE FUNCTION coerce_to_regoper(x REGOPER) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
 
 
+skipif serenedb
 query
 SELECT coerce_to_regoper(97::integer);
 ----
@@ -411,11 +500,30 @@ coerce_to_regoper
 97
 
 
+onlyif serenedb
+statement error
+SELECT coerce_to_regoper(97::integer);
+----
+db error: ERROR: Macro coerce_to_regoper() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regoper(x regoper)
+
+
+skipif serenedb
 query
 SELECT coerce_to_regoper(97::bigint);
 ----
 coerce_to_regoper
 97
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_regoper(97::bigint);
+----
+db error: ERROR: Macro coerce_to_regoper() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regoper(x regoper)
 
 
 query
@@ -434,6 +542,7 @@ statement ok
 CREATE FUNCTION coerce_to_regoperator(x REGOPERATOR) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
 
 
+skipif serenedb
 query
 SELECT coerce_to_regoperator(97::integer);
 ----
@@ -441,11 +550,30 @@ coerce_to_regoperator
 97
 
 
+onlyif serenedb
+statement error
+SELECT coerce_to_regoperator(97::integer);
+----
+db error: ERROR: Macro coerce_to_regoperator() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regoperator(x regoperator)
+
+
+skipif serenedb
 query
 SELECT coerce_to_regoperator(97::bigint);
 ----
 coerce_to_regoperator
 97
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_regoperator(97::bigint);
+----
+db error: ERROR: Macro coerce_to_regoperator() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regoperator(x regoperator)
 
 
 query
@@ -464,6 +592,7 @@ statement ok
 CREATE FUNCTION coerce_to_regprocedure(x REGPROCEDURE) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
 
 
+skipif serenedb
 query
 SELECT coerce_to_regprocedure(43::integer);
 ----
@@ -471,11 +600,30 @@ coerce_to_regprocedure
 43
 
 
+onlyif serenedb
+statement error
+SELECT coerce_to_regprocedure(43::integer);
+----
+db error: ERROR: Macro coerce_to_regprocedure() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regprocedure(x regprocedure)
+
+
+skipif serenedb
 query
 SELECT coerce_to_regprocedure(43::bigint);
 ----
 coerce_to_regprocedure
 43
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_regprocedure(43::bigint);
+----
+db error: ERROR: Macro coerce_to_regprocedure() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regprocedure(x regprocedure)
 
 
 query
@@ -494,6 +642,7 @@ statement ok
 CREATE FUNCTION coerce_to_regrole(x REGROLE) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
 
 
+skipif serenedb
 query
 SELECT coerce_to_regrole(10::integer);
 ----
@@ -501,11 +650,30 @@ coerce_to_regrole
 10
 
 
+onlyif serenedb
+statement error
+SELECT coerce_to_regrole(10::integer);
+----
+db error: ERROR: Macro coerce_to_regrole() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regrole(x regrole)
+
+
+skipif serenedb
 query
 SELECT coerce_to_regrole(10::bigint);
 ----
 coerce_to_regrole
 10
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_regrole(10::bigint);
+----
+db error: ERROR: Macro coerce_to_regrole() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regrole(x regrole)
 
 
 query
@@ -524,6 +692,7 @@ statement ok
 CREATE FUNCTION coerce_to_regconfig(x REGCONFIG) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
 
 
+skipif serenedb
 query
 SELECT coerce_to_regconfig(3748::integer);
 ----
@@ -531,11 +700,30 @@ coerce_to_regconfig
 3748
 
 
+onlyif serenedb
+statement error
+SELECT coerce_to_regconfig(3748::integer);
+----
+db error: ERROR: Macro coerce_to_regconfig() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regconfig(x regconfig)
+
+
+skipif serenedb
 query
 SELECT coerce_to_regconfig(3748::bigint);
 ----
 coerce_to_regconfig
 3748
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_regconfig(3748::bigint);
+----
+db error: ERROR: Macro coerce_to_regconfig() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regconfig(x regconfig)
 
 
 query
@@ -554,6 +742,7 @@ statement ok
 CREATE FUNCTION coerce_to_regdictionary(x REGDICTIONARY) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
 
 
+skipif serenedb
 query
 SELECT coerce_to_regdictionary(3769::integer);
 ----
@@ -561,11 +750,30 @@ coerce_to_regdictionary
 3769
 
 
+onlyif serenedb
+statement error
+SELECT coerce_to_regdictionary(3769::integer);
+----
+db error: ERROR: Macro coerce_to_regdictionary() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regdictionary(x regdictionary)
+
+
+skipif serenedb
 query
 SELECT coerce_to_regdictionary(3769::bigint);
 ----
 coerce_to_regdictionary
 3769
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_regdictionary(3769::bigint);
+----
+db error: ERROR: Macro coerce_to_regdictionary() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regdictionary(x regdictionary)
 
 
 query
@@ -584,6 +792,7 @@ statement ok
 CREATE FUNCTION coerce_to_regcollation(x REGCOLLATION) RETURNS OID AS $$ SELECT x::oid $$ LANGUAGE sql
 
 
+skipif serenedb
 query
 SELECT coerce_to_regcollation(100::integer);
 ----
@@ -591,11 +800,30 @@ coerce_to_regcollation
 100
 
 
+onlyif serenedb
+statement error
+SELECT coerce_to_regcollation(100::integer);
+----
+db error: ERROR: Macro coerce_to_regcollation() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regcollation(x regcollation)
+
+
+skipif serenedb
 query
 SELECT coerce_to_regcollation(100::bigint);
 ----
 coerce_to_regcollation
 100
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_regcollation(100::bigint);
+----
+db error: ERROR: Macro coerce_to_regcollation() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_regcollation(x regcollation)
 
 
 query
@@ -621,11 +849,21 @@ coerce_to_name
 hello
 
 
+skipif serenedb
 query
 SELECT coerce_to_name('hello'::text);
 ----
 coerce_to_name
 hello
+
+
+onlyif serenedb
+statement error
+SELECT coerce_to_name('hello'::text);
+----
+db error: ERROR: Macro coerce_to_name() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	coerce_to_name(x name)
 
 
 statement ok
@@ -826,11 +1064,21 @@ test_name_coerce
 public
 
 
+skipif serenedb
 query
 SELECT test_name_coerce('public'::text);
 ----
 test_name_coerce
 public
+
+
+onlyif serenedb
+statement error
+SELECT test_name_coerce('public'::text);
+----
+db error: ERROR: Macro test_name_coerce() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	test_name_coerce(x name)
 
 
 statement ok

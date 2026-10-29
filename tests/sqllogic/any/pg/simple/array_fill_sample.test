@@ -1,0 +1,47 @@
+query
+SELECT id, array_fill(7, ARRAY[n, n]::int[]) AS a FROM (VALUES (1, 2.0)) v(id, n);
+----
+id	a
+1	{{7,7},{7,7}}
+
+query
+SELECT id, array_fill(7, ARRAY[n, n]) AS a FROM (VALUES (1, 2::int2)) v(id, n);
+----
+id	a
+1	{{7,7},{7,7}}
+
+query
+SELECT id, array_fill(7, d) AS a FROM (VALUES (1, ARRAY[2])) v(id, d);
+----
+id	a
+1	{7,7}
+
+query
+SELECT id, array_fill(7, array_append(d, 2)) AS a FROM (VALUES (1, ARRAY[]::int[])) v(id, d);
+----
+id	a
+1	{7,7}
+
+statement ok
+PREPARE array_fill_dims(int[]) AS SELECT array_fill(1, $1) AS a;
+
+query
+EXECUTE array_fill_dims(ARRAY[2]);
+----
+a
+{1,1}
+
+query
+SELECT id, array_shuffle(a) IS NULL AS s, array_sample(a, n) IS NULL AS t
+FROM (VALUES (1, ARRAY[1, 2], 1), (2, NULL::int[], 1), (3, ARRAY[1, 2], NULL::int)) v(id, a, n)
+ORDER BY id;
+----
+id	s	t
+1	f	f
+2	t	t
+3	f	t
+
+statement error
+SELECT array_fill(NULL, ARRAY[2]);
+----
+db error: ERROR: could not determine polymorphic type because input has type unknown

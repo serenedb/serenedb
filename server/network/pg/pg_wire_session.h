@@ -93,9 +93,9 @@
 #include "pg/connection_context.h"
 #include "pg/copy_in_batches.h"
 #include "pg/deserialize.h"
-#include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/serialize.h"
+#include "pg/types/mapping.h"
 #include "server/utils/asio_ns.h"
 #include "server/utils/message_buffer.h"
 
@@ -445,6 +445,7 @@ class PgWireSession
   // loopback reads as IPv4. Feeds HBA CIDR matching and the passwordless-trust
   // gate (via asio's address::is_loopback()).
   asio_ns::ip::address _peer_addr;
+  std::string _system_user;
   FrameReader _frames;
   // The current command frame's pending _recv consume. Normally the command
   // loop applies it after the handler; COPY FROM STDIN consumes it early (so

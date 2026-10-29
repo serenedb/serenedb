@@ -30,6 +30,38 @@ SELECT epoch(INTERVAL 5 HOUR) AS seconds;
 seconds
 18000
 
+# DOCS_TEST: justify_days
+# DOCS_TEST_BODY
+query
+SELECT justify_days(INTERVAL '35 days') AS result;
+----
+result
+1 mon 5 days
+
+# DOCS_TEST: justify_hours
+# DOCS_TEST_BODY
+query
+SELECT justify_hours(INTERVAL '27 hours') AS result;
+----
+result
+1 day 03:00:00
+
+# DOCS_TEST: justify_interval
+# DOCS_TEST_BODY
+query
+SELECT justify_interval(INTERVAL '1 mon -1 hour') AS result;
+----
+result
+29 days 23:00:00
+
+# DOCS_TEST: make_interval
+# DOCS_TEST_BODY
+query
+SELECT make_interval(days => 10, hours => 3) AS result;
+----
+result
+10 days 03:00:00
+
 # DOCS_TEST: to_centuries
 # DOCS_TEST_BODY
 query

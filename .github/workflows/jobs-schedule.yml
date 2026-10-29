@@ -29,14 +29,7 @@ env:
   SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
 
 jobs:
-  image:
-    uses: ./.github/workflows/build-images.yml
-    with:
-      REF: ${{ github.sha }}
-    secrets: inherit
-
   perf:
-    needs: image
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: perf
@@ -44,7 +37,6 @@ jobs:
     secrets: inherit
 
   dev:
-    needs: image
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: dev
@@ -52,7 +44,6 @@ jobs:
     secrets: inherit
 
   asan:
-    needs: image
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: asan
@@ -60,7 +51,6 @@ jobs:
     secrets: inherit
 
   tsan:
-    needs: image
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: tsan
@@ -68,7 +58,6 @@ jobs:
     secrets: inherit
 
   msan:
-    needs: image
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: msan
@@ -76,7 +65,6 @@ jobs:
     secrets: inherit
 
   perf-arm64:
-    needs: image
     uses: ./.github/workflows/build.yml
     with:
       CONFIG: perf
@@ -84,7 +72,6 @@ jobs:
     secrets: inherit
 
   dev-arm64:
-    needs: image
     uses: ./.github/workflows/build.yml
     with:
       CONFIG: dev
@@ -124,7 +111,7 @@ jobs:
 
   report:
     name: Report Status
-    needs: [image, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, macos, release, timing]
+    needs: [perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, macos, release, timing]
     if: always()
     runs-on: ubuntu-latest
     steps:

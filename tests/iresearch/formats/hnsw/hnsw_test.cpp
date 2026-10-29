@@ -30,6 +30,7 @@
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
@@ -192,11 +193,48 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
                                   irs::ByVectorSimilarity& filter,
                                   size_t k = 128) {
   irs::VectorSimilarityScorer scorer;
+  irs::StatsArena stats_arena{duckdb::Allocator::DefaultAllocator()};
+  irs::PreparedCollector collector_tree{filter, scorer, stats_arena, 1};
+  std::vector<irs::QueryBuilder::ptr> queries;
+  queries.reserve(reader.size());
+  for (auto& segment : reader) {
+    queries.emplace_back(
+      irs::PrepareMasked(filter, segment, {.collector = collector_tree.Get()}));
+  }
+  collector_tree.Finish();
+
   std::vector<irs::ScoreDoc> hits(k);
-  const auto count =
-    irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{hits});
+  std::atomic<irs::score_t> score_threshold{
+    std::numeric_limits<irs::score_t>::lowest()};
+  irs::LoserScoreCollector collector{score_threshold, std::span{hits}};
+  irs::ColumnArgsFetcher fetcher;
+  uint32_t seg_idx = 0;
+  for (auto& query : queries) {
+    fetcher.Clear();
+    collector.SetSegment(seg_idx++);
+    if (!query) {
+      continue;
+    }
+    auto ann = irs::ann::MakeRoot(*query, {
+                                            .scorer = scorer,
+                                            .fetcher = fetcher,
+                                            .k = static_cast<uint32_t>(k),
+                                          });
+    EXPECT_TRUE(ann);
+    if (!ann) {
+      continue;
+    }
+    irs::ann::SharedFloor floor{static_cast<uint32_t>(k)};
+    irs::ann::Collector candidates{floor, static_cast<uint32_t>(k)};
+    ann->Run(candidates);
+    for (const auto& hit : candidates.Flush()) {
+      collector.Add(hit.score, hit.doc);
+    }
+  }
+  collector.SortHits();
+
   std::vector<irs::doc_id_t> docs;
-  const auto n = std::min<size_t>(count, k);
+  const auto n = std::min<size_t>(collector.TotalMatches(), k);
   docs.reserve(n);
   for (size_t i = 0; i < n; ++i) {
     docs.push_back(hits[i].doc);
@@ -1050,6 +1088,59 @@ TEST(HnswRandomLevelTest, UpperLevelShareMatchesRoundedDraw) {
   }
 }
 
+TEST(HnswVisitedTest, MembershipSurvivesGrowthAndTheSwitchToTheBitset) {
+  for (const uint32_t nodes : {1000U, 40000U, 30000000U}) {
+    for (const size_t visits : {size_t{0}, size_t{6000}, size_t{300000}}) {
+      irs::HnswVisited visited;
+      std::vector<bool> marked(nodes);
+      pcg32 rng{irs::kHnswBuildSeed};
+      visited.Reset(nodes, visits);
+      for (const size_t count :
+           {size_t{0}, size_t{10}, size_t{5000}, size_t{300000}, size_t{10}}) {
+        visited.Next();
+        std::vector<uint32_t> ids;
+        for (size_t i = 0; i < count; ++i) {
+          const auto id = absl::Uniform<uint32_t>(rng, 0, nodes);
+          ASSERT_EQ(visited.TestAndSet(id), marked[id])
+            << "nodes " << nodes << " visits " << visits << " count " << count
+            << " id " << id;
+          marked[id] = true;
+          ids.push_back(id);
+        }
+        for (const auto id : ids) {
+          ASSERT_TRUE(visited.Test(id)) << "nodes " << nodes << " id " << id;
+        }
+        for (size_t i = 0; i < 1000; ++i) {
+          const auto id = absl::Uniform<uint32_t>(rng, 0, nodes);
+          ASSERT_EQ(visited.Test(id), marked[id])
+            << "nodes " << nodes << " id " << id;
+        }
+        for (const auto id : ids) {
+          marked[id] = false;
+        }
+      }
+    }
+  }
+}
+
+TEST(HnswVisitedTest, ResetForgetsEveryMarkAcrossUniverses) {
+  irs::HnswVisited visited;
+  visited.Reset(30000000, 0);
+  for (uint32_t i = 0; i < 400000; ++i) {
+    visited.Set(i * 7);
+  }
+  visited.Reset(1000, 0);
+  for (uint32_t id = 0; id < 1000; ++id) {
+    ASSERT_FALSE(visited.Test(id)) << id;
+  }
+  visited.Set(999);
+  visited.Reset(30000000, 0);
+  ASSERT_FALSE(visited.Test(999));
+  ASSERT_FALSE(visited.Test(7000));
+  ASSERT_FALSE(visited.TestAndSet(7000));
+  ASSERT_TRUE(visited.Test(7000));
+}
+
 TEST(HnswSelectNeighborsTest, TransposedMatchesReference) {
   constexpr uint32_t kD = 6;
   constexpr size_t kNodes = 400;
@@ -1202,7 +1293,7 @@ void CheckWalkAsksPerHop() {
   writer.SetEntryPoint(entry);
   WalkDist build{.pts = &pts, .d = kD};
   irs::HnswBuildScratch scratch;
-  scratch.search.visited.Reset(kNodes);
+  scratch.search.visited.Reset(kNodes, irs::HnswWalkVisits(kEf, writer.M0()));
   for (uint32_t i = 0; i < kNodes; ++i) {
     if (i != entry) {
       build.SetQuery(i);
@@ -1302,7 +1393,7 @@ TEST(HnswWalkTest, AdaptiveCrossesOverWhereThePredicateAdmitsNothingNearby) {
   writer.SetEntryPoint(entry);
   WalkDist build{.pts = &pts, .d = kD};
   irs::HnswBuildScratch scratch;
-  scratch.search.visited.Reset(kNodes);
+  scratch.search.visited.Reset(kNodes, irs::HnswWalkVisits(kEf, writer.M0()));
   for (uint32_t i = 0; i < kNodes; ++i) {
     if (i != entry) {
       build.SetQuery(i);
@@ -1395,7 +1486,8 @@ TEST(HnswInsertTest, NodesInsertedTowardsTheGraphStayReachable) {
   writer.SetEntryPoint(entry);
   WalkDist build{.pts = &pts, .d = kD};
   irs::HnswBuildScratch scratch;
-  scratch.search.visited.Reset(kNodes);
+  scratch.search.visited.Reset(
+    kNodes, irs::HnswWalkVisits(irs::kHnswDefaultEfConstruction, writer.M0()));
   for (uint32_t i = 0; i < kNodes; ++i) {
     if (i != entry) {
       build.SetQuery(i);

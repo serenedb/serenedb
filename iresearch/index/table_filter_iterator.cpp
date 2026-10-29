@@ -395,6 +395,7 @@ void ColFilterChain::FinishBind() {
       }
     }
   }
+  _point_reads = ClassifyPointReads();
 }
 
 template<bool Keep>
@@ -485,6 +486,7 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
                                            duckdb::SelectionVector& sel,
                                            duckdb::idx_t survivors,
                                            duckdb::DataChunk* output) {
+  SDB_ASSERT(span <= STANDARD_VECTOR_SIZE);
   duckdb::AdaptiveFilterState timing;
   if (_adaptive) {
     timing = _adaptive->BeginFilter();
@@ -605,13 +607,8 @@ duckdb::idx_t ColFilterChain::FilterRows(uint64_t anchor, duckdb::idx_t span,
     auto& chunk = *row.chunk;
     chunk.Reset();
     for (size_t j = 0; j < row.readers.size(); ++j) {
-      auto& vector = chunk.data[j];
-      const auto* reader = row.readers[j];
-      if (span <= STANDARD_VECTOR_SIZE) {
-        reader->GatherDense(row.scans[j], anchor, sel, survivors, span, vector);
-      } else {
-        reader->GatherScatter(row.scans[j], anchor, sel, survivors, vector, 0);
-      }
+      row.readers[j]->GatherDense(row.scans[j], anchor, sel, survivors, span,
+                                  chunk.data[j]);
     }
     const auto approved = EvaluateRow(row, survivors, [&](duckdb::idx_t k) {
       return static_cast<doc_id_t>(anchor + sel.get_index(k)) +
@@ -685,7 +682,7 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
   return w;
 }
 
-detail::PointRead ColFilterChain::PointReads() const noexcept {
+detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
   const auto zstd = [](const irs::ColumnReader& reader) {
     return absl::c_any_of(reader.DataBlocks(), [](const auto& block) {
       return block.codec->type == duckdb::CompressionType::COMPRESSION_ZSTD;

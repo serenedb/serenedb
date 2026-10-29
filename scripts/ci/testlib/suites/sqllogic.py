@@ -15,6 +15,7 @@ ENGINES = ("pg-wire-simple", "pg-wire-extended")
 PLANNED_EXITS = (0, 75)
 STATEFUL_SERVICES = ("minio", "azurite", "iceberg", "postgres", "clickhouse")
 INFERENCE_CPUS = {"svc:ollama": 8, "svc:kev": 8}
+INFERENCE_TIMEOUT = 900.0
 CORPUS = "any/sqlite/"
 CORPUS_SECONDS_PER_MB = 18.0
 PART_SECONDS = 10.0
@@ -44,13 +45,15 @@ def runner_binary(ctx):
         return _runner_path
 
 
-def generated_tests(ctx, command):
+def generated_tests(ctx, command, only=None, engine="serenedb"):
     base = sqllogic_dir(ctx)
     for generator in sorted((base / "generators").rglob("*.py")):
         rel = generator.relative_to(base / "generators")
+        if only is not None and os.path.realpath(base / rel.with_suffix("")) not in only:
+            continue
         target = base / rel.with_suffix(".gen.test")
-        subprocess.run(["python3", str(base / "generated.py"), command, str(generator), str(target)],
-                       check=True)
+        subprocess.run(["python3", str(base / "generated.py"), command, str(generator), str(target),
+                        engine], check=True)
 
 
 def find_tests(root, fast):
@@ -237,7 +240,10 @@ def sqllogic_units(ctx, args, skips):
                 continue
             cost, timeout = plan(ctx, uid, default_seconds(path, rel))
             if CORPUS not in rel:
-                cpus = 1 + sum(INFERENCE_CPUS.get(f, 0) for f in fixtures)
+                inference = [f for f in fixtures if f in INFERENCE_CPUS]
+                cpus = 1 + sum(INFERENCE_CPUS[f] for f in inference)
+                if inference:
+                    timeout = max(timeout, INFERENCE_TIMEOUT)
                 units.append(Unit(uid, "sqllogic", _sqllogic_run(ctx, args, rel, engine), cpus=cpus,
                                   mem_gb=0.3, fixtures=pool + fixtures, shared=shared, cost=cost,
                                   timeout=timeout, group=f"sqllogic:{rel}"))
@@ -254,6 +260,7 @@ def sqllogic_units(ctx, args, skips):
 
 def postgres_units(ctx, args, skips):
     base = sqllogic_dir(ctx)
+    generated_tests(ctx, "write")
     if args.corpus:
         check_out_corpus(ctx)
     units = []

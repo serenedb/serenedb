@@ -47,9 +47,9 @@
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_batches.h"
-#include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
+#include "pg/types/mapping.h"
 #include "replication/repl_source.h"
 
 namespace sdb::replication {
@@ -243,10 +243,10 @@ bool SyncSession::SetupApplyConnection() {
     duckdb::SetScope::SESSION, duckdb::Value{"replica"});
   this->_txn_state.emplace(this->_conn->context->transaction);
   this->_connection_ctx = std::make_shared<ConnectionContext>(
-    *this->_conn->context, user, role, _target.database_name,
-    _target.database_oid, nullptr, 0, nullptr);
+    *this->_conn->context, user, std::string_view{}, role,
+    _target.database_name, _target.database_oid, nullptr, 0, nullptr);
   this->_client_state = &connector::SereneDBClientState::Register(
-    *this->_conn->context, this->_connection_ctx);
+    *this->_conn->context, this->_connection_ctx, false);
   this->_progress =
     sdb::pg::ProgressRegistration{this->_client_state->progress_source};
   connector::SetDefaultSearchPath(*this->_conn->context, _target.database_name);

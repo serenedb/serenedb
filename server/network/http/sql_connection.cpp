@@ -57,11 +57,11 @@ SqlConnection OpenSqlConnection(
                          irs::DuckDBEngine::Instance().CreateConnection()};
   result.conn->context->SetSchedulerAccount(account);
   result.context = std::make_shared<ConnectionContext>(
-    *result.conn->context, login_user, login.role, dbname, database_id, nullptr,
-    static_cast<int32_t>(cancel_key >> 32), cancel);
+    *result.conn->context, login_user, std::string_view{}, login.role, dbname,
+    database_id, nullptr, static_cast<int32_t>(cancel_key >> 32), cancel);
   result.progress =
     sdb::pg::ProgressRegistration{connector::SereneDBClientState::Register(
-                                    *result.conn->context, result.context)
+                                    *result.conn->context, result.context, true)
                                     .progress_source};
   connector::SetDefaultSearchPath(*result.conn->context, dbname);
   result.context->SetSetting("session_authorization", std::string{login_user},

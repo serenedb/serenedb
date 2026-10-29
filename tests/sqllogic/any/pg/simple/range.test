@@ -1,0 +1,384 @@
+control substitution on
+
+query
+SELECT '[1,5)'::int4range AS a, '(1,5]'::int4range AS b, '[1,5]'::int4range AS c, '(1,5)'::int4range AS d,
+       'empty'::int4range AS e, '(,5)'::int4range AS f, '[1,)'::int4range AS g, '(,)'::int4range AS h,
+       '[,5]'::int4range AS i, '  [ 1, 5 )  '::int4range AS j, 'EMPTY'::int4range AS k, '(1,2)'::int4range AS l,
+       '[3,3]'::int4range AS m, '[3,3)'::int4range AS n, '["1","5")'::int4range AS o;
+----
+a	b	c	d	e	f	g	h	i	j	k	l	m	n	o
+[1,5)	[2,6)	[1,6)	[2,5)	empty	(,5)	[1,)	(,)	(,6)	[1,5)	empty	empty	[3,4)	empty	[1,5)
+
+
+query
+SELECT '[1,5)'::int8range AS a, '(,9223372036854775806]'::int8range AS b, '[2020-01-01,2020-01-05]'::daterange AS c,
+       '(2020-01-01,infinity)'::daterange AS d, '[-infinity,2020-01-01)'::daterange AS e,
+       '["2020-01-01 10:00","2020-01-01 12:00")'::tsrange AS f, '[2020-01-01,)'::tsrange AS g,
+       '(2020-01-01,2020-01-02)'::daterange AS i;
+----
+a	b	c	d	e	f	g	i
+[1,5)	(,9223372036854775807)	[2020-01-01,2020-01-06)	[2020-01-02,infinity)	[-infinity,2020-01-01)	["2020-01-01 10:00:00","2020-01-01 12:00:00")	["2020-01-01 00:00:00",)	empty
+
+
+statement ok
+SET TimeZone = 'UTC'
+
+
+query
+SELECT '["2020-01-01 10:00+02","2020-01-01 12:00+02")'::tstzrange AS a, tstzrange('2020-01-01 10:00+00', NULL) AS b,
+       tstzrange('2020-01-01 10:00+00', '2020-01-01 10:00+00', '[]') AS c;
+----
+a	b	c
+["2020-01-01 08:00:00+00","2020-01-01 10:00:00+00")	["2020-01-01 10:00:00+00",)	["2020-01-01 10:00:00+00","2020-01-01 10:00:00+00"]
+
+
+statement ok
+RESET TimeZone
+
+
+statement error (range lower bound must be less than or equal to range upper bound)
+SELECT '[5,1)'::int4range;
+
+
+statement error (malformed range literal)
+SELECT '[1,5'::int4range;
+
+
+statement error (malformed range literal)
+SELECT '1,5'::int4range;
+
+
+statement error (malformed range literal)
+SELECT 'empty x'::int4range;
+
+
+statement error (malformed range literal)
+SELECT '[1,2,3)'::int4range;
+
+
+statement error (invalid input syntax for type integer|Could not convert string 'x' to INT32)
+SELECT '[x,5)'::int4range;
+
+
+statement error (integer out of range)
+SELECT int4range(1, 2147483647, '[]');
+
+
+statement error (invalid range bound flags)
+SELECT int4range(1, 5, 'xx');
+
+
+statement error (range lower bound must be less than or equal to range upper bound)
+SELECT int4range(5, 1);
+
+
+query
+SELECT int4range(1, 5) AS a, int4range(1, 5, '[]') AS b, int4range(NULL, 5) AS c, int4range(1, NULL, '()') AS d,
+       int4range(NULL, NULL) AS e, int8range(1, 5, '(]') AS f, daterange('2020-01-01', '2020-01-03', '[]') AS g,
+       tsrange('2020-01-01', '2020-01-02') AS h, int4range(3, 3) AS i;
+----
+a	b	c	d	e	f	g	h	i
+[1,5)	[1,6)	(,5)	[2,)	(,)	[2,6)	[2020-01-01,2020-01-04)	["2020-01-01 00:00:00","2020-01-02 00:00:00")	empty
+
+
+query
+SELECT i, lower(r) AS lower, upper(r) AS upper, isempty(r) AS isempty, lower_inc(r) AS lower_inc, upper_inc(r) AS upper_inc,
+       lower_inf(r) AS lower_inf, upper_inf(r) AS upper_inf
+FROM (VALUES (1, '[1,5)'::int4range), (2, 'empty'::int4range), (3, '(,5]'::int4range), (4, '[3,)'::int4range)) t(i, r)
+ORDER BY i;
+----
+i	lower	upper	isempty	lower_inc	upper_inc	lower_inf	upper_inf
+1	1	5	f	t	f	f	f
+2	NULL	NULL	t	f	f	f	f
+3	NULL	6	f	f	f	t	f
+4	3	NULL	f	t	f	f	t
+
+
+query
+SELECT lower(daterange('2020-01-01', '2020-01-03', '(]')) AS a, upper(tsrange('2020-01-01', NULL)) AS b,
+       upper(daterange('2020-01-01', 'infinity')) AS c, upper_inf(daterange('2020-01-01', 'infinity')) AS d;
+----
+a	b	c	d
+2020-01-02	NULL	infinity	f
+
+
+query
+SELECT int4range(1,5) @> 3 AS a, int4range(1,5) @> 5 AS b, 3 <@ int4range(1,5) AS c, int4range(1,10) @> int4range(2,3) AS d,
+       int4range(2,3) <@ int4range(1,10) AS e, int4range(1,5) && int4range(4,8) AS f, int4range(1,5) && int4range(5,8) AS g,
+       int4range(1,5) << int4range(5,8) AS h, int4range(5,8) >> int4range(1,5) AS i, int4range(1,5) &< int4range(2,6) AS j,
+       int4range(1,5) &> int4range(0,6) AS k, int4range(1,5) -|- int4range(5,8) AS l, 'empty'::int4range @> 'empty'::int4range AS m,
+       int4range(1,5) @> 'empty'::int4range AS n, 'empty'::int4range <@ int4range(1,5) AS o, 'empty'::int4range && int4range(1,5) AS p;
+----
+a	b	c	d	e	f	g	h	i	j	k	l	m	n	o	p
+t	f	t	t	t	t	f	t	t	t	t	t	t	t	t	f
+
+
+query
+SELECT int4range(1,5) + int4range(5,8) AS a, int4range(1,5) + int4range(3,8) AS b, int4range(1,5) * int4range(3,8) AS c,
+       int4range(1,5) * int4range(6,8) AS d, int4range(1,8) - int4range(5,9) AS e, int4range(1,8) - int4range(0,3) AS f,
+       int4range(1,8) - int4range(10,20) AS g, int4range(1,8) - int4range(0,20) AS h, range_merge(int4range(1,3), int4range(6,8)) AS i,
+       'empty'::int4range + int4range(1,2) AS j, int4range(NULL, 3) + int4range(2, NULL) AS k;
+----
+a	b	c	d	e	f	g	h	i	j	k
+[1,8)	[1,8)	[3,5)	empty	[1,5)	[3,8)	[1,8)	empty	[1,8)	[1,2)	(,)
+
+
+statement error (result of range union would not be contiguous)
+SELECT int4range(1,3) + int4range(5,8);
+
+
+statement error (result of range difference would not be contiguous)
+SELECT int4range(1,10) - int4range(4,6);
+
+
+query
+SELECT tsrange('2020-01-01', '2020-01-02') -|- tsrange('2020-01-02', '2020-01-03') AS a,
+       tsrange('2020-01-01', '2020-01-02', '[]') -|- tsrange('2020-01-02', '2020-01-03') AS b,
+       daterange('2020-01-01', '2020-01-02', '[]') -|- daterange('2020-01-03', '2020-01-05') AS c,
+       tsrange('2020-01-01', '2020-01-05') * tsrange('2020-01-03', '2020-01-10') AS d,
+       tsrange('2020-01-01', '2020-01-02', '(]') -|- tsrange('2020-01-02', '2020-01-03', '(]') AS e,
+       daterange('2020-01-01', '2020-01-02') @> '2020-01-01'::date AS f;
+----
+a	b	c	d	e	f
+t	f	t	["2020-01-03 00:00:00","2020-01-05 00:00:00")	t	t
+
+
+query
+SELECT r FROM (VALUES ('[3,5)'::int4range), ('empty'), ('(,5)'), ('[1,5)'), ('[1,3)'), ('[1,)'), ('(,)')) t(r) ORDER BY r;
+----
+r
+empty
+(,5)
+(,)
+[1,3)
+[1,5)
+[1,)
+[3,5)
+
+
+query
+SELECT '[1,5)'::int4range = '[1,4]'::int4range AS a, '[1,5)'::int4range < '[1,6)'::int4range AS b,
+       'empty'::int4range < '(,1)'::int4range AS c, '(,)'::int4range > '[1,2)'::int4range AS d,
+       '(1,5)'::int4range = '[2,5)'::int4range AS e, '[1,5)'::int4range <> 'empty'::int4range AS f;
+----
+a	b	c	d	e	f
+t	t	t	f	t	t
+
+
+query
+SELECT count(DISTINCT r) AS a FROM (VALUES ('[1,5)'::int4range), ('[1,4]'), ('(0,5)'), ('empty'), ('(1,1)')) t(r);
+----
+a
+2
+
+
+query
+SELECT ARRAY['[1,2)'::int4range, 'empty'::int4range] AS a, ROW('[1,2)'::int4range) AS b, ROW('empty'::int4range) AS c,
+       '[1,5)'::int4range::text AS d, pg_typeof('[1,5)'::int4range) AS e,
+       ARRAY[tsrange('2020-01-01', '2020-01-02')] AS f;
+----
+a	b	c	d	e	f
+{"[1,2)",empty}	("[1,2)")	(empty)	[1,5)	int4range	{"[\\"2020-01-01 00:00:00\\",\\"2020-01-02 00:00:00\\")"}
+
+
+query
+SELECT '{"[1,3)","(5,7]",NULL,empty}'::int4range[] AS a, '{"[2020-01-01,2020-01-05)"}'::daterange[] AS b,
+       ('{"[1,3)","(5,7]"}'::int4range[])[2] AS c, '{"[1,2]","(,)"}'::int8range[] AS d;
+----
+a	b	c	d
+{"[1,3)","[6,8)",NULL,empty}	{"[2020-01-01,2020-01-05)"}	[6,8)	{"[1,3)","(,)"}
+
+
+statement ok
+CREATE TABLE range_t (id INT, r int4range, d daterange);
+
+
+statement ok
+INSERT INTO range_t VALUES (1, '[1,5)', '[2020-01-01,2020-02-01)'), (2, 'empty', NULL), (3, NULL, '(,2020-01-01]'), (4, '[10,)', 'empty');
+
+
+query
+SELECT id, r, d FROM range_t ORDER BY id;
+----
+id	r	d
+1	[1,5)	[2020-01-01,2020-02-01)
+2	empty	NULL
+3	NULL	(,2020-01-02)
+4	[10,)	empty
+
+
+query
+SELECT id FROM range_t WHERE r @> 3 OR d @> '2019-06-01'::date ORDER BY id;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM range_t ORDER BY r, id;
+----
+id
+2
+1
+4
+3
+
+
+statement ok
+DROP TABLE range_t;
+
+
+statement error (range constructor flags argument must not be null)
+SELECT int4range(1, 2, NULL);
+
+
+query
+SELECT pg_input_is_valid('[1,2', 'int4range') AS a, pg_input_is_valid('[5,1)', 'int4range') AS b,
+       pg_input_is_valid('[1,2)', 'int4range') AS c, pg_input_is_valid('(2020-01-01,2020-01-02)', 'daterange') AS d;
+----
+a	b	c	d
+f	f	t	t
+
+
+query
+SELECT message, detail, sql_error_code FROM pg_input_error_info('[1,2', 'int4range');
+----
+message	detail	sql_error_code
+malformed range literal: "[1,2"	Unexpected end of input.	22P02
+
+
+query
+SELECT message, sql_error_code FROM pg_input_error_info('[5,1)', 'int4range');
+----
+message	sql_error_code
+range lower bound must be less than or equal to range upper bound	22000
+
+
+query
+SELECT r, count(*) AS n FROM (VALUES ('[1,2)'::int4range), ('[1,1]'), ('(0,2)'), ('empty'), ('[3,4)'), (NULL)) t(r)
+GROUP BY r ORDER BY r;
+----
+r	n
+empty	1
+[1,2)	3
+[3,4)	1
+NULL	1
+
+
+query
+SELECT a.id, b.id AS other
+FROM (VALUES (1, '[1,5)'::int4range), (2, '[4,8)'), (3, '[10,12)')) a(id, r)
+JOIN (VALUES (10, '[1,4]'::int4range), (20, '[4,7]')) b(id, r) ON a.r = b.r
+ORDER BY a.id, other;
+----
+id	other
+1	10
+2	20
+
+
+query
+SELECT '[1,5)'::int4range <= '[1,5)'::int4range AS a, '[1,5)'::int4range >= '[1,6)'::int4range AS b,
+       int4range(NULL, 5) && int4range(4, NULL) AS c, int4range(NULL, 5) << int4range(5, NULL) AS d,
+       int4range(NULL, NULL) @> int4range(NULL, 5) AS e, range_merge('empty'::int4range, int4range(1, 2)) AS f,
+       int4range(1, 5) - 'empty'::int4range AS g, 'empty'::int4range - int4range(1, 5) AS h,
+       int4range(1, 5) * 'empty'::int4range AS i, int4range(1, 5) -|- 'empty'::int4range AS j;
+----
+a	b	c	d	e	f	g	h	i	j
+t	f	t	t	t	[1,2)	[1,5)	empty	empty	f
+
+
+statement ok
+SET TimeZone = 'America/New_York'
+
+
+query
+SELECT tstzrange('2020-01-01 00:00+00', '2020-01-02 00:00+00')::text AS a,
+       '[2020-01-01 00:00,2020-01-02 00:00)'::tstzrange::text AS b;
+----
+a	b
+["2019-12-31 19:00:00-05","2020-01-01 19:00:00-05")	["2020-01-01 00:00:00-05","2020-01-02 00:00:00-05")
+
+
+statement ok
+RESET TimeZone
+
+
+statement error
+SELECT int8range(9223372036854775807, NULL, '(]');
+----
+db error: ERROR: bigint out of range
+
+
+statement error
+SELECT int8range(1, 9223372036854775807, '[]');
+----
+db error: ERROR: bigint out of range
+
+
+statement error
+SELECT int4range(2147483647, NULL, '(]');
+----
+db error: ERROR: integer out of range
+
+
+statement error
+SELECT int4range(1, 5, '[x');
+----
+db error: ERROR: invalid range bound flags
+HINT: Valid values are "[]", "[)", "(]", and "()".
+
+
+query
+SELECT '[1,\3)'::int4range AS a, '[\1,3)'::int4range AS b, '("2020-01-01","2020-01-03"]'::daterange AS c;
+----
+a	b	c
+[1,3)	[1,3)	[2020-01-02,2020-01-04)
+
+
+statement error
+SELECT '[1,3\'::int4range;
+----
+db error: ERROR: malformed range literal: "[1,3\"
+DETAIL: Unexpected end of input.
+
+
+statement error
+SELECT '[1'::int4range;
+----
+db error: ERROR: malformed range literal: "[1"
+DETAIL: Unexpected end of input.
+
+
+statement error
+SELECT '[1)'::int4range;
+----
+db error: ERROR: malformed range literal: "[1)"
+DETAIL: Missing comma after lower bound.
+
+
+statement error
+SELECT '[1,2) x'::int4range;
+----
+db error: ERROR: malformed range literal: "[1,2) x"
+DETAIL: Junk after right parenthesis or bracket.
+
+
+statement error (invalid input syntax for type integer: "3""|Could not convert string '3"' to INT32)
+SELECT '[1,"3""")'::int4range;
+
+
+statement ok
+COPY (SELECT '[5,1)' AS r) TO '${__TEST_DIR__}/range_reversed.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE range_reversed (r int4range);
+
+
+statement error (range lower bound must be less than or equal to range upper bound|COPY FROM: invalid input for column 1)
+COPY range_reversed FROM '${__TEST_DIR__}/range_reversed.txt' (FORMAT text);
+
+
+statement ok
+DROP TABLE range_reversed;

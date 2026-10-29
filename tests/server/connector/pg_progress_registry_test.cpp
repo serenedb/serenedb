@@ -170,8 +170,10 @@ TEST(ProgressRegistryTest,
   auto conn = std::make_unique<duckdb::Connection>(db);
   auto& state = connector::SereneDBClientState::Register(
     *conn->context,
-    std::make_shared<ConnectionContext>(*conn->context, "postgres", 0, "memory",
-                                        0, nullptr, 1006, nullptr));
+    std::make_shared<ConnectionContext>(*conn->context, "postgres",
+                                        std::string_view{}, 0, "memory", 0,
+                                        nullptr, 1006, nullptr),
+    true);
   ProgressRegistration registration{state.progress_source};
   state.progress_source->BeginQuery("SELECT 1");
 

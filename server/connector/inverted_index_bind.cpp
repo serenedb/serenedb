@@ -61,9 +61,9 @@
 #include "connector/column_id.h"
 #include "connector/geo_validate.h"
 #include "connector/index_expression.hpp"
-#include "connector/pg_logical_types.h"
 #include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
+#include "pg/types/logical.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 

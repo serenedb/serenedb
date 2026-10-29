@@ -1,0 +1,127 @@
+control substitution on
+
+statement ok
+CREATE DATABASE sor_db;
+
+
+connection sor database=sor_db
+statement ok
+CREATE TABLE sor_t(id INTEGER PRIMARY KEY, txt TEXT);
+
+
+connection sor database=sor_db
+statement ok
+INSERT INTO sor_t VALUES (1, 'a'), (2, 'b');
+
+
+connection sor database=sor_db
+statement ok
+CREATE VIEW sor_v AS SELECT txt FROM sor_t;
+
+
+connection sor database=sor_db
+statement ok
+CREATE FUNCTION sor_f(x INTEGER) RETURNS INTEGER LANGUAGE SQL AS 'SELECT x * 2';
+
+
+connection sor database=sor_db
+statement ok
+CREATE TABLE sor_db_before AS
+SELECT 'relation' AS kind, relname::text AS name, oid::int8 AS oid FROM pg_class WHERE relnamespace = 'public'::regnamespace
+UNION ALL SELECT 'function', proname::text, oid::int8 FROM pg_proc WHERE pronamespace = 'public'::regnamespace
+UNION ALL SELECT 'system relation', relname::text, oid::int8 FROM pg_class WHERE relnamespace IN (11, 13293);
+
+
+statement ok
+CREATE ROLE sor_role;
+
+
+statement ok
+CREATE TABLE sor_before AS
+SELECT 'relation' AS kind, relname::text AS name, oid::int8 AS oid FROM pg_class WHERE relnamespace IN (11, 13293)
+UNION ALL SELECT 'function', oid::regprocedure::text, oid::int8 FROM pg_proc WHERE pronamespace IN (11, 13293)
+UNION ALL SELECT 'type', typname::text, oid::int8 FROM pg_type WHERE typnamespace IN (11, 13293)
+UNION ALL SELECT 'collation', collname::text, oid::int8 FROM pg_collation
+UNION ALL SELECT 'namespace', nspname::text, oid::int8 FROM pg_namespace
+UNION ALL SELECT 'database', datname::text, oid::int8 FROM pg_database
+UNION ALL SELECT 'role', rolname::text, oid::int8 FROM pg_authid;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) > 0 AS recorded FROM sor_before;
+----
+recorded
+t
+
+
+connection after_crash
+query
+SELECT kind, count(*) AS changed FROM (
+  (SELECT kind, name, oid FROM sor_before
+   EXCEPT
+   (SELECT 'relation', relname::text, oid::int8 FROM pg_class WHERE relnamespace IN (11, 13293)
+    UNION ALL SELECT 'function', oid::regprocedure::text, oid::int8 FROM pg_proc WHERE pronamespace IN (11, 13293)
+    UNION ALL SELECT 'type', typname::text, oid::int8 FROM pg_type WHERE typnamespace IN (11, 13293)
+    UNION ALL SELECT 'collation', collname::text, oid::int8 FROM pg_collation
+    UNION ALL SELECT 'namespace', nspname::text, oid::int8 FROM pg_namespace
+    UNION ALL SELECT 'database', datname::text, oid::int8 FROM pg_database
+    UNION ALL SELECT 'role', rolname::text, oid::int8 FROM pg_authid))
+  UNION ALL
+  ((SELECT 'relation', relname::text, oid::int8 FROM pg_class WHERE relnamespace IN (11, 13293)
+    UNION ALL SELECT 'function', oid::regprocedure::text, oid::int8 FROM pg_proc WHERE pronamespace IN (11, 13293)
+    UNION ALL SELECT 'type', typname::text, oid::int8 FROM pg_type WHERE typnamespace IN (11, 13293)
+    UNION ALL SELECT 'collation', collname::text, oid::int8 FROM pg_collation
+    UNION ALL SELECT 'namespace', nspname::text, oid::int8 FROM pg_namespace
+    UNION ALL SELECT 'database', datname::text, oid::int8 FROM pg_database
+    UNION ALL SELECT 'role', rolname::text, oid::int8 FROM pg_authid)
+   EXCEPT
+   SELECT kind, name, oid FROM sor_before)
+) d GROUP BY kind ORDER BY kind;
+----
+kind	changed
+
+
+connection after_crash_sor database=sor_db
+query
+SELECT count(*) AS changed FROM (
+  (SELECT kind, name, oid FROM sor_db_before
+   EXCEPT
+   (SELECT 'relation', relname::text, oid::int8 FROM pg_class WHERE relnamespace = 'public'::regnamespace
+    UNION ALL SELECT 'function', proname::text, oid::int8 FROM pg_proc WHERE pronamespace = 'public'::regnamespace
+    UNION ALL SELECT 'system relation', relname::text, oid::int8 FROM pg_class WHERE relnamespace IN (11, 13293)))
+  UNION ALL
+  ((SELECT 'relation', relname::text, oid::int8 FROM pg_class WHERE relnamespace = 'public'::regnamespace
+    UNION ALL SELECT 'function', proname::text, oid::int8 FROM pg_proc WHERE pronamespace = 'public'::regnamespace
+    UNION ALL SELECT 'system relation', relname::text, oid::int8 FROM pg_class WHERE relnamespace IN (11, 13293))
+   EXCEPT
+   SELECT kind, name, oid FROM sor_db_before)
+) d;
+----
+changed
+0
+
+
+connection after_crash_sor database=sor_db
+query
+SELECT id, txt, sor_f(id) AS doubled FROM sor_t ORDER BY id;
+----
+id	txt	doubled
+1	a	2
+2	b	4
+
+
+connection after_crash_sor database=sor_db
+query
+SELECT count(*) AS user_objects_below_262144 FROM sor_db_before WHERE kind IN ('relation', 'function') AND oid < 262144;
+----
+user_objects_below_262144
+0

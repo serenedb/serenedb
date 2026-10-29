@@ -1,0 +1,332 @@
+# btrim
+
+query
+SELECT btrim('  xyz  '), btrim('xyxtrimyyx', 'xy'), btrim('', 'x'), btrim('abc', '');
+----
+btrim	btrim	btrim	btrim
+xyz	trim	(empty)	abc
+
+
+onlyif postgres
+query
+SELECT length(btrim(chr(160) || ' x ' || chr(160))), btrim('éaxé', 'é');
+----
+length	btrim
+5	ax
+
+
+skipif postgres
+query
+SELECT length(btrim(chr(160) || ' x ' || chr(160))), btrim('éaxé', 'é');
+----
+length	btrim
+1	ax
+
+
+onlyif postgres
+query
+SELECT length(trim(chr(160) || ' x ' || chr(160))), length(ltrim(chr(160) || ' x')), length(rtrim('x ' || chr(160))),
+       length(trim('  x  ')), length(ltrim('  x')), length(rtrim('x  '));
+----
+length	length	length	length	length	length
+5	3	3	1	1	1
+
+
+skipif postgres
+query
+SELECT length(trim(chr(160) || ' x ' || chr(160))), length(ltrim(chr(160) || ' x')), length(rtrim('x ' || chr(160))),
+       length(trim('  x  ')), length(ltrim('  x')), length(rtrim('x  '));
+----
+length	length	length	length	length	length
+1	1	1	1	1	1
+
+
+query
+SELECT btrim(NULL), btrim('x', NULL), btrim(NULL::bytea, '\x00'::bytea);
+----
+btrim	btrim	btrim
+NULL	NULL	NULL
+
+
+query
+SELECT btrim('\x1234567890'::bytea, '\x9012'::bytea), btrim('\x0101'::bytea, '\x01'::bytea), btrim('\x01'::bytea, ''::bytea);
+----
+btrim	btrim	btrim
+\\x345678	\\x	\\x01
+
+
+# ltrim, rtrim and trim
+
+onlyif postgres
+query
+SELECT length(ltrim(chr(160) || ' x ')), length(rtrim(' x ' || chr(12288))), length(trim(chr(160) || ' x ' || chr(160))), '[' || trim(BOTH FROM '  x  ') || ']';
+----
+length	length	length	?column?
+4	4	5	[x]
+
+
+skipif postgres
+query
+SELECT length(ltrim(chr(160) || ' x ')), length(rtrim(' x ' || chr(12288))), length(trim(chr(160) || ' x ' || chr(160))), '[' || trim(BOTH FROM '  x  ') || ']';
+----
+length	length	length	?column?
+2	2	1	[x]
+
+
+# casefold
+
+query
+SELECT casefold('PostgreSQL'), casefold('ÀÉÎ Straße'), casefold(''), casefold(NULL);
+----
+casefold	casefold	casefold	casefold
+postgresql	àéî straße	(empty)	NULL
+
+
+# crc32 / crc32c
+
+query
+SELECT crc32(''::bytea), crc32('The quick brown fox jumps over the lazy dog'::bytea), crc32('\x00ff'::bytea), crc32(NULL);
+----
+crc32	crc32	crc32	crc32
+0	1095738169	1826356594	NULL
+
+
+query
+SELECT crc32c(''::bytea), crc32c('The quick brown fox jumps over the lazy dog'::bytea), crc32c('\x00ff'::bytea), crc32c(NULL);
+----
+crc32c	crc32c	crc32c	crc32c
+0	576848900	1545348227	NULL
+
+
+# like / notlike
+
+query
+SELECT like('Serene', 'Ser%'), like('Serene_DB', 'Serene\_DB'), like('abc', 'a_'), notlike('Serene', 'Ser%'), notlike('abc', 'a_'), like(NULL, 'x'), notlike('x', NULL);
+----
+like	like	like	notlike	notlike	like	notlike
+t	t	f	f	t	NULL	NULL
+
+
+query
+SELECT like('Abc'::name, 'A%'), notlike('Abc'::name, 'A%');
+----
+like	notlike
+t	f
+
+
+# parse_ident
+
+query
+SELECT parse_ident('SomeSchema.SomeTable'), parse_ident('"SomeSchema".someTable'), parse_ident(' a . "b""c" . d '), parse_ident('ünï.x$1');
+----
+parse_ident	parse_ident	parse_ident	parse_ident
+{someschema,sometable}	{SomeSchema,sometable}	{a,"b\\"c",d}	{ünï,x$1}
+
+
+
+query
+SELECT parse_ident('a.b junk', false), parse_ident('a(1)', false), parse_ident(NULL), parse_ident('a', NULL);
+----
+parse_ident	parse_ident	parse_ident	parse_ident
+{a,b}	{a}	NULL	NULL
+
+
+statement error
+SELECT parse_ident('a.b junk');
+----
+db error: ERROR: string is not a valid identifier: "a.b junk"
+
+
+statement error
+SELECT parse_ident('a.');
+----
+db error: ERROR: string is not a valid identifier: "a."
+DETAIL: No valid identifier after ".".
+
+
+statement error
+SELECT parse_ident('.a');
+----
+db error: ERROR: string is not a valid identifier: ".a"
+DETAIL: No valid identifier before ".".
+
+
+statement error
+SELECT parse_ident('"a');
+----
+db error: ERROR: string is not a valid identifier: ""a"
+DETAIL: String has unclosed double quotes.
+
+
+statement error
+SELECT parse_ident('""');
+----
+db error: ERROR: string is not a valid identifier: """"
+DETAIL: Quoted identifier must not be empty.
+
+
+statement error
+SELECT parse_ident('');
+----
+db error: ERROR: string is not a valid identifier: ""
+
+
+statement error
+SELECT parse_ident('1a');
+----
+db error: ERROR: string is not a valid identifier: "1a"
+
+
+# sha224 / sha384 / sha512
+
+query
+SELECT sha224('abc'::bytea), sha224(''::bytea), sha224(NULL);
+----
+sha224	sha224	sha224
+\\x23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7	\\xd14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f	NULL
+
+
+query
+SELECT sha384('abc'::bytea), sha512('abc'::bytea), sha384(NULL), sha512(NULL);
+----
+sha384	sha512	sha384	sha512
+\\xcb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7	\\xddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f	NULL	NULL
+
+
+# similar_escape
+
+query
+SELECT similar_escape('abc%', NULL), similar_escape('a#%b_', '#'), similar_escape('a|b', '#'), similar_escape(NULL, '#');
+----
+similar_escape	similar_escape	similar_escape	similar_escape
+^(?:abc.*)$	^(?:a\\%b.)$	^(?:a|b)$	NULL
+
+
+statement error invalid escape string
+SELECT similar_escape('abc', '##');
+
+
+# string_to_array with a null string
+
+# string_to_table
+
+query
+SELECT * FROM string_to_table('a,b,,c', ',') ORDER BY 1;
+----
+string_to_table
+(empty)
+a
+b
+c
+
+
+query
+SELECT string_to_table('xx~^~yy~^~zz', '~^~', 'yy') AS v ORDER BY v NULLS FIRST;
+----
+v
+NULL
+xx
+zz
+
+
+query
+SELECT count(*) FROM string_to_table('', ',');
+----
+count
+0
+
+
+query
+SELECT v FROM string_to_table('abc', '') AS t(v);
+----
+v
+abc
+
+
+query
+SELECT v FROM string_to_table('héx', NULL) AS t(v) ORDER BY ascii(v);
+----
+v
+h
+x
+é
+
+
+query
+SELECT count(*) FROM string_to_table(NULL, ',');
+----
+count
+0
+
+
+# textlen
+
+query
+SELECT textlen('héllo'), textlen(''), textlen(NULL);
+----
+textlen	textlen	textlen
+5	0	NULL
+
+
+# unistr
+
+query
+SELECT unistr('d\0061t\+000061'), unistr('da' || chr(92) || 'u0074' || chr(92) || 'U00000061'), unistr('\\\0041'), unistr('\D83D\DE00'), unistr(''), unistr(NULL);
+----
+unistr	unistr	unistr	unistr	unistr	unistr
+data	data	\\A	😀	(empty)	NULL
+
+
+statement error
+SELECT unistr('wrong: \db99');
+----
+db error: ERROR: invalid Unicode surrogate pair
+
+
+statement error
+SELECT unistr('wrong: \db99\0061');
+----
+db error: ERROR: invalid Unicode surrogate pair
+
+
+statement error
+SELECT unistr('wrong: \+00db99\+000061');
+----
+db error: ERROR: invalid Unicode surrogate pair
+
+
+statement error
+SELECT unistr('wrong: \+2FFFFF');
+----
+db error: ERROR: invalid Unicode code point: 2FFFFF
+
+
+statement error
+SELECT unistr('wrong: ' || chr(92) || 'udb99' || chr(92) || 'u0061');
+----
+db error: ERROR: invalid Unicode surrogate pair
+
+
+statement error
+SELECT unistr('wrong: \U0000db99\U00000061');
+----
+db error: ERROR: invalid Unicode surrogate pair
+
+
+statement error
+SELECT unistr('wrong: \U002FFFFF');
+----
+db error: ERROR: invalid Unicode code point: 2FFFFF
+
+
+statement error
+SELECT unistr('wrong: \xyz');
+----
+db error: ERROR: invalid Unicode escape
+HINT: Unicode escapes must be \XXXX, \+XXXXXX, \uXXXX, or \UXXXXXXXX.
+
+
+statement error
+SELECT unistr('\0000');
+----
+db error: ERROR: invalid Unicode code point: 0000

@@ -209,6 +209,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     std::span<const std::shared_ptr<const irs::Filter>> row_leaves;
   };
   std::vector<ColFilter> col_filters;
+  std::vector<ColFilter> dual_filters;
   std::vector<duckdb::unique_ptr<duckdb::TableFilter>> emit_score_filters;
   std::vector<duckdb::unique_ptr<duckdb::TableFilter>> deferred_filters;
   std::vector<DeferredCheck> deferred_checks;
@@ -220,6 +221,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   const irs::Filter* filter = nullptr;
   irs::Filter::ptr owned_filter;
   std::shared_ptr<const irs::Filter> owned_where;
+  std::shared_ptr<const irs::Filter> owned_index_only;
   std::vector<std::shared_ptr<irs::Scorer>> owned_where_scorers;
   std::unique_ptr<irs::Scorer> scorer_obj;
   bool needs_terms = false;
@@ -322,6 +324,10 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::shared_ptr<const irs::Filter> ClaimedWhere() const {
     return scan->plan_cache.deferred ? owned_where : scan->search.filter;
   }
+  std::shared_ptr<const irs::Filter> ClaimedIndexOnly() const {
+    return scan->plan_cache.deferred ? owned_index_only
+                                     : scan->search.index_only;
+  }
   SegmentWork& Segment(uint32_t seg) noexcept { return segments[seg]; }
   UnitRows RowsOf(const ScanUnit& unit) const noexcept;
   irs::DocRange RangeOf(const ScanUnit& unit) const noexcept;
@@ -421,6 +427,9 @@ struct AnnLocalState final : public RankedLocalState {
   std::vector<std::unique_ptr<irs::detail::RawVectorReader>> rescorers;
   std::vector<irs::doc_id_t> rescore_docs;
   std::vector<irs::score_t> rescore_scores;
+  ColFilterVerify column_verify;
+  irs::ColFilterClassification dual_cls;
+  std::vector<irs::ColFilterSpec> column_specs;
 };
 
 struct TsDictLocalState;
@@ -436,14 +445,19 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);
 bool FinishUnit(ScanGlobalState& g, ScanLocalState& l);
 
-void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
-                               irs::ColFilterStateCache& states,
-                               irs::ColFilterClassification& out,
-                               bool prepare_leaves);
+void ClassifySegmentColFilters(
+  const irs::SubReader& seg, ScanGlobalState& g,
+  std::span<const ScanGlobalState::ColFilter> filters,
+  irs::ColFilterStateCache& states, irs::ColFilterClassification& out,
+  bool prepare_leaves);
 
 irs::detail::TableFilter* BeginVerify(ColFilterVerify& verify,
                                       const irs::SubReader& seg,
                                       ScanGlobalState& g, ScanLocalState& l);
+
+irs::detail::TableFilter* BeginColumnVerify(const irs::SubReader& seg,
+                                            ScanGlobalState& g,
+                                            AnnLocalState& l);
 
 void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
                          duckdb::Vector* scores, duckdb::DataChunk& output);

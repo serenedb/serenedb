@@ -76,7 +76,8 @@ void ClassifySegments(ScanGlobalState& g) {
   irs::ColFilterStateCache init_states;
   irs::ColFilterClassification cls;
   for (uint32_t si = 0; si < g.total_segments; ++si) {
-    ClassifySegmentColFilters((*g.reader)[si], g, init_states, cls, false);
+    ClassifySegmentColFilters((*g.reader)[si], g, g.col_filters, init_states,
+                              cls, false);
     if (!cls.segment_dead) {
       g.segment_order.push_back(si);
     }
@@ -298,7 +299,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   const auto where = state->ClaimedWhere();
   if (ss.score.vector) {
     const auto& vs = PrepareVectorScorer(*state, context, *ss.score.vector);
-    state->owned_filter = MakeVectorFilter(vs, where, vs.EffectiveRadius());
+    state->owned_filter =
+      MakeVectorFilter(vs, where, vs.EffectiveRadius(),
+                       state->ClaimedIndexOnly(), !state->dual_filters.empty());
     state->filter = state->owned_filter.get();
   } else {
     state->filter = where ? where.get() : &MatchAllFilter();

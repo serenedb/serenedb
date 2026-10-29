@@ -228,6 +228,12 @@ class ChangedTests:
         return found
 
 
+def generated_sources(units):
+    base = ROOT / "tests" / "sqllogic"
+    return {os.path.realpath(base / source.group(1)) for u in units if u.suite in ("sqllogic", "postgres")
+            and (source := _GENERATED.match(u.id.split(":", 2)[-1].split("#", 1)[0]))}
+
+
 def changed_units(units, base, compiled=True):
     changed = ChangedTests(changed_files(base), compiled)
     picked = []
@@ -270,6 +276,8 @@ def main(argv):
         suites = [*suites, "postgres"]
     if args.server and {"sqllogic", "postgres"} <= set(suites):
         raise SystemExit("--server serves either the sqllogic or the postgres suite, not both")
+    if args.override and {"sqllogic", "postgres"} <= set(suites):
+        raise SystemExit("--override records either the sqllogic or the postgres suite, not both")
     if args.server and "recovery" in suites:
         raise SystemExit("recovery units restart their own servers: run them without --server")
     needs_build = [s for s in suites if s != "postgres" and not (s == "sqllogic" and args.server)]
@@ -355,8 +363,9 @@ def main(argv):
                 sched.repeat(changed, args.repeat, args.repeat_budget)
     finally:
         sched.stop_fixtures()
-    if args.override and "sqllogic" in suites:
-        sqllogic.generated_tests(ctx, "record")
+    if args.override:
+        sqllogic.generated_tests(ctx, "record", only=generated_sources(units),
+                                 engine="postgres" if "postgres" in suites else "serenedb")
     if args.expect_fail:
         sched.invert(changed_tests)
     results = sched.results

@@ -1,0 +1,49 @@
+control substitution on
+
+statement ok
+CREATE TABLE ses_search (v text) WITH (storage = 'search');
+
+
+statement ok
+ALTER SEQUENCE ses_search_pk_seq RESTART WITH 9223372036854775806;
+
+
+statement error
+INSERT INTO ses_search VALUES ('a'), ('b'), ('c');
+----
+db error: ERROR: nextval: reached maximum value of sequence "ses_search_pk_seq" (9223372036854775807)
+
+
+statement ok
+CREATE SEQUENCE ses_restarted;
+
+
+query
+SELECT nextval('ses_restarted') AS v;
+----
+v
+1
+
+
+statement ok
+ALTER SEQUENCE ses_restarted RESTART WITH 10;
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/ses_export';
+
+
+query
+SELECT count(*) AS restarted FROM read_text('${__TEST_DIR__}/ses_export/schema.sql')
+WHERE content LIKE '%setval(''%ses_restarted'', 10, false)%';
+----
+restarted
+1
+
+
+statement ok
+DROP SEQUENCE ses_restarted;
+
+
+statement ok
+DROP TABLE ses_search;

@@ -726,7 +726,8 @@ struct HnswInsertJob {
     auto& slot = _slots[worker];
     if (!slot) {
       slot = std::make_unique<WorkerSlot>(_factory.Make());
-      slot->scratch.search.visited.Reset(_rows);
+      slot->scratch.search.visited.Reset(_rows,
+                                         HnswWalkVisits(_ef, _graph.M0()));
       if (_window.base) {
         slot->dist.SetWindow(_window.base, _window.first, _window.count);
       }
@@ -800,7 +801,7 @@ auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
   {
     auto dist = factory.Make();
     HnswBuildScratch scratch;
-    scratch.search.visited.Reset(rows);
+    scratch.search.visited.Reset(rows, HnswWalkVisits(ef, graph.M0()));
     for (size_t i = 0; i < serial; ++i) {
       dist.SetQuery(nodes[i]);
       HnswInsert(graph, nodes[i], dist, ef, scratch);
@@ -936,10 +937,11 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
 
   auto dist = factory.Make();
   HnswBuildScratch scratch;
-  scratch.search.visited.Reset(rows);
+  scratch.search.visited.Reset(rows,
+                               HnswWalkVisits(ef_construction, graph.M0()));
   HealScratch heal;
-  heal.seen.Reset(rows);
-  heal.walked.Reset(src_rows);
+  heal.seen.Reset(rows, HnswWalkVisits(graph.M0(), graph.M0()));
+  heal.walked.Reset(src_rows, HnswWalkVisits(graph.M0(), graph.M0()));
   for (const auto& [src_node, node, level] : to_heal) {
     dist.SetQuery(node);
     HealNode(graph, src_graph, remap, dist, src_node, node, level, scratch,

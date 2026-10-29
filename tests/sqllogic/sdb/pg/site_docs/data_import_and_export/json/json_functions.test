@@ -648,3 +648,54 @@ species	["mercury","venus"]	ARRAY	4	0	$.species	2
 0	"mercury"	VARCHAR	5	4	$.species[0]	3
 1	"venus"	VARCHAR	6	4	$.species[1]	4
 coolness	42.42	DOUBLE	8	0	$.coolness	5
+
+# DOCS_TEST: example_052
+
+# DOCS_TEST_BODY
+
+query
+SELECT e.j->>'family' AS family, s.value AS species
+FROM example AS e, json_array_elements_text(e.j->'species') AS s
+ORDER BY family, species;
+----
+family	species
+gas_giant	jupiter
+gas_giant	saturn
+terrestrial	mercury
+terrestrial	venus
+
+# DOCS_TEST: example_053
+
+# DOCS_TEST_BODY
+
+query
+SELECT k.key, k.value
+FROM json_each_text('{"name": "mars", "moons": 2, "rings": null}') AS k
+ORDER BY k.key;
+----
+key	value
+moons	2
+name	mars
+rings	NULL
+
+query
+SELECT json_object_keys('{"name": "mars", "moons": 2}') AS key
+ORDER BY key;
+----
+key
+moons
+name
+
+# DOCS_TEST: example_055
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE planet AS (name TEXT, moons INTEGER);
+
+query
+SELECT *
+FROM json_populate_record(NULL::planet, '{"name": "mars", "moons": 2}');
+----
+name	moons
+mars	2

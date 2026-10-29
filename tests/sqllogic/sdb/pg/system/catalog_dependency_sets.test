@@ -186,7 +186,6 @@ ORDER BY 1, 2
 ----
 rolname	deptype
 cds_grantee	a
-cds_owner	a
 cds_owner	o
 
 

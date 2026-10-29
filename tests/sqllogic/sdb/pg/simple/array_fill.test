@@ -1,0 +1,59 @@
+# lower bounds
+
+statement error
+SELECT array_fill(7, ARRAY[3], ARRAY[2]);
+----
+db error: ERROR: array lower bounds other than 1 are not supported
+
+
+query
+SELECT array_fill(7, ARRAY[0], ARRAY[5]);
+----
+array_fill
+{}
+
+
+# dimensions from a column
+
+statement ok
+CREATE TABLE array_fill_dims (dims INT[])
+
+
+statement ok
+INSERT INTO array_fill_dims VALUES ('{2}'), ('{}')
+
+
+query
+SELECT array_fill('x'::text, dims) FROM array_fill_dims ORDER BY cardinality(dims);
+----
+array_fill
+{}
+{x,x}
+
+
+statement ok
+INSERT INTO array_fill_dims VALUES ('{1,2}')
+
+
+statement error
+SELECT array_fill('x'::text, dims) FROM array_fill_dims;
+----
+db error: ERROR: array_fill() cannot produce 2 dimensions where the query expects 1
+HINT: Pass the dimensions as a constant or an ARRAY[...] constructor.
+
+
+statement ok
+DROP TABLE array_fill_dims
+
+
+query
+SELECT array_fill(0, ARRAY[1, 1, 1, 1, 1, 1, 1, 1]);
+----
+array_fill
+{{{{{{{{0}}}}}}}}
+
+
+statement error
+SELECT array_fill(0, string_to_array(repeat('1,', 1000) || '1', ',')::int[]);
+----
+db error: ERROR: number of array dimensions (1001) exceeds the maximum allowed (1000)

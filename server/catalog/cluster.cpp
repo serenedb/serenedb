@@ -52,8 +52,8 @@
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 
 namespace sdb::catalog {
 namespace {

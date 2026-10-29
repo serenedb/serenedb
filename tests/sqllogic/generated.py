@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 PLACEHOLDER = "<recorded>"
+ROWS = "<recorded rows>"
 PART = "<part>"
 KEY_WIDTH = 16
 NEW_ERRORS = "SDB_RECORD_NEW_ERRORS"
@@ -31,7 +32,19 @@ def join(parts):
 
 def spots(block):
     return [(i, j) for i, line in enumerate(block)
-            for j, cell in enumerate(line.split("\t")) if cell == PLACEHOLDER]
+            for j, cell in enumerate(line.split("\t")) if cell in (PLACEHOLDER, ROWS)]
+
+
+def table(block):
+    return block.index(ROWS) if ROWS in block else None
+
+
+def head(block):
+    return next(i for i, line in enumerate(block) if not line.startswith(("onlyif ", "skipif ")))
+
+
+def owner(block, shared):
+    return "postgres" if shared and block[0] != "onlyif serenedb" else "serenedb"
 
 
 def recorded(text):
@@ -40,7 +53,8 @@ def recorded(text):
     for block in blocks(text):
         if not spots(block):
             continue
-        sql = "\n".join(block[1:block.index("----")])
+        start = head(block)
+        sql = "\n".join(block[:start] + block[start + 1:block.index("----")])
         key = hashlib.sha256(sql.encode()).hexdigest()[:KEY_WIDTH]
         seen[key] = seen.get(key, 0) + 1
         out.append((key if seen[key] == 1 else f"{key}.{seen[key]}", sql))
@@ -92,22 +106,42 @@ def unescape(text):
                   text)
 
 
-def load(path):
-    try:
-        with open(path) as f:
-            lines = f.read().split("\n")
-    except FileNotFoundError:
-        return {}
+def parse(text):
     records = {}
-    for line in lines:
+    for line in text.split("\n"):
+        if line.startswith("\t"):
+            records[key][1].append(line[1:])
+            continue
         if not line:
             continue
-        key, _, rest = line.partition("\t")
-        if rest.startswith("error\t"):
+        key, tab, rest = line.partition("\t")
+        if not tab:
+            records[key] = ("rows", [])
+        elif rest.startswith("error\t"):
             records[key] = ("error", unescape(rest[len("error\t"):]))
         else:
             records[key] = ("values", rest.split("\t"))
     return records
+
+
+def load(path):
+    try:
+        with open(path) as f:
+            return parse(f.read())
+    except FileNotFoundError:
+        return {}
+
+
+def dump(records):
+    lines = []
+    for key, (kind, value) in records.items():
+        if kind == "rows":
+            lines.append("\n\t".join([key, *value]))
+        elif kind == "error":
+            lines.append(f"{key}\terror\t{escape(value)}")
+        else:
+            lines.append("\t".join([key, *value]))
+    return "\n".join(lines) + "\n"
 
 
 def fill(text, records):
@@ -126,8 +160,13 @@ def fill(text, records):
             continue
         kind, values = found
         if kind == "error":
-            sql = block[1:block.index("----")]
-            out.append(["query error", *sql, "----", *values.split("\n"), ""])
+            start = head(block)
+            sql = block[start + 1:block.index("----")]
+            out.append([*block[:start], "query error", *sql, "----", *values.split("\n"), ""])
+            continue
+        if kind == "rows":
+            line = table(block)
+            out.append(block[:line] + values + block[line + 1:])
             continue
         filled = list(block)
         for (i, j), value in zip(places, values):
@@ -139,45 +178,66 @@ def fill(text, records):
 
 
 def error_of(block):
-    if block[0] == "query error":
+    start = head(block)
+    if block[start] == "query error":
         return "\n".join(block[block.index("----") + 1:])
-    if block[0].startswith("query error "):
-        return unescape(block[0][len("query error "):])
+    if block[start].startswith("query error "):
+        return unescape(block[start][len("query error "):])
     return None
 
 
-def record(text, overridden, target):
+def record(text, overridden, target, previous, engine, shared):
     want, got = blocks(text), blocks(overridden)
     if len(want) != len(got):
         sys.exit(f"{target} doesn't follow its generator")
     keys = iter(key for key, _ in recorded(text))
     records = {}
+    ran = False
     for expected, actual in zip(want, got):
         places = spots(expected)
         if not places:
             continue
         key = next(keys)
-        if expected[1] != actual[1]:
-            sys.exit(f"{target} doesn't follow its generator at {expected[1]}")
+        sql = expected[head(expected) + 1]
+        if sql != actual[head(actual) + 1]:
+            sys.exit(f"{target} doesn't follow its generator at {sql}")
+        if owner(expected, shared) != engine:
+            if key in previous:
+                records[key] = previous[key]
+            continue
         error = error_of(actual)
         if error is not None:
             records[key] = ("error", error)
+            ran = True
+            continue
+        line = table(expected)
+        if line is not None:
+            if ROWS in actual:
+                if key in previous:
+                    records[key] = previous[key]
+                continue
+            records[key] = ("rows", actual[line:])
+            ran = True
             continue
         values = []
         for i, j in places:
             cells = actual[i].split("\t") if i < len(actual) else []
             value = cells[j] if j < len(cells) else ""
             if value == PLACEHOLDER:
-                return None
+                break
             if not value:
-                sys.exit(f"{target} can't record an empty value at "
-                         f"{expected[1]}")
+                sys.exit(f"{target} can't record an empty value at {sql}")
             values.append(value)
-        if len(values) > 1 and values[0] == "error":
-            sys.exit(f"{target} can't record 'error' as the first of "
-                     f"several values at {expected[1]}")
-        records[key] = ("values", values)
-    return records
+        else:
+            if len(values) > 1 and values[0] == "error":
+                sys.exit(f"{target} can't record 'error' as the first of "
+                         f"several values at {sql}")
+            records[key] = ("values", values)
+            ran = True
+            continue
+        if key in previous:
+            records[key] = previous[key]
+    return records if ran else None
 
 
 def generate(generator):
@@ -196,13 +256,16 @@ def show(generator, keys):
             continue
         kind, value = records.get(key, ("missing", None))
         answer = ("not recorded" if kind == "missing" else
-                  f"error: {value}" if kind == "error" else "\t".join(value))
+                  f"error: {value}" if kind == "error" else
+                  "\n".join(value) if kind == "rows" else "\t".join(value))
         print(f"{key}\t{answer}\n{sql}\n")
 
 
-def main(command, generator, target):
+def main(command, generator, target, engine="serenedb"):
     text = generate(generator)
     path = generator[:-len(".py")] + ".recorded"
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generators")
+    shared = os.path.relpath(os.path.abspath(generator), base).split(os.sep)[0] == "any"
     if command == "write":
         filled, missing = fill(text, load(path))
         pieces = parts(filled)
@@ -219,13 +282,13 @@ def main(command, generator, target):
         return
     if not any(spots(block) for block in blocks(text)):
         return
-    records = record(text, assembled(text, target), target)
+    previous = load(path)
+    records = record(text, assembled(text, target), target, previous, engine, shared)
     if records is None:
         print(f"{target} wasn't overridden, {path} is unchanged",
               file=sys.stderr)
         return
     queries = dict(recorded(text))
-    previous = load(path)
     fresh = [f"{key}\t{queries[key]}\n  {value}"
              for key, (kind, value) in records.items()
              if kind == "error" and previous.get(key) != (kind, value)]
@@ -233,12 +296,7 @@ def main(command, generator, target):
         sys.exit(f"{target} has queries that fail where {path} recorded "
                  f"something else; check them and record with "
                  f"{NEW_ERRORS}=1:\n" + "\n".join(fresh))
-    lines = []
-    for key, (kind, value) in records.items():
-        rest = (f"error\t{escape(value)}" if kind == "error"
-                else "\t".join(value))
-        lines.append(f"{key}\t{rest}")
-    write(path, "\n".join(lines) + "\n")
+    write(path, dump(records))
 
 
 if __name__ == "__main__":

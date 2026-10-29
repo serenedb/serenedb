@@ -54,6 +54,8 @@ jobs:
       run: |
         scripts/duckdb_family.sh fetch HEAD^1
         [[ ! -e third_party/duckdb/.git ]] || echo fetched=true >> "$GITHUB_OUTPUT"
+    - name: Check out the PostgreSQL sources the system catalogs are generated from
+      run: git submodule update --init --depth 1 third_party/postgres
     - name: Python version
       id: python
       run: echo "version=$(python3 -c 'import platform; print(platform.python_version())')" >> "$GITHUB_OUTPUT"

@@ -15,6 +15,12 @@ ASSERTIONS = {"SDB_ASSERT", "SDB_VERIFY", "SDB_ENSURE", "SDB_UNREACHABLE", "D_AS
               "ALWAYS_ASSERT", "DUCKDB_DEBUG_VERIFY_GUARD", "DUCKDB_DEBUG_VERIFY_ENABLED"}
 UNREACHABLE = re.compile(r"\b(?:SDB_UNREACHABLE|std::unreachable|(?:std::)?abort)\(\)")
 IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+INTERNAL = re.compile(r"^([^:]+:)(_Z.*)$")
+SWITCH = re.compile(r"\s*switch\b")
+CASE = re.compile(r"\s*(?:case\b|default\s*:)")
+FOREVER = re.compile(r"\s*(?:\}\s*)?while\s*\(\s*true\s*\)")
+BRACE = re.compile(r"\s*\};?\s*$")
+USING = re.compile(r"\s*using\b[^;]*;\s*$")
 CODE, EXPANSION, MCDC_BRANCH = 0, 1, 6
 
 
@@ -155,6 +161,12 @@ def demangle(names):
     return dict(zip(names, out))
 
 
+def readable(names):
+    parts = {n: m.groups() if (m := INTERNAL.match(n)) else ("", n) for n in names}
+    plain = demangle(sorted({symbol for _, symbol in parts.values()}))
+    return {n: prefix + plain.get(symbol, symbol) for n, (prefix, symbol) in parts.items()}
+
+
 def parse_json(text):
     files = {}
     data = json.loads(text)["data"][0]
@@ -247,7 +259,9 @@ def unreachable(path, touched, code):
             size = min((c[2] - c[0], c[3] - c[1]) for c in inside)
             innermost = [c for c in inside if (c[2] - c[0], c[3] - c[1]) == size]
             if all(c[4] == 0 for c in innermost):
-                lines.update(range(innermost[0][0], innermost[0][2] + 1))
+                region = innermost[0]
+                before = any((region[0], region[1]) < (c[0], c[1]) < point for c in code)
+                lines.update(range(no if before else region[0], region[2] + 1))
     return lines
 
 
@@ -306,6 +320,9 @@ def cover(path, touched, data, spans, summary, details):
     touched = touched - skipped
     missed = []
     for no in sorted(touched & set(data["lines"])):
+        text = source_text(path, no)
+        if BRACE.match(text) or USING.match(text):
+            continue
         summary["lines"][1] += 1
         if data["lines"][no] > 0:
             summary["lines"][0] += 1
@@ -315,7 +332,10 @@ def cover(path, touched, data, spans, summary, details):
                             "function": enclosing(spans["functions"], no),
                             "source": source_line(path, no)})
     for no in sorted(touched & set(data["branches"])):
+        text = source_text(path, no)
         for idx, taken in enumerate(data["branches"][no]):
+            if SWITCH.match(text) or (idx % 2 and (CASE.match(text) or FOREVER.match(text))):
+                continue
             summary["branches"][1] += 1
             if taken > 0:
                 summary["branches"][0] += 1
@@ -331,11 +351,12 @@ def cover(path, touched, data, spans, summary, details):
                 summary["functions"][0] += 1
             else:
                 details.append({"kind": "function", "file": path, "line": start,
-                                "function": enclosing(spans["functions"], start) or name,
-                                "source": source_line(path, start)})
+                                "function": name, "source": source_line(path, start)})
     for m in spans["mcdc"].values():
         decision = m["site"] or m["decision"]
         if decision[0] in skipped or not touched & set(range(decision[0], decision[2] + 1)):
+            continue
+        if not any(vector.get("executed") for vector in m["vectors"]):
             continue
         for idx, shown in enumerate(m["shown"]):
             summary["mcdc"][1] += 1
@@ -393,6 +414,10 @@ def main():
                 missed = cover(path, changed[path], data, spans, summary, details)
                 if missed:
                     uncovered_ranges[path] = ranges(missed)
+    names = readable({d["function"] for d in details if d["kind"] == "function"})
+    for d in details:
+        if d["kind"] == "function":
+            d["function"] = names[d["function"]]
     text = (f"{args.label}: lines {summary['lines'][0]}/{summary['lines'][1]}, "
             f"functions {summary['functions'][0]}/{summary['functions'][1]}, "
             f"branches {summary['branches'][0]}/{summary['branches'][1]}, "

@@ -33,7 +33,7 @@ repos:
       - id: end-of-file-fixer
       - id: mixed-line-ending
       - id: trailing-whitespace
-        exclude: \.test$
+        exclude: \.(test|recorded)$
 
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.7
@@ -94,10 +94,10 @@ repos:
         language: python
         entry: python3 scripts/check_banned_calls.py
         files: ^(server|iresearch)/.*\.(cpp|cc|hpp|hh|h|ipp|tpp)$
-      - id: check-system-table-claims
-        name: Check system-table compatibility claims
+      - id: check-generated
+        name: Check the generated files are current
         language: python
-        entry: python3 scripts/generate_system_table_claims.py --check
+        entry: python3 scripts/check_generated.py
         pass_filenames: false
         always_run: true
       - id: check-llm-symbols
@@ -170,5 +170,5 @@ repos:
         language: python
         additional_dependencies: [pytest==9.1.1]
         entry: python3 -m pytest -q -p no:cacheprovider scripts/ci/tests
-        files: ^(scripts/(ci/|coverage/|check_submodule_pointers\.py$|duckdb_family\.sh$)|tests/drivers/harness/|\.github/workflows/simple\.yml$)
+        files: ^(scripts/(ci/|coverage/|check_submodule_pointers\.py$|duckdb_family\.sh$)|tests/drivers/harness/|tests/sqllogic/(generated|sqllogic_gen)\.py$|\.github/workflows/simple\.yml$)
         pass_filenames: false

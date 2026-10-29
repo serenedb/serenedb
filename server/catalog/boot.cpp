@@ -59,6 +59,7 @@
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "pg/catalog/oids.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "search/wal_recovery.h"
@@ -181,6 +182,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachCluster(
   const std::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
   RequestSereneDBStorageVersion(options);
+  db.oid = pg::kClusterCatalog;
   return duckdb::make_uniq<ClusterCatalog>(db);
 }
 

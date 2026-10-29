@@ -43,10 +43,11 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   HnswQuery(const SubReader& segment, std::shared_ptr<const HnswData> data,
             const VectorFilterOptions& opts, uint32_t record_size,
             HnswSearchLimits limits, score_t boost, QueryBuilder::ptr&& inner,
-            AnnQueryCache* cache);
+            QueryBuilder::ptr&& index_only, AnnQueryCache* cache);
 
   std::vector<ScoreDoc> RunSearch(
     detail::TableFilter* table = nullptr,
+    detail::TableFilter* columns = nullptr,
     std::vector<score_t>* spreads = nullptr) const;
 
   ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
@@ -64,6 +65,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
 
   template<typename Dist>
   void RunFiltered(Dist& dist, detail::TableFilter* table,
+                   detail::TableFilter* columns,
                    HnswSearchScratch& scratch) const;
 
   void PrepareDistance() const;
@@ -81,6 +83,8 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   mutable absl::once_flag _distance_prepared;
   AnnQueryCache* _cache;
   QueryBuilder::ptr _inner;
+  QueryBuilder::ptr _index_only;
+  uint64_t _index_only_postings;
   const ColumnReader* _exact;
   containers::Fixed<float> _query;
   VectorMetric _metric;
@@ -94,6 +98,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   score_t _boost;
   HnswFilterMode _filter_mode;
   HnswColumnFilter _column_filter;
+  bool _dual;
   bool _inclusive;
 };
 

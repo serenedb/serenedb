@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <duckdb/common/fault_points.hpp>
 #include <numeric>
 #include <optional>
@@ -33,10 +34,13 @@
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/vector_of.hpp"
+#include "iresearch/search/detail/window.hpp"
+#include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 namespace {
@@ -214,18 +218,29 @@ struct WalkFilterScratch {
   HnswVisited pass;
   std::vector<doc_id_t> ask;
   std::vector<uint32_t> keep;
+  uint64_t asked = 0;
+  uint64_t admitted = 0;
 };
+
+inline constexpr double kHnswStallSlack = 5;
 
 class WalkFilter {
  public:
-  WalkFilter(detail::TableFilter& table, doc_id_t docs_count,
-             WalkFilterScratch& s)
+  WalkFilter(detail::TableFilter& table, doc_id_t docs_count, size_t visits,
+             double stall_share, WalkFilterScratch& s)
     : _table{&table},
       _s{s},
+      _stall_share{stall_share},
       _docs_count{docs_count},
       _points{table.PointReads() != detail::PointRead::None} {
-    _s.known.Reset(docs_count);
-    _s.pass.Reset(docs_count);
+    _s.known.Reset(docs_count, visits);
+    _s.pass.Reset(docs_count, visits);
+  }
+
+  bool Stalled() const noexcept {
+    return static_cast<double>(_s.admitted * kHnswAdaptiveScarcity) +
+             kHnswStallSlack <=
+           static_cast<double>(_s.asked) * _stall_share;
   }
 
   WalkFilter(const WalkFilter&) = delete;
@@ -256,6 +271,8 @@ class WalkFilter {
     for (uint32_t i = 0; i < kept; ++i) {
       _s.pass.Set(ask[i] - doc_limits::min());
     }
+    _s.asked += ask.size();
+    _s.admitted += kept;
   }
 
   bool operator()(uint32_t node) const {
@@ -263,8 +280,10 @@ class WalkFilter {
       return false;
     }
     if (!_s.known.TestAndSet(node)) {
+      ++_s.asked;
       if (_table->Admits(node + doc_limits::min())) {
         _s.pass.Set(node);
+        ++_s.admitted;
       }
     }
     return _s.pass.Test(node);
@@ -273,6 +292,7 @@ class WalkFilter {
  private:
   detail::TableFilter* _table;
   WalkFilterScratch& _s;
+  double _stall_share;
   doc_id_t _docs_count;
   bool _points;
 };
@@ -298,6 +318,8 @@ class InnerAndTableFilter {
     return _inner->Contains(node + doc_limits::min()) && (*_table)(node);
   }
 
+  bool Stalled() const noexcept { return _table->Stalled(); }
+
  private:
   detail::LazyBitset* _inner;
   const WalkFilter* _table;
@@ -312,31 +334,29 @@ static_assert(
     f.Prepare(std::span<const uint32_t>{});
   }, "InnerAndTableFilter::Prepare must match it too");
 
-inline constexpr long double kWalkShare = 0.25L;
+inline constexpr double kWalkShare = 0.25;
 
-long double HnswWalkNodes(uint64_t matches, uint32_t ef, uint32_t m0,
-                          uint64_t nodes) noexcept {
+double HnswWalkNodes(uint64_t matches, uint32_t ef, uint32_t m0,
+                     uint64_t nodes) noexcept {
   if (matches == 0) {
-    return static_cast<long double>(nodes);
+    return static_cast<double>(nodes);
   }
-  return kWalkShare * static_cast<long double>(ef) * m0 * nodes /
-         static_cast<long double>(matches);
+  return kWalkShare * static_cast<double>(ef) * m0 * nodes /
+         static_cast<double>(matches);
 }
 
-inline constexpr long double kProbeFoldRatio = 4096;
+inline constexpr double kProbeFoldRatio = 4096;
 
-inline constexpr long double kPointReadFoldRatio = 32;
+inline constexpr double kPointReadFoldRatio = 32;
 
-inline constexpr long double kVectorPointReadFoldRatio = 456;
-
-inline constexpr uint32_t kCountSampleWindows = 8;
+inline constexpr double kVectorPointReadFoldRatio = 456;
 
 inline constexpr uint64_t kHnswColumnScanShare = 16;
 
-inline constexpr long double kWalkCandidateOverhead = 192;
+inline constexpr double kWalkCandidateOverhead = 192;
 
-long double ScanCandidateCost(uint32_t record_size) noexcept {
-  const auto r = static_cast<long double>(record_size);
+double ScanCandidateCost(uint32_t record_size) noexcept {
+  const auto r = static_cast<double>(record_size);
   return r / (r + kWalkCandidateOverhead);
 }
 
@@ -353,19 +373,17 @@ uint32_t HnswCandidateBytes(uint32_t record_size, uint32_t d,
 inline constexpr uint64_t kTwoHopAdmittedNeighbours = 2;
 
 bool HnswBridgeRejected(uint32_t record_size, uint32_t m0) noexcept {
-  return static_cast<long double>(record_size) >
-         static_cast<long double>(m0) * sizeof(uint32_t) +
-           kWalkCandidateOverhead;
+  return static_cast<double>(record_size) >
+         static_cast<double>(m0) * sizeof(uint32_t) + kWalkCandidateOverhead;
 }
 
-long double HnswTwoHopShare(uint64_t matches, uint64_t nodes, uint32_t m0,
-                            uint32_t record_size) noexcept {
-  const auto p = std::min<long double>(
-    1, static_cast<long double>(matches) / static_cast<long double>(nodes));
+double HnswTwoHopShare(uint64_t matches, uint64_t nodes, uint32_t m0,
+                       uint32_t record_size) noexcept {
+  const auto p = std::min<double>(
+    1, static_cast<double>(matches) / static_cast<double>(nodes));
   const auto crossed =
-    static_cast<long double>(m0) * sizeof(uint32_t) + kWalkCandidateOverhead;
-  const auto scored =
-    static_cast<long double>(record_size) + kWalkCandidateOverhead;
+    static_cast<double>(m0) * sizeof(uint32_t) + kWalkCandidateOverhead;
+  const auto scored = static_cast<double>(record_size) + kWalkCandidateOverhead;
   return p + (1 - p) * crossed / scored;
 }
 
@@ -374,12 +392,12 @@ bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
   if (matches == 0 || nodes == 0) {
     return true;
   }
-  long double walk = HnswWalkNodes(matches, ef, m0, nodes);
+  double walk = HnswWalkNodes(matches, ef, m0, nodes);
   if (two_hop && matches * m0 >= kTwoHopAdmittedNeighbours * nodes) {
     walk *= HnswTwoHopShare(matches, nodes, m0, record_size);
   }
-  const long double scan =
-    static_cast<long double>(matches) * ScanCandidateCost(record_size);
+  const double scan =
+    static_cast<double>(matches) * ScanCandidateCost(record_size);
   return scan <= walk;
 }
 
@@ -388,6 +406,7 @@ struct HnswFilterPlan {
   HnswWalk walk = HnswWalk::Through;
   bool two_hop = false;
   bool ask_per_hop = false;
+  double read_cost = 0;
 };
 
 HnswFilterPlan PlanHnswFilter(HnswFilterMode forced,
@@ -411,12 +430,12 @@ HnswFilterPlan PlanHnswFilter(HnswFilterMode forced,
     point_read == detail::PointRead::Row      ? kPointReadFoldRatio
     : point_read == detail::PointRead::Vector ? kVectorPointReadFoldRatio
                                               : kProbeFoldRatio;
-  plan.ask_per_hop =
-    table && mode == HnswFilterMode::Walk &&
-    (column_filter == HnswColumnFilter::Read ||
-     (column_filter == HnswColumnFilter::Auto &&
-      HnswWalkNodes(matches, ef, graph.M0(), graph.Size()) * probe_ratio <=
-        static_cast<long double>(graph.Size())));
+  plan.read_cost =
+    HnswWalkNodes(matches, ef, graph.M0(), graph.Size()) * probe_ratio;
+  plan.ask_per_hop = table && mode == HnswFilterMode::Walk &&
+                     (column_filter == HnswColumnFilter::Read ||
+                      (column_filter == HnswColumnFilter::Auto &&
+                       plan.read_cost <= static_cast<double>(graph.Size())));
   switch (mode) {
     case HnswFilterMode::Walk:
       plan.walk = plan.two_hop && !plan.ask_per_hop ? HnswWalk::TwoHop
@@ -490,29 +509,57 @@ std::vector<uint32_t> AdmittedSeeds(detail::LazyBitset& set,
   return seeds;
 }
 
-template<typename Dist>
-void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
-                  uint32_t ef, HnswSearchScratch& s) {
+auto SetDocs(detail::LazyBitset& set) {
+  return [&set](auto&& visit) {
+    for (auto doc = set.Probe(doc_limits::min());
+         !doc_limits::eof(doc) && visit(doc); doc = set.Probe(doc + 1)) {
+    }
+  };
+}
+
+auto IndexDocs(const QueryBuilder& inner, detail::TableFilter* table,
+               doc_id_t docs_count) {
+  return [&inner, table, docs_count](auto&& visit) {
+    const auto root = docs::MakeRoot(inner, {});
+    SlackBuf<doc_id_t, detail::kWindowDocs, doc_limits::kDocsSlack> docs;
+    const auto end = doc_limits::min() + docs_count;
+    for (auto min = doc_limits::min(); min < end; min += detail::kWindowDocs) {
+      auto n =
+        root->Run(min, std::min(min + detail::kWindowDocs, end), docs.data());
+      if (table) {
+        n = table->Narrow(docs.data(), nullptr, n);
+      }
+      for (uint32_t i = 0; i < n; ++i) {
+        if (!visit(docs[i])) {
+          return;
+        }
+      }
+    }
+  };
+}
+
+template<typename Dist, typename Docs>
+void HnswScanTopK(Docs&& docs, const HnswGraph& graph, Dist& dist, uint32_t ef,
+                  HnswSearchScratch& s) {
   constexpr size_t kBatch = 256;
   s.nearest.clear();
   s.batch.clear();
   const auto size = graph.Size();
   size_t limit = std::min<size_t>(kBatch, ef);
-  for (auto doc = set.Probe(doc_limits::min()); !doc_limits::eof(doc);
-       doc = set.Probe(doc + 1)) {
+  docs([&](doc_id_t doc) {
     const auto node = static_cast<uint32_t>(doc - doc_limits::min());
     if (node >= size) {
-      break;
+      return false;
     }
-    if (graph.LevelOf(node) == 0) {
-      continue;
+    if (graph.LevelOf(node) != 0) {
+      s.batch.push_back(node);
+      if (s.batch.size() == limit) {
+        HnswAdmit(dist, ef, s);
+        limit = std::min(kBatch, 2 * limit);
+      }
     }
-    s.batch.push_back(node);
-    if (s.batch.size() == limit) {
-      HnswAdmit(dist, ef, s);
-      limit = std::min(kBatch, 2 * limit);
-    }
-  }
+    return true;
+  });
   if (!s.batch.empty()) {
     HnswAdmit(dist, ef, s);
   }
@@ -524,12 +571,17 @@ HnswQuery::HnswQuery(const SubReader& segment,
                      std::shared_ptr<const HnswData> data,
                      const VectorFilterOptions& opts, uint32_t record_size,
                      HnswSearchLimits limits, score_t boost,
-                     QueryBuilder::ptr&& inner, AnnQueryCache* cache)
+                     QueryBuilder::ptr&& inner, QueryBuilder::ptr&& index_only,
+                     AnnQueryCache* cache)
   : QueryBuilderImpl{segment, static_cast<uint32_t>(segment.docs_count()),
                      QueryKind::Ann},
     _data{std::move(data)},
     _cache{cache},
     _inner{std::move(inner)},
+    _index_only{std::move(index_only)},
+    _index_only_postings{opts.index_only && _index_only
+                           ? _index_only->Postings()
+                           : segment.docs_count() - segment.live_docs_count()},
     _exact{segment.Column(opts.column_id)},
     _query{opts.query.size(),
            [&](float& slot, size_t i) noexcept { slot = opts.query[i]; }},
@@ -544,6 +596,7 @@ HnswQuery::HnswQuery(const SubReader& segment,
     _boost{boost},
     _filter_mode{opts.hnsw_filter_mode},
     _column_filter{opts.hnsw_column_filter},
+    _dual{opts.dual},
     _inclusive{limits.inclusive} {
   if (_metric == VectorMetric::Cosine) {
     duckdb::L2NormalizeOp::Operation(_query.data(), _query.data(), _d);
@@ -568,30 +621,62 @@ void HnswQuery::RunRadius(Dist& dist, detail::TableFilter* table,
 
 template<typename Dist>
 void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
+                            detail::TableFilter* columns,
                             HnswSearchScratch& scratch) const {
   SDB_ASSERT(_ef != 0 && (_inner || table));
+  SDB_ASSERT(!columns || _inner);
   const auto& graph = _data->graph;
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
+  const auto record = HnswCandidateBytes(_record_size, _d, _data->stats.get());
+  const QueryBuilder* inner = _inner.get();
+  auto* const index_table = table;
   std::optional<detail::LazyBitset> probe;
   uint64_t matches = 0;
-  bool bounded = true;
-  if (table || _inner->Kind() == QueryKind::Boolean) {
-    probe.emplace(detail::MakeDocSet(_inner.get(), docs_count, table));
-    matches =
-      table ? probe->EstimateCount(kCountSampleWindows) : probe->Count();
-    bounded = probe->Filled() >= probe->End();
-  } else {
-    matches = _inner->EstimateMax();
+  const auto reads = [&](uint64_t estimate) {
+    const auto plan = PlanHnswFilter(_filter_mode, _column_filter, graph,
+                                     record, _ef, estimate, columns);
+    return plan.ask_per_hop &&
+           (_column_filter == HnswColumnFilter::Read ||
+            plan.read_cost + static_cast<double>(_index_only_postings) <
+              static_cast<double>(_inner->Postings()));
+  };
+  const auto expected = [rest = table ? table->Share() : 1.0](uint64_t count) {
+    return static_cast<uint64_t>(
+      std::llround(static_cast<double>(count) * rest));
+  };
+  uint64_t most = docs_count;
+  bool by_columns = false;
+  if (columns && reads(_inner->EstimateMax())) {
+    matches = expected(_inner->EstimateMatches());
+    by_columns = reads(matches);
+    if (by_columns) {
+      SDB_IF_FAILURE("irs::HnswReadsColumns") {
+        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+      }
+      most = _inner->EstimateMax();
+      inner = _index_only.get();
+      table = columns;
+    }
   }
-  const auto plan =
-    PlanHnswFilter(_filter_mode, _column_filter, graph,
-                   HnswCandidateBytes(_record_size, _d, _data->stats.get()),
-                   _ef, matches, table);
+  if (!by_columns) {
+    if (!inner) {
+      matches = expected(docs_count);
+    } else if (!table && inner->Kind() == QueryKind::Boolean &&
+               inner->EstimateMin() != inner->EstimateMax()) {
+      probe.emplace(detail::MakeDocSet(inner, docs_count, nullptr));
+      matches = most = probe->Count();
+    } else {
+      matches = expected(inner->EstimateMatches());
+      most = inner->EstimateMax();
+    }
+  }
+  const auto plan = PlanHnswFilter(_filter_mode, _column_filter, graph, record,
+                                   _ef, matches, table);
   if (plan.ask_per_hop) {
     probe.reset();
   }
   auto set = probe ? std::move(*probe)
-                   : detail::MakeDocSet(_inner.get(), docs_count,
+                   : detail::MakeDocSet(inner, docs_count,
                                         plan.ask_per_hop ? nullptr : table);
   const auto admit = AdmitIn(set);
   uint64_t budget = matches;
@@ -599,8 +684,8 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     std::min(1.0, static_cast<double>(matches) /
                     static_cast<double>(std::max<uint64_t>(1, graph.Size())));
   const auto walked = [&](bool complete) {
-    return complete && (scratch.nearest.size() >= _ef ||
-                        (bounded && scratch.nearest.size() >= matches));
+    return complete &&
+           (scratch.nearest.size() >= _ef || scratch.nearest.size() >= most);
   };
   const auto run = [&](const auto& acc) {
     bool done = false;
@@ -614,18 +699,31 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   };
   if (plan.ask_per_hop) {
     WalkFilterScratch walk_scratch;
-    const WalkFilter walk_filter{*table, docs_count, walk_scratch};
+    const WalkFilter walk_filter{
+      *table, docs_count, HnswWalkVisits(_ef, graph.M0()),
+      by_columns && _column_filter == HnswColumnFilter::Auto
+        ? scratch.admit_share
+        : 0.0,
+      walk_scratch};
     const bool done =
-      _inner ? run(InnerAndTableFilter{set, walk_filter, walk_scratch})
-             : run(walk_filter);
+      inner ? run(InnerAndTableFilter{set, walk_filter, walk_scratch})
+            : run(walk_filter);
     if (done) {
       return;
     }
+    if (walk_filter.Stalled()) {
+      SDB_IF_FAILURE("irs::HnswColumnsStalled") {
+        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+      }
+      RunFiltered(dist, index_table, nullptr, scratch);
+      return;
+    }
     table->Rewind();
-    set = detail::MakeDocSet(_inner.get(), docs_count, table);
+    set = detail::MakeDocSet(inner, docs_count, table);
   } else if (run(admit)) {
     return;
-  } else if (plan.two_hop && plan.walk == HnswWalk::TwoHop &&
+  } else if (((plan.two_hop && plan.walk == HnswWalk::TwoHop) ||
+              plan.walk == HnswWalk::Adaptive) &&
              scratch.scored < budget) {
     budget -= scratch.scored;
     const auto seeds = AdmittedSeeds(set, graph, 2 * _ef);
@@ -637,7 +735,12 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   SDB_IF_FAILURE("irs::HnswFilteredScan") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  HnswScanTopK(set, graph, dist, _ef, scratch);
+  if (inner && set.Filled() == doc_limits::min()) {
+    HnswScanTopK(IndexDocs(*inner, table, docs_count), graph, dist, _ef,
+                 scratch);
+  } else {
+    HnswScanTopK(SetDocs(set), graph, dist, _ef, scratch);
+  }
 }
 
 void HnswQuery::PrepareDistance() const {
@@ -678,13 +781,18 @@ bool HnswQuery::ScansByColumn() const {
 }
 
 void HnswQuery::ScanColumn(HnswSearchScratch& s) const {
-  auto set = detail::MakeDocSet(_inner.get(),
-                                static_cast<doc_id_t>(_segment.docs_count()));
+  const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
   detail::RawVectorReader reader{*_exact, *_segment.GetColReader(), _d};
   reader.SetQuery(_query, _metric);
   std::vector<doc_id_t> docs;
   HnswColumnDist dist{.reader = &reader, .docs = &docs};
-  HnswScanTopK(set, _data->graph, dist, _ef, s);
+  if (_inner) {
+    HnswScanTopK(IndexDocs(*_inner, nullptr, docs_count), _data->graph, dist,
+                 _ef, s);
+    return;
+  }
+  auto set = detail::MakeDocSet(nullptr, docs_count);
+  HnswScanTopK(SetDocs(set), _data->graph, dist, _ef, s);
 }
 
 void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
@@ -730,12 +838,16 @@ void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
 }
 
 std::vector<ScoreDoc> HnswQuery::RunSearch(
-  detail::TableFilter* table, std::vector<score_t>* spreads) const {
+  detail::TableFilter* table, detail::TableFilter* columns,
+  std::vector<score_t>* spreads) const {
   HnswSearchScratch scratch;
   std::vector<score_t> widened;
   bool wide = false;
   if (table && !table->Foldable()) {
     table = nullptr;
+  }
+  if (!_dual || (columns && !columns->Foldable())) {
+    columns = nullptr;
   }
   if (!table && ScansByColumn()) {
     ScanColumn(scratch);
@@ -747,7 +859,7 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(
                  if (_ef == 0) {
                    RunRadius(dist, table, scratch);
                  } else if (_inner || table) {
-                   RunFiltered(dist, table, scratch);
+                   RunFiltered(dist, table, columns, scratch);
                  } else {
                    HnswSearchTopK(_data->graph, dist, _ef, scratch);
                  }

@@ -1,0 +1,83 @@
+query
+SELECT '1 2 3'::int2vector AS v, '  1   2 '::int2vector AS spaced, ''::int2vector AS empty;
+----
+v	spaced	empty
+1 2 3	1 2	(empty)
+
+
+query
+SELECT '23 25'::oidvector AS o, ''::oidvector AS empty;
+----
+o	empty
+23 25	(empty)
+
+
+statement error
+SELECT '{1,2}'::int2vector;
+----
+db error: ERROR: invalid input syntax for type smallint: "{1,2}"<slt:ignore>
+
+
+statement error
+SELECT '1 x'::int2vector;
+----
+db error: ERROR: invalid input syntax for type smallint: "x"<slt:ignore>
+
+
+statement error
+SELECT '1 70000'::int2vector;
+----
+db error: ERROR: value "70000" is out of range for type smallint<slt:ignore>
+
+
+query
+SELECT '-1 2'::int2vector AS a, '-32768 32767'::int2vector AS b;
+----
+a	b
+-1 2	-32768 32767
+
+
+statement error
+SELECT '-32769'::int2vector;
+----
+db error: ERROR: value "-32769" is out of range for type smallint
+
+
+statement error
+SELECT '99999999999999999999'::int2vector;
+----
+db error: ERROR: value "99999999999999999999" is out of range for type smallint
+
+
+query
+SELECT '1 2'::int2vector::text AS a, '23 25'::oidvector::text AS b, ''::int2vector::text AS d;
+----
+a	b	d
+1 2	23 25	(empty)
+
+
+statement error
+SELECT '1	2'::int2vector;
+----
+db error: ERROR: invalid input syntax for type smallint: "1	2"<slt:ignore>
+
+
+statement error invalid input syntax for type oid: "2?x"
+SELECT '1 2x'::oidvector;
+
+
+query
+SELECT ARRAY['1 2'::int2vector, '3'::int2vector, ''::int2vector] AS a, ROW(''::int2vector) AS b,
+       ROW('3'::int2vector) AS c, ROW('1 2'::int2vector) AS d, ARRAY[ROW('3'::int2vector)] AS e,
+       ARRAY[ROW('1 2'::int2vector)] AS f;
+----
+a	b	c	d	e	f
+{"1 2",3,""}	("")	(3)	("1 2")	{(3)}	{"(\\"1 2\\")"}
+
+
+query
+SELECT ARRAY[ARRAY['1 2'::int2vector], ARRAY['3'::int2vector]] AS a, ROW(ARRAY['1 2'::int2vector]) AS b,
+       ARRAY['1 2'::oidvector, '3'::oidvector] AS c;
+----
+a	b	c
+{{"1 2"},{3}}	("{""1 2""}")	{"1 2",3}

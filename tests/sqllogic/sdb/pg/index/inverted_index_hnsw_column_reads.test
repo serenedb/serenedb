@@ -168,6 +168,18 @@ pk
 2452
 
 
+query
+SELECT pk FROM hnsw_cr_idx WHERE body < repeat('x', 100) || '25' OR tag = 'b'
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2500
+2499
+2498
+2503
+2497
+
+
 statement ok
 SET sdb_hnsw_column_filter = 'fold';
 

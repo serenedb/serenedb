@@ -25,16 +25,12 @@
 
 #include <atomic>
 #include <cstdint>
+#include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
-
-namespace duckdb {
-
-class ClientContext;
-}
 
 namespace sdb::pg {
 
@@ -141,6 +137,7 @@ struct ProgressMetrics {
 struct ProgressSource {
   int32_t pid{0};
   int64_t datid{0};
+  bool client_backend{false};
   std::string user;
   std::string database;
   int64_t backend_start_us{0};
@@ -150,11 +147,20 @@ struct ProgressSource {
   duckdb::ClientContext* ctx{nullptr};
 
   std::atomic<int64_t> query_start_us{0};
+  std::atomic<int64_t> xact_commit{0};
+  std::atomic<int64_t> xact_rollback{0};
   ProgressMetrics metrics;
 
   void BeginQuery(std::string query_text);
   void EndQuery();
   void Detach();
+};
+
+struct DatabaseStats {
+  int64_t xact_commit{0};
+  int64_t xact_rollback{0};
+  int64_t sessions{0};
+  int64_t session_time_us{0};
 };
 
 struct ProgressSnapshot {
@@ -193,9 +199,13 @@ class ProgressRegistry {
   }
 
   void Register(std::shared_ptr<ProgressSource> source);
-  void Unregister(const ProgressSource* source);
+  void Unregister(ProgressSource* source);
 
   std::vector<ProgressSnapshot> GetSnapshots() const;
+
+  DatabaseStats GetDatabaseStats(int64_t datid) const;
+  void CollectTransactions(ProgressSource& source);
+  void ForgetDatabase(int64_t datid);
 
   size_t OtherSessions(int64_t datid, int32_t pid, absl::Duration wait) const;
 
@@ -204,6 +214,7 @@ class ProgressRegistry {
   irs::containers::FlatHashMap<const ProgressSource*,
                                std::shared_ptr<ProgressSource>>
     _sources;
+  irs::containers::FlatHashMap<int64_t, DatabaseStats> _ended_stats;
 };
 
 class [[nodiscard]] ProgressRegistration {

@@ -71,10 +71,10 @@
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/inet_terms.h"
-#include "connector/pg_logical_types.h"
 #include "connector/scan/deferred_check.h"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
+#include "pg/types/logical.h"
 #include "query/config.h"
 
 namespace {

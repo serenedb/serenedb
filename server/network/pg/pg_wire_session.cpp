@@ -34,6 +34,7 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_data.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
@@ -483,10 +484,10 @@ bool PgWireSession<Kind>::SetupConnection() {
   _conn->context->SetSchedulerAccount(this->_task->Account());
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = std::make_shared<ConnectionContext>(
-    *_conn->context, user, role, DatabaseName(), database_id, &this->_send,
-    static_cast<int32_t>(_cancel_key >> 32), _cancel);
-  _client_state =
-    &connector::SereneDBClientState::Register(*_conn->context, _connection_ctx);
+    *_conn->context, user, _system_user, role, DatabaseName(), database_id,
+    &this->_send, static_cast<int32_t>(_cancel_key >> 32), _cancel);
+  _client_state = &connector::SereneDBClientState::Register(
+    *_conn->context, _connection_ctx, true);
   _progress = sdb::pg::ProgressRegistration{_client_state->progress_source};
   _client_state->protocol_state = &_proto;
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
@@ -888,7 +889,8 @@ void PgWireSession<Kind>::CommitAndReportReady() {
   // overlay, so reporting afterwards tells the client the value it actually
   // keeps (and a set-then-reverted SET LOCAL nets to no message).
   ReportChangedParameters();
-  WriteReadyForQuery(this->_send, _txn_state->StatusByte());
+  const auto status = _txn_state->StatusByte();
+  WriteReadyForQuery(this->_send, status);
   this->KickSend();
 }
 
@@ -1049,6 +1051,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
                              UserName(), "\"")));
     co_return false;
   }
+  _system_user = absl::StrCat(hba::MethodName(hba_method), ":", UserName());
   co_return true;
 }
 
@@ -1479,8 +1482,8 @@ yaclib::Task<duckdb::QueryResultState> PgWireSession<Kind>::DriveQuery(
     }
   };
   for (;;) {
-    if (wire) {
-      DrainWire(*wire);
+    if (wire && !DrainWire(*wire)) {
+      _conn->context->Interrupt();
     }
     const auto status =
       pending.ExecuteTask([this] { this->_task->RequestRun(); });
@@ -1980,7 +1983,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     const uint64_t oid = absl::big_endian::Load32(payload.data());
     payload.remove_prefix(sizeof(uint32_t));
     param_oids.push_back(oid);
-    if (oid != 0 && !IsNumericOid(oid)) {
+    if (oid != 0 && oid != sdb::pg::kUnknown && !IsNumericOid(oid)) {
       type_hints.emplace(
         absl::StrCat(i + 1),
         sdb::pg::Oid2Type(oid, _connection_ctx->GetClientContext()));
@@ -3012,10 +3015,11 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   };
   try {
     if (SetupConnection()) {
+      _cancel_token->role.store(_connection_ctx->GetLoginRoleId(),
+                                std::memory_order_relaxed);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
-        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
       SendStartupBurst();
       this->KickSend();

@@ -39,8 +39,6 @@ def test_ddl_command_tags():
                 (f"GRANT {prefix}_r TO {prefix}_u", "GRANT ROLE"),
                 (f"REVOKE {prefix}_r FROM {prefix}_u", "REVOKE ROLE"),
                 (f"ALTER ROLE {prefix}_r WITH LOGIN", "ALTER ROLE"),
-                (f"ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO {prefix}_r", "ALTER DEFAULT PRIVILEGES"),
-                (f"ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM {prefix}_r", "ALTER DEFAULT PRIVILEGES"),
                 (f"ANALYZE {prefix}_t", "ANALYZE"),
                 (f"VACUUM ANALYZE {prefix}_t", "VACUUM"),
                 (f"DROP TABLE {prefix}_t", "DROP TABLE"),
@@ -49,8 +47,42 @@ def test_ddl_command_tags():
                 cur.execute(statement)
                 assert cur.statusmessage == tag
                 assert cur.description is None
+            with psycopg.connect(**{**conn_kwargs(), "dbname": database}, autocommit=True) as d, d.cursor() as dcur:
+                for statement in (
+                    f"ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO {prefix}_r",
+                    f"ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM {prefix}_r",
+                ):
+                    dcur.execute(statement)
+                    assert dcur.statusmessage == "ALTER DEFAULT PRIVILEGES"
+                    assert dcur.description is None
             cur.execute(f"DROP ROLE {prefix}_u")
             cur.execute(f"DROP ROLE {prefix}_r")
             cur.execute(f"DROP DATABASE {database}")
+    finally:
+        c.close()
+
+
+def test_permission_command_tags():
+    prefix = f"cmdtag_priv_{os.getpid()}"
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        with c.cursor() as cur:
+            for statement, tag in (
+                (f"CREATE ROLE {prefix}_r", "CREATE ROLE"),
+                (f"CREATE TABLE {prefix}_t (a INT)", "CREATE TABLE"),
+                (f"CREATE SEQUENCE {prefix}_s", "CREATE SEQUENCE"),
+                (f"CREATE SCHEMA {prefix}_sch", "CREATE SCHEMA"),
+                (f"GRANT USAGE ON SCHEMA {prefix}_sch TO {prefix}_r", "GRANT"),
+                (f"REVOKE USAGE ON SCHEMA {prefix}_sch FROM {prefix}_r", "REVOKE"),
+                (f"ALTER TABLE {prefix}_t OWNER TO {prefix}_r", "ALTER TABLE"),
+                (f"ALTER SEQUENCE {prefix}_s OWNER TO {prefix}_r", "ALTER SEQUENCE"),
+                (f"ALTER SCHEMA {prefix}_sch OWNER TO {prefix}_r", "ALTER SCHEMA"),
+                (f"DROP SEQUENCE {prefix}_s", "DROP SEQUENCE"),
+                (f"DROP TABLE {prefix}_t", "DROP TABLE"),
+                (f"DROP SCHEMA {prefix}_sch", "DROP SCHEMA"),
+                (f"DROP ROLE {prefix}_r", "DROP ROLE"),
+            ):
+                cur.execute(statement)
+                assert cur.statusmessage == tag, (statement, cur.statusmessage)
     finally:
         c.close()

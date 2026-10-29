@@ -62,6 +62,7 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
 
   BooleanQuery(const SubReader& segment, Clauses&& clauses,
                uint32_t declared_msm, uint32_t min_should_match, score_t boost,
+               uint32_t estimate_min, uint32_t estimate_matches,
                uint32_t estimate, ScoreMergeType merge_type)
     : QueryBuilderImpl{segment, estimate, QueryKind::Boolean},
       _clauses{std::move(clauses)},
@@ -69,6 +70,10 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
       _min_should_match{min_should_match},
       _boost{boost},
       _merge_type{merge_type} {
+    SDB_ASSERT(estimate_min <= estimate_matches &&
+               estimate_matches <= estimate);
+    _estimate_min = estimate_min;
+    _estimate_matches = estimate_matches;
     _postings = 0;
     _leaves = 0;
     for (const auto& bucket : _clauses) {

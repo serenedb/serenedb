@@ -75,7 +75,6 @@ jobs:
       test_args: ${{ steps.select.outputs.test_args }}
       perf_test_args: ${{ steps.select.outputs.perf_test_args }}
       sanitizer_test_args: ${{ steps.select.outputs.sanitizer_test_args }}
-      images: ${{ steps.images.outputs.images }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -88,13 +87,6 @@ jobs:
         run: python3 scripts/ci/ci.py wait-check --repo "${{ github.repository }}" --sha "${{ inputs.PR_SHA }}" --name pre-commit
       - id: classify
         run: ./scripts/ci/classify-changes.sh origin/main
-      - name: Find the images the registry lacks
-        id: images
-        working-directory: ./scripts/ci
-        run: |
-          images=$(./build_images.sh missing | paste -sd' ')
-          echo "images=$images" >> "$GITHUB_OUTPUT"
-          echo "missing: ${images:-none}"
       - id: select
         env:
           EVERYTHING: ${{ inputs.EVERYTHING }}
@@ -133,17 +125,9 @@ jobs:
             echo "sanitizer_test_args=$(python3 scripts/ci/ci.py select-suites "${sanitizer[@]}") $flaky"
           } >> "$GITHUB_OUTPUT"
 
-  image:
-    needs: prepare
-    if: needs.prepare.outputs.images != ''
-    uses: ./.github/workflows/build-images.yml
-    with:
-      REF: ${{ inputs.PR_SHA || github.sha }}
-    secrets: inherit
-
   perf:
-    needs: [prepare, image]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.LOCATION != 'dev-only' }}
+    needs: prepare
+    if: inputs.LOCATION != 'dev-only'
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: perf
@@ -153,8 +137,7 @@ jobs:
     secrets: inherit
 
   dev:
-    needs: [prepare, image]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' }}
+    needs: prepare
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: dev
@@ -166,8 +149,8 @@ jobs:
     secrets: inherit
 
   asan:
-    needs: [prepare, image]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.LOCATION != 'dev-only' }}
+    needs: prepare
+    if: inputs.LOCATION != 'dev-only'
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: asan
@@ -177,8 +160,8 @@ jobs:
     secrets: inherit
 
   tsan:
-    needs: [prepare, image]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.LOCATION != 'dev-only' }}
+    needs: prepare
+    if: inputs.LOCATION != 'dev-only'
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: tsan
@@ -188,8 +171,8 @@ jobs:
     secrets: inherit
 
   msan:
-    needs: [prepare, image]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.LOCATION != 'dev-only' }}
+    needs: prepare
+    if: inputs.LOCATION != 'dev-only'
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: msan
@@ -199,8 +182,8 @@ jobs:
     secrets: inherit
 
   perf-arm64:
-    needs: [prepare, image]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.LOCATION != 'dev-only' }}
+    needs: prepare
+    if: inputs.LOCATION != 'dev-only'
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: perf
@@ -212,8 +195,8 @@ jobs:
     secrets: inherit
 
   dev-arm64:
-    needs: [prepare, image]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.LOCATION != 'dev-only' }}
+    needs: prepare
+    if: inputs.LOCATION != 'dev-only'
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: dev
@@ -275,8 +258,8 @@ jobs:
 
   bugfix:
     name: bugfix check
-    needs: [prepare, image]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.image.result != 'failure' && inputs.BUGFIX && inputs.LOCATION != 'dev-only' }}
+    needs: prepare
+    if: inputs.BUGFIX && inputs.LOCATION != 'dev-only'
     runs-on:
       - linux-amd64
     timeout-minutes: 240
@@ -303,6 +286,12 @@ jobs:
           docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
           git clean -ffdxq
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
+      - name: Build and push the images this architecture lacks
+        working-directory: ./scripts/ci
+        env:
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+        run: ./build_images.sh arch
       - name: The changed tests fail without the fix
         run: ./scripts/ci/bugfix_check.sh origin/main
       - name: Summary
@@ -325,7 +314,7 @@ jobs:
 
   report:
     name: Report Status
-    needs: [prepare, image, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, coverage, bugfix]
+    needs: [prepare, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, coverage, bugfix]
     if: always()
     runs-on: ubuntu-latest
     steps:

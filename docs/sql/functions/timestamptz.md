@@ -31,6 +31,7 @@ they are always available.
 | `now()`                                                          | Current date and time (start of current transaction).                      |
 | [`timetz_byte_comparable(timetz)`](#timetz_byte_comparabletimetz)        | Converts a `TIME WITH TIME ZONE` to a `UBIGINT` sort key.                  |
 | [`to_timestamp(double)`](#to_timestampdouble)                            | Converts seconds since the epoch to a timestamp with time zone.            |
+| [`to_timestamp(text, format)`](../../sql/functions/dateformat.md#to_timestamptext-format) | Parses text into a timestamp with time zone according to a PostgreSQL template. |
 | `transaction_timestamp()`                      | Current date and time (start of current transaction).                      |
 
 #### `current_timestamp`

@@ -157,6 +157,78 @@ CREATE RULE "_RETURN" AS\n    ON SELECT TO rs.v DO INSTEAD  SELECT a, b FROM rs.
 
 
 statement ok
+CREATE VIEW rs.v_alias (x, y) AS SELECT 1, 'a'::text;
+
+
+statement ok
+CREATE VIEW rs.v_partly (a, renamed) AS SELECT a, b FROM rs.t;
+
+
+statement ok
+CREATE VIEW rs.v_union (u) AS SELECT 1 UNION ALL SELECT 2;
+
+
+query
+SELECT pg_get_viewdef('rs.v_alias'::regclass) AS aliased,
+       pg_get_viewdef('rs.v_partly'::regclass) AS partly,
+       pg_get_viewdef('rs.v_union'::regclass) AS unioned;
+----
+aliased	partly	unioned
+SELECT 1 AS x, CAST('a' AS text) AS y;	SELECT a, b AS renamed FROM rs.t;	(SELECT 1 AS u) UNION ALL (SELECT 2);
+
+
+statement ok
+CREATE VIEW rs.v_star (x) AS SELECT * FROM rs.t;
+
+
+statement ok
+CREATE VIEW rs.v_by_name (x, y) AS SELECT a, b FROM rs.t UNION ALL BY NAME SELECT b, a FROM rs.t;
+
+
+statement ok
+CREATE TABLE rs.nested (s STRUCT(p integer, q integer), n integer);
+
+
+statement ok
+CREATE VIEW rs.v_unnest (x, y, z) AS SELECT unnest(s), n FROM rs.nested;
+
+
+query
+SELECT pg_get_viewdef('rs.v_star'::regclass) AS star,
+       pg_get_viewdef('rs.v_by_name'::regclass) AS by_name,
+       pg_get_viewdef('rs.v_unnest'::regclass) AS unnested;
+----
+star	by_name	unnested
+SELECT * FROM (SELECT * FROM rs.t) AS v_star(x);	SELECT * FROM ((SELECT a, b FROM rs.t) UNION ALL BY NAME (SELECT b, a FROM rs.t)) AS v_by_name(x, y);	SELECT * FROM (SELECT unnest(s), n FROM rs.nested) AS v_unnest(x, y, z);
+
+
+query
+SELECT c.relname, string_agg(a.attname, ',' ORDER BY a.attnum) AS columns
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relnamespace = 'rs'::regnamespace AND c.relname IN ('v_star', 'v_by_name', 'v_unnest') AND a.attnum > 0
+GROUP BY c.relname ORDER BY c.relname;
+----
+relname	columns
+v_by_name	x,y
+v_star	x,a,b,c,Odd Col
+v_unnest	x,y,z
+
+
+query
+SELECT definition FROM pg_views WHERE schemaname = 'rs' AND viewname = 'v_alias';
+----
+definition
+SELECT 1 AS x, CAST('a' AS text) AS y;
+
+
+query
+SELECT pg_get_ruledef(oid) AS def FROM pg_rewrite WHERE ev_class = 'rs.v_alias'::regclass;
+----
+def
+CREATE RULE "_RETURN" AS\n    ON SELECT TO rs.v_alias DO INSTEAD  SELECT 1 AS x, CAST('a' AS text) AS y;
+
+
+statement ok
 CREATE TABLE rs.audit (a integer);
 
 
@@ -184,6 +256,41 @@ FROM information_schema.triggers WHERE trigger_schema = 'rs' ORDER BY trigger_na
 trigger_name	action_statement	action_condition
 t_ins	INSERT INTO rs.audit (VALUES ("new".a))	NULL
 t_upd	INSERT INTO rs.audit (VALUES (0))	NULL
+
+
+statement ok
+CREATE TABLE rs.watched (a integer);
+
+
+statement ok
+CREATE TABLE rs.watched_rows (a integer);
+
+
+statement ok
+CREATE TRIGGER w_del AFTER DELETE ON rs.watched_rows FOR EACH ROW INSERT INTO rs.audit VALUES (OLD.a);
+
+
+statement ok
+CREATE TRIGGER w_new AFTER INSERT ON rs.watched REFERENCING NEW TABLE AS fresh FOR EACH STATEMENT INSERT INTO rs.audit SELECT a FROM fresh;
+
+
+statement ok
+CREATE TRIGGER w_old AFTER DELETE ON rs.watched REFERENCING OLD TABLE AS gone FOR EACH STATEMENT INSERT INTO rs.audit SELECT a FROM gone;
+
+
+statement ok
+CREATE TRIGGER w_both AFTER UPDATE ON rs.watched REFERENCING OLD TABLE AS "Old Rows" NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO rs.audit SELECT a FROM new_rows;
+
+
+query
+SELECT tgname, pg_get_triggerdef(oid) AS def FROM pg_trigger
+WHERE tgrelid IN ('rs.watched'::regclass, 'rs.watched_rows'::regclass) ORDER BY tgname;
+----
+tgname	def
+w_both	CREATE TRIGGER w_both AFTER UPDATE ON rs.watched REFERENCING OLD TABLE AS "Old Rows" NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO rs.audit SELECT a FROM new_rows
+w_del	CREATE TRIGGER w_del AFTER DELETE ON rs.watched_rows FOR EACH ROW INSERT INTO rs.audit (VALUES ("old".a))
+w_new	CREATE TRIGGER w_new AFTER INSERT ON rs.watched REFERENCING NEW TABLE AS fresh FOR EACH STATEMENT INSERT INTO rs.audit SELECT a FROM fresh
+w_old	CREATE TRIGGER w_old AFTER DELETE ON rs.watched REFERENCING OLD TABLE AS gone FOR EACH STATEMENT INSERT INTO rs.audit SELECT a FROM gone
 
 
 statement ok
@@ -223,12 +330,26 @@ args	identity	result	d1	d2	proargnames
 a, b DEFAULT 3	a, b	NULL	NULL	3	{a,b}
 
 
+statement ok
+CREATE FUNCTION rs.out_default(a integer, OUT r integer, b integer := 7) LANGUAGE sql AS 'SELECT a + b';
+
+
+query
+SELECT pg_get_function_arg_default('rs.out_default'::regproc, 1) AS d1,
+       pg_get_function_arg_default('rs.out_default'::regproc, 2) AS d2,
+       pg_get_function_arg_default('rs.out_default'::regproc, 3) AS d3,
+       pg_get_function_arg_default('rs.out_default'::regproc, 4) AS d4;
+----
+d1	d2	d3	d4
+NULL	NULL	7	NULL
+
+
 query
 SELECT pg_get_function_arguments(oid) AS args, pg_get_function_result(oid) AS result
 FROM pg_proc WHERE proname = 'lower' AND pronamespace = 'pg_catalog'::regnamespace ORDER BY args LIMIT 1;
 ----
 args	result
-text	text
+datemultirange	date
 
 
 query
@@ -238,6 +359,18 @@ SELECT pg_get_statisticsobjdef(0) IS NULL AS stats,
 ----
 stats	stats_columns	stats_expressions
 t	t	t
+
+
+statement ok
+CREATE MACRO rs.with_default(a := 7) AS a;
+
+
+query
+SELECT pg_get_function_arg_default('rs.with_default'::regproc, 1) AS first,
+       pg_get_function_arg_default('rs.with_default'::regproc, 5) IS NULL AS out_of_range;
+----
+first	out_of_range
+7	t
 
 
 statement ok

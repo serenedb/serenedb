@@ -183,10 +183,11 @@ class HttpSession final
       _conn = std::move(sql.conn);
       _connection_ctx = std::move(sql.context);
       _progress = std::move(sql.progress);
+      _cancel_token->role.store(_connection_ctx->GetLoginRoleId(),
+                                std::memory_order_relaxed);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
-        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
       _conn_user = _user;
     }

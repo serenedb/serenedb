@@ -65,7 +65,7 @@ query
 SELECT pg_typeof(u) FROM union_values WHERE id = 1;
 ----
 pg_typeof
-union
+"union"
 
 
 skipif pg-wire-extended
@@ -73,7 +73,15 @@ query
 SELECT 'union'::regtype;
 ----
 regtype
-union
+"union"
+
+
+skipif pg-wire-extended
+query
+SELECT '"union"'::regtype, '"union"'::regtype = 'union'::regtype AS same;
+----
+regtype	same
+"union"	t
 
 
 statement ok
@@ -85,7 +93,7 @@ query
 SELECT pg_typeof(u) FROM ctas_union;
 ----
 pg_typeof
-union
+"union"
 
 
 query

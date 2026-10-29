@@ -10,6 +10,7 @@ binary result format.
 
 from __future__ import annotations
 
+import json
 import select
 import socket
 import struct
@@ -248,6 +249,21 @@ def conn():
     c = WireConn()
     yield c
     c.close()
+
+
+def test_query_of_a_vanished_client_ends(conn):
+    query = "SELECT i, repeat('x', 100) FROM range(3000000) t(i) ORDER BY i -- vanished"
+    victim = WireConn()
+    victim.send("Q", _cstr(query))
+    victim.sock.close()
+    probe = (
+        "SELECT count(*) FROM pg_stat_activity "
+        "WHERE query LIKE '%-- vanished' AND pid <> pg_backend_pid()"
+    )
+    deadline = time.monotonic() + 60
+    while first_field(conn.run_ok(probe)) != b"0":
+        assert time.monotonic() < deadline, "the query outlived its client"
+        time.sleep(0.2)
 
 
 def test_startup_rejects_missing_user():
@@ -561,6 +577,340 @@ def test_char_oid18_param_roundtrip(conn):
     cols = row_description(m)
     assert cols and cols[0][1] == 18, cols  # result type oid 18 ("char")
     assert first_field(m) == b"A"
+
+
+@pytest.mark.parametrize(
+    "param, text",
+    [(b"A", b"A"), (b"\0", b""), (b"\xc3", b"\\303")],
+)
+def test_char_oid18_binary_param(conn, param, text):
+    conn.parse("", "select $1::text", oids=(18,))
+    conn.bind("", "", params=(param,), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == text
+
+
+@pytest.mark.parametrize(
+    "query, value",
+    [
+        ("select 'A'::\"char\"", b"A"),
+        ("select 'abc'::\"char\"", b"a"),
+        ("select ''::\"char\"", b"\0"),
+        ("select '\\303'::\"char\"", b"\xc3"),
+    ],
+)
+def test_char_oid18_binary_result(conn, query, value):
+    conn.parse("", query)
+    conn.bind("", "", result_format=1)
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == value
+
+
+@pytest.mark.parametrize(
+    "param, text",
+    [(b"abc", b"a"), (b"\\101", b"A"), (b"\xc3\xa9", b"\\303"), (b"", b"")],
+)
+def test_char_oid18_text_param(conn, param, text):
+    conn.parse("", "select $1::text", oids=(18,))
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == text
+
+
+@pytest.mark.parametrize(
+    "oid, fmt, param, sqlstate",
+    [
+        (27, 0, b"abc", "22P02"),
+        (18, 1, b"ab", "22P03"),
+        (3904, 0, b"garbage", "22P02"),
+        (3904, 1, b"", "22P03"),
+        (3904, 1, b"\x02", "22P03"),
+        (3904, 1, b"\x02\xff\xff\xff\xfe", "22P03"),
+        (4451, 0, b"{garbage}", "22P02"),
+        (4451, 0, b"garbage", "22P02"),
+        (4451, 1, b"\x00\x00\x00", "22P03"),
+        (4451, 1, b"\xff\xff\xff\xff", "22P03"),
+        (4451, 1, b"\x00\x00\x00\x01", "22P03"),
+        (4451, 1, b"\x00\x00\x00\x01\xff\xff\xff\xfe", "22P03"),
+        (22, 0, b"a b", "22P02"),
+        (1007, 0, b"{{1,2},{3,4}}", "22P02"),
+    ],
+)
+def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
+    conn.parse("", "select $1::text", oids=(oid,))
+    conn.bind("", "", params=(param,), formats=(fmt,))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == [sqlstate]
+
+
+def test_int2vector_array_text_param(conn):
+    conn.parse("", "select array_to_string($1, ',')", oids=(1006,))
+    conn.bind("", "", params=(b'{"1 2","3"}',))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == b"1 2,3"
+
+
+GEOMETRIC_PARAMS = [
+    (600, b"(1,2)", struct.pack("!dd", 1, 2), b"(1,2)"),
+    (601, b"[(1,2),(3,4)]", struct.pack("!dddd", 1, 2, 3, 4), b"[(1,2),(3,4)]"),
+    (
+        602,
+        b"((1,2),(3,4))",
+        struct.pack("!Bidddd", 1, 2, 1, 2, 3, 4),
+        b"((1,2),(3,4))",
+    ),
+    (603, b"(1,2),(3,4)", struct.pack("!dddd", 3, 4, 1, 2), b"(3,4),(1,2)"),
+    (604, b"((1,2),(3,4))", struct.pack("!idddd", 2, 1, 2, 3, 4), b"((1,2),(3,4))"),
+    (628, b"{1,2,3}", struct.pack("!ddd", 1, 2, 3), b"{1,2,3}"),
+    (718, b"<(1,2),3>", struct.pack("!ddd", 1, 2, 3), b"<(1,2),3>"),
+]
+
+
+@pytest.mark.parametrize("oid, text_param, binary_param, text", GEOMETRIC_PARAMS)
+@pytest.mark.parametrize("binary", [False, True])
+def test_geometric_param(conn, oid, text_param, binary_param, text, binary):
+    conn.parse("", "select $1::text", oids=(oid,))
+    if binary:
+        conn.bind("", "", params=(binary_param,), formats=(1,))
+    else:
+        conn.bind("", "", params=(text_param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == text
+
+
+@pytest.mark.parametrize(
+    "oid, sqlstate, message",
+    [
+        (3, "XX000", "cache lookup failed for type 3"),
+        (2970, "0A000", "type txid_snapshot is not supported"),
+    ],
+)
+def test_parse_param_oid_without_a_type(conn, oid, sqlstate, message):
+    conn.parse("", "select $1", oids=(oid,))
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == [sqlstate], errors(m)
+    assert errors(m)[0]["M"] == message
+
+
+def check_user_type_params(conn, name, in_transaction):
+    conn.run_ok(f"create type {name} as enum ('sad', 'ok')")
+    conn.run_ok(f"create table {name}_table (a int)")
+    try:
+        oid, array = (
+            int(v)
+            for v in all_fields(
+                conn.run_ok(
+                    f"select oid, typarray from pg_type where typname = '{name}'"
+                )
+            )
+        )
+        table = int(
+            first_field(conn.run_ok(f"select '{name}_table'::regclass::oid"))
+        )
+        for type_oid, param, text in (
+            (oid, b"ok", b"ok"),
+            (array, b"{sad,ok}", b"{sad,ok}"),
+        ):
+            if in_transaction:
+                conn.run_ok("begin")
+            conn.parse("", "select $1", oids=(type_oid,))
+            conn.bind("", "", params=(param,))
+            conn.execute("")
+            conn.sync()
+            m = conn.drain_to_ready()
+            if in_transaction:
+                conn.run_ok("commit")
+            assert "E" not in types(m), errors(m)
+            assert first_field(m) == text
+        for missing in (table, 1000000000):
+            if in_transaction:
+                conn.run_ok("begin")
+            conn.parse("", "select $1", oids=(missing,))
+            conn.sync()
+            m = conn.drain_to_ready()
+            if in_transaction:
+                conn.run("rollback")
+            assert sqlstates(m) == ["XX000"], errors(m)
+            assert errors(m)[0]["M"] == f"cache lookup failed for type {missing}"
+    finally:
+        conn.run("rollback")
+        conn.run(f"drop table if exists {name}_table")
+        conn.run(f"drop type if exists {name}")
+
+
+def test_parse_param_oid_of_user_types_in_transaction(conn):
+    check_user_type_params(conn, "raw_param_mood_txn", True)
+
+
+def test_parse_param_oid_of_user_types(conn):
+    check_user_type_params(conn, "raw_param_mood", False)
+
+
+def test_parse_param_oid_unknown_is_inferred(conn):
+    conn.parse("", "select $1::int4 + 1", oids=(705,))
+    conn.bind("", "", params=(b"41",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == b"42"
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [("select $1", b"abc"), ("select $1 || 'x'", b"abcx")],
+)
+def test_parse_param_oid_unknown_reads_as_text(conn, query, expected):
+    conn.parse("", query, oids=(705,))
+    conn.bind("", "", params=(b"abc",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected
+
+
+def numeric_send(text):
+    sign = 0x4000 if text.startswith("-") else 0
+    whole, _, fraction = text.lstrip("-").partition(".")
+    whole = whole.lstrip("0")
+    whole = "0" * (-len(whole) % 4) + whole
+    padded = fraction + "0" * (-len(fraction) % 4)
+    groups = [int(whole[i : i + 4]) for i in range(0, len(whole), 4)]
+    groups += [int(padded[i : i + 4]) for i in range(0, len(padded), 4)]
+    weight = len(whole) // 4 - 1
+    while groups and groups[0] == 0:
+        groups.pop(0)
+        weight -= 1
+    while groups and groups[-1] == 0:
+        groups.pop()
+    return struct.pack(
+        f"!hhHH{len(groups)}h", len(groups), weight, sign, len(fraction), *groups
+    )
+
+
+@pytest.mark.parametrize(
+    "query, param, fmt, expected",
+    [
+        ("select $1 = 1.23456", b"1.23456", 0, b"t"),
+        ("select $1 > 1", b"1.0001", 0, b"t"),
+        ("select round($1, 2)", b"1.23456", 0, b"1.23"),
+        ("select $1::text", b"1.23456", 0, b"1.23456"),
+        (
+            "select $1::text",
+            b"123456789012345678901234.5",
+            0,
+            b"123456789012345678901234.5",
+        ),
+        ("select $1 = 1.23456", numeric_send("1.23456"), 1, b"t"),
+        ("select $1::text", numeric_send("-0.000123"), 1, b"-0.000123"),
+    ],
+)
+def test_parse_param_oid_numeric_keeps_its_digits(conn, query, param, fmt, expected):
+    conn.parse("", query, oids=(1700,))
+    conn.bind("", "", params=(param,), formats=(fmt,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    if isinstance(expected, str):
+        assert sqlstates(m) == [expected], errors(m)
+        return
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected, first_field(m)
+
+
+@pytest.mark.parametrize(
+    "oid, param",
+    [(3802, b'\x01{"a": 1}'), (114, b'{"a": 1}')],
+)
+def test_binary_json_param(conn, oid, param):
+    conn.parse("", "select $1::text, $1->>'a'", oids=(oid,))
+    conn.bind("", "", params=(param,), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert all_fields(m) == [b'{"a": 1}', b"1"], all_fields(m)
+
+
+def test_numeric_param_rounds_into_its_column(conn):
+    conn.run_ok("drop table if exists raw_numeric_param")
+    conn.run_ok("create table raw_numeric_param (n numeric(10,4))")
+    conn.parse("", "insert into raw_numeric_param values ($1)", oids=(1700,))
+    conn.bind("", "", params=(b"1.23456",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(conn.run_ok("select n::text from raw_numeric_param")) == (
+        b"1.2346"
+    )
+    conn.run_ok("drop table raw_numeric_param")
+
+
+def parameter_types(msgs):
+    for t, p in msgs:
+        if t == "t":
+            (count,) = struct.unpack("!H", p[:2])
+            return list(struct.unpack(f"!{count}I", p[2 : 2 + 4 * count]))
+    return None
+
+
+@pytest.mark.parametrize(
+    "query, oids, expected",
+    [
+        ("select $1::int4 + 1", (705,), [705]),
+        (
+            "select table_name from information_schema.tables "
+            "where table_name = $1",
+            (),
+            [19],
+        ),
+        ("select $1::pg_lsn", (3220,), [3220]),
+    ],
+)
+def test_describe_reports_resolved_param_types(conn, query, oids, expected):
+    conn.parse("", query, oids=oids)
+    conn.describe("S", "")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert parameter_types(m) == expected, parameter_types(m)
+
+
+@pytest.mark.parametrize(
+    "oid, param, check",
+    [
+        (1700, b"1.5", lambda value: float(value) == 1.5),
+        (1042, b"ab", lambda value: value == b"ab"),
+        (3802, b'{"a": 1}', lambda value: json.loads(value) == {"a": 1}),
+    ],
+)
+def test_parse_param_oid_numeric_bpchar_jsonb(conn, oid, param, check):
+    conn.parse("", "select $1", oids=(oid,))
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert check(first_field(m)), first_field(m)
 
 
 def test_bytea_text_param_decodes_input_syntax(conn):
@@ -1022,6 +1372,31 @@ def test_binary_result_format(conn):
     ncols, length = struct.unpack("!hi", row[:6])
     assert ncols == 1 and length == 4
     assert struct.unpack("!i", row[6:10])[0] == 42
+
+
+@pytest.mark.parametrize(
+    "column, source",
+    [
+        ("acldefault('r', 10)", ""),
+        ("table_name", " from information_schema.tables limit 1"),
+    ],
+)
+def test_binary_record_field_type_matches_row_description(conn, column, source):
+    def binary_first_field(query):
+        conn.parse("", query)
+        conn.bind("", "", result_format=1)
+        conn.describe("P", "")
+        conn.execute("")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert "E" not in types(m), errors(m)
+        ((_, oid, _),) = row_description(m)
+        return oid, all_fields(m)[0]
+
+    column_oid, _ = binary_first_field(f"select {column}{source}")
+    _, record = binary_first_field(f"select row({column}){source}")
+    fields, field_oid = struct.unpack("!iI", record[:8])
+    assert (fields, field_oid) == (1, column_oid)
 
 
 def test_portal_paging_and_unlimited_drain(conn):

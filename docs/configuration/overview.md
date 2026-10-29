@@ -79,6 +79,12 @@ SereneDB has a [Secrets manager](../sql/statements/create_secret/index.md), whic
 
 The Scope column gives the scope a plain `SET` changes: a `GLOBAL` option changes for every session on the server, a `SESSION` option only for the current session. `SET GLOBAL`, `SET SESSION` and `SET LOCAL` name the [scope](../sql/statements/set/index.md#scopes) explicitly, for the options that take it. The options are grouped by the part of the system they affect.
 
+Who may change an option:
+
+- Changing an option for every session (`SET GLOBAL`, `RESET GLOBAL`, a plain `SET` or `RESET` of a `GLOBAL` option, `set_config` of one) requires a superuser; anyone else gets `permission denied to set parameter`.
+- The options that name server files or control logging and profiling output (`allowed_directories`, `allowed_paths`, `enable_logging`, `enabled_log_types`, `file_search_path`, `home_directory`, `log_query_path`, `logging_level`, `logging_storage`, `profiling_output`, `secret_directory`), `max_expression_depth`, the AI default secrets (`sdb_ai_text_default_secret`, `sdb_ai_embedding_default_secret`, `sdb_ai_system_one_default_secret`) and the options of the database connectors and object stores (for example `s3_region` or `s3_secret_access_key`) can be set only by a superuser, also for a single session.
+- The connector and object store options and `http_proxy_username` and `http_proxy_password` hold credentials: only a superuser can read them (`current_setting`, `SHOW`), and listings such as `duckdb_settings()` and `pg_settings` leave them out for everyone else.
+
 To search the reference rather than read it, query the catalog -- every option on this page is a `setting` object:
 
 ```sql

@@ -33,5 +33,9 @@ if ! command -v psql >/dev/null 2>&1; then
 	exit 1
 fi
 
+status=0
 echo "[network] running HBA mask test (serened=$SERENED)"
-python3 "${SCRIPT_DIR}/hba_mask_test.py" --serened "$SERENED"
+python3 "${SCRIPT_DIR}/hba_mask_test.py" --serened "$SERENED" || status=1
+echo "[network] running PROXY source test (serened=$SERENED)"
+python3 "${SCRIPT_DIR}/proxy_source_test.py" --serened "$SERENED" || status=1
+exit "$status"

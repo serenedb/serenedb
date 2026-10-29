@@ -1,0 +1,222 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS esp_vedernikoff;
+
+
+statement ok
+CREATE ROLE esp_vedernikoff LOGIN PASSWORD 'esp_pw';
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+SET GLOBAL threads = 2;
+----
+db error: ERROR: permission denied to set parameter "threads"
+DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+SET memory_limit = '1GB';
+----
+db error: ERROR: permission denied to set parameter "max_memory"
+DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+SET lock_configuration = true;
+----
+db error: ERROR: permission denied to set parameter "lock_configuration"
+DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+SELECT set_config('max_memory', '1GB', false);
+----
+db error: ERROR: permission denied to set parameter "max_memory"
+DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+CALL enable_profiling(format := 'json', save_location := '${__TEST_DIR__}/esp_profile.json');
+----
+db error: ERROR: permission denied to set parameter "profiling_output"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+CALL enable_profiling(format := 'json');
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+CALL disable_profiling();
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+SET sdb_job_history_size = 10;
+----
+db error: ERROR: permission denied to set parameter "sdb_job_history_size"
+DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+RESET GLOBAL threads;
+----
+db error: ERROR: permission denied to set parameter "threads"
+DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET SESSION profiling_output = '${__TEST_DIR__}/esp_profile.json';
+----
+db error: ERROR: permission denied to set parameter "profiling_output"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET log_query_path = '${__TEST_DIR__}/esp_queries.log';
+----
+db error: ERROR: permission denied to set parameter "log_query_path"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET SESSION enable_logging = true;
+----
+db error: ERROR: permission denied to set parameter "enable_logging"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET Calendar = 'gregorian';
+----
+db error: ERROR: permission denied to set parameter "calendar"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET sdb_ai_text_default_secret = 'esp_other';
+----
+db error: ERROR: permission denied to set parameter "sdb_ai_text_default_secret"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SELECT current_setting('http_proxy_password');
+----
+db error: ERROR: must be superuser to examine "http_proxy_password"
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SHOW http_proxy_username;
+----
+db error: ERROR: must be superuser to examine "http_proxy_username"
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SHOW Calendar;
+----
+db error: ERROR: must be superuser to examine "calendar"
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SELECT current_setting('http_proxy_password', true);
+----
+db error: ERROR: must be superuser to examine "http_proxy_password"
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SELECT current_setting(name, true) FROM (VALUES ('Calendar')) AS t(name);
+----
+db error: ERROR: must be superuser to examine "Calendar"
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SELECT current_setting(name) FROM (VALUES ('search_path')) AS t(name);
+----
+db error: ERROR: must be superuser to examine a parameter by a computed name
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT count(*) AS shown FROM duckdb_settings() WHERE name IN ('Calendar', 'http_proxy_password');
+----
+shown
+0
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT count(*) AS shown FROM pg_settings WHERE name IN ('Calendar', 'http_proxy_password');
+----
+shown
+0
+
+
+query
+SELECT count(*) AS shown FROM duckdb_settings() WHERE name IN ('Calendar', 'http_proxy_password');
+----
+shown
+2
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+SET search_path = public;
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT current_setting('search_path') = 'public' AS changed;
+----
+changed
+t
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+SET statement_timeout = '5min';
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+SET debug_force_external = true;
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+SET SESSION enable_profiling = 'no_output';
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+RESET ALL;
+
+
+statement ok
+DROP ROLE esp_vedernikoff;

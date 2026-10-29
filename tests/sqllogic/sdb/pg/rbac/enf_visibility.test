@@ -1,0 +1,308 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS evis_vedernikoff;
+
+
+statement ok
+CREATE ROLE evis_vedernikoff LOGIN PASSWORD 'evis_pw';
+
+
+statement ok
+CREATE TABLE evis_granted (a integer);
+
+
+statement ok
+CREATE TABLE evis_secretive (a integer);
+
+
+statement ok
+CREATE SCHEMA evis_private;
+
+
+statement ok
+CREATE TABLE evis_private.evis_tucked (a integer);
+
+
+statement ok
+GRANT SELECT ON evis_granted TO evis_vedernikoff;
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+query
+SELECT schema_name, table_name FROM duckdb_tables() WHERE table_name LIKE 'evis_%' ORDER BY 1, 2;
+----
+schema_name	table_name
+public	evis_granted
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+query
+SELECT schema_name FROM duckdb_schemas() WHERE schema_name LIKE 'evis_%' ORDER BY 1;
+----
+schema_name
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+SELECT * FROM evis_secretiv;
+----
+db error: ERROR: Table with name evis_secretiv does not exist!
+Did you mean "evis_granted"?
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+SELECT * FROM evis_tucke;
+----
+db error: ERROR: Table with name evis_tucke does not exist!
+Did you mean "evis_granted"?
+
+
+statement ok
+CREATE TABLE evis_vault (secret_code integer);
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+SELECT secret_cod FROM evis_vault;
+----
+db error: ERROR: permission denied for table evis_vault
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+SELECT v.secret_cod FROM evis_vault AS v;
+----
+db error: ERROR: permission denied for table evis_vault
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+SELECT COLUMNS('^secret_cod$') FROM evis_vault;
+----
+db error: ERROR: permission denied for table evis_vault
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+UPDATE evis_vault SET secret_cod = 1;
+----
+db error: ERROR: permission denied for table evis_vault
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+INSERT INTO evis_vault (secret_cod) VALUES (1);
+----
+db error: ERROR: permission denied for table evis_vault
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+COPY evis_vault (secret_cod) FROM '${__TEST_DIR__}/evis_vault.csv';
+----
+db error: ERROR: permission denied for table evis_vault
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+SELECT b FROM evis_granted;
+----
+db error: ERROR: Referenced column "b" not found in FROM clause!
+Candidate bindings: "a"
+
+
+statement ok
+GRANT SELECT ON evis_secretive TO evis_vedernikoff;
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+SELECT * FROM evis_secretiv;
+----
+db error: ERROR: Table with name evis_secretiv does not exist!
+Did you mean "evis_secretive"?
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+query
+SELECT table_name FROM duckdb_tables() WHERE table_name LIKE 'evis_%' ORDER BY 1;
+----
+table_name
+evis_granted
+evis_secretive
+
+
+statement ok
+CREATE DATABASE evis_other_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE evis_other_${__DATABASE__}.public.evis_remote (a integer);
+
+
+statement ok
+GRANT SELECT ON evis_other_${__DATABASE__}.public.evis_remote TO evis_vedernikoff;
+
+
+statement ok
+GRANT MAINTAIN ON evis_other_${__DATABASE__}.public.evis_remote TO evis_vedernikoff;
+
+
+statement ok
+COPY (SELECT 1 AS id) TO '${__TEST_DIR__}/evis_remote.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE VIEW evis_other_${__DATABASE__}.public.evis_remote_view AS SELECT * FROM read_parquet('${__TEST_DIR__}/evis_remote.parquet');
+
+
+statement ok
+CREATE INDEX evis_remote_idx ON evis_other_${__DATABASE__}.public.evis_remote_view USING inverted(id);
+
+
+statement ok
+REVOKE CONNECT ON DATABASE evis_other_${__DATABASE__} FROM PUBLIC;
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+SELECT * FROM evis_other_${__DATABASE__}.public.evis_remote;
+----
+db error: ERROR: permission denied for database "evis_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+VACUUM (RECOMPUTE_STATS_TABLE) evis_other_${__DATABASE__}.public.evis_remote;
+----
+db error: ERROR: permission denied for database "evis_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+USE evis_other_${__DATABASE__};
+----
+db error: ERROR: permission denied for database "evis_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+REINDEX INDEX evis_other_${__DATABASE__}.public.evis_remote_idx;
+----
+db error: ERROR: permission denied for database "evis_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+INSERT INTO evis_other_${__DATABASE__}.public.evis_remote VALUES (1);
+----
+db error: ERROR: permission denied for database "evis_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+query
+SELECT count(*) AS listed FROM duckdb_tables() WHERE table_name = 'evis_remote';
+----
+listed
+0
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+SELECT pg_database_size('evis_other_${__DATABASE__}');
+----
+db error: ERROR: permission denied for database evis_other_<slt:ignore>
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+SELECT * FROM evis_remot;
+----
+db error: ERROR: Table with name evis_remot does not exist!
+Did you mean "evis_granted"?
+
+
+statement ok
+GRANT CONNECT ON DATABASE evis_other_${__DATABASE__} TO evis_vedernikoff;
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement ok
+VACUUM (RECOMPUTE_STATS_TABLE) evis_other_${__DATABASE__}.public.evis_remote;
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement ok
+USE evis_other_${__DATABASE__};
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement ok
+USE ${__DATABASE__};
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+statement error
+REINDEX INDEX evis_other_${__DATABASE__}.public.evis_remote_idx;
+----
+db error: ERROR: permission denied for index "evis_remote_idx"
+
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+query
+SELECT count(*) AS rows FROM evis_other_${__DATABASE__}.public.evis_remote;
+----
+rows
+0
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+query
+SELECT count(*) AS listed FROM duckdb_tables() WHERE table_name = 'evis_remote';
+----
+listed
+1
+
+
+connection c_ved user=evis_vedernikoff password=evis_pw
+query
+SELECT pg_database_size('evis_other_${__DATABASE__}') >= 0 AS sized;
+----
+sized
+t
+
+
+statement ok
+DROP DATABASE evis_other_${__DATABASE__};
+
+
+statement ok
+DROP TABLE evis_vault;
+
+
+statement ok
+DROP TABLE evis_private.evis_tucked;
+
+
+statement ok
+DROP SCHEMA evis_private;
+
+
+statement ok
+DROP TABLE evis_granted;
+
+
+statement ok
+DROP TABLE evis_secretive;
+
+
+statement ok
+DROP ROLE evis_vedernikoff;

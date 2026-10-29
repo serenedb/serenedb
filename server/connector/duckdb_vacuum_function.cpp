@@ -224,6 +224,11 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
   }
+  if (!context.CanSeeDatabase(found->GetAttached())) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for database \"", name, "\""),
+                    ERR_DETAIL("User does not have CONNECT privilege."));
+  }
   return *found;
 }
 
@@ -304,7 +309,8 @@ CollectMaintainTargets(duckdb::ClientContext& context,
       [&](duckdb::CatalogEntry& entry) {
         // Tables and views share one set, so the scan hands
         // back both.
-        if (entry.type != duckdb::CatalogType::TABLE_ENTRY || entry.internal) {
+        if (entry.type != duckdb::CatalogType::TABLE_ENTRY || entry.internal ||
+            !context.CanSee(entry)) {
           return;
         }
         auto& table = entry.Cast<duckdb::TableCatalogEntry>();
@@ -407,7 +413,7 @@ void DispatchInverted(duckdb::ClientContext& context,
       auto relation =
         index->GetRelation(index->catalog.GetCatalogTransaction(context));
       if (relation && !MayMaintain(conn_ctx, relation->permissions,
-                                   relation->name.GetIdentifierName(), verb)) {
+                                   index->name.GetIdentifierName(), verb)) {
         return;
       }
       steps.emplace_back(std::move(storage), inverted->Config(), nullptr,

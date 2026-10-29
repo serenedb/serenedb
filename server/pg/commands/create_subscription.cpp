@@ -331,6 +331,13 @@ void ApplySetOptions(ConnectionContext& conn_ctx,
 
 void CheckConnInfo(ConnectionContext& conn_ctx,
                    const duckdb::CreateSubscriptionInfo& info) {
+  if (!IsSuperuser(conn_ctx) && replication::NamesServerFiles(info.conninfo)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied to use server files in the connection string"),
+      ERR_DETAIL("Only roles with the SUPERUSER attribute may use the "
+                 "passfile, service and SSL file options."));
+  }
   const auto conninfo = replication::ParseConnInfo(info.conninfo);
   if (info.password_required && conninfo.password.empty() &&
       !IsSuperuser(conn_ctx)) {

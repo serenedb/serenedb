@@ -49,6 +49,7 @@
 #include <tuple>
 #include <utility>
 
+#include "auth/role_closure.h"
 #include "query/config.h"
 
 namespace sdb::connector::ai {
@@ -230,6 +231,19 @@ Endpoint ResolveEndpoint(duckdb::ClientContext& context,
                     ERR_MSG(fn, ": no secret given"),
                     ERR_HINT("Pass secret_name := '<name>' or SET ",
                              api.default_secret, " = '<name>'."));
+  }
+  if (const auto closure = auth::SessionClosure(context);
+      closure && !closure->is_superuser) {
+    const auto shared = GetGlobalSetting(duckdb::DBConfig::GetConfig(context),
+                                         api.default_secret);
+    if (shared.IsNull() || shared.ToString() != name) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG(fn, ": permission denied for secret '", name, "'"),
+        ERR_HINT("Only roles with the SUPERUSER attribute may use a secret "
+                 "other than the server-wide ",
+                 api.default_secret, "."));
+    }
   }
   auto& secret_manager = duckdb::SecretManager::Get(context);
   auto txn = duckdb::CatalogTransaction::GetSystemCatalogTransaction(context);

@@ -222,15 +222,11 @@ yaclib::Task<bool> SyncSession::CopyTable(const SyncTable& table, bool binary) {
 }
 
 bool SyncSession::SetupApplyConnection() {
-  if (_target.database_oid == 0) {
+  if (_target.database_oid == 0 || _target.owner_name.empty()) {
     return false;
   }
-  const std::string_view user =
-    _target.owner_name.empty()
-      ? std::string_view{irs::StaticStrings::kDefaultUser}
-      : std::string_view{_target.owner_name};
-  const duckdb::idx_t role =
-    _target.owner_name.empty() ? pg::kRootUser : _target.owner_id;
+  const std::string_view user{_target.owner_name};
+  const duckdb::idx_t role = _target.owner_id;
   _database =
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
       .GetDatabase(duckdb::Identifier{_target.database_name});

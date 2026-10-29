@@ -1,0 +1,153 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS eue_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS eue_vedernikoff;
+
+
+statement ok
+CREATE ROLE eue_clickclack LOGIN PASSWORD 'eue_pw';
+
+
+statement ok
+CREATE ROLE eue_vedernikoff LOGIN PASSWORD 'eue_pw';
+
+
+statement ok
+CALL dbgen(sf = 0, schema = 'public');
+
+
+query
+SELECT tableowner FROM pg_tables WHERE tablename = 'nation';
+----
+tableowner
+unknown (OID=0)
+
+
+connection c_ved user=eue_vedernikoff password=eue_pw
+statement error
+SELECT count(*) FROM nation;
+----
+db error: ERROR: permission denied for table nation
+
+
+connection c_ved user=eue_vedernikoff password=eue_pw
+statement error
+INSERT INTO region VALUES (9, 'EUE', 'unowned');
+----
+db error: ERROR: permission denied for table region
+
+
+query
+SELECT count(*) AS rows FROM nation;
+----
+rows
+0
+
+
+connection c_click user=eue_clickclack password=eue_pw
+statement error
+CALL es_create_index('eue_docs', '{"mappings":{"properties":{"title":{"type":"keyword"}}}}');
+----
+db error: ERROR: permission denied for database <slt:ignore>
+
+
+statement ok
+GRANT CREATE ON DATABASE ${__DATABASE__} TO eue_clickclack;
+
+
+connection c_click user=eue_clickclack password=eue_pw
+statement ok
+CALL es_create_index('eue_docs', '{"mappings":{"properties":{"title":{"type":"keyword"}}}}');
+
+
+query
+SELECT schemaname, tablename, tableowner FROM pg_tables WHERE schemaname = 'es' ORDER BY 2;
+----
+schemaname	tablename	tableowner
+es	eue_docs	eue_clickclack
+
+
+query
+SELECT nspname, pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'es';
+----
+nspname	owner
+es	eue_clickclack
+
+
+connection c_ved user=eue_vedernikoff password=eue_pw
+statement error
+CALL es_create_index('eue_more', '{"mappings":{"properties":{"title":{"type":"keyword"}}}}');
+----
+db error: ERROR: permission denied for schema es
+
+
+connection c_ved user=eue_vedernikoff password=eue_pw
+query
+SELECT count(*) AS listed FROM es_cat_indices() WHERE index = 'eue_docs';
+----
+listed
+0
+
+
+connection c_click user=eue_clickclack password=eue_pw
+query
+SELECT count(*) AS listed FROM es_cat_indices() WHERE index = 'eue_docs';
+----
+listed
+1
+
+
+connection c_ved user=eue_vedernikoff password=eue_pw
+statement error
+CALL es_refresh('eue_docs');
+----
+db error: ERROR: permission denied for table eue_docs
+
+
+connection c_ved user=eue_vedernikoff password=eue_pw
+statement ok
+CALL es_refresh(NULL);
+
+
+connection c_ved user=eue_vedernikoff password=eue_pw
+statement error
+CALL es_drop_index('eue_docs');
+----
+db error: ERROR: must be owner of table eue_docs
+
+
+connection c_click user=eue_clickclack password=eue_pw
+statement ok
+CALL es_refresh('eue_docs');
+
+
+connection c_click user=eue_clickclack password=eue_pw
+statement ok
+CALL es_drop_index('eue_docs');
+
+
+query
+SELECT count(*) AS left_over FROM pg_tables WHERE schemaname = 'es';
+----
+left_over
+0
+
+
+statement ok
+DROP SCHEMA es CASCADE;
+
+
+statement ok
+REVOKE CREATE ON DATABASE ${__DATABASE__} FROM eue_clickclack;
+
+
+statement ok
+DROP ROLE eue_clickclack;
+
+
+statement ok
+DROP ROLE eue_vedernikoff;

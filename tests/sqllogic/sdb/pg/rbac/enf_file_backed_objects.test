@@ -1,0 +1,170 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS efb_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS efb_clickclack;
+
+
+statement ok
+CREATE ROLE efb_vedernikoff LOGIN PASSWORD 'efb_pw';
+
+
+statement ok
+CREATE ROLE efb_clickclack;
+
+
+statement ok
+COPY (SELECT 1 AS id, 'pudge' AS body UNION ALL SELECT 2, 'anchin') TO '${__TEST_DIR__}/efb_lake.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE VIEW efb_lake AS SELECT * FROM read_parquet('${__TEST_DIR__}/efb_lake.parquet');
+
+
+statement ok
+CREATE VIEW efb_lake_indexed AS SELECT * FROM read_parquet('${__TEST_DIR__}/efb_lake.parquet');
+
+
+statement ok
+CREATE INDEX efb_lake_idx ON efb_lake_indexed USING inverted(id);
+
+
+statement ok
+CREATE VIEW efb_lake_invoker WITH (security_invoker = true) AS SELECT * FROM read_parquet('${__TEST_DIR__}/efb_lake.parquet');
+
+
+statement ok
+CREATE VIEW efb_lake_handed AS SELECT * FROM read_parquet('${__TEST_DIR__}/efb_lake.parquet');
+
+
+statement ok
+ALTER VIEW efb_lake_handed OWNER TO efb_clickclack;
+
+
+statement ok
+GRANT SELECT ON efb_lake TO efb_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON efb_lake_indexed TO efb_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON efb_lake_invoker TO efb_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON efb_lake_handed TO efb_vedernikoff;
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+query
+SELECT id, body FROM efb_lake ORDER BY id;
+----
+id	body
+1	pudge
+2	anchin
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+query
+SELECT id, body FROM efb_lake_indexed WHERE id = 2;
+----
+id	body
+2	anchin
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+query
+SELECT l.id, g.n FROM efb_lake AS l, generate_series(1, 2) AS g(n) WHERE l.id = g.n ORDER BY l.id;
+----
+id	n
+1	1
+2	2
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+statement ok
+PREPARE efb_count AS SELECT count(*) AS rows FROM efb_lake;
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+query
+EXECUTE efb_count;
+----
+rows
+2
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+statement error
+PREPARE efb_direct AS SELECT * FROM read_parquet('${__TEST_DIR__}/efb_lake.parquet');
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+statement error
+SELECT * FROM read_parquet('${__TEST_DIR__}/efb_lake.parquet');
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+statement error
+SELECT l.id FROM efb_lake AS l, read_parquet('${__TEST_DIR__}/efb_lake.parquet') AS r WHERE l.id = r.id;
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+statement error
+SELECT * FROM efb_lake_invoker;
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+statement error
+SELECT * FROM efb_lake_handed;
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+statement error
+SELECT count(*) AS rows FROM efb_lake_handed;
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+statement ok
+DROP VIEW efb_lake_handed;
+
+
+statement ok
+DROP VIEW efb_lake_invoker;
+
+
+statement ok
+DROP VIEW efb_lake_indexed;
+
+
+statement ok
+DROP VIEW efb_lake;
+
+
+statement ok
+DROP ROLE efb_clickclack;
+
+
+statement ok
+DROP ROLE efb_vedernikoff;

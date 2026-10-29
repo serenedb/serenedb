@@ -1,0 +1,113 @@
+control substitution on
+
+statement ok
+CREATE ROLE rss_vedernikoff LOGIN PASSWORD 'rss_pw';
+
+
+statement ok
+SET GLOBAL sdb_job_history_size = 77;
+
+
+connection c_ved user=rss_vedernikoff password=rss_pw
+query
+SELECT current_setting('sdb_job_history_size') AS size;
+----
+size
+77
+
+
+connection c_ved user=rss_vedernikoff password=rss_pw
+statement error
+SET GLOBAL sdb_job_history_size = 1;
+----
+db error: ERROR: permission denied to set parameter "sdb_job_history_size"
+DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+
+
+connection c_ved user=rss_vedernikoff password=rss_pw
+statement error
+SET GLOBAL fsync_mode = 'none';
+----
+db error: ERROR: permission denied to set parameter "fsync_mode"
+DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+
+
+connection c_ved user=rss_vedernikoff password=rss_pw
+statement error
+RESET sdb_job_history_size;
+----
+db error: ERROR: permission denied to set parameter "sdb_job_history_size"
+DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+
+
+query
+SELECT current_setting('sdb_job_history_size') AS size;
+----
+size
+77
+
+
+statement ok
+SET GLOBAL http_proxy_password = 'rss_secret_value';
+
+
+connection c_ved user=rss_vedernikoff password=rss_pw
+statement error
+SELECT current_setting('http_proxy_password');
+----
+db error: ERROR: must be superuser to examine "http_proxy_password"
+
+
+query
+SELECT current_setting('http_proxy_password') AS value;
+----
+value
+rss_secret_value
+
+
+statement ok
+CREATE SECRET rss_shared (TYPE openai, base_url 'http://127.0.0.1:9');
+
+
+statement ok
+CREATE SECRET rss_private (TYPE openai, base_url 'http://127.0.0.1:9');
+
+
+statement ok
+SET GLOBAL sdb_ai_text_default_secret = 'rss_shared';
+
+
+connection c_ved user=rss_vedernikoff password=rss_pw
+statement error
+SELECT ai_generate('x');
+----
+db error: ERROR: ai_generate: no model given
+HINT: Pass model := '<name>' or set the secret's model option.
+
+
+connection c_ved user=rss_vedernikoff password=rss_pw
+statement error
+SELECT ai_generate('x', secret_name := 'rss_shared');
+----
+db error: ERROR: ai_generate: no model given
+HINT: Pass model := '<name>' or set the secret's model option.
+
+
+connection c_ved user=rss_vedernikoff password=rss_pw
+statement error
+SELECT ai_generate('x', secret_name := 'rss_private');
+----
+db error: ERROR: ai_generate: permission denied for secret 'rss_private'
+HINT: Only roles with the SUPERUSER attribute may use a secret other than the server-wide sdb_ai_text_default_secret.
+
+
+connection c_ved user=rss_vedernikoff password=rss_pw
+statement error
+SET lock_configuration = true;
+----
+db error: ERROR: permission denied to set parameter "lock_configuration"
+DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+
+
+statement ok
+SET application_name = 'rss_still_configurable';

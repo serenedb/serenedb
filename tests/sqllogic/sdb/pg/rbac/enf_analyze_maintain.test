@@ -1,0 +1,65 @@
+statement ok
+DROP ROLE IF EXISTS eam_keeper;
+
+
+statement ok
+DROP ROLE IF EXISTS eam_stranger;
+
+
+statement ok
+CREATE ROLE eam_keeper LOGIN PASSWORD 'eam_pw';
+
+
+statement ok
+CREATE ROLE eam_stranger LOGIN PASSWORD 'eam_pw';
+
+
+statement ok
+CREATE TABLE eam_ledger (a integer);
+
+
+statement ok
+INSERT INTO eam_ledger VALUES (1), (2), (2);
+
+
+statement ok
+GRANT MAINTAIN ON eam_ledger TO eam_keeper;
+
+
+connection c_keeper user=eam_keeper password=eam_pw
+statement ok
+ANALYZE eam_ledger;
+
+
+connection c_keeper user=eam_keeper password=eam_pw
+statement ok
+VACUUM ANALYZE eam_ledger (a);
+
+
+connection c_keeper user=eam_keeper password=eam_pw
+statement error
+SELECT a FROM eam_ledger;
+----
+db error: ERROR: permission denied for table eam_ledger
+
+
+connection c_stranger user=eam_stranger password=eam_pw
+statement ok
+ANALYZE eam_ledger;
+
+
+connection c_stranger user=eam_stranger password=eam_pw
+statement ok
+VACUUM eam_ledger;
+
+
+statement ok
+DROP TABLE eam_ledger;
+
+
+statement ok
+DROP ROLE eam_stranger;
+
+
+statement ok
+DROP ROLE eam_keeper;

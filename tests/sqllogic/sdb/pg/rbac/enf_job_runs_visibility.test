@@ -1,0 +1,84 @@
+statement ok
+DROP ROLE IF EXISTS ejr_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS ejr_clickclack;
+
+
+statement ok
+CREATE ROLE ejr_kostya LOGIN PASSWORD 'ejr_pw';
+
+
+statement ok
+CREATE ROLE ejr_clickclack LOGIN PASSWORD 'ejr_pw';
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO ejr_kostya;
+
+
+connection c_kostya user=ejr_kostya password=ejr_pw
+statement ok
+CREATE JOB ejr_job AFTER 1 HOUR SUSPENDED AS SELECT 1;
+
+
+connection c_kostya user=ejr_kostya password=ejr_pw
+statement ok
+CALL execute_job('ejr_job');
+
+
+connection c_kostya user=ejr_kostya password=ejr_pw
+query
+SELECT count(*) AS runs FROM sdb_job_runs() WHERE job_name = 'ejr_job';
+----
+runs
+1
+
+
+connection c_kostya user=ejr_kostya password=ejr_pw
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name = 'ejr_job';
+----
+jobs
+1
+
+
+connection c_click user=ejr_clickclack password=ejr_pw
+query
+SELECT count(*) AS runs FROM sdb_job_runs() WHERE job_name = 'ejr_job';
+----
+runs
+0
+
+
+connection c_click user=ejr_clickclack password=ejr_pw
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name = 'ejr_job';
+----
+jobs
+0
+
+
+query
+SELECT count(*) AS runs FROM sdb_job_runs() WHERE job_name = 'ejr_job';
+----
+runs
+1
+
+
+connection c_kostya user=ejr_kostya password=ejr_pw
+statement ok
+DROP JOB ejr_job;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM ejr_kostya;
+
+
+statement ok
+DROP ROLE ejr_kostya;
+
+
+statement ok
+DROP ROLE ejr_clickclack;

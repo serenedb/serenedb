@@ -361,6 +361,14 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database ", KeyText(key), " does not exist"));
       }
+      if (const auto closure = auth::SessionClosure(context);
+          closure && !closure->is_superuser &&
+          !closure->Can(duckdb::CatalogType::DATABASE_ENTRY, entry->permissions,
+                        duckdb::AclMode::Connect)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("permission denied for database ",
+                                entry->name.GetIdentifierName()));
+      }
       return static_cast<int64_t>(
         DatabaseStorageSize(context, *database, {}).bytes);
     });

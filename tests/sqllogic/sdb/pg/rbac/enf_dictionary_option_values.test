@@ -1,0 +1,57 @@
+statement ok
+DROP ROLE IF EXISTS edov_vedernikoff;
+
+
+statement ok
+CREATE ROLE edov_vedernikoff LOGIN PASSWORD 'edov_pw';
+
+
+statement ok
+CREATE SEQUENCE edov_counter;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO edov_vedernikoff;
+
+
+connection c_ved user=edov_vedernikoff password=edov_pw
+statement error
+CREATE TEXT SEARCH DICTIONARY edov_ngrams AS generate_ngrams(min_gram := nextval('edov_counter'), max_gram := 3);
+----
+db error: ERROR: generate_ngrams(): option "min_gram": the value is not a constant
+
+
+connection c_ved user=edov_vedernikoff password=edov_pw
+statement error
+CREATE TEXT SEARCH DICTIONARY edov_stop AS generate_ngrams(min_gram := length(current_setting('http_proxy_password')), max_gram := 3);
+----
+db error: ERROR: must be superuser to examine "http_proxy_password"
+
+
+query
+SELECT nextval('edov_counter') AS first;
+----
+first
+1
+
+
+connection c_ved user=edov_vedernikoff password=edov_pw
+statement ok
+CREATE TEXT SEARCH DICTIONARY edov_ngrams AS generate_ngrams(min_gram := 1 + 1, max_gram := 3);
+
+
+connection c_ved user=edov_vedernikoff password=edov_pw
+statement ok
+DROP TEXT SEARCH DICTIONARY edov_ngrams;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM edov_vedernikoff;
+
+
+statement ok
+DROP SEQUENCE edov_counter;
+
+
+statement ok
+DROP ROLE edov_vedernikoff;

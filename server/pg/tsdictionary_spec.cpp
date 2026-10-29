@@ -42,6 +42,7 @@
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression_binder/constant_binder.hpp>
+#include <duckdb/planner/operator/logical_projection.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
@@ -52,8 +53,10 @@
 #include <utility>
 #include <vector>
 
+#include "auth/enforce.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/tokenizer.h"
+#include "connector/duckdb_client_state.h"
 #include "pg/option_help.h"
 #include "pg/tokenizer_options.h"
 #include "pg/tsdictionary.h"
@@ -763,16 +766,32 @@ class SpecCompiler {
 
   duckdb::Value Fold(const OptionGroup& group, std::string_view name,
                      const duckdb::ParsedExpression& value) {
+    auto binder = duckdb::Binder::CreateBinder(_context);
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> select_list;
     std::string error;
     try {
-      auto binder = duckdb::Binder::CreateBinder(_context);
       duckdb::ConstantBinder constant_binder{*binder, _context,
                                              std::string{kOperation}};
       auto copy = value.Copy();
-      auto bound = constant_binder.Bind(copy);
-      return duckdb::ExpressionExecutor::EvaluateScalar(_context, *bound, true);
+      select_list.push_back(constant_binder.Bind(copy));
+      if (!select_list[0]->IsFoldable()) {
+        error = "the value is not a constant";
+      }
     } catch (const std::exception& e) {
       error = duckdb::ErrorData{e}.RawMessage();
+    }
+    if (error.empty()) {
+      duckdb::LogicalProjection projection{binder->GenerateTableIndex(),
+                                           std::move(select_list)};
+      if (auto* connection = connector::GetSereneDBContextPtr(_context)) {
+        auth::EnforcePlan(_context, *connection, *binder, projection);
+      }
+      try {
+        return duckdb::ExpressionExecutor::EvaluateScalar(
+          _context, *projection.expressions[0], true);
+      } catch (const std::exception& e) {
+        error = duckdb::ErrorData{e}.RawMessage();
+      }
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(group.name, "(): option \"", name, "\": ", error));

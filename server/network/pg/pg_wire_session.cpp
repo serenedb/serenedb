@@ -915,16 +915,10 @@ void PgWireSession<Kind>::WriteCommandTag(
   WriteCommandComplete(this->_send, prepared, rows);
 }
 
-// Capture the client's peer IP once, before auth. Unix sockets and capture
-// failures leave _peer_addr unspecified (no IP). A v4-mapped-v6 address is
-// normalized back to IPv4 so HBA family-strict matching stays PG-faithful and
-// is_loopback() sees the v4.
 template<SocketKind Kind>
 void PgWireSession<Kind>::CapturePeerAddress() {
-  if constexpr (Kind != SocketKind::Unix && Kind != SocketKind::Client) {
-    if (const auto address = this->ClientAddress()) {
-      _peer_addr = *address;
-    }
+  if (const auto address = this->ClientAddress()) {
+    _peer_addr = *address;
   }
 }
 
@@ -971,7 +965,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   };
 
   hba::ClientInfo client;
-  client.is_local = Kind == SocketKind::Unix;
+  client.is_local = Kind == SocketKind::Unix && !this->_proxy_client;
   client.is_ssl = this->_socket.IsTls();
   client.is_gss = false;
   if (!_peer_addr.is_unspecified()) {

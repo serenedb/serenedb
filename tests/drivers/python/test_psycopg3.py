@@ -825,6 +825,70 @@ def test_engine_warning_reaches_the_client_as_a_notice():
         c.close()
 
 
+def test_vacuum_walk_warns_only_about_tables_the_role_can_see():
+    suffix = os.getpid()
+    role = f"vac_walk_role_{suffix}"
+    hidden = f"vac_walk_hidden_{suffix}"
+    shown = f"vac_walk_shown_{suffix}"
+    index = f"vac_walk_ix_{suffix}"
+    admin = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        admin.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'vac_walk_pw'")
+        admin.execute(f"CREATE TABLE {hidden} (a integer)")
+        admin.execute(f"CREATE INDEX {index} ON {hidden} USING inverted(a)")
+        admin.execute(f"CREATE TABLE {shown} (a integer)")
+        admin.execute(f"GRANT SELECT ON {shown} TO {role}")
+        c = psycopg.connect(
+            **{**conn_kwargs(), "user": role, "password": "vac_walk_pw"}, autocommit=True
+        )
+        notices: list[str] = []
+        c.add_notice_handler(lambda d: notices.append(d.message_primary))
+        try:
+            c.execute("VACUUM (RECOMPUTE_STATS_ALL)")
+            c.execute("VACUUM (REFRESH_ALL)")
+            c.execute(f"VACUUM (REFRESH_INDEX) {index}")
+        finally:
+            c.close()
+        assert f'permission denied to analyze "{shown}", skipping it' in notices, notices
+        assert f'permission denied to refresh "{shown}", skipping it' in notices, notices
+        assert f'permission denied to refresh "{index}", skipping it' in notices, notices
+        assert not any(hidden in n for n in notices), notices
+    finally:
+        admin.execute(f"DROP TABLE IF EXISTS {hidden}")
+        admin.execute(f"DROP TABLE IF EXISTS {shown}")
+        admin.execute(f"DROP ROLE IF EXISTS {role}")
+        admin.close()
+
+
+def test_analyze_without_maintain_warns_and_skips():
+    suffix = os.getpid()
+    role = f"analyze_reader_{suffix}"
+    table = f"analyze_ledger_{suffix}"
+    admin = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        admin.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'analyze_pw'")
+        admin.execute(f"CREATE TABLE {table} (a integer)")
+        admin.execute(f"GRANT SELECT ON {table} TO {role}")
+        c = psycopg.connect(
+            **{**conn_kwargs(), "user": role, "password": "analyze_pw"}, autocommit=True
+        )
+        notices: list[str] = []
+        c.add_notice_handler(lambda d: notices.append(d.message_primary))
+        try:
+            c.execute(f"ANALYZE {table}")
+            c.execute(f"VACUUM {table}")
+        finally:
+            c.close()
+        assert notices == [
+            f'permission denied to analyze "{table}", skipping it',
+            f'permission denied to vacuum "{table}", skipping it',
+        ], notices
+    finally:
+        admin.execute(f"DROP TABLE IF EXISTS {table}")
+        admin.execute(f"DROP ROLE IF EXISTS {role}")
+        admin.close()
+
+
 def test_unenforced_setting_warns_when_its_value_changes():
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
     notices: list[str] = []

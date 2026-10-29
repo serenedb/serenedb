@@ -1,0 +1,142 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS ess_vedernikoff;
+
+
+statement ok
+CREATE ROLE ess_vedernikoff LOGIN CREATEDB PASSWORD 'ess_pw';
+
+
+statement ok
+CREATE SECRET ess_secret_${__DATABASE__} (TYPE s3, KEY_ID 'ess_key', SECRET 'ess_value');
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+DROP SECRET ess_secret_${__DATABASE__};
+----
+db error: ERROR: permission denied: superuser required
+
+
+statement ok
+DROP SECRET ess_secret_${__DATABASE__};
+
+
+statement ok
+ATTACH ':memory:' AS ess_scratch_${__DATABASE__};
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+DETACH ess_scratch_${__DATABASE__};
+----
+db error: ERROR: permission denied: superuser required
+
+
+statement ok
+DETACH ess_scratch_${__DATABASE__};
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+ATTACH ':memory:' AS ess_mine_${__DATABASE__};
+----
+db error: ERROR: permission denied: superuser required
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+ATTACH '${__TEST_DIR__}/ess_attached.db' AS ess_file_${__DATABASE__};
+----
+db error: ERROR: permission denied: superuser required
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+CONNECT '${__TEST_DIR__}/ess_connected.db';
+----
+db error: ERROR: permission denied: superuser required
+
+
+query
+SELECT count(*) AS created FROM glob('${__TEST_DIR__}/ess_*.db');
+----
+created
+0
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement ok
+CREATE DATABASE ess_db_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE ess_db_${__DATABASE__};
+
+
+statement ok
+GRANT CREATE ON DATABASE ${__DATABASE__} TO ess_vedernikoff;
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+CREATE SERVER ess_files_${__DATABASE__} FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${__TEST_DIR__}/ess_server.db');
+----
+db error: ERROR: permission denied: superuser required
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+CREATE SERVER ess_snap_${__DATABASE__} FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/ess_snap');
+----
+db error: ERROR: permission denied: superuser required
+
+
+statement ok
+REVOKE CREATE ON DATABASE ${__DATABASE__} FROM ess_vedernikoff;
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+PRAGMA force_checkpoint;
+----
+db error: ERROR: permission denied: superuser required
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+PRAGMA disable_checkpoint_on_shutdown;
+----
+db error: ERROR: permission denied: superuser required
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+PRAGMA enable_checkpoint_on_shutdown;
+----
+db error: ERROR: permission denied: superuser required
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement ok
+PRAGMA enable_profiling;
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement ok
+PRAGMA disable_profiling;
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement ok
+PRAGMA enable_progress_bar;
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement ok
+PRAGMA disable_progress_bar;
+
+
+statement ok
+DROP ROLE ess_vedernikoff;

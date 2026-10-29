@@ -94,4 +94,4 @@ Secrets can be listed using the built-in table-producing function, e.g., by usin
 
 <SqlLogicTest id="configuration/secrets_manager/example_008" />
 
-`sdb_secrets()` shows some sensitive values as `redacted`, but it does not hide every credential a secret holds, so do not rely on it to keep credentials from the users who can call it. For an `s3`, `r2`, `gcs` or `aws` secret, `secret`, `session_token`, `http_proxy_password` and `refresh_info` are redacted.
+`sdb_secrets()` can be called only by a superuser. It shows the credentials of a secret as `redacted`: the `secret`, `session_token` and `http_proxy_password` of an `s3`, `r2`, `gcs` or `aws` secret, and its whole `refresh_info`, which repeats the options the secret was created with.

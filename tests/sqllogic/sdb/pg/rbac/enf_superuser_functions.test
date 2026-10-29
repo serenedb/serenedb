@@ -1,0 +1,254 @@
+statement ok
+DROP ROLE IF EXISTS esf_vedernikoff;
+
+
+statement ok
+CREATE ROLE esf_vedernikoff LOGIN PASSWORD 'esf_pw';
+
+
+statement ok
+CREATE TABLE esf_vault (secret text);
+
+
+statement ok
+INSERT INTO esf_vault VALUES ('esf_hidden_value');
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT * FROM esf_vault;
+----
+db error: ERROR: permission denied for table esf_vault
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT * FROM esf_vault'));
+----
+db error: ERROR: permission denied for table esf_vault
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT content FROM read_text(''/etc/hostname'')'));
+----
+db error: ERROR: permission denied to access "/etc/hostname"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+query
+SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT current_user AS who'));
+----
+who
+esf_vedernikoff
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT json_serialize_plan('SELECT * FROM esf_vault');
+----
+db error: ERROR: permission denied for function json_serialize_plan
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT column_name FROM pragma_storage_info('esf_vault');
+----
+db error: ERROR: permission denied for function pragma_storage_info
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM duckdb_table_sample('esf_vault');
+----
+db error: ERROR: permission denied for function duckdb_table_sample
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM duckdb_secrets();
+----
+db error: ERROR: permission denied for function duckdb_secrets
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM sdb_secrets();
+----
+db error: ERROR: permission denied for function sdb_secrets
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM which_secret('s3://esf-bucket/file.csv', 's3');
+----
+db error: ERROR: permission denied for function which_secret
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM duckdb_databases();
+----
+db error: ERROR: permission denied for function duckdb_databases
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM sdb_databases();
+----
+db error: ERROR: permission denied for function sdb_databases
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM duckdb_logs();
+----
+db error: ERROR: permission denied for function duckdb_logs
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM sdb_logs();
+----
+db error: ERROR: permission denied for function sdb_logs
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM duckdb_temporary_files();
+----
+db error: ERROR: permission denied for function duckdb_temporary_files
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM duckdb_external_file_cache();
+----
+db error: ERROR: permission denied for function duckdb_external_file_cache
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM pragma_metadata_info();
+----
+db error: ERROR: permission denied for function pragma_metadata_info
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM pragma_database_size();
+----
+db error: ERROR: permission denied for function pragma_database_size
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM pg_show_replication_origin_status();
+----
+db error: ERROR: permission denied for function pg_show_replication_origin_status
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM pg_replication_origin_status;
+----
+db error: ERROR: permission denied for view pg_replication_origin_status
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM pg_hba_file_rules();
+----
+db error: ERROR: permission denied for function pg_hba_file_rules
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM pg_hba_file_rules;
+----
+db error: ERROR: permission denied for function pg_hba_file_rules
+
+
+query
+SELECT count(*) >= 0 AS listed FROM pg_show_replication_origin_status();
+----
+listed
+t
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+CALL enable_logging();
+----
+db error: ERROR: permission denied for function enable_logging
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+CALL dbgen(sf = 0);
+----
+db error: ERROR: permission denied for function dbgen
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+CHECKPOINT;
+----
+db error: ERROR: permission denied for function checkpoint
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+FORCE CHECKPOINT;
+----
+db error: ERROR: permission denied for function force_checkpoint
+
+
+statement ok
+CREATE VIEW esf_peek AS SELECT name FROM duckdb_secrets();
+
+
+statement ok
+GRANT SELECT ON esf_peek TO esf_vedernikoff;
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT * FROM esf_peek;
+----
+db error: ERROR: permission denied for function duckdb_secrets
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+query
+SELECT count(*) > 0 AS listed FROM duckdb_settings();
+----
+listed
+t
+
+
+query
+SELECT count(*) > 0 AS listed FROM duckdb_databases();
+----
+listed
+t
+
+
+query
+SELECT count(*) > 0 AS listed FROM pragma_storage_info('esf_vault');
+----
+listed
+t
+
+
+statement ok
+DROP VIEW esf_peek;
+
+
+statement ok
+DROP TABLE esf_vault;
+
+
+statement ok
+DROP ROLE esf_vedernikoff;

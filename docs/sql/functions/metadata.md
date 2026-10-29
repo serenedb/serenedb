@@ -428,7 +428,7 @@ The `sdb_secret_types()` lists secret types that are supported in the current Se
 
 ## `sdb_secrets`
 
-The `sdb_secrets()` function provides metadata about the secrets available in the SereneDB instance.
+The `sdb_secrets()` function provides metadata about the secrets available in the SereneDB instance. Only a superuser can call it.
 
 <SqlLogicTest id="sql/functions/metadata/example_022" />
 

@@ -21,9 +21,11 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <string>
 
 namespace duckdb {
 
+class AttachedDatabase;
 class Binder;
 class ClientContext;
 class LogicalOperator;
@@ -36,9 +38,19 @@ class ConnectionContext;
 }  // namespace sdb
 namespace sdb::auth {
 
-void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
+bool EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan);
 
 bool Unowned(const duckdb::CatalogEntry& entry);
+
+bool CanSee(duckdb::ClientContext& context, duckdb::CatalogEntry& entry);
+
+bool CanSeeDatabase(duckdb::ClientContext& context,
+                    duckdb::AttachedDatabase& database);
+
+void CheckEntryReference(duckdb::ClientContext& context,
+                         duckdb::CatalogEntry& entry);
+
+void CheckFileAccess(duckdb::ClientContext& context, const std::string& path);
 
 }  // namespace sdb::auth

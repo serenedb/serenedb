@@ -61,22 +61,16 @@ statement ok
 BEGIN;
 
 connection first
-query
-SELECT count(*) AS n FROM obw_first;
-----
-n
-4000
+statement ok
+INSERT INTO obw_second VALUES (4000, 'w1');
 
 connection second
 statement ok
 BEGIN;
 
 connection second
-query
-SELECT count(*) AS n FROM obw_second;
-----
-n
-4000
+statement ok
+INSERT INTO obw_first VALUES (4000, 'w1');
 
 connection first
 statement async ok
@@ -103,17 +97,135 @@ connection first
 statement ok
 COMMIT;
 
+statement ok
+VACUUM (REFRESH_TABLE) obw_second;
+
 query
 SELECT count(*) AS n FROM obw_first_idx WHERE body @@ ts_phrase('w1');
 ----
 n
-1000
+1001
 
 query
 SELECT count(*) AS n FROM obw_second_idx WHERE body @@ ts_phrase('w1');
 ----
 n
+1001
+
+statement ok
+CREATE TABLE obw_free (id BIGINT, body VARCHAR);
+
+statement ok
+INSERT INTO obw_free SELECT i, 'w' || (i % 4) FROM range(4000) r(i);
+
+connection reader
+statement ok
+BEGIN;
+
+connection reader
+query
+SELECT count(*) AS n FROM obw_free;
+----
+n
+4000
+
+connection other
+statement ok
+BEGIN;
+
+connection other
+statement ok
+INSERT INTO obw VALUES (4000, 'w1');
+
+connection builder
+statement ok
+CREATE INDEX obw_free_idx ON obw_free USING inverted(id, body obw_words);
+
+connection reader
+statement ok
+COMMIT;
+
+connection other
+statement ok
+COMMIT;
+
+query
+SELECT count(*) AS n FROM obw_free_idx WHERE body @@ ts_phrase('w1');
+----
+n
 1000
+
+statement ok
+CREATE TABLE obw_prepared (id BIGINT, body VARCHAR);
+
+statement ok
+INSERT INTO obw_prepared SELECT i, 'w' || (i % 4) FROM range(4000) r(i);
+
+connection writer
+statement ok
+PREPARE obw_prepared_insert AS INSERT INTO obw_prepared VALUES (4000, 'w1');
+
+connection late
+statement ok
+PREPARE obw_prepared_update AS UPDATE obw_prepared SET body = 'fresh' WHERE id % 4 = 0;
+
+connection writer
+statement ok
+BEGIN;
+
+connection writer
+statement ok
+EXECUTE obw_prepared_insert;
+
+connection builder
+statement async ok
+CREATE INDEX obw_prepared_idx ON obw_prepared USING inverted(id, body obw_words);
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT phase FROM pg_stat_progress_create_index WHERE relid = 'obw_prepared'::regclass;
+----
+phase
+waiting for writers before build
+
+connection late
+statement ok
+BEGIN;
+
+connection late
+statement ok
+EXECUTE obw_prepared_update;
+
+connection writer
+statement ok
+COMMIT;
+
+wait
+
+connection late
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) obw_prepared;
+
+query
+SELECT count(*) AS n FROM obw_prepared_idx WHERE body @@ ts_phrase('w1');
+----
+n
+1001
+
+query
+SELECT count(*) AS n FROM obw_prepared_idx WHERE body @@ ts_phrase('fresh');
+----
+n
+1000
+
+query
+SELECT count(*) AS n FROM obw_prepared_idx WHERE body @@ ts_phrase('w0');
+----
+n
+0
 
 statement ok
 CREATE TABLE obw_cancel (id BIGINT, body VARCHAR);

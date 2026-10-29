@@ -1023,7 +1023,7 @@ void WaitForWritersBeforeBuild(duckdb::ClientContext& context,
   }
   auto& manager = duckdb::DuckTransactionManager::Get(data.db);
   auto& transaction = duckdb::DuckTransaction::Get(context, data.db);
-  manager.WaitForOlderTransactions(context, transaction);
+  manager.WaitForOlderWriters(context, transaction, *data.GetDataTableInfo());
   auto commit_lock = data.db.GetStorageManager().GetCommitLock();
   manager.WaitForDurability();
   manager.AdvanceStartTime(transaction);

@@ -745,6 +745,27 @@ struct TablespacePrivileges : ObjectPrivileges<TablespacePrivileges> {
   }
 };
 
+struct LanguagePrivileges : ObjectPrivileges<LanguagePrivileges> {
+  static constexpr std::string_view kName = "has_language_privilege";
+  static constexpr CatalogType kType = CatalogType::TYPE_ENTRY;
+  static constexpr AclMode kModes = AclMode::Usage;
+  static constexpr bool kSuperuserFirst = true;
+
+  static uint64_t Resolve(const Session&, std::string_view name) {
+    if (const auto* language = FindSystemObject(kSystemLanguages, name)) {
+      return language->oid;
+    }
+    ThrowUndefinedObject("language", name);
+  }
+
+  static std::optional<ObjectTarget> Find(const Session&, uint64_t oid) {
+    if (!FindSystemObject(kSystemLanguages, oid)) {
+      return std::nullopt;
+    }
+    return ObjectTarget{&kBuiltinPermissions};
+  }
+};
+
 struct ParameterPrivileges : ObjectPrivileges<ParameterPrivileges> {
   static constexpr std::string_view kName = "has_parameter_privilege";
   static constexpr AclMode kModes = AclMode::Set | AclMode::AlterSystem;
@@ -1063,6 +1084,7 @@ void RegisterAclFunctions(duckdb::ExtensionLoader& loader) {
   RegisterPrivilegeFunctions<ForeignDataWrapperPrivileges, ByName, ByOid>(
     loader);
   RegisterPrivilegeFunctions<TablespacePrivileges, ByName, ByOid>(loader);
+  RegisterPrivilegeFunctions<LanguagePrivileges, ByName, ByOid>(loader);
   RegisterPrivilegeFunctions<ParameterPrivileges, ByName>(loader);
   RegisterPrivilegeFunctions<LargeObjectPrivileges, ByOid>(loader);
   RegisterPrivilegeFunctions<RolePrivileges, ByName, ByOid>(loader);

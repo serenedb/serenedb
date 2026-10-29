@@ -110,8 +110,9 @@ inline constexpr std::array kSystemAccessMethods{
   SystemAccessMethod{kPgAmSecondary, "secondary", 'i', kInvalidOid},
 };
 
-constexpr const SystemObject* FindSystemObject(
-  std::span<const SystemObject> objects, duckdb::idx_t oid) {
+template<typename T, size_t N>
+constexpr const T* FindSystemObject(const std::array<T, N>& objects,
+                                    duckdb::idx_t oid) {
   for (const auto& object : objects) {
     if (object.oid == oid) {
       return &object;
@@ -120,8 +121,9 @@ constexpr const SystemObject* FindSystemObject(
   return nullptr;
 }
 
-constexpr const SystemObject* FindSystemObject(
-  std::span<const SystemObject> objects, std::string_view name) {
+template<typename T, size_t N>
+constexpr const T* FindSystemObject(const std::array<T, N>& objects,
+                                    std::string_view name) {
   for (const auto& object : objects) {
     if (object.name == name) {
       return &object;

@@ -369,13 +369,11 @@ ObjectIdentity IdentifyNamed(std::string_view type, std::string_view name) {
                         .identity = QuoteIdentifier(name)};
 }
 
-template<typename R>
-ObjectIdentity IdentifyNamed(std::string_view type, const R& objects,
+ObjectIdentity IdentifyNamed(std::string_view type, const auto& objects,
                              uint64_t oid) {
-  const auto it = absl::c_find_if(
-    objects, [&](const auto& object) { return object.oid == oid; });
-  return it == objects.end() ? Missing(std::string{type})
-                             : IdentifyNamed(type, it->name);
+  const auto* object = FindSystemObject(objects, oid);
+  return object ? IdentifyNamed(type, object->name)
+                : Missing(std::string{type});
 }
 
 ObjectIdentity IdentifyDatabase(const Session& session, uint64_t oid) {

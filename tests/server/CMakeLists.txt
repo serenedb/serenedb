@@ -16,6 +16,7 @@ add_executable(
     metrics_test.cpp
     network_duck_executor_test.cpp
     network_duck_pump_test.cpp
+    network_gate_test.cpp
     network_h1_codec_test.cpp
     network_header_test.cpp
     network_http_compression_test.cpp

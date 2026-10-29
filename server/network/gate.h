@@ -54,15 +54,15 @@ class Gate {
     template<typename Promise>
     bool await_suspend(std::coroutine_handle<Promise> handle) noexcept {
       _job = &handle.promise();
-      const auto prev = _gate._state.exchange(reinterpret_cast<uintptr_t>(this),
-                                              std::memory_order_acq_rel);
+      auto& state = _gate._state;
+      const auto prev = state.exchange(reinterpret_cast<uintptr_t>(this),
+                                       std::memory_order_acq_rel);
       if (prev == kEmpty) {
         return true;  // parked; a Kick will Submit us
       }
       // prev == kKicked: a kick was pending. Take the slot back; if a racing
       // Kick already replaced us with kKicked (it Submitted us) we stay parked.
-      return _gate._state.exchange(kEmpty, std::memory_order_acq_rel) ==
-             kKicked;
+      return state.exchange(kEmpty, std::memory_order_acq_rel) == kKicked;
     }
 
     void await_resume() const noexcept {}

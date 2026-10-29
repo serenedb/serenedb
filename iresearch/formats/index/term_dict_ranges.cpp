@@ -126,7 +126,7 @@ class RangeWalk {
   }
 
   bool Terms(bytes_view lower, bytes_view upper) {
-    if (_cursor.SeekGe(lower) == SeekResult::End) {
+    if (_cursor.SeekGe(lower, true) == SeekResult::End) {
       return false;
     }
     do {

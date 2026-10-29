@@ -23,6 +23,12 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
+#ifdef __BMI2__
+#include <immintrin.h>
+#endif
+
+#include <array>
+#include <bit>
 #include <cstring>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
@@ -36,6 +42,7 @@
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
@@ -54,6 +61,7 @@ constexpr duckdb::field_id_t kTermsInlineOffset = 6;
 constexpr duckdb::field_id_t kTermsInlineSize = 7;
 constexpr duckdb::field_id_t kTermsRangesSize = 8;
 constexpr duckdb::field_id_t kTermsFields = 9;
+constexpr duckdb::field_id_t kTermsInlineStarts = 10;
 
 constexpr duckdb::field_id_t kSpanBlock = 0;
 constexpr duckdb::field_id_t kSpanExtraPages = 1;
@@ -294,6 +302,28 @@ std::vector<uint32_t> DecodePrefixes(bytes_view encoded, field_id id) {
 
 uint64_t VSize(uint64_t value) noexcept {
   return bytes_io<uint64_t, sizeof(uint64_t)>::vsize(value);
+}
+
+constexpr uint64_t kWordBits = 64;
+
+void SetBitOf(std::vector<uint64_t>& words, uint64_t bit) noexcept {
+  SetBit(words[bit / kWordBits], bit % kWordBits);
+}
+
+bool BitOf(std::span<const uint64_t> words, uint64_t bit) noexcept {
+  return CheckBit(words[bit / kWordBits], bit % kWordBits);
+}
+
+uint64_t SelectInWord(uint64_t bits, uint64_t rank) noexcept {
+#ifdef __BMI2__
+  return static_cast<uint64_t>(
+    std::countr_zero(_pdep_u64(uint64_t{1} << rank, bits)));
+#else
+  for (; rank != 0; --rank) {
+    bits &= bits - 1;
+  }
+  return static_cast<uint64_t>(std::countr_zero(bits));
+#endif
 }
 
 void AppendFieldPrefix(bstring& out, uint32_t ordinal) {
@@ -586,19 +616,10 @@ class TermIteratorImpl : public SeekTermIterator {
     return true;
   }
 
-  SeekResult seek_ge(bytes_view term) final {
-    const auto result = _cursor.SeekGe(term);
-    if (result == SeekResult::End) {
-      End();
-      return result;
-    }
-    _position = Position::At;
-    _term.value = _cursor.Term();
-    return result;
-  }
+  SeekResult seek_ge(bytes_view term) final { return Seek(term, false); }
 
   bool seek(bytes_view term) final {
-    return seek_ge(term) == SeekResult::Found;
+    return Seek(term, true) == SeekResult::Found;
   }
 
   const PostingMeta& cookie() const final { return _cursor.Meta(); }
@@ -614,6 +635,17 @@ class TermIteratorImpl : public SeekTermIterator {
   }
 
  private:
+  SeekResult Seek(bytes_view term, bool prefetch) {
+    const auto result = _cursor.SeekGe(term, prefetch);
+    if (result == SeekResult::End) {
+      End();
+      return result;
+    }
+    _position = Position::At;
+    _term.value = _cursor.Term();
+    return result;
+  }
+
   bool End() noexcept {
     _position = Position::After;
     _term.value = {};
@@ -736,6 +768,86 @@ PrefixIndex::PrefixIndex(std::vector<uint32_t> prefixes)
   }
 }
 
+InlinePages::InlinePages(bytes_view starts, uint32_t blocks, uint64_t offset,
+                         uint64_t size)
+  : _begin{offset}, _end{offset + size}, _blocks{blocks} {
+  const auto corrupted = [] { Corrupted("inline starts"); };
+  if (blocks > starts.size()) {
+    corrupted();
+  }
+  bstring padded{starts};
+  padded.append(kSlack, byte_type{0});
+  const auto* p = padded.data();
+  const auto* const end = p + starts.size();
+  const uint64_t first = offset / kPage;
+  const uint64_t words = (uint64_t{blocks} + kWordBits - 1) / kWordBits;
+  _ones.resize((blocks + (offset + size) / kPage - first + kWordBits - 1) /
+               kWordBits);
+  _empty.resize(words);
+  _samples.reserve(words);
+  uint64_t start = 0;
+  for (uint32_t block = 0; block != blocks; ++block) {
+    if (p >= end) {
+      corrupted();
+    }
+    const auto delta = vread<uint64_t>(p);
+    if (p > end || delta > size - start) {
+      corrupted();
+    }
+    if (block != 0 && delta == 0) {
+      SetBitOf(_empty, block - 1);
+    }
+    start += delta;
+    const uint64_t at = block + (offset + start) / kPage - first;
+    SetBitOf(_ones, at);
+    if (block % kWordBits == 0) {
+      _samples.push_back(at);
+    }
+  }
+  if (p != end) {
+    corrupted();
+  }
+  if (blocks != 0 && start == size) {
+    SetBitOf(_empty, blocks - 1);
+  }
+}
+
+InlinePages::Span InlinePages::Of(uint32_t block) const noexcept {
+  if (block >= _blocks || BitOf(_empty, block)) {
+    return {};
+  }
+  const uint64_t first = _begin / kPage;
+  const uint64_t at = Select(block);
+  const uint64_t from = std::max(_begin, (first + at - block) * kPage);
+  if (block + 1 == _blocks) {
+    return {.from = from, .to = _end};
+  }
+  const uint64_t next = first + Next(at) - block - 1;
+  return {.from = from, .to = std::min(_end, (next + 1) * kPage)};
+}
+
+uint64_t InlinePages::Select(uint64_t rank) const noexcept {
+  const uint64_t sample = _samples[rank / kWordBits];
+  uint64_t left = rank % kWordBits;
+  size_t word = sample / kWordBits;
+  uint64_t bits = _ones[word] & (~uint64_t{0} << (sample % kWordBits));
+  for (auto count = static_cast<uint64_t>(std::popcount(bits)); count <= left;
+       count = static_cast<uint64_t>(std::popcount(bits))) {
+    left -= count;
+    bits = _ones[++word];
+  }
+  return word * kWordBits + SelectInWord(bits, left);
+}
+
+uint64_t InlinePages::Next(uint64_t at) const noexcept {
+  size_t word = at / kWordBits;
+  uint64_t bits = _ones[word] & (~uint64_t{1} << (at % kWordBits));
+  while (bits == 0) {
+    bits = _ones[++word];
+  }
+  return word * kWordBits + static_cast<uint64_t>(std::countr_zero(bits));
+}
+
 void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms) {
   out.WriteProperty<uint32_t>(kTermsRestartInterval, "restart_interval",
                               kRestartInterval);
@@ -768,6 +880,8 @@ void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms) {
                     WriteField(field, terms.fields[i], i);
                   });
                 });
+  WriteOptionalBytes(out, kTermsInlineStarts, "inline_starts",
+                     terms.inline_starts);
 }
 
 TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size) {
@@ -805,6 +919,8 @@ TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size) {
                   terms.fields.push_back(ReadField(field, i));
                 });
               });
+  terms.inline_starts =
+    ReadOptionalBytes(in, kTermsInlineStarts, "inline_starts");
   if (terms.inline_offset > data_size ||
       terms.inline_size > data_size - terms.inline_offset ||
       terms.ranges_size > data_size - terms.inline_offset - terms.inline_size) {
@@ -1045,6 +1161,9 @@ void FieldWriter::Cut() {
     _separator.assign(separator);
   }
   WriteBlock(_page);
+  BytesOutput{_inline_starts}.WriteV64(_inline_start - _inline_last);
+  _inline_last = _inline_start;
+  _inline_start = _inline.size();
   _last.assign(KeyAt(_block, _block.ends.size() - 1));
   Clear(_block);
 }
@@ -1147,9 +1266,12 @@ void FieldWriter::Reset() noexcept {
   _separators.clear();
   _separator.clear();
   _last.clear();
+  _inline_starts.clear();
   _range_regions.clear();
   _heads.clear();
   _first_page = 0;
+  _inline_start = 0;
+  _inline_last = 0;
   _blocks = 0;
   _ordinal = 0;
 }
@@ -1169,6 +1291,7 @@ void FieldWriter::end() {
       .inline_size = _inline.size(),
       .ranges_size = _range_regions.size(),
       .fields = std::move(_heads),
+      .inline_starts = _inline.empty() ? bstring{} : std::move(_inline_starts),
     };
     out.WriteData(_inline.data(), _inline.size());
     out.WriteData(_range_regions.data(), _range_regions.size());
@@ -1415,6 +1538,21 @@ const byte_type* TermReaderImpl::Block(size_t block,
                buffer.copy);
 }
 
+void TermReaderImpl::PrefetchLookup(uint32_t block) const {
+  if (Small()) {
+    return;
+  }
+  const auto span = InlineSpan(block);
+  if (span.from == span.to) {
+    return;
+  }
+  std::array ranges{
+    std::pair{BlockOffset(block), BlockOffset(block + 1)},
+    std::pair{span.from, span.to},
+  };
+  PrefetchRanges(_owner->Input(), ranges);
+}
+
 SeekTermIterator::ptr TermReaderImpl::iterator() const {
   if (Single()) {
     return memory::make_managed<SingleIterator<false>>(*this);
@@ -1457,6 +1595,7 @@ PostingMeta TermReaderImpl::Lookup(bytes_view term) const {
   PaddedKey padded;
   const auto probe = padded.Assign(KeyPrefix(), term);
   const uint32_t block = BlockOf(padded.Key());
+  PrefetchLookup(block);
   BlockBuffer buffer;
   const auto view = Parse(Block(block, buffer), Fsst());
   const auto entry = Find(view, probe, Fsst());
@@ -1480,7 +1619,8 @@ void TermReaderImpl::LookupBatch(std::span<const bytes_view> terms,
     return;
   }
   containers::SmallVector<uint32_t, kBatchTerms> blocks(terms.size(), kNoBlock);
-  containers::SmallVector<std::pair<uint64_t, uint64_t>, kBatchTerms> ranges;
+  containers::SmallVector<std::pair<uint64_t, uint64_t>, 2 * kBatchTerms>
+    ranges;
   PaddedKey padded;
   uint32_t last = kNoBlock;
   bytes_view last_term;
@@ -1497,14 +1637,18 @@ void TermReaderImpl::LookupBatch(std::span<const bytes_view> terms,
     const auto block = last == kNoBlock || term < last_term
                          ? BlockOf(padded.Key())
                          : BlockFrom(last, padded.Key());
+    if (block != last) {
+      ranges.emplace_back(BlockOffset(block), BlockOffset(block + 1));
+      if (const auto span = InlineSpan(block); span.from != span.to) {
+        ranges.emplace_back(span.from, span.to);
+      }
+    }
     blocks[i] = last = block;
     last_term = term;
-    ranges.emplace_back(BlockOffset(block), BlockOffset(block + 1));
   }
   if (ranges.size() > 1) {
     PrefetchRanges(_owner->Input(), ranges);
   }
-  ranges.clear();
 
   BlockBuffer buffer;
   BlockView view{};
@@ -1522,14 +1666,7 @@ void TermReaderImpl::LookupBatch(std::span<const bytes_view> terms,
     if (entry == kNoEntry) {
       continue;
     }
-    const auto& meta = out[i] = DecodeRecord(*this, view, parsed, entry);
-    if (meta.inline_size != 0 && !Small()) {
-      const uint64_t end = InlineBegin() + meta.inline_end;
-      ranges.emplace_back(end - meta.inline_size, end);
-    }
-  }
-  if (ranges.size() > 1) {
-    PrefetchRanges(_owner->Input(), ranges);
+    out[i] = DecodeRecord(*this, view, parsed, entry);
   }
 
   for (auto& meta : out) {
@@ -1680,7 +1817,15 @@ Separators FieldReader::Bind(TermsMeta& terms) {
     }
     _fsst = std::move(decoder);
   }
+  if (terms.inline_starts.empty() != (_inline_size == 0)) {
+    Corrupted("inline starts");
+  }
+  if (_inline_size != 0) {
+    _inline_pages =
+      InlinePages{terms.inline_starts, blocks, _inline_offset, _inline_size};
+  }
   _bytes = _spans.capacity() * sizeof(SpanningBlock) +
+           _inline_pages.MemoryBytes() +
            (_fsst ? sizeof(duckdb_fsst_decoder_t) : 0);
   if (_bytes != 0) {
     _rm->Increase(_bytes);

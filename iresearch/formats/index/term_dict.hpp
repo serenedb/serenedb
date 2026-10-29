@@ -229,6 +229,35 @@ class PrefixIndex {
   std::array<uint32_t, kNoLabel + 1> _pair_rows{};
 };
 
+class InlinePages {
+ public:
+  struct Span {
+    uint64_t from = 0;
+    uint64_t to = 0;
+  };
+
+  InlinePages() = default;
+  InlinePages(bytes_view starts, uint32_t blocks, uint64_t offset,
+              uint64_t size);
+
+  Span Of(uint32_t block) const noexcept;
+  size_t MemoryBytes() const noexcept {
+    return (_ones.capacity() + _empty.capacity() + _samples.capacity()) *
+           sizeof(uint64_t);
+  }
+
+ private:
+  uint64_t Select(uint64_t rank) const noexcept;
+  uint64_t Next(uint64_t at) const noexcept;
+
+  std::vector<uint64_t> _ones;
+  std::vector<uint64_t> _empty;
+  std::vector<uint64_t> _samples;
+  uint64_t _begin = 0;
+  uint64_t _end = 0;
+  uint32_t _blocks = 0;
+};
+
 class RangeWriter final {
  public:
   bool Active() const noexcept { return _pw != nullptr; }
@@ -326,6 +355,7 @@ class FieldWriter final {
   bstring _separators;
   bstring _separator;
   bstring _last;
+  bstring _inline_starts;
   bstring _range_regions;
   std::vector<FieldHead> _heads;
   std::vector<uint32_t> _prefixes;
@@ -336,6 +366,8 @@ class FieldWriter final {
   IndexOutput* _out = nullptr;
   uint64_t _terms = 0;
   uint64_t _first_page = 0;
+  uint64_t _inline_start = 0;
+  uint64_t _inline_last = 0;
   uint32_t _blocks = 0;
   uint32_t _width = 0;
   uint32_t _ordinal = 0;
@@ -436,6 +468,8 @@ class TermReaderImpl final : public TermReader {
   const byte_type* Block(size_t block, BlockBuffer& buffer) const;
   uint64_t BlockOffset(size_t block) const noexcept;
   uint64_t BlocksEnd() const noexcept { return BlockOffset(_blocks); }
+  InlinePages::Span InlineSpan(uint32_t block) const noexcept;
+  void PrefetchLookup(uint32_t block) const;
   bool Gates(bytes_view head) const noexcept {
     return _prefixes && head.size() < kTermPrefix;
   }
@@ -520,6 +554,9 @@ class FieldReader final {
   }
   uint64_t InlineBegin() const noexcept { return _inline_offset; }
   uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
+  InlinePages::Span InlineSpan(uint32_t block) const noexcept {
+    return _inline_pages.Of(block);
+  }
   uint64_t RangesBegin() const noexcept { return InlineEnd(); }
   uint64_t RangesSize() const noexcept { return _ranges_size; }
   bytes_view Load(IndexInput& in, uint64_t offset, uint64_t size);
@@ -549,6 +586,7 @@ class FieldReader final {
   const byte_type* _base = nullptr;
   IResourceManager* _rm;
   std::vector<SpanningBlock> _spans;
+  InlinePages _inline_pages;
   containers::NodeHashMap<uint64_t, bstring> _copies;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
   uint64_t _first_page = 0;
@@ -573,6 +611,11 @@ inline TermPostings::ptr TermReaderImpl::PostingsOf(
 
 inline uint64_t TermReaderImpl::BlockOffset(size_t block) const noexcept {
   return _owner->PageOffset(_first_block + block);
+}
+
+inline InlinePages::Span TermReaderImpl::InlineSpan(
+  uint32_t block) const noexcept {
+  return _owner->InlineSpan(_first_block + block);
 }
 
 inline uint64_t TermReaderImpl::InlineBegin() const noexcept {

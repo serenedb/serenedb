@@ -20,8 +20,11 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <absl/strings/str_cat.h>
 
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <iresearch/formats/flush_state.hpp>
+#include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
 #include <iresearch/formats/index/term_dict.hpp>
@@ -303,6 +306,24 @@ uint32_t KeyWidth(const std::vector<Entry>& entries) {
            : 0;
 }
 
+std::vector<uint64_t> DecodeVarints(irs::bytes_view bytes) {
+  std::vector<uint64_t> values;
+  const auto* p = bytes.data();
+  while (p != bytes.data() + bytes.size()) {
+    values.push_back(irs::vread<uint64_t>(p));
+  }
+  return values;
+}
+
+irs::bstring EncodeVarints(std::span<const uint64_t> values) {
+  irs::bstring bytes;
+  auto out = std::back_inserter(bytes);
+  for (const auto value : values) {
+    irs::WriteVarint(value, out);
+  }
+  return bytes;
+}
+
 irs::bstring BigEndian(uint8_t shift, uint64_t value) {
   irs::bstring key(1 + sizeof(uint64_t), irs::byte_type{0});
   key[0] = shift;
@@ -445,6 +466,35 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
   const irs::TermReader* Get(irs::field_id id,
                              irs::TermDict dict = irs::TermDict::Main) const {
     return _reader->field({.id = id, .dict = dict});
+  }
+
+  irs::term_dict::TermsMeta TakeTerms() {
+    return irs::IdxReader{dir(), kSegment, nullptr}.TakeTerms();
+  }
+
+  void RewriteTerms(const irs::term_dict::TermsMeta& terms) {
+    _reader.reset();
+    _idx.reset();
+    const auto name = absl::StrCat(kSegment, ".", irs::kIdxFormatExt);
+    irs::bstring data;
+    {
+      auto in = dir().open(name, irs::IOAdvice::RANDOM);
+      ASSERT_NE(nullptr, in);
+      const uint64_t length = in->Length();
+      in->Seek(length - sizeof(uint32_t));
+      const uint64_t footer = static_cast<uint32_t>(in->ReadI32());
+      data.resize(length - 2 * sizeof(uint32_t) - footer);
+      in->ReadData(0, data.data(), data.size());
+    }
+    auto out = dir().create(name);
+    ASSERT_NE(nullptr, out);
+    out->WriteData(data.data(), data.size());
+    irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta) {
+      meta.WriteObject(irs::kIdxFieldTerms, "terms",
+                       [&](duckdb::BinarySerializer& object) {
+                         irs::term_dict::WriteTerms(object, terms);
+                       });
+    });
   }
 
   static std::vector<irs::bstring> Probes(const std::vector<Entry>& entries) {
@@ -1310,6 +1360,145 @@ TEST_P(TermDictTest, open_takes_the_terms_from_the_footer) {
   }
 }
 
+TEST_P(TermDictTest, inline_starts_bound_each_block_postings) {
+  std::vector<std::pair<int64_t, irs::doc_id_t>> values;
+  for (irs::doc_id_t doc = 1; doc <= 40000; ++doc) {
+    values.emplace_back(int64_t{doc % 5000} * 7, doc);
+  }
+  const Field fields[]{
+    {.id = 1, .entries = MakeEntries({Bytes("x"), Bytes("y"), Bytes("z")})},
+    {.id = 2, .entries = MakeEntries(Words(20000, 5))},
+    {.id = 3, .entries = NumericEntries(std::move(values))},
+    {.id = 4, .entries = MakeEntries({Bytes("only")})},
+    {.id = 5, .entries = MakeEntries({Bytes("p"), Bytes("q")})},
+  };
+  Write(fields);
+  const auto terms = TakeTerms();
+  ASSERT_TRUE(terms.spans.empty());
+  ASSERT_NE(0, terms.inline_size);
+  const auto deltas = DecodeVarints(terms.inline_starts);
+  ASSERT_EQ(terms.blocks, deltas.size());
+  std::vector<uint64_t> starts;
+  uint64_t start = 0;
+  for (const auto delta : deltas) {
+    start += delta;
+    starts.push_back(start);
+  }
+  starts.push_back(terms.inline_size);
+  ASSERT_TRUE(absl::c_is_sorted(starts));
+
+  constexpr auto kNone = std::numeric_limits<uint64_t>::max();
+  std::vector<std::pair<uint64_t, uint64_t>> inlined(terms.blocks, {kNone, 0});
+  for (const auto& field : fields) {
+    const auto& impl =
+      static_cast<const irs::term_dict::TermReaderImpl&>(*Get(field.id));
+    if (impl.Single()) {
+      continue;
+    }
+    auto it = impl.iterator();
+    while (it->next()) {
+      const auto& meta = it->cookie();
+      if (meta.inline_size == 0) {
+        continue;
+      }
+      const auto local = impl.Small() ? 0 : BlockOf(impl, it->value());
+      const auto block =
+        impl.BlockOffset(local) / irs::term_dict::kPage - terms.first_page;
+      auto& [from, to] = inlined[block];
+      from = std::min(from, meta.inline_end - meta.inline_size);
+      to = std::max(to, meta.inline_end);
+    }
+  }
+
+  const auto& owner =
+    static_cast<const irs::term_dict::TermReaderImpl&>(*Get(2)).Owner();
+  size_t with = 0;
+  for (uint32_t block = 0; block != terms.blocks; ++block) {
+    SCOPED_TRACE(testing::Message("block ") << block);
+    const auto [from, to] = inlined[block];
+    const auto span = owner.InlineSpan(block);
+    if (from == kNone) {
+      ASSERT_EQ(starts[block], starts[block + 1]);
+      ASSERT_EQ(span.from, span.to);
+      continue;
+    }
+    ++with;
+    ASSERT_EQ(starts[block], from);
+    ASSERT_EQ(starts[block + 1], to);
+    ASSERT_LE(owner.InlineBegin(), span.from);
+    ASSERT_LE(span.from, owner.InlineBegin() + from);
+    ASSERT_LE(owner.InlineBegin() + to, span.to);
+    ASSERT_LE(span.to, owner.InlineEnd());
+    ASSERT_LT(span.to - span.from, to - from + 2 * irs::term_dict::kPage);
+  }
+  ASSERT_GT(with, 1);
+  for (const auto& field : fields) {
+    SCOPED_TRACE(testing::Message("field ") << field.id);
+    AssertField(*Get(field.id), field.entries);
+  }
+}
+
+TEST_P(TermDictTest, corrupt_inline_starts_are_refused) {
+  const Field fields[]{{.id = 2, .entries = MakeEntries(Words(20000, 5))}};
+  Write(fields);
+  const auto terms = TakeTerms();
+  ASSERT_LT(1, terms.blocks);
+  ASSERT_NE(0, terms.inline_size);
+  const auto deltas = DecodeVarints(terms.inline_starts);
+  ASSERT_EQ(terms.blocks, deltas.size());
+  const auto refused = [&](std::span<const uint64_t> values,
+                           irs::bytes_view tail) {
+    auto corrupt = terms;
+    corrupt.inline_starts = EncodeVarints(values);
+    corrupt.inline_starts.append(tail);
+    RewriteTerms(corrupt);
+    ASSERT_SQL_ERROR(Open(dir()), ERRCODE_INDEX_CORRUPTED);
+  };
+  constexpr irs::byte_type kUnterminated[]{0x80};
+
+  auto fewer = deltas;
+  fewer.pop_back();
+  refused(fewer, {});
+  refused(fewer, irs::bytes_view{kUnterminated, std::size(kUnterminated)});
+  auto more = deltas;
+  more.push_back(0);
+  refused(more, {});
+  auto outside = deltas;
+  outside.back() +=
+    terms.inline_size - absl::c_accumulate(deltas, uint64_t{0}) + 1;
+  refused(outside, {});
+  auto decreasing = deltas;
+  decreasing.back() = std::numeric_limits<uint64_t>::max();
+  refused(decreasing, {});
+  refused({}, {});
+
+  RewriteTerms(terms);
+  Open(dir());
+  AssertField(*Get(2), fields[0].entries);
+
+  std::vector<std::pair<int64_t, irs::doc_id_t>> values;
+  for (irs::doc_id_t doc = 1; doc <= 20000; ++doc) {
+    values.emplace_back(int64_t{doc} * 3, doc);
+  }
+  const Field plain[]{{.id = 1, .entries = NumericEntries(std::move(values))}};
+  Write(plain);
+  auto bare = TakeTerms();
+  ASSERT_LT(1, bare.blocks);
+  ASSERT_EQ(0, bare.inline_size);
+  ASSERT_TRUE(bare.inline_starts.empty());
+  const auto& owner =
+    static_cast<const irs::term_dict::TermReaderImpl&>(*Get(1)).Owner();
+  for (uint32_t block = 0; block != bare.blocks; ++block) {
+    const auto span = owner.InlineSpan(block);
+    ASSERT_EQ(span.from, span.to);
+  }
+  AssertField(*Get(1), plain[0].entries);
+  bare.inline_starts =
+    EncodeVarints(std::vector<uint64_t>(bare.blocks, uint64_t{0}));
+  RewriteTerms(bare);
+  ASSERT_SQL_ERROR(Open(dir()), ERRCODE_INDEX_CORRUPTED);
+}
+
 TEST_P(TermDictTest, several_dicts_under_one_field) {
   std::vector<std::pair<int64_t, irs::doc_id_t>> values;
   for (irs::doc_id_t doc = 1; doc <= 5000; ++doc) {
@@ -1669,11 +1858,31 @@ TEST_P(TermDictTest, walks_read_ahead) {
 
   const auto& entries = fields[0].entries;
   for (size_t i = 0; i < entries.size(); i += 37) {
+    const auto block = BlockOf(impl, entries[i].key);
+    const auto span = impl.InlineSpan(static_cast<uint32_t>(block));
+    std::vector<std::pair<uint64_t, uint64_t>> own{
+      {impl.BlockOffset(block), impl.BlockOffset(block + 1)},
+    };
+    if (span.from != span.to) {
+      own.emplace_back(span.from, span.to);
+      if (span.from <= own[0].second + irs::file_utils::kPage) {
+        own.emplace_back(own[0].first, span.to);
+      }
+    }
+    prefetched.clear();
     reader->Lookup(entries[i].key);
     auto it = reader->iterator();
     ASSERT_TRUE(it->seek(entries[i].key));
+    for (const auto& [begin, end] : prefetched) {
+      ASSERT_TRUE(absl::c_any_of(own,
+                                 [&](const auto& range) {
+                                   return range.first <= begin &&
+                                          end <= range.second;
+                                 }))
+        << begin;
+    }
   }
-  ASSERT_TRUE(prefetched.empty());
+  prefetched.clear();
 
   size_t scanned = 0;
   {
@@ -1888,6 +2097,72 @@ TEST_P(TermDictTest, batch_lookup_hints_before_reading) {
   }
 }
 
+TEST_P(TermDictTest, cold_lookups_prefetch_inline_postings_with_the_block) {
+  const Field fields[]{{.id = 2, .entries = MakeEntries(Words(20000, 5))}};
+  Write(fields);
+  CountingDirectory counting{dir()};
+  Open(counting);
+  const auto* reader = Get(2);
+  ASSERT_NE(nullptr, reader);
+  const auto& impl =
+    static_cast<const irs::term_dict::TermReaderImpl&>(*reader);
+  ASSERT_GT(impl.Blocks(), 2);
+  auto& prefetched = counting.Prefetched();
+  auto& offsets = counting.Offsets();
+  auto& hinted = counting.Hinted();
+  const auto cold = [&] {
+    irs::file_utils::InvalidateResidency();
+    prefetched.clear();
+    offsets.clear();
+    hinted.clear();
+  };
+  const auto before_reading = [&] {
+    ASSERT_FALSE(offsets.empty());
+    for (const auto offset : offsets) {
+      ASSERT_TRUE(absl::c_any_of(std::span{prefetched}.first(hinted.front()),
+                                 [&](const auto& range) {
+                                   return range.first <= offset &&
+                                          offset < range.second;
+                                 }))
+        << offset;
+    }
+  };
+
+  const auto& entries = fields[0].entries;
+  std::vector<irs::bytes_view> batch;
+  for (size_t i = 0; i < entries.size(); i += 97) {
+    const auto& key = entries[i].key;
+    SCOPED_TRACE(testing::Message("term ")
+                 << irs::ViewCast<char>(irs::bytes_view{key}));
+    cold();
+    const auto meta = reader->Lookup(key);
+    if (meta.inline_size == 0) {
+      continue;
+    }
+    batch.emplace_back(key);
+    ASSERT_EQ(2, offsets.size());
+    ASSERT_LE(impl.InlineBegin(), offsets[1]);
+    before_reading();
+
+    cold();
+    auto it = reader->iterator();
+    ASSERT_TRUE(it->seek(key));
+    AssertSameMeta(meta, it->cookie());
+    ASSERT_EQ(2, offsets.size());
+    before_reading();
+  }
+  ASSERT_GT(batch.size(), 8);
+
+  cold();
+  std::vector<irs::PostingMeta> metas(batch.size());
+  reader->LookupBatch(batch, metas);
+  for (const auto& meta : metas) {
+    ASSERT_NE(0, meta.inline_size);
+  }
+  ASSERT_GT(offsets.size(), batch.size());
+  before_reading();
+}
+
 TEST_P(TermDictTest, evicted_warm_pages_are_prefetched_again) {
   const Field fields[]{{.id = 2, .entries = MakeEntries(Words(400000, 5))}};
   Write(fields);
@@ -1987,7 +2262,8 @@ TEST_P(TermDictTest, evicted_warm_pages_are_prefetched_again) {
     prefetched.clear();
     offsets.clear();
     auto it = reader->iterator();
-    ASSERT_TRUE(it->seek(entries[entries.size() / 2].key));
+    ASSERT_EQ(irs::SeekResult::Found,
+              it->seek_ge(entries[entries.size() / 2].key));
     for (size_t i = 0; i != 30000; ++i) {
       ASSERT_TRUE(it->next());
     }

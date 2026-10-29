@@ -76,6 +76,7 @@ struct TermsMeta {
   uint64_t inline_size = 0;
   uint64_t ranges_size = 0;
   std::vector<FieldHead> fields;
+  bstring inline_starts;
 };
 
 void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms);

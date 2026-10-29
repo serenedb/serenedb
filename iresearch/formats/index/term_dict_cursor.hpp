@@ -835,7 +835,7 @@ class Cursor {
 
   size_t Shared() const noexcept { return _shared; }
 
-  SeekResult SeekGe(bytes_view key) {
+  SeekResult SeekGe(bytes_view key, bool prefetch) {
     const auto& field = *_field;
     if (field.size() == 0 || key > field.max()) {
       return SeekResult::End;
@@ -843,6 +843,9 @@ class Cursor {
     const auto probe = _probe.Assign(field.KeyPrefix(), key);
     const uint32_t block = field.BlockOf(_probe.Key());
     if (block != _block || _entry == kNoEntry) {
+      if (prefetch) {
+        field.PrefetchLookup(block);
+      }
       Load(block);
     }
     if (!LowerBound(probe)) {

@@ -36,6 +36,7 @@
 #include <duckdb/common/types/blob.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/function/scalar/regexp.hpp>
 #include <duckdb/function/scalar/string_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -924,6 +925,19 @@ void RegexpInstrFunction(duckdb::DataChunk& args,
   }
 }
 
+bool IsCharBoundary(const char* it, const char* end) {
+  return it == end || (static_cast<irs::byte_type>(*it) & 0xC0) != 0x80;
+}
+
+void VerifyWholeCharacters(re2::StringPiece part, re2::StringPiece input) {
+  const auto* end = input.data() + input.size();
+  if (IsCharBoundary(part.data(), end) &&
+      IsCharBoundary(part.data() + part.size(), end)) [[likely]] {
+    return;
+  }
+  duckdb::regexp_util::VerifyUTF8Result(part.data(), part.size());
+}
+
 // regexp_match(text, pattern) -> text[]
 // Returns capture groups from the first match. If no capture groups,
 // returns the full match. Returns NULL if no match.
@@ -940,6 +954,7 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
   auto local = duckdb::ExecuteFunctionState::GetFunctionState(state);
   re2::RE2* compiled = local ? &local->Cast<RegexpLocalState>().re : nullptr;
   const auto row_options = OwnedRegexOptions();
+  std::vector<re2::StringPiece> groups;
 
   for (duckdb::idx_t row = 0; row < count; row++) {
     auto text_value = texts[row];
@@ -973,6 +988,7 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
         rows.WriteNull();
         continue;
       }
+      VerifyWholeCharacters(match, input);
       for (auto& child : rows.WriteList(1)) {
         child.WriteValue(
           duckdb::string_t{match.data(), static_cast<uint32_t>(match.size())});
@@ -980,7 +996,7 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
       continue;
     }
 
-    std::vector<re2::StringPiece> groups(num_groups + 1);
+    groups.resize(static_cast<size_t>(num_groups) + 1);
     if (!re->Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED,
                    groups.data(), num_groups + 1)) {
       rows.WriteNull();
@@ -990,6 +1006,7 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
     int group = 1;
     for (auto& child : rows.WriteList(static_cast<duckdb::idx_t>(num_groups))) {
       if (groups[group].data()) {
+        VerifyWholeCharacters(groups[group], input);
         child.WriteValue(duckdb::string_t{
           groups[group].data(), static_cast<uint32_t>(groups[group].size())});
       } else {
@@ -1483,6 +1500,7 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       nullptr,
       RegexpInitLocalState};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    func.SetFallible();
     loader.RegisterFunction(func);
   }
 
@@ -1491,15 +1509,17 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   // regexp_instr(text, pattern) / regexp_instr(text, pattern, start, n)
   {
     duckdb::ScalarFunctionSet regexp_instr_set("regexp_instr");
-    regexp_instr_set.AddFunction(duckdb::ScalarFunction{
+    duckdb::ScalarFunction instr{
       "regexp_instr",
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BIGINT,
       RegexpInstrFunction,
       RegexpInstrBind,
       nullptr,
-      RegexpInitLocalState});
-    regexp_instr_set.AddFunction(duckdb::ScalarFunction{
+      RegexpInitLocalState};
+    instr.SetFallible();
+    regexp_instr_set.AddFunction(instr);
+    duckdb::ScalarFunction instr_from{
       "regexp_instr",
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
        duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
@@ -1507,7 +1527,9 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       RegexpInstrFunction,
       RegexpInstrBind,
       nullptr,
-      RegexpInitLocalState});
+      RegexpInitLocalState};
+    instr_from.SetFallible();
+    regexp_instr_set.AddFunction(instr_from);
     loader.RegisterFunction(regexp_instr_set);
   }
 

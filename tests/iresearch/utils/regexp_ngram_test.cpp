@@ -140,7 +140,6 @@ TEST(RegexpNGramTest, shapes) {
     {"(ab){2}", R"("\x1fabab\x1f")"},
     {"x(a[bc]d)+y",
      R"(And(Or("abd", "acd"), Or("\x1fxab", "\x1fxac"), Or("bdy\x1f", "cdy\x1f")))"},
-    {R"(a\x1fb)", R"("\x1fa\x1fb\x1f")"},
     {R"(a\x41b)", R"("\x1faAb\x1f")"},
     {R"(a\pLbc)", R"("bc\x1f")"},
     {"abc", R"("\x1fabc\x1f")", 4},
@@ -263,6 +262,13 @@ TEST(RegexpNGramTest, nothing_to_require) {
   EXPECT_EQ("ALL", Extract(R"(.*\C.*)"));
   EXPECT_EQ("ALL", Extract(R"(abc(\C)*)"));
   EXPECT_EQ("ALL", Extract(R"(\x{D800}abc)"));
+  EXPECT_EQ("ALL", Extract(R"([\x{D7FF}-\x{D800}]abc)"));
+  for (const std::string_view pattern :
+       {R"(a\x1fb)", R"((?s)\A.*\x1f.*\z)", R"((?s)\A\x1f.*\z)",
+        R"((?s)\A.*\x1f\z)", R"([\x1e-\x20]bc)"}) {
+    EXPECT_EQ("ALL", Extract(pattern)) << pattern;
+    EXPECT_FALSE(Exact(pattern)) << pattern;
+  }
 }
 
 TEST(RegexpNGramTest, nothing_matches) {

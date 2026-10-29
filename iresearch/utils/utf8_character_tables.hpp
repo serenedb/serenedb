@@ -43,11 +43,11 @@ struct Category {
   T codepoint;
   uint16_t category;
 
-  IRS_FORCE_INLINE bool operator==(Category other) const noexcept {
+  IRS_FORCE_INLINE constexpr bool operator==(Category other) const noexcept {
     return codepoint == other.codepoint;
   }
 
-  IRS_FORCE_INLINE auto operator<=>(Category other) const noexcept {
+  IRS_FORCE_INLINE constexpr auto operator<=>(Category other) const noexcept {
     return codepoint <=> other.codepoint;
   }
 };
@@ -56,7 +56,7 @@ using SmallCategory = Category<uint16_t>;
 using LargeCategory = Category<uint32_t>;
 
 // clang-format off
-inline constexpr std::array<SmallCategory, 2848> kSmallCategoryTable{SmallCategory
+inline constexpr std::array<SmallCategory, 2849> kSmallCategoryTable{SmallCategory
   {0x00, 0x4363},     {0x20, 0x5a73},     {0x21, 0x506f},    {0x24, 0x5363},
   {0x25, 0x506f},     {0x28, 0x5073},     {0x29, 0x5065},    {0x2a, 0x506f},
   {0x2b, 0x536d},     {0x2c, 0x506f},     {0x2d, 0x5064},    {0x2e, 0x506f},
@@ -769,9 +769,10 @@ inline constexpr std::array<SmallCategory, 2848> kSmallCategoryTable{SmallCatego
   {0xffe2, 0x536d},   {0xffe3, 0x536b},   {0xffe4, 0x536f},  {0xffe5, 0x5363},
   {0xffe7, 0x436e},   {0xffe8, 0x536f},   {0xffe9, 0x536d},  {0xffed, 0x536f},
   {0xffef, 0x436e},   {0xfff9, 0x4366},   {0xfffc, 0x536f},  {0xfffe, 0x436e},
+  {0xffff, 0x436e},
 };
 
-inline constexpr std::array<LargeCategory, 718> kLargeCategoryTable{LargeCategory
+inline constexpr std::array<LargeCategory, 719> kLargeCategoryTable{LargeCategory
   {0x10000, 0x4c6f},  {0x1000c, 0x436e},  {0x1000d, 0x4c6f}, {0x10027, 0x436e},
   {0x10028, 0x4c6f},  {0x1003b, 0x436e},  {0x1003c, 0x4c6f}, {0x1003e, 0x436e},
   {0x1003f, 0x4c6f},  {0x1004e, 0x436e},  {0x10050, 0x4c6f}, {0x1005e, 0x436e},
@@ -951,7 +952,7 @@ inline constexpr std::array<LargeCategory, 718> kLargeCategoryTable{LargeCategor
   {0x2b820, 0x4c6f},  {0x2cea2, 0x436e},  {0x2f800, 0x4c6f}, {0x2fa1e, 0x436e},
   {0xe0001, 0x4366},  {0xe0002, 0x436e},  {0xe0020, 0x4366}, {0xe0080, 0x436e},
   {0xe0100, 0x4d6e},  {0xe01f0, 0x436e},  {0xf0000, 0x436f}, {0xffffe, 0x436e},
-  {0x100000, 0x436f}, {0x10fffe, 0x436e},
+  {0x100000, 0x436f}, {0x10fffe, 0x436e}, {0xffffffff, 0x436e},
 };
 
 // clang-format on

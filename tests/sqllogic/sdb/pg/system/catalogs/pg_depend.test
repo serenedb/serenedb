@@ -448,8 +448,9 @@ CREATE TABLE roshan_dep_search (txt text) WITH (storage = 'search');
 
 query
 SELECT count(*) AS n
-FROM pg_depend
-WHERE classid = 'pg_class'::regclass AND objid = 'roshan_dep_search_pk_seq'::regclass;
+FROM pg_depend d JOIN pg_class c ON c.oid = d.refobjid
+WHERE d.classid = 'pg_class'::regclass AND c.relname = 'roshan_dep_search'
+  AND d.deptype = 'a';
 ----
 n
 0

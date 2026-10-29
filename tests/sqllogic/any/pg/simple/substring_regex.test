@@ -8,10 +8,26 @@ bc	bc	t	b	t	oo	él
 
 
 query
-SELECT substring('abc' from 2) AS g, substring('abc', '2') IS NULL AS h, substr('abc', '2') AS i
+SELECT substring('abc' from 2) AS g, substring('abc', '2') IS NULL AS h, substr('abc', '2') AS i,
+       substring('abc', NULL) IS NULL AS k
 ----
-g	h	i
-bc	t	bc
+g	h	i	k
+bc	t	bc	t
+
+
+statement ok
+PREPARE substring_regex_untyped AS SELECT substring($1, $2) AS m
+
+
+query
+EXECUTE substring_regex_untyped('abc', 'b.')
+----
+m
+bc
+
+
+statement ok
+DEALLOCATE substring_regex_untyped
 
 
 statement error (parentheses \(\) not balanced|missing \))

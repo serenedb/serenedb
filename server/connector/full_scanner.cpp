@@ -20,12 +20,12 @@
 
 #include "connector/full_scanner.h"
 
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 namespace sdb::connector {

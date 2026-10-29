@@ -111,6 +111,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Semijoins                  | Yes           |  |
 | Antijoins                  | Yes           |                |
 | Table Functions            | Yes           | |
+| Column Definition Lists    | No            |                |
 | Lateral Subqueries         | Yes           |                |
 | User-Specified Aliases     | Yes           |                |
 | GROUP BY                   | Yes           |  |
@@ -135,52 +136,8 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 ## Data Types 
 
 ### Types
-| Type                                              | Support State | Details                  |
-|---------------------------------------------------|---------------|--------------------------|
-| array                                             | Yes           |    |
-| bigint                                            | Yes           |  |
-| bigserial                                         | Yes           |                          |
-| bit [ (n) ]                                       | Yes           |                          |
-| bit varying [ (n) ]                               | Yes           |                          |
-| boolean                                           | Yes           |  |
-| box                                               | No            |                          |
-| bytea                                             | Yes           | |
-| character [ (n) ]                                 | Yes           | CHAR(n) not supported; use TEXT |
-| character varying [ (n) ]                         | Yes           | VARCHAR works, VARCHAR(n) does not |
-| cidr                                              | Partial       | See [Inet](../sql/data_types/inet.md#cidr) for the differences |
-| circle                                            | No            |                          |
-| date                                              | Yes           |     |
-| double precision                                  | Yes           |    |
-| inet                                              | Partial       | See [Inet](../sql/data_types/inet.md) for the supported operators and functions |
-| integer                                           | Yes           |    |
-| interval [ fields ] [ (p) ]                       | Yes           |   |
-| json                                              | Yes           |       |
-| jsonb                                             | No            |                          |
-| line                                              | No            |                          |
-| lseg                                              | No            |                          |
-| macaddr                                           | No            |                          |
-| macaddr8                                          | No            |                          |
-| money                                             | No            |                          |
-| numeric [ (p, s) ]                                | Yes           |    |
-| path                                              | No            |                          |
-| pg_lsn                                            | No            |                          |
-| pg_snapshot                                       | No            |                          |
-| point                                             | No            |                          |
-| polygon                                           | No            |                          |
-| real                                              | Yes           |      |
-| smallint                                          | Yes           |    |
-| smallserial                                       | Yes           |                          |
-| serial                                            | Yes           |                          |
-| text                                              | Yes           |       |
-| time [ (p) ] [ without time zone ]                | Partial       |                          |
-| time [ (p) ] with time zone                       | Yes           |                          |
-| timestamp [ (p) ] [ without time zone ]           | Yes           |  |
-| timestamp [ (p) ] with time zone                  | Yes          |  |
-| tsquery                                           | Yes           | [SereneDB `TSQUERY`](../sql/data_types/tsquery.md) (inverted index), not PG tsvector/tsquery |
-| tsvector                                          | No            |                          |
-| txid_snapshot                                     | No            |                          |
-| uuid                                              | Yes           |       |
-| xml                                               | No            |                          |
+
+[Data Type Compatibility](./data-type-compatibility.md) lists every PostgreSQL type and how SereneDB supports it.
 
 ### Operators & Functions
 
@@ -220,15 +177,15 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | +                | Yes           |                                                                         |
 | -                | Yes           |                                                                         |
 | *                | Yes           |                                                                         |
-| /                | Yes           |                                                                         |
+| /                | Yes           | On `numeric`, returns `double precision`                                |
 | %                | Yes           |                                                                         |
-| ^                | Yes           |                                                                         |
+| ^                | Yes           | On `numeric`, returns `double precision`                                |
 | |/               | Yes            |                                                                         |
 | ||/              | Yes            |                                                                         |
 | @                | Yes           |                                                                         |
 | &                | Yes           |                                                                         |
 | |                | Yes            |                                                                         |
-| #                | No            |                                                                         |
+| #                | Yes           |                                                                         |
 | ~                | Yes           |                                                                         |
 | \<\<             | Yes           |                                                                         |
 | >>               | Yes           |                                                                         |
@@ -239,24 +196,24 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | div              | Yes           |                                                                         |
 | erf              | Yes           |                                                                         |
 | erfc             | Yes           |                                                                         |
-| exp              | Yes           |                                                                         |
+| exp              | Yes           | On `numeric`, returns `double precision`                                |
 | factorial        | Yes           |                                                                         |
 | floor            | Yes           |                                                                         |
 | gcd              | Yes           |                                                                         |
 | lcm              | Yes           |                                                                         |
-| ln               | Yes           |                                                                         |
-| log              | Yes           |                                                                         |
-| log10            | Yes           |                                                                         |
-| min_scale        | No            |                                                                         |
+| ln               | Yes           | On `numeric`, returns `double precision`                                |
+| log              | Yes           | On `numeric`, returns `double precision`                                |
+| log10            | Yes           | On `numeric`, returns `double precision`                                |
+| min_scale        | Yes           |                                                                         |
 | mod              | Yes           |                                                                         |
 | pi               | Yes           |                                                                         |
-| power            | Yes           |                                                                         |
+| power            | Yes           | On `numeric`, returns `double precision`                                |
 | radians          | Yes           |                                                                         |
 | round            | Yes           |                                                                         |
-| scale            | No            |                                                                         |
-| sign             | Yes           |                                                                         |
-| sqrt             | Yes           |                                                                         |
-| trim_scale       | No            |                                                                         |
+| scale            | Yes           | The scale of the column type: `numeric` without a scale has three fractional digits |
+| sign             | Yes           | Returns `smallint`                                                      |
+| sqrt             | Yes           | On `numeric`, returns `double precision`                                |
+| trim_scale       | Partial       | Trims a constant; a column's value keeps the scale of its type          |
 | trunc            | Yes           |                                                                         |
 | width_bucket     | Yes           |                                                                         |
 | random           | Yes           |                                                                         |
@@ -289,23 +246,24 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Feature             | Support State | Details                                                    |
 |---------------------|---------------|------------------------------------------------------------|
 | \|\|                | Yes           |                                                            |
-| btrim               | No            |                                                            |
+| btrim               | Yes           | Without characters to remove, also removes Unicode space separators such as the no-break space; PostgreSQL removes only spaces |
 | bit_length          | Yes           |                                                            |
 | char_length         | Yes           |                                                            |
 | lower               | Yes           |                                                            |
 | lpad                | Yes           |                                                            |
-| ltrim               | Yes           |                                                            |
-| normalize           | Yes           |                                                            |
+| ltrim               | Yes           | Same as `btrim`                                            |
+| normalize           | Partial       | Returns the text unchanged: no normalization form is applied |
 | octet_length        | Yes           |                                                            |
 | overlay             | Yes           |                                                            |
 | position            | Yes           |                                                            |
 | rpad                | Yes           |                                                            |
-| rtrim               | Yes           |                                                            |
+| rtrim               | Yes           | Same as `btrim`                                            |
 | substring           | Yes           | Currently not supporting regular expression arguments      |
-| trim                | Yes           |                                                            |
+| trim                | Yes           | Same as `btrim`                                            |
 | upper               | Yes           |                                                            |
 | ^@                  | Yes           |                                                            |
 | ascii               | Yes           |                                                            |
+| casefold            | Yes           |                                                            |
 | chr                 | Yes           |                                                            |
 | concat              | Yes           |                                                            |
 | concat_ws           | Yes           |                                                            |
@@ -314,7 +272,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | left                | Yes           |                                                            |
 | length              | Yes           |                                                            |
 | md5                 | Yes           |                                                            |
-| parse_ident         | No            |                                                            |
+| parse_ident         | Yes           |                                                            |
 | quote_ident         | Yes           |                                                            |
 | quote_literal       | Yes           |                                                            |
 | quote_nullable      | Yes           |                                                            |
@@ -325,20 +283,20 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | split_part          | Yes           |                                                            |
 | starts_with         | Yes           |                                                            |
 | string_to_array     | Yes           |                                                            |
-| string_to_table     | No            |                                                            |
+| string_to_table     | Yes           |                                                            |
 | strpos              | Yes           |                                                            |
 | substr              | Yes           |                                                            |
 | to_ascii            | No            |                                                            |
 | to_hex              | Yes           |                                                            |
 | translate           | Yes           |                                                            |
-| unistr              | No            |                                                            |
+| unistr              | Yes           |                                                            |
 
 #### Bytea
 | Feature        | Support State | Details                   |
 |----------------|---------------|---------------------------|
 | \|\|           | Yes           |                           |
 | bit_length     | Yes           |                           |
-| btrim          | No            |                           |
+| btrim          | Yes           |                           |
 | ltrim          | Yes           |                           |
 | octet_length   | Yes           |                           |
 | overlay        | Yes           |                           |
@@ -347,15 +305,17 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | substring      | Yes           |                           |
 | trim           | Yes           |                           |
 | bit_count      | No            |                           |
+| crc32          | Yes           |                           |
+| crc32c         | Yes           |                           |
 | get_bit        | Yes           |                           |
 | get_byte       | Yes           |                           |
 | length         | Yes           |                           |
 | md5            | Yes           |                           |
 | set_bit        | Yes           |                           |
 | set_byte       | Yes           |                           |
-| sha224         | No            |                           |
-| sha384         | No            |                           |
-| sha512         | No            |                           |
+| sha224         | Yes           |                           |
+| sha384         | Yes           |                           |
+| sha512         | Yes           |                           |
 | substr         | Yes           |                           |
 | convert        | No            |                           |
 | convert_from   | Yes           |                           |
@@ -369,7 +329,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | \|\|          | Yes           |         |
 | &             | Yes           |         |
 | \|            | Yes           |         |
-| #             | No            |         |
+| #             | Yes           |         |
 | ~             | Yes           |         |
 | \<\<          | Yes           |         |
 | >>            | Yes           |         |
@@ -401,10 +361,10 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 #### Data Type Formatting
 | Feature       | Support State | Details                |
 |---------------|---------------|------------------------|
-| to_char       | No            |                        |
-| to_date       | No            |                        |
-| to_number     | No            |                        |
-| to_timestamp  | Partial       | Epoch (numeric) form only; text+format parsing unsupported |
+| to_char       | Yes           | `TZ` prints the UTC offset for zones other than UTC and GMT |
+| to_date       | Yes           |                        |
+| to_number     | Yes           | The scale of the result is fixed per query |
+| to_timestamp  | Yes           | `TZ` input recognizes UTC, GMT and numeric offsets |
 
 #### Date/Time
 | Feature                | Support State | Details                  |
@@ -415,32 +375,34 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | /                      | Yes           |                          |
 | age                    | Yes           |                          |
 | clock_timestamp        | Yes           |                          |
+| pg_sleep_for           | Yes           | Also `pg_sleep_until`    |
 | current_date           | Yes           |                          |
 | current_time           | Yes           |                          |
 | current_timestamp      | Yes           |                          |
 | date_add               | Yes           | possible with +          |
 | date_bin               | Yes           |                          |
 | date_part              | Yes           |                          |
-| date_subtract          | No            | possible with -          |
-| date_trunc             | Yes           | Without timezone         |
-| extract                | Yes           |                          |
+| date_subtract          | Yes           |                          |
+| date_trunc             | Yes           |                          |
+| extract                | Yes           | `pg_catalog.extract(field, source)` returns `numeric`. An infinite source gives `NULL` where PostgreSQL gives `Infinity`, `julian` of a timestamp has 20 fractional digits, and a field that is not a constant gives six fractional digits |
 | isfinite               | Yes           |                          |
-| justify_days           | No            |                          |
-| justify_hours          | No            |                          |
-| justify_interval       | No            |                          |
+| justify_days           | Yes           |                          |
+| justify_hours          | Yes           |                          |
+| justify_interval       | Yes           |                          |
 | localtime              | Yes           |                          |
 | localtimestamp         | Yes           |                          |
 | make_date              | Yes           |                          |
-| make_interval          | No            |                          |
+| make_interval          | Yes           |                          |
 | make_time              | Yes           |                          |
 | make_timestamp         | Yes           |                          |
 | make_timestamptz       | Yes           | With time zone name      |
 | now                    | Yes           |                          |
-| statement_timestamp    | No            |                          |
+| statement_timestamp    | Yes           |                          |
 | timeofday              | Yes           |                          |
+| timestamp              | Yes           | Also `timestamptz`: the casts as functions, and `timestamp(value, precision)` rounds to the precision |
 | transaction_timestamp  | Yes           |                          |
-| to_timestamp           | Partial           | Epoch (numeric) form only; text+format parsing unsupported |
-| OVERLAPS               | No            |                          |
+| to_timestamp           | Yes               |                          |
+| OVERLAPS               | Yes           |                          |
 | EXTRACT                | Yes           |                          |
 
 #### Enum
@@ -452,59 +414,60 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 
 #### Geometric
 
-PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`, `circle`) and their operators/functions are not supported. SereneDB instead provides spatial data through a built-in `GEOMETRY` type and `ST_*` functions (`ST_Point`, `ST_Intersects`, `ST_Contains`, `ST_Distance`, ...). See [Spatial Functions](../sql/functions/geometry.md) and the [GEOMETRY type](../sql/data_types/geometry.md).
+An operator with a string literal on one side, as in `point '(1,2)' <-> '(3,4)'`, is an error when the operator takes several types on that side: cast the literal, as in `point '(1,2)' <-> point '(3,4)'`. For spatial data, SereneDB also has a `GEOMETRY` type and `ST_*` functions: see [Spatial Functions](../sql/functions/geometry.md) and the [GEOMETRY type](../sql/data_types/geometry.md).
+
 | Feature        | Support State | Details |
 |----------------|---------------|---------|
-| +              | No            |         |
-| -              | No            |         |
-| *              | No            |         |
-| /              | No            |         |
-| @-@            | No            |         |
-| @@             | No            |         |
-| #              | No            |         |
-| ##             | No            |         |
-| \<->           | No            |         |
-| @>             | No            |         |
-| \<@            | No            |         |
-| &&             | No            |         |
-| \<\<           | No            |         |
-| >>             | No            |         |
-| &\<            | No            |         |
-| &>             | No            |         |
-| \<\<\|         No | No            |         |
-| \|>>           | No            |         |
-| &\<\|          No | No            |         |
-| |&>            | No            |         |
-| \<^            | No            |         |
-| >^             | No            |         |
-| ?#             | No            |         |
-| ?-             | No            |         |
-| ?|             | No            |         |
-| ?-|            No | No            |         |
-| ?||            | No            |         |
-| ~=             | No            |         |
-| area           | No            |         |
-| center         | No            |         |
-| diagonal       | No            |         |
-| diameter       | No            |         |
-| height         | No            |         |
-| isclosed       | No            |         |
-| isopen         | No            |         |
-| length         | No            |         |
-| npoints        | No            |         |
-| pclose         | No            |         |
-| popen          | No            |         |
-| radius         | No            |         |
-| slope          | No            |         |
-| width          | No            |         |
-| box            | No            |         |
-| bounding_box   | No            |         |
-| circle         | No            |         |
-| line           | No            |         |
-| lseg           | No            |         |
-| path           | No            |         |
-| point          | No            |         |
-| polygon        | No            |         |
+| +              | Yes           |         |
+| -              | Yes           |         |
+| *              | Yes           |         |
+| /              | Yes           |         |
+| @-@            | Yes           |         |
+| @@             | Yes           |         |
+| #              | Yes           |         |
+| ##             | Yes           |         |
+| \<->           | Yes           |         |
+| @>             | Yes           |         |
+| \<@            | Yes           |         |
+| &&             | Yes           |         |
+| \<\<           | Yes           |         |
+| >>             | Yes           |         |
+| &\<            | Yes           |         |
+| &>             | Yes           |         |
+| \<\<\|         | Yes           |         |
+| \|>>           | Yes           |         |
+| &\<\|          | Yes           |         |
+| \|&>           | Yes           |         |
+| \<^            | Yes           |         |
+| >^             | Yes           |         |
+| ?#             | Yes           |         |
+| ?-             | Partial       | Between two values only: a leading `?` is a parameter, so `?- x` is written `line_horizontal(x)` or `lseg_horizontal(x)` |
+| ?\|            | Yes           | A `?` parameter followed by `\|` reads as this operator, so a parameter's bitwise or is written `$1 \| x` or `(?) \| x` |
+| ?-\|           | Yes           |         |
+| ?\|\|          | Yes           |         |
+| ~=             | Yes           |         |
+| area           | Yes           |         |
+| center         | Yes           |         |
+| diagonal       | Yes           |         |
+| diameter       | Yes           |         |
+| height         | Yes           |         |
+| isclosed       | Yes           |         |
+| isopen         | Yes           |         |
+| length         | Yes           |         |
+| npoints        | Yes           |         |
+| pclose         | Yes           |         |
+| popen          | Yes           |         |
+| radius         | Yes           |         |
+| slope          | Yes           |         |
+| width          | Yes           |         |
+| box            | Yes           |         |
+| bound_box      | Yes           |         |
+| circle         | Yes           |         |
+| line           | Yes           |         |
+| lseg           | Yes           |         |
+| path           | Yes           |         |
+| point          | Yes           |         |
+| polygon        | Yes           |         |
 
 #### Network
 | Feature            | Support State | Details |
@@ -517,19 +480,19 @@ PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`,
 | ~                  | Yes           |         |
 | &                  | Yes           |         |
 | \|                 | Yes           |         |
-| +                  | Partial       | `inet + integer` works, `integer + inet` does not |
-| -                  | Partial       | `inet - integer` works, `inet - inet` does not |
-| abbrev             | No            |         |
+| +                  | Yes           |         |
+| -                  | Yes           |         |
+| abbrev             | Yes           |         |
 | broadcast          | Yes           |         |
 | family             | Yes           |         |
 | host               | Yes           |         |
-| hostmask           | No            |         |
-| inet_merge         | No            |         |
-| inet_same_family   | No            |         |
-| masklen            | No            |         |
+| hostmask           | Yes           |         |
+| inet_merge         | Yes           |         |
+| inet_same_family   | Yes           |         |
+| masklen            | Yes           |         |
 | netmask            | Yes           |         |
 | network            | Yes           |         |
-| set_masklen        | No            |         |
+| set_masklen        | Yes           |         |
 | text               | No            |         |
 
 #### Text Search
@@ -580,25 +543,25 @@ PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`,
 #### XML
 | Feature               | Support State | Details |
 |-----------------------|---------------|---------|
-| xmltext               | No            |         |
-| xmlcomment            | No            |         |
-| xmlconcat             | No            |         |
+| xmltext               | Yes           |         |
+| xmlcomment            | Yes           |         |
+| xmlconcat             | Yes           |         |
 | xmlelement            | No            |         |
 | xmlforest             | No            |         |
 | xmlpi                 | No            |         |
 | xmlroot               | No            |         |
-| xmlagg                | No            |         |
-| `IS DOCUMENT`         | No            |         |
-| `IS NOT DOCUMENT`     | No            |         |
+| xmlagg                | Yes           |         |
+| `IS DOCUMENT`         | Yes           |         |
+| `IS NOT DOCUMENT`     | Yes           |         |
 | XMLEXISTS             | No            |         |
-| xml_is_well_formed    | No            |         |
-| xpath                 | No            |         |
-| xpath_exists          | No            |         |
+| xml_is_well_formed    | Yes           | Also `xml_is_well_formed_document` and `xml_is_well_formed_content` |
+| xpath                 | Yes           |         |
+| xpath_exists          | Yes           |         |
 | XMLTABLE              | No            |         |
 
 #### JSON
 
-The PostgreSQL-named JSON functions below are largely unsupported. SereneDB instead provides JSON access through the [`JSON` column type](../data_import_and_export/json/json_type.md) and SereneDB-style functions -- `json_extract`, `json_extract_string`, `json_keys`, `json_type`, `json_valid` and more (see [JSON Functions](../data_import_and_export/json/json_functions.md)). The PostgreSQL accessor operators `->`, `->>`, `#>` and `#>>` are supported.
+Most of the PostgreSQL `json` functions below are supported. SereneDB also provides JSON access through the [`JSON` column type](../data_import_and_export/json/json_type.md) and SereneDB-style functions -- `json_extract`, `json_extract_string`, `json_keys`, `json_type`, `json_valid` and more (see [JSON Functions](../data_import_and_export/json/json_functions.md)). The PostgreSQL accessor operators `->`, `->>`, `#>` and `#>>` are supported.
 
 Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jsonb`-only operators are unavailable. A query parameter a client sends as `jsonb` is read as `JSON`.
 
@@ -627,28 +590,28 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | jsonb_build_array | No |  |
 | json_build_object | Yes | Same as `json_object(key, value)` |
 | jsonb_build_object | No |  |
-| json_object | Partial | Requires even arg count; SereneDB `json_object(key, value)` |
+| json_object | Partial | Two `text` arguments are one `key, value` pair, as for `json_build_object`: the arrays of `json_object('{a,b}', '{1,2}')` need `::text[]` |
 | jsonb_object | No |  |
 | `IS JSON` | No | Use `json_valid()` |
-| json_array_elements | No | Use `json_each()` |
+| json_array_elements | Yes |  |
 | jsonb_array_elements | No |  |
-| json_array_elements_text | No | Use `json_extract_string()` |
+| json_array_elements_text | Yes |  |
 | jsonb_array_elements_text | No |  |
 | json_array_length | Yes |  |
 | jsonb_array_length | No | Use `json_array_length` |
 | json_each | Yes |  |
 | jsonb_each | No |  |
-| json_each_text | No | Use `json_each()` |
+| json_each_text | Yes |  |
 | jsonb_each_text | No |  |
-| json_object_keys | No | Use `json_keys()` |
+| json_object_keys | Yes |  |
 | jsonb_object_keys | No |  |
-| json_populate_record | No | Use `json_transform()` |
+| json_populate_record | Yes |  |
 | jsonb_populate_record | No |  |
-| json_populate_recordset | No | Use `json_transform()` |
+| json_populate_recordset | Yes |  |
 | jsonb_populate_recordset | No |  |
-| json_to_record | No | Use `json_transform()` |
+| json_to_record | No | Use `json_populate_record` |
 | jsonb_to_record | No |  |
-| json_to_recordset | No | Use `json_transform()` |
+| json_to_recordset | No | Use `json_populate_recordset` |
 | jsonb_to_recordset | No |  |
 | jsonb_set | No |  |
 | jsonb_set_lax | No |  |
@@ -665,7 +628,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | nextval  | Yes          |  |
 | setval   | Yes          |  |
 | currval  | Yes          |  |
-| lastval  | No            |         |
+| lastval  | Yes           |         |
 
 #### Conditional
 | Feature   | Support State | Details |
@@ -686,7 +649,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | array_append       | Yes           |                                |
 | array_cat          | Yes           |                                |
 | array_dims         | Yes           |                                |
-| array_fill         | No            |                                |
+| array_fill         | Yes           | Lower bounds must be 1; dimensions taken from a column fill one-dimensional arrays unless written as `ARRAY[...]`; up to `max_expression_depth` dimensions (1000 by default) |
 | array_lower        | Yes           |                                |
 | array_ndims        | Yes           |                                |
 | array_position     | Yes           |                                |
@@ -694,8 +657,8 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | array_prepend      | Yes           |                                |
 | array_remove       | Yes           |                                |
 | array_replace      | Yes           |                                |
-| array_sample       | No            |                                |
-| array_shuffle      | No            |                                |
+| array_sample       | Yes           |                                |
+| array_shuffle      | Yes           |                                |
 | array_to_string    | Yes           |                                |
 | array_upper        | Yes           |                                |
 | array_cardinality  | Yes           | via cardinality()              |
@@ -703,29 +666,30 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | unnest             | Yes           | No multi-array expansion       |
 
 #### Range
-| Feature       | Support State | Details |
-|---------------|---------------|---------|
-| @>            | No            |         |
-| \<@           | No            |         |
-| &&            | No            |         |
-| \<\<          | No            |         |
-| >>            | No            |         |
-| &\<           | No            |         |
-| &>            | No            |         |
-| -\| No        | No            |         |
-| +             | No            |         |
-| *             | No            |         |
-| -             | No            |         |
-| lower         | No            |         |
-| upper         | No            |         |
-| isempty       | No            |         |
-| lower_inc     | No            |         |
-| upper_inc     | No            |         |
-| lower_inf     | No            |         |
-| upper_inf     | No            |         |
-| range_merge   | No            |         |
-| multirange    | No            |         |
-| unnest        | No            |         |
+| Feature                  | Support State | Details |
+|--------------------------|---------------|---------|
+| @>                       | Yes           | A string literal on the right is read as an element, not a range or multirange: write `r @> '[2,3)'::int4range` to test a range |
+| \<@                      | Yes           | A string literal on the left is read as an element, not a range or multirange: write `'[2,3)'::int4range <@ r` to test a range |
+| &&                       | Yes           |         |
+| \<\<                     | Yes           |         |
+| >>                       | Yes           |         |
+| &\<                      | Yes           |         |
+| &>                       | Yes           |         |
+| -\|-                     | Yes           |         |
+| +                        | Yes           |         |
+| *                        | Yes           |         |
+| -                        | Yes           |         |
+| lower                    | Yes           |         |
+| upper                    | Yes           |         |
+| isempty                  | Yes           |         |
+| lower_inc                | Yes           |         |
+| upper_inc                | Yes           |         |
+| lower_inf                | Yes           |         |
+| upper_inf                | Yes           |         |
+| range_merge              | Yes           |         |
+| multirange               | Yes           |         |
+| unnest                   | Yes           |         |
+| CREATE TYPE ... AS RANGE | No            |         |
 
 #### Aggregate Functions
 
@@ -742,16 +706,16 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | bool_or                    | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
 | `count(*)`                 | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
 | `count("any")`             | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
-| json(b)_agg                | No            |                               |
+| json(b)_agg                | Partial       | `json_agg` and `json_agg_strict`, not `jsonb_agg`: [JSON aggregate functions](../data_import_and_export/json/json_functions.md#json-aggregate-functions) |
 | json(b)_objectagg          | No            |                               |
-| json(b)_object_agg         | No            |                               |
+| json(b)_object_agg         | Partial       | `json_object_agg` and its `_strict`, `_unique` and `_unique_strict` forms, not `jsonb_object_agg`: [JSON aggregate functions](../data_import_and_export/json/json_functions.md#json-aggregate-functions) |
 | json_arrayagg              | No            |                               |
 | max                        | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
 | min                        | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
-| range(_intersect)_agg      | No            |                               |
+| range(_intersect)_agg      | Yes           |                               |
 | string_agg                 | Yes           |                                  |
 | sum                        | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
-| xmlagg                      | No            |                               |
+| xmlagg                      | Yes           |                               |
 
 ##### Statistical
 | Feature        | Support State | Details                          |
@@ -779,8 +743,8 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | Feature            | Support State | Details                          |
 |--------------------|---------------|----------------------------------|
 | mode               | Yes           |                                  |
-| percentile_cont    | Yes           |                                  |
-| percentile_disc    | Yes           |                                  |
+| percentile_cont    | Yes           | The fraction must be a constant |
+| percentile_disc    | Yes           | The fraction must be a constant |
 
 #### Window
 | Feature        | Support State | Details |
@@ -835,8 +799,55 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_get_function_identity_arguments | Yes           |  |
 | pg_get_function_result             | Yes           |  |
 | pg_get_function_arg_default        | Yes           |  |
-| pg_get_partkeydef                  | Yes           | Always `NULL`: there are no partitioned tables |
+| pg_get_function_sqlbody            | Partial       | Always `NULL`: the body of a SQL function is kept as source text, shown in `prosrc` and by `pg_get_functiondef` |
+| pg_get_partkeydef                  | Yes           | Always `NULL`, as is `pg_get_partition_constraintdef`: there are no partitioned tables |
 | pg_get_statisticsobjdef            | Yes           | Always `NULL`, as are `pg_get_statisticsobjdef_columns` and `pg_get_statisticsobjdef_expressions`: there are no extended statistics |
+| pg_get_serial_sequence             | Yes           | Finds the sequence named by the column's `nextval(...)` default |
+| pg_get_replica_identity_index      | Yes           | The index of the table's primary key; `NULL` for a table without one |
+| format_type                        | Yes           | Prints type modifiers, for example `numeric(10,2)`, `character varying(50)` and `timestamp(3) without time zone` |
+| to_regclass                        | Yes           | Also `to_regtype`, `to_regtypemod`, `to_regproc`, `to_regprocedure`, `to_regnamespace`, `to_regrole`, `to_regcollation`, `to_regoper` and `to_regoperator`; they return `NULL` where the cast would fail |
+| pg_input_is_valid                  | Yes           | Also `pg_input_error_info`. For `bytea`, `cidr`, `pg_lsn` and the `reg*` types it reports PostgreSQL's message, detail, hint and SQLSTATE; for other types the message of the failed cast, with SQLSTATE `22P02` |
+| pg_get_userbyid                    | Yes           |  |
+| getpgusername                      | Yes           |  |
+| pg_basetype                        | Yes           |  |
+| pg_collation_for                   | Yes           | An untyped string literal is `text`, so it has the default collation |
+| system_user                        | Yes           | Also the `SYSTEM_USER` keyword. The [authentication method](../security/client_authentication.md) and the role, for example `scram-sha-256:alice`; `NULL` for a connection a `trust` rule admits and for the HTTP API |
+| pg_get_keywords                    | Yes           | Lists the keywords of SereneDB's parser, among them `pivot` and `qualify`, which PostgreSQL does not reserve. A word the parser takes both as a column name and as a type or function name, such as `struct`, is listed once, as unreserved. `barelabel` and `baredesc` are `NULL`: the parser does not say which keywords can be a bare column label |
+| pg_table_is_visible                | Yes           | Also `pg_type_is_visible` and `pg_function_is_visible`. Functions are compared by name, not by argument types |
+| obj_description                    | Yes           | Also `col_description`. Built-in types, functions and schemas have no description, so they return `NULL` |
+| shobj_description                  | Partial       | Always `NULL`: comments on databases and roles are not stored |
+| pg_describe_object                 | Partial       | Also `pg_identify_object`. Tables, views, indexes, sequences, composite types and their columns, functions, types, schemas, roles, constraints, column defaults, view rules, triggers, databases, collations, languages, access methods and tablespaces; other object classes return `NULL` |
+| pg_get_acl                         | Partial       | Tables, views, sequences and their columns, functions, types and schemas; other object classes return `NULL` |
+| pg_relation_is_updatable           | Yes           | Also `pg_column_is_updatable`. Tables are updatable, views are not |
+| pg_sequence_last_value             | Yes           |  |
+| pg_sequence_parameters             | Yes           | Also `pg_get_sequence_data`. `data_type` is always `bigint` |
+| pg_options_to_table                | Yes           |  |
+| pg_encoding_to_char                | Yes           | Also `pg_char_to_encoding` |
+| pg_tablespace_location             | Yes           | Always an empty string |
+| pg_tablespace_size                 | Yes           | `pg_default` holds every database and `pg_global` the catalog that all databases share |
+| pg_tablespace_databases            | Yes           | `pg_default` lists every database |
+| pg_size_bytes                      | Yes           |  |
+| pg_column_size                     | Partial       | Counts a value as it is held in memory: a value read from a table counts as a computed one, so a short string takes 4 bytes more than its length. A whole row, as in `pg_column_size(t)`, counts as in PostgreSQL |
+| pg_column_compression              | Yes           | Always `NULL`, as is `pg_column_toast_chunk_id`: values are not compressed or stored out of line one by one |
+| pg_my_temp_schema                  | Partial       | Always `0` |
+| acldefault                         | Yes           | Also `aclexplode` |
+| makeaclitem                        | Yes           |  |
+| has_table_privilege                | Yes           | Also `has_column_privilege`, `has_any_column_privilege`, `has_sequence_privilege`, `has_schema_privilege`, `has_database_privilege`, `has_function_privilege`, `has_type_privilege` and `pg_has_role`, with the role and the object given by name or by oid |
+| has_server_privilege               | Yes           | Also `has_foreign_data_wrapper_privilege` (`clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`) and `has_tablespace_privilege` (`pg_default` and `pg_global`) |
+| has_parameter_privilege            | Yes           | `true` for superusers and `false` for other roles: privileges on settings cannot be granted |
+| has_largeobject_privilege          | Yes           | Always `NULL`: there are no large objects |
+| pg_settings_get_flags              | Partial       | An empty array for every setting, `NULL` for an unknown name |
+| unicode_version                    | Yes           | Also `icu_unicode_version` and `unicode_assigned`; both versions are `17.0` |
+| pg_current_logfile                 | Yes           | Always `NULL`: there is no logging collector |
+| pg_jit_available                   | Yes           | Always `false`, as is `pg_numa_available` |
+| pg_collation_actual_version        | Yes           | Also `pg_database_collation_actual_version`; always `NULL`: collations are not versioned |
+| pg_safe_snapshot_blocking_pids     | Yes           | Also `pg_blocking_pids`; always an empty array |
+| pg_available_wal_summaries         | Yes           | Returns no rows |
+| pg_extension_update_paths          | Yes           | Fails for every extension name: no extension is available |
+| pg_wal_lsn_diff                    | Yes           | Also `pg_lsn(numeric)` |
+| pg_restore_relation_stats          | Partial       | Also `pg_restore_attribute_stats`; accept the arguments `pg_dump --statistics` writes and return `false`: imported statistics are not kept |
+| pg_clear_relation_stats            | Yes           | Also `pg_clear_attribute_stats`; there are no imported statistics to clear |
+| pg_stat_get_*                      | Partial       | `pg_stat_get_live_tuples` returns the table's row count and `pg_stat_get_db_numbackends` the database's sessions. `pg_stat_get_db_xact_commit`, `pg_stat_get_db_xact_rollback`, `pg_stat_get_db_sessions` and `pg_stat_get_db_session_time` count from server start. Other counters and durations, function statistics included, are `0`, and timestamps `NULL` |
 
 ## Behavioral Differences from PostgreSQL
 
@@ -851,6 +862,12 @@ SereneDB and PostgreSQL handle floating-point arithmetic differently for divisio
 On an attached PostgreSQL, the same division by zero raises an error instead (operations involving infinity follow IEEE 754 on both engines):
 
 <SqlLogicTest id="compatibility/postgresql_comparisons_pgscan/example_006" />
+
+Mathematical functions follow IEEE 754 the same way: an argument outside a function's domain, or a result too large for `double precision`, gives `NaN` or `±Infinity` where PostgreSQL raises an error:
+
+<SqlLogicTest id="sql/dialect/postgresql_compatibility/example_017" />
+
+The two-argument `log(b, x)` raises an error for a zero or negative argument, as in PostgreSQL.
 
 ### Integer Division Operator (`//`)
 
@@ -938,13 +955,6 @@ PostgreSQL's array-to-text conversion leaves the quote unescaped instead:
 Unlike PostgreSQL's `regexp_substr` function, SereneDB's `regexp_extract` returns empty strings instead of `NULL`s when there is no match:
 
 <SqlLogicTest id="sql/dialect/postgresql_compatibility/example_014" />
-
-#### `to_date` Function
-
-SereneDB does not support the [`to_date` PostgreSQL date formatting function](https://www.postgresql.org/docs/17/functions-formatting.html).
-Instead, please use the [`strptime` function](../sql/functions/dateformat.md#strptime-examples):
-
-<SqlLogicTest id="sql/dialect/postgresql_compatibility/example_015" />
 
 #### `date_part` Function
 

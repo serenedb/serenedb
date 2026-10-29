@@ -32,6 +32,7 @@
 #include <memory>
 #include <tz_calendar.hpp>
 
+#include "pg/catalog/utils/session.h"
 #include "query/config.h"
 #include "server/utils/message_buffer.h"
 
@@ -60,13 +61,25 @@ using SerializationFunction = bool (*)(
   struct SerializationContext& context,
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row);
 
+enum class ArrayWrap : uint8_t {
+  ByValue,
+  Never,
+  Always,
+};
+
 struct RecordSerializers {
   std::vector<SerializationFunction> functions;
   std::vector<uint64_t> oids;  // populated for binary, empty for text
+  ArrayWrap array_wrap = ArrayWrap::ByValue;
 };
 
 using TypesSerializationCache =
   irs::containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>;
+
+struct SerializationCaches {
+  TypesSerializationCache types;
+  std::unique_ptr<const Session> session;
+};
 
 struct SerializationContext {
   message::Writer* writer = nullptr;
@@ -88,7 +101,7 @@ struct SerializationContext {
   // Null means UTC (the default) and keeps the cheap ToString + "+00" path.
   duckdb::unique_ptr<duckdb::TimeZone> time_zone;
   duckdb::shared_ptr<const duckdb::ZoneLUT> zone_lut;
-  std::unique_ptr<TypesSerializationCache> types_cache;
+  std::unique_ptr<SerializationCaches> caches;
   std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded;
 };
 

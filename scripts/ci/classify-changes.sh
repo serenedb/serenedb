@@ -45,16 +45,24 @@ declare -A SUITE_OF_DIR=(
 	[openssl-cmake]="httpfs azure iceberg postgres_scanner"
 )
 
-iresearch=false other_tp=false re2=false
+iresearch=false other_tp=false re2=false pg=false everything=false
 declare -A suite_hit=()
-declare -a pg_files=()
 
 while IFS= read -r f; do
 	[[ -z "$f" ]] && continue
 	case "$f" in
+	CMakeLists.txt | CMakePresets.json | cmake/* | scripts/ci/build-ubuntu.Dockerfile | scripts/ci/build.bash | \
+		scripts/ci/config.sh | scripts/ci/test.py | scripts/ci/run_shard.sh | scripts/ci/testlib/* | \
+		tests/drivers/harness/*)
+		everything=true
+		;;
+	esac
+	case "$f" in
 	third_party/re2 | third_party/re2/* | third_party/abseil-cpp | third_party/abseil-cpp/* | \
 		third_party/googletest | third_party/googletest/* | third_party/simdutf | third_party/simdutf/* | \
-		third_party/CMakeLists.txt | cmake/OptimizeForArchitecture.cmake | scripts/ci/steps/041-ci-in-docker-run-re2-tests.bash)
+		third_party/duckdb | third_party/duckdb/* | third_party/llvm-project | third_party/llvm-project/* | \
+		third_party/jemalloc | third_party/jemalloc/* | third_party/jemalloc-cmake | third_party/jemalloc-cmake/* | \
+		third_party/tcmalloc | third_party/tcmalloc/* | third_party/CMakeLists.txt)
 		re2=true
 		;;
 	esac
@@ -64,11 +72,28 @@ while IFS= read -r f; do
 		continue
 		;;
 	tests/sqllogic/pg/* | tests/sqllogic/any/pg/*)
-		pg_files+=("${f#tests/sqllogic/}")
+		pg=true
 		continue
 		;;
 	tests/duckdb/interop/*)
 		suite_hit[interop]=1
+		continue
+		;;
+	tests/duckdb/config/*.json)
+		suite="${f#tests/duckdb/config/}"
+		suite="${suite%.json}"
+		if [[ " $ALL_SUITES " == *" $suite "* ]]; then
+			suite_hit[$suite]=1
+		else
+			for s in $ALL_SUITES; do suite_hit[$s]=1; done
+		fi
+		continue
+		;;
+	tests/duckdb/*.md)
+		continue
+		;;
+	tests/duckdb/*)
+		for s in $ALL_SUITES; do suite_hit[$s]=1; done
 		continue
 		;;
 	esac
@@ -100,20 +125,15 @@ done <<<"$changed"
 if [[ "$other_tp" == true ]]; then
 	iresearch=true
 fi
+if [[ "$everything" == true ]]; then
+	iresearch=true re2=true pg=true
+	for s in $ALL_SUITES; do suite_hit[$s]=1; done
+fi
 
-# Ordered so the list reads the same way run.sh --list prints it.
 duckdb_suites=""
 for s in $ALL_SUITES; do
 	[[ -n "${suite_hit[$s]:-}" ]] && duckdb_suites="${duckdb_suites:+$duckdb_suites,}$s"
 done
-
-# No separate "any pg tests changed" flag: the list itself is the signal, so the
-# gate downstream is `pg_tests != ''`. It is only emitted when non-empty, since a
-# heredoc output of one blank line would otherwise read as set.
-pg_list=""
-if ((${#pg_files[@]} > 0)); then
-	pg_list=$(printf '%s\n' "${pg_files[@]}")
-fi
 
 emit() {
 	echo "$1=$2"
@@ -121,20 +141,8 @@ emit() {
 		echo "$1=$2" >>"$GITHUB_OUTPUT"
 	fi
 }
-emit_multiline() {
-	local key="$1" val="$2"
-	echo "$key (multiline):"
-	printf '%s\n' "$val" | sed 's/^/  /'
-	if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-		{
-			echo "${key}<<__SDB_EOF__"
-			printf '%s\n' "$val"
-			echo "__SDB_EOF__"
-		} >>"$GITHUB_OUTPUT"
-	fi
-}
 emit iresearch "$iresearch"
 emit duckdb_suites "$duckdb_suites"
 emit re2 "$re2"
-[[ -n "$pg_list" ]] && emit_multiline pg_tests "$pg_list"
-exit 0
+emit pg "$pg"
+emit everything "$everything"

@@ -153,13 +153,21 @@ Examples using a solar-system dataset:
 
 ## JSON Aggregate Functions
 
-There are three JSON aggregate functions.
+There are nine JSON aggregate functions.
 
-| Function                        | Description                                                            |
-| :------------------------------ | :--------------------------------------------------------------------- |
-| `json_group_array(any)`         | Return a JSON array with all values of `any` in the aggregation.       |
-| `json_group_object(key, value)` | Return a JSON object with all `key`, `value` pairs in the aggregation. |
-| `json_group_structure(json)`    | Return the combined `json_structure` of all `json` in the aggregation. |
+| Function                                    | Description                                                            |
+| :------------------------------------------ | :--------------------------------------------------------------------- |
+| `json_group_array(any)`                     | Return a JSON array with all values of `any` in the aggregation.       |
+| `json_group_object(key, value)`             | Return a JSON object with all `key`, `value` pairs in the aggregation. |
+| `json_group_structure(json)`                | Return the combined `json_structure` of all `json` in the aggregation. |
+| `json_agg(any)`                             | Return a JSON array with all values of `any` in the aggregation, written as PostgreSQL writes it, or `NULL` when the aggregation has no rows. |
+| `json_agg_strict(any)`                      | Like `json_agg`, without the `NULL` values. |
+| `json_object_agg(key, value)`               | Return a JSON object with all `key`, `value` pairs in the aggregation, written as PostgreSQL writes it. A `NULL` key is an error. |
+| `json_object_agg_strict(key, value)`        | Like `json_object_agg`, without the pairs whose `value` is `NULL`. |
+| `json_object_agg_unique(key, value)`        | Like `json_object_agg`, but a repeated `key` is an error. |
+| `json_object_agg_unique_strict(key, value)` | Like `json_object_agg_unique`, without the pairs whose `value` is `NULL`. |
+
+`DISTINCT`, `FILTER` and `ORDER BY` work on the PostgreSQL ones as on any aggregate, as in `json_agg(x ORDER BY x DESC)`.
 
 Examples:
 
@@ -239,3 +247,39 @@ Examples:
 <SqlLogicTest id="data_import_and_export/json/json_functions/example_050" />
 
 <SqlLogicTest id="data_import_and_export/json/json_functions/example_051" />
+
+## JSON Set-Returning Functions
+
+These functions return one row per element of a JSON array or per member of a JSON object.
+
+| Function                         | Columns                 | Description                                                                                            |
+| :------------------------------- | :---------------------- | :----------------------------------------------------------------------------------------------------- |
+| `json_array_elements(json)`      | `value JSON`            | One row per element of the top-level array.                                                            |
+| `json_array_elements_text(json)` | `value TEXT`            | Like `json_array_elements`, as text: a string without its quotes and escapes, a JSON `null` as `NULL`. |
+| `json_each_text(json)`           | `key TEXT, value TEXT`  | One row per member of the top-level object, the value as text like in `json_array_elements_text`.      |
+| `json_object_keys(json)`         | `json_object_keys TEXT` | One row per key of the top-level object.                                                               |
+
+Elements and members come in the order of the input, and a repeated key gives a row per occurrence. `json_array_elements` returns each element with the spacing it has in the input. A `NULL` input returns no rows. An array where an object is expected, an object where an array is expected, or a scalar is an error. In the select list, these functions return a row per element as well; `json_each_text` then returns each row as a record.
+
+Examples:
+
+<SqlLogicTest id="data_import_and_export/json/json_functions/example_052" />
+
+<SqlLogicTest id="data_import_and_export/json/json_functions/example_053" />
+
+## JSON Record Functions
+
+These functions turn JSON objects into rows.
+
+| Function                                                  | Description                                                                                                                                                  |
+| :-------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `json_populate_record(base, json[, use_json_as_text])`    | A value of the composite type of `base` built from the top-level object. Members missing from `json` take their values from `base`.                         |
+| `json_populate_recordset(base, json[, use_json_as_text])` | One row of the composite type of `base` per object of the top-level array, missing members taken from `base`.                                               |
+
+A column takes the member of the same name, matched case-sensitively; a missing member or a JSON `null` gives `NULL`. A JSON string is converted to the column type from its text without quotes and escapes, any other value from its JSON text, so a `TEXT` column takes a nested array or object as JSON text and a `JSON` column takes the value as JSON. An array column takes a JSON array, a composite column takes a JSON object, and either also takes a string in the type's text form. A value that does not convert to its column type is an error. `use_json_as_text` is accepted and has no effect.
+
+For a `NULL` input, `json_populate_record` returns `base` and `json_populate_recordset` returns no rows. Both also work in the select list, where they return records.
+
+Example:
+
+<SqlLogicTest id="data_import_and_export/json/json_functions/example_055" />

@@ -5,10 +5,11 @@
 # EXPLAIN ANALYZE -- plain EXPLAIN always prints "Sequential Scan". <slt:ignore>
 # skips the volatile optimizer-timing section and each operator's timing line.
 #
-# NOTE: this matches a filter on the raw indexed COLUMN. A filter on an indexed
-# EXPRESSION (e.g. WHERE (j + k) = 30) is not pushed as a column filter, so it
-# stays a Sequential Scan -- a duckdb-core limitation (TryScanIndex matches a
-# single indexed column), see secondary_index_expression_scale.test.
+# NOTE: a filter on an indexed expression of one column (WHERE abs(b) = 5) is a
+# column filter as well and switches the same way. One over several columns
+# (WHERE (j + k) = 30) is not pushed as a column filter, so it stays a
+# Sequential Scan -- a duckdb-core limitation (TryScanIndex matches a single
+# indexed column), see secondary_index_expression_scale.test.
 
 
 statement ok
@@ -75,6 +76,37 @@ SELECT count(*) FROM pudge_pt WHERE b < 60000;
 ----
 count
 60000
+
+
+# An index on an expression of one column: a selective equality on that
+# expression is a column filter too, and switches to the Index Scan.
+statement ok
+CREATE INDEX pudge_pt_abs ON pudge_pt((abs(b - 50000)));
+
+
+query
+EXPLAIN ANALYZE SELECT a FROM pudge_pt WHERE abs(b - 50000) = 42;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ─────────────────────────╮
+│ Table: pudge_pt                      │
+│ Type: Index Scan                     │
+│ Projections: a                       │
+│ Column Filter: abs((b - 50000)) = 42 │
+│ Row Groups Scanned: 0 / 1            │
+│ 2 rows                           0µs │
+╰──────────────────────────────────────╯
+
+
+query
+SELECT a FROM pudge_pt WHERE abs(b - 50000) = 42 ORDER BY a;
+----
+a
+49958
+50042
 
 
 statement ok

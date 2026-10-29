@@ -35,10 +35,11 @@ def _break_schema(tmp_path: Path, statement: str) -> None:
         server.close()
 
 
-def _start_otel(tmp_path: Path) -> subprocess.CompletedProcess:
+def _start_otel(tmp_path: Path,
+                params: str = "api=otel") -> subprocess.CompletedProcess:
     with reserve_port() as pg_sock, reserve_port() as http_sock:
         listen = (f"postgres://127.0.0.1:{pg_sock.getsockname()[1]},"
-                  f"http://127.0.0.1:{http_sock.getsockname()[1]}?api=otel")
+                  f"http://127.0.0.1:{http_sock.getsockname()[1]}?{params}")
         return subprocess.run(
             [SERENED_BIN, str(tmp_path / "data"), f"--listen={listen}"],
             capture_output=True, text=True, timeout=60,
@@ -123,6 +124,55 @@ def _indexes_of(server: _Server, table: str) -> list[str]:
         "ORDER BY indexname", (table,)).fetchall()]
 
 
+def test_without_create_schema_exports_wait_for_the_tables(
+        tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel&create_schema=false")
+    try:
+        assert _otel_objects(server, "pg_tables") == 0
+        assert "Exports answer 503" in server.serened.log.tail(0)
+        logs = (FIXTURES / "logs/basic.json").read_bytes()
+        metrics = (FIXTURES / "metrics/mixed_batch.json").read_bytes()
+        assert server.post("/v1/logs", logs, "application/json") == 503
+        assert server.post("/v1/metrics", metrics, "application/json") == 503
+
+        sql = (FIXTURES.parent / "otel_schema.sql").read_text()
+        for statement in sql.split(";\n"):
+            if statement.strip():
+                server.pg.execute(statement)
+
+        assert server.post("/v1/logs", logs, "application/json") == 200
+        assert server.post("/v1/metrics", metrics, "application/json") == 200
+        assert server.count("otel_logs") > 0
+        assert server.count("otel_metrics_gauge") > 0
+    finally:
+        server.close()
+
+
+def test_without_create_schema_mistyped_column_answers_503(
+        tmp_path: Path) -> None:
+    _break_schema(
+        tmp_path,
+        'CREATE TABLE otel_logs ("timestamp" VARCHAR NOT NULL) '
+        "WITH (storage = 'search')",
+    )
+    server = _Server(tmp_path, "api=otel&create_schema=false")
+    try:
+        assert "invalid OpenTelemetry schema" in server.serened.log.tail(0)
+        body = (FIXTURES / "logs/basic.json").read_bytes()
+        assert server.post("/v1/logs", body, "application/json") == 503
+        assert _otel_objects(server, "pg_tables") == 1
+    finally:
+        server.close()
+
+
+def test_without_create_schema_missing_database_refuses_startup(
+        tmp_path: Path) -> None:
+    result = _start_otel(tmp_path, "api=otel&db=telemetry&create_schema=false")
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "database 'telemetry' does not exist" in output, output
+
+
 def test_missing_table_is_created_with_its_index(tmp_path: Path) -> None:
     server = _Server(tmp_path, "api=otel")
     try:
@@ -162,20 +212,23 @@ def test_own_index_survives_restart(tmp_path: Path) -> None:
         ]), "application/json") == 200
         assert server.count("otel_logs") == 2
 
-        server.pg.execute("DROP INDEX otel_logs_idx")
         server.pg.execute(
             "CREATE TEXT SEARCH DICTIONARY otel_words AS "
             "split_by_non_alpha(case := 'lower', break := 'alnum') "
             "WITH (frequency, position, norm)")
         server.pg.execute(
-            "CREATE INDEX otel_logs_words ON otel_logs USING inverted "
+            "CREATE OR REPLACE INDEX otel_logs_idx ON otel_logs USING inverted "
             '("timestamp", body otel_words, service_name)')
     finally:
         server.close()
 
     server = _Server(tmp_path, "api=otel")
     try:
-        assert _indexes_of(server, "otel_logs") == ["otel_logs_words"]
+        assert _indexes_of(server, "otel_logs") == ["otel_logs_idx"]
+        definition = server.pg.execute(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = 'otel_logs_idx'"
+        ).fetchone()[0]
+        assert "otel_words" in definition, definition
         assert server.post("/v1/logs", export([
             "local_disconnect", "remote peer closed",
         ]), "application/json") == 200
@@ -190,6 +243,118 @@ def test_own_index_survives_restart(tmp_path: Path) -> None:
             "remote peer closed", "upstream downstream_remote_disconnect"]
         assert matches("disconnect") == [
             "local_disconnect", "upstream downstream_remote_disconnect"]
+    finally:
+        server.close()
+
+
+OWN_LOGS_SCHEMA = (
+    "CREATE TEXT SEARCH DICTIONARY otel_words AS "
+    "split_by_non_alpha(case := 'lower', break := 'alnum') "
+    "WITH (frequency, position, norm)",
+    "CREATE TEXT SEARCH DICTIONARY otel_keyword AS keyword()",
+    """CREATE TABLE otel_logs (
+        "timestamp"         TIMESTAMP_NS NOT NULL,
+        observed_timestamp  TIMESTAMP_NS,
+        trace_id            VARCHAR,
+        span_id             VARCHAR,
+        trace_flags         INTEGER,
+        severity_text       VARCHAR,
+        severity_number     SMALLINT,
+        service_name        VARCHAR,
+        event_name          VARCHAR,
+        body                VARCHAR USING COMPRESSION zstd,
+        resource_schema_url VARCHAR,
+        scope_schema_url    VARCHAR,
+        scope_name          VARCHAR,
+        scope_version       VARCHAR,
+        resource_attributes JSON,
+        scope_attributes    JSON,
+        log_attributes      JSON
+    ) WITH (storage = 'search')""",
+    """CREATE INDEX otel_logs_idx ON otel_logs USING inverted (
+        "timestamp", body otel_words, severity_text, service_name, trace_id,
+        (log_attributes ->> 'error.type') otel_keyword
+    )""",
+)
+
+
+def test_own_schema_with_its_own_tokenizer_and_expression_index(
+        tmp_path: Path) -> None:
+    def export(records: list[tuple[str, str | None]]) -> bytes:
+        return json.dumps({"resourceLogs": [{"scopeLogs": [{"logRecords": [{
+            "timeUnixNano": str(1_700_000_000_000_000_000 + i),
+            "body": {"stringValue": body},
+            "attributes": [] if error is None else [
+                {"key": "error.type", "value": {"stringValue": error}}],
+        } for i, (body, error) in enumerate(records)]}]}]}).encode()
+
+    def bodies(server: _Server, where: str) -> list[str]:
+        return [row[0] for row in server.pg.execute(
+            f"SELECT body FROM otel_logs WHERE {where} ORDER BY body"
+        ).fetchall()]
+
+    server = _Server(tmp_path, "api=otel&create_schema=false")
+    try:
+        assert "Exports answer 503" in server.serened.log.tail(0)
+        for statement in OWN_LOGS_SCHEMA:
+            server.pg.execute(statement)
+        sql = (FIXTURES.parent / "otel_schema.sql").read_text()
+        for statement in sql.split(";\n"):
+            if statement.strip():
+                server.pg.execute(statement)
+        assert _otel_objects(server, "pg_tables") == 7
+
+        assert server.post("/v1/logs", export([
+            ("upstream reset: downstream_remote_disconnect",
+             "downstream_remote_disconnect"),
+            ("remote peer closed the stream", "remote"),
+            ("inventory lookup timed out", "timeout"),
+            ("order placed", None),
+        ]), "application/json") == 200
+        assert server.count("otel_logs") == 4
+    finally:
+        server.close()
+
+    restart = (tmp_path / "serened.log").stat().st_size
+    server = _Server(tmp_path, "api=otel&create_schema=false")
+    try:
+        assert "Exports answer 503" not in server.serened.log.tail(restart)
+        definition = server.pg.execute(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = 'otel_logs_idx'"
+        ).fetchone()[0]
+        assert "otel_words" in definition, definition
+        assert "otel_keyword" in definition, definition
+        assert server.post("/v1/logs", export([
+            ("payment gateway timed out", "timeout"),
+        ]), "application/json") == 200
+        assert server.count("otel_logs") == 5
+
+        assert bodies(server, "body @@ 'remote'") == [
+            "remote peer closed the stream",
+            "upstream reset: downstream_remote_disconnect"]
+        assert bodies(server, "body @@ 'disconnect'") == [
+            "upstream reset: downstream_remote_disconnect"]
+        assert bodies(
+            server,
+            "body @@ phraseto_tsquery('downstream_remote_disconnect')") == [
+            "upstream reset: downstream_remote_disconnect"]
+        assert bodies(
+            server,
+            "(log_attributes ->> 'error.type') @@ "
+            "'downstream_remote_disconnect'") == [
+            "upstream reset: downstream_remote_disconnect"]
+        assert bodies(
+            server, "(log_attributes ->> 'error.type') @@ 'remote'") == [
+            "remote peer closed the stream"]
+        assert server.pg.execute(
+            "SELECT log_attributes ->> 'error.type' AS error_type, count(*) "
+            "FROM otel_logs WHERE log_attributes ->> 'error.type' IS NOT NULL "
+            "GROUP BY ALL ORDER BY 2 DESC, 1").fetchall() == [
+            ("timeout", 2), ("downstream_remote_disconnect", 1),
+            ("remote", 1)]
+        assert server.pg.execute(
+            "SELECT DISTINCT compression FROM pragma_storage_info('otel_logs') "
+            "WHERE column_name = 'body'").fetchall() == [("ZSTD",)]
     finally:
         server.close()
 
@@ -236,7 +401,7 @@ def test_failed_metrics_export_writes_no_table(tmp_path: Path) -> None:
         conn.request("POST", "/v1/metrics", body=body, headers=headers)
         response = conn.getresponse()
         response.read()
-        assert response.status == 500
+        assert response.status == 503
         for table in ("otel_metrics_gauge", "otel_metrics_sum",
                       "otel_metrics_histogram"):
             assert server.count(table) == 0, table

@@ -46,7 +46,8 @@ BANNED = [
     (
         re.compile(
             r"(?<![\w:])(?:std::)?(sto(?:i|l|ll|ul|ull|f|d|ld)|from_chars"
-            r"|ato(?:i|l|ll|f)|strto(?:l|ll|ul|ull|f|d|ld))\s*\("
+            r"|ato(?:i|l|ll|f)|strto(?:l|ll|ul|ull|f|d|ld)|v?(?:f|s)?scanf)"
+            r"\s*\("
         ),
         "fast_float::from_chars",
     ),

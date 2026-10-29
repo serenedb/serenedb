@@ -87,12 +87,18 @@ def test_missing_database_file(tmp_path: Path) -> None:
             conn.execute("CREATE DATABASE lost")
             conn.execute("CREATE TABLE lost.public.t(a INTEGER)")
             conn.execute("INSERT INTO lost.public.t VALUES (1)")
+            conn.execute("CREATE INDEX t_inv ON lost.public.t USING inverted (a)")
+            conn.execute("CREATE TABLE lost.public.s(a INTEGER PRIMARY KEY, b TEXT) "
+                         "WITH (storage = 'search')")
+            conn.execute("INSERT INTO lost.public.s VALUES (1, 'x')")
             oid = conn.execute(
                 "SELECT oid FROM pg_database WHERE datname = 'lost'"
             ).fetchone()[0]
     finally:
         server.stop()
-    for path in (datadir / "engine_v1" / str(oid)).glob("data.db*"):
+    database_dir = datadir / "engine_v1" / str(oid)
+    assert sum(path.is_dir() for path in database_dir.iterdir()) == 2
+    for path in database_dir.glob("data.db*"):
         path.unlink()
 
     refused = _Server(datadir)

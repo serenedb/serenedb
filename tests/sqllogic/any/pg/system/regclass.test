@@ -1,12 +1,7 @@
-# regclass returns OID in binary protocol and our test runner can't
-# resolve OIDs back to table names, so we only run with simple protocol
-
-skipif pg-wire-extended
 statement ok
 CREATE TABLE regclass_test_table (id int, name text);
 
 
-skipif pg-wire-extended
 query
 SELECT pg_typeof('regclass_test_table'::regclass);
 ----
@@ -14,7 +9,6 @@ pg_typeof
 regclass
 
 
-skipif pg-wire-extended
 query
 SELECT 'regclass_test_table'::regclass;
 ----
@@ -22,12 +16,10 @@ regclass
 regclass_test_table
 
 
-skipif pg-wire-extended
 statement error
 SELECT 'nonexistent_table'::regclass;
 
 
-skipif pg-wire-extended
 query
 SELECT 'public.regclass_test_table'::regclass;
 ----
@@ -35,7 +27,6 @@ regclass
 regclass_test_table
 
 
-skipif pg-wire-extended
 query
 SELECT 'pg_type'::regclass;
 ----
@@ -43,7 +34,6 @@ regclass
 pg_type
 
 
-skipif pg-wire-extended
 query
 SELECT 'pg_catalog.pg_type'::regclass;
 ----
@@ -51,7 +41,6 @@ regclass
 pg_type
 
 
-skipif pg-wire-extended
 query
 SELECT 'pg_class'::regclass;
 ----
@@ -59,7 +48,6 @@ regclass
 pg_class
 
 
-skipif pg-wire-extended
 query
 SELECT 'regclass_test_table'::regclass <> 0::bigint;
 ----
@@ -67,9 +55,152 @@ SELECT 'regclass_test_table'::regclass <> 0::bigint;
 t
 
 
-skipif pg-wire-extended
 statement ok
 DROP TABLE regclass_test_table;
+
+
+statement ok
+CREATE TABLE public.pg_class (a int)
+
+
+query
+SELECT 'pg_class'::regclass::oid = 1259 AS cast_catalog, to_regclass('pg_class')::oid = 1259 AS to_reg_catalog, 'public.pg_class'::regclass::oid <> 1259 AS qualified_user
+----
+cast_catalog	to_reg_catalog	qualified_user
+t	t	t
+
+
+statement ok
+SET search_path = public, pg_catalog
+
+
+query
+SELECT 'pg_class'::regclass::oid <> 1259 AS cast_user, to_regclass('pg_class')::oid <> 1259 AS to_reg_user
+----
+cast_user	to_reg_user
+t	t
+
+
+statement ok
+RESET search_path
+
+
+statement ok
+DROP TABLE public.pg_class
+
+
+statement ok
+DROP SCHEMA IF EXISTS regclass_first CASCADE
+
+
+statement ok
+DROP SCHEMA IF EXISTS regclass_second CASCADE
+
+
+statement ok
+CREATE SCHEMA regclass_first
+
+
+statement ok
+CREATE SCHEMA regclass_second
+
+
+statement ok
+CREATE TABLE regclass_first.pair (a int)
+
+
+statement ok
+CREATE TYPE regclass_second.pair AS (a int, b int)
+
+
+statement ok
+CREATE TABLE regclass_first.parent (id int PRIMARY KEY)
+
+
+statement ok
+CREATE TABLE regclass_second.parent (id int PRIMARY KEY)
+
+
+statement ok
+CREATE SEQUENCE regclass_first.shared_name
+
+
+statement ok
+CREATE TABLE regclass_second.indexed (x int)
+
+
+statement ok
+CREATE INDEX shared_name ON regclass_second.indexed (x)
+
+
+statement ok
+CREATE TEMP TABLE regclass_temp (a int)
+
+
+statement ok
+SET search_path = regclass_second, regclass_first
+
+
+# Postgres resolves a name schema by schema, and every kind of relation --
+# composite types and key indexes included -- shares one namespace per schema.
+query
+SELECT 'pair'::regclass = 'regclass_second.pair'::regclass AS type_first,
+       pg_table_is_visible('regclass_first.pair'::regclass) AS table_visible
+----
+type_first	table_visible
+t	f
+
+
+query
+SELECT 'parent_pkey'::regclass = 'regclass_second.parent_pkey'::regclass AS second_key,
+       'regclass_first.parent_pkey'::regclass::text AS first_key,
+       pg_table_is_visible('regclass_first.parent_pkey'::regclass) AS first_visible
+----
+second_key	first_key	first_visible
+t	regclass_first.parent_pkey	f
+
+
+query
+SELECT 'shared_name'::regclass = 'regclass_second.shared_name'::regclass AS index_first,
+       pg_table_is_visible('regclass_first.shared_name'::regclass) AS sequence_visible
+----
+index_first	sequence_visible
+t	f
+
+
+query
+SELECT to_regclass('regclass_temp') IS NOT NULL AS temp_found,
+       to_regclass('duckdb_tables') IS NULL AS duckdb_view_hidden
+----
+temp_found	duckdb_view_hidden
+t	t
+
+
+statement ok
+RESET search_path
+
+
+statement ok
+DROP SCHEMA regclass_first CASCADE
+
+
+statement ok
+DROP SCHEMA regclass_second CASCADE
+
+
+statement ok
+CREATE TABLE regclass_long_name_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (a int)
+
+
+query
+SELECT to_regclass('regclass_long_name_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') IS NOT NULL AS found
+----
+found
+t
+
+
+statement ok
+DROP TABLE regclass_long_name_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 
 statement ok
@@ -100,6 +231,64 @@ SELECT 'information_schema.tables'::regclass::text AS sys_view,
 ----
 sys_view	sys_table	pg_table
 information_schema.tables	information_schema.sql_features	pg_class
+
+
+statement ok
+CREATE TABLE regclass_temp_table (id int);
+
+
+statement ok
+CREATE TABLE regclass_temp_seq (id int);
+
+
+statement ok
+CREATE TABLE regclass_temp_view (id int);
+
+
+query
+SELECT c.relname,
+       c.oid::regclass::text AS qualified,
+       pg_table_is_visible(c.oid) AS visible
+FROM pg_class c
+WHERE c.relnamespace = 'public'::regnamespace
+  AND c.relname IN ('regclass_temp_table', 'regclass_temp_seq', 'regclass_temp_view')
+ORDER BY c.relname;
+----
+relname	qualified	visible
+regclass_temp_seq	public.regclass_temp_seq	f
+regclass_temp_table	public.regclass_temp_table	f
+regclass_temp_view	public.regclass_temp_view	f
+
+
+query
+SELECT count(*) AS visible
+FROM pg_class c
+WHERE c.relnamespace = 'public'::regnamespace
+  AND c.relname IN ('regclass_temp_table', 'regclass_temp_seq', 'regclass_temp_view')
+  AND pg_table_is_visible(c.oid);
+----
+visible
+0
+
+
+query
+SELECT 'regclass_temp_table'::regclass = 'public.regclass_temp_table'::regclass AS same,
+       'regclass_temp_table'::regclass::text AS temp_name;
+----
+same	temp_name
+f	regclass_temp_table
+
+
+statement ok
+DROP TABLE public.regclass_temp_table;
+
+
+statement ok
+DROP TABLE public.regclass_temp_seq;
+
+
+statement ok
+DROP TABLE public.regclass_temp_view;
 
 
 statement ok

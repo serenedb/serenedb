@@ -223,12 +223,14 @@ if(SDB_GTEST)
 endif()
 sdb_add_module(re2 COVERAGE)
 if(SDB_GTEST)
-    get_property(re2_targets DIRECTORY re2 PROPERTY BUILDSYSTEM_TARGETS)
-    list(FILTER re2_targets INCLUDE REGEX "_test$")
-    foreach(target ${re2_targets})
-        target_link_libraries(${target} PRIVATE icu_extension)
-    endforeach()
-    add_custom_target(re2-tests DEPENDS ${re2_targets})
+    target_link_libraries(re2_tests PRIVATE icu_extension)
+    set_target_properties(
+        re2_tests
+        PROPERTIES
+            OUTPUT_NAME re2-tests
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    )
+    add_custom_target(re2-tests DEPENDS re2_tests)
 endif()
 
 ################################################################################
@@ -693,6 +695,15 @@ if(TARGET iceberg_planning_scan_plan)
 endif()
 if(TARGET libpq)
     target_compile_options(libpq PRIVATE -w)
+    if(SDB_COVERAGE)
+        target_compile_options(
+            libpq
+            PRIVATE
+                -fno-profile-instr-generate
+                -fno-coverage-mapping
+                -fno-coverage-mcdc
+        )
+    endif()
 endif()
 
 if(TARGET duckdb_shell)

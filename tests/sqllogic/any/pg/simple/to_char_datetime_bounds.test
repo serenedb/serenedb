@@ -1,0 +1,44 @@
+statement ok
+SET TimeZone = 'America/New_York';
+
+onlyif postgres
+query
+SELECT to_char(TIMESTAMPTZ '1800-01-01 00:00:00+00', 'TZ') AS a;
+----
+a
+LMT
+
+skipif postgres
+query
+SELECT to_char(TIMESTAMPTZ '1800-01-01 00:00:00+00', 'TZ') AS a;
+----
+a
+-045602
+
+statement ok
+SET TimeZone = 'Etc/GMT-1';
+
+onlyif postgres
+query
+SELECT to_char(TIMESTAMPTZ '294247-01-10 04:00:54.775806+00', 'YYYY-MM-DD HH24:MI:SS.US') AS a,
+       to_char(TIMESTAMPTZ '294247-01-10 03:00:54.775807+00', 'YYYY-MM-DD HH24:MI:SS.US') AS b;
+----
+a	b
+294247-01-10 05:00:54.775806	294247-01-10 04:00:54.775807
+
+skipif postgres
+statement error
+SELECT to_char(TIMESTAMPTZ '294247-01-10 04:00:54.775806+00', 'YYYY-MM-DD HH24:MI:SS.US');
+----
+db error: ERROR: timestamp out of range
+
+
+skipif postgres
+statement error
+SELECT to_char(TIMESTAMPTZ '294247-01-10 03:00:54.775807+00', 'YYYY-MM-DD HH24:MI:SS.US');
+----
+db error: ERROR: timestamp out of range
+
+
+statement ok
+SET TimeZone = 'UTC';

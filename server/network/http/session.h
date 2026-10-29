@@ -200,16 +200,16 @@ class HttpSession final
       _conn = irs::DuckDBEngine::Instance().CreateConnection();
       _conn->context->SetSchedulerAccount(_task->Account());
       _connection_ctx = std::make_shared<ConnectionContext>(
-        *_conn->context, user, role, dbname, database_id, nullptr,
-        static_cast<int32_t>(_cancel_key >> 32), _cancel);
+        *_conn->context, user, std::string_view{}, role, dbname, database_id,
+        nullptr, static_cast<int32_t>(_cancel_key >> 32), _cancel);
+      _cancel_token->role.store(role, std::memory_order_relaxed);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
-        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
       _progress =
         sdb::pg::ProgressRegistration{connector::SereneDBClientState::Register(
-                                        *_conn->context, _connection_ctx)
+                                        *_conn->context, _connection_ctx, true)
                                         .progress_source};
       connector::SetDefaultSearchPath(*_conn->context, dbname);
       _conn_user = _user;

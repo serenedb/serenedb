@@ -55,3 +55,19 @@ CREATE INDEX title_idx ON films (title);
 
 statement ok
 DROP INDEX title_idx;
+
+# DOCS_TEST: example_007
+
+statement ok
+CREATE INDEX genre_idx ON films (genre);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE INDEX genre_idx ON films (genre, year);
+
+query
+SELECT indexdef FROM pg_indexes WHERE indexname = 'genre_idx';
+----
+indexdef
+CREATE INDEX genre_idx ON public.films USING secondary (genre, year)

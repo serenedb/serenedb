@@ -21,6 +21,7 @@
 #include "pg/copy_in_batches.h"
 
 #include <algorithm>
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/utils/assert.hpp>
 
 namespace sdb::pg {
@@ -178,6 +179,8 @@ CopyTake CopyInBatches::Take(duckdb::TableFunctionInput& input, size_t max,
     }
     if (CanPark(input) && _waiters.BlockTask(*input.interrupt_state)) {
       input.async_result = duckdb::AsyncResultType::BLOCKED;
+      lock.unlock();
+      SDB_PARK_ONCE_ON_FAILURE("pause_copy_take_blocked");
       return CopyTake::Blocked;
     }
     WaitForPush(lock);

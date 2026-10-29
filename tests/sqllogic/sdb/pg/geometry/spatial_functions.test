@@ -326,3 +326,21 @@ SELECT ST_DWithin_Spheroid('POINT(0 0)'::GEOMETRY,'POINT(1 1)'::GEOMETRY,200000)
 ----
 v
 t
+
+query
+SELECT ST_Point2D(1, 2) AS p, ST_MakeBox2D(ST_Point(0, 0), ST_Point(1, 1)) AS b,
+       'LINESTRING (0 0, 1 1)'::GEOMETRY::LINESTRING_2D AS l;
+----
+p	b	l
+(1,2)	(0,0,1,1)	{"(0,0)","(1,1)"}
+
+statement ok
+CREATE TABLE spatial_struct_columns (l LINESTRING_2D, b BOX_2D);
+
+query
+SELECT attname, atttypid::regtype AS type, attndims FROM pg_attribute
+WHERE attrelid = 'spatial_struct_columns'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname	type	attndims
+l	record[]	1
+b	record	0

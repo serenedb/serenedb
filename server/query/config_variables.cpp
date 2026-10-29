@@ -31,13 +31,13 @@
 #include <cmath>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serializer.hpp>
@@ -55,6 +55,7 @@
 #include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
+#include "pg/types/xml.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "scheduler/job_scheduler.h"
@@ -557,23 +558,24 @@ constexpr std::pair<std::string_view, VariableDescription>
           RequireFaultSuperuser(ctx);
           auto s = value.ToString();
           if (s.starts_with('-')) {
-            if (!irs::RemoveFailurePointDebugging(
-                  std::string_view{s}.substr(1))) {
+            if (!duckdb::FaultPoints::Disarm(std::string_view{s}.substr(1))) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' not set"));
             }
           } else {
-            if (!irs::AddFailurePointDebugging(s)) {
+            if (!duckdb::FaultPoints::Arm(s)) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' already set"));
             }
+            SDB_WARN(GENERAL, "activating intentional failure point '", s,
+                     "'. the server will misbehave!");
           }
-          auto points = irs::GetFailurePointsDebugging();
+          auto points = duckdb::FaultPoints::List();
           value = duckdb::Value(absl::StrJoin(points, ","));
         },
         [](duckdb::ClientContext& ctx, duckdb::SetScope) {
           RequireFaultSuperuser(ctx);
-          irs::ClearFailurePointsDebugging();
+          duckdb::FaultPoints::Clear();
         },
         // SESSION scope, though the registry behind it is process-global: it
         // is the only scope that works. GLOBAL is refused inside a
@@ -1372,7 +1374,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Shows the server version.",
-        [] { return duckdb::Value{"18.3"}; },
+        [] { return duckdb::Value{pg::kPgServerVersion}; },
         nullptr,  // refused via kUnchangeableSettings
       },
     },
@@ -1381,7 +1383,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::INTEGER,
         "Shows the server version as an integer.",
-        [] { return duckdb::Value::INTEGER(180003); },
+        [] { return duckdb::Value::INTEGER(pg::kPgServerVersionNum); },
         nullptr,  // refused via kUnchangeableSettings
       },
     },
@@ -1529,6 +1531,35 @@ constexpr std::pair<std::string_view, VariableDescription>
         [] { return duckdb::Value{"Etc/UTC"}; },
       },
     },
+    {
+      "max_identifier_length",
+      {
+        LogicalTypeId::INTEGER,
+        "Shows the maximum identifier length. SereneDB keeps longer "
+        "identifiers in full.",
+        [] { return duckdb::Value::INTEGER(63); },
+      },
+    },
+    {
+      "max_index_keys",
+      {
+        LogicalTypeId::INTEGER,
+        "Shows the maximum number of index keys. Clients read it as the bound "
+        "of index and constraint key arrays, such as pg_index.indkey and "
+        "pg_constraint.conkey.",
+        [] { return duckdb::Value::INTEGER(32); },
+      },
+    },
+    {
+      "xmloption",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets whether XML data in implicit parsing and serialization "
+        "operations is to be considered as documents or content fragments.",
+        [] { return duckdb::Value{"content"}; },
+        OneOfEnum<pg::XmlOption, "xmloption">,
+      },
+    },
 };
 
 const duckdb::case_insensitive_set_view_t kVariableIndex = [] {
@@ -1561,6 +1592,8 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
   // the GUC.
   "in_hot_standby",
   "is_superuser",
+  "max_identifier_length",
+  "max_index_keys",
   "server_encoding",
   "server_version",
   "server_version_num",
@@ -1568,6 +1601,18 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
 
 bool IsUnchangeableSetting(std::string_view name) {
   return kUnchangeableSettings.contains(name);
+}
+
+const duckdb::case_insensitive_set_view_t kSuperuserSettings = {
+  "max_expression_depth",
+};
+
+void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name) {
+  if (kSuperuserSettings.contains(name)) {
+    RequireSuperuser(
+      ctx, name,
+      "Only roles with the SUPERUSER attribute may change this parameter.");
+  }
 }
 
 namespace {

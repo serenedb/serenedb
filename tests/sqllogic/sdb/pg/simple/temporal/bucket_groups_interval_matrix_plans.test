@@ -1,0 +1,302 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE iv AS SELECT TIMESTAMP '2025-03-29 12:00:00' + INTERVAL (i * 17) SECOND AS ts, (TIMESTAMP '2025-03-29 12:00:00' + INTERVAL (i * 17) SECOND)::TIMESTAMPTZ AS tstz, i AS v FROM range(20000) t(i);
+
+statement ok
+INSERT INTO iv VALUES (NULL, NULL, -1);
+
+statement ok
+CREATE TABLE ivw AS SELECT TIMESTAMP '2023-11-01 00:00:00' + INTERVAL (i * 3671) SECOND AS ts, (TIMESTAMP '2023-11-01 00:00:00' + INTERVAL (i * 3671) SECOND)::TIMESTAMPTZ AS tstz, i AS v FROM range(20000) t(i);
+
+statement ok
+INSERT INTO ivw VALUES (NULL, NULL, -1);
+
+statement ok
+CREATE TABLE ivn AS SELECT TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i) SECOND AS ts, (TIMESTAMP '2025-01-01 00:00:00' + INTERVAL (i) SECOND)::TIMESTAMPTZ AS tstz, i AS v FROM range(20000) t(i);
+
+statement ok
+INSERT INTO ivn VALUES (NULL, NULL, -1);
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '7 minutes', ts) AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────╮
+│ Projections:                                              │
+│ __internal_date_trunc_unbucket(#0, 420000000, 360000000), │
+│ #1                                                        │
+│ ~10,000 rows                                              │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────┴─────────────────────────────╮
+│ Groups: #0                                                │
+│ Aggregates: count_star()                                  │
+│ ~10,000 rows                                              │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ PROJECTION ────────────────┴─────────────────────────────╮
+│ Projections:                                              │
+│ __internal_date_trunc_bucket(ts, 420000000, 360000000)    │
+│ ~20,001 rows                                              │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴─────────────────────────────╮
+│ Table: iv                                                 │
+│ Type: Sequential Scan                                     │
+│ Projections: ts                                           │
+│ ~20,001 rows                                              │
+╰───────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '90 seconds', ts, TIMESTAMP '2025-01-01 00:00:07') AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────╮
+│ Projections:                                           │
+│ __internal_date_trunc_unbucket(#0, 90000000, 7000000), │
+│ #1                                                     │
+│ ~10,000 rows                                           │
+╰────────────────────────────┬───────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────┴───────────────────────────╮
+│ Groups: #0                                             │
+│ Aggregates: count_star()                               │
+│ ~10,000 rows                                           │
+╰────────────────────────────┬───────────────────────────╯
+╭─ PROJECTION ───────────────┴───────────────────────────╮
+│ Projections:                                           │
+│ __internal_date_trunc_bucket(ts, 90000000, 7000000)    │
+│ ~20,001 rows                                           │
+╰────────────────────────────┬───────────────────────────╯
+╭─ SEQ_SCAN ─────────────────┴───────────────────────────╮
+│ Table: iv                                              │
+│ Type: Sequential Scan                                  │
+│ Projections: ts                                        │
+│ ~20,001 rows                                           │
+╰────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '15 minutes', ts, INTERVAL '5 minutes') AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────╮
+│ Projections:                                              │
+│ __internal_date_trunc_unbucket(#0, 900000000, 300000000), │
+│ #1                                                        │
+│ ~10,000 rows                                              │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────┴─────────────────────────────╮
+│ Groups: #0                                                │
+│ Aggregates: count_star()                                  │
+│ ~10,000 rows                                              │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ PROJECTION ────────────────┴─────────────────────────────╮
+│ Projections:                                              │
+│ __internal_date_trunc_bucket(ts, 900000000, 300000000)    │
+│ ~20,001 rows                                              │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴─────────────────────────────╮
+│ Table: iv                                                 │
+│ Type: Sequential Scan                                     │
+│ Projections: ts                                           │
+│ ~20,001 rows                                              │
+╰───────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_bin(INTERVAL '90 seconds', ts, TIMESTAMP '2025-01-01 00:00:07') AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────╮
+│ Projections:                                                    │
+│ __internal_date_trunc_unbucket(#0, 90000000, 1735689607000000), │
+│ #1                                                              │
+│ ~10,000 rows                                                    │
+╰────────────────────────────────┬────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────┴────────────────────────────────╮
+│ Groups: #0                                                      │
+│ Aggregates: count_star()                                        │
+│ ~10,000 rows                                                    │
+╰────────────────────────────────┬────────────────────────────────╯
+╭─ PROJECTION ───────────────────┴────────────────────────────────╮
+│ Projections:                                                    │
+│ __internal_date_trunc_bucket(ts, 90000000, 1735689607000000)    │
+│ ~20,001 rows                                                    │
+╰────────────────────────────────┬────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────┴────────────────────────────────╮
+│ Table: iv                                                       │
+│ Type: Sequential Scan                                           │
+│ Projections: ts                                                 │
+│ ~20,001 rows                                                    │
+╰─────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('second', ts) AS b, count(*) AS c FROM ivn GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections:                                    │
+│ __internal_date_trunc_unbucket(#0, 1000000, 0), │
+│ #1                                              │
+│ ~10,000 rows                                    │
+╰────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: count_star()                        │
+│ ~10,000 rows                                    │
+╰────────────────────────┬────────────────────────╯
+╭─ PROJECTION ───────────┴────────────────────────╮
+│ Projections:                                    │
+│ __internal_date_trunc_bucket(ts, 1000000, 0)    │
+│ ~20,001 rows                                    │
+╰────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+│ Table: ivn                                      │
+│ Type: Sequential Scan                           │
+│ Projections: ts                                 │
+│ ~20,001 rows                                    │
+╰─────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('second', ts) AS b, count(*) AS c FROM ivw GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: ivw               │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL (v % 3 + 1) MINUTE, ts) AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: iv                │
+│ Type: Sequential Scan    │
+│ Projections: v, ts       │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '45 minutes', tstz) AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_unbucket_tz(#0, 2700000000, 946857600000000), │
+│ #1                                                                  │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴──────────────────────────────────╮
+│ Groups: #0                                                          │
+│ Aggregates: count_star()                                            │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴──────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_bucket(tstz, 2700000000, 946857600000000)     │
+│ ~20,001 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴──────────────────────────────────╮
+│ Table: iv                                                           │
+│ Type: Sequential Scan                                               │
+│ Projections: tstz                                                   │
+│ ~20,001 rows                                                        │
+╰─────────────────────────────────────────────────────────────────────╯
+
+statement ok
+SET TimeZone = 'Asia/Kolkata';
+
+query
+EXPLAIN SELECT date_trunc('hour', tstz) AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~10,000 rows             │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: b           │
+│ ~20,001 rows             │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: iv                │
+│ Type: Sequential Scan    │
+│ Projections: tstz        │
+│ ~20,001 rows             │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '30 minutes', tstz) AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_unbucket_tz(#0, 1800000000, 946857600000000), │
+│ #1                                                                  │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴──────────────────────────────────╮
+│ Groups: #0                                                          │
+│ Aggregates: count_star()                                            │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴──────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_bucket(tstz, 1800000000, 946857600000000)     │
+│ ~20,001 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴──────────────────────────────────╮
+│ Table: iv                                                           │
+│ Type: Sequential Scan                                               │
+│ Projections: tstz                                                   │
+│ ~20,001 rows                                                        │
+╰─────────────────────────────────────────────────────────────────────╯
+
+statement ok
+SET TimeZone = 'Australia/Lord_Howe';
+
+query
+EXPLAIN SELECT time_bucket(INTERVAL '30 minutes', tstz) AS b, count(*) AS c FROM iv GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_unbucket_tz(#0, 1800000000, 946857600000000), │
+│ #1                                                                  │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴──────────────────────────────────╮
+│ Groups: #0                                                          │
+│ Aggregates: count_star()                                            │
+│ ~10,000 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴──────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_date_trunc_bucket(tstz, 1800000000, 946857600000000)     │
+│ ~20,001 rows                                                        │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴──────────────────────────────────╮
+│ Table: iv                                                           │
+│ Type: Sequential Scan                                               │
+│ Projections: tstz                                                   │
+│ ~20,001 rows                                                        │
+╰─────────────────────────────────────────────────────────────────────╯

@@ -143,6 +143,27 @@ void ProgressSource::EndQuery() {
   query_start_us.store(0, std::memory_order_relaxed);
 }
 
+namespace {
+
+void AddSessionStats(DatabaseStats& stats, const ProgressSource& source,
+                     int64_t until_us) {
+  if (!source.client_backend) {
+    return;
+  }
+  ++stats.sessions;
+  stats.session_time_us +=
+    std::max<int64_t>(until_us - source.backend_start_us, 0);
+}
+
+void TakeTransactions(DatabaseStats& stats, ProgressSource& source) {
+  stats.xact_commit +=
+    source.xact_commit.exchange(0, std::memory_order_relaxed);
+  stats.xact_rollback +=
+    source.xact_rollback.exchange(0, std::memory_order_relaxed);
+}
+
+}  // namespace
+
 void ProgressSource::Detach() {
   absl::MutexLock lock{&mu};
   ctx = nullptr;
@@ -153,9 +174,47 @@ void ProgressRegistry::Register(std::shared_ptr<ProgressSource> source) {
   _sources.emplace(source.get(), std::move(source));
 }
 
-void ProgressRegistry::Unregister(const ProgressSource* source) {
+void ProgressRegistry::Unregister(ProgressSource* source) {
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
   absl::MutexLock lock{&_mu};
+  auto& stats = _ended_stats[source->datid];
+  TakeTransactions(stats, *source);
+  AddSessionStats(stats, *source, now);
   _sources.erase(source);
+}
+
+void ProgressRegistry::CollectTransactions(ProgressSource& source) {
+  absl::MutexLock lock{&_mu};
+  if (_sources.contains(&source)) {
+    return;
+  }
+  if (const auto it = _ended_stats.find(source.datid);
+      it != _ended_stats.end()) {
+    TakeTransactions(it->second, source);
+  }
+}
+
+DatabaseStats ProgressRegistry::GetDatabaseStats(int64_t datid) const {
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
+  absl::MutexLock lock{&_mu};
+  DatabaseStats stats;
+  if (const auto it = _ended_stats.find(datid); it != _ended_stats.end()) {
+    stats = it->second;
+  }
+  for (const auto& [_, source] : _sources) {
+    if (source->datid == datid) {
+      stats.xact_commit += source->xact_commit.load(std::memory_order_relaxed);
+      stats.xact_rollback +=
+        source->xact_rollback.load(std::memory_order_relaxed);
+      AddSessionStats(stats, *source, now);
+    }
+  }
+  return stats;
+}
+
+void ProgressRegistry::ForgetDatabase(int64_t datid) {
+  absl::MutexLock lock{&_mu};
+  _ended_stats.erase(datid);
 }
 
 ProgressRegistration::ProgressRegistration(

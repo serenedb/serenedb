@@ -35,6 +35,7 @@
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/common/string_util.hpp>
@@ -74,7 +75,6 @@
 #include <functional>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -229,10 +229,11 @@ class PassConnection {
     : _caller{caller},
       _conn{*context.db},
       _ctx{std::make_shared<ConnectionContext>(
-        *_conn.context, caller.user(), caller.GetRoleId(), target.database,
-        target.database_id, nullptr, caller.GetBackendPid(), nullptr)},
-      _progress{
-        SereneDBClientState::Register(*_conn.context, _ctx).progress_source} {
+        *_conn.context, caller.user(), caller.SystemUser(), caller.GetRoleId(),
+        target.database, target.database_id, nullptr, caller.GetBackendPid(),
+        nullptr)},
+      _progress{SereneDBClientState::Register(*_conn.context, _ctx, false)
+                  .progress_source} {
     _conn.context->config.user_settings = context.config.user_settings;
   }
   ~PassConnection() {
@@ -1022,7 +1023,7 @@ ReindexOutcome RunClaimed(
     return {ReindexAction::UpToDate, 0, 0, 0, 0};
   }
   src->files = ListSourceFiles(*src->list);
-  SDB_WAIT_ON_FAILURE("pause_reindex_before_pass");
+  SDB_PARK_ONCE_ON_FAILURE("pause_reindex_before_pass");
   if (src->iceberg_list) {
     if (manifest->version && src->version &&
         !SnapshotIsAncestor(*src->iceberg_list, manifest->version)) {
@@ -1052,11 +1053,11 @@ class ReindexSession {
                  duckdb::idx_t database_id, int32_t backend_pid,
                  NoticeSink sink)
     : _conn{db},
-      _ctx{std::make_shared<ConnectionContext>(*_conn.context, user, role_id,
-                                               database, database_id, nullptr,
-                                               backend_pid, nullptr)},
-      _progress{
-        SereneDBClientState::Register(*_conn.context, _ctx).progress_source},
+      _ctx{std::make_shared<ConnectionContext>(
+        *_conn.context, user, std::string_view{}, role_id, database,
+        database_id, nullptr, backend_pid, nullptr)},
+      _progress{SereneDBClientState::Register(*_conn.context, _ctx, false)
+                  .progress_source},
       _sink{std::move(sink)} {}
   ~ReindexSession() {
     _ctx->ConsumeNotices([&](auto& notice) { _sink(notice); });

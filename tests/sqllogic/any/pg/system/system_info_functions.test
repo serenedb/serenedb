@@ -1,0 +1,1269 @@
+# System information and catalog functions
+
+control substitution on
+
+statement ok
+CREATE ROLE sif_role_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE sif_keyed (id integer PRIMARY KEY, v text);
+
+
+statement ok
+CREATE TABLE sif_plain (id integer, v text);
+
+
+statement ok
+CREATE VIEW sif_view AS SELECT 1 AS x;
+
+
+statement ok
+CREATE SEQUENCE sif_seq START 5 INCREMENT 2 MINVALUE 1 MAXVALUE 100 CACHE 3 CYCLE;
+
+
+statement ok
+CREATE SEQUENCE sif_seq_plain;
+
+
+# pg_input_is_valid
+
+query
+SELECT pg_input_is_valid('42', 'integer') AS int_ok, pg_input_is_valid('42000000000', 'integer') AS int_range,
+       pg_input_is_valid('abc', 'integer') AS int_bad, pg_input_is_valid('1.5', 'numeric') AS numeric_ok,
+       pg_input_is_valid('12.34', 'numeric(3,2)') AS numeric_typmod, pg_input_is_valid('2024-01-01', 'date') AS date_ok,
+       pg_input_is_valid('2024-13-01', 'date') AS date_bad, pg_input_is_valid('t', 'boolean') AS bool_ok,
+       pg_input_is_valid('maybe', 'boolean') AS bool_bad, pg_input_is_valid('{1,2,3}', 'integer[]') AS array_ok,
+       pg_input_is_valid('{1,x}', 'integer[]') AS array_bad;
+----
+int_ok	int_range	int_bad	numeric_ok	numeric_typmod	date_ok	date_bad	bool_ok	bool_bad	array_ok	array_bad
+t	f	f	t	f	t	f	t	f	t	f
+
+
+query
+SELECT pg_input_is_valid('0/16B3748', 'pg_lsn') AS lsn_ok, pg_input_is_valid('xyz', 'pg_lsn') AS lsn_bad,
+       pg_input_is_valid('10.0.0.0/8', 'cidr') AS cidr_ok, pg_input_is_valid('1.2.3.4/16', 'cidr') AS cidr_bad,
+       pg_input_is_valid('\x0102', 'bytea') AS bytea_ok, pg_input_is_valid('\xzz', 'bytea') AS bytea_bad,
+       pg_input_is_valid('pg_class', 'regclass') AS class_ok, pg_input_is_valid('sif_nosuch', 'regclass') AS class_bad,
+       pg_input_is_valid('int4', 'regtype') AS type_ok, pg_input_is_valid('sif_nosuch', 'regtype') AS type_bad;
+----
+lsn_ok	lsn_bad	cidr_ok	cidr_bad	bytea_ok	bytea_bad	class_ok	class_bad	type_ok	type_bad
+t	f	t	f	t	f	t	f	t	f
+
+
+query
+SELECT pg_input_is_valid(NULL, 'integer') AS null_text, pg_input_is_valid('1', NULL) AS null_type;
+----
+null_text	null_type
+NULL	NULL
+
+
+query
+SELECT id, pg_input_is_valid(v, 'integer') AS valid
+FROM (VALUES (1, '1'), (2, 'x'), (3, '-7'), (4, ''), (5, NULL)) AS t(id, v) ORDER BY id;
+----
+id	valid
+1	t
+2	f
+3	t
+4	f
+5	NULL
+
+
+statement error
+SELECT pg_input_is_valid('1', 'sif_nosuch_type');
+----
+db error: ERROR: type "sif_nosuch_type" does not exist
+
+
+# pg_input_error_info
+
+query
+SELECT * FROM pg_input_error_info('42', 'integer');
+----
+message	detail	hint	sql_error_code
+NULL	NULL	NULL	NULL
+
+
+query
+SELECT message IS NOT NULL AS has_message, detail, hint, sql_error_code FROM pg_input_error_info('abc', 'integer');
+----
+has_message	detail	hint	sql_error_code
+t	NULL	NULL	22P02
+
+
+query
+SELECT * FROM pg_input_error_info('1.2.3.4/16', 'cidr');
+----
+message	detail	hint	sql_error_code
+invalid cidr value: "1.2.3.4/16"	Value has bits set to right of mask.	NULL	22P02
+
+
+query
+SELECT * FROM pg_input_error_info('xyz', 'pg_lsn');
+----
+message	detail	hint	sql_error_code
+invalid input syntax for type pg_lsn: "xyz"	NULL	NULL	22P02
+
+
+query
+SELECT * FROM pg_input_error_info('\xzz', 'bytea');
+----
+message	detail	hint	sql_error_code
+invalid hexadecimal digit: "z"	NULL	NULL	22023
+
+
+query
+SELECT * FROM pg_input_error_info('\x123', 'bytea');
+----
+message	detail	hint	sql_error_code
+invalid hexadecimal data: odd number of digits	NULL	NULL	22023
+
+
+query
+SELECT * FROM pg_input_error_info('\', 'bytea');
+----
+message	detail	hint	sql_error_code
+invalid input syntax for type bytea	NULL	NULL	22P02
+
+
+query
+SELECT * FROM pg_input_error_info('sif_nosuch', 'regclass');
+----
+message	detail	hint	sql_error_code
+relation "sif_nosuch" does not exist	NULL	NULL	42P01
+
+
+query
+SELECT * FROM pg_input_error_info('sif_nosuch', 'regtype');
+----
+message	detail	hint	sql_error_code
+type "sif_nosuch" does not exist	NULL	NULL	42704
+
+
+query
+SELECT * FROM pg_input_error_info('sif_nosuch', 'regrole');
+----
+message	detail	hint	sql_error_code
+role "sif_nosuch" does not exist	NULL	NULL	42704
+
+
+query
+SELECT * FROM pg_input_error_info('sif_nosuch', 'regnamespace');
+----
+message	detail	hint	sql_error_code
+schema "sif_nosuch" does not exist	NULL	NULL	3F000
+
+
+query
+SELECT (pg_input_error_info(NULL, 'integer')).message AS null_text,
+       (pg_input_error_info('1', NULL)).message AS null_type;
+----
+null_text	null_type
+NULL	NULL
+
+
+# pg_sequence_parameters and pg_get_sequence_data
+
+query
+SELECT * FROM pg_sequence_parameters('sif_seq'::regclass);
+----
+start_value	minimum_value	maximum_value	increment	cycle_option	cache_size	data_type
+5	1	100	2	t	3	20
+
+
+query
+SELECT start_value, minimum_value, maximum_value, increment, cycle_option, cache_size
+FROM pg_sequence_parameters('sif_seq_plain'::regclass);
+----
+start_value	minimum_value	maximum_value	increment	cycle_option	cache_size
+1	1	9223372036854775807	1	f	1
+
+
+query
+SELECT (pg_sequence_parameters(NULL)).start_value AS null_input;
+----
+null_input
+NULL
+
+
+statement error
+SELECT * FROM pg_sequence_parameters(0);
+----
+db error: ERROR: relation with OID 0 does not exist
+
+
+statement error
+SELECT * FROM pg_sequence_parameters('sif_plain'::regclass);
+----
+db error: ERROR: cache lookup failed for sequence <slt:ignore>
+
+
+query
+SELECT * FROM pg_get_sequence_data('sif_seq');
+----
+last_value	is_called
+5	f
+
+
+statement ok
+SELECT nextval('sif_seq');
+
+
+query
+SELECT last_value >= 5 AS advanced, is_called FROM pg_get_sequence_data('sif_seq');
+----
+advanced	is_called
+t	t
+
+
+statement ok
+SELECT setval('sif_seq_plain', 42);
+
+
+query
+SELECT * FROM pg_get_sequence_data('sif_seq_plain');
+----
+last_value	is_called
+42	t
+
+
+query
+SELECT pg_sequence_last_value('sif_seq_plain') AS last_value;
+----
+last_value
+42
+
+
+statement ok
+SELECT setval('sif_seq_plain', 50, false);
+
+
+query
+SELECT * FROM pg_get_sequence_data('sif_seq_plain');
+----
+last_value	is_called
+50	f
+
+
+query
+SELECT pg_sequence_last_value('sif_seq_plain') AS last_value;
+----
+last_value
+NULL
+
+
+query
+SELECT nextval('sif_seq_plain') AS next;
+----
+next
+50
+
+
+query
+SELECT is_called FROM pg_get_sequence_data('sif_seq_plain');
+----
+is_called
+t
+
+
+query
+SELECT * FROM pg_get_sequence_data('sif_plain');
+----
+last_value	is_called
+NULL	NULL
+
+
+query
+SELECT * FROM pg_get_sequence_data(0);
+----
+last_value	is_called
+NULL	NULL
+
+
+statement ok
+SET ROLE sif_role_${__DATABASE__};
+
+
+query
+SELECT * FROM pg_get_sequence_data('sif_seq_plain');
+----
+last_value	is_called
+NULL	NULL
+
+
+query
+SELECT pg_sequence_last_value('sif_seq_plain') AS last_value;
+----
+last_value
+NULL
+
+
+statement error
+SELECT * FROM pg_sequence_parameters('sif_seq_plain'::regclass);
+----
+db error: ERROR: permission denied for sequence sif_seq_plain
+
+
+statement error
+SELECT pg_tablespace_size('pg_global');
+----
+db error: ERROR: permission denied for tablespace pg_global
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT pg_sequence_last_value(x) IS NULL AS last_value, pg_relation_size(x, 'main') IS NULL AS size
+FROM (VALUES (NULL::regclass)) v(x);
+----
+last_value	size
+t	t
+
+
+query
+SELECT d.* FROM (VALUES (NULL::regclass)) v(x), pg_get_sequence_data(x) d;
+----
+last_value	is_called
+NULL	NULL
+
+
+query
+SELECT p.start_value IS NULL AS start_value, p.cycle_option IS NULL AS cycle_option
+FROM (VALUES (NULL::regclass)) v(x), pg_sequence_parameters(x) p;
+----
+start_value	cycle_option
+t	t
+
+
+statement error
+SELECT pg_size_bytes('100000000000000000000');
+----
+db error: ERROR: bigint out of range
+
+
+statement error
+SELECT pg_size_bytes('1e9999999999');
+----
+db error: ERROR: value overflows numeric format
+
+
+# pg_size_bytes
+
+query
+SELECT pg_size_bytes('1') AS a, pg_size_bytes('123bytes') AS b, pg_size_bytes('1kB') AS c,
+       pg_size_bytes('1MB') AS d, pg_size_bytes(' 1 GB ') AS e, pg_size_bytes('1.5 GB ') AS f,
+       pg_size_bytes('1TB') AS g, pg_size_bytes('3000 TB') AS h, pg_size_bytes('1e6 MB') AS i,
+       pg_size_bytes('1 B') AS j, pg_size_bytes('1 kb') AS k, pg_size_bytes('1 PB') AS l;
+----
+a	b	c	d	e	f	g	h	i	j	k	l
+1	123	1024	1048576	1073741824	1610612736	1099511627776	3298534883328000	1048576000000	1	1024	1125899906842624
+
+
+query
+SELECT pg_size_bytes('-1') AS a, pg_size_bytes('-.1') AS b, pg_size_bytes('-0.5') AS c,
+       pg_size_bytes('0.5') AS d, pg_size_bytes('1.5 bytes') AS e, pg_size_bytes('-1.5 bytes') AS f,
+       pg_size_bytes('1e-1 kB') AS g, pg_size_bytes('.5 kB') AS h, pg_size_bytes('5. kB') AS i,
+       pg_size_bytes('+1kB') AS j, pg_size_bytes('1E3') AS k, pg_size_bytes('1e+2 MB') AS l;
+----
+a	b	c	d	e	f	g	h	i	j	k	l
+-1	0	-1	1	2	-2	102	512	5120	1024	1000	104857600
+
+
+query
+SELECT pg_size_bytes('9223372036854775807') AS max, pg_size_bytes('-9223372036854775808') AS min,
+       pg_size_bytes('8191 PB') AS pb,
+       pg_size_bytes('0.0000000000000000000000000000000000000000000000000001 PB') AS tiny,
+       pg_size_bytes('00000000000000000000000000000000000000000001.5 kB') AS zeros,
+       pg_size_bytes(E'1\tkB') AS tab, pg_size_bytes(NULL) AS null_input;
+----
+max	min	pb	tiny	zeros	tab	null_input
+9223372036854775807	-9223372036854775808	9222246136947933184	0	1536	1024	NULL
+
+
+statement error
+SELECT pg_size_bytes('');
+----
+db error: ERROR: invalid size: ""
+
+
+statement error
+SELECT pg_size_bytes('kB');
+----
+db error: ERROR: invalid size: "kB"
+
+
+statement error
+SELECT pg_size_bytes('1 KiB');
+----
+db error: ERROR: invalid size: "1 KiB"
+DETAIL: Invalid size unit: "KiB".
+HINT: Valid units are "bytes", "B", "kB", "MB", "GB", "TB", and "PB".
+
+
+statement error
+SELECT pg_size_bytes('1e kB');
+----
+db error: ERROR: invalid size: "1e kB"
+DETAIL: Invalid size unit: "e kB".
+HINT: Valid units are "bytes", "B", "kB", "MB", "GB", "TB", and "PB".
+
+
+statement error
+SELECT pg_size_bytes('1e 5');
+----
+db error: ERROR: invalid input syntax for type numeric: "1e 5"
+
+
+statement error
+SELECT pg_size_bytes('8192 PB');
+----
+db error: ERROR: bigint out of range
+
+
+statement error
+SELECT pg_size_bytes('9223372036854775808');
+----
+db error: ERROR: bigint out of range
+
+
+statement error
+SELECT pg_size_bytes('1e1000000');
+----
+db error: ERROR: value overflows numeric format
+
+
+statement error
+SELECT pg_size_bytes('1e-20000');
+----
+db error: ERROR: value overflows numeric format
+
+
+# pg_tablespace_size
+
+query
+SELECT pg_tablespace_size('pg_default') >= pg_database_size(current_database()) AS by_name,
+       pg_tablespace_size(1663::oid) >= pg_database_size(current_database()) AS by_oid,
+       pg_tablespace_size('pg_global') >= 0 AS global, pg_tablespace_size(NULL::oid) AS null_input;
+----
+by_name	by_oid	global	null_input
+t	t	t	NULL
+
+
+statement error
+SELECT pg_tablespace_size('sif_nosuch');
+----
+db error: ERROR: tablespace "sif_nosuch" does not exist
+
+
+statement error
+SELECT pg_tablespace_size(0::oid);
+----
+db error: ERROR: tablespace with OID 0 does not exist
+
+
+# has_parameter_privilege
+
+query
+SELECT has_parameter_privilege('work_mem', 'SET') AS set, has_parameter_privilege('work_mem', 'ALTER SYSTEM') AS alter_system,
+       has_parameter_privilege('sif_nosuch', 'SET') AS unknown, has_parameter_privilege('work_mem', 'set, alter system') AS both,
+       has_parameter_privilege('work_mem', 'SET WITH GRANT OPTION') AS grantable,
+       has_parameter_privilege(current_user, 'work_mem', 'SET') AS by_name,
+       has_parameter_privilege((SELECT oid FROM pg_roles WHERE rolname = current_user), 'work_mem', 'SET') AS by_oid;
+----
+set	alter_system	unknown	both	grantable	by_name	by_oid
+t	t	t	t	t	t	t
+
+
+query
+SELECT has_parameter_privilege('public', 'work_mem', 'SET') AS public,
+       has_parameter_privilege('sif_role_${__DATABASE__}', 'work_mem', 'SET') AS role,
+       has_parameter_privilege(0::oid, 'work_mem', 'SET') AS oid_zero,
+       has_parameter_privilege(NULL, 'SET') AS null_parameter, has_parameter_privilege('work_mem', NULL) AS null_privilege;
+----
+public	role	oid_zero	null_parameter	null_privilege
+f	f	f	NULL	NULL
+
+
+statement error
+SELECT has_parameter_privilege('work_mem', 'SELECT');
+----
+db error: ERROR: unrecognized privilege type: "SELECT"
+
+
+statement error
+SELECT has_parameter_privilege('sif_nosuch_role', 'work_mem', 'SET');
+----
+db error: ERROR: role "sif_nosuch_role" does not exist
+
+
+# has_largeobject_privilege
+
+query
+SELECT has_largeobject_privilege(0, 'SELECT') AS missing, has_largeobject_privilege(12345, 'UPDATE') AS update,
+       has_largeobject_privilege(current_user, 0, 'SELECT') AS by_name,
+       has_largeobject_privilege((SELECT oid FROM pg_roles WHERE rolname = current_user), 0, 'SELECT WITH GRANT OPTION') AS by_oid;
+----
+missing	update	by_name	by_oid
+NULL	NULL	NULL	NULL
+
+
+statement error
+SELECT has_largeobject_privilege(0, 'USAGE');
+----
+db error: ERROR: unrecognized privilege type: "USAGE"
+
+
+statement error
+SELECT has_largeobject_privilege('sif_nosuch_role', 0, 'SELECT');
+----
+db error: ERROR: role "sif_nosuch_role" does not exist
+
+
+# makeaclitem
+
+query
+SELECT makeaclitem(12345, 0, 'SELECT', false)::text AS plain, makeaclitem(12345, 0, 'SELECT, INSERT', true)::text AS grantable,
+       makeaclitem(0, 12345, 'usage', false)::text AS public,
+       makeaclitem(12345, 12345, 'temp,temporary,connect,set,alter system,maintain', false)::text AS many,
+       makeaclitem(12345, 12345, ' select , update ', false)::text AS spaced,
+       makeaclitem(12345, 0, NULL, false)::text AS null_input;
+----
+plain	grantable	public	many	spaced	null_input
+12345=r/0	12345=a*r*/0	=U/12345	12345=TcsAm/12345	12345=rw/12345	NULL
+
+
+statement error
+SELECT makeaclitem(12345, 0, 'ALL', false);
+----
+db error: ERROR: unrecognized privilege type: "ALL"
+
+
+statement error
+SELECT makeaclitem(12345, 0, 'SELECT WITH GRANT OPTION', false);
+----
+db error: ERROR: unrecognized privilege type: "SELECT WITH GRANT OPTION"
+
+
+statement error
+SELECT makeaclitem(12345, 0, '', false);
+----
+db error: ERROR: unrecognized privilege type: ""
+
+
+# pg_get_function_sqlbody and pg_get_partition_constraintdef
+
+statement ok
+CREATE FUNCTION sif_body(a integer) RETURNS integer LANGUAGE sql AS 'SELECT a + 1';
+
+
+query
+SELECT pg_get_function_sqlbody('sif_body'::regproc) AS string_body, pg_get_function_sqlbody(0) AS missing,
+       pg_get_function_sqlbody('lower(text)'::regprocedure) AS builtin;
+----
+string_body	missing	builtin
+NULL	NULL	NULL
+
+
+query
+SELECT pg_get_partition_constraintdef('sif_keyed'::regclass) AS plain, pg_get_partition_constraintdef(0) AS missing;
+----
+plain	missing
+NULL	NULL
+
+
+statement ok
+DROP FUNCTION sif_body;
+
+
+# pg_column_size
+
+query
+SELECT pg_column_size(1) AS int4, pg_column_size(1::bigint) AS int8, pg_column_size(1::smallint) AS int2,
+       pg_column_size(true) AS bool, pg_column_size(1.5::float8) AS float8, pg_column_size(1.5::float4) AS float4,
+       pg_column_size(DATE '2024-01-01') AS date, pg_column_size(TIME '12:00') AS time,
+       pg_column_size(TIMESTAMP '2024-01-01 12:00') AS ts, pg_column_size(INTERVAL '1 day') AS iv,
+       pg_column_size('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid) AS uuid, pg_column_size(NULL::int) AS null_input;
+----
+int4	int8	int2	bool	float8	float4	date	time	ts	iv	uuid	null_input
+4	8	2	1	8	4	4	8	8	16	16	NULL
+
+
+query
+SELECT pg_column_size('abc'::text) AS text, pg_column_size(''::text) AS empty, pg_column_size('abc'::varchar) AS varchar,
+       pg_column_size('\x0102'::bytea) AS bytea, pg_column_size(repeat('x', 200)) AS long_text;
+----
+text	empty	varchar	bytea	long_text
+7	4	7	6	204
+
+
+query
+SELECT pg_column_size(0::numeric) AS zero, pg_column_size(1::numeric) AS one, pg_column_size(1.00::numeric) AS one_scaled,
+       pg_column_size(10000::numeric) AS ten_k, pg_column_size(12345::numeric) AS two_digits,
+       pg_column_size(0.0001::numeric(10,4)) AS small, pg_column_size(0.00001::numeric(10,5)) AS smaller,
+       pg_column_size(-1.5::numeric) AS negative, pg_column_size(123.45::numeric(10,2)) AS typed,
+       pg_column_size(123456789.123::numeric) AS long_value;
+----
+zero	one	one_scaled	ten_k	two_digits	small	smaller	negative	typed	long_value
+6	8	8	8	10	8	8	10	10	14
+
+
+query
+SELECT pg_column_size(ARRAY[1, 2, 3]) AS ints, pg_column_size(ARRAY[1, NULL, 3]) AS nulls,
+       pg_column_size(ARRAY[1::bigint, 2]) AS bigints, pg_column_size(ARRAY['a', 'b']::text[]) AS texts,
+       pg_column_size(ARRAY[[1, 2], [3, 4]]) AS matrix, pg_column_size(ARRAY[]::integer[]) AS empty;
+----
+ints	nulls	bigints	texts	matrix	empty
+36	40	40	40	48	16
+
+
+query
+SELECT pg_column_size(ROW(1, 2)) AS ints, pg_column_size(ROW(1, NULL)) AS nulls,
+       pg_column_size(ROW('abc', 1)) AS text_int, pg_column_size(ROW(1::bigint, 1)) AS wide_first,
+       pg_column_size(ROW(1, 1::bigint)) AS wide_second, pg_column_size(ROW(true)) AS bool;
+----
+ints	nulls	text_int	wide_first	wide_second	bool
+32	28	32	36	40	25
+
+
+statement ok
+INSERT INTO sif_plain VALUES (1, 'abc'), (2, repeat('x', 200));
+
+
+query
+SELECT id, pg_column_size(sif_plain) AS row_size FROM sif_plain ORDER BY id;
+----
+id	row_size
+1	32
+2	232
+
+
+# pg_column_compression and pg_column_toast_chunk_id
+
+query
+SELECT pg_column_compression('abc'::text) AS compression, pg_column_compression(1) AS fixed,
+       pg_column_toast_chunk_id('abc'::text) AS chunk, pg_column_toast_chunk_id(1) AS fixed_chunk;
+----
+compression	fixed	chunk	fixed_chunk
+NULL	NULL	NULL	NULL
+
+
+query
+SELECT pg_column_compression(v) AS compression, pg_column_toast_chunk_id(v) AS chunk FROM sif_plain ORDER BY id;
+----
+compression	chunk
+NULL	NULL
+NULL	NULL
+
+
+# pg_sleep_for and pg_sleep_until
+
+statement ok
+CREATE TABLE sif_clock AS SELECT clock_timestamp() AS started;
+
+
+statement ok
+SELECT pg_sleep_for('100 milliseconds');
+
+
+query
+SELECT clock_timestamp() - started >= INTERVAL '100 milliseconds' AS slept FROM sif_clock;
+----
+slept
+t
+
+
+statement ok
+UPDATE sif_clock SET started = clock_timestamp();
+
+
+statement ok
+SELECT pg_sleep_until(clock_timestamp() + INTERVAL '100 milliseconds');
+
+
+query
+SELECT clock_timestamp() - started >= INTERVAL '100 milliseconds' AS slept FROM sif_clock;
+----
+slept
+t
+
+
+query
+SELECT count(*) AS calls FROM (SELECT pg_sleep_for(NULL), pg_sleep_until(NULL), pg_sleep_for('-1 second')) AS t;
+----
+calls
+1
+
+
+statement ok
+DROP TABLE sif_clock;
+
+
+# pg_get_replica_identity_index
+
+query
+SELECT pg_get_replica_identity_index('sif_keyed') AS keyed, pg_get_replica_identity_index('sif_plain') AS plain,
+       pg_get_replica_identity_index('sif_view') AS view, pg_get_replica_identity_index('sif_seq') AS sequence,
+       pg_get_replica_identity_index('pg_class') AS catalog, pg_get_replica_identity_index(NULL) AS null_input;
+----
+keyed	plain	view	sequence	catalog	null_input
+sif_keyed_pkey	NULL	NULL	NULL	NULL	NULL
+
+
+statement error
+SELECT pg_get_replica_identity_index('sif_keyed_pkey');
+----
+db error: ERROR: cannot open relation "sif_keyed_pkey"
+DETAIL: This operation is not supported for indexes.
+
+
+statement error
+SELECT pg_get_replica_identity_index(0);
+----
+db error: ERROR: could not open relation with OID 0
+
+
+# pg_basetype
+
+query
+SELECT pg_basetype('int4'::regtype) AS int4, pg_basetype('int4[]'::regtype) AS int4_array,
+       pg_basetype('information_schema.cardinal_number'::regtype) AS domain,
+       pg_basetype('information_schema.sql_identifier'::regtype) AS name_domain,
+       pg_basetype(0) AS zero, pg_basetype(12345678) AS missing, pg_basetype(NULL) AS null_input;
+----
+int4	int4_array	domain	name_domain	zero	missing	null_input
+integer	integer[]	integer	name	NULL	NULL	NULL
+
+
+# pg_collation_for
+
+query
+SELECT pg_collation_for('abc'::text) AS text, pg_collation_for('abc' COLLATE "C") AS c,
+       pg_collation_for(NULL::text) AS null_text, pg_collation_for(ARRAY['a']) AS array,
+       pg_collation_for('a'::varchar) AS varchar, pg_collation_for('a'::name) AS name;
+----
+text	c	null_text	array	varchar	name
+"default"	"C"	"default"	"default"	"default"	"C"
+
+
+statement error
+SELECT pg_collation_for(1);
+----
+db error: ERROR: collations are not supported by type integer
+
+
+query
+SELECT pg_collation_for(NULL) AS untyped;
+----
+untyped
+NULL
+
+
+skipif serenedb
+query
+SELECT pg_collation_for('abc') AS literal;
+----
+literal
+NULL
+
+
+onlyif serenedb
+query
+SELECT pg_collation_for('abc') AS literal;
+----
+literal
+"default"
+
+
+# pg_settings_get_flags
+
+skipif serenedb # SereneDB has no work_mem setting
+query
+SELECT pg_settings_get_flags('work_mem') IS NOT NULL AS work_mem, pg_settings_get_flags('search_path') IS NOT NULL AS search_path,
+       pg_settings_get_flags('sif_nosuch') AS unknown, pg_settings_get_flags(NULL) AS null_input;
+----
+work_mem	search_path	unknown	null_input
+t	t	NULL	NULL
+
+
+onlyif serenedb
+query
+SELECT pg_settings_get_flags('work_mem') IS NOT NULL AS work_mem, pg_settings_get_flags('search_path') IS NOT NULL AS search_path,
+       pg_settings_get_flags('sif_nosuch') AS unknown, pg_settings_get_flags(NULL) AS null_input;
+----
+work_mem	search_path	unknown	null_input
+f	t	NULL	NULL
+
+
+# pg_tablespace_databases
+
+query
+SELECT EXISTS (SELECT 1 FROM pg_tablespace_databases(1663) AS t(o)
+               JOIN pg_database AS d ON d.oid = t.o
+               WHERE d.datname = current_database()) AS current;
+----
+current
+t
+
+
+query
+SELECT (SELECT count(*) FROM pg_tablespace_databases(1664)) AS global,
+       (SELECT count(*) FROM pg_tablespace_databases(0)) AS zero,
+       (SELECT count(*) FROM pg_tablespace_databases(NULL)) AS null_input;
+----
+global	zero	null_input
+0	0	0
+
+
+# getpgusername
+
+query
+SELECT getpgusername() = current_user AS same, pg_typeof(getpgusername()) AS type;
+----
+same	type
+t	name
+
+
+# unicode_version, icu_unicode_version and unicode_assigned
+
+query
+SELECT unicode_version() ~ '^\d+\.\d+$' AS unicode, icu_unicode_version() ~ '^\d+\.\d+$' AS icu;
+----
+unicode	icu
+t	t
+
+
+query
+SELECT unicode_assigned('abc') AS ascii, unicode_assigned('') AS empty, unicode_assigned(chr(888)) AS unassigned,
+       unicode_assigned(chr(57344)) AS private_use, unicode_assigned(chr(64976)) AS noncharacter,
+       unicode_assigned('a' || chr(888)) AS mixed, unicode_assigned(NULL) AS null_input;
+----
+ascii	empty	unassigned	private_use	noncharacter	mixed	null_input
+t	t	f	t	f	f	NULL
+
+
+# pg_current_logfile
+
+query
+SELECT pg_current_logfile() AS any_format, pg_current_logfile('stderr') AS stderr,
+       pg_current_logfile('csvlog') AS csvlog, pg_current_logfile(NULL) AS null_input;
+----
+any_format	stderr	csvlog	null_input
+NULL	NULL	NULL	NULL
+
+
+statement error
+SELECT pg_current_logfile('xml');
+----
+db error: ERROR: log format "xml" is not supported
+HINT: The supported log formats are "stderr", "csvlog", and "jsonlog".
+
+
+# pg_jit_available and pg_numa_available
+
+query
+SELECT pg_typeof(pg_jit_available()) AS jit, pg_typeof(pg_numa_available()) AS numa;
+----
+jit	numa
+boolean	boolean
+
+
+skipif serenedb
+query
+SELECT pg_jit_available() AS jit, pg_numa_available() IS NOT NULL AS numa_known;
+----
+jit	numa_known
+t	t
+
+
+onlyif serenedb
+query
+SELECT pg_jit_available() AS jit, pg_numa_available() IS NOT NULL AS numa_known;
+----
+jit	numa_known
+f	t
+
+
+# pg_collation_actual_version and pg_database_collation_actual_version
+
+query
+SELECT pg_collation_actual_version(950) AS c, pg_collation_actual_version(951) AS posix,
+       pg_collation_actual_version(NULL) AS null_input,
+       pg_database_collation_actual_version(d.oid) IS NOT DISTINCT FROM pg_collation_actual_version(100) AS same
+FROM pg_database AS d WHERE d.datname = current_database();
+----
+c	posix	null_input	same
+NULL	NULL	NULL	t
+
+
+statement error
+SELECT pg_collation_actual_version(12345678);
+----
+db error: ERROR: collation with OID 12345678 does not exist
+
+
+statement error
+SELECT pg_database_collation_actual_version(12345678);
+----
+db error: ERROR: database with OID 12345678 does not exist
+
+
+# pg_safe_snapshot_blocking_pids
+
+query
+SELECT pg_safe_snapshot_blocking_pids(0) AS zero, pg_safe_snapshot_blocking_pids(pg_backend_pid()) AS own,
+       pg_safe_snapshot_blocking_pids(NULL) AS null_input;
+----
+zero	own	null_input
+{}	{}	NULL
+
+
+# pg_blocking_pids
+
+query
+SELECT pg_blocking_pids(0) AS zero, pg_blocking_pids(pg_backend_pid()) AS own,
+       pg_blocking_pids(NULL) AS null_input;
+----
+zero	own	null_input
+{}	{}	NULL
+
+
+# pg_restore_relation_stats, pg_restore_attribute_stats, pg_clear_relation_stats, pg_clear_attribute_stats
+
+statement ok
+CREATE TABLE sif_stats (a int);
+
+
+query
+SELECT pg_restore_relation_stats('version', 180006::integer, 'schemaname', 'public', 'relname', 'sif_stats',
+                                 'relpages', 1::integer, 'reltuples', 10::real, 'relallvisible', 0::integer) IS NOT NULL AS relation,
+       pg_restore_attribute_stats('version', 180006::integer, 'schemaname', 'public', 'relname', 'sif_stats',
+                                  'attname', 'a', 'inherited', false, 'null_frac', 0.5::real, 'avg_width', 4::integer,
+                                  'n_distinct', -1::real) IS NOT NULL AS attribute;
+----
+relation	attribute
+t	t
+
+
+statement ok
+SELECT pg_clear_relation_stats('public', 'sif_stats');
+
+
+statement ok
+SELECT pg_clear_attribute_stats('public', 'sif_stats', 'a', false);
+
+
+statement error (function pg_restore_relation_stats\(\) does not exist|No function matches the given name and argument types 'pg_restore_relation_stats\(\)')
+SELECT pg_restore_relation_stats();
+
+
+statement ok
+DROP TABLE sif_stats;
+
+
+# pg_available_wal_summaries
+
+query
+SELECT count(*) AS summaries FROM pg_available_wal_summaries();
+----
+summaries
+0
+
+
+# pg_extension_update_paths
+
+query
+SELECT count(*) AS paths FROM pg_extension_update_paths(NULL);
+----
+paths
+0
+
+
+statement error
+SELECT * FROM pg_extension_update_paths('sif_nosuch');
+----
+db error: ERROR: extension "sif_nosuch" is not available
+HINT: The extension must first be installed on the system where PostgreSQL is running.
+
+
+statement error
+SELECT * FROM pg_extension_update_paths('');
+----
+db error: ERROR: invalid extension name: ""
+DETAIL: Extension names must not be empty.
+
+
+statement error
+SELECT * FROM pg_extension_update_paths('a--b');
+----
+db error: ERROR: invalid extension name: "a--b"
+DETAIL: Extension names must not contain "--".
+
+
+statement error
+SELECT * FROM pg_extension_update_paths('-a');
+----
+db error: ERROR: invalid extension name: "-a"
+DETAIL: Extension names must not begin or end with "-".
+
+
+statement error
+SELECT * FROM pg_extension_update_paths('a/b');
+----
+db error: ERROR: invalid extension name: "a/b"
+DETAIL: Extension names must not contain directory separator characters.
+
+
+statement error
+SELECT * FROM pg_extension_update_paths('a-');
+----
+db error: ERROR: invalid extension name: "a-"
+DETAIL: Extension names must not begin or end with "-".
+
+
+statement ok
+CREATE TABLE sif_serial (a int UNIQUE, b serial);
+
+
+statement ok
+CREATE INDEX sif_serial_a ON sif_serial (a);
+
+
+statement ok
+CREATE TYPE sif_pair AS (x int);
+
+
+statement ok
+COMMENT ON TABLE sif_serial IS '';
+
+
+statement ok
+COMMENT ON COLUMN sif_serial.a IS 'column a';
+
+
+query
+SELECT obj_description('sif_role_${__DATABASE__}'::regrole::oid, 'pg_authid') AS role_described,
+       obj_description('sif_role_${__DATABASE__}'::regrole::oid) AS role_one_arg;
+----
+role_described	role_one_arg
+NULL	NULL
+
+
+query
+SELECT obj_description('sif_serial'::regclass, 'pg_class') AS empty_comment,
+       obj_description('sif_serial'::regclass, 'sif_nosuch') AS no_catalog, obj_description(0) AS zero,
+       col_description('sif_serial'::regclass, 1) AS a, col_description('sif_serial'::regclass, -1) AS negative,
+       col_description('sif_serial'::regclass, 0) AS table_comment, col_description('sif_serial'::regclass, 99) AS past_table,
+       col_description('sif_view'::regclass, 99) AS past_view, col_description('int4'::regtype::oid, 0) AS not_a_table;
+----
+empty_comment	no_catalog	zero	a	negative	table_comment	past_table	past_view	not_a_table
+NULL	NULL	NULL	column a	NULL	NULL	NULL	NULL	NULL
+
+
+query
+SELECT pg_get_serial_sequence('sif_serial', 'b') AS serial, pg_get_serial_sequence('pg_class', 'oid') AS system;
+----
+serial	system
+public.sif_serial_b_seq	NULL
+
+
+query
+SELECT pg_relation_is_updatable(0, false) AS zero, pg_relation_is_updatable('sif_plain'::regclass, false) AS plain,
+       pg_relation_is_updatable('sif_view'::regclass, false) AS view_rel,
+       pg_column_is_updatable('sif_plain'::regclass, 1::int2, false) AS plain_col,
+       pg_column_is_updatable('sif_plain'::regclass, 0::int2, false) AS system_col,
+       pg_column_is_updatable('sif_view'::regclass, 1::int2, false) AS view_col;
+----
+zero	plain	view_rel	plain_col	system_col	view_col
+0	28	0	t	f	f
+
+
+query
+SELECT pg_get_replica_identity_index('sif_serial') AS unique_only;
+----
+unique_only
+NULL
+
+
+statement error
+SELECT pg_get_replica_identity_index('sif_serial_a');
+----
+db error: ERROR: cannot open relation "sif_serial_a"
+DETAIL: This operation is not supported for indexes.
+
+
+statement error
+SELECT pg_get_replica_identity_index('sif_pair');
+----
+db error: ERROR: cannot open relation "sif_pair"
+DETAIL: This operation is not supported for composite types.
+
+
+query
+SELECT pg_basetype('sif_pair'::regtype) AS composite, pg_settings_get_flags(NULL) AS null_flags,
+       pg_settings_get_flags('sif_nosuch') AS unknown_flags;
+----
+composite	null_flags	unknown_flags
+sif_pair	NULL	NULL
+
+
+query
+SELECT pg_char_to_encoding('UTF-8') AS utf8, pg_char_to_encoding('unicode') AS unicode,
+       pg_char_to_encoding('sif_nosuch') AS unknown;
+----
+utf8	unicode	unknown
+6	6	-1
+
+
+query
+SELECT pg_stat_get_db_numbackends(oid) >= 1 AS backends FROM pg_database WHERE datname = current_database();
+----
+backends
+t
+
+
+query
+SELECT pg_stat_get_live_tuples(0) AS zero, pg_stat_get_live_tuples('sif_view'::regclass) AS view_rel;
+----
+zero	view_rel
+0	0
+
+
+query
+SELECT current_setting(name, true) AS setting
+FROM (VALUES (1, 'DateStyle'), (2, 'DateStyle'), (3, 'sif.nosuch'), (4, 'search_path')) AS t(i, name) ORDER BY i;
+----
+setting
+ISO, MDY
+ISO, MDY
+NULL
+"$user", public
+
+
+query
+SELECT current_setting('DateStyle', NULL) AS null_flag;
+----
+null_flag
+NULL
+
+
+statement error
+SELECT current_setting('sif_nosuch', false);
+----
+db error: ERROR: unrecognized configuration parameter "sif_nosuch"
+
+
+query
+SELECT pg_cancel_backend(NULL) AS cancel, pg_terminate_backend(NULL) AS terminate, pg_cancel_backend(0) AS not_a_backend;
+----
+cancel	terminate	not_a_backend
+NULL	NULL	f
+
+
+query
+SELECT pg_input_is_valid(input, type) AS valid
+FROM (VALUES (1, '1', 'int4'), (2, 'x', 'int4'), (3, 'x', 'text'), (4, '1', 'int4')) AS t(i, input, type) ORDER BY i;
+----
+valid
+t
+f
+t
+t
+
+
+query
+SELECT pg_input_error_info(NULL, 'int4') IS NULL AS null_input, pg_input_error_info('1', NULL) IS NULL AS null_type;
+----
+null_input	null_type
+t	t
+
+
+query
+SELECT pg_column_size(1.5::numeric(4,1)) AS n4, pg_column_size(1234567.89::numeric(9,2)) AS n9,
+       pg_column_size(1234567890123.45::numeric(18,2)) AS n18,
+       pg_column_size(12345678901234567890123.45::numeric(30,2)) AS n30,
+       pg_column_size(B'101') AS bit3, pg_column_size(ARRAY[B'101', B'1']) AS bits,
+       pg_column_size('192.168.0.1'::inet) AS v4, pg_column_size('::1'::inet) AS v6,
+       pg_column_size(ARRAY['10.0.0.0/8'::cidr, '::1/128'::cidr]) AS cidrs, pg_column_size(ARRAY[1::int2, 2::int2]) AS int2s;
+----
+n4	n9	n18	n30	bit3	bits	v4	v6	cidrs	int2s
+10	12	16	20	9	48	10	22	60	28
+
+
+query
+SELECT pg_column_size(ROW(1, 'a')) AS rec, pg_column_size(ROW(1, NULL::text)) AS rec_null,
+       pg_column_size(ROW('1 2'::int2vector)) AS rec_vector, pg_column_size(ROW(B'101', 'x')) AS rec_bit,
+       pg_column_size(ROW('{1,2}'::int[], 'abc'::text, 1.5::numeric)) AS rec_mixed,
+       pg_column_size(ARRAY[[1, 2], [3, 4]]) AS matrix, pg_column_size(ARRAY['ab', NULL, 'cde']) AS text_nulls,
+       pg_column_size(ARRAY[1.5::numeric, 2]) AS numerics, pg_column_size(ARRAY[]::int[]) AS empty;
+----
+rec	rec_null	rec_vector	rec_bit	rec_mixed	matrix	text_nulls	numerics	empty
+30	28	52	32	64	48	48	44	16
+
+
+query
+SELECT pg_column_size('{1,2,3}'::line) AS line, pg_column_size('<(1,2),3>'::circle) AS circle;
+----
+line	circle
+24	24
+
+
+skipif serenedb
+query
+SELECT pg_column_size('[(0,0),(1,0),(1,1)]'::path) AS path, pg_column_size('((0,0),(1,0),(1,1))'::polygon) AS polygon;
+----
+path	polygon
+64	88
+
+
+onlyif serenedb
+query
+SELECT pg_column_size('[(0,0),(1,0),(1,1)]'::path) AS path, pg_column_size('((0,0),(1,0),(1,1))'::polygon) AS polygon;
+----
+path	polygon
+176	168
+
+
+query
+SELECT pg_column_size(x) AS size FROM (VALUES (1, 1.5::numeric(4,1)), (2, NULL), (3, 22.5)) AS t(i, x) ORDER BY i;
+----
+size
+10
+NULL
+10
+
+
+# Cleanup
+
+statement ok
+DROP TYPE sif_pair;
+
+
+statement ok
+DROP TABLE sif_serial;
+
+
+statement ok
+DROP SEQUENCE sif_seq;
+
+
+statement ok
+DROP SEQUENCE sif_seq_plain;
+
+
+statement ok
+DROP VIEW sif_view;
+
+
+statement ok
+DROP TABLE sif_plain;
+
+
+statement ok
+DROP TABLE sif_keyed;
+
+
+statement ok
+DROP ROLE sif_role_${__DATABASE__};

@@ -31,6 +31,7 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -38,6 +39,7 @@
 #include <vector>
 
 #include "pg/serialize.h"
+#include "pg/types/xml.h"
 
 namespace sdb::pg {
 
@@ -54,8 +56,11 @@ struct DeserializeContext {
   irs::containers::FlatHashMap<std::string,
                                duckdb::unique_ptr<duckdb::Calendar>>
     named_calendars;
+  duckdb::optional_ptr<duckdb::ClientContext> client;
+  std::optional<XmlOption> xml_option;
 
   duckdb::Calendar* CalendarFor(std::string_view tz_name);
+  XmlOption SessionXmlOption();
 };
 
 void FillDeserializeContext(duckdb::ClientContext& client,
@@ -143,7 +148,7 @@ struct ValueSink {
 
   template<typename T>
   void Fixed(T v) {
-    out = duckdb::Value::CreateValue(v);
+    out = duckdb::Value::CreateValue(v).WithType(type);
   }
 
   void Varchar(std::string_view s) { out = duckdb::Value(s); }

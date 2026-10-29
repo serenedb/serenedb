@@ -33,7 +33,9 @@ TEST(InvertedIndexConfigTest, StoredExpressionNeedsAStoredField) {
         .normalized_expression = "lower(title)"},
        "lower(title)"}};
   };
-  const InvertedIndexConfig unstored{keys(), {}};
+  InvertedIndexFields unstored_fields;
+  unstored_fields.emplace(7, InvertedIndexField{{.store_values = false}});
+  const InvertedIndexConfig unstored{keys(), std::move(unstored_fields)};
   EXPECT_EQ("", unstored.StoredExpression(7));
   EXPECT_FALSE(unstored.StoresExpressions());
   InvertedIndexFields fields;

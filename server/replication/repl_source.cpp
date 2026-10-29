@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -452,6 +453,7 @@ void ScanReplSource(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
         g.finished = true;
         break;
       }
+      SDB_PARK_ONCE_ON_FAILURE("pause_subscription_apply_drained");
       if (stream.Park(*input.interrupt_state)) {
         input.async_result = duckdb::AsyncResultType::BLOCKED;
         break;

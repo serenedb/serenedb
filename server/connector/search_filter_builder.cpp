@@ -75,7 +75,6 @@
 #include "comparison_op.hpp"
 #include "connector/common.h"
 #include "connector/index_expression.hpp"
-#include "connector/pg_logical_types.h"
 #include "connector/term_dict.h"
 #include "functions/search.h"
 #include "functions/string.h"
@@ -83,6 +82,7 @@
 #include "functions/ts_query_codec.h"
 #include "geo_filter_builder.hpp"
 #include "inet_filter_builder.hpp"
+#include "pg/types/logical.h"
 #include "query/config.h"
 #include "search/scorer_options.h"
 

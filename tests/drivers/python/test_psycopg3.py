@@ -19,6 +19,7 @@ import re
 import struct
 import threading
 import time
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import psycopg
@@ -26,6 +27,24 @@ import pytest
 from psycopg.adapt import Loader
 from psycopg.pq import Format, TransactionStatus
 from psycopg.types.json import Jsonb
+from psycopg.types.multirange import (
+    DateMultirange,
+    Int4Multirange,
+    Int8Multirange,
+    Multirange,
+    NumericMultirange,
+    TimestampMultirange,
+    TimestamptzMultirange,
+)
+from psycopg.types.range import (
+    DateRange,
+    Int4Range,
+    Int8Range,
+    NumericRange,
+    Range,
+    TimestampRange,
+    TimestamptzRange,
+)
 from spec_loader import (
     PROTOCOL_MODES,
     TypeSpec,
@@ -511,6 +530,166 @@ def test_binary_array_header_matches_pg():
         c.close()
 
 
+def test_range_values_roundtrip():
+    """Range values travel in both wire formats -- bound parameters, results,
+    arrays of ranges and binary COPY -- and come back in PostgreSQL's
+    canonical form. Cross-checked against PostgreSQL 18. psycopg sends small
+    integer bounds as int2, which neither server reads inside an int4range or
+    int8range, so the integer bounds here need their full width.
+    """
+    cases = [
+        ("int4range", Int4Range(100000, 100005, "[]"), Range(100000, 100006)),
+        ("int4range", Int4Range(empty=True), Range(empty=True)),
+        ("int8range", Int8Range(None, 10_000_000_000, "(]"),
+         Range(None, 10_000_000_001, "()")),
+        ("numrange", NumericRange(Decimal("1.5"), Decimal("2.5"), "(]"),
+         Range(Decimal("1.5"), Decimal("2.5"), "(]")),
+        ("daterange", DateRange(date(2020, 1, 1), date(2020, 1, 31), "(]"),
+         Range(date(2020, 1, 2), date(2020, 2, 1))),
+        ("tsrange", TimestampRange(datetime(2020, 1, 1, 10), None),
+         Range(datetime(2020, 1, 1, 10), None)),
+        ("tstzrange",
+         TimestamptzRange(datetime(2020, 1, 1, 10, tzinfo=timezone.utc),
+                          datetime(2020, 1, 2, tzinfo=timezone.utc), "[]"),
+         Range(datetime(2020, 1, 1, 10, tzinfo=timezone.utc),
+               datetime(2020, 1, 2, tzinfo=timezone.utc), "[]")),
+    ]
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    src = f"range_copy_src_{os.getpid()}"
+    dst = f"range_copy_dst_{os.getpid()}"
+    try:
+        for binary in (False, True):
+            with c.cursor(binary=binary) as cur:
+                for name, value, expected in cases:
+                    cur.execute(
+                        f"SELECT %s::{name}, ARRAY[%s::{name}, 'empty'::{name}]",
+                        (value, value))
+                    assert cur.fetchone() == (expected, [expected, Range(empty=True)]), (
+                        binary, name)
+        rows = [
+            (1, Int4Range(100000, 100005, "[]"), DateRange(date(2020, 1, 1), None),
+             NumericRange(Decimal("1.5"), Decimal("2.5")), TimestamptzRange(empty=True)),
+            (2, None, None, None, None),
+        ]
+        with c.cursor(binary=True) as cur:
+            for table in (src, dst):
+                cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+                cur.execute(f'CREATE TABLE "{table}" '
+                            "(id int, r int4range, d daterange, n numrange, t tstzrange)")
+            with cur.copy(f'COPY "{src}" FROM STDIN (FORMAT BINARY)') as cp:
+                cp.set_types(["int4", "int4range", "daterange", "numrange", "tstzrange"])
+                for row in rows:
+                    cp.write_row(row)
+            data = b""
+            with cur.copy(f'COPY "{src}" TO STDOUT (FORMAT BINARY)') as cp:
+                for chunk in cp:
+                    data += bytes(chunk)
+            with cur.copy(f'COPY "{dst}" FROM STDIN (FORMAT BINARY)') as cp:
+                cp.write(data)
+            cur.execute(f'SELECT * FROM "{dst}" ORDER BY id')
+            assert cur.fetchall() == [
+                (1, Range(100000, 100006), Range(date(2020, 1, 1), None),
+                 Range(Decimal("1.5"), Decimal("2.5")), Range(empty=True)),
+                (2, None, None, None, None),
+            ]
+    finally:
+        with c.cursor() as cur:
+            for table in (src, dst):
+                cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+        c.close()
+
+
+def test_binary_array_deeper_than_its_type():
+    """A binary array carries its own number of dimensions. One with more
+    dimensions than the parameter's array type holds is refused as malformed
+    binary data, and the session keeps working.
+    """
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        with c.cursor(binary=True) as cur:
+            with pytest.raises(psycopg.errors.InvalidBinaryRepresentation):
+                cur.execute("SELECT %b::int4[]", ([[1, 2], [3, 4]],))
+        assert c.execute("SELECT 1").fetchone() == (1,)
+
+
+def test_multirange_values_roundtrip():
+    """Multirange values travel in both wire formats -- bound parameters,
+    results, arrays of multiranges and binary COPY -- and come back sorted and
+    merged as in PostgreSQL. Cross-checked against PostgreSQL 18. Integer
+    bounds need their full width, as for ranges.
+    """
+    utc = timezone.utc
+    cases = [
+        ("int4multirange",
+         Int4Multirange([Int4Range(100010, 100020), Int4Range(100000, 100005, "[]")]),
+         Multirange([Range(100000, 100006), Range(100010, 100020)])),
+        ("int4multirange", Int4Multirange(), Multirange()),
+        ("int8multirange",
+         Int8Multirange([Int8Range(None, 10_000_000_000, "(]"),
+                         Int8Range(10_000_000_001, 10_000_000_005)]),
+         Multirange([Range(None, 10_000_000_005, "()")])),
+        ("nummultirange",
+         NumericMultirange([NumericRange(Decimal("1.5"), Decimal("2.5"), "(]")]),
+         Multirange([Range(Decimal("1.5"), Decimal("2.5"), "(]")])),
+        ("datemultirange",
+         DateMultirange([DateRange(date(2020, 1, 1), date(2020, 1, 31), "(]"),
+                         DateRange(date(2020, 3, 1), None)]),
+         Multirange([Range(date(2020, 1, 2), date(2020, 2, 1)), Range(date(2020, 3, 1), None)])),
+        ("tsmultirange",
+         TimestampMultirange([TimestampRange(datetime(2020, 1, 1, 10), None)]),
+         Multirange([Range(datetime(2020, 1, 1, 10), None)])),
+        ("tstzmultirange",
+         TimestamptzMultirange([TimestamptzRange(datetime(2020, 1, 1, 10, tzinfo=utc),
+                                                 datetime(2020, 1, 2, tzinfo=utc), "[]")]),
+         Multirange([Range(datetime(2020, 1, 1, 10, tzinfo=utc),
+                           datetime(2020, 1, 2, tzinfo=utc), "[]")])),
+    ]
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    src = f"multirange_copy_src_{os.getpid()}"
+    dst = f"multirange_copy_dst_{os.getpid()}"
+    try:
+        for binary in (False, True):
+            with c.cursor(binary=binary) as cur:
+                for name, value, expected in cases:
+                    cur.execute(
+                        f"SELECT %s::{name}, ARRAY[%s::{name}, '{{}}'::{name}]",
+                        (value, value))
+                    assert cur.fetchone() == (expected, [expected, Multirange()]), (
+                        binary, name)
+        rows = [
+            (1, Int4Multirange([Int4Range(100000, 100005), Int4Range(100007, 100009)]),
+             DateMultirange([DateRange(date(2020, 1, 1), None)]), NumericMultirange()),
+            (2, None, None, None),
+        ]
+        with c.cursor(binary=True) as cur:
+            for table in (src, dst):
+                cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+                cur.execute(f'CREATE TABLE "{table}" '
+                            "(id int, m int4multirange, d datemultirange, n nummultirange)")
+            with cur.copy(f'COPY "{src}" FROM STDIN (FORMAT BINARY)') as cp:
+                cp.set_types(["int4", "int4multirange", "datemultirange", "nummultirange"])
+                for row in rows:
+                    cp.write_row(row)
+            for fmt in ("BINARY", "TEXT"):
+                cur.execute(f'DELETE FROM "{dst}"')
+                data = b""
+                with cur.copy(f'COPY "{src}" TO STDOUT (FORMAT {fmt})') as cp:
+                    for chunk in cp:
+                        data += bytes(chunk)
+                with cur.copy(f'COPY "{dst}" FROM STDIN (FORMAT {fmt})') as cp:
+                    cp.write(data)
+                cur.execute(f'SELECT * FROM "{dst}" ORDER BY id')
+                assert cur.fetchall() == [
+                    (1, Multirange([Range(100000, 100005), Range(100007, 100009)]),
+                     Multirange([Range(date(2020, 1, 1), None)]), Multirange()),
+                    (2, None, None, None),
+                ], fmt
+    finally:
+        with c.cursor() as cur:
+            for table in (src, dst):
+                cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+        c.close()
+
+
 # ---- pg_cancel_backend() / pg_terminate_backend() --------------------------
 
 
@@ -526,6 +705,19 @@ def test_pg_cancel_terminate_unknown_pid():
             assert cur.execute("select pg_terminate_backend(2147483647)").fetchone()[0] is False
         assert len(notices) == 2, notices
         assert all("is not a PostgreSQL backend process" in n for n in notices), notices
+    finally:
+        c.close()
+
+
+def test_pg_cancel_terminate_negative_pid():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    notices: list[str] = []
+    c.add_notice_handler(lambda d: notices.append(d.message_primary))
+    try:
+        with c.cursor() as cur:
+            assert cur.execute("select pg_cancel_backend(-1)").fetchone()[0] is False
+            assert cur.execute("select pg_terminate_backend(-1)").fetchone()[0] is False
+        assert notices == ["PID -1 is not a PostgreSQL backend process"] * 2, notices
     finally:
         c.close()
 
@@ -629,6 +821,27 @@ def test_engine_warning_reaches_the_client_as_a_notice():
             cur.execute("SET profiling_mode = 'standard'")
         assert [s for s, _ in diags] == ["WARNING"], diags
         assert "profiling_mode setting is deprecated" in diags[0][1], diags
+    finally:
+        c.close()
+
+
+def test_unenforced_setting_warns_when_its_value_changes():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    notices: list[str] = []
+    c.add_notice_handler(lambda d: notices.append(d.message_primary))
+    try:
+        with c.cursor() as cur:
+            cur.execute("SET DateStyle = 'German'")
+            cur.execute("RESET DateStyle")
+            cur.execute("SET IntervalStyle = 'sql_standard'")
+            cur.execute("SET IntervalStyle = 'postgres'")
+            cur.execute("SET client_min_messages = warning")
+            cur.execute("RESET ALL")
+        assert notices == [
+            f'parameter "{name}" is accepted for compatibility but is not '
+            "enforced by serened"
+            for name in ("client_min_messages", "client_min_messages")
+        ], notices
     finally:
         c.close()
 

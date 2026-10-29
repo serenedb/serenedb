@@ -1,0 +1,65 @@
+statement ok
+DROP TABLE IF EXISTS meepo_poof;
+
+
+statement ok
+DROP ROLE IF EXISTS meepo_statistic_clone;
+
+
+statement ok
+CREATE ROLE meepo_statistic_clone LOGIN PASSWORD 'meepo_statistic_pw';
+
+
+statement ok
+CREATE TABLE meepo_poof (id int, hero text);
+
+
+statement ok
+INSERT INTO meepo_poof VALUES (1, 'meepo'), (2, 'pudge');
+
+
+query
+SELECT count(*) >= 0 AS readable FROM pg_statistic;
+----
+readable
+t
+
+
+query
+SELECT starelid, staattnum, stainherit
+FROM pg_statistic
+WHERE starelid = 'meepo_poof'::regclass;
+----
+starelid	staattnum	stainherit
+
+
+query
+SELECT starelid
+FROM pg_statistic
+WHERE starelid = 'meepo_poof'::regclass AND staattnum = 1 AND NOT stainherit;
+----
+starelid
+
+
+connection meepo_statistic user=meepo_statistic_clone password=meepo_statistic_pw
+statement error
+SELECT count(*) FROM pg_statistic;
+----
+db error: ERROR: permission denied for table pg_statistic<slt:ignore>
+
+
+connection meepo_statistic user=meepo_statistic_clone password=meepo_statistic_pw
+statement error
+SELECT starelid FROM pg_statistic WHERE starelid = 'meepo_poof'::regclass;
+----
+db error: ERROR: permission denied for table pg_statistic<slt:ignore>
+
+
+connection default
+statement ok
+DROP TABLE meepo_poof;
+
+
+connection default
+statement ok
+DROP ROLE meepo_statistic_clone;

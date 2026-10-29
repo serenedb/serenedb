@@ -25,6 +25,7 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/functional/function_ref.h>
+#include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <cstdint>
@@ -45,7 +46,6 @@
 #include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
-#include "iresearch/utils/async_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/object_pool.hpp"
 
@@ -132,6 +132,7 @@ struct IndexWriterOptions : public SegmentOptions {
   ColumnOptionsProvider column_options;
   NormColumnIdProvider norm_column_id;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  AnnFieldsByColumn anns;
 
   const AnnBuildEnv* ann_env = nullptr;
 

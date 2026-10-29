@@ -37,6 +37,7 @@
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/subscription.h"
 #include "catalog/entry/tokenizer.h"
+#include "catalog/snapshot.h"
 
 namespace duckdb {
 
@@ -68,6 +69,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
     return _directory;
   }
+  CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
 
   std::string GetCatalogType() final;
 
@@ -194,6 +196,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
  private:
   std::shared_ptr<DatabaseDirectory> _directory;
+  CatalogSnapshots _snapshots{*this};
   duckdb::unique_ptr<duckdb::FileHandle> _catalog_log_lock;
   std::atomic_bool _detached{false};
 };

@@ -412,6 +412,21 @@ ok
 t
 
 
+skipif serenedb
+statement error
+SELECT decode('@@', 'base64');
+----
+db error: ERROR: invalid symbol "@" found while decoding base64 sequence
+
+
+onlyif serenedb
+statement error
+SELECT decode('@@', 'base64');
+----
+db error: ERROR: Could not decode string "@@" as base64
+
+
+
 # get_byte / set_byte
 
 query
@@ -517,6 +532,23 @@ ok
 t
 
 
+query
+SELECT current_setting('client_encoding', true) AS found,
+       current_setting(NULL, true) IS NULL AS null_name;
+----
+found	null_name
+UTF8	t
+
+
+query
+SELECT current_setting('standard_conforming_strings') AS one_arg,
+       current_setting('standard_conforming_strings', false) AS strict,
+       current_setting('standard_conforming_strings', true) AS missing_ok;
+----
+one_arg	strict	missing_ok
+on	on	on
+
+
 # set_config
 
 query
@@ -570,6 +602,13 @@ SELECT quote_ident('table');
 ----
 quote_ident
 "table"
+
+
+query
+SELECT quote_ident('user') AS a, quote_ident('current_role') AS b;
+----
+a	b
+"user"	"current_role"
 
 
 query

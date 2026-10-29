@@ -43,6 +43,13 @@ float8
 
 
 query
+SELECT '-0'::float8, ARRAY['-0'::float8];
+----
+float8	array
+-0	{-0}
+
+
+query
 SELECT '-0'::float8;
 ----
 float8

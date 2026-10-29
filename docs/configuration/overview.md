@@ -202,7 +202,7 @@ Planning, rewriting and the shape of query output.
 | `late_materialization_lookup_max_rows` | The maximum amount of rows in the LIMIT/TOP_N/SAMPLE for which a scan that can look up rows by their row id is late materialized through a `LOOKUP_JOIN`. `0` disables the `LOOKUP_JOIN`: late materialization then joins on the row ids, up to `late_materialization_max_rows`. | `UBIGINT` | `SESSION` | `2048` |
 | `late_materialization_max_rows` | The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization | `UBIGINT` | `SESSION` | `50` |
 | `match_recognize_max_states` | The maximum number of pattern states `MATCH_RECOGNIZE` explores for a single match before it refuses the pattern (0 = no limit). | `UBIGINT` | `SESSION` | `1000000` |
-| `max_expression_depth` | The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors. | `UBIGINT` | `SESSION` | `1000` |
+| `max_expression_depth` | The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors. Only a superuser can change it. | `UBIGINT` | `SESSION` | `1000` |
 | `max_streaming_buffer_size` | The maximum number of bytes a streaming query result buffers (e.g. 1GB). | `VARCHAR` | `SESSION` | `10.0 MiB` |
 | `merge_join_threshold` | The maximum number of rows on either table to choose a merge join | `UBIGINT` | `SESSION` | `1000` |
 | `nested_loop_join_threshold` | The maximum number of rows on either table to choose a nested loop join | `UBIGINT` | `SESSION` | `5` |
@@ -248,12 +248,14 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `is_superuser` | Shows whether the current session's user is a superuser. | `BOOLEAN` | `SESSION` | `on` |
 | `lock_configuration` | Whether or not configurations can be altered | `BOOLEAN` | `GLOBAL` | `false` |
 | `max_execution_time` | The maximum execution time per query in milliseconds (0 = no limit). | `BIGINT` | `SESSION` | `0` |
+| `max_identifier_length` | Shows the maximum identifier length. SereneDB keeps longer identifiers in full. Read-only. | `INTEGER` | `SESSION` | `63` |
+| `max_index_keys` | Shows the maximum number of index keys. Clients read it as the bound of index and constraint key arrays, such as `pg_index.indkey` and `pg_constraint.conkey`. Read-only. | `INTEGER` | `SESSION` | `32` |
 | `regex_match_operator_semantics` | Deprecated. Configures whether regex match operators use partial or full string matching. | `VARCHAR` | `SESSION` | `partial` |
 | `role` | Sets the current role. | `VARCHAR` | `SESSION` | `none` |
 | `search_path` | Sets the default catalog search path as a comma-separated list of values | `VARCHAR` | `SESSION` | `"$user", public` |
 | `server_encoding` | Shows the server (database) character set encoding. | `VARCHAR` | `SESSION` | `UTF8` |
-| `server_version` | Shows the server version. | `VARCHAR` | `SESSION` | `18.3` |
-| `server_version_num` | Shows the server version as an integer. | `INTEGER` | `SESSION` | `180003` |
+| `server_version` | Shows the server version. | `VARCHAR` | `SESSION` | `18.6` |
+| `server_version_num` | Shows the server version as an integer. | `INTEGER` | `SESSION` | `180006` |
 | `session_authorization` | Sets the current session's user name. | `VARCHAR` | `SESSION` | the session's user |
 | `session_replication_role` | Sets the session's behavior for triggers, as in PostgreSQL: `origin` (the default) and `local` fire the triggers enabled with `ENABLE TRIGGER`, `replica` fires only those enabled with `ENABLE REPLICA TRIGGER` and skips foreign key checks; `ENABLE ALWAYS` triggers fire in every role. Only superusers may change it. The apply worker of a subscription runs as `replica`. | `VARCHAR` | `SESSION` | `origin` |
 | `show_behavior` | Configures how `SHOW` resolves a bare identifier: `auto` describes a table if one exists, else a setting (deprecated); `table` always describes a table; `setting` always describes a setting. | `VARCHAR` | `SESSION` | `SETTING` |
@@ -262,6 +264,9 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `table_function_identifier_conversion` | Deprecated. Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments. | `VARCHAR` | `SESSION` | `DISABLE_IMPLICIT_STRING` |
 | `TimeZone` | Sets the time zone for displaying and interpreting time stamps. | `VARCHAR` | `SESSION` | `Etc/UTC` |
 | `transaction_isolation` | Sets the current transaction's isolation level. | `VARCHAR` | `SESSION` | `repeatable read` |
+| `xmloption` | Whether text read as `xml`, and the argument of `xml_is_well_formed`, must be an XML `document` or may be `content`. | `VARCHAR` | `SESSION` | `content` |
+
+PostgreSQL settings that are not listed here, such as `work_mem`, `lock_timeout` or `shared_buffers`, do not exist in SereneDB: `SET` and `SHOW` fail with `unrecognized configuration parameter`. This includes several of the `SET` lines at the top of a `pg_dump` script.
 
 ### Logical replication
 

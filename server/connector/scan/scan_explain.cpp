@@ -28,11 +28,11 @@
 
 #include "connector/column_id.h"
 #include "connector/functions/vector.h"
-#include "connector/pg_logical_types.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/scan/scan_function.h"
 #include "connector/search_filter_printer.hpp"
 #include "connector/term_dict.h"
+#include "pg/types/logical.h"
 #include "search/scorer_options.h"
 
 namespace sdb::connector {

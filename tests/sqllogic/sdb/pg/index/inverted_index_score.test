@@ -3016,3 +3016,46 @@ WHERE body @@ ts_phrase('fox')::score('raw_tf()');
 
 statement ok
 DROP TABLE score_vec;
+
+
+# A dictionary without frequency and norm scores every matching row the same,
+# not zero, and ordering by that score returns the rows.
+statement ok
+CREATE TEXT SEARCH DICTIONARY score_plain_dict AS split_text(case := 'lower');
+
+
+statement ok
+CREATE TABLE score_plain (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX score_plain_idx ON score_plain USING inverted (id, body score_plain_dict)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO score_plain VALUES (1, 'the mouse ran'), (2, 'a mouse and another mouse'), (3, 'no rodents here');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) score_plain;
+
+
+query
+SELECT id, BM25(score_plain_idx.tableoid) AS score FROM score_plain_idx WHERE body @@ 'mouse' ORDER BY id;
+----
+id	score
+1	0.29936534
+2	0.29936534
+
+
+query
+SELECT id FROM score_plain_idx WHERE body @@ 'mouse' ORDER BY BM25(score_plain_idx.tableoid) DESC, id LIMIT 5;
+----
+id
+1
+2
+
+
+statement ok
+DROP TABLE score_plain;

@@ -34,6 +34,18 @@ v
 
 
 statement ok
+CREATE SEQUENCE slv_top START 9223372036854775806;
+
+
+query
+SELECT nextval('slv_top') AS v FROM range(2);
+----
+v
+9223372036854775806
+9223372036854775807
+
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 
@@ -63,6 +75,13 @@ SELECT last_value IS NOT NULL AS known FROM duckdb_sequences() WHERE sequence_na
 ----
 known
 t
+
+
+connection after_crash
+statement error
+SELECT nextval('slv_top');
+----
+db error: ERROR: nextval: reached maximum value of sequence "slv_top" (9223372036854775807)
 
 
 connection after_crash
@@ -109,6 +128,18 @@ SELECT last_value >= 12 AS ahead, nextval('slv_k') = last_value + 1 AS follows F
 ----
 ahead	follows
 t	t
+
+
+connection after_second_crash
+statement error
+SELECT nextval('slv_top');
+----
+db error: ERROR: nextval: reached maximum value of sequence "slv_top" (9223372036854775807)
+
+
+connection after_second_crash
+statement ok
+DROP SEQUENCE slv_top;
 
 
 connection after_second_crash

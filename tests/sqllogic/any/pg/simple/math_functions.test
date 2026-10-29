@@ -1,0 +1,512 @@
+# dexp
+
+query
+SELECT dexp(0), dexp(1), dexp(-1), dexp(-740) > 0, dexp('-Infinity'), dexp('Infinity'), dexp('NaN'), dexp(NULL);
+----
+dexp	dexp	dexp	?column?	dexp	dexp	dexp	dexp
+1	2.718281828459045	0.36787944117144233	t	0	Infinity	NaN	NULL
+
+
+onlyif postgres
+statement error
+SELECT dexp(710);
+----
+db error: ERROR: value out of range: overflow
+
+
+skipif postgres
+query
+SELECT dexp(710);
+----
+dexp
+Infinity
+
+
+onlyif postgres
+statement error
+SELECT dexp(-746);
+----
+db error: ERROR: value out of range: underflow
+
+
+skipif postgres
+query
+SELECT dexp(-746);
+----
+dexp
+0
+
+
+# dlog1
+
+query
+SELECT dlog1(1), dlog1(2.718281828459045), dlog1(10), dlog1('Infinity'), dlog1('NaN'), dlog1(NULL);
+----
+dlog1	dlog1	dlog1	dlog1	dlog1	dlog1
+0	1	2.302585092994046	Infinity	NaN	NULL
+
+
+onlyif postgres
+statement error
+SELECT dlog1(0);
+----
+db error: ERROR: cannot take logarithm of zero
+
+
+skipif postgres
+query
+SELECT dlog1(0);
+----
+dlog1
+-Infinity
+
+
+onlyif postgres
+statement error
+SELECT dlog1(-1);
+----
+db error: ERROR: cannot take logarithm of a negative number
+
+
+skipif postgres
+query
+SELECT dlog1(-1);
+----
+dlog1
+NaN
+
+
+# dlog10
+
+query
+SELECT dlog10(1), dlog10(1000), dlog10(0.001), dlog10(2), dlog10('Infinity'), dlog10(NULL);
+----
+dlog10	dlog10	dlog10	dlog10	dlog10	dlog10
+0	3	-3	0.3010299956639812	Infinity	NULL
+
+
+onlyif postgres
+statement error
+SELECT dlog10(0);
+----
+db error: ERROR: cannot take logarithm of zero
+
+
+skipif postgres
+query
+SELECT dlog10(0);
+----
+dlog10
+-Infinity
+
+
+onlyif postgres
+statement error
+SELECT dlog10('-Infinity');
+----
+db error: ERROR: cannot take logarithm of a negative number
+
+
+skipif postgres
+query
+SELECT dlog10('-Infinity');
+----
+dlog10
+NaN
+
+
+# dround
+
+query
+SELECT dround(0.5), dround(1.5), dround(2.5), dround(-2.5), dround(2.6), dround(-0.4), dround('Infinity'), dround(NULL);
+----
+dround	dround	dround	dround	dround	dround	dround	dround
+0	2	2	-2	3	-0	Infinity	NULL
+
+
+# dtrunc
+
+query
+SELECT dtrunc(2.7), dtrunc(-2.7), dtrunc(-0.5), dtrunc(42), dtrunc('-Infinity'), dtrunc('NaN'), dtrunc(NULL);
+----
+dtrunc	dtrunc	dtrunc	dtrunc	dtrunc	dtrunc	dtrunc
+2	-2	-0	42	-Infinity	NaN	NULL
+
+
+# int4inc
+
+query
+SELECT int4inc(0), int4inc(-1), int4inc(2147483646), int4inc(5::smallint), int4inc(NULL);
+----
+int4inc	int4inc	int4inc	int4inc	int4inc
+1	0	2147483647	6	NULL
+
+
+statement error (integer out of range|Overflow in addition of INT32)
+SELECT int4inc(2147483647);
+
+
+# int8_sum
+
+query
+SELECT int8_sum(10.5, 5), int8_sum(NULL, 7), int8_sum(1.25, NULL), int8_sum(NULL, NULL), int8_sum(1, 9223372036854775807);
+----
+int8_sum	int8_sum	int8_sum	int8_sum	int8_sum
+15.5	7	1.25	NULL	9223372036854775808
+
+
+# numeric_inc
+
+query
+SELECT numeric_inc(1.5), numeric_inc(-1), numeric_inc(0.001), numeric_inc(99999999999), numeric_inc(NULL);
+----
+numeric_inc	numeric_inc	numeric_inc	numeric_inc	numeric_inc
+2.5	0	1.001	100000000000	NULL
+
+
+# numeric_exp, numeric_ln, numeric_log, numeric_sqrt
+
+query
+SELECT numeric_exp(0)::float8, numeric_ln(1)::float8, numeric_log(2, 64)::float8,
+       numeric_sqrt(4)::float8, numeric_sqrt(NULL);
+----
+numeric_exp	numeric_ln	numeric_log	numeric_sqrt	numeric_sqrt
+1	0	6	2	NULL
+
+
+onlyif postgres
+statement error
+SELECT numeric_sqrt(-1);
+----
+db error: ERROR: cannot take square root of a negative number
+
+
+skipif postgres
+query
+SELECT numeric_sqrt(-1);
+----
+numeric_sqrt
+NaN
+
+
+onlyif postgres
+statement error
+SELECT numeric_ln(0);
+----
+db error: ERROR: cannot take logarithm of zero
+
+
+skipif postgres
+query
+SELECT numeric_ln(0);
+----
+numeric_ln
+-Infinity
+
+
+onlyif postgres
+statement error
+SELECT numeric_ln(-2);
+----
+db error: ERROR: cannot take logarithm of a negative number
+
+
+skipif postgres
+query
+SELECT numeric_ln(-2);
+----
+numeric_ln
+NaN
+
+
+statement error
+SELECT numeric_log(1, 10);
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT numeric_log(0, 10);
+----
+db error: ERROR: cannot take logarithm of zero
+
+
+onlyif postgres
+statement error (value overflows numeric format|value out of range: overflow)
+SELECT numeric_exp(100000);
+
+
+skipif postgres
+query
+SELECT numeric_exp(100000);
+----
+numeric_exp
+Infinity
+
+
+# dsqrt
+
+query
+SELECT dsqrt(2), dsqrt(0), dsqrt('NaN'::float8), dsqrt(NULL);
+----
+dsqrt	dsqrt	dsqrt	dsqrt
+1.4142135623730951	0	NaN	NULL
+
+
+onlyif postgres
+statement error
+SELECT dsqrt(-1);
+----
+db error: ERROR: cannot take square root of a negative number
+
+
+skipif postgres
+query
+SELECT dsqrt(-1);
+----
+dsqrt
+NaN
+
+
+# dexp, dlog1, dlog10, dround and dtrunc
+
+query
+SELECT exp('Infinity'::float8), exp('-Infinity'::float8), exp('NaN'::float8), sqrt('NaN'::float8), ln('NaN'::float8);
+----
+exp	exp	exp	sqrt	ln
+Infinity	0	NaN	NaN	NaN
+
+
+query
+SELECT dexp(1), dlog1(1), dlog10(100), dround(2.5), dround(-2.5), dtrunc(-2.7);
+----
+dexp	dlog1	dlog10	dround	dround	dtrunc
+2.718281828459045	0	2	2	-2	-2
+
+
+# |/ and ||/
+
+query
+SELECT |/ 16.0 AS sqrt, |/ 2::float8 AS sqrt2, ||/ 8.0 AS cbrt, ||/ -8.0 AS cbrt_negative, ||/ 1000.0 AS cbrt_1000,
+       pg_typeof(|/ 16) AS type;
+----
+sqrt	sqrt2	cbrt	cbrt_negative	cbrt_1000	type
+4	1.4142135623730951	2	-2	10	double precision
+
+
+# numeric_div_trunc
+
+query
+SELECT numeric_div_trunc(9, 4), numeric_div_trunc(-9, 4), numeric_div_trunc(9.9, 0.2), numeric_div_trunc(-7.5, -2.5), numeric_div_trunc(1, 3), numeric_div_trunc(NULL, 1);
+----
+numeric_div_trunc	numeric_div_trunc	numeric_div_trunc	numeric_div_trunc	numeric_div_trunc	numeric_div_trunc
+2	-2	49	3	0	NULL
+
+
+query
+SELECT numeric_div_trunc(12345678901234567890.123, 0.001), numeric_div_trunc(0.0001, 0.00003);
+----
+numeric_div_trunc	numeric_div_trunc
+12345678901234567890123	3
+
+
+statement error
+SELECT numeric_div_trunc(1.5, 0);
+----
+db error: ERROR: division by zero
+
+
+# scale
+
+query
+SELECT scale(1.230), scale(0.5), scale(42), scale(-7.00001), scale(CAST(3 AS numeric(10, 2))), scale(NULL);
+----
+scale	scale	scale	scale	scale	scale
+3	1	0	5	2	NULL
+
+
+# min_scale
+
+query
+SELECT min_scale(1.230), min_scale(0.500), min_scale(42.00), min_scale(0.000), min_scale(-7.00001), min_scale(CAST(100 AS numeric(10, 2))), min_scale(NULL);
+----
+min_scale	min_scale	min_scale	min_scale	min_scale	min_scale	min_scale
+2	1	0	0	5	0	NULL
+
+
+# trim_scale
+
+query
+SELECT trim_scale(8.4100), trim_scale(0.00), trim_scale(-1.50), trim_scale(100), trim_scale(NULL::numeric),
+       trim_scale(2.000::numeric(10, 3)), trim_scale(12.30::numeric(10, 2) * 2), trim_scale(123.4500::numeric(38, 10));
+----
+trim_scale	trim_scale	trim_scale	trim_scale	trim_scale	trim_scale	trim_scale	trim_scale
+8.41	0	-1.5	100	NULL	2	24.6	123.45
+
+
+query
+SELECT pg_typeof(trim_scale(8.4100))::text AS t, scale(trim_scale(8.4100)) AS s, trim_scale(0.0050) = 0.005 AS same;
+----
+t	s	same
+numeric	2	t
+
+
+query
+SELECT gcd(12.0, 18.0) AS g, lcm(12.0, 18.0) AS l, gcd(-12.0, 18.00) AS g_neg, gcd(0.0, 0.0) AS g0,
+       lcm(0.0, 5.5) AS l0, gcd(1.5, 2.25) AS g_frac, lcm(1.5, 2.25) AS l_frac;
+----
+g	l	g_neg	g0	l0	g_frac	l_frac
+6.0	36.0	6.00	0.0	0.0	0.75	4.50
+
+
+query
+SELECT width_bucket(5, ARRAY[1, 3, 7]) AS w, width_bucket(0, ARRAY[1, 3, 7]) AS w_low, width_bucket(7, ARRAY[1, 3, 7]) AS w_edge,
+       width_bucket(5.5, ARRAY[1.0, 5.5]) AS w_num, width_bucket(DATE '2020-06-01', ARRAY[DATE '2020-01-01', DATE '2021-01-01']) AS w_date,
+       width_bucket('m', ARRAY['a', 'n', 'z']) AS w_text;
+----
+w	w_low	w_edge	w_num	w_date	w_text
+2	0	3	2	1	1
+
+
+statement error
+SELECT width_bucket(5, ARRAY[1, NULL, 7]);
+----
+db error: ERROR: thresholds array must not contain NULLs
+
+
+statement error
+SELECT width_bucket(5, ARRAY[[1, 3], [5, 7]]);
+----
+db error: ERROR: thresholds must be one-dimensional array
+
+
+query
+SELECT width_bucket(NULL::int, ARRAY[1, 2]) AS null_operand, width_bucket(5, NULL::int[]) AS null_thresholds;
+----
+null_operand	null_thresholds
+NULL	NULL
+
+
+statement error
+SELECT width_bucket(1, ARRAY['a']);
+----
+db error: ERROR: function width_bucket(integer, text[]) does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+
+
+query
+SELECT width_bucket(5.35, 0.024, 10.06, 5) AS inside, width_bucket(-1, 0, 10, 5) AS below, width_bucket(10, 0, 10, 5) AS at_end,
+       width_bucket(5, 10, 0, 5) AS descending, width_bucket(11, 10, 0, 5) AS above_descending,
+       width_bucket(0, 10, 0, 5) AS at_descending_end, width_bucket(0.5e-30, -1, 1e-30, 10) AS rounds_to_last,
+       width_bucket(1e308, -1e308, 1.5e308, 4) AS huge_bounds, width_bucket(-1e308, 1e308, -1.5e308, 4) AS huge_descending,
+       width_bucket('infinity', 0, 10, 5) AS infinite_operand, width_bucket(5, 10, 0, 2147483647) AS wide;
+----
+inside	below	at_end	descending	above_descending	at_descending_end	rounds_to_last	huge_bounds	huge_descending	infinite_operand	wide
+3	0	6	3	0	6	10	4	4	6	1073741824
+
+
+statement error
+SELECT width_bucket(1, 0, 10, 0);
+----
+db error: ERROR: count must be greater than zero
+
+
+statement error
+SELECT width_bucket('NaN', 0, 10, 5);
+----
+db error: ERROR: operand, lower bound, and upper bound cannot be NaN
+
+
+statement error
+SELECT width_bucket(1, 'NaN', 10, 5);
+----
+db error: ERROR: operand, lower bound, and upper bound cannot be NaN
+
+
+statement error
+SELECT width_bucket(1, 0, 'NaN', 5);
+----
+db error: ERROR: operand, lower bound, and upper bound cannot be NaN
+
+
+statement error
+SELECT width_bucket(1, '-infinity', 10, 5);
+----
+db error: ERROR: lower and upper bounds must be finite
+
+
+statement error
+SELECT width_bucket(1, 0, 'infinity', 5);
+----
+db error: ERROR: lower and upper bounds must be finite
+
+
+statement error
+SELECT width_bucket(1, 5, 5, 5);
+----
+db error: ERROR: lower bound cannot equal upper bound
+
+
+statement error
+SELECT width_bucket(100, 0, 10, 2147483647);
+----
+db error: ERROR: integer out of range
+
+
+statement error
+SELECT width_bucket(-100, 10, 0, 2147483647);
+----
+db error: ERROR: integer out of range
+
+
+query
+SELECT random_normal(10, 0) AS fixed, random_normal() IS NOT NULL AS standard, random_normal(5) IS NOT NULL AS mean_only;
+----
+fixed	standard	mean_only
+10	t	t
+
+
+query
+SELECT abs(avg(v)) < 0.05 AS centered, stddev(v) BETWEEN 0.95 AND 1.05 AS spread
+FROM (SELECT random_normal() AS v FROM generate_series(1, 100000)) AS t;
+----
+centered	spread
+t	t
+
+
+query
+SELECT count(DISTINCT random_normal(0, 1)) = 10 AS per_row FROM generate_series(1, 10);
+----
+per_row
+t
+
+
+statement ok
+SELECT setseed(0.25);
+
+
+statement ok
+CREATE TABLE random_normal_first AS SELECT random_normal() AS v;
+
+
+statement ok
+SELECT setseed(0.25);
+
+
+statement ok
+CREATE TABLE random_normal_second AS SELECT random_normal() AS v;
+
+
+query
+SELECT (SELECT v FROM random_normal_first) = (SELECT v FROM random_normal_second) AS same;
+----
+same
+t
+
+
+statement ok
+DROP TABLE random_normal_first;
+
+
+statement ok
+DROP TABLE random_normal_second;

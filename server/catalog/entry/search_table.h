@@ -151,10 +151,13 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
 
+  duckdb::Value Option(std::string_view name) const;
+
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
 
+  void BeforeDrop(duckdb::CatalogTransaction transaction) final;
   void OnDrop() final;
 
   void Rollback(duckdb::CatalogEntry& prev_entry) final;

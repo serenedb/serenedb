@@ -91,8 +91,6 @@ class WireSinkContext {
   // Set by the hook when it takes this context; the session gates the wire
   // drain on it (a non-QUERY_RESULT statement leaves the context unused).
   bool engaged = false;
-  // Output formats for this portal (empty = all text) and the settings
-  // template the lstates clone (buffer/types_cache filled per lstate).
   std::vector<sdb::pg::VarFormat> formats;
   sdb::pg::SerializationContext proto;
   // Normal SELECT emits DataRow; COPY ... TO STDOUT emits PGCOPY rows

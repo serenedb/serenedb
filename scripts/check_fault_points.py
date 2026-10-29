@@ -11,8 +11,8 @@ in .pre-commit-config.yaml):
 
   2. Test -> Source: every fault NAME activated in a recovery .test must be
      defined in C++ source (SDB_IF_FAILURE / SDB_WAIT_ON_FAILURE /
-     SDB_PARK_ONCE_ON_FAILURE / WaitWhileFailurePointDebugging /
-     ParkOnceOnFailurePointDebugging string literal in server/ or iresearch/).
+     SDB_PARK_ONCE_ON_FAILURE / FaultPoints::WaitWhileArmed /
+     FaultPoints::ParkOnce string literal in server/, iresearch/ or DuckDB).
      A park-once point NAME also defines NAME:parked and NAME:release, the
      names a test polls and arms to observe and release the parked thread.
 
@@ -28,6 +28,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 RECOVERY_DIR = "tests/sqllogic/recovery"
 SOURCE_DIRS = ("server", "iresearch")
+DUCKDB_CHECKOUT = "third_party/duckdb/.git"
+DUCKDB_DIRS = ("third_party/duckdb/src", "third_party/duckdb/extension")
+DUCKDB_PARK_FAULTS = frozenset({"pause_checkpoint", "pause_wal_sync"})
 TEST_DIR = "tests"
 
 TEST_EXTS = (".test", ".test_slow")
@@ -46,15 +49,15 @@ SET_FAULT = re.compile(
 SET_FAULT_HEAD = re.compile(r"SET\s+(?:(?:LOCAL|SESSION)\s+)?sdb_faults\b", re.IGNORECASE)
 
 # Source-side definitions: SDB_IF_FAILURE("NAME") / SDB_WAIT_ON_FAILURE("NAME")
-# / WaitWhile...("NAME").
+# / FaultPoints::WaitWhileArmed("NAME").
 SOURCE_DEF = re.compile(
     r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|SDB_PARK_ONCE_ON_FAILURE|'
-    r'WaitWhileFailurePointDebugging|ParkOnceOnFailurePointDebugging)'
+    r'FaultPoints::WaitWhileArmed|FaultPoints::ParkOnce)'
     r'\s*\(\s*"([^"]+)"'
 )
 # Park-once definitions, whose companion names are defined along with them.
 PARK_DEF = re.compile(
-    r'(?:SDB_PARK_ONCE_ON_FAILURE|ParkOnceOnFailurePointDebugging)'
+    r'(?:SDB_PARK_ONCE_ON_FAILURE|FaultPoints::ParkOnce)'
     r'\s*\(\s*"([^"]+)"'
 )
 PARK_SUFFIXES = (":parked", ":release")
@@ -62,8 +65,8 @@ PARK_SUFFIXES = (":parked", ":release")
 # or a SET sdb_faults activation).
 TESTNET_LITERAL = re.compile(
     r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|SDB_PARK_ONCE_ON_FAILURE|'
-    r'AddFailurePointDebugging|ShouldFailDebugging|'
-    r'WaitWhileFailurePointDebugging|ParkOnceOnFailurePointDebugging)'
+    r'FaultPoints::Arm|FaultPoints::Armed|'
+    r'FaultPoints::WaitWhileArmed|FaultPoints::ParkOnce)'
     r'\s*\(\s*"([^"]+)"'
 )
 # Python driver tests activate faults through f-strings (`SET sdb_faults =
@@ -124,23 +127,46 @@ def lineno(text, pos):
     return text.count("\n", 0, pos) + 1
 
 
-def main():
-    errors = []
-
-    # ----- collect source-side definitions -----
+def scan_sources(dirs):
     # Substring pre-filters gate the regex: the bulk of the tree (notably the
     # ~630MB of sqlite-derived .test_slow files) contains no fault points, and a
     # plain `in` is far cheaper than running finditer over every byte.
-    source_faults = {}  # name -> "path:line"
-    park_faults = set()
-    for path in (p for d in SOURCE_DIRS for p in walk_files(d, SOURCE_EXTS)):
+    faults = {}  # name -> "path:line"
+    parks = set()
+    for path in (p for d in dirs for p in walk_files(d, SOURCE_EXTS)):
         text = read(path)
         if "FAIL" not in text and "Fail" not in text:
             continue
         for m in SOURCE_DEF.finditer(text):
-            source_faults.setdefault(m.group(1), f"{rel(path)}:{lineno(text, m.start())}")
+            faults.setdefault(m.group(1), f"{rel(path)}:{lineno(text, m.start())}")
         for m in PARK_DEF.finditer(text):
-            park_faults.add(m.group(1))
+            parks.add(m.group(1))
+    return faults, parks
+
+
+def main():
+    errors = []
+
+    # ----- collect source-side definitions -----
+    source_faults, park_faults = scan_sources(SOURCE_DIRS)
+    if os.path.exists(os.path.join(ROOT, DUCKDB_CHECKOUT)):
+        duckdb_faults, duckdb_parks = scan_sources(DUCKDB_DIRS)
+        for name, loc in sorted(duckdb_faults.items()):
+            if name not in DUCKDB_PARK_FAULTS or name not in duckdb_parks:
+                errors.append(
+                    f"{loc}: fault '{name}' is missing from DUCKDB_PARK_FAULTS in "
+                    "scripts/check_fault_points.py, which CI's pre-commit reads "
+                    "instead of DuckDB's sources when the change leaves the duckdb "
+                    "gitlink alone"
+                )
+        for name in sorted(DUCKDB_PARK_FAULTS - duckdb_parks):
+            errors.append(
+                f"scripts/check_fault_points.py: DUCKDB_PARK_FAULTS lists '{name}', "
+                "which DuckDB's sources do not park on"
+            )
+    for name in sorted(DUCKDB_PARK_FAULTS):
+        source_faults.setdefault(name, DUCKDB_DIRS[0])
+    park_faults |= DUCKDB_PARK_FAULTS
 
     # ----- single pass over tests/ (checks #1 and the #3 test net) -----
     test_faults = {}  # name -> "path:line" (recovery activations only)
@@ -190,8 +216,8 @@ def main():
         errors.append(
             f"{loc}: fault '{name}' is activated by a test but is not defined in "
             "C++ source (no SDB_IF_FAILURE/SDB_WAIT_ON_FAILURE/"
-            "SDB_PARK_ONCE_ON_FAILURE/WaitWhileFailurePointDebugging/"
-            "ParkOnceOnFailurePointDebugging literal in server/ or iresearch/)"
+            "SDB_PARK_ONCE_ON_FAILURE/FaultPoints::WaitWhileArmed/"
+            "FaultPoints::ParkOnce literal in server/, iresearch/ or DuckDB)"
         )
 
     # ----- check #3: source -> test -----

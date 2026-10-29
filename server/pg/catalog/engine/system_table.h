@@ -1,0 +1,1396 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
+#include <absl/functional/function_ref.h>
+
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <bitset>
+#include <compare>
+#include <cstddef>
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/catalog/permissions.hpp>
+#include <duckdb/common/types.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/string_type.hpp>
+#include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/common/types/value.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/function/table_function.hpp>
+#include <duckdb/parser/column_list.hpp>
+#include <duckdb/planner/expression.hpp>
+#include <duckdb/planner/table_filter.hpp>
+#include <duckdb/planner/table_filter_state.hpp>
+#include <duckdb/storage/statistics/base_statistics.hpp>
+#include <functional>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/serializer.hpp>
+#include <iresearch/utils/shared.hpp>
+#include <iresearch/utils/system_compiler.hpp>
+#include <memory>
+#include <optional>
+#include <ranges>
+#include <span>
+#include <string>
+#include <string_view>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include "auth/role_closure.h"
+#include "catalog/entry/database.h"
+#include "catalog/entry/foreign_server.h"
+#include "catalog/entry/role.h"
+#include "catalog/entry/subscription.h"
+#include "catalog/entry/tokenizer.h"
+#include "catalog/snapshot.h"
+#include "pg/catalog/utils/session.h"
+#include "pg/types/mapping.h"
+
+namespace sdb::pg {
+
+enum class SystemKey : uint8_t {
+  None,
+  Unique,
+  Indexed,
+};
+
+struct SystemSqlColumn {
+  constexpr SystemSqlColumn(std::string_view name, int32_t type,
+                            int32_t element_type, bool composite, bool not_null,
+                            int32_t collation, int16_t ndims, SystemKey key)
+    : name{name},
+      type{type},
+      physical{element_type != 0 ? duckdb::PhysicalType::LIST
+                                 : StorageOf(type).physical},
+      element{composite           ? duckdb::PhysicalType::STRUCT
+              : element_type != 0 ? StorageOf(element_type).physical
+                                  : duckdb::PhysicalType::INVALID},
+      not_null{not_null},
+      zero_default{not_null && element_type == 0 && StorageOf(type).zero},
+      collation{collation},
+      ndims{ndims},
+      key{key} {}
+
+  std::string_view name;
+  int32_t type;
+  duckdb::PhysicalType physical;
+  duckdb::PhysicalType element;
+  bool not_null;
+  bool zero_default;
+  int32_t collation;
+  int16_t ndims;
+  SystemKey key;
+};
+
+enum class SystemLookup : uint8_t {
+  Object,
+  Namespace,
+  Kind,
+  Dependents,
+};
+
+struct SystemKindTypes {
+  int64_t kind;
+  std::span<const duckdb::CatalogType> types;
+};
+
+struct SystemIndex {
+  uint32_t column;
+  SystemLookup lookup;
+  std::span<const SystemKindTypes> kinds = {};
+};
+
+enum class SystemSchemas : bool {
+  Skip,
+  Visit,
+};
+
+enum class SystemCatalog : bool {
+  Database,
+  Cluster,
+};
+
+struct SystemSql {
+  duckdb::idx_t oid;
+  std::string_view schema;
+  std::string_view name;
+  int32_t row_type;
+  int32_t row_array_type;
+  char relkind;
+  char replident;
+  bool superuser_only;
+  uint64_t public_columns;
+  bool shared;
+  std::span<const SystemSqlColumn> columns;
+
+  consteval uint32_t operator[](std::string_view column) const {
+    for (uint32_t i = 0; i < columns.size(); ++i) {
+      if (columns[i].name == column) {
+        return i;
+      }
+    }
+    SDB_UNREACHABLE();
+  }
+};
+
+template<irs::utils::detail::FixedString Name, typename Get>
+struct SystemColumn {
+  static constexpr std::string_view kName{Name};
+
+  Get get;
+};
+
+template<irs::utils::detail::FixedString Name, typename Get>
+consteval SystemColumn<Name, Get> Col(Get get) {
+  return {get};
+}
+
+template<const SystemSql& Sql, typename Ctx, typename... Cols>
+struct SystemShape {
+  using Context = Ctx;
+
+  static constexpr const SystemSql& kSql = Sql;
+  static constexpr size_t kSize = sizeof...(Cols);
+  static constexpr std::array<uint32_t, kSize> kColumns{Sql[Cols::kName]...};
+  static constexpr uint64_t kProvided =
+    (uint64_t{0} | ... | (uint64_t{1} << Sql[Cols::kName]));
+
+  static consteval uint64_t Required() {
+    uint64_t required = 0;
+    for (uint32_t i = 0; i < Sql.columns.size(); ++i) {
+      if (Sql.columns[i].not_null && !Sql.columns[i].zero_default) {
+        required |= uint64_t{1} << i;
+      }
+    }
+    return required;
+  }
+
+  static_assert(std::popcount(kProvided) == static_cast<int>(kSize),
+                "a shape sets every column once");
+  static_assert((Required() & ~kProvided) == 0,
+                "a shape sets every NOT NULL column without a default");
+
+  std::tuple<Cols...> columns;
+};
+
+template<const SystemSql& Sql, typename Ctx, typename... Args>
+consteval auto Shape(Args... args) {
+  return std::apply(
+    [](auto... columns) {
+      return SystemShape<Sql, Ctx, decltype(columns)...>{
+        std::tuple{columns...}};
+    },
+    std::tuple_cat(std::tuple{args}...));
+}
+
+template<const auto& Shape>
+using SystemShapeOf = std::remove_cvref_t<decltype(Shape)>;
+
+struct SystemScanFunctions {
+  duckdb::table_function_init_global_t init;
+  duckdb::table_function_t scan;
+};
+
+struct SystemFact {
+  uint32_t column;
+  int64_t min;
+  int64_t max;
+};
+
+struct SystemVisibility {
+  uint32_t column;
+  std::string_view function;
+};
+
+struct SystemTypeShape {
+  duckdb::CatalogType type;
+  uint64_t provided;
+};
+
+struct SystemColumnKey {
+  uint32_t column;
+  SystemKey key;
+};
+
+class SystemTable {
+ public:
+  SystemTable(const SystemSql& sql, SystemScanFunctions functions,
+              std::span<const SystemFact> facts,
+              std::optional<SystemVisibility> visibility,
+              std::span<const SystemTypeShape> type_shapes,
+              std::span<const SystemColumnKey> column_keys, duckdb::idx_t rows,
+              bool superuser_only)
+    : _sql{sql},
+      _functions{functions},
+      _facts{facts},
+      _visibility{visibility},
+      _type_shapes{type_shapes},
+      _column_keys{column_keys},
+      _rows{rows},
+      _superuser_only{sql.superuser_only || superuser_only} {}
+
+  template<typename T>
+  explicit SystemTable(std::type_identity<T>, const SystemSql& sql);
+
+  SystemTable(const SystemTable&) = delete;
+  SystemTable& operator=(const SystemTable&) = delete;
+
+  void Init();
+
+  const SystemSql& Sql() const noexcept { return _sql; }
+  const duckdb::ColumnList& Columns() const noexcept { return _columns; }
+  const SystemScanFunctions& Functions() const noexcept { return _functions; }
+  const SystemFact* FactOf(uint32_t column) const {
+    const auto it = absl::c_find_if(
+      _facts, [&](const SystemFact& fact) { return fact.column == column; });
+    return it == _facts.end() ? nullptr : &*it;
+  }
+  bool Holds(uint32_t column, int64_t value) const {
+    const auto* fact = FactOf(column);
+    return !fact || (fact->min <= value && value <= fact->max);
+  }
+  const std::optional<SystemVisibility>& Visibility() const noexcept {
+    return _visibility;
+  }
+  std::span<const SystemTypeShape> TypeShapes() const noexcept {
+    return _type_shapes;
+  }
+  SystemKey KeyOf(uint32_t column) const {
+    const auto it = absl::c_find_if(
+      _column_keys,
+      [&](const SystemColumnKey& key) { return key.column == column; });
+    return it == _column_keys.end() ? _sql.columns[column].key : it->key;
+  }
+  duckdb::idx_t Rows() const noexcept { return _rows; }
+  bool SuperuserOnly() const noexcept { return _superuser_only; }
+  bool DefaultsHold(uint64_t provided) const;
+
+ private:
+  const SystemSql& _sql;
+  SystemScanFunctions _functions;
+  std::span<const SystemFact> _facts;
+  std::optional<SystemVisibility> _visibility;
+  std::span<const SystemTypeShape> _type_shapes;
+  std::span<const SystemColumnKey> _column_keys;
+  duckdb::idx_t _rows;
+  bool _superuser_only;
+  duckdb::ColumnList _columns;
+};
+
+duckdb::LogicalType SystemRowType(const SystemSql& sql);
+duckdb::LogicalType SystemColumnType(int32_t oid);
+
+class SystemScan;
+
+template<typename V>
+struct SystemOptional : std::false_type {
+  using Type = V;
+};
+
+template<typename V>
+struct SystemOptional<std::optional<V>> : std::true_type {
+  using Type = V;
+};
+
+struct SystemConcatText {
+  std::array<std::string_view, 4> parts;
+};
+
+std::strong_ordering operator<=>(const SystemConcatText& text,
+                                 std::string_view other);
+
+inline bool operator==(const SystemConcatText& text, std::string_view other) {
+  return (text <=> other) == 0;
+}
+
+using SystemText =
+  std::variant<std::string_view, SystemConcatText, std::string>;
+
+template<typename V>
+constexpr bool kSystemCheckable =
+  std::is_same_v<V, duckdb::Identifier> ||
+  std::is_same_v<V, SystemConcatText> || std::is_same_v<V, SystemText> ||
+  std::is_convertible_v<const V&, std::string_view> || std::is_integral_v<V> ||
+  std::is_enum_v<V>;
+
+struct CatalogSource {
+  std::span<const duckdb::CatalogType> types;
+  SystemSchemas schemas;
+  std::span<const SystemIndex> indexes;
+};
+
+struct SystemPrefix {
+  duckdb::Identifier lower;
+  duckdb::Identifier upper;
+};
+
+struct SystemSet {
+  std::shared_ptr<const catalog::CatalogSnapshot> snapshot;
+  std::span<duckdb::CatalogEntry* const> entries;
+};
+
+struct CatalogSetSource {
+  SystemCatalog catalog;
+  duckdb::CatalogType type;
+  std::span<const SystemIndex> indexes;
+};
+
+struct SystemKeys {
+  std::span<const std::string> names;
+  std::span<const int64_t> oids;
+  const CatalogSource* source = nullptr;
+  const CatalogSetSource* set = nullptr;
+  bool dependents = false;
+
+  size_t Count() const noexcept { return names.size() + oids.size(); }
+};
+
+struct SystemListed {
+  SystemSet set;
+  SystemKeys keys;
+};
+
+struct SystemEntries {
+  SystemKeys keys;
+  std::vector<duckdb::SchemaCatalogEntry*> schemas;
+  absl::InlinedVector<duckdb::CatalogType, 8> sets;
+  std::bitset<256> wanted;
+  std::optional<SystemPrefix> prefix;
+};
+
+template<typename Row, typename Holder = void>
+class SystemRows {
+ public:
+  SystemRows(std::span<const Row> rows) : _rows{rows} {}
+  SystemRows(std::span<const Row> rows, std::shared_ptr<const Holder> owner)
+    : _rows{rows}, _owner{std::move(owner)} {}
+  SystemRows(std::vector<Row> rows) {
+    auto owned = std::make_shared<const std::vector<Row>>(std::move(rows));
+    _rows = *owned;
+    _owner = std::move(owned);
+  }
+
+  std::span<const Row> Rows() const noexcept { return _rows; }
+  const auto& Owner() const noexcept { return *_owner; }
+
+ private:
+  std::span<const Row> _rows;
+  std::shared_ptr<const Holder> _owner;
+};
+
+template<typename T>
+struct SystemBound {
+  T value;
+  bool inclusive;
+};
+
+template<typename T>
+struct SystemCondition {
+  std::optional<std::vector<T>> keys;
+  std::vector<T> excluded;
+  std::optional<SystemBound<T>> lower;
+  std::optional<SystemBound<T>> upper;
+  bool null = false;
+  bool not_null = false;
+
+  bool Empty() const noexcept {
+    return !keys && excluded.empty() && !lower && !upper && !null && !not_null;
+  }
+
+  bool KeysOnly() const noexcept {
+    return keys && excluded.empty() && !lower && !upper && !null;
+  }
+
+  std::span<const T> Keys() const noexcept {
+    return keys ? std::span<const T>{*keys} : std::span<const T>{};
+  }
+
+  bool PassesNull() const noexcept {
+    return null && !not_null && !keys && excluded.empty() && !lower && !upper;
+  }
+
+  template<typename V>
+  bool Passes(const V& value) const {
+    if (null) {
+      return false;
+    }
+    if (keys) {
+      return absl::c_binary_search(*keys, value);
+    }
+    return !absl::c_linear_search(excluded, value) &&
+           (!lower || (lower->inclusive ? !(value < lower->value)
+                                        : lower->value < value)) &&
+           (!upper || (upper->inclusive ? !(upper->value < value)
+                                        : value < upper->value));
+  }
+
+  bool Overlaps(const T& min, const T& max) const {
+    if (null) {
+      return false;
+    }
+    if (keys) {
+      const auto key = absl::c_lower_bound(*keys, min);
+      return key != keys->end() && !(max < *key);
+    }
+    return !(min == max && absl::c_linear_search(excluded, min)) &&
+           (!lower ||
+            (lower->inclusive ? !(max < lower->value) : lower->value < max)) &&
+           (!upper ||
+            (upper->inclusive ? !(upper->value < min) : min < upper->value));
+  }
+};
+
+struct SystemFilter {
+  SystemCondition<int64_t> numbers;
+  SystemCondition<std::string> texts;
+  std::bitset<256> chars;
+};
+
+struct SystemPrune {
+  uint32_t column;
+  const duckdb::TableFilter* filter;
+  duckdb::unique_ptr<duckdb::TableFilterState> state;
+  duckdb::unique_ptr<duckdb::BaseStatistics> stats;
+};
+
+struct SystemVector {
+  duckdb::Vector* vector;
+  duckdb::data_ptr_t data;
+  duckdb::ValidityMask* validity;
+};
+
+struct SystemConstant {
+  uint32_t place;
+  duckdb::Value value;
+};
+
+struct SystemAlias {
+  uint32_t place;
+  uint32_t source;
+};
+
+struct SystemStableText {
+  std::string_view text;
+};
+
+duckdb::TableFilterPushdown SystemPushdown(const SystemTable& table,
+                                           duckdb::column_t column,
+                                           const duckdb::Expression& expr);
+
+template<typename Row, typename Holder = void>
+struct ArrayKey {
+  uint32_t column;
+  void (*find)(const SystemRows<Row, Holder>& rows, const SystemFilter& filter,
+               std::vector<const Row*>& picked);
+};
+
+template<typename Row, typename Holder = void>
+struct ArraySource {
+  SystemRows<Row, Holder> (*load)(SystemScan& scan);
+  std::span<const ArrayKey<Row, Holder>> keys;
+  std::span<const SystemFact> facts;
+};
+
+template<typename Row, typename Holder>
+struct SystemArray {
+  SystemRows<Row, Holder> rows;
+  std::optional<std::vector<const Row*>> picked;
+};
+
+template<typename Row, auto Project, typename Holder = void>
+void SortedBy(const SystemRows<Row, Holder>& rows, const SystemFilter& filter,
+              std::vector<const Row*>& picked) {
+  using V =
+    std::remove_cvref_t<std::invoke_result_t<decltype(Project), const Row&>>;
+  const auto key = [](const auto& side) -> decltype(auto) {
+    if constexpr (std::is_same_v<std::remove_cvref_t<decltype(side)>, Row>) {
+      return std::invoke(Project, side);
+    } else {
+      return (side);
+    }
+  };
+  const auto all = rows.Rows();
+  const auto pick = [&](const V& probe) {
+    const auto [first, last] = absl::c_equal_range(
+      all, probe,
+      [&](const auto& lhs, const auto& rhs) { return key(lhs) < key(rhs); });
+    for (const auto& row : std::span{first, last}) {
+      picked.emplace_back(&row);
+    }
+  };
+  if constexpr (std::is_integral_v<V>) {
+    for (const auto key : *filter.numbers.keys) {
+      pick(static_cast<V>(key));
+    }
+  } else {
+    for (const auto& key : *filter.texts.keys) {
+      pick(V{key});
+    }
+  }
+}
+
+class SystemScan {
+ public:
+  static constexpr std::span<const SystemFact> kFacts{};
+  static constexpr std::optional<SystemVisibility> kVisibility{};
+  static constexpr std::span<const SystemTypeShape> kTypeShapes{};
+  static constexpr std::span<const SystemColumnKey> kColumnKeys{};
+  static constexpr duckdb::idx_t kRows = 1000;
+  static constexpr bool kSuperuserOnly = false;
+
+  SystemScan(duckdb::ClientContext& context,
+             duckdb::TableFunctionInitInput& input);
+  ~SystemScan();
+
+  SystemScan(const SystemScan&) = delete;
+  SystemScan& operator=(const SystemScan&) = delete;
+
+  duckdb::ClientContext& Context() const noexcept { return _context; }
+  duckdb::DuckCatalog& Database() const noexcept { return _database; }
+  const duckdb::CatalogTransaction& Transaction() const noexcept {
+    return _transaction;
+  }
+
+  SystemEntries Resolve(const CatalogSource& source) const;
+  SystemListed Resolve(const CatalogSetSource& source) const;
+  void VisitKey(const SystemEntries& entries, size_t key,
+                absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) const;
+  void VisitKey(const SystemListed& listed, size_t key,
+                absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) const;
+  SystemSet MemberSet(duckdb::SchemaCatalogEntry& schema,
+                      duckdb::CatalogType type,
+                      const SystemPrefix* prefix) const;
+  template<typename Row, typename Holder>
+  SystemArray<Row, Holder> Resolve(const ArraySource<Row, Holder>& source) {
+    if (!Possible(source.facts)) {
+      return {std::span<const Row>{}, std::nullopt};
+    }
+    auto rows = source.load(*this);
+    for (const auto& key : source.keys) {
+      const auto* filter = FilterOf(key.column);
+      if (filter && (filter->numbers.keys || filter->texts.keys)) {
+        std::vector<const Row*> picked;
+        key.find(rows, *filter, picked);
+        absl::c_sort(picked);
+        const auto duplicates = std::ranges::unique(picked);
+        picked.erase(duplicates.begin(), duplicates.end());
+        return {std::move(rows), std::move(picked)};
+      }
+    }
+    return {std::move(rows), std::nullopt};
+  }
+
+  template<typename V>
+  bool Allows(uint32_t column, const V& value) const {
+    if constexpr (std::is_integral_v<V> && !std::is_same_v<V, char>) {
+      return Allows(column, static_cast<int64_t>(value),
+                    static_cast<int64_t>(value));
+    } else {
+      return !Filtered(column) || Passes(column, value);
+    }
+  }
+
+  IRS_FORCE_INLINE bool Allows(uint32_t column, int64_t min,
+                               int64_t max) const {
+    return (((_filtered | _pruned) >> column) & 1) == 0 ||
+           Overlaps(column, min, max);
+  }
+
+  void Begin(duckdb::DataChunk& output);
+  void End(duckdb::DataChunk& output);
+  template<typename F>
+  bool Step(F&& row) {
+    const auto start = _row;
+    const auto resumed = _skip;
+    row();
+    if (!_full) {
+      return false;
+    }
+    _skip = resumed + (_row - start);
+    return true;
+  }
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> FindById(duckdb::idx_t oid) const {
+    return _database.GetOidIndex().GetVisible(oid, Transaction().view);
+  }
+
+  template<const auto& Shape>
+  bool Emit(typename SystemShapeOf<Shape>::Context& ctx) {
+    return Emit<Shape>(ctx, nullptr);
+  }
+
+  template<const auto& Shape, typename Visible>
+  bool Emit(typename SystemShapeOf<Shape>::Context& ctx, Visible&& visible) {
+    using T = SystemShapeOf<Shape>;
+    SDB_ASSERT(_table.DefaultsHold(T::kProvided));
+#ifdef SDB_DEV
+    SDB_ASSERT(Declared(T::kProvided));
+#endif
+    if ((_rejecting & ~T::kProvided) != 0) {
+      return false;
+    }
+    if (_row == STANDARD_VECTOR_SIZE) {
+      _full = true;
+      return false;
+    }
+    for (auto bits = _filtered & T::kProvided; bits != 0; bits &= bits - 1) {
+      const auto check = kChecks<Shape>[std::countr_zero(bits)];
+      SDB_ASSERT(check);
+      if (!check(*this, ctx)) {
+        return false;
+      }
+    }
+    if constexpr (!std::is_null_pointer_v<Visible>) {
+      if (_session && !visible(*_session)) {
+        return false;
+      }
+    }
+    if (_skip != 0) {
+      --_skip;
+      return true;
+    }
+    if constexpr (T::kSize < T::kSql.columns.size()) {
+      if ((_needed & ~T::kProvided) != 0) {
+        [&]<uint32_t... C>(std::integer_sequence<uint32_t, C...>) {
+          (
+            [&] {
+              if constexpr (((T::kProvided >> C) & 1) == 0) {
+                if (((_needed >> C) & 1) != 0) {
+                  PutDefault<T::kSql, C>();
+                }
+              }
+            }(),
+            ...);
+        }(std::make_integer_sequence<uint32_t, T::kSql.columns.size()>{});
+      }
+    }
+    if (const auto rest = _needed & ~_filtered & T::kProvided; rest != 0) {
+      [&]<size_t... I>(std::index_sequence<I...>) {
+        (((rest >> T::kColumns[I]) & 1
+            ? void(Write<Shape, I, false>(*this, ctx))
+            : void()),
+         ...);
+      }(std::make_index_sequence<T::kSize>{});
+    }
+    ++_row;
+    return true;
+  }
+
+  void Walking(const catalog::CatalogSnapshot* snapshot) noexcept {
+    _walked = snapshot;
+  }
+
+  template<typename F>
+  void ScanSubjects(duckdb::CatalogEntry& entry, F&& visit) const {
+    if (!_walked) {
+      Dependencies().ScanEdges(Transaction(), entry, true, visit);
+      return;
+    }
+    for (const auto& [subject, flags] : WalkedSubjects(entry)) {
+      visit(*subject, flags);
+    }
+  }
+
+  bool Indexed(duckdb::CatalogEntry& relation) const;
+  bool Triggered(const duckdb::TableCatalogEntry& table) const;
+
+#ifdef SDB_DEV
+  void Visiting(duckdb::CatalogType type) noexcept { _visiting = type; }
+#endif
+
+  IRS_FORCE_INLINE bool Reads(uint32_t column) const noexcept {
+    return (((_needed | _filtered) >> column) & 1) != 0;
+  }
+
+ private:
+  IRS_FORCE_INLINE bool Needs(uint32_t column) const noexcept {
+    return ((_needed >> column) & 1) != 0;
+  }
+
+  duckdb::DependencyManager& Dependencies() const {
+    return *_database.GetDependencyManager();
+  }
+
+  SystemSet SetOf(catalog::CatalogSnapshots& snapshots,
+                  duckdb::CatalogSet& set) const;
+
+  std::span<const catalog::CatalogEdge> WalkedSubjects(
+    duckdb::CatalogEntry& entry) const;
+
+  template<typename Get, typename Ctx>
+  IRS_FORCE_INLINE decltype(auto) Value(const Get& get, Ctx& ctx) {
+    if constexpr (std::is_invocable_v<const Get&, Ctx&, SystemScan&>) {
+      return std::invoke(get, ctx, *this);
+    } else {
+      return std::invoke(get, ctx);
+    }
+  }
+
+  template<const auto& Shape, size_t I, bool Checked>
+  IRS_FORCE_INLINE static bool Write(
+    SystemScan& scan, typename SystemShapeOf<Shape>::Context& ctx) {
+    using T = SystemShapeOf<Shape>;
+    constexpr auto kColumn = T::kColumns[I];
+    constexpr auto& kMeta = T::kSql.columns[kColumn];
+    constexpr bool kNullDefault = !kMeta.zero_default;
+    const auto put = [&](const auto& value) {
+      using V = std::remove_cvref_t<decltype(value)>;
+      static_assert(!std::is_same_v<V, char> || kMeta.type == kChar,
+                    "a char getter feeds a \"char\" column");
+      if constexpr (Checked) {
+        if (!scan.Passes(kColumn, value)) {
+          return false;
+        }
+        if (!scan.Needs(kColumn)) {
+          return true;
+        }
+      }
+      const auto& target = scan._vectors[scan._slots[kColumn]];
+      if constexpr (kNullDefault) {
+        target.validity->SetValid(scan._row);
+      }
+      if constexpr (std::is_integral_v<V> || std::is_enum_v<V>) {
+        SDB_ASSERT(scan._table.Holds(kColumn, Integer<int64_t>(value)));
+      }
+      if constexpr (kMeta.physical == duckdb::PhysicalType::LIST) {
+        scan.PutList<kMeta.element, !kMeta.not_null>(target, value);
+      } else {
+        scan.Put<kMeta.physical>(target, scan._row, value);
+      }
+      return true;
+    };
+    decltype(auto) value = scan.Value(std::get<I>(Shape.columns).get, ctx);
+    if constexpr (SystemOptional<std::remove_cvref_t<decltype(value)>>::value) {
+      static_assert(!(kMeta.not_null && kNullDefault),
+                    "a NOT NULL column without a default is always set");
+      if (value) {
+        return put(*value);
+      }
+      if (Checked && ((scan._rejecting >> kColumn) & 1) != 0) {
+        return false;
+      }
+      if (!Checked || scan.Needs(kColumn)) {
+        scan.template PutDefault<T::kSql, kColumn>();
+      }
+      return true;
+    } else if constexpr (std::is_lvalue_reference_v<decltype(value)> &&
+                         std::is_same_v<std::remove_cvref_t<decltype(value)>,
+                                        duckdb::Identifier>) {
+      return put(SystemStableText{value.GetIdentifierName()});
+    } else {
+      return put(value);
+    }
+  }
+
+  template<const auto& Shape, size_t... I>
+  static consteval auto MakeChecks(std::index_sequence<I...>) {
+    using T = SystemShapeOf<Shape>;
+    using Checker = bool (*)(SystemScan&, typename T::Context&);
+    std::array<Checker, 64> checks{};
+    ((checks[T::kColumns[I]] = [] -> Checker {
+       using V = std::remove_cvref_t<decltype(std::declval<SystemScan&>().Value(
+         std::get<I>(Shape.columns).get,
+         std::declval<typename T::Context&>()))>;
+       constexpr auto kPhysical = T::kSql.columns[T::kColumns[I]].physical;
+       if constexpr (kSystemCheckable<typename SystemOptional<V>::Type> &&
+                     (kPhysical == duckdb::PhysicalType::VARCHAR ||
+                      kPhysical == duckdb::PhysicalType::BOOL ||
+                      kPhysical == duckdb::PhysicalType::INT16 ||
+                      kPhysical == duckdb::PhysicalType::INT32 ||
+                      kPhysical == duckdb::PhysicalType::INT64)) {
+         return &Write<Shape, I, true>;
+       } else {
+         return nullptr;
+       }
+     }()),
+     ...);
+    return checks;
+  }
+
+  template<const auto& Shape>
+  static constexpr auto kChecks =
+    MakeChecks<Shape>(std::make_index_sequence<SystemShapeOf<Shape>::kSize>{});
+
+  bool Filtered(uint32_t column) const noexcept {
+    return ((_filtered >> column) & 1) != 0;
+  }
+
+  const SystemFilter* FilterOf(uint32_t column) const {
+    return Filtered(column) ? &_filters[_filter_index[column]] : nullptr;
+  }
+
+  template<typename V>
+  IRS_FORCE_INLINE bool Passes(uint32_t column, const V& value) const {
+    const auto& filter = _filters[_filter_index[column]];
+    if constexpr (std::is_same_v<V, char>) {
+      SDB_ASSERT(_table.Sql().columns[column].type == kChar);
+      return filter.chars[static_cast<unsigned char>(value)];
+    } else if constexpr (std::is_same_v<V, SystemStableText>) {
+      return filter.texts.Passes(value.text);
+    } else if constexpr (std::is_same_v<V, SystemConcatText>) {
+      return filter.texts.Passes(value);
+    } else if constexpr (std::is_same_v<V, SystemText>) {
+      return std::visit([&](const auto& text) { return Passes(column, text); },
+                        value);
+    } else if constexpr (std::is_convertible_v<const V&, std::string_view>) {
+      return filter.texts.Passes(std::string_view{value});
+    } else {
+      static_assert(std::is_integral_v<V> || std::is_enum_v<V>,
+                    "a filtered column needs a text or integer value");
+      return filter.numbers.Passes(Integer<int64_t>(value));
+    }
+  }
+  template<typename T, typename V>
+  static T Integer(const V& value) {
+    if constexpr (std::is_enum_v<V>) {
+      return static_cast<T>(std::to_underlying(value));
+    } else {
+      static_assert(std::is_integral_v<V>, "integer column needs an integer");
+      return static_cast<T>(value);
+    }
+  }
+
+  template<typename T>
+  static T* Cells(const SystemVector& target) {
+    return reinterpret_cast<T*>(target.data);
+  }
+
+  template<duckdb::PhysicalType P, typename V>
+  IRS_FORCE_INLINE void Put(const SystemVector& target, duckdb::idx_t row,
+                            const V& value) {
+    if constexpr (P == duckdb::PhysicalType::BOOL) {
+      static_assert(std::is_convertible_v<const V&, bool> &&
+                      !std::is_pointer_v<V> &&
+                      !std::is_convertible_v<const V&, std::string_view>,
+                    "bool column needs a bool");
+      Cells<bool>(target)[row] = static_cast<bool>(value);
+    } else if constexpr (P == duckdb::PhysicalType::INT16) {
+      Cells<int16_t>(target)[row] = Integer<int16_t>(value);
+    } else if constexpr (P == duckdb::PhysicalType::INT32) {
+      Cells<int32_t>(target)[row] = Integer<int32_t>(value);
+    } else if constexpr (P == duckdb::PhysicalType::INT64 &&
+                         std::is_same_v<V, duckdb::timestamp_tz_t>) {
+      Cells<duckdb::timestamp_tz_t>(target)[row] = value;
+    } else if constexpr (P == duckdb::PhysicalType::INT64) {
+      Cells<int64_t>(target)[row] = Integer<int64_t>(value);
+    } else if constexpr (P == duckdb::PhysicalType::UINT64) {
+      Cells<uint64_t>(target)[row] = Integer<uint64_t>(value);
+    } else if constexpr (P == duckdb::PhysicalType::FLOAT) {
+      static_assert(std::is_arithmetic_v<V>, "real column needs a number");
+      Cells<float>(target)[row] = static_cast<float>(value);
+    } else if constexpr (P == duckdb::PhysicalType::DOUBLE) {
+      static_assert(std::is_arithmetic_v<V>, "real column needs a number");
+      Cells<double>(target)[row] = static_cast<double>(value);
+    } else if constexpr (P == duckdb::PhysicalType::VARCHAR) {
+      if constexpr (std::is_same_v<V, char>) {
+        PutText(target, row, std::string_view{&value, value ? 1U : 0U});
+      } else if constexpr (std::is_same_v<V, SystemStableText>) {
+        Cells<duckdb::string_t>(target)[row] = duckdb::string_t{
+          value.text.data(), static_cast<uint32_t>(value.text.size())};
+      } else if constexpr (std::is_same_v<V, duckdb::AclItem>) {
+        PutAcl(target, row, value);
+      } else if constexpr (std::is_same_v<V, SystemConcatText>) {
+        PutConcat(target, row, value);
+      } else if constexpr (std::is_same_v<V, SystemText>) {
+        std::visit([&](const auto& text) { Put<P>(target, row, text); }, value);
+      } else {
+        static_assert(std::is_convertible_v<const V&, std::string_view>,
+                      "text column needs a string");
+        PutText(target, row, std::string_view{value});
+      }
+    } else {
+      static_assert(false, "column type cannot be written");
+    }
+  }
+
+  template<duckdb::PhysicalType E, bool Nullable, typename R>
+  void PutList(const SystemVector& target, R& items) {
+    if constexpr (Nullable && std::is_same_v<std::ranges::range_value_t<R>,
+                                             duckdb::AclItem>) {
+      if (std::ranges::empty(items)) {
+        target.validity->SetInvalid(_row);
+        return;
+      }
+    }
+    auto& vector = *target.vector;
+    const auto offset = duckdb::ListVector::GetListSize(vector);
+    const auto length = static_cast<duckdb::idx_t>(std::ranges::size(items));
+    duckdb::ListVector::Reserve(vector, offset + length);
+    auto& child = duckdb::ListVector::GetChildMutable(vector);
+    const SystemVector elements{&child,
+                                duckdb::FlatVector::GetDataMutable(child),
+                                &duckdb::FlatVector::ValidityMutable(child)};
+    auto row = offset;
+    for (const auto& item : items) {
+      Put<E>(elements, row++, item);
+    }
+    Cells<duckdb::list_entry_t>(target)[_row] = {offset, length};
+    duckdb::ListVector::SetListSize(vector, offset + length);
+  }
+
+  template<const SystemSql& Sql, uint32_t C>
+  void PutDefault() {
+    constexpr auto& kMeta = Sql.columns[C];
+    const auto& target = _vectors[_slots[C]];
+    if constexpr (!kMeta.zero_default) {
+      target.validity->SetInvalid(_row);
+    } else if constexpr (kMeta.physical == duckdb::PhysicalType::VARCHAR) {
+      Put<duckdb::PhysicalType::VARCHAR>(target, _row, SystemStableText{});
+    } else {
+      Put<kMeta.physical>(target, _row, 0);
+    }
+  }
+
+  static void PutText(const SystemVector& target, duckdb::idx_t row,
+                      std::string_view value);
+  static void PutConcat(const SystemVector& target, duckdb::idx_t row,
+                        const SystemConcatText& value);
+  void PutAcl(const SystemVector& target, duckdb::idx_t row,
+              const duckdb::AclItem& item);
+  bool Overlaps(uint32_t column, int64_t min, int64_t max) const;
+  bool Possible(std::span<const SystemFact> facts) const;
+#ifdef SDB_DEV
+  bool Declared(uint64_t provided) const;
+#endif
+  void Compile(duckdb::column_t column, const duckdb::TableFilter& filter);
+  const SystemIndex* Choose(std::span<const SystemIndex> indexes,
+                            size_t name_probes) const;
+  std::string_view NamePrefix(std::span<const SystemIndex> indexes) const;
+  duckdb::optional_ptr<duckdb::CatalogEntry> FindOwner(
+    duckdb::idx_t oid) const {
+    return _database.GetOidIndex().GetVisibleOwner(oid, Transaction().view);
+  }
+  duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
+    std::string_view name, SystemSchemas system) const;
+  std::vector<duckdb::SchemaCatalogEntry*> Schemas(SystemSchemas system) const;
+  duckdb::optional_ptr<duckdb::CatalogEntry> FindOwned(
+    duckdb::idx_t oid, SystemSchemas system) const;
+  void VisitNamed(std::string_view name, const SystemEntries& entries,
+                  absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) const;
+
+  duckdb::ClientContext& _context;
+  duckdb::DuckCatalog& _database;
+  duckdb::CatalogTransaction _transaction;
+  const SystemTable& _table;
+  std::shared_ptr<const auth::RoleGraph> _roles;
+  std::vector<SystemFilter> _filters;
+  std::array<uint32_t, 64> _slots{};
+  std::vector<SystemConstant> _constants;
+  std::vector<SystemAlias> _aliases;
+  std::vector<SystemVector> _vectors;
+  duckdb::idx_t _row = 0;
+  size_t _skip = 0;
+  bool _full = false;
+  uint64_t _needed = 0;
+  uint64_t _filtered = 0;
+  uint64_t _rejecting = 0;
+  std::array<uint8_t, 64> _filter_index{};
+  uint64_t _pruned = 0;
+  std::vector<SystemPrune> _prunes;
+  std::string _text;
+  std::optional<Session> _session;
+  const catalog::CatalogSnapshot* _walked = nullptr;
+#ifdef SDB_DEV
+  duckdb::CatalogType _visiting = duckdb::CatalogType::INVALID;
+#endif
+};
+
+template<const SystemSql& Sql>
+class SystemTableScan : public SystemScan {
+ public:
+  static constexpr const SystemSql& kSql = Sql;
+
+  using SystemScan::SystemScan;
+
+  template<irs::utils::detail::FixedString Name, typename V>
+  bool Allows(const V& value) const {
+    return SystemScan::Allows(Sql[std::string_view{Name}], value);
+  }
+
+  template<irs::utils::detail::FixedString Name>
+  bool Allows(int64_t min, int64_t max) const {
+    return SystemScan::Allows(Sql[std::string_view{Name}], min, max);
+  }
+
+  template<irs::utils::detail::FixedString Name>
+  bool Reads() const noexcept {
+    return SystemScan::Reads(Sql[std::string_view{Name}]);
+  }
+};
+
+template<typename T, typename Entry>
+concept Visits = requires(T& table, Entry& entry) { table.Row(entry); };
+
+template<typename Entry, typename T>
+  requires Visits<T, Entry>
+void Visit(T& table, duckdb::CatalogEntry& entry) {
+#ifdef SDB_DEV
+  table.Visiting(entry.type);
+#endif
+  table.Row(entry.Cast<Entry>());
+#ifdef SDB_DEV
+  table.Visiting(duckdb::CatalogType::INVALID);
+#endif
+}
+
+template<typename Entry>
+void Visit(SystemScan&, duckdb::CatalogEntry&) {
+  static_assert(sizeof(Entry) > 0,
+                "dispatching an entry kind needs its definition");
+}
+
+template<typename T>
+void Dispatch(T& table, duckdb::CatalogEntry& entry) {
+  switch (entry.type) {
+    case duckdb::CatalogType::TABLE_ENTRY:
+      return Visit<duckdb::TableCatalogEntry>(table, entry);
+    case duckdb::CatalogType::VIEW_ENTRY:
+      return Visit<duckdb::ViewCatalogEntry>(table, entry);
+    case duckdb::CatalogType::INDEX_ENTRY:
+      return Visit<duckdb::IndexCatalogEntry>(table, entry);
+    case duckdb::CatalogType::SEQUENCE_ENTRY:
+      return Visit<duckdb::SequenceCatalogEntry>(table, entry);
+    case duckdb::CatalogType::TYPE_ENTRY:
+      return Visit<duckdb::TypeCatalogEntry>(table, entry);
+    case duckdb::CatalogType::SCHEMA_ENTRY:
+      return Visit<duckdb::SchemaCatalogEntry>(table, entry);
+    case duckdb::CatalogType::MACRO_ENTRY:
+    case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+      return Visit<duckdb::MacroCatalogEntry>(table, entry);
+    case duckdb::CatalogType::TRIGGER_ENTRY:
+      return Visit<duckdb::TriggerCatalogEntry>(table, entry);
+    case duckdb::CatalogType::ROLE_ENTRY:
+      return Visit<catalog::RoleCatalogEntry>(table, entry);
+    case duckdb::CatalogType::DATABASE_ENTRY:
+      return Visit<catalog::DatabaseCatalogEntry>(table, entry);
+    case duckdb::CatalogType::FOREIGN_SERVER_ENTRY:
+      return Visit<catalog::ForeignServerCatalogEntry>(table, entry);
+    case duckdb::CatalogType::TOKENIZER_ENTRY:
+      return Visit<catalog::TokenizerCatalogEntry>(table, entry);
+    case duckdb::CatalogType::SUBSCRIPTION_ENTRY:
+      return Visit<catalog::SubscriptionCatalogEntry>(table, entry);
+    case duckdb::CatalogType::INVALID:
+    case duckdb::CatalogType::PREPARED_STATEMENT:
+    case duckdb::CatalogType::COLLATION_ENTRY:
+    case duckdb::CatalogType::COORDINATE_SYSTEM_ENTRY:
+    case duckdb::CatalogType::JOB_ENTRY:
+    case duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY:
+    case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
+    case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
+    case duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY:
+    case duckdb::CatalogType::PRAGMA_FUNCTION_ENTRY:
+    case duckdb::CatalogType::COPY_FUNCTION_ENTRY:
+    case duckdb::CatalogType::WINDOW_FUNCTION_ENTRY:
+    case duckdb::CatalogType::DELETED_ENTRY:
+    case duckdb::CatalogType::RENAMED_ENTRY:
+    case duckdb::CatalogType::SECRET_ENTRY:
+    case duckdb::CatalogType::SECRET_TYPE_ENTRY:
+    case duckdb::CatalogType::SECRET_FUNCTION_ENTRY:
+    case duckdb::CatalogType::DEPENDENCY_ENTRY:
+      return Visit<duckdb::CatalogEntry>(table, entry);
+  }
+}
+
+template<typename Source>
+class SystemCursor;
+
+template<typename Row, typename Holder>
+class SystemCursor<SystemArray<Row, Holder>> final {
+ public:
+  explicit SystemCursor(SystemArray<Row, Holder> array)
+    : _array{std::move(array)} {}
+
+  size_t Size() const noexcept {
+    return _array.picked ? _array.picked->size() : _array.rows.Rows().size();
+  }
+
+  template<typename T>
+  bool Run(T& table) {
+    for (const auto size = Size(); _next < size; ++_next) {
+      if (table.Step([&] {
+            table.Row(_array.picked ? *(*_array.picked)[_next]
+                                    : _array.rows.Rows()[_next]);
+          })) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+ private:
+  SystemArray<Row, Holder> _array;
+  size_t _next = 0;
+};
+
+class SystemKeyCursor final {
+ public:
+  template<typename T, typename Entries>
+  bool Run(T& table, const Entries& entries) {
+    const auto& keys = entries.keys;
+    const bool distinct = keys.Count() > 1 || keys.dependents;
+    for (const auto steps = keys.dependents ? 2 * keys.Count() : keys.Count();
+         _key < steps; ++_key) {
+      if (table.Step([&] {
+            table.VisitKey(entries, _key, [&](duckdb::CatalogEntry& entry) {
+              if (!distinct || Fresh(entry)) {
+                Dispatch(table, entry);
+              }
+            });
+          })) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+ private:
+  bool Fresh(const duckdb::CatalogEntry& entry) {
+    const auto [it, inserted] = _seen.try_emplace(&entry, _key);
+    return inserted || it->second == _key;
+  }
+
+  size_t _key = 0;
+  irs::containers::FlatHashMap<const duckdb::CatalogEntry*, size_t> _seen;
+};
+
+template<>
+class SystemCursor<SystemListed> final {
+ public:
+  explicit SystemCursor(SystemListed listed) : _listed{std::move(listed)} {}
+
+  template<typename T>
+  bool Run(T& table) {
+    const auto entries = _listed.set.entries;
+    for (; _next < entries.size(); ++_next) {
+      if (table.Step([&] { Dispatch(table, *entries[_next]); })) {
+        return true;
+      }
+    }
+    return _keys.Run(table, _listed);
+  }
+
+ private:
+  SystemListed _listed;
+  size_t _next = 0;
+  SystemKeyCursor _keys;
+};
+
+template<>
+class SystemCursor<SystemEntries> final {
+ public:
+  explicit SystemCursor(SystemEntries entries) : _entries{std::move(entries)} {}
+
+  template<typename T>
+  bool Run(T& table) {
+    if (_keys.Run(table, _entries)) {
+      return true;
+    }
+    for (; _schema < _entries.schemas.size(); ++_schema, _slot = 0) {
+      for (; _slot < _entries.sets.size(); ++_slot, _pos = 0, _set = {}) {
+        if (Walk(table, *_entries.schemas[_schema], _entries.sets[_slot])) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+ private:
+  template<typename T>
+  bool Walk(T& table, duckdb::SchemaCatalogEntry& schema,
+            duckdb::CatalogType type) {
+    if constexpr (Visits<T, duckdb::SchemaCatalogEntry>) {
+      if (type == duckdb::CatalogType::SCHEMA_ENTRY) {
+        return table.Step(
+          [&] { Visit<duckdb::SchemaCatalogEntry>(table, schema); });
+      }
+    }
+    const bool relations = type == duckdb::CatalogType::TABLE_ENTRY ||
+                           type == duckdb::CatalogType::VIEW_ENTRY;
+    if (!_set.snapshot) {
+      const bool keyed = relations && _entries.wanted.test(std::to_underlying(
+                                        duckdb::CatalogType::INDEX_ENTRY));
+      _set = table.MemberSet(
+        schema, type, _entries.prefix && !keyed ? &*_entries.prefix : nullptr);
+    }
+    if constexpr (Visits<T, duckdb::TableCatalogEntry> ||
+                  Visits<T, duckdb::ViewCatalogEntry>) {
+      if (relations) {
+        return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
+          if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
+            Visit<duckdb::TableCatalogEntry>(table, entry);
+          } else {
+            Visit<duckdb::ViewCatalogEntry>(table, entry);
+          }
+        });
+      }
+    }
+    if constexpr (Visits<T, duckdb::IndexCatalogEntry>) {
+      if (type == duckdb::CatalogType::INDEX_ENTRY) {
+        return Walk<duckdb::IndexCatalogEntry>(table, schema);
+      }
+    }
+    if constexpr (Visits<T, duckdb::SequenceCatalogEntry>) {
+      if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
+        return Walk<duckdb::SequenceCatalogEntry>(table, schema);
+      }
+    }
+    if constexpr (Visits<T, duckdb::TypeCatalogEntry>) {
+      if (type == duckdb::CatalogType::TYPE_ENTRY) {
+        return Walk<duckdb::TypeCatalogEntry>(table, schema);
+      }
+    }
+    if constexpr (Visits<T, duckdb::MacroCatalogEntry>) {
+      if (type == duckdb::CatalogType::MACRO_ENTRY ||
+          type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+        return Walk<duckdb::MacroCatalogEntry>(table, schema);
+      }
+    }
+    if constexpr (Visits<T, catalog::TokenizerCatalogEntry>) {
+      if (type == duckdb::CatalogType::TOKENIZER_ENTRY) {
+        return Walk<catalog::TokenizerCatalogEntry>(table, schema);
+      }
+    }
+    SDB_UNREACHABLE();
+  }
+
+  template<typename Entry, typename T>
+  bool Walk(T& table, const duckdb::SchemaCatalogEntry& schema) {
+    return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
+      Visit<Entry>(table, entry);
+    });
+  }
+
+  template<typename T, typename V>
+  bool Walk(T& table, const duckdb::SchemaCatalogEntry& schema, V&& visit) {
+    const auto entries = _set.entries;
+    const bool user_schema = !schema.internal;
+    table.Walking(_set.snapshot.get());
+    for (; _pos < entries.size(); ++_pos) {
+      if (_pos + kPrefetchAhead < entries.size()) {
+        __builtin_prefetch(entries[_pos + kPrefetchAhead]);
+      }
+      auto& entry = *entries[_pos];
+      if (!_entries.wanted.test(std::to_underlying(entry.type)) ||
+          (entry.internal && user_schema)) {
+        continue;
+      }
+      if (table.Step([&] { visit(entry); })) {
+        return true;
+      }
+    }
+    table.Walking(nullptr);
+    return false;
+  }
+
+  static constexpr size_t kPrefetchAhead = 8;
+
+  SystemEntries _entries;
+  SystemKeyCursor _keys;
+  size_t _schema = 0;
+  size_t _slot = 0;
+  size_t _pos = 0;
+  SystemSet _set;
+};
+
+template<typename Source>
+SystemCursor(Source) -> SystemCursor<Source>;
+
+template<typename T>
+auto SystemCursors(T& table) {
+  return std::apply(
+    [&](const auto&... sources) {
+      return std::tuple{SystemCursor{table.Resolve(sources)}...};
+    },
+    T::kSources);
+}
+
+template<typename T>
+class SystemScanState final : public duckdb::GlobalTableFunctionState {
+ public:
+  SystemScanState(duckdb::ClientContext& context,
+                  duckdb::TableFunctionInitInput& input)
+    : _table{context, input}, _cursors{SystemCursors(_table)} {}
+
+  void Next(duckdb::DataChunk& output) {
+    if (_finished) {
+      return;
+    }
+    _table.Begin(output);
+    _finished = !std::apply(
+      [&](auto&... cursors) { return (... || cursors.Run(_table)); }, _cursors);
+    _table.End(output);
+  }
+
+ private:
+  T _table;
+  decltype(SystemCursors(std::declval<T&>())) _cursors;
+  bool _finished = false;
+};
+
+template<typename T>
+duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SystemScanInit(
+  duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
+  return duckdb::make_uniq<SystemScanState<T>>(context, input);
+}
+
+template<typename T>
+void SystemScanRun(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
+                   duckdb::DataChunk& output) {
+  input.global_state->Cast<SystemScanState<T>>().Next(output);
+}
+
+template<typename T>
+SystemTable::SystemTable(std::type_identity<T>, const SystemSql& sql)
+  : SystemTable{sql,
+                {&SystemScanInit<T>, &SystemScanRun<T>},
+                T::kFacts,
+                T::kVisibility,
+                T::kTypeShapes,
+                T::kColumnKeys,
+                T::kRows,
+                T::kSuperuserOnly} {}
+
+template<typename T>
+SystemTable SystemTableOf() {
+  return SystemTable{std::type_identity<T>{}, T::kSql};
+}
+
+}  // namespace sdb::pg

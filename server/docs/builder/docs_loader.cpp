@@ -54,8 +54,8 @@
 #include "connector/duckdb_client_state.h"
 #include "docs/builder/docs_data.h"
 #include "docs/docs_index_data.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 #include "search/search_table.h"
 #include "utils/file_utils.h"
 
@@ -247,10 +247,11 @@ class Loader {
          std::span<const Doc> docs)
     : _conn{irs::DuckDBEngine::Instance().CreateConnection()},
       _ctx{std::make_shared<ConnectionContext>(
-        *_conn->context, irs::StaticStrings::kDefaultUser, pg::kRootUser,
-        database, database_id, nullptr, 0, nullptr)},
-      _progress{connector::SereneDBClientState::Register(*_conn->context, _ctx)
-                  .progress_source},
+        *_conn->context, irs::StaticStrings::kDefaultUser, std::string_view{},
+        pg::kRootUser, database, database_id, nullptr, 0, nullptr)},
+      _progress{
+        connector::SereneDBClientState::Register(*_conn->context, _ctx, false)
+          .progress_source},
       _docs{docs} {
     connector::SetDefaultSearchPath(*_conn->context, database);
   }

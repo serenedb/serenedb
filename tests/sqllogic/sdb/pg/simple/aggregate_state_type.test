@@ -1,0 +1,7 @@
+query
+SELECT pg_typeof(to_aggregate_state(NULL, 'avg', [make_type('INTEGER')]))::text AS a,
+       typeof(to_aggregate_state(NULL, 'avg', [make_type('INTEGER')])) AS b,
+       to_aggregate_state(NULL, 'avg', [make_type('INTEGER')]) IS NULL AS c;
+----
+a	b	c
+record	AGGREGATE_STATE	t

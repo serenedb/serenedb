@@ -1116,6 +1116,10 @@ class Enforcer {
       }
       return;
     }
+    if (info.type == CatalogType::SECRET_ENTRY) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied: superuser required"));
+    }
     if (!IsSchemaScoped(info.type)) {
       return;
     }

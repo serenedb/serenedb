@@ -58,15 +58,13 @@ Root::ptr MakeShape(const Context& ctx, Args&&... args) {
     utils::Empty{}, std::forward<Args>(args)...);
 }
 
-inline constexpr uint64_t kPrunedVisitsPerHit = 400;
-inline constexpr uint64_t kPrunedVisitedShare = 100;
-
 inline uint64_t PrunedCandidates(uint64_t docs, const Context& ctx) noexcept {
-  if (ctx.k == 0) {
+  if (docs <= ctx.k || ctx.k == 0) {
     return docs;
   }
-  return std::min(
-    docs, uint64_t{ctx.k} * kPrunedVisitsPerHit + docs / kPrunedVisitedShare);
+  const auto k = static_cast<double>(ctx.k);
+  return std::min(docs, static_cast<uint64_t>(
+                          k * (1 + std::log(static_cast<double>(docs) / k))));
 }
 
 template<typename Make>

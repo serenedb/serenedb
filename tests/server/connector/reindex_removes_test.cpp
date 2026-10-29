@@ -91,6 +91,7 @@ class ReindexRemovesTest : public ::testing::Test {
     irs::IndexWriterOptions options;
     options.db = &EngineDb();
     options.reader_options.db = &EngineDb();
+    options.column_options = [](irs::field_id) { return irs::ColumnOptions{}; };
     options.row_group_size = kRowGroupSize;
     _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
   }

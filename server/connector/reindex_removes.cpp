@@ -231,6 +231,7 @@ class SegmentRemoves {
     KeyHalf<uint64_t> file_half{files, ctx};
     KeyHalf<int64_t> row_half{key->StructField(1), ctx};
     _rows = &key->StructField(1);
+    SDB_ASSERT(_rows->DataRgCount() == files.DataRgCount());
     for (size_t block = 0; block != files.DataRgCount(); ++block) {
       const auto first = files.DataBlockFirstRow(block);
       const auto& meta = files.DataBlocks()[block];
@@ -241,7 +242,8 @@ class SegmentRemoves {
         continue;
       }
       if (bounded && min == max) {
-        RemoveFileRows(_deletes.Of(min), first, meta.tuple_count, row_half);
+        RemoveFileRows(_deletes.Of(min), block, first, meta.tuple_count,
+                       row_half);
       } else {
         RemoveMixed(first, meta.tuple_count, file_half, row_half);
       }
@@ -270,38 +272,25 @@ class SegmentRemoves {
     _range_begin = _range_end = 0;
   }
 
-  void RemoveFileRows(const FileDeletes& file, uint64_t first, uint64_t count,
-                      KeyHalf<int64_t>& row_half) {
+  void RemoveFileRows(const FileDeletes& file, size_t block, uint64_t first,
+                      uint64_t count, KeyHalf<int64_t>& row_half) {
     if (file.whole) {
       Add(first, first + count);
       return;
     }
-    const auto end = first + count;
-    for (; _row_block != _rows->DataRgCount(); ++_row_block) {
-      const auto block_first = _rows->DataBlockFirstRow(_row_block);
-      const auto& meta = _rows->DataBlocks()[_row_block];
-      const auto block_end = block_first + meta.tuple_count;
-      if (block_end <= first) {
-        continue;
-      }
-      if (block_first >= end) {
-        return;
-      }
-      const auto from = std::max(block_first, first);
-      const auto to = std::min(block_end, end);
-      int64_t min = 0;
-      int64_t max = 0;
-      if (!Bounds(meta.statistics, min, max) || file.Any(min, max)) {
-        row_half.Read(from, to - from, [&](uint64_t row, int64_t value) {
-          if (file.Contains(value)) {
-            Add(row, row + 1);
-          }
-        });
-      }
-      if (block_end > end) {
-        return;
-      }
+    const auto& meta = _rows->DataBlocks()[block];
+    SDB_ASSERT(_rows->DataBlockFirstRow(block) == first &&
+               meta.tuple_count == count);
+    int64_t min = 0;
+    int64_t max = 0;
+    if (Bounds(meta.statistics, min, max) && !file.Any(min, max)) {
+      return;
     }
+    row_half.Read(first, count, [&](uint64_t row, int64_t value) {
+      if (file.Contains(value)) {
+        Add(row, row + 1);
+      }
+    });
   }
 
   void RemoveMixed(uint64_t first, uint64_t count, KeyHalf<uint64_t>& file_half,
@@ -335,7 +324,6 @@ class SegmentRemoves {
   uint32_t _index;
   irs::DocRemovalBuilder& _removal;
   const irs::ColumnReader* _rows = nullptr;
-  size_t _row_block = 0;
   std::vector<FileRun> _file_runs;
   uint64_t _range_begin = 0;
   uint64_t _range_end = 0;

@@ -311,6 +311,8 @@ def main(argv):
         base_env["SDB_FAULT_INJECTION"] = "1" if build.fault_injection else "0"
     base_env.setdefault("SDB_DOCKER_OWNER", f"test-py-{os.getpid()}")
     os.environ["SDB_DOCKER_OWNER"] = base_env["SDB_DOCKER_OWNER"]
+    base_env.update(build.coverage_env(out / "profiles"))
+    os.environ.update(build.coverage_env(out / "profiles"))
     ctx = Context(root=ROOT, build=build, config=config, out_dir=out,
                   timing=Timing.load(args.timing), jobs=jobs,
                   mem_gb=args.mem or memory_gb() * 0.75, verbose=args.verbose or args.keep,

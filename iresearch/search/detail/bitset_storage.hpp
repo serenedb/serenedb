@@ -27,6 +27,7 @@
 
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -48,6 +49,14 @@ class BitsetStorage {
       _words{static_cast<uint32_t>((docs_count + (kBits - 1)) / kBits)},
       _alloc{_words + kWindowDocs / kBits + 1},
       _bits{std::make_unique<uint64_t[]>(_alloc + 1)} {}
+
+  BitsetStorage(doc_id_t docs_count, memory::AllocateOnlyTag)
+    : _end{kMin + docs_count},
+      _words{static_cast<uint32_t>((docs_count + (kBits - 1)) / kBits)},
+      _alloc{_words + kWindowDocs / kBits + 1},
+      _bits{std::make_unique_for_overwrite<uint64_t[]>(_alloc + 1)} {
+    _bits[0] = 0;
+  }
 
   uint64_t* Words() noexcept { return _bits.get() + 1; }
   const uint64_t* Words() const noexcept { return _bits.get() + 1; }

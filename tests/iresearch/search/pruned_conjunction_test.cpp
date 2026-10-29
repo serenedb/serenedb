@@ -103,6 +103,7 @@ bool AlmostEqual(irs::score_t lhs, irs::score_t rhs) {
 struct Shape {
   std::vector<std::string_view> must;
   std::vector<std::string_view> must_not;
+  std::vector<std::vector<std::string_view>> any;
 };
 
 class PrunedConjunctionTest : public tests::IndexTestBase {
@@ -200,13 +201,22 @@ class PrunedConjunctionTest : public tests::IndexTestBase {
 
   void Check(const Shape& shape) {
     SCOPED_TRACE(absl::StrCat("+", absl::StrJoin(shape.must, " +"), " -",
-                              absl::StrJoin(shape.must_not, " -")));
+                              absl::StrJoin(shape.must_not, " -"), " any ",
+                              shape.any.size()));
     irs::BooleanFilter filter;
     for (const auto term : shape.must) {
       filter.Add(Clause(term), irs::Occur::Must);
     }
     for (const auto term : shape.must_not) {
       filter.Add(Clause(term), irs::Occur::MustNot);
+    }
+    for (const auto& terms : shape.any) {
+      auto group = std::make_unique<irs::BooleanFilter>();
+      for (const auto term : terms) {
+        group->Add(Clause(term), irs::Occur::Should);
+      }
+      group->SetMinShouldMatch(1);
+      filter.Add(std::move(group), irs::Occur::Must);
     }
     const auto matches = Matches(filter);
     std::vector<irs::score_t> ranked;
@@ -279,6 +289,18 @@ TEST_P(PrunedConjunctionTest, conjunctions_with_exclusions) {
          {{"sparse", "dense"}, {"run", "holes"}},
          {{"cluster", "dense"}, {"half"}},
          {{"mid", "dense", "half"}, {"rare", "cluster"}},
+       }) {
+    Check(shape);
+  }
+}
+
+TEST_P(PrunedConjunctionTest, conjunctions_with_nested_disjunctions) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {{"mid"}, {}, {{"half", "dense"}}},
+         {{"sparse"}, {}, {{"half", "cluster"}}},
+         {{"mid"}, {"rare"}, {{"dense", "holes"}}},
+         {{"cluster"}, {}, {{"half", "run"}, {"dense", "mid"}}},
        }) {
     Check(shape);
   }

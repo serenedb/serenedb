@@ -44,8 +44,6 @@ template<typename Lead, typename Others, typename Excludes, typename Table>
 class PrunedConjunction : public Root {
  public:
   static constexpr uint32_t kChunk = kScoreBlock;
-  static constexpr size_t kNarrowWindowClauses = 4;
-  static constexpr uint32_t kNarrowFragment = 32;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
 
   template<typename Init, typename ExcludesArgs>
@@ -57,7 +55,6 @@ class PrunedConjunction : public Root {
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _admit{table} {
     SDB_ASSERT(size > 1);
-    _narrow = size >= kNarrowWindowClauses;
     init(_lead, 0);
   }
 
@@ -72,7 +69,6 @@ class PrunedConjunction : public Root {
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _admit{table} {
     SDB_ASSERT(size > 1);
-    _narrow = size >= kNarrowWindowClauses;
   }
 
   PrunedConjunction(PrunedConjunction&&) = delete;
@@ -81,14 +77,8 @@ class PrunedConjunction : public Root {
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
     for (auto doc = _lead.Seek(min); doc < max;) {
       const auto threshold = collector.ScoreThreshold();
-      const auto others_end = _others.AdvanceTo(doc);
-      const auto lead_last = _lead.BlockLast();
-      auto last = lead_last;
-      if (_narrow && doc < others_end && others_end < lead_last &&
-          static_cast<uint64_t>(others_end - doc) * kNarrowFragment >=
-            static_cast<uint64_t>(lead_last - doc)) {
-        last = others_end;
-      }
+      _others.AdvanceTo(doc);
+      auto last = _lead.BlockLast();
       if (last >= max) [[unlikely]] {
         last = max - 1;
       }
@@ -254,7 +244,6 @@ class PrunedConjunction : public Root {
   [[no_unique_address]] utils::Need<kDocFirst, ScoreBatch> _batch;
   [[no_unique_address]] utils::Need<kDocFirst, std::array<Bucket, kBuckets>>
     _buckets;
-  bool _narrow = false;
   uint32_t _span = 1;
   [[no_unique_address]] Admit<Table> _admit;
 };

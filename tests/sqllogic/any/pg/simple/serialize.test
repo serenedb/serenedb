@@ -1056,3 +1056,11 @@ SELECT ROW(ROW('\x68'::bytea)) AS kostya;
 ----
 kostya
 ("(""\\\\\\\\x68"")")
+
+
+# Record fields print as their types do outside a record.
+query
+SELECT ROW(1::oid, 'a'::"char", '1/2'::pg_lsn, B'101'::bit(3), '10:00:00+02'::timetz, '{"a b",NULL}'::text[]) AS kostya;
+----
+kostya
+(1,a,1/2,101,10:00:00+02,"{""a b"",NULL}")

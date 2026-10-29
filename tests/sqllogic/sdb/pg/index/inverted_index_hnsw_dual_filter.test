@@ -1,0 +1,296 @@
+# A search table stores every column, so a predicate on an indexed column can
+# be answered from the index or from the columns. Both sides return the same
+# rows, for a literal WHERE and a prepared one, beside predicates only one
+# side can answer.
+
+statement ok
+CREATE TABLE hd (pk INTEGER PRIMARY KEY, emb FLOAT[8], cat INTEGER,
+  num INTEGER, tag VARCHAR, extra INTEGER)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX hd_idx ON hd
+  USING inverted(pk, cat, num, tag, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO hd SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i % 10, i,
+  CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END, i % 13
+FROM range(3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hd;
+
+query
+EXPLAIN SELECT pk FROM hd WHERE cat = 4 AND num < 2000 AND tag @@ 'even'
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────╮
+│ Index: hd                          │
+│ Lookup: search                     │
+│ Index Filter:                      │
+│ ╭─ And ──────╮                     │
+│ ╰──────┬─────╯                     │
+│        ├─────────────────╮         │
+│ ╭─ Terms ────╮  ╭─ Terms ┴───────╮ │
+│ │ Field: cat │  │ Field: tag     │ │
+│ │ Values: 4  │  │ Values: 'even' │ │
+│ ╰────────────╯  ╰────────────────╯ │
+│ Column Filter: num < 2000          │
+│ Index or Column Filter: cat = 4    │
+│ Score: l2_distance(emb, FLOAT[8])  │
+│ Top: 4                             │
+│ Projections: pk                    │
+│ ~120 rows                          │
+╰────────────────────────────────────╯
+
+query
+EXPLAIN SELECT pk FROM hd WHERE cat = 3 AND extra = 5
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: hd                         │
+│ Lookup: search                    │
+│ Index Filter:                     │
+│ ╭─ Term ─────╮                    │
+│ │ Field: cat │                    │
+│ │ Value: 3   │                    │
+│ ╰────────────╯                    │
+│ Column Filter: extra = 5          │
+│ Index or Column Filter: cat = 3   │
+│ Score: l2_distance(emb, FLOAT[8]) │
+│ Top: 4                            │
+│ Projections: pk                   │
+│ ~47 rows                          │
+╰───────────────────────────────────╯
+
+statement ok
+SET sdb_hnsw_filter_mode = 'walk';
+
+statement ok
+PREPARE hd_prepared AS SELECT pk FROM hd WHERE cat = $2 AND num >= $3
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 4;
+
+statement ok
+SET sdb_hnsw_column_filter = 'read';
+
+query
+SELECT pk FROM hd WHERE cat = 3
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+1503
+1493
+1513
+1483
+
+query
+SELECT pk FROM hd WHERE num BETWEEN 100 AND 200
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+200
+199
+198
+197
+
+query
+SELECT pk FROM hd WHERE cat IN (1, 2)
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+1501
+1502
+1492
+1491
+
+query
+SELECT pk FROM hd WHERE cat = 3 AND num < 1000
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+993
+983
+973
+963
+
+query
+SELECT pk FROM hd WHERE cat = 4 AND tag @@ 'even'
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+1504
+1494
+1514
+1484
+
+query
+SELECT pk FROM hd WHERE cat = 3 AND extra = 5
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+1513
+1383
+1643
+1253
+
+query
+EXECUTE hd_prepared([1500.4, 0, 0, 0, 0, 0, 0, 0], 3, 1490);
+----
+pk
+1503
+1493
+1513
+1523
+
+statement ok
+SET sdb_hnsw_column_filter = 'fold';
+
+query
+SELECT pk FROM hd WHERE cat = 3
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+1503
+1493
+1513
+1483
+
+query
+SELECT pk FROM hd WHERE num BETWEEN 100 AND 200
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+200
+199
+198
+197
+
+query
+SELECT pk FROM hd WHERE cat IN (1, 2)
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+1501
+1502
+1492
+1491
+
+query
+SELECT pk FROM hd WHERE cat = 3 AND num < 1000
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+993
+983
+973
+963
+
+query
+SELECT pk FROM hd WHERE cat = 4 AND tag @@ 'even'
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+1504
+1494
+1514
+1484
+
+query
+SELECT pk FROM hd WHERE cat = 3 AND extra = 5
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+1513
+1383
+1643
+1253
+
+query
+EXECUTE hd_prepared([1500.4, 0, 0, 0, 0, 0, 0, 0], 3, 1490);
+----
+pk
+1503
+1493
+1513
+1523
+
+statement ok
+RESET sdb_hnsw_column_filter;
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+query
+SELECT pk FROM hd WHERE cat = 3
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+1503
+1493
+1513
+1483
+
+query
+EXECUTE hd_prepared([1500.4, 0, 0, 0, 0, 0, 0, 0], 3, 1490);
+----
+pk
+1503
+1493
+1513
+1523
+
+# Deleted rows stay out on both sides.
+statement ok
+DELETE FROM hd WHERE pk IN (1503, 1493);
+
+statement ok
+VACUUM (REFRESH_TABLE) hd;
+
+statement ok
+SET sdb_hnsw_filter_mode = 'walk';
+
+statement ok
+SET sdb_hnsw_column_filter = 'read';
+
+query
+SELECT pk FROM hd WHERE cat = 3
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+1513
+1483
+1523
+1473
+
+query
+EXECUTE hd_prepared([1500.4, 0, 0, 0, 0, 0, 0, 0], 3, 1490);
+----
+pk
+1513
+1523
+1533
+1543
+
+statement ok
+SET sdb_hnsw_column_filter = 'fold';
+
+query
+SELECT pk FROM hd WHERE cat = 3
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+1513
+1483
+1523
+1473
+
+query
+EXECUTE hd_prepared([1500.4, 0, 0, 0, 0, 0, 0, 0], 3, 1490);
+----
+pk
+1513
+1523
+1533
+1543

@@ -61,6 +61,7 @@
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "pg/catalog/oids.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "search/wal_recovery.h"
@@ -89,15 +90,15 @@ constexpr std::string_view kEngineDir = "engine_v1";
 void RemoveUnowned(const std::filesystem::path& directory,
                    const absl::flat_hash_set<duckdb::idx_t>& owned) {
   for (const auto& [oid, path] : OidDirectories(directory)) {
-    if (owned.contains(oid)) {
-      continue;
+    if (!owned.contains(oid)) {
+      RemoveDirectory(path);
     }
-    RemoveTree(path);
   }
 }
 
 template<typename Storage>
-void RequirePresent(const Storage& storage, const duckdb::CatalogEntry& entry) {
+void OpenLive(Storage& storage, const duckdb::CatalogEntry& entry) {
+  storage.Open();
   if (storage.Absent()) {
     SDB_FATAL(STARTUP, "the directory '", storage.Path().string(), "' of ",
               entry.name.GetIdentifierName(), " (oid ", entry.oid,
@@ -105,16 +106,16 @@ void RequirePresent(const Storage& storage, const duckdb::CatalogEntry& entry) {
   }
 }
 
-absl::flat_hash_set<duckdb::idx_t> StorageOids(SereneDBCatalog& catalog) {
+absl::flat_hash_set<duckdb::idx_t> OpenStorages(SereneDBCatalog& catalog) {
   absl::flat_hash_set<duckdb::idx_t> oids;
   ForEachSearchStorage(
     catalog,
     [&](SearchTableEntry& table) {
-      RequirePresent(*table.Storage(), table);
+      OpenLive(*table.Storage(), table);
       oids.insert(table.oid);
     },
     [&](InvertedIndexEntry& index) {
-      RequirePresent(*index.Storage(), index);
+      OpenLive(*index.Storage(), index);
       oids.insert(index.oid);
     });
   return oids;
@@ -129,14 +130,14 @@ void RemoveUnownedDatabases(const DataDirectory& layout,
   RemoveUnowned(layout.EngineDir(), databases);
 }
 
-void RemoveUnownedStorages(
+void OpenStorages(
   const DataDirectory& layout,
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached) {
   for (const auto& db : attached) {
     auto& catalog = db->GetCatalog();
+    const auto live = OpenStorages(catalog.Cast<SereneDBCatalog>());
     if (!catalog.InMemory()) {
-      RemoveUnowned(layout.DatabaseDir(db->oid),
-                    StorageOids(catalog.Cast<SereneDBCatalog>()));
+      RemoveUnowned(layout.DatabaseDir(db->oid), live);
     }
   }
 }
@@ -147,6 +148,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachCluster(
   const std::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
   RequestSereneDBStorageVersion(options);
+  db.oid = pg::kClusterCatalog;
   return duckdb::make_uniq<ClusterCatalog>(db);
 }
 
@@ -392,7 +394,7 @@ void InitCatalog(std::string_view directory) {
     });
   }
   const auto attached = SereneDBDatabases(manager);
-  RemoveUnownedStorages(layout, attached);
+  OpenStorages(layout, attached);
   for (const auto& db : attached) {
     db->GetStorageManager().FinishLoad(context);
   }

@@ -25,7 +25,7 @@
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting_pruned_clause.hpp"
 #include "iresearch/search/top/posting_pruned_lead.hpp"
-#include "iresearch/search/top/prune_leaves.hpp"
+#include "iresearch/search/top/pruned_leaves.hpp"
 #include "iresearch/search/top/pruned_req_opt.hpp"
 
 namespace irs::top {
@@ -56,11 +56,11 @@ Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
                                           .boost = posting.boost});
     };
     if (size == 2) {
-      return MakeShape<PrunedReqOpt, Lead, PruneLeaves<Clause, 1>>(
+      return MakeShape<PrunedReqOpt, Lead, PrunedLeaves<Clause, 1>>(
         ctx, ctx.fetcher, size, init);
     }
-    return MakeShape<PrunedReqOpt, Lead, PruneLeaves<Clause>>(ctx, ctx.fetcher,
-                                                              size, init);
+    return MakeShape<PrunedReqOpt, Lead, PrunedLeaves<Clause>>(ctx, ctx.fetcher,
+                                                               size, init);
   });
 }
 

@@ -1,0 +1,142 @@
+statement ok
+CREATE SCHEMA vrd;
+
+
+statement ok
+CREATE TABLE vrd.meat (id int PRIMARY KEY, kg int);
+
+
+statement ok
+CREATE TABLE vrd.bone (id int, len int);
+
+
+statement ok
+CREATE VIEW vrd.va AS SELECT * FROM vrd.meat;
+
+
+statement ok
+CREATE VIEW vrd.vb AS SELECT m.* FROM vrd.meat m;
+
+
+statement ok
+CREATE VIEW vrd.vc AS SELECT id, (SELECT max(len) FROM vrd.bone) AS mx FROM vrd.meat;
+
+
+statement ok
+CREATE VIEW vrd.vd AS SELECT m.id FROM vrd.meat AS m;
+
+
+statement ok
+CREATE VIEW vrd.ve AS SELECT vrd.meat.kg FROM vrd.meat;
+
+
+statement ok
+CREATE VIEW vrd.vf AS SELECT meat.kg FROM vrd.meat;
+
+
+statement ok
+CREATE VIEW vrd.vg AS SELECT a.id, b.len FROM vrd.meat a JOIN vrd.bone b ON a.id = b.id;
+
+
+statement ok
+CREATE VIEW vrd.vh AS SELECT bone.* FROM vrd.meat, vrd.bone;
+
+
+statement ok
+CREATE VIEW vrd.vi AS SELECT kg FROM vrd.meat JOIN vrd.bone USING (id);
+
+
+statement ok
+CREATE VIEW vrd.vj AS SELECT kg FROM vrd.meat m WHERE EXISTS (SELECT 1 FROM vrd.bone b WHERE b.len = m.kg);
+
+
+statement ok
+CREATE VIEW vrd.vk AS SELECT id FROM vrd.meat WHERE kg IN (SELECT len FROM vrd.bone WHERE len > kg);
+
+
+statement ok
+CREATE VIEW vrd.vl AS WITH w AS (SELECT len FROM vrd.bone) SELECT len FROM w;
+
+
+statement ok
+CREATE VIEW vrd.vm AS SELECT kg FROM vrd.meat WHERE EXISTS (SELECT * FROM vrd.bone);
+
+
+statement ok
+CREATE VIEW vrd.vn AS SELECT count(*) AS n FROM vrd.meat;
+
+
+query
+SELECT r.ev_class::regclass::text AS view, d.refobjid::regclass::text AS ref, d.refobjsubid, d.deptype
+FROM pg_rewrite r JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
+WHERE r.ev_class::regclass::text LIKE 'vrd.v%' AND d.deptype = 'n'
+ORDER BY 1, 2, 3;
+----
+view	ref	refobjsubid	deptype
+vrd.va	vrd.meat	1	n
+vrd.va	vrd.meat	2	n
+vrd.vb	vrd.meat	1	n
+vrd.vb	vrd.meat	2	n
+vrd.vc	vrd.bone	2	n
+vrd.vc	vrd.meat	1	n
+vrd.vd	vrd.meat	1	n
+vrd.ve	vrd.meat	2	n
+vrd.vf	vrd.meat	2	n
+vrd.vg	vrd.bone	1	n
+vrd.vg	vrd.bone	2	n
+vrd.vg	vrd.meat	1	n
+vrd.vh	vrd.bone	1	n
+vrd.vh	vrd.bone	2	n
+vrd.vh	vrd.meat	0	n
+vrd.vi	vrd.bone	1	n
+vrd.vi	vrd.meat	1	n
+vrd.vi	vrd.meat	2	n
+vrd.vj	vrd.bone	2	n
+vrd.vj	vrd.meat	2	n
+vrd.vk	vrd.bone	2	n
+vrd.vk	vrd.meat	1	n
+vrd.vk	vrd.meat	2	n
+vrd.vl	vrd.bone	2	n
+vrd.vm	vrd.bone	1	n
+vrd.vm	vrd.bone	2	n
+vrd.vm	vrd.meat	2	n
+vrd.vn	vrd.meat	0	n
+
+
+statement ok
+CREATE SEQUENCE vrd.s2;
+
+
+statement ok
+CREATE TABLE vrd.seqdef (a int DEFAULT coalesce(1, nextval('vrd.s2'), 2));
+
+
+statement ok
+CREATE TABLE vrd.gen (a int, b int GENERATED ALWAYS AS (a + 1));
+
+
+query
+SELECT d.classid::regclass::text AS class, d.objsubid, d.refobjid::regclass::text AS ref, d.refobjsubid, d.deptype
+FROM pg_depend d WHERE d.refobjid IN ('vrd.s2'::regclass, 'vrd.gen'::regclass) ORDER BY 1, 2, 3, 4, 5;
+----
+class	objsubid	ref	refobjsubid	deptype
+pg_attrdef	0	vrd.gen	1	n
+pg_attrdef	0	vrd.gen	2	i
+pg_attrdef	0	vrd.s2	0	n
+pg_type	0	vrd.gen	0	i
+
+
+statement ok
+CREATE TABLE vrd.nonconst (a bigint DEFAULT nextval('vrd.s2' || ''));
+
+
+query
+SELECT count(*) AS deps FROM pg_depend
+WHERE refobjid = 'vrd.s2'::regclass AND objid IN (SELECT oid FROM pg_attrdef WHERE adrelid = 'vrd.nonconst'::regclass);
+----
+deps
+0
+
+
+statement ok
+DROP SCHEMA vrd CASCADE;

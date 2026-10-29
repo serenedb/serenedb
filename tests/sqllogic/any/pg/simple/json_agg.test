@@ -1,0 +1,136 @@
+query
+SELECT json_agg(x) AS j FROM (VALUES (1), (2), (NULL)) t(x);
+----
+j
+[1, 2, null]
+
+
+query
+SELECT json_agg(x ORDER BY x DESC) AS j FROM (VALUES (1), (3), (2)) t(x);
+----
+j
+[3, 2, 1]
+
+
+query
+SELECT json_agg(DISTINCT x ORDER BY x) AS j FROM (VALUES (1), (1), (2)) t(x);
+----
+j
+[1, 2]
+
+
+query
+SELECT json_agg(x) FILTER (WHERE x > 1) AS j FROM (VALUES (1), (2), (3)) t(x);
+----
+j
+[2, 3]
+
+
+query
+SELECT json_agg(x) IS NULL AS empty FROM (SELECT 1 AS x WHERE false) t;
+----
+empty
+t
+
+
+query
+SELECT g, json_agg(x ORDER BY x) AS j FROM (VALUES ('a', 1), ('a', 2), ('b', 3)) t(g, x) GROUP BY g ORDER BY g;
+----
+g	j
+a	[1, 2]
+b	[3]
+
+
+query
+SELECT json_agg(s ORDER BY s) AS j FROM (VALUES ('a"b'), ('c')) t(s);
+----
+j
+["a\\"b", "c"]
+
+
+query
+SELECT replace(CAST(json_agg(t ORDER BY a) AS text), chr(10), '|') AS j FROM (VALUES (1, 'x'), (2, 'y')) t(a, b);
+----
+j
+[{"a":1,"b":"x"}, | {"a":2,"b":"y"}]
+
+
+query
+SELECT json_agg(x ORDER BY x) AS j FROM (VALUES (true), (false)) t(x);
+----
+j
+[false, true]
+
+
+query
+SELECT json_agg(x ORDER BY x) AS j FROM (VALUES (TIMESTAMP '2024-03-05 14:07:09'), (TIMESTAMP '2024-03-06 00:00:00')) t(x);
+----
+j
+["2024-03-05T14:07:09", "2024-03-06T00:00:00"]
+
+
+query
+SELECT json_agg_strict(x ORDER BY x) AS j FROM (VALUES (1), (NULL), (2)) t(x);
+----
+j
+[1, 2]
+
+
+query
+SELECT json_agg_strict(x) AS j FROM (VALUES (NULL::int)) t(x);
+----
+j
+[]
+
+
+query
+SELECT json_object_agg(k, v ORDER BY k) AS j FROM (VALUES ('b', 2), ('a', 1)) t(k, v);
+----
+j
+{ "a" : 1, "b" : 2 }
+
+
+query
+SELECT json_object_agg(k, v) FILTER (WHERE v > 1) AS j FROM (VALUES ('b', 2), ('a', 1)) t(k, v);
+----
+j
+{ "b" : 2 }
+
+
+statement error
+SELECT json_object_agg(k, v) FROM (VALUES (NULL::text, 1)) t(k, v);
+----
+db error: ERROR: null value not allowed for object key
+
+
+query
+SELECT json_object_agg_strict(k, v ORDER BY k) AS j FROM (VALUES ('a', 1), ('b', NULL)) t(k, v);
+----
+j
+{ "a" : 1 }
+
+
+statement error
+SELECT json_object_agg_strict(k, v) FROM (VALUES (NULL::text, NULL::int)) t(k, v);
+----
+db error: ERROR: null value not allowed for object key
+
+
+statement error
+SELECT json_object_agg_unique(k, v) FROM (VALUES ('a', 1), ('a', 2)) t(k, v);
+----
+db error: ERROR: duplicate JSON object key value: "a"
+
+
+query
+SELECT json_object_agg_unique(k, v ORDER BY k) AS j FROM (VALUES ('b', 2), ('a', 1)) t(k, v);
+----
+j
+{ "a" : 1, "b" : 2 }
+
+
+query
+SELECT json_object_agg_unique_strict(k, v ORDER BY k) AS j FROM (VALUES ('a', 1), ('b', NULL)) t(k, v);
+----
+j
+{ "a" : 1 }

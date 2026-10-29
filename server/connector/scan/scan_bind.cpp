@@ -25,6 +25,7 @@
 
 #include <cmath>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/planner/binder.hpp>
@@ -42,7 +43,6 @@
 #include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <magic_enum/magic_enum.hpp>
@@ -74,7 +74,8 @@ uint64_t EstimateFilterMatchCount(const irs::Filter& filter,
     return 0;
   }
   constexpr double kDefaultFilterSelectivity = 0.2;
-  return std::max<uint64_t>(live_docs * kDefaultFilterSelectivity, 1U);
+  return std::max<uint64_t>(
+    static_cast<uint64_t>(live_docs * kDefaultFilterSelectivity), 1U);
 }
 
 duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
@@ -115,15 +116,29 @@ const duckdb::ColumnDefinition* FindColumnById(
   return nullptr;
 }
 
+search::SearchTableTransaction::PinnedSearchTable PinnedSearchTable(
+  duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
+  const std::shared_ptr<search::SearchTable>& store) {
+  const auto make = [&] {
+    auto config = store->ScanConfig();
+    return search::SearchTableTransaction::PinnedSearchTable{
+      .reader =
+        std::make_shared<irs::DirectoryReader>(store->GetDirectoryReader()),
+      .config = std::move(config),
+    };
+  };
+  auto* conn_ctx = GetSereneDBContextPtr(context);
+  if (!conn_ctx) {
+    return make();
+  }
+  return conn_ctx->SearchTxn().EnsureSearchTable(database_oid, oid, make);
+}
+
 irs::DirectoryReader PinnedSearchReader(
   duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
   const std::shared_ptr<search::SearchTable>& store) {
-  auto* conn_ctx = GetSereneDBContextPtr(context);
-  if (!conn_ctx) {
-    return store->GetDirectoryReader();
-  }
-  return irs::DirectoryReader{*conn_ctx->SearchTxn().EnsureSearchTableReader(
-    database_oid, oid, [&] { return store->GetDirectoryReader(); })};
+  return irs::DirectoryReader{
+    *PinnedSearchTable(context, database_oid, oid, store).reader};
 }
 
 decltype(SearchSpec::acquire_snapshot) SearchTableSnapshot(
@@ -200,24 +215,47 @@ duckdb::unique_ptr<ScanBindData> MakeViewScanBindData(
   return data;
 }
 
-double AutoOversample(const VectorScorerOptions& vs) noexcept {
-  switch (vs.quant) {
+float AutoRescoreWidth(irs::VectorQuantization quant, uint32_t nb_bits,
+                       irs::AnnKind kind) noexcept {
+  const bool ivf = kind == irs::AnnKind::Ivf;
+  switch (quant) {
     case irs::VectorQuantization::None:
     case irs::VectorQuantization::FP16:
     case irs::VectorQuantization::BF16:
-      return 0.0;
+      return 0.f;
     case irs::VectorQuantization::SQ8:
-    case irs::VectorQuantization::USQ8:
-    case irs::VectorQuantization::SQ4:
-    case irs::VectorQuantization::USQ4:
-    case irs::VectorQuantization::PQ:
+      return 2.f;
     case irs::VectorQuantization::RaBitQ:
-    case irs::VectorQuantization::TQ:
-    case irs::VectorQuantization::BQ:
+      return nb_bits > 1 ? 3.f : 2.f;
     case irs::VectorQuantization::OSQ:
-      return 1.0;
+      if (nb_bits > 2) {
+        return 7.f;
+      }
+      return ivf ? 3.f : 2.f;
+    case irs::VectorQuantization::TQ:
+      return 3.f;
+    case irs::VectorQuantization::BQ:
+      return ivf ? 1.f : 3.f;
+    case irs::VectorQuantization::USQ8:
+      return 4.f;
+    case irs::VectorQuantization::PQ:
+      return ivf ? 2.f : 3.f;
+    case irs::VectorQuantization::SQ4:
+      return 5.f;
+    case irs::VectorQuantization::USQ4:
+      return 6.f;
   }
-  return 0.0;
+  return 0.f;
+}
+
+float AnnRescoreWidth(duckdb::ClientContext& context,
+                      const VectorScorerOptions& vs) {
+  if (vs.quant == irs::VectorQuantization::None) {
+    return 0.f;
+  }
+  const auto z = GetDoubleSetting(context, "sdb_ann_rescore_width");
+  return z < 0.0 ? AutoRescoreWidth(vs.quant, vs.nb_bits, vs.kind)
+                 : static_cast<float>(z);
 }
 
 template<typename AnnFilter>
@@ -227,8 +265,8 @@ std::unique_ptr<AnnFilter> MakeAnnFilter(
   *f->mutable_field_id() = vs.field_id;
   auto* o = f->mutable_options();
   o->query = vs.query_vector;
-  o->centroids_id = vs.centroids_id;
-  o->postings_id = vs.postings_id;
+  o->column_id = vs.field_id;
+  o->ann_id = vs.ann_id;
   o->metric = vs.metric;
   o->quant = vs.quant;
   o->inner = std::move(inner);
@@ -245,17 +283,6 @@ double SegmentBeamShare(double k, size_t segments) noexcept {
   const double mean = k / n;
   const double sd = std::sqrt(mean * (1.0 - 1.0 / n));
   return std::min(k, std::max(16.0, std::ceil(mean + 3.0 * sd)));
-}
-
-double AnnOversample(duckdb::ClientContext& context,
-                     const VectorScorerOptions& vs, bool& chosen_here) {
-  auto factor = GetDoubleSetting(context, "sdb_ann_oversample");
-  chosen_here = factor < 0.0;
-  return chosen_here ? AutoOversample(vs) : factor;
-}
-
-double OversamplePool(double factor, double count) noexcept {
-  return factor > 0.0 ? std::max(count, std::ceil(factor * count)) : 0.0;
 }
 
 uint32_t ClampCandidates(double pool, double k, uint64_t live) noexcept {
@@ -283,6 +310,7 @@ void RefreshVectorKnobs(VectorScorerOptions& vs,
   vs.hnsw_column_filter =
     mode("sdb_hnsw_column_filter", irs::HnswColumnFilter::Auto);
   vs.exact = GetBoolSetting(context, "sdb_ann_force_exact");
+  vs.rescore_width = AnnRescoreWidth(context, vs);
 }
 
 TsDictRequest& TsDictSpec::For(irs::field_id field_id) {
@@ -319,6 +347,17 @@ duckdb::shared_ptr<duckdb::PlanDataVersion> ScanBindData::GetPlanDataVersion()
   const {
   return duckdb::make_shared_ptr<SnapshotVersion>(search.planned_reader,
                                                   search.acquire_snapshot);
+}
+
+duckdb::idx_t ScanColumnOfStorage(const ScanBindData& bind,
+                                  duckdb::idx_t storage_index) {
+  const auto table = bind.relation.table_entry;
+  if (!table || storage_index >= table->GetColumns().PhysicalColumnCount()) {
+    return storage_index;
+  }
+  return table->GetColumns()
+    .PhysicalToLogical(duckdb::PhysicalIndex{storage_index})
+    .index;
 }
 
 std::string_view ScanBindData::ColumnNameById(ColumnId col_id) const {
@@ -483,18 +522,31 @@ duckdb::TableFunction BindSearchTableScan(
     MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search");
   AcquireSnapshot(*data, context, SearchTableSnapshot(entry));
   data->score.prune = store->TopKScorer();
-  data->relation.inverted_config = store->ScanConfig();
+  data->relation.inverted_config =
+    PinnedSearchTable(context, entry.catalog.GetOid(), entry.oid, store).config;
   data->relation.row_group_size =
     data->relation.inverted_config->row_group_size;
   bind_data = std::move(data);
   return CreateIResearchScanFunction();
 }
 
+bool LooksUpByPk(const ScanBindData& bind) {
+  return bind.relation.kind == ScanEntryKind::InvertedIndex &&
+         bind.relation.ScannedIndex().pk.column == PkColumnKind::Has &&
+         (!bind.view || bind.view->fast_path);
+}
+
 std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind) {
   if (bind.relation.IsSearchTable()) {
     return duckdb::LogicalType::ROW_TYPE;
   }
-  return std::nullopt;
+  if (!LooksUpByPk(bind)) {
+    return std::nullopt;
+  }
+  if (bind.view) {
+    return bind.view->fast_path->GeneratedPkType();
+  }
+  return duckdb::LogicalType::ROW_TYPE;
 }
 
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
@@ -517,10 +569,35 @@ DeferredBuild BuildDeferredFilter(
       context,
       optimizer::SubstituteParameters(e->Copy(), /*with_values=*/true));
   };
+  DeferredBuild out;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> index_only;
   conjuncts.reserve(claim.conjuncts.size() + claim.ranges.size());
+  const bool keeps_columns = scan.KeepsColumnForms();
+  const auto keep_column_form = [&](const duckdb::Expression& conjunct) {
+    const auto* ref = optimizer::SoleColumn(conjunct);
+    if (!ref) {
+      return false;
+    }
+    const auto it = claim.columns->find(MakeBindingKey(ref->Binding()));
+    if (it == claim.columns->end() || !it->second.column_stored) {
+      return false;
+    }
+    out.dual_filters.push_back(
+      {.column = it->second.column,
+       .type = ref->GetReturnType(),
+       .filter = duckdb::make_uniq<duckdb::ExpressionFilter>(
+         optimizer::ColumnFormOf(conjunct.Copy()))});
+    return true;
+  };
+  const auto to_index = [&](duckdb::unique_ptr<duckdb::Expression> conjunct) {
+    if (keeps_columns && !keep_column_form(*conjunct)) {
+      index_only.push_back(conjunct->Copy());
+    }
+    conjuncts.push_back(std::move(conjunct));
+  };
   for (const auto& e : claim.conjuncts) {
-    conjuncts.push_back(bound(e));
+    to_index(bound(e));
   }
   const ColumnGetter getter = [&](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<SearchColumnInfo> {
@@ -539,7 +616,6 @@ DeferredBuild BuildDeferredFilter(
     [](const duckdb::Expression&) -> std::optional<SearchColumnInfo> {
     return std::nullopt;
   };
-  DeferredBuild out;
   struct WideColumn {
     duckdb::LogicalType type;
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> parts;
@@ -588,7 +664,7 @@ DeferredBuild BuildDeferredFilter(
       if (probe_wide(range)) {
         to_column(std::move(range));
       } else {
-        conjuncts.push_back(std::move(range));
+        to_index(std::move(range));
       }
       continue;
     }
@@ -600,20 +676,14 @@ DeferredBuild BuildDeferredFilter(
       if (fits ? !*fits : probe_wide(range)) {
         to_column(std::move(range));
       } else {
-        conjuncts.push_back(std::move(range));
+        to_index(std::move(range));
       }
     }
   }
   for (auto& [column, typed] : wide) {
     auto& [type, parts] = typed;
     for (auto& part : parts) {
-      duckdb::ExpressionIterator::VisitExpressionMutable<
-        duckdb::BoundColumnRefExpression>(
-        part, [](duckdb::BoundColumnRefExpression& r,
-                 duckdb::unique_ptr<duckdb::Expression>& child) {
-          child = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
-            r.GetAlias(), r.GetReturnType(), 0ULL);
-        });
+      part = optimizer::ColumnFormOf(std::move(part));
     }
     duckdb::unique_ptr<duckdb::Expression> expr;
     if (parts.size() == 1) {
@@ -665,18 +735,36 @@ DeferredBuild BuildDeferredFilter(
   out.filter = std::shared_ptr<const irs::Filter>{std::move(filter)};
   out.scorers = std::move(scorers);
   out.checks = MakeChecks(std::move(deferral));
+  if (!out.dual_filters.empty() && !index_only.empty()) {
+    auto rest = std::make_unique<irs::BooleanFilter>();
+    FilterScorers rest_scorers;
+    if (MakeSearchFilter(*rest, index_only, getter, context, expr_getter,
+                         &rest_scorers)
+          .ok()) {
+      irs::Filter::ptr rest_filter = std::move(rest);
+      EnsureIncludeSides(*rest_filter);
+      irs::Optimize(rest_filter, {.scored = false,
+                                  .analyzed_fields = ctx.analyzed_fields,
+                                  .null_markers = &null_markers});
+      out.index_only = std::move(rest_filter);
+    } else {
+      out.dual_filters.clear();
+    }
+  }
   return out;
 }
 
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
-                                  float radius) {
+                                  float radius,
+                                  std::shared_ptr<const irs::Filter> index_only,
+                                  bool dual) {
   if (vs.exact) {
     auto f = std::make_unique<irs::ByVectorExact>();
     *f->mutable_field_id() = vs.field_id;
     auto* o = f->mutable_options();
     o->query = vs.query_vector;
-    o->centroids_id = vs.centroids_id;
+    o->ann_id = vs.ann_id;
     o->metric = vs.metric;
     o->radius = radius;
     o->inclusive = vs.radius_inclusive;
@@ -699,8 +787,11 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->min_ef = vs.min_ef;
   o->top_k = vs.top_k;
   o->posting_size = vs.posting_size;
+  o->rescore_width = vs.rescore_all || vs.top_k == 0 ? 0.f : vs.rescore_width;
   o->hnsw_filter_mode = vs.hnsw_filter_mode;
   o->hnsw_column_filter = vs.hnsw_column_filter;
+  o->index_only = std::move(index_only);
+  o->dual = dual;
   return f;
 }
 

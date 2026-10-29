@@ -35,9 +35,9 @@
 #include <vector>
 
 #include "pg/command_tag.h"
-#include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
+#include "pg/types/mapping.h"
 #include "query/utils.h"
 #include "server/utils/dtoa.h"
 
@@ -740,6 +740,16 @@ irs::pg::SqlErrorData ToSqlError(const std::exception& exception) {
   }
   return irs::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
                                .errmsg = exception.what()};
+}
+
+irs::pg::SqlErrorData ToSqlError(const duckdb::ErrorData& error) {
+  try {
+    error.Throw();
+  } catch (const irs::SqlException& e) {
+    return e.error();
+  } catch (...) {
+  }
+  return DuckErrorToSqlData(error);
 }
 
 void WriteEmptyFrame(message::Buffer& out, char type) {

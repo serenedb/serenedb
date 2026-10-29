@@ -62,7 +62,7 @@ db error: ERROR: invalid value for parameter "statement_timeout": "5 parsecs"<sl
 
 
 statement ok
-SET statement_timeout = '100ms';
+SET statement_timeout = '1s';
 
 
 statement error
@@ -94,7 +94,7 @@ statement_timeout
 
 
 statement ok
-SELECT pg_sleep(0.2);
+SELECT pg_sleep(1.2);
 
 
 statement ok
@@ -105,7 +105,7 @@ query
 SHOW statement_timeout;
 ----
 statement_timeout
-100ms
+1s
 
 
 statement ok
@@ -113,4 +113,4 @@ RESET statement_timeout;
 
 
 statement ok
-SELECT pg_sleep(0.2);
+SELECT pg_sleep(1.2);

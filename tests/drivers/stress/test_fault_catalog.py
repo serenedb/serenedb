@@ -59,10 +59,10 @@ def test_progress_gated_faults_are_a_subset_of_park_faults():
     assert faults.PROGRESS_GATED_FAULTS <= faults.PARK_FAULTS
 
 
-def test_crash_fault_names_match_the_classifier_prefixes():
-    from classify import CRASH_FAULT_PREFIXES
+def test_classify_expects_a_connection_loss_under_every_crash_fault():
+    from classify import has_crash_fault
     for name in faults.CRASH_FAULTS:
-        assert name.startswith(CRASH_FAULT_PREFIXES), (
+        assert has_crash_fault([name]), (
             f"{name} is in CRASH_FAULTS but classify() would not treat a "
             "connection loss under it as expected"
         )

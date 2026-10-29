@@ -69,20 +69,29 @@ SELECT count(*) FROM rvps3_idx WHERE body @@ ts_phrase('farms');
 count
 1
 
-# Stopping the loop stops the ticks: a further rewrite stays invisible over
-# a generous window until a manual REINDEX applies it.
+# Stopping the loop stops the ticks: a further rewrite stays invisible
+# until a manual REINDEX applies it.
+statement ok
+ALTER JOB rvps3_idx SUSPEND;
+
+query ok retry 200 backoff 500ms
+SELECT running FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvps3_idx';
+----
+running
+f
+
 statement ok
 ALTER INDEX rvps3_idx SET (reindex_interval=0);
 
-system ok
-sleep 0.6
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvps3_idx';
+----
+jobs
+0
 
 statement count 1
 COPY (SELECT 4 AS id, 'silent object' AS body)
 TO 's3://${MINIO_BUCKET}/${__DATABASE__}_p_c.parquet' (FORMAT parquet);
-
-system ok
-sleep 1.5
 
 query
 SELECT count(*) FROM rvps3_idx;

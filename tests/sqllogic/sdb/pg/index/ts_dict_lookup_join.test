@@ -1,0 +1,317 @@
+hash-threshold 100
+
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tl_words AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE tl_docs (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR)
+
+statement ok
+CREATE INDEX tl_idx ON tl_docs USING inverted (id, body tl_words)
+
+statement ok
+INSERT INTO tl_docs
+SELECT i,
+       'title-' || i || '-long-enough-to-not-inline',
+       CASE WHEN i % 3 = 0 THEN 'red fox ' ELSE 'blue cat ' END ||
+       CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END
+FROM generate_series(1, 15) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) tl_docs
+
+statement ok
+INSERT INTO tl_docs
+SELECT i,
+       'title-' || i || '-long-enough-to-not-inline',
+       CASE WHEN i % 3 = 0 THEN 'red fox ' ELSE 'blue cat ' END ||
+       CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END
+FROM generate_series(16, 30) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) tl_docs
+
+query
+EXPLAIN SELECT id, title FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ─────────────────────╮
+│ Key: rowid                        │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+                  ├───────────────────────────────╮
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ INDEX_SOURCE ─────╮
+│ Top: 3                            │  │ Lookup: table      │
+│ Order By: id DESC                 │  │ Projections: title │
+│ ~3 rows                           │  │ ~3 rows            │
+╰─────────────────┬─────────────────╯  ╰────────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: tl_idx                     │
+│ Lookup: table                     │
+│ Index Filter:                     │
+│ ╭─ Term ──────────────╮           │
+│ │ Field: body(string) │           │
+│ │ Value: fox          │           │
+│ ╰─────────────────────╯           │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (id > ?) │
+│ Projections: id, pk               │
+│ ~6 rows                           │
+╰───────────────────────────────────╯
+
+query
+SELECT id, title FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3
+----
+id	title
+30	title-30-long-enough-to-not-inline
+27	title-27-long-enough-to-not-inline
+24	title-24-long-enough-to-not-inline
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM tl_idx ORDER BY docs DESC, term LIMIT 3
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────────────────────────╮
+│ Top: 3                                               │
+│ Order By: docs DESC, term ASC                        │
+│ ~3 rows                                              │
+╰───────────────────────────┬──────────────────────────╯
+╭─ PROJECTION ──────────────┴──────────────────────────╮
+│ Projections:                                         │
+│ sdb_inverted_index_term$body,                        │
+│ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
+│ ~6 rows                                              │
+╰───────────────────────────┬──────────────────────────╯
+╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
+│ Groups: #0                                           │
+│ Aggregates: sum(#1)                                  │
+│ ~6 rows                                              │
+╰───────────────────────────┬──────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
+│ Index: tl_idx                                        │
+│ TsDict: body                                         │
+│ Projections:                                         │
+│ sdb_inverted_index_term$body,                        │
+│ sdb_inverted_index_term_count$body                   │
+│ ~12 rows                                             │
+╰──────────────────────────────────────────────────────╯
+
+query
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM tl_idx ORDER BY docs DESC, term LIMIT 3
+----
+term	docs
+blue	20
+cat	20
+even	15
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY docs DESC, term LIMIT 3
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────────────────────────╮
+│ Top: 3                                               │
+│ Order By: docs DESC, term ASC                        │
+│ ~3 rows                                              │
+╰───────────────────────────┬──────────────────────────╯
+╭─ PROJECTION ──────────────┴──────────────────────────╮
+│ Projections:                                         │
+│ sdb_inverted_index_term$body,                        │
+│ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
+│ ~6 rows                                              │
+╰───────────────────────────┬──────────────────────────╯
+╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
+│ Groups: #0                                           │
+│ Aggregates: sum(#1)                                  │
+│ ~6 rows                                              │
+╰───────────────────────────┬──────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
+│ Index: tl_idx                                        │
+│ Index Filter:                                        │
+│ ╭─ Term ──────────────╮                              │
+│ │ Field: body(string) │                              │
+│ │ Value: fox          │                              │
+│ ╰─────────────────────╯                              │
+│ TsDict: body                                         │
+│ Projections:                                         │
+│ sdb_inverted_index_term$body,                        │
+│ sdb_inverted_index_term_count$body                   │
+│ ~12 rows                                             │
+╰──────────────────────────────────────────────────────╯
+
+query
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY docs DESC, term LIMIT 3
+----
+term	docs
+fox	10
+red	10
+even	5
+
+statement error
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM (SELECT body FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3) s
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+statement error
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM (SELECT body FROM tl_idx WHERE body @@ ts_phrase('fox') LIMIT 3) s
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+statement error
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM (SELECT body FROM tl_idx WHERE body @@ ts_phrase('fox')
+      ORDER BY BM25(tl_idx.tableoid) DESC LIMIT 3) s
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+statement error
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+FROM (SELECT body FROM (SELECT body FROM tl_idx LIMIT 3) a) s
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+statement error
+SELECT ts_dict_min(body) FROM (SELECT body FROM tl_idx ORDER BY id DESC LIMIT 1) s
+----
+db error: ERROR: ts_dict_min() requires an inverted index scan in the same sub-query
+
+
+statement ok
+SET late_materialization_lookup_max_rows = 0
+
+statement error
+SELECT unnest(ts_dict_agg(body)) AS term
+FROM (SELECT body FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3) s
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+statement ok
+RESET late_materialization_lookup_max_rows
+
+statement error
+SELECT list_sort(ts_dict_agg(body))
+FROM (SELECT body FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC) s
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+statement error
+SELECT list_sort(ts_dict_agg(body))
+FROM (SELECT body FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY id OFFSET 8) s
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+statement error
+SELECT list_sort(ts_dict_agg(body)) FROM (SELECT body FROM tl_idx USING SAMPLE 2 ROWS) s
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+statement error
+SELECT list_sort(ts_dict_agg(body)) FROM tl_idx TABLESAMPLE 50%
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+statement error
+SELECT list_sort(ts_dict_agg(body))
+FROM (SELECT body, row_number() OVER (ORDER BY id) AS rn FROM tl_idx) s
+WHERE rn <= 2
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+statement error
+SELECT list_sort(ts_dict_agg(body)) FROM (SELECT DISTINCT body FROM tl_idx) s
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+statement error
+SELECT list_sort(ts_dict_agg(i.body))
+FROM tl_idx i JOIN (VALUES (3), (6)) v(id) ON i.id = v.id
+----
+db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+
+
+query
+SELECT body, count(*) AS n
+FROM (SELECT body FROM tl_idx ORDER BY id LIMIT 3) s
+GROUP BY body ORDER BY body
+----
+body	n
+blue cat even	1
+blue cat odd	1
+red fox odd	1
+
+query
+EXPLAIN SELECT d.id, d.title, t.term
+FROM (SELECT id, title FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 2) d
+CROSS JOIN (SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+            FROM tl_idx ORDER BY docs DESC, term LIMIT 2) t
+ORDER BY d.id, t.term
+----
+QUERY PLAN
+╭─ ORDER_BY ────────────────────────╮
+│ Order By: id ASC, term ASC        │
+│ ~4 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ CROSS_PRODUCT ─┴─────────────────╮
+╰─────────────────┬─────────────────╯
+                  ├────────────────────────────────────────────────────────────────────────╮
+╭─ LOOKUP_JOIN ───┴─────────────────╮                          ╭─ TOP_N ───────────────────┴──────────────────────────╮
+│ Key: rowid                        │                          │ Top: 2                                               │
+│ ~2 rows                           │                          │ Order By: docs DESC, term ASC                        │
+╰─────────────────┬─────────────────╯                          │ ~2 rows                                              │
+                  ├───────────────────────────────╮            ╰───────────────────────────┬──────────────────────────╯
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ INDEX_SOURCE ─────╮  ╭─ PROJECTION ──────────────┴──────────────────────────╮
+│ Top: 2                            │  │ Lookup: table      │  │ Projections:                                         │
+│ Order By: id DESC                 │  │ Projections: title │  │ sdb_inverted_index_term$body,                        │
+│ ~2 rows                           │  │ ~2 rows            │  │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
+╰─────────────────┬─────────────────╯  ╰────────────────────╯  │ ~6 rows                                              │
+╭─ IRESEARCH_SCAN ┴─────────────────╮                          ╰───────────────────────────┬──────────────────────────╯
+│ Index: tl_idx                     │                          ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
+│ Lookup: table                     │                          │ Groups: #0                                           │
+│ Index Filter:                     │                          │ Aggregates: sum(#1)                                  │
+│ ╭─ Term ──────────────╮           │                          │ ~6 rows                                              │
+│ │ Field: body(string) │           │                          ╰───────────────────────────┬──────────────────────────╯
+│ │ Value: fox          │           │                          ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
+│ ╰─────────────────────╯           │                          │ Index: tl_idx                                        │
+│ Column Filter:                    │                          │ TsDict: body                                         │
+│ optional: Dynamic Filter (id > ?) │                          │ Projections:                                         │
+│ Projections: id, pk               │                          │ sdb_inverted_index_term$body,                        │
+│ ~6 rows                           │                          │ sdb_inverted_index_term_count$body                   │
+╰───────────────────────────────────╯                          │ ~12 rows                                             │
+                                                               ╰──────────────────────────────────────────────────────╯
+
+query
+SELECT d.id, d.title, t.term
+FROM (SELECT id, title FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 2) d
+CROSS JOIN (SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
+            FROM tl_idx ORDER BY docs DESC, term LIMIT 2) t
+ORDER BY d.id, t.term
+----
+id	title	term
+27	title-27-long-enough-to-not-inline	blue
+27	title-27-long-enough-to-not-inline	cat
+30	title-30-long-enough-to-not-inline	blue
+30	title-30-long-enough-to-not-inline	cat

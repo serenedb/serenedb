@@ -21,9 +21,13 @@
 #pragma once
 
 #include <duckdb/main/database.hpp>
+#include <duckdb/main/extension/extension_loader.hpp>
+#include <string_view>
 
 namespace sdb::connector {
 
+void RegisterScalarAlias(duckdb::ExtensionLoader& loader,
+                         std::string_view source_name, std::string_view alias);
 void RegisterDuckDBAliases(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector

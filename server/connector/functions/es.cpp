@@ -351,6 +351,9 @@ void CreateTextIndex(duckdb::ClientContext& context,
   }
   catalog::BindInvertedIndexOptions(context, info.options, false, false);
   auto& schema = table.ParentSchema(context);
+  auto dict = ResolveOpclassTokenizer(context, schema, kTextTokenizer);
+  SDB_ASSERT(dict);
+  info.dependencies.AddDependency(*dict);
   auto entry = schema.CreateIndex(
     schema.ParentCatalog().GetCatalogTransaction(context), info, table);
   SDB_ASSERT(entry);

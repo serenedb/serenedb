@@ -22,13 +22,13 @@
 #include <iresearch/analysis/delimited_tokenizer.hpp>
 #include <iresearch/analysis/filter_tokens_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <random>
 #include <string>
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "test_resources.hpp"
 #include "token_sink_utils.hpp"
 
 namespace {
@@ -36,15 +36,9 @@ namespace {
 using irs::analysis::FilterTokensTokenizer;
 using Options = FilterTokensTokenizer::Options;
 
-duckdb::ClientContext& TestContext() {
-  static auto* conn =
-    new duckdb::Connection{irs::DuckDBEngine::Instance().instance()};
-  return *conn->context;
-}
-
 bool Passes(Options opts, std::string_view value) {
   FilterTokensTokenizer stream{opts};
-  stream.Bind(TestContext());
+  stream.Bind(tests::EngineContext());
   const auto tokens = tests::Analyze(stream, value);
   EXPECT_TRUE(tokens.has_value());
   EXPECT_LE(tokens->size(), 1);
@@ -163,7 +157,7 @@ TEST(filter_tokens_tokenizer_test, predicate_and_length_combine) {
 
 TEST(filter_tokens_tokenizer_test, predicate_must_be_boolean) {
   FilterTokensTokenizer stream{{.predicate = "length(input)"}};
-  ASSERT_THROW(stream.Bind(TestContext()), irs::SqlException);
+  ASSERT_THROW(stream.Bind(tests::EngineContext()), irs::SqlException);
 }
 
 TEST(filter_tokens_tokenizer_test, predicate_rejects_subqueries) {
@@ -185,7 +179,7 @@ TEST(filter_tokens_tokenizer_test, pipeline_drops_without_position_gaps) {
 TEST(filter_tokens_tokenizer_test, pipeline_predicate_keeps_offsets) {
   auto pipe = SplitThenFilter(
     {.min_length = 2, .predicate = "input NOT IN ('the', 'over')"});
-  pipe.Bind(TestContext());
+  pipe.Bind(tests::EngineContext());
   const std::string data = "the quick fox a over the lazy dog";
   const auto tokens = tests::Analyze(pipe, data);
   ASSERT_TRUE(tokens.has_value());
@@ -198,7 +192,7 @@ TEST(filter_tokens_tokenizer_test, pipeline_predicate_keeps_offsets) {
 
 TEST(filter_tokens_tokenizer_test, pipeline_predicate_spans_batches) {
   auto pipe = SplitThenFilter({.predicate = "length(input) % 3 = 0"});
-  pipe.Bind(TestContext());
+  pipe.Bind(tests::EngineContext());
   std::string data;
   std::vector<std::string> expected;
   for (size_t i = 0; i < 5000; ++i) {
@@ -232,7 +226,7 @@ TEST(filter_tokens_tokenizer_test, column_fill_matches_per_value) {
   const Options opts{
     .min_length = 2, .max_length = 40, .predicate = "input NOT LIKE 'http%'"};
   FilterTokensTokenizer stream{opts};
-  stream.Bind(TestContext());
+  stream.Bind(tests::EngineContext());
   std::vector<duckdb::string_t> vals;
   for (const auto& v : values) {
     vals.emplace_back(v.data(), static_cast<uint32_t>(v.size()));

@@ -13,14 +13,6 @@ CALL postgres_execute('rstr_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF E
 
 
 statement ok
-CALL postgres_execute('rstr_${__DATABASE__}', 'ALTER SYSTEM SET logical_decoding_work_mem = ''64kB''', use_transaction := false);
-
-
-statement ok
-CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT pg_reload_conf()');
-
-
-statement ok
 CALL postgres_execute('rstr_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rstr_big (id int PRIMARY KEY, v text); CREATE TABLE rstr_added (id int PRIMARY KEY, v text); CREATE TABLE rstr_nocopy (id int PRIMARY KEY); CREATE TABLE rstr_late (id int PRIMARY KEY); INSERT INTO rstr_late SELECT generate_series(1, 5); INSERT INTO rstr_added SELECT g, ''before'' FROM generate_series(1, 1000) g; INSERT INTO rstr_nocopy SELECT generate_series(1, 10); CREATE PUBLICATION rstr_pub FOR TABLE rstr_big; END $$');
 
 
@@ -41,7 +33,7 @@ CREATE TABLE rstr_late (id INTEGER PRIMARY KEY);
 
 
 statement ok
-CREATE SUBSCRIPTION rstr_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rstr_pub WITH (slot_name = 'rstr_sub', streaming = on, origin = none);
+CREATE SUBSCRIPTION rstr_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER} options=''-c logical_decoding_work_mem=64kB''' PUBLICATION rstr_pub WITH (slot_name = 'rstr_sub', streaming = on, origin = none);
 
 
 query ok retry 120 backoff 250ms
@@ -207,14 +199,6 @@ added	nocopy	late
 
 statement ok
 DROP SUBSCRIPTION rstr_sub;
-
-
-statement ok
-CALL postgres_execute('rstr_${__DATABASE__}', 'ALTER SYSTEM RESET logical_decoding_work_mem', use_transaction := false);
-
-
-statement ok
-CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT pg_reload_conf()');
 
 
 statement ok

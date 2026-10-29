@@ -691,3 +691,359 @@ DROP SEQUENCE seq_cache;
 
 statement ok
 DROP SEQUENCE seq_nocache;
+
+
+connection lv_conn
+statement error
+SELECT lastval();
+----
+db error: ERROR: lastval is not yet defined in this session
+
+
+connection lv_conn
+statement ok
+CREATE SEQUENCE lv_a;
+
+
+connection lv_conn
+statement ok
+CREATE SEQUENCE lv_b START 100;
+
+
+connection lv_conn
+query
+SELECT nextval('lv_a') AS a1, nextval('lv_a') AS a2;
+----
+a1	a2
+1	2
+
+
+connection lv_conn
+query
+SELECT lastval();
+----
+lastval
+2
+
+
+connection lv_conn
+query
+SELECT nextval('lv_b');
+----
+nextval
+100
+
+
+connection lv_conn
+query
+SELECT lastval();
+----
+lastval
+100
+
+
+connection lv_conn
+query
+SELECT setval('lv_b', 500);
+----
+setval
+500
+
+
+connection lv_conn
+query
+SELECT lastval();
+----
+lastval
+500
+
+
+connection lv_conn
+query
+SELECT setval('lv_a', 7);
+----
+setval
+7
+
+
+connection lv_conn
+query
+SELECT lastval();
+----
+lastval
+500
+
+
+connection lv_conn
+statement ok
+DROP SEQUENCE lv_b;
+
+
+connection lv_conn
+statement error
+SELECT lastval();
+----
+db error: ERROR: lastval is not yet defined in this session
+
+
+connection lv_conn
+statement ok
+DROP SEQUENCE lv_a;
+
+
+statement ok
+CREATE SEQUENCE seq_top START 9223372036854775806;
+
+
+query
+SELECT nextval('seq_top') AS first, nextval('seq_top') AS last;
+----
+first	last
+9223372036854775806	9223372036854775807
+
+
+query
+SELECT pg_sequence_last_value('seq_top'::regclass) AS last_called;
+----
+last_called
+9223372036854775807
+
+
+statement error
+SELECT nextval('seq_top');
+----
+db error: ERROR: nextval: reached maximum value of sequence "seq_top" (9223372036854775807)
+
+
+statement ok
+CREATE SEQUENCE seq_bottom INCREMENT -1 START -9223372036854775807 MINVALUE -9223372036854775808 MAXVALUE -1;
+
+
+query
+SELECT nextval('seq_bottom') AS first, nextval('seq_bottom') AS last;
+----
+first	last
+-9223372036854775807	-9223372036854775808
+
+
+statement error
+SELECT nextval('seq_bottom');
+----
+db error: ERROR: nextval: reached minimum value of sequence "seq_bottom" (-9223372036854775808)
+
+
+statement ok
+CREATE SEQUENCE seq_leap INCREMENT 9223372036854775806 MINVALUE 1 MAXVALUE 9223372036854775807;
+
+
+query
+SELECT nextval('seq_leap') AS first, nextval('seq_leap') AS last;
+----
+first	last
+1	9223372036854775807
+
+
+statement ok
+CREATE SEQUENCE seq_set_max;
+
+
+query
+SELECT setval('seq_set_max', 9223372036854775807, true) AS set_to;
+----
+set_to
+9223372036854775807
+
+
+query
+SELECT pg_sequence_last_value('seq_set_max'::regclass) AS last_called, (pg_get_sequence_data('seq_set_max'::regclass)).*;
+----
+last_called	last_value	is_called
+9223372036854775807	9223372036854775807	t
+
+
+statement error
+SELECT nextval('seq_set_max');
+----
+db error: ERROR: nextval: reached maximum value of sequence "seq_set_max" (9223372036854775807)
+
+
+statement ok
+CREATE SEQUENCE seq_unset;
+
+
+query
+SELECT nextval('seq_unset') AS a, nextval('seq_unset') AS b, setval('seq_unset', 3, false) AS set_to;
+----
+a	b	set_to
+1	2	3
+
+
+query
+SELECT pg_sequence_last_value('seq_unset'::regclass) AS last_called, (pg_get_sequence_data('seq_unset'::regclass)).*;
+----
+last_called	last_value	is_called
+NULL	3	f
+
+
+query
+SELECT nextval('seq_unset') AS next;
+----
+next
+3
+
+
+statement ok
+CREATE SEQUENCE seq_up MINVALUE 1 MAXVALUE 3 CYCLE;
+
+
+query
+SELECT nextval('seq_up') AS a, nextval('seq_up') AS b, nextval('seq_up') AS c;
+----
+a	b	c
+1	2	3
+
+
+query
+SELECT pg_sequence_last_value('seq_up'::regclass) AS last_called, nextval('seq_up') AS wrapped;
+----
+last_called	wrapped
+3	1
+
+
+statement ok
+CREATE SEQUENCE seq_down INCREMENT -1 MINVALUE 1 MAXVALUE 3 START 3 CYCLE;
+
+
+query
+SELECT nextval('seq_down') AS a, nextval('seq_down') AS b, nextval('seq_down') AS c;
+----
+a	b	c
+3	2	1
+
+
+query
+SELECT pg_sequence_last_value('seq_down'::regclass) AS last_called, nextval('seq_down') AS wrapped;
+----
+last_called	wrapped
+1	3
+
+
+statement ok
+CREATE SEQUENCE seq_wrap_up INCREMENT 9223372036854775806 MINVALUE 1 MAXVALUE 9223372036854775807 CYCLE;
+
+
+query
+SELECT nextval('seq_wrap_up') AS a, nextval('seq_wrap_up') AS b;
+----
+a	b
+1	9223372036854775807
+
+
+query
+SELECT pg_sequence_last_value('seq_wrap_up'::regclass) AS last_called, nextval('seq_wrap_up') AS wrapped;
+----
+last_called	wrapped
+9223372036854775807	1
+
+
+statement ok
+CREATE SEQUENCE seq_wrap_down INCREMENT -9223372036854775807 MINVALUE -9223372036854775808 MAXVALUE -1 CYCLE;
+
+
+query
+SELECT nextval('seq_wrap_down') AS a, nextval('seq_wrap_down') AS b;
+----
+a	b
+-1	-9223372036854775808
+
+
+query
+SELECT pg_sequence_last_value('seq_wrap_down'::regclass) AS last_called, nextval('seq_wrap_down') AS wrapped;
+----
+last_called	wrapped
+-9223372036854775808	-1
+
+
+query
+SELECT pg_sequence_last_value(NULL) AS last_called, pg_get_sequence_data(NULL) IS NULL AS no_data,
+       pg_sequence_parameters(NULL) IS NULL AS no_parameters;
+----
+last_called	no_data	no_parameters
+NULL	t	t
+
+
+skipif serenedb
+statement error
+SELECT pg_sequence_last_value(0);
+----
+db error: ERROR: could not open relation with OID 0
+
+
+onlyif serenedb
+query
+SELECT pg_sequence_last_value(0) AS last_called, pg_sequence_last_value('pg_class'::regclass) AS system_table;
+----
+last_called	system_table
+NULL	NULL
+
+
+skipif serenedb
+statement error
+SELECT pg_sequence_last_value('pg_class'::regclass);
+----
+db error: ERROR: cannot open relation "pg_class"
+DETAIL: This operation is not supported for tables.
+
+
+statement ok
+CREATE TABLE seq_plain (a int);
+
+
+statement error (cannot open relation "seq_plain"|"seq_plain" is not a sequence)
+SELECT pg_sequence_last_value('seq_plain'::regclass);
+
+
+statement ok
+DROP TABLE seq_plain;
+
+
+statement error
+SELECT * FROM pg_sequence_parameters('pg_class'::regclass);
+----
+db error: ERROR: cache lookup failed for sequence 1259
+
+
+statement ok
+DROP SEQUENCE seq_wrap_down;
+
+
+statement ok
+DROP SEQUENCE seq_wrap_up;
+
+
+statement ok
+DROP SEQUENCE seq_down;
+
+
+statement ok
+DROP SEQUENCE seq_up;
+
+
+statement ok
+DROP SEQUENCE seq_unset;
+
+
+statement ok
+DROP SEQUENCE seq_set_max;
+
+
+statement ok
+DROP SEQUENCE seq_leap;
+
+
+statement ok
+DROP SEQUENCE seq_bottom;
+
+
+statement ok
+DROP SEQUENCE seq_top;

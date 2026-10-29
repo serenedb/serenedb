@@ -31,13 +31,13 @@
 #include <cmath>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serializer.hpp>
@@ -55,6 +55,7 @@
 #include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
+#include "pg/types/xml.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "scheduler/job_scheduler.h"
@@ -549,30 +550,32 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Fault injection control. SET sdb_faults = 'name' to add a failure "
         "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
-        "clear all. Superuser only: the failure-point registry is "
+        "clear all and release parked threads. Superuser only: the "
+        "failure-point registry is "
         "process-global, so an armed point fires for every session.",
         [] { return duckdb::Value{""}; },
         [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
           RequireFaultSuperuser(ctx);
           auto s = value.ToString();
           if (s.starts_with('-')) {
-            if (!irs::RemoveFailurePointDebugging(
-                  std::string_view{s}.substr(1))) {
+            if (!duckdb::FaultPoints::Disarm(std::string_view{s}.substr(1))) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' not set"));
             }
           } else {
-            if (!irs::AddFailurePointDebugging(s)) {
+            if (!duckdb::FaultPoints::Arm(s)) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' already set"));
             }
+            SDB_WARN(GENERAL, "activating intentional failure point '", s,
+                     "'. the server will misbehave!");
           }
-          auto points = irs::GetFailurePointsDebugging();
+          auto points = duckdb::FaultPoints::List();
           value = duckdb::Value(absl::StrJoin(points, ","));
         },
         [](duckdb::ClientContext& ctx, duckdb::SetScope) {
           RequireFaultSuperuser(ctx);
-          irs::ClearFailurePointsDebugging();
+          duckdb::FaultPoints::Clear();
         },
         // SESSION scope, though the registry behind it is process-global: it
         // is the only scope that works. GLOBAL is refused inside a
@@ -832,12 +835,15 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_hnsw_column_filter",
       {
         LogicalTypeId::VARCHAR,
-        "How an HNSW graph walk answers a predicate only the columnstore can: "
-        "'fold' evaluates it over the whole segment before the walk; 'read' "
-        "reads the columns of each row the walk reaches; 'auto' reads while "
-        "the walk is expected to reach few enough rows for that to cost less "
-        "than the fold, weighing what one read costs in the columns' "
-        "encodings. Default 'auto'.",
+        "How an HNSW graph walk answers a predicate the columnstore can "
+        "evaluate: 'fold' evaluates one only the columnstore answers over the "
+        "whole segment before the walk, and takes one the index answers from "
+        "the index; 'read' reads the columns of each row the walk reaches, "
+        "including for predicates the index answers; 'auto' reads while the "
+        "walk is expected to reach few enough rows for that to cost less than "
+        "the fold, or than the index where the index answers the predicate, "
+        "weighing what one read costs in the columns' encodings. Default "
+        "'auto'.",
         [] { return duckdb::Value{"auto"}; },
         OneOfEnum<irs::HnswColumnFilter, "sdb_hnsw_column_filter">,
       },
@@ -897,34 +903,33 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_ann_oversample",
+      "sdb_ann_rescore_width",
       {
         LogicalTypeId::DOUBLE,
-        "Oversample for a quantized vector-similarity query, HNSW and IVF "
-        "alike: the search runs on quantized codes and ceil(sdb_ann_oversample "
-        "* k) of each segment\'s candidates are read back at full precision, "
-        "re-ordered, and only then compared against other segments -- a "
-        "quantized score is an estimate and two segments\' estimates are not "
-        "comparable, because each trains its own quantizer. Where the search "
-        "can return fewer candidates than the pool asks for, it is widened to "
-        "hold it: for HNSW that means the beam, since a beam of a hundred "
-        "cannot hand four hundred to the rescorer. 0 disables the rescore: "
-        "the query answers from the codes, which is faster and caps recall at "
-        "whatever the codes can tell apart -- well below 1 for a 4-bit or "
-        "binary quantizer, and worse still across many segments. -1 (the "
-        "default) rescores every quantized index at 1. Fractional "
-        "values are allowed, but a factor between 0 and 1 is rejected because "
-        "the pool must cover k. Unquantized (quant = \'none\') indexes never "
-        "rerank, regardless of this setting, and a query whose pool exists to "
-        "survive a lookup filter keeps that pool either way.",
+        "Rescore width z for a quantized vector-similarity query, HNSW and "
+        "IVF alike: the search runs on quantized codes, and a candidate from "
+        "any segment is read back at full precision while its code score plus "
+        "z times the code's estimated error could still beat the k-th best "
+        "full-precision score found so far, so a segment holding many of the "
+        "nearest neighbours gets more of them rescored and a segment holding "
+        "none gets none. A larger z rescores more and misses fewer: a "
+        "neighbour sitting exactly at the k-th score is missed with the "
+        "probability that a normal error exceeds z standard deviations. 0 "
+        "disables the rescore: the query answers from the codes, which is "
+        "faster and caps recall at whatever the codes can tell apart. -1 (the "
+        "default) uses 2 for sq8 and 1-bit rabitq, 3 for tq and multi-bit "
+        "rabitq, 4 for usq8, 5 for sq4, 6 for usq4, 7 for osq at 4 or more "
+        "bits, and 0 for fp16 and bf16, which answer from their codes; pq uses "
+        "2 on an ivf index and 3 on an hnsw index, bq 1 and 3, and osq at 1 or "
+        "2 bits 3 and 2. "
+        "Unquantized (quant = \'none\') indexes are never rescored.",
         [] { return duckdb::Value::DOUBLE(-1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<double>();
-          if (!std::isfinite(n) || n < -1.0 || (n > 0.0 && n < 1.0) ||
-              (n < 0.0 && n != -1.0)) {
+          if (!std::isfinite(n) || (n < 0.0 && n != -1.0)) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
-                                    "\"sdb_ann_oversample\": \"",
+                                    "\"sdb_ann_rescore_width\": \"",
                                     value.ToString(), "\""));
           }
         },
@@ -1010,6 +1015,17 @@ constexpr std::pair<std::string_view, VariableDescription>
         "When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC "
         "LIMIT k` into the inverted-index scan, so block-max score pruning "
         "never engages. Default: false (optimization on).",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_lookup_join_source_hop",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, a LOOKUP_JOIN over an inverted index that returns only "
+        "source columns reads the row keys from the index in one LOOKUP_JOIN "
+        "and the source columns in a second one. Default: false.",
         [] { return duckdb::Value::BOOLEAN(false); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -1361,7 +1377,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Shows the server version.",
-        [] { return duckdb::Value{"18.3"}; },
+        [] { return duckdb::Value{pg::kPgServerVersion}; },
         nullptr,  // refused via kUnchangeableSettings
       },
     },
@@ -1370,7 +1386,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::INTEGER,
         "Shows the server version as an integer.",
-        [] { return duckdb::Value::INTEGER(180003); },
+        [] { return duckdb::Value::INTEGER(pg::kPgServerVersionNum); },
         nullptr,  // refused via kUnchangeableSettings
       },
     },
@@ -1553,6 +1569,35 @@ constexpr std::pair<std::string_view, VariableDescription>
         [] { return duckdb::Value{"Etc/UTC"}; },
       },
     },
+    {
+      "max_identifier_length",
+      {
+        LogicalTypeId::INTEGER,
+        "Shows the maximum identifier length. SereneDB keeps longer "
+        "identifiers in full.",
+        [] { return duckdb::Value::INTEGER(63); },
+      },
+    },
+    {
+      "max_index_keys",
+      {
+        LogicalTypeId::INTEGER,
+        "Shows the maximum number of index keys. Clients read it as the bound "
+        "of index and constraint key arrays, such as pg_index.indkey and "
+        "pg_constraint.conkey.",
+        [] { return duckdb::Value::INTEGER(32); },
+      },
+    },
+    {
+      "xmloption",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets whether XML data in implicit parsing and serialization "
+        "operations is to be considered as documents or content fragments.",
+        [] { return duckdb::Value{"content"}; },
+        OneOfEnum<pg::XmlOption, "xmloption">,
+      },
+    },
 };
 
 const duckdb::case_insensitive_set_view_t kVariableIndex = [] {
@@ -1589,6 +1634,8 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
   "data_directory",
   "in_hot_standby",
   "is_superuser",
+  "max_identifier_length",
+  "max_index_keys",
   "server_encoding",
   "server_version",
   "server_version_num",
@@ -1596,6 +1643,18 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
 
 bool IsUnchangeableSetting(std::string_view name) {
   return kUnchangeableSettings.contains(name);
+}
+
+const duckdb::case_insensitive_set_view_t kSuperuserSettings = {
+  "max_expression_depth",
+};
+
+void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name) {
+  if (kSuperuserSettings.contains(name)) {
+    RequireSuperuser(
+      ctx, name,
+      "Only roles with the SUPERUSER attribute may change this parameter.");
+  }
 }
 
 namespace {

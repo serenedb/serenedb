@@ -1,0 +1,25 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE products (id INTEGER, name VARCHAR);
+
+statement ok
+INSERT INTO products VALUES (1, 'Trail Shoe'), (2, 'trail map'), (3, 'Road Shoe');
+
+statement ok
+CREATE INDEX products_idx ON products USING inverted (id, name);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lower_words AS split_text(case := 'lower');
+
+statement ok
+CREATE OR REPLACE INDEX products_idx ON products USING inverted (id, name lower_words);
+
+query
+SELECT id, name FROM products_idx WHERE name @@ 'trail' ORDER BY id;
+----
+id	name
+1	Trail Shoe
+2	trail map

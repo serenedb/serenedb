@@ -1,56 +1,100 @@
-add_subdirectory(sdb_catalog)
 add_subdirectory(commands)
 target_sources(
     sereneserver
     PRIVATE
-        pg_catalog/builtin_functions.cpp
-        pg_catalog/pg_aggregate.cpp
-        pg_catalog/pg_am.cpp
-        pg_catalog/pg_attribute.cpp
-        pg_catalog/pg_authid.cpp
-        pg_catalog/pg_auth_members.cpp
-        pg_catalog/pg_class.cpp
-        pg_catalog/pg_constraint.cpp
-        pg_catalog/pg_database.cpp
-        pg_catalog/pg_db_role_setting.cpp
-        pg_catalog/pg_default_acl.cpp
-        pg_catalog/pg_depend.cpp
-        pg_catalog/pg_shdepend.cpp
-        pg_catalog/pg_attrdef.cpp
-        pg_catalog/pg_description.cpp
-        pg_catalog/pg_enum.cpp
-        pg_catalog/pg_extension.cpp
-        pg_catalog/pg_hba_file_rules.cpp
-        pg_catalog/pg_foreign_server.cpp
-        pg_catalog/pg_index.cpp
-        pg_catalog/pg_language.cpp
-        pg_catalog/pg_namespace.cpp
-        pg_catalog/pg_opclass.cpp
-        pg_catalog/pg_proc.cpp
-        pg_catalog/pg_rewrite.cpp
-        pg_catalog/pg_sequence.cpp
-        pg_catalog/pg_tablespace.cpp
-        pg_catalog/pg_trigger.cpp
-        pg_catalog/pg_ts_dict.cpp
-        pg_catalog/sdb_progress.cpp
-        pg_catalog/pg_prepared_statements.cpp
-        pg_catalog/pg_replication_origin.cpp
-        pg_catalog/pg_subscription.cpp
-        pg_catalog/pg_subscription_rel.cpp
-        pg_catalog/pg_stat_subscription.cpp
-        pg_catalog/pg_stat_subscription_stats.cpp
-        pg_catalog/pg_type.cpp
-        information_schema/sql_implementation_info.cpp
-        information_schema/sql_parts.cpp
-        information_schema/sql_sizing.cpp
+        catalog/builtin/builtin.cpp
+        catalog/engine/builtin_functions.cpp
+        catalog/engine/registry.cpp
+        catalog/engine/scan_function.cpp
+        catalog/engine/system_filter.cpp
+        catalog/engine/system_source.cpp
+        catalog/engine/system_table.cpp
+        catalog/functions/functions.cpp
+        catalog/functions/information_schema/macros.cpp
+        catalog/functions/information_schema/misc.cpp
+        catalog/functions/pg_catalog/acl.cpp
+        catalog/functions/pg_catalog/dbsize.cpp
+        catalog/functions/pg_catalog/format_type.cpp
+        catalog/functions/pg_catalog/macros.cpp
+        catalog/functions/pg_catalog/misc.cpp
+        catalog/functions/pg_catalog/objectaddress.cpp
+        catalog/functions/pg_catalog/regproc.cpp
+        catalog/functions/pg_catalog/ruleutils.cpp
+        catalog/functions/pg_catalog/sequence.cpp
+        catalog/functions/pg_catalog/subscription.cpp
+        catalog/table_functions/pg_catalog/pg_hba_file_rules.cpp
+        catalog/table_functions/pg_catalog/pg_prepared_statement.cpp
+        catalog/table_functions/pg_catalog/pg_show_all_settings.cpp
+        catalog/tables/information_schema/columns.cpp
+        catalog/tables/information_schema/sql_implementation_info.cpp
+        catalog/tables/information_schema/sql_parts.cpp
+        catalog/tables/information_schema/sql_sizing.cpp
+        catalog/tables/pg_catalog/pg_aggregate.cpp
+        catalog/tables/pg_catalog/pg_am.cpp
+        catalog/tables/pg_catalog/pg_attrdef.cpp
+        catalog/tables/pg_catalog/pg_attribute.cpp
+        catalog/tables/pg_catalog/pg_auth_members.cpp
+        catalog/tables/pg_catalog/pg_authid.cpp
+        catalog/tables/pg_catalog/pg_class.cpp
+        catalog/tables/pg_catalog/pg_collation.cpp
+        catalog/tables/pg_catalog/pg_constraint.cpp
+        catalog/tables/pg_catalog/pg_database.cpp
+        catalog/tables/pg_catalog/pg_db_role_setting.cpp
+        catalog/tables/pg_catalog/pg_default_acl.cpp
+        catalog/tables/pg_catalog/pg_depend.cpp
+        catalog/tables/pg_catalog/pg_description.cpp
+        catalog/tables/pg_catalog/pg_enum.cpp
+        catalog/tables/pg_catalog/pg_foreign_data_wrapper.cpp
+        catalog/tables/pg_catalog/pg_foreign_server.cpp
+        catalog/tables/pg_catalog/pg_index.cpp
+        catalog/tables/pg_catalog/pg_init_privs.cpp
+        catalog/tables/pg_catalog/pg_language.cpp
+        catalog/tables/pg_catalog/pg_namespace.cpp
+        catalog/tables/pg_catalog/pg_opclass.cpp
+        catalog/tables/pg_catalog/pg_proc.cpp
+        catalog/tables/pg_catalog/pg_range.cpp
+        catalog/tables/pg_catalog/pg_replication_origin.cpp
+        catalog/tables/pg_catalog/pg_rewrite.cpp
+        catalog/tables/pg_catalog/pg_sequence.cpp
+        catalog/tables/pg_catalog/pg_shdepend.cpp
+        catalog/tables/pg_catalog/pg_subscription.cpp
+        catalog/tables/pg_catalog/pg_subscription_rel.cpp
+        catalog/tables/pg_catalog/pg_tablespace.cpp
+        catalog/tables/pg_catalog/pg_trigger.cpp
+        catalog/tables/pg_catalog/pg_ts_dict.cpp
+        catalog/tables/pg_catalog/pg_type.cpp
+        catalog/tables/sdb/sdb_metrics.cpp
+        catalog/tables/sdb/sdb_progress.cpp
+        catalog/tables/sdb/sdb_settings.cpp
+        catalog/utils/acl.cpp
+        catalog/utils/columns.cpp
+        catalog/utils/lookup.cpp
+        catalog/utils/session.cpp
+        catalog/views/information_schema/triggers.cpp
+        catalog/views/pg_catalog/pg_stat_progress_create_index.cpp
+        catalog/views/sdb/pg_stat_progress_create_table_as.cpp
         command_tag.cpp
         copy_in_batches.cpp
         copy_batch_builder.cpp
         connection_context.cpp
-        pg_types.cpp
+        types/bytea.cpp
+        types/cast.cpp
+        types/char.cpp
+        types/function.cpp
+        types/geometric.cpp
+        types/mac.cpp
+        types/mapping.cpp
+        types/money.cpp
+        types/multirange.cpp
+        types/pg_lsn.cpp
+        types/range.cpp
+        types/reg.cpp
+        types/register.cpp
+        types/tid.cpp
+        types/vector.cpp
+        types/xml.cpp
         serialize.cpp
         deserialize.cpp
-        system_catalog.cpp
         progress_registry.cpp
         sql_utils.cpp
         option_help.cpp

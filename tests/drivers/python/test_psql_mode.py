@@ -9,6 +9,7 @@ import re
 import select
 import struct
 import subprocess
+import tempfile
 import termios
 import time
 import uuid
@@ -125,7 +126,9 @@ def test_psql_user_default_falls_back_to_os_user() -> None:
 
     # The psql lane's unfiltered \du goldens list every role in the cluster;
     # hold the cross-lane lock for as long as the sentinel exists.
-    lock = open("/tmp/sdb-drivers-global-roles.lock", "w")
+    shared = Path(os.environ.get("SDB_DRV_SHARED_DIR") or tempfile.gettempdir())
+    shared.mkdir(parents=True, exist_ok=True)
+    lock = open(shared / "sdb-drivers-global-roles.lock", "w")
     fcntl.flock(lock, fcntl.LOCK_EX)
     _admin("DROP ROLE IF EXISTS zzz_sentinel_user;")
     _admin("CREATE ROLE zzz_sentinel_user LOGIN;")
@@ -516,22 +519,15 @@ def test_psql_default_host_localhost() -> None:
         f"default host wasn't localhost: stdout={r.stdout!r} stderr={r.stderr!r}"
 
 
-def test_psql_default_port_5432() -> None:
+def test_psql_default_port_5432(tmp_path) -> None:
     # Default port is 5432 -- assert it lands in the DSN even when no
     # server listens there (we never actually connect).
-    env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
+    env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb", "PGHOST": str(tmp_path)}
     env.pop("PGPORT", None)
-    # Print the planned ATTACH path. We use --echo so the synthesised
-    # -cmd is visible, but the easier route: trigger the connection and
-    # let DuckDB's IO Error echo back the DSN. Either way the port
-    # value lives in the error message.
-    env["PGHOST"] = "127.0.0.1"
     r = subprocess.run(
-        [SERENED_BIN, "psql", "-h", "127.0.0.1", "-c", "SELECT 1;"],
+        [SERENED_BIN, "psql", "-h", str(tmp_path), "-c", "SELECT 1;"],
         capture_output=True, text=True, timeout=20, env=env,
     )
-    # Server isn't running on 5432 in the test fixture (it's on 6161),
-    # so we expect failure and a port=5432 mention in the error.
     assert "port=5432" in (r.stdout + r.stderr), \
         f"default port wasn't 5432: stdout={r.stdout!r} stderr={r.stderr!r}"
 

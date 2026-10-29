@@ -214,7 +214,7 @@ QUERY PLAN
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
 │ sdb_inverted_index_term_count$sev         │
-│ Column Filter: lower(svc) = 'backend'     │
+│ Column Filter: svc ~~* 'backend'          │
 │ ~1 row                                    │
 ╰───────────────────────────────────────────╯
 
@@ -609,7 +609,7 @@ QUERY PLAN
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
 │ sdb_inverted_index_term_count$sev         │
-│ Column Filter: lower(svc) = 'frontend'    │
+│ Column Filter: svc ~~* 'frontend'         │
 │ ~1 row                                    │
 ╰───────────────────────────────────────────╯
 

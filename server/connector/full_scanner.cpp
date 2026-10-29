@@ -20,12 +20,12 @@
 
 #include "connector/full_scanner.h"
 
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 namespace sdb::connector {
@@ -81,6 +81,7 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
                                 duckdb::DataChunk& output,
                                 const duckdb::SelectionVector* live,
                                 duckdb::idx_t live_count) {
+  _selection = nullptr;
   if (count == 0) {
     return 0;
   }
@@ -144,6 +145,7 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
     sel = &_sel;
   }
   SDB_ASSERT(sel != nullptr);
+  _selection = sel;
   for (auto& b : _bound) {
     auto& out = output.data[b.output_slot];
     if (b.extract) {

@@ -24,7 +24,6 @@
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
 
-#include <duckdb/catalog/default/default_types.hpp>
 #include <iresearch/utils/application_exit.hpp>
 #include <type_traits>
 #include <utility>
@@ -51,6 +50,7 @@
 #include <vector>
 
 #include "index/doc_generator.hpp"
+#include "test_resources.hpp"
 #include "tests_config.hpp"
 #include "tests_shared.hpp"
 
@@ -61,13 +61,6 @@
     ? templ                                                               \
     : nullptr
 #endif
-
-// Standalone IResearch tests do not provide the server's additional SQL types.
-extern "C" const duckdb::DefaultType* duckdb_external_types(
-  duckdb::idx_t* count) {
-  *count = 0;
-  return nullptr;
-}
 
 ABSL_FLAG(bool, ires_log_stack, false, "always log stack trace");
 // String (not bool): the CI passes --ires_output=xml:<path>, so the flag must
@@ -92,7 +85,13 @@ uint32_t IterationTracker::gSIteration = (std::numeric_limits<uint32_t>::max)();
 const std::string kIresOutputPath("ires_output_path");
 const std::string kIresResourceDir("ires_resource_dir");
 
+constinit duckdb::Connection* gEngineConnection = nullptr;
+
 }  // namespace
+
+duckdb::ClientContext& tests::EngineContext() {
+  return *gEngineConnection->context;
+}
 
 const std::string TestEnv::kTestResults("test_detail.xml");
 
@@ -115,7 +114,9 @@ std::filesystem::path TestEnv::resource(const std::string& name) {
 }
 
 bool TestEnv::prepare() {
-  make_directories();
+  if (!make_directories()) {
+    return false;
+  }
 
   // NOTE: --ires_log_level is parsed but currently has no effect: SDB_*
   // levels are now driven by the duckdb LogManager config installed at
@@ -135,7 +136,7 @@ bool TestEnv::prepare() {
   return true;
 }
 
-void TestEnv::make_directories() {
+bool TestEnv::make_directories() {
   std::filesystem::path exec_path(gArgv[0]);
   auto path_parts = irs::file_utils::PathParts(exec_path.c_str());
 
@@ -188,8 +189,14 @@ void TestEnv::make_directories() {
 
   auto res_dir_templ = gResDir.string();
 
-  gResDir = mkdtemp(res_dir_templ.data());
+  if (!mkdtemp(res_dir_templ.data())) {
+    std::cerr << "cannot create " << res_dir_templ << ": "
+              << std::strerror(errno) << std::endl;
+    return false;
+  }
+  gResDir = res_dir_templ;
   (gResPath = gResDir) /= kTestResults;
+  return true;
 }
 
 void TestEnv::parse_command_line() {
@@ -258,7 +265,15 @@ int main(int argc, char* argv[]) {
   // heap-use-after-free.
   irs::DuckDBEngine::Instance().Initialize();
 
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  gEngineConnection = connection.get();
   const int code = TestEnv::initialize(argc, argv);
+  gEngineConnection = nullptr;
+  connection.reset();
+  if (code < 0) {
+    irs::DuckDBEngine::Instance().Shutdown();
+    return EXIT_FAILURE;
+  }
 
   SDB_INFO(IRESEARCH, "Path to test result directory: ",
            TestEnv::test_results_dir().string());
@@ -276,11 +291,12 @@ int main(int argc, char* argv[]) {
   if (all_paths == 0) {
     std::filesystem::remove(TestEnv::test_results_dir());
   } else {
+    const auto outside = TestEnv::test_results_dir().parent_path();
     for (auto& path : empty_paths) {
       do {
         std::filesystem::remove(path);
         path = path.parent_path();
-      } while (std::filesystem::is_empty(path));
+      } while (path != outside && std::filesystem::is_empty(path));
     }
   }
 

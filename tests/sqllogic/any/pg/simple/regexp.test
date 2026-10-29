@@ -322,3 +322,69 @@ statement error
 SELECT regexp_instr('abc', (1 / 0)::text);
 ----
 db error: ERROR: <slt:ignore>
+
+
+# A constant regex that the optimizer rewrites to LIKE keeps its literal
+# backslashes, and the same regex read from a column agrees.
+statement ok
+CREATE TABLE rx_paths (id int, s text, p text);
+
+statement ok
+INSERT INTO rx_paths VALUES
+  (1, 'C:\Windows\System32', '^C:\\Windows'),
+  (2, 'C:Windows', '^C:\\Windows'),
+  (3, 'a\xyz', '^a\\'),
+  (4, 'a%', '^a\\'),
+  (5, 'a_c', '^a_c$'),
+  (6, 'abc', '^a_c$');
+
+query
+SELECT id, s ~ '^C:\\Windows' AS w, s !~ '^C:\\Windows' AS nw, s ~ '^a\\' AS a, s ~ '^a_c$' AS u, s ~ p AS m FROM rx_paths ORDER BY id;
+----
+id	w	nw	a	u	m
+1	t	f	f	f	t
+2	f	t	f	f	f
+3	f	t	t	f	t
+4	f	t	f	f	f
+5	f	t	f	t	t
+6	f	t	f	f	f
+
+# A literal % stays a literal through the rewrite, and a filter reads the
+# escapes of the prefix it pushes into the scan.
+query
+SELECT id, s ~ '^a%' AS pct FROM rx_paths ORDER BY id;
+----
+id	pct
+1	f
+2	f
+3	f
+4	t
+5	f
+6	f
+
+query
+SELECT id FROM rx_paths WHERE s ~ '^C:\\Windows' ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM rx_paths WHERE s ~ '^a%' ORDER BY id;
+----
+id
+4
+
+query
+SELECT id FROM rx_paths WHERE s ~ '^a_c$' ORDER BY id;
+----
+id
+5
+
+# An anchor with a character on the side it anchors never matches.
+query
+SELECT s, s ~ 'a^b' AS a1, s ~ 'a$b' AS a2, s ~ 'abc^' AS a3, s ~ '$abc' AS a4, s ~ ('a' || '^b') AS a5 FROM (VALUES ('xaby'), ('ab'), ('abc')) t(s) ORDER BY s;
+----
+s	a1	a2	a3	a4	a5
+ab	f	f	f	f	f
+abc	f	f	f	f	f
+xaby	f	f	f	f	f

@@ -21,28 +21,6 @@
 
 #pragma once
 
-#if SERENEDB_STANDALONE_ASIO
-
-#define ASIO_HAS_MOVE 1
-
-#include <asio/buffer.hpp>
-#include <asio/connect.hpp>
-#include <asio/error.hpp>
-#include <asio/io_context.hpp>
-#include <asio/io_context_strand.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/local/stream_protocol.hpp>
-#include <asio/read.hpp>
-#include <asio/signal_set.hpp>
-#include <asio/ssl.hpp>
-#include <asio/steady_timer.hpp>
-#include <asio/streambuf.hpp>
-#include <asio/write.hpp>
-
-namespace asio_ns = asio;
-
-#else
-
 #define ASIO_HAS_MOVE 1
 
 #include <boost/asio.hpp>
@@ -64,6 +42,4 @@ namespace asio_ns = boost::asio;
 
 #ifdef BOOST_ASIO_HAS_LOCAL_SOCKETS
 #define ASIO_HAS_LOCAL_SOCKETS
-#endif
-
 #endif

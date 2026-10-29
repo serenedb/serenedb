@@ -20,6 +20,7 @@
 
 #include "catalog/database_directory.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/no_destructor.h>
 #include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
@@ -27,6 +28,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
@@ -98,13 +100,30 @@ void CreateDirectory(const std::filesystem::path& path) {
   utils::file_utils::SyncDirectory(path.parent_path());
 }
 
-void RemoveTree(const std::filesystem::path& path) noexcept {
-  duckdb::TaskScheduler::BlockingScope blocking;
+void RemoveDirectory(const std::filesystem::path& path) {
   std::error_code ec;
+  SDB_IF_FAILURE("pause_removal_midway") {
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry :
+         std::filesystem::recursive_directory_iterator{path, ec}) {
+      if (entry.is_regular_file()) {
+        files.push_back(entry.path());
+      }
+    }
+    if (!files.empty()) {
+      std::filesystem::remove(*absl::c_min_element(files));
+    }
+    SDB_PARK_ONCE_ON_FAILURE("pause_removal_midway");
+  }
   std::filesystem::remove_all(path, ec);
   if (ec) {
     SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
   }
+}
+
+void RemoveTree(const std::filesystem::path& path) noexcept {
+  duckdb::TaskScheduler::BlockingScope blocking;
+  RemoveDirectory(path);
 }
 
 DatabaseDirectory::DatabaseDirectory(std::filesystem::path path)

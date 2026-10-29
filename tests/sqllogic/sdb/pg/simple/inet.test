@@ -6,6 +6,13 @@
 #    lacks, and json_build_object, whose output spacing differs.
 
 query
+SELECT netmask('192.168.1.5/24'::INET) AS mask;
+----
+mask
+255.255.255.0
+
+
+query
 SELECT html_escape('<a href="x">') AS esc;
 ----
 esc

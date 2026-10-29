@@ -1,5 +1,6 @@
 """Pytest config that pulls the shared spec loader onto sys.path."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -10,15 +11,53 @@ if str(HARNESS) not in sys.path:
 # pytest-asyncio mode: each async test handles its own event loop via
 # `@pytest.mark.asyncio`; no autouse needed.
 import pytest
+from serened import Serened
+
+SERENED_BIN = os.environ.get(
+    "SDB_DRV_SERENED_BIN",
+    str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serened"),
+)
+FAULT_INJECTION = os.environ.get("SDB_FAULT_INJECTION", "1") != "0"
+
+
+def _own_server(tmp_dir: Path):
+    if not (Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)):
+        pytest.skip(f"serened binary not found or not executable: {SERENED_BIN}")
+    server = Serened(SERENED_BIN, datadir_root=str(tmp_dir),
+                     log_path=str(tmp_dir / "serened.log"))
+    try:
+        server.start()
+        with pytest.MonkeyPatch.context() as env:
+            env.setenv("SDB_DRV_HOST", "127.0.0.1")
+            env.setenv("SDB_DRV_PORT", str(server.port))
+            yield server
+    finally:
+        server.stop()
+
+
+@pytest.fixture()
+def own_server(tmp_path):
+    yield from _own_server(tmp_path)
+
+
+@pytest.fixture(scope="module")
+def own_server_module(tmp_path_factory):
+    yield from _own_server(tmp_path_factory.mktemp("serened"))
+
+
+@pytest.fixture(scope="session")
+def faults() -> bool:
+    return FAULT_INJECTION
 
 
 def pytest_configure(config):
-    config.addinivalue_line(
-        "markers",
-        "exclusive: arms a server-wide failure point, so tests/drivers/run.sh "
-        "runs it alone once every driver suite has finished",
-    )
+    config.addinivalue_line("markers", "faults: needs serened built with fault injection")
 
 
 def pytest_collection_modifyitems(config, items):
-    pass
+    if FAULT_INJECTION:
+        return
+    skip = pytest.mark.skip(reason="serened is built without fault injection")
+    for item in items:
+        if item.get_closest_marker("faults"):
+            item.add_marker(skip)

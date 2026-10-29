@@ -1,0 +1,358 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
+
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <duckdb/storage/data_table.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/shared.hpp>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
+#include "catalog/entry/system_table.h"
+#include "pg/catalog/builtin/builtin.h"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
+#include "pg/catalog/tables/tables.h"
+#include "pg/catalog/utils/columns.h"
+#include "pg/catalog/utils/lookup.h"
+
+namespace sdb::pg {
+namespace {
+
+constexpr SystemKindTypes kRelkinds[] = {
+  {'r', kTableTypes},    {'v', kTableViewTypes}, {'i', kIndexTypes},
+  {'S', kSequenceTypes}, {'c', kTypeTypes},
+};
+
+constexpr SystemIndex kIndexes[] = {
+  {kPgClassSql["oid"], SystemLookup::Object},
+  {kPgClassSql["relname"], SystemLookup::Object},
+  {kPgClassSql["relnamespace"], SystemLookup::Namespace},
+  {kPgClassSql["relkind"], SystemLookup::Kind, kRelkinds},
+};
+
+std::optional<std::vector<std::string>> Reloptions(
+  const catalog::SearchTableEntry& table) {
+  std::vector<std::string> result;
+  for (const auto name : catalog::kSearchTableOptions) {
+    if (const auto value = table.Option(name); !value.IsNull()) {
+      result.emplace_back(absl::StrCat(name, "=", value.ToString()));
+    }
+  }
+  return NonEmpty(std::move(result));
+}
+
+std::optional<std::vector<std::string>> Reloptions(
+  const duckdb::IndexCatalogEntry& index) {
+  std::vector<std::string> result;
+  for (const auto name : catalog::kInvertedIndexSettings) {
+    if (const auto it = index.options.find(name); it != index.options.end()) {
+      result.emplace_back(absl::StrCat(name, "=", it->second.ToString()));
+    }
+  }
+  return NonEmpty(std::move(result));
+}
+
+uint64_t RelationRowType(const duckdb::CatalogEntry& relation) {
+  if (const auto* row = relation.oid < kMaxSystem
+                          ? FindBuiltinRowType(relation.oid)
+                          : nullptr) {
+    return row->oid;
+  }
+  return relation.internal ? kInvalidOid : RowTypeOid(relation.oid);
+}
+
+constexpr std::tuple kRelationBase{
+  Col<"oid">(&duckdb::CatalogEntry::oid),
+  Col<"relname">(&duckdb::CatalogEntry::name),
+  Col<"relnamespace">(&duckdb::CatalogEntry::ParentSchemaOid),
+  Col<"relowner">(
+    [](const auto& relation) { return relation.permissions.owner; })};
+
+constexpr std::tuple kRelationState{
+  Col<"relpersistence">([](const auto&) { return 'p'; }),
+  Col<"relispopulated">([](const auto&) { return true; })};
+
+constexpr auto kRelationTraits = std::tuple_cat(
+  kRelationState,
+  std::tuple{Col<"relreplident">([](const auto&) { return 'n'; })});
+
+template<char Kind>
+constexpr auto kRelation = std::tuple_cat(
+  kRelationBase, std::tuple{Col<"relkind">([](const auto&) { return Kind; })},
+  kRelationTraits);
+
+struct Ordinary {
+  duckdb::TableCatalogEntry& table;
+  const catalog::SearchTableEntry* search;
+};
+
+struct KeyIndex {
+  const duckdb::TableCatalogEntry& table;
+  const duckdb::UniqueConstraint& key;
+};
+
+struct Index {
+  const duckdb::IndexCatalogEntry& index;
+  const irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t>& owners;
+};
+
+auto Shown(const SystemScan& scan, const duckdb::CatalogEntry& owner,
+           std::string_view name) {
+  return [&scan, &owner, name](const Session& session) {
+    return RelationVisible(session, NameOf(scan.Transaction(), owner).schema,
+                           name);
+  };
+}
+
+class PgClass final : public SystemTableScan<kPgClassSql> {
+ public:
+  using SystemTableScan::SystemTableScan;
+
+  static constexpr duckdb::idx_t kRows = 10000;
+
+  static constexpr std::tuple kSources{
+    CatalogSource{kRelationTypes, SystemSchemas::Visit, kIndexes}};
+
+  static constexpr SystemVisibility kVisibility{kSql["oid"],
+                                                "pg_table_is_visible"};
+
+  static constexpr auto kSystem = Shape<kSql, const catalog::SystemTableEntry>(
+    kRelationBase, kRelationState, Col<"relkind">([](const auto& entry) {
+      return entry.Table().Sql().relkind;
+    }),
+    Col<"relreplident">(
+      [](const auto& entry) { return entry.Table().Sql().replident; }),
+    Col<"reltuples">([](const auto&) { return -1.0F; }),
+    Col<"relam">([](const auto& entry) {
+      return entry.Table().Sql().relkind == 'v' ? duckdb::idx_t{0} : kPgAmHeap;
+    }),
+    Col<"relhasrules">(
+      [](const auto& entry) { return entry.Table().Sql().relkind == 'v'; }),
+    Col<"relnatts">(
+      [](const auto& entry) { return entry.Table().Sql().columns.size(); }),
+    Col<"relisshared">(
+      [](const auto& entry) { return entry.Table().Sql().shared; }),
+    Col<"reltablespace">([](const auto& entry) {
+      return entry.Table().Sql().shared ? kPgGlobalTablespace
+                                        : duckdb::idx_t{0};
+    }),
+    Col<"reltype">(&RelationRowType),
+    Col<"relacl">([](const auto& relation) -> const auto& {
+      return relation.permissions.acl;
+    }));
+
+  static constexpr auto kOrdinary = Shape<kSql, const Ordinary>(
+    Col<"oid">([](const auto& row) { return row.table.oid; }),
+    Col<"relname">(
+      [](const auto& row) -> const auto& { return row.table.name; }),
+    Col<"relnamespace">(
+      [](const auto& row) { return row.table.ParentSchemaOid(); }),
+    Col<"relowner">(
+      [](const auto& row) { return row.table.permissions.owner; }),
+    Col<"relkind">([](const auto&) { return 'r'; }), kRelationState,
+    Col<"relam">(
+      [](const auto& row) { return row.search ? kPgAmIResearch : kPgAmHeap; }),
+    Col<"relnatts">([](const auto& row) {
+      return row.table.GetColumns().LogicalColumnCount();
+    }),
+    Col<"relreplident">([](const auto&) { return 'd'; }),
+    Col<"reltype">([](const auto& row) { return RelationRowType(row.table); }),
+    Col<"reloptions">([](const auto& row) {
+      return row.search ? Reloptions(*row.search) : std::nullopt;
+    }),
+    Col<"relchecks">([](const auto& row) {
+      return absl::c_count_if(
+        row.table.GetConstraints(), [](const auto& constraint) {
+          return constraint->type == duckdb::ConstraintType::CHECK;
+        });
+    }),
+    Col<"relhasindex">([](const auto& row, SystemScan& scan) {
+      return !KeyIndexes(row.table).empty() || scan.Indexed(row.table);
+    }),
+    Col<"relhastriggers">([](const auto& row, SystemScan& scan) {
+      return absl::c_any_of(row.table.GetConstraints(),
+                            [](const auto& constraint) {
+                              return constraint->type ==
+                                     duckdb::ConstraintType::FOREIGN_KEY;
+                            }) ||
+             scan.Triggered(row.table);
+    }),
+    Col<"reltuples">([](const auto& row) {
+      return row.table.IsDuckTable()
+               ? static_cast<float>(row.table.GetStorage().GetTotalRows())
+               : -1.0F;
+    }),
+    Col<"relacl">([](const auto& row) -> const auto& {
+      return row.table.permissions.acl;
+    }));
+
+  static constexpr auto kKeyIndex = Shape<kSql, const KeyIndex>(
+    kRelationTraits,
+    Col<"oid">([](const auto& row) { return row.key.index_oid; }),
+    Col<"relname">(
+      [](const auto& row) -> const auto& { return row.key.constraint_name; }),
+    Col<"relnamespace">(
+      [](const auto& row) { return row.table.ParentSchemaOid(); }),
+    Col<"relowner">(
+      [](const auto& row) { return row.table.permissions.owner; }),
+    Col<"relkind">([](const auto&) { return 'i'; }),
+    Col<"relam">([](const auto&) { return kPgAmSecondary; }),
+    Col<"relnatts">([](const auto& row) {
+      return KeyAttnums(row.table.GetColumns(), row.key).size();
+    }));
+
+  static constexpr auto kIndex = Shape<kSql, const Index>(
+    kRelationTraits, Col<"oid">([](const auto& row) { return row.index.oid; }),
+    Col<"relname">(
+      [](const auto& row) -> const auto& { return row.index.name; }),
+    Col<"relnamespace">(
+      [](const auto& row) { return row.index.ParentSchemaOid(); }),
+    Col<"relkind">([](const auto&) { return 'i'; }),
+    Col<"relam">([](const auto& row) {
+      return row.index.index_type == catalog::kInvertedIndexTypeName
+               ? kPgAmInverted
+               : kPgAmSecondary;
+    }),
+    Col<"relnatts">(
+      [](const auto& row) { return row.index.parsed_expressions.size(); }),
+    Col<"reloptions">([](const auto& row) {
+      return row.index.index_type == catalog::kInvertedIndexTypeName
+               ? Reloptions(row.index)
+               : std::nullopt;
+    }),
+    Col<"relowner">([](const auto& row, SystemScan& scan) {
+      if (const auto it = row.owners.find(row.index.table_oid);
+          it != row.owners.end()) {
+        return it->second;
+      }
+      const auto relation = scan.FindById(row.index.table_oid);
+      return relation ? relation->permissions.owner
+                      : row.index.permissions.owner;
+    }));
+
+  static constexpr auto kView = Shape<kSql, duckdb::ViewCatalogEntry>(
+    kRelation<'v'>, Col<"relhasrules">([](const auto&) { return true; }),
+    Col<"reltuples">([](const auto&) { return -1.0F; }),
+    Col<"reltype">(&RelationRowType),
+    Col<"relnatts">([](auto& view, SystemScan& scan) {
+      const auto columns = ViewColumns(scan.Context(), view);
+      return columns ? columns->types.size() : 0;
+    }),
+    Col<"relhasindex">([](auto& view, SystemScan& scan) {
+      return !view.internal && scan.Indexed(view);
+    }),
+    Col<"reloptions">(
+      [](const auto& view) -> std::optional<std::vector<std::string_view>> {
+        const auto* system = view.internal ? FindSystemView(view.oid) : nullptr;
+        if (!system || system->options.empty()) {
+          return std::nullopt;
+        }
+        return absl::StrSplit(system->options, ',');
+      }),
+    Col<"relacl">(
+      [](const auto& view) -> const auto& { return view.permissions.acl; }));
+
+  static constexpr auto kSequence =
+    Shape<kSql, const duckdb::SequenceCatalogEntry>(
+      kRelation<'S'>, Col<"relnatts">([](const auto&) { return 3; }),
+      Col<"reltuples">([](const auto&) { return 1.0F; }),
+      Col<"relacl">([](const auto& sequence) -> const auto& {
+        return sequence.permissions.acl;
+      }));
+
+  static constexpr auto kComposite =
+    Shape<kSql, const duckdb::TypeCatalogEntry>(
+      kRelation<'c'>, Col<"reltype">(&duckdb::CatalogEntry::oid),
+      Col<"reltuples">([](const auto&) { return -1.0F; }),
+      Col<"relnatts">([](const auto& type) {
+        return duckdb::StructType::GetChildCount(type.user_type);
+      }));
+
+  static constexpr SystemTypeShape kTypeShapes[] = {
+    {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kSystem>::kProvided},
+    {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kOrdinary>::kProvided},
+    {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kKeyIndex>::kProvided},
+    {duckdb::CatalogType::VIEW_ENTRY, SystemShapeOf<kView>::kProvided},
+    {duckdb::CatalogType::INDEX_ENTRY, SystemShapeOf<kIndex>::kProvided},
+    {duckdb::CatalogType::SEQUENCE_ENTRY, SystemShapeOf<kSequence>::kProvided},
+    {duckdb::CatalogType::TYPE_ENTRY, SystemShapeOf<kComposite>::kProvided},
+  };
+
+  void Row(duckdb::TableCatalogEntry& table) {
+    const auto shown = Shown(*this, table, table.name.GetIdentifierName());
+    if (table.internal && FindSystemTable(table.oid)) {
+      Emit<kSystem>(table.Cast<catalog::SystemTableEntry>(), shown);
+      return;
+    }
+    Emit<kOrdinary>(
+      {table, dynamic_cast<const catalog::SearchTableEntry*>(&table)}, shown);
+    if (Allows<"relkind">('i')) {
+      if (Reads<"relowner">()) {
+        _owners.emplace(table.oid, table.permissions.owner);
+      }
+      for (const auto& key : KeyIndexes(table)) {
+        Emit<kKeyIndex>({table, key}, Shown(*this, table, key.constraint_name));
+      }
+    }
+  }
+
+  void Row(duckdb::ViewCatalogEntry& view) {
+    Emit<kView>(view, Shown(*this, view, view.name.GetIdentifierName()));
+  }
+
+  void Row(const duckdb::IndexCatalogEntry& index) {
+    Emit<kIndex>({index, _owners},
+                 Shown(*this, index, index.name.GetIdentifierName()));
+  }
+
+  void Row(duckdb::SequenceCatalogEntry& sequence) {
+    if (!NumbersRows(sequence)) {
+      Emit<kSequence>(
+        sequence, Shown(*this, sequence, sequence.name.GetIdentifierName()));
+    }
+  }
+
+  void Row(const duckdb::TypeCatalogEntry& type) {
+    if (duckdb::StructType::IsStruct(type.user_type)) {
+      Emit<kComposite>(type, Shown(*this, type, type.name.GetIdentifierName()));
+    }
+  }
+
+ private:
+  irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> _owners;
+};
+
+}  // namespace
+
+SystemTable gPgClass = SystemTableOf<PgClass>();
+
+}  // namespace sdb::pg

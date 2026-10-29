@@ -70,6 +70,28 @@ class EchoHandler final : public network::HttpHandler {
   }
 };
 
+class StreamedHandler final : public network::HttpHandler {
+ public:
+  yaclib::Task<> Handle(network::RequestContext&, const network::HttpRequest&,
+                        network::http::HttpResponseWriter& writer) override {
+    writer.WriteHead(network::http::HttpStatus::Ok, "text/plain", 5);
+    writer.Write("hello");
+    writer.Finish();
+    return yaclib::MakeTask();
+  }
+};
+
+class ChunkedHandler final : public network::HttpHandler {
+ public:
+  yaclib::Task<> Handle(network::RequestContext&, const network::HttpRequest&,
+                        network::http::HttpResponseWriter& writer) override {
+    writer.WriteHeadChunked(network::http::HttpStatus::Ok, "text/plain");
+    writer.Write("hello");
+    writer.Finish();
+    return yaclib::MakeTask();
+  }
+};
+
 void RegisterFixtures(network::HttpRouter& router) {
   static constexpr std::string_view kRoot =
     R"({"name":"serenedb","tagline":"You Know, for Search"})";
@@ -195,6 +217,31 @@ TEST(NetworkHttp, BodyEcho) {
     "POST /echo HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n"
     "Connection: close\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n");
   EXPECT_NE(chunked.find("\r\n\r\nhello world"), std::string::npos);
+}
+
+TEST(NetworkHttp, ResponsesWithoutExtraHeaders) {
+  network::HttpRouter router;
+  RegisterFixtures(router);
+  router.Add(network::HttpMethod::Get, "/streamed",
+             std::make_unique<StreamedHandler>());
+  router.Add(network::HttpMethod::Get, "/chunked",
+             std::make_unique<ChunkedHandler>());
+  HttpServerHarness harness{router};
+
+  const auto body_of = [&](std::string_view path) {
+    const std::string response = Roundtrip(
+      harness.server, std::string{"GET "} + std::string{path} +
+                        " HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
+    EXPECT_TRUE(response.starts_with("HTTP/1.1 200")) << response;
+    const auto separator = response.find("\r\n\r\n");
+    return separator == std::string::npos ? std::string{}
+                                          : response.substr(separator + 4);
+  };
+  EXPECT_EQ(body_of("/ping"), R"({"status":"ok"})");
+  EXPECT_EQ(body_of("/streamed"), "hello");
+  const std::string chunked = body_of("/chunked");
+  EXPECT_NE(chunked.find("\r\nhello\r\n"), std::string::npos) << chunked;
+  EXPECT_TRUE(chunked.ends_with("0\r\n\r\n")) << chunked;
 }
 
 TEST(NetworkHttp, ShutdownWithOpenKeepAliveConnection) {

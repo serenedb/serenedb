@@ -31,6 +31,7 @@
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/execution/execution_context.hpp>
@@ -59,7 +60,6 @@
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
@@ -74,14 +74,14 @@
 #include "connector/index_expression.hpp"
 #include "connector/inverted_index_bind.h"
 #include "connector/inverted_store_index.h"
-#include "connector/pg_logical_types.h"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_backfill.h"
 #include "connector/view_fast_path.h"
+#include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
-#include "pg/sql_utils.h"
+#include "pg/types/logical.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "server/utils/primary_key.h"
@@ -242,6 +242,13 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     pk_type.id() == duckdb::LogicalTypeId::STRUCT && pk_type != pg::CTID()
       ? PkShape::Struct
       : PkShape::Single;
+  if (_relation.type == duckdb::CatalogType::TABLE_ENTRY &&
+      _relation.Cast<duckdb::TableCatalogEntry>().GetLogStorage() &&
+      !IndexNameTaken(context, *_info, _relation)) {
+    auto& search_table = _relation.Cast<catalog::SearchTableEntry>();
+    search_table.Storage()->ClaimLayout(context,
+                                        search_table.name.GetIdentifierName());
+  }
   if (IsReindexPass()) {
     // The pass carries the index's name, resolved in the schema the statement
     // is qualified with -- the same pair every other lookup in this operator
@@ -274,12 +281,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       if (const auto& store = index_entry.SearchStore()) {
         state->build_claim =
           store->BeginIndexBuild(index_entry.oid, index_entry.Config());
-        if (!state->build_claim.Claimed()) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
-                          ERR_MSG("an index build is already running on "
-                                  "search table ",
-                                  _relation.oid));
-        }
         SearchBackfillTarget backfill;
         backfill.shard = store;
         backfill.catalog = &_relation.ParentCatalog();

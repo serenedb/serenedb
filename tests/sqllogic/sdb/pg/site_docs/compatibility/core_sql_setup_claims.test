@@ -271,3 +271,7 @@ SELECT setval('sc_seq', 10);
 # op_seq_cond: currval
 statement ok
 SELECT currval('sc_seq');
+
+# op_seq_cond: lastval
+statement ok
+SELECT lastval();

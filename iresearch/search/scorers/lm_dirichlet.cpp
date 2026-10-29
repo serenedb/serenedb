@@ -32,6 +32,7 @@
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
 #include "iresearch/utils/down_cast.hpp"
@@ -42,24 +43,17 @@
 namespace irs {
 namespace {
 
-template<typename T>
-constexpr const T* TryGetValue(const T* value) noexcept {
-  return value;
-}
-
-constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
-
 template<ScoreMergeType MergeType, bool HasScale>
 IRS_FORCE_INLINE void LmDirImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
   const uint32_t* IRS_RESTRICT norm,
   [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t mu_p_inv,
-  score_t mu, score_t const_boost) noexcept {
+  score_t mu_inv, score_t const_boost) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
     const score_t tf = ScaledFreq<HasScale>(freq, scale, i);
     const score_t dl = TermCountToScore(norm[i]);
     const score_t weight = std::log1p(tf * mu_p_inv);
-    const score_t doc_norm = std::log1p(dl / mu);
+    const score_t doc_norm = std::log1p(dl * mu_inv);
     score_t r = weight - doc_norm;
     if (r < 0.f) {
       r = 0.f;
@@ -70,7 +64,7 @@ IRS_FORCE_INLINE void LmDirImpl(
 }
 
 template<bool HasScale>
-struct LmDirScore : public ScoreOperator {
+struct LmDirScore : public ScoreOperatorOf<LmDirScore<HasScale>> {
   LmDirScore(score_t boost, score_t mu, const LMStats& stats,
              const FreqBlockAttr* freq, const uint32_t* norm,
              const score_t* scale) noexcept
@@ -78,51 +72,21 @@ struct LmDirScore : public ScoreOperator {
       norm{norm},
       scale{scale},
       boost{boost},
-      mu{mu},
+      mu_inv{1.f / mu},
       mu_p_inv{1.f / (mu * stats.collection_prob)} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
     LmDirImpl<MergeType, HasScale>(res, n, freq->value, norm,
-                                   TryGetValue(scale), mu_p_inv, mu, boost);
-  }
-
-  score_t Score() const noexcept final {
-    score_t res{};
-    ScoreImpl(&res, 1);
-    return res;
-  }
-
-  void Score(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl(res, n);
-  }
-  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, n);
-  }
-  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, n);
-  }
-
-  void ScoreBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kScoreBlock);
-  }
-  void ScoreSumBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
-  }
-  void ScoreMaxBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
-  }
-
-  void ScorePostingBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kPostingBlock);
+                                   TryGetValue(scale), mu_p_inv, mu_inv, boost);
   }
 
   const FreqBlockAttr* freq;
   const uint32_t* norm;
   [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t boost;
-  score_t mu;
+  score_t mu_inv;
   score_t mu_p_inv;
 };
 
@@ -130,50 +94,14 @@ struct LmDirScore : public ScoreOperator {
 
 void LMDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
                           const TermCollector* term) const {
-  auto* stats = stats_cast(stats_buf);
-
-  const auto ttf_field = field ? field->total_term_freq : 0;
-  const auto ttf_term = term ? term->total_term_freq : 0;
-
-  const double num = static_cast<double>(ttf_term) + 1.0;
-  const double den = static_cast<double>(ttf_field) + 1.0;
-  stats->collection_prob = static_cast<score_t>(num / den);
+  CollectLMStats(*stats_cast(stats_buf), field, term);
 }
 
 ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
-  auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
-  if (!freq) {
+  if (_mu <= 0.f) {
     return ScoreFunction::Default();
   }
-
-  auto* stats = stats_cast(ctx.stats);
-  if (stats->collection_prob <= 0.f || _mu <= 0.f) {
-    return ScoreFunction::Default();
-  }
-
-  const uint32_t* norm = [&] {
-    auto* attr = irs::get<Norm>(ctx.doc_attrs);
-    return attr ? &attr->value : nullptr;
-  }();
-
-  if (!norm) {
-    auto norm_reader = ctx.segment.norms(ctx.field.norm);
-    norm = ctx.fetcher.AddNorms(ctx.field.norm, std::move(norm_reader));
-  }
-
-  if (!norm) {
-    norm = kNorms.data();
-  }
-
-  auto* scale = [&] {
-    auto* attr = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
-    return attr ? attr->value : nullptr;
-  }();
-
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
-    return ScoreFunction::Make<LmDirScore<HasScale>>(ctx.boost, _mu, *stats,
-                                                     freq, norm, scale);
-  });
+  return PrepareLMScorer<LmDirScore>(ctx, *stats_cast(ctx.stats), _mu);
 }
 
 std::string LMDirichlet::ToString() const {

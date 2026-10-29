@@ -29,6 +29,7 @@
 #include <deque>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -48,7 +49,6 @@
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iterator>
 #include <span>
 #include <string>

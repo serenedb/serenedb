@@ -62,11 +62,11 @@ A `CIDR` value is a network: an `INET` whose bits beyond the netmask are all zer
 
 <SqlLogicTest id="sql/data_types/inet/example_008" />
 
-Unlike PostgreSQL, abbreviated input such as `'10'` for `10.0.0.0/8` is not accepted, and `min` and `max` of a `CIDR` column return a `CIDR` value rather than an `INET` one.
+A `CIDR` string may abbreviate an IPv4 network, as in PostgreSQL: `'10'` and `'10/8'` are `10.0.0.0/8`, and `'192.168'` is `192.168.0.0/24`. Unlike PostgreSQL, `min` and `max` of a `CIDR` column return a `CIDR` value rather than an `INET` one.
 
 ## Functions
 
-`host`, `network`, `broadcast`, `netmask` and `family` take an `INET` value. Adding an integer to an `INET` value, or subtracting one, moves the address.
+`host`, `network`, `broadcast`, `netmask`, `hostmask`, `masklen` and `family` take an `INET` value. `set_masklen(ip, n)` sets the netmask length, `abbrev(ip)` returns the shortest text form, `inet_same_family(a, b)` tells whether two values are of the same family, and `inet_merge(a, b)` returns the smallest network that contains both. Adding an integer to an `INET` value, or subtracting one, moves the address, and subtracting one `INET` value from another returns the distance between the two addresses as a `BIGINT`.
 
 `inet_sort_key(ip)` returns a `BLOB` that compares byte by byte in the order described in [Ordering](#ordering). Use it to carry the `INET` order into a context that compares bytes, such as a key built for another system.
 

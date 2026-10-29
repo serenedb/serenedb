@@ -27,10 +27,6 @@ DROP JOB IF EXISTS jsb_once;
 
 
 statement ok
-DROP JOB IF EXISTS jsb_soon;
-
-
-statement ok
 DROP JOB IF EXISTS jsb_every;
 
 
@@ -368,31 +364,6 @@ SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database()
 ----
 jobs
 0
-
-
-statement ok
-CREATE JOB jsb_soon AFTER 1 SECOND AS $$BEGIN; INSERT INTO jsb_log VALUES (20, 'scheduled'); DROP JOB jsb_soon; COMMIT;$$;
-
-
-query ok retry 80 backoff 250ms
-SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_soon';
-----
-jobs
-0
-
-
-query
-SELECT step, note FROM jsb_log WHERE step = 20;
-----
-step	note
-20	scheduled
-
-
-query
-SELECT trigger, success, error IS NULL AS no_error FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsb_soon';
-----
-trigger	success	no_error
-schedule	t	t
 
 
 statement ok

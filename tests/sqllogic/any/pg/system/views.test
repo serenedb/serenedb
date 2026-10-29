@@ -49,3 +49,30 @@ query
 SELECT * FROM pg_matviews LIMIT 0;
 ----
 schemaname	matviewname	matviewowner	tablespace	hasindexes	ispopulated	definition
+
+
+query
+SELECT c.relname, count(r.oid) AS rules
+FROM pg_class c LEFT JOIN pg_rewrite r ON r.ev_class = c.oid AND r.rulename = '_RETURN'
+WHERE c.oid IN ('pg_catalog.pg_roles'::regclass, 'information_schema.tables'::regclass)
+GROUP BY c.relname ORDER BY c.relname;
+----
+relname	rules
+pg_roles	1
+tables	1
+
+
+query
+SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod) AS type
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE a.attrelid IN ('pg_catalog.pg_stat_activity'::regclass, 'pg_catalog.pg_stat_progress_vacuum'::regclass)
+  AND a.attname IN ('datname', 'usename', 'client_addr', 'backend_xid', 'backend_xmin')
+ORDER BY c.relname, a.attnum;
+----
+relname	attname	type
+pg_stat_activity	datname	name
+pg_stat_activity	usename	name
+pg_stat_activity	client_addr	inet
+pg_stat_activity	backend_xid	xid
+pg_stat_activity	backend_xmin	xid
+pg_stat_progress_vacuum	datname	name

@@ -646,11 +646,13 @@ struct Unestimated : public irs::FilterWithType<Unestimated> {
 
 struct Estimated : public irs::FilterWithType<Estimated> {
   struct Prepared : public irs::QueryBuilder {
-    Prepared(const irs::SubReader& segment, uint32_t est, bool* evaluated)
+    Prepared(const irs::SubReader& segment, uint32_t est, uint32_t est_min,
+             bool* evaluated)
       : QueryBuilder{
           segment,
           static_cast<uint32_t>(std::min<uint64_t>(est, segment.docs_count())),
           irs::QueryKind::Other} {
+      _estimate_min = std::min(est_min, _estimate_max);
       *evaluated = true;
     }
 
@@ -700,7 +702,7 @@ struct Estimated : public irs::FilterWithType<Estimated> {
   irs::QueryBuilder::ptr PrepareSegment(
     const irs::SubReader& segment,
     const irs::PrepareContext& /*ctx*/) const final {
-    return irs::memory::make_managed<Estimated::Prepared>(segment, est,
+    return irs::memory::make_managed<Estimated::Prepared>(segment, est, est_min,
                                                           &evaluated);
   }
 
@@ -710,6 +712,7 @@ struct Estimated : public irs::FilterWithType<Estimated> {
 
   mutable bool evaluated = false;
   uint32_t est{};
+  uint32_t est_min{};
 };
 
 }  // namespace detail
@@ -1481,6 +1484,53 @@ TEST(boolean_query_estimation, and_filter) {
   }
 }
 
+TEST(boolean_query_estimation, bounds_and_matches) {
+  detail::SegmentReaderMock segment_reader{1000};
+  const auto add = [](irs::BooleanFilter& root, irs::Occur occur,
+                      uint32_t est) {
+    auto& node = AddChild<detail::Estimated>(root, occur);
+    node.est = est;
+    node.est_min = est;
+  };
+
+  {
+    irs::BooleanFilter root;
+    add(root, irs::Occur::Must, 600);
+    add(root, irs::Occur::Must, 700);
+    tests::PreparedFilter prep{root, segment_reader};
+    const auto* query = prep.Query(0);
+    ASSERT_NE(nullptr, query);
+    EXPECT_EQ(300, query->EstimateMin());
+    EXPECT_EQ(420, query->EstimateMatches());
+    EXPECT_EQ(600, query->EstimateMax());
+  }
+
+  {
+    irs::BooleanFilter root;
+    add(root, irs::Occur::Should, 100);
+    add(root, irs::Occur::Should, 300);
+    AsDisjunction(root);
+    tests::PreparedFilter prep{root, segment_reader};
+    const auto* query = prep.Query(0);
+    ASSERT_NE(nullptr, query);
+    EXPECT_EQ(300, query->EstimateMin());
+    EXPECT_EQ(370, query->EstimateMatches());
+    EXPECT_EQ(400, query->EstimateMax());
+  }
+
+  {
+    irs::BooleanFilter root;
+    add(root, irs::Occur::Must, 500);
+    add(root, irs::Occur::MustNot, 100);
+    tests::PreparedFilter prep{root, segment_reader};
+    const auto* query = prep.Query(0);
+    ASSERT_NE(nullptr, query);
+    EXPECT_EQ(400, query->EstimateMin());
+    EXPECT_EQ(450, query->EstimateMatches());
+    EXPECT_EQ(500, query->EstimateMax());
+  }
+}
+
 TEST(boolean_disjunction, next) {
   detail::SegmentReaderMock segment{2048};
 
@@ -1794,6 +1844,103 @@ TEST(boolean_conjunction, scored) {
     ASSERT_EQ(2 * value, scr.Score());
   }
   ASSERT_TRUE(irs::doc_limits::eof(it->Next()));
+}
+
+TEST(boolean_conjunction, max_merge_is_the_same_in_lead_and_fill) {
+  tests::sort::Boost sort;
+  detail::SegmentReaderMock segment{2048};
+
+  const auto check = [&](
+                       const irs::BooleanFilter& root,
+                       const std::map<irs::doc_id_t, irs::score_t>& expected) {
+    tests::PreparedFilter prep{root, segment, &sort};
+
+    std::map<irs::doc_id_t, irs::score_t> lead;
+    irs::ColumnArgsFetcher lead_fetcher;
+    auto it = prep.ExecuteScored(0, lead_fetcher);
+    ASSERT_TRUE(bool(it));
+    const auto score = it->PrepareScore();
+    while (!irs::doc_limits::eof(it->Next())) {
+      it->FetchScoreArgs(0);
+      lead.emplace(it->Value(), score.Score());
+    }
+    EXPECT_EQ(expected, lead);
+
+    std::map<irs::doc_id_t, irs::score_t> fill;
+    irs::ColumnArgsFetcher fill_fetcher;
+    auto node = prep.Query(0)->PlanFill(
+      {.scorer = &sort, .fetcher = &fill_fetcher}, irs::ScoreMergeType::Sum);
+    ASSERT_TRUE(bool(node));
+    const auto min = irs::doc_limits::min();
+    std::vector<uint64_t> mask(irs::detail::kWindowWords);
+    std::vector<irs::score_t> scores(irs::detail::kWindowDocs);
+    node->Fill(min, min + irs::detail::kWindowDocs, mask.data(), scores.data());
+    for (size_t w = 0; w != mask.size(); ++w) {
+      for (auto bits = mask[w]; bits != 0; bits &= bits - 1) {
+        const auto offset =
+          w * irs::detail::kWindowBits + std::countr_zero(bits);
+        fill.emplace(min + offset, scores[offset]);
+      }
+    }
+    EXPECT_EQ(expected, fill);
+  };
+
+  {
+    irs::BooleanFilter root;
+    root.SetMergeType(irs::ScoreMergeType::Max);
+    AddDocs(root, irs::Occur::Must, {1, 5, 7}, 2);
+    AddDocs(root, irs::Occur::Must, {1, 5, 7, 9}, 3);
+    check(root, {{1, 3}, {5, 3}, {7, 3}});
+  }
+
+  {
+    irs::BooleanFilter root;
+    root.SetMergeType(irs::ScoreMergeType::Max);
+    AddDocs(root, irs::Occur::Must, {1, 5, 7}, 2);
+    AddDocs(root, irs::Occur::Must, {1, 5, 7, 9}, 3);
+    AddDocs(root, irs::Occur::Should, {5}, 4);
+    check(root, {{1, 3}, {5, 4}, {7, 3}});
+  }
+}
+
+TEST(boolean_exclusion, optional_scores_are_the_same_in_lead_and_probe) {
+  tests::sort::Boost sort;
+  detail::SegmentReaderMock segment{2048};
+
+  irs::BooleanFilter root;
+  AddDocs(root, irs::Occur::Must, {1, 5, 7, 9}, 2);
+  AddDocs(root, irs::Occur::Should, {5, 9}, 4);
+  AddDocs(root, irs::Occur::MustNot, {7}, 1);
+  const std::map<irs::doc_id_t, irs::score_t> expected{{1, 2}, {5, 6}, {9, 6}};
+
+  tests::PreparedFilter prep{root, segment, &sort};
+
+  std::map<irs::doc_id_t, irs::score_t> lead;
+  irs::ColumnArgsFetcher lead_fetcher;
+  auto it = prep.ExecuteScored(0, lead_fetcher);
+  ASSERT_TRUE(bool(it));
+  const auto lead_score = it->PrepareScore();
+  while (!irs::doc_limits::eof(it->Next())) {
+    it->FetchScoreArgs(0);
+    lead.emplace(it->Value(), lead_score.Score());
+  }
+  EXPECT_EQ(expected, lead);
+
+  std::map<irs::doc_id_t, irs::score_t> probe;
+  irs::ColumnArgsFetcher probe_fetcher;
+  auto node =
+    prep.Query(0)->PlanProbe({.scorer = &sort, .fetcher = &probe_fetcher}, 16);
+  ASSERT_TRUE(bool(node));
+  const auto probe_score = node->PrepareScore();
+  for (irs::doc_id_t doc = irs::doc_limits::min(); doc != 16; ++doc) {
+    if (node->Probe(doc) != doc) {
+      continue;
+    }
+    node->FetchScoreArgs(0);
+    probe_fetcher.Fetch(doc);
+    probe.emplace(doc, probe_score.Score());
+  }
+  EXPECT_EQ(expected, probe);
 }
 
 TEST(boolean_exclusion, next) {

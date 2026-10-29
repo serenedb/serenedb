@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "pg/connection_context.h"
+#include "pg/types/pg_lsn.h"
 
 namespace sdb::pg {
 

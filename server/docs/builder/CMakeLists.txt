@@ -40,7 +40,7 @@ file(
 add_custom_command(
     OUTPUT ${SDB_DOCS_GENERATED} ${SDB_DOCS_CORPUS}
     COMMAND
-        ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/generate_docs.py
+        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/generate_docs.py
         ${SDB_DOCS_DIR} ${SDB_DOCS_GENERATED}.tmp --tests-dir
         ${SDB_DOCS_TESTS_DIR} --corpus ${SDB_DOCS_CORPUS}.tmp
     COMMAND
@@ -82,16 +82,12 @@ add_library(
 target_include_directories(serene_docs_index PRIVATE ${CMAKE_SOURCE_DIR}/server)
 
 function(sdb_embed_docs_index TARGET)
-    if(NOT APPLE)
-        set(_script ${CMAKE_SOURCE_DIR}/server/docs/docs_index.ld)
-        target_link_options(${TARGET} PRIVATE -Wl,-T,${_script})
-        set_property(TARGET ${TARGET} APPEND PROPERTY LINK_DEPENDS ${_script})
-    endif()
     add_custom_command(
         TARGET ${TARGET}
         POST_BUILD
         COMMAND
-            ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/embed_docs_index.py
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/scripts/embed_docs_index.py
             ${SDB_DOCS_INDEX_WORK}/index $<TARGET_FILE:${TARGET}>
         VERBATIM
     )
@@ -102,6 +98,10 @@ function(sdb_embed_docs_index TARGET)
             COMMAND codesign --force --sign - $<TARGET_FILE:${TARGET}>
             VERBATIM
         )
+    else()
+        set(script ${CMAKE_SOURCE_DIR}/server/docs/docs_index.ld)
+        target_link_options(${TARGET} PRIVATE -Wl,-T,${script})
+        set_property(TARGET ${TARGET} APPEND PROPERTY LINK_DEPENDS ${script})
     endif()
 endfunction()
 

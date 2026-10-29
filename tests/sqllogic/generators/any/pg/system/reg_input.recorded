@@ -1,0 +1,1453 @@
+c5bea14854ec55cd
+	type	typmod	formatted
+	NULL	NULL	NULL
+d5099a1b14c8dd61	error	db error: ERROR: invalid type name "setof int4"
+5cd8b619a1a16160	error	db error: ERROR: syntax error at or near "int4"
+57de0b506720442b	error	db error: ERROR: syntax error at or near "int4"
+f39796c532f4fff5	error	db error: ERROR: syntax error at or near ")"
+5212584062726296	error	db error: ERROR: syntax error at or near ")"
+284429ed9344744c	error	db error: ERROR: syntax error at end of input
+0b425d3cf4cd3088	error	db error: ERROR: syntax error at end of input
+8ec5f1e1e2ba3ae0	error	db error: ERROR: invalid input syntax for type integer: "x"
+8e6340adf373be94	error	db error: ERROR: invalid input syntax for type integer: "x"
+71f1e02211ea022b	error	db error: ERROR: value "99999999999" is out of range for type integer
+c73b9e2c941f4c25	error	db error: ERROR: value "99999999999" is out of range for type integer
+5ed0d607db74e831	error	db error: ERROR: syntax error at or near "("
+d9367b9564cf4b53	error	db error: ERROR: syntax error at or near "("
+3bc7c67b320b81b0	error	db error: ERROR: syntax error at end of input
+d4ab570d347599f2	error	db error: ERROR: syntax error at end of input
+843e07bf5d75ad4f	error	db error: ERROR: syntax error at or near "."
+f20e5e850e5ffa43	error	db error: ERROR: syntax error at or near "."
+f51862ef6460c7af	error	db error: ERROR: syntax error at end of input
+62770ecf83fd48fb	error	db error: ERROR: syntax error at end of input
+2fcf9e13b7247b90
+	type	typmod	formatted
+	double precision	-1	double precision
+38461ec4faa61d9b
+	type
+	double precision
+277408cc5298a9b0	error	db error: ERROR: precision for type float must be at least 1 bit
+ba4e7253593a9753	error	db error: ERROR: precision for type float must be at least 1 bit
+cee9c99847412f3d	error	db error: ERROR: syntax error at or near "-"
+d4d6f9a6416896e0	error	db error: ERROR: syntax error at or near "-"
+24d4662668e26e74
+	type	typmod	formatted
+	real	-1	real
+18ede3210c6b26c0
+	type
+	real
+a6db2a78a48d3408
+	type	typmod	formatted
+	real	-1	real
+21b32127662b971a
+	type
+	real
+6fd6a854398fd96d
+	type	typmod	formatted
+	double precision	-1	double precision
+567c8174523cf369
+	type
+	double precision
+1e4dd09e218bcbbd
+	type	typmod	formatted
+	double precision	-1	double precision
+f6ad4599a7f676b3
+	type
+	double precision
+b8f98ae544ecc104	error	db error: ERROR: precision for type float must be less than 54 bits
+fe9684811a0bcb3f	error	db error: ERROR: precision for type float must be less than 54 bits
+82f284423fe5a6bf	error	db error: ERROR: syntax error at or near "x"
+28d616dcff698b2e	error	db error: ERROR: syntax error at or near "x"
+40a5b9b27a4fbd06	error	db error: ERROR: syntax error at end of input
+8e6016d7175f766e	error	db error: ERROR: syntax error at end of input
+1d6d2ccf69980040
+	type	typmod	formatted
+	double precision	-1	double precision
+66b96e46092dec8e
+	type
+	double precision
+9db97b1edd453fdc
+	type	typmod	formatted
+	NULL	NULL	NULL
+c024797befd4e4f1	error	db error: ERROR: type "double" does not exist
+d8f52e8df98cdeb1
+	type	typmod	formatted
+	numeric	327686	numeric(5,2)
+9a5076907d002e6b
+	type
+	numeric
+ab903c7bf5dcfe76
+	type	typmod	formatted
+	numeric	-1	numeric
+604edcab168fa6b2
+	type
+	numeric
+7b82431db76bc158
+	type	typmod	formatted
+	numeric	458756	numeric(7,0)
+1971175270dcf039
+	type
+	numeric
+82033851ebbffab6
+	type	typmod	formatted
+	numeric	-1	numeric
+97e3ad1539f033ae
+	type
+	numeric
+44da4de67d0e8de0
+	type	typmod	formatted
+	character	7	character(3)
+4bd8ea5f7fa7dbfe
+	type
+	character
+1fc51126afd72d6a
+	type	typmod	formatted
+	character varying	8	character varying(4)
+6a3cc9dd67267656
+	type
+	character varying
+3ab371425e217b38
+	type	typmod	formatted
+	character varying	-1	character varying
+0d8e38a1f6e1d98a
+	type
+	character varying
+a771c7e14851ac48	error	db error: ERROR: syntax error at end of input
+78270ed5ca7b4197	error	db error: ERROR: syntax error at end of input
+16c504c8d30755c0	error	db error: ERROR: syntax error at or near "varchar"
+bfc5240a8f04dbc5	error	db error: ERROR: syntax error at or near "varchar"
+485e4869b7c4d667
+	type	typmod	formatted
+	character	5	character(1)
+2a29a2aa7738b34a
+	type
+	character
+c8b2da8bc43588a0
+	type	typmod	formatted
+	character	6	character(2)
+b9f7f5908efad71f
+	type
+	character
+4a2b1ad6283e9899
+	type	typmod	formatted
+	character	5	character(1)
+b8efc43e48eb40d5
+	type
+	character
+5366a988ae31b9fa
+	type	typmod	formatted
+	character varying	9	character varying(5)
+a68918e39d2b017f
+	type
+	character varying
+087b2ce9ca18b42f
+	type	typmod	formatted
+	character varying	-1	character varying
+c3332e9adfebc8b0
+	type
+	character varying
+a28f0a438f5e6296	error	db error: ERROR: length for type char must be at least 1
+ec3b0bfc8299df7e	error	db error: ERROR: length for type char must be at least 1
+8263dc6b57ebe1c0	error	db error: ERROR: length for type char cannot exceed 10485760
+2d4b6ffa658ce199	error	db error: ERROR: length for type char cannot exceed 10485760
+1b3877992e23f7c1
+	type	typmod	formatted
+	character varying	-1	character varying
+01e2bbec9c422c0c
+	type
+	character varying
+1f2215fba6e62f02	error	db error: ERROR: length for type varchar must be at least 1
+8ddfd99989e5f6ab	error	db error: ERROR: length for type varchar must be at least 1
+f1829c5f624cbe6a
+	type	typmod	formatted
+	character varying	10485764	character varying(10485760)
+0909cd634541f38f
+	type
+	character varying
+a61f355b244e635d	error	db error: ERROR: length for type varchar cannot exceed 10485760
+ae26b8c8c11e22ec	error	db error: ERROR: length for type varchar cannot exceed 10485760
+6f3b504ea9248c30	error	db error: ERROR: syntax error at or near ","
+58a5309ebca1d5ca	error	db error: ERROR: syntax error at or near ","
+1451f24bbecf5d61
+	type	typmod	formatted
+	bit	1	bit(1)
+836cde706df1484a
+	type
+	bit
+8d06b67c40c02d5f
+	type	typmod	formatted
+	bit	3	bit(3)
+09f5891cab2c2a7b
+	type
+	bit
+4f6a3eb4f8562770
+	type	typmod	formatted
+	bit varying	-1	bit varying
+39cfbd4fc141e002
+	type
+	bit varying
+58a2d661891ca8d2
+	type	typmod	formatted
+	bit varying	5	bit varying(5)
+eee80e821c45f648
+	type
+	bit varying
+c25fb722f749d987	error	db error: ERROR: length for type bit must be at least 1
+8cc2c58005e50088	error	db error: ERROR: length for type bit must be at least 1
+1aa8c7ec40259692	error	db error: ERROR: length for type varbit must be at least 1
+69aebb6077fd613e	error	db error: ERROR: length for type varbit must be at least 1
+f76ac7373590bdfb
+	type	typmod	formatted
+	bit varying	4	bit varying(4)
+28347e535ec3e975
+	type
+	bit varying
+5be0dba2a5ea2433	error	db error: ERROR: length for type bit cannot exceed 83886080
+f9d56fcf35be773a	error	db error: ERROR: length for type bit cannot exceed 83886080
+b432e288b6733e69
+	type	typmod	formatted
+	time without time zone	-1	time without time zone
+d1bb15eb762df423
+	type
+	time without time zone
+d832349ae26047f9
+	type	typmod	formatted
+	time without time zone	3	time(3) without time zone
+77d2b498a64aadb3
+	type
+	time without time zone
+bf03ad71ffe2617c
+	type	typmod	formatted
+	time with time zone	3	time(3) with time zone
+066ac00c873766db
+	type
+	time with time zone
+1a08647154d0bcd4
+	type	typmod	formatted
+	time without time zone	-1	time without time zone
+250bc5974a4ec047
+	type
+	time without time zone
+654a85f989577d5c
+	type	typmod	formatted
+	time without time zone	6	time(6) without time zone
+e2f38d1bec1fbc3c
+	type
+	time without time zone
+6c2eead08a5c4931	error	db error: ERROR: syntax error at or near "-"
+ae876b09342971a1	error	db error: ERROR: syntax error at or near "-"
+e2d12e5d408a7f85	error	db error: ERROR: syntax error at or near ","
+06a5feded27b1543	error	db error: ERROR: syntax error at or near ","
+c3b74d54ae2373f2	error	db error: ERROR: syntax error at or near "with"
+afba96008fef89c3	error	db error: ERROR: syntax error at or near "with"
+8c838f6d11bb3439	error	db error: ERROR: syntax error at or near "without"
+093c35ce740b9dc9	error	db error: ERROR: syntax error at or near "without"
+58bf4f5563606b3f	error	db error: ERROR: syntax error at or near "with"
+d55463201271f05a	error	db error: ERROR: syntax error at or near "with"
+f8855cfe41ebf1c8
+	type	typmod	formatted
+	time with time zone	2	time(2) with time zone
+ab791ec284095257
+	type
+	time with time zone
+f2e0641d51451918
+	type	typmod	formatted
+	timestamp with time zone	2	timestamp(2) with time zone
+483cc513be6bb475
+	type
+	timestamp with time zone
+5cf326fab9d97495
+	type	typmod	formatted
+	timestamp without time zone	6	timestamp(6) without time zone
+d5c86ef78d970ad4
+	type
+	timestamp without time zone
+adb8a102789f52b4
+	type	typmod	formatted
+	timestamp with time zone	3	timestamp(3) with time zone
+2036640f8f0b6ea7
+	type
+	timestamp with time zone
+531047f0fda17e44	error	db error: ERROR: syntax error at or near "-"
+7be41e6b7fcdbfc0	error	db error: ERROR: syntax error at or near "-"
+b2b8fbff54c0748b	error	db error: ERROR: syntax error at or near ","
+41d925289d286b87	error	db error: ERROR: syntax error at or near ","
+55a5054ad67fe430
+	type	typmod	formatted
+	interval	-1	interval
+e05bcac6616657fb
+	type
+	interval
+f15c0313d7cfd5ce
+	type	typmod	formatted
+	interval	2147418115	interval(3)
+47593c7c10da821d
+	type
+	interval
+59085b23559aa953	error	db error: ERROR: syntax error at or near "-"
+cc79af8b53404d3e	error	db error: ERROR: syntax error at or near "-"
+e60f4f40ad53c2be
+	type	typmod	formatted
+	interval	2147418118	interval(6)
+07b3c5b0bad4d893
+	type
+	interval
+6f5a49bf450d82c7	error	db error: ERROR: syntax error at or near ","
+2afbfe3511f5c36f	error	db error: ERROR: syntax error at or near ","
+498b48227409a156
+	type	typmod	formatted
+	interval	327679	interval year
+5b33d46b618d5f73
+	type
+	interval
+6e04c6582a5c7e28
+	type	typmod	formatted
+	interval	196607	interval month
+3ab75977e3d8da8e
+	type
+	interval
+426d31386fa7fb08
+	type	typmod	formatted
+	interval	589823	interval day
+34965f3c85cc8f58
+	type
+	interval
+f2507659217e04b9
+	type	typmod	formatted
+	interval	67174399	interval hour
+4e29a2804c40b08d
+	type
+	interval
+ff6b08d093e3e0c7
+	type	typmod	formatted
+	interval	134283263	interval minute
+2d0f88d25e77d85b
+	type
+	interval
+39030e02fcd16fe0
+	type	typmod	formatted
+	interval	268500991	interval second
+c61874a265d0d647
+	type
+	interval
+5f0775aff800f193
+	type	typmod	formatted
+	interval	268435459	interval second(3)
+bf198d57ecf79bff
+	type
+	interval
+0214cb108fe4a95f	error	db error: ERROR: syntax error at or near "-"
+be752c47df7f98dc	error	db error: ERROR: syntax error at or near "-"
+0918edef7a5cf8f0
+	type	typmod	formatted
+	interval	458751	interval year to month
+5d577c1f5c2a356f
+	type
+	interval
+7965ded8f56edec6
+	type	typmod	formatted
+	interval	67698687	interval day to hour
+8ca3372bec569a37
+	type
+	interval
+173fceb572eebea0
+	type	typmod	formatted
+	interval	201916415	interval day to minute
+49848eb433161d48
+	type
+	interval
+956b8b05322ef1b3
+	type	typmod	formatted
+	interval	470351871	interval day to second
+bc81b270cf12f96f
+	type
+	interval
+959b7af081d9296b
+	type	typmod	formatted
+	interval	470286338	interval day to second(2)
+df2716acfd03a3f9
+	type
+	interval
+6796f3710850b3fa
+	type	typmod	formatted
+	interval	201392127	interval hour to minute
+6a08354dd2aa9b01
+	type
+	interval
+c38ecadb591365a5
+	type	typmod	formatted
+	interval	469827583	interval hour to second
+4ed60a1b28ee6da7
+	type
+	interval
+3521689439293fc8
+	type	typmod	formatted
+	interval	402718719	interval minute to second
+411d73966db184c3
+	type
+	interval
+2587f3e5744a82b1
+	type	typmod	formatted
+	interval	402653185	interval minute to second(1)
+f7538cf467597202
+	type
+	interval
+fad718444c57f901	error	db error: ERROR: syntax error at or near "to"
+d51c8d174f0e1dc6	error	db error: ERROR: syntax error at or near "to"
+2c022799907719be	error	db error: ERROR: syntax error at or near "day"
+81d0086ba3a2efd2	error	db error: ERROR: syntax error at or near "day"
+07a24afb452356d3	error	db error: ERROR: syntax error at or near "hour"
+2da3718193f0e7ea	error	db error: ERROR: syntax error at or near "hour"
+d6c98d08a693b288	error	db error: ERROR: syntax error at or near "to"
+faa335def33eab80	error	db error: ERROR: syntax error at or near "to"
+7676f7f1fc366d64	error	db error: ERROR: syntax error at end of input
+2812c3bc66fac1af	error	db error: ERROR: syntax error at end of input
+c54548e0433e8df6	error	db error: ERROR: syntax error at or near "foo"
+d34f4a4235518264	error	db error: ERROR: syntax error at or near "foo"
+6389326b0fb4fe3d	error	db error: ERROR: syntax error at or near "foo"
+f45f243bceabece2	error	db error: ERROR: syntax error at or near "foo"
+1dbab8a8cc89399d	error	db error: ERROR: syntax error at or near "5"
+1504ef5e632285a4	error	db error: ERROR: syntax error at or near "5"
+ae05af010163ec6c	error	db error: ERROR: syntax error at or near "("
+60efb744c92b96b7	error	db error: ERROR: syntax error at or near "("
+5cff3509bc2b6a5e	error	db error: ERROR: invalid NUMERIC type modifier
+e7e5b35d19c4dfe1	error	db error: ERROR: invalid NUMERIC type modifier
+a2c818d3d0045161	error	db error: ERROR: NUMERIC precision 0 must be between 1 and 1000
+276e30fb7d439feb	error	db error: ERROR: NUMERIC precision 0 must be between 1 and 1000
+8a839b2f56887943	error	db error: ERROR: NUMERIC precision 1001 must be between 1 and 1000
+b82fd629ee0d5a92	error	db error: ERROR: NUMERIC precision 1001 must be between 1 and 1000
+1d579446adc2812a
+	type	typmod	formatted
+	numeric	65536004	numeric(1000,0)
+3ab706172126780a
+	type
+	numeric
+08a2ad8afa31025b	error	db error: ERROR: NUMERIC scale -1001 must be between -1000 and 1000
+2b5e59b1686c27f4	error	db error: ERROR: NUMERIC scale -1001 must be between -1000 and 1000
+6ad297865a5ae61a	error	db error: ERROR: NUMERIC scale 1001 must be between -1000 and 1000
+0f0149b28307c8c5	error	db error: ERROR: NUMERIC scale 1001 must be between -1000 and 1000
+714c991485640f61
+	type	typmod	formatted
+	numeric	329730	numeric(5,-2)
+a4689efa8dee03cb
+	type
+	numeric
+ac2775707d8a8482
+	type	typmod	formatted
+	numeric	329730	numeric(5,-2)
+8470d55443cd6c8b
+	type
+	numeric
+8fe01316f28202c2	error	db error: ERROR: syntax error at or near ")"
+9acaed9426293c3a	error	db error: ERROR: syntax error at or near ")"
+f001ef928c2fc14f	error	db error: ERROR: NUMERIC precision -5 must be between 1 and 1000
+88123c2debd42419	error	db error: ERROR: NUMERIC precision -5 must be between 1 and 1000
+fa99530481e51cf4	error	db error: ERROR: type modifier is not allowed for type "int4"
+440b66b22374ffaa	error	db error: ERROR: type modifier is not allowed for type "int4"
+cb81eb40bf2ce723	error	db error: ERROR: type modifier is not allowed for type "text"
+1b95ae9bcec9bd60	error	db error: ERROR: type modifier is not allowed for type "text"
+0aa2e6f96aa7d751	error	db error: ERROR: syntax error at or near "("
+12d7d418cdf63280	error	db error: ERROR: syntax error at or near "("
+55e1fce6f1d2d4f7
+	type	typmod	formatted
+	integer[]	-1	integer[]
+9f527e0d9fdaf0f0
+	type
+	integer[]
+cbc5d06eb5ab8a1c
+	type	typmod	formatted
+	integer[]	-1	integer[]
+294c4fa247fafced
+	type
+	integer[]
+aecbf11d05055c1e	error	db error: ERROR: syntax error at or near "x"
+e9a6a737a53af033	error	db error: ERROR: syntax error at or near "x"
+63517fc7cdf86f02	error	db error: ERROR: syntax error at end of input
+b5cbf34c06e53508	error	db error: ERROR: syntax error at end of input
+2975ac161f7df332
+	type	typmod	formatted
+	integer[]	-1	integer[]
+6b1934ac5493663d
+	type
+	integer[]
+084d8a511a48135e
+	type	typmod	formatted
+	integer[]	-1	integer[]
+3b18dfe77057d1a2
+	type
+	integer[]
+debd8a4fe7938cda
+	type	typmod	formatted
+	integer[]	-1	integer[]
+1fe6dc3ba7f94131
+	type
+	integer[]
+1c82815370c08f23
+	type	typmod	formatted
+	integer[]	-1	integer[]
+75fe67c32ff74f62
+	type
+	integer[]
+acd3a4513df87243	error	db error: ERROR: syntax error at end of input
+d32d9a5745678511	error	db error: ERROR: syntax error at end of input
+9b751f63dafde84a	error	db error: ERROR: syntax error at or near "x"
+b3e9f1bc79df7b86	error	db error: ERROR: syntax error at or near "x"
+b1fe0795f67a93ff	error	db error: ERROR: syntax error at end of input
+235a00b7c4653b5c	error	db error: ERROR: syntax error at end of input
+2617338b58771d06
+	type	typmod	formatted
+	integer[]	-1	integer[]
+5b61db70736bde16
+	type
+	integer[]
+d2bdef17a21cd07a
+	type	typmod	formatted
+	integer	-1	integer
+1460788fffc4d69f
+	type
+	integer
+eec6d9f6445e0f69
+	type	typmod	formatted
+	NULL	NULL	NULL
+1f5776032bc160e4	error	db error: ERROR: type "Int4" does not exist
+77eae9852d692157	error	db error: ERROR: unterminated quoted identifier at or near ""unterminated"
+8b32f703b23e2677	error	db error: ERROR: unterminated quoted identifier at or near ""unterminated"
+d41ee8ca0f479101	error	db error: ERROR: zero-length delimited identifier at or near """"
+5c58fb7f17533834	error	db error: ERROR: zero-length delimited identifier at or near """"
+9f28fe0534156601
+	type	typmod	formatted
+	integer	-1	integer
+5fbc0609d0de92b8
+	type
+	integer
+f8e3d975331fb488
+	type	typmod	formatted
+	NULL	NULL	NULL
+3af858e5fe6744dd	error	db error: ERROR: type "a$b" does not exist
+4577712e9a9a7d69
+	type	typmod	formatted
+	NULL	NULL	NULL
+5cbae0024713b4f5	error	db error: ERROR: type "тип" does not exist
+59be4b23704cf126
+	type	typmod	formatted
+	integer[]	-1	integer[]
+0265e9065d313a1c
+	type
+	integer[]
+67d8e57890e70a03
+	type	typmod	formatted
+	NULL	NULL	NULL
+18a12934ef55841f	error	db error: ERROR: type "int4$" does not exist
+785c5e29d51d2523
+	type	typmod	formatted
+	integer	-1	integer
+b587e5c58943cd97
+	type
+	integer
+b7dd7f59b84f079c
+	type	typmod	formatted
+	NULL	NULL	NULL
+0f5a376236d74ac9	error	db error: ERROR: type "public.int4" does not exist
+244cfec4e1d45cd9
+	type	typmod	formatted
+	NULL	NULL	NULL
+fcc7462fa76d5f4e	error	db error: ERROR: schema "nosuchschema" does not exist
+f414d9ea2a731765	error	db error: ERROR: improper qualified name (too many dotted names): a.b.c.d
+cfc1f91f57923547	error	db error: ERROR: improper qualified name (too many dotted names): a.b.c.d
+1c0cdc2477a3bf28	error	db error: ERROR: cross-database references are not implemented: otherdb.pg_catalog.int4
+3c1dabec18046ce9	error	db error: ERROR: cross-database references are not implemented: otherdb.pg_catalog.int4
+0d9b437350de6ff2
+	type	typmod	formatted
+	NULL	NULL	NULL
+18a2329338dd1ba2	error	db error: ERROR: invalid type name ""
+e5de09dfe80c6146
+	type	typmod	formatted
+	NULL	NULL	NULL
+17239a4ec9e54fc0	error	db error: ERROR: invalid type name "   "
+aba424434e1fa0e1
+	type	typmod	formatted
+	integer	-1	integer
+d2c68c3c80fcabbd
+	type
+	integer
+ba630601629ab18b	error	db error: ERROR: syntax error at or near "-"
+4fadd5e947ab659c	error	db error: ERROR: syntax error at or near "-"
+d7849583a02003cb
+	type	typmod	formatted
+	regin_mood	-1	regin_mood
+c8265fee0b2cda5b
+	type
+	regin_mood
+2397a890b9a0c9f4
+	type	typmod	formatted
+	regin_mood	-1	regin_mood
+614eaaeb7b972331
+	type
+	regin_mood
+92d8223820a2866e
+	type	typmod	formatted
+	regin_mood[]	-1	regin_mood[]
+53af69c194a05bd4
+	type
+	regin_mood[]
+28bb39cd4602793a
+	type	typmod	formatted
+	regin_mood[]	-1	regin_mood[]
+d1093200f6ab6b2b
+	type
+	regin_mood[]
+f53a21ee798a11f7
+	type	typmod	formatted
+	NULL	NULL	NULL
+dec38d4e8f1e8caf	error	db error: ERROR: type "_regin_mood[]" does not exist
+0467756b7ca06b29
+	type	typmod	formatted
+	NULL	NULL	NULL
+19cea4058946d6f2	error	db error: ERROR: type "__regin_mood" does not exist
+5a7e65f9df745372
+	type	typmod	formatted
+	regin_t	-1	regin_t
+f11a8a5beee1c72a
+	type
+	regin_t
+c9816ab1ca09803c
+	type	typmod	formatted
+	regin_t[]	-1	regin_t[]
+d28fc501ca453550
+	type
+	regin_t[]
+272c251f353bb7ae
+	type	typmod	formatted
+	regin_t[]	-1	regin_t[]
+b31b6480fc69c6c2
+	type
+	regin_t[]
+a032a9abdbba0006
+	type	typmod	formatted
+	regin_pair	-1	regin_pair
+6ba62f9429d82bfa
+	type
+	regin_pair
+54c061f3f08d6b31
+	type	typmod	formatted
+	regin_s.t	-1	regin_s.t
+1a49c0dde9376c4e
+	type
+	regin_s.t
+c837c1d5dcc11f8c	error	db error: ERROR: type modifier is not allowed for type "regin_mood"
+768dda6bf7fc3b8a	error	db error: ERROR: type modifier is not allowed for type "regin_mood"
+9cc11a02c67ef863
+	type	typmod	formatted
+	regin_s.regin_e	-1	regin_s.regin_e
+f262f2489ff7b9fc
+	type
+	regin_s.regin_e
+ad9b0f8508c8ffa3
+	type	typmod	formatted
+	information_schema.sql_identifier	-1	information_schema.sql_identifier
+5261666ee49a25e0
+	type
+	information_schema.sql_identifier
+ce49cf716bae4580
+	type	typmod	formatted
+	NULL	NULL	NULL
+f40b0e1aaf302efa	error	db error: ERROR: type "sql_identifier" does not exist
+c864f264399cc99c	error	db error: ERROR: syntax error at end of input
+2f9b66153420b6f2	error	db error: ERROR: syntax error at end of input
+e6bb7a5c61063a2c	error	db error: ERROR: syntax error at end of input
+c4e05274c416482e	error	db error: ERROR: syntax error at end of input
+e772f4ec989fffce	error	db error: ERROR: syntax error at or near "99999999999"
+d328d556ed61d836	error	db error: ERROR: syntax error at or near "99999999999"
+fa493f28c20fc01f	error	db error: ERROR: type modifiers must be simple constants or identifiers
+f169d543c5c3ecb8	error	db error: ERROR: type modifiers must be simple constants or identifiers
+8d0fae6a657dd270	error	db error: ERROR: type modifiers must be simple constants or identifiers
+774b31e21285d653	error	db error: ERROR: type modifiers must be simple constants or identifiers
+02aa8a57b9d6fc03	error	db error: ERROR: syntax error at or near ")"
+6aeb24ddaa688cb0	error	db error: ERROR: syntax error at or near ")"
+3ff223a7e0265c7e	error	db error: ERROR: syntax error at or near ","
+bb3083bfcc65aab3	error	db error: ERROR: syntax error at or near ","
+73700d36e8e537b8	error	db error: ERROR: invalid input syntax for type integer: "x"
+a12f5449f08d320a	error	db error: ERROR: invalid input syntax for type integer: "x"
+4701905d0d830d81	error	db error: ERROR: invalid type modifier
+8910407d339fb005	error	db error: ERROR: invalid type modifier
+afc574d1c1ca16a3	error	db error: ERROR: invalid type modifier
+82db3cac965f8519	error	db error: ERROR: invalid type modifier
+85f49128368b55e9	error	db error: ERROR: invalid type modifier
+f4d9069e782b192e	error	db error: ERROR: invalid type modifier
+6b10840b730c5ac8	error	db error: ERROR: TIME(-1) WITH TIME ZONE precision must not be negative
+b0d2e354aa4a1aa5	error	db error: ERROR: TIME(-1) WITH TIME ZONE precision must not be negative
+5cf3472977a6d21d	error	db error: ERROR: TIMESTAMP(-1) WITH TIME ZONE precision must not be negative
+b5c89c343e3ad306	error	db error: ERROR: TIMESTAMP(-1) WITH TIME ZONE precision must not be negative
+d58672675065d55a	error	db error: ERROR: TIME(-1) precision must not be negative
+15892e15f5c78a7d	error	db error: ERROR: TIME(-1) precision must not be negative
+098632ebbfc870c9	error	db error: ERROR: invalid type modifier
+64401e21ee8071db	error	db error: ERROR: invalid type modifier
+dd9e7ffffdd4ae8f	error	db error: ERROR: invalid INTERVAL type modifier
+8ab001f5e856a711	error	db error: ERROR: invalid INTERVAL type modifier
+eb83d6655cfe0509	error	db error: ERROR: invalid INTERVAL type modifier
+37aa5b0534d3578d	error	db error: ERROR: invalid INTERVAL type modifier
+d87140a34b4dd136
+	type	typmod	formatted
+	interval	-1	interval
+4c3b5d96c7c8bbda
+	type
+	interval
+b80f301dbe6cf7eb	error	db error: ERROR: INTERVAL(-1) precision must not be negative
+a3cd82e94e09db41	error	db error: ERROR: INTERVAL(-1) precision must not be negative
+73c4401c01a98407
+	type	typmod	formatted
+	interval	327679	interval year
+3d0cad5935e1b0bc
+	type
+	interval
+4a144489b5c957cb
+	type	typmod	formatted
+	interval	262147	interval year(3)
+2bb970027fb9fb67
+	type
+	interval
+1b7ab285fae95302	error	db error: ERROR: syntax error at or near "."
+cbcaba0fc7750d44	error	db error: ERROR: syntax error at or near "."
+9ba5351e56657253	error	db error: ERROR: syntax error at or near "."
+af16b9e75d1abba2	error	db error: ERROR: syntax error at or near "."
+85274258c65e930b	error	db error: ERROR: type modifiers must be simple constants or identifiers
+cdad9a7be0d04a0a	error	db error: ERROR: type modifiers must be simple constants or identifiers
+85f9ebbfe2da36c0
+	type
+	integer
+33ef5d6a9eb0767a
+	type
+	integer
+dc1c612c13bdc2ab
+	relation
+	regin_t
+2e50bf5f175e91dd
+	relation
+	regin_t
+598f0055f10e233b
+	relation
+	regin_t
+6f71c21cf2924d34
+	relation
+	regin_t
+4f3e10beac2bd001
+	relation
+	regin_s.t
+e8132addf822f811
+	relation
+	regin_s.t
+9b9ee58a743b3cc5
+	relation
+	NULL
+6eddf22db2faba03	error	db error: ERROR: relation "t" does not exist
+76589df73c457ca2
+	relation
+	regin_pair
+a8a48171ae5c173e
+	relation
+	regin_pair
+a31090be22213d2f
+	relation
+	NULL
+4ca1ffa6c953b45f	error	db error: ERROR: relation "regin_mood" does not exist
+6337e11a610e0bfd
+	relation
+	regin_k_pkey
+da3fb6781e77f39d
+	relation
+	regin_k_pkey
+da10f3bf14d4b6f7
+	relation
+	regin_tmp
+84fe52ffc7754789
+	relation
+	regin_tmp
+b2a2ada427022989
+	relation
+	regin_t
+93354b60e21f89c8
+	relation
+	regin_t
+ec9c261fdefde21f
+	relation
+	regin_t
+677fc376f23c93aa
+	relation
+	regin_t
+8d1ffec495255904
+	relation
+	NULL
+a117f80c5ebc4b5c	error	db error: ERROR: relation "REGIN_T" does not exist
+fcb6ef4afbee49ca
+	relation
+	regin_v
+416381df37ff7329
+	relation
+	regin_v
+97b9f3e3ce5b8750
+	relation
+	regin_seq
+acfab6111b1c9241
+	relation
+	regin_seq
+b40393e01047de5b	error	db error: ERROR: improper relation name (too many dotted names): a.b.c.d
+974b7c8d41ccf647	error	db error: ERROR: improper relation name (too many dotted names): a.b.c.d
+1ff2363f883f2152	error	db error: ERROR: cross-database references are not implemented: "otherdb.public.regin_t"
+594af544a32f4cd8	error	db error: ERROR: cross-database references are not implemented: "otherdb.public.regin_t"
+1a8e53187774fe41
+	relation
+	NULL
+b485c910da1221fd	error	db error: ERROR: invalid name syntax
+cf77dada3d030abf
+	relation
+	NULL
+208cdcf3cd9c8afc	error	db error: ERROR: relation "" does not exist
+60dd783aabd78582
+	relation
+	NULL
+4aef0c130bbb17b8	error	db error: ERROR: invalid name syntax
+e5635b2d5ff499d9
+	relation
+	NULL
+2ca3947f24631692	error	db error: ERROR: invalid name syntax
+1afffbd6f9d710d5
+	relation
+	NULL
+8f5987d5d9b90b3f	error	db error: ERROR: invalid name syntax
+9dbeee27555f6aaf
+	relation
+	NULL
+fb533a110a75f45a	error	db error: ERROR: invalid name syntax
+73e8644de1b69c10
+	relation
+	regin_t
+d2846fcc85c419f8
+	relation
+	regin_t
+9d5cadebef29d153
+	relation
+	regin_t
+36a4a8a89dcaa500
+	relation
+	regin_t
+f74b054b5defc47a
+	relation
+	pg_class
+df1950a0ddf79cdf
+	relation
+	pg_class
+091e6b3edfe3668d
+	relation
+	pg_class
+6e21fdaa5e6ceddc
+	relation
+	pg_class
+6e75505c0b989509
+	relation
+	information_schema.tables
+fd58bf431a5b64aa
+	relation
+	information_schema.tables
+d51b088abac03aa0
+	relation
+	NULL
+838c1d2ddc48fc3c	error	db error: ERROR: relation "nosuchschema.t" does not exist
+848245901335b8d0
+	relation
+	-
+e5031ee4e6eaa6be
+	relation
+	-
+ec18302772d3056e
+	relation
+	-
+18e872296405bb51
+	relation
+	-
+665bb63fb03cfefc
+	relation
+	pg_class
+f35615ce6992acb6
+	relation
+	pg_class
+19f7de2da4a75316
+	relation
+	NULL
+44011090f5da9757	error	db error: ERROR: invalid input syntax for type oid: "00001259"
+432d34c5bb6e9b26
+	relation
+	4294967295
+270645bd845a219d
+	relation
+	4294967295
+f367c91dc14494c4
+	relation
+	NULL
+d79486602c6533a8	error	db error: ERROR: value "4294967296" is out of range for type oid
+17d136c523832d70
+	relation
+	NULL
+feeba8625a3d6316	error	db error: ERROR: value "18446744073709551616" is out of range for type oid
+15d79bde998d46d1
+	relation
+	NULL
+cde954cb3df4eeff	error	db error: ERROR: relation "duckdb_tables" does not exist
+8eafe75ce533a689
+	relation
+	NULL
+b9a5cdc83d602193	error	db error: ERROR: relation "sqlite_master" does not exist
+305beabe8f274567
+	relation
+	regin_t
+fde416a062138392
+	proc
+	NULL
+1200ce7657551d2a	error	db error: ERROR: more than one function named "abs"
+3b9e2398ad1620ab
+	proc
+	now
+ccd9155088806e93
+	proc
+	now
+4fad18c3124f1043
+	proc
+	now
+47165ccdd4205150
+	proc
+	now
+61841403aa68c895
+	proc
+	NULL
+507a9f2608d265d6	error	db error: ERROR: function "nosuch" does not exist
+b1d5a30a9b17c2dd
+	proc
+	NULL
+5166fa9458de10c6	error	db error: ERROR: invalid name syntax
+2010c8d02175c7c4
+	proc
+	regin_f
+ca0bf7c49c25d5b5
+	proc
+	regin_f
+f101739df4952ff9
+	proc
+	regin_s.regin_g
+8f3faf479e787206
+	proc
+	regin_s.regin_g
+60a9419aca24cf15
+	proc
+	regin_g
+25abdb7198579ad3
+	proc
+	regin_g
+9ce969a1796efb7a
+	proc
+	regin_f
+5997a0efc3c3664d
+	proc
+	regin_f
+d34ce2d91f19a344	error	db error: ERROR: improper qualified name (too many dotted names): a.b.c.d
+6645facd5d74bd6d	error	db error: ERROR: improper qualified name (too many dotted names): a.b.c.d
+c44f9f534f223d60	error	db error: ERROR: cross-database references are not implemented: otherdb.pg_catalog.now
+00bd943a2935b3ec	error	db error: ERROR: cross-database references are not implemented: otherdb.pg_catalog.now
+a092d67d062d8479
+	proc
+	-
+d6b1c103bd44707b
+	proc
+	-
+1728b23994ca1a9a
+	proc
+	-
+e751362be882142f
+	proc
+	-
+1699361e901f1f75
+	proc
+	1
+2385f58ffb9378ac
+	proc
+	1
+2467f59c167b14a0
+	proc
+	999999999
+aa3d205aea048bf4
+	proc
+	999999999
+d59d58f675c42c91
+	proc
+	NULL
+d47cb69cfd6f488a	error	db error: ERROR: function "information_schema.now" does not exist
+d4a66767713dcd4e
+	proc
+	information_schema._pg_expandarray
+b7afa16472bf9891
+	proc
+	information_schema._pg_expandarray
+7777556c6c51e219
+	procedure
+	abs(integer)
+48a9a162918d152f
+	procedure
+	abs(integer)
+ff8ca135e9f87347
+	procedure
+	abs(integer)
+5cdd5cc8cf6b6279
+	procedure
+	abs(integer)
+f97743851def56e4
+	procedure
+	abs(integer)
+e8892cde8d51cd1a
+	procedure
+	abs(integer)
+ada3df0e1b6bb5ea
+	procedure
+	NULL
+d33921bb5c8706a9	error	db error: ERROR: expected a right parenthesis
+99a175619560d440
+	procedure
+	NULL
+e10b9df8dba5d5ea	error	db error: ERROR: expected a left parenthesis
+5940030df167b368
+	procedure
+	abs(integer)
+2ba689db24f7475c
+	procedure
+	abs(integer)
+2c28e3bdaa4ba879
+	procedure
+	abs(integer)
+a8e74672075c5d18
+	procedure
+	abs(integer)
+8756a42ff815edda
+	procedure
+	NULL
+9221c99362157561	error	db error: ERROR: expected a type name
+0213273cd66857b1
+	procedure
+	NULL
+bba3ad96e35c3618	error	db error: ERROR: invalid type name ""
+dec5e8596fd116a8
+	procedure
+	abs(numeric)
+d9720530cf25bea7
+	procedure
+	abs(numeric)
+f111d0c1acabc587
+	procedure
+	NULL
+928d548d21ebf9b3	error	db error: ERROR: function "abs(int4[])" does not exist
+e24478a34ca9f516
+	procedure
+	NULL
+5b71bc8bee8764f6	error	db error: ERROR: improper type name
+d3e36502b199568b
+	procedure
+	NULL
+d9eb4d1522810d69	error	db error: ERROR: improper type name
+b0e9c23ce50ff940	error	db error: ERROR: syntax error at or near "none"
+101b2841d4d84537
+	procedure
+	NULL
+d76f583bd4a50539	error	db error: ERROR: syntax error at or near "none"
+d7e0becbf3244eb3	error	db error: ERROR: type "none" does not exist
+84b2e7485fea39fe
+	procedure
+	NULL
+0e28e9276f47b9c9	error	db error: ERROR: type "nosuchtype" does not exist
+aef10e0c6845ce7c
+	procedure
+	NULL
+22d50e50e1cdfab7	error	db error: ERROR: invalid name syntax
+a4d395c331160073
+	procedure
+	NULL
+853c806538f6b3c1	error	db error: ERROR: function ""ab(c"(int4)" does not exist
+dec3d0ae2a47535d
+	procedure
+	now()
+e681b6bfc09bca71
+	procedure
+	now()
+a31e257fc67a94a2
+	procedure
+	now()
+74f48fc90076e511
+	procedure
+	now()
+84f8b1ada5c69cd3
+	procedure
+	regin_f(integer)
+1162afefcb41e164
+	procedure
+	regin_f(integer)
+347470ac3aad07ff
+	procedure
+	NULL
+07fe13737ee766cb	error	db error: ERROR: function "regin_f(int8)" does not exist
+d6b7846262102d7f
+	procedure
+	regin_s.regin_g(integer)
+f760ba6b6fa9a6fc
+	procedure
+	regin_s.regin_g(integer)
+0934dfd72c78eb28
+	procedure
+	regin_g(integer)
+900dbec73060a07e
+	procedure
+	regin_g(integer)
+5ee512f433f4a4be
+	procedure
+	regin_s.regin_g(integer)
+35fd7fce9f04fe7a
+	procedure
+	regin_s.regin_g(integer)
+9b0c3d5a9eefaaef
+	procedure
+	NULL
+d056a1462e9f5f2b	error	db error: ERROR: type "a,b" does not exist
+d7e4b5c9e5f7fa56
+	procedure
+	abs(integer)
+9d5c54a947a03646
+	procedure
+	abs(integer)
+34a71d96a51a2d77
+	procedure
+	NULL
+4f2db5da0c2e500d	error	db error: ERROR: too many arguments
+2cb85bdd0efbf116
+	oper
+	NULL
+6cbe9cbc3d682417	error	db error: ERROR: more than one operator named +
+e7566b790200615f	error	db error: ERROR: operator does not exist: +
+88e475e5e05c5ec5
+	oper
+	||/
+810b77f84ac740dc
+	oper
+	NULL
+110a34add3fa6cb0
+	oper
+	||/
+5fd27efaa45649f0	error	db error: ERROR: operator does not exist: ||/
+d5251f1d179f52a5
+	oper
+	NULL
+d6ec6a80962ed2ce	error	db error: ERROR: more than one operator named -
+9ef663c3e80f5346	error	db error: ERROR: operator does not exist: -
+7a82c1c19c7519fc
+	oper
+	NULL
+a14d250d2b6db41c	error	db error: ERROR: operator does not exist: nosuch
+c10746d99c6247fa
+	oper
+	NULL
+fcf90b45e2d3d13e	error	db error: ERROR: invalid name syntax
+c745eafe6c75c50c	error	db error: ERROR: improper qualified name (too many dotted names): a.b.c.d
+d99b3fe8704aaeb1	error	db error: ERROR: improper qualified name (too many dotted names): a.b.c.d
+8a03248b66ef74a8
+	oper
+	0
+39913a8f8f2927fa
+	oper
+	0
+daa166854a20d161
+	operator
+	+(integer,integer)
+63f2247b40bb9373
+	operator
+	NULL
+18974520d63d1b75
+	operator
+	+(integer,integer)
+e5af3a047ba005cf	error	db error: ERROR: operator does not exist: +(int4,int4)
+e853f1fa21ac454c
+	operator
+	NULL
+f158c1fe403c42a2	error	db error: ERROR: missing argument\nHINT: Use NONE to denote the missing argument of a unary operator.
+61085dc38d446ad0
+	operator
+	NULL
+84223ee0432c95cc	error	db error: ERROR: too many arguments\nHINT: Provide two argument types for operator.
+1d7af7a44efc6dfc
+	operator
+	-(NONE,integer)
+799089a88e88fa8a
+	operator
+	NULL
+7dff357a176f2b70
+	operator
+	-(NONE,integer)
+a71b2e259c70bb3c	error	db error: ERROR: operator does not exist: -(none,int4)
+0fec8b69dc160608
+	operator
+	NULL
+53d0ebeedfa56f39	error	db error: ERROR: operator does not exist: -(int4,none)
+82eea7912ed0c0d2
+	operator
+	NULL
+9b333674f1b1cccf	error	db error: ERROR: operator does not exist: +(none,none)
+ff495263c29fdd7f
+	operator
+	NULL
+57d2ef6debb442f7	error	db error: ERROR: type "nosuchtype" does not exist
+f25b314181fff46a
+	operator
+	NULL
+71e5e2bbbfdd5407	error	db error: ERROR: expected a left parenthesis
+ed1e1ad7616de89d
+	operator
+	0
+c4887521f85624cb
+	operator
+	0
+e9d5dcf36dde262f
+	operator
+	NULL
+87d691c28f24519e	error	db error: ERROR: expected a left parenthesis
+d0a62a983fff5ee1
+	collation
+	NULL
+f4682cd935b606d8	error	db error: ERROR: collation "c" for encoding "UTF8" does not exist
+639c3ea6cd9541c1
+	collation
+	"C"
+833daf89c4859f7e
+	collation
+	"C"
+b2dcb986c6ec3e6d
+	collation
+	"C"
+c030be7b4bcc4df4
+	collation
+	"C"
+efb03385137338a1
+	collation
+	NULL
+69154f274c22dcf7	error	db error: ERROR: collation "posix" for encoding "UTF8" does not exist
+73ab42177a450d8f
+	collation
+	"default"
+f6907dd8c6b65bb2
+	collation
+	"default"
+56abf2f207fc933d
+	collation
+	"default"
+39819517a5348581
+	collation
+	"default"
+e695f5828fadab5c
+	collation
+	NULL
+478b106483a07193	error	db error: ERROR: collation "public.C" for encoding "UTF8" does not exist
+7fa061de42836414
+	collation
+	NULL
+25d53c8d365592c3	error	db error: ERROR: collation "nosuch.C" for encoding "UTF8" does not exist
+30f378bf3879c26f
+	collation
+	NULL
+9419cde49ff76fb0	error	db error: ERROR: invalid name syntax
+56a600c89ff1c306
+	collation
+	ucs_basic
+fc4d273b39922cce
+	collation
+	NULL
+630ac5d5dc19c228
+	collation
+	ucs_basic
+34daba20228e704f	error	db error: ERROR: collation "ucs_basic" for encoding "UTF8" does not exist
+61f0ce502a657b6a	error	db error: ERROR: improper qualified name (too many dotted names): a.b.c.d
+93e69189c9704eca	error	db error: ERROR: improper qualified name (too many dotted names): a.b.c.d
+b4e114b46ee26ede
+	collation
+	NULL
+b1ef33e3901e5413	error	db error: ERROR: collation "nosuch" for encoding "UTF8" does not exist
+87c30c0bed046441
+	config
+	english
+e1a207a790e07575	error	db error: ERROR: text search configuration "english" does not exist
+0b64b144b37570f3
+	config
+	english
+604e863e22295be3	error	db error: ERROR: text search configuration "pg_catalog.english" does not exist
+7530ad2eeef6f1ee
+	config
+	simple
+bc6948a29a840cd8	error	db error: ERROR: text search configuration "simple" does not exist
+cf562b721c7de95e	error	db error: ERROR: invalid name syntax
+8a431c1345588ef1	error	db error: ERROR: text search configuration "nosuch" does not exist
+eb592b19f1627324	error	db error: ERROR: improper qualified name (too many dotted names): a.b.c.d
+0f87789432e9ef68	error	db error: ERROR: invalid name syntax
+4ae9bc3dec877733
+	dictionary
+	simple
+068926fcd1597adf	error	db error: ERROR: text search dictionary "simple" does not exist
+93e38df7d2ec62e9
+	dictionary
+	simple
+aa4c1fdf4ad098b2	error	db error: ERROR: text search dictionary "pg_catalog.simple" does not exist
+dc02dea936829493
+	dictionary
+	english_stem
+ac39777900f11073	error	db error: ERROR: text search dictionary "english_stem" does not exist
+bd7baaa9d12f4208	error	db error: ERROR: text search dictionary "nosuch.simple" does not exist
+c81049f173029609	error	db error: ERROR: text search dictionary "public.nosuch" does not exist
+48b1864968be57c9	error	db error: ERROR: invalid name syntax
+b9b218e92afff336	error	db error: ERROR: text search dictionary "nosuch" does not exist
+19fcff6eeac17ee4	error	db error: ERROR: invalid name syntax
+77fc9ca70704d197
+	config	dictionary	missing_config	missing_dictionary
+	f	f	f	f
+7fad1a0444ae1f89
+	role
+	postgres
+22d9b35cd8906f76
+	role
+	postgres
+5d9a500f2e1f0b33
+	role
+	postgres
+e5acf9b81a4c3e55
+	role
+	postgres
+bf62a55fb8e45d72
+	role
+	NULL
+d43a631179492822	error	db error: ERROR: role "nosuch" does not exist
+c4c911e43a8f57b6
+	role
+	NULL
+69a5300d25d8f17f	error	db error: ERROR: invalid name syntax
+c43443e652ee3979
+	role
+	NULL
+bed966a5eab2636f	error	db error: ERROR: invalid name syntax
+9dba1b42f5ae6daa
+	role
+	NULL
+ea13e9e592bd673b	error	db error: ERROR: role "public" does not exist
+5013171c871625bc
+	role
+	NULL
+08f2aa4e5674af90	error	db error: ERROR: invalid name syntax
+bfe635ad5daca26f
+	namespace
+	public
+053a111d430ce3d6
+	namespace
+	public
+b69fa9b32a7011a7
+	namespace
+	pg_catalog
+09f96f1fb27de838
+	namespace
+	pg_catalog
+0f755e17aea12be2
+	namespace
+	NULL
+6f5b841792b32721	error	db error: ERROR: schema "nosuch" does not exist
+60c0a085b8bb143d
+	namespace
+	NULL
+75f1984715c1419a	error	db error: ERROR: invalid name syntax
+e15effbb951f093c
+	namespace
+	NULL
+efe59440fedffdca	error	db error: ERROR: invalid name syntax
+cc9055c2764b2873
+	namespace
+	public
+420d02b3b08c49f2
+	namespace
+	public
+032dfbe9a1d6e00d
+	namespace
+	regin_s
+eed6ced6ddb6c2a0
+	namespace
+	regin_s
+aa97ba4987ab590f
+	namespace
+	NULL
+7f2b1ad0a2763eba	error	db error: ERROR: invalid name syntax
+63b49538051ae965
+	regclass	regtype	regproc	regprocedure	regrole	regnamespace	regcollation	regdictionary	regconfig	regoper	regoperator
+	-	-	-	-	-	-	-	-	-	0	0
+11f08e734c3aba70
+	regclass	regtype	regproc	regprocedure	regrole	regnamespace	regcollation	regdictionary	regconfig	regoper	regoperator
+	1	1	1	1	1	1	1	1	1	1	1
+b513c0de3f59b13f
+	regclass	regtype	regproc	regprocedure	regrole	regnamespace	regcollation	regdictionary	regconfig	regoper	regoperator
+	999999999	999999999	999999999	999999999	999999999	999999999	999999999	999999999	999999999	999999999	999999999
+423136ee00b6c220
+	regclass
+	-
+bfc8b48098a78d4d
+	regtype
+	-
+942bab8984a535a9
+	regproc
+	-
+9b279d9188dff3a9
+	regprocedure
+	-
+c0e68aae62b16eb7
+	regrole
+	-
+108d1ff9480a15bb
+	regnamespace
+	-
+aa93c0b032fc8e63
+	regcollation
+	-
+2a9fafe5cc1a5470
+	regdictionary
+	-
+a94dc1c051f72c8d
+	regconfig
+	-
+4021ac503fea4cb9	error	db error: ERROR: more than one operator named -
+3fe3e9694a0bad6b	error	db error: ERROR: operator does not exist: -
+9fbddf5a6f826cf2	error	db error: ERROR: expected a left parenthesis
+19c600a2cb0371e2
+	table_as_proc	table_as_type	table_as_dictionary
+	t	t	t
+88e1f2ffb1decbca
+	names
+	5000
+ef73e32f1e8a8db7
+	type	proc
+	public.regin_mood	public.regin_f(integer)
+3bf46a61a0dc4e71
+	type	schema	name	identity
+	routine	NULL	NULL	NULL
+5261666ee49a25e0.2
+	type
+	sql_identifier
+c4e62be18d969e81
+	oper	operator	config	dictionary
+	pg_catalog.+	+(integer,integer)	simple	simple
+c65e46727e7c6631
+	oper	operator	config	dictionary
+	551	551	3748	3765
+42c9f0063346c5ae
+	unknown	missing	invalid	bit	bpchar	int4	json	uuid
+	???	???	-	"bit"	bpchar	integer	json	uuid(3)
+3801a41a276ec5bb
+	missing	temporary	hidden	visible
+	NULL	t	f	t
+0c4ba7a4e79f1005
+	missing	enum_array	row_array	enum
+	NULL	t	t	t
+44346409e52b6ee3
+	missing	unknown_builtin	hidden	visible
+	NULL	NULL	f	t

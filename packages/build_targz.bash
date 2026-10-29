@@ -66,6 +66,6 @@ if [[ "${DEBUG_SYMBOLS:-false}" == "true" ]]; then
 	echo "Created: ${NAME}-dbgsym.tar.gz ($(du -h "${NAME}-dbgsym.tar.gz" | cut -f1))"
 fi
 
-# Create symlink for multi-arch build_docker.bash
+# Create symlink for build_docker.bash
 mkdir -p "${PROJECT_ROOT}/packages/tarball"
 ln -sf "../../${NAME}.tar.gz" "${PROJECT_ROOT}/packages/tarball/install-${ARCH}.tar.gz"

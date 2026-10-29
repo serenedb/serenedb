@@ -39,7 +39,7 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
  public:
   // `return_chunk` is RETURNING: `types` is then the table row followed by its
   // row-identity virtual columns, and `return_columns` maps each table column
-  // to its slot in the child's chunk. Otherwise the operator reports the row
+  // to the expression that reads it. Otherwise the operator reports the row
   // count and `types` is one BIGINT.
   SereneDBSearchDelete(
     duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
@@ -55,9 +55,6 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;
-  duckdb::SinkFinalizeType Finalize(
-    duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
-    duckdb::OperatorSinkFinalizeInput& input) const final;
 
   bool IsSource() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(

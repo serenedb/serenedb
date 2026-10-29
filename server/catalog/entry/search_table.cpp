@@ -244,7 +244,7 @@ SearchTableEntry::SearchTableEntry(
     _storage = search::SearchTable::Create(
       catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
       catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
-      _options, search::SearchTable::DeclaredCompression(GetColumns()));
+      _options, GetColumns());
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
 }
@@ -435,10 +435,16 @@ SearchTableEntry::GeneratedPkSequence(duckdb::ClientContext& context) const {
   return entry ? &entry->Cast<duckdb::SequenceCatalogEntry>() : nullptr;
 }
 
+void SearchTableEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {
+  if (transaction.HasContext()) {
+    _storage->ClaimLayout(transaction.GetContext(), name.GetIdentifierName());
+  }
+}
+
 void SearchTableEntry::OnDrop() { _storage->MarkDropped(); }
 
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
-  if (prev_entry.type == duckdb::CatalogType::INVALID) {
+  if (CreatedObject(prev_entry)) {
     OnDrop();
   }
 }
@@ -499,29 +505,50 @@ void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
 duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   auto info = duckdb::TableCatalogEntry::GetInfo();
   auto& options = info->Cast<duckdb::CreateTableInfo>().options;
-  const auto set = [&](std::string_view name, const duckdb::Value& value) {
-    options.insert_or_assign(name, OptionConstant(value));
-  };
-  set(kStorageOption, duckdb::Value{kEngineSearch});
-  set(kRefreshIntervalSetting,
-      duckdb::Value::UINTEGER(_options.refresh_interval_ms));
-  set(kCompactionIntervalSetting,
-      duckdb::Value::UINTEGER(_options.compaction_interval_ms));
-  set(kCleanupIntervalStepSetting,
-      duckdb::Value::UINTEGER(_options.cleanup_interval_step));
-  set(kRowGroupSizeSetting, duckdb::Value::UINTEGER(_options.row_group_size));
-  set(kSegmentMemoryMaxSetting,
-      duckdb::Value::UBIGINT(_options.segment_memory_max));
-  set(kCompactionMaxSegmentsSetting,
-      duckdb::Value::UINTEGER(_options.compaction_max_segments));
-  set(kCompactionMaxSegmentsBytesSetting,
-      duckdb::Value::UBIGINT(_options.compaction_max_segments_bytes));
-  set(kCompactionFloorSegmentBytesSetting,
-      duckdb::Value::UBIGINT(_options.compaction_floor_segment_bytes));
-  if (!_options.optimize_top_k.empty()) {
-    set(kOptimizeTopKSetting, duckdb::Value{_options.optimize_top_k});
+  options.insert_or_assign(kStorageOption,
+                           OptionConstant(duckdb::Value{kEngineSearch}));
+  for (const auto name :
+       {kRefreshIntervalSetting, kCompactionIntervalSetting,
+        kCleanupIntervalStepSetting, kRowGroupSizeSetting,
+        kSegmentMemoryMaxSetting, kCompactionMaxSegmentsSetting,
+        kCompactionMaxSegmentsBytesSetting, kCompactionFloorSegmentBytesSetting,
+        kOptimizeTopKSetting}) {
+    if (const auto value = Option(name); !value.IsNull()) {
+      options.insert_or_assign(name, OptionConstant(value));
+    }
   }
   return info;
+}
+
+duckdb::Value SearchTableEntry::Option(std::string_view name) const {
+  if (name == kRefreshIntervalSetting) {
+    return duckdb::Value::UINTEGER(_options.refresh_interval_ms);
+  }
+  if (name == kCompactionIntervalSetting) {
+    return duckdb::Value::UINTEGER(_options.compaction_interval_ms);
+  }
+  if (name == kCleanupIntervalStepSetting) {
+    return duckdb::Value::UINTEGER(_options.cleanup_interval_step);
+  }
+  if (name == kRowGroupSizeSetting) {
+    return duckdb::Value::UINTEGER(_options.row_group_size);
+  }
+  if (name == kSegmentMemoryMaxSetting) {
+    return duckdb::Value::UBIGINT(_options.segment_memory_max);
+  }
+  if (name == kCompactionMaxSegmentsSetting) {
+    return duckdb::Value::UINTEGER(_options.compaction_max_segments);
+  }
+  if (name == kCompactionMaxSegmentsBytesSetting) {
+    return duckdb::Value::UBIGINT(_options.compaction_max_segments_bytes);
+  }
+  if (name == kCompactionFloorSegmentBytesSetting) {
+    return duckdb::Value::UBIGINT(_options.compaction_floor_segment_bytes);
+  }
+  if (name == kOptimizeTopKSetting && !_options.optimize_top_k.empty()) {
+    return duckdb::Value{_options.optimize_top_k};
+  }
+  return duckdb::Value{};
 }
 
 duckdb::TableFunction SearchTableEntry::GetScanFunction(
@@ -585,6 +612,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
   if (info.type != duckdb::AlterType::ALTER_TABLE) {
     return duckdb::TableCatalogEntry::AlterEntry(context, info);
   }
+  _storage->ClaimLayout(context, name.GetIdentifierName());
   auto& alter = info.Cast<duckdb::AlterTableInfo>();
   switch (alter.alter_table_type) {
     case duckdb::AlterTableType::RENAME_TABLE:

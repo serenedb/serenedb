@@ -55,17 +55,17 @@
 #include "server/utils/app_server.h"
 #include "server/utils/build.h"
 #include "server/utils/init.h"
+#include "server/utils/signals.h"
 #include "storage_engine/search_engine.h"
 
-ABSL_FLAG(bool, remap_executable, SDB_REMAP_EXECUTABLE_DEFAULT,
+ABSL_FLAG(bool, remap_executable, SDB_REMAP_EXECUTABLE,
           "Copy the server's machine code into anonymous huge-page memory at "
           "startup, so the first queries after a cold start pay no code page "
           "faults and the code runs from huge pages. Off, the machine code is "
           "locked in memory instead, or pre-read where locking is not "
           "permitted, and perf can symbolize it, which it cannot for "
           "anonymous code. Read-only data is pre-read either way. On by "
-          "default in Release and MinSizeRel builds, the ones that omit frame "
-          "pointers, and off in the others.");
+          "default in Release builds, and off in the others.");
 
 namespace {
 
@@ -89,6 +89,7 @@ void SetSanitizerThreadStackSize() {
 int RunServer(int argc, char** argv) {
   try {
     irs::CrashHandler::installCrashHandler();
+    signals::InstallShutdownHandlers();
 
     AppServer server;
 

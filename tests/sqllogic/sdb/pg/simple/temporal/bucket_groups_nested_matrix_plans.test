@@ -1,0 +1,152 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE g AS SELECT TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE AS ts, (TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2024-12-28' + (i % 300)::INTEGER)::DATE AS d, (i % 1000)::DOUBLE AS price, (i % 5)::SMALLINT AS sev, i AS v FROM range(50000) t(i);
+
+statement ok
+INSERT INTO g VALUES (NULL, NULL, NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE dst AS SELECT tstz, v FROM (SELECT TIMESTAMPTZ '2025-03-28 00:00:00+00' + INTERVAL (i * 41) MINUTE AS tstz, i AS v FROM range(0, 400) t(i) UNION ALL SELECT TIMESTAMPTZ '2025-10-24 00:00:00+00' + INTERVAL (i * 41) MINUTE, 1000 + i FROM range(0, 400) t(i) UNION ALL SELECT TIMESTAMPTZ '2025-11-01 12:00:00+00' + INTERVAL (i * 41) MINUTE, 2000 + i FROM range(0, 100) t(i));
+
+query
+EXPLAIN SELECT date_trunc('day', ts) AS d, date_trunc('hour', ts) AS h, count(*) AS c FROM g GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────╮
+│ Projections:                                       │
+│ d,                                                 │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0), │
+│ #1                                                 │
+│ ~25,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴─────────────────────────╮
+│ Groups: #0                                         │
+│ Aggregates: count_star()                           │
+│ ~25,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ─────────────┴─────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0)    │
+│ ~50,001 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴─────────────────────────╮
+│ Table: g                                           │
+│ Type: Sequential Scan                              │
+│ Projections: ts                                    │
+│ ~50,001 rows                                       │
+╰────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('month', ts) AS m, date_trunc('day', ts) AS d, date_trunc('hour', ts) AS h, count(*) AS c FROM g GROUP BY 1, 2, 3;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────╮
+│ Projections:                                       │
+│ m, d,                                              │
+│ __internal_date_trunc_unbucket(#0, 3600000000, 0), │
+│ #1                                                 │
+│ ~25,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴─────────────────────────╮
+│ Groups: #0                                         │
+│ Aggregates: count_star()                           │
+│ ~25,000 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ─────────────┴─────────────────────────╮
+│ Projections:                                       │
+│ __internal_date_trunc_bucket(ts, 3600000000, 0)    │
+│ ~50,001 rows                                       │
+╰──────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴─────────────────────────╮
+│ Table: g                                           │
+│ Type: Sequential Scan                              │
+│ Projections: ts                                    │
+│ ~50,001 rows                                       │
+╰────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(ts, '%Y-%m') AS m, date_trunc('day', ts) AS d, count(*) AS c FROM g GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────╮
+│ Projections:                                        │
+│ m,                                                  │
+│ __internal_date_trunc_unbucket(#0, 86400000000, 0), │
+│ #1                                                  │
+│ ~25,000 rows                                        │
+╰──────────────────────────┬──────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──┴──────────────────────────╮
+│ Groups: #0                                          │
+│ Aggregates: count_star()                            │
+│ ~25,000 rows                                        │
+╰──────────────────────────┬──────────────────────────╯
+╭─ PROJECTION ─────────────┴──────────────────────────╮
+│ Projections:                                        │
+│ __internal_date_trunc_bucket(ts, 86400000000, 0)    │
+│ ~50,001 rows                                        │
+╰──────────────────────────┬──────────────────────────╯
+╭─ SEQ_SCAN ───────────────┴──────────────────────────╮
+│ Table: g                                            │
+│ Type: Sequential Scan                               │
+│ Projections: ts                                     │
+│ ~50,001 rows                                        │
+╰─────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('month', ts) AS m, date_trunc('week', ts) AS w, count(*) AS c FROM g GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────╮
+│ Projections:                                                     │
+│ __internal_date_trunc_month_unbucket(#0, 1, 0),                  │
+│ __internal_date_trunc_unbucket(#1, 604800000000, -259200000000), │
+│ #2                                                               │
+│ ~25,000 rows                                                     │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────┴────────────────────────────────╮
+│ Groups: #0, #1                                                   │
+│ Aggregates: count_star()                                         │
+│ ~25,000 rows                                                     │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ PROJECTION ────────────────────┴────────────────────────────────╮
+│ Projections:                                                     │
+│ __internal_date_trunc_month_bucket(ts, 1, 0),                    │
+│ __internal_date_trunc_bucket(ts, 604800000000, -259200000000)    │
+│ ~50,001 rows                                                     │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────┴────────────────────────────────╮
+│ Table: g                                                         │
+│ Type: Sequential Scan                                            │
+│ Projections: ts                                                  │
+│ ~50,001 rows                                                     │
+╰──────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('day', tstz) AS d, date_trunc('hour', tstz) AS h, count(*) AS c FROM dst GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────╮
+│ Projections:                                    │
+│ d,                                              │
+│ __internal_icu_date_trunc_unbucket('hour', #0), │
+│ #1                                              │
+│ ~450 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ┴────────────────────────╮
+│ Groups: #0                                      │
+│ Aggregates: count_star()                        │
+│ ~450 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ PROJECTION ───────────┴────────────────────────╮
+│ Projections:                                    │
+│ __internal_icu_date_trunc_bucket('hour', tstz)  │
+│ ~900 rows                                       │
+╰────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+│ Table: dst                                      │
+│ Type: Sequential Scan                           │
+│ Projections: tstz                               │
+│ ~900 rows                                       │
+╰─────────────────────────────────────────────────╯

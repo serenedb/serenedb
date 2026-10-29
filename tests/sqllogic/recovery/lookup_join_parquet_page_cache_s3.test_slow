@@ -1,0 +1,79 @@
+control substitution on
+
+statement ok
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
+statement ok
+SET s3_use_ssl = false;
+
+statement ok
+SET logging_storage = 'memory';
+
+statement ok
+SET logging_level = 'debug';
+
+statement ok
+COPY (
+  SELECT i AS id, i % 1000 AS k,
+         array_to_string(list_transform(range(16), x -> md5(i::VARCHAR || '-' || x::VARCHAR)), '') AS body
+  FROM range(20000) t(i)
+) TO 's3://${MINIO_BUCKET}/${__DATABASE__}_pages.parquet' (FORMAT parquet);
+
+query
+EXPLAIN SELECT id, k, body FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_pages.parquet') ORDER BY k, id LIMIT 3;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ─────────────────────╮
+│ Key: file_index, file_row_number  │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+                  ├─────────────────────────────────╮
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ READ_PARQUET ─────────╮
+│ Top: 3                            │  │ Function: READ_PARQUET │
+│ Order By: k ASC, id ASC           │  │ Projections: body      │
+│ ~3 rows                           │  │ ~3 rows                │
+╰─────────────────┬─────────────────╯  ╰────────────────────────╯
+╭─ READ_PARQUET ──┴─────────────────╮
+│ Function: READ_PARQUET            │
+│ Projections: id, k                │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k <= ?) │
+│ ~20,000 rows                      │
+╰───────────────────────────────────╯
+
+query
+SELECT id, k, body = array_to_string(list_transform(range(16), x -> md5(id::VARCHAR || '-' || x::VARCHAR)), '') AS body_ok
+FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_pages.parquet') ORDER BY k, id LIMIT 3;
+----
+id	k	body_ok
+0	0	t
+1000	0	t
+2000	0	t
+
+statement ok
+CREATE TABLE http_mark AS
+SELECT count(*) AS n FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id() AND request.type = 'GET';
+
+query
+SELECT id, k, body = array_to_string(list_transform(range(16), x -> md5(id::VARCHAR || '-' || x::VARCHAR)), '') AS body_ok
+FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_pages.parquet') ORDER BY k, id LIMIT 3;
+----
+id	k	body_ok
+0	0	t
+1000	0	t
+2000	0	t
+
+query
+SELECT count(*) - (SELECT n FROM http_mark) AS gets
+FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id() AND request.type = 'GET';
+----
+gets
+0

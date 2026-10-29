@@ -1,0 +1,133 @@
+query
+SELECT to_char(TIMESTAMP '2024-03-05 14:07:09.123456', 'YYYY-MM-DD HH24:MI:SS') AS a, to_char(TIMESTAMP '2024-03-05 14:07:09.123456', 'YYYY-MM-DD"T"HH24:MI:SS.MS') AS b, to_char(TIMESTAMP '2024-03-05 14:07:09', 'HH12:MI AM') AS c, to_char(TIMESTAMP '2024-03-05 04:07:09', 'hh12 pm') AS d, to_char(TIMESTAMP '2024-03-05 00:30:00', 'HH12 A.M.') AS e;
+----
+a	b	c	d	e
+2024-03-05 14:07:09	2024-03-05T14:07:09.123	02:07 PM	04 am	12 A.M.
+
+
+query
+SELECT '[' || to_char(TIMESTAMP '2024-03-05 14:07:09', 'Day, DD Month YYYY') || ']' AS a, '[' || to_char(TIMESTAMP '2024-03-05 14:07:09', 'FMDay, FMDD FMMonth YYYY') || ']' AS b, to_char(TIMESTAMP '2024-03-05 14:07:09', 'DY dy Dy MON mon Mon') AS c, '[' || to_char(TIMESTAMP '2024-03-05 14:07:09', 'DAY MONTH') || ']' AS d, to_char(TIMESTAMP '2024-03-05 14:07:09', 'FMday fmmonth') AS e;
+----
+a	b	c	d	e
+[Tuesday  , 05 March     2024]	[Tuesday, 5 March 2024]	TUE tue Tue MAR mar Mar	[TUESDAY   MARCH    ]	tuesday march
+
+
+query
+SELECT to_char(TIMESTAMP '2024-03-05 14:07:09', 'Q') AS q, to_char(TIMESTAMP '2024-03-05', 'WW W') AS ww, to_char(DATE '2024-03-05', 'IW IYYY ID') AS iso, to_char(TIMESTAMP '2024-03-05', 'DDD D J') AS days, to_char(TIMESTAMP '2024-03-05', 'YY YYY Y,YYY CC') AS years, to_char(TIMESTAMP '2021-01-01', 'IYYY-IW-ID') AS iso_edge;
+----
+q	ww	iso	days	years	iso_edge
+1	10 1	10 2024 2	065 3 2460375	24 024 2,024 21	2020-53-5
+
+
+query
+SELECT to_char(TIMESTAMP '2024-03-01', 'DDth') AS a, to_char(TIMESTAMP '2024-03-02', 'DDTH') AS b, to_char(TIMESTAMP '2024-03-03', 'FMDDth') AS c, to_char(TIMESTAMP '2024-03-11', 'DDth') AS d, to_char(TIMESTAMP '2024-03-22', 'FMDDth') AS e, to_char(TIMESTAMP '2024-03-05', 'FMMMth') AS f;
+----
+a	b	c	d	e	f
+01st	02ND	3rd	11th	22nd	3rd
+
+
+query
+SELECT to_char(TIMESTAMP '2024-03-05 14:07:09.123456', 'MS US FF1 FF2 FF3 FF4 FF5 FF6') AS frac, to_char(TIMESTAMP '2024-03-05 14:07:09', 'SSSS SSSSS') AS secs, to_char(TIMESTAMP '2024-03-05 14:07:09', 'RM rm') AS roman_month, to_char(TIMESTAMP '2024-03-05 14:07:09', 'AD ad B.C. bc') AS era;
+----
+frac	secs	roman_month	era
+123 123456 1 12 123 1234 12345 123456	50829 50829	III  iii 	AD ad A.D. ad
+
+
+query
+SELECT to_char(TIMESTAMP '2024-03-05 14:07:09', '"Year" YYYY "Q"Q \"quoted\"') AS lit, to_char(TIMESTAMP '2024-03-05 14:07:09', 'YYYY-MM-DD HH24:MI:SS FXYYYY') AS fx, to_char(DATE '2024-03-05', 'DD/MM/YYYY') AS d;
+----
+lit	fx	d
+Year 2024 Q1 "1uote3"	2024-03-05 14:07:09 2024	05/03/2024
+
+
+statement ok
+SET TimeZone = 'UTC';
+
+
+query
+SELECT to_char(TIMESTAMPTZ '2024-03-05 14:07:09+00', 'YYYY-MM-DD HH24:MI:SS TZ OF') AS a, to_char(TIMESTAMPTZ '2024-03-05 14:07:09+00', 'tz TZH:TZM') AS b;
+----
+a	b
+2024-03-05 14:07:09 UTC +00	utc +00:00
+
+
+query
+SELECT to_char(INTERVAL '1 day 02:03:04', 'DD HH24:MI:SS') AS a, to_char(INTERVAL '15 hours 2 minutes', 'HH24:MI') AS b, to_char(INTERVAL '2 years 3 months', 'YYYY MM') AS c, to_char(INTERVAL '40 hours', 'HH24') AS d, to_char(INTERVAL '-3 hours', 'HH24:MI') AS e;
+----
+a	b	c	d	e
+01 02:03:04	15:02	0002 03	40	-03:00
+
+
+query
+SELECT to_char(NULL::timestamp, 'YYYY') IS NULL AS a, to_char(TIMESTAMP '2024-03-05', NULL) IS NULL AS b, to_char(TIMESTAMP '2024-03-05', '') AS c;
+----
+a	b	c
+t	t	NULL
+
+
+query
+SELECT '[' || to_char(1234567.891, 'FM9,999,999.00') || ']' AS a, '[' || to_char(42, '00000') || ']' AS b, '[' || to_char(3.14159::float8, '9.999') || ']' AS c, '[' || to_char(-12.5, '999.9') || ']' AS d, '[' || to_char(-12.5, 'S999.9') || ']' AS e, '[' || to_char(-12.5, '999.9PR') || ']' AS f, '[' || to_char(12.5, '999.9MI') || ']' AS g, '[' || to_char(-12.5, '999.9MI') || ']' AS h;
+----
+a	b	c	d	e	f	g	h
+[1,234,567.89]	[ 00042]	[ 3.142]	[ -12.5]	[ -12.5]	[ <12.5>]	[ 12.5 ]	[ 12.5-]
+
+
+query
+SELECT '[' || to_char(485, '999') || ']' AS a, '[' || to_char(-485, '999') || ']' AS b, '[' || to_char(1485, '9,999') || ']' AS c, '[' || to_char(1485, '9G999') || ']' AS d, '[' || to_char(148.5, '999.999') || ']' AS e, '[' || to_char(148.5, 'FM999.999') || ']' AS f, '[' || to_char(148.5, 'FM999.990') || ']' AS g, '[' || to_char(148.5, '999D999') || ']' AS h, '[' || to_char(3148.5, '9G999D999') || ']' AS i;
+----
+a	b	c	d	e	f	g	h	i
+[ 485]	[-485]	[ 1,485]	[ 1,485]	[ 148.500]	[148.5]	[148.500]	[ 148.500]	[ 3,148.500]
+
+
+query
+SELECT '[' || to_char(-485, '999S') || ']' AS a, '[' || to_char(-485, '999MI') || ']' AS b, '[' || to_char(485, '999MI') || ']' AS c, '[' || to_char(485, 'PL999') || ']' AS d, '[' || to_char(-485, 'SG999') || ']' AS e, '[' || to_char(-485, '999PR') || ']' AS f, '[' || to_char(485, 'FMPL999') || ']' AS g;
+----
+a	b	c	d	e	f	g
+[485-]	[485-]	[485 ]	[+ 485]	[-485]	[<485>]	[+485]
+
+
+query
+SELECT '[' || to_char(12, '99V9') || ']' AS a, '[' || to_char(12.4, '99V999') || ']' AS b, '[' || to_char(0.0004859, '9.99EEEE') || ']' AS c, '[' || to_char(12345.678, '9.99EEEE') || ']' AS d, '[' || to_char(485, 'RN') || ']' AS e, '[' || to_char(485, 'FMRN') || ']' AS f, '[' || to_char(1999, 'rn') || ']' AS g, '[' || to_char(21, '99th') || ']' AS h, '[' || to_char(22, 'FM99TH') || ']' AS i;
+----
+a	b	c	d	e	f	g	h	i
+[ 120]	[ 12400]	[ 4.86e-04]	[ 1.23e+04]	[        CDLXXXV]	[CDLXXXV]	[        mcmxcix]	[ 21st]	[22ND]
+
+
+query
+SELECT '[' || to_char(1234, '99') || ']' AS overflow, '[' || to_char(0.5, '9.9') || ']' AS a, '[' || to_char(0.5, '0.9') || ']' AS b, '[' || to_char(0, '9') || ']' AS c, '[' || to_char(-0.1, 'FM9.9') || ']' AS d, '[' || to_char(1e20::float8, '9.99EEEE') || ']' AS e, '[' || to_char(123456789012345678::bigint, 'FM999999999999999999') || ']' AS f;
+----
+overflow	a	b	c	d	e	f
+[ ##]	[  .5]	[ 0.5]	[ 0]	[-.1]	[ 1.00e+20]	[123456789012345678]
+
+
+query
+SELECT to_number('12,454.8-', '99G999D9S') AS a, to_number('-34,338,492', '99G999G999') AS b, to_number('  42', '999') AS c, to_number('-3.5', 'S9.9') AS d, to_number('5.01-', 'FM9.999999MI') AS e, to_number('<564646.654564>', '999999.999999PR') AS f;
+----
+a	b	c	d	e	f
+-12454.8	-34338492	42	-3.5	-5.01	-564646.654564
+
+
+query
+SELECT to_date('05 Mar 2024', 'DD Mon YYYY') AS a, to_date('2024-03-05', 'YYYY-MM-DD') AS b, to_date('20240305', 'YYYYMMDD') AS c, to_date('5 March 2024', 'DD Month YYYY') AS d, to_date('2024 64', 'YYYY DDD') AS e;
+----
+a	b	c	d	e
+2024-03-05	2024-03-05	2024-03-05	2024-03-05	2024-03-04
+
+
+query
+SELECT to_timestamp('2024-03-05 14:07', 'YYYY-MM-DD HH24:MI') AS a, to_timestamp('05/03/2024 02:07:09 PM', 'DD/MM/YYYY HH12:MI:SS PM') AS b, to_timestamp('2024-03-05 14:07:09.123', 'YYYY-MM-DD HH24:MI:SS.MS') AS c, to_timestamp('2024-03-05 14:07:09.123456', 'YYYY-MM-DD HH24:MI:SS.US') AS d;
+----
+a	b	c	d
+2024-03-05 14:07:00+00	2024-03-05 14:07:09+00	2024-03-05 14:07:09.123+00	2024-03-05 14:07:09.123456+00
+
+
+statement error
+SELECT to_date('2024-13-05', 'YYYY-MM-DD');
+----
+db error: ERROR: date/time field value out of range: "2024-13-05"
+
+
+statement error
+SELECT to_timestamp('2024-03-05 25:00', 'YYYY-MM-DD HH24:MI');
+----
+db error: ERROR: date/time field value out of range: "2024-03-05 25:00"

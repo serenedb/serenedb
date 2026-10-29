@@ -12,14 +12,16 @@ Besides compatibility with the PostgreSQL SQL dialect and protocol, SereneDB als
 This page provides an overview of the currently supported system tables and views.
 
 - 🟢 Supported
-- 🟡 Stubbed for compatibility: These do not contain actual content and exist solely for compatibility purposes, as SereneDB does not share PostgreSQL’s codebase or internal architecture
+- 🟡 Stubbed for compatibility: These do not contain actual content and exist solely for compatibility purposes, as SereneDB does not share PostgreSQL's codebase or internal architecture
 - 🔴 Not yet supported
 
 ## System Tables
 
-System tables provide a raw view into the state of the database system. In contrast to PostgreSQL, system tables in SereneDB are read-only, and can only be indirectly influenced through DDL statements: `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE` and `COPY ... FROM` on a system table, in `pg_catalog` or `information_schema`, fail with `permission denied: "<table>" is a system catalog`, the error PostgreSQL raises for what it refuses on its catalogs.
+System tables provide a raw view into the state of the database system. In contrast to PostgreSQL, system tables in SereneDB are read-only, and can only be indirectly influenced through DDL statements: `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE` and `COPY ... FROM` on a system table, in `pg_catalog` or `information_schema`, fail with `permission denied: "<table>" is a system catalog`, the error PostgreSQL raises for what it refuses on its catalogs. No object can be created inside `pg_catalog` or `information_schema`, not even by a superuser: `CREATE TABLE`, `CREATE VIEW`, `CREATE FUNCTION`, `CREATE TYPE`, `CREATE INDEX` and the other `CREATE` statements fail there with `permission denied to create`.
 
 System tables often contain many low-level details. For more accessible and friendly access to the same information, consider using the built-in system views, or the SQL-standard information schema.
+
+Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` is `1259`, `'int4'::regtype` is `23`, and `pg_type.typinput` names the same `pg_proc` rows as in PostgreSQL. A built-in function PostgreSQL also has, with the same argument types, has PostgreSQL's OID. These OIDs are the same in every SereneDB release. The system views, `information_schema` and its objects are numbered from `12000` in the order PostgreSQL 18.6 creates them (`'pg_roles'::regclass` is `12000`, `'information_schema'::regnamespace` is `12240`), which need not match the OIDs a PostgreSQL server gives them. The other built-in functions and collations get OIDs that are the same in every database of a SereneDB release and can change between releases. Built-in objects only have OIDs below `262144`, and objects you create get OIDs from `262144` up. Queries that look objects up by `oid`, by name, by name within a schema or by the relation they belong to, such as `pg_class WHERE oid = ...`, `pg_class WHERE relname = ... AND relnamespace = ...` or `pg_attribute WHERE attrelid = ...`, read only the matching objects, so their cost does not grow with the number of tables. The same holds when the key comes from a join, as in `pg_attribute JOIN pg_class ON attrelid = pg_class.oid WHERE relname = ...`. Filters on the schema and on the object kind, such as `relnamespace = ...`, `relkind IN ('r', 'v')` or `prokind = 'a'`, combine with each other and with these lookups: `pg_class WHERE relnamespace = ... AND relkind = 'r'` reads only that schema's tables. Rows are produced as the query consumes them, so a `LIMIT` stops the scan early.
 
 | Feature                     | Support State | Details |
 |-----------------------------|---------------|---------|
@@ -33,23 +35,23 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_auth_members             | 🟢            | Tracks role memberships. |
 | pg_cast                     | 🟡            | Contains information about type casts. |
 | pg_class                    | 🟢            | Stores information about tables, indexes, sequences and other relations. |
-| pg_collation                | 🟡            | Contains information about collations. |
+| pg_collation                | 🟢            | Lists PostgreSQL's `default`, `C` and `POSIX` and every [SereneDB collation](../sql/expressions/collations/index.md): `nocase`, `noaccent` and `nfc` (provider `b`) and the ICU locale collations (provider `i`). SereneDB collations are not deterministic: equal-comparing strings may differ in bytes. |
 | pg_constraint               | 🟢            | Stores information about table constraints. |
 | pg_conversion               | 🟡            | Contains information about encoding conversions. |
 | pg_database                 | 🟢            | Stores information about databases. |
-| pg_db_role_setting          | 🟡            | Contains per-role and per-database configuration settings. |
-| pg_default_acl              | 🟡            | Stores default access privileges. |
+| pg_db_role_setting          | 🟢            | Contains per-role configuration settings set with `ALTER ROLE ... SET`. |
+| pg_default_acl              | 🟢            | Stores default access privileges set with `ALTER DEFAULT PRIVILEGES`. |
 | pg_depend                   | 🟢            | Tracks dependencies between database objects. |
-| pg_description              | 🟢            | Stores optional descriptions (comments) for database objects. |
+| pg_description              | 🟢            | Stores optional descriptions (comments) for database objects. Built-in objects have no rows. |
 | pg_enum                     | 🟢            | Contains information about enum types. |
 | pg_event_trigger            | 🟡            | Stores information about event triggers. |
 | pg_extension                | 🟡            | Contains information about installed extensions. |
-| pg_foreign_data_wrapper     | 🟡            | Stores information about foreign-data wrappers. |
-| pg_foreign_server           | 🟢            | Contains information about foreign servers created with [`CREATE SERVER`](../sql/statements/create_server/index.md). **Superuser-only** — its `srvoptions` carry credentials and are shown unredacted. `srvfdw` is always `0`. |
+| pg_foreign_data_wrapper     | 🟢            | Lists the foreign-data wrappers [`CREATE SERVER`](../sql/statements/create_server/index.md) accepts: `clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`. Every role may use them, so each grants `USAGE` to `PUBLIC`. |
+| pg_foreign_server           | 🟢            | Contains information about foreign servers created with [`CREATE SERVER`](../sql/statements/create_server/index.md). **Superuser-only** -- its `srvoptions` carry credentials and are shown unredacted. `srvfdw` names the server's wrapper in `pg_foreign_data_wrapper`. |
 | pg_foreign_table            | 🟡            | Stores information about foreign tables. |
 | pg_index                    | 🟢            | Contains information about indexes. |
 | pg_inherits                 | 🟡            | Tracks table inheritance hierarchies. |
-| pg_init_privs               | 🟡            | Stores initial privileges of database objects. |
+| pg_init_privs               | 🟢            | Stores initial privileges of database objects: the built-in relations of `pg_catalog` and the `pg_catalog` and `public` schemas, with the privileges they start with. |
 | pg_language                 | 🟢            | Contains information about procedural languages. |
 | pg_largeobject              | 🟡            | Stores large object data. |
 | pg_largeobject_metadata     | 🟡            | Contains metadata for large objects. |
@@ -64,7 +66,7 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_publication              | 🟡            | Contains all publications created in the database. |
 | pg_publication_namespace    | 🟡            | Maps schemas to publications (many-to-many). |
 | pg_publication_rel          | 🟡            | Maps relations (tables) to publications (many-to-many). |
-| pg_range                    | 🟡            | Stores information about range types. |
+| pg_range                    | 🟡            | Stores information about range types. SereneDB has no range types. |
 | pg_replication_origin       | 🟢            | One origin `pg_<subscription oid>` per subscription, see [CREATE SUBSCRIPTION](../sql/statements/create_subscription/index.md), and the origins made with [`pg_replication_origin_create`](../sql/functions/replication_origin.md). |
 | pg_rewrite                  | 🟢            | Stores rewrite rules for tables and views. |
 | pg_seclabel                 | 🟡            | Stores security labels on database objects. |
@@ -82,10 +84,10 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_trigger                  | 🟢            | Contains information about table triggers. |
 | pg_ts_config                | 🟡            | Stores text search configurations. |
 | pg_ts_config_map            | 🟡            | Maps text search configurations to dictionaries. |
-| pg_ts_dict                  | 🟡            | Stores text search dictionaries. |
+| pg_ts_dict                  | 🟢            | Lists text search dictionaries (tokenizers). |
 | pg_ts_parser                | 🟡            | Contains text search parsers. |
 | pg_ts_template              | 🟡            | Stores text search templates. |
-| pg_type                     | 🟢            | Stores information about data types. |
+| pg_type                     | 🟢            | Stores information about data types. Lists every built-in PostgreSQL type; [Data Type Compatibility](data-type-compatibility.md) says which of them hold values. |
 | pg_user_mapping             | 🟡            | Contains user mappings for foreign data access. |
 
 ## System Views
@@ -115,15 +117,16 @@ System views provide convenient access to system information. System tables ofte
 | pg_rules | 🟡 | Shows information about rules. |
 | pg_seclabels | 🟡 | Displays security labels. |
 | pg_sequences | 🟢 | Lists sequences. |
-| pg_settings | 🟢 | Provides access to parameter settings. |
+| pg_settings | 🟢 | Lists SereneDB and DuckDB settings and the [PostgreSQL settings SereneDB accepts](../configuration/overview.md), each with SereneDB's own value, with PostgreSQL's columns. A lookup by `name` reads only that setting. |
 | pg_shadow | 🟢 | Displays database users. |
 | pg_shmem_allocations | 🟡 | Shows shared memory allocations. |
+| pg_stat_database | 🟢 | Shows one row per database, plus a row with `datid` `0` for shared objects. `numbackends`, `xact_commit`, `xact_rollback`, `sessions` and `session_time` count from the moment the server started; a restart sets them back to `0`. The other counters are always `0` and `stats_reset` is `NULL`. |
 | pg_stats | 🟡 | Provides planner statistics. |
 | pg_stats_ext | 🟡 | Displays extended planner statistics. |
 | pg_stats_ext_exprs | 🟡 | Shows extended planner statistics for expressions. |
 | pg_tables | 🟢 | Lists tables. |
 | pg_timezone_abbrevs | 🟡 | Displays time zone abbreviations. |
-| pg_timezone_names | 🟡 | Lists time zone names. |
+| pg_timezone_names | 🟢 | Lists time zone names. |
 | pg_user | 🟢 | Shows database users. |
 | pg_user_mappings | 🟡 | Displays user mappings. |
 | pg_views | 🟢 | Lists views. |
@@ -192,10 +195,10 @@ name:
 | routines | 🟢 |  |
 | schemata | 🟢 |  |
 | sequences | 🟢 |  |
-| sql_features | 🟡 |  |
-| sql_implementation_info | 🟢 |  |
-| sql_parts | 🟢 |  |
-| sql_sizing | 🟢 |  |
+| sql_features | 🟡 | SereneDB makes no claims about individual SQL standard features, so the table is empty. |
+| sql_implementation_info | 🟢 | SereneDB's own values: `DBMS NAME` and `DBMS VERSION` name SereneDB, the default isolation level is `REPEATABLE READ`, and nulls sort at the end. |
+| sql_parts | 🟢 | Every part of the SQL standard is listed as not supported in full. |
+| sql_sizing | 🟢 | Names longer than the 63 characters listed are kept in full. |
 | table_constraints | 🟢 |  |
 | table_privileges | 🟢 |  |
 | tables | 🟢 |  |

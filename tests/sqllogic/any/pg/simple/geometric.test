@@ -1,0 +1,1703 @@
+control substitution on
+
+skipif serenedb
+query
+SELECT '(1,2)'::point AS a, ' ( 1.5 , -2 ) '::point AS b, '3,4'::point AS c, point '(-0, 1e20)' AS d,
+       point '(Infinity,-inf)' AS e, point '(NaN, 0.0001)' AS f, point '(1e-5, 123456789012345678)' AS g,
+       point '(+1.5e3, -.25)' AS h;
+----
+a	b	c	d	e	f	g	h
+(1,2)	(1.5,-2)	(3,4)	(-0,1e+20)	(Infinity,-Infinity)	(NaN,0.0001)	(1e-05,1.2345678901234568e+17)	(1500,-0.25)
+
+
+skipif pg-wire-extended
+onlyif serenedb
+query
+SELECT '(1,2)'::point AS a, ' ( 1.5 , -2 ) '::point AS b, '3,4'::point AS c, point '(-0, 1e20)' AS d,
+       point '(Infinity,-inf)' AS e, point '(NaN, 0.0001)' AS f, point '(1e-5, 123456789012345678)' AS g,
+       point '(+1.5e3, -.25)' AS h;
+----
+a	b	c	d	e	f	g	h
+(1,2)	(1.5,-2)	(3,4)	(-0,1e+20)	(Infinity,-Infinity)	(NaN,1e-04)	(1e-05,123456789012345680)	(1500,-0.25)
+
+
+skipif pg-wire-simple
+onlyif serenedb
+query
+SELECT '(1,2)'::point AS a, ' ( 1.5 , -2 ) '::point AS b, '3,4'::point AS c, point '(-0, 1e20)' AS d,
+       point '(Infinity,-inf)' AS e, point '(NaN, 0.0001)' AS f, point '(1e-5, 123456789012345678)' AS g,
+       point '(+1.5e3, -.25)' AS h;
+----
+a	b	c	d	e	f	g	h
+(1,2)	(1.5,-2)	(3,4)	(-0,1e+20)	(Infinity,-Infinity)	(NaN,0.0001)	(1e-05,1.2345678901234568e+17)	(1500,-0.25)
+
+
+query
+SELECT '{1,-1,0}'::line AS a, '{ 1 , 2 , 3 }'::line AS b, '[(0,0),(1,1)]'::line AS c, '((0,0),(0,1))'::line AS d,
+       '(0,0),(2,0)'::line AS e, line '0,1,2,5' AS f, line '(1,3),(2,5)' AS g;
+----
+a	b	c	d	e	f	g
+{1,-1,0}	{1,2,3}	{1,-1,0}	{-1,0,0}	{0,-1,0}	{2,-1,1}	{2,-1,1}
+
+
+query
+SELECT '[(1,2),(3,4)]'::lseg AS a, '((1,2),(3,4))'::lseg AS b, '(1,2),(3,4)'::lseg AS c, '1,2,3,4'::lseg AS d,
+       lseg '(1,2,3,4)' AS e, lseg '[ ( 1 , 2 ) , ( 3 , 4 ) ]' AS f;
+----
+a	b	c	d	e	f
+[(1,2),(3,4)]	[(1,2),(3,4)]	[(1,2),(3,4)]	[(1,2),(3,4)]	[(1,2),(3,4)]	[(1,2),(3,4)]
+
+
+query
+SELECT '(0,0),(2,2)'::box AS a, '((2,2),(0,0))'::box AS b, '(2,0),(0,2)'::box AS c, '0,0,2,2'::box AS d,
+       box '(1,1,0,0)' AS e, box '(-1,5),(3,-2)' AS f;
+----
+a	b	c	d	e	f
+(2,2),(0,0)	(2,2),(0,0)	(2,2),(0,0)	(2,2),(0,0)	(1,1),(0,0)	(3,5),(-1,-2)
+
+
+query
+SELECT '[(0,0),(1,1),(2,0)]'::path AS a, '((0,0),(1,1),(2,0))'::path AS b, '(0,0),(1,1),(2,0)'::path AS c,
+       '0,0,1,1,2,0'::path AS d, '(0,0,1,1,2,0)'::path AS e, path '[(1,2)]' AS f, path '((1,2))' AS g,
+       path ' [ ( 1 , 2 ) , ( 3 , 4 ) ] ' AS h;
+----
+a	b	c	d	e	f	g	h
+[(0,0),(1,1),(2,0)]	((0,0),(1,1),(2,0))	((0,0),(1,1),(2,0))	((0,0),(1,1),(2,0))	((0,0),(1,1),(2,0))	[(1,2)]	((1,2))	[(1,2),(3,4)]
+
+
+query
+SELECT '((0,0),(1,1),(2,0))'::polygon AS a, '(0,0),(1,1),(2,0)'::polygon AS b, '0,0,1,1,2,0'::polygon AS c,
+       '(0,0,1,1,2,0)'::polygon AS d, polygon '((1,2))' AS e, polygon '(1,2)' AS f;
+----
+a	b	c	d	e	f
+((0,0),(1,1),(2,0))	((0,0),(1,1),(2,0))	((0,0),(1,1),(2,0))	((0,0),(1,1),(2,0))	((1,2))	((1,2))
+
+
+query
+SELECT '<(1,2),3>'::circle AS a, '((1,2),3)'::circle AS b, '(1,2),3'::circle AS c, '1,2,3'::circle AS d,
+       circle '<(0,0),0>' AS e, circle '( ( 1 , 2 ) , 3 )' AS f, circle '<(1,2),NaN>' AS g, circle '<(1,2),3)' AS h;
+----
+a	b	c	d	e	f	g	h
+<(1,2),3>	<(1,2),3>	<(1,2),3>	<(1,2),3>	<(0,0),0>	<(1,2),3>	<(1,2),NaN>	<(1,2),3>
+
+
+query
+SELECT NULL::point AS a, NULL::line AS b, NULL::lseg AS c, NULL::box AS d, NULL::path AS e, NULL::polygon AS f,
+       NULL::circle AS g;
+----
+a	b	c	d	e	f	g
+NULL	NULL	NULL	NULL	NULL	NULL	NULL
+
+
+statement error
+SELECT '(1,2'::point;
+----
+db error: ERROR: invalid input syntax for type point: "(1,2"
+
+
+statement error
+SELECT '1,2,3'::point;
+----
+db error: ERROR: invalid input syntax for type point: "1,2,3"
+
+
+statement error
+SELECT '(1,2) x'::point;
+----
+db error: ERROR: invalid input syntax for type point: "(1,2) x"
+
+
+statement error
+SELECT ''::point;
+----
+db error: ERROR: invalid input syntax for type point: ""
+
+
+statement error
+SELECT '(1e400,1)'::point;
+----
+db error: ERROR: "1e400" is out of range for type double precision
+
+
+statement error
+SELECT '(1,  -1e-400)'::point;
+----
+db error: ERROR: "-1e-400" is out of range for type double precision
+
+
+statement error
+SELECT '{0,0,1}'::line;
+----
+db error: ERROR: invalid line specification: A and B cannot both be zero
+
+
+statement error
+SELECT '[(1,1),(1,1)]'::line;
+----
+db error: ERROR: invalid line specification: must be two distinct points
+
+
+statement error
+SELECT '{1,2}'::line;
+----
+db error: ERROR: invalid input syntax for type line: "{1,2}"
+
+
+statement error
+SELECT '{1,2,3} x'::line;
+----
+db error: ERROR: invalid input syntax for type line: "{1,2,3} x"
+
+
+statement error
+SELECT '[(1,2),(3,4),(5,6)]'::lseg;
+----
+db error: ERROR: invalid input syntax for type lseg: "[(1,2),(3,4),(5,6)]"
+
+
+statement error
+SELECT '[(0,0),(1,1)]'::box;
+----
+db error: ERROR: invalid input syntax for type box: "[(0,0),(1,1)]"
+
+
+statement error
+SELECT ''::path;
+----
+db error: ERROR: invalid input syntax for type path: ""
+
+
+statement error
+SELECT '[(0,0),(1,1)'::path;
+----
+db error: ERROR: invalid input syntax for type path: "[(0,0),(1,1)"
+
+
+statement error
+SELECT '((0,0),(1,1)'::path;
+----
+db error: ERROR: invalid input syntax for type path: "((0,0),(1,1)"
+
+
+statement error
+SELECT '[(0,0),(1,1)]'::polygon;
+----
+db error: ERROR: invalid input syntax for type polygon: "[(0,0),(1,1)]"
+
+
+statement error
+SELECT '()'::polygon;
+----
+db error: ERROR: invalid input syntax for type polygon: "()"
+
+
+statement error
+SELECT '<(1,2),-1>'::circle;
+----
+db error: ERROR: invalid input syntax for type circle: "<(1,2),-1>"
+
+
+statement error
+SELECT '<(1,2),3'::circle;
+----
+db error: ERROR: invalid input syntax for type circle: "<(1,2),3"
+
+
+statement error
+SELECT '<(1,2),3> x'::circle;
+----
+db error: ERROR: invalid input syntax for type circle: "<(1,2),3> x"
+
+
+query
+SELECT pg_input_is_valid('(1,2)', 'point') AS a, pg_input_is_valid('(1,2', 'point') AS b,
+       pg_input_is_valid('{0,0,1}', 'line') AS c, pg_input_is_valid('<(1,2),-1>', 'circle') AS d,
+       pg_input_is_valid('((0,0),(1,1))', 'polygon') AS e, pg_input_is_valid('[(0,0)', 'path') AS f,
+       pg_input_is_valid('(1,1),(0,0)', 'box') AS g, pg_input_is_valid('[(0,0),(1,1)]', 'lseg') AS h;
+----
+a	b	c	d	e	f	g	h
+t	f	f	f	t	f	t	t
+
+
+query
+SELECT * FROM pg_input_error_info('(1,2', 'point');
+----
+message	detail	hint	sql_error_code
+invalid input syntax for type point: "(1,2"	NULL	NULL	22P02
+
+
+query
+SELECT * FROM pg_input_error_info('(1e400,2),(0,0)', 'box');
+----
+message	detail	hint	sql_error_code
+"1e400" is out of range for type double precision	NULL	NULL	22003
+
+
+query
+SELECT * FROM pg_input_error_info('{0,0,1}', 'line');
+----
+message	detail	hint	sql_error_code
+invalid line specification: A and B cannot both be zero	NULL	NULL	22P02
+
+
+query
+SELECT * FROM pg_input_error_info('[(0,0),(0,0)]', 'line');
+----
+message	detail	hint	sql_error_code
+invalid line specification: must be two distinct points	NULL	NULL	22P02
+
+
+skipif serenedb
+query
+SELECT (point(1::float8 / 3, 2::float8 / 3))::text AS a, (circle(point(0.1, 0.2), 1::float8 / 7))::text AS b,
+       (box(point(1e20::float8 / 3, 0), point(0, 1)))::text AS c, (line '{1,3,7}')::text AS d;
+----
+a	b	c	d
+(0.3333333333333333,0.6666666666666666)	<(0.1,0.2),0.14285714285714285>	(3.333333333333333e+19,1),(0,0)	{1,3,7}
+
+
+onlyif serenedb
+query
+SELECT (point(1::float8 / 3, 2::float8 / 3))::text AS a, (circle(point(0.1, 0.2), 1::float8 / 7))::text AS b,
+       (box(point(1e20::float8 / 3, 0), point(0, 1)))::text AS c, (line '{1,3,7}')::text AS d;
+----
+a	b	c	d
+(0.3333333333333333,0.6666666666666666)	<(0.1,0.2),0.14285714285714285>	(33333333333333331968,1),(0,0)	{1,3,7}
+
+
+statement ok
+SET extra_float_digits = 0;
+
+
+query
+SELECT (point(1::float8 / 3, 2::float8 / 3))::text AS a, (circle(point(0.1, 0.2), 1::float8 / 7))::text AS b,
+       (box(point(1e20::float8 / 3, 0), point(0, 1)))::text AS c, (line '{1,3,7}')::text AS d,
+       (path '[(0,0),(1,1)]' * point(1::float8 / 3, 0))::text AS e;
+----
+a	b	c	d	e
+(0.333333333333333,0.666666666666667)	<(0.1,0.2),0.142857142857143>	(3.33333333333333e+19,1),(0,0)	{1,3,7}	[(0,0),(0.333333333333333,0.333333333333333)]
+
+
+statement ok
+SET extra_float_digits = -10;
+
+
+query
+SELECT (point(1::float8 / 3, 2::float8 / 3))::text AS a, (lseg(point(1::float8 / 3, 0), point(0, 2::float8 / 3)))::text AS b;
+----
+a	b
+(0.33333,0.66667)	[(0.33333,0),(0,0.66667)]
+
+
+statement ok
+RESET extra_float_digits;
+
+
+query
+SELECT point '(1,2)'::box AS a, lseg '[(0,0),(2,4)]'::point AS b, path '((0,0),(1,1),(2,0))'::polygon AS c,
+       box '(2,2),(0,0)'::point AS d, box '(2,2),(0,0)'::lseg AS e, box '(2,2),(0,0)'::polygon AS f,
+       box '(2,2),(0,0)'::circle AS g;
+----
+a	b	c	d	e	f	g
+(1,2),(1,2)	(1,2)	((0,0),(1,1),(2,0))	(1,1)	[(2,2),(0,0)]	((0,0),(0,2),(2,2),(2,0))	<(1,1),1.4142135623730951>
+
+
+query
+SELECT polygon '((0,0),(2,0),(2,2),(0,2))'::point AS a, polygon '((0,0),(2,0),(2,2),(0,2))'::path AS b,
+       polygon '((0,0),(2,0),(2,2),(0,2))'::box AS c, polygon '((0,0),(2,0),(2,2),(0,2))'::circle AS d,
+       circle '<(1,1),2>'::point AS e, circle '<(1,1),2>'::box AS f;
+----
+a	b	c	d	e	f
+(1,1)	((0,0),(2,0),(2,2),(0,2))	(2,2),(0,0)	<(1,1),1.4142135623730951>	(1,1)	(2.414213562373095,2.414213562373095),(-0.4142135623730949,-0.4142135623730949)
+
+
+query
+SELECT circle '<(1,1),2>'::polygon AS a;
+----
+a
+((-1,1),(-0.7320508075688774,2),(-2.220446049250313e-16,2.732050807568877),(0.9999999999999999,3),(1.9999999999999996,2.7320508075688776),(2.7320508075688767,2.000000000000001),(3,1.0000000000000002),(2.7320508075688776,5.551115123125783e-16),(2.000000000000001,-0.7320508075688767),(1.0000000000000004,-1),(1.3322676295501878e-15,-0.7320508075688781),(-0.7320508075688767,-8.881784197001252e-16))
+
+
+query
+SELECT (point '(1,2)')::text AS a, ('(3,4)'::text)::point AS b, (box '(1,1),(0,0)')::varchar AS c;
+----
+a	b	c
+(1,2)	(3,4)	(1,1),(0,0)
+
+
+statement error
+SELECT path '[(0,0),(1,1)]'::polygon;
+----
+db error: ERROR: open path cannot be converted to polygon
+
+
+query
+SELECT area(box '(2,3),(0,0)') AS a, area(circle '<(0,0),2>') AS b, area(path '((0,0),(4,0),(4,3))') AS c,
+       area(path '[(0,0),(4,0),(4,3)]') AS d, center(box '(2,3),(0,0)') AS e, center(circle '<(1,2),3>') AS f,
+       diagonal(box '(2,3),(0,0)') AS g, diameter(circle '<(1,2),3>') AS h, height(box '(2,3),(0,0)') AS i,
+       width(box '(2,3),(0,0)') AS j, radius(circle '<(1,2),3>') AS k;
+----
+a	b	c	d	e	f	g	h	i	j	k
+6	12.566370614359172	6	NULL	(1,1.5)	(1,2)	[(2,3),(0,0)]	6	3	2	3
+
+
+query
+SELECT isclosed(path '((0,0),(1,1))') AS a, isopen(path '((0,0),(1,1))') AS b, length(lseg '[(0,0),(3,4)]') AS c,
+       length(path '[(0,0),(3,4),(3,0)]') AS d, length(path '((0,0),(3,4),(3,0))') AS e,
+       npoints(path '[(0,0),(3,4)]') AS f, npoints(polygon '((0,0),(3,4),(3,0))') AS g,
+       pclose(path '[(0,0),(3,4)]') AS h, popen(path '((0,0),(3,4))') AS i, slope(point '(0,0)', point '(2,4)') AS j,
+       slope(point '(0,0)', point '(0,4)') AS k, slope(point '(0,0)', point '(4,0)') AS l;
+----
+a	b	c	d	e	f	g	h	i	j	k	l
+t	f	5	9	12	2	3	((0,0),(3,4))	[(0,0),(3,4)]	2	Infinity	0
+
+
+query
+SELECT box(circle '<(0,0),2>') AS a, box(point '(1,2)') AS b, box(point '(1,2)', point '(3,0)') AS c,
+       box(polygon '((0,0),(3,4),(3,0))') AS d, bound_box(box '(1,1),(0,0)', box '(3,3),(2,2)') AS e,
+       circle(box '(2,2),(0,0)') AS f, circle(point '(1,2)', 3) AS g,
+       circle(polygon '((0,0),(2,0),(2,2),(0,2))') AS h;
+----
+a	b	c	d	e	f	g	h
+(1.414213562373095,1.414213562373095),(-1.414213562373095,-1.414213562373095)	(1,2),(1,2)	(3,2),(1,0)	(3,4),(0,0)	(3,3),(0,0)	<(1,1),1.4142135623730951>	<(1,2),3>	<(1,1),1.4142135623730951>
+
+
+query
+SELECT line(point '(0,0)', point '(1,1)') AS a, line(point '(0,0)', point '(0,1)') AS b,
+       line(point '(0,1)', point '(1,1)') AS c, lseg(box '(2,2),(0,0)') AS d, lseg(point '(0,0)', point '(1,1)') AS e,
+       path(polygon '((0,0),(1,1),(2,0))') AS f, point(box '(2,2),(0,0)') AS g, point(circle '<(1,2),3>') AS h,
+       point(1.5, 2.5) AS i, point(lseg '[(0,0),(2,2)]') AS j, point(polygon '((0,0),(2,0),(2,2),(0,2))') AS k;
+----
+a	b	c	d	e	f	g	h	i	j	k
+{1,-1,0}	{-1,0,0}	{0,-1,1}	[(2,2),(0,0)]	[(0,0),(1,1)]	((0,0),(1,1),(2,0))	(1,1)	(1,2)	(1.5,2.5)	(1,1)	(1,1)
+
+
+query
+SELECT polygon(box '(2,2),(0,0)') AS a, polygon(4, circle '<(0,0),1>') AS b,
+       polygon(path '((0,0),(1,1),(2,0))') AS c, polygon(circle '<(0,0),1>') AS d;
+----
+a	b	c	d
+((0,0),(0,2),(2,2),(2,0))	((-1,0),(-6.123233995736766e-17,1),(1,1.2246467991473532e-16),(1.8369701987210297e-16,-1))	((0,0),(1,1),(2,0))	((-1,0),(-0.8660254037844387,0.49999999999999994),(-0.5000000000000001,0.8660254037844386),(-6.123233995736766e-17,1),(0.4999999999999998,0.8660254037844387),(0.8660254037844385,0.5000000000000003),(1,1.2246467991473532e-16),(0.8660254037844388,-0.4999999999999997),(0.5000000000000004,-0.8660254037844384),(1.8369701987210297e-16,-1),(-0.49999999999999933,-0.866025403784439),(-0.8660254037844384,-0.5000000000000004))
+
+
+query
+SELECT ishorizontal(line '{0,1,2}') AS a, ishorizontal(lseg '[(0,1),(2,1)]') AS b,
+       ishorizontal(point '(0,1)', point '(5,1)') AS c, isvertical(line '{1,0,2}') AS d,
+       isvertical(lseg '[(1,0),(1,2)]') AS e, isvertical(point '(1,0)', point '(1,5)') AS f,
+       isparallel(line '{1,-1,0}', line '{1,-1,5}') AS g, isparallel(lseg '[(0,0),(1,1)]', lseg '[(0,1),(1,2)]') AS h,
+       isperp(line '{1,-1,0}', line '{1,1,0}') AS i, isperp(lseg '[(0,0),(1,1)]', lseg '[(0,1),(1,0)]') AS j;
+----
+a	b	c	d	e	f	g	h	i	j
+t	t	t	t	t	t	t	t	t	t
+
+
+query
+SELECT area(NULL::box) AS a, point(NULL::float8, 1) AS b, polygon(NULL::int, circle '<(0,0),1>') AS c,
+       point '(1,1)' <-> NULL::point AS d, NULL::box && box '(1,1),(0,0)' AS e;
+----
+a	b	c	d	e
+NULL	NULL	NULL	NULL	NULL
+
+
+statement error
+SELECT point '(1,1)' / point '(0,0)';
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT point '(1e300,1e300)' * point '(1e300,1e300)';
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT point '(1e-300,1e-300)' * point '(1e-300,1e-300)';
+----
+db error: ERROR: value out of range: underflow
+
+
+statement error
+SELECT polygon(1, circle '<(0,0),1>');
+----
+db error: ERROR: must request at least 2 points
+
+
+statement error
+SELECT polygon(4, circle '<(0,0),0>');
+----
+db error: ERROR: cannot convert circle with radius zero to polygon
+
+
+statement error
+SELECT line(point '(1,1)', point '(1,1)');
+----
+db error: ERROR: invalid line specification: must be two distinct points
+
+
+statement error
+SELECT polygon(path '[(0,0),(1,1)]');
+----
+db error: ERROR: open path cannot be converted to polygon
+
+
+statement ok
+CREATE TABLE geo_points (id int, p point);
+
+
+statement ok
+INSERT INTO geo_points VALUES (1, '(0,0)'), (2, '(1,1)'), (3, '(3,4)'), (4, '(-1,2)'), (5, '(1,1.0000001)');
+
+
+query
+SELECT a.id AS a, b.id AS b, a.p + b.p AS plus, a.p - b.p AS minus, a.p * b.p AS times, a.p <-> b.p AS dist,
+       a.p << b.p AS l, a.p >> b.p AS r, a.p <^ b.p AS below, a.p >^ b.p AS above, a.p <<| b.p AS below2,
+       a.p |>> b.p AS above2, a.p ?- b.p AS horiz, a.p ?| b.p AS vert, a.p ~= b.p AS same
+FROM geo_points a, geo_points b
+ORDER BY a.id, b.id;
+----
+a	b	plus	minus	times	dist	l	r	below	above	below2	above2	horiz	vert	same
+1	1	(0,0)	(0,0)	(0,0)	0	f	f	f	f	f	f	t	t	t
+1	2	(1,1)	(-1,-1)	(0,0)	1.4142135623730951	t	f	t	f	t	f	f	f	f
+1	3	(3,4)	(-3,-4)	(0,0)	5	t	f	t	f	t	f	f	f	f
+1	4	(-1,2)	(1,-2)	(-0,0)	2.23606797749979	f	t	t	f	t	f	f	f	f
+1	5	(1,1.0000001)	(-1,-1.0000001)	(0,0)	1.4142136330837751	t	f	t	f	t	f	f	f	f
+2	1	(1,1)	(1,1)	(0,0)	1.4142135623730951	f	t	f	t	f	t	f	f	f
+2	2	(2,2)	(0,0)	(0,2)	0	f	f	f	f	f	f	t	t	t
+2	3	(4,5)	(-2,-3)	(-1,7)	3.6055512754639896	t	f	t	f	t	f	f	f	f
+2	4	(0,3)	(2,-1)	(-3,1)	2.23606797749979	f	t	t	f	t	f	f	f	f
+2	5	(2,2.0000001000000003)	(0,-1.0000000005838672e-07)	(-1.0000000005838672e-07,2.0000001000000003)	1.0000000005838672e-07	f	f	f	f	f	f	t	t	t
+3	1	(3,4)	(3,4)	(0,0)	5	f	t	f	t	f	t	f	f	f
+3	2	(4,5)	(2,3)	(-1,7)	3.6055512754639896	f	t	f	t	f	t	f	f	f
+3	3	(6,8)	(0,0)	(-7,24)	0	f	f	f	f	f	f	t	t	t
+3	4	(2,6)	(4,2)	(-11,2)	4.47213595499958	f	t	f	t	f	t	f	f	f
+3	5	(4,5.0000001)	(2,2.9999998999999997)	(-1.0000004000000002,7.0000003)	3.6055511922589605	f	t	f	t	f	t	f	f	f
+4	1	(-1,2)	(-1,2)	(-0,0)	2.23606797749979	t	f	f	t	f	t	f	f	f
+4	2	(0,3)	(-2,1)	(-3,1)	2.23606797749979	t	f	f	t	f	t	f	f	f
+4	3	(2,6)	(-4,-2)	(-11,2)	4.47213595499958	t	f	t	f	t	f	f	f	f
+4	4	(-2,4)	(0,0)	(-3,-4)	0	f	f	f	f	f	f	t	t	t
+4	5	(0,3.0000001000000003)	(-2,0.9999998999999999)	(-3.0000002,0.9999998999999999)	2.236067932778432	t	f	f	t	f	t	f	f	f
+5	1	(1,1.0000001)	(1,1.0000001)	(0,0)	1.4142136330837751	f	t	f	t	f	t	f	f	f
+5	2	(2,2.0000001000000003)	(0,1.0000000005838672e-07)	(-1.0000000005838672e-07,2.0000001000000003)	1.0000000005838672e-07	f	f	f	f	f	f	t	t	t
+5	3	(4,5.0000001)	(-2,-2.9999998999999997)	(-1.0000004000000002,7.0000003)	3.6055511922589605	t	f	t	f	t	f	f	f	f
+5	4	(0,3.0000001000000003)	(2,-0.9999998999999999)	(-3.0000002,0.9999998999999999)	2.236067932778432	f	t	t	f	t	f	f	f	f
+5	5	(2,2.0000002)	(0,0)	(-2.0000001010878066e-07,2.0000002)	0	f	f	f	f	f	f	t	t	t
+
+
+query
+SELECT a.id AS a, b.id AS b, a.p / b.p AS quotient, slope(a.p, b.p) AS slope
+FROM geo_points a, geo_points b
+WHERE b.id <> 1
+ORDER BY a.id, b.id;
+----
+a	b	quotient	slope
+1	2	(0,0)	1
+1	3	(0,0)	1.3333333333333333
+1	4	(0,-0)	-2
+1	5	(0,0)	1.0000001
+2	2	(1,0)	Infinity
+2	3	(0.28,-0.04)	1.5
+2	4	(0.2,-0.6)	-0.5
+2	5	(0.99999995,-4.99999950291936e-08)	Infinity
+3	2	(3.5,0.5)	1.5
+3	3	(1,0)	Infinity
+3	4	(1,-2)	0.5
+3	5	(3.499999849999997,0.4999998000000174)	1.4999999499999999
+4	2	(0.5,1.5)	-0.5
+4	3	(0.2,0.4)	0.5
+4	4	(1,0)	Infinity
+4	5	(0.5000000499999925,1.4999999000000024)	-0.49999994999999997
+5	2	(1.0000000500000001,5.000000002919336e-08)	Infinity
+5	3	(0.280000016,-0.039999988)	1.4999999499999999
+5	4	(0.20000004000000002,-0.6000000200000001)	-0.49999994999999997
+5	5	(1,0)	Infinity
+
+
+statement ok
+CREATE TABLE geo_lines (id int, l line);
+
+
+statement ok
+INSERT INTO geo_lines VALUES (1, '{1,-1,0}'), (2, '{0,-1,2}'), (3, '{-1,0,3}'), (4, '{2,-2,6}'), (5, '{1,1,0}');
+
+
+query
+SELECT a.id AS a, b.id AS b, a.l ?# b.l AS intersects, a.l ?|| b.l AS parallel, a.l ?-| b.l AS perp,
+       a.l <-> b.l AS dist, a.l # b.l AS crossing
+FROM geo_lines a, geo_lines b
+ORDER BY a.id, b.id;
+----
+a	b	intersects	parallel	perp	dist	crossing
+1	1	f	t	f	0	NULL
+1	2	t	f	f	0	(2,2)
+1	3	t	f	f	0	(3,3)
+1	4	f	t	f	2.1213203435596424	NULL
+1	5	t	f	t	0	(0,0)
+2	1	t	f	f	0	(2,2)
+2	2	f	t	f	0	NULL
+2	3	t	f	t	0	(3,2)
+2	4	t	f	f	0	(-1,2)
+2	5	t	f	f	0	(-2,2)
+3	1	t	f	f	0	(3,3)
+3	2	t	f	t	0	(3,2)
+3	3	f	t	f	0	NULL
+3	4	t	f	f	0	(3,6)
+3	5	t	f	f	0	(3,-3)
+4	1	f	t	f	2.1213203435596424	NULL
+4	2	t	f	f	0	(-1,2)
+4	3	t	f	f	0	(3,6)
+4	4	f	t	f	0	NULL
+4	5	t	f	t	0	(-1.5,1.5)
+5	1	t	f	t	0	(0,0)
+5	2	t	f	f	0	(-2,2)
+5	3	t	f	f	0	(3,-3)
+5	4	t	f	t	0	(-1.5,1.5)
+5	5	f	t	f	0	NULL
+
+
+query
+SELECT id, line_horizontal(l) AS horizontal, ?| l AS vertical
+FROM geo_lines
+ORDER BY id;
+----
+id	horizontal	vertical
+1	f	f
+2	t	f
+3	f	t
+4	f	f
+5	f	f
+
+
+statement ok
+CREATE TABLE geo_lsegs (id int, s lseg);
+
+
+statement ok
+INSERT INTO geo_lsegs VALUES (1, '[(0,0),(2,2)]'), (2, '[(0,2),(2,0)]'), (3, '[(3,3),(4,4)]'), (4, '[(0,1),(5,1)]'),
+  (5, '[(1,0),(1,5)]');
+
+
+query
+SELECT a.id AS a, b.id AS b, a.s ?# b.s AS intersects, a.s ?|| b.s AS parallel, a.s ?-| b.s AS perp,
+       a.s <-> b.s AS dist, a.s # b.s AS crossing, a.s ## b.s AS closest
+FROM geo_lsegs a, geo_lsegs b
+ORDER BY a.id, b.id;
+----
+a	b	intersects	parallel	perp	dist	crossing	closest
+1	1	f	t	f	0	NULL	NULL
+1	2	t	f	t	0	(1,1)	(1,1)
+1	3	f	t	f	1.4142135623730951	NULL	NULL
+1	4	t	f	f	0	(1,1)	(1,1)
+1	5	t	f	f	0	(1,1)	(1,1)
+2	1	t	f	t	0	(1,1)	(1,1)
+2	2	f	t	f	0	NULL	NULL
+2	3	f	f	t	2.8284271247461903	NULL	(3,3)
+2	4	t	f	f	0	(1,1)	(1,1)
+2	5	t	f	f	0	(1,1)	(1,1)
+3	1	f	t	f	1.4142135623730951	NULL	NULL
+3	2	f	f	t	2.8284271247461903	NULL	(1,1)
+3	3	f	t	f	0	NULL	NULL
+3	4	f	f	f	2	NULL	(3,1)
+3	5	f	f	f	2	NULL	(1,3)
+4	1	t	f	f	0	(1,1)	(1,1)
+4	2	t	f	f	0	(1,1)	(1,1)
+4	3	f	f	f	2	NULL	(3,3)
+4	4	f	t	f	0	NULL	NULL
+4	5	t	f	t	0	(1,1)	(1,1)
+5	1	t	f	f	0	(1,1)	(1,1)
+5	2	t	f	f	0	(1,1)	(1,1)
+5	3	f	f	f	2	NULL	(3,3)
+5	4	t	f	t	0	(1,1)	(1,1)
+5	5	f	t	f	0	NULL	NULL
+
+
+query
+SELECT id, @-@ s AS len, @@ s AS center, lseg_horizontal(s) AS horizontal, ?| s AS vertical
+FROM geo_lsegs
+ORDER BY id;
+----
+id	len	center	horizontal	vertical
+1	2.8284271247461903	(1,1)	f	f
+2	2.8284271247461903	(1,1)	f	f
+3	1.4142135623730951	(3.5,3.5)	f	f
+4	5	(2.5,1)	t	f
+5	5	(1,2.5)	f	t
+
+
+statement ok
+CREATE TABLE geo_boxes (id int, b box);
+
+
+statement ok
+INSERT INTO geo_boxes VALUES (1, '(2,2),(0,0)'), (2, '(3,3),(1,1)'), (3, '(5,5),(4,4)'), (4, '(1,1),(0,0)'),
+  (5, '(2,4),(0,2)');
+
+
+query
+SELECT a.id AS a, b.id AS b, a.b && b.b AS overlap, a.b << b.b AS l, a.b &< b.b AS ol, a.b >> b.b AS r,
+       a.b &> b.b AS orr, a.b <<| b.b AS below, a.b &<| b.b AS obelow, a.b |>> b.b AS above, a.b |&> b.b AS oabove,
+       a.b <@ b.b AS inside, a.b @> b.b AS contains, a.b <^ b.b AS belowe, a.b >^ b.b AS abovee, a.b ~= b.b AS same,
+       a.b ?# b.b AS intersects, a.b <-> b.b AS dist, a.b # b.b AS common
+FROM geo_boxes a, geo_boxes b
+ORDER BY a.id, b.id;
+----
+a	b	overlap	l	ol	r	orr	below	obelow	above	oabove	inside	contains	belowe	abovee	same	intersects	dist	common
+1	1	t	f	t	f	t	f	t	f	t	t	t	f	f	t	t	0	(2,2),(0,0)
+1	2	t	f	t	f	f	f	t	f	f	f	f	f	f	f	t	1.4142135623730951	(2,2),(1,1)
+1	3	f	t	t	f	f	t	t	f	f	f	f	t	f	f	f	4.949747468305833	NULL
+1	4	t	f	f	f	t	f	f	f	t	f	t	f	f	f	t	0.7071067811865476	(1,1),(0,0)
+1	5	t	f	t	f	t	f	t	f	f	f	f	t	f	f	t	2	(2,2),(0,2)
+2	1	t	f	f	f	t	f	f	f	t	f	f	f	f	f	t	1.4142135623730951	(2,2),(1,1)
+2	2	t	f	t	f	t	f	t	f	t	t	t	f	f	t	t	0	(3,3),(1,1)
+2	3	f	t	t	f	f	t	t	f	f	f	f	t	f	f	f	3.5355339059327378	NULL
+2	4	t	f	f	f	t	f	f	f	t	f	f	f	t	f	t	2.121320343559643	(1,1),(1,1)
+2	5	t	f	f	f	t	f	t	f	f	f	f	f	f	f	t	1.4142135623730951	(2,3),(1,2)
+3	1	f	f	f	t	t	f	f	t	t	f	f	f	t	f	f	4.949747468305833	NULL
+3	2	f	f	f	t	t	f	f	t	t	f	f	f	t	f	f	3.5355339059327378	NULL
+3	3	t	f	t	f	t	f	t	f	t	t	t	f	f	t	t	0	(5,5),(4,4)
+3	4	f	f	f	t	t	f	f	t	t	f	f	f	t	f	f	5.656854249492381	NULL
+3	5	f	f	f	t	t	f	f	f	t	f	f	f	t	f	f	3.8078865529319543	NULL
+4	1	t	f	t	f	t	f	t	f	t	t	f	f	f	f	t	0.7071067811865476	(1,1),(0,0)
+4	2	t	f	t	f	f	f	t	f	f	f	f	t	f	f	t	2.121320343559643	(1,1),(1,1)
+4	3	f	t	t	f	f	t	t	f	f	f	f	t	f	f	f	5.656854249492381	NULL
+4	4	t	f	t	f	t	f	t	f	t	t	t	f	f	t	t	0	(1,1),(0,0)
+4	5	f	f	t	f	t	t	t	f	f	f	f	t	f	f	f	2.5495097567963927	NULL
+5	1	t	f	t	f	t	f	f	f	t	f	f	f	t	f	t	2	(2,2),(0,2)
+5	2	t	f	t	f	f	f	f	f	t	f	f	f	f	f	t	1.4142135623730951	(2,3),(1,2)
+5	3	f	t	t	f	f	f	t	f	f	f	f	t	f	f	f	3.8078865529319543	NULL
+5	4	f	f	f	f	t	f	f	t	t	f	f	f	t	f	f	2.5495097567963927	NULL
+5	5	t	f	t	f	t	f	t	f	t	t	t	f	f	t	t	0	(2,4),(0,2)
+
+
+query
+SELECT id, @@ b AS center, b + point '(1,1)' AS plus, b - point '(1,1)' AS minus, b * point '(2,0)' AS times,
+       b / point '(2,0)' AS quotient, b * point '(0,1)' AS rotated, area(b) AS area
+FROM geo_boxes
+ORDER BY id;
+----
+id	center	plus	minus	times	quotient	rotated	area
+1	(1,1)	(3,3),(1,1)	(1,1),(-1,-1)	(4,4),(0,0)	(1,1),(0,0)	(0,2),(-2,0)	4
+2	(2,2)	(4,4),(2,2)	(2,2),(0,0)	(6,6),(2,2)	(1.5,1.5),(0.5,0.5)	(-1,3),(-3,1)	4
+3	(4.5,4.5)	(6,6),(5,5)	(4,4),(3,3)	(10,10),(8,8)	(2.5,2.5),(2,2)	(-4,5),(-5,4)	1
+4	(0.5,0.5)	(2,2),(1,1)	(0,0),(-1,-1)	(2,2),(0,0)	(0.5,0.5),(0,0)	(0,1),(-1,0)	1
+5	(1,3)	(3,5),(1,3)	(1,3),(-1,1)	(4,8),(0,4)	(1,2),(0,1)	(-2,2),(-4,0)	4
+
+
+statement ok
+CREATE TABLE geo_paths (id int, p path);
+
+
+statement ok
+INSERT INTO geo_paths VALUES (1, '[(0,0),(2,0),(2,2)]'), (2, '((0,0),(2,0),(2,2),(0,2))'), (3, '[(5,5)]'),
+  (4, '[(1,-1),(1,3)]'), (5, '((3,0),(4,0),(4,1))');
+
+
+query
+SELECT a.id AS a, b.id AS b, a.p ?# b.p AS intersects, a.p <-> b.p AS dist, a.p + b.p AS joined
+FROM geo_paths a, geo_paths b
+ORDER BY a.id, b.id;
+----
+a	b	intersects	dist	joined
+1	1	t	0	[(0,0),(2,0),(2,2),(0,0),(2,0),(2,2)]
+1	2	t	0	NULL
+1	3	f	NULL	[(0,0),(2,0),(2,2),(5,5)]
+1	4	t	0	[(0,0),(2,0),(2,2),(1,-1),(1,3)]
+1	5	f	1	NULL
+2	1	t	0	NULL
+2	2	t	0	NULL
+2	3	f	NULL	NULL
+2	4	t	0	NULL
+2	5	f	1	NULL
+3	1	f	NULL	[(5,5),(0,0),(2,0),(2,2)]
+3	2	f	NULL	NULL
+3	3	f	NULL	[(5,5),(5,5)]
+3	4	f	NULL	[(5,5),(1,-1),(1,3)]
+3	5	f	NULL	NULL
+4	1	t	0	[(1,-1),(1,3),(0,0),(2,0),(2,2)]
+4	2	t	0	NULL
+4	3	f	NULL	[(1,-1),(1,3),(5,5)]
+4	4	f	0	[(1,-1),(1,3),(1,-1),(1,3)]
+4	5	f	2	NULL
+5	1	f	1	NULL
+5	2	f	1	NULL
+5	3	f	NULL	NULL
+5	4	f	2	NULL
+5	5	t	0	NULL
+
+
+query
+SELECT id, # p AS points, @-@ p AS len, p + point '(1,1)' AS plus, p - point '(1,1)' AS minus,
+       p * point '(0,1)' AS times, p / point '(0,1)' AS quotient, area(p) AS area
+FROM geo_paths
+ORDER BY id;
+----
+id	points	len	plus	minus	times	quotient	area
+1	3	4	[(1,1),(3,1),(3,3)]	[(-1,-1),(1,-1),(1,1)]	[(0,0),(0,2),(-2,2)]	[(0,0),(0,-2),(2,-2)]	NULL
+2	4	8	((1,1),(3,1),(3,3),(1,3))	((-1,-1),(1,-1),(1,1),(-1,1))	((0,0),(0,2),(-2,2),(-2,0))	((0,0),(0,-2),(2,-2),(2,0))	4
+3	1	0	[(6,6)]	[(4,4)]	[(-5,5)]	[(5,-5)]	NULL
+4	2	4	[(2,0),(2,4)]	[(0,-2),(0,2)]	[(1,1),(-3,1)]	[(-1,-1),(3,-1)]	NULL
+5	3	3.414213562373095	((4,1),(5,1),(5,2))	((2,-1),(3,-1),(3,0))	((0,3),(0,4),(-1,4))	((0,-3),(0,-4),(1,-4))	0.5
+
+
+statement ok
+CREATE TABLE geo_polygons (id int, g polygon);
+
+
+statement ok
+INSERT INTO geo_polygons VALUES (1, '((0,0),(2,0),(2,2),(0,2))'), (2, '((1,1),(3,1),(3,3),(1,3))'),
+  (3, '((5,5),(6,5),(6,6))'), (4, '((0.5,0.5),(1.5,0.5),(1.5,1.5),(0.5,1.5))'), (5, '((2,0),(2,2),(0,2),(0,0))'),
+  (6, '((0,0),(4,0),(4,4),(2,1),(0,4))');
+
+
+query
+SELECT a.id AS a, b.id AS b, a.g && b.g AS overlap, a.g << b.g AS l, a.g &< b.g AS ol, a.g >> b.g AS r,
+       a.g &> b.g AS orr, a.g <<| b.g AS below, a.g &<| b.g AS obelow, a.g |>> b.g AS above, a.g |&> b.g AS oabove,
+       a.g @> b.g AS contains, a.g <@ b.g AS inside, a.g ~= b.g AS same, a.g <-> b.g AS dist
+FROM geo_polygons a, geo_polygons b
+ORDER BY a.id, b.id;
+----
+a	b	overlap	l	ol	r	orr	below	obelow	above	oabove	contains	inside	same	dist
+1	1	t	f	t	f	t	f	t	f	t	t	t	t	0
+1	2	t	f	t	f	f	f	t	f	f	f	f	f	0
+1	3	f	t	t	f	f	t	t	f	f	f	f	f	4.242640687119286
+1	4	t	f	f	f	f	f	f	f	f	t	f	f	0
+1	5	t	f	t	f	t	f	t	f	t	t	t	t	0
+1	6	t	f	t	f	t	f	t	f	t	f	f	f	0
+2	1	t	f	f	f	t	f	f	f	t	f	f	f	0
+2	2	t	f	t	f	t	f	t	f	t	t	t	t	0
+2	3	f	t	t	f	f	t	t	f	f	f	f	f	2.8284271247461903
+2	4	t	f	f	f	t	f	f	f	t	f	f	f	0
+2	5	t	f	f	f	t	f	f	f	t	f	f	f	0
+2	6	t	f	t	f	t	f	t	f	t	f	f	f	0
+3	1	f	f	f	t	t	f	f	t	t	f	f	f	4.242640687119286
+3	2	f	f	f	t	t	f	f	t	t	f	f	f	2.8284271247461903
+3	3	t	f	t	f	t	f	t	f	t	t	t	t	0
+3	4	f	f	f	t	t	f	f	t	t	f	f	f	4.949747468305833
+3	5	f	f	f	t	t	f	f	t	t	f	f	f	4.242640687119286
+3	6	f	f	f	t	t	f	f	t	t	f	f	f	1.4142135623730951
+4	1	t	f	t	f	t	f	t	f	t	f	t	f	0
+4	2	t	f	t	f	f	f	t	f	f	f	f	f	0
+4	3	f	t	t	f	f	t	t	f	f	f	f	f	4.949747468305833
+4	4	t	f	t	f	t	f	t	f	t	t	t	t	0
+4	5	t	f	t	f	t	f	t	f	t	f	t	f	0
+4	6	t	f	t	f	t	f	t	f	t	f	t	f	0
+5	1	t	f	t	f	t	f	t	f	t	t	t	t	0
+5	2	t	f	t	f	f	f	t	f	f	f	f	f	0
+5	3	f	t	t	f	f	t	t	f	f	f	f	f	4.242640687119286
+5	4	t	f	f	f	f	f	f	f	f	t	f	f	0
+5	5	t	f	t	f	t	f	t	f	t	t	t	t	0
+5	6	t	f	t	f	t	f	t	f	t	f	f	f	0
+6	1	t	f	f	f	t	f	f	f	t	f	f	f	0
+6	2	t	f	f	f	f	f	f	f	f	f	f	f	0
+6	3	f	t	t	f	f	t	t	f	f	f	f	f	1.4142135623730951
+6	4	t	f	f	f	f	f	f	f	f	t	f	f	0
+6	5	t	f	f	f	t	f	f	f	t	f	f	f	0
+6	6	t	f	t	f	t	f	t	f	t	t	t	t	0
+
+
+query
+SELECT id, # g AS points, @@ g AS center, box(g) AS bounds, circle(g) AS circle
+FROM geo_polygons
+ORDER BY id;
+----
+id	points	center	bounds	circle
+1	4	(1,1)	(2,2),(0,0)	<(1,1),1.4142135623730951>
+2	4	(2,2)	(3,3),(1,1)	<(2,2),1.4142135623730951>
+3	3	(5.666666666666667,5.333333333333333)	(6,6),(5,5)	<(5.666666666666667,5.333333333333333),0.6540388352636305>
+4	4	(1,1)	(1.5,1.5),(0.5,0.5)	<(1,1),0.7071067811865476>
+5	4	(1,1)	(2,2),(0,0)	<(1,1),1.4142135623730951>
+6	5	(2,1.8)	(4,4),(0,0)	<(2,1.8),2.4255754235513773>
+
+
+statement ok
+CREATE TABLE geo_circles (id int, c circle);
+
+
+statement ok
+INSERT INTO geo_circles VALUES (1, '<(0,0),1>'), (2, '<(1,1),1>'), (3, '<(5,5),1>'), (4, '<(0,0),3>'),
+  (5, '<(0,0),1>');
+
+
+query
+SELECT a.id AS a, b.id AS b, a.c && b.c AS overlap, a.c << b.c AS l, a.c &< b.c AS ol, a.c >> b.c AS r,
+       a.c &> b.c AS orr, a.c <<| b.c AS below, a.c &<| b.c AS obelow, a.c |>> b.c AS above, a.c |&> b.c AS oabove,
+       a.c @> b.c AS contains, a.c <@ b.c AS inside, a.c ~= b.c AS same, a.c <-> b.c AS dist
+FROM geo_circles a, geo_circles b
+ORDER BY a.id, b.id;
+----
+a	b	overlap	l	ol	r	orr	below	obelow	above	oabove	contains	inside	same	dist
+1	1	t	f	t	f	t	f	t	f	t	t	t	t	0
+1	2	t	f	t	f	f	f	t	f	f	f	f	f	0
+1	3	f	t	t	f	f	t	t	f	f	f	f	f	5.0710678118654755
+1	4	t	f	t	f	t	f	t	f	t	f	t	f	0
+1	5	t	f	t	f	t	f	t	f	t	t	t	t	0
+2	1	t	f	f	f	t	f	f	f	t	f	f	f	0
+2	2	t	f	t	f	t	f	t	f	t	t	t	t	0
+2	3	f	t	t	f	f	t	t	f	f	f	f	f	3.6568542494923806
+2	4	t	f	t	f	t	f	t	f	t	f	t	f	0
+2	5	t	f	f	f	t	f	f	f	t	f	f	f	0
+3	1	f	f	f	t	t	f	f	t	t	f	f	f	5.0710678118654755
+3	2	f	f	f	t	t	f	f	t	t	f	f	f	3.6568542494923806
+3	3	t	f	t	f	t	f	t	f	t	t	t	t	0
+3	4	f	f	f	t	t	f	f	t	t	f	f	f	3.0710678118654755
+3	5	f	f	f	t	t	f	f	t	t	f	f	f	5.0710678118654755
+4	1	t	f	f	f	f	f	f	f	f	t	f	f	0
+4	2	t	f	f	f	f	f	f	f	f	t	f	f	0
+4	3	f	t	t	f	f	t	t	f	f	f	f	f	3.0710678118654755
+4	4	t	f	t	f	t	f	t	f	t	t	t	t	0
+4	5	t	f	f	f	f	f	f	f	f	t	f	f	0
+5	1	t	f	t	f	t	f	t	f	t	t	t	t	0
+5	2	t	f	t	f	f	f	t	f	f	f	f	f	0
+5	3	f	t	t	f	f	t	t	f	f	f	f	f	5.0710678118654755
+5	4	t	f	t	f	t	f	t	f	t	f	t	f	0
+5	5	t	f	t	f	t	f	t	f	t	t	t	t	0
+
+
+query
+SELECT id, @@ c AS center, c + point '(1,1)' AS plus, c - point '(1,1)' AS minus, c * point '(0,2)' AS times,
+       c / point '(0,2)' AS quotient, area(c) AS area, diameter(c) AS diameter
+FROM geo_circles
+ORDER BY id;
+----
+id	center	plus	minus	times	quotient	area	diameter
+1	(0,0)	<(1,1),1>	<(-1,-1),1>	<(0,0),2>	<(0,0),0.5>	3.141592653589793	2
+2	(1,1)	<(2,2),1>	<(0,0),1>	<(-2,2),2>	<(0.5,-0.5),0.5>	3.141592653589793	2
+3	(5,5)	<(6,6),1>	<(4,4),1>	<(-10,10),2>	<(2.5,-2.5),0.5>	3.141592653589793	2
+4	(0,0)	<(1,1),3>	<(-1,-1),3>	<(0,0),6>	<(0,0),1.5>	28.274333882308138	6
+5	(0,0)	<(1,1),1>	<(-1,-1),1>	<(0,0),2>	<(0,0),0.5>	3.141592653589793	2
+
+
+query
+SELECT p.id AS p, b.id AS b, p.p <@ b.b AS inside, b.b @> p.p AS contains, p.p <-> b.b AS dist1,
+       b.b <-> p.p AS dist2, p.p ## b.b AS closest
+FROM geo_points p, geo_boxes b
+ORDER BY p.id, b.id;
+----
+p	b	inside	contains	dist1	dist2	closest
+1	1	t	t	0	0	(0,0)
+1	2	f	f	1.4142135623730951	1.4142135623730951	(1,1)
+1	3	f	f	5.656854249492381	5.656854249492381	(4,4)
+1	4	t	t	0	0	(0,0)
+1	5	f	f	2	2	(0,2)
+2	1	t	t	0	0	(1,1)
+2	2	t	t	0	0	(1,1)
+2	3	f	f	4.242640687119286	4.242640687119286	(4,4)
+2	4	t	t	0	0	(1,1)
+2	5	f	f	1	1	(1,2)
+3	1	f	f	2.23606797749979	2.23606797749979	(2,2)
+3	2	f	f	1	1	(3,3)
+3	3	f	f	1	1	(4,4)
+3	4	f	f	3.6055512754639896	3.6055512754639896	(1,1)
+3	5	f	f	1	1	(2,4)
+4	1	f	f	1	1	(0,2)
+4	2	f	f	2	2	(1,2)
+4	3	f	f	5.385164807134505	5.385164807134505	(4,4)
+4	4	f	f	1.4142135623730951	1.4142135623730951	(0,1)
+4	5	f	f	1	1	(0,2)
+5	1	t	t	0	0	(1,1.0000001)
+5	2	t	t	0	0	(1,1.0000001)
+5	3	f	f	4.2426406164086075	4.2426406164086075	(4,4)
+5	4	f	f	1.0000000005838672e-07	1.0000000005838672e-07	(1,1)
+5	5	f	f	0.9999998999999999	0.9999998999999999	(1,2)
+
+
+query
+SELECT p.id AS p, l.id AS l, p.p <@ l.l AS inside, p.p <-> l.l AS dist1, l.l <-> p.p AS dist2,
+       p.p ## l.l AS closest
+FROM geo_points p, geo_lines l
+ORDER BY p.id, l.id;
+----
+p	l	inside	dist1	dist2	closest
+1	1	t	0	0	(0,0)
+1	2	f	2	2	(0,2)
+1	3	f	3	3	(3,0)
+1	4	f	2.121320343559643	2.121320343559643	(-1.5,1.5)
+1	5	t	0	0	(0,0)
+2	1	t	0	0	(1,1)
+2	2	f	1	1	(1,2)
+2	3	f	2	2	(3,1)
+2	4	f	2.121320343559643	2.121320343559643	(-0.5,2.5)
+2	5	f	1.4142135623730951	1.4142135623730951	(0,0)
+3	1	f	0.7071067811865476	0.7071067811865476	(3.5,3.5)
+3	2	f	2	2	(3,2)
+3	3	t	0	0	(3,4)
+3	4	f	1.4142135623730951	1.4142135623730951	(2,5)
+3	5	f	4.949747468305833	4.949747468305833	(-0.5,0.5)
+4	1	f	2.121320343559643	2.121320343559643	(0.5,0.5)
+4	2	t	0	0	(-1,2)
+4	3	f	4	4	(3,2)
+4	4	t	0	0	(-1,2)
+4	5	f	0.7071067811865476	0.7071067811865476	(-1.5,1.5)
+5	1	t	7.07106781599404e-08	7.07106781599404e-08	(1.0000000500000001,1.0000000500000001)
+5	2	f	0.9999998999999999	0.9999998999999999	(1,2)
+5	3	f	2	2	(3,1.0000001)
+5	4	f	2.121320272848964	2.121320272848964	(-0.49999994999999986,2.50000005)
+5	5	f	1.4142136330837736	1.4142136330837736	(-5.000000002919336e-08,5.000000002919336e-08)
+
+
+query
+SELECT p.id AS p, s.id AS s, p.p <@ s.s AS inside, p.p <-> s.s AS dist1, s.s <-> p.p AS dist2,
+       p.p ## s.s AS closest
+FROM geo_points p, geo_lsegs s
+ORDER BY p.id, s.id;
+----
+p	s	inside	dist1	dist2	closest
+1	1	t	0	0	(0,0)
+1	2	f	1.4142135623730951	1.4142135623730951	(1,1)
+1	3	f	4.242640687119286	4.242640687119286	(3,3)
+1	4	f	1	1	(0,1)
+1	5	f	1	1	(1,0)
+2	1	t	0	0	(1,1)
+2	2	t	0	0	(1,1)
+2	3	f	2.8284271247461903	2.8284271247461903	(3,3)
+2	4	t	0	0	(1,1)
+2	5	t	0	0	(1,1)
+3	1	f	2.23606797749979	2.23606797749979	(2,2)
+3	2	f	3.5355339059327378	3.5355339059327378	(0.5,1.5)
+3	3	f	0.7071067811865476	0.7071067811865476	(3.5,3.5)
+3	4	f	3	3	(3,1)
+3	5	f	2	2	(1,4)
+4	1	f	2.121320343559643	2.121320343559643	(0.5,0.5)
+4	2	f	1	1	(0,2)
+4	3	f	4.123105625617661	4.123105625617661	(3,3)
+4	4	f	1.4142135623730951	1.4142135623730951	(0,1)
+4	5	f	2	2	(1,2)
+5	1	t	7.07106781599404e-08	7.07106781599404e-08	(1.0000000500000001,1.0000000500000001)
+5	2	t	7.071067808143577e-08	7.071067808143577e-08	(0.99999995,1.0000000500000001)
+5	3	f	2.828427054035513	2.828427054035513	(3,3)
+5	4	t	1.0000000005838672e-07	1.0000000005838672e-07	(1,1)
+5	5	t	0	0	(1,1.0000001)
+
+
+query
+SELECT p.id AS p, a.id AS a, p.p <@ a.p AS inside, a.p @> p.p AS contains, p.p <-> a.p AS dist1,
+       a.p <-> p.p AS dist2
+FROM geo_points p, geo_paths a
+ORDER BY p.id, a.id;
+----
+p	a	inside	contains	dist1	dist2
+1	1	t	t	0	0
+1	2	t	t	0	0
+1	3	f	f	0	0
+1	4	f	f	1	1
+1	5	f	f	3	3
+2	1	f	f	1	1
+2	2	t	t	1	1
+2	3	f	f	0	0
+2	4	t	t	0	0
+2	5	f	f	2.23606797749979	2.23606797749979
+3	1	f	f	2.23606797749979	2.23606797749979
+3	2	f	f	2.23606797749979	2.23606797749979
+3	3	f	f	0	0
+3	4	f	f	2.23606797749979	2.23606797749979
+3	5	f	f	3.1622776601683795	3.1622776601683795
+4	1	f	f	2.23606797749979	2.23606797749979
+4	2	f	f	1	1
+4	3	f	f	0	0
+4	4	f	f	2	2
+4	5	f	f	4.47213595499958	4.47213595499958
+5	1	f	f	1	1
+5	2	t	t	0.9999998999999999	0.9999998999999999
+5	3	f	f	0	0
+5	4	t	t	0	0
+5	5	f	f	2.236068022221151	2.236068022221151
+
+
+query
+SELECT p.id AS p, g.id AS g, p.p <@ g.g AS inside, g.g @> p.p AS contains, p.p <-> g.g AS dist1,
+       g.g <-> p.p AS dist2
+FROM geo_points p, geo_polygons g
+ORDER BY p.id, g.id;
+----
+p	g	inside	contains	dist1	dist2
+1	1	t	t	0	0
+1	2	f	f	1.4142135623730951	1.4142135623730951
+1	3	f	f	7.0710678118654755	7.0710678118654755
+1	4	f	f	0.7071067811865476	0.7071067811865476
+1	5	t	t	0	0
+1	6	t	t	0	0
+2	1	t	t	0	0
+2	2	t	t	0	0
+2	3	f	f	5.656854249492381	5.656854249492381
+2	4	t	t	0	0
+2	5	t	t	0	0
+2	6	t	t	0	0
+3	1	f	f	2.23606797749979	2.23606797749979
+3	2	f	f	1	1
+3	3	f	f	2.23606797749979	2.23606797749979
+3	4	f	f	2.91547594742265	2.91547594742265
+3	5	f	f	2.23606797749979	2.23606797749979
+3	6	f	f	0.8320502943378439	0.8320502943378439
+4	1	f	f	1	1
+4	2	f	f	2	2
+4	3	f	f	6.708203932499369	6.708203932499369
+4	4	f	f	1.5811388300841898	1.5811388300841898
+4	5	f	f	1	1
+4	6	f	f	1	1
+5	1	t	t	0	0
+5	2	t	t	0	0
+5	3	f	f	5.656854178781702	5.656854178781702
+5	4	t	t	0	0
+5	5	t	t	0	0
+5	6	t	t	0	0
+
+
+query
+SELECT p.id AS p, c.id AS c, p.p <@ c.c AS inside, c.c @> p.p AS contains, p.p <-> c.c AS dist1,
+       c.c <-> p.p AS dist2
+FROM geo_points p, geo_circles c
+ORDER BY p.id, c.id;
+----
+p	c	inside	contains	dist1	dist2
+1	1	t	t	0	0
+1	2	f	f	0.41421356237309515	0.41421356237309515
+1	3	f	f	6.0710678118654755	6.0710678118654755
+1	4	t	t	0	0
+1	5	t	t	0	0
+2	1	f	f	0.41421356237309515	0.41421356237309515
+2	2	t	t	0	0
+2	3	f	f	4.656854249492381	4.656854249492381
+2	4	t	t	0	0
+2	5	f	f	0.41421356237309515	0.41421356237309515
+3	1	f	f	4	4
+3	2	f	f	2.6055512754639896	2.6055512754639896
+3	3	f	f	1.2360679774997898	1.2360679774997898
+3	4	f	f	2	2
+3	5	f	f	4	4
+4	1	f	f	1.2360679774997898	1.2360679774997898
+4	2	f	f	1.2360679774997898	1.2360679774997898
+4	3	f	f	5.708203932499369	5.708203932499369
+4	4	t	t	0	0
+4	5	f	f	1.2360679774997898	1.2360679774997898
+5	1	f	f	0.4142136330837751	0.4142136330837751
+5	2	t	t	0	0
+5	3	f	f	4.656854178781702	4.656854178781702
+5	4	t	t	0	0
+5	5	f	f	0.4142136330837751	0.4142136330837751
+
+
+query
+SELECT s.id AS s, l.id AS l, s.s <@ l.l AS inside, s.s ?# l.l AS intersects, s.s <-> l.l AS dist1,
+       l.l <-> s.s AS dist2, l.l ## s.s AS closest
+FROM geo_lsegs s, geo_lines l
+ORDER BY s.id, l.id;
+----
+s	l	inside	intersects	dist1	dist2	closest
+1	1	t	f	0	0	NULL
+1	2	f	t	0	0	(2,2)
+1	3	f	f	1	1	(2,2)
+1	4	f	f	2.121320343559643	2.121320343559643	NULL
+1	5	f	t	0	0	(0,0)
+2	1	f	t	0	0	(1,1)
+2	2	f	t	0	0	(0,2)
+2	3	f	f	1	1	(2,0)
+2	4	f	f	0.7071067811865476	0.7071067811865476	(0,2)
+2	5	f	f	1.4142135623730951	1.4142135623730951	NULL
+3	1	t	f	0	0	NULL
+3	2	f	f	1	1	(3,3)
+3	3	f	t	0	0	(3,3)
+3	4	f	f	2.121320343559643	2.121320343559643	NULL
+3	5	f	f	4.242640687119286	4.242640687119286	(3,3)
+4	1	f	t	0	0	(1,1)
+4	2	f	f	1	1	NULL
+4	3	f	t	0	0	(3,1)
+4	4	f	f	1.4142135623730951	1.4142135623730951	(0,1)
+4	5	f	f	0.7071067811865476	0.7071067811865476	(0,1)
+5	1	f	t	0	0	(1,1)
+5	2	f	t	0	0	(1,2)
+5	3	f	f	2	2	NULL
+5	4	f	t	0	0	(1,4)
+5	5	f	f	0.7071067811865476	0.7071067811865476	(1,0)
+
+
+query
+SELECT s.id AS s, b.id AS b, s.s <@ b.b AS inside, s.s ?# b.b AS intersects, s.s <-> b.b AS dist1,
+       b.b <-> s.s AS dist2, s.s ## b.b AS closest
+FROM geo_lsegs s, geo_boxes b
+ORDER BY s.id, b.id;
+----
+s	b	inside	intersects	dist1	dist2	closest
+1	1	t	t	0	0	(1,1)
+1	2	f	t	0	0	(2,2)
+1	3	f	f	2.8284271247461903	2.8284271247461903	(4,4)
+1	4	f	t	0	0	(0.5,0.5)
+1	5	f	t	0	0	(2,2)
+2	1	t	t	0	0	(1,1)
+2	2	f	t	0	0	(1,1)
+2	3	f	f	4.242640687119286	4.242640687119286	(4,4)
+2	4	f	t	0	0	(1,1)
+2	5	f	t	0	0	(0,2)
+3	1	f	f	1.4142135623730951	1.4142135623730951	(2,2)
+3	2	f	t	0	0	(3,3)
+3	3	f	t	0	0	(4,4)
+3	4	f	f	2.8284271247461903	2.8284271247461903	(1,1)
+3	5	f	f	1	1	(2,3)
+4	1	f	t	0	0	(1,1)
+4	2	f	t	0	0	(2,1)
+4	3	f	f	3	3	(4,4)
+4	4	f	t	0	0	(0.5,1)
+4	5	f	f	1	1	(0,2)
+5	1	f	t	0	0	(1,1)
+5	2	f	t	0	0	(1,2)
+5	3	f	f	3	3	(4,5)
+5	4	f	t	0	0	(1,0.5)
+5	5	f	t	0	0	(1,3)
+
+
+query
+SELECT l.id AS l, b.id AS b, l.l ?# b.b AS intersects
+FROM geo_lines l, geo_boxes b
+ORDER BY l.id, b.id;
+----
+l	b	intersects
+1	1	t
+1	2	t
+1	3	t
+1	4	t
+1	5	t
+2	1	t
+2	2	t
+2	3	f
+2	4	f
+2	5	t
+3	1	f
+3	2	t
+3	3	f
+3	4	f
+3	5	f
+4	1	f
+4	2	f
+4	3	f
+4	4	f
+4	5	t
+5	1	t
+5	2	f
+5	3	f
+5	4	t
+5	5	f
+
+
+query
+SELECT c.id AS c, g.id AS g, c.c <-> g.g AS dist1, g.g <-> c.c AS dist2
+FROM geo_circles c, geo_polygons g
+ORDER BY c.id, g.id;
+----
+c	g	dist1	dist2
+1	1	0	0
+1	2	0.41421356237309515	0.41421356237309515
+1	3	6.0710678118654755	6.0710678118654755
+1	4	0	0
+1	5	0	0
+1	6	0	0
+2	1	0	0
+2	2	0	0
+2	3	4.656854249492381	4.656854249492381
+2	4	0	0
+2	5	0	0
+2	6	0	0
+3	1	3.2426406871192857	3.2426406871192857
+3	2	1.8284271247461903	1.8284271247461903
+3	3	0	0
+3	4	3.9497474683058327	3.9497474683058327
+3	5	3.2426406871192857	3.2426406871192857
+3	6	0.41421356237309515	0.41421356237309515
+4	1	0	0
+4	2	0	0
+4	3	4.0710678118654755	4.0710678118654755
+4	4	0	0
+4	5	0	0
+4	6	0	0
+5	1	0	0
+5	2	0.41421356237309515	0.41421356237309515
+5	3	6.0710678118654755	6.0710678118654755
+5	4	0	0
+5	5	0	0
+5	6	0	0
+
+
+query
+SELECT point_add(point '(1,1)', point '(2,3)') AS a, point_eq(point '(1,1)', point '(1,1.0000001)') AS b,
+       point_ne(point '(1,1)', point '(1,2)') AS c, line_eq(line '{1,-1,0}', line '{2,-2,0}') AS d,
+       lseg_eq(lseg '[(0,0),(1,1)]', lseg '[(0,0),(1,1)]') AS e, lseg_ne(lseg '[(0,0),(1,1)]', lseg '[(0,0),(1,2)]') AS f,
+       lseg_lt(lseg '[(0,0),(1,1)]', lseg '[(0,0),(2,2)]') AS g, lseg_ge(lseg '[(0,0),(1,1)]', lseg '[(5,5),(6,6)]') AS h,
+       box_eq(box '(1,1),(0,0)', box '(2,1),(1,0)') AS i, box_lt(box '(1,1),(0,0)', box '(3,3),(0,0)') AS j,
+       circle_eq(circle '<(0,0),1>', circle '<(5,5),1>') AS k, circle_ne(circle '<(0,0),1>', circle '<(0,0),2>') AS l,
+       path_n_lt(path '[(0,0)]', path '[(0,0),(1,1)]') AS m, path_n_eq(path '[(0,0)]', path '((5,5))') AS n,
+       dist_ps(point '(0,0)', lseg '[(1,0),(1,1)]') AS o, close_pb(point '(5,5)', box '(1,1),(0,0)') AS p,
+       on_ppath(point '(1,0)', path '[(0,0),(2,0)]') AS q, path_contain_pt(path '[(0,0),(2,0)]', point '(1,0)') AS r,
+       poly_npoints(polygon '((0,0),(1,1),(1,0))') AS s, circle_center(circle '<(1,2),3>') AS t;
+----
+a	b	c	d	e	f	g	h	i	j	k	l	m	n	o	p	q	r	s	t
+(3,4)	t	t	t	t	t	t	t	t	t	t	t	t	t	1	(1,1)	t	t	3	(1,2)
+
+
+query
+SELECT ARRAY[point '(1,2)', NULL, point '(3,4)'] AS a, ARRAY[box '(1,1),(0,0)', box '(3,3),(2,2)'] AS b,
+       ARRAY[circle '<(1,2),3>'] AS c, ARRAY[path '[(1,2),(3,4)]', path '((0,0),(1,1))'] AS d,
+       ARRAY[line '{1,2,3}'] AS e, ARRAY[lseg '[(1,2),(3,4)]'] AS f, ARRAY[polygon '((0,0),(1,1),(1,0))'] AS g;
+----
+a	b	c	d	e	f	g
+{"(1,2)",NULL,"(3,4)"}	{(1,1),(0,0);(3,3),(2,2)}	{"<(1,2),3>"}	{"[(1,2),(3,4)]","((0,0),(1,1))"}	{"{1,2,3}"}	{"[(1,2),(3,4)]"}	{"((0,0),(1,1),(1,0))"}
+
+
+query
+SELECT ROW(point '(1,2)', box '(1,1),(0,0)', lseg '[(1,2),(3,4)]', NULL::circle) AS a,
+       ARRAY[ROW(point '(1,2)')] AS b, ROW(ARRAY[box '(1,1),(0,0)', box '(3,3),(2,2)']) AS c;
+----
+a	b	c
+("(1,2)","(1,1),(0,0)","[(1,2),(3,4)]",)	{"(\\"(1,2)\\")"}	("{(1,1),(0,0);(3,3),(2,2)}")
+
+
+query
+SELECT '{"(1,2)","(3,4)",NULL}'::point[] AS a, '{"<(1,2),3>"}'::circle[] AS b;
+----
+a	b
+{"(1,2)","(3,4)",NULL}	{"<(1,2),3>"}
+
+
+query
+SELECT '{(1,1),(0,0);(3,3),(2,2)}'::box[] AS a, '{"[(1,2),(3,4)]",NULL}'::lseg[] AS b,
+       '{"((0,0),(1,1))","[(1,1),(2,2)]"}'::path[] AS c, '{"((0,0),(1,1),(1,0))"}'::polygon[] AS d,
+       '{"{1,-1,0}"}'::line[] AS e, ('{(1,1),(0,0);(3,3),(2,2)}'::box[])[2] AS f,
+       '{{(1,1),(0,0)};{(3,3),(2,2)}}'::box[][] AS g, '{"(1,1),(0,0)";NULL}'::box[] AS h;
+----
+a	b	c	d	e	f	g	h
+{(1,1),(0,0);(3,3),(2,2)}	{"[(1,2),(3,4)]",NULL}	{"((0,0),(1,1))","[(1,1),(2,2)]"}	{"((0,0),(1,1),(1,0))"}	{"{1,-1,0}"}	(3,3),(2,2)	{{(1,1),(0,0)};{(3,3),(2,2)}}	{(1,1),(0,0);NULL}
+
+
+statement ok
+CREATE TABLE geo_all (id int, p point, l line, s lseg, b box, a path, g polygon, c circle);
+
+
+statement ok
+INSERT INTO geo_all VALUES
+  (1, '(1,2)', '{1,-1,0}', '[(0,0),(1,1)]', '(1,1),(0,0)', '[(0,0),(1,1)]', '((0,0),(1,1),(1,0))', '<(0,0),1>'),
+  (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+  (3, '(-1.5,1e300)', '{0,1,-1e-300}', '[(1,1),(1,1)]', '(-1,-1),(-1,-1)', '((0,0))', '((7,8),(9,10))', '<(1,1),0>');
+
+
+query
+SELECT * FROM geo_all ORDER BY id;
+----
+id	p	l	s	b	a	g	c
+1	(1,2)	{1,-1,0}	[(0,0),(1,1)]	(1,1),(0,0)	[(0,0),(1,1)]	((0,0),(1,1),(1,0))	<(0,0),1>
+2	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+3	(-1.5,1e+300)	{0,1,-1e-300}	[(1,1),(1,1)]	(-1,-1),(-1,-1)	((0,0))	((7,8),(9,10))	<(1,1),0>
+
+
+statement ok
+UPDATE geo_all SET p = p + point '(1,1)', b = b * point '(2,0)', c = c + point '(1,1)' WHERE id = 1;
+
+
+query
+SELECT id, p, b, c FROM geo_all ORDER BY id;
+----
+id	p	b	c
+1	(2,3)	(2,2),(0,0)	<(1,1),1>
+2	NULL	NULL	NULL
+3	(-1.5,1e+300)	(-1,-1),(-1,-1)	<(1,1),0>
+
+
+query
+SELECT id FROM geo_all WHERE p ~= point '(2,3)' OR b && box '(-1,-1),(-2,-2)' ORDER BY id;
+----
+id
+1
+3
+
+
+statement ok
+DELETE FROM geo_all WHERE p ~= point '(2,3)';
+
+
+query
+SELECT count(*) AS n FROM geo_all;
+----
+n
+2
+
+
+statement ok
+DROP TABLE geo_all;
+
+
+statement ok
+DROP TABLE geo_points;
+
+
+statement ok
+DROP TABLE geo_lines;
+
+
+statement ok
+DROP TABLE geo_lsegs;
+
+
+statement ok
+DROP TABLE geo_boxes;
+
+
+statement ok
+DROP TABLE geo_paths;
+
+
+statement ok
+DROP TABLE geo_polygons;
+
+
+statement ok
+DROP TABLE geo_circles;
+
+
+query
+SELECT point '(Infinity,0)' + point '(1,0)' AS a, point '(1,0)' + point '(Infinity,0)' AS b,
+       point '(Infinity,0)' - point '(1,0)' AS c, point '(1,0)' - point '(-Infinity,0)' AS d,
+       point '(Infinity,1)' * point '(2,0)' AS e, point '(2,0)' * point '(Infinity,1)' AS f,
+       point '(NaN,0)' / point '(0,0)' AS g, point '(Infinity,0)' / point '(2,0)' AS h,
+       circle '<(0,0),1>' / point '(Infinity,0)' AS i;
+----
+a	b	c	d	e	f	g	h	i
+(Infinity,0)	(Infinity,0)	(Infinity,0)	(Infinity,0)	(Infinity,NaN)	(Infinity,NaN)	(NaN,NaN)	(Infinity,NaN)	<(NaN,NaN),0>
+
+
+statement error
+SELECT point '(1e308,0)' + point '(1e308,0)';
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT point '(1e308,0)' - point '(-1e308,0)';
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT point '(1e308,1e308)' / point '(1e-10,0)';
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT circle '<(0,0),1e-300>' / point '(1e100,0)';
+----
+db error: ERROR: value out of range: underflow
+
+
+statement error
+SELECT point '(1.5e308,1.5e308)' <-> point '(0,0)';
+----
+db error: ERROR: value out of range: overflow
+
+
+query
+SELECT point '(Infinity,0)' <-> point '(0,0)' AS a, point '(0,Infinity)' <-> point '(0,0)' AS b,
+       point '(NaN,0)' <-> point '(0,0)' AS c, point '(0,NaN)' <-> point '(0,0)' AS d;
+----
+a	b	c	d
+Infinity	Infinity	NaN	NaN
+
+
+query
+SELECT point '(NaN,1)' ~= point '(NaN,1)' AS a, point '(NaN,1)' ~= point '(1,1)' AS b, point '(1,NaN)' ~= point '(1,1)' AS c,
+       point '(1,1)' ~= point '(NaN,1)' AS d, point '(1,1)' ~= point '(1,NaN)' AS e, point '(1,NaN)' ~= point '(2,NaN)' AS f,
+       point '(1,NaN)' ~= point '(1,NaN)' AS g;
+----
+a	b	c	d	e	f	g
+t	f	f	f	f	f	t
+
+
+query
+SELECT box '(NaN,1),(0,0)' AS a, box '(0,1),(NaN,0)' AS b, box '(1,NaN),(0,0)' AS c, box '(1,0),(0,NaN)' AS d,
+       box(point '(NaN,0)', point '(1,1)') AS e, box(point '(1,0)', point '(NaN,1)') AS f,
+       box(point '(0,NaN)', point '(1,1)') AS g, box(point '(0,1)', point '(1,NaN)') AS h;
+----
+a	b	c	d	e	f	g	h
+(NaN,1),(0,0)	(NaN,1),(0,0)	(1,NaN),(0,0)	(1,NaN),(0,0)	(NaN,1),(1,0)	(NaN,1),(1,0)	(1,NaN),(0,1)	(1,NaN),(0,1)
+
+
+query
+SELECT circle_ne(circle '<(0,0),1>', circle '<(5,5),1>') AS a, circle_ne(circle '<(0,0),1>', circle '<(0,0),1.0000000001>') AS b,
+       circle_ne(circle '<(0,0),1>', circle '<(0,0),2>') AS c, circle '<(0,0),NaN>' ~= circle '<(0,0),NaN>' AS d,
+       circle '<(0,0),NaN>' ~= circle '<(0,0),1>' AS e, circle '<(0,0),1>' ~= circle '<(0,0),NaN>' AS f;
+----
+a	b	c	d	e	f
+f	f	t	t	f	f
+
+
+query
+SELECT lseg_gt(lseg '[(0,0),(2,2)]', lseg '[(0,0),(1,1)]') AS a, lseg_le(lseg '[(0,0),(1,1)]', lseg '[(0,0),(1,1)]') AS b,
+       box_le(box '(1,1),(0,0)', box '(2,2),(0,0)') AS c, box_gt(box '(2,2),(0,0)', box '(1,1),(0,0)') AS d,
+       box_ge(box '(1,1),(0,0)', box '(2,2),(0,0)') AS e, circle_lt(circle '<(0,0),1>', circle '<(0,0),2>') AS f,
+       circle_le(circle '<(0,0),2>', circle '<(0,0),1>') AS g, circle_gt(circle '<(0,0),2>', circle '<(0,0),1>') AS h,
+       circle_ge(circle '<(0,0),1>', circle '<(5,5),1>') AS i, path_n_le(path '[(0,0)]', path '[(0,0),(1,1)]') AS j,
+       path_n_gt(path '[(0,0)]', path '[(0,0),(1,1)]') AS k, path_n_ge(path '((0,0),(1,1))', path '[(0,0),(1,1)]') AS l;
+----
+a	b	c	d	e	f	g	h	i	j	k	l
+t	t	t	t	f	t	f	t	t	t	f	t
+
+
+query
+SELECT line '{1,1e-6,0}' ?# line '{2,2e-6,5}' AS a, line '{1,1e-6,0}' ?|| line '{2,2e-6,5}' AS b,
+       line '{1,1e-6,0}' # line '{2,2e-6,5}' AS c, line '{1e-6,1,0}' ?|| line '{1.0000001e-6,1e-6,5}' AS d,
+       line '{2e-6,-1,0}' ?|| line '{1e-6,-1,5}' AS e;
+----
+a	b	c	d	e
+f	t	NULL	t	t
+
+
+query
+SELECT line '{NaN,0,1}' <-> line '{1,0,0}' AS a, line '{2e-6,-1,0}' <-> line '{1e-6,-1,5}' AS b,
+       line '{1,0,0}' <-> line '{NaN,0,3}' AS c, line '{1e-6,1,0}' <-> line '{1.0000001e-6,1e-6,5}' AS d;
+----
+a	b	c	d
+NaN	4.99999999999	3	4.9999999999975
+
+
+query
+SELECT line_eq(line '{NaN,1,0}', line '{NaN,1,0}') AS a, line_eq(line '{NaN,1,0}', line '{1,1,0}') AS b,
+       line_eq(line '{NaN,1,0}', line '{NaN,2,0}') AS c, line_eq(line '{NaN,1,0}', line '{NaN,1,5}') AS d,
+       line_eq(line '{1,NaN,0}', line '{1,NaN,0}') AS e, line_eq(line '{1,1,NaN}', line '{1,1,NaN}') AS f,
+       line_eq(line '{1,1,0}', line '{NaN,1,0}') AS g, line_eq(line '{1,1,0}', line '{1,NaN,0}') AS h,
+       line_eq(line '{1,1,0}', line '{1,1,NaN}') AS i, line_eq(line '{0,-1,2}', line '{0,-2,4}') AS j,
+       line_eq(line '{1,-1,0}', line '{0,-1,2}') AS k, line_eq(line '{1,-1,0}', line '{1,1,0}') AS l,
+       line_eq(line '{1,-1,0}', line '{1,-1,5}') AS m;
+----
+a	b	c	d	e	f	g	h	i	j	k	l	m
+t	f	f	f	t	t	f	f	f	t	f	f	f
+
+
+query
+SELECT lseg_eq(lseg '[(0,0),(1,1)]', lseg '[(1,0),(1,1)]') AS a, lseg_eq(lseg '[(0,0),(1,1)]', lseg '[(0,0),(2,2)]') AS b,
+       lseg_ne(lseg '[(0,0),(1,1)]', lseg '[(1,0),(1,1)]') AS c, lseg_ne(lseg '[(0,0),(1,1)]', lseg '[(0,0),(2,2)]') AS d,
+       lseg_ne(lseg '[(0,0),(1,1)]', lseg '[(0,0),(1,1)]') AS e, box '(2,2),(0,0)' ~= box '(2,2),(1,1)' AS f;
+----
+a	b	c	d	e	f
+f	f	t	t	f	f
+
+
+query
+SELECT point '(NaN,1)' ## line '{1,-1,0}' AS a, point '(NaN,1)' ## lseg '[(0,0),(1,1)]' AS b,
+       point '(NaN,1)' ## box '(1,1),(0,0)' AS c, lseg '[(NaN,0),(1,1)]' ## box '(1,1),(0,0)' AS d;
+----
+a	b	c	d
+NULL	NULL	NULL	(1,1)
+
+
+statement error
+SELECT polygon(100000000, circle '<(0,0),1>');
+----
+db error: ERROR: invalid memory alloc request size 1600000040
+
+
+statement error
+SELECT polygon(2147483647, circle '<(0,0),1>');
+----
+db error: ERROR: too many points requested
+
+
+query
+SELECT polygon '((1,0),(-1,0),(0,1))' @> point '(0,0)' AS a, polygon '((-1,0),(-2,0),(-2,1))' @> point '(0,0)' AS b,
+       polygon '((0,0),(2,0),(2,2))' @> point '(1,1)' AS c, polygon '((-1,-1),(1,1),(1,-1))' @> point '(0,0)' AS d,
+       polygon '((-2,0),(-1,0),(-1,1),(-2,1))' @> point '(0,0)' AS e, polygon '((-1,0),(1,0),(1,1),(-1,1))' @> point '(0,0)' AS f,
+       polygon '((1,0),(-1,0),(-1,1),(1,1))' @> point '(0.5,0)' AS g, box(polygon '((0,2),(1,0),(2,2))') AS h,
+       box(polygon '((0,2),(1,0),(2,3),(-1,1))') AS i;
+----
+a	b	c	d	e	f	g	h	i
+t	f	t	t	f	t	t	(2,2),(0,0)	(2,3),(-1,0)
+
+
+query
+SELECT polygon '((0,0),(4,0),(4,1),(1,1),(1,4),(0,4))' && polygon '((2,2),(3,2),(3,3),(2,3))' AS a,
+       polygon '((2,2),(3,2),(3,3),(2,3))' && polygon '((0,0),(4,0),(4,1),(1,1),(1,4),(0,4))' AS b;
+----
+a	b
+f	f
+
+
+statement error (stack depth limit exceeded)
+WITH saw AS (
+  SELECT ('(' || string_agg('(' || i || ',' || CASE WHEN i % 2 = 0 THEN -1 ELSE 1 END || ')', ',' ORDER BY i) ||
+          ',(20000,-10),(0,-10))')::polygon AS g
+  FROM generate_series(0, 20000) AS i)
+SELECT g @> polygon '((0.9,-5),(0.9,0),(19999.9,0),(19999.9,-5))' AS a FROM saw;
+
+
+statement ok
+CREATE TABLE geo_shapes (id int, g polygon);
+
+
+statement ok
+INSERT INTO geo_shapes VALUES (1, '((0,0),(4,0),(4,4),(0,4))'), (2, '((0,0),(4,0),(4,4),(2,2),(0,4))'),
+  (3, '((0,1),(2,1),(2,3),(0,3))'), (4, '((0,2),(2,0),(2,4))'), (5, '((1,2),(3,2),(3,1),(1,1))'),
+  (6, '((4,4),(0,4),(0,0),(4,0))'), (7, '((4,4),(6,4),(6,6),(4,6))'), (8, '((1,1))'), (9, '((0,0),(4,4))'),
+  (10, '((0,0),(2,1),(4,0),(3,2),(4,4),(2,3),(0,4),(1,2))'), (11, '((-10,-10),(10,-10),(10,10),(-10,10))'),
+  (12, '((0,0),(2,0),(4,0),(4,4),(0,4))'), (13, '((1,0),(3,0),(3,1),(1,1))'), (14, '((2,2),(4,0),(4,4))'),
+  (15, '((0,0),(4,4),(0,4))'), (16, '((1,3),(2,2),(3,3),(2,4))'), (17, '((0,0),(0,1),(1,1),(1,0))'),
+  (18, '((0,0),(1,0),(1,1),(0,1))'), (19, '((1,1),(1,0),(0,0),(0,1))'), (20, '((0,0),(2,0),(2,2))');
+
+
+query
+SELECT a.id AS a, string_agg(CASE WHEN a.g @> b.g THEN 't' ELSE 'f' END, '' ORDER BY b.id) AS contains,
+       string_agg(CASE WHEN a.g && b.g THEN 't' ELSE 'f' END, '' ORDER BY b.id) AS overlaps,
+       string_agg(CASE WHEN a.g ~= b.g THEN 't' ELSE 'f' END, '' ORDER BY b.id) AS same
+FROM geo_shapes a, geo_shapes b GROUP BY a.id ORDER BY a.id;
+----
+a	contains	overlaps	same
+1	ttttttftttfttttttttt	tttttttttttttttttttt	tfffftffffffffffffff
+2	ftfftffttfffttfftttt	tttttttttttttttttttt	ftffffffffffffffffff
+3	fftfffftffffffffffff	ttttttfttttttttttttt	fftfffffffffffffffff
+4	ffftffftffffffffffff	ttttttfttttttttttttt	ffftffffffffffffffff
+5	fffftfftffffffffffff	ttttttfttttttttttttt	fffftfffffffffffffff
+6	ttttttftttfttttttttt	tttttttttttttttttttt	tfffftffffffffffffff
+7	fffffftfffffffffffff	ttfffttfttttfttfffff	fffffftfffffffffffff
+8	ffffffftffffffffffff	ttttttfttttttftftttt	ffffffftffffffffffff
+9	fffffffttfffffffffff	tttttttttttttttttttt	fffffffftfffffffffff
+10	fffftfftttffffffffff	tttttttttttttttttttt	ffffffffftffffffffff
+11	tttttttttttttttttttt	tttttttttttttttttttt	fffffffffftfffffffff
+12	ttttttftttfttttttttt	tttttttttttttttttttt	ffffffffffftffffffff
+13	ffffffftfffftfffffff	ttttttfttttttttftttt	fffffffffffftfffffff
+14	ffffffffffffftffffff	tttttttfttttttttffft	ffffffffffffftffffff
+15	fffffffttfffffttffff	tttttttttttttttttttt	fffffffffffffftfffff
+16	ffffffffffffffftffff	ttttttffttttftttffft	ffffffffffffffftffff
+17	ffffffftfffffffftttf	ttttttfttttttftftttt	fffffffffffffffftttf
+18	ffffffftfffffffftttf	ttttttfttttttftftttt	fffffffffffffffftttf
+19	ffffffftfffffffftttf	ttttttfttttttftftttt	fffffffffffffffftttf
+20	ffffffftffffffffffft	ttttttfttttttttttttt	ffffffffffffffffffft
+
+
+query
+SELECT pg_input_is_valid('(x,1)', 'point') AS a, pg_input_is_valid('(1 2)', 'point') AS b,
+       pg_input_is_valid('((1,2),(3,4)]', 'lseg') AS c, pg_input_is_valid('[(1,2),(3,4)]x', 'lseg') AS d,
+       pg_input_is_valid('(1,2),(3,4)x', 'box') AS e, pg_input_is_valid('{x,1,2}', 'line') AS f,
+       pg_input_is_valid('{1 2,3}', 'line') AS g, pg_input_is_valid('{1,x,2}', 'line') AS h,
+       pg_input_is_valid('{1,2,x}', 'line') AS i, pg_input_is_valid('{1,2,3', 'line') AS j,
+       pg_input_is_valid('[(1,2)', 'line') AS k, pg_input_is_valid('[(1,2),(3,4)]x', 'line') AS l,
+       pg_input_is_valid('(1,2,3,4', 'path') AS m, pg_input_is_valid('[(1,2),(3,4)]x', 'path') AS n,
+       pg_input_is_valid('((1,2),(3,4))x', 'polygon') AS o, pg_input_is_valid('<(1,x),3>', 'circle') AS p,
+       pg_input_is_valid('<(1,2),x>', 'circle') AS q;
+----
+a	b	c	d	e	f	g	h	i	j	k	l	m	n	o	p	q
+f	f	f	f	f	f	f	f	f	f	f	f	f	f	f	f	f
+
+
+statement error
+SELECT '(1 2)'::point;
+----
+db error: ERROR: invalid input syntax for type point: "(1 2)"
+
+
+query
+SELECT '( (1,2),(3,4))'::lseg AS a, '( (1,2),(3,4))'::box AS b, '( (1,2),(3,4))'::path AS c;
+----
+a	b	c
+[(1,2),(3,4)]	(3,4),(1,2)	((1,2),(3,4))
+
+
+query
+SELECT i, point(x, y) AS p FROM (VALUES (1, 1::float8, 2::float8), (2, 3, NULL), (3, NULL, 4)) t(i, x, y) ORDER BY i;
+----
+i	p
+1	(1,2)
+2	NULL
+3	NULL
+
+
+statement ok
+CREATE TABLE geo_bin_src (id int, p point, l line, s lseg, b box, a path, g polygon, c circle);
+
+
+statement ok
+INSERT INTO geo_bin_src VALUES
+  (1, '(1,2)', '{1,-1,0}', '[(0,0),(1,1)]', '(1,1),(0,0)', '[(0,0),(1,1),(2,0)]', '((0,0),(1,1),(1,0))', '<(0,0),1>'),
+  (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+  (3, '(-1.5,NaN)', '{0,1,-1e-300}', '[(1,1),(1,1)]', '(-1,-1),(-1,-1)', '((0,0))', '((7,8))', '<(1,1),0>');
+
+
+statement ok
+COPY geo_bin_src TO '${__TEST_DIR__}/geo_bin.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE geo_bin_dst (id int, p point, l line, s lseg, b box, a path, g polygon, c circle);
+
+
+statement ok
+COPY geo_bin_dst FROM '${__TEST_DIR__}/geo_bin.bin' (FORMAT binary);
+
+
+query
+SELECT * FROM geo_bin_dst ORDER BY id;
+----
+id	p	l	s	b	a	g	c
+1	(1,2)	{1,-1,0}	[(0,0),(1,1)]	(1,1),(0,0)	[(0,0),(1,1),(2,0)]	((0,0),(1,1),(1,0))	<(0,0),1>
+2	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+3	(-1.5,NaN)	{0,1,-1e-300}	[(1,1),(1,1)]	(-1,-1),(-1,-1)	((0,0))	((7,8))	<(1,1),0>
+
+
+statement ok
+CREATE TABLE geo_bin_one (p point, l line, a path, g polygon, c circle);
+
+
+statement ok
+COPY (SELECT '\x3ff0000000000000'::bytea) TO '${__TEST_DIR__}/geo_bin_short_point.bin' (FORMAT binary);
+
+
+statement error (insufficient data left in message|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (p) FROM '${__TEST_DIR__}/geo_bin_short_point.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x000000000000000000000000000000003ff0000000000000'::bytea) TO '${__TEST_DIR__}/geo_bin_zero_line.bin' (FORMAT binary);
+
+
+statement error (invalid line specification: A and B cannot both be zero|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (l) FROM '${__TEST_DIR__}/geo_bin_zero_line.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x00000000000000000000000000000000bff0000000000000'::bytea) TO '${__TEST_DIR__}/geo_bin_negative_circle.bin' (FORMAT binary);
+
+
+statement error (invalid radius in external "circle" value|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (c) FROM '${__TEST_DIR__}/geo_bin_negative_circle.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x'::bytea) TO '${__TEST_DIR__}/geo_bin_empty_path.bin' (FORMAT binary);
+
+
+statement error (no data left in message|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (a) FROM '${__TEST_DIR__}/geo_bin_empty_path.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x010000'::bytea) TO '${__TEST_DIR__}/geo_bin_short_path.bin' (FORMAT binary);
+
+
+statement error (insufficient data left in message|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (a) FROM '${__TEST_DIR__}/geo_bin_short_path.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x00000000'::bytea) TO '${__TEST_DIR__}/geo_bin_no_points.bin' (FORMAT binary);
+
+
+statement error (invalid number of points in external "polygon" value|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (g) FROM '${__TEST_DIR__}/geo_bin_no_points.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x7fffffff'::bytea) TO '${__TEST_DIR__}/geo_bin_many_points.bin' (FORMAT binary);
+
+
+statement error (invalid number of points in external "polygon" value|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (g) FROM '${__TEST_DIR__}/geo_bin_many_points.bin' (FORMAT binary);
+
+
+statement ok
+COPY (SELECT '\x0000000200000000000000000000000000000000'::bytea) TO '${__TEST_DIR__}/geo_bin_missing_point.bin' (FORMAT binary);
+
+
+statement error (insufficient data left in message|COPY FROM: invalid binary value in column 1)
+COPY geo_bin_one (g) FROM '${__TEST_DIR__}/geo_bin_missing_point.bin' (FORMAT binary);

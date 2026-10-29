@@ -1,0 +1,55 @@
+control substitution on
+
+# TIMESTAMPTZ filter pushdown must be timezone-proof: the rendered literal
+# carries its UTC offset, so the remote parses the same instant whatever its
+# session time zone. The old rendering cast to naive TIMESTAMP first (offset
+# lost), so a non-UTC remote re-interpreted the wall time in its own zone --
+# pushed equality lost rows and pushed ranges matched extras. The CI postgres
+# runs UTC, so this test creates its OWN remote database pinned to Asia/Tokyo
+# (database-level GUC, applies to new connections) and attaches to that.
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgtza_${__DATABASE__} (TYPE postgres);
+
+statement ok
+CALL postgres_execute('pgtza_${__DATABASE__}', 'CREATE DATABASE tzdb_${__DATABASE__}', use_transaction := false);
+
+statement ok
+CALL postgres_execute('pgtza_${__DATABASE__}', 'ALTER DATABASE tzdb_${__DATABASE__} SET timezone = ''Asia/Tokyo''');
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=tzdb_${__DATABASE__} user=${PGUSER}' AS pgtz_${__DATABASE__} (TYPE postgres);
+
+statement ok
+CREATE TABLE pgtz_${__DATABASE__}.public.tzt (id INTEGER, ts TIMESTAMPTZ);
+
+statement count 3
+INSERT INTO pgtz_${__DATABASE__}.public.tzt VALUES
+  (1, TIMESTAMPTZ '2024-06-01 12:00:00+00'),
+  (2, TIMESTAMPTZ '2024-06-01 15:00:00+00'),
+  (3, TIMESTAMPTZ '2024-06-02 03:00:00+00');
+
+# Pushed equality: the naive-wall-time rendering returned 0 rows here (the
+# Tokyo session read '12:00:00' as UTC+9, an instant no row has).
+query
+SELECT id FROM pgtz_${__DATABASE__}.public.tzt WHERE ts = TIMESTAMPTZ '2024-06-01 12:00:00+00';
+----
+id
+1
+
+# Pushed range: the shifted boundary wrongly included id 1 before the fix.
+query
+SELECT id FROM pgtz_${__DATABASE__}.public.tzt WHERE ts >= TIMESTAMPTZ '2024-06-01 13:00:00+00' ORDER BY id;
+----
+id
+2
+3
+
+statement ok
+DETACH pgtz_${__DATABASE__};
+
+statement ok
+CALL postgres_execute('pgtza_${__DATABASE__}', 'DROP DATABASE tzdb_${__DATABASE__}', use_transaction := false);
+
+statement ok
+DETACH pgtza_${__DATABASE__};

@@ -14,14 +14,14 @@ jobs:
     steps:
       - name: Label fork PR
         if: github.event.action == 'opened'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             await github.rest.issues.addLabels({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: ['from-fork', 'needs-security-review']
+              labels: ['from-fork']
             });
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -31,7 +31,7 @@ jobs:
             });
 
       - name: Block workflow file changes
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const { data: files } = await github.rest.pulls.listFiles({

@@ -90,6 +90,7 @@ class ReadContext final : public BlockManager,
 
  private:
   void ResetMapping();
+  bool Maps(uint64_t offset, uint64_t size) const noexcept;
 
   IndexInput::ptr _in;
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;

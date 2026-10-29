@@ -42,7 +42,7 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
     return QueryBuilder::Empty();
   }
   AnnExactCodes codes;
-  if (const auto* ann = segment.Ann(opts.centroids_id)) {
+  if (const auto* ann = segment.Ann(opts.ann_id)) {
     codes = ann->PrepareExact(segment, opts.query, opts.metric);
   }
   std::optional<score_t> threshold;

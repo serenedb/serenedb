@@ -198,7 +198,7 @@ statement ok
 CALL postgres_execute('rpub_${__DATABASE__}', 'INSERT INTO rsub_items VALUES (100, ''while disabled'', 1)');
 
 
-sleep 2s
+sleep 1s
 
 
 query
@@ -232,9 +232,6 @@ n
 
 statement ok
 CALL postgres_execute('rpub_${__DATABASE__}', 'INSERT INTO rsub_items VALUES (101, ''after drop'', 1)');
-
-
-sleep 2s
 
 
 query

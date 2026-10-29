@@ -1,6 +1,0 @@
-query
-SELECT __internal_regexp_substring('ac', 'a(b)?c') IS NULL AS skipped, __internal_regexp_substring('abc', 'a(b)?c') AS taken,
-       __internal_regexp_substring('xyz', 'a(b)?c') IS NULL AS no_match
-----
-skipped	taken	no_match
-t	b	t

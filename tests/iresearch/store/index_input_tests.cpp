@@ -120,13 +120,13 @@ TEST_F(IndexInputTest, peek_refills_an_empty_window_and_reads_cross_blocks) {
   ASSERT_FALSE(blocks.Contiguous());
   irs::IndexInput in{blocks};
   in.Seek(kBlock + 10);
-  const auto* inside = in.Peek(kRead);
-  ASSERT_NE(nullptr, inside);
+  const auto inside = in.Peek(kRead);
+  ASSERT_EQ(kRead, inside.size());
   EXPECT_EQ(ExpectedByte(kBlock + 10), inside[0]);
   EXPECT_EQ(kBlock + 10, in.Position());
 
   in.Seek(2 * kBlock - 5);
-  EXPECT_EQ(nullptr, in.Peek(kRead));
+  EXPECT_TRUE(in.Peek(kRead).empty());
   irs::byte_type across[kRead];
   in.ReadData(across, kRead);
   for (uint64_t j = 0; j != kRead; ++j) {

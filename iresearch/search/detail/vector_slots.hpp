@@ -76,14 +76,14 @@ class VectorBlockReader {
     const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
     const size_t bytes = count * size_t{_record_size};
     _in.Seek(offset);
-    const byte_type* p = _in.Peek(bytes);
-    if (p == nullptr) {
+    auto view = _in.Peek(bytes);
+    if (view.empty()) {
       _scratch.resize(bytes);
       _in.ReadData(_scratch.data(), bytes);
-      p = _scratch.data();
+      view = {_scratch.data(), bytes};
     }
-    SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % _alignment == 0);
-    return {p, bytes};
+    SDB_ASSERT(reinterpret_cast<uintptr_t>(view.data()) % _alignment == 0);
+    return {view.data(), bytes};
   }
 
  private:

@@ -81,12 +81,7 @@ class InputFile {
   bool Contiguous() const noexcept {
     return std::holds_alternative<MappedSpan>(_kind);
   }
-  bytes_view Span() const noexcept {
-    if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
-      return span->bytes;
-    }
-    return {};
-  }
+  bytes_view Span() const noexcept { return _span; }
   bool Paged() const noexcept;
   bytes_view Refill(uint64_t position, CursorBlock& block, bool ahead) const;
   PinnedBytes Pin(uint64_t offset, uint64_t size) const;
@@ -100,7 +95,6 @@ class InputFile {
  private:
   struct MappedSpan {
     std::unique_ptr<duckdb::MemoryMappedFile> mapping;
-    bytes_view bytes;
     file_utils::ResidencyMap residency;
     bool paged = false;
   };
@@ -117,6 +111,7 @@ class InputFile {
   bytes_view SpanWindow(uint64_t offset, uint64_t size) const noexcept;
 
   uint64_t _length;
+  bytes_view _span;
   std::variant<MappedSpan, CacheBlocks> _kind;
 };
 
@@ -276,13 +271,13 @@ class BasicInput {
   {
     return _pos;
   }
-  const byte_type* Peek(uint64_t count)
+  IRS_FORCE_INLINE bytes_view Peek(uint64_t count)
     requires(!Contiguous)
   {
-    if (_pos == _end) [[unlikely]] {
-      Refill(true);
+    if (count <= Remain()) [[likely]] {
+      return {_pos, count};
     }
-    return Remain() >= count ? _pos : nullptr;
+    return PeekSlow(count);
   }
 
   IRS_FORCE_INLINE Pinned Pin(uint64_t count) {
@@ -356,6 +351,13 @@ class BasicInput {
   IRS_NO_INLINE T ReadVarintSlow() {
     Bytes bytes{*this};
     return irs::vread<T>(bytes);
+  }
+
+  IRS_NO_INLINE bytes_view PeekSlow(uint64_t count) {
+    if (_pos == _end && Refill(true) && count <= Remain()) {
+      return {_pos, count};
+    }
+    return {};
   }
 
   IRS_NO_INLINE byte_type ReadByteSlow() {

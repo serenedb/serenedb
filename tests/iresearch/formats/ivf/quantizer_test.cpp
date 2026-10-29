@@ -209,9 +209,10 @@ class ClusterScorer {
     const uint64_t offset = _base + index * _setting.record_size;
     const size_t bytes = count * size_t{_setting.record_size};
     _in.Seek(offset);
-    if (const byte_type* p = _in.Peek(bytes)) {
-      SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % _setting.alignment == 0);
-      return {p, bytes};
+    if (const auto view = _in.Peek(bytes); !view.empty()) {
+      SDB_ASSERT(
+        reinterpret_cast<uintptr_t>(view.data()) % _setting.alignment == 0);
+      return {view.data(), bytes};
     }
     _buf.resize(bytes);
     _in.ReadData(_buf.data(), bytes);

@@ -57,7 +57,7 @@ InputFile::InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping)
   auto& span = *std::get_if<MappedSpan>(&_kind);
   span.paged = span.mapping->OnDiskFile();
   if (_length != 0) {
-    span.bytes = {span.mapping->GetData(0, _length), _length};
+    _span = {span.mapping->GetData(0, _length), _length};
     if (span.paged) {
       span.residency.Reset(math::DivCeil64(_length, file_utils::kPage));
     }
@@ -84,9 +84,9 @@ bool InputFile::Paged() const noexcept {
 bytes_view InputFile::Refill(uint64_t position, CursorBlock& block,
                              bool ahead) const {
   SDB_ASSERT(position < _length);
-  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
+  if (Contiguous()) {
     block.start = 0;
-    return span->bytes;
+    return _span;
   }
   const auto* blocks = std::get_if<CacheBlocks>(&_kind);
   if (!block.pinned) {
@@ -105,8 +105,8 @@ PinnedBytes InputFile::Pin(uint64_t offset, uint64_t size) const {
   if (offset > _length || size > _length - offset) [[unlikely]] {
     ThrowPastEnd(this, offset, _length);
   }
-  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
-    return {.bytes = {span->bytes.data() + offset, size}};
+  if (Contiguous()) {
+    return {.bytes = {_span.data() + offset, size}};
   }
   if (size == 0) {
     return {};

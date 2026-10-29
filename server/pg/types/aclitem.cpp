@@ -37,7 +37,7 @@ namespace {
 
 struct AclitemInputState final : InputState {
   explicit AclitemInputState(duckdb::ClientContext* context)
-    : roles{context ? auth::RolesOf(context) : nullptr} {}
+    : roles{auth::RolesOf(context)} {}
 
   std::shared_ptr<const auth::RoleGraph> roles;
 };

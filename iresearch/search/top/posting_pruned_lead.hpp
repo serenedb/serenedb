@@ -67,6 +67,13 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
     return *(std::end(_docs) - 1);
   }
 
+  template<typename Visitor>
+  void ForEachDocs(doc_id_t max, Visitor&& visit) {
+    Base::ForEachBlock(max, [&](doc_id_t* docs, uint32_t len) IRS_FORCE_INLINE {
+      visit(docs, _freqs.data + (docs - std::begin(_docs)), len);
+    });
+  }
+
   doc_id_t SpanLast(uint32_t blocks) {
     if (blocks > 1 && _cursor.Armed()) {
       const auto& index = _cursor.Index();

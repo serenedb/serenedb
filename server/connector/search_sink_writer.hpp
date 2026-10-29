@@ -53,7 +53,6 @@
 #include "search/inverted_index_storage.h"
 #include "search/search_analyzer_impl.h"
 #include "search/search_table.h"
-#include "search_remove_filter.hpp"
 #include "server/utils/primary_key.h"
 
 namespace duckdb {
@@ -62,8 +61,6 @@ class DataChunk;
 
 }  // namespace duckdb
 namespace sdb::connector {
-
-class SearchRemoveFilter;
 
 using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
@@ -110,8 +107,7 @@ class SearchSinkInsertBaseImpl {
     std::vector<IndexedExpression>&& indexed_exprs = {},
     const catalog::InvertedIndexConfig* config = nullptr);
 
-  void InitImpl(size_t batch_size, const PkChunk& pk = {},
-                irs::CommitOnFlush* commit_on_flush = nullptr);
+  void InitImpl(size_t batch_size, const PkChunk& pk = {});
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);
@@ -143,8 +139,6 @@ class SearchSinkInsertBaseImpl {
     _pk_column_writer = nullptr;
     _document.reset();
   }
-
-  std::vector<duckdb::string_t>& KeyTerms() noexcept { return _key_terms; }
 
  protected:
   struct Field {
@@ -312,7 +306,6 @@ class SearchSinkInsertBaseImpl {
   duckdb::RecursiveUnifiedVectorFormat _vec_fmt;
   std::unique_ptr<InetBatch> _inet_batch;
   StoreAppender _store_appender;
-  std::vector<duckdb::string_t> _key_terms;
   std::vector<IndexedExpression> _indexed_expressions;
   irs::containers::FlatHashMap<ColumnId, std::vector<irs::field_id>>
     _terms_by_column;
@@ -322,23 +315,6 @@ class SearchSinkInsertBaseImpl {
   std::vector<irs::doc_id_t> _json_num_docs;
   std::vector<irs::doc_id_t> _json_bool_docs;
   std::vector<irs::doc_id_t> _null_docs;
-};
-
-class SearchSinkDeleteBaseImpl {
- public:
-  explicit SearchSinkDeleteBaseImpl(irs::IndexWriter::Transaction& trx);
-
-  void InitImpl(size_t batch_size);
-
-  void FinishImpl();
-
-  void DeleteRowImpl(std::string_view row_key);
-
-  void AbortImpl() { _remove_filter.reset(); }
-
- protected:
-  irs::IndexWriter::Transaction* _trx;
-  std::shared_ptr<SearchRemoveFilter> _remove_filter;
 };
 
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
@@ -353,9 +329,8 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                std::move(entry_info_provider), pk_policy},
       _indexed{indexed_columns.begin(), indexed_columns.end()} {}
 
-  void Init(duckdb::idx_t batch_size, const PkChunk& pk,
-            irs::CommitOnFlush* commit_on_flush = nullptr) final {
-    InitImpl(batch_size, pk, commit_on_flush);
+  void Init(duckdb::idx_t batch_size, const PkChunk& pk) final {
+    InitImpl(batch_size, pk);
   }
 
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
@@ -379,25 +354,6 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   irs::containers::FlatHashSet<ColumnId> _indexed;
 };
 
-class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,
-                                           public SearchSinkDeleteBaseImpl {
- public:
-  explicit DuckDBSearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx)
-    : SearchSinkDeleteBaseImpl{trx} {}
-
-  void Init(duckdb::idx_t batch_size, const PkChunk& /*pk*/,
-            irs::CommitOnFlush* /*commit_on_flush*/ = nullptr) final {
-    InitImpl(batch_size);
-  }
-
-  void DeleteRow(std::string_view encoded_pk) final {
-    DeleteRowImpl(encoded_pk);
-  }
-
-  void Finish() final { FinishImpl(); }
-  void Abort() final { AbortImpl(); }
-};
-
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context);
@@ -405,17 +361,7 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const ColumnId> column_ids,
-                            uint64_t pk_base, duckdb::idx_t table_id,
+                            duckdb::idx_t table_id,
                             duckdb::ClientContext& context);
-
-void WriteRebuiltChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
-                                   duckdb::DataChunk& chunk,
-                                   std::span<const ColumnId> column_ids,
-                                   duckdb::idx_t rowid_slot,
-                                   duckdb::idx_t table_id,
-                                   duckdb::ClientContext& context);
-
-void RemoveGeneratedRows(irs::IndexWriter::Transaction& trx,
-                         std::span<const int64_t> rows);
 
 }  // namespace sdb::connector

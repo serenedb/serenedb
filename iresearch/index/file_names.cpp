@@ -26,6 +26,9 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/strip.h>
+#include <fast_float/fast_float.h>
+
+#include <system_error>
 
 #include "iresearch/utils/shared.hpp"
 
@@ -61,6 +64,16 @@ bool ParseFileName(std::string_view file, std::string_view ext,
 
   name = file.substr(0, dot);
   return true;
+}
+
+bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
+  if (name.size() < 2 || name.front() != '_') {
+    return false;
+  }
+  const auto* begin = name.data() + 1;
+  const auto* end = name.data() + name.size();
+  const auto [ptr, ec] = fast_float::from_chars(begin, end, id);
+  return ec == std::errc{} && (ptr == end || *ptr == '.');
 }
 
 }  // namespace irs

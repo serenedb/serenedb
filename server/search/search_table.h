@@ -125,10 +125,13 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   void ReplayInsert(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                     std::span<const connector::ColumnId> column_ids,
-                    duckdb::DataChunk& chunk, uint64_t row_start);
-  void ReplayDelete(duckdb::AttachedDatabase& db, duckdb::DataChunk& chunk);
-  void ReplayDeleteRanges(duckdb::AttachedDatabase& db,
-                          std::vector<RowRange> rows);
+                    duckdb::DataChunk& chunk);
+  void ReplayDeleteRowPositions(
+    duckdb::AttachedDatabase& db, std::shared_ptr<const duckdb::data_t> entry,
+    std::span<const duckdb::WALFrozenRowPositionGroup> groups);
+  void ReplayRowPositionMaps(
+    duckdb::AttachedDatabase& db, std::shared_ptr<const duckdb::data_t> entry,
+    uint64_t source, std::span<const duckdb::WALFrozenRowPositionMap> maps);
   void ReplayTruncate(duckdb::AttachedDatabase& db);
   void ReplayAdoptSegments(duckdb::AttachedDatabase& db,
                            std::vector<std::string> segments);
@@ -151,6 +154,12 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   uint64_t NextTick(uint64_t count) noexcept {
     return _writer->NextTick(count);
+  }
+
+  template<typename Visit>
+  void VisitDocMaps(std::span<const irs::DocRemoval* const> removals,
+                    const Visit& visit) const {
+    _writer->VisitDocMaps(removals, visit);
   }
 
   duckdb::idx_t GetId() const noexcept { return _table_id; }
@@ -245,44 +254,25 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   bool BuildInFlight() const;
 
-  bool IsDeleteLogOpen() const noexcept {
-    return _delete_log_open.load(std::memory_order_acquire);
-  }
-  void OpenDeleteLog();
-  void AppendDeleteLog(std::span<const RowRange> rows);
+  void WatchTruncates();
   void RecordTruncateForBuild(const irs::SourcePosition& position);
   bool TruncatedAfter(const irs::SourcePosition& position) {
-    absl::MutexLock lock{&_delete_log_mutex};
+    absl::MutexLock lock{&_truncate_mutex};
     return _build_truncate > position;
-  }
-
-  struct DrainedDeleteLog {
-    std::vector<RowRange> rows;
-    irs::SourcePosition truncate;
-  };
-
-  DrainedDeleteLog DrainDeleteLog() {
-    absl::MutexLock lock{&_delete_log_mutex};
-    return {.rows = std::exchange(_delete_log, {}),
-            .truncate = _build_truncate};
   }
 
   std::pair<irs::DirectoryReader, irs::SourcePosition>
   GetSnapshotWithPosition() {
     return _durability.Snapshot(*_writer);
   }
-  void CloseDeleteLog();
 
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
     return _writer->ArmCompactionFloor();
   }
   void ReplaceSegments(
-    std::span<const std::string_view> replaced,
-    std::span<const std::string_view> adopted_metas,
-    absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
-      removal_provider) {
-    _durability.ReplaceSegments(*_writer, replaced, adopted_metas,
-                                removal_provider);
+    std::span<const irs::SubReader* const> replaced,
+    std::vector<irs::IndexWriter::Replacement> replacements) {
+    _durability.ReplaceSegments(*_writer, replaced, std::move(replacements));
   }
 
  private:
@@ -341,12 +331,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   WriterGenerations _writers;
 
-  // Delete log. The open flag is atomic so the commit path can skip the mutex
-  // entirely when no build is running, which is the normal case.
-  std::atomic<bool> _delete_log_open{false};
-  absl::Mutex _delete_log_mutex;
-  std::vector<RowRange> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
-  irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_delete_log_mutex);
+  absl::Mutex _truncate_mutex;
+  irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_truncate_mutex);
   // How often a waiting rebuild surfaces to check for cancellation. The
   // CondVar does the blocking; this only bounds how long a cancelled statement
   // keeps waiting.

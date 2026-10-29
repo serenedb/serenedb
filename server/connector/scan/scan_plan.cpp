@@ -48,6 +48,7 @@
 #include "connector/column_id.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_writer.hpp"
+#include "connector/row_position.h"
 #include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_state.h"
 #include "connector/term_dict.h"
@@ -729,16 +730,20 @@ void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
   }
 }
 
-void WriteDocAddresses(const ScanGlobalState& g, uint32_t seg,
+void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
                        std::span<const irs::doc_id_t> docs,
                        duckdb::DataChunk& output) {
-  if (g.doc_address_output_idx == duckdb::DConstants::INVALID_INDEX) {
-    return;
+  if (g.doc_address_output_idx != duckdb::DConstants::INVALID_INDEX) {
+    FillRowPositions(seg, docs, output.data[g.doc_address_output_idx]);
   }
-  auto* out = duckdb::FlatVector::GetDataMutable<int64_t>(
-    output.data[g.doc_address_output_idx]);
-  for (size_t i = 0; i < docs.size(); ++i) {
-    out[i] = DocAddress(seg, docs[i]);
+}
+
+void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
+                       irs::doc_id_t first, const duckdb::SelectionVector* sel,
+                       duckdb::idx_t count, duckdb::DataChunk& output) {
+  if (g.doc_address_output_idx != duckdb::DConstants::INVALID_INDEX) {
+    FillRowPositions(seg, first, sel, count,
+                     output.data[g.doc_address_output_idx]);
   }
 }
 
@@ -837,7 +842,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
     f.pk_column = batch.pk;
   }
   WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
-  WriteDocAddresses(g, batch.seg, batch.docs, output);
+  WriteRowPositions(g, batch.seg, batch.docs, output);
   WriteVirtualColumns(g, batch.count, batch.score_vec, output);
   return batch.count;
 }

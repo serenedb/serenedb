@@ -49,4 +49,6 @@ std::string FileName(std::string_view name, uint64_t gen, std::string_view ext);
 bool ParseFileName(std::string_view file, std::string_view ext,
                    std::string_view& name, uint64_t& gen) noexcept;
 
+bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept;
+
 }  // namespace irs

@@ -1,0 +1,87 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5) t(i)) TO '${__TEST_DIR__}/rdrc_1.parquet' (FORMAT parquet);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rdrc_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE VIEW rdrc_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rdrc_*.parquet');
+
+
+statement ok
+CREATE INDEX rdrc_idx ON rdrc_v USING inverted(id, body rdrc_en)
+  WITH (reindex_interval = 0, compaction_interval = 0);
+
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5, 8) t(i)) TO '${__TEST_DIR__}/rdrc_2.parquet' (FORMAT parquet);
+
+
+query
+SELECT * FROM serenedb_reindex('rdrc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+
+system ok
+rm $__TEST_DIR__/rdrc_2.parquet
+
+
+statement ok
+SET sdb_faults = 'reindex_delta_removes_resolved';
+
+
+connection reindexer
+statement async ok
+SELECT * FROM serenedb_reindex('rdrc_idx');
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-reindex_delta_removes_resolved:parked';
+
+
+connection default
+statement ok
+VACUUM (COMPACT_INDEX) rdrc_idx;
+
+
+connection default
+statement ok
+VACUUM (REFRESH_INDEX) rdrc_idx;
+
+
+connection default
+statement ok
+SET sdb_faults = 'reindex_delta_removes_resolved:release';
+
+
+connection reindexer
+wait
+
+
+connection default
+query
+SELECT count(*) AS n FROM rdrc_idx;
+----
+n
+5
+
+
+connection default
+query
+SELECT * FROM serenedb_reindex('rdrc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0

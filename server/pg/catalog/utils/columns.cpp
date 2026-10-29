@@ -39,7 +39,6 @@
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
-#include "catalog/entry/search_table.h"
 #include "pg/catalog/utils/lookup.h"
 
 namespace sdb::pg {
@@ -274,10 +273,6 @@ SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,
              .Name()
              .GetIdentifierName(),
            "_not_null"}};
-}
-
-bool NumbersRows(const duckdb::CatalogEntry& sequence) {
-  return sequence.tags.contains(catalog::kGeneratedPkSequenceTag);
 }
 
 std::vector<std::string> RelationAttributeNames(const Session& session,

@@ -538,9 +538,6 @@ bool LooksUpByPk(const ScanBindData& bind) {
 }
 
 std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind) {
-  if (bind.relation.IsSearchTable()) {
-    return duckdb::LogicalType::ROW_TYPE;
-  }
   if (!LooksUpByPk(bind)) {
     return std::nullopt;
   }

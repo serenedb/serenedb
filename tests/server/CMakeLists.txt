@@ -56,7 +56,9 @@ add_executable(
     connector/pg_progress_registry_test.cpp
     connector/pg_serialize_array_test.cpp
     connector/pgoutput_test.cpp
+    connector/reindex_removes_test.cpp
     connector/scram_client_test.cpp
+    connector/search_row_removal_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
     connector/writer_generations_test.cpp

@@ -1132,8 +1132,7 @@ PkPolicy ResolvePkPolicy(
       store_pk = "none";
     }
   }
-  PkPolicy policy{.index_term = table_backed || file_row,
-                  .column = PkColumnKind::Has};
+  PkPolicy policy{.index_term = table_backed, .column = PkColumnKind::Has};
   if (store_pk == "none") {
     policy.index_term = false;
     policy.column = PkColumnKind::None;

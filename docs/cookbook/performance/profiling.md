@@ -136,6 +136,7 @@ A `LOOKUP_JOIN` reads columns of rows its left input picked — after a `TOP_N`,
 | DuckDB files (`read_duckdb`) | `file_index, rowid` |
 | CSV and JSON files | `file_index, file_offset`, the byte offset of the row in its file |
 | A PostgreSQL table | `ctid` |
+| A search table, or an inverted index on one | `rowid` |
 | An inverted index | `iresearch_pk`, the row's address in the index |
 | The source of an inverted index (`INDEX_SOURCE`) | the [row identity](../../sql/indexes/inverted/views.md#row-identity) the index stores, named as its source names it: `rowid` for a table, `ctid` for a PostgreSQL view, `file_index, file_row_number` for a Parquet glob |
 

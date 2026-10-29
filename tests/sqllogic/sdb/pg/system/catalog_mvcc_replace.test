@@ -1489,10 +1489,10 @@ connection s2
 statement error
 CREATE OR REPLACE TABLE cmr_s(f INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_s_pk_seq"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_s"
 
 
-# The search table depends on its schema and on its key sequence.
+# The search table depends on its schema.
 connection s2
 statement error
 DROP TABLE cmr_s

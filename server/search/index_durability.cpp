@@ -301,13 +301,11 @@ absl::Status IndexDurability::Refresh(
 }
 
 void IndexDurability::ReplaceSegments(
-  irs::IndexWriter& writer, std::span<const std::string_view> replaced,
-  std::span<const std::string_view> adopted_metas,
-  absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
-    removal_provider) {
+  irs::IndexWriter& writer, std::span<const irs::SubReader* const> replaced,
+  std::vector<irs::IndexWriter::Replacement> replacements) {
   auto lock = LockRefresh(_refresh_mutex);
   AwaitPendingSave(lock, writer);
-  writer.ReplaceSegments(replaced, adopted_metas, removal_provider);
+  writer.ReplaceSegments(replaced, std::move(replacements));
 }
 
 void IndexDurability::Clear(irs::IndexWriter& writer,

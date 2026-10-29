@@ -95,10 +95,7 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/file_manifest.h"
 #include "connector/inverted_store_index.h"
-#include "connector/primary_key.h"
-#include "connector/search_remove_filter.hpp"
-#include "connector/search_sink_writer.hpp"
-#include "connector/term_dict.h"
+#include "connector/reindex_removes.h"
 #include "connector/view_fast_path.h"
 #include "core/deletes/iceberg_equality_delete.hpp"
 #include "pg/connection_context.h"
@@ -296,10 +293,10 @@ class PassConnection {
   pg::ProgressRegistration _progress;
 };
 
-bool CollectDeadRowPks(duckdb::ClientContext& context,
-                       ConnectionContext& conn_ctx, const ReindexTarget& target,
-                       duckdb::unique_ptr<duckdb::ParsedExpression> condition,
-                       std::vector<std::string>& pks) {
+bool CollectDeadRows(duckdb::ClientContext& context,
+                     ConnectionContext& conn_ctx, const ReindexTarget& target,
+                     duckdb::unique_ptr<duckdb::ParsedExpression> condition,
+                     std::vector<std::pair<uint64_t, int64_t>>& rows) {
   // Statement object, no SQL text: values travel verbatim.
   auto select = duckdb::make_uniq<duckdb::SelectNode>();
   select->select_list.emplace_back(
@@ -347,9 +344,7 @@ bool CollectDeadRowPks(duckdb::ClientContext& context,
       if (!file.IsValid() || !row_number.IsValid()) {
         continue;
       }
-      auto pk = primary_key::PkFilePrefix(file.GetValue());
-      primary_key::AppendSigned(pk, row_number.GetValue());
-      pks.emplace_back(std::move(pk));
+      rows.emplace_back(file.GetValue(), row_number.GetValue());
     }
   }
   return true;
@@ -357,7 +352,8 @@ bool CollectDeadRowPks(duckdb::ClientContext& context,
 
 // Delete kind 3 -- equality deletes (iceberg): covered files group by
 // their applicable-delete set; ALL groups merge into ONE
-// `DELETE FROM <index> WHERE (<rows> AND <files>) OR ...`.
+// `SELECT file_index, row_number FROM <index> WHERE (<rows> AND <files>) OR
+// ...`, whose rows the removal resolves.
 
 // A KEEP filter (col != v / col IS NOT NULL) parsed: view output position
 // plus the deleted value (NULL value = IS NULL).
@@ -645,7 +641,7 @@ bool RunEqualityRemoves(duckdb::ClientContext& context,
                         ConnectionContext& conn_ctx,
                         const ReindexTarget& target, const Source& src,
                         IcebergObserve& observe,
-                        std::vector<std::string>& pks) {
+                        std::vector<std::pair<uint64_t, int64_t>>& dead_rows) {
   const auto& view_info = *target.view_info;
   if (absl::c_any_of(view_info.names, [](const duckdb::Identifier& name) {
         return name == "file_index";
@@ -668,10 +664,10 @@ bool RunEqualityRemoves(duckdb::ClientContext& context,
   if (branches.empty()) {
     return true;
   }
-  return CollectDeadRowPks(
+  return CollectDeadRows(
     context, conn_ctx, target,
     CombineExprs(duckdb::ExpressionType::CONJUNCTION_OR, std::move(branches)),
-    pks);
+    dead_rows);
 }
 
 // Every eq-covered file demotes to remove-and-rescan (its masks drop --
@@ -696,82 +692,6 @@ void DemoteEqCoveredToRescan(const Source& src, FileDiff& files,
   absl::c_sort(files.scan, [&](const auto& a, const auto& b) {
     return listing_pos.find(a.path)->second < listing_pos.find(b.path)->second;
   });
-}
-
-SearchRemovePrefixFilter::DeadRowCursor MakeRowsCursor(
-  std::vector<int64_t> rows) {
-  return [rows = std::move(rows)](int64_t min_row) -> std::optional<int64_t> {
-    const auto it = absl::c_lower_bound(rows, min_row);
-    if (it == rows.end()) {
-      return std::nullopt;
-    }
-    return *it;
-  };
-}
-
-// Buckets ascend by (high, low) = ascending row.
-SearchRemovePrefixFilter::DeadRowCursor MakeDvCursor(
-  std::vector<std::pair<int32_t, roaring::Roaring>> buckets) {
-  return
-    [buckets = std::move(buckets)](int64_t min_row) -> std::optional<int64_t> {
-      for (const auto& [high, bitmap] : buckets) {
-        const auto base = static_cast<int64_t>(high) << 32;
-        if (min_row >= base + (int64_t{1} << 32)) {
-          continue;
-        }
-        const uint32_t low = min_row <= base ? 0 : min_row - base;
-        auto it = bitmap.begin();
-        if (!it.move_equalorlarger(low)) {
-          continue;
-        }
-        return base | *it;
-      }
-      return std::nullopt;
-    };
-}
-
-// Delete kind 1 -- deleted files: one prefix entry per file. nullptr =
-// none.
-std::shared_ptr<SearchRemovePrefixFilter> BuildDeletedFilesRemove(
-  std::vector<uint64_t>& del_files) {
-  if (del_files.empty()) {
-    return nullptr;
-  }
-  absl::c_sort(del_files);
-  auto remove =
-    std::make_shared<SearchRemovePrefixFilter>(term_dict::kPKFieldId);
-  for (const auto id : del_files) {
-    remove->AddFile(primary_key::PkFilePrefix(id));
-  }
-  return remove;
-}
-
-// Delete kind 2 -- changed bitmasks (iceberg): kept files whose dead rows
-// leapfrog the cursors against the sorted terms. nullptr = nothing to
-// remove (row-less masks are eq-covered files).
-std::shared_ptr<SearchRemovePrefixFilter> BuildMaskRemove(
-  const std::vector<IcebergObserve::DeleteMask>& del_masks) {
-  std::vector<const IcebergObserve::DeleteMask*> masks;
-  masks.reserve(del_masks.size());
-  for (const auto& mask : del_masks) {
-    if (!mask.rows.empty() || !mask.dv.empty()) {
-      masks.push_back(&mask);
-    }
-  }
-  if (masks.empty()) {
-    return nullptr;
-  }
-  absl::c_sort(masks, [](const auto* a, const auto* b) {
-    return a->file_id < b->file_id;
-  });
-  auto remove =
-    std::make_shared<SearchRemovePrefixFilter>(term_dict::kPKFieldId);
-  for (const auto* mask : masks) {
-    remove->AddFileRows(
-      primary_key::PkFilePrefix(mask->file_id),
-      mask->dv.empty() ? MakeRowsCursor(mask->rows) : MakeDvCursor(mask->dv));
-  }
-  return remove;
 }
 
 // Old manifest minus dying files, plus fresh ids for the scans: a scan
@@ -810,50 +730,32 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
               Observe& observe, const search::FileManifest& manifest,
               search::InvertedIndexStorage& storage) {
   constexpr bool kIceberg = std::is_same_v<Observe, IcebergObserve>;
-  std::vector<std::string> eq_pks;
+  std::vector<std::pair<uint64_t, int64_t>> eq_rows;
   if constexpr (kIceberg) {
     // Kind 3 first: a group with no road demotes its covered files into
     // kind 1's input.
     if (!observe.eq_covered.empty() &&
-        !RunEqualityRemoves(context, conn_ctx, target, src, observe, eq_pks)) {
+        !RunEqualityRemoves(context, conn_ctx, target, src, observe, eq_rows)) {
       DemoteEqCoveredToRescan(src, files, observe);
     }
   }
   uint64_t file_base = 0;
   auto manifest_next = BuildNextManifest(manifest, files, file_base);
-  auto file_removes = BuildDeletedFilesRemove(files.del_files);
-  std::shared_ptr<SearchRemovePrefixFilter> mask_removes;
+  std::vector<IcebergObserve::DeleteMask> masks;
   if constexpr (kIceberg) {
-    mask_removes = BuildMaskRemove(observe.del_masks);
+    masks = std::move(observe.del_masks);
   }
 
-  // The removes commit first as their own transaction; the pass's docs land
-  // above them (the pass transactions pull domain ticks). A crash between
-  // the two loses the removed rows until the next tick: the manifest
-  // version only moves at the end, so the tick re-runs the delta.
-  if (file_removes || mask_removes || !eq_pks.empty()) {
-    auto trx = storage.GetTransaction();
-    if (file_removes) {
-      trx.Remove(std::move(file_removes));
-    }
-    if (mask_removes) {
-      trx.Remove(std::move(mask_removes));
-    }
-    if (!eq_pks.empty()) {
-      SearchSinkDeleteBaseImpl remover{trx};
-      remover.InitImpl(eq_pks.size());
-      for (const auto& pk : eq_pks) {
-        remover.DeleteRowImpl(pk);
-      }
-      remover.FinishImpl();
-    }
-    trx.RegisterFlush();
-    if (!trx.Commit()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_OUT_OF_MEMORY),
-        ERR_MSG("REINDEX delta of \"", target.name,
-                "\": failed to commit the removes: out of memory"));
-    }
+  // The removes commit first as their own transaction, so the pass's docs land
+  // above them. A crash between the two loses the removed rows until the next
+  // tick: the manifest version only moves at the end, so the tick re-runs the
+  // delta.
+  if (auto removal = ResolveRemoves(storage.GetInvertedIndexSnapshot()->reader,
+                                    std::move(files.del_files),
+                                    std::move(masks), std::move(eq_rows));
+      !removal->groups.empty()) {
+    SDB_PARK_ONCE_ON_FAILURE("reindex_delta_removes_resolved");
+    storage.CommitRemoval(std::move(removal));
   }
 
   if (files.scan.empty()) {
@@ -924,8 +826,10 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
     return {ReindexAction::UpToDate, files.added, files.changed, files.removed};
   }
   // Delta needs the view's support (recorded at fast-path resolution) and
-  // pk terms (term-less indexes take the rebuild road).
-  if (src.fast_path.supports_delta && target.index->Config()->pk.index_term) {
+  // the stored row keys its removals are resolved from (an index without them
+  // takes the rebuild road).
+  if (src.fast_path.supports_delta &&
+      target.index->Config()->pk.column == catalog::PkColumnKind::Has) {
     RunDelta(context, conn_ctx, target, src, files, observe, manifest, storage);
     return {ReindexAction::Delta, files.added, files.changed, files.removed,
             static_cast<int64_t>(files.scan.size()) - files.added};

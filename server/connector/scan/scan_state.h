@@ -461,12 +461,12 @@ irs::detail::TableFilter* BeginColumnVerify(const irs::SubReader& seg,
 
 void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
                          duckdb::Vector* scores, duckdb::DataChunk& output);
-inline int64_t DocAddress(uint32_t seg, irs::doc_id_t doc) noexcept {
-  return static_cast<int64_t>((uint64_t{seg} << 32) | doc);
-}
-void WriteDocAddresses(const ScanGlobalState& g, uint32_t seg,
+void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
                        std::span<const irs::doc_id_t> docs,
                        duckdb::DataChunk& output);
+void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
+                       irs::doc_id_t first, const duckdb::SelectionVector* sel,
+                       duckdb::idx_t count, duckdb::DataChunk& output);
 void WriteChunkOffsets(FetchLocalState& f, const ScanGlobalState& g,
                        uint32_t seg, std::span<const irs::doc_id_t> docs,
                        duckdb::DataChunk& output);

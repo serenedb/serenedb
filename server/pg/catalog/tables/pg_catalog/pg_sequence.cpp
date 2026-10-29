@@ -62,9 +62,7 @@ class PgSequence final : public SystemTableScan<kPgSequenceSql> {
     Col<"seqcycle">([](const auto& row) { return row.Data().cycle; }));
 
   void Row(duckdb::SequenceCatalogEntry& sequence) {
-    if (!NumbersRows(sequence)) {
-      Emit<kSequence>({sequence, {}});
-    }
+    Emit<kSequence>({sequence, {}});
   }
 };
 

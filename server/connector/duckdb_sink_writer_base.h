@@ -32,11 +32,6 @@
 #include "connector/column_id.h"
 #include "connector/index_expression.hpp"
 
-namespace irs {
-
-struct CommitOnFlush;
-
-}  // namespace irs
 namespace sdb::connector {
 
 struct ColumnDescriptor {
@@ -57,14 +52,13 @@ struct ExpressionDescriptor {
 };
 
 // Index sink used by CREATE INDEX and store-index maintenance sessions:
-// one virtual dispatch per column batch / per deleted row.
+// one virtual dispatch per column batch.
 class DuckDBSinkIndexWriter {
  public:
   DuckDBSinkIndexWriter() = default;
   virtual ~DuckDBSinkIndexWriter() = default;
 
-  virtual void Init(duckdb::idx_t batch_size, const PkChunk& pk,
-                    irs::CommitOnFlush* commit_on_flush = nullptr) {}
+  virtual void Init(duckdb::idx_t batch_size, const PkChunk& pk) = 0;
 
   virtual void Finish() = 0;
   virtual void Abort() = 0;
@@ -78,10 +72,6 @@ class DuckDBSinkIndexWriter {
                                 const duckdb::Vector& /*vec*/,
                                 duckdb::idx_t /*count*/) {
     return false;
-  }
-
-  virtual void DeleteRow(std::string_view row_key) {
-    THROW_SQL_ERROR(ERR_MSG("DeleteRow call not implemented"));
   }
 };
 

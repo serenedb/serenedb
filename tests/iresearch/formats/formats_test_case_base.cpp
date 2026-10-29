@@ -45,7 +45,6 @@
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -118,11 +117,8 @@ void FormatTestCase::AssertNoDirectoryArtifacts(
   ASSERT_TRUE(index_files.empty());
 }
 
-auto MakeByTerm(irs::field_id id, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = id;
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
+tests::Terms MakeByTerm(irs::field_id id, std::string_view value) {
+  return {id, {std::string{value}}};
 }
 
 TEST_P(FormatTestCase, directory_artifact_cleaner) {
@@ -191,7 +187,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete record from first segment (creating new index_meta file + doc_mask
     // file, remove old)
     {
-      tests::Remove(*writer, *query_doc1);
+      tests::Remove(*writer, query_doc1);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -203,7 +199,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete all record from first segment (creating new index_meta file,
     // remove old meta + unused segment)
     {
-      tests::Remove(*writer, *query_doc2);
+      tests::Remove(*writer, query_doc2);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -215,7 +211,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete all records from second segment (creating new index_meta file,
     // remove old meta + unused segment)
     {
-      tests::Remove(*writer, *query_doc2);
+      tests::Remove(*writer, query_doc2);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -268,7 +264,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
 
     // delete record from first segment (creating new doc_mask file)
     {
-      tests::Remove(*writer, *query_doc1);
+      tests::Remove(*writer, query_doc1);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -311,7 +307,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete record from first segment (creating new doc_mask file, not-remove
     // old)
     {
-      tests::Remove(*writer, *(query_doc2));
+      tests::Remove(*writer, query_doc2);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -323,7 +319,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete all record from first segment (creating new index_meta file,
     // remove old meta but leave first segment)
     {
-      tests::Remove(*writer, *(query_doc3));
+      tests::Remove(*writer, query_doc3);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -335,7 +331,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete all records from second segment (creating new index_meta file,
     // remove old meta + unused segment)
     {
-      tests::Remove(*writer, *(query_doc4));
+      tests::Remove(*writer, query_doc4);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -386,7 +382,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      tests::Remove(*writer, *(query_doc1));
+      tests::Remove(*writer, query_doc1);
       writer->RefreshCommit();  // remove first segment
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),

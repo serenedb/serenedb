@@ -1,28 +1,5 @@
 control substitution on
 
-skipif serenedb
-query
-SELECT '(1,2)'::point AS a, ' ( 1.5 , -2 ) '::point AS b, '3,4'::point AS c, point '(-0, 1e20)' AS d,
-       point '(Infinity,-inf)' AS e, point '(NaN, 0.0001)' AS f, point '(1e-5, 123456789012345678)' AS g,
-       point '(+1.5e3, -.25)' AS h;
-----
-a	b	c	d	e	f	g	h
-(1,2)	(1.5,-2)	(3,4)	(-0,1e+20)	(Infinity,-Infinity)	(NaN,0.0001)	(1e-05,1.2345678901234568e+17)	(1500,-0.25)
-
-
-skipif pg-wire-extended
-onlyif serenedb
-query
-SELECT '(1,2)'::point AS a, ' ( 1.5 , -2 ) '::point AS b, '3,4'::point AS c, point '(-0, 1e20)' AS d,
-       point '(Infinity,-inf)' AS e, point '(NaN, 0.0001)' AS f, point '(1e-5, 123456789012345678)' AS g,
-       point '(+1.5e3, -.25)' AS h;
-----
-a	b	c	d	e	f	g	h
-(1,2)	(1.5,-2)	(3,4)	(-0,1e+20)	(Infinity,-Infinity)	(NaN,1e-04)	(1e-05,123456789012345680)	(1500,-0.25)
-
-
-skipif pg-wire-simple
-onlyif serenedb
 query
 SELECT '(1,2)'::point AS a, ' ( 1.5 , -2 ) '::point AS b, '3,4'::point AS c, point '(-0, 1e20)' AS d,
        point '(Infinity,-inf)' AS e, point '(NaN, 0.0001)' AS f, point '(1e-5, 123456789012345678)' AS g,
@@ -247,22 +224,12 @@ message	detail	hint	sql_error_code
 invalid line specification: must be two distinct points	NULL	NULL	22P02
 
 
-skipif serenedb
 query
 SELECT (point(1::float8 / 3, 2::float8 / 3))::text AS a, (circle(point(0.1, 0.2), 1::float8 / 7))::text AS b,
        (box(point(1e20::float8 / 3, 0), point(0, 1)))::text AS c, (line '{1,3,7}')::text AS d;
 ----
 a	b	c	d
 (0.3333333333333333,0.6666666666666666)	<(0.1,0.2),0.14285714285714285>	(3.333333333333333e+19,1),(0,0)	{1,3,7}
-
-
-onlyif serenedb
-query
-SELECT (point(1::float8 / 3, 2::float8 / 3))::text AS a, (circle(point(0.1, 0.2), 1::float8 / 7))::text AS b,
-       (box(point(1e20::float8 / 3, 0), point(0, 1)))::text AS c, (line '{1,3,7}')::text AS d;
-----
-a	b	c	d
-(0.3333333333333333,0.6666666666666666)	<(0.1,0.2),0.14285714285714285>	(33333333333333331968,1),(0,0)	{1,3,7}
 
 
 statement ok

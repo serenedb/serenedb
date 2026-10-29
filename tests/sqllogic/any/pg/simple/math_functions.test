@@ -510,3 +510,29 @@ DROP TABLE random_normal_first;
 
 statement ok
 DROP TABLE random_normal_second;
+
+
+query
+SELECT 1e15::float8::text AS a, 999999999999999::float8::text AS b, 1234567890123456.7::float8::text AS c,
+       0.0001::float8::text AS d, 0.00009::float8::text AS e, (-1e15)::float8::text AS f, 1e16::float8::text AS g,
+       '-0'::float8::text AS h, 0.5::float8::text AS i, 'x' || 1e15::float8 AS j;
+----
+a	b	c	d	e	f	g	h	i	j
+1e+15	999999999999999	1.2345678901234568e+15	0.0001	9e-05	-1e+15	1e+16	-0	0.5	x1e+15
+
+
+query
+SELECT 1000000::float4::text AS a, 999999::float4::text AS b, 123456789::float4::text AS c,
+       1234567.5::float4::text AS d, 0.0001::float4::text AS e, 0.00009::float4::text AS f, 123456.5::float4::text AS g;
+----
+a	b	c	d	e	f	g
+1e+06	999999	1.2345679e+08	1.2345675e+06	0.0001	9e-05	123456.5
+
+
+skipif pg-wire-extended
+query
+SELECT 1e15::float8 AS a, 0.0001::float8 AS b, 1234567890123456.7::float8 AS c, 1000000::float4 AS d,
+       123456789::float4 AS e;
+----
+a	b	c	d	e
+1e+15	0.0001	1.2345678901234568e+15	1e+06	1.2345679e+08

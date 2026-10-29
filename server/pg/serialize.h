@@ -107,6 +107,8 @@ struct SerializationContext {
 
 inline constexpr size_t kMaxMessageSize = std::numeric_limits<int32_t>::max();
 
+inline constexpr size_t kIntStrMaxLen = 22;
+
 [[noreturn]] void ThrowMessageTooLarge();
 
 IRS_FORCE_INLINE inline void CheckMessageSize(size_t size) {

@@ -80,7 +80,6 @@
 #include "pg/types/tid.h"
 #include "pg/types/xml.h"
 #include "query/config.h"
-#include "server/utils/dtoa.h"
 
 namespace sdb::pg {
 namespace {
@@ -733,7 +732,7 @@ struct IntBinCore {
 template<typename Read>
 struct IntTextCore {
   using Value = Read;
-  static constexpr uint32_t kMaxBytes = utils::kIntStrMaxLen;
+  static constexpr uint32_t kMaxBytes = kIntStrMaxLen;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
     char* buf = reinterpret_cast<char*>(dst);
     char* end = absl::numbers_internal::FastIntToBuffer(v, buf);
@@ -805,7 +804,7 @@ struct FloatBinCore {
 template<typename T, bool Precise>
 struct FloatTextCore {
   using Value = T;
-  static constexpr uint32_t kMaxBytes = utils::kNumberStrMaxLen;
+  static constexpr uint32_t kMaxBytes = kNumberStrMaxLen;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, SerializationContext& ctx,
                                         Value v) {
     return WriteFloat<Precise>(v, ctx.extra_float_digits,

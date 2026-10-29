@@ -220,6 +220,54 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
                       [this](doc_id_t prev) IRS_FORCE_INLINE { Load(prev); });
   }
 
+  uint32_t Landings(const doc_id_t* in, uint32_t n, uint32_t* blocks) {
+    auto& walk = this->_walk;
+    if (!walk.Armed() || walk.Pending() || n < 2 || in[n - 1] <= _last ||
+        (in[n - 1] - in[0]) / (n - 1) <= _last - _cursor.base) {
+      return 0;
+    }
+    const auto& index = walk.Index();
+    const auto size = index.Size();
+    auto block = walk.NextBlock(_left_in_list);
+    doc_id_t upper = _last;
+    uint32_t landings = 0;
+    for (uint32_t i = 0; i != n && landings != kBlock; ++i) {
+      if (in[i] <= upper) {
+        continue;
+      }
+      const auto next = block;
+      if (block == size || index.Last(block) < in[i]) {
+        block = index.Find(block, in[i]);
+      }
+      if (block == size) {
+        break;
+      }
+      blocks[landings++] = block;
+      if constexpr (InputType::kVolatileAlways) {
+        if (block != next) {
+          const auto* const at = this->In().At(walk.BlockStart(block));
+          __builtin_prefetch(at, 0, 2);
+          __builtin_prefetch(at + ABSL_CACHELINE_SIZE, 0, 2);
+        }
+      }
+      upper = index.Last(block);
+      ++block;
+    }
+    return landings;
+  }
+
+  void LandOn(uint32_t block) {
+    auto& walk = this->_walk;
+    if (block == walk.NextBlock(_left_in_list)) {
+      Load(_last);
+      return;
+    }
+    _left_in_list = walk.MoveTo(block);
+    const auto landing = walk.Landing();
+    this->In().Seek(landing.doc_ptr);
+    Load(landing.doc);
+  }
+
   IRS_FORCE_INLINE void Load(doc_id_t prev) {
     const auto read = ReadLeafFill(prev);
     _kind = read.leaf.kind;
@@ -410,10 +458,15 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   template<bool Keep>
   IRS_FORCE_INLINE uint32_t Sift(const doc_id_t* in, uint32_t n,
                                  doc_id_t* out) {
+    uint32_t blocks[kBlock];
+    const auto landings = n != 0 ? Landings(in, n, blocks) : 0;
+    uint32_t landed = 0;
     uint32_t kept = 0;
     uint32_t i = 0;
     while (i != n) {
-      if (!Reach(in[i])) [[unlikely]] {
+      if (in[i] > _last && landed != landings) {
+        LandOn(blocks[landed++]);
+      } else if (!Reach(in[i])) [[unlikely]] {
         if constexpr (!Keep) {
           for (; i != n; ++i) {
             out[kept++] = in[i];

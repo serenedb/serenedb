@@ -394,6 +394,18 @@ class BlockCursor {
     return _block == 0 ? doc_limits::invalid() : _index.Last(_block - 1);
   }
 
+  bool Pending() const noexcept { return _pending; }
+
+  uint32_t NextBlock(uint32_t left) const noexcept {
+    SDB_ASSERT(left <= _docs_count);
+    return (_docs_count - left) / doc_limits::kBlockSize;
+  }
+
+  uint64_t BlockStart(uint32_t block) const noexcept {
+    SDB_ASSERT(!_pending && block < _index.Size());
+    return _doc_start + (block == 0 ? 0 : _index.End(block - 1));
+  }
+
   const BlockIndex& Index() const noexcept { return _index; }
 
   template<typename Input>

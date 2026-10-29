@@ -471,6 +471,25 @@ class PostingLeaf {
   template<typename Read>
   IRS_NO_INLINE bool SeekToLeaf(doc_id_t target, Read&& read) {
     static_assert(Shape.cursor);
+    if (_walk.Armed() && !_walk.Pending()) {
+      if (_left_in_list == 0) [[unlikely]] {
+        return false;
+      }
+      const auto& index = _walk.Index();
+      const auto next = _walk.NextBlock(_left_in_list);
+      if (index.Last(next) >= target) {
+        read(_last);
+        return true;
+      }
+      _left_in_list = _walk.MoveTo(index.Find(next + 1, target));
+      if (_left_in_list == 0) [[unlikely]] {
+        return false;
+      }
+      const auto landing = _walk.Landing();
+      In().Seek(landing.doc_ptr);
+      read(landing.doc);
+      return true;
+    }
     const auto span = _last - _cursor.base;
     const bool avoid_seek = target - _last <= span ||
                             target <= _walk.UpperBound() ||

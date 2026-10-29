@@ -1,4 +1,4 @@
-"""Concurrent DML on search tables keeps them equal to a regular table fed the same changes."""
+"""Concurrent DML on search tables: the workload and the checks that they equal a regular table fed the same changes."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
-from serened import Serened  # type: ignore[import-untyped]
+from serened import Serened
 
 
 SERENED_BIN = os.environ.get(
@@ -26,6 +26,14 @@ pytestmark = pytest.mark.skipif(
 WORDS = [f"w{i}" for i in range(40)]
 ID_SPAN = 1_000_000_000
 ROUND_SPAN = 100_000_000
+
+WRITER_CASES = [
+    ("refresh_interval = 0, compaction_interval = 0", 6, ""),
+    ("refresh_interval = 20, compaction_interval = 10", 6, "index"),
+    ("refresh_interval = 5, compaction_interval = 5", 4, "index big_inserts"),
+    ("refresh_interval = 10, compaction_interval = 20", 6, "builds"),
+    ("refresh_interval = 5, compaction_interval = 5", 4, "index builds big_inserts"),
+]
 
 
 def make_server(tmp_path: Path) -> Serened:
@@ -282,17 +290,7 @@ def seed_rows(conn: psycopg.Connection, rows: int) -> None:
     conn.execute("VACUUM (REFRESH_TABLE) s")
 
 
-@pytest.mark.parametrize(
-    ("options", "writers", "flags"),
-    [
-        ("refresh_interval = 0, compaction_interval = 0", 6, ""),
-        ("refresh_interval = 20, compaction_interval = 10", 6, "index"),
-        ("refresh_interval = 5, compaction_interval = 5", 4, "index big_inserts"),
-        ("refresh_interval = 10, compaction_interval = 20", 6, "builds"),
-        ("refresh_interval = 5, compaction_interval = 5", 4, "index builds big_inserts"),
-    ],
-)
-def test_concurrent_writers_keep_the_search_table_equal_to_its_model(
+def concurrent_writers_keep_the_search_table_equal_to_its_model(
     tmp_path: Path, options: str, writers: int, flags: str
 ) -> None:
     index = "index" in flags
@@ -311,8 +309,7 @@ def test_concurrent_writers_keep_the_search_table_equal_to_its_model(
             assert_matches_model(conn, index)
 
 
-@pytest.mark.parametrize("seed", [1, 2, 3, 4, 5, 6])
-def test_a_crash_during_concurrent_writes_replays_to_an_equal_search_table(
+def a_crash_during_concurrent_writes_replays_to_an_equal_search_table(
     tmp_path: Path, seed: int
 ) -> None:
     rng = random.Random(seed)

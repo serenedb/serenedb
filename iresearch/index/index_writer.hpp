@@ -397,7 +397,8 @@ class IndexWriter : private util::Noncopyable {
     while (!slots.empty()) {
       const auto* slot = slots.back();
       slots.pop_back();
-      if (slot == nullptr || slot->maps.empty() || !seen.insert(slot).second) {
+      SDB_ASSERT(slot != nullptr);
+      if (slot->maps.empty() || !seen.insert(slot).second) {
         continue;
       }
       visit(slot->maps);

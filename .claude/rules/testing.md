@@ -53,6 +53,6 @@ scripts/ci/test.py --suite sqllogic --server 127.0.0.1:<port> --test 'sqllogic:*
 
 ## When you change ...
 
-- **A python driver test file:** add it to the list in `tests/drivers/python/run.sh`, or nothing runs it. A test that arms fault points carries `@pytest.mark.faults` (a test that only adapts takes the `faults` fixture): `test.py` passes the build's `SDB_FAULT_INJECTION`, and without it the marked tests skip, without asking the server.
+- **A python driver test file:** add it to the list in `tests/drivers/python/run.sh`, or nothing runs it. CI gives a file it has no timings for 180 s in `dev` and `perf`, so a new file stays well under that; split a longer one and share its helpers through a module beside it. A test that arms fault points carries `@pytest.mark.faults` (a test that only adapts takes the `faults` fixture): `test.py` passes the build's `SDB_FAULT_INJECTION`, and without it the marked tests skip, without asking the server.
 - **A driver's dependency manifest:** the CI image installs from it ([ci.md](ci.md), "CI images").
 - **The OpenTelemetry schema** (`resources/otel/otel_schema.sql`): `scripts/otel/schema.py generate`; its conformance fixtures: `scripts/otel/fixtures.py generate`.

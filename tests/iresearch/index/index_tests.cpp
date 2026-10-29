@@ -3769,6 +3769,43 @@ TEST_P(IndexTestCase, ReadDocs) {
   }
 }
 
+TEST_P(IndexTestCase, term_removal_passes_segments_without_keys) {
+  const auto factory = [](bool keyed) {
+    return [keyed](tests::Document& doc, const std::string& name,
+                   const tests::JsonDocGenerator::JsonValue& data) {
+      if (data.is_string()) {
+        auto field = std::make_shared<tests::StringField>(name, data.str);
+        field->id = tests::FieldIdFor(name);
+        doc.insert(std::move(field));
+      }
+      if (keyed) {
+        AddNameKey(doc, name, data);
+      }
+    };
+  };
+  tests::JsonDocGenerator keyed(resource("simple_sequential.json"),
+                                factory(true));
+  tests::JsonDocGenerator plain(resource("simple_sequential.json"),
+                                factory(false));
+  const auto* doc1 = keyed.next();
+  plain.next();
+  const auto* doc2 = plain.next();
+
+  auto writer = open_writer(irs::kOmCreate, tests::CsDefaultWriterOptions());
+  const auto removal = InsertWithNameRemovable(*writer, *doc1);
+  ASSERT_TRUE(writer->RefreshCommit());
+  ASSERT_TRUE(InsertWithName(*writer, *doc2));
+  tests::Remove(*writer, Merged({removal, NameRemoval({"Z"})}));
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  const auto reader = writer->GetSnapshot();
+  ASSERT_EQ(1, reader.live_docs_count());
+  for (const auto& segment : reader) {
+    EXPECT_EQ(segment.live_docs_count() != 0,
+              segment.field(tests::FieldIdFor(kNameKey)) == nullptr);
+  }
+}
+
 TEST_P(IndexTestCase, doc_removal) {
   tests::JsonDocGenerator gen(
     resource("simple_sequential.json"),

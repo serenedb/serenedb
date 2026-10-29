@@ -55,16 +55,16 @@ constexpr int64_t kMinRow = std::numeric_limits<int64_t>::min();
 constexpr int64_t kMaxRow = std::numeric_limits<int64_t>::max();
 
 bool AnyIn(const DeadRows* rows, int64_t first, int64_t last) {
-  return rows && last >= 0 &&
+  SDB_ASSERT(0 <= first && first <= last);
+  return rows &&
          roaring::api::roaring64_bitmap_intersect_with_range(
-           rows, static_cast<uint64_t>(std::max<int64_t>(first, 0)),
-           static_cast<uint64_t>(last) + 1);
+           rows, static_cast<uint64_t>(first), static_cast<uint64_t>(last) + 1);
 }
 
 bool ContainsIn(const DeadRows* rows, int64_t row) {
-  return rows && row >= 0 &&
-         roaring::api::roaring64_bitmap_contains(rows,
-                                                 static_cast<uint64_t>(row));
+  SDB_ASSERT(row >= 0);
+  return rows && roaring::api::roaring64_bitmap_contains(
+                   rows, static_cast<uint64_t>(row));
 }
 
 bool AnyIn(const DeletionVector* dv, int64_t first, int64_t last) {
@@ -119,15 +119,15 @@ struct FileDeletes {
   bool Empty() const { return !whole && !mask && eq_rows.empty(); }
 
   bool Any(int64_t first, int64_t last) const {
-    return whole ||
-           (mask && (AnyIn(mask->rows.get(), first, last) ||
+    SDB_ASSERT(!whole);
+    return (mask && (AnyIn(mask->rows.get(), first, last) ||
                      AnyIn(mask->dv.get(), first, last))) ||
            AnyIn(eq_rows, first, last);
   }
 
   bool Contains(int64_t row) const {
-    return whole ||
-           (mask && (ContainsIn(mask->rows.get(), row) ||
+    SDB_ASSERT(!whole);
+    return (mask && (ContainsIn(mask->rows.get(), row) ||
                      ContainsIn(mask->dv.get(), row))) ||
            ContainsIn(eq_rows, row);
   }

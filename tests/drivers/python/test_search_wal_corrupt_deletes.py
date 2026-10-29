@@ -73,7 +73,8 @@ def test_corrupt_delete_refuses_replay(
             for fault in faults:
                 conn.execute(f"SET sdb_faults = '{fault}'")
             assert conn.execute(statement).rowcount == 100
-        server.kill()
+            conn.execute("SET debug_checkpoint_abort = 'before_header'")
+        assert server.graceful_stop() == 0
 
         with pytest.raises(RuntimeError, match="exited"):
             server.start()

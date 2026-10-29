@@ -561,6 +561,23 @@ TEST(ReplayRemovalTest, ASourceSplitAcrossTargetsKeepsEveryWindow) {
   EXPECT_TRUE(removal->groups[1].docs.Contains(5));
 }
 
+TEST(ReplayRemovalTest, AWindowWithoutRemovedDocsGetsNoGroup) {
+  const auto first = IdOf(OneRowSegments()[1]);
+  const auto second = IdOf(OneRowSegments()[4]);
+  MapsBySource maps;
+  maps.emplace(
+    kGone,
+    std::vector<irs::DocMap>{
+      {.source = kGone, .target = first, .rank_end = 5},
+      {.source = kGone, .target = second, .rank_begin = 5, .rank_end = 10}});
+  const auto removal =
+    search::ReplayRemoval(Rows({{kGone, 7}}), OneRowSegments(), maps);
+  ASSERT_EQ(1, removal->groups.size());
+  EXPECT_EQ(second, removal->groups[0].segment);
+  EXPECT_EQ(1, removal->groups[0].docs.Count());
+  EXPECT_TRUE(removal->groups[0].docs.Contains(2));
+}
+
 TEST_F(SearchRowRemovalTest, CompactionAfterRemovalKeepsRowsRemoved) {
   InsertRange(0, 3000);
   InsertRange(3000, 3000);

@@ -660,10 +660,6 @@ void SearchTable::ReplayRowPositionMaps(
   if (!session) {
     return;
   }
-  if (maps.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                    ERR_MSG("Malformed doc maps: the entry is empty"));
-  }
   auto& doc_maps = session->doc_maps[source];
   doc_maps.clear();
   doc_maps.reserve(maps.size());

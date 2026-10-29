@@ -266,6 +266,8 @@ TEST_F(ReindexRemovesTest, DeletionVectorsNameTheirRowsBucketByBucket) {
               {segment, DocAt(1)}, {segment, DocAt(4)}, {segment, DocAt(7)}}),
             Resolve({}, {{.file_id = 1,
                           .dv = DeletionVectorOf({{1, high}, {0, low}})}}));
+  EXPECT_EQ((std::vector<Doc>{{segment, DocAt(1)}, {segment, DocAt(4)}}),
+            Resolve({}, {{.file_id = 1, .dv = DeletionVectorOf({{0, low}})}}));
 }
 
 TEST_F(ReindexRemovesTest, DeletedFilesAndChangedMasksResolveTogether) {
@@ -338,6 +340,7 @@ TEST_F(ReindexRemovesTest, EveryKindOfRemoveOfOneFileUnites) {
   EXPECT_EQ(DocsOf(segment, {2, 3, 7}), Resolve({}, masks, {{1, 3}, {1, 2}}));
   EXPECT_EQ(DocsOf(segment, {3, 5}),
             Resolve({}, {{.file_id = 1, .rows = DeadRowsOf({5})}}, {{1, 3}}));
+  EXPECT_EQ(DocsOf(segment, {8}), Resolve({}, {}, {{1, 8}}));
   EXPECT_EQ(Resolve({1}), Resolve({1}, masks, {{1, 3}}));
 }
 

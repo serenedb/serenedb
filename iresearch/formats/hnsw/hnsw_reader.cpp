@@ -159,9 +159,11 @@ QueryBuilder::ptr HnswIndex::PrepareSearch(const SubReader& segment,
     return QueryBuilder::Empty();
   }
   QueryBuilder::ptr index_only;
-  if (opts.dual && limits.ef != 0 &&
-      !PrepareInnerFilter(opts.index_only, segment, ctx, index_only)) {
-    return QueryBuilder::Empty();
+  if (opts.dual) {
+    SDB_ASSERT(limits.ef != 0);
+    const bool prepared =
+      PrepareInnerFilter(opts.index_only, segment, ctx, index_only);
+    SDB_ASSERT(prepared);
   }
   auto built = memory::make_tracked<HnswQuery>(
     ctx.memory, segment, std::move(data), opts, _meta.header.record_size,

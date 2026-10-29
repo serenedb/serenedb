@@ -73,6 +73,10 @@ PREPARE hd_prepared AS SELECT pk FROM hd WHERE cat = $2 AND num >= $3
   ORDER BY emb <-> $1::FLOAT[8] LIMIT 4;
 
 statement ok
+PREPARE hd_text AS SELECT pk FROM hd WHERE cat = $1 AND tag @@ 'even'
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+
+statement ok
 SET sdb_hnsw_column_filter = 'read';
 
 query
@@ -143,6 +147,15 @@ pk
 1493
 1513
 1523
+
+query
+EXECUTE hd_text(4);
+----
+pk
+1504
+1494
+1514
+1484
 
 statement ok
 SET sdb_hnsw_column_filter = 'fold';

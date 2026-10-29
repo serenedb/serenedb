@@ -738,18 +738,15 @@ DeferredBuild BuildDeferredFilter(
   if (!out.dual_filters.empty() && !index_only.empty()) {
     auto rest = std::make_unique<irs::BooleanFilter>();
     FilterScorers rest_scorers;
-    if (MakeSearchFilter(*rest, index_only, getter, context, expr_getter,
-                         &rest_scorers)
-          .ok()) {
-      irs::Filter::ptr rest_filter = std::move(rest);
-      EnsureIncludeSides(*rest_filter);
-      irs::Optimize(rest_filter, {.scored = false,
-                                  .analyzed_fields = ctx.analyzed_fields,
-                                  .null_markers = &null_markers});
-      out.index_only = std::move(rest_filter);
-    } else {
-      out.dual_filters.clear();
-    }
+    const auto rest_status = MakeSearchFilter(
+      *rest, index_only, getter, context, expr_getter, &rest_scorers);
+    SDB_ENSURE(rest_status.ok(), rest_status.message());
+    irs::Filter::ptr rest_filter = std::move(rest);
+    EnsureIncludeSides(*rest_filter);
+    irs::Optimize(rest_filter, {.scored = false,
+                                .analyzed_fields = ctx.analyzed_fields,
+                                .null_markers = &null_markers});
+    out.index_only = std::move(rest_filter);
   }
   return out;
 }

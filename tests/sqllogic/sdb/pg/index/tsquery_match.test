@@ -2903,17 +2903,17 @@ query
 EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '^[a-z]+[0-9]+$';
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────────╮
-│ Index: tsq_rx_idx               │
-│ Lookup: table                   │
-│ Index Filter:                   │
-│ ╭─ Automaton ─────────────────╮ │
-│ │ Field: msg(string)          │ │
-│ │ Pattern: (?:^[a-z]+[0-9]+$) │ │
-│ ╰─────────────────────────────╯ │
-│ Projections: id                 │
-│ ~1 row                          │
-╰─────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: tsq_rx_idx           │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Automaton ─────────────╮ │
+│ │ Field: msg(string)      │ │
+│ │ Pattern: ^[a-z]+[0-9]+$ │ │
+│ ╰─────────────────────────╯ │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 query
 SELECT id FROM tsq_rx_idx WHERE msg ~ '^[a-z]+' ORDER BY id;

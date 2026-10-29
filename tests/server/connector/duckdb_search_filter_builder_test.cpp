@@ -6587,11 +6587,11 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_TextAnchorsSkipTheirSide) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   const std::pair<std::string_view, std::string_view> cases[] = {
-    {"^[a-z]+[0-9]+$", "(?:^[a-z]+[0-9]+$)"},
+    {"^[a-z]+[0-9]+$", "^[a-z]+[0-9]+$"},
     {"^[a-z]+", "(?:^[a-z]+)(?s:.*)"},
     {"[0-9]+$", "(?s:.*)(?:[0-9]+$)"},
     {"\\A[a-z]+", "(?:\\A[a-z]+)(?s:.*)"},
-    {"(^[a-z])[0-9]+\\z", "(?:(^[a-z])[0-9]+\\z)"},
+    {"(^[a-z])[0-9]+\\z", "(^[a-z])[0-9]+\\z"},
     {"[a-z]([0-9]+$)", "(?s:.*)(?:[a-z]([0-9]+$))"},
     {"(?m)^[a-z]+", "(?s:.*)(?:(?m)^[a-z]+)(?s:.*)"},
     {"^[a-z]|[0-9]+", "(?s:.*)(?:^[a-z]|[0-9]+)(?s:.*)"},

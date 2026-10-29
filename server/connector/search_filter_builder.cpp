@@ -24,7 +24,6 @@
 #include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-#include <re2/re2.h>
 #include <re2/regexp.h>
 
 #include <duckdb/common/extension_type_info.hpp>
@@ -1349,33 +1348,49 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSEndsWithLike(
                 duckdb::Value(std::move(pattern)))));
 }
 
-template<bool Start>
-bool AnchoredAtText(re2::Regexp* re) {
+bool AnchoredAtText(re2::Regexp* re, bool start) {
   while (re->op() == re2::kRegexpCapture || re->op() == re2::kRegexpConcat) {
     re =
-      re->sub()[Start || re->op() == re2::kRegexpCapture ? 0 : re->nsub() - 1];
+      re->sub()[start || re->op() == re2::kRegexpCapture ? 0 : re->nsub() - 1];
   }
-  return re->op() == (Start ? re2::kRegexpBeginText : re2::kRegexpEndText);
+  return re->op() == (start ? re2::kRegexpBeginText : re2::kRegexpEndText);
+}
+
+re2::Regexp* ParseRegexp(std::string_view pattern, re2::RegexpStatus& status) {
+  return re2::Regexp::Parse(pattern, re2::Regexp::LikePerl, &status);
+}
+
+std::string TSRegexpPattern(std::string_view literal) {
+  re2::RegexpStatus status;
+  auto* re = ParseRegexp(literal, status);
+  if (!re) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(status.Text()));
+  }
+  const bool at_start = AnchoredAtText(re, true);
+  const bool at_end = AnchoredAtText(re, false);
+  re->Decref();
+  if (at_start && at_end) {
+    return std::string{literal};
+  }
+  const std::string_view head = at_start ? "(?:" : "(?s:.*)(?:";
+  const std::string_view tail = at_end ? ")" : ")(?s:.*)";
+  auto pattern = absl::StrCat(head, literal, tail);
+  if (literal.contains("\\Q")) {
+    re = ParseRegexp(pattern, status);
+    if (!re) {
+      return absl::StrCat(head, literal, "\\E", tail);
+    }
+    re->Decref();
+  }
+  return pattern;
 }
 
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSRegexp(
   std::string_view literal) {
-  const re2::RE2 parsed{literal, re2::RE2::Quiet};
-  if (!parsed.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(parsed.error()));
-  }
-  const std::string_view head =
-    AnchoredAtText<true>(parsed.Regexp()) ? "(?:" : "(?s:.*)(?:";
-  const std::string_view tail =
-    AnchoredAtText<false>(parsed.Regexp()) ? ")" : ")(?s:.*)";
-  auto pattern = absl::StrCat(head, literal, tail);
-  if (literal.contains("\\Q") && !re2::RE2{pattern, re2::RE2::Quiet}.ok()) {
-    pattern = absl::StrCat(head, literal, "\\E", tail);
-  }
   return MakeTSQueryCall(
     kTSQRegexp, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-                  duckdb::Value(std::move(pattern)))));
+                  duckdb::Value(TSRegexpPattern(literal)))));
 }
 
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(

@@ -6,7 +6,6 @@
       "paths": [
         "test/sql/attach_secret_name.test",
         "test/sql/authn_swap.test",
-        "test/sql/duckdb_databases.test",
         "test/sql/reconnects_ack_best_effort.test",
         "test/sql/self_stop.test",
         "test/sql/serve_canonical.test",
@@ -94,6 +93,12 @@
       "paths": [
         "test/sql/logging.test",
         "test/sql/self_connect.test"
+      ]
+    },
+    {
+      "reason": "serened answers COMMIT and ROLLBACK outside a transaction with a warning, as PostgreSQL does, so attach_transaction_finalize_error.test cannot make the client's COMMIT or ROLLBACK fail on the server by ending the server's transaction first.",
+      "paths": [
+        "test/sql/attach_transaction_finalize_error.test"
       ]
     },
     {

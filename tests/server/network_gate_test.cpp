@@ -21,9 +21,14 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <memory>
 #include <thread>
+#include <vector>
 #include <yaclib/coro/task.hpp>
 #include <yaclib/exe/inline.hpp>
+#include <yaclib/runtime/fair_thread_pool.hpp>
 
 #include "network/gate.h"
 
@@ -34,6 +39,25 @@ namespace {
 yaclib::Task<> Pass(network::Gate& gate, std::atomic<int>& passed) {
   co_await gate.Wait(yaclib::MakeInline());
   passed.fetch_add(1, std::memory_order_relaxed);
+  co_return {};
+}
+
+struct Channel {
+  network::Gate gate;
+  std::atomic<uint64_t> produced{0};
+  std::atomic<uint64_t> consumed{0};
+};
+
+yaclib::Task<> Consume(Channel& channel, yaclib::IExecutor& resume,
+                       uint64_t last) {
+  while (channel.consumed.load(std::memory_order_relaxed) < last) {
+    const auto produced = channel.produced.load(std::memory_order_acquire);
+    if (channel.consumed.load(std::memory_order_relaxed) < produced) {
+      channel.consumed.store(produced, std::memory_order_release);
+      continue;
+    }
+    co_await channel.gate.Wait(resume);
+  }
   co_return {};
 }
 
@@ -58,4 +82,40 @@ TEST(NetworkGate, AKickRacingAPendingKickFreesTheWaiterSafely) {
   }
   kicker.join();
   EXPECT_EQ(kRounds, passed.load(std::memory_order_relaxed));
+}
+
+TEST(NetworkGate, NoKickIsLostWhileTheWaiterResumesOnOtherThreads) {
+  constexpr uint64_t kItems = 50000;
+  constexpr int kChannels = 4;
+  auto pool = yaclib::MakeFairThreadPool(2 * kChannels);
+  std::vector<std::unique_ptr<Channel>> channels;
+  std::atomic<uint64_t> stalls{0};
+  std::vector<std::thread> producers;
+  for (int i = 0; i < kChannels; ++i) {
+    auto& channel = *channels.emplace_back(std::make_unique<Channel>());
+    Consume(channel, *pool, kItems).Detach(*pool);
+    producers.emplace_back([&channel, &stalls] {
+      for (uint64_t item = 1; item <= kItems; ++item) {
+        channel.produced.store(item, std::memory_order_release);
+        channel.gate.Kick();
+        auto deadline =
+          std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (channel.consumed.load(std::memory_order_acquire) < item) {
+          if (std::chrono::steady_clock::now() > deadline) {
+            stalls.fetch_add(1, std::memory_order_relaxed);
+            channel.gate.Kick();
+            deadline =
+              std::chrono::steady_clock::now() + std::chrono::seconds(10);
+          }
+          std::this_thread::yield();
+        }
+      }
+    });
+  }
+  for (auto& producer : producers) {
+    producer.join();
+  }
+  pool->Stop();
+  pool->Wait();
+  EXPECT_EQ(0u, stalls.load(std::memory_order_relaxed));
 }

@@ -1263,9 +1263,14 @@ struct RegText {
     }
     SDB_ASSERT(context.client);
     uint64_t oid = kInvalidOid;
-    context.client->RunFunctionInTransaction([&] {
+    const auto lookup = [&] {
       oid = *RegIn(MakeSession(context.client.get()), Kind, data, nullptr);
-    });
+    };
+    if constexpr (std::is_same_v<Sink, ValueSink>) {
+      context.client->RunFunctionInTransaction(lookup);
+    } else {
+      lookup();
+    }
     sink.Fixed(static_cast<int64_t>(oid));
     return true;
   }

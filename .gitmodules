@@ -199,3 +199,4 @@
 	path = third_party/cmocka
 	url = https://gitlab.com/cmocka/cmocka.git
 	shallow = true
+	update = none

@@ -528,8 +528,8 @@ sdb_add_module(ada)
 ## croaring
 ################################################################################
 
-set(ENABLE_ROARING_TESTS ${SDB_GTEST} CACHE BOOL "" FORCE)
-if(SDB_GTEST)
+if(SDB_GTEST AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmocka/CMakeLists.txt)
+    set(ENABLE_ROARING_TESTS ON CACHE BOOL "" FORCE)
     set(WITH_EXAMPLES OFF)
     sdb_add_module(cmocka EXCLUDE_FROM_ALL NO_WARNINGS)
     unset(WITH_EXAMPLES)
@@ -545,6 +545,8 @@ if(SDB_GTEST)
         VERSION ${cmocka_version}
         COMPATIBILITY SameMajorVersion
     )
+else()
+    set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)
 endif()
 set(ROARING_USE_CPM OFF CACHE BOOL "" FORCE)
 set(TEST_DATA_DIR tests/testdata/)

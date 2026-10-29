@@ -36,6 +36,10 @@ if [[ "$where" != none ]]; then
 fi
 output reused false
 
+if [[ " ${TARGETS[*]} " == *" croaring-tests "* ]]; then
+	git submodule update --init --checkout --depth 1 third_party/cmocka
+fi
+
 remote=()
 if [[ "$ARCH" == x86_64 && -n "${SDB_STORE_HOST:-}" ]]; then
 	remote=(-e "CCACHE_REMOTE_STORAGE=$SDB_STORE_HOST/ccache|layout=bazel")

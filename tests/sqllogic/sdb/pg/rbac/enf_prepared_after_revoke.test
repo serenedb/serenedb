@@ -1,0 +1,181 @@
+control substitution on
+
+statement ok
+DROP SERVER IF EXISTS epr_srv_${__DATABASE__};
+
+
+statement ok
+DETACH IF EXISTS epr_src_${__DATABASE__};
+
+
+statement ok
+DROP TABLE IF EXISTS epr_direct;
+
+
+statement ok
+DROP TABLE IF EXISTS epr_inherited;
+
+
+statement ok
+DROP ROLE IF EXISTS epr_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS epr_readers;
+
+
+statement ok
+CREATE ROLE epr_vedernikoff LOGIN PASSWORD 'epr_pw';
+
+
+statement ok
+CREATE ROLE epr_readers;
+
+
+statement ok
+GRANT epr_readers TO epr_vedernikoff;
+
+
+statement ok
+CREATE TABLE epr_direct (a integer);
+
+
+statement ok
+INSERT INTO epr_direct VALUES (1);
+
+
+statement ok
+CREATE TABLE epr_inherited (a integer);
+
+
+statement ok
+INSERT INTO epr_inherited VALUES (2);
+
+
+statement ok
+GRANT SELECT ON epr_direct TO epr_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON epr_inherited TO epr_readers;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/epr_src.duckdb' AS epr_src_${__DATABASE__};
+
+
+statement ok
+CREATE OR REPLACE TABLE epr_src_${__DATABASE__}.main.docs (id integer);
+
+
+statement ok
+INSERT INTO epr_src_${__DATABASE__}.main.docs VALUES (1), (2), (3);
+
+
+statement ok
+DETACH epr_src_${__DATABASE__};
+
+
+statement ok
+CREATE SERVER epr_srv_${__DATABASE__} FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${__TEST_DIR__}/epr_src.duckdb', read_only 'true');
+
+
+statement ok
+GRANT USAGE ON FOREIGN SERVER epr_srv_${__DATABASE__} TO epr_vedernikoff;
+
+
+connection c_epr user=epr_vedernikoff password=epr_pw
+statement ok
+PREPARE epr_direct_q AS SELECT a FROM epr_direct;
+
+
+connection c_epr user=epr_vedernikoff password=epr_pw
+statement ok
+PREPARE epr_inherited_q AS SELECT a FROM epr_inherited;
+
+
+connection c_epr user=epr_vedernikoff password=epr_pw
+statement ok
+PREPARE epr_server_q AS SELECT count(*) AS n FROM epr_srv_${__DATABASE__}.main.docs;
+
+
+connection c_epr user=epr_vedernikoff password=epr_pw
+query
+EXECUTE epr_direct_q;
+----
+a
+1
+
+
+connection c_epr user=epr_vedernikoff password=epr_pw
+query
+EXECUTE epr_inherited_q;
+----
+a
+2
+
+
+connection c_epr user=epr_vedernikoff password=epr_pw
+query
+EXECUTE epr_server_q;
+----
+n
+3
+
+
+statement ok
+REVOKE SELECT ON epr_direct FROM epr_vedernikoff;
+
+
+statement ok
+REVOKE epr_readers FROM epr_vedernikoff;
+
+
+statement ok
+REVOKE USAGE ON FOREIGN SERVER epr_srv_${__DATABASE__} FROM epr_vedernikoff;
+
+
+connection c_epr user=epr_vedernikoff password=epr_pw
+statement error
+EXECUTE epr_direct_q;
+----
+db error: ERROR: permission denied for table epr_direct
+
+
+connection c_epr user=epr_vedernikoff password=epr_pw
+statement error
+EXECUTE epr_inherited_q;
+----
+db error: ERROR: permission denied for table epr_inherited
+
+
+connection c_epr user=epr_vedernikoff password=epr_pw
+statement error
+EXECUTE epr_server_q;
+----
+db error: ERROR: permission denied for foreign server epr_srv_<slt:ignore>
+
+
+connection c_epr user=epr_vedernikoff password=epr_pw
+statement ok
+DEALLOCATE ALL;
+
+
+statement ok
+DROP SERVER epr_srv_${__DATABASE__};
+
+
+statement ok
+DROP TABLE epr_direct;
+
+
+statement ok
+DROP TABLE epr_inherited;
+
+
+statement ok
+DROP ROLE epr_vedernikoff;
+
+
+statement ok
+DROP ROLE epr_readers;

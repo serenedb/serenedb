@@ -143,6 +143,7 @@ add_executable(
     search/phrase_slop_matcher_fuzz.cpp
     search/phrase_slop_matcher_tests.cpp
     search/prefix_filter_test.cpp
+    search/pruned_conjunction_test.cpp
     search/range_filter_test.cpp
     search/raw_tf_test.cpp
     search/regexp_filter_test.cpp

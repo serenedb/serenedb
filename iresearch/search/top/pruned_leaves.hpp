@@ -164,17 +164,7 @@ class PrunedLeaves {
           break;
         }
       }
-      auto& leaf = _leaves[_order[i]];
-      uint32_t out = 0;
-      for (uint32_t j = 0; j != len; ++j) {
-        const auto doc = docs[j];
-        const auto hit = static_cast<uint32_t>(leaf.Probe(doc) == doc);
-        docs[out] = doc;
-        scores[out] = scores[j];
-        leaf.FetchScoreArgs(out);
-        out += hit;
-      }
-      len = out;
+      len = Keep(_leaves[_order[i]], docs, scores, len);
       if (len == 0) {
         break;
       }
@@ -284,6 +274,27 @@ class PrunedLeaves {
   }
 
  private:
+  IRS_FORCE_INLINE static uint32_t Keep(Leaf& leaf, doc_id_t* IRS_RESTRICT docs,
+                                        score_t* IRS_RESTRICT scores,
+                                        uint32_t len) {
+    if constexpr (requires { leaf.Keep(docs, scores, len); }) {
+      return leaf.Keep(docs, scores, len);
+    } else {
+      uint32_t out = 0;
+      for (uint32_t j = 0; j != len; ++j) {
+        const auto doc = docs[j];
+        const bool hit = leaf.Probe(doc) == doc;
+        docs[out] = doc;
+        scores[out] = scores[j];
+        if (hit) {
+          leaf.FetchScoreArgs(out);
+        }
+        out += static_cast<uint32_t>(hit);
+      }
+      return out;
+    }
+  }
+
   static ScoreFunction Scorer(Leaf& leaf) {
     if constexpr (requires { leaf.PrepareScore(); }) {
       return leaf.PrepareScore();

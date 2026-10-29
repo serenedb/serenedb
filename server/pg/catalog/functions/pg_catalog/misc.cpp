@@ -86,6 +86,7 @@
 #include "pg/types/cast.h"
 #include "pg/types/logical.h"
 #include "pg/types/mapping.h"
+#include "query/config.h"
 #include "search/search_table.h"
 #include "server/utils/build.h"
 
@@ -426,6 +427,10 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
     const auto key = AsView(name.GetValue());
     duckdb::Value value;
     if (context.TryGetCurrentSetting(duckdb::Identifier{key}, value)) {
+      if (!IsReadableSetting(context, key)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("must be superuser to examine \"", key, "\""));
+      }
       value = duckdb::Settings::FormatDisplayValue(context, value);
       last_found = row;
       last_value = value.IsNull()

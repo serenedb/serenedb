@@ -1397,6 +1397,7 @@ bool DeserializeBinaryList(DeserializeContext& ctx, std::string_view data,
   if (ndim < 0 || data.size() < 12 + static_cast<size_t>(ndim) * 8) {
     return false;
   }
+  size_t offset = 12 + static_cast<size_t>(ndim) * 8;
   std::vector<int32_t> dims(static_cast<size_t>(ndim));
   for (int32_t d = 0; d < ndim; ++d) {
     const auto size = absl::big_endian::Load<int32_t>(data.data() + 12 + d * 8);
@@ -1404,6 +1405,17 @@ bool DeserializeBinaryList(DeserializeContext& ctx, std::string_view data,
       return false;
     }
     dims[static_cast<size_t>(d)] = size;
+  }
+  if (absl::c_linear_search(dims, 0)) {
+    Out<duckdb::list_entry_t>(vec)[row] = {cur, 0};
+    return true;
+  }
+  uint64_t elements = 1;
+  for (const auto size : dims) {
+    elements *= static_cast<uint64_t>(size);
+    if (elements > (data.size() - offset) / 4) {
+      return false;
+    }
   }
   // Resolve the leaf element deserializer once (the element type is fixed for
   // the whole array). LIST and MAP each contribute one dimension; ARRAY targets
@@ -1420,7 +1432,6 @@ bool DeserializeBinaryList(DeserializeContext& ctx, std::string_view data,
   if (leaf_fn == nullptr) {
     return false;
   }
-  size_t offset = 12 + static_cast<size_t>(ndim) * 8;
   return DecodeBinaryDim(ctx, data, offset, dims.data(), ndim, 0, vec, row,
                          leaf_fn);
 }

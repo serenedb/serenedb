@@ -255,7 +255,7 @@ A foreign server is owned by the role that created it and carries a single privi
 
 | Action | Requirement |
 |---|---|
-| `CREATE SERVER` | `CREATE` on the current **database** |
+| `CREATE SERVER` | `CREATE` on the current **database**; a superuser for `duckdb_fdw` and `serenedb_fdw`, whose `path` names a server file |
 | `DROP SERVER` | Ownership of the server, or superuser |
 | Querying through the server | `USAGE` on the server (owner and superusers exempt) |
 | `GRANT` / `REVOKE USAGE` | Ownership, `WITH GRANT OPTION`, or superuser |

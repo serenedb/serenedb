@@ -27,10 +27,13 @@
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/planner/operator/logical_execute.hpp>
+#include <duckdb/planner/operator/logical_prepare.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
@@ -54,6 +57,32 @@
 #include "query/config.h"
 
 namespace sdb::connector {
+namespace {
+
+void RequireConnectForUse(duckdb::ClientContext& context,
+                          const duckdb::Value& target) {
+  const auto entry = duckdb::CatalogSearchEntry::Parse(target.ToString());
+  auto database = entry.GetCatalog();
+  if (database.empty()) {
+    if (duckdb::Catalog::GetSchema(context, duckdb::Identifier{},
+                                   entry.GetSchema(),
+                                   duckdb::OnEntryNotFound::RETURN_NULL)) {
+      return;
+    }
+    database = entry.GetSchema();
+  }
+  auto catalog = duckdb::Catalog::GetCatalogEntry(context, database);
+  if (catalog &&
+      catalog->GetCatalogType() == catalog::SereneDBCatalog::kStorageType &&
+      !context.CanSeeDatabase(catalog->GetAttached())) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for database \"",
+                            database.GetIdentifierName(), "\""),
+                    ERR_DETAIL("User does not have CONNECT privilege."));
+  }
+}
+
+}  // namespace
 
 SereneDBClientState& SereneDBClientState::Register(
   duckdb::ClientContext& client_ctx,
@@ -99,26 +128,21 @@ SereneDBClientState& SereneDBClientState::Register(
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
                         ERR_MSG("parameter \"", name, "\" cannot be changed"));
       }
-      if (new_value) {
-        RequireSuperuserToSet(ctx, name);
-      }
       // Resolve AUTOMATIC against the setting's target scope so the downstream
       // check works uniformly regardless of how the user wrote the SET.
-      if (scope == duckdb::SetScope::AUTOMATIC) {
-        auto& db_config = duckdb::DBConfig::GetConfig(ctx);
-        const duckdb::Identifier setting{name};
-        duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-        if (db_config.TryGetSettingIndex(setting, option).IsValid() && option) {
-          scope = (option->scope == duckdb::SettingScopeTarget::GLOBAL_ONLY ||
-                   option->scope == duckdb::SettingScopeTarget::GLOBAL_DEFAULT)
-                    ? duckdb::SetScope::GLOBAL
-                    : duckdb::SetScope::SESSION;
-        } else {
-          duckdb::ExtensionOption ext;
-          if (db_config.TryGetExtensionOption(setting, ext)) {
-            scope = ext.default_scope;
-          }
-        }
+      const duckdb::Identifier setting{name};
+      std::string_view canonical = name;
+      if (const auto option = duckdb::DBConfig::GetOptionByName(setting)) {
+        scope = duckdb::PhysicalSet::GetSettingScope(*option, scope);
+        canonical = option->name;
+      } else if (duckdb::ExtensionOption ext;
+                 duckdb::DBConfig::GetConfig(ctx).TryGetExtensionOption(setting,
+                                                                        ext)) {
+        scope = duckdb::PhysicalSet::GetSettingScope(ext, scope);
+      }
+      RequireSuperuserToSet(ctx, canonical, scope, new_value);
+      if (new_value && canonical == "schema") {
+        RequireConnectForUse(ctx, *new_value);
       }
       // SET GLOBAL changes the DB-instance default (lives only in DBConfig, not
       // user_settings / custom session store) and is not rolled back with the
@@ -142,13 +166,17 @@ SereneDBClientState& SereneDBClientState::Register(
                     std::move(old_value), new_value);
     };
 
-  client_ctx.setting_visibility = [](duckdb::ClientContext&,
+  client_ctx.setting_visibility = [](duckdb::ClientContext& ctx,
                                      const std::string& name) {
     static const irs::containers::FlatHashSet<std::string_view> kHidden = {
       "sdb_faults", "debug_verification", "is_superuser", "role",
       "session_authorization"};
-    return !kHidden.contains(name);
+    return !kHidden.contains(name) && IsReadableSetting(ctx, name);
   };
+  client_ctx.entry_visibility = auth::CanSee;
+  client_ctx.database_visibility = auth::CanSeeDatabase;
+  client_ctx.file_access_handler = auth::CheckFileAccess;
+  client_ctx.entry_reference_handler = auth::CheckEntryReference;
 
   client_ctx.isolation_level_validator =
     [](duckdb::ClientContext& ctx, duckdb::TransactionIsolationLevel level) {
@@ -347,8 +375,40 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
 
 void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,
                                       duckdb::Binder& binder,
-                                      duckdb::LogicalOperator& plan) {
-  auth::EnforcePlan(context, *_connection_ctx, binder, plan);
+                                      duckdb::LogicalOperator& plan,
+                                      duckdb::StatementProperties& properties) {
+  const bool authorized =
+    auth::EnforcePlan(context, *_connection_ctx, binder, plan);
+  if (plan.type == duckdb::LogicalOperatorType::LOGICAL_EXECUTE &&
+      plan.children.empty()) {
+    return;
+  }
+  const auto principal = _connection_ctx->GetRoleId();
+  properties.file_access_authorized = authorized;
+  properties.principal = principal;
+  const auto stamp = [&](duckdb::PreparedStatementData& prepared) {
+    prepared.properties.file_access_authorized = authorized;
+    prepared.properties.principal = principal;
+  };
+  for (auto* op = &plan; op;
+       op = op->children.empty() ? nullptr : op->children[0].get()) {
+    if (op->type == duckdb::LogicalOperatorType::LOGICAL_EXECUTE) {
+      stamp(*op->Cast<duckdb::LogicalExecute>().prepared);
+    } else if (op->type == duckdb::LogicalOperatorType::LOGICAL_PREPARE) {
+      stamp(*op->Cast<duckdb::LogicalPrepare>().prepared);
+    } else {
+      break;
+    }
+  }
+}
+
+duckdb::RebindQueryInfo SereneDBClientState::OnRebindPreparedStatement(
+  duckdb::ClientContext&, duckdb::BindPreparedStatementCallbackInfo& info,
+  duckdb::RebindQueryInfo) {
+  const auto& principal = info.prepared_statement.properties.principal;
+  return principal && *principal == _connection_ctx->GetRoleId()
+           ? duckdb::RebindQueryInfo::DO_NOT_REBIND
+           : duckdb::RebindQueryInfo::ATTEMPT_TO_REBIND;
 }
 
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {
@@ -362,8 +422,10 @@ ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {
 
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
   auto* ctx = GetSereneDBContextPtr(context);
-  SDB_ASSERT(ctx, "SereneDB client state not registered; active query: ",
-             context.GetCurrentQuery());
+  if (!ctx) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("this operation needs a client session"));
+  }
   return *ctx;
 }
 

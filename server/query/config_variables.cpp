@@ -1607,15 +1607,60 @@ bool IsUnchangeableSetting(std::string_view name) {
 }
 
 const duckdb::case_insensitive_set_view_t kSuperuserSettings = {
+  "allowed_directories",
+  "allowed_paths",
+  "enable_logging",
+  "enabled_log_types",
+  "file_search_path",
+  "home_directory",
+  "log_query_path",
+  "logging_level",
+  "logging_storage",
   "max_expression_depth",
+  "profiling_output",
+  "sdb_ai_embedding_default_secret",
+  "sdb_ai_system_one_default_secret",
+  "sdb_ai_text_default_secret",
+  "secret_directory",
 };
 
-void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name) {
-  if (kSuperuserSettings.contains(name)) {
+const duckdb::case_insensitive_set_view_t kSuperuserReadSettings = {
+  "http_proxy_password",
+  "http_proxy_username",
+};
+
+bool IsSuperuserReadSetting(duckdb::ClientContext& ctx, std::string_view name) {
+  if (kSuperuserReadSettings.contains(name)) {
+    return true;
+  }
+  if (!GetOriginalName(name).empty()) {
+    return false;
+  }
+  duckdb::ExtensionOption option;
+  return duckdb::DBConfig::GetConfig(ctx).TryGetExtensionOption(
+    duckdb::Identifier{name}, option);
+}
+
+void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name,
+                           duckdb::SetScope scope, bool is_set) {
+  if (scope == duckdb::SetScope::GLOBAL) {
+    RequireSuperuser(ctx, name,
+                     "Only roles with the SUPERUSER attribute may change "
+                     "server-wide parameters.");
+  } else if (is_set && (kSuperuserSettings.contains(name) ||
+                        IsSuperuserReadSetting(ctx, name))) {
     RequireSuperuser(
       ctx, name,
       "Only roles with the SUPERUSER attribute may change this parameter.");
   }
+}
+
+bool IsReadableSetting(duckdb::ClientContext& ctx, std::string_view name) {
+  if (!IsSuperuserReadSetting(ctx, name)) {
+    return true;
+  }
+  auto* conn = connector::GetSereneDBContextPtr(ctx);
+  return !conn || auth::ClosureFor(&ctx, conn->GetRoleId())->is_superuser;
 }
 
 namespace {

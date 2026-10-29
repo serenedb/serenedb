@@ -103,3 +103,31 @@ def test_a_rejected_request_does_not_change_the_session_role(role, http_conn):
         (200, SUPERUSER_NAME),
         (200, role),
     ]
+
+
+PASSWORDLESS = "drv_http_session_nopw"
+
+
+@pytest.fixture()
+def passwordless_role():
+    database = conn_kwargs()["dbname"]
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        conn.execute(f"DROP ROLE IF EXISTS {PASSWORDLESS}")
+        conn.execute(f"CREATE ROLE {PASSWORDLESS} LOGIN")
+        conn.execute(f'GRANT CONNECT ON DATABASE "{database}" TO {PASSWORDLESS}')
+    yield PASSWORDLESS
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        conn.execute(f'REVOKE CONNECT ON DATABASE "{database}" FROM {PASSWORDLESS}')
+        conn.execute(f"DROP ROLE {PASSWORDLESS}")
+
+
+def test_a_passwordless_role_is_not_trusted(passwordless_role, http_conn):
+    for password in ("", "anything"):
+        auth = "Basic " + base64.b64encode(
+            f"{passwordless_role}:{password}".encode()
+        ).decode()
+        status, _ = session_user(http_conn, auth)
+        assert status == 401
+    empty_user = "Basic " + base64.b64encode(b":").decode()
+    status, _ = session_user(http_conn, empty_user)
+    assert status == 401

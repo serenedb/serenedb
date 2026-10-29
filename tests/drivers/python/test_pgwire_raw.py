@@ -3672,3 +3672,37 @@ def test_like_and_similar_to_escape_errors(conn, query, sqlstate, message, hint)
     assert [(e["C"], e["M"], e.get("H")) for e in errors(m)] == [
         (sqlstate, message, hint)
     ]
+
+
+def _int4_array(dims, values):
+    payload = struct.pack("!iii", len(dims), 0, 23)
+    for size in dims:
+        payload += struct.pack("!ii", size, 1)
+    for value in values:
+        payload += struct.pack("!ii", 4, value)
+    return payload
+
+
+@pytest.mark.parametrize(
+    "dims, values, expected",
+    [([2], [7, 9], b"2"), ([3, 0], [], b"0"), ([0x7FFFFFFF, 0], [], b"0")],
+)
+def test_int4_array_binary_param(conn, dims, values, expected):
+    conn.parse("", "select cardinality($1::int4[])", oids=(1007,))
+    conn.bind("", "", params=(_int4_array(dims, values),), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected
+
+
+@pytest.mark.parametrize("dims", [[0x7FFFFFFF], [0x10000, 0x10000]])
+def test_int4_array_binary_param_with_more_elements_than_bytes(conn, dims):
+    conn.parse("", "select cardinality($1::int4[])", oids=(1007,))
+    conn.bind("", "", params=(_int4_array(dims, [1]),), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert errors(m), m
+    conn.run_ok("select 1")

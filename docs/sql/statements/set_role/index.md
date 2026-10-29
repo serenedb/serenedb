@@ -8,7 +8,7 @@ import RailroadSource from './diagram.js';
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-The `SET ROLE` statement switches the current role of the session. Privilege checks then apply to that role instead of the role you authenticated as. A superuser can set any role; other users can only set roles they are a member of. `RESET ROLE` (or `SET ROLE DEFAULT`) switches back.
+The `SET ROLE` statement switches the current role of the session. Privilege checks then apply to that role instead of the role you authenticated as, also for statements prepared before the switch: `EXECUTE` checks them again against the current role. A superuser can set any role; other users can only set roles they are a member of. `RESET ROLE` (or `SET ROLE DEFAULT`) switches back.
 
 ## Examples
 

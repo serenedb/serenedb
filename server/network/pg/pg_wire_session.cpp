@@ -916,7 +916,14 @@ void PgWireSession<Kind>::WriteCommandTag(
 // is_loopback() sees the v4.
 template<SocketKind Kind>
 void PgWireSession<Kind>::CapturePeerAddress() {
-  if constexpr (Kind == SocketKind::Unix || Kind == SocketKind::Client) {
+  asio_ns::ip::address address;
+  if (this->_proxied) {
+    asio_ns::error_code ec;
+    address = asio_ns::ip::make_address(this->_proxy_source, ec);
+    if (ec) {
+      return;
+    }
+  } else if constexpr (Kind == SocketKind::Unix || Kind == SocketKind::Client) {
     return;  // no IP; the gate treats a unix peer as local via is_local
   } else {
     asio_ns::error_code ec;
@@ -924,15 +931,15 @@ void PgWireSession<Kind>::CapturePeerAddress() {
     if (ec) {
       return;  // no usable peer: stays unspecified -> gate fails closed
     }
-    const auto address = endpoint.address();
-    if (address.is_v6()) {
-      if (const auto v6 = address.to_v6(); v6.is_v4_mapped()) {
-        _peer_addr = asio_ns::ip::make_address_v4(asio_ns::ip::v4_mapped, v6);
-        return;
-      }
-    }
-    _peer_addr = address;
+    address = endpoint.address();
   }
+  if (address.is_v6()) {
+    if (const auto v6 = address.to_v6(); v6.is_v4_mapped()) {
+      _peer_addr = asio_ns::ip::make_address_v4(asio_ns::ip::v4_mapped, v6);
+      return;
+    }
+  }
+  _peer_addr = address;
 }
 
 template<SocketKind Kind>
@@ -978,7 +985,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   };
 
   hba::ClientInfo client;
-  client.is_local = Kind == SocketKind::Unix;
+  client.is_local = Kind == SocketKind::Unix && !this->_proxied;
   client.is_ssl = this->_socket.IsTls();
   client.is_gss = false;
   if (!_peer_addr.is_unspecified()) {

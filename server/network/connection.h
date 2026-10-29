@@ -274,7 +274,8 @@ class Transport : public TransportBase {
         InjectRecv(tmp.data(), have);  // no header: all bytes are protocol
         co_return true;
       }
-      // r.source_addr is proxy source here, can be saved if needed
+      _proxied = true;
+      _proxy_source = r.source_addr;
       if (have > r.length) {
         InjectRecv(tmp.data() + r.length, have - r.length);
       }
@@ -366,6 +367,8 @@ class Transport : public TransportBase {
 
   const duckdb::shared_ptr<CpuResumer> _task;
   bool _handed_off = false;
+  bool _proxied = false;
+  std::string _proxy_source;
 
  private:
   static duckdb::shared_ptr<CpuResumer> MakeResumer() {

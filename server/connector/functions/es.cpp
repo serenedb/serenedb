@@ -68,7 +68,9 @@
 #include <map>
 #include <string_view>
 
+#include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
@@ -388,10 +390,34 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   // duckdb's operations, and serenedb's are the same ones.
   auto& db_catalog = duckdb::Catalog::GetCatalog(
     context, duckdb::DatabaseManager::GetDefaultDatabase(context));
+  const auto owner = GetSereneDBContext(context).GetRoleId();
+  if (const auto closure = auth::ClosureFor(&context, owner);
+      !closure->is_superuser) {
+    if (auto schema = EsSchema(context)) {
+      if (!closure->Can(duckdb::CatalogType::SCHEMA_ENTRY, schema->permissions,
+                        duckdb::AclMode::Create)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("permission denied for schema ", kEsSchema));
+      }
+    } else {
+      auto& cluster = catalog::ClusterOf(context);
+      auto database = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                        .GetEntry(cluster.GetCatalogTransaction(context),
+                                  db_catalog.GetName());
+      if (database &&
+          !closure->Can(duckdb::CatalogType::DATABASE_ENTRY,
+                        database->permissions, duckdb::AclMode::Create)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("permission denied for database ",
+                                db_catalog.GetName().GetIdentifierName()));
+      }
+    }
+  }
   {
     duckdb::CreateSchemaInfo info;
     info.SetSchema(duckdb::Identifier{kEsSchema});
     info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+    info.permissions.owner = owner;
     db_catalog.CreateSchema(db_catalog.GetCatalogTransaction(context), info);
   }
 
@@ -399,6 +425,7 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   options->SetTableName(duckdb::Identifier{data.index});
   options->SetSchema(duckdb::Identifier{kEsSchema});
   options->on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+  options->permissions.owner = owner;
   std::vector<std::string_view> text_columns;
 
   auto add_column = [&](std::string_view name, duckdb::LogicalType type) {
@@ -454,10 +481,17 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
                                     duckdb::Identifier{data.index}};
   // ES "no such index" covers both a missing name and a name that resolves
   // to a non-table relation, so gate the drop on an actual table existing.
-  if (!duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-        context, qname, duckdb::OnEntryNotFound::RETURN_NULL)) {
+  auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
+    context, qname, duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
+  }
+  if (const auto closure = auth::SessionClosure(context);
+      closure && !closure->is_superuser &&
+      !closure->Owns(table->permissions.owner)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("must be owner of table ", data.index));
   }
   duckdb::DropInfo drop;
   drop.type = duckdb::CatalogType::TABLE_ENTRY;
@@ -564,8 +598,8 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
     // index set from inside the relation set's own walk.
     std::vector<duckdb::reference<duckdb::TableCatalogEntry>> tables;
     if (auto schema = EsSchema(context)) {
-      schema->Scan(
-        context, duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::Catalog::ScanListedEntries(
+        context, *schema, duckdb::CatalogType::TABLE_ENTRY,
         [&](duckdb::CatalogEntry& entry) {
           if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
             tables.emplace_back(entry.Cast<duckdb::TableCatalogEntry>());
@@ -709,6 +743,8 @@ FieldValue ReadFieldValue(simdjson::ondemand::value& value,
 // truncate floating points; real corpora (e.g. rally's pmc) depend on it.
 int64_t CoerceInt64(simdjson::ondemand::value& value, const FieldValue& read,
                     std::string_view index, std::string_view field) {
+  constexpr double kLimit = 9223372036854775808.0;
+  const auto in_range = [&](double d) { return d >= -kLimit && d < kLimit; };
   if (read.type == simdjson::ondemand::json_type::number) {
     // One scan of the number, whichever of the three shapes it turns out to be.
     if (simdjson::ondemand::number parsed;
@@ -716,16 +752,15 @@ int64_t CoerceInt64(simdjson::ondemand::value& value, const FieldValue& read,
       if (parsed.is_int64()) {
         return parsed.get_int64();
       }
-      if (parsed.is_uint64()) {
-        return static_cast<int64_t>(parsed.get_uint64());
+      if (!parsed.is_uint64() && in_range(parsed.get_double())) {
+        return static_cast<int64_t>(parsed.get_double());
       }
-      return static_cast<int64_t>(parsed.get_double());
     }
   } else if (read.type == simdjson::ondemand::json_type::string) {
     if (int64_t v = 0; absl::SimpleAtoi(read.text, &v)) {
       return v;
     }
-    if (double d = 0; absl::SimpleAtod(read.text, &d)) {
+    if (double d = 0; absl::SimpleAtod(read.text, &d) && in_range(d)) {
       return static_cast<int64_t>(d);
     }
   }
@@ -1403,6 +1438,12 @@ void EsRefreshExecute(duckdb::ClientContext& context,
   state.done = true;
   auto& data = input.bind_data->Cast<EsIndexBindData>();
 
+  const auto closure = auth::SessionClosure(context);
+  const auto may_maintain = [&](const duckdb::TableCatalogEntry& table) {
+    return !closure || closure->is_superuser ||
+           closure->Can(duckdb::CatalogType::TABLE_ENTRY, table.permissions,
+                        duckdb::AclMode::Maintain);
+  };
   auto refresh_table = [&](duckdb::TableCatalogEntry& table) {
     VisitInvertedIndexes(context, table, [&](duckdb::DuckIndexEntry& index) {
       if (const auto& storage =
@@ -1428,13 +1469,19 @@ void EsRefreshExecute(duckdb::ClientContext& context,
         });
     }
     for (auto table : tables) {
-      refresh_table(table.get());
+      if (may_maintain(table.get())) {
+        refresh_table(table.get());
+      }
     }
   } else {
     auto table = FindEsTable(context, data.index);
     if (!table) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                       ERR_MSG("no such index [", data.index, "]"));
+    }
+    if (!may_maintain(*table)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied for table ", data.index));
     }
     refresh_table(*table);
   }

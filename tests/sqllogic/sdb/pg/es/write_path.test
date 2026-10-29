@@ -55,6 +55,24 @@ INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'a', '{"n":1}');
 statement error (?i)failed to parse field \[n\]
 INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'x', '{"n":"oops"}');
 
+statement error
+INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'u', '{"n":18446744073709551615}');
+----
+db error: ERROR: failed to parse field [n] for index [slt_es_w]: expected an integer
+
+
+statement error
+INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'v', '{"n":1e300}');
+----
+db error: ERROR: failed to parse field [n] for index [slt_es_w]: expected an integer
+
+
+statement error
+INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'w', '{"n":"-1e300"}');
+----
+db error: ERROR: failed to parse field [n] for index [slt_es_w]: expected an integer
+
+
 # Trailing content would store invalid JSON in _source.
 statement error (?i)has trailing content
 INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'y', '{"n":1}{"n":2}');

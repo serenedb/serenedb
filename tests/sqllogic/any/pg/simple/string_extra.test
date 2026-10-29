@@ -461,6 +461,13 @@ convert_from
 hello
 
 
+query
+SELECT 'x' || true AS concatenated, pg_typeof('x' || true) AS type, true || 'x' AS reversed;
+----
+concatenated	type	reversed
+xtrue	text	truex
+
+
 # convert_to
 
 query

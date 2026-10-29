@@ -381,6 +381,15 @@ statement ok
 DROP TABLE size_temp
 
 
+query
+SELECT row_number() OVER (ORDER BY pg_total_relation_size(oid) DESC) AS ranked,
+       rank() OVER (PARTITION BY pg_relation_size(oid) > 0 ORDER BY oid) AS partitioned
+FROM pg_class WHERE relname = 'size_test';
+----
+ranked	partitioned
+1	1
+
+
 # Cleanup
 
 statement ok

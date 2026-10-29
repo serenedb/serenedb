@@ -643,7 +643,7 @@ void RegisterDbsizeFunctions(duckdb::ExtensionLoader& loader) {
   const auto text = duckdb::LogicalType::VARCHAR;
   const auto int8 = duckdb::LogicalType::BIGINT;
   const std::string_view main = DEFAULT_SCHEMA;
-  const auto stability = duckdb::FunctionStability::VOLATILE;
+  const auto stability = duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY;
 
   RegisterScalar(loader, main, "pg_relation_size", stability, InitSession,
                  {duckdb::ScalarFunction{

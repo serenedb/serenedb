@@ -23,6 +23,7 @@ for i in 1 2 3; do
 	docker pull -q "$BUILD_IMAGE" && break
 	sleep 10
 done
+python3 scripts/ci/ci.py prune
 
 digest=$(python3 scripts/ci/ci.py digest --config "$CONFIG" --flags "$BUILD_FLAGS" --image "$BUILD_IMAGE")
 output digest "$digest"

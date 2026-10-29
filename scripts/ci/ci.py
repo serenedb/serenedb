@@ -18,6 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "harness")]
 
+import services  # noqa: E402
 from testlib import store  # noqa: E402
 from testlib.config import CONFIGS  # noqa: E402
 from testlib.scheduler import BAD  # noqa: E402
@@ -41,8 +42,11 @@ BUNDLE_PATHS = (
     "bin/re2-tests", "third_party/duckdb/test/unittest", "CMakeCache.txt",
 )
 BUNDLE_CACHE = Path(os.environ.get("SDB_BUNDLE_CACHE", "/mnt/data/sdb-ci/bundles"))
+BUNDLE_MIN_FREE = 200 << 30
 ARCHES = ("x86_64", "aarch64")
+DOCKER_ARCHES = {"x86_64": "amd64", "aarch64": "arm64"}
 IMAGE_REPO = "serenedb/serenedb-build-ubuntu"
+FIXTURE_IMAGE_REPO = "serenedb/serenedb-test-"
 IMAGE_DOCKERFILE = "scripts/ci/build-ubuntu.Dockerfile"
 IMAGE_CONTEXTS = {"": "scripts/ci", "drivers": "tests/drivers"}
 
@@ -135,6 +139,7 @@ def cmd_stage(args):
     if args.runner:
         files.append((Path(args.runner).resolve(), "bin/sqllogictest"))
     shared_cache()
+    prune_bundles()
     dest = cached_bundle(args.config, args.arch, args.digest)
     tmp_dir = Path(tempfile.mkdtemp(dir=BUNDLE_CACHE, prefix=".stage-"))
     try:
@@ -214,23 +219,79 @@ def fetch_bundle(config, arch, dig, dest):
     return dest
 
 
-def prune_bundles(keep_days=2):
+def drop_bundle(path):
+    if not (path / ".complete").is_file():
+        shutil.rmtree(path, ignore_errors=True)
+        return
+    with open(path / ".complete") as marker:
+        fcntl.flock(marker, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def prune_bundles(keep_days=2, min_free=BUNDLE_MIN_FREE):
     if not BUNDLE_CACHE.is_dir():
         return
     cutoff = time.time() - keep_days * 86400
+    recent = []
     for d in BUNDLE_CACHE.iterdir():
         try:
             info = d.stat()
-            if info.st_uid != os.getuid() or info.st_mtime >= cutoff:
+            if info.st_uid != os.getuid():
                 continue
-            if not (d / ".complete").is_file():
-                shutil.rmtree(d, ignore_errors=True)
-                continue
-            with open(d / ".complete") as marker:
-                fcntl.flock(marker, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                shutil.rmtree(d, ignore_errors=True)
+            if info.st_mtime < cutoff:
+                drop_bundle(d)
+            elif not d.name.startswith(".") and (d / ".complete").is_file():
+                recent.append((info.st_mtime, d))
         except OSError:
             pass
+    for _, d in sorted(recent):
+        if shutil.disk_usage(BUNDLE_CACHE).free >= min_free:
+            return
+        try:
+            drop_bundle(d)
+        except OSError:
+            pass
+
+
+def checkout_images():
+    fixtures = ROOT / "tests" / "sqllogic" / "fixtures"
+    return {image_name(), services.KEV_IMAGE,
+            *(f"{FIXTURE_IMAGE_REPO}{d.parent.name}:{services.fixture_image_tag(d.parent.name)}"
+              for d in fixtures.glob("*/Dockerfile"))}
+
+
+def stale_images(rows, wanted, arch):
+    foreign = tuple(f"-{other}" for other in DOCKER_ARCHES.values() if other != arch)
+    newest = {}
+    stale = []
+    for ref, _ in sorted(rows, key=lambda row: row[1], reverse=True):
+        repo, _, tag = ref.rpartition(":")
+        if tag == "<none>" or (repo != IMAGE_REPO and not repo.startswith(FIXTURE_IMAGE_REPO)):
+            continue
+        if tag.endswith(foreign):
+            stale.append(ref)
+            continue
+        base = ref.removesuffix(f"-{arch}")
+        if newest.setdefault(repo, base) != base and base not in wanted:
+            stale.append(ref)
+    return stale
+
+
+def prune_images():
+    listing = subprocess.run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}}\t{{.CreatedAt}}"],
+                             capture_output=True, text=True)
+    if listing.returncode != 0:
+        return
+    rows = [line.split("\t") for line in listing.stdout.splitlines()]
+    stale = stale_images(rows, checkout_images(), DOCKER_ARCHES[platform.machine()])
+    if stale:
+        subprocess.run(["docker", "rmi", *stale], capture_output=True)
+    subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
+
+
+def cmd_prune(args):
+    prune_bundles()
+    prune_images()
 
 
 def fetched(config, arch, dig):
@@ -556,6 +617,8 @@ def main(argv):
     p.add_argument("--arch", required=True)
     p.add_argument("--digest", required=True)
     p.set_defaults(fn=cmd_fetch)
+    p = sub.add_parser("prune", help="drop this box's stale bundles and the CI images its checkout does not use")
+    p.set_defaults(fn=cmd_prune)
     p = sub.add_parser("upload", help="put a file into the store")
     p.add_argument("src")
     p.add_argument("dest")

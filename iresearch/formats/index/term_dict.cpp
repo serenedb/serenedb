@@ -1399,10 +1399,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
       }
     }
   }
-  if (bytes != 0) {
-    owner.ResourceManager().Increase(bytes);
-    _root_bytes = bytes;
-  }
+  owner.Account(bytes);
 }
 
 uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
@@ -1517,10 +1514,6 @@ void TermReaderImpl::SampleTerms(
     }
     visit({run.data(), n});
   }
-}
-
-TermReaderImpl::~TermReaderImpl() {
-  _owner->ResourceManager().DecreaseChecked(_root_bytes);
 }
 
 const byte_type* TermReaderImpl::Block(size_t block,
@@ -1726,8 +1719,7 @@ bytes_view FieldReader::Load(IndexInput& in, uint64_t offset, uint64_t size) {
   const auto [it, inserted] = _copies.try_emplace(offset);
   auto& copy = it->second;
   if (inserted) {
-    _rm->Increase(size);
-    _bytes += size;
+    Account(size);
     copy.resize(size);
     in.ReadData(offset, copy.data(), size);
   }
@@ -1739,8 +1731,7 @@ bytes_view FieldReader::Copy(uint64_t offset, uint64_t size) {
   const auto [it, inserted] = _copies.try_emplace(offset);
   auto& copy = it->second;
   if (inserted) {
-    _rm->Increase(size);
-    _bytes += size;
+    Account(size);
     copy.resize(size);
     _pending.push_back({.offset = offset, .size = size, .data = copy.data()});
   }
@@ -1824,12 +1815,9 @@ Separators FieldReader::Bind(TermsMeta& terms) {
     _inline_pages =
       InlinePages{terms.inline_starts, blocks, _inline_offset, _inline_size};
   }
-  _bytes = _spans.capacity() * sizeof(SpanningBlock) +
-           _inline_pages.MemoryBytes() +
-           (_fsst ? sizeof(duckdb_fsst_decoder_t) : 0);
-  if (_bytes != 0) {
-    _rm->Increase(_bytes);
-  }
+  Account(_spans.capacity() * sizeof(SpanningBlock) +
+          _inline_pages.MemoryBytes() +
+          (_fsst ? sizeof(duckdb_fsst_decoder_t) : 0));
   return decoded;
 }
 

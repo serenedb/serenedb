@@ -398,7 +398,6 @@ class TermReaderImpl final : public TermReader {
  public:
   TermReaderImpl(FieldReader& owner, const FieldHead& head, IndexInput& in,
                  const Separators& separators);
-  ~TermReaderImpl() final;
 
   SeekTermIterator::ptr iterator() const final;
   SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
@@ -514,7 +513,6 @@ class TermReaderImpl final : public TermReader {
   std::vector<RangeLevel> _levels;
   std::unique_ptr<PrefixIndex> _prefixes;
   uint32_t _range_prefix = 0;
-  uint64_t _root_bytes = 0;
 };
 
 class FieldReader final {
@@ -536,7 +534,12 @@ class FieldReader final {
   const PostingsReader& Postings() const noexcept { return _pr; }
   const IndexInput& Input() const noexcept { return *_in; }
   const byte_type* Base() const noexcept { return _base; }
-  IResourceManager& ResourceManager() const noexcept { return *_rm; }
+  void Account(uint64_t bytes) {
+    if (bytes != 0) {
+      _rm->Increase(bytes);
+      _bytes += bytes;
+    }
+  }
   const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
   uint32_t BlockCount() const noexcept { return _block_count; }
   uint64_t PageOffset(size_t block) const noexcept {

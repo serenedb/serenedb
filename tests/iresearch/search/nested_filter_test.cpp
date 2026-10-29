@@ -268,6 +268,7 @@ auto MakeByTermAndRange(irs::field_id field, std::string_view value,
 
     auto& range = filter->mutable_options()->range;
     irs::SetGranularNumericTerm(range.max, upper_bound);
+    range.max_type = irs::BoundType::Inclusive;
     root->Add(std::move(filter), irs::Occur::Must);
   }
   return root;

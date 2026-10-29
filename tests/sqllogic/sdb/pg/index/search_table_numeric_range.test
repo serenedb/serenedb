@@ -260,6 +260,7 @@ QUERY PLAN
 │ │ Field: val       │              │
 │ │ Range: <=20      │              │
 │ ╰──────────────────╯              │
+│ Index or Column Filter: val <= 20 │
 │ Score: l2_distance(emb, FLOAT[2]) │
 │ Top: 3                            │
 │ Projections: pk                   │

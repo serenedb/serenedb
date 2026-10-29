@@ -300,6 +300,22 @@ def test_every_croaring_test_binary_is_a_unit_unless_skipped(tmp_path):
     assert gtest.croaring_units(ctx, None, skips) == []
 
 
+def test_croaring_tests_run_in_the_croaring_checkout_where_their_data_paths_lead(tmp_path):
+    tests = tmp_path / "build" / "bin" / "croaring-tests"
+    tests.mkdir(parents=True)
+    (tests / "format_portability_unit").write_text("")
+    ctx = SimpleNamespace(
+        root=tmp_path / "src",
+        build=SimpleNamespace(croaring_tests=True, bin=lambda name: tmp_path / "build" / "bin" / name),
+        timing=Timing(), config=SimpleNamespace(slowdown=1.0), timeout_floor=180.0, skips=[])
+    [unit] = gtest.croaring_units(ctx, None, [])
+    calls = []
+    r = SimpleNamespace(tmp=tmp_path / "tmp", outcome=lambda res: res,
+                        exec=lambda argv, cwd: calls.append((argv, cwd)) or "ran")
+    assert unit.run(r) == "ran"
+    assert calls == [([str(tests / "format_portability_unit")], tmp_path / "src" / "third_party" / "croaring")]
+
+
 def test_a_single_shard_runs_in_the_build_job_and_more_go_to_test_jobs():
     def shards(count, check=""):
         prefix = f"{check}-" if check else ""

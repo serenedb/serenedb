@@ -237,13 +237,13 @@ def croaring_units(ctx, args, skips):
             ctx.skips.append((uid, skip))
             continue
         cost, timeout = plan(ctx, uid, 5.0)
-        units.append(Unit(uid, "croaring", _croaring_run(binary), cost=cost, timeout=timeout))
+        units.append(Unit(uid, "croaring", _croaring_run(ctx, binary), cost=cost, timeout=timeout))
     return units
 
 
-def _croaring_run(binary):
+def _croaring_run(ctx, binary):
     def run(r):
-        return r.outcome(r.exec([str(binary)], cwd=r.tmp))
+        return r.outcome(r.exec([str(binary)], cwd=ctx.root / "third_party" / "croaring"))
 
     return run
 

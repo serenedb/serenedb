@@ -547,7 +547,11 @@ if(SDB_GTEST)
     )
 endif()
 set(ROARING_USE_CPM OFF CACHE BOOL "" FORCE)
+set(TEST_DATA_DIR tests/testdata/)
+set(BENCHMARK_DATA_DIR benchmarks/realdata/)
 sdb_add_module(croaring)
+unset(TEST_DATA_DIR)
+unset(BENCHMARK_DATA_DIR)
 if(ENABLE_ROARING_TESTS)
     get_directory_property(
         croaring_targets

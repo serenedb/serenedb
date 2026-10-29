@@ -75,21 +75,14 @@ TEST_F(RegexpUtilsTest, regexp_type_literal) {
             irs::ComputeRegexpType(ToBytesView("a\\+b\\?c")));
 }
 
-TEST_F(RegexpUtilsTest, regexp_type_prefix) {
-  ASSERT_EQ(irs::RegexpType::Prefix,
+TEST_F(RegexpUtilsTest, regexp_type_trailing_dot_star) {
+  ASSERT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("foo.*")));
-  ASSERT_EQ(irs::RegexpType::Prefix,
-            irs::ComputeRegexpType(ToBytesView("abc.*")));
-  ASSERT_EQ(irs::RegexpType::Prefix,
-            irs::ComputeRegexpType(ToBytesView("x.*")));
-  ASSERT_EQ(irs::RegexpType::Prefix,
+  ASSERT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("hello world.*")));
-}
-
-TEST_F(RegexpUtilsTest, regexp_type_prefix_escaped) {
-  ASSERT_EQ(irs::RegexpType::PrefixEscaped,
+  ASSERT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("foo\\.bar.*")));
-  ASSERT_EQ(irs::RegexpType::PrefixEscaped,
+  ASSERT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("a\\*b.*")));
 }
 
@@ -108,27 +101,12 @@ TEST_F(RegexpUtilsTest, regexp_type_complex) {
             irs::ComputeRegexpType(ToBytesView("a?b")));
   ASSERT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("(ab)+")));
-  // .* is classified as Prefix with empty prefix
-  ASSERT_EQ(irs::RegexpType::Prefix, irs::ComputeRegexpType(ToBytesView(".*")));
+  ASSERT_EQ(irs::RegexpType::Complex,
+            irs::ComputeRegexpType(ToBytesView(".*")));
   ASSERT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("fo+.*")));
   ASSERT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("a|b.*")));
-}
-
-// ExtractRegexpPrefix
-
-TEST_F(RegexpUtilsTest, extract_prefix) {
-  EXPECT_EQ(
-    "foo", irs::ViewCast<char>(irs::ExtractRegexpPrefix(ToBytesView("foo.*"))));
-  EXPECT_EQ(
-    "abc", irs::ViewCast<char>(irs::ExtractRegexpPrefix(ToBytesView("abc.*"))));
-  EXPECT_EQ("x",
-            irs::ViewCast<char>(irs::ExtractRegexpPrefix(ToBytesView("x.*"))));
-  EXPECT_EQ("",
-            irs::ViewCast<char>(irs::ExtractRegexpPrefix(ToBytesView(".*"))));
-  EXPECT_EQ("hello world", irs::ViewCast<char>(irs::ExtractRegexpPrefix(
-                             ToBytesView("hello world.*"))));
 }
 
 // UnescapeRegexp
@@ -232,23 +210,21 @@ TEST_F(RegexpUtilsTest, regexp_type_trailing_backslash) {
 }
 
 TEST_F(RegexpUtilsTest, regexp_type_escaped_dot_then_star) {
-  // "\.*" on wire = literal dot, then unescaped *. The * is a
-  // metacharacter but not part of a .* tail (no preceding unescaped
-  // dot) -> Complex.
+  // "\.*" on wire = literal dot, then unescaped * -> Complex.
   EXPECT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("\\.*")));
 }
 
 TEST_F(RegexpUtilsTest, regexp_type_escaped_backslash_plus_dotstar) {
   // "\\.*" on wire (4 bytes: \, \, ., *) = one literal backslash,
-  // then .* -> PrefixEscaped with prefix "\\" (one backslash literal).
-  EXPECT_EQ(irs::RegexpType::PrefixEscaped,
+  // then .* -> Complex.
+  EXPECT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("\\\\.*")));
 }
 
 TEST_F(RegexpUtilsTest, regexp_type_escaped_prefix_with_dotstar) {
-  // "\.foo.*" on wire = \., then foo, then .* -> PrefixEscaped
-  EXPECT_EQ(irs::RegexpType::PrefixEscaped,
+  // "\.foo.*" on wire = \., then foo, then .* -> Complex
+  EXPECT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("\\.foo.*")));
 }
 
@@ -313,38 +289,11 @@ TEST_F(RegexpUtilsTest, regexp_type_prefix_only_star_no_dot) {
             irs::ComputeRegexpType(ToBytesView("foo*")));
 }
 
-TEST_F(RegexpUtilsTest, regexp_type_prefix_empty_prefix_dotstar) {
-  EXPECT_EQ(irs::RegexpType::Prefix, irs::ComputeRegexpType(ToBytesView(".*")));
-}
-
 TEST_F(RegexpUtilsTest, regexp_type_prefix_escaped_dotstar_in_middle) {
   // "a\.*" - escaped dot, then *. The * is applied to the literal dot,
   // so the pattern is "a, then zero-or-more dots" -> Complex.
   EXPECT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("a\\.*")));
-}
-
-// UTF-8: a multi-byte literal prefix must still be recognised as one, or
-// prefix searches silently lose the fast path.
-
-TEST_F(RegexpUtilsTest, regexp_type_utf8_cyrillic_prefix) {
-  EXPECT_EQ(irs::RegexpType::Prefix,
-            irs::ComputeRegexpType(ToBytesView("привет.*")));
-}
-
-TEST_F(RegexpUtilsTest, regexp_type_utf8_chinese_prefix) {
-  EXPECT_EQ(irs::RegexpType::Prefix,
-            irs::ComputeRegexpType(ToBytesView("中文.*")));
-}
-
-TEST_F(RegexpUtilsTest, regexp_type_utf8_emoji_prefix) {
-  EXPECT_EQ(irs::RegexpType::Prefix,
-            irs::ComputeRegexpType(ToBytesView("😀.*")));
-}
-
-TEST_F(RegexpUtilsTest, regexp_type_utf8_mixed_prefix) {
-  EXPECT_EQ(irs::RegexpType::Prefix,
-            irs::ComputeRegexpType(ToBytesView("aб中😀.*")));
 }
 
 TEST_F(RegexpUtilsTest, regexp_type_utf8_literal) {
@@ -355,13 +304,6 @@ TEST_F(RegexpUtilsTest, regexp_type_utf8_literal) {
             irs::ComputeRegexpType(ToBytesView("中文")));
   EXPECT_EQ(irs::RegexpType::Literal,
             irs::ComputeRegexpType(ToBytesView("😀")));
-}
-
-TEST_F(RegexpUtilsTest, extract_prefix_utf8) {
-  EXPECT_EQ("привет", irs::ViewCast<char>(
-                        irs::ExtractRegexpPrefix(ToBytesView("привет.*"))));
-  EXPECT_EQ("中文", irs::ViewCast<char>(
-                      irs::ExtractRegexpPrefix(ToBytesView("中文.*"))));
 }
 
 // The classifier and the acceptor have to agree about which dialect a pattern
@@ -412,6 +354,52 @@ TEST_F(RegexpUtilsTest, perl_and_posix_syntaxes_differ) {
     EXPECT_TRUE(Accepts(a, "abc"));
     EXPECT_TRUE(Accepts(a, "abbc"));
     EXPECT_FALSE(Accepts(a, "ac"));
+  }
+}
+
+TEST_F(RegexpUtilsTest, dot_star_part_is_an_exempt_prefix) {
+  using Kind = irs::RegexpAcceptor::PartKind;
+  struct Case {
+    std::string_view pattern;
+    Kind kind;
+    bool exempt;
+    std::string_view prefix;
+  };
+  constexpr Case kCases[]{
+    {"bur.*", Kind::Perl, true, "bur"},
+    {"bur.*", Kind::PosixEre, true, "bur"},
+    {".*", Kind::Perl, true, ""},
+    {"(?s)bur.*", Kind::Perl, true, "bur"},
+    {"bur.*?", Kind::Perl, true, "bur"},
+    {"a\\.b.*", Kind::Perl, true, "a.b"},
+    {"^bur.*", Kind::Perl, true, "bur"},
+    {"[b]ur.*", Kind::Perl, true, "bur"},
+    {"\xC3\xA9t.*", Kind::Perl, true, "\xC3\xA9t"},
+    {"bur.+", Kind::Perl, false, ""},
+    {"(?i)bur.*", Kind::Perl, false, ""},
+    {"bur[0-9]*", Kind::Perl, false, ""},
+    {"bur[^x]*", Kind::Perl, false, ""},
+    {"bur.*|x", Kind::Perl, false, ""},
+    {"(bur).*", Kind::Perl, false, ""},
+  };
+  for (const auto& c : kCases) {
+    SCOPED_TRACE(testing::Message("Pattern: '") << c.pattern << "'");
+    const irs::RegexpAcceptor::Part parts[]{
+      {c.kind, ToBytesView(c.pattern)},
+      {Kind::Wildcard, ToBytesView("%tion")},
+    };
+    const irs::RegexpAcceptor acceptor{std::span{parts}};
+    ASSERT_TRUE(acceptor.ok());
+    if (!c.exempt) {
+      EXPECT_TRUE(acceptor.ExemptKeys().empty());
+      EXPECT_TRUE(acceptor.RequiredSuffixes().empty());
+      continue;
+    }
+    ASSERT_EQ(1, acceptor.RequiredSuffixes().size());
+    EXPECT_EQ(ToBytesView("tion"), acceptor.RequiredSuffixes()[0]);
+    ASSERT_EQ(1, acceptor.ExemptKeys().size());
+    EXPECT_EQ(ToBytesView(c.prefix), acceptor.ExemptKeys()[0].key);
+    EXPECT_TRUE(acceptor.ExemptKeys()[0].prefix);
   }
 }
 

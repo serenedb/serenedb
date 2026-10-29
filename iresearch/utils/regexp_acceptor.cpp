@@ -233,6 +233,41 @@ bool AppendExact(std::span<re2::Regexp* const> pieces, bstring& out) {
   return true;
 }
 
+struct DotStarPrefix {
+  bool found{false};
+  bstring prefix;
+};
+
+bool DotStar(re2::Regexp* re) {
+  if (re->op() != re2::kRegexpStar) {
+    return false;
+  }
+  auto* dot = re->sub()[0];
+  if (dot->op() == re2::kRegexpAnyChar) {
+    return true;
+  }
+  if (dot->op() != re2::kRegexpCharClass ||
+      dot->cc()->end() - dot->cc()->begin() != 2) {
+    return false;
+  }
+  const auto* first = dot->cc()->begin();
+  const auto* second = first + 1;
+  return first->lo == 0 && first->hi == '\n' - 1 && second->lo == '\n' + 1 &&
+         second->hi == re2::Runemax;
+}
+
+DotStarPrefix DotStarPrefixOf(re2::Regexp* re) {
+  std::vector<re2::Regexp*> pieces;
+  AppendPieces(re, pieces);
+  DotStarPrefix shape;
+  if (pieces.empty() || !DotStar(pieces.back())) {
+    return shape;
+  }
+  shape.found =
+    AppendExact(std::span{pieces}.first(pieces.size() - 1), shape.prefix);
+  return shape;
+}
+
 bool Unbounded(std::span<re2::Regexp* const> pieces) {
   return std::any_of(pieces.begin(), pieces.end(), [](re2::Regexp* piece) {
     return piece->op() == re2::kRegexpStar || piece->op() == re2::kRegexpPlus;
@@ -875,7 +910,7 @@ re2::Regexp* BytesTree(bytes_view bytes, bool any_tail) {
 constexpr std::string_view kTooComplex = "regular expression is too complex";
 
 re2::Regexp* RegexpTree(bytes_view pattern, RegexpSyntax syntax,
-                        std::string& error) {
+                        std::string& error, DotStarPrefix* dot_star) {
   const absl::string_view sv{reinterpret_cast<const char*>(pattern.data()),
                              pattern.size()};
   // The two dialects a term regexp is offered: Perl and POSIX ERE.
@@ -888,6 +923,9 @@ re2::Regexp* RegexpTree(bytes_view pattern, RegexpSyntax syntax,
   if (!parsed) {
     error = status.Text();
     return nullptr;
+  }
+  if (dot_star) {
+    *dot_star = DotStarPrefixOf(parsed);
   }
   re2::Regexp* simple = parsed->Simplify();
   parsed->Decref();
@@ -953,8 +991,8 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
 #ifdef SDB_DEV
   kBuilds.fetch_add(1, std::memory_order_relaxed);
 #endif
-  re2::Regexp* re =
-    wildcard ? WildcardTree(pattern) : RegexpTree(pattern, syntax, _error);
+  re2::Regexp* re = wildcard ? WildcardTree(pattern)
+                             : RegexpTree(pattern, syntax, _error, nullptr);
   if (re) {
     _suffixes = SuffixesOf(re);
     NormalizeSuffixes(_suffixes);
@@ -989,6 +1027,7 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
   bool constrained = true;
   for (const auto& part : parts) {
     re2::Regexp* re = nullptr;
+    DotStarPrefix dot_star;
     switch (part.kind) {
       case PartKind::Term:
         re = BytesTree(part.pattern, false);
@@ -1000,10 +1039,11 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
         re = WildcardTree(part.pattern);
         break;
       case PartKind::Perl:
-        re = RegexpTree(part.pattern, RegexpSyntax::Perl, _error);
+        re = RegexpTree(part.pattern, RegexpSyntax::Perl, _error, &dot_star);
         break;
       case PartKind::PosixEre:
-        re = RegexpTree(part.pattern, RegexpSyntax::PosixEre, _error);
+        re =
+          RegexpTree(part.pattern, RegexpSyntax::PosixEre, _error, &dot_star);
         break;
     }
     if (!re) {
@@ -1012,6 +1052,8 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
     }
     if (part.kind == PartKind::Term || part.kind == PartKind::Prefix) {
       _exempt.push_back({bstring{part.pattern}, part.kind == PartKind::Prefix});
+    } else if (dot_star.found) {
+      _exempt.push_back({std::move(dot_star.prefix), true});
     } else if (auto suffixes = SuffixesOf(re); suffixes.empty()) {
       constrained = false;
     } else {

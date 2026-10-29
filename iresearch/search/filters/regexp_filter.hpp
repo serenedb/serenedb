@@ -32,18 +32,13 @@ namespace irs {
 
 class ByRegexp;
 
-template<typename Term, typename Prefix, typename Complex>
-auto ExecuteRegexp(bstring& buf, bytes_view pattern, Term&& t, Prefix&& p,
-                   Complex&& c) {
+template<typename Term, typename Complex>
+auto ExecuteRegexp(bstring& buf, bytes_view pattern, Term&& t, Complex&& c) {
   switch (ComputeRegexpType(pattern)) {
     case RegexpType::LiteralEscaped:
       return t(UnescapeRegexp(pattern, buf));
     case RegexpType::Literal:
       return t(pattern);
-    case RegexpType::PrefixEscaped:
-      return p(UnescapeRegexp(ExtractRegexpPrefix(pattern), buf));
-    case RegexpType::Prefix:
-      return p(ExtractRegexpPrefix(pattern));
     case RegexpType::Complex:
       return c(pattern);
     default:

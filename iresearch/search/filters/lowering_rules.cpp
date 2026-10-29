@@ -133,14 +133,6 @@ bool RegexpSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
       filter->SetScorer(node.GetScorer());
       return filter;
     },
-    [&](bytes_view prefix) -> Filter::ptr {
-      auto filter = std::make_unique<ByPrefix>();
-      *filter->mutable_field_id() = node.field_id();
-      filter->mutable_options()->term = prefix;
-      filter->SetBoost(node.GetBoost());
-      filter->SetScorer(node.GetScorer());
-      return filter;
-    },
     [](bytes_view) -> Filter::ptr { return nullptr; });
   if (lowered == nullptr) {
     return false;

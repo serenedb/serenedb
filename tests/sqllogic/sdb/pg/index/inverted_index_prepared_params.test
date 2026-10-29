@@ -427,13 +427,13 @@ n
 10
 
 statement ok
-CREATE TABLE ppr (pk INTEGER PRIMARY KEY, v INTEGER, s VARCHAR);
+CREATE TABLE ppr (pk INTEGER PRIMARY KEY, v INTEGER, s VARCHAR, f BOOLEAN);
 
 statement ok
-CREATE INDEX ppr_idx ON ppr USING inverted(pk, v, s);
+CREATE INDEX ppr_idx ON ppr USING inverted(pk, v, s, f);
 
 statement ok
-INSERT INTO ppr SELECT i, i % 10, (i % 7)::VARCHAR FROM range(100) t(i);
+INSERT INTO ppr SELECT i, i % 10, (i % 7)::VARCHAR, i % 4 = 0 FROM range(100) t(i);
 
 statement ok
 VACUUM (REFRESH_TABLE) ppr;
@@ -463,6 +463,16 @@ EXECUTE ppr_text(5);
 ----
 n
 14
+
+statement ok
+PREPARE ppr_bool(text) AS SELECT count(*) AS n FROM ppr_idx
+  WHERE f = ltrim($1, 'x')::boolean;
+
+query
+EXECUTE ppr_bool('xtrue');
+----
+n
+25
 
 statement ok
 DEALLOCATE ALL;

@@ -444,14 +444,6 @@ bool TryClaimIResearchConjunctImpl(
     } catch (const irs::SqlException&) {
       deferred->declined_parameter = true;
       return false;
-    } catch (const duckdb::Exception& e) {
-      const auto type = duckdb::ErrorData{e}.Type();
-      if (type != duckdb::ExceptionType::CONVERSION &&
-          type != duckdb::ExceptionType::INVALID_INPUT) {
-        throw;
-      }
-      deferred->declined_parameter = true;
-      return false;
     }
     deferred->claim.conjuncts.push_back(conjunct->Copy());
     return true;

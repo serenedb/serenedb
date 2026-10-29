@@ -1669,7 +1669,7 @@ IndexWriter::FlushContextPtr IndexWriter::GetFlushContext() const noexcept
   auto* ctx = _flush_context.load(std::memory_order_relaxed);
   for (;;) {
     const bool lock = ctx->context_mutex.try_lock_shared();
-    auto* curr = _flush_context.load(std::memory_order_relaxed);
+    auto* curr = _flush_context.load(std::memory_order_acquire);
     if (lock) {
       if (ctx == curr) [[likely]] {
         return {ctx, [](FlushContext* ctx)
@@ -1689,7 +1689,7 @@ IndexWriter::FlushContextPtr IndexWriter::SwitchFlushContext() noexcept {
   auto* ctx = _flush_context.load(std::memory_order_relaxed);
   absl::MutexLock lock{&ctx->context_mutex};
   SwapDocMaps(*ctx);
-  _flush_context.store(ctx->next, std::memory_order_relaxed);
+  _flush_context.store(ctx->next, std::memory_order_release);
   return {ctx, [](FlushContext* ctx) noexcept {
             absl::MutexLock lock{&ctx->context_mutex};
             ctx->Reset();

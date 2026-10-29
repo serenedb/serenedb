@@ -102,6 +102,13 @@ statement ok
 CALL postgres_execute('rsrch_${__DATABASE__}', 'INSERT INTO rsrch_full VALUES (1, ''x''), (1, ''x''), (2, NULL), (3, ''y'')');
 
 
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM rsrch_full;
+----
+n
+4
+
+
 statement ok
 CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN UPDATE rsrch_full SET b = ''z'' WHERE a = 2; DELETE FROM rsrch_full WHERE ctid = (SELECT min(ctid) FROM rsrch_full WHERE a = 1); UPDATE rsrch_full SET a = 30 WHERE a = 3; END $$');
 

@@ -1000,6 +1000,11 @@ TEST_F(SearchRowRemovalTest, ConcurrentInsertRemoveCompact) {
   for (auto& thread : threads) {
     thread.join();
   }
+  for (bool idle = true; idle;) {
+    std::this_thread::yield();
+    std::lock_guard lock{mutex};
+    idle = removed.empty();
+  }
   stop.store(true);
   for (auto& thread : removers) {
     thread.join();

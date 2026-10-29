@@ -95,7 +95,7 @@ int64_t Int(JsonValue value, std::string_view what) {
 
 bool IsJsonInteger(std::string_view token) {
   absl::ConsumePrefix(&token, "-");
-  return !token.empty() && (token.size() == 1 || token.front() != '0') &&
+  return !token.empty() && token.front() != '0' &&
          absl::c_all_of(token, absl::ascii_isdigit);
 }
 

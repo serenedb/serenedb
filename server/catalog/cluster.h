@@ -20,9 +20,7 @@
 
 #pragma once
 
-#include <absl/base/thread_annotations.h>
 #include <absl/functional/function_ref.h>
-#include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <duckdb/catalog/catalog_set.hpp>
@@ -32,7 +30,6 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
-#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -77,6 +74,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     duckdb::CreateRoleInfo& info) final;
   bool IsPinnedEntry(const duckdb::CatalogEntry& entry) const final;
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeDatabaseEntry(
+    duckdb::CatalogTransaction transaction,
     duckdb::CreateDatabaseInfo& info) final;
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeTablespaceEntry(
     duckdb::CreateTablespaceInfo& info) final;
@@ -106,9 +104,11 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   void DropTablespace(duckdb::CatalogTransaction transaction,
                       duckdb::DropInfo& info) final;
 
-  std::shared_ptr<TablespaceRoot> TablespaceRootOf(duckdb::idx_t oid);
+  std::shared_ptr<TablespaceRoot> TablespaceRootOf(
+    duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
   std::shared_ptr<DatabaseDirectory> MakeDatabaseDirectory(
-    duckdb::idx_t oid, duckdb::idx_t tablespace);
+    duckdb::CatalogTransaction transaction, duckdb::idx_t oid,
+    duckdb::idx_t tablespace);
 
   auth::RoleCache& Roles() noexcept { return _roles; }
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
@@ -118,15 +118,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
   bool HoldsTablespaceObjects(const TablespaceCatalogEntry& tablespace);
 
-  struct KnownRoot {
-    std::weak_ptr<TablespaceRoot> root;
-    std::weak_ptr<const std::string> path;
-  };
-
-  absl::Mutex _tablespace_creation_mutex;
-  absl::Mutex _tablespaces_mutex;
-  irs::containers::FlatHashMap<duckdb::idx_t, KnownRoot> _tablespace_roots
-    ABSL_GUARDED_BY(_tablespaces_mutex);
+  std::shared_ptr<TablespaceRoot> _default_root;
   std::mutex _log_mutex;
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
   bool _compactable = false;

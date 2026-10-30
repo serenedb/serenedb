@@ -59,22 +59,15 @@ class DatabaseDirectoryTest : public ::testing::Test {
     std::filesystem::remove_all(_root);
   }
 
+  static duckdb::CatalogTransaction Transaction() {
+    return duckdb::CatalogTransaction::GetSystemTransaction(
+      irs::DuckDBEngine::Instance().instance());
+  }
+
   static bool Gone(const std::filesystem::path& path) {
     const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds{30};
     while (std::filesystem::exists(path)) {
-      if (std::chrono::steady_clock::now() > deadline) {
-        return false;
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds{5});
-    }
-    return true;
-  }
-
-  static bool Released(const std::weak_ptr<const std::string>& held) {
-    const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds{30};
-    while (!held.expired()) {
       if (std::chrono::steady_clock::now() > deadline) {
         return false;
       }
@@ -118,7 +111,7 @@ TEST_F(DatabaseDirectoryTest, CreatesOnceAndOpensOnlyWhatExists) {
   EXPECT_TRUE(std::filesystem::is_directory(_root / "5"));
   EXPECT_ANY_THROW(directory->Create());
   EXPECT_EQ(directory->DataFile(), Path("5/data.db"));
-  const auto storages = directory->InTablespace(0);
+  const auto storages = directory->InTablespace(Transaction(), 0);
   EXPECT_FALSE(storages.OpenStorage(7));
   EXPECT_EQ(storages.CreateStorage(7), Path("5/7"));
   EXPECT_ANY_THROW(storages.CreateStorage(7));
@@ -128,7 +121,8 @@ TEST_F(DatabaseDirectoryTest, CreatesOnceAndOpensOnlyWhatExists) {
 TEST_F(DatabaseDirectoryTest, ARemovedStorageLeavesItsSiblings) {
   auto directory = Database(_root.string());
   directory->Create();
-  std::optional<StorageDirectory> storages = directory->InTablespace(0);
+  std::optional<StorageDirectory> storages =
+    directory->InTablespace(Transaction(), 0);
   storages->CreateStorage(7);
   storages->CreateStorage(8);
   std::ofstream{_root / "5" / "7" / "segment"} << "rows";
@@ -143,7 +137,8 @@ TEST_F(DatabaseDirectoryTest, ARemovedStorageLeavesItsSiblings) {
 TEST_F(DatabaseDirectoryTest, ADroppedDatabaseGoesAfterItsLastStorage) {
   auto directory = Database(_root.string());
   directory->Create();
-  std::optional<StorageDirectory> storages = directory->InTablespace(0);
+  std::optional<StorageDirectory> storages =
+    directory->InTablespace(Transaction(), 0);
   storages->CreateStorage(7);
   std::ofstream{_root / "5" / "data.db"} << "pages";
   std::ofstream{_root / "5" / "7" / "segment"} << "rows";
@@ -160,7 +155,8 @@ TEST_F(DatabaseDirectoryTest, StoragesInAnotherTablespace) {
   auto directory = std::make_shared<DatabaseDirectory>(
     5, std::make_shared<TablespaceRoot>(Path("indexes")), _root / "5");
   directory->Create();
-  std::optional<StorageDirectory> storages = directory->InTablespace(0);
+  std::optional<StorageDirectory> storages =
+    directory->InTablespace(Transaction(), 0);
   EXPECT_EQ(storages->CreateStorage(7), Path("indexes/5/7"));
   EXPECT_TRUE(std::filesystem::is_directory(_root / "indexes" / "5" / "7"));
   EXPECT_FALSE(std::filesystem::exists(_root / "5" / "7"));
@@ -179,7 +175,7 @@ TEST_F(DatabaseDirectoryTest, StoragesOnAnObjectStore) {
                                  "bucket/database_directory_", ::getpid());
   auto directory = Database(root);
   directory->Create();
-  const auto storages = directory->InTablespace(0);
+  const auto storages = directory->InTablespace(Transaction(), 0);
   EXPECT_FALSE(storages.OpenStorage(7));
   EXPECT_EQ(storages.CreateStorage(7), absl::StrCat(root, "/5/7"));
   EXPECT_TRUE(ObjectStore().Find(absl::StrCat(root, "/5/7.storage")));
@@ -228,27 +224,23 @@ TEST_F(DatabaseDirectoryTest, AFailedClaimLeavesTheClaimedDirectory) {
 TEST_F(DatabaseDirectoryTest, ADroppedTablespaceGoesAfterItsLastStorage) {
   auto root = std::make_shared<TablespaceRoot>(Path("ts/engine_v1"));
   root->Claim();
-  const auto held = root->HeldPath();
   auto directory =
     std::make_shared<DatabaseDirectory>(5, root, _root / "default" / "5");
-  std::optional<StorageDirectory> storages = directory->InTablespace(0);
+  std::optional<StorageDirectory> storages =
+    directory->InTablespace(Transaction(), 0);
   storages->CreateStorage(7);
   root->MarkDropped();
   root.reset();
   directory.reset();
   EXPECT_TRUE(std::filesystem::is_directory(_root / "ts" / "engine_v1" / "5"));
-  EXPECT_FALSE(held.expired());
   storages.reset();
-  EXPECT_TRUE(Released(held));
-  EXPECT_FALSE(std::filesystem::exists(_root / "ts" / "engine_v1"));
+  EXPECT_TRUE(Gone(_root / "ts" / "engine_v1"));
 }
 
-TEST_F(DatabaseDirectoryTest, AKeptTablespaceReleasesItsPathWithItsRoot) {
+TEST_F(DatabaseDirectoryTest, AKeptTablespaceKeepsItsFilesWhenItsRootGoes) {
   auto root = std::make_shared<TablespaceRoot>(Path("ts/engine_v1"));
   root->Claim();
-  const auto held = root->HeldPath();
   root.reset();
-  EXPECT_TRUE(held.expired());
   EXPECT_TRUE(std::filesystem::is_directory(_root / "ts" / "engine_v1"));
 }
 
@@ -268,7 +260,6 @@ TEST_F(DatabaseDirectoryTest, ADropWaitsForNoCreationAndBlocksNewOnes) {
   ASSERT_TRUE(drop);
   root->MarkDropped();
   drop.reset();
-  EXPECT_TRUE(root->Dropped());
   EXPECT_FALSE(root->Pin());
   EXPECT_FALSE(root->BeginDrop());
 }
@@ -276,7 +267,7 @@ TEST_F(DatabaseDirectoryTest, ADropWaitsForNoCreationAndBlocksNewOnes) {
 TEST_F(DatabaseDirectoryTest, UnownedStoragesGoFromADirectory) {
   auto directory = Database(_root.string());
   directory->Create();
-  const auto storages = directory->InTablespace(0);
+  const auto storages = directory->InTablespace(Transaction(), 0);
   storages.CreateStorage(7);
   storages.CreateStorage(8);
   std::ofstream{_root / "5" / "8" / "segment"} << "rows";
@@ -295,7 +286,7 @@ TEST_F(DatabaseDirectoryTest, UnownedStoragesGoFromAnObjectStore) {
   const auto root = absl::StrCat(tablespace, "/5");
   auto directory = Database(tablespace);
   directory->Create();
-  const auto in_default = directory->InTablespace(0);
+  const auto in_default = directory->InTablespace(Transaction(), 0);
   in_default.CreateStorage(7);
   in_default.CreateStorage(8);
   ObjectStore().Publish(absl::StrCat(root, "/7/segment"), "rows");

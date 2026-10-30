@@ -449,9 +449,11 @@ int64_t TablespaceBytes(const Session& session,
     }
   }
   duckdb::TaskScheduler::BlockingScope blocking;
+  auto& cluster = catalog::ClusterOf(context);
   const auto root =
     tablespace.oid == kPgGlobalTablespace
-      ? catalog::ClusterOf(context).TablespaceRootOf(kPgDefaultTablespace)
+      ? cluster.TablespaceRootOf(cluster.GetCatalogTransaction(context),
+                                 kPgDefaultTablespace)
       : tablespace.Root();
   const auto size = catalog::StorageBytes(root->Path());
   switch (tablespace.oid) {

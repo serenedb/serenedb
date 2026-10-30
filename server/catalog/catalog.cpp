@@ -199,10 +199,11 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
 }
 
 duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
-  duckdb::DuckSchemaEntry& schema, duckdb::CreateIndexInfo& info,
-  duckdb::CatalogEntry& relation) {
+  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+  duckdb::CreateIndexInfo& info, duckdb::CatalogEntry& relation) {
   if (info.index_type != kInvertedIndexTypeName) {
-    return duckdb::DuckCatalog::MakeIndexEntry(schema, info, relation);
+    return duckdb::DuckCatalog::MakeIndexEntry(transaction, schema, info,
+                                               relation);
   }
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table;
   if (relation.type == duckdb::CatalogType::TABLE_ENTRY) {
@@ -217,7 +218,7 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
     entry->AdoptStorage(search::InvertedIndexStorage::Create(
-      Directory(entry->Tablespace()), GetAttached(), entry->oid,
+      Directory(transaction, entry->Tablespace()), GetAttached(), entry->oid,
       ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
   }
   return std::move(entry);

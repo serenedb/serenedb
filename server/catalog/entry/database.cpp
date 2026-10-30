@@ -35,12 +35,18 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(
                            info.GetQualifiedName().Name(), info.oid},
     _options{info.options},
     _tablespace{info.tablespace_oid},
-    _directory{directory ? std::move(directory)
-                         : catalog.Cast<ClusterCatalog>().MakeDatabaseDirectory(
-                             oid, Tablespace())} {
+    _directory{std::move(directory)} {
   comment = info.comment;
   tags = info.tags;
   permissions = info.permissions;
+}
+
+DatabaseCatalogEntry::DatabaseCatalogEntry(
+  duckdb::CatalogTransaction transaction, duckdb::Catalog& catalog,
+  duckdb::CreateDatabaseInfo& info)
+  : DatabaseCatalogEntry{catalog, info, nullptr} {
+  _directory = catalog.Cast<ClusterCatalog>().MakeDatabaseDirectory(
+    transaction, oid, Tablespace());
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {

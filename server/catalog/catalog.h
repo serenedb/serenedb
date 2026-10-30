@@ -67,11 +67,12 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
                   std::shared_ptr<DatabaseDirectory> directory)
     : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
 
-  std::optional<StorageDirectory> Directory(duckdb::idx_t tablespace) const {
+  std::optional<StorageDirectory> Directory(
+    duckdb::CatalogTransaction transaction, duckdb::idx_t tablespace) const {
     if (!_directory) {
       return std::nullopt;
     }
-    return _directory->InTablespace(tablespace);
+    return _directory->InTablespace(transaction, tablespace);
   }
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
 
@@ -113,8 +114,8 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     duckdb::CreateSchemaInfo& info) final;
 
   duckdb::unique_ptr<duckdb::IndexCatalogEntry> MakeIndexEntry(
-    duckdb::DuckSchemaEntry& schema, duckdb::CreateIndexInfo& info,
-    duckdb::CatalogEntry& relation) final;
+    duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+    duckdb::CreateIndexInfo& info, duckdb::CatalogEntry& relation) final;
 
   duckdb::unique_ptr<duckdb::TableCatalogEntry> MakeTableEntry(
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,

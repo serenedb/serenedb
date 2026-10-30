@@ -148,6 +148,7 @@ statement error
 CREATE TABLESPACE half_created LOCATION '${__TEST_DIR__}/half';
 ----
 db error: ERROR: directory "<slt:ignore>/half/engine_v1" already in use as a tablespace
+HINT: Remove it if no tablespace uses it; a dropped tablespace removes it once the transactions that began before the drop have ended.
 
 
 system ok

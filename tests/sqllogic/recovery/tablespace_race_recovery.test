@@ -157,8 +157,8 @@ connection default
 statement error
 CREATE TABLESPACE held_again LOCATION '${__TEST_DIR__}/held';
 ----
-db error: ERROR: tablespace location "<slt:ignore>" overlaps a dropped tablespace that still holds it
-HINT: A dropped tablespace releases its location once the transactions that began before the drop have ended and its files are removed.
+db error: ERROR: directory "<slt:ignore>" already in use as a tablespace
+HINT: Remove it if no tablespace uses it; a dropped tablespace removes it once the transactions that began before the drop have ended.
 
 
 connection holder
@@ -190,8 +190,8 @@ connection default
 statement error
 CREATE TABLESPACE held_once_more LOCATION '${__TEST_DIR__}/held';
 ----
-db error: ERROR: tablespace location "<slt:ignore>" overlaps a dropped tablespace that still holds it
-HINT: A dropped tablespace releases its location once the transactions that began before the drop have ended and its files are removed.
+db error: ERROR: directory "<slt:ignore>" already in use as a tablespace
+HINT: Remove it if no tablespace uses it; a dropped tablespace removes it once the transactions that began before the drop have ended.
 
 
 connection default

@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -152,63 +153,47 @@ class BuiltinTablespaces final : public duckdb::DefaultGenerator {
 
 void ClusterCatalog::Initialize(bool load_builtin) {
   duckdb::DuckCatalog::Initialize(load_builtin);
-  auto root =
+  _default_root =
     std::make_shared<TablespaceRoot>(ClusterLayout(GetAttached()).EngineDir());
-  {
-    absl::MutexLock lock{&_tablespaces_mutex};
-    _tablespace_roots[pg::kPgDefaultTablespace] = {.root = root,
-                                                   .path = root->HeldPath()};
-  }
   GetCatalogSet(duckdb::CatalogType::TABLESPACE_ENTRY)
     .SetDefaultGenerator(
-      duckdb::make_uniq<BuiltinTablespaces>(*this, std::move(root)));
+      duckdb::make_uniq<BuiltinTablespaces>(*this, _default_root));
 }
 
 duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeDatabaseEntry(
-  duckdb::CreateDatabaseInfo& info) {
-  return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);
+  duckdb::CatalogTransaction transaction, duckdb::CreateDatabaseInfo& info) {
+  return duckdb::make_uniq<DatabaseCatalogEntry>(transaction, *this, info);
 }
 
 duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeTablespaceEntry(
   duckdb::CreateTablespaceInfo& info) {
-  std::shared_ptr<TablespaceRoot> root;
-  {
-    absl::MutexLock lock{&_tablespaces_mutex};
-    if (const auto it = _tablespace_roots.find(info.oid);
-        info.oid != 0 && it != _tablespace_roots.end()) {
-      root = it->second.root.lock();
-    }
-  }
-  if (!root) {
-    root = std::make_shared<TablespaceRoot>(EngineDirOf(info.location));
-  }
-  auto entry = duckdb::make_uniq<TablespaceCatalogEntry>(*this, info, root);
-  absl::MutexLock lock{&_tablespaces_mutex};
-  _tablespace_roots[entry->oid] = {.root = root, .path = root->HeldPath()};
-  return entry;
+  return duckdb::make_uniq<TablespaceCatalogEntry>(
+    *this, info, std::make_shared<TablespaceRoot>(EngineDirOf(info.location)));
 }
 
 std::shared_ptr<TablespaceRoot> ClusterCatalog::TablespaceRootOf(
-  duckdb::idx_t oid) {
-  {
-    absl::MutexLock lock{&_tablespaces_mutex};
-    if (const auto it = _tablespace_roots.find(oid);
-        it != _tablespace_roots.end()) {
-      if (auto root = it->second.root.lock()) {
-        return root;
-      }
-    }
+  duckdb::CatalogTransaction transaction, duckdb::idx_t oid) {
+  if (oid == pg::kPgDefaultTablespace) {
+    return _default_root;
+  }
+  const auto view =
+    transaction.HasContext()
+      ? GetCatalogTransaction(transaction.GetContext()).view
+      : duckdb::CatalogTransaction::GetCommittedTransaction(GetDatabase()).view;
+  if (const auto entry = GetOidIndex().GetVisible(oid, view);
+      entry && entry->type == duckdb::CatalogType::TABLESPACE_ENTRY) {
+    return entry->Cast<TablespaceCatalogEntry>().Root();
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                   ERR_MSG("tablespace with OID ", oid, " does not exist"));
 }
 
 std::shared_ptr<DatabaseDirectory> ClusterCatalog::MakeDatabaseDirectory(
-  duckdb::idx_t oid, duckdb::idx_t tablespace) {
-  auto root = TablespaceRootOf(tablespace);
+  duckdb::CatalogTransaction transaction, duckdb::idx_t oid,
+  duckdb::idx_t tablespace) {
+  auto root = TablespaceRootOf(transaction, tablespace);
   std::filesystem::path path =
-    (root->Remote() ? TablespaceRootOf(pg::kPgDefaultTablespace) : root)
-      ->DatabaseDir(oid);
+    (root->Remote() ? _default_root : root)->DatabaseDir(oid);
   return std::make_shared<DatabaseDirectory>(oid, std::move(root),
                                              std::move(path));
 }
@@ -225,43 +210,23 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateTablespace(
   }
   info.location = NormalizeLocation(info.location);
   const auto root = EngineDirOf(info.location);
-  absl::MutexLock creating{&_tablespace_creation_mutex};
-  duckdb::idx_t overlapping = 0;
-  bool dropped = false;
-  {
-    absl::MutexLock lock{&_tablespaces_mutex};
-    absl::erase_if(_tablespace_roots, [](const auto& known) {
-      return known.second.path.expired();
-    });
-    for (const auto& [oid, known] : _tablespace_roots) {
-      const auto path = known.path.lock();
-      if (path && (Nested(*path, root) || Nested(root, *path))) {
-        const auto existing = known.root.lock();
-        overlapping = oid;
-        dropped = !existing || existing->Dropped();
-      }
+  std::optional<duckdb::Identifier> overlapping;
+  tablespaces.Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+    const auto& other = entry.Cast<TablespaceCatalogEntry>().Root();
+    if (other && (Nested(other->Path(), root) || Nested(root, other->Path()))) {
+      overlapping = entry.name;
     }
+  });
+  if (overlapping) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                    ERR_MSG("tablespace location \"", info.location,
+                            "\" overlaps tablespace \"",
+                            overlapping->GetIdentifierName(), "\""));
   }
-  if (dropped) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_OBJECT_IN_USE),
-      ERR_MSG("tablespace location \"", info.location,
-              "\" overlaps a dropped tablespace that still holds it"),
-      ERR_HINT("A dropped tablespace releases its location once the "
-               "transactions that began before the drop have ended and its "
-               "files are removed."));
-  }
-  if (overlapping != 0) {
-    std::string other = "another tablespace";
-    tablespaces.Scan(transaction, [&](duckdb::CatalogEntry& entry) {
-      if (entry.oid == overlapping) {
-        other =
-          absl::StrCat("tablespace \"", entry.name.GetIdentifierName(), "\"");
-      }
-    });
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_OBJECT_IN_USE),
-      ERR_MSG("tablespace location \"", info.location, "\" overlaps ", other));
+  if (absl::c_linear_search(absl::StrSplit(info.location, '/'), kEngineDir)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+                    ERR_MSG("tablespace location \"", info.location,
+                            "\" is inside the files of a tablespace"));
   }
   auto entry = duckdb::DuckCatalog::CreateTablespace(transaction, info);
   if (entry) {

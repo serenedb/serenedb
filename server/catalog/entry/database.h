@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/parser/parsed_data/create_database_info.hpp>
 #include <memory>
 #include <string>
@@ -39,7 +40,10 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
 
   DatabaseCatalogEntry(duckdb::Catalog& catalog,
                        duckdb::CreateDatabaseInfo& info,
-                       std::shared_ptr<DatabaseDirectory> directory = nullptr);
+                       std::shared_ptr<DatabaseDirectory> directory);
+  DatabaseCatalogEntry(duckdb::CatalogTransaction transaction,
+                       duckdb::Catalog& catalog,
+                       duckdb::CreateDatabaseInfo& info);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;

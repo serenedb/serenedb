@@ -49,6 +49,12 @@ CREATE TABLESPACE loc_inside_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/base/
 db error: ERROR: tablespace location "<slt:ignore>" overlaps tablespace "<slt:ignore>"
 
 
+statement error
+CREATE TABLESPACE loc_files_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc_files/engine_v1/deeper';
+----
+db error: ERROR: tablespace location "<slt:ignore>" is inside the files of a tablespace
+
+
 statement ok
 CREATE TABLESPACE loc_child_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/base/child';
 
@@ -138,6 +144,7 @@ statement error
 CREATE TABLESPACE loc_stray_${__DATABASE__} LOCATION '${__TEST_DIR__}/stray';
 ----
 db error: ERROR: directory "<slt:ignore>/stray/engine_v1" already in use as a tablespace
+HINT: Remove it if no tablespace uses it; a dropped tablespace removes it once the transactions that began before the drop have ended.
 
 
 system ok

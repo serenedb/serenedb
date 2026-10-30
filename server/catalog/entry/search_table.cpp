@@ -244,7 +244,7 @@ SearchTableEntry::SearchTableEntry(
   }
   if (!_storage) {
     _storage = search::SearchTable::Create(
-      catalog.Cast<SereneDBCatalog>().Directory(_tablespace),
+      catalog.Cast<SereneDBCatalog>().Directory(transaction, _tablespace),
       catalog.GetAttached(), oid, base.oid == 0, _options, GetColumns());
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }

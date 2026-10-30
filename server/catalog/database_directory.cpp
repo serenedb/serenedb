@@ -200,8 +200,8 @@ void RemoveUnowned(std::span<const StorageEntry> entries,
 }
 
 TablespaceRoot::TablespaceRoot(std::string path)
-  : _path{std::make_shared<const std::string>(std::move(path))},
-    _remote{irs::StorageKindOf(*_path) == irs::StorageKind::Remote} {}
+  : _path{std::move(path)},
+    _remote{irs::StorageKindOf(_path) == irs::StorageKind::Remote} {}
 
 TablespaceRoot::~TablespaceRoot() {
   if (_state != State::Dropped) {
@@ -209,7 +209,7 @@ TablespaceRoot::~TablespaceRoot() {
   }
   RunRemoval([path = std::move(_path)] {
     SDB_PARK_ONCE_ON_FAILURE("pause_tablespace_removal");
-    RemoveTree(*path);
+    RemoveTree(path);
   });
 }
 
@@ -217,7 +217,10 @@ void TablespaceRoot::Claim() {
   const auto in_use = [&] {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_IN_USE),
-      ERR_MSG("directory \"", Path(), "\" already in use as a tablespace"));
+      ERR_MSG("directory \"", Path(), "\" already in use as a tablespace"),
+      ERR_HINT("Remove it if no tablespace uses it; a dropped tablespace "
+               "removes it once the transactions that began before the drop "
+               "have ended."));
   };
   if (!_remote) {
     const std::filesystem::path path{Path()};
@@ -264,11 +267,6 @@ std::shared_ptr<void> TablespaceRoot::BeginDrop() {
       root._state = State::Live;
     }
   });
-}
-
-bool TablespaceRoot::Dropped() const {
-  absl::MutexLock lock{&_mutex};
-  return _state == State::Dropped;
 }
 
 void TablespaceRoot::MarkDropped() {
@@ -373,19 +371,14 @@ std::string DatabaseDirectory::DataFile() const {
 
 void DatabaseDirectory::Create() const { CreateNewDirectory(_path); }
 
-std::shared_ptr<TablespaceRoot> DatabaseDirectory::RootOf(
-  duckdb::idx_t tablespace) const {
-  if (tablespace == 0) {
-    return _root;
-  }
-  return ClusterOf().TablespaceRootOf(tablespace);
-}
-
-StorageDirectory DatabaseDirectory::InTablespace(duckdb::idx_t tablespace) {
+StorageDirectory DatabaseDirectory::InTablespace(
+  duckdb::CatalogTransaction transaction, duckdb::idx_t tablespace) {
   if (!_root) {
     return {shared_from_this(), nullptr, _path.string()};
   }
-  auto root = RootOf(tablespace);
+  auto root = tablespace == 0
+                ? _root
+                : ClusterOf().TablespaceRootOf(transaction, tablespace);
   if (root != _root) {
     absl::MutexLock lock{&_mutex};
     std::erase_if(_roots, [](const auto& known) { return known.expired(); });

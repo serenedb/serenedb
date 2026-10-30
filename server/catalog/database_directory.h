@@ -24,6 +24,7 @@
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/storage/storage_extension.hpp>
@@ -69,15 +70,13 @@ class TablespaceRoot final
   explicit TablespaceRoot(std::string path);
   ~TablespaceRoot();
 
-  const std::string& Path() const noexcept { return *_path; }
-  std::weak_ptr<const std::string> HeldPath() const noexcept { return _path; }
+  const std::string& Path() const noexcept { return _path; }
   bool Remote() const noexcept { return _remote; }
   std::string DatabaseDir(duckdb::idx_t oid) const;
 
   void Claim();
   [[nodiscard]] std::shared_ptr<void> Pin();
   [[nodiscard]] std::shared_ptr<void> BeginDrop();
-  bool Dropped() const;
   void MarkDropped();
   void Abandon();
 
@@ -92,7 +91,7 @@ class TablespaceRoot final
   State _state ABSL_GUARDED_BY(_mutex) = State::Live;
   uint32_t _pins ABSL_GUARDED_BY(_mutex) = 0;
   bool _claimed ABSL_GUARDED_BY(_mutex) = false;
-  std::shared_ptr<const std::string> _path;
+  std::string _path;
   bool _remote;
 };
 
@@ -131,15 +130,14 @@ class DatabaseDirectory final
   std::string DataFile() const;
 
   void Create() const;
-  StorageDirectory InTablespace(duckdb::idx_t tablespace);
+  StorageDirectory InTablespace(duckdb::CatalogTransaction transaction,
+                                duckdb::idx_t tablespace);
 
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
 
  private:
-  std::shared_ptr<TablespaceRoot> RootOf(duckdb::idx_t tablespace) const;
-
   duckdb::idx_t _oid;
   std::shared_ptr<TablespaceRoot> _root;
   std::filesystem::path _path;

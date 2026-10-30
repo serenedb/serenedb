@@ -115,8 +115,8 @@ class LevenshteinIterator : public WrappedTermIterator {
     return true;
   }
 
-  bool SeekPast(bytes_view key) {
-    if (_impl->seek_ge(AfterKey(key)) == SeekResult::End) {
+  bool SeekGe(bytes_view target) {
+    if (_impl->seek_ge(target) == SeekResult::End) {
       return false;
     }
     Score();
@@ -178,6 +178,7 @@ void WalkTopTerms(const TermReader& reader,
   const auto prefix = options.parametric->LowerBound();
   const auto term = bytes_view{options.target}.substr(prefix.size());
   std::unique_ptr<const LevenshteinAcceptor> narrow;
+  bstring past;
   auto distance = static_cast<uint8_t>(options.no_distance - 1);
   std::array<size_t, ParametricDescription::kMaxDistance + 1> reached{};
   const auto reaches = [&](score_t boost, uint8_t d) {
@@ -202,12 +203,12 @@ void WalkTopTerms(const TermReader& reader,
         options.provider(narrowed, options.with_transpositions);
       if (description) {
         distance = narrowed;
-        const bstring last{it->value()};
+        AssignAfterKey(past, it->value());
         auto acceptor = std::make_unique<const LevenshteinAcceptor>(
           description, prefix, term);
         it.emplace(reader.iterator(*acceptor), options);
         narrow = std::move(acceptor);
-        if (!it->SeekPast(last)) {
+        if (!it->SeekGe(past)) {
           return;
         }
         on_terms(it->GetImpl());

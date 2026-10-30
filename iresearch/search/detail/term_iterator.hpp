@@ -63,21 +63,32 @@ class WrappedTermIterator : public TermIterator {
   SeekTermIterator::ptr _impl;
 };
 
+inline void AssignAfterKey(bstring& out, bytes_view key) {
+  out.reserve(key.size() + 1);
+  out.assign(key);
+  out.push_back(0);
+}
+
 inline bstring AfterKey(bytes_view key) {
-  bstring after{key};
-  after.push_back(0);
+  bstring after;
+  AssignAfterKey(after, key);
   return after;
 }
 
-inline bstring UpperBoundOf(bytes_view prefix) {
-  bstring upper{prefix};
-  while (!upper.empty()) {
-    if (upper.back() != 0xFF) {
-      ++upper.back();
-      return upper;
+inline void AssignUpperBoundOf(bstring& out, bytes_view prefix) {
+  out.assign(prefix);
+  while (!out.empty()) {
+    if (out.back() != 0xFF) {
+      ++out.back();
+      return;
     }
-    upper.pop_back();
+    out.pop_back();
   }
+}
+
+inline bstring UpperBoundOf(bytes_view prefix) {
+  bstring upper;
+  AssignUpperBoundOf(upper, prefix);
   return upper;
 }
 

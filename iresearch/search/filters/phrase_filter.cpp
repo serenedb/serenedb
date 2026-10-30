@@ -197,8 +197,8 @@ class WordIterator final : public WrappedTermIterator {
       if (at == bytes_view::npos) {
         return true;
       }
-      const auto upper = UpperBoundOf(term.substr(0, at + _separator.size()));
-      if (upper.empty() || SeekResult::End == _impl->seek_ge(upper)) {
+      AssignUpperBoundOf(_upper, term.substr(0, at + _separator.size()));
+      if (_upper.empty() || SeekResult::End == _impl->seek_ge(_upper)) {
         return false;
       }
     }
@@ -206,6 +206,7 @@ class WordIterator final : public WrappedTermIterator {
 
   Bounds _bounds;
   bytes_view _separator;
+  bstring _upper;
   bool _started = false;
 };
 

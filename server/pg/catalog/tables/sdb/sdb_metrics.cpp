@@ -97,6 +97,7 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
                       metrics::Description(gauge));
   }
   auto& storage = scan.Database().GetAttached().GetStorageManager();
+  const auto commit_lock = storage.GetCommitLock();
   const auto wal = storage.GetWAL();
   rows.emplace_back("catalog_wal_appended_bytes",
                     wal ? static_cast<int64_t>(wal->GetFlushedOffset()) : 0,

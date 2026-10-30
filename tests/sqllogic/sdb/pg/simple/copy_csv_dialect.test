@@ -6,6 +6,11 @@ TO '${__TEST_DIR__}/crlf_quoted_lf.csv' (FORMAT BLOB);
 
 
 statement ok
+COPY (SELECT ('"a' || chr(10) || 'b",x' || chr(13) || chr(10) || '"y",z' || chr(13) || chr(10))::BLOB)
+TO '${__TEST_DIR__}/crlf_leading_quoted_lf.csv' (FORMAT BLOB);
+
+
+statement ok
 COPY (SELECT ('x,,"",z' || chr(13) || chr(10))::BLOB)
 TO '${__TEST_DIR__}/crlf_empty.csv' (FORMAT BLOB);
 
@@ -29,6 +34,22 @@ SELECT a, replace(b, chr(10), '|') AS b FROM csv_two ORDER BY a;
 a	b
 x	a|b
 y	z
+
+
+statement ok
+DELETE FROM csv_two;
+
+
+statement ok
+COPY csv_two FROM '${__TEST_DIR__}/crlf_leading_quoted_lf.csv' (FORMAT csv);
+
+
+query
+SELECT replace(a, chr(10), '|') AS a, b, length(b) AS b_length FROM csv_two ORDER BY a;
+----
+a	b	b_length
+a|b	x	1
+y	z	1
 
 
 statement ok

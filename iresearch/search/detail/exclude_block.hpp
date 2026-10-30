@@ -196,8 +196,6 @@ IRS_FORCE_INLINE uint32_t ExcludeBlock(Excludes& excludes,
                                        uint32_t len) {
   if constexpr (requires { excludes.FilterBlock(docs, scores, len); }) {
     return excludes.FilterBlock(docs, scores, len);
-  } else if constexpr (requires { excludes.Drop(docs, scores, len); }) {
-    return excludes.Drop(docs, scores, len);
   } else {
     if (len == 0) {
       return len;
@@ -210,17 +208,20 @@ IRS_FORCE_INLINE uint32_t ExcludeBlock(Excludes& excludes,
     for (auto step = std::bit_floor(len); step != 0; step >>= 1) {
       i += (i + step <= len && docs[i + step - 1] < next) ? step : 0;
     }
-    if constexpr (requires { excludes.Words(); }) {
+    if constexpr (requires { excludes.Drop(docs, scores, len); }) {
+      return i + excludes.Drop(docs + i, scores + i, len - i);
+    } else if constexpr (requires { excludes.Words(); }) {
       return ExcludeWords(excludes, docs, scores, i, len);
+    } else {
+      uint32_t kept = i;
+      for (; i != len; ++i) {
+        const auto doc = docs[i];
+        docs[kept] = doc;
+        scores[kept] = scores[i];
+        kept += static_cast<uint32_t>(!IsExcluded(excludes, doc));
+      }
+      return kept;
     }
-    uint32_t kept = i;
-    for (; i != len; ++i) {
-      const auto doc = docs[i];
-      docs[kept] = doc;
-      scores[kept] = scores[i];
-      kept += static_cast<uint32_t>(!IsExcluded(excludes, doc));
-    }
-    return kept;
   }
 }
 

@@ -386,7 +386,7 @@ void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,
                                       duckdb::Binder& binder,
                                       duckdb::LogicalOperator& plan,
                                       duckdb::StatementProperties& properties) {
-  auth::EnforcePlan(context, *_connection_ctx, binder, plan);
+  auth::EnforcePlan(context, *_connection_ctx, plan);
 }
 
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {

@@ -53,10 +53,8 @@
 #include <utility>
 #include <vector>
 
-#include "auth/enforce.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/tokenizer.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/option_help.h"
 #include "pg/tokenizer_options.h"
 #include "pg/tsdictionary.h"
@@ -786,9 +784,6 @@ class SpecCompiler {
     if (error.empty()) {
       duckdb::LogicalProjection projection{binder->GenerateTableIndex(),
                                            std::move(select_list)};
-      if (auto* connection = connector::GetSereneDBContextPtr(_context)) {
-        auth::EnforcePlan(_context, *connection, *binder, projection);
-      }
       try {
         return duckdb::ExpressionExecutor::EvaluateScalar(
           _context, *projection.expressions[0], true);

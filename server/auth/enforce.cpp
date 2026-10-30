@@ -38,7 +38,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/constraint.hpp>
-#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
@@ -46,12 +45,10 @@
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_sequence_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
-#include <duckdb/parser/parsed_data/create_trigger_info.hpp>
 #include <duckdb/parser/parsed_data/detach_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
-#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_alter.hpp>
 #include <duckdb/planner/operator/logical_attach.hpp>
@@ -64,7 +61,6 @@
 #include <duckdb/planner/operator/logical_vacuum.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
-#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -256,10 +252,9 @@ bool PointAtCluster(Info& info, CatalogType type) {
 class Enforcer {
  public:
   Enforcer(duckdb::ClientContext& context, ConnectionContext& connection,
-           duckdb::Binder& binder, duckdb::LogicalOperator& root)
+           duckdb::LogicalOperator& root)
     : _context{context},
       _connection{connection},
-      _props{binder.GetStatementProperties()},
       _root{StatementRoot(root)},
       _caller{connection.GetRoleId()},
       _roles{RolesOf(&context)},
@@ -267,12 +262,7 @@ class Enforcer {
       _caller_closure{*_caller_closure_owner},
       _enforce{!_caller_closure.is_superuser} {}
 
-  void Run() {
-    Check(_root);
-    if (_enforce) {
-      CheckResolved();
-    }
-  }
+  void Run() { Check(_root); }
 
  private:
   void Check(duckdb::LogicalOperator& op) {
@@ -291,9 +281,6 @@ class Enforcer {
         for (auto& serial : create.info->serial_sequences) {
           Stamp(serial.permissions, create.schema.ParentCatalog(),
                 CatalogType::SEQUENCE_ENTRY, &create.schema, _caller);
-        }
-        if (_enforce) {
-          CheckForeignKeys(info, create.schema);
         }
         break;
       }
@@ -328,9 +315,6 @@ class Enforcer {
         auto& create = op.Cast<duckdb::LogicalCreate>();
         RequireUserSchema(create.schema->oid, *create.info);
         Stamp(*create.info, CatalogType::TRIGGER_ENTRY, create.schema);
-        if (_enforce) {
-          CheckCreateTrigger(create.info->Cast<duckdb::CreateTriggerInfo>());
-        }
         break;
       }
       case LogicalOperatorType::LOGICAL_CREATE_SCHEMA: {
@@ -495,113 +479,6 @@ class Enforcer {
       _caller_memberships = MembershipsOf(*_roles, _caller);
     }
     return *_caller_memberships;
-  }
-
-  void CheckResolved() {
-    const bool defines_relation =
-      _root.type == LogicalOperatorType::LOGICAL_CREATE_TABLE ||
-      _root.type == LogicalOperatorType::LOGICAL_ALTER;
-    irs::containers::FlatHashSet<const duckdb::CatalogEntry*> seen;
-    if (_root.type == LogicalOperatorType::LOGICAL_CREATE_TABLE) {
-      const auto& dependencies = _root.Cast<duckdb::LogicalCreateTable>()
-                                   .info->Base()
-                                   .dependencies.Set();
-      for (const auto& dependency : dependencies) {
-        if (dependency.entry.type != CatalogType::TYPE_ENTRY) {
-          continue;
-        }
-        auto& catalog =
-          duckdb::Catalog::GetCatalog(_context, dependency.catalog);
-        auto dependency_manager = catalog.GetDependencyManager();
-        auto entry = dependency_manager
-                       ? dependency_manager->LookupEntry(
-                           catalog.GetCatalogTransaction(_context), dependency)
-                       : duckdb::Catalog::GetEntry(
-                           _context,
-                           duckdb::EntryLookupInfo{
-                             CatalogType::TYPE_ENTRY,
-                             duckdb::QualifiedName::FromCatalogSchema(
-                               dependency.catalog, dependency.entry.schema_path,
-                               dependency.entry.name)},
-                           duckdb::OnEntryNotFound::RETURN_NULL);
-        if (!entry || duckdb::IsUnowned(*entry) ||
-            !seen.insert(entry.get()).second) {
-          continue;
-        }
-        if (!_caller_closure.Can(entry->type, entry->permissions,
-                                 AclMode::Usage)) {
-          duckdb::ThrowPermissionDenied(*entry);
-        }
-      }
-    }
-    for (const auto* entry : _props.resolved_entries) {
-      if (!seen.insert(entry).second || duckdb::IsUnowned(*entry)) {
-        continue;
-      }
-      switch (entry->type) {
-        case CatalogType::TYPE_ENTRY:
-          if (defines_relation &&
-              !_caller_closure.Can(entry->type, entry->permissions,
-                                   AclMode::Usage)) {
-            duckdb::ThrowPermissionDenied(*entry);
-          }
-          break;
-        default:
-          break;
-      }
-    }
-  }
-
-  void CheckForeignKeys(const duckdb::CreateTableInfo& info,
-                        const duckdb::SchemaCatalogEntry& schema) {
-    for (const auto& constraint : info.constraints) {
-      if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
-        continue;
-      }
-      const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
-      if (fk.info.type != duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
-        continue;
-      }
-      const auto parent_schema = fk.info.schema.GetIdentifierName().empty()
-                                   ? schema.name
-                                   : fk.info.schema;
-      auto parent = duckdb::Catalog::GetEntry(
-        _context,
-        duckdb::EntryLookupInfo(
-          CatalogType::TABLE_ENTRY,
-          duckdb::QualifiedName(schema.catalog.GetName(), parent_schema,
-                                fk.info.table)),
-        duckdb::OnEntryNotFound::RETURN_NULL);
-      if (!parent || parent->type != CatalogType::TABLE_ENTRY) {
-        continue;
-      }
-      auto& table = parent->Cast<duckdb::TableCatalogEntry>();
-      std::vector<std::span<const duckdb::AclItem>> acls;
-      for (const auto& column : fk.pk_columns) {
-        duckdb::Identifier name = column;
-        acls.emplace_back(table.GetColumn(table.GetColumnIndex(name)).Acl());
-      }
-      if (!_caller_closure.CanColumns(table.permissions, AclMode::References,
-                                      acls)) {
-        duckdb::ThrowPermissionDenied(table);
-      }
-    }
-  }
-
-  void CheckCreateTrigger(const duckdb::CreateTriggerInfo& info) {
-    auto entry = duckdb::Catalog::GetEntry(
-      _context,
-      duckdb::EntryLookupInfo(CatalogType::TABLE_ENTRY,
-                              info.base_table->GetQualifiedName()),
-      duckdb::OnEntryNotFound::RETURN_NULL);
-    if (!entry) {
-      return;
-    }
-    if (!_caller_closure.Owns(entry->permissions.owner) &&
-        !_caller_closure.Can(CatalogType::TABLE_ENTRY, entry->permissions,
-                             AclMode::Trigger)) {
-      duckdb::ThrowPermissionDenied(*entry);
-    }
   }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> FindEntry(
@@ -1134,7 +1011,6 @@ class Enforcer {
 
   duckdb::ClientContext& _context;
   ConnectionContext& _connection;
-  duckdb::StatementProperties& _props;
   duckdb::LogicalOperator& _root;
   const duckdb::idx_t _caller;
   RoleGraphPtr _roles;
@@ -1148,9 +1024,9 @@ class Enforcer {
 }  // namespace
 
 void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
-                 duckdb::Binder& binder, duckdb::LogicalOperator& plan) {
+                 duckdb::LogicalOperator& plan) {
   if (HasStatementRules(StatementRoot(plan))) {
-    Enforcer{context, connection, binder, plan}.Run();
+    Enforcer{context, connection, plan}.Run();
   }
 }
 

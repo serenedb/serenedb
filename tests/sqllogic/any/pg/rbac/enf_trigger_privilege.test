@@ -1,0 +1,92 @@
+statement ok
+DROP TABLE IF EXISTS etp_t;
+
+
+statement ok
+DROP TABLE IF EXISTS etp_log;
+
+
+onlyif postgres
+statement ok
+DROP FUNCTION IF EXISTS etp_note();
+
+
+statement ok
+DROP ROLE IF EXISTS etp_vedernikoff;
+
+
+statement ok
+CREATE ROLE etp_vedernikoff LOGIN PASSWORD 'etp_pw';
+
+
+statement ok
+CREATE TABLE etp_t (a integer);
+
+
+statement ok
+CREATE TABLE etp_log (a integer);
+
+
+statement ok
+GRANT INSERT ON etp_log TO etp_vedernikoff;
+
+
+onlyif postgres
+statement ok
+CREATE FUNCTION etp_note() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NULL; END';
+
+
+onlyif postgres
+connection c_etp user=etp_vedernikoff password=etp_pw
+statement error
+CREATE TRIGGER etp_trg AFTER INSERT ON etp_t REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION etp_note();
+----
+db error: ERROR: permission denied for table etp_t
+
+
+skipif postgres
+connection c_etp user=etp_vedernikoff password=etp_pw
+statement error
+CREATE TRIGGER etp_trg AFTER INSERT ON etp_t REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO etp_log SELECT a FROM new_rows;
+----
+db error: ERROR: permission denied for table etp_t
+
+
+statement ok
+GRANT TRIGGER ON etp_t TO etp_vedernikoff;
+
+
+onlyif postgres
+connection c_etp user=etp_vedernikoff password=etp_pw
+statement ok
+CREATE TRIGGER etp_trg AFTER INSERT ON etp_t REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION etp_note();
+
+
+skipif postgres
+connection c_etp user=etp_vedernikoff password=etp_pw
+statement ok
+CREATE TRIGGER etp_trg AFTER INSERT ON etp_t REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO etp_log SELECT a FROM new_rows;
+
+
+query
+SELECT tgname FROM pg_trigger WHERE tgrelid = 'etp_t'::regclass;
+----
+tgname
+etp_trg
+
+
+statement ok
+DROP TABLE etp_t;
+
+
+statement ok
+DROP TABLE etp_log;
+
+
+onlyif postgres
+statement ok
+DROP FUNCTION etp_note();
+
+
+statement ok
+DROP ROLE etp_vedernikoff;

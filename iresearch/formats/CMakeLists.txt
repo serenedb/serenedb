@@ -1,10 +1,6 @@
 target_sources(
     iresearch
     PRIVATE
-        column/codecs/dict_fsst.cpp
-        column/codecs/dict_lz4.cpp
-        column/codecs/dict_zstd.cpp
-        column/codecs/dict_zxc.cpp
         column/codecs/fsst.cpp
         column/codecs/fsst_chain_encoder.cpp
         column/codecs/lz4.cpp

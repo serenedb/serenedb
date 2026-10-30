@@ -385,8 +385,7 @@ Result<Family> MakeWindowExclusion(
       const ExcludeCosts<PostingClause> costs{
         exclude_terms, exclude_filters, candidates,
         candidates,    docs_count,      ExcludeUse::PerDoc};
-      if (!kWindowBatches<Family> &&
-          !costs.TakesWindowLead(
+      if (!costs.TakesWindowLead(
             SegmentDoc(segment) != nullptr, Family::kWindowLeadDrains,
             Family::kSparseLeadCost, Family::kWindowLeadRefills, candidates)) {
         return {};

@@ -16,7 +16,7 @@ Roll up yesterday's events every day at 02:00 UTC, and run it once right away:
 ## Syntax
 
 ```sql
-CREATE [ OR REPLACE ] JOB [ IF NOT EXISTS ] name
+CREATE [ OR REPLACE ] [ TEMPORARY | TEMP ] JOB [ IF NOT EXISTS ] name
     { EVERY interval [ OFFSET interval ] [ RANDOMIZE FOR interval ] [ CONCURRENT ]
     | AFTER interval [ RANDOMIZE FOR interval ] }
     [ SUSPENDED ]
@@ -110,7 +110,13 @@ A job can live in any SereneDB database, not only the current one; wherever it l
 
 <SqlLogicTest id="sql/statements/create_job/index/example_006" />
 
-Jobs exist only in SereneDB databases, like text search dictionaries: a job in `memory` or in an attached DuckDB file is rejected with `Jobs are not supported by this catalog`, and `CREATE TEMPORARY JOB` with `a job cannot be temporary`.
+Jobs exist only in SereneDB databases, like text search dictionaries: a job in `memory` or in an attached DuckDB file is rejected with `Jobs are not supported by this catalog`.
+
+## Temporary jobs
+
+`CREATE TEMPORARY JOB` creates the job in the session's temporary database, `temp`, as `CREATE TEMPORARY TABLE` creates a table there: only the session sees it, it is not persisted, and it is dropped when the session ends, which interrupts a run in progress. Its runs work in that temporary database: the job's schema, `temp.main`, is their search path, so the body reads and writes the session's temporary tables by name and qualifies the tables of a database:
+
+<SqlLogicTest id="sql/statements/create_job/index/example_011" />
 
 ## Dropping a job
 

@@ -243,10 +243,6 @@ duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
 duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::CreateJobInfo& info) {
-  if (info.temporary) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("a job cannot be temporary"));
-  }
   VerifySchedule(info.schedule);
   auto job = duckdb::make_uniq<JobCatalogEntry>(*this, schema, info,
                                                 std::make_shared<JobState>());

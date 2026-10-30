@@ -185,12 +185,6 @@ SELECT count(*) AS runs FROM doc_jobs_db.public.doc_session_log;
 runs
 1
 
-statement error
-CREATE TEMPORARY JOB doc_session_job AFTER 1 HOUR AS SELECT 1;
-----
-db error: ERROR: a job cannot be temporary
-
-
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
@@ -296,7 +290,39 @@ SELECT events FROM doc_daily WHERE kind = 'audit';
 events
 3
 
+# DOCS_TEST: example_011
+
+statement ok
+CREATE TEMPORARY TABLE doc_scratch (n int);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEMPORARY JOB doc_scratch_job AFTER 1 HOUR AS
+    INSERT INTO doc_scratch SELECT n FROM doc_jobs_db.public.doc_session_log;
+
+statement ok
+EXECUTE JOB doc_scratch_job;
+
+query
+SELECT n FROM doc_scratch;
+----
+n
+1
+
+query
+SELECT database_name, schema_name, job_name FROM sdb_jobs() WHERE database_name = 'temp';
+----
+database_name	schema_name	job_name
+temp	main	doc_scratch_job
+
 # DOCS_TEST_END
+
+statement ok
+DROP JOB doc_scratch_job;
+
+statement ok
+DROP TABLE doc_scratch;
 
 statement ok
 DROP JOB doc_ops.doc_audit;

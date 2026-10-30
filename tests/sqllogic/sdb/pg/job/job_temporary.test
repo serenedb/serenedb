@@ -1,0 +1,128 @@
+control substitution on
+
+statement ok
+CREATE TABLE jtmp_kept (n INT);
+
+
+statement ok
+CREATE TEMPORARY TABLE jtmp_scratch (n INT);
+
+
+statement ok
+CREATE TEMPORARY JOB jtmp_every EVERY 1 SECOND AS INSERT INTO jtmp_scratch VALUES (1);
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) >= 2 AS ticked FROM jtmp_scratch;
+----
+ticked
+t
+
+
+statement ok
+ALTER JOB jtmp_every SUSPEND;
+
+
+query
+SELECT database_name, schema_name, suspended, sql FROM sdb_jobs() WHERE job_name = 'jtmp_every';
+----
+database_name	schema_name	suspended	sql
+temp	main	t	CREATE TEMPORARY JOB jtmp_every EVERY INTERVAL '00:00:01' SUSPENDED AS INSERT INTO jtmp_scratch (VALUES (1));
+
+
+query
+SELECT DISTINCT database_name, schema_name, trigger, success FROM sdb_job_runs() WHERE job_name = 'jtmp_every';
+----
+database_name	schema_name	trigger	success
+temp	main	schedule	t
+
+
+connection other
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name = 'jtmp_every';
+----
+jobs
+0
+
+
+connection other
+query
+SELECT count(*) AS runs FROM sdb_job_runs() WHERE job_name = 'jtmp_every';
+----
+runs
+0
+
+
+connection other
+statement error
+EXECUTE JOB jtmp_every;
+----
+db error: ERROR: Job with name jtmp_every does not exist!<slt:ignore>
+
+
+connection other
+statement ok
+CREATE TEMPORARY JOB jtmp_every AFTER 1 HOUR AS SELECT 1;
+
+
+connection other
+statement ok
+DROP JOB jtmp_every;
+
+
+statement ok
+CREATE TEMPORARY JOB jtmp_copy AFTER 1 HOUR AS INSERT INTO ${__DATABASE__}.public.jtmp_kept SELECT max(n) FROM jtmp_scratch;
+
+
+statement ok
+EXECUTE JOB jtmp_copy;
+
+
+query
+SELECT n FROM jtmp_kept;
+----
+n
+1
+
+
+statement ok
+CREATE TEMP JOB jtmp_unqualified AFTER 1 HOUR AS INSERT INTO jtmp_kept VALUES (2);
+
+
+statement error
+EXECUTE JOB jtmp_unqualified;
+----
+db error: ERROR: Table with name jtmp_kept does not exist!<slt:ignore>
+
+
+statement error
+CREATE TEMPORARY JOB ${__DATABASE__}.public.jtmp_misplaced AFTER 1 HOUR AS SELECT 1;
+----
+db error: ERROR: <slt:ignore>can *only* use the "temp" catalog<slt:ignore>
+
+
+statement ok
+DROP JOB jtmp_unqualified;
+
+
+statement ok
+DROP JOB jtmp_copy;
+
+
+statement ok
+DROP JOB jtmp_every;
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = 'temp';
+----
+jobs
+0
+
+
+statement ok
+DROP TABLE jtmp_scratch;
+
+
+statement ok
+DROP TABLE jtmp_kept;

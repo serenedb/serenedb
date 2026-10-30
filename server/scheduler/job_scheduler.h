@@ -31,6 +31,7 @@
 #include <duckdb/common/optional_ptr.hpp>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -83,6 +84,7 @@ struct JobDefinition {
   std::shared_ptr<
     const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>>
     body;
+  duckdb::weak_ptr<duckdb::AttachedDatabase> temporary;
 };
 
 struct JobState {

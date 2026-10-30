@@ -40,7 +40,6 @@
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
-#include <iresearch/index/typed_terms.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
@@ -174,21 +173,23 @@ irs::bytes_view AsRawBytes(const duckdb::Value& value) {
 }
 
 bool TryEncodeTerm(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
-                   irs::bstring& out) {
+                   irs::TermClause& out) {
   if (type_id == duckdb::LogicalTypeId::VARCHAR ||
       type_id == duckdb::LogicalTypeId::BLOB) {
-    out.assign(AsRawBytes(value));
+    out.slot = irs::FieldSlot::String;
+    out.term.assign(AsRawBytes(value));
     return true;
   }
   if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-    out.assign(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTerm(value.GetValue<bool>())));
+    out.slot = irs::BoolSlot(value.GetValue<bool>());
+    out.term.clear();
     return true;
   }
   if (IsNumericTypeId(type_id)) {
+    out.slot = irs::FieldSlot::Numeric;
     WithNumericValue(type_id, value, [&](auto v) {
       irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
-      out.assign(irs::numeric_utils::EncodeNumericTerm(buf, v));
+      out.term.assign(irs::numeric_utils::EncodeNumericTerm(buf, v));
     });
     return true;
   }
@@ -211,12 +212,12 @@ absl::Status SetupTermClause(irs::TermClause& clause,
       "Unsupported type id ", static_cast<int>(type_id), " for filter"));
   }
 
-  if (!TryEncodeTerm(type_id, value, clause.term)) {
+  if (!TryEncodeTerm(type_id, value, clause)) {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type for term filter: ", static_cast<int>(type_id)));
   }
 
-  clause.field = PickPerKindFieldId(column_info, type_id);
+  clause.field = column_info.field_id;
   return absl::OkStatus();
 }
 
@@ -366,10 +367,6 @@ void FromTSQueryMatch(BoolTarget filter, const FilterContext& ctx,
                       const duckdb::Expression& rhs);
 void RejectSlopOnNonPhrase(const FilterContext& ctx);
 
-irs::bytes_view NullMarkerTerm() noexcept {
-  return irs::ViewCast<irs::byte_type>(irs::kNullTerm);
-}
-
 }  // namespace
 
 bool HasGroupModifier(const duckdb::LogicalType& type) {
@@ -387,12 +384,35 @@ const duckdb::Expression& PeelGroupModifiers(const duckdb::Expression& expr) {
   return *cur;
 }
 
-void AddNullMarkerTerm(BoolTarget parent, irs::field_id null_field_id) {
-  AddTerm(parent, null_field_id, NullMarkerTerm(), irs::kNoBoost,
+void AddNullMarkerTerm(BoolTarget parent, irs::field_id field) {
+  AddTerm(parent, field, irs::FieldSlot::SqlNull, irs::kSlotTerm, irs::kNoBoost,
           &irs::ForceConstScore());
 }
 
+void AddBoolSlots(BoolTarget parent, const SearchColumnInfo& info,
+                  bool accept_false, bool accept_true, irs::score_t boost) {
+  const auto* scorer = LeafScorer(info);
+  if (!accept_false && !accept_true) {
+    AddFilter<irs::Empty>(parent);
+    return;
+  }
+  if (accept_false != accept_true) {
+    AddTerm(parent, info.field_id, irs::BoolSlot(accept_true), irs::kSlotTerm,
+            boost, scorer);
+    return;
+  }
+  auto& node = AddFilter<irs::BooleanFilter>(parent);
+  const BoolTarget either{&node, irs::Occur::Should};
+  AddTerm(either, info.field_id, irs::FieldSlot::False, irs::kSlotTerm,
+          irs::kNoBoost, scorer);
+  AddTerm(either, info.field_id, irs::FieldSlot::True, irs::kSlotTerm,
+          irs::kNoBoost, scorer);
+  SetMinMatch(node, 1);
+  node.SetBoost(boost);
+}
+
 irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,
+                               irs::FieldSlot slot,
                                std::span<irs::bstring> terms,
                                size_t min_match) {
   auto& node = AddFilter<irs::BooleanFilter>(parent);
@@ -403,7 +423,9 @@ irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,
   const bool all = min_match >= terms.size();
   const auto occur = all ? irs::Occur::Must : irs::Occur::Should;
   for (auto& term : terms) {
-    node.Add(irs::TermClause{.field = field, .term = std::move(term)}, occur);
+    node.Add(
+      irs::TermClause{.field = field, .slot = slot, .term = std::move(term)},
+      occur);
   }
   if (!all) {
     SetMinMatch(node, min_match);
@@ -422,9 +444,8 @@ void CollectNullableMarkers(const FilterContext& ctx,
                             const duckdb::Expression& expr,
                             std::vector<irs::field_id>& markers) {
   if (const auto* info = FindIndexedExpressionInfo(ctx, expr)) {
-    if (irs::field_limits::valid(info->null_field_id) &&
-        !absl::c_linear_search(markers, info->null_field_id)) {
-      markers.push_back(info->null_field_id);
+    if (info->nullable && !absl::c_linear_search(markers, info->field_id)) {
+      markers.push_back(info->field_id);
     }
     return;
   }
@@ -748,13 +769,13 @@ absl::Status FromIsNull(BoolTarget filter, const FilterContext& ctx,
     return absl::InvalidArgumentError(
       "IS NULL input is not a reference to an indexed column");
   }
-  if (!irs::field_limits::valid(column_info->null_field_id)) {
+  if (!column_info->nullable) {
     return absl::InvalidArgumentError(
-      "IS NULL over a column without a null-marker field (NOT NULL or "
-      "legacy index)");
+      "IS NULL over a column that has no NULL rows in the index");
   }
-  AddTerm(ctx.negated ? Negate(filter) : filter, column_info->null_field_id,
-          NullMarkerTerm(), ctx.boost, &irs::ForceConstScore());
+  AddTerm(ctx.negated ? Negate(filter) : filter, column_info->field_id,
+          irs::FieldSlot::SqlNull, irs::kSlotTerm, ctx.boost,
+          &irs::ForceConstScore());
   return absl::OkStatus();
 }
 
@@ -974,8 +995,8 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
   auto type_id = column_info->logical_type.id();
 
   auto setup_base_filter = [&](auto& range_filter) -> decltype(auto) {
-    *range_filter.mutable_field_id() =
-      PickPerKindFieldId(*column_info, type_id);
+    *range_filter.mutable_field_id() = column_info->field_id;
+    *range_filter.mutable_slot() = ValueSlot(type_id);
     range_filter.SetBoost(ctx.boost);
     SetLeafScorer(range_filter, *column_info);
     switch (op) {
@@ -1010,10 +1031,23 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
     auto& range_filter = AddFilter<irs::ByRange>(filter);
     setup_base_filter(range_filter).assign(AsRawBytes(*const_val));
   } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-    auto& range_filter = AddFilter<irs::ByRange>(filter);
-    setup_base_filter(range_filter)
-      .assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTerm(const_val->GetValue<bool>())));
+    const bool value = const_val->GetValue<bool>();
+    switch (op) {
+      case ComparisonOp::Lt:
+        AddBoolSlots(filter, *column_info, value, false, ctx.boost);
+        break;
+      case ComparisonOp::Le:
+        AddBoolSlots(filter, *column_info, true, value, ctx.boost);
+        break;
+      case ComparisonOp::Gt:
+        AddBoolSlots(filter, *column_info, false, !value, ctx.boost);
+        break;
+      case ComparisonOp::Ge:
+        AddBoolSlots(filter, *column_info, !value, true, ctx.boost);
+        break;
+      default:
+        SDB_UNREACHABLE();
+    }
   } else if (IsNumericTypeId(type_id)) {
     if (column_info->column_stored && ctx.wide_ranges != WideRanges::Build) {
       bool wide = ctx.wide_ranges == WideRanges::DeclineAll;
@@ -1164,17 +1198,37 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
       "Unsupported type id ", static_cast<int>(type_id), " for filter"));
   }
 
+  const auto target = MaybeNegated(filter, ctx, *column_info);
+  if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
+    std::array<bool, 2> seen{};
+    for (const auto* value : values) {
+      seen[value->GetValue<bool>()] = true;
+    }
+    auto& node = AddFilter<irs::BooleanFilter>(target);
+    for (const bool value : {false, true}) {
+      if (seen[value]) {
+        node.Add(irs::TermClause{.field = column_info->field_id,
+                                 .slot = irs::BoolSlot(value)},
+                 irs::Occur::Should);
+      }
+    }
+    SetMinMatch(node, 1);
+    node.SetBoost(ctx.boost);
+    node.SetScorer(LeafScorer(*column_info));
+    return absl::OkStatus();
+  }
   std::vector<irs::bstring> terms;
   terms.reserve(values.size());
+  irs::TermClause clause;
   for (const auto* value : values) {
-    if (!TryEncodeTerm(type_id, *value, terms.emplace_back())) {
+    if (!TryEncodeTerm(type_id, *value, clause)) {
       return absl::UnimplementedError(absl::StrCat(
         "Unsupported type for IN filter: ", static_cast<int>(type_id)));
     }
+    terms.push_back(std::move(clause.term));
   }
-  auto& node = AddTermSet(MaybeNegated(filter, ctx, *column_info),
-                          PickPerKindFieldId(*column_info, type_id), terms,
-                          /*min_match=*/1);
+  auto& node = AddTermSet(target, column_info->field_id, ValueSlot(type_id),
+                          terms, /*min_match=*/1);
   node.SetBoost(ctx.boost);
   node.SetScorer(LeafScorer(*column_info));
   return absl::OkStatus();
@@ -2317,10 +2371,9 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
       }
     } else if (cast_type.id() != info->logical_type.id()) {
       if (IsNumericTypeId(cast_type.id())) {
-        if (!irs::field_limits::valid(info->numeric_field_id)) {
+        if (!info->json_leaves) {
           return nullptr;
         }
-        // Numeric field id is set up -> it's json leaf
         info->logical_type = duckdb::LogicalType::DOUBLE;
       } else {
         info->logical_type = cast_type;
@@ -2331,14 +2384,9 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
   if (!term_dict::IsSupported(term_dict::Classify(info->logical_type))) {
     return nullptr;
   }
-  info->field_id = PickPerKindFieldId(*info, info->logical_type.id());
-  auto it = ctx.expr_cache.find(info->field_id);
-  if (it != ctx.expr_cache.end()) {
-    return &it->second;
-  }
-  const auto field_id = info->field_id;
-  return &ctx.expr_cache.emplace(field_id, std::move(info.value()))
-            .first->second;
+  const ExprCacheKey key{.field = info->field_id,
+                         .type = info->logical_type.id()};
+  return &ctx.expr_cache.try_emplace(key, std::move(*info)).first->second;
 }
 
 bool IsFilterableType(duckdb::LogicalTypeId type_id) {
@@ -2832,7 +2880,7 @@ absl::Status MakeSearchFilter(
   WideRanges wide_ranges) {
   irs::KeywordTokenizer identity;
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
-  irs::containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
+  ExprCache expr_cache;
 
   const auto levenshtein_max_terms =
     GetIntSetting(context, "sdb_levenshtein_max_terms");

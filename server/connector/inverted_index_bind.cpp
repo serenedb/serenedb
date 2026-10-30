@@ -800,13 +800,9 @@ void FillEntryFromTokenizer(const catalog::TokenizerCatalogEntry& dict,
   if (wants_store || wants_norm) {
     EnsureId(entry.synthetic_column, next_id);
   }
-  // A geo analyzer consumes the GeoJSON object itself, so it gets no leaf
-  // ids -- which is what keeps it out of the JSON leaf splitter.
+  // A geo analyzer consumes the GeoJSON object itself, which is what keeps it
+  // out of the JSON leaf splitter.
   entry.whole_value = IsGeoAnalyzer(analyzer);
-  if (value_type.IsJSONType() && !entry.whole_value) {
-    EnsureId(entry.bool_field_id, next_id);
-    EnsureId(entry.numeric_field_id, next_id);
-  }
 }
 
 void ValidateTermDictKey(std::string_view label,
@@ -1300,11 +1296,6 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
 
     const auto [slot, fresh] = entries.try_emplace(record.field_id);
     auto& field = slot->second;
-    if (fresh) {
-      // Every field carries a null leaf; only the typed leaves are
-      // conditional on what the analyzer reads.
-      field.null_field_id = next_id();
-    }
     if (opclass.IsTokenizer()) {
       if (!fresh && field.indexed_term_dict) {
         const std::string_view title = bare_column ? "Column" : "Expression";

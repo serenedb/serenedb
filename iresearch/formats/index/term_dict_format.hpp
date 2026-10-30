@@ -22,7 +22,9 @@
 
 #include <absl/base/internal/endian.h>
 
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <limits>
 #include <string_view>
@@ -30,6 +32,7 @@
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -101,25 +104,25 @@ constexpr uint32_t TermPrefix(bytes_view term) noexcept {
                   ERR_MSG("term dictionary: bad ", what, " of field ", id));
 }
 
-inline constexpr uint32_t kShortPrefix = 0xF0;
-inline constexpr uint32_t kMediumPrefix =
-  kShortPrefix + (0xFF - kShortPrefix) * 256;
+inline constexpr uint32_t kMaxOrdinalBytes = sizeof(uint32_t);
 
-inline void AppendFieldPrefix(bstring& out, uint32_t ordinal) {
-  if (ordinal < kShortPrefix) {
-    out.push_back(static_cast<byte_type>(ordinal));
-    return;
-  }
-  if (ordinal < kMediumPrefix) {
-    const uint32_t rest = ordinal - kShortPrefix;
-    out.push_back(static_cast<byte_type>(kShortPrefix + rest / 256));
-    out.push_back(static_cast<byte_type>(rest % 256));
-    return;
-  }
-  out.push_back(0xFF);
-  byte_type rest[sizeof(uint32_t)];
-  absl::big_endian::Store32(rest, ordinal - kMediumPrefix);
-  out.append(rest, sizeof(rest));
+constexpr uint32_t OrdinalBytes(uint64_t keyed_dicts) noexcept {
+  const uint64_t max = keyed_dicts == 0 ? 0 : keyed_dicts - 1;
+  return std::max<uint32_t>(
+    1, static_cast<uint32_t>((std::bit_width(max) + 7) / 8));
+}
+
+constexpr uint64_t OrdinalLimit(uint32_t ordinal_bytes) noexcept {
+  return uint64_t{1} << (8 * ordinal_bytes);
+}
+
+inline void AppendOrdinal(bstring& out, uint32_t ordinal,
+                          uint32_t ordinal_bytes) {
+  SDB_ASSERT(ordinal_bytes != 0 && ordinal_bytes <= kMaxOrdinalBytes);
+  SDB_ASSERT(ordinal < OrdinalLimit(ordinal_bytes));
+  byte_type bytes[kMaxOrdinalBytes];
+  absl::big_endian::Store32(bytes, ordinal);
+  out.append(bytes + kMaxOrdinalBytes - ordinal_bytes, ordinal_bytes);
 }
 
 }  // namespace irs::term_dict

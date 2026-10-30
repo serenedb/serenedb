@@ -191,8 +191,8 @@ struct RangeLevel {
 
 class TermReaderImpl final : public TermReader {
  public:
-  TermReaderImpl(FieldReader& owner, const FieldHead& head, IndexInput& in,
-                 const Separators& separators);
+  TermReaderImpl(FieldReader& owner, const FieldHead& head, bytes_view prefix,
+                 IndexInput& in, const Separators& separators);
 
   SeekTermIterator::ptr iterator() const final;
   SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
@@ -319,8 +319,7 @@ class FieldReader final {
   uint64_t CountMappedMemory() const;
   void prepare(const ReaderState& state);
 
-  const TermReader* field(FieldKey key) const;
-  std::span<const FieldKey> field_keys() const noexcept { return _keys; }
+  const TermReader* field(field_id id, FieldSlot slot) const;
   std::span<const field_id> field_ids() const noexcept { return _ids; }
   size_t size() const noexcept { return _fields.size(); }
 
@@ -368,16 +367,13 @@ class FieldReader final {
     byte_type* data;
   };
 
-  struct Dicts {
-    std::array<const TermReaderImpl*, kTermDicts> dicts{};
-  };
+  using Slots = std::array<const TermReaderImpl*, kFieldSlots>;
 
   Separators Bind(TermsMeta& terms);
   void FillCopies();
 
   std::deque<TermReaderImpl> _fields;
-  containers::FlatHashMap<field_id, Dicts> _by_id;
-  std::vector<FieldKey> _keys;
+  containers::FlatHashMap<field_id, Slots> _by_id;
   std::vector<field_id> _ids;
   PostingsReader _pr;
   IndexInput::ptr _in;

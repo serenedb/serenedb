@@ -33,7 +33,7 @@
 #include <iresearch/analysis/numeric_terms.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/index/typed_terms.hpp>
+#include "typed_terms.hpp"
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
@@ -665,19 +665,19 @@ void GenericJsonFieldFactory(Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = id;
-    field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kNullTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = id;
-    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = id;
-    field.value(irs::ViewCast<irs::byte_type>(irs::kFalseTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kFalseTerm));
   } else if (data.is_number()) {
     doc.insert(std::make_shared<DoubleField>());
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();
@@ -710,19 +710,19 @@ void PayloadedJsonFieldFactory(Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = tests::FieldIdForRuntime(name);
-    field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kNullTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = tests::FieldIdForRuntime(name);
-    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = tests::FieldIdForRuntime(name);
-    field.value(irs::ViewCast<irs::byte_type>(irs::kFalseTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kFalseTerm));
   } else if (data.is_number()) {
     doc.insert(std::make_shared<DoubleField>());
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();

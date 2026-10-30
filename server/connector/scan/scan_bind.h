@@ -135,7 +135,6 @@ ENABLE_BITMASK_ENUM(TsDictTermUses);
 struct TsDictRequest {
   irs::field_id field_id = irs::field_limits::invalid();
   irs::field_id display_id = irs::field_limits::invalid();
-  irs::field_id null_field_id = irs::field_limits::invalid();
   std::shared_ptr<irs::Filter> having_filter;
   duckdb::idx_t term_col_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t term_raw_col_idx = duckdb::DConstants::INVALID_INDEX;
@@ -143,6 +142,7 @@ struct TsDictRequest {
   duckdb::idx_t freq_col_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t score_col_idx = duckdb::DConstants::INVALID_INDEX;
   TsDictTermUses term_uses = TsDictTermUses::None;
+  bool nulls = false;
 };
 
 struct TsDictSpec {
@@ -163,7 +163,6 @@ struct DeferredClaim {
   std::vector<std::shared_ptr<const duckdb::Expression>> ranges;
   std::shared_ptr<const std::map<BindingKey, DeferredColumn>> columns;
   std::set<irs::field_id> analyzed_fields;
-  std::map<irs::field_id, irs::field_id> null_markers;
 };
 
 struct PlanCacheSpec {

@@ -26,6 +26,7 @@
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <optional>
 #include <string>
 #include <vector>
@@ -67,9 +68,9 @@ struct KeyRecord {
 };
 
 struct FieldRecord {
-  irs::field_id numeric_field_id = irs::field_limits::invalid();
-  irs::field_id bool_field_id = irs::field_limits::invalid();
-  irs::field_id null_field_id = irs::field_limits::invalid();
+  irs::utils::Deleted<irs::field_id> numeric_field_id;
+  irs::utils::Deleted<irs::field_id> bool_field_id;
+  irs::utils::Deleted<irs::field_id> null_field_id;
   irs::field_id synthetic_column = irs::field_limits::invalid();
   search::Features features;
   bool store_values = false;

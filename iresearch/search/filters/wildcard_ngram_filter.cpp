@@ -216,6 +216,7 @@ class GramQueryPreparer {
                                         prefix->term);
       }
       return ByTerm::PrepareSegment(_segment, _sub_ctx, _filter.field_id(),
+                                    FieldSlot::String,
                                     std::get<ByTermOptions>(part).term);
     }
     if (_filter.options().has_pos) {
@@ -231,6 +232,7 @@ class GramQueryPreparer {
     for (const auto& gram : grams) {
       builder.Add(
         ByTerm::PrepareSegment(_segment, _sub_ctx, _filter.field_id(),
+                               FieldSlot::String,
                                std::get<ByTermOptions>(gram.part).term),
         Occur::Must);
     }

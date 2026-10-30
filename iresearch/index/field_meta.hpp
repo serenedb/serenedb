@@ -31,30 +31,37 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/attributes.hpp"
+#include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
-enum class TermDict : uint8_t {
-  Main = 0,
-  Numeric = 1,
-  Bool = 2,
-  Null = 3,
+enum class FieldSlot : uint8_t {
+  SqlNull = 0,
+  JsonNull = 1,
+  False = 2,
+  True = 3,
+  Numeric = 4,
+  String = 5,
 };
 
-inline constexpr size_t kTermDicts = 4;
+inline constexpr size_t kFieldSlots = 6;
+inline constexpr size_t kPostingSlots = 4;
+inline constexpr size_t kKeyedSlots = kFieldSlots - kPostingSlots;
 
-struct FieldKey {
-  field_id id = field_limits::invalid();
-  TermDict dict = TermDict::Main;
-
-  auto operator<=>(const FieldKey&) const = default;
-};
-
-template<typename H>
-H AbslHashValue(H h, const FieldKey& key) {
-  return H::combine(std::move(h), key.id, key.dict);
+constexpr bool IsKeyed(FieldSlot slot) noexcept {
+  return slot >= FieldSlot::Numeric;
 }
+
+constexpr size_t KeyedIndex(FieldSlot slot) noexcept {
+  return static_cast<size_t>(slot) - kPostingSlots;
+}
+
+constexpr FieldSlot BoolSlot(bool value) noexcept {
+  return value ? FieldSlot::True : FieldSlot::False;
+}
+
+inline constexpr bytes_view kSlotTerm{};
 
 struct FieldStats {
   // Total number of terms
@@ -64,7 +71,6 @@ struct FieldStats {
 struct FieldProperties {
   field_id norm{field_limits::invalid()};
   IndexFeatures index_features{IndexFeatures::None};
-  bool ranges = false;
   uint32_t key_width = 0;
 };
 
@@ -75,10 +81,8 @@ struct FieldMeta : FieldProperties {
   FieldMeta(field_id id, IndexFeatures index_features)
     : FieldProperties{.index_features = index_features}, id{id} {}
 
-  FieldMeta(FieldKey key, IndexFeatures index_features)
-    : FieldProperties{.index_features = index_features},
-      id{key.id},
-      dict{key.dict} {}
+  FieldMeta(field_id id, FieldSlot slot, IndexFeatures index_features)
+    : FieldProperties{.index_features = index_features}, id{id}, slot{slot} {}
 
   FieldMeta() = default;
   FieldMeta(FieldMeta&& rhs) noexcept = default;
@@ -88,16 +92,12 @@ struct FieldMeta : FieldProperties {
 
   bool operator==(const FieldMeta& rhs) const noexcept {
     return index_features == rhs.index_features && id == rhs.id &&
-           dict == rhs.dict;
+           slot == rhs.slot;
   }
 
   field_id id{field_limits::invalid()};
-  TermDict dict = TermDict::Main;
+  FieldSlot slot = FieldSlot::String;
 };
-
-inline FieldKey KeyOf(const FieldMeta& meta) noexcept {
-  return {.id = meta.id, .dict = meta.dict};
-}
 
 static_assert(std::is_move_constructible_v<FieldMeta>);
 

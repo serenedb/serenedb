@@ -83,7 +83,7 @@ inline bool PrepareVectorState(
     return false;
   }
 
-  const auto* postings = segment.field(opts.ann_id);
+  const auto* postings = segment.field(opts.ann_id, FieldSlot::String);
   if (!postings || ivf.Empty() || opts.query.size() != ivf.Dim()) {
     return false;
   }

@@ -37,7 +37,7 @@ namespace sdb::connector {
 struct TsDictLocalState final : public ScanLocalState {
   struct FieldState {
     irs::field_id field_id = irs::field_limits::invalid();
-    irs::field_id null_field_id = irs::field_limits::invalid();
+    bool nulls = false;
     duckdb::idx_t term_slot = duckdb::DConstants::INVALID_INDEX;
     duckdb::idx_t term_raw_slot = duckdb::DConstants::INVALID_INDEX;
     duckdb::idx_t count_slot = duckdb::DConstants::INVALID_INDEX;
@@ -460,7 +460,9 @@ void TsDictLocalState::CountUnit(ScanGlobalState& g) {
     if (_null_pending) {
       const bool known =
         !count_all && slot->Nulls().load(std::memory_order_relaxed) != 0;
-      const auto* nulls = known ? nullptr : _seg->field(_field->null_field_id);
+      const auto* nulls =
+        known ? nullptr
+              : _seg->field(_field->field_id, irs::FieldSlot::SqlNull);
       if (nulls) {
         slot->Nulls().fetch_add(NullDocs(*nulls, count_all),
                                 std::memory_order_relaxed);
@@ -574,13 +576,13 @@ bool TsDictLocalState::NextField() {
       _next_field = nullptr;
     }
     _field = &field;
-    _null_pending = irs::field_limits::valid(field.null_field_id);
+    _null_pending = field.nulls;
     _cursor_mode = count_mode;
     _cursor.reset();
     _term_ordinal = 0;
     _counts = nullptr;
     _reader = nullptr;
-    if (const auto* reader = _seg->field(field.field_id);
+    if (const auto* reader = _seg->field(field.field_id, irs::FieldSlot::String);
         reader && reader->size() != 0) {
       _reader = reader;
       if (emitting || counting) {
@@ -688,7 +690,7 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
 duckdb::idx_t TsDictLocalState::AppendNullRow(duckdb::DataChunk& output,
                                               const FieldState& field,
                                               duckdb::idx_t row) {
-  const auto* reader = _seg->field(field.null_field_id);
+  const auto* reader = _seg->field(field.field_id, irs::FieldSlot::SqlNull);
   if (!reader) {
     return 0;
   }
@@ -745,7 +747,8 @@ void BuildTsDictCounts(ScanGlobalState& g) {
     auto& per_field = g.ts_dict_counts[seg];
     per_field.resize(reqs.size());
     for (size_t i = 0; i != reqs.size(); ++i) {
-      const auto* terms = reader[seg].field(reqs[i].field_id);
+      const auto* terms =
+        reader[seg].field(reqs[i].field_id, irs::FieldSlot::String);
       per_field[i].Reset(!terms ? 0 : static_cast<uint32_t>(terms->size()));
     }
   }
@@ -758,7 +761,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> MakeTsDictLocal(
   lstate->fields.resize(ss.ts_dict.requests.size());
   for (size_t i = 0; i < ss.ts_dict.requests.size(); ++i) {
     lstate->fields[i].field_id = ss.ts_dict.requests[i].field_id;
-    lstate->fields[i].null_field_id = ss.ts_dict.requests[i].null_field_id;
+    lstate->fields[i].nulls = ss.ts_dict.requests[i].nulls;
     lstate->fields[i].term_uses = ss.ts_dict.requests[i].term_uses;
     lstate->fields[i].having_filter =
       ss.ts_dict.requests[i].having_filter.get();

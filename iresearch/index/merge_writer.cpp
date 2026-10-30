@@ -27,6 +27,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 
+#include <bit>
 #include <optional>
 #include <span>
 #include <vector>
@@ -62,7 +63,21 @@ namespace irs {
 namespace {
 
 using DocIdMapT = ManagedVector<doc_id_t>;
-using FieldMetaMapT = absl::flat_hash_map<field_id, IndexFeatures>;
+
+struct MergedField {
+  IndexFeatures string_features = IndexFeatures::None;
+  bool has_string = false;
+  uint8_t keyed = 0;
+};
+
+using FieldMetaMapT = absl::flat_hash_map<field_id, MergedField>;
+
+struct SlotKey {
+  field_id id;
+  FieldSlot slot;
+
+  auto operator<=>(const SlotKey&) const = default;
+};
 
 class ProgressTracker {
  public:
@@ -354,14 +369,9 @@ class CompoundFieldIterator final : public BasicTermReader {
     return *_current_meta;
   }
 
-  FieldKey key() const noexcept final { return KeyOf(Meta()); }
+  field_id id() const noexcept final { return Meta().id; }
   FieldProperties properties() const noexcept final { return _props; }
   uint32_t KeyWidth() const noexcept;
-  bool Ranges() const noexcept {
-    return absl::c_any_of(_field_iterator_mask, [](const auto& segment) {
-      return segment.reader->meta().ranges;
-    });
-  }
   void SampleTerms(
     uint64_t bytes,
     absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final;
@@ -377,6 +387,7 @@ class CompoundFieldIterator final : public BasicTermReader {
   struct FieldIteratorImpl {
     std::span<const field_id> ids;
     size_t pos;
+    size_t slot;
     const SubReader* reader;
     const DocRemap* remap;
   };
@@ -386,8 +397,10 @@ class CompoundFieldIterator final : public BasicTermReader {
     const TermReader* reader;
   };
 
+  const TermReader* Current(FieldIteratorImpl& it) const;
+
   FieldProperties _props;
-  field_id _current_id{field_limits::invalid()};
+  SlotKey _current{.id = field_limits::invalid(), .slot = FieldSlot::SqlNull};
   FieldMeta _synthesized_meta;
   const FieldMeta* _current_meta{&FieldMeta::kEmpty};
   std::vector<TermIteratorImpl> _field_iterator_mask;
@@ -399,46 +412,58 @@ class CompoundFieldIterator final : public BasicTermReader {
 
 void CompoundFieldIterator::Add(const SubReader& reader,
                                 const DocRemap& remap) {
-  _field_iterators.emplace_back(reader.field_ids(), size_t{0}, &reader, &remap);
+  _field_iterators.emplace_back(reader.field_ids(), size_t{0}, size_t{0},
+                                &reader, &remap);
+}
+
+const TermReader* CompoundFieldIterator::Current(FieldIteratorImpl& it) const {
+  for (; it.pos < it.ids.size(); ++it.pos, it.slot = 0) {
+    const auto id = it.ids[it.pos];
+    if (_field_options &&
+        _field_options->GetFieldKind(id) != FieldKind::Index) {
+      continue;
+    }
+    for (; it.slot != kFieldSlots; ++it.slot) {
+      if (const auto* terms =
+            it.reader->field(id, static_cast<FieldSlot>(it.slot))) {
+        return terms;
+      }
+    }
+  }
+  return nullptr;
 }
 
 bool CompoundFieldIterator::Next() {
   _progress();
 
+  const SlotKey none{.id = field_limits::invalid(), .slot = FieldSlot::SqlNull};
   if (Aborted()) {
     _field_iterator_mask.clear();
     _field_iterators.clear();
-    _current_id = field_limits::invalid();
+    _current = none;
     return false;
   }
 
   for (auto& entry : _field_iterator_mask) {
-    ++_field_iterators[entry.itr_id].pos;
+    ++_field_iterators[entry.itr_id].slot;
   }
 
   _field_iterator_mask.clear();
-  _current_id = field_limits::invalid();
+  _current = none;
 
   for (size_t i = 0, count = _field_iterators.size(); i != count; ++i) {
     auto& field_itr = _field_iterators[i];
-    while (_field_options && field_itr.pos < field_itr.ids.size() &&
-           _field_options->GetFieldKind(field_itr.ids[field_itr.pos]) !=
-             FieldKind::Index) {
-      ++field_itr.pos;
-    }
-    if (field_itr.pos >= field_itr.ids.size()) {
-      continue;
-    }
-    const auto id = field_itr.ids[field_itr.pos];
-    if (field_limits::valid(_current_id) && id > _current_id) {
-      continue;
-    }
-    const auto* field_terms = field_itr.reader->field(id);
+    const auto* field_terms = Current(field_itr);
     if (!field_terms) {
-      ++field_itr.pos;
       continue;
     }
-    if (field_limits::valid(_current_id) && id < _current_id) {
+    const SlotKey key{.id = field_itr.ids[field_itr.pos],
+                      .slot = static_cast<FieldSlot>(field_itr.slot)};
+    const bool first = !field_limits::valid(_current.id) || key < _current;
+    if (!first && key != _current) {
+      continue;
+    }
+    if (first) {
       _field_iterator_mask.clear();
     }
     const auto features = field_terms->meta().index_features;
@@ -446,15 +471,16 @@ bool CompoundFieldIterator::Next() {
       _field_iterator_mask.empty()
         ? features
         : _synthesized_meta.index_features & features;
-    _current_id = id;
+    _current = key;
     _field_iterator_mask.emplace_back(TermIteratorImpl{i, field_terms});
   }
 
-  if (!field_limits::valid(_current_id)) {
+  if (!field_limits::valid(_current.id)) {
     _current_meta = &FieldMeta::kEmpty;
     return false;
   }
-  _synthesized_meta.id = _current_id;
+  _synthesized_meta.id = _current.id;
+  _synthesized_meta.slot = _current.slot;
   _current_meta = &_synthesized_meta;
   return true;
 }
@@ -495,20 +521,38 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
                       IndexFeatures& index_features, const SubReader& reader,
                       const IndexFieldOptions* field_options) {
   for (auto id : reader.field_ids()) {
-    const auto* term_reader = reader.field(id);
-    if (!term_reader || (field_options &&
-                         field_options->GetFieldKind(id) != FieldKind::Index)) {
+    if (field_options && field_options->GetFieldKind(id) != FieldKind::Index) {
       continue;
     }
-    const auto& field_meta = term_reader->meta();
-    const auto [field_meta_it, is_new] =
-      field_meta_map.emplace(id, field_meta.index_features);
-    if (!is_new) {
-      field_meta_it->second &= field_meta.index_features;
+    for (size_t i = 0; i != kFieldSlots; ++i) {
+      const auto slot = static_cast<FieldSlot>(i);
+      const auto* term_reader = reader.field(id, slot);
+      if (!term_reader) {
+        continue;
+      }
+      const auto features = term_reader->meta().index_features;
+      index_features |= features;
+      if (!IsKeyed(slot)) {
+        continue;
+      }
+      auto& field = field_meta_map[id];
+      field.keyed |= static_cast<uint8_t>(1U << KeyedIndex(slot));
+      if (slot == FieldSlot::String) {
+        field.string_features =
+          field.has_string ? field.string_features & features : features;
+        field.has_string = true;
+      }
     }
-    index_features |= field_meta.index_features;
   }
   return true;
+}
+
+uint64_t KeyedDicts(const FieldMetaMapT& field_meta_map) noexcept {
+  uint64_t count = 0;
+  for (const auto& [id, field] : field_meta_map) {
+    count += static_cast<uint64_t>(std::popcount(field.keyed));
+  }
+  return count;
 }
 
 doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
@@ -645,8 +689,9 @@ MergedNormIdMap MergeNorms(ColWriter& col_writer,
                            const FieldMetaMapT& field_meta_map,
                            const IndexFieldOptions* field_options) {
   MergedNormIdMap out;
-  for (const auto& [id, features] : field_meta_map) {
-    if (!IsSubsetOf(IndexFeatures::Norm, features)) {
+  for (const auto& [id, field] : field_meta_map) {
+    if (!field.has_string ||
+        !IsSubsetOf(IndexFeatures::Norm, field.string_features)) {
       continue;
     }
     const auto new_norm_id =
@@ -677,51 +722,55 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  CompoundFieldIterator& field_itr,
                  const MergedNormIdMap& merged_norm_ids,
                  const MergeWriter::FlushProgress& progress, IdxWriter& idx,
-                 std::span<const BasicTermReader* const> extra) {
+                 std::span<const BasicTermReader* const> extra,
+                 uint64_t keyed_dicts) {
   auto field_writer =
     std::make_unique<term_dict::FieldWriter>(/*compaction=*/true);
   field_writer->SetIdxWriter(idx);
-  field_writer->prepare(flush_state);
+  field_writer->prepare(flush_state, keyed_dicts + extra.size());
 
   std::vector<const BasicTermReader*> sorted_extra(extra.begin(), extra.end());
   absl::c_sort(sorted_extra,
                [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
-                 return lhs->key() < rhs->key();
+                 return lhs->id() < rhs->id();
                });
+  const auto extra_key = [](const BasicTermReader* reader) {
+    return SlotKey{.id = reader->id(), .slot = FieldSlot::String};
+  };
   size_t ei = 0;
   const size_t en = sorted_extra.size();
 
   while (field_itr.Next()) {
-    const auto key = KeyOf(field_itr.Meta());
-    while (ei < en && sorted_extra[ei]->key() < key) {
-      field_writer->write(*sorted_extra[ei]);
+    const SlotKey key{.id = field_itr.Meta().id, .slot = field_itr.Meta().slot};
+    while (ei < en && extra_key(sorted_extra[ei]) < key) {
+      field_writer->write(FieldSlot::String, *sorted_extra[ei]);
       ++ei;
     }
 
-    if (ei < en && sorted_extra[ei]->key() == key) {
-      field_writer->write(*sorted_extra[ei]);
+    if (ei < en && extra_key(sorted_extra[ei]) == key) {
+      field_writer->write(FieldSlot::String, *sorted_extra[ei]);
       ++ei;
       continue;
     }
 
     FieldProperties props;
     props.index_features = field_itr.Meta().index_features;
-    props.ranges = field_itr.Ranges();
     props.key_width = field_itr.KeyWidth();
 
-    if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
-      const auto it = merged_norm_ids.find(field_itr.Meta().id);
+    if (key.slot == FieldSlot::String &&
+        IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
+      const auto it = merged_norm_ids.find(key.id);
       if (it != merged_norm_ids.end()) {
         props.norm = it->second;
       }
     }
 
     field_itr.SetProperties(props);
-    field_writer->write(field_itr);
+    field_writer->write(key.slot, field_itr);
   }
 
   while (ei < en) {
-    field_writer->write(*sorted_extra[ei]);
+    field_writer->write(FieldSlot::String, *sorted_extra[ei]);
     ++ei;
   }
 
@@ -879,7 +928,8 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   };
   if (segment.docs_count != 0 &&
       !WriteFields(state, segment, fields_itr, merged_norm_ids,
-                   progress_callback, idx, cluster_readers)) {
+                   progress_callback, idx, cluster_readers,
+                   KeyedDicts(field_meta_map))) {
     co_return false;
   }
 

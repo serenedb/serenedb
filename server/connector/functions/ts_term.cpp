@@ -79,10 +79,11 @@ void AddTokenGroup(BoolTarget parent, irs::field_id field,
                    std::span<irs::bstring> group, const irs::Scorer* scorer) {
   SDB_ASSERT(!group.empty());
   if (group.size() == 1) {
-    AddTerm(parent, field, group.front(), irs::kNoBoost, scorer);
+    AddTerm(parent, field, irs::FieldSlot::String, group.front(),
+            irs::kNoBoost, scorer);
     return;
   }
-  auto& node = AddTermSet(parent, field, group, 1);
+  auto& node = AddTermSet(parent, field, irs::FieldSlot::String, group, 1);
   node.SetMergeType(irs::ScoreMergeType::Max);
   node.SetScorer(scorer);
 }
@@ -119,7 +120,8 @@ void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
     absl::c_any_of(groups, [](const auto& group) { return group.size() > 1; });
   if (!stacked) {
     if (groups.size() == 1) {
-      AddTerm(parent, field, groups.front().front(), boost, scorer);
+      AddTerm(parent, field, irs::FieldSlot::String, groups.front().front(),
+              boost, scorer);
       return;
     }
     std::vector<irs::bstring> terms;
@@ -127,13 +129,15 @@ void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
     for (auto& group : groups) {
       terms.push_back(std::move(group.front()));
     }
-    auto& node = AddTermSet(parent, field, terms, min_match);
+    auto& node =
+      AddTermSet(parent, field, irs::FieldSlot::String, terms, min_match);
     node.SetBoost(boost);
     node.SetScorer(scorer);
     return;
   }
   if (groups.size() == 1) {
-    auto& node = AddTermSet(parent, field, groups.front(), 1);
+    auto& node =
+      AddTermSet(parent, field, irs::FieldSlot::String, groups.front(), 1);
     node.SetMergeType(irs::ScoreMergeType::Max);
     node.SetBoost(boost);
     node.SetScorer(scorer);
@@ -171,10 +175,8 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
   const auto min_match = require_all
                            ? groups.size()
                            : size_t{std::max(value_min_match, uint32_t{1})};
-  AddTokenGroups(
-    MaybeNegated(parent, ctx, column_info),
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR), groups,
-    min_match, ctx.boost);
+  AddTokenGroups(MaybeNegated(parent, ctx, column_info), column_info.field_id,
+                 groups, min_match, ctx.boost);
 }
 
 void BuildFtsWord(BoolTarget parent, const FilterContext& ctx,

@@ -25,18 +25,25 @@
 
 namespace irs {
 
-class BytesOutput : public DataOutput {
+template<typename String>
+class BasicBytesOutput : public DataOutput {
  public:
-  explicit BytesOutput(bstring& buf) noexcept : _buf{&buf} {}
+  using Char = typename String::value_type;
+  static_assert(sizeof(Char) == sizeof(byte_type));
 
-  void WriteByte(byte_type b) final { _buf->push_back(b); }
+  explicit BasicBytesOutput(String& buf) noexcept : _buf{&buf} {}
+
+  void WriteByte(byte_type b) final { _buf->push_back(static_cast<Char>(b)); }
 
   void WriteData(const byte_type* b, uint64_t size) final {
-    _buf->append(b, size);
+    _buf->append(reinterpret_cast<const Char*>(b), size);
   }
 
  private:
-  bstring* _buf;
+  String* _buf;
 };
+
+using BytesOutput = BasicBytesOutput<bstring>;
+using StringOutput = BasicBytesOutput<std::string>;
 
 }  // namespace irs

@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/common/constants.hpp>
+#include <string>
 #include <vector>
 
 #include "iresearch/index/field_meta.hpp"
@@ -32,21 +33,19 @@
 namespace irs::term_dict {
 
 struct FieldHead {
-  FieldKey key;
+  field_id id = field_limits::invalid();
+  FieldSlot slot = FieldSlot::String;
   IndexFeatures features = IndexFeatures::None;
   uint64_t term_count = 0;
   uint64_t doc_count = 0;
-  uint64_t total_doc_freq = 0;
-  uint64_t total_term_freq = 0;
+  uint64_t total_freq = 0;
   field_id norm = field_limits::invalid();
   bool has_score_bounds = false;
-  bool ranges = false;
-  uint32_t ordinal = 0;
   uint32_t width = 0;
-  bstring min;
-  bstring max;
-  bstring record;
-  bstring record_inline;
+  std::string min;
+  std::string max;
+  std::string record;
+  std::string record_inline;
   uint32_t first_block = 0;
   uint32_t first_entry = 0;
   uint32_t first_record = 0;
@@ -58,7 +57,7 @@ struct FieldHead {
   uint64_t range_size = 0;
   uint32_t range_prefix = 0;
   std::vector<uint64_t> range_counts;
-  bstring prefixes;
+  std::string prefixes;
 };
 
 struct SpanningBlock {
@@ -70,13 +69,14 @@ struct TermsMeta {
   uint32_t blocks = 0;
   uint64_t first_page = 0;
   std::vector<SpanningBlock> spans;
-  bstring separators;
-  bstring fsst_table;
+  std::string separators;
+  std::string fsst_table;
   uint64_t inline_offset = 0;
   uint64_t inline_size = 0;
   uint64_t ranges_size = 0;
   std::vector<FieldHead> fields;
-  bstring inline_starts;
+  std::string inline_starts;
+  uint32_t ordinal_bytes = 1;
 };
 
 void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms);

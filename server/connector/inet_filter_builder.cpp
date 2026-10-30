@@ -211,7 +211,7 @@ void AddFamilyRange(BoolTarget target, const SearchColumnInfo& column,
         clip_last ? max_term : inet_terms::LastExactTermOf(family, piece.last),
         clip_last ? max.type : irs::BoundType::Inclusive);
     } else if (piece.first == piece.last) {
-      AddTerm(pieces_target, field,
+      AddTerm(pieces_target, field, irs::FieldSlot::String,
               inet_terms::LevelTermOf(family, piece.level, piece.first),
               irs::kNoBoost, &irs::ForceConstScore());
     } else {
@@ -304,7 +304,8 @@ void AddContainedBy(BoolTarget target, const SearchColumnInfo& column,
     return;
   }
   if (inet_terms::LevelBits(value.family, level) == bits) {
-    AddTerm(group, field, inet_terms::LevelTermOf(value.family, level, network),
+    AddTerm(group, field, irs::FieldSlot::String,
+            inet_terms::LevelTermOf(value.family, level, network),
             irs::kNoBoost, &irs::ForceConstScore());
   } else {
     AddByteRange(group, field,
@@ -406,8 +407,8 @@ absl::Status FromInetEquality(BoolTarget filter, const FilterContext& ctx,
   const auto target = (ctx.negated != not_equal)
                         ? NegateScoped(filter, *operands.column)
                         : filter;
-  AddTerm(target, operands.column->field_id, inet_terms::ExactTermOf(*value),
-          ctx.boost, &irs::ForceConstScore());
+  AddTerm(target, operands.column->field_id, irs::FieldSlot::String,
+          inet_terms::ExactTermOf(*value), ctx.boost, &irs::ForceConstScore());
   return absl::OkStatus();
 }
 
@@ -492,7 +493,8 @@ absl::Status FromInetIn(BoolTarget filter, const FilterContext& ctx,
     return absl::OkStatus();
   }
   auto& node =
-    AddTermSet(MaybeNegated(filter, ctx, column), column.field_id, terms, 1);
+    AddTermSet(MaybeNegated(filter, ctx, column), column.field_id,
+               irs::FieldSlot::String, terms, 1);
   node.SetBoost(ctx.boost);
   node.SetScorer(&irs::ForceConstScore());
   return absl::OkStatus();

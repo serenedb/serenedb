@@ -56,6 +56,20 @@ class ShingleTokenizer;
 }  // namespace irs::analysis
 namespace sdb::connector {
 
+struct ExprCacheKey {
+  irs::field_id field;
+  duckdb::LogicalTypeId type;
+
+  bool operator==(const ExprCacheKey&) const = default;
+};
+
+template<typename H>
+H AbslHashValue(H h, const ExprCacheKey& key) {
+  return H::combine(std::move(h), key.field, key.type);
+}
+
+using ExprCache = irs::containers::NodeHashMap<ExprCacheKey, SearchColumnInfo>;
+
 struct FilterContext {
   bool negated = false;
   irs::score_t boost = irs::kNoBoost;
@@ -63,7 +77,7 @@ struct FilterContext {
   const ColumnGetter& column_getter;
   const ExpressionGetter* expr_getter = nullptr;
   duckdb::column_binding_map_t<SearchColumnInfo>& column_cache;
-  irs::containers::NodeHashMap<irs::field_id, SearchColumnInfo>& expr_cache;
+  ExprCache& expr_cache;
   irs::analysis::Tokenizer& identity;
   irs::analysis::Tokenizer& tokenizer;
   duckdb::ClientContext& client_context;
@@ -158,6 +172,11 @@ Filter& AddMaybeNegated(BoolTarget parent, const FilterContext& ctx,
   return AddFilter<Filter>(MaybeNegated(parent, ctx, info),
                            std::forward<Args>(args)...);
 }
+
+// A boolean comparison is the union of the value slots it accepts: `b = v`
+// is one slot, `b <> v` the other, an ordering one, both or none.
+void AddBoolSlots(BoolTarget parent, const SearchColumnInfo& info,
+                  bool accept_false, bool accept_true, irs::score_t boost);
 
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr);
 

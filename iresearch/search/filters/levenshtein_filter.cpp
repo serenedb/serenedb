@@ -303,7 +303,7 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id field,
   const LevenshteinAutomatonOptions& options, size_t terms_limit,
   score_t boost) {
-  const auto* reader = segment.field(field);
+  const auto* reader = segment.field(field, FieldSlot::String);
   if (!reader) {
     return QueryBuilder::Empty();
   }

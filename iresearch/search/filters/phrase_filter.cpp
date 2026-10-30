@@ -513,7 +513,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   const auto is_ord_empty = !collector || !collector->GetScorer();
 
   PhraseState state{ctx.memory};
-  const auto* reader = segment.field(field);
+  const auto* reader = segment.field(field, FieldSlot::String);
   state.reader = reader;
   const ColumnReader* column = nullptr;
   if (!detail::ResolvePhrase(reader, state.handles)) {

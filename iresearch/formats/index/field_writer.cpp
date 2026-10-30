@@ -167,7 +167,7 @@ void AppendEntry(VarColumns& columns, bool restart, size_t lcp,
   columns.suffixes.append(suffix);
 }
 
-void WriteColumn(BytesOutput& out, std::span<const uint32_t> values,
+void WriteColumn(DataOutput& out, std::span<const uint32_t> values,
                  uint32_t width) {
   for (const auto value : values) {
     switch (width) {
@@ -184,16 +184,18 @@ void WriteColumn(BytesOutput& out, std::span<const uint32_t> values,
   }
 }
 
-void WriteHeads(BytesOutput& out, const BlockBuilder& block, size_t step,
+void WriteHeads(DataOutput& out, const BlockBuilder& block, size_t step,
                 size_t skip) {
   for (size_t i = 0; i < block.ends.size(); i += step) {
     out.WriteU32(static_cast<uint32_t>(HeadAt(KeyAt(block, i), skip) >> 32));
   }
 }
 
-void Serialize(const BlockBuilder& block, bstring& page) {
-  page.clear();
-  BytesOutput out{page};
+uint64_t SerializedSize(const BlockBuilder& block) noexcept {
+  return block.kind == BlockKind::VarFsst ? block.coded_size : block.size;
+}
+
+void Serialize(const BlockBuilder& block, DataOutput& out) {
   const auto count = static_cast<uint32_t>(block.ends.size());
   SDB_ASSERT(block.record_starts.size() == RecordGroups(count));
   out.WriteByte(static_cast<byte_type>(block.kind));
@@ -240,7 +242,6 @@ void Serialize(const BlockBuilder& block, bstring& page) {
   }
   out.WriteData(block.records.data(), block.records.size());
   out.WriteData(kZeros, kSlack);
-  SDB_ASSERT(page.size() == (coded ? block.coded_size : block.size));
 }
 
 }  // namespace
@@ -315,7 +316,7 @@ void FieldWriter::TrainFsst() {
     return;
   }
   _fsst = std::move(encoder);
-  _fsst_table.assign(table, table_size);
+  _fsst_table.assign(reinterpret_cast<const char*>(table), table_size);
 }
 
 bytes_view FieldWriter::EncodeSuffix(bytes_view suffix) {
@@ -334,40 +335,48 @@ bytes_view FieldWriter::EncodeSuffix(bytes_view suffix) {
   return {out, out_length};
 }
 
-void FieldWriter::prepare(const FlushState& state) {
+void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
   SDB_ASSERT(_idx);
   Reset();
+  _ordinal_bytes = OrdinalBytes(keyed_dicts);
   _out = &_idx->BlocksOut();
   _pw.Prepare(state);
 }
 
-void FieldWriter::write(const BasicTermReader& reader) {
+void FieldWriter::write(FieldSlot slot, const BasicTermReader& reader) {
+  const auto id = reader.id();
+  SDB_ASSERT(!field_limits::valid(_last_id) || _last_id < id ||
+             (_last_id == id && _slot < slot));
+  _last_id = id;
+  _slot = slot;
   const auto props = reader.properties();
+  SDB_ASSERT(IsKeyed(slot) || props.index_features == IndexFeatures::None);
   _pw.SetTermPayloadWriter(reader.PayloadWriter());
   _pw.BeginField(props);
   _width = props.key_width <= kMaxStride ? props.key_width : 0;
-  if (_width == 0) {
+  if (_width == 0 && IsKeyed(slot)) {
     SampleFsst(reader);
   }
-  if (props.ranges && _width != 0) {
+  if (slot == FieldSlot::Numeric && _width != 0) {
     SDB_ASSERT(!IsSubsetOf(IndexFeatures::Pos, props.index_features));
     _ranges.Begin(_pw);
   }
 
   const uint64_t first_inline = _inline.size();
-  uint64_t sum_dfreq = 0;
-  uint64_t sum_tfreq = 0;
+  uint64_t total_freq = 0;
   const bool freq_exists =
     IndexFeatures::None != (props.index_features & IndexFeatures::Freq);
 
   const auto consume = [&](bytes_view term, const PostingMeta& meta) {
     if (freq_exists) {
-      sum_tfreq += meta.freq;
+      total_freq += meta.freq;
     }
     if (meta.docs_count == 0) {
       return;
     }
-    sum_dfreq += meta.docs_count;
+    if (!freq_exists) {
+      total_freq += meta.docs_count;
+    }
     Add(term, meta);
     if (_ranges.Active()) {
       _ranges.Add(term, meta);
@@ -398,7 +407,7 @@ void FieldWriter::write(const BasicTermReader& reader) {
     }
   }
 
-  EndField(reader.key(), props, sum_dfreq, sum_tfreq, first_inline);
+  EndField(id, slot, props, total_freq, first_inline);
   ResetField();
 }
 
@@ -410,6 +419,7 @@ void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
     }
   }
   if (_terms++ == 0) {
+    SDB_ASSERT(IsKeyed(_slot) || term.empty());
     _min.assign(term);
     _single = meta;
     if (meta.inline_size != 0) {
@@ -417,10 +427,16 @@ void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
       _single.inline_data = _single_inline.data();
     }
     _key.clear();
-    AppendFieldPrefix(_key, _ordinal++);
+    if (IsKeyed(_slot)) {
+      SDB_ENSURE(_ordinal < OrdinalLimit(_ordinal_bytes),
+                 "term dictionary: more keyed dictionaries than ",
+                 OrdinalLimit(_ordinal_bytes));
+      AppendOrdinal(_key, _ordinal++, _ordinal_bytes);
+    }
     _prefix_size = static_cast<uint32_t>(_key.size());
     return;
   }
+  SDB_ASSERT(IsKeyed(_slot));
   if (_terms == 2) {
     Commit(_min, _single);
   }
@@ -550,7 +566,6 @@ void FieldWriter::Seal() {
   if (_block.kind == BlockKind::Var && _block.coded_size < _block.size) {
     _block.kind = BlockKind::VarFsst;
   }
-  Serialize(_block, _page);
 }
 
 void FieldWriter::Cut() {
@@ -563,36 +578,38 @@ void FieldWriter::Cut() {
     const auto separator =
       first.substr(0, CommonPrefixLength(bytes_view{_last}, first) + 1);
     const auto shared = CommonPrefixLength(bytes_view{_separator}, separator);
-    BytesOutput out{_separators};
+    StringOutput out{_separators};
     out.WriteV32(static_cast<uint32_t>(shared));
     WriteStr(out, separator.substr(shared));
     _separator.assign(separator);
   }
-  WriteBlock(_page);
-  BytesOutput{_inline_starts}.WriteV64(_inline_start - _inline_last);
+  WriteBlock();
+  StringOutput{_inline_starts}.WriteV64(_inline_start - _inline_last);
   _inline_last = _inline_start;
   _inline_start = _inline.size();
   _last.assign(KeyAt(_block, _block.ends.size() - 1));
   Clear(_block);
 }
 
-void FieldWriter::WriteBlock(bytes_view block) {
+void FieldWriter::WriteBlock() {
   const uint64_t position = _out->Position();
   const uint64_t pad = (kPage - position % kPage) % kPage;
   _out->WriteData(kZeros, pad);
   if (_blocks == 0) {
     _first_page = (position + pad) / kPage;
   }
-  const auto pages = static_cast<uint32_t>((block.size() + kPage - 1) / kPage);
+  const uint64_t size = SerializedSize(_block);
+  const auto pages = static_cast<uint32_t>((size + kPage - 1) / kPage);
   if (pages != 1) {
     _spans.push_back({.block = _blocks, .extra = pages - 1});
   }
-  _out->WriteData(block.data(), block.size());
+  Serialize(_block, *_out);
+  SDB_ASSERT(_out->Position() == position + pad + size);
   ++_blocks;
 }
 
-void FieldWriter::EndField(FieldKey key, const FieldProperties& props,
-                           uint64_t total_doc_freq, uint64_t total_term_freq,
+void FieldWriter::EndField(field_id id, FieldSlot slot,
+                           const FieldProperties& props, uint64_t total_freq,
                            uint64_t first_inline) {
   if (_ranges.Active()) {
     _ranges.Finish(_terms);
@@ -603,26 +620,24 @@ void FieldWriter::EndField(FieldKey key, const FieldProperties& props,
   }
 
   auto& head = _heads.emplace_back();
-  head.key = key;
+  head.id = id;
+  head.slot = slot;
   head.features = props.index_features;
   head.term_count = _terms;
   head.doc_count = stats.docs_count;
-  head.total_doc_freq = total_doc_freq;
-  head.total_term_freq = total_term_freq;
+  head.total_freq = total_freq;
   head.norm = props.norm;
   head.has_score_bounds = stats.has_score_bounds;
-  head.ranges = props.ranges;
-  head.ordinal = _ordinal - 1;
   head.width = _width;
-  head.min = _min;
+  head.min = ViewCast<char>(bytes_view{_min});
   if (_terms == 1) {
     _record.Clear();
     _pw.EncodeDetached(_record, _single, 0);
-    head.record = _record.View();
-    head.record_inline = _single.Inline();
+    head.record = ViewCast<char>(_record.View());
+    head.record_inline = ViewCast<char>(_single.Inline());
     return;
   }
-  head.max = bytes_view{_key}.substr(_prefix_size);
+  head.max = ViewCast<char>(bytes_view{_key}.substr(_prefix_size));
   head.first_block = _first_block;
   head.first_entry = _first_entry;
   head.first_record = _first_record;
@@ -631,7 +646,7 @@ void FieldWriter::EndField(FieldKey key, const FieldProperties& props,
   if (_first_block == _blocks) {
     head.inline_base = first_inline;
     head.inline_size = _inline.size() - first_inline;
-  } else {
+  } else if (slot == FieldSlot::String) {
     auto out = std::back_inserter(head.prefixes);
     uint32_t last = 0;
     for (const auto prefix : _prefixes) {
@@ -639,17 +654,17 @@ void FieldWriter::EndField(FieldKey key, const FieldProperties& props,
       last = prefix;
     }
   }
-  if (props.ranges) {
-    bstring region;
-    const auto prefix =
-      CommonPrefixLength(bytes_view{_min}, bytes_view{head.max});
-    _ranges.Write(region, prefix, head.range_counts);
+  if (slot == FieldSlot::Numeric && _width != 0) {
+    const auto prefix = CommonPrefixLength(
+      bytes_view{_min}, bytes_view{_key}.substr(_prefix_size));
+    const auto offset = _range_regions.size();
+    _ranges.Write(_range_regions, prefix, head.range_counts);
     if (!head.range_counts.empty()) {
-      head.range_offset = _range_regions.size();
-      head.range_size = region.size();
+      head.range_offset = offset;
+      head.range_size = _range_regions.size() - offset;
       head.range_prefix = static_cast<uint32_t>(prefix);
-      _range_regions.append(region);
     }
+    SDB_ASSERT(!head.range_counts.empty() || _range_regions.size() == offset);
   }
 }
 
@@ -682,6 +697,9 @@ void FieldWriter::Reset() noexcept {
   _inline_last = 0;
   _blocks = 0;
   _ordinal = 0;
+  _ordinal_bytes = 1;
+  _last_id = field_limits::invalid();
+  _slot = FieldSlot::String;
 }
 
 void FieldWriter::end() {
@@ -699,7 +717,9 @@ void FieldWriter::end() {
       .inline_size = _inline.size(),
       .ranges_size = _range_regions.size(),
       .fields = std::move(_heads),
-      .inline_starts = _inline.empty() ? bstring{} : std::move(_inline_starts),
+      .inline_starts =
+        _inline.empty() ? std::string{} : std::move(_inline_starts),
+      .ordinal_bytes = _ordinal_bytes,
     };
     out.WriteData(_inline.data(), _inline.size());
     out.WriteData(_range_regions.data(), _range_regions.size());

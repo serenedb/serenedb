@@ -95,6 +95,7 @@ Filter::ptr MergeSameBounds(const Range& lhs, const Range& rhs, bool min,
   const auto& looser = &tighter == &lhs ? rhs : lhs;
   auto merged = std::make_unique<Range>();
   *merged->mutable_field_id() = lhs.field_id();
+  *merged->mutable_slot() = lhs.slot();
   *merged->mutable_options() = tighter.options();
   if (RangeBound(lhs, min) == RangeBound(rhs, min)) {
     auto& rng = merged->mutable_options()->range;
@@ -123,6 +124,7 @@ Filter::ptr MergeRangeBounds(const Range& lo, const Range& hi,
         hi.options().range.max_type == BoundType::Inclusive) {
       auto by_term = std::make_unique<ByTerm>();
       *by_term->mutable_field_id() = lo.field_id();
+      *by_term->mutable_slot() = lo.slot();
       by_term->mutable_options()->term = RangeBound(lo, true);
       by_term->SetBoost(boost);
       return by_term;
@@ -131,6 +133,7 @@ Filter::ptr MergeRangeBounds(const Range& lo, const Range& hi,
   }
   auto merged = std::make_unique<Range>();
   *merged->mutable_field_id() = lo.field_id();
+  *merged->mutable_slot() = lo.slot();
   auto& options = *merged->mutable_options();
   options = lo.options();
   options.range.max = hi.options().range.max;
@@ -164,7 +167,8 @@ bool MergeComplementaryRanges(BooleanFilter& node, const OptimizeContext& ctx) {
       auto& hi = irs::utils::downCast<Range>(*children[j]);
       const bool same = min_only ? IsMinOnly(hi) : IsMaxOnly(hi);
       const bool complementary = min_only ? IsMaxOnly(hi) : IsMinOnly(hi);
-      if ((!same && !complementary) || hi.field_id() != lo.field_id()) {
+      if ((!same && !complementary) || hi.field_id() != lo.field_id() ||
+          hi.slot() != lo.slot()) {
         continue;
       }
       if (scores && children[i]->GetScorer() != children[j]->GetScorer()) {
@@ -251,8 +255,18 @@ field_id FieldOf(const Filter& child) noexcept {
   return field_limits::invalid();
 }
 
+FieldSlot SlotOf(const Filter& child) noexcept {
+  if (AsPrefix(child) != nullptr) {
+    return irs::utils::downCast<ByPrefix>(child).slot();
+  }
+  if (AsRange(child) != nullptr) {
+    return irs::utils::downCast<ByRange>(child).slot();
+  }
+  return FieldSlot::String;
+}
+
 bool CoversTerm(const Filter& child, const TermClause& clause) noexcept {
-  if (FieldOf(child) != clause.field) {
+  if (FieldOf(child) != clause.field || SlotOf(child) != clause.slot) {
     return false;
   }
   if (const auto* prefix = AsPrefix(child); prefix != nullptr) {
@@ -428,6 +442,7 @@ bool Degenerate(Filter::ptr& slot) {
       rng.max_type == BoundType::Inclusive) {
     auto by_term = std::make_unique<ByTerm>();
     *by_term->mutable_field_id() = node.field_id();
+    *by_term->mutable_slot() = node.slot();
     by_term->mutable_options()->term = rng.min;
     by_term->SetBoost(node.GetBoost());
     by_term->SetScorer(node.GetScorer());

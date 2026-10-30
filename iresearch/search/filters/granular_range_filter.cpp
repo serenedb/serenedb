@@ -34,18 +34,19 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
   sub_ctx.boost *= GetBoost();
-  return PrepareSegment(segment, sub_ctx, field_id(), options());
+  return PrepareSegment(segment, sub_ctx, field_id(), slot(), options());
 }
 
 QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
                                                   const PrepareContext& ctx,
                                                   const irs::field_id field,
+                                                  FieldSlot slot,
                                                   const options_type& options) {
   const auto& rng = options.range;
   if (rng.max_type == BoundType::Exclusive && rng.max.empty()) {
     return QueryBuilder::Empty();
   }
-  const auto* reader = segment.field(field);
+  const auto* reader = segment.field(field, slot);
   if (!reader) {
     return QueryBuilder::Empty();
   }

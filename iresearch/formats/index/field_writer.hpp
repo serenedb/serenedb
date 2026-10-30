@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "iresearch/formats/basic_term_reader.hpp"
@@ -77,8 +78,8 @@ class FieldWriter final {
   FieldWriter& operator=(const FieldWriter&) = delete;
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
-  void prepare(const FlushState& state);
-  void write(const BasicTermReader& reader);
+  void prepare(const FlushState& state, uint64_t keyed_dicts);
+  void write(FieldSlot slot, const BasicTermReader& reader);
   void end();
 
  private:
@@ -93,10 +94,9 @@ class FieldWriter final {
   void AppendVarColumns(uint32_t index, bytes_view key);
   void Seal();
   void Cut();
-  void WriteBlock(bytes_view block);
-  void EndField(FieldKey key, const FieldProperties& props,
-                uint64_t total_doc_freq, uint64_t total_term_freq,
-                uint64_t first_inline);
+  void WriteBlock();
+  void EndField(field_id id, FieldSlot slot, const FieldProperties& props,
+                uint64_t total_freq, uint64_t first_inline);
   void ResetField() noexcept;
   void Reset() noexcept;
 
@@ -106,16 +106,15 @@ class FieldWriter final {
   RangeWriter _ranges;
   bstring _inline;
   FsstEncoder _fsst;
-  bstring _fsst_table;
+  std::string _fsst_table;
   bstring _samples;
   std::vector<size_t> _sample_lengths;
   bstring _coded;
-  bstring _page;
   std::vector<SpanningBlock> _spans;
-  bstring _separators;
+  std::string _separators;
   bstring _separator;
   bstring _last;
-  bstring _inline_starts;
+  std::string _inline_starts;
   bstring _range_regions;
   std::vector<FieldHead> _heads;
   std::vector<uint32_t> _prefixes;
@@ -132,7 +131,10 @@ class FieldWriter final {
   uint32_t _blocks = 0;
   uint32_t _width = 0;
   uint32_t _ordinal = 0;
+  uint32_t _ordinal_bytes = 1;
   uint32_t _prefix_size = 0;
+  field_id _last_id = field_limits::invalid();
+  FieldSlot _slot = FieldSlot::String;
   uint32_t _first_block = 0;
   uint32_t _first_entry = 0;
   uint32_t _first_record = 0;

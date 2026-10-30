@@ -63,12 +63,22 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // WithField runs `func(slot)` against the resolved slot; WithTokens
   // serves streamed fills against the pooled TokenSink.
   template<typename Func>
-  bool WithField(field_id id, IndexFeatures index_features, Func&& func) {
-    auto* slot = Field(id, index_features);
+  bool WithField(field_id id, FieldSlot field_slot,
+                 IndexFeatures index_features, Func&& func) {
+    auto* slot = Field(id, field_slot, index_features);
     if (!slot) [[unlikely]] {
       return false;
     }
     return WithSlot(*slot, std::forward<Func>(func));
+  }
+
+  template<typename Func>
+  bool WithPostingSlots(field_id id, Func&& func) {
+    if (!_valid) [[unlikely]] {
+      return false;
+    }
+    func(_fields.Slots(id));
+    return true;
   }
 
   // Streamed sibling of WithField: `func(slot, sink)` runs against the
@@ -163,8 +173,9 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // Per-column slot acquisition: resolves (creating on first sight) and
   // validates the requested features once; a feature mismatch poisons the
   // writer and returns null.
-  FieldInverter* Field(field_id id, IndexFeatures index_features) {
-    auto* slot = _fields.Emplace(id, index_features);
+  FieldInverter* Field(field_id id, FieldSlot field_slot,
+                       IndexFeatures index_features) {
+    auto* slot = _fields.Emplace(id, field_slot, index_features);
     if (!IsSubsetOf(index_features, slot->Meta().index_features)) [[unlikely]] {
       _valid = false;
       _error = "the field was created with other index features";
@@ -191,7 +202,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   template<typename Target, typename Func>
   bool WithTarget(field_id id, IndexFeatures index_features, StoreSink* store,
                   Func&& func) {
-    auto* slot = Field(id, index_features);
+    auto* slot = Field(id, FieldSlot::String, index_features);
     if (!slot) [[unlikely]] {
       return false;
     }

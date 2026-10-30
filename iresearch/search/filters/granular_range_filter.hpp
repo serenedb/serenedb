@@ -58,6 +58,7 @@ class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           const irs::field_id field,
+                                          FieldSlot slot,
                                           const options_type& options);
 
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,

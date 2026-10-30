@@ -41,7 +41,7 @@ void WalkClauses(const BooleanFilter& node, OnTerms on_terms,
     const auto terms = node.Terms(occur);
     for (size_t begin = 0; begin != terms.size();) {
       size_t end = begin + 1;
-      while (end != terms.size() && terms[end].field == terms[begin].field &&
+      while (end != terms.size() && SameField(terms[end], terms[begin]) &&
              terms[end].scorer == terms[begin].scorer) {
         ++end;
       }
@@ -132,10 +132,9 @@ class TermsIterator : public WrappedTermIterator {
 };
 
 bool SingleField(std::span<const TermClause> terms) noexcept {
-  return absl::c_all_of(
-    terms, [field = terms.front().field](const TermClause& clause) noexcept {
-      return clause.field == field;
-    });
+  return absl::c_all_of(terms, [&](const TermClause& clause) noexcept {
+    return SameField(clause, terms.front());
+  });
 }
 
 TermPredicate::ptr CombinePredicates(std::vector<TermPredicate::ptr>&& preds) {
@@ -209,6 +208,7 @@ void BooleanFilter::Add(Filter::ptr filter, Occur occur) {
   if (filter->type() == irs::Type<ByTerm>::id()) {
     auto& term = irs::utils::downCast<ByTerm>(*filter);
     Add(TermClause{.field = term.field_id(),
+                   .slot = term.slot(),
                    .scorer = term.GetScorer(),
                    .term = std::move(term.mutable_options()->term),
                    .boost = term.GetBoost()},
@@ -392,15 +392,15 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
   const auto advance = [&] {
     child.collector = compound ? compound->Child(idx++) : nullptr;
   };
-  field_id opened = field_limits::invalid();
+  const TermClause* opened = nullptr;
   const TermReader* reader = nullptr;
   WalkClauses(
     *this,
     [&](std::span<const TermClause> run, Occur occur) {
       advance();
-      if (opened != run.front().field) {
-        opened = run.front().field;
-        reader = segment.field(opened);
+      if (!opened || !SameField(*opened, run.front())) {
+        opened = &run.front();
+        reader = segment.field(opened->field, opened->slot);
       }
       if (reader == nullptr) {
         for (size_t i = 0; i != run.size(); ++i) {

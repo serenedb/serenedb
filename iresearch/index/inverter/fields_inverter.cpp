@@ -25,62 +25,99 @@
 #include "iresearch/index/inverter/columnar_readers.hpp"
 
 namespace irs {
+namespace {
+
+bool HasTerms(const FieldInverter* field) noexcept {
+  return field && (field->Log().Size() != 0 || !field->InlineDocs().empty());
+}
+
+}  // namespace
 
 void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
                            std::span<const BasicTermReader* const> extra) {
   IndexFeatures index_features{IndexFeatures::None};
+  uint64_t keyed_dicts = extra.size();
 
-  ManagedVector<const FieldInverter*> sorted_fields{
-    ManagedTypedAllocator<const FieldInverter*>{_mem.rm}};
-  sorted_fields.reserve(_fields.size());
-  for (auto& entry : _fields) {
-    if (entry.Log().Size() == 0 && entry.InlineDocs().empty()) {
-      continue;
+  ManagedVector<const FieldsMap::value_type*> sorted{
+    ManagedTypedAllocator<const FieldsMap::value_type*>{_mem.rm}};
+  sorted.reserve(_fields_map.size());
+  for (const auto& item : _fields_map) {
+    const auto& entry = item.second;
+    bool used = entry.slots && !entry.slots->Empty();
+    for (const auto& keyed : entry.keyed) {
+      if (HasTerms(keyed.field)) {
+        ++keyed_dicts;
+        index_features |= keyed.field->Meta().index_features;
+        used = true;
+      }
     }
-    sorted_fields.push_back(&entry);
-    index_features |= entry.Meta().index_features;
+    if (used) {
+      sorted.push_back(&item);
+    }
   }
   for (const auto* reader : extra) {
     index_features |= reader->properties().index_features;
   }
   state.index_features = index_features;
 
-  absl::c_sort(sorted_fields,
-               [](const FieldInverter* lhs, const FieldInverter* rhs) noexcept {
-                 return KeyOf(lhs->Meta()) < KeyOf(rhs->Meta());
-               });
+  absl::c_sort(sorted, [](const FieldsMap::value_type* lhs,
+                          const FieldsMap::value_type* rhs) noexcept {
+    return lhs->first < rhs->first;
+  });
 
   ManagedVector<const BasicTermReader*> sorted_extra{
     ManagedTypedAllocator<const BasicTermReader*>{_mem.rm}};
   sorted_extra.assign(extra.begin(), extra.end());
   absl::c_sort(sorted_extra,
                [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
-                 return lhs->key() < rhs->key();
+                 return lhs->id() < rhs->id();
                });
 
   ScatterScratch scratch{_mem.rm};
   ScatteredField scattered{_mem, scratch};
   ColumnarTermReader terms;
+  SlotTermReader slot_terms;
 
-  fw.prepare(state);
-  size_t fi = 0;
-  size_t ei = 0;
-  const size_t fn = sorted_fields.size();
-  const size_t en = sorted_extra.size();
-  while (fi < fn || ei < en) {
-    const bool take_field =
-      ei >= en ||
-      (fi < fn && KeyOf(sorted_fields[fi]->Meta()) < sorted_extra[ei]->key());
-    if (take_field) {
-      scattered.Reset(*sorted_fields[fi]);
-      ++fi;
-      SDB_ASSERT(scattered.TermCount() != 0);
-      terms.Reset(scattered);
-      fw.write(terms);
-    } else {
-      fw.write(*sorted_extra[ei]);
-      ++ei;
+  const auto write_keyed = [&](FieldSlot slot, const FieldInverter* field) {
+    if (!HasTerms(field)) {
+      return;
     }
+    scattered.Reset(*field);
+    SDB_ASSERT(scattered.TermCount() != 0);
+    terms.Reset(scattered);
+    fw.write(slot, terms);
+  };
+
+  fw.prepare(state, keyed_dicts);
+  size_t ei = 0;
+  for (const auto* item : sorted) {
+    const auto id = item->first;
+    const auto& entry = item->second;
+    for (; ei < sorted_extra.size() && sorted_extra[ei]->id() < id; ++ei) {
+      fw.write(FieldSlot::String, *sorted_extra[ei]);
+    }
+    if (entry.slots) {
+      for (size_t i = 0; i != kPostingSlots; ++i) {
+        const auto slot = static_cast<FieldSlot>(i);
+        if (const auto docs = entry.slots->Docs(slot); !docs.empty()) {
+          slot_terms.Reset(id, docs);
+          fw.write(slot, slot_terms);
+        }
+      }
+    }
+    write_keyed(FieldSlot::Numeric,
+                entry.keyed[KeyedIndex(FieldSlot::Numeric)].field);
+    const auto* string = entry.keyed[KeyedIndex(FieldSlot::String)].field;
+    if (ei < sorted_extra.size() && sorted_extra[ei]->id() == id) {
+      SDB_ASSERT(!HasTerms(string));
+      fw.write(FieldSlot::String, *sorted_extra[ei]);
+      ++ei;
+    } else {
+      write_keyed(FieldSlot::String, string);
+    }
+  }
+  for (; ei < sorted_extra.size(); ++ei) {
+    fw.write(FieldSlot::String, *sorted_extra[ei]);
   }
   fw.end();
 }

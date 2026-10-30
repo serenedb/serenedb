@@ -95,7 +95,7 @@ QueryBuilder::ptr PrepareCells(const SubReader& segment,
   SDB_ASSERT(std::unique(sorted_terms.begin(), sorted_terms.end()) ==
              sorted_terms.end());
 
-  const auto* reader = segment.field(id);
+  const auto* reader = segment.field(id, FieldSlot::String);
   if (!reader) {
     return QueryBuilder::Empty();
   }

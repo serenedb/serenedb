@@ -75,9 +75,9 @@ struct ColumnTokenizer {
 
 struct InvertedIndexField : persistence::FieldRecord {
   bool HasTextDictionary() const noexcept { return text_dictionary != 0; }
+  // For a JSON value: whether its leaves are indexed one by one.
   bool HasJsonLeafFields() const noexcept {
-    return irs::field_limits::valid(numeric_field_id) &&
-           irs::field_limits::valid(bool_field_id);
+    return HasTextDictionary() && !whole_value;
   }
   bool IsTermDict() const noexcept {
     return !column_options.ann_info && indexed_term_dict;

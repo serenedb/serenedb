@@ -297,6 +297,8 @@ class FilterWithField : public FilterWithOptions<Options> {
 
   irs::field_id field_id() const noexcept { return _field_id; }
   irs::field_id* mutable_field_id() noexcept { return &_field_id; }
+  FieldSlot slot() const noexcept { return _slot; }
+  FieldSlot* mutable_slot() noexcept { return &_slot; }
 
  protected:
   bool equals(const Filter& rhs) const noexcept final {
@@ -304,11 +306,12 @@ class FilterWithField : public FilterWithOptions<Options> {
       return false;
     }
     const auto& r = irs::utils::downCast<FilterType>(rhs);
-    return _field_id == r._field_id;
+    return _field_id == r._field_id && _slot == r._slot;
   }
 
  private:
   irs::field_id _field_id{irs::field_limits::invalid()};
+  FieldSlot _slot = FieldSlot::String;
 };
 
 class Empty final : public FilterWithType<Empty> {

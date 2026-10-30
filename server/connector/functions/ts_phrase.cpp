@@ -140,14 +140,13 @@ void AppendTokenSlots(irs::ByPhraseOptions& options,
 void AddPhrase(BoolTarget parent, const FilterContext& ctx,
                const SearchColumnInfo& column_info,
                irs::ByPhraseOptions&& options) {
-  const auto field_id =
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
+  const auto field_id = column_info.field_id;
   if (options.size() == 1) {
     if (const auto* set =
           std::get_if<irs::TermSetOptions>(&options.begin()->part)) {
       std::vector<irs::bstring> terms(set->terms.begin(), set->terms.end());
-      auto& node =
-        AddTermSet(MaybeNegated(parent, ctx, column_info), field_id, terms, 1);
+      auto& node = AddTermSet(MaybeNegated(parent, ctx, column_info), field_id,
+                              irs::FieldSlot::String, terms, 1);
       node.SetMergeType(irs::ScoreMergeType::Max);
       node.SetBoost(ctx.boost);
       return;
@@ -276,9 +275,8 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 std::string_view hint) {
   if (auto term = PlanPhrase(QueryShingle(ctx, column_info), column_info,
                              options, label, hint, ctx.client_context)) {
-    AddTerm(MaybeNegated(parent, ctx, column_info),
-            PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-            *term, ctx.boost);
+    AddTerm(MaybeNegated(parent, ctx, column_info), column_info.field_id,
+            irs::FieldSlot::String, *term, ctx.boost);
     return;
   }
   AddPhrase(parent, ctx, column_info, std::move(options));
@@ -290,8 +288,7 @@ bool MatchesPhrases(const SearchColumnInfo& column_info) {
   return HasPositions(column_info) ||
          (column_info.tokenizer.analyzer.get_deleter().tokenizer &&
           irs::field_limits::valid(column_info.text) &&
-          (column_info.logical_type.IsJSONType() ||
-           !irs::field_limits::valid(column_info.numeric_field_id)));
+          (column_info.logical_type.IsJSONType() || !column_info.json_leaves));
 }
 
 irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,

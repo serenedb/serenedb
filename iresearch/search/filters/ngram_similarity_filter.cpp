@@ -48,14 +48,15 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
   const auto min_match_count = MinMatchCount(terms_count, threshold);
 
   if (terms_count == 1) {
-    return ByTerm::PrepareSegment(segment, ctx, field_name, ngrams.front());
+    return ByTerm::PrepareSegment(segment, ctx, field_name, FieldSlot::String,
+                                  ngrams.front());
   }
 
   auto* ngram_collector =
     ctx.collector ? &irs::utils::downCast<SlotsCollector>(*ctx.collector)
                   : nullptr;
 
-  const TermReader* field = segment.field(field_name);
+  const TermReader* field = segment.field(field_name, FieldSlot::String);
 
   if (!field) {
     return QueryBuilder::Empty();

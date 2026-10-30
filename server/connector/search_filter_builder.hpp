@@ -58,14 +58,15 @@ using FieldSetGetter =
 // matters; the writer/printer paths don't need to.
 struct SearchColumnInfo {
   irs::field_id field_id = irs::field_limits::invalid();
-  // Valid iff NULL rows can exist here: producers invalidate it when a table
+  // Set iff NULL rows can exist here: producers clear it when a table
   // constraint proves the column NOT NULL (or the surface has no NULLs, e.g.
-  // term columns). Negation claims exclude it so SQL three-valued logic
-  // holds; IS NULL claims match it; invalid keeps negations plain acceptor
-  // shapes and declines IS NULL claims.
-  irs::field_id null_field_id = irs::field_limits::invalid();
-  irs::field_id bool_field_id = irs::field_limits::invalid();
-  irs::field_id numeric_field_id = irs::field_limits::invalid();
+  // term columns). Negation claims exclude the NULL rows so SQL three-valued
+  // logic holds; IS NULL claims match them; cleared keeps negations plain
+  // acceptor shapes and declines IS NULL claims.
+  bool nullable = false;
+  // A JSON expression indexed leaf by leaf: its numbers, booleans and JSON
+  // nulls are in their own slots of `field_id`.
+  bool json_leaves = false;
   irs::field_id text = irs::field_limits::invalid();
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
@@ -180,11 +181,12 @@ Filter& AddFilter(BoolTarget parent, Args&&... args) {
 }
 
 // A term clause, which the node stores rather than the `ByTerm` it came as.
-inline void AddTerm(BoolTarget parent, irs::field_id field,
+inline void AddTerm(BoolTarget parent, irs::field_id field, irs::FieldSlot slot,
                     irs::bytes_view term, irs::score_t boost = irs::kNoBoost,
                     const irs::Scorer* scorer = nullptr) {
   parent.Add(irs::TermClause{
     .field = field,
+    .slot = slot,
     .scorer = scorer,
     .term = irs::bstring{term},
     .boost = boost,
@@ -210,12 +212,13 @@ inline BoolTarget AddGroup(BoolTarget parent, irs::Occur occur) {
   return {&AddFilter<irs::BooleanFilter>(parent), occur};
 }
 
-void AddNullMarkerTerm(BoolTarget parent, irs::field_id null_field_id);
+void AddNullMarkerTerm(BoolTarget parent, irs::field_id field);
 
 // `ByTerms{field, terms, mm=k}`: one node holding the terms of a single
 // field. Every term required is the `Must` bucket and no threshold at all;
 // anything less is `Should` counted to `k`.
 irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,
+                               irs::FieldSlot slot,
                                std::span<irs::bstring> terms, size_t min_match);
 
 // What a negated clause is added to. Under a conjunction the node's own
@@ -230,7 +233,7 @@ inline BoolTarget Negate(BoolTarget parent) {
 
 // SQL three-valued logic: a NULL row satisfies no comparison, but a bare
 // negation runs against ALL live docs and would readmit rows without a token
-// in the negated column. Scoped negation excludes the column's null-marker
+// in the negated column. Scoped negation excludes the column's SQL NULL
 // docs alongside the negated set -- `must_not` is a union, so they share one
 // bucket; the and_null_exclusion optimizer rule prunes the branch wherever a
 // positive same-column conjunct already rejects those rows.
@@ -261,8 +264,8 @@ inline void EnsureIncludeSides(irs::Filter& filter) {
 inline BoolTarget NegateScoped(BoolTarget parent,
                                const SearchColumnInfo& info) {
   const auto target = Negate(parent);
-  if (irs::field_limits::valid(info.null_field_id)) {
-    AddNullMarkerTerm(target, info.null_field_id);
+  if (info.nullable) {
+    AddNullMarkerTerm(target, info.field_id);
   }
   return target;
 }
@@ -283,19 +286,10 @@ std::unique_ptr<irs::BooleanFilter> MakeConjunctFilter(
   const ExpressionGetter& expr_getter, FilterScorers* scorers,
   WideRanges wide_ranges);
 
-inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
-                                        duckdb::LogicalTypeId type_id) {
-  const auto pick = [&](irs::field_id per_kind) {
-    return irs::field_limits::valid(per_kind) ? per_kind : column_info.field_id;
-  };
-  const auto kind = term_dict::Classify(type_id);
-  if (kind == term_dict::Kind::Bool) {
-    return pick(column_info.bool_field_id);
-  }
-  if (term_dict::IsNumeric(kind)) {
-    return pick(column_info.numeric_field_id);
-  }
-  return column_info.field_id;
+inline irs::FieldSlot ValueSlot(duckdb::LogicalTypeId type_id) {
+  return term_dict::IsNumeric(term_dict::Classify(type_id))
+           ? irs::FieldSlot::Numeric
+           : irs::FieldSlot::String;
 }
 
 // True when the expression tree contains an optimizer-claimed index-only

@@ -226,7 +226,7 @@ std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
   }
   words.resize(WordCount(phrase));
   for (const auto& segment : index) {
-    if (const auto* reader = segment.field(field)) {
+    if (const auto* reader = segment.field(field, FieldSlot::String)) {
       AddWordStats(phrase, *reader, words);
     }
   }

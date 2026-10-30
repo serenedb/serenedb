@@ -298,7 +298,6 @@ void RangeWriter::Finish(uint64_t terms) {
 
 void RangeWriter::Write(bstring& region, size_t prefix,
                         std::vector<uint64_t>& counts) const {
-  region.clear();
   counts.clear();
   if (_height == 0) {
     return;

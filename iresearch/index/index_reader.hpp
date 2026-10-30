@@ -158,7 +158,7 @@ struct SubReader : public IndexReader, public NormProvider {
 
   virtual std::span<const field_id> field_ids() const = 0;
 
-  virtual const TermReader* field(field_id id) const = 0;
+  virtual const TermReader* field(field_id id, FieldSlot slot) const = 0;
 
   virtual const ColReader* GetColReader() const { return nullptr; }
 
@@ -170,10 +170,10 @@ struct SubReader : public IndexReader, public NormProvider {
 };
 
 template<typename Visitor, typename FilterVisitor>
-void Visit(const IndexReader& index, field_id id,
+void Visit(const IndexReader& index, field_id id, FieldSlot slot,
            const FilterVisitor& field_visitor, Visitor& visitor) {
   for (auto& segment : index) {
-    const auto* reader = segment.field(id);
+    const auto* reader = segment.field(id, slot);
 
     if (reader) [[likely]] {
       field_visitor(segment, *reader, visitor);

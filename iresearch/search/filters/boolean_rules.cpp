@@ -492,20 +492,34 @@ bool BooleanDedupRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
 
 namespace {
 
-template<typename... Ts>
-field_id AnyFieldOf(const Filter& node) {
+struct LeafField {
   field_id field = field_limits::invalid();
+  FieldSlot slot = FieldSlot::String;
+};
+
+template<typename... Ts>
+LeafField AnyFieldOf(const Filter& node) {
+  LeafField leaf;
   (void)((node.type() == Type<Ts>::id()
-            ? (field = irs::utils::downCast<Ts>(node).field_id(), true)
+            ? (leaf = {.field = irs::utils::downCast<Ts>(node).field_id(),
+                       .slot = irs::utils::downCast<Ts>(node).slot()},
+               true)
             : false) ||
          ...);
-  return field;
+  return leaf;
 }
 
-field_id RequiringLeafFieldOf(const Filter& node) {
+LeafField RequiringLeafFieldOf(const Filter& node) {
   return AnyFieldOf<ByTerm, ByPrefix, ByPrefixes, ByRange, ByGranularRange,
                     ByPhrase, AutomatonFilter, LevenshteinAutomatonFilter>(
     node);
+}
+
+void AddAnchor(field_id field, FieldSlot slot,
+               irs::containers::FlatHashSet<field_id>& out) {
+  if (field_limits::valid(field) && slot != FieldSlot::SqlNull) {
+    out.insert(field);
+  }
 }
 
 void CollectAnchors(const Filter& node,
@@ -515,7 +529,7 @@ void CollectBucketAnchors(const BooleanFilter& node,
                           irs::containers::FlatHashSet<field_id>& out) {
   const auto& must = node.Bucket(Occur::Must);
   for (const auto& term : must.terms) {
-    out.insert(term.field);
+    AddAnchor(term.field, term.slot, out);
   }
   for (const auto& child : must.filters) {
     CollectAnchors(*child, out);
@@ -543,7 +557,7 @@ void CollectBucketAnchors(const BooleanFilter& node,
       common, [&](const field_id field) { return !branch.contains(field); });
   };
   for (const auto& term : should.terms) {
-    fold([&](auto& b) { b.insert(term.field); });
+    fold([&](auto& b) { AddAnchor(term.field, term.slot, b); });
   }
   for (const auto& child : should.filters) {
     fold([&](auto& b) { CollectAnchors(*child, b); });
@@ -557,19 +571,13 @@ void CollectAnchors(const Filter& node,
     CollectBucketAnchors(irs::utils::downCast<BooleanFilter>(node), out);
     return;
   }
-  if (const auto field = RequiringLeafFieldOf(node);
-      field_limits::valid(field)) {
-    out.insert(field);
-  }
+  const auto leaf = RequiringLeafFieldOf(node);
+  AddAnchor(leaf.field, leaf.slot, out);
 }
 
 }  // namespace
 
-bool BooleanNullMarkerRule::Apply(Filter::ptr& slot,
-                                  const OptimizeContext& ctx) {
-  if (ctx.null_markers == nullptr || ctx.null_markers->empty()) {
-    return false;
-  }
+bool BooleanNullMarkerRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   auto& node = irs::utils::downCast<BooleanFilter>(*slot);
   auto& excluded = node.Bucket(Occur::MustNot);
   if (excluded.empty()) {
@@ -577,25 +585,24 @@ bool BooleanNullMarkerRule::Apply(Filter::ptr& slot,
   }
   irs::containers::FlatHashSet<field_id> anchors;
   bool ready = false;
-  const auto vacuous = [&](field_id marker) {
-    const auto it = ctx.null_markers->find(marker);
-    if (it == ctx.null_markers->end()) {
+  const auto vacuous = [&](field_id field, FieldSlot field_slot) {
+    if (field_slot != FieldSlot::SqlNull || !field_limits::valid(field)) {
       return false;
     }
     if (!ready) {
       ready = true;
       CollectBucketAnchors(node, anchors);
     }
-    return anchors.contains(it->second);
+    return anchors.contains(field);
   };
 
   const auto before = excluded.size();
   std::erase_if(excluded.terms, [&](const TermClause& clause) {
-    return vacuous(clause.field);
+    return vacuous(clause.field, clause.slot);
   });
   std::erase_if(excluded.filters, [&](const Filter::ptr& child) {
-    const auto field = RequiringLeafFieldOf(*child);
-    return field_limits::valid(field) && vacuous(field);
+    const auto leaf = RequiringLeafFieldOf(*child);
+    return vacuous(leaf.field, leaf.slot);
   });
   return excluded.size() != before;
 }
@@ -685,6 +692,7 @@ bool BooleanSingleClauseRule::Apply(Filter::ptr& slot,
     auto& clause = bucket.terms.front();
     auto by_term = std::make_unique<ByTerm>();
     *by_term->mutable_field_id() = clause.field;
+    *by_term->mutable_slot() = clause.slot;
     by_term->mutable_options()->term = std::move(clause.term);
     by_term->SetBoost(node.GetBoost() * clause.boost);
     by_term->SetScorer(ResolveScorer(clause.scorer, node.GetScorer()));
@@ -729,7 +737,7 @@ struct AndAcceptorFusionRule {
     std::shared_ptr<const LevenshteinAcceptor> fuzzy;
   };
 
-  static Operand OperandOf(const TermClause& term);
+  static std::optional<Operand> OperandOf(const TermClause& term);
   static std::optional<Operand> OperandOf(const Filter& child);
 };
 
@@ -768,7 +776,10 @@ size_t DriverRank(const Filter& filter) noexcept {
 
 std::optional<OrAcceptorFusionRule::AcceptorInfo> OrAcceptorFusionRule::InfoOf(
   const Filter& child) {
-  const auto info = [](const auto& filter) {
+  const auto info = [](const auto& filter) -> std::optional<AcceptorInfo> {
+    if (filter.slot() != FieldSlot::String) {
+      return std::nullopt;
+    }
     return AcceptorInfo{filter.field_id(), filter.GetBoost()};
   };
   const auto type = child.type();
@@ -865,7 +876,8 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
 
   size_t seekable = terms.size();
   for (const auto& term : terms) {
-    if (term.field != field || (scores && term.scorer != scorer)) {
+    if (term.field != field || term.slot != FieldSlot::String ||
+        (scores && term.scorer != scorer)) {
       return false;
     }
     if (scores && term.boost != boost) {
@@ -912,14 +924,20 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   return true;
 }
 
-AndAcceptorFusionRule::Operand AndAcceptorFusionRule::OperandOf(
+std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
   const TermClause& term) {
+  if (term.slot != FieldSlot::String) {
+    return std::nullopt;
+  }
   return Operand{term.field, term.term,
                  TermBounds{term.term, AfterKey(term.term)}, nullptr};
 }
 
 std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
   const Filter& child) {
+  if (RequiringLeafFieldOf(child).slot != FieldSlot::String) {
+    return std::nullopt;
+  }
   const auto type = child.type();
   if (type == Type<ByTerm>::id()) {
     const auto& filter = irs::utils::downCast<ByTerm>(child);

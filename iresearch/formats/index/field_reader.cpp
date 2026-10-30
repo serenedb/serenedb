@@ -313,36 +313,30 @@ uint64_t InlinePages::Next(uint64_t at) const noexcept {
 }
 
 TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
-                               IndexInput& in, const Separators& separators)
+                               bytes_view prefix, IndexInput& in,
+                               const Separators& separators)
   : _owner{&owner},
-    _meta{head.key, head.features},
+    _meta{head.id, head.slot, head.features},
     _terms{head.term_count},
     _docs{head.doc_count},
     _has_score_bounds{head.has_score_bounds} {
   _meta.norm = head.norm;
-  _meta.ranges = head.ranges;
-  const auto total =
-    IndexFeatures::None != (head.features & IndexFeatures::Freq)
-      ? head.total_term_freq
-      : head.total_doc_freq;
-  SDB_ENSURE(total <= std::numeric_limits<uint32_t>::max(),
-             "term dictionary: total frequency ", total,
+  SDB_ENSURE(head.total_freq <= std::numeric_limits<uint32_t>::max(),
+             "term dictionary: total frequency ", head.total_freq,
              " exceeds uint32_t::max");
-  _freq.value = static_cast<uint32_t>(total);
+  _freq.value = static_cast<uint32_t>(head.total_freq);
 
-  const auto corrupted = [&] { Corrupted("record", head.key.id); };
+  const auto corrupted = [&] { Corrupted("record", head.id); };
   if (head.width > kMaxStride ||
       (!head.range_counts.empty() && head.record.size() != 0) ||
       (!head.prefixes.empty() && (head.width != 0 || !head.record.empty()))) {
     corrupted();
   }
-  bstring prefix;
-  AppendFieldPrefix(prefix, head.ordinal);
   _prefix_size = static_cast<uint32_t>(prefix.size());
   _meta.key_width = head.width;
   uint64_t bytes = 0;
   _min_key.assign(prefix);
-  _min_key.append(head.min);
+  _min_key.append(ViewCast<byte_type>(std::string_view{head.min}));
   if (!head.record.empty()) {
     _max_key = _min_key;
     RecordBytes record{};
@@ -358,11 +352,15 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
       corrupted();
     }
     if (_single.inline_size != 0) {
-      _single.inline_data = owner.KeepInline(head.record_inline);
+      _single.inline_data = owner.KeepInline(
+        ViewCast<byte_type>(std::string_view{head.record_inline}));
+    }
+    if (!IsKeyed(head.slot)) {
+      _docs = _single.docs_count;
     }
   } else {
     _max_key.assign(prefix);
-    _max_key.append(head.max);
+    _max_key.append(ViewCast<byte_type>(std::string_view{head.max}));
     _first_block = head.first_block;
     _first_entry = head.first_entry;
     _first_record = head.first_record;
@@ -383,8 +381,8 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
       _root = Root{MakeSeparators(slice), _meta.key_width != 0};
       bytes += _root.MemoryBytes();
       if (!head.prefixes.empty()) {
-        _prefixes = std::make_unique<PrefixIndex>(
-          DecodePrefixes(head.prefixes, head.key.id));
+        _prefixes = std::make_unique<PrefixIndex>(DecodePrefixes(
+          ViewCast<byte_type>(std::string_view{head.prefixes}), head.id));
         bytes += _prefixes->MemoryBytes();
       }
     } else if (!head.prefixes.empty()) {
@@ -780,15 +778,18 @@ Separators FieldReader::Bind(TermsMeta& terms) {
   auto& separators = terms.separators;
   if (blocks != 0) {
     const auto size = separators.size();
-    separators.append(kSlack, byte_type{0});
-    decoded = DecodeSeparators({separators.data(), size}, blocks - 1);
+    separators.append(kSlack, '\0');
+    decoded = DecodeSeparators(
+      ViewCast<byte_type>(std::string_view{separators}).substr(0, size),
+      blocks - 1);
   } else if (!separators.empty()) {
     Corrupted("separators");
   }
   if (const auto& table = terms.fsst_table; !table.empty()) {
     auto decoder = std::make_unique<duckdb_fsst_decoder_t>();
-    const auto consumed =
-      duckdb_fsst_import(decoder.get(), table.data(), table.size());
+    const auto consumed = duckdb_fsst_import(
+      decoder.get(), reinterpret_cast<const unsigned char*>(table.data()),
+      table.size());
     if (consumed != table.size()) {
       Corrupted("FSST table");
     }
@@ -802,7 +803,8 @@ Separators FieldReader::Bind(TermsMeta& terms) {
       Corrupted("inline postings");
     }
     _inline_pages =
-      InlinePages{terms.inline_starts, blocks, _inline_offset, _inline_size};
+      InlinePages{ViewCast<byte_type>(std::string_view{terms.inline_starts}),
+                  blocks, _inline_offset, _inline_size};
     _inline_region = _base ? _base + _inline_offset
                            : Copy(_inline_offset, _inline_size + kSlack).data();
   }
@@ -843,20 +845,20 @@ void FieldReader::prepare(const ReaderState& state) {
     _single_inline.reserve(single_inline + kSlack);
     Account(_single_inline.capacity());
   }
-  _keys.reserve(heads.size());
   _by_id.reserve(heads.size());
-  for (size_t i = 0; i != heads.size(); ++i) {
-    const auto& head = heads[i];
-    if (i != 0 && (head.key <= heads[i - 1].key ||
-                   head.ordinal <= heads[i - 1].ordinal)) {
-      Corrupted("field order");
+  bstring prefix;
+  uint32_t ordinal = 0;
+  for (const auto& head : heads) {
+    prefix.clear();
+    if (IsKeyed(head.slot)) {
+      AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
     }
-    const auto& field = _fields.emplace_back(*this, head, *_in, separators);
-    _by_id[head.key.id].dicts[static_cast<size_t>(head.key.dict)] = &field;
-    if (_ids.empty() || _ids.back() != head.key.id) {
-      _ids.push_back(head.key.id);
+    const auto& field =
+      _fields.emplace_back(*this, head, prefix, *_in, separators);
+    _by_id[head.id][static_cast<size_t>(head.slot)] = &field;
+    if (_ids.empty() || _ids.back() != head.id) {
+      _ids.push_back(head.id);
     }
-    _keys.push_back(head.key);
   }
   if (single_inline != 0) {
     _single_inline.resize(_single_inline.size() + kSlack);
@@ -872,10 +874,10 @@ const byte_type* FieldReader::KeepInline(bytes_view bytes) {
   return _single_inline.data() + at;
 }
 
-const TermReader* FieldReader::field(FieldKey key) const {
-  const auto it = _by_id.find(key.id);
+const TermReader* FieldReader::field(field_id id, FieldSlot slot) const {
+  const auto it = _by_id.find(id);
   return it == _by_id.end() ? nullptr
-                            : it->second.dicts[static_cast<size_t>(key.dict)];
+                            : it->second[static_cast<size_t>(slot)];
 }
 
 }  // namespace irs::term_dict

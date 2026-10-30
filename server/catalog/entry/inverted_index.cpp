@@ -327,8 +327,7 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
         resolved.tokenizer_column = field.synthetic_column;
       }
     }
-    for (const auto id : {field_id, field.numeric_field_id, field.bool_field_id,
-                          field.null_field_id, field.synthetic_column}) {
+    for (const auto id : {field_id, field.synthetic_column}) {
       if (irs::field_limits::valid(id)) {
         _fields.try_emplace(id, resolved);
       }
@@ -407,11 +406,8 @@ InvertedIndexConfig::InvertedIndexConfig(
     }
   }
   for (const auto& [owner, field] : fields) {
-    for (const auto id : {field.numeric_field_id, field.bool_field_id,
-                          field.null_field_id, field.synthetic_column}) {
-      if (irs::field_limits::valid(id)) {
-        _owners.try_emplace(id, owner);
-      }
+    if (irs::field_limits::valid(field.synthetic_column)) {
+      _owners.try_emplace(field.synthetic_column, owner);
     }
   }
 }

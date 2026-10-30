@@ -102,12 +102,12 @@ bool TryClaimIResearchConjunct(
 inline connector::SearchColumnInfo MakeSearchColumnInfo(
   irs::field_id field, const catalog::InvertedIndexField* info,
   duckdb::LogicalType type, catalog::ColumnTokenizer tokenizer) {
+  const bool json_leaves =
+    info && type.IsJSONType() && info->HasJsonLeafFields();
   return {
     .field_id = field,
-    .null_field_id = info ? info->null_field_id : irs::field_limits::invalid(),
-    .bool_field_id = info ? info->bool_field_id : irs::field_limits::invalid(),
-    .numeric_field_id =
-      info ? info->numeric_field_id : irs::field_limits::invalid(),
+    .nullable = info != nullptr,
+    .json_leaves = json_leaves,
     .logical_type = std::move(type),
     .tokenizer = std::move(tokenizer),
   };
@@ -120,7 +120,6 @@ struct SearchGetters {
   const connector::ColumnGetter& getter;
   const connector::ExpressionGetter& expr_getter;
   irs::containers::FlatHashSet<irs::field_id>& analyzed_fields;
-  irs::containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers;
   const BindingColumnId& column_id;
 };
 

@@ -29,6 +29,7 @@
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "tests_shared.hpp"
+#include "typed_terms.hpp"
 
 namespace {
 
@@ -88,19 +89,19 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
       auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
       field.Name(name);
       field.id = fid;
-      field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
+      field.value(irs::ViewCast<irs::byte_type>(tests::kNullTerm));
     } else if (data.is_bool() && data.b) {
       doc.insert(std::make_shared<tests::BinaryField>());
       auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
       field.Name(name);
       field.id = fid;
-      field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
+      field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
     } else if (data.is_bool() && !data.b) {
       doc.insert(std::make_shared<tests::BinaryField>());
       auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
       field.Name(name);
       field.id = fid;
-      field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
+      field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
     } else if (data.is_number()) {
       // 'value' can be interpreted as a double
       {
@@ -1757,19 +1758,19 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
         auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
         field.Name(name);
         field.id = fid;
-        field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
+        field.value(irs::ViewCast<irs::byte_type>(tests::kNullTerm));
       } else if (data.is_bool() && data.b) {
         doc.insert(std::make_shared<tests::BinaryField>());
         auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
         field.Name(name);
         field.id = fid;
-        field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
+        field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
       } else if (data.is_bool() && !data.b) {
         doc.insert(std::make_shared<tests::BinaryField>());
         auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
         field.Name(name);
         field.id = fid;
-        field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
+        field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
       } else if (data.is_number()) {
         // 'value' can be interpreted as a double
         const auto d_value = data.as_number<double_t>();

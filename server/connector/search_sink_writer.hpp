@@ -165,7 +165,7 @@ class SearchSinkInsertBaseImpl {
     void PrepareForStringValue(irs::field_id field_id,
                                catalog::ColumnTokenizer& column_analyzer);
 
-    void PrepareForBlockValue(irs::field_id field_id);
+    void PrepareForBlockValue(irs::field_id field_id, irs::FieldSlot value_slot);
 
     irs::analysis::Tokenizer* string_analyzer = nullptr;
     irs::field_id id{irs::field_limits::invalid()};
@@ -173,11 +173,15 @@ class SearchSinkInsertBaseImpl {
     // stores nothing.
     irs::field_id store_column{irs::field_limits::invalid()};
     irs::IndexFeatures index_features;
+    irs::FieldSlot slot = irs::FieldSlot::String;
     bool keyword = false;
   };
 
   template<typename Func>
   void InvertField(const Field& field, Func&& func);
+
+  template<typename Func>
+  void InvertSlots(irs::field_id id, Func&& func);
 
   template<typename Func>
   void InvertTokens(const Field& field, irs::StoreSink* store, Func&& func);
@@ -198,30 +202,30 @@ class SearchSinkInsertBaseImpl {
                         const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
                         irs::doc_id_t first_doc);
 
-  void WriteKeywordColumn(const Field& field, const Field& null_field,
+  void WriteKeywordColumn(const Field& field, irs::field_id null_id,
                           const duckdb::Vector& vec, duckdb::idx_t count);
 
-  void WriteAnalyzedColumn(const Field& field, const Field& null_field,
+  void WriteAnalyzedColumn(const Field& field, irs::field_id null_id,
                            const duckdb::Vector& vec, duckdb::idx_t count);
 
   template<duckdb::LogicalTypeId Kind>
-  void WriteNumericColumn(const Field& field, const Field& null_field,
+  void WriteNumericColumn(const Field& field, irs::field_id null_id,
                           duckdb::idx_t count);
 
-  void WriteBoolColumn(const Field& field, const Field& null_field,
+  void WriteBoolColumn(irs::field_id id, irs::field_id null_id,
                        duckdb::idx_t count);
 
-  void WriteInetColumn(const Field& field, const Field& null_field,
+  void WriteInetColumn(const Field& field, irs::field_id null_id,
                        const duckdb::Vector& vec, duckdb::idx_t count);
 
-  void WriteNullColumn(const Field& null_field, duckdb::idx_t count);
+  void WriteNullColumn(irs::field_id null_id, duckdb::idx_t count);
 
   template<duckdb::LogicalTypeId ChildKind>
-  void WriteListBatch(const Field& field, const Field& null_field,
+  void WriteListBatch(const Field& field, irs::field_id null_id,
                       duckdb::idx_t count, duckdb::idx_t array_size);
 
   bool DispatchListBatch(duckdb::LogicalTypeId child_kind, const Field& field,
-                         const Field& null_field, duckdb::idx_t count,
+                         irs::field_id null_id, duckdb::idx_t count,
                          duckdb::idx_t array_size);
 
   void WriteJsonBatch(const duckdb::Vector& vec, duckdb::idx_t count);
@@ -239,18 +243,15 @@ class SearchSinkInsertBaseImpl {
                     duckdb::string_t bytes);
 
   template<typename Insert>
-  void WriteColumnBlock(const Field& null_field, duckdb::idx_t count,
+  void WriteColumnBlock(irs::field_id null_id, duckdb::idx_t count,
                         Insert&& insert);
-  void FinishColumnBlocks(const Field& null_field);
+  void FinishColumnBlocks(irs::field_id null_id, irs::FieldSlot slot);
 
   struct JsonExpressionFields {
     Field string_field;
     Field numeric_field;
-    Field bool_field;
-    Field null_field;
 
     void InitForExpression(irs::field_id entry_field_id,
-                           const catalog::InvertedIndexField* entry,
                            catalog::ColumnTokenizer& string_analyzer);
   };
 
@@ -265,7 +266,7 @@ class SearchSinkInsertBaseImpl {
     _tokenizer_cache;
   Field _pk_field;
   Field _field;
-  Field _null_field;
+  irs::field_id _null_id = irs::field_limits::invalid();
   irs::IndexWriter::Transaction* _trx;
   std::optional<irs::IndexWriter::Document> _document;
 
@@ -317,10 +318,14 @@ class SearchSinkInsertBaseImpl {
   irs::containers::FlatHashMap<ColumnId, std::vector<irs::field_id>>
     _terms_by_column;
 
-  std::vector<duckdb::string_t> _json_bool_terms;
+  struct JsonBool {
+    irs::doc_id_t doc;
+    bool value;
+  };
+
   std::vector<double> _json_nums;
   std::vector<irs::doc_id_t> _json_num_docs;
-  std::vector<irs::doc_id_t> _json_bool_docs;
+  std::vector<JsonBool> _json_bools;
   std::vector<irs::doc_id_t> _null_docs;
 };
 

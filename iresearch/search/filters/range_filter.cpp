@@ -92,13 +92,14 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
   sub_ctx.boost *= GetBoost();
-  return PrepareSegment(segment, sub_ctx, field_id(), options().range,
+  return PrepareSegment(segment, sub_ctx, field_id(), slot(), options().range,
                         GetBoost());
 }
 
 QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           const irs::field_id field,
+                                          FieldSlot slot,
                                           const options_type::range_type& rng,
                                           score_t boost) {
   switch (Classify(rng)) {
@@ -109,7 +110,7 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
       break;
   }
 
-  const auto* reader = segment.field(field);
+  const auto* reader = segment.field(field, slot);
   if (!reader) {
     return QueryBuilder::Empty();
   }

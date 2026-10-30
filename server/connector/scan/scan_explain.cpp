@@ -64,8 +64,25 @@ void AppendKindSuffix(std::string& name, const duckdb::LogicalType& type) {
   }
 }
 
+std::string_view SlotSuffix(irs::FieldSlot slot) {
+  switch (slot) {
+    case irs::FieldSlot::SqlNull:
+      return "(null)";
+    case irs::FieldSlot::JsonNull:
+      return "(json null)";
+    case irs::FieldSlot::False:
+    case irs::FieldSlot::True:
+      return "(bool)";
+    case irs::FieldSlot::Numeric:
+      return "(numeric)";
+    case irs::FieldSlot::String:
+      return {};
+  }
+  return {};
+}
+
 auto MakeFieldNameResolver(const ScanBindData& bind_data) {
-  return [&bind_data](ColumnId col_id) -> std::string {
+  return [&bind_data](ColumnId col_id, irs::FieldSlot slot) -> std::string {
     const auto& config = *bind_data.relation.inverted_config;
     auto base = bind_data.DisplayColumnName(col_id);
     const auto column_type = bind_data.ColumnTypeById(col_id);
@@ -80,6 +97,9 @@ auto MakeFieldNameResolver(const ScanBindData& bind_data) {
     if (lookup.entry) {
       const auto& entry = *lookup.entry;
       if (col_id == lookup.entry_field_id) {
+        if (const auto suffix = SlotSuffix(slot); !suffix.empty()) {
+          return absl::StrCat(base, suffix);
+        }
         const auto expr_type_id = config.ExpressionType(col_id).id();
         const bool is_expr = expr_type_id != duckdb::LogicalTypeId::INVALID;
         if (is_expr) {
@@ -90,15 +110,6 @@ auto MakeFieldNameResolver(const ScanBindData& bind_data) {
           base += "(string)";
         }
         return base;
-      }
-      if (col_id == entry.null_field_id) {
-        return bind_data.DisplayColumnName(lookup.entry_field_id) + "(null)";
-      }
-      if (col_id == entry.bool_field_id) {
-        return bind_data.DisplayColumnName(lookup.entry_field_id) + "(bool)";
-      }
-      if (col_id == entry.numeric_field_id) {
-        return bind_data.DisplayColumnName(lookup.entry_field_id) + "(numeric)";
       }
       if (col_id == entry.synthetic_column) {
         return bind_data.DisplayColumnName(lookup.entry_field_id) +
@@ -129,36 +140,37 @@ term_dict::Kind ClassifyTerms(const duckdb::LogicalType& type) {
 }
 
 auto MakeFieldKindResolver(const ScanBindData& bind_data) {
-  return [&bind_data](ColumnId col_id) -> term_dict::Kind {
+  return [&bind_data](ColumnId col_id, irs::FieldSlot slot) -> term_dict::Kind {
     using term_dict::Kind;
     const auto& config = *bind_data.relation.inverted_config;
     const auto lookup = config.LookupField(col_id);
     if (lookup.entry_field_id == term_dict::kPKFieldId) {
       return Kind::NumericI64;
     }
-    if (lookup.entry) {
-      const auto& entry = *lookup.entry;
-      if (col_id == lookup.entry_field_id) {
-        if (const auto expr_type = config.ExpressionType(col_id);
-            expr_type.id() != duckdb::LogicalTypeId::INVALID) {
-          return ClassifyTerms(expr_type);
-        }
-        const auto column_type =
-          bind_data.ColumnTypeById(config.ColumnOf(col_id));
-        if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
-          return ClassifyTerms(column_type);
-        }
-        return Kind::String;
-      }
-      if (col_id == entry.null_field_id) {
+    switch (slot) {
+      case irs::FieldSlot::SqlNull:
+      case irs::FieldSlot::JsonNull:
         return Kind::Null;
-      }
-      if (col_id == entry.bool_field_id) {
+      case irs::FieldSlot::False:
+      case irs::FieldSlot::True:
         return Kind::Bool;
+      case irs::FieldSlot::Numeric:
+      case irs::FieldSlot::String:
+        break;
+    }
+    if (lookup.entry && col_id == lookup.entry_field_id) {
+      if (const auto expr_type = config.ExpressionType(col_id);
+          expr_type.id() != duckdb::LogicalTypeId::INVALID) {
+        return slot == irs::FieldSlot::Numeric && expr_type.IsJSONType()
+                 ? Kind::NumericF64
+                 : ClassifyTerms(expr_type);
       }
-      if (col_id == entry.numeric_field_id) {
-        return Kind::NumericF64;
+      const auto column_type =
+        bind_data.ColumnTypeById(config.ColumnOf(col_id));
+      if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
+        return ClassifyTerms(column_type);
       }
+      return Kind::String;
     }
     const auto column_type = bind_data.ColumnTypeById(config.ColumnOf(col_id));
     if (column_type.id() != duckdb::LogicalTypeId::INVALID) {

@@ -20,10 +20,9 @@
 
 #pragma once
 
-#include <duckdb/common/types/string_type.hpp>
 #include <string_view>
 
-namespace irs {
+namespace tests {
 
 constexpr std::string_view kTrueTerm{"\xFF", 1};
 constexpr std::string_view kFalseTerm{"\x00", 1};
@@ -32,15 +31,6 @@ constexpr std::string_view BooleanTerm(bool value) noexcept {
   return value ? kTrueTerm : kFalseTerm;
 }
 
-inline duckdb::string_t BoolTerm(bool value) noexcept {
-  const auto term = BooleanTerm(value);
-  return {term.data(), static_cast<uint32_t>(term.size())};
-}
-
 constexpr std::string_view kNullTerm{"\x00", 0};
 
-inline duckdb::string_t NullTerm() noexcept {
-  return {kNullTerm.data(), static_cast<uint32_t>(kNullTerm.size())};
-}
-
-}  // namespace irs
+}  // namespace tests

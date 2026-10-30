@@ -57,7 +57,6 @@
 #include <duckdb/planner/operator/logical_alter.hpp>
 #include <duckdb/planner/operator/logical_attach.hpp>
 #include <duckdb/planner/operator/logical_create.hpp>
-#include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
 #include <duckdb/planner/operator/logical_detach.hpp>
 #include <duckdb/planner/operator/logical_drop.hpp>
@@ -236,7 +235,6 @@ bool HasStatementRules(const duckdb::LogicalOperator& root) {
     case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
     case LogicalOperatorType::LOGICAL_CREATE_TRIGGER:
     case LogicalOperatorType::LOGICAL_CREATE_SCHEMA:
-    case LogicalOperatorType::LOGICAL_CREATE_INDEX:
     case LogicalOperatorType::LOGICAL_DROP:
     case LogicalOperatorType::LOGICAL_ALTER:
     case LogicalOperatorType::LOGICAL_ATTACH:
@@ -301,7 +299,6 @@ class Enforcer {
         }
         if (_enforce) {
           RequireSchemaCreate(create.schema);
-          CheckReplace(info);
           CheckForeignKeys(info, create.schema);
         }
         break;
@@ -318,7 +315,6 @@ class Enforcer {
               OwnerFor(*create.info));
         if (_enforce) {
           RequireSchemaCreate(*create.schema);
-          CheckReplace(*create.info);
         }
         break;
       }
@@ -361,14 +357,6 @@ class Enforcer {
               SchemaOwner(create.info->Cast<duckdb::CreateSchemaInfo>()));
         if (_enforce) {
           RequireDatabasePrivilege(AclMode::Create);
-        }
-        break;
-      }
-      case LogicalOperatorType::LOGICAL_CREATE_INDEX: {
-        auto& create = op.Cast<duckdb::LogicalCreateIndex>();
-        if (_enforce) {
-          RequireOwner(create.table);
-          CheckReplace(*create.info);
         }
         break;
       }
@@ -454,6 +442,7 @@ class Enforcer {
         }
         break;
       }
+      case LogicalOperatorType::LOGICAL_CREATE_INDEX:
       case LogicalOperatorType::LOGICAL_INVALID:
       case LogicalOperatorType::LOGICAL_PROJECTION:
       case LogicalOperatorType::LOGICAL_FILTER:
@@ -684,15 +673,6 @@ class Enforcer {
 
   void CheckDrop(const duckdb::DropInfo& info) {
     const auto& name = info.GetQualifiedName();
-    if (info.type == CatalogType::SCHEMA_ENTRY) {
-      auto schema =
-        duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name(),
-                                   duckdb::OnEntryNotFound::RETURN_NULL);
-      if (schema) {
-        RequireOwner(*schema);
-      }
-      return;
-    }
     if (info.type == CatalogType::DATABASE_ENTRY) {
       RequireDatabaseOwner(name.Name().GetIdentifierName());
       return;
@@ -707,58 +687,21 @@ class Enforcer {
                                    name.Name().GetIdentifierName())) {
         RequireRoleAdmin(*role, "drop");
       }
-      return;
-    }
-    if (info.type == CatalogType::FOREIGN_SERVER_ENTRY) {
-      if (auto server = ServerEntry(name.Name().GetIdentifierName())) {
-        RequireOwner(*server);
-      }
-      return;
-    }
-    if (info.type == CatalogType::SECRET_ENTRY) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("permission denied: superuser required"));
-    }
-    if (!IsSchemaScoped(info.type)) {
-      return;
-    }
-    if (auto entry = FindEntry(info.type, name)) {
-      RequireOwner(*entry);
-    }
-  }
-
-  // CREATE OR REPLACE keeps an existing object under its own name, which is the
-  // owner's to change.
-  void CheckReplace(const duckdb::CreateInfo& info) {
-    const bool replaces =
-      info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT ||
-      info.on_conflict == duckdb::OnCreateConflict::ALTER_ON_CONFLICT;
-    if (!replaces || !IsSchemaScoped(info.type)) {
-      return;
-    }
-    if (auto entry = FindEntry(info.type, info.GetQualifiedName())) {
-      RequireOwner(*entry);
     }
   }
 
   void CheckAlter(const duckdb::AlterInfo& info) {
     const auto type = info.GetCatalogType();
     if (type == CatalogType::SCHEMA_ENTRY) {
-      if (auto schema = SchemaOf(type, info.GetQualifiedName())) {
-        RequireOwner(*schema);
+      if (SchemaOf(type, info.GetQualifiedName())) {
         RequireDatabasePrivilege(AclMode::Create);
       }
       return;
     }
-    if (!IsSchemaScoped(type)) {
+    if (!IsRename(info) || !IsSchemaScoped(type)) {
       return;
     }
-    auto entry = FindEntry(type, info.GetQualifiedName());
-    if (!entry) {
-      return;
-    }
-    RequireOwner(*entry);
-    if (IsRename(info)) {
+    if (auto entry = FindEntry(type, info.GetQualifiedName())) {
       RequireSchemaCreate(entry->ParentSchema(_context));
     }
   }

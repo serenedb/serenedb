@@ -687,6 +687,7 @@ def test_char_oid18_text_param(conn, param, text):
         (4451, 1, b"\x00\x00\x00\x01\xff\xff\xff\xfe", "22P03"),
         (22, 0, b"a b", "22P02"),
         (1007, 0, b"{{1,2},{3,4}}", "22P02"),
+        (1020, 0, b'{"(1,1),(0,0)","(2,2),(1,1)"}', "22P02"),
         (1033, 0, b"garbage", "22P02"),
         (1033, 0, b"nobody_missing=r/postgres", "42704"),
         (2205, 0, b"no_such_table_x", "42P01"),
@@ -698,6 +699,14 @@ def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
     conn.execute("")
     conn.sync()
     assert sqlstates(conn.drain_to_ready()) == [sqlstate]
+
+
+def test_malformed_map_parameter_is_refused(conn):
+    conn.parse("", "select $1::MAP(INT, INT)::text", oids=(0,))
+    conn.bind("", "", params=(b'{"(1,2)"x}',), formats=(0,))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == ["22P02"]
 
 
 def test_aclitem_text_param_is_canonical(conn):

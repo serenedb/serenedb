@@ -524,12 +524,13 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
 
+  const bool tracks_deletes =
+    lstate->uncommitted_min_slot != std::numeric_limits<size_t>::max();
   irs::CommitOnFlush commit_on_flush;
   FeedChunk(*writer, num_rows, pk, chunk, columns, gstate.expression_slots,
-            &commit_on_flush);
+            tracks_deletes ? &commit_on_flush : nullptr);
 
-  if (commit_on_flush.committed &&
-      lstate->uncommitted_min_slot != std::numeric_limits<size_t>::max()) {
+  if (commit_on_flush.committed) {
     auto rowids = chunk.data[gstate.pk_base_col_idx].Values<int64_t>();
     const auto batch_min_rowid = rowids[0].GetValueUnsafe();
     SDB_ASSERT(batch_min_rowid <= rowids[num_rows - 1].GetValueUnsafe());

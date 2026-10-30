@@ -102,7 +102,8 @@ connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 COPY evis_vault (secret_cod) FROM '${__TEST_DIR__}/evis_vault.csv';
 ----
-db error: ERROR: permission denied for table evis_vault
+db error: ERROR: permission denied to access "<slt:ignore>/evis_vault.csv"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw

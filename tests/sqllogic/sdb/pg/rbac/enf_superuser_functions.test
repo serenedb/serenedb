@@ -189,7 +189,7 @@ connection c_ved user=esf_vedernikoff password=esf_pw
 statement error
 SELECT count(*) FROM pg_hba_file_rules;
 ----
-db error: ERROR: permission denied for function pg_hba_file_rules
+db error: ERROR: permission denied for view pg_hba_file_rules
 
 
 query

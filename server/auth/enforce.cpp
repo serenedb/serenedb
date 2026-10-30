@@ -105,50 +105,11 @@ using duckdb::AclMode;
 using duckdb::CatalogType;
 using duckdb::LogicalOperatorType;
 
-std::string KindName(CatalogType type) {
-  switch (type) {
-    case CatalogType::TABLE_ENTRY:
-      return "table";
-    case CatalogType::VIEW_ENTRY:
-      return "view";
-    case CatalogType::SEQUENCE_ENTRY:
-      return "sequence";
-    case CatalogType::MACRO_ENTRY:
-    case CatalogType::TABLE_MACRO_ENTRY:
-    case CatalogType::TABLE_FUNCTION_ENTRY:
-    case CatalogType::SCALAR_FUNCTION_ENTRY:
-      return "function";
-    case CatalogType::TYPE_ENTRY:
-      return "type";
-    case CatalogType::SCHEMA_ENTRY:
-      return "schema";
-    case CatalogType::DATABASE_ENTRY:
-      return "database";
-    case CatalogType::INDEX_ENTRY:
-      return "index";
-    case CatalogType::TOKENIZER_ENTRY:
-      return "text search dictionary";
-    case CatalogType::FOREIGN_SERVER_ENTRY:
-      return "foreign server";
-    case CatalogType::SUBSCRIPTION_ENTRY:
-      return "subscription";
-    case CatalogType::JOB_ENTRY:
-      return "job";
-    default:
-      return "object";
-  }
-}
-
-[[noreturn]] void Denied(const duckdb::CatalogEntry& entry) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("permission denied for ", KindName(entry.type), " ",
-                          entry.name.GetIdentifierName()));
-}
-
 [[noreturn]] void MustOwn(const duckdb::CatalogEntry& entry) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("must be owner of ", KindName(entry.type), " ",
-                          entry.name.GetIdentifierName()));
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("must be owner of ", duckdb::PermissionKindName(entry.type), " ",
+            entry.name.GetIdentifierName()));
 }
 
 void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
@@ -530,15 +491,12 @@ class Enforcer {
     if (_enforce) {
       CheckDatabaseConnect();
     }
-    CheckViews();
-    Collect(_root);
     Check(_root);
     if (!_enforce) {
       return _files_authorized;
     }
     CheckSchemaUsage();
     CheckResolved();
-    CheckReturning();
     if (_file_copy) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied to COPY to a file"));
@@ -547,142 +505,30 @@ class Enforcer {
   }
 
  private:
-  void Collect(duckdb::LogicalOperator& op) {
-    switch (op.type) {
-      case LogicalOperatorType::LOGICAL_UPDATE: {
-        auto& update = op.Cast<duckdb::LogicalUpdate>();
-        _dml_tables.emplace(update.table_index.index, &update.table);
-        MarkTargetScans(op, update.table);
-        break;
-      }
-      case LogicalOperatorType::LOGICAL_DELETE: {
-        auto& del = op.Cast<duckdb::LogicalDelete>();
-        _dml_tables.emplace(del.table_index.index, &del.table);
-        MarkTargetScans(op, del.table);
-        break;
-      }
-      case LogicalOperatorType::LOGICAL_MERGE_INTO: {
-        auto& merge = op.Cast<duckdb::LogicalMergeInto>();
-        _dml_tables.emplace(merge.table_index.index, &merge.table);
-        MarkTargetScans(op, merge.table);
-        break;
-      }
-      case LogicalOperatorType::LOGICAL_INSERT: {
-        auto& insert = op.Cast<duckdb::LogicalInsert>();
-        _dml_tables.emplace(insert.table_index.index, &insert.table);
-        break;
-      }
-      default:
-        break;
-    }
-    for (auto& child : op.children) {
-      Collect(*child);
-    }
-  }
-
-  void MarkTargetScans(duckdb::LogicalOperator& op,
-                       const duckdb::TableCatalogEntry& table) {
-    if (op.type == LogicalOperatorType::LOGICAL_GET) {
-      auto& get = op.Cast<duckdb::LogicalGet>();
-      if (get.GetTable().get() == &table) {
-        _target_scans.emplace(get.table_index.index, &get);
-      }
-    }
-    for (auto& child : op.children) {
-      MarkTargetScans(*child, table);
-    }
-  }
-
   void Check(duckdb::LogicalOperator& op) {
-    if (op.type == LogicalOperatorType::LOGICAL_UPDATE &&
-        !op.children.empty() &&
-        op.children[0]->type == LogicalOperatorType::LOGICAL_PROJECTION) {
-      auto& update = op.Cast<duckdb::LogicalUpdate>();
-      const auto& projection =
-        op.children[0]->Cast<duckdb::LogicalProjection>();
-      auto& positions = _projection_reads[projection.table_index.index];
-      for (duckdb::idx_t i = 0; i < update.expressions.size(); ++i) {
-        auto collect = [&](duckdb::Expression& expr) {
-          if (expr.GetExpressionType() !=
-              duckdb::ExpressionType::BOUND_COLUMN_REF) {
-            return;
-          }
-          const auto& binding =
-            expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
-          if (binding.table_index.index != projection.table_index.index) {
-            return;
-          }
-          const auto position = binding.column_index.GetIndex();
-          if (IsPassthrough(projection, position, update.table,
-                            update.columns[i])) {
-            return;
-          }
-          positions.insert(position);
-        };
-        duckdb::ExpressionIterator::EnumerateExpression(update.expressions[i],
-                                                        collect);
-      }
-    }
     auto visit = [&](duckdb::Expression& expr) {
-      switch (expr.GetExpressionType()) {
-        case duckdb::ExpressionType::BOUND_COLUMN_REF: {
-          const auto& binding =
-            expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
-          if (auto it = _dml_tables.find(binding.table_index.index);
-              it != _dml_tables.end()) {
-            auto entry =
-              absl::c_find_if(_returning, [&](const ReturningColumns& columns) {
-                return columns.first == it->second;
-              });
-            if (entry == _returning.end()) {
-              entry = _returning.emplace(_returning.end(), it->second,
-                                         ReturningColumns::second_type{});
-            }
-            entry->second.insert(binding.column_index.GetIndex());
-          }
-          _scan_refs[binding.table_index.index].insert(
-            binding.column_index.GetIndex());
-          break;
+      if (expr.GetExpressionType() != duckdb::ExpressionType::BOUND_FUNCTION) {
+        return;
+      }
+      const auto& name = expr.Cast<duckdb::BoundFunctionExpression>()
+                           .Function()
+                           .GetName()
+                           .GetIdentifierName();
+      if (name == "nextval" || name == "currval" || name == "setval") {
+        if (_enforce) {
+          CheckSequenceCall(expr.Cast<duckdb::BoundFunctionExpression>(), name);
         }
-        case duckdb::ExpressionType::BOUND_FUNCTION: {
-          const auto& name = expr.Cast<duckdb::BoundFunctionExpression>()
-                               .Function()
-                               .GetName()
-                               .GetIdentifierName();
-          if (name == "nextval" || name == "currval" || name == "setval") {
-            if (_enforce) {
-              CheckSequenceCall(expr.Cast<duckdb::BoundFunctionExpression>(),
-                                name);
-            }
-          } else if (_enforce && name == "current_setting") {
-            CheckSettingRead(expr.Cast<duckdb::BoundFunctionExpression>());
-          } else if (_enforce && IsSuperuserFunction(name)) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                            ERR_MSG("permission denied for function ", name));
-          }
-          break;
-        }
-        default:
-          break;
+      } else if (_enforce && name == "current_setting") {
+        CheckSettingRead(expr.Cast<duckdb::BoundFunctionExpression>());
+      } else if (_enforce && IsSuperuserFunction(name)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("permission denied for function ", name));
       }
     };
-    if (op.type == LogicalOperatorType::LOGICAL_PROJECTION &&
-        _projection_reads.contains(
-          op.Cast<duckdb::LogicalProjection>().table_index.index)) {
-      const auto& positions = _projection_reads.at(
-        op.Cast<duckdb::LogicalProjection>().table_index.index);
-      for (duckdb::idx_t i = 0; i < op.expressions.size(); ++i) {
-        if (positions.contains(i)) {
-          duckdb::ExpressionIterator::EnumerateExpression(op.expressions[i],
-                                                          visit);
-        }
-      }
-    } else if (op.type != LogicalOperatorType::LOGICAL_DELETE) {
-      duckdb::LogicalOperatorVisitor::EnumerateExpressions(
-        op, [&](duckdb::unique_ptr<duckdb::Expression>* child) {
-          duckdb::ExpressionIterator::EnumerateExpression(*child, visit);
-        });
-    }
+    duckdb::LogicalOperatorVisitor::EnumerateExpressions(
+      op, [&](duckdb::unique_ptr<duckdb::Expression>* child) {
+        duckdb::ExpressionIterator::EnumerateExpression(*child, visit);
+      });
 
     switch (op.type) {
       case LogicalOperatorType::LOGICAL_GET: {
@@ -698,35 +544,11 @@ class Enforcer {
         }
         break;
       }
-      case LogicalOperatorType::LOGICAL_INSERT: {
-        auto& insert = op.Cast<duckdb::LogicalInsert>();
-        if (_enforce) {
-          CheckInsert(insert);
-        }
+      case LogicalOperatorType::LOGICAL_INSERT:
+      case LogicalOperatorType::LOGICAL_UPDATE:
+      case LogicalOperatorType::LOGICAL_DELETE:
+      case LogicalOperatorType::LOGICAL_MERGE_INTO:
         break;
-      }
-      case LogicalOperatorType::LOGICAL_UPDATE: {
-        auto& update = op.Cast<duckdb::LogicalUpdate>();
-        if (_enforce) {
-          CheckUpdate(update);
-        }
-        break;
-      }
-      case LogicalOperatorType::LOGICAL_DELETE: {
-        auto& del = op.Cast<duckdb::LogicalDelete>();
-        if (_enforce) {
-          RequireTablePrivilege(
-            del.table, del.is_truncate ? AclMode::Truncate : AclMode::Delete);
-        }
-        break;
-      }
-      case LogicalOperatorType::LOGICAL_MERGE_INTO: {
-        auto& merge = op.Cast<duckdb::LogicalMergeInto>();
-        if (_enforce) {
-          CheckMerge(merge);
-        }
-        break;
-      }
       case LogicalOperatorType::LOGICAL_CREATE_TABLE: {
         auto& create = op.Cast<duckdb::LogicalCreateTable>();
         auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
@@ -901,7 +723,7 @@ class Enforcer {
         break;
       case LogicalOperatorType::LOGICAL_VACUUM: {
         auto& vacuum = op.Cast<duckdb::LogicalVacuum>();
-        if (!_enforce || !vacuum.table || Unowned(*vacuum.table)) {
+        if (!_enforce || !vacuum.table || duckdb::IsUnowned(*vacuum.table)) {
           break;
         }
         auto& info = vacuum.GetInfo();
@@ -1015,7 +837,7 @@ class Enforcer {
   duckdb::idx_t PrincipalFor(duckdb::idx_t table_index) const {
     const duckdb::StatementProperties::ViewScope* inner = nullptr;
     for (const auto& scope : _props.view_scopes) {
-      if (Unowned(*scope.view)) {
+      if (duckdb::IsUnowned(*scope.view)) {
         continue;
       }
       if (scope.begin <= table_index && table_index < scope.end &&
@@ -1027,56 +849,6 @@ class Enforcer {
       return _caller;
     }
     return inner->view->permissions.owner;
-  }
-
-  duckdb::idx_t EnclosingPrincipal(
-    const duckdb::StatementProperties::ViewScope& scope) const {
-    const duckdb::StatementProperties::ViewScope* inner = nullptr;
-    for (const auto& other : _props.view_scopes) {
-      if (other.view == scope.view && other.begin == scope.begin &&
-          other.end == scope.end) {
-        continue;
-      }
-      if (Unowned(*other.view)) {
-        continue;
-      }
-      if (other.begin <= scope.begin && scope.end <= other.end &&
-          (!inner || other.end - other.begin < inner->end - inner->begin)) {
-        inner = &other;
-      }
-    }
-    if (!inner || inner->view->security_invoker) {
-      return _caller;
-    }
-    return inner->view->permissions.owner;
-  }
-
-  bool IsPassthrough(const duckdb::LogicalProjection& projection,
-                     duckdb::idx_t position,
-                     const duckdb::TableCatalogEntry& table,
-                     duckdb::PhysicalIndex target) const {
-    if (position >= projection.expressions.size()) {
-      return false;
-    }
-    const auto& expr = *projection.expressions[position];
-    if (expr.GetExpressionType() != duckdb::ExpressionType::BOUND_COLUMN_REF) {
-      return false;
-    }
-    const auto& binding =
-      expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
-    const auto get = _target_scans.find(binding.table_index.index);
-    if (get == _target_scans.end()) {
-      return false;
-    }
-    const auto& column_ids = get->second->GetColumnIds();
-    const auto index = binding.column_index.GetIndex();
-    if (index >= column_ids.size() || column_ids[index].IsRowIdColumn() ||
-        column_ids[index].IsVirtualColumn()) {
-      return false;
-    }
-    const auto& column = table.GetColumns().GetColumn(
-      duckdb::LogicalIndex(column_ids[index].GetPrimaryIndex()));
-    return !column.Generated() && column.Physical() == target;
   }
 
   void CheckIndexScan(duckdb::LogicalGet& get) {
@@ -1097,12 +869,13 @@ class Enforcer {
     }
     auto view =
       index.GetRelation(index.catalog.GetCatalogTransaction(_context));
-    if (!view || view->type != CatalogType::VIEW_ENTRY || Unowned(*view)) {
+    if (!view || view->type != CatalogType::VIEW_ENTRY ||
+        duckdb::IsUnowned(*view)) {
       return;
     }
     if (!ClosureOf(PrincipalFor(get.table_index.index))
            .Can(CatalogType::TABLE_ENTRY, view->permissions, AclMode::Select)) {
-      Denied(*view);
+      duckdb::ThrowPermissionDenied(*view);
     }
   }
 
@@ -1120,132 +893,6 @@ class Enforcer {
     if (table->catalog.GetCatalogType() !=
         catalog::SereneDBCatalog::kStorageType) {
       RequireServerUsage(table->catalog.GetName());
-    }
-    if (Unowned(*table)) {
-      return;
-    }
-    const auto& closure = ClosureOf(PrincipalFor(get.table_index.index));
-    const bool target = _target_scans.contains(get.table_index.index);
-    const auto& column_ids = get.GetColumnIds();
-    std::vector<std::span<const duckdb::AclItem>> acls;
-    const auto add = [&](const duckdb::ColumnIndex& column) {
-      if (column.IsRowIdColumn() || column.IsVirtualColumn()) {
-        return;
-      }
-      acls.emplace_back(
-        table->GetColumns()
-          .GetColumn(duckdb::LogicalIndex(column.GetPrimaryIndex()))
-          .Acl());
-    };
-    if (target) {
-      if (auto it = _scan_refs.find(get.table_index.index);
-          it != _scan_refs.end()) {
-        for (const auto position : it->second) {
-          if (position < column_ids.size()) {
-            add(column_ids[position]);
-          }
-        }
-      }
-      if (acls.empty()) {
-        return;
-      }
-    } else {
-      for (const auto& column : column_ids) {
-        add(column);
-      }
-      if (acls.empty()) {
-        if (!closure.CanAnyColumn(table->permissions, AclMode::Select,
-                                  AllColumnAcls(*table))) {
-          Denied(*table);
-        }
-        return;
-      }
-    }
-    if (!closure.CanColumns(table->permissions, AclMode::Select, acls)) {
-      Denied(*table);
-    }
-  }
-
-  static bool ReferencesColumns(duckdb::unique_ptr<duckdb::Expression>& expr) {
-    bool found = false;
-    duckdb::ExpressionIterator::EnumerateExpression(
-      expr, [&](duckdb::Expression& node) {
-        found |=
-          node.GetExpressionType() == duckdb::ExpressionType::BOUND_COLUMN_REF;
-      });
-    return found;
-  }
-
-  void CheckInsert(duckdb::LogicalInsert& insert) {
-    auto& table = insert.table;
-    const auto& columns = table.GetColumns();
-    std::vector<std::span<const duckdb::AclItem>> acls;
-    auto* source = insert.children.empty() ? nullptr : insert.children[0].get();
-    const bool per_column =
-      source && source->type == LogicalOperatorType::LOGICAL_PROJECTION &&
-      source->expressions.size() == columns.PhysicalColumnCount();
-    duckdb::idx_t position = 0;
-    for (const auto& column : columns.Physical()) {
-      if (!per_column || ReferencesColumns(source->expressions[position])) {
-        acls.emplace_back(column.Acl());
-      }
-      ++position;
-    }
-    if (!_caller_closure.CanColumns(table.permissions, AclMode::Insert, acls)) {
-      Denied(table);
-    }
-  }
-
-  void CheckUpdate(duckdb::LogicalUpdate& update) {
-    auto& table = update.table;
-    if (update.update_is_del_and_insert) {
-      RequireTablePrivilege(table, AclMode::Update);
-      return;
-    }
-    std::vector<std::span<const duckdb::AclItem>> acls;
-    for (const auto index : update.columns) {
-      acls.emplace_back(table.GetColumns().GetColumn(index).Acl());
-    }
-    if (!_caller_closure.CanColumns(table.permissions, AclMode::Update, acls)) {
-      Denied(table);
-    }
-  }
-
-  void CheckMerge(duckdb::LogicalMergeInto& merge) {
-    for (const auto& [condition, actions] : merge.actions) {
-      for (const auto& action : actions) {
-        switch (action->action_type) {
-          case duckdb::MergeActionType::MERGE_UPDATE:
-            RequireTablePrivilege(merge.table, AclMode::Update);
-            break;
-          case duckdb::MergeActionType::MERGE_DELETE:
-            RequireTablePrivilege(merge.table, AclMode::Delete);
-            break;
-          case duckdb::MergeActionType::MERGE_INSERT:
-            RequireTablePrivilege(merge.table, AclMode::Insert);
-            break;
-          default:
-            break;
-        }
-      }
-    }
-  }
-
-  void CheckViews() {
-    auto scopes = _props.view_scopes;
-    absl::c_sort(scopes, [](const auto& lhs, const auto& rhs) {
-      return lhs.begin != rhs.begin ? lhs.begin < rhs.begin : lhs.end > rhs.end;
-    });
-    for (const auto& scope : scopes) {
-      const auto& view = *scope.view;
-      if (Unowned(view) && !view.ParentCatalog().IsSystemCatalog()) {
-        continue;
-      }
-      if (!ClosureOf(EnclosingPrincipal(scope))
-             .Can(CatalogType::TABLE_ENTRY, view.permissions,
-                  AclMode::Select)) {
-        Denied(view);
-      }
     }
   }
 
@@ -1277,7 +924,7 @@ class Enforcer {
       return;
     }
     const auto& sequence = bind->Cast<duckdb::NextvalBindData>().sequence;
-    if (Unowned(sequence)) {
+    if (duckdb::IsUnowned(sequence)) {
       return;
     }
     const auto& permissions = sequence.permissions;
@@ -1291,7 +938,7 @@ class Enforcer {
         : _caller_closure.Can(CatalogType::SEQUENCE_ENTRY, permissions,
                               AclMode::Update);
     if (!allowed) {
-      Denied(sequence);
+      duckdb::ThrowPermissionDenied(sequence);
     }
   }
 
@@ -1333,8 +980,8 @@ class Enforcer {
     irs::containers::FlatHashSet<const duckdb::CatalogEntry*> checked;
     for (size_t i = 0; i < resolved.size(); ++i) {
       const auto& entry = *resolved[i];
-      if (in_view[i] || !IsSchemaMember(entry.type) || Unowned(entry) ||
-          entry.ParentCatalog().IsSystemCatalog()) {
+      if (in_view[i] || !IsSchemaMember(entry.type) ||
+          duckdb::IsUnowned(entry) || entry.ParentCatalog().IsSystemCatalog()) {
         continue;
       }
       const auto& schema = entry.ParentSchema(_context);
@@ -1343,7 +990,7 @@ class Enforcer {
       }
       if (!_caller_closure.Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
                                AclMode::Usage)) {
-        Denied(schema);
+        duckdb::ThrowPermissionDenied(schema);
       }
     }
   }
@@ -1375,17 +1022,18 @@ class Enforcer {
                                dependency.catalog, dependency.entry.schema_path,
                                dependency.entry.name)},
                            duckdb::OnEntryNotFound::RETURN_NULL);
-        if (!entry || Unowned(*entry) || !seen.insert(entry.get()).second) {
+        if (!entry || duckdb::IsUnowned(*entry) ||
+            !seen.insert(entry.get()).second) {
           continue;
         }
         if (!_caller_closure.Can(entry->type, entry->permissions,
                                  AclMode::Usage)) {
-          Denied(*entry);
+          duckdb::ThrowPermissionDenied(*entry);
         }
       }
     }
     for (const auto* entry : _props.resolved_entries) {
-      if (!seen.insert(entry).second || Unowned(*entry)) {
+      if (!seen.insert(entry).second || duckdb::IsUnowned(*entry)) {
         continue;
       }
       switch (entry->type) {
@@ -1393,14 +1041,14 @@ class Enforcer {
         case CatalogType::TABLE_MACRO_ENTRY:
           if (!_caller_closure.Can(entry->type, entry->permissions,
                                    AclMode::Execute)) {
-            Denied(*entry);
+            duckdb::ThrowPermissionDenied(*entry);
           }
           break;
         case CatalogType::TYPE_ENTRY:
           if (defines_relation &&
               !_caller_closure.Can(entry->type, entry->permissions,
                                    AclMode::Usage)) {
-            Denied(*entry);
+            duckdb::ThrowPermissionDenied(*entry);
           }
           break;
         case CatalogType::JOB_ENTRY:
@@ -1408,23 +1056,6 @@ class Enforcer {
           break;
         default:
           break;
-      }
-    }
-  }
-
-  void CheckReturning() {
-    for (const auto& [table, columns] : _returning) {
-      const auto& list = table->GetColumns();
-      std::vector<std::span<const duckdb::AclItem>> acls;
-      for (const auto column : columns) {
-        if (column < list.PhysicalColumnCount()) {
-          acls.emplace_back(
-            list.GetColumn(duckdb::PhysicalIndex(column)).Acl());
-        }
-      }
-      if (!acls.empty() && !_caller_closure.CanColumns(table->permissions,
-                                                       AclMode::Select, acls)) {
-        Denied(*table);
       }
     }
   }
@@ -1460,7 +1091,7 @@ class Enforcer {
       }
       if (!_caller_closure.CanColumns(table.permissions, AclMode::References,
                                       acls)) {
-        Denied(table);
+        duckdb::ThrowPermissionDenied(table);
       }
     }
   }
@@ -1477,7 +1108,7 @@ class Enforcer {
     if (!_caller_closure.Owns(entry->permissions.owner) &&
         !_caller_closure.Can(CatalogType::TABLE_ENTRY, entry->permissions,
                              AclMode::Trigger)) {
-      Denied(*entry);
+      duckdb::ThrowPermissionDenied(*entry);
     }
   }
 
@@ -1683,7 +1314,7 @@ class Enforcer {
       }
     }
     if (held == AclMode::NoRights) {
-      Denied(entry);
+      duckdb::ThrowPermissionDenied(entry);
     }
   }
 
@@ -1704,7 +1335,8 @@ class Enforcer {
       const bool relation = info.entry_catalog_type == CatalogType::TABLE_ENTRY;
       THROW_SQL_ERROR(
         ERR_CODE(relation ? ERRCODE_UNDEFINED_TABLE : ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG(relation ? "relation" : KindName(info.entry_catalog_type),
+        ERR_MSG(relation ? "relation"
+                         : duckdb::PermissionKindName(info.entry_catalog_type),
                 " \"", name.ToString(), "\" does not exist"));
     }
     info.entry_catalog_type = entry->type == CatalogType::VIEW_ENTRY
@@ -1793,7 +1425,7 @@ class Enforcer {
         !ClosureOf(info.new_owner_id)
            .Can(CatalogType::SCHEMA_ENTRY,
                 entry.ParentSchema(_context).permissions, AclMode::Create)) {
-      Denied(entry.ParentSchema(_context));
+      duckdb::ThrowPermissionDenied(entry.ParentSchema(_context));
     }
   }
 
@@ -1832,7 +1464,7 @@ class Enforcer {
       if (_enforce && !ClosureOf(info.target_role)
                          .Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
                               AclMode::Create)) {
-        Denied(schema);
+        duckdb::ThrowPermissionDenied(schema);
       }
       info.default_scope = schema.oid;
       database = schema.ParentCatalog().GetName().GetIdentifierName();
@@ -1845,14 +1477,6 @@ class Enforcer {
                           duckdb::Identifier{database});
   }
 
-  void RequireTablePrivilege(const duckdb::TableCatalogEntry& table,
-                             AclMode need) {
-    if (!_caller_closure.Can(CatalogType::TABLE_ENTRY, table.permissions,
-                             need)) {
-      Denied(table);
-    }
-  }
-
   void RequireSchemaCreate(const duckdb::SchemaCatalogEntry& schema) {
     if (schema.ParentCatalog().GetAttached().IsTemporary()) {
       RequireTemporaryCreate();
@@ -1860,7 +1484,7 @@ class Enforcer {
     }
     if (!_caller_closure.Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
                              AclMode::Create)) {
-      Denied(schema);
+      duckdb::ThrowPermissionDenied(schema);
     }
   }
 
@@ -1907,7 +1531,7 @@ class Enforcer {
                      .GetIdentifierName());
     if (database && !_caller_closure.Can(CatalogType::DATABASE_ENTRY,
                                          database->permissions, need)) {
-      Denied(*database);
+      duckdb::ThrowPermissionDenied(*database);
     }
   }
 
@@ -2069,7 +1693,7 @@ class Enforcer {
     auto server = FindServer(_context, name);
     if (server && !_caller_closure.Can(CatalogType::FOREIGN_SERVER_ENTRY,
                                        server->permissions, AclMode::Usage)) {
-      Denied(*server);
+      duckdb::ThrowPermissionDenied(*server);
     }
   }
 
@@ -2154,20 +1778,6 @@ class Enforcer {
   const bool _enforce;
   irs::containers::NodeHashMap<duckdb::idx_t, RoleClosure> _closures;
   std::optional<RoleMemberships> _caller_memberships;
-  irs::containers::FlatHashMap<duckdb::idx_t, const duckdb::LogicalGet*>
-    _target_scans;
-  irs::containers::FlatHashMap<duckdb::idx_t, const duckdb::TableCatalogEntry*>
-    _dml_tables;
-  using ReturningColumns =
-    std::pair<const duckdb::TableCatalogEntry*,
-              irs::containers::FlatHashSet<duckdb::idx_t>>;
-  std::vector<ReturningColumns> _returning;
-  irs::containers::FlatHashMap<duckdb::idx_t,
-                               irs::containers::FlatHashSet<duckdb::idx_t>>
-    _scan_refs;
-  irs::containers::FlatHashMap<duckdb::idx_t,
-                               irs::containers::FlatHashSet<duckdb::idx_t>>
-    _projection_reads;
   bool _file_copy = false;
   bool _files_authorized = true;
 };
@@ -2179,22 +1789,12 @@ bool EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
   return Enforcer{context, connection, binder, plan}.Run();
 }
 
-bool Unowned(const duckdb::CatalogEntry& entry) {
-  if (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly()) {
-    return true;
-  }
-  const bool serenedb_catalog =
-    entry.ParentCatalog().Compatibility() == duckdb::SqlCompatibility::POSTGRES;
-  return entry.permissions.owner == pg::kInvalidOid &&
-         (entry.internal || !serenedb_catalog);
-}
-
 namespace {
 
 bool ScopeAuthorized(duckdb::ClientContext& context, const RoleClosure& caller,
                      const duckdb::ClientContext::FileAccessScope& scope) {
   for (const duckdb::ViewCatalogEntry& view : scope.views) {
-    if (Unowned(view)) {
+    if (duckdb::IsUnowned(view)) {
       continue;
     }
     if (view.security_invoker) {
@@ -2239,7 +1839,7 @@ bool EntryVisible(duckdb::ClientContext& context,
       IsSuperuserFunction(entry.name.GetIdentifierName())) {
     return false;
   }
-  if (entry.internal || Unowned(entry)) {
+  if (entry.internal || duckdb::IsUnowned(entry)) {
     return true;
   }
   const auto& perm = entry.permissions;
@@ -2318,7 +1918,9 @@ void CheckEntryReference(duckdb::ClientContext& context,
   if (closure->is_superuser) {
     return;
   }
-  auto& database = entry.ParentCatalog().GetAttached();
+  auto& database = entry.type == CatalogType::DATABASE_ENTRY
+                     ? entry.Cast<duckdb::AttachedDatabase>()
+                     : entry.ParentCatalog().GetAttached();
   if (!DatabaseVisible(context, *connection, *closure, database)) {
     if (database.GetCatalog().GetCatalogType() ==
         catalog::SereneDBCatalog::kStorageType) {
@@ -2328,11 +1930,12 @@ void CheckEntryReference(duckdb::ClientContext& context,
                       ERR_DETAIL("User does not have CONNECT privilege."));
     }
     if (const auto server = FindServer(context, database.GetName())) {
-      Denied(*server);
+      duckdb::ThrowPermissionDenied(*server);
     }
   }
-  if (!EntryVisible(context, *connection, *closure, entry)) {
-    Denied(entry);
+  if (entry.type != CatalogType::DATABASE_ENTRY &&
+      !EntryVisible(context, *connection, *closure, entry)) {
+    duckdb::ThrowPermissionDenied(entry);
   }
 }
 

@@ -41,8 +41,6 @@ namespace sdb::auth {
 bool EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan);
 
-bool Unowned(const duckdb::CatalogEntry& entry);
-
 bool CanSee(duckdb::ClientContext& context, duckdb::CatalogEntry& entry);
 
 bool CanSeeDatabase(duckdb::ClientContext& context,

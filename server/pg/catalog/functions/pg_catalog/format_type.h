@@ -30,7 +30,6 @@
 namespace sdb::pg {
 
 inline constexpr int32_t kVarHdrSz = 4;
-inline constexpr int32_t kMaxAttrSize = 10 * 1024 * 1024;
 
 inline constexpr int32_t kIntervalMonth = 1 << 1;
 inline constexpr int32_t kIntervalYear = 1 << 2;

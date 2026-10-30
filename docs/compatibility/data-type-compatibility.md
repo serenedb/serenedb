@@ -60,7 +60,7 @@ The coordinates of the geometric types print as `float8` values do, so `point(1e
 | numeric                      | 🟡            | Without a precision, `numeric` holds up to 28 integer and 10 fractional digits, rounds further fractional digits and prints all ten, so `1.5::numeric` is `1.5000000000`; a column declared so is `numeric` without precision and scale in `information_schema.columns` and `pg_attribute`. The precision is at most 38, and `NaN` is not supported. |
 | nummultirange                | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits, as for `numrange`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | numrange                     | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits: `numrange(1.25, 2.5)` is `[1.250,2.500)`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
-| oid                          | 🟡            | Object identifiers are 64-bit: `oid` and the `reg*` types take a number above `4294967295`, such as `'4294967296'::oid`, where PostgreSQL reports it out of range. |
+| oid                          | 🟡            | Text input reads as a `bigint`: `'010'::oid` is `10`, where PostgreSQL reads octal and gives `8`, `'-1'::oid` stays `-1`, where PostgreSQL gives `4294967295`, and a value above `4294967295` is accepted. A number given for a `reg*` type reads as PostgreSQL reads it, so `'023'::regtype` is octal, but a value above `4294967295` is accepted there too. |
 | oidvector                    | 🟡            | Elements read as `oid` text does. |
 | path                         | 🟡            | The comparison operators such as `=` and `<` compare whether the path is closed and then its points, where PostgreSQL compares the numbers of points, so `path '((0,0),(1,1))' = path '[(5,5),(6,6)]'` is false. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
 | pg_brin_bloom_summary        | 🔴            |         |
@@ -100,7 +100,7 @@ The coordinates of the geometric types print as `float8` values do, so `point(1e
 | txid_snapshot                | 🔴            |         |
 | uuid                         | 🟢            |         |
 | varbit                       | 🟡            | A length such as `varbit(3)` is not accepted. A bit string holds at least one bit, as for `bit`. |
-| varchar                      | 🟡            | A length is not enforced: `'abc'::varchar(2)` stays `abc`. |
+| varchar                      | 🟡            | A length is not enforced: `'abc'::varchar(2)` stays `abc`. A `varchar` or `char` column declared with `COLLATE` reports as `text`, without its length, in `pg_attribute` and `information_schema.columns`. |
 | xid                          | 🟢            |         |
 | xid8                         | 🟢            |         |
 | xml                          | 🟡            | The SQL/XML expressions `XMLPARSE`, `XMLSERIALIZE`, `XMLELEMENT`, `XMLFOREST`, `XMLPI`, `XMLROOT`, `XMLEXISTS` and `XMLTABLE` are not supported, nor are `SET XML OPTION` (use `SET xmloption`) and the functions that map tables and queries to XML, such as `table_to_xml`. Values compare, sort and group as text, and text functions such as `length()` take them, where PostgreSQL raises an error. `COPY ... (FORMAT csv)` stores a value without checking that it is well-formed. |

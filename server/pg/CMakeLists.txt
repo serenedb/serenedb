@@ -88,7 +88,6 @@ target_sources(
         types/mapping.cpp
         types/money.cpp
         types/multirange.cpp
-        types/oid.cpp
         types/pg_lsn.cpp
         types/range.cpp
         types/reg.cpp

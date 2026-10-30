@@ -93,7 +93,7 @@ inline duckdb::LogicalType VOID() {
 
 // 32-bit OID-family types: backed by BIGINT in DuckDB for storage, but travel
 // as 4-byte unsigned OID on the PG wire (typsend = oidsend / typreceive =
-// oidrecv in pg_type.dat).
+// oidrecv in pg_type.dat). `xid8` is NOT in this set -- it's an 8-byte xid.
 inline const irs::containers::FlatHashSet<std::string_view> kOidLikeAliases = {
   kOidAlias,          kRegprocAlias,   kRegprocedureAlias,  kRegoperAlias,
   kRegoperatorAlias,  kRegclassAlias,  kRegtypeAlias,       kRegroleAlias,

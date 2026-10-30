@@ -25,7 +25,6 @@
 
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/common/extension_type_info.hpp>
-#include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/type_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -36,6 +35,7 @@
 #include "connector/functions/ts_query_codec.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/pg_catalog/format_type.h"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/types/geometric.h"
 #include "pg/types/range.h"
@@ -195,19 +195,12 @@ bool Names(const duckdb::TypeExpression& type, std::string_view name) {
          absl::EqualsIgnoreCase(type.GetTypeName().GetIdentifierName(), name);
 }
 
-int32_t DeclaredLength(const duckdb::TypeExpression& type) {
-  const auto& modifiers = type.GetChildren();
-  int64_t length = 0;
-  if (modifiers.size() != 1 ||
-      modifiers[0]->GetExpressionClass() != duckdb::ExpressionClass::CONSTANT ||
-      !modifiers[0]
-         ->Cast<duckdb::ConstantExpression>()
-         .GetLiteral()
-         .TryGetInt64(length) ||
-      length < 1 || length > kMaxAttrSize) {
-    return -1;
+int32_t DeclaredTypmod(const duckdb::TypeExpression& type, int32_t oid) {
+  std::vector<std::string> texts;
+  for (const auto& modifier : type.GetChildren()) {
+    texts.emplace_back(modifier->ToString());
   }
-  return static_cast<int32_t>(length) + kVarHdrSz;
+  return TypmodIn(oid, texts, type.GetTypeName().GetIdentifierName());
 }
 
 struct DeclaredType {
@@ -217,12 +210,13 @@ struct DeclaredType {
 
 std::optional<DeclaredType> DeclaredBuiltin(const duckdb::TypeExpression& type,
                                             const duckdb::LogicalType& bound) {
-  if (bound.id() == TypeId::VARCHAR && !bound.HasAlias()) {
+  if (bound.id() == TypeId::VARCHAR && !bound.HasAlias() &&
+      duckdb::StringType::GetCollation(bound).empty()) {
     if (Names(type, "varchar")) {
-      return DeclaredType{kVarchar, DeclaredLength(type)};
+      return DeclaredType{kVarchar, DeclaredTypmod(type, kVarchar)};
     }
     if (Names(type, "bpchar")) {
-      return DeclaredType{kBpchar, DeclaredLength(type)};
+      return DeclaredType{kBpchar, DeclaredTypmod(type, kBpchar)};
     }
     return std::nullopt;
   }

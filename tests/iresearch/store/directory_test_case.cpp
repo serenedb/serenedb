@@ -4478,6 +4478,85 @@ TEST_P(DirectoryTestCase, evict_keeps_contents) {
   EXPECT_EQ(0, std::memcmp(after.data(), data.data(), data.size()));
 }
 
+TEST_P(DirectoryTestCase, warm_counts_leading_marked_bytes) {
+  constexpr uint64_t kPage = irs::file_utils::kPage;
+  {
+    auto out = _dir->create("warm");
+    ASSERT_FALSE(!out);
+    const std::vector<irs::byte_type> data(80 * kPage + 100, 1);
+    out->WriteData(data.data(), data.size());
+  }
+  auto in = _dir->open("warm", irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  const bool tracked = dynamic_cast<MMapDirectory*>(_dir.get()) != nullptr;
+  const auto warm = [&](uint64_t bytes) { return tracked ? bytes : 0; };
+
+  irs::file_utils::InvalidateResidency();
+  EXPECT_EQ(0, in->Warm(0, in->Length()));
+  in->MarkWarm(2 * kPage, 4 * kPage);
+  in->MarkWarm(60 * kPage, 10 * kPage);
+  in->MarkWarm(78 * kPage, 10 * kPage);
+
+  EXPECT_EQ(0, in->Warm(kPage, 10 * kPage));
+  EXPECT_EQ(warm(4 * kPage - 100), in->Warm(2 * kPage + 100, 10 * kPage));
+  EXPECT_EQ(warm(2 * kPage), in->Warm(3 * kPage + 5, 2 * kPage));
+  EXPECT_EQ(warm(kPage), in->Warm(5 * kPage, 2 * kPage));
+  EXPECT_EQ(warm(10 * kPage - 7), in->Warm(60 * kPage + 7, 20 * kPage));
+  EXPECT_EQ(warm(kPage), in->Warm(63 * kPage, kPage));
+  EXPECT_EQ(warm(10 * kPage), in->Warm(79 * kPage, 10 * kPage));
+  EXPECT_EQ(0, in->Warm(in->Length(), kPage));
+  EXPECT_EQ(0, in->Warm(3 * kPage, 0));
+
+  irs::file_utils::InvalidateResidency();
+  EXPECT_EQ(0, in->Warm(3 * kPage, kPage));
+}
+
+TEST_P(DirectoryTestCase, hint_prefetches_the_cold_remainder) {
+  constexpr uint64_t kPage = irs::file_utils::kPage;
+  {
+    auto out = _dir->create("hint");
+    ASSERT_FALSE(!out);
+    const std::vector<irs::byte_type> data(80 * kPage + 100, 1);
+    out->WriteData(data.data(), data.size());
+  }
+  auto in = _dir->open("hint", irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  const bool tracked = dynamic_cast<MMapDirectory*>(_dir.get()) != nullptr;
+
+  using Ranges = std::vector<std::pair<uint64_t, uint64_t>>;
+  struct Recording {
+    uint64_t Warm(uint64_t offset, uint64_t size) const noexcept {
+      return in->Warm(offset, size);
+    }
+    bool Resident(uint64_t, uint64_t) const noexcept { return false; }
+    void Prefetch(uint64_t offset, uint64_t size) const noexcept {
+      prefetched.emplace_back(offset, offset + size);
+    }
+    void MarkWarm(uint64_t offset, uint64_t size) const noexcept {
+      in->MarkWarm(offset, size);
+    }
+
+    const irs::IndexInput* in;
+    mutable Ranges prefetched;
+  };
+  Recording recording{.in = in.get(), .prefetched = {}};
+
+  irs::file_utils::InvalidateResidency();
+  irs::file_utils::Hint(recording, kPage, 10 * kPage);
+  EXPECT_EQ((Ranges{{kPage, 11 * kPage}}), recording.prefetched);
+
+  recording.prefetched.clear();
+  irs::file_utils::Hint(recording, 8 * kPage + 7, 6 * kPage);
+  EXPECT_EQ((tracked ? Ranges{{11 * kPage, 14 * kPage + 7}}
+                     : Ranges{{8 * kPage + 7, 14 * kPage + 7}}),
+            recording.prefetched);
+
+  recording.prefetched.clear();
+  irs::file_utils::Hint(recording, 2 * kPage, 12 * kPage);
+  EXPECT_EQ((tracked ? Ranges{} : Ranges{{2 * kPage, 14 * kPage}}),
+            recording.prefetched);
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(directory_test, DirectoryTestCase,

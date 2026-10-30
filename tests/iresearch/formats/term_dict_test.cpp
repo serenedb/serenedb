@@ -106,9 +106,7 @@ struct ReadState {
   std::vector<uint64_t> offsets;
   std::vector<size_t> hinted;
   uint32_t warm_epoch = 0;
-  uint64_t warm_limit = std::numeric_limits<uint64_t>::max();
-  size_t resident_checks = 0;
-  bool resident = false;
+  uint64_t warm_end = std::numeric_limits<uint64_t>::max();
 };
 
 void MaybeFail(const ReadState& state) {
@@ -173,13 +171,12 @@ class CountingInput final : public irs::IndexInput {
   void Evict(uint64_t offset, uint64_t count) const noexcept final {
     _state->evicted.emplace_back(offset, offset + count);
   }
-  bool Resident(uint64_t, uint64_t) const noexcept final {
-    ++_state->resident_checks;
-    return _state->resident;
-  }
-  bool Warm(uint64_t, uint64_t count) const noexcept final {
-    return _state->warm_epoch == irs::file_utils::ResidencyEpoch() &&
-           count <= _state->warm_limit;
+  uint64_t Warm(uint64_t offset, uint64_t count) const noexcept final {
+    if (_state->warm_epoch != irs::file_utils::ResidencyEpoch() ||
+        offset >= _state->warm_end) {
+      return 0;
+    }
+    return std::min(count, _state->warm_end - offset);
   }
 
  private:
@@ -213,9 +210,7 @@ class CountingDirectory final : public tests::DirectoryMock {
   void MarkWarm() noexcept {
     _state->warm_epoch = irs::file_utils::ResidencyEpoch();
   }
-  void SetResident(bool resident) noexcept { _state->resident = resident; }
-  void SetWarmLimit(uint64_t limit) noexcept { _state->warm_limit = limit; }
-  size_t& ResidentChecks() const noexcept { return _state->resident_checks; }
+  void SetWarmEnd(uint64_t end) noexcept { _state->warm_end = end; }
 
  private:
   std::shared_ptr<ReadState> _state = std::make_shared<ReadState>();
@@ -2188,15 +2183,13 @@ TEST_P(TermDictTest, evicted_warm_pages_are_prefetched_again) {
   prefetched.clear();
 
   counting.MarkWarm();
-  counting.SetResident(true);
   const auto epoch = irs::file_utils::ResidencyEpoch();
   walk();
   reader->LookupBatch(terms, metas);
   ASSERT_TRUE(prefetched.empty());
   ASSERT_EQ(epoch, irs::file_utils::ResidencyEpoch());
 
-  counting.MarkWarm();
-  counting.SetResident(false);
+  irs::file_utils::InvalidateResidency();
   walk();
   absl::c_sort(prefetched);
   uint64_t covered = impl.BlockOffset(2);
@@ -2211,7 +2204,7 @@ TEST_P(TermDictTest, evicted_warm_pages_are_prefetched_again) {
     sparse.emplace_back(entries[i].key);
   }
   metas.resize(sparse.size());
-  counting.MarkWarm();
+  irs::file_utils::InvalidateResidency();
   prefetched.clear();
   offsets.clear();
   hinted.clear();
@@ -2227,24 +2220,39 @@ TEST_P(TermDictTest, evicted_warm_pages_are_prefetched_again) {
       << offset;
   }
 
-  counting.SetWarmLimit(irs::file_utils::kPrefetchChunk / 2);
-  for (const std::string_view pattern : {"[a-z]nation.*", ".con"}) {
+  const auto cold_from = [&](uint64_t warm_end) {
+    for (const auto& range : prefetched) {
+      ASSERT_LE(warm_end, range.first);
+    }
+  };
+  for (const std::string_view pattern : {"[a-z]nation.*", ".con.*"}) {
     SCOPED_TRACE(testing::Message("pattern ") << pattern);
     const irs::RegexpAcceptor acceptor{irs::ViewCast<irs::byte_type>(pattern)};
     ASSERT_TRUE(acceptor.ok());
+    const auto run = [&] {
+      prefetched.clear();
+      offsets.clear();
+      auto it = reader->iterator(acceptor);
+      while (it->next()) {
+      }
+    };
+    irs::file_utils::InvalidateResidency();
+    run();
+    ASSERT_GT(offsets.size(), 1);
+    const uint64_t warm_end = offsets[offsets.size() / 2];
+    counting.SetWarmEnd(warm_end);
     counting.MarkWarm();
-    prefetched.clear();
-    offsets.clear();
-    auto it = reader->iterator(acceptor);
-    while (it->next()) {
-    }
-    ASSERT_FALSE(offsets.empty());
+    run();
+    ASSERT_TRUE(
+      absl::c_any_of(offsets, [&](uint64_t at) { return at < warm_end; }));
+    cold_from(warm_end);
     for (const uint64_t at : offsets) {
-      ASSERT_TRUE(absl::c_any_of(prefetched,
-                                 [&](const auto& range) {
-                                   return range.first <= at &&
-                                          at < range.second;
-                                 }))
+      ASSERT_TRUE(at < warm_end || absl::c_any_of(
+                                     prefetched,
+                                     [&](const auto& range) {
+                                       return range.first <= at &&
+                                              at < range.second;
+                                     }))
         << at;
     }
   }
@@ -2270,65 +2278,16 @@ TEST_P(TermDictTest, evicted_warm_pages_are_prefetched_again) {
   std::vector<uint64_t> fresh;
   irs::file_utils::InvalidateResidency();
   scan(fresh);
-  std::vector<uint64_t> stale;
+  const uint64_t warm_end = offsets[offsets.size() / 2];
+  const auto warm = [&](uint64_t at) { return at < warm_end; };
+  std::vector<uint64_t> partial;
+  counting.SetWarmEnd(warm_end);
   counting.MarkWarm();
-  scan(stale);
-  ASSERT_EQ(fresh, stale);
-}
-
-TEST_P(TermDictTest, only_large_batches_check_the_page_cache) {
-  const Field fields[]{{.id = 2, .entries = MakeEntries(Words(400000, 5))}};
-  Write(fields);
-  CountingDirectory counting{dir()};
-  Open(counting);
-  const auto* reader = Get(2);
-  ASSERT_NE(nullptr, reader);
-  const auto& entries = fields[0].entries;
-  const auto lookup = [&](size_t count) {
-    std::vector<irs::bytes_view> terms;
-    for (size_t i = 0; i != count; ++i) {
-      terms.emplace_back(entries[i * (entries.size() / count)].key);
-    }
-    std::vector<irs::PostingMeta> metas(terms.size());
-    reader->LookupBatch(terms, metas);
-  };
-  lookup(50);
-  irs::file_utils::SyncResidency();
-
-  counting.MarkWarm();
-  counting.SetResident(true);
-  counting.ResidentChecks() = 0;
-  lookup(2);
-  ASSERT_EQ(0, counting.ResidentChecks());
-  lookup(50);
-  ASSERT_LT(0, counting.ResidentChecks());
-}
-
-TEST_P(TermDictTest, only_wide_walks_check_the_page_cache) {
-  const Field fields[]{{.id = 2, .entries = MakeEntries(Words(400000, 5))}};
-  Write(fields);
-  CountingDirectory counting{dir()};
-  Open(counting);
-  const auto* reader = Get(2);
-  ASSERT_NE(nullptr, reader);
-  const auto walk = [&](std::string_view pattern) {
-    const irs::RegexpAcceptor acceptor{irs::RegexpAcceptor::WildcardTag{},
-                                       irs::ViewCast<irs::byte_type>(pattern)};
-    auto it = reader->iterator(acceptor);
-    while (it->next()) {
-    }
-  };
-  walk("%");
-  walk("conion%");
-  irs::file_utils::SyncResidency();
-
-  counting.MarkWarm();
-  counting.SetResident(true);
-  counting.ResidentChecks() = 0;
-  walk("conion%");
-  ASSERT_EQ(0, counting.ResidentChecks());
-  walk("%");
-  ASSERT_LT(0, counting.ResidentChecks());
+  scan(partial);
+  cold_from(warm_end);
+  std::erase_if(fresh, warm);
+  std::erase_if(partial, warm);
+  ASSERT_EQ(fresh, partial);
 }
 
 TEST_P(TermDictTest, scans_read_ahead_to_their_bound) {

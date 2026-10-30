@@ -530,7 +530,6 @@ struct ReadWindow {
 struct HintSpan {
   uint64_t from;
   uint64_t to;
-  bool probe;
 };
 
 inline HintSpan Slide(ReadWindow& window, uint64_t at, uint64_t end,
@@ -543,11 +542,10 @@ inline HintSpan Slide(ReadWindow& window, uint64_t at, uint64_t end,
   if (from >= to) {
     return {};
   }
-  const bool probe = window.issued == 0;
   window.ahead = to;
   window.issued = to - from;
   window.size = std::min(2 * window.size, max);
-  return {.from = from, .to = to, .probe = probe};
+  return {.from = from, .to = to};
 }
 
 inline const byte_type* FieldRecords(const TermReaderImpl& field,
@@ -582,10 +580,7 @@ class Cursor {
     _inline_state = InlineState::Armed;
   }
 
-  void WatchCold(ColdBlocks& cold) noexcept {
-    _cold = &cold;
-    _probed = 0;
-  }
+  void WatchCold(ColdBlocks& cold) noexcept { _cold = &cold; }
 
   const TermReaderImpl& Field() const noexcept { return *_field; }
   bytes_view Key() const noexcept {
@@ -1109,9 +1104,7 @@ class Cursor {
     const auto& in = _field->Owner().Input();
     const uint64_t offset = _field->BlockOffset(block);
     const uint64_t size = _field->BlockOffset(block + 1) - offset;
-    if (file_utils::StillWarm(in, offset, size,
-                              _probed < file_utils::kWarmProbes)) {
-      ++_probed;
+    if (in.Warm(offset, size) == size) {
       return;
     }
     _cold->Reached(block);
@@ -1124,7 +1117,7 @@ class Cursor {
     if (span.from < span.to) {
       const uint64_t offset = _field->BlockOffset(span.from);
       file_utils::Hint(_field->Owner().Input(), offset,
-                       _field->BlockOffset(span.to) - offset, span.probe);
+                       _field->BlockOffset(span.to) - offset);
     }
   }
 
@@ -1139,8 +1132,7 @@ class Cursor {
     const auto span =
       Slide(_inline_ahead, at, _field->InlineEnd(), file_utils::kMaxReadahead);
     if (span.from < span.to) {
-      file_utils::Hint(_field->Owner().Input(), span.from, span.to - span.from,
-                       span.probe);
+      file_utils::Hint(_field->Owner().Input(), span.from, span.to - span.from);
     }
   }
 
@@ -1183,7 +1175,6 @@ class Cursor {
   };
   uint32_t _end;
   ColdBlocks* _cold = nullptr;
-  uint32_t _probed = 0;
   InlineState _inline_state = InlineState::Off;
   bool _eager = false;
 };

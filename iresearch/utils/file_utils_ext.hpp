@@ -25,8 +25,8 @@
 
 #include <fcntl.h>  // open/_wopen
 
-#include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cstdio>
 #include <filesystem>
 #include <functional>
@@ -170,36 +170,16 @@ void InvalidateResidency() noexcept;
 void SyncResidency() noexcept;
 void PollResidency() noexcept;
 
-inline constexpr uint64_t kWarmProbes = 4;
-inline constexpr size_t kProbedBatch = 16;
-
 template<typename Input>
-bool StillWarm(const Input& in, uint64_t offset, uint64_t size,
-               bool probe) noexcept {
-  if (!in.Warm(offset, size)) {
-    return false;
-  }
-  if (!probe) {
-    return true;
-  }
-  const auto probes =
-    std::min<uint64_t>(kWarmProbes, (size + kPage - 1) / kPage);
-  for (uint64_t i = 0; i != probes; ++i) {
-    if (!in.Resident(offset + size * i / probes, 1)) {
-      InvalidateResidency();
-      return false;
-    }
-  }
-  return true;
-}
-
-template<typename Input>
-void Hint(const Input& in, uint64_t offset, uint64_t size,
-          bool probe) noexcept {
-  if (StillWarm(in, offset, size, probe)) {
+void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
+  const uint64_t warm = in.Warm(offset, size);
+  SDB_ASSERT(warm <= size);
+  if (warm == size) {
     PollResidency();
     return;
   }
+  offset += warm;
+  size -= warm;
   if (size <= kPrefetchChunk || !in.Resident(offset, size)) {
     in.Prefetch(offset, size);
   }
@@ -223,15 +203,16 @@ class ResidencyMap {
             1) != 0;
   }
 
-  bool Test(size_t first, size_t last) const noexcept {
+  size_t Test(size_t first, size_t last) const noexcept {
     SDB_ASSERT(first <= last && last < _pages);
     for (auto w = first / kBits, end = last / kBits; w <= end; ++w) {
-      const auto mask = Mask(w, first, last);
-      if ((_bits[w].load(std::memory_order_relaxed) & mask) != mask) {
-        return false;
+      const auto cold =
+        ~_bits[w].load(std::memory_order_relaxed) & Mask(w, first, last);
+      if (cold != 0) {
+        return w * kBits + std::countr_zero(cold) - first;
       }
     }
-    return true;
+    return last - first + 1;
   }
 
   void Set(size_t first, size_t last) const noexcept {

@@ -945,8 +945,7 @@ class BlockPlan {
     }
     const uint64_t offset = _field->BlockOffset(_run_begin);
     file_utils::Hint(_field->Owner().Input(), offset,
-                     _field->BlockOffset(_run_end) - offset,
-                     _flushed++ < file_utils::kWarmProbes);
+                     _field->BlockOffset(_run_end) - offset);
     _run_begin = _run_end;
   }
 
@@ -960,7 +959,6 @@ class BlockPlan {
   const uint32_t* _hint = nullptr;
   uint32_t _run_begin = 0;
   uint32_t _run_end = 0;
-  uint32_t _flushed = 0;
 };
 
 constexpr uint64_t kMaxWalkPrefetch = uint64_t{256} << 20;
@@ -988,7 +986,6 @@ class ColdPlan final : public ColdBlocks {
 
 template<typename A>
 void Readahead(Cursor& cursor, ColdPlan<A>& plan, const A& a) {
-  constexpr uint64_t kProbedSpan = uint64_t{1} << 20;
   const auto& field = cursor.Field();
   PaddedKey key;
   key.Assign(field.KeyPrefix(), a.LowerBound());
@@ -1003,7 +1000,7 @@ void Readahead(Cursor& cursor, ColdPlan<A>& plan, const A& a) {
   const uint64_t range = field.BlockOffset(end) - offset;
   const uint64_t size = std::min(range, kMaxWalkPrefetch);
   cursor.ReadaheadUntil(range <= kMaxWalkPrefetch ? 0 : end, false);
-  if (file_utils::StillWarm(in, offset, size, size >= kProbedSpan)) {
+  if (in.Warm(offset, size) == size) {
     return;
   }
   plan.Arm(end);

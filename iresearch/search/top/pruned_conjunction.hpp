@@ -102,7 +102,7 @@ class PrunedConjunction : public Root {
 
       if (lead_max + others_max <= threshold) {
         _span = 1;
-        doc = _lead.SkipTo(last + 1);
+        doc = SkipLead(last + 1, max, threshold - _others.RootMax());
         continue;
       }
 
@@ -186,6 +186,18 @@ class PrunedConjunction : public Root {
     const auto sf_reads = bucket.sf_reads * bucket.doc_range;
     return doc_reads > sf_reads && (doc_reads - sf_reads) * kDocsPerSavedRead >=
                                      bucket.sf_seen * bucket.doc_range;
+  }
+
+  doc_id_t SkipLead(doc_id_t target, doc_id_t max, score_t threshold) {
+    if constexpr (requires {
+                    _lead.SkipNonCompetitive(target, max, threshold);
+                  }) {
+      target = _lead.SkipNonCompetitive(target, max, threshold);
+      if (target >= max) {
+        return target;
+      }
+    }
+    return _lead.SkipTo(target);
   }
 
   std::pair<uint32_t, uint32_t> ScoreFirst(doc_id_t last, score_t others_max,

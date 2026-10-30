@@ -73,6 +73,7 @@ struct Spec {
   std::string_view term;
   uint64_t salt;
   bool (*has)(doc_id_t);
+  uint32_t (*freq)(doc_id_t) = nullptr;
 };
 
 inline constexpr Spec kSpecs[]{
@@ -90,6 +91,9 @@ inline constexpr Spec kSpecs[]{
      return i >= 100000 && i < 110000 ? Chance(6, i, 500) : Chance(6, i, 5);
    }},
   {"edge", 20, [](doc_id_t i) { return i == 5000 || i == 10000; }},
+  {"common", 21, [](doc_id_t i) { return Chance(9, i, 900); }},
+  {"burst", 22, [](doc_id_t i) { return Chance(10, i, 400); },
+   [](doc_id_t i) -> uint32_t { return i >= 2000 && i < 3000 ? 8 : 1; }},
 };
 
 irs::TermClause Clause(std::string_view value) {
@@ -140,7 +144,8 @@ class PrunedTopTest : public tests::IndexTestBase {
       std::string text = "doc";
       for (const auto& spec : kSpecs) {
         if (spec.has(i)) {
-          for (auto n = Freq(spec.salt, i); n != 0; --n) {
+          for (auto n = spec.freq ? spec.freq(i) : Freq(spec.salt, i); n != 0;
+               --n) {
             absl::StrAppend(&text, " ", spec.term);
           }
         }
@@ -332,6 +337,20 @@ TEST_P(PrunedTopTest, conjunctions_across_block_kinds) {
          {{"sparse", "mid", "dense", "half"}, {}},
          {{"rare", "mid", "run"}, {}},
          {{"cluster", "mid", "dense"}, {}},
+       }) {
+    Check(shape);
+  }
+}
+
+TEST_P(PrunedTopTest, leads_skip_runs_of_non_competitive_blocks) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {{"burst", "common"}, {}},
+         {{"burst", "dense"}, {}},
+         {{"mid", "burst", "common"}, {}},
+         {{"burst", "common"}, {"rare"}},
+         {.must = {"burst"}, .should = {"common"}},
+         {.must = {"burst"}, .should = {"common", "mid"}},
        }) {
     Check(shape);
   }

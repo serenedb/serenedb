@@ -396,7 +396,73 @@ a	p	g	q
 13	22	13	11
 
 statement ok
+CREATE MACRO sfn_agg_over(y) AS count(*) + y, (y, z) AS y + z
+
+statement ok
+CREATE FUNCTION sfn_over_body(x int) RETURNS bigint LANGUAGE sql AS 'SELECT sfn_agg_over(x) FROM range(3)'
+
+query
+SELECT sfn_over_body(10) AS o
+----
+o
+13
+
+statement ok
+CREATE FUNCTION sfn_num(x numeric) RETURNS numeric LANGUAGE sql RETURN x * 2
+
+statement ok
+CREATE MACRO sfn_pick_num(t DECIMAL(18,3)) AS (SELECT 'numeric' WHERE t IS NOT NULL), (t VARCHAR) AS (SELECT 'text' WHERE t IS NOT NULL)
+
+statement ok
+CREATE FUNCTION sfn_ts_struct_s(x bigint) RETURNS STRUCT(t TIMESTAMP_S) LANGUAGE sql RETURN {'t': make_timestamp_ns(x)}
+
+statement ok
+CREATE FUNCTION sfn_ts_struct_ms(x bigint) RETURNS STRUCT(t TIMESTAMP_MS) LANGUAGE sql RETURN {'t': make_timestamp_ns(x)}
+
+statement ok
+CREATE FUNCTION sfn_ts_struct_ns(x bigint) RETURNS STRUCT(t TIMESTAMP_NS) LANGUAGE sql RETURN {'t': make_timestamp(x)}
+
+statement ok
+CREATE MACRO sfn_pick_struct(s STRUCT(t TIMESTAMP)) AS (SELECT 'struct' WHERE s IS NOT NULL), (s VARCHAR) AS (SELECT 'text' WHERE s IS NOT NULL)
+
+statement ok
+CREATE FUNCTION sfn_void() RETURNS void LANGUAGE sql AS 'SELECT 1'
+
+query
+SELECT sfn_pick_num(sfn_num(1.5)) AS n, sfn_pick_struct(sfn_ts_struct_s(1)) AS s, sfn_pick_struct(sfn_ts_struct_ms(1)) AS ms, sfn_pick_struct(sfn_ts_struct_ns(1)) AS ns, sfn_pick_num(sfn_void()) IS NULL AS v
+----
+n	s	ms	ns	v
+numeric	struct	struct	struct	t
+
+statement ok
 RESET statement_timeout
+
+statement ok
+DROP FUNCTION sfn_void
+
+statement ok
+DROP MACRO sfn_pick_struct
+
+statement ok
+DROP FUNCTION sfn_ts_struct_ns
+
+statement ok
+DROP FUNCTION sfn_ts_struct_ms
+
+statement ok
+DROP FUNCTION sfn_ts_struct_s
+
+statement ok
+DROP MACRO sfn_pick_num
+
+statement ok
+DROP FUNCTION sfn_num
+
+statement ok
+DROP FUNCTION sfn_over_body
+
+statement ok
+DROP MACRO sfn_agg_over
 
 statement ok
 DROP FUNCTION sfn_qualify

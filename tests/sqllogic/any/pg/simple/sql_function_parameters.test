@@ -332,6 +332,37 @@ m	s	u	f	g
 
 
 statement ok
+CREATE FUNCTION fnp_cte_param(x int) RETURNS int LANGUAGE sql AS 'WITH c AS (SELECT x + v AS w FROM generate_series(1, 3) g(v)) SELECT w FROM c ORDER BY w DESC LIMIT 1';
+
+
+statement ok
+CREATE FUNCTION fnp_first_unnested(x int) RETURNS int LANGUAGE sql AS 'SELECT unnest(ARRAY[1, 2]) + x';
+
+
+statement ok
+CREATE FUNCTION fnp_having_group(x int) RETURNS bigint LANGUAGE sql AS 'SELECT v + x FROM generate_series(1, 3) g(v) GROUP BY v HAVING v > 2 AND g.v < x';
+
+
+query
+SELECT fnp_cte_param(10) AS c, fnp_first_unnested(10) AS f, fnp_having_group(10) AS h;
+----
+c	f	h
+13	11	13
+
+
+statement ok
+DROP FUNCTION fnp_having_group;
+
+
+statement ok
+DROP FUNCTION fnp_first_unnested;
+
+
+statement ok
+DROP FUNCTION fnp_cte_param;
+
+
+statement ok
 DROP FUNCTION fnp_series;
 
 

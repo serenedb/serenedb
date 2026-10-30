@@ -820,6 +820,16 @@ CREATE MACRO mn_sample(x) AS (SELECT x USING SAMPLE 1)
 statement ok
 CREATE MACRO mn_counted(x) AS (SELECT x + x + count(*))
 
+statement ok
+CREATE MACRO mn_group_all(x) AS (SELECT x + count(*) GROUP BY ALL)
+
+query
+SELECT i, mn_group_all(i) AS g FROM range(2) t(i) ORDER BY i
+----
+i	g
+0	1
+1	2
+
 query
 SELECT i, mn_pos(i - 1) AS p, mn_grouped(i) AS g, mn_grand(i) AS c, mn_having(i - 1) AS h, mn_qualify(i) AS q, mn_sample(i) AS s, mn_counted(i) AS n, mn_counted(mn_counted(i)) AS nn FROM range(3) t(i) ORDER BY i
 ----
@@ -864,6 +874,17 @@ SELECT mn_typed_item(sum(i)) AS a, mn_typed((SELECT 2)) AS b FROM range(3) t(i)
 ----
 a	b
 6	17
+
+statement ok
+CREATE MACRO mn_typed_item2(x BIGINT, y BIGINT) AS (SELECT x + x + y)
+
+query
+SELECT i, mn_typed_item2(i + 1, sum(i)) AS r FROM range(3) t(i) GROUP BY i ORDER BY i
+----
+i	r
+0	2
+1	5
+2	8
 
 statement ok
 CREATE MACRO mn_default(x, d := 1) AS x + d
@@ -911,6 +932,29 @@ SELECT i, mn_named(i + 1) AS a, mn_named_param(i + 1) AS b, mn_default_twice(i +
 i	a	b	c	u	f
 0	8	5	7	2	5
 1	11	7	9	4	9
+
+statement ok
+CREATE MACRO mn_ov(x, d := 1) AS x + d, (x, y, z) AS x * y * z
+
+statement ok
+CREATE MACRO mn_ov_caller(p) AS mn_ov(1, d := p) + p
+
+statement ok
+CREATE MACRO mn_ov_typed(p BIGINT) AS mn_ov(1, d := p) + p
+
+query
+SELECT i, mn_ov_caller(i + 1) AS a, mn_ov_typed(i + 1) AS b FROM range(2) t(i) ORDER BY i
+----
+i	a	b
+0	3	3
+1	5	5
+
+query
+SELECT i + 1 AS a, mn_ov(1, d := a) + a AS b FROM range(2) t(i) WHERE b > 0 ORDER BY a
+----
+a	b
+1	3
+2	5
 
 statement ok
 CREATE MACRO mn_agg_lambda(l) AS (SELECT sum(list_sum(list_transform(l, lambda e: e * 2))) FROM range(3) r(v))
@@ -969,6 +1013,18 @@ k	s	t
 2	38	38
 
 query
+SELECT i + 1 AS j, j + j AS k FROM (VALUES (1, 100)) t(i, j) WHERE k > 0
+----
+j	k
+2	200
+
+query
+SELECT x + 1 AS k, list_sum(list_transform([10, 20], lambda x: x + k + k)) AS s FROM (VALUES (1)) v(x) WHERE s = 38
+----
+k	s
+2	38
+
+query
 SELECT mn_twice((SELECT * FROM (VALUES (21)) v(a))) AS star, mn_twice(count(*) + random() * 0 + 1) AS mixed FROM range(3)
 ----
 star	mixed
@@ -995,12 +1051,23 @@ statement ok
 CREATE MACRO mn_typed_from(x BIGINT) AS mn_from(x + (SELECT 0))
 
 query
-SELECT i, mn_typed_from(i) AS a, mn_from((SELECT i + 1)) AS b, mn_sub((SELECT 2) + i) AS c FROM range(3) t(i) ORDER BY i
+SELECT i, mn_typed_from(i + 1) AS a, mn_from((SELECT i + 1)) AS b, mn_sub((SELECT 2) + i) AS c FROM range(3) t(i) ORDER BY i
 ----
 i	a	b	c
-0	0	2	4
-1	2	4	6
-2	4	6	7
+0	2	2	4
+1	4	4	6
+2	6	6	7
+
+statement ok
+CREATE MACRO mn_typed_out(x BIGINT) AS mn_out(x + 1)
+
+query
+SELECT i, mn_typed_out(i + 1) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	5
+1	7
+2	9
 
 query
 SELECT mn_sub(#1) AS a, mn_sub(#1 + 0) AS b, mn_sub(x := #1) AS c FROM range(3) t(i) ORDER BY 1
@@ -1017,6 +1084,14 @@ r	q	u
 10	0	0
 17	1	1
 24	2	2
+
+query
+SELECT mn_typed(i + 1) AS r, r + 1 AS s FROM range(3) t(i) ORDER BY r
+----
+r	s
+10	11
+17	18
+24	25
 
 statement ok
 CREATE MACRO mn_typed_twice(x BIGINT) AS mn_twice(x) + x
@@ -1047,6 +1122,24 @@ DROP TABLE mn_check
 
 statement ok
 DROP MACRO mn_typed_twice
+
+statement ok
+DROP MACRO mn_typed_out
+
+statement ok
+DROP MACRO mn_ov_typed
+
+statement ok
+DROP MACRO mn_ov_caller
+
+statement ok
+DROP MACRO mn_ov
+
+statement ok
+DROP MACRO mn_typed_item2
+
+statement ok
+DROP MACRO mn_group_all
 
 statement ok
 DROP MACRO mn_typed_from

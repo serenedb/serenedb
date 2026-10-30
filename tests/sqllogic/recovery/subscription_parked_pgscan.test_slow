@@ -1,15 +1,23 @@
 control substitution on
 
 statement ok
-ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rpk_${__DATABASE__} (TYPE postgres);
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rpka_${__DATABASE__} (TYPE postgres);
 
 
 statement ok
-CALL postgres_execute('rpk_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rpk\_%''');
+CALL postgres_execute('rpka_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rpk\_%''');
 
 
 statement ok
-CALL postgres_execute('rpk_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rpk_pub; DROP TABLE IF EXISTS rpk_rows; CREATE TABLE rpk_rows (id int PRIMARY KEY); CREATE PUBLICATION rpk_pub FOR TABLE rpk_rows; END $$');
+CALL postgres_execute('rpka_${__DATABASE__}', 'CREATE DATABASE rpkdb_${__DATABASE__}', use_transaction := false);
+
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=rpkdb_${__DATABASE__} user=${PGUSER}' AS rpk_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rpk_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rpk_rows (id int PRIMARY KEY); CREATE PUBLICATION rpk_pub FOR TABLE rpk_rows; END $$');
 
 
 statement ok
@@ -17,7 +25,7 @@ CREATE TABLE rpk_rows (id INTEGER);
 
 
 statement ok
-CREATE SUBSCRIPTION rpk_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER} options=''-c logical_decoding_work_mem=64kB''' PUBLICATION rpk_pub WITH (slot_name = 'rpk_sub', streaming = on);
+CREATE SUBSCRIPTION rpk_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=rpkdb_${__DATABASE__} user=${PGUSER} options=''-c logical_decoding_work_mem=64kB''' PUBLICATION rpk_pub WITH (slot_name = 'rpk_sub', streaming = on);
 
 
 query ok retry 120 backoff 250ms
@@ -166,8 +174,12 @@ COMMIT;
 
 connection default
 statement ok
-CALL postgres_execute('rpk_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rpk_pub; DROP TABLE rpk_rows; END $$');
+DETACH rpk_${__DATABASE__};
 
 
 statement ok
-DETACH rpk_${__DATABASE__};
+CALL postgres_execute('rpka_${__DATABASE__}', 'DROP DATABASE rpkdb_${__DATABASE__}', use_transaction := false);
+
+
+statement ok
+DETACH rpka_${__DATABASE__};

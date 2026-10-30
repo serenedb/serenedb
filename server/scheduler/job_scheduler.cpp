@@ -41,6 +41,7 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/parser.hpp>
 #include <functional>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -167,6 +168,17 @@ bool Dropped(JobState& state) {
   return state.dropped;
 }
 
+duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> ReadBody(
+  duckdb::ClientContext& context,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& body) {
+  if (!duckdb::CreateJobInfo::IsScript(body)) {
+    return duckdb::CreateJobInfo::CopyBody(body);
+  }
+  duckdb::Parser parser{context};
+  parser.ParseQuery(duckdb::CreateJobInfo::BodyToString(body));
+  return std::move(parser.statements);
+}
+
 duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
                            duckdb::optional_ptr<duckdb::ClientContext> caller,
                            duckdb::shared_ptr<duckdb::ClientContext>& context) {
@@ -209,11 +221,17 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
     absl::MutexLock lock{&state.mutex};
     state.contexts.emplace_back(context);
   }
+  duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> body;
+  try {
+    body = ReadBody(*context, *job.body);
+  } catch (const std::exception& e) {
+    return duckdb::ErrorData{e};
+  }
   duckdb::QueryParameters parameters;
   parameters.caller_drives = true;
-  for (const auto& peel : *job.body) {
+  for (auto& peel : body) {
     duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> statements;
-    statements.push_back(peel->Copy());
+    statements.push_back(std::move(peel));
     try {
       context->PreprocessStatements(statements);
     } catch (const std::exception& e) {

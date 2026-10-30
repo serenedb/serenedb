@@ -803,16 +803,16 @@ void IndexWriter::Transaction::RegisterFlush(
   static_assert(std::ranges::forward_range<Transactions>);
   SDB_ASSERT(
     absl::c_none_of(transactions, [](const auto& trx) { return !trx; }));
-  // Is the commit already in a flush? Only a pooled segment puts it there.
-  FlushContext* flush = nullptr;
+  // Is the commit already in a flush? Only a pooled segment puts it there and
+  // its transaction keeps that flush open, so there is nothing to release.
+  FlushContextPtr flush{nullptr, nullptr};
   for (const auto& trx : transactions) {
-    flush = trx->_active.Flush();
-    if (flush) {
+    if (auto* joined = trx->_active.Flush()) {
+      flush = {joined, [](FlushContext*) noexcept {}};
       break;
     }
   }
   // Put every transaction that has data and isn't in a flush into it.
-  FlushContextPtr current{nullptr, nullptr};
   for (const auto& trx : transactions) {
     // Nothing written, or already in.
     if (!trx->_active.Segment() || trx->_active.Flush()) {
@@ -821,13 +821,12 @@ void IndexWriter::Transaction::RegisterFlush(
     // The commit isn't in a flush yet: take the current one, locked against
     // switching until we return.
     if (!flush) {
-      current = trx->_writer->GetFlushContext();
-      flush = current.get();
+      flush = trx->_writer->GetFlushContext();
     }
     flush->AddToPending(trx->_active);
   }
   SDB_ASSERT(absl::c_all_of(transactions, [&](const auto& trx) {
-    return !trx->_active.Segment() || trx->_active.Flush() == flush;
+    return !trx->_active.Segment() || trx->_active.Flush() == flush.get();
   }));
 }
 

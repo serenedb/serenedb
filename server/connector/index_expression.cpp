@@ -28,15 +28,12 @@
 #include <duckdb/common/type_visitor.hpp>
 #include <duckdb/execution/column_binding_resolver.hpp>
 #include <duckdb/execution/expression_executor.hpp>
-#include <duckdb/optimizer/expression_rewriter.hpp>
-#include <duckdb/optimizer/rule/concat_flattening.hpp>
-#include <duckdb/optimizer/rule/constant_folding.hpp>
+#include <duckdb/optimizer/optimizer.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_lambda_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
-#include <duckdb/planner/operator/logical_projection.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <utility>
 
@@ -51,21 +48,6 @@ std::string SerializeBoundExpression(const duckdb::Expression& expr) {
   duckdb::BinarySerializer::Serialize(expr, stream);
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};
-}
-
-duckdb::unique_ptr<duckdb::Expression> ApplyOptimizerRules(
-  duckdb::unique_ptr<duckdb::Expression> expr, duckdb::ClientContext& context) {
-  duckdb::ExpressionRewriter rewriter{context};
-  rewriter.rules.push_back(
-    duckdb::make_uniq<duckdb::ConstantFoldingRule>(rewriter));
-  rewriter.rules.push_back(
-    duckdb::make_uniq<duckdb::ConcatFlatteningRule>(rewriter));
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> select_list;
-  select_list.push_back(std::move(expr));
-  duckdb::LogicalProjection projection{duckdb::TableIndex{0},
-                                       std::move(select_list)};
-  rewriter.VisitOperator(projection);
-  return std::move(projection.expressions[0]);
 }
 
 void ClearSource(duckdb::Expression& expr);
@@ -92,7 +74,7 @@ void ClearSource(duckdb::Expression& expr) {
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
-  auto copy = ApplyOptimizerRules(expr.Copy(), context);
+  auto copy = duckdb::Optimizer::OptimizeExpression(context, expr.Copy());
   duckdb::ExpressionIterator::EnumerateExpression(
     copy, [&](duckdb::Expression& e) {
       ClearSource(e);

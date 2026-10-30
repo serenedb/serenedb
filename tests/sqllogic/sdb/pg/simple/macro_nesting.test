@@ -197,3 +197,594 @@ DROP MACRO mn_dup1
 
 statement ok
 DROP MACRO mn_dup0
+
+statement ok
+SET statement_timeout = '10s'
+
+statement ok
+CREATE MACRO mn_va(a, b) AS [a[1] + b[1], a[2] + b[2], a[3] + b[3]]
+
+statement ok
+CREATE MACRO mn_vs(a, b) AS [a[1] - b[1], a[2] - b[2], a[3] - b[3]]
+
+statement ok
+CREATE MACRO mn_vm(a, s) AS [a[1] * s, a[2] * s, a[3] * s]
+
+statement ok
+CREATE MACRO mn_mix(a, b, t) AS mn_va(a, mn_vm(mn_vs(b, a), t))
+
+query
+SELECT list_transform(mn_mix(mn_mix(mn_mix(mn_mix([0.1, 0.2, 0.3]::DOUBLE[], [0.4, 0.5, 0.6]::DOUBLE[], h), [0.7, 0.8, 0.9]::DOUBLE[], h), [0.1, 0.1, 0.1]::DOUBLE[], h), [0.2, 0.2, 0.2]::DOUBLE[], h), lambda x: round(x, 6)) AS r FROM (SELECT range::DOUBLE / 4 AS h FROM range(3)) ORDER BY h
+----
+r
+{0.1,0.2,0.3}
+{0.241016,0.297266,0.353516}
+{0.24375,0.26875,0.29375}
+
+query
+EXPLAIN SELECT mn_mix([0.1, 0.2, 0.3]::DOUBLE[], [0.4, 0.5, 0.6]::DOUBLE[], range::DOUBLE / 4) FROM range(3)
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                                                                                    │
+│ invoke(lambda 0_macro_argument_0_0: list_value((0.1 + (0.30000000000000004 * 0_macro_argument_0_0)), (0.2 + (0.3 * 0_macro_argument_0_0)), (0.3 + (0.3 * 0_macro_argument_0_0))), (CAST(range AS DOUBLE) // 4)) │
+│ ~3 rows                                                                                                                                                                                                         │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ RANGE ────────────────────────────────────────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Function: RANGE                                                                                                                                                                                                 │
+│ ~3 rows                                                                                                                                                                                                         │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT mn_mix(mn_mix([0.1, 0.2, 0.3]::DOUBLE[], [0.4, 0.5, 0.6]::DOUBLE[], range::DOUBLE / 4), [0.7, 0.8, 0.9]::DOUBLE[], range::DOUBLE / 4) FROM range(3)
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                                                                                                                                                                                                                                                                                 │
+│ invoke(lambda 0_macro_argument_0_0: invoke(lambda 0_macro_argument_1_0_1, 0_macro_argument_1_0_2, 0_macro_argument_1_0_3, 0_macro_argument_1_1: list_value((array_extract(0_macro_argument_0_0, 1) + (0_macro_argument_1_0_1 * 0_macro_argument_1_1)), (array_extract(0_macro_argument_0_0, 2) + (0_macro_argument_1_0_2 * 0_macro_argument_1_1)), (array_extract(0_macro_argument_0_0, 3) +                 │
+│ (0_macro_argument_1_0_3 * 0_macro_argument_1_1))), (0.7 - array_extract(0_macro_argument_0_0, 1)), (0.8 - array_extract(0_macro_argument_0_0, 2)), (0.9 - array_extract(0_macro_argument_0_0, 3)), (CAST(range AS DOUBLE) // 4), 0_macro_argument_0_0), invoke(lambda 0_macro_argument_0_0: list_value((0.1 + (0.30000000000000004 * 0_macro_argument_0_0)), (0.2 + (0.3 * 0_macro_argument_0_0)), (0.3 +    │
+│ (0.3 * 0_macro_argument_0_0))), (CAST(range AS DOUBLE) // 4)), range)                                                                                                                                                                                                                                                                                                                                        │
+│ ~3 rows                                                                                                                                                                                                                                                                                                                                                                                                      │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ RANGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Function: RANGE                                                                                                                                                                                                                                                                                                                                                                                              │
+│ ~3 rows                                                                                                                                                                                                                                                                                                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+statement ok
+CREATE MACRO mn_sva(a, b) AS (SELECT [a[1] + b[1], a[2] + b[2], a[3] + b[3]])
+
+statement ok
+CREATE MACRO mn_svs(a, b) AS (SELECT [a[1] - b[1], a[2] - b[2], a[3] - b[3]])
+
+statement ok
+CREATE MACRO mn_svm(a, s) AS (SELECT [a[1] * s, a[2] * s, a[3] * s])
+
+statement ok
+CREATE MACRO mn_smix(a, b, t) AS (SELECT mn_sva(a, mn_svm(mn_svs(b, a), t)))
+
+query
+SELECT list_transform(mn_smix(mn_smix(mn_smix(mn_smix([0.1, 0.2, 0.3]::DOUBLE[], [0.4, 0.5, 0.6]::DOUBLE[], h), [0.7, 0.8, 0.9]::DOUBLE[], h), [0.1, 0.1, 0.1]::DOUBLE[], h), [0.2, 0.2, 0.2]::DOUBLE[], h), lambda x: round(x, 6)) AS r FROM (SELECT range::DOUBLE / 4 AS h FROM range(3)) ORDER BY h
+----
+r
+{0.1,0.2,0.3}
+{0.241016,0.297266,0.353516}
+{0.24375,0.26875,0.29375}
+
+query
+EXPLAIN SELECT mn_smix(mn_smix([0.1, 0.2, 0.3]::DOUBLE[], [0.4, 0.5, 0.6]::DOUBLE[], range::DOUBLE / 4), [0.7, 0.8, 0.9]::DOUBLE[], range::DOUBLE / 4) FROM range(3)
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                                                                                                                                                                                                                                                                                 │
+│ invoke(lambda 0_macro_argument_0_0: invoke(lambda 0_macro_argument_1_0_1, 0_macro_argument_1_0_2, 0_macro_argument_1_0_3, 0_macro_argument_1_1: list_value((array_extract(0_macro_argument_0_0, 1) + (0_macro_argument_1_0_1 * 0_macro_argument_1_1)), (array_extract(0_macro_argument_0_0, 2) + (0_macro_argument_1_0_2 * 0_macro_argument_1_1)), (array_extract(0_macro_argument_0_0, 3) +                 │
+│ (0_macro_argument_1_0_3 * 0_macro_argument_1_1))), (0.7 - array_extract(0_macro_argument_0_0, 1)), (0.8 - array_extract(0_macro_argument_0_0, 2)), (0.9 - array_extract(0_macro_argument_0_0, 3)), (CAST(range AS DOUBLE) // 4), 0_macro_argument_0_0), invoke(lambda 0_macro_argument_0_0: list_value((0.1 + (0.30000000000000004 * 0_macro_argument_0_0)), (0.2 + (0.3 * 0_macro_argument_0_0)), (0.3 +    │
+│ (0.3 * 0_macro_argument_0_0))), (CAST(range AS DOUBLE) // 4)), range)                                                                                                                                                                                                                                                                                                                                        │
+│ ~3 rows                                                                                                                                                                                                                                                                                                                                                                                                      │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ RANGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Function: RANGE                                                                                                                                                                                                                                                                                                                                                                                              │
+│ ~3 rows                                                                                                                                                                                                                                                                                                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+statement ok
+CREATE MACRO mn_qual(x) AS system.main.abs(x) + system.main.abs(x)
+
+query
+SELECT mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(i - 1)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+1048576
+1048576
+
+statement ok
+CREATE MACRO mn_case(c, x) AS CASE WHEN c THEN x ELSE x + 1 END
+
+query
+SELECT mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, mn_case(i > 0, i)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+1
+2
+20
+
+statement ok
+CREATE MACRO mn_let(x) AS list_transform([1], lambda y: y + x + x)[1]
+
+query
+SELECT mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(mn_let(i)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+1048575
+2097151
+3145727
+
+statement ok
+CREATE MACRO mn_from(x) AS (SELECT x + x + v FROM (VALUES (0)) t(v))
+
+query
+SELECT mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(mn_from(i)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+1048576
+2097152
+
+statement ok
+CREATE MACRO mn_max(x) AS (SELECT max(v) + x + x FROM range(2) r(v))
+
+query
+SELECT mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(mn_max(i)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+1048575
+2097151
+3145727
+
+statement ok
+CREATE MACRO mn_branch(c, x) AS CASE WHEN c THEN x + x END
+
+query
+SELECT mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, mn_branch(i > 0, i)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+1048576
+2097152
+NULL
+
+statement ok
+CREATE MACRO mn_two(c, x) AS CASE WHEN c = 1 THEN x + x WHEN c = 2 THEN x - x + 2 END
+
+query
+SELECT mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, mn_two(i, i)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+2
+1048576
+NULL
+
+statement ok
+CREATE MACRO mn_over(a) AS a + 1, (a, b) AS a + b
+
+statement ok
+CREATE MACRO mn_overuse(x) AS mn_over(x, x) + mn_over(x, 1)
+
+query
+SELECT mn_overuse(mn_overuse(mn_overuse(mn_overuse(mn_overuse(mn_overuse(mn_overuse(mn_overuse(mn_overuse(mn_overuse(mn_overuse(mn_overuse(mn_overuse(mn_overuse(mn_overuse(mn_overuse(i)))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+21523360
+64570081
+107616802
+
+statement ok
+CREATE MACRO mn_listx(x, l) AS x + list_sum(list_transform(l, lambda y: y * x))
+
+query
+SELECT mn_listx(mn_listx(mn_listx(mn_listx(mn_listx(mn_listx(mn_listx(mn_listx(mn_listx(mn_listx(mn_listx(mn_listx(mn_listx(mn_listx(mn_listx(mn_listx(i, [1, 1]), [1, 1]), [1, 1]), [1, 1]), [1, 1]), [1, 1]), [1, 1]), [1, 1]), [1, 1]), [1, 1]), [1, 1]), [1, 1]), [1, 1]), [1, 1]), [1, 1]), [1, 1]) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+43046721
+86093442
+
+statement ok
+CREATE MACRO mn_norm(v) AS list_transform(v, lambda x: x / list_sum(v))
+
+query
+SELECT list_transform(mn_norm(mn_norm(mn_norm(mn_norm(mn_norm(mn_norm(mn_norm(mn_norm(mn_norm(mn_norm(mn_norm(mn_norm(mn_norm(mn_norm(mn_norm(mn_norm([1.0, 2.0, i::DOUBLE])))))))))))))))), lambda x: round(x, 4)) AS r FROM range(2) t(i) ORDER BY i
+----
+r
+{0.3333,0.6667,0}
+{0.25,0.5,0.25}
+
+statement ok
+CREATE MACRO mn_lz(c, x, l) AS CASE WHEN c THEN x + x ELSE list_sum(list_transform(l, lambda y: y)) END
+
+query
+SELECT i, mn_lz(i > 0, 10 / i, [i, 1]) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	1
+1	20
+2	10
+
+statement ok
+CREATE MACRO mn_lg(x, l) AS list_sum(list_transform(l, lambda y: CASE WHEN y > 5 THEN x + x END))
+
+query
+SELECT i, mn_lg(10 / i, CASE WHEN i = 0 THEN [1, 2] ELSE [i * 10] END) AS a, mn_lg(10 / i, CASE WHEN i = 0 THEN []::INTEGER[] ELSE [i * 10] END) AS b FROM range(3) t(i) ORDER BY i
+----
+i	a	b
+0	NULL	NULL
+1	20	20
+2	10	10
+
+query
+SELECT a20 AS r FROM (SELECT i AS a0, a0 + a0 + 1 AS a1, a1 + a1 + 1 AS a2, a2 + a2 + 1 AS a3, a3 + a3 + 1 AS a4, a4 + a4 + 1 AS a5, a5 + a5 + 1 AS a6, a6 + a6 + 1 AS a7, a7 + a7 + 1 AS a8, a8 + a8 + 1 AS a9, a9 + a9 + 1 AS a10, a10 + a10 + 1 AS a11, a11 + a11 + 1 AS a12, a12 + a12 + 1 AS a13, a13 + a13 + 1 AS a14, a14 + a14 + 1 AS a15, a15 + a15 + 1 AS a16, a16 + a16 + 1 AS a17, a17 + a17 + 1 AS a18, a18 + a18 + 1 AS a19, a19 + a19 + 1 AS a20 FROM range(3) t(i) WHERE a20 > 0) s ORDER BY 1
+----
+r
+1048575
+2097151
+3145727
+
+query
+SELECT a0, s FROM (SELECT i AS a0, a0 + a0 + 1 AS a1, a1 + a1 + 1 AS a2, a2 + a2 + 1 AS a3, a3 + a3 + 1 AS a4, a4 + a4 + 1 AS a5, a5 + a5 + 1 AS a6, a6 + a6 + 1 AS a7, a7 + a7 + 1 AS a8, a8 + a8 + 1 AS a9, a9 + a9 + 1 AS a10, a10 + a10 + 1 AS a11, a11 + a11 + 1 AS a12, a12 + a12 + 1 AS a13, a13 + a13 + 1 AS a14, a14 + a14 + 1 AS a15, a15 + a15 + 1 AS a16, a16 + a16 + 1 AS a17, a17 + a17 + 1 AS a18, a18 + a18 + 1 AS a19, a19 + a19 + 1 AS a20, sum(a20) AS s FROM range(3) t(i) GROUP BY i) q ORDER BY a0
+----
+a0	s
+0	1048575
+1	2097151
+2	3145727
+
+statement ok
+RESET statement_timeout
+
+statement ok
+CREATE MACRO mn_inc(a) AS (SELECT a + 1)
+
+query
+SELECT mn_inc(count(*)) AS r FROM range(3)
+----
+r
+2
+2
+2
+
+query
+SELECT count(*) AS r FROM range(mn_inc(4))
+----
+r
+5
+
+query
+SELECT list_transform([1, 2], lambda x: mn_inc(x)) AS r
+----
+r
+{2,3}
+
+statement ok
+CREATE MACRO mn_rand() AS (SELECT random())
+
+query
+SELECT count(DISTINCT mn_rand()) AS r FROM range(100)
+----
+r
+1
+
+statement ok
+CREATE MACRO mn_pair(x, y) AS (SELECT x + x + y FROM (VALUES (1)) v(c))
+
+query
+SELECT mn_pair(i + 1, x) AS r FROM (SELECT 5 AS x, 2 AS i) t
+----
+r
+11
+
+query
+SELECT (SELECT mn_pair(i + 1, x) FROM (VALUES (2)) w(i)) AS r FROM (SELECT 5 AS x) t
+----
+r
+11
+
+statement ok
+CREATE MACRO mn_shadow(x) AS (SELECT x + x FROM (VALUES (100)) t(i))
+
+query
+SELECT i, mn_shadow(i) AS a, mn_shadow(i + 1) AS b FROM range(3) t(i) ORDER BY i
+----
+i	a	b
+0	200	202
+1	200	202
+2	200	202
+
+statement ok
+CREATE MACRO mn_below(x) AS (SELECT max(v) + x + x FROM range(4) r(v) WHERE v < x)
+
+query
+SELECT i, mn_below(i + 1) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	2
+1	5
+2	8
+
+statement ok
+CREATE MACRO mn_sum(e) AS (SELECT sum(e) + max(e) FROM range(4) r(v))
+
+query
+SELECT i, mn_sum(v * 2 + i) AS r FROM (SELECT i, 100 AS v FROM range(3) t(i)) s ORDER BY i
+----
+i	r
+0	1000
+1	1005
+2	1010
+
+statement ok
+CREATE MACRO mn_range(x) AS (SELECT sum(v) + x + x FROM range(x) r(v))
+
+query
+SELECT i, mn_range(i + 1) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	2
+1	5
+2	9
+
+statement ok
+CREATE MACRO mn_cte(x) AS (WITH c AS (SELECT x AS w) SELECT w + x + x FROM c)
+
+query
+SELECT i, mn_cte(i + 1) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	3
+1	6
+2	9
+
+query
+SELECT i, mn_branch(i > 5, 10 / i) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	NULL
+1	NULL
+2	NULL
+
+query
+SELECT i, mn_two(i, 10 / i) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	NULL
+1	20
+2	2
+
+statement ok
+CREATE MACRO mn_vdiff(x) AS x - x
+
+query
+SELECT bool_or(mn_vdiff(random()) <> 0) AS r FROM range(100)
+----
+r
+t
+
+query
+EXPLAIN SELECT mn_branch(i > 0, i + 1) FROM range(3) t(i)
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                     │
+│ invoke(lambda 0_macro_argument_0_0: CASE  WHEN ((i > 0)) THEN ((0_macro_argument_0_0 + 0_macro_argument_0_0)) ELSE NULL::BIGINT END, (i + 1), i) │
+│ ~3 rows                                                                                                                                          │
+╰─────────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────╯
+╭─ RANGE ─────────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────╮
+│ Function: RANGE                                                                                                                                  │
+│ ~3 rows                                                                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT mn_from(i + 1) FROM range(3) t(i)
+----
+QUERY PLAN
+╭─ CTE ──────────────────────────────╮
+│ CTE Name: __duckdb_delim_31        │
+│ Table Index: 31                    │
+│ Execution Mode: PIPELINE_DEPENDENT │
+│ ~3 rows                            │
+╰──────────────────┬─────────────────╯
+                   ├────────────────────────────────────────╮
+╭─ RANGE ──────────┴─────────────────╮  ╭─ PROJECTION ──────┴──────────────────╮
+│ Function: RANGE                    │  │ Projections: #1                      │
+│ ~3 rows                            │  │ ~3 rows                              │
+╰────────────────────────────────────╯  ╰───────────────────┬──────────────────╯
+                                        ╭─ HASH_JOIN ───────┴──────────────────╮
+                                        │ Join Type: SINGLE                    │
+                                        │ Conditions: i IS NOT DISTINCT FROM i │
+                                        │ ~3 rows                              │
+                                        ╰───────────────────┬──────────────────╯
+                                                            ├───────────────────────────────────────╮
+                                        ╭─ CTE_SCAN ────────┴──────────────────╮  ╭─ PROJECTION ────┴────────────────╮
+                                        │ CTE Index: 31                        │  │ Projections:                     │
+                                        │ ~3 rows                              │  │ (0_x + 0_x) + CAST(v AS BIGINT), │
+                                        ╰──────────────────────────────────────╯  │ i                                │
+                                                                                  │ ~1 row                           │
+                                                                                  ╰─────────────────┬────────────────╯
+                                                                                  ╭─ CROSS_PRODUCT ─┴────────────────╮
+                                                                                  ╰─────────────────┬────────────────╯
+                                                                                                    ├──────────────────────────────╮
+                                                                                  ╭─ PROJECTION ────┴────────────────╮  ╭─ COLUMN_DATA_SCAN ─╮
+                                                                                  │ Projections: 0_x, i              │  │ ~1 row             │
+                                                                                  │ ~1 row                           │  ╰────────────────────╯
+                                                                                  ╰─────────────────┬────────────────╯
+                                                                                  ╭─ HASH_GROUP_BY ─┴────────────────╮
+                                                                                  │ Groups: #0                       │
+                                                                                  │ ~1 row                           │
+                                                                                  ╰─────────────────┬────────────────╯
+                                                                                  ╭─ CTE_SCAN ──────┴────────────────╮
+                                                                                  │ CTE Index: 31                    │
+                                                                                  │ ~3 rows                          │
+                                                                                  ╰──────────────────────────────────╯
+
+query
+EXPLAIN SELECT mn_below(i + 1) FROM range(3) t(i)
+----
+QUERY PLAN
+╭─ CTE ──────────────────────────────╮
+│ CTE Name: __duckdb_delim_41        │
+│ Table Index: 41                    │
+│ Execution Mode: PIPELINE_DEPENDENT │
+│ ~3 rows                            │
+╰──────────────────┬─────────────────╯
+                   ├───────────────────────────────────────╮
+╭─ RANGE ──────────┴─────────────────╮  ╭─ CTE ────────────┴─────────────────╮
+│ Function: RANGE                    │  │ CTE Name: __duckdb_delim_dedup_39  │
+│ ~3 rows                            │  │ Table Index: 39                    │
+╰────────────────────────────────────╯  │ Execution Mode: PIPELINE_DEPENDENT │
+                                        │ ~3 rows                            │
+                                        ╰──────────────────┬─────────────────╯
+                                                           ├────────────────────────────────────────╮
+                                        ╭─ HASH_GROUP_BY ──┴─────────────────╮  ╭─ PROJECTION ──────┴──────────────────╮
+                                        │ Groups: #0                         │  │ Projections: #1                      │
+                                        │ ~1 row                             │  │ ~3 rows                              │
+                                        ╰──────────────────┬─────────────────╯  ╰───────────────────┬──────────────────╯
+                                        ╭─ CTE_SCAN ───────┴─────────────────╮  ╭─ HASH_JOIN ───────┴──────────────────╮
+                                        │ CTE Index: 41                      │  │ Join Type: SINGLE                    │
+                                        │ ~3 rows                            │  │ Conditions: i IS NOT DISTINCT FROM i │
+                                        ╰────────────────────────────────────╯  │ ~3 rows                              │
+                                                                                ╰───────────────────┬──────────────────╯
+                                                                                                    ├────────────────────────────────────────╮
+                                                                                ╭─ CTE_SCAN ────────┴──────────────────╮  ╭─ PROJECTION ─────┴─────────────────╮
+                                                                                │ CTE Index: 41                        │  │ Projections: ?column?, i           │
+                                                                                │ ~3 rows                              │  │ ~0 rows                            │
+                                                                                ╰──────────────────────────────────────╯  ╰──────────────────┬─────────────────╯
+                                                                                                                          ╭─ CTE ────────────┴─────────────────╮
+                                                                                                                          │ CTE Name: __duckdb_delim_dedup_30  │
+                                                                                                                          │ Table Index: 30                    │
+                                                                                                                          │ Execution Mode: PIPELINE_DEPENDENT │
+                                                                                                                          │ ~0 rows                            │
+                                                                                                                          ╰──────────────────┬─────────────────╯
+                                                                                                                                             ├──────────────────────────────────────────╮
+                                                                                                                          ╭─ HASH_GROUP_BY ──┴─────────────────╮  ╭─ HASH_JOIN ─────────┴────────────────────╮
+                                                                                                                          │ Groups: #0                         │  │ Join Type: INNER                         │
+                                                                                                                          │ ~0 rows                            │  │ Conditions: 0_x IS NOT DISTINCT FROM 0_x │
+                                                                                                                          ╰──────────────────┬─────────────────╯  │ ~0 rows                                  │
+                                                                                                                          ╭─ PROJECTION ─────┴─────────────────╮  ╰─────────────────────┬────────────────────╯
+                                                                                                                          │ Projections: 0_x                   │                        ├────────────────────────────────────────────╮
+                                                                                                                          │ ~1 row                             │  ╭─ PROJECTION ────────┴────────────────────╮  ╭─ PROJECTION ───────┴────────────────────╮
+                                                                                                                          ╰──────────────────┬─────────────────╯  │ Projections: 0_x, i                      │  │ Projections: (max(v) + 0_x) + 0_x, 0_x  │
+                                                                                                                          ╭─ CTE_SCAN ───────┴─────────────────╮  │ ~1 row                                   │  │ ~1 row                                  │
+                                                                                                                          │ CTE Index: 39                      │  ╰─────────────────────┬────────────────────╯  ╰────────────────────┬────────────────────╯
+                                                                                                                          │ ~1 row                             │  ╭─ CTE_SCAN ──────────┴────────────────────╮  ╭─ HASH_JOIN ────────┴────────────────────╮
+                                                                                                                          ╰────────────────────────────────────╯  │ CTE Index: 39                            │  │ Join Type: LEFT                         │
+                                                                                                                                                                  │ ~1 row                                   │  │ Conditions: 0_x IS NOT DISTINCT FROM #0 │
+                                                                                                                                                                  ╰──────────────────────────────────────────╯  │ ~1 row                                  │
+                                                                                                                                                                                                                ╰────────────────────┬────────────────────╯
+                                                                                                                                                                                                                                     ├──────────────────────────────────╮
+                                                                                                                                                                                                                ╭─ CTE_SCAN ─────────┴────────────────────╮  ╭─ HASH_GROUP_BY ─────╮
+                                                                                                                                                                                                                │ CTE Index: 30                           │  │ Groups: #0          │
+                                                                                                                                                                                                                │ ~0 rows                                 │  │ Aggregates: max(#1) │
+                                                                                                                                                                                                                ╰─────────────────────────────────────────╯  │ ~0 rows             │
+                                                                                                                                                                                                                                                             ╰──────────┬──────────╯
+                                                                                                                                                                                                                                                             ╭─ PROJECTION ────────╮
+                                                                                                                                                                                                                                                             │ Projections: 0_x, v │
+                                                                                                                                                                                                                                                             │ ~1 row              │
+                                                                                                                                                                                                                                                             ╰──────────┬──────────╯
+                                                                                                                                                                                                                                                             ╭─ NESTED_LOOP_JOIN ──╮
+                                                                                                                                                                                                                                                             │ Join Type: INNER    │
+                                                                                                                                                                                                                                                             │ Conditions: v < 0_x │
+                                                                                                                                                                                                                                                             │ ~1 row              │
+                                                                                                                                                                                                                                                             ╰──────────┬──────────╯
+                                                                                                                                                                                                                                                                        ├─────────────────────╮
+                                                                                                                                                                                                                                                             ╭─ RANGE ──┴──────────╮  ╭─ CTE_SCAN ────╮
+                                                                                                                                                                                                                                                             │ Function: RANGE     │  │ CTE Index: 30 │
+                                                                                                                                                                                                                                                             │ ~4 rows             │  │ ~0 rows       │
+                                                                                                                                                                                                                                                             ╰─────────────────────╯  ╰───────────────╯
+
+statement ok
+DROP MACRO mn_cte
+
+statement ok
+DROP MACRO mn_range
+
+statement ok
+DROP MACRO mn_sum
+
+statement ok
+DROP MACRO mn_below
+
+statement ok
+DROP MACRO mn_shadow
+
+statement ok
+DROP MACRO mn_pair
+
+statement ok
+DROP MACRO mn_rand
+
+statement ok
+DROP MACRO mn_inc
+
+statement ok
+DROP MACRO mn_lg
+
+statement ok
+DROP MACRO mn_lz
+
+statement ok
+DROP MACRO mn_norm
+
+statement ok
+DROP MACRO mn_listx
+
+statement ok
+DROP MACRO mn_overuse
+
+statement ok
+DROP MACRO mn_over
+
+statement ok
+DROP MACRO mn_vdiff
+
+statement ok
+DROP MACRO mn_two
+
+statement ok
+DROP MACRO mn_branch
+
+statement ok
+DROP MACRO mn_max
+
+statement ok
+DROP MACRO mn_from
+
+statement ok
+DROP MACRO mn_let
+
+statement ok
+DROP MACRO mn_case
+
+statement ok
+DROP MACRO mn_qual
+
+statement ok
+DROP MACRO mn_smix
+
+statement ok
+DROP MACRO mn_svm
+
+statement ok
+DROP MACRO mn_svs
+
+statement ok
+DROP MACRO mn_sva
+
+statement ok
+DROP MACRO mn_mix
+
+statement ok
+DROP MACRO mn_vm
+
+statement ok
+DROP MACRO mn_vs
+
+statement ok
+DROP MACRO mn_va

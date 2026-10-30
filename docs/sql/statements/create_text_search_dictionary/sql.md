@@ -35,7 +35,7 @@ A lambda parameter may appear any number of times. Nothing else is in scope, so 
 - `sql: text-search function "<name>" is not allowed in a sql tokenizer expression (it would recurse into the tokenizer)` — any function whose name starts with `ts_`, anywhere in the expression, since calling one would re-enter the tokenizer.
 - `sql: volatile expressions are not allowed` — `random()::VARCHAR` and the like. The same value has to produce the same tokens every time.
 - `sql: expression must return VARCHAR, BLOB, or a list of them, got <type>` — `length()` reports `BIGINT`, `(lambda x: [length(x)])` reports `BIGINT[]`.
-- `sql: <DuckDB binder message>` — whatever else the binder refuses: an unknown column, a call whose argument types no overload of the function accepts, an aggregate, a window function, a lambda. The wording mentions check constraints, because the expression is bound the way a `CHECK` constraint is.
+- `sql: <DuckDB binder message>` — whatever else the binder refuses: an unknown column, a call whose argument types no overload of the function accepts, an aggregate, a window function. The wording mentions check constraints, because the expression is bound the way a `CHECK` constraint is.
 
 The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](./index.md#feature-flags). `OFFSET` is rejected with `Unsupported index features are specified: offset`, because an expression result carries no offsets back into the source value; a [`pipeline`](./pipeline/index.md) that contains a `sql` step loses offsets for the same reason.
 

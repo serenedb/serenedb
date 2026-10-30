@@ -294,7 +294,53 @@ QUERY PLAN
                                                                                                                                                                                                                 ╰──────────────────╯
 
 statement ok
+CREATE FUNCTION sfn_sub(x bigint) RETURNS bigint LANGUAGE sql RETURN x + (SELECT count(*) FROM range(3) r(v) WHERE v < x)
+
+query
+SELECT sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(i)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+58
+61
+
+statement ok
+CREATE FUNCTION sfn_qsub(x bigint) RETURNS bigint LANGUAGE sql AS 'SELECT x + (SELECT count(*) FROM range(3) r(v) WHERE v < x)'
+
+query
+SELECT sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(i)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+58
+61
+
+statement ok
+CREATE FUNCTION sfn_ts_ns(x bigint) RETURNS timestamp LANGUAGE sql RETURN make_timestamp_ns(x)
+
+statement ok
+CREATE MACRO sfn_pick_ts(t timestamp) AS (SELECT 'us' WHERE t IS NOT NULL), (t timestamp_ns) AS (SELECT 'ns' WHERE t IS NOT NULL)
+
+query
+SELECT sfn_pick_ts(sfn_ts_ns(1)) AS nested, sfn_pick_ts(make_timestamp_ns(1)) AS direct
+----
+nested	direct
+ns	ns
+
+statement ok
 RESET statement_timeout
+
+statement ok
+DROP MACRO sfn_pick_ts
+
+statement ok
+DROP FUNCTION sfn_ts_ns
+
+statement ok
+DROP FUNCTION sfn_qsub
+
+statement ok
+DROP FUNCTION sfn_sub
 
 statement ok
 DROP FUNCTION sfn_max

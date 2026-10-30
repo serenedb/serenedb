@@ -586,8 +586,8 @@ EXPLAIN SELECT mn_from(i + 1) FROM range(3) t(i)
 ----
 QUERY PLAN
 ╭─ CTE ──────────────────────────────╮
-│ CTE Name: __duckdb_delim_31        │
-│ Table Index: 31                    │
+│ CTE Name: __duckdb_delim_24        │
+│ Table Index: 24                    │
 │ Execution Mode: PIPELINE_DEPENDENT │
 │ ~3 rows                            │
 ╰──────────────────┬─────────────────╯
@@ -601,43 +601,43 @@ QUERY PLAN
                                         │ Conditions: i IS NOT DISTINCT FROM i │
                                         │ ~3 rows                              │
                                         ╰───────────────────┬──────────────────╯
-                                                            ├───────────────────────────────────────╮
-                                        ╭─ CTE_SCAN ────────┴──────────────────╮  ╭─ PROJECTION ────┴────────────────╮
-                                        │ CTE Index: 31                        │  │ Projections:                     │
-                                        │ ~3 rows                              │  │ (0_x + 0_x) + CAST(v AS BIGINT), │
-                                        ╰──────────────────────────────────────╯  │ i                                │
-                                                                                  │ ~1 row                           │
-                                                                                  ╰─────────────────┬────────────────╯
-                                                                                  ╭─ CROSS_PRODUCT ─┴────────────────╮
-                                                                                  ╰─────────────────┬────────────────╯
-                                                                                                    ├──────────────────────────────╮
-                                                                                  ╭─ PROJECTION ────┴────────────────╮  ╭─ COLUMN_DATA_SCAN ─╮
-                                                                                  │ Projections: 0_x, i              │  │ ~1 row             │
-                                                                                  │ ~1 row                           │  ╰────────────────────╯
-                                                                                  ╰─────────────────┬────────────────╯
-                                                                                  ╭─ HASH_GROUP_BY ─┴────────────────╮
-                                                                                  │ Groups: #0                       │
-                                                                                  │ ~1 row                           │
-                                                                                  ╰─────────────────┬────────────────╯
-                                                                                  ╭─ CTE_SCAN ──────┴────────────────╮
-                                                                                  │ CTE Index: 31                    │
-                                                                                  │ ~3 rows                          │
-                                                                                  ╰──────────────────────────────────╯
+                                                            ├──────────────────────────────────────╮
+                                        ╭─ CTE_SCAN ────────┴──────────────────╮  ╭─ PROJECTION ───┴───────────────╮
+                                        │ CTE Index: 24                        │  │ Projections:                   │
+                                        │ ~3 rows                              │  │ (#0 + #0) + CAST(v AS BIGINT), │
+                                        ╰──────────────────────────────────────╯  │ i                              │
+                                                                                  │ ~1 row                         │
+                                                                                  ╰────────────────┬───────────────╯
+                                                                                  ╭─ PROJECTION ───┴───────────────╮
+                                                                                  │ Projections: i + 1, v, i       │
+                                                                                  │ ~1 row                         │
+                                                                                  ╰────────────────┬───────────────╯
+                                                                                  ╭─ CROSS_PRODUCT ┴───────────────╮
+                                                                                  ╰────────────────┬───────────────╯
+                                                                                                   ├─────────────────────────────╮
+                                                                                  ╭─ HASH_GROUP_BY ┴───────────────╮  ╭─ COLUMN_DATA_SCAN ─╮
+                                                                                  │ Groups: #0                     │  │ ~1 row             │
+                                                                                  │ ~1 row                         │  ╰────────────────────╯
+                                                                                  ╰────────────────┬───────────────╯
+                                                                                  ╭─ CTE_SCAN ─────┴───────────────╮
+                                                                                  │ CTE Index: 24                  │
+                                                                                  │ ~3 rows                        │
+                                                                                  ╰────────────────────────────────╯
 
 query
 EXPLAIN SELECT mn_below(i + 1) FROM range(3) t(i)
 ----
 QUERY PLAN
 ╭─ CTE ──────────────────────────────╮
-│ CTE Name: __duckdb_delim_41        │
-│ Table Index: 41                    │
+│ CTE Name: __duckdb_delim_18        │
+│ Table Index: 18                    │
 │ Execution Mode: PIPELINE_DEPENDENT │
 │ ~3 rows                            │
 ╰──────────────────┬─────────────────╯
                    ├───────────────────────────────────────╮
 ╭─ RANGE ──────────┴─────────────────╮  ╭─ CTE ────────────┴─────────────────╮
-│ Function: RANGE                    │  │ CTE Name: __duckdb_delim_dedup_39  │
-│ ~3 rows                            │  │ Table Index: 39                    │
+│ Function: RANGE                    │  │ CTE Name: __duckdb_delim_dedup_16  │
+│ ~3 rows                            │  │ Table Index: 16                    │
 ╰────────────────────────────────────╯  │ Execution Mode: PIPELINE_DEPENDENT │
                                         │ ~3 rows                            │
                                         ╰──────────────────┬─────────────────╯
@@ -647,57 +647,176 @@ QUERY PLAN
                                         │ ~1 row                             │  │ ~3 rows                              │
                                         ╰──────────────────┬─────────────────╯  ╰───────────────────┬──────────────────╯
                                         ╭─ CTE_SCAN ───────┴─────────────────╮  ╭─ HASH_JOIN ───────┴──────────────────╮
-                                        │ CTE Index: 41                      │  │ Join Type: SINGLE                    │
+                                        │ CTE Index: 18                      │  │ Join Type: SINGLE                    │
                                         │ ~3 rows                            │  │ Conditions: i IS NOT DISTINCT FROM i │
                                         ╰────────────────────────────────────╯  │ ~3 rows                              │
                                                                                 ╰───────────────────┬──────────────────╯
-                                                                                                    ├────────────────────────────────────────╮
-                                                                                ╭─ CTE_SCAN ────────┴──────────────────╮  ╭─ PROJECTION ─────┴─────────────────╮
-                                                                                │ CTE Index: 41                        │  │ Projections: ?column?, i           │
-                                                                                │ ~3 rows                              │  │ ~0 rows                            │
-                                                                                ╰──────────────────────────────────────╯  ╰──────────────────┬─────────────────╯
-                                                                                                                          ╭─ CTE ────────────┴─────────────────╮
-                                                                                                                          │ CTE Name: __duckdb_delim_dedup_30  │
-                                                                                                                          │ Table Index: 30                    │
-                                                                                                                          │ Execution Mode: PIPELINE_DEPENDENT │
-                                                                                                                          │ ~0 rows                            │
-                                                                                                                          ╰──────────────────┬─────────────────╯
-                                                                                                                                             ├──────────────────────────────────────────╮
-                                                                                                                          ╭─ HASH_GROUP_BY ──┴─────────────────╮  ╭─ HASH_JOIN ─────────┴────────────────────╮
-                                                                                                                          │ Groups: #0                         │  │ Join Type: INNER                         │
-                                                                                                                          │ ~0 rows                            │  │ Conditions: 0_x IS NOT DISTINCT FROM 0_x │
-                                                                                                                          ╰──────────────────┬─────────────────╯  │ ~0 rows                                  │
-                                                                                                                          ╭─ PROJECTION ─────┴─────────────────╮  ╰─────────────────────┬────────────────────╯
-                                                                                                                          │ Projections: 0_x                   │                        ├────────────────────────────────────────────╮
-                                                                                                                          │ ~1 row                             │  ╭─ PROJECTION ────────┴────────────────────╮  ╭─ PROJECTION ───────┴────────────────────╮
-                                                                                                                          ╰──────────────────┬─────────────────╯  │ Projections: 0_x, i                      │  │ Projections: (max(v) + 0_x) + 0_x, 0_x  │
-                                                                                                                          ╭─ CTE_SCAN ───────┴─────────────────╮  │ ~1 row                                   │  │ ~1 row                                  │
-                                                                                                                          │ CTE Index: 39                      │  ╰─────────────────────┬────────────────────╯  ╰────────────────────┬────────────────────╯
-                                                                                                                          │ ~1 row                             │  ╭─ CTE_SCAN ──────────┴────────────────────╮  ╭─ HASH_JOIN ────────┴────────────────────╮
-                                                                                                                          ╰────────────────────────────────────╯  │ CTE Index: 39                            │  │ Join Type: LEFT                         │
-                                                                                                                                                                  │ ~1 row                                   │  │ Conditions: 0_x IS NOT DISTINCT FROM #0 │
-                                                                                                                                                                  ╰──────────────────────────────────────────╯  │ ~1 row                                  │
-                                                                                                                                                                                                                ╰────────────────────┬────────────────────╯
-                                                                                                                                                                                                                                     ├──────────────────────────────────╮
-                                                                                                                                                                                                                ╭─ CTE_SCAN ─────────┴────────────────────╮  ╭─ HASH_GROUP_BY ─────╮
-                                                                                                                                                                                                                │ CTE Index: 30                           │  │ Groups: #0          │
-                                                                                                                                                                                                                │ ~0 rows                                 │  │ Aggregates: max(#1) │
-                                                                                                                                                                                                                ╰─────────────────────────────────────────╯  │ ~0 rows             │
-                                                                                                                                                                                                                                                             ╰──────────┬──────────╯
-                                                                                                                                                                                                                                                             ╭─ PROJECTION ────────╮
-                                                                                                                                                                                                                                                             │ Projections: 0_x, v │
-                                                                                                                                                                                                                                                             │ ~1 row              │
-                                                                                                                                                                                                                                                             ╰──────────┬──────────╯
-                                                                                                                                                                                                                                                             ╭─ NESTED_LOOP_JOIN ──╮
-                                                                                                                                                                                                                                                             │ Join Type: INNER    │
-                                                                                                                                                                                                                                                             │ Conditions: v < 0_x │
-                                                                                                                                                                                                                                                             │ ~1 row              │
-                                                                                                                                                                                                                                                             ╰──────────┬──────────╯
-                                                                                                                                                                                                                                                                        ├─────────────────────╮
-                                                                                                                                                                                                                                                             ╭─ RANGE ──┴──────────╮  ╭─ CTE_SCAN ────╮
-                                                                                                                                                                                                                                                             │ Function: RANGE     │  │ CTE Index: 30 │
-                                                                                                                                                                                                                                                             │ ~4 rows             │  │ ~0 rows       │
-                                                                                                                                                                                                                                                             ╰─────────────────────╯  ╰───────────────╯
+                                                                                                    ├─────────────────────────────────────────╮
+                                                                                ╭─ CTE_SCAN ────────┴──────────────────╮  ╭─ PROJECTION ──────┴───────────────────╮
+                                                                                │ CTE Index: 18                        │  │ Projections: (max(v) + #1) + #1, i    │
+                                                                                │ ~3 rows                              │  │ ~1 row                                │
+                                                                                ╰──────────────────────────────────────╯  ╰───────────────────┬───────────────────╯
+                                                                                                                          ╭─ PROJECTION ──────┴───────────────────╮
+                                                                                                                          │ Projections: max(v), i + 1, i         │
+                                                                                                                          │ ~1 row                                │
+                                                                                                                          ╰───────────────────┬───────────────────╯
+                                                                                                                          ╭─ HASH_JOIN ───────┴───────────────────╮
+                                                                                                                          │ Join Type: LEFT                       │
+                                                                                                                          │ Conditions: i IS NOT DISTINCT FROM #0 │
+                                                                                                                          │ ~1 row                                │
+                                                                                                                          ╰───────────────────┬───────────────────╯
+                                                                                                                                              ├───────────────────────────────────╮
+                                                                                                                          ╭─ CTE_SCAN ────────┴───────────────────╮  ╭─ HASH_GROUP_BY ─────────╮
+                                                                                                                          │ CTE Index: 16                         │  │ Groups: #0              │
+                                                                                                                          │ ~1 row                                │  │ Aggregates: max(#1)     │
+                                                                                                                          ╰───────────────────────────────────────╯  │ ~0 rows                 │
+                                                                                                                                                                     ╰────────────┬────────────╯
+                                                                                                                                                                     ╭─ PROJECTION ────────────╮
+                                                                                                                                                                     │ Projections: i, v       │
+                                                                                                                                                                     │ ~1 row                  │
+                                                                                                                                                                     ╰────────────┬────────────╯
+                                                                                                                                                                     ╭─ NESTED_LOOP_JOIN ──────╮
+                                                                                                                                                                     │ Join Type: INNER        │
+                                                                                                                                                                     │ Conditions: v < (i + 1) │
+                                                                                                                                                                     │ ~1 row                  │
+                                                                                                                                                                     ╰────────────┬────────────╯
+                                                                                                                                                                                  ├───────────────────────╮
+                                                                                                                                                                     ╭─ RANGE ────┴────────────╮  ╭─ CTE_SCAN ────╮
+                                                                                                                                                                     │ Function: RANGE         │  │ CTE Index: 16 │
+                                                                                                                                                                     │ ~4 rows                 │  │ ~1 row        │
+                                                                                                                                                                     ╰─────────────────────────╯  ╰───────────────╯
+
+statement ok
+CREATE MACRO mn_sub(x) AS x + (SELECT count(*) FROM range(3) r(v) WHERE v < x)
+
+query
+SELECT mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(mn_sub(i)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+58
+61
+
+statement ok
+CREATE MACRO mn_subq(x) AS (SELECT x + (SELECT count(*) FROM range(3) r(v) WHERE v < x))
+
+query
+SELECT mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(mn_subq(i)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+58
+61
+
+query
+SELECT i, mn_sub(i + 1) AS a, mn_subq(i + 1) AS b FROM range(4) t(i) ORDER BY i
+----
+i	a	b
+0	2	2
+1	4	4
+2	6	6
+3	7	7
+
+statement ok
+CREATE MACRO mn_out(x) AS x + x + (SELECT 1)
+
+query
+SELECT mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(mn_out(i)))))))))))))))))))) AS r FROM range(2) t(i) ORDER BY 1
+----
+r
+1048575
+2097151
+
+query
+SELECT a + 1 AS k, mn_out(mn_out(a + 1)) AS r FROM (VALUES (1), (1), (2)) t(a) GROUP BY a + 1 ORDER BY 1
+----
+k	r
+2	11
+3	15
+
+statement ok
+CREATE MACRO mn_outpair(x, y) AS x + x + y + y + (SELECT 1)
+
+statement ok
+CREATE MACRO mn_typed(x BIGINT) AS mn_outpair(x, mn_out(x)) + x
+
+query
+SELECT i, mn_typed(i + 1) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	10
+1	17
+2	24
+
+statement ok
+CREATE MACRO mn_twice(x) AS x + x
+
+statement ok
+CREATE TABLE mn_check (i BIGINT CHECK (mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(i)))))))))))))))))))) >= 0))
+
+statement ok
+INSERT INTO mn_check VALUES (1)
+
+statement error
+INSERT INTO mn_check VALUES (-1)
+----
+db error: ERROR: CHECK constraint failed on table "mn_check" with expression CHECK((mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(i)))))))))))))))))))) >= 0))
+
+
+statement ok
+CREATE TABLE mn_generated (i BIGINT, g BIGINT GENERATED ALWAYS AS (mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(i))))))))))))))))))))))
+
+statement ok
+INSERT INTO mn_generated VALUES (3)
+
+query
+SELECT i, g FROM mn_generated
+----
+i	g
+3	3145728
+
+statement ok
+CREATE TABLE mn_alter (i BIGINT)
+
+statement ok
+INSERT INTO mn_alter VALUES (1), (3)
+
+statement ok
+ALTER TABLE mn_alter ALTER i TYPE BIGINT USING mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(mn_twice(i))))))))))))))))))))
+
+query
+SELECT i FROM mn_alter ORDER BY i
+----
+i
+1048576
+3145728
+
+statement ok
+DROP TABLE mn_alter
+
+statement ok
+DROP TABLE mn_generated
+
+statement ok
+DROP TABLE mn_check
+
+statement ok
+DROP MACRO mn_twice
+
+statement ok
+DROP MACRO mn_typed
+
+statement ok
+DROP MACRO mn_outpair
+
+statement ok
+DROP MACRO mn_out
+
+statement ok
+DROP MACRO mn_subq
+
+statement ok
+DROP MACRO mn_sub
 
 statement ok
 DROP MACRO mn_cte

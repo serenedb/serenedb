@@ -176,7 +176,11 @@ An argument that the expression uses more than once is evaluated once for each r
 
 In a macro, a volatile argument such as `random()` is evaluated at each use; in a function declared with `RETURNS`, a volatile argument used more than once is evaluated once for each row. A macro used as a predicate in `WHERE` or in a join condition is planned like the expression it expands to, so it can filter a table scan, use an index or make a hash join.
 
-In a macro defined with a scalar or `EXISTS` subquery that is more than a single expression such as `(SELECT 5)`, an argument used more than once is evaluated once for each row of the calling query, as a function argument is: it is evaluated even when the subquery returns no rows, and an aggregate over its parameter aggregates the rows of the subquery. When an argument of the call contains a volatile, aggregate or window function, every argument of that call is replaced as written.
+In a macro whose body contains a subquery, an aggregate over a parameter aggregates the rows of the subquery it is written in:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_042" />
+
+The argument of such a parameter, and an argument that itself contains a subquery, such as a nested call of the same macro, when the body uses it more than once, is evaluated once for each row of the calling query, as a function argument is, even when the subquery returns no rows. Any other argument is replaced as written, and so is every argument of a call where one argument contains a volatile, aggregate or window function.
 
 ## Limitations
 

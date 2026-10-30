@@ -255,6 +255,7 @@ void SereneDBClientState::TransactionPreCommit(
             index->PrepareFeed(*_connection_ctx, context, rows);
           }
         }
+        SDB_PARK_ONCE_ON_FAILURE("inverted_feed_prepared");
       }
     }
   }

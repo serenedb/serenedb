@@ -154,6 +154,27 @@ struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   size_t uncommitted_min_slot = std::numeric_limits<size_t>::max();
 };
 
+void RefuseInWritingTransaction(duckdb::ClientContext& context,
+                                duckdb::DataTable& data,
+                                const duckdb::Identifier& name) {
+  const auto undo =
+    duckdb::DuckTransaction::Get(context, data.db).GetUndoProperties();
+  if (undo.has_updates || undo.has_deletes) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG("CREATE INDEX on \"", name.GetIdentifierName(),
+              "\" cannot run in a transaction that has updated or deleted "
+              "rows"));
+  }
+  if (GetSereneDBContext(context).HasSearchTableWrites()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG("CREATE INDEX on \"", name.GetIdentifierName(),
+              "\" cannot run in a transaction that has written to a search "
+              "table"));
+  }
+}
+
 }  // namespace
 
 SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
@@ -297,8 +318,17 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         }
         state->search_backfill = std::move(backfill);
       } else {
+        auto* table = DuckTableOrNull();
+        if (table) {
+          RefuseInWritingTransaction(context, table->GetStorage(),
+                                     _relation.name);
+        }
         const auto published = PublishInvertedIndex(
           context, index_entry, _relation, _bound_expressions);
+        if (table) {
+          WaitForWritersBeforeBuild(context, table->GetStorage(),
+                                    state->progress);
+        }
         published.storage->SetFileManifest(extras ? extras->manifest : nullptr);
         published.storage->StartTasks();
         index_entry.CreateReindexJob(transaction, reindex_interval);

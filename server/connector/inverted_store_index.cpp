@@ -1012,15 +1012,21 @@ PublishedInvertedIndex PublishInvertedIndex(
     entry.ResolveTokenizers(context), static_cast<bool>(entry.where_clause));
   auto commit_lock = data.db.GetStorageManager().GetCommitLock();
   data.AddIndex(std::move(index), entry.oid);
-  const auto rowid_horizon = data.GetNextRowId();
-  auto& transaction = duckdb::DuckTransaction::Get(context, data.db);
-  const auto undo = transaction.GetUndoProperties();
-  if (!undo.has_updates && !undo.has_deletes) {
-    auto& manager = duckdb::DuckTransactionManager::Get(data.db);
-    manager.WaitForDurability();
-    manager.AdvanceStartTime(transaction);
+  return {std::move(storage), data.GetNextRowId()};
+}
+
+void WaitForWritersBeforeBuild(duckdb::ClientContext& context,
+                               duckdb::DataTable& data,
+                               pg::ProgressMetrics* progress) {
+  if (progress) {
+    progress->SetPhase(pg::progress_phase::CreateIndex::WaitingForWriters);
   }
-  return {std::move(storage), rowid_horizon};
+  auto& manager = duckdb::DuckTransactionManager::Get(data.db);
+  auto& transaction = duckdb::DuckTransaction::Get(context, data.db);
+  manager.WaitForOlderWriters(context, transaction, *data.GetDataTableInfo());
+  auto commit_lock = data.db.GetStorageManager().GetCommitLock();
+  manager.WaitForDurability();
+  manager.AdvanceStartTime(transaction);
 }
 
 }  // namespace sdb::connector

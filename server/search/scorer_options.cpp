@@ -253,6 +253,7 @@ irs::ScorerOptions ParseScorerExpression(duckdb::ClientContext* context,
     FunctionArgument{ConstantExpression::FromValue(Value::BIGINT(0))});
 
   auto binder = Binder::CreateBinder(*context);
+  binder->principal = context->principal;
   ConstantBinder cb(*binder, *context, std::string{what});
   auto bound = cb.Bind(fn_expr);
   if (bound->GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {

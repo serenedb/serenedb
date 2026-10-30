@@ -1,0 +1,67 @@
+statement ok
+DROP SEQUENCE IF EXISTS esllv_ledger_seq;
+
+
+statement ok
+DROP ROLE IF EXISTS esllv_vedernikoff;
+
+
+statement ok
+CREATE ROLE esllv_vedernikoff;
+
+
+statement ok
+CREATE SEQUENCE esllv_ledger_seq;
+
+
+query
+SELECT nextval('esllv_ledger_seq') AS n;
+----
+n
+1
+
+
+statement ok
+GRANT UPDATE ON SEQUENCE esllv_ledger_seq TO esllv_vedernikoff;
+
+
+statement ok
+SET ROLE esllv_vedernikoff;
+
+
+query
+SELECT sequence_name, last_value FROM duckdb_sequences() WHERE sequence_name = 'esllv_ledger_seq';
+----
+sequence_name	last_value
+esllv_ledger_seq	NULL
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT USAGE ON SEQUENCE esllv_ledger_seq TO esllv_vedernikoff;
+
+
+statement ok
+SET ROLE esllv_vedernikoff;
+
+
+query
+SELECT sequence_name, last_value FROM duckdb_sequences() WHERE sequence_name = 'esllv_ledger_seq';
+----
+sequence_name	last_value
+esllv_ledger_seq	1
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP SEQUENCE esllv_ledger_seq;
+
+
+statement ok
+DROP ROLE esllv_vedernikoff;

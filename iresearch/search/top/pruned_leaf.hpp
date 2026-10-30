@@ -165,6 +165,8 @@ class PrunedLeafBase {
 
   uint32_t Cost() const noexcept { return _cost; }
 
+  score_t RootScore() const noexcept { return _root_score; }
+
   doc_id_t AdvanceBlock(doc_id_t target) {
     if (!_cursor.Armed()) [[unlikely]] {
       return doc_limits::eof();

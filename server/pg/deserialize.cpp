@@ -1459,27 +1459,37 @@ bool DeserializeBinaryList(DeserializeContext& ctx, std::string_view data,
     }
     dims[static_cast<size_t>(d)] = size;
   }
-  if (absl::c_linear_search(dims, 0)) {
-    Out<duckdb::list_entry_t>(vec)[row] = {cur, 0};
-    return true;
-  }
-  uint64_t elements = 1;
-  for (const auto size : dims) {
-    elements *= static_cast<uint64_t>(size);
-    if (elements > (data.size() - offset) / 4) {
-      return false;
-    }
-  }
   // Resolve the leaf element deserializer once (the element type is fixed for
   // the whole array). LIST and MAP each contribute one dimension; ARRAY targets
   // aren't reconstructed by the multi-dim path.
   const auto* leaf = &duckdb::ListType::GetChildType(vec.GetType());
-  for (int32_t d = 1; d < ndim; ++d) {
+  int32_t levels = 1;
+  for (; levels < ndim; ++levels) {
     if (leaf->id() == duckdb::LogicalTypeId::ARRAY ||
         !IsArrayDimension(*leaf)) {
-      return false;
+      break;
     }
     leaf = &duckdb::ListType::GetChildType(*leaf);
+  }
+  const bool empty = absl::c_linear_search(dims, 0);
+  if (empty && levels < ndim) {
+    Out<duckdb::list_entry_t>(vec)[row] = {cur, 0};
+    return true;
+  }
+  if (levels < ndim) {
+    return false;
+  }
+  uint64_t entries = 0;
+  uint64_t product = 1;
+  for (const auto size : dims) {
+    product *= static_cast<uint64_t>(size);
+    entries += product;
+    if (empty ? entries > data.size() : product > (data.size() - offset) / 4) {
+      return false;
+    }
+    if (size == 0) {
+      break;
+    }
   }
   const auto leaf_fn = GetDeserialization<VectorSink>(*leaf, VarFormat::Binary);
   if (leaf_fn == nullptr) {

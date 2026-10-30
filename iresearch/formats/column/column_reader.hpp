@@ -86,16 +86,12 @@ inline size_t ConsecutiveRunLength(const Rows& rows, size_t i) noexcept {
   return run;
 }
 
-inline constexpr uint64_t kUnknownDefaults =
-  std::numeric_limits<uint64_t>::max();
-
 struct ColumnBlockMeta {
   duckdb::BaseStatistics statistics;
   uint64_t tuple_count = 0;
   uint64_t file_offset = 0;
   uint64_t byte_size = 0;
   const duckdb::CompressionFunction* codec = nullptr;
-  uint64_t default_count = kUnknownDefaults;
 };
 
 struct ColumnMeta;
@@ -213,10 +209,6 @@ class ColumnReader {
   const duckdb::BaseStatistics& RowGroupStatistics(size_t rg) const noexcept {
     SDB_ASSERT(rg < _segments.size());
     return _segments[rg].statistics;
-  }
-  uint64_t BlockDefaults(size_t block) const noexcept {
-    SDB_ASSERT(block < _segments.size());
-    return _segments[block].default_count;
   }
   bool IsValidityRgEmpty(size_t vrg) const noexcept {
     SDB_ASSERT(_validity && vrg < _validity->_segments.size());

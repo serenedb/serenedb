@@ -25,7 +25,6 @@
 #include <algorithm>
 #include <cstring>
 #include <duckdb/common/allocator.hpp>
-#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
@@ -52,103 +51,8 @@
 namespace irs {
 namespace {
 
-bool CountsDefaults(const duckdb::LogicalType& type) {
-  switch (type.InternalType()) {
-    case duckdb::PhysicalType::BOOL:
-    case duckdb::PhysicalType::INT8:
-    case duckdb::PhysicalType::INT16:
-    case duckdb::PhysicalType::INT32:
-    case duckdb::PhysicalType::INT64:
-    case duckdb::PhysicalType::UINT8:
-    case duckdb::PhysicalType::UINT16:
-    case duckdb::PhysicalType::UINT32:
-    case duckdb::PhysicalType::UINT64:
-    case duckdb::PhysicalType::FLOAT:
-    case duckdb::PhysicalType::DOUBLE:
-    case duckdb::PhysicalType::VARCHAR:
-      return true;
-    default:
-      return false;
-  }
-}
-
-template<typename T>
-uint64_t CountDefaultsOf(const WriteChunk& chunk, duckdb::idx_t begin,
-                         duckdb::idx_t end) {
-  uint64_t defaults = 0;
-  const auto values = chunk.data.Values<T>();
-  for (auto i = begin; i != end; ++i) {
-    const auto entry = values[i];
-    if (!entry.IsValid()) {
-      continue;
-    }
-    if constexpr (std::is_same_v<T, duckdb::string_t>) {
-      defaults += entry.GetValue().GetSize() == 0;
-    } else {
-      defaults += entry.GetValue() == T{};
-    }
-  }
-  return defaults;
-}
-
-uint64_t CountDefaults(const WriteChunk& chunk, duckdb::idx_t begin,
-                       duckdb::idx_t end) {
-  switch (chunk.data.GetType().InternalType()) {
-    case duckdb::PhysicalType::BOOL:
-      return CountDefaultsOf<bool>(chunk, begin, end);
-    case duckdb::PhysicalType::INT8:
-      return CountDefaultsOf<int8_t>(chunk, begin, end);
-    case duckdb::PhysicalType::INT16:
-      return CountDefaultsOf<int16_t>(chunk, begin, end);
-    case duckdb::PhysicalType::INT32:
-      return CountDefaultsOf<int32_t>(chunk, begin, end);
-    case duckdb::PhysicalType::INT64:
-      return CountDefaultsOf<int64_t>(chunk, begin, end);
-    case duckdb::PhysicalType::UINT8:
-      return CountDefaultsOf<uint8_t>(chunk, begin, end);
-    case duckdb::PhysicalType::UINT16:
-      return CountDefaultsOf<uint16_t>(chunk, begin, end);
-    case duckdb::PhysicalType::UINT32:
-      return CountDefaultsOf<uint32_t>(chunk, begin, end);
-    case duckdb::PhysicalType::UINT64:
-      return CountDefaultsOf<uint64_t>(chunk, begin, end);
-    case duckdb::PhysicalType::FLOAT:
-      return CountDefaultsOf<float>(chunk, begin, end);
-    case duckdb::PhysicalType::DOUBLE:
-      return CountDefaultsOf<double>(chunk, begin, end);
-    case duckdb::PhysicalType::VARCHAR:
-      return CountDefaultsOf<duckdb::string_t>(chunk, begin, end);
-    default:
-      return kUnknownDefaults;
-  }
-}
-
-struct DefaultsCursor {
-  std::span<WriteChunk> chunks;
-  size_t chunk = 0;
-  duckdb::idx_t offset = 0;
-
-  uint64_t Take(uint64_t rows) {
-    uint64_t defaults = 0;
-    while (rows != 0 && chunk != chunks.size()) {
-      const auto& c = chunks[chunk];
-      const auto end = std::min<duckdb::idx_t>(
-        c.count, offset + static_cast<duckdb::idx_t>(rows));
-      defaults += CountDefaults(c, offset, end);
-      rows -= end - offset;
-      offset = end;
-      if (offset == c.count) {
-        ++chunk;
-        offset = 0;
-      }
-    }
-    return defaults;
-  }
-};
-
 void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
                     const uint8_t* bytes, IndexOutput& out,
-                    DefaultsCursor* defaults,
                     std::vector<ColumnBlockMeta>& sink) {
   const auto tuple_count = segment.count.load();
   if (tuple_count == 0) {
@@ -156,9 +60,6 @@ void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
   }
   ColumnBlockMeta m{segment.GetStats().Copy()};
   m.tuple_count = tuple_count;
-  if (defaults) {
-    m.default_count = defaults->Take(tuple_count);
-  }
   m.codec = &segment.GetCompressionFunction();
   if (m.statistics.IsConstant()) {
     auto& cfg = duckdb::DBConfig::GetConfig(segment.GetDatabase());
@@ -345,11 +246,9 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
 void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
                             duckdb::unique_ptr<duckdb::AnalyzeState> state,
                             const duckdb::LogicalType& codec_type,
-                            std::span<WriteChunk> chunks, bool count_defaults,
+                            std::span<WriteChunk> chunks,
                             std::vector<ColumnBlockMeta>& sink) {
   auto& ctx = WriteCtx();
-  SDB_IF_FAILURE("irs::ColumnWithoutDefaultCounts") { count_defaults = false; }
-  DefaultsCursor defaults{.chunks = chunks};
   auto& db = ctx.Database();
   auto& out = Out();
   auto& bm = db.GetBufferManager();
@@ -363,8 +262,7 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
 
   auto capture = [&](duckdb::ColumnSegment& seg, duckdb::idx_t size,
                      const uint8_t* bytes) {
-    CaptureSegment(seg, size, bytes, out, count_defaults ? &defaults : nullptr,
-                   sink);
+    CaptureSegment(seg, size, bytes, out, sink);
   };
   auto capture_from_block = [&](duckdb::ColumnSegment& seg,
                                 duckdb::idx_t size) {
@@ -421,7 +319,7 @@ void ColumnWriter::SealValidity(std::span<WriteChunk> chunks,
   duckdb::unique_ptr<duckdb::AnalyzeState> state;
   auto fn = PickCodec(validity_type, chunks,
                       duckdb::CompressionType::COMPRESSION_AUTO, state);
-  Compress(*fn, std::move(state), validity_type, chunks, false, sink);
+  Compress(*fn, std::move(state), validity_type, chunks, sink);
 }
 
 void ColumnWriter::SealNestedValidity(std::span<WriteChunk> chunks,
@@ -539,7 +437,7 @@ void ColumnWriter::SealList(const duckdb::LogicalType& type,
   duckdb::unique_ptr<duckdb::AnalyzeState> state;
   auto fn = PickCodec(type, offset_chunks,
                       duckdb::CompressionType::COMPRESSION_AUTO, state);
-  Compress(*fn, std::move(state), type, offset_chunks, false, meta.data);
+  Compress(*fn, std::move(state), type, offset_chunks, meta.data);
 
   SealColumn(duckdb::ListType::GetChildType(type), elem_chunks, total_elems,
              /*skip_validity=*/false, forced, meta.children[0]);
@@ -652,8 +550,7 @@ void ColumnWriter::SealColumn(const duckdb::LogicalType& type,
   auto data_fn = PickCodec(type, chunks, forced, data_state);
   const bool nulls_covered_by_data =
     data_fn->validity == duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
-  Compress(*data_fn, std::move(data_state), type, chunks, CountsDefaults(type),
-           meta.data);
+  Compress(*data_fn, std::move(data_state), type, chunks, meta.data);
 
   if (skip_validity) {
     return;

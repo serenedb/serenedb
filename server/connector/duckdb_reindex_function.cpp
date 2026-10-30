@@ -817,7 +817,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
     if constexpr (kIceberg) {
       if (files.version != manifest.version) {
         // Identical files under a moved pin: restamp so reads never pin an
-        // expiring snapshot. Durability rides the next real commit.
+        // expiring snapshot. Durability rides the next refresh.
         auto restamped = std::make_shared<search::FileManifest>(manifest);
         restamped->version = files.version;
         storage.SetFileManifest(std::move(restamped));

@@ -1879,7 +1879,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   }
 #endif
 
-  const bool modified = IsInitialCommit(committed_reader.Meta()) ||
+  const bool modified = info.payload_changed ||
+                        IsInitialCommit(committed_reader.Meta()) ||
                         existing.modified || incoming.modified ||
                         flushed.modified || !files_to_sync.empty();
 

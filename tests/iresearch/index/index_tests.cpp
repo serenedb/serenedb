@@ -11191,6 +11191,35 @@ TEST_P(IndexTestCase11, initial_commit_payload) {
   ASSERT_EQ(reader, writer->GetSnapshot());
 }
 
+TEST_P(IndexTestCase11, changed_payload_commits_without_changes) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+  const auto* doc = gen.next();
+
+  auto writer_options = irs::tests::DefaultWriterOptions();
+  std::string input_payload = "init";
+  writer_options.meta_payload_writer = [&input_payload](
+                                         const irs::SourcePosition&,
+                                         duckdb::BinarySerializer& out) {
+    out.WriteProperty<std::string>(0, "payload", input_payload);
+  };
+  auto writer = open_writer(irs::kOmCreate, std::move(writer_options));
+  ASSERT_TRUE(Insert(*writer, *doc));
+  ASSERT_TRUE(writer->RefreshCommit());
+  const auto reader = writer->GetSnapshot();
+
+  input_payload = "changed";
+  ASSERT_FALSE(writer->RefreshCommit());
+  ASSERT_EQ(reader, writer->GetSnapshot());
+
+  ASSERT_TRUE(writer->RefreshCommit({.payload_changed = true}));
+  const auto changed = writer->GetSnapshot();
+  ASSERT_NE(reader, changed);
+  ASSERT_EQ(input_payload, ReadMetaPayload(dir(), changed));
+  ASSERT_EQ(1, changed.size());
+  ASSERT_EQ(1, changed.live_docs_count());
+}
+
 TEST_P(IndexTestCase11, commit_payload) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);

@@ -606,6 +606,9 @@ class PostingLeaf {
     return {.leaf = leaf, .bitset = bitset, .len = len};
   }
 
+  [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Grows,
+                                    GrowingHint> _hint;
+  BlockCursor _walk;
   [[no_unique_address]] utils::Need<kEnc, EncBuf> _enc;
   [[no_unique_address]] utils::Need<Shape.holes, HoleBuf> _holes;
   [[no_unique_address]] utils::Need<Shape.freqs, FreqBuf> _freqs;
@@ -622,9 +625,6 @@ class PostingLeaf {
     _provider;
   [[no_unique_address]] utils::Need<Shape.defer, LeafRecipe> _recipe;
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
-  [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Grows,
-                                    GrowingHint> _hint;
-  BlockCursor _walk;
 };
 
 }  // namespace irs::detail

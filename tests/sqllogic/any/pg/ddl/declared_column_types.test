@@ -133,6 +133,25 @@ n	d
 
 
 statement ok
+CREATE TABLE dct_bare (b bpchar, n numeric);
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, atttypmod
+FROM pg_attribute
+WHERE attrelid = 'dct_bare'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	atttypmod
+b	bpchar	-1
+n	numeric	-1
+
+
+statement ok
+DROP TABLE dct_bare;
+
+
+statement ok
 DROP TABLE dct_as;
 
 

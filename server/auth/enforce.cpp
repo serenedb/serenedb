@@ -38,7 +38,6 @@
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
-#include <duckdb/parser/parsed_data/create_role_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/detach_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
@@ -65,7 +64,6 @@
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "connector/duckdb_client_state.h"
-#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 #include "query/config.h"
@@ -76,17 +74,6 @@ namespace {
 using duckdb::AclMode;
 using duckdb::CatalogType;
 using duckdb::LogicalOperatorType;
-
-void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
-  if (const auto* system =
-        pg::FindSystemObject(pg::kSystemNamespaces, schema)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied to create \"", system->name, ".",
-              info.GetQualifiedName().Name().GetIdentifierName(), "\""),
-      ERR_DETAIL("System catalog modifications are currently disallowed."));
-  }
-}
 
 std::vector<std::span<const duckdb::AclItem>> AllColumnAcls(
   const duckdb::TableCatalogEntry& table) {
@@ -143,15 +130,6 @@ bool HasStatementRules(const duckdb::LogicalOperator& root) {
   switch (root.type) {
     case LogicalOperatorType::LOGICAL_EXPLAIN:
       return !root.children.empty() && HasStatementRules(*root.children[0]);
-    case LogicalOperatorType::LOGICAL_CREATE_TABLE:
-    case LogicalOperatorType::LOGICAL_CREATE_VIEW:
-    case LogicalOperatorType::LOGICAL_CREATE_SEQUENCE:
-    case LogicalOperatorType::LOGICAL_CREATE_MACRO:
-    case LogicalOperatorType::LOGICAL_CREATE_TYPE:
-    case LogicalOperatorType::LOGICAL_CREATE_JOB:
-    case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
-    case LogicalOperatorType::LOGICAL_CREATE_ROLE:
-    case LogicalOperatorType::LOGICAL_CREATE_TRIGGER:
     case LogicalOperatorType::LOGICAL_DROP:
     case LogicalOperatorType::LOGICAL_ALTER:
     case LogicalOperatorType::LOGICAL_ATTACH:
@@ -161,17 +139,6 @@ bool HasStatementRules(const duckdb::LogicalOperator& root) {
     default:
       return false;
   }
-}
-
-template<typename Info>
-bool PointAtCluster(Info& info, CatalogType type) {
-  if (type != CatalogType::DATABASE_ENTRY && type != CatalogType::ROLE_ENTRY) {
-    return false;
-  }
-  info.GetQualifiedNameMutable() = duckdb::QualifiedName{
-    duckdb::Identifier{catalog::ClusterCatalog::kDatabaseName},
-    duckdb::Identifier{}, info.GetQualifiedName().Name()};
-  return true;
 }
 
 class Enforcer {
@@ -191,49 +158,19 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_DELETE:
       case LogicalOperatorType::LOGICAL_MERGE_INTO:
         break;
-      case LogicalOperatorType::LOGICAL_CREATE_TABLE: {
-        auto& create = op.Cast<duckdb::LogicalCreateTable>();
-        RequireUserSchema(create.schema.oid, create.info->Base());
-        break;
-      }
-      case LogicalOperatorType::LOGICAL_CREATE_VIEW:
-      case LogicalOperatorType::LOGICAL_CREATE_SEQUENCE:
-      case LogicalOperatorType::LOGICAL_CREATE_MACRO:
-      case LogicalOperatorType::LOGICAL_CREATE_TYPE:
-      case LogicalOperatorType::LOGICAL_CREATE_JOB:
-      case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
-      case LogicalOperatorType::LOGICAL_CREATE_TRIGGER: {
-        auto& create = op.Cast<duckdb::LogicalCreate>();
-        RequireUserSchema(create.schema->oid, *create.info);
-        break;
-      }
-      case LogicalOperatorType::LOGICAL_CREATE_ROLE: {
-        auto& info =
-          op.Cast<duckdb::LogicalCreate>().info->Cast<duckdb::CreateRoleInfo>();
-        PointAtCluster(info, CatalogType::ROLE_ENTRY);
-        _connection.MarkClusterWritten();
-        break;
-      }
       case LogicalOperatorType::LOGICAL_DROP: {
         auto& info = *op.Cast<duckdb::LogicalDrop>().info;
         RequireOutsideTransactionBlock(info);
         RequireDroppableNow(info);
-        if (PointAtCluster(info, info.type)) {
-          _connection.MarkClusterWritten();
-        }
         break;
       }
-      case LogicalOperatorType::LOGICAL_ALTER: {
-        auto& info = *op.Cast<duckdb::LogicalAlter>().info;
-        if (info.type == duckdb::AlterType::ALTER_DATABASE) {
+      case LogicalOperatorType::LOGICAL_ALTER:
+        if (op.Cast<duckdb::LogicalAlter>().info->type ==
+            duckdb::AlterType::ALTER_DATABASE) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                           ERR_MSG("renaming a database is not supported"));
         }
-        if (PointAtCluster(info, info.GetCatalogType())) {
-          _connection.MarkClusterWritten();
-        }
         break;
-      }
       case LogicalOperatorType::LOGICAL_ATTACH:
         RequireDatabaseNotBeingCreated(
           op.Cast<duckdb::LogicalAttach>().info->name);
@@ -258,6 +195,15 @@ class Enforcer {
         }
         break;
       }
+      case LogicalOperatorType::LOGICAL_CREATE_TABLE:
+      case LogicalOperatorType::LOGICAL_CREATE_VIEW:
+      case LogicalOperatorType::LOGICAL_CREATE_SEQUENCE:
+      case LogicalOperatorType::LOGICAL_CREATE_MACRO:
+      case LogicalOperatorType::LOGICAL_CREATE_TYPE:
+      case LogicalOperatorType::LOGICAL_CREATE_JOB:
+      case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
+      case LogicalOperatorType::LOGICAL_CREATE_TRIGGER:
+      case LogicalOperatorType::LOGICAL_CREATE_ROLE:
       case LogicalOperatorType::LOGICAL_CREATE_INDEX:
       case LogicalOperatorType::LOGICAL_VACUUM:
       case LogicalOperatorType::LOGICAL_CREATE_SCHEMA:

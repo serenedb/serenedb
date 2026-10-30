@@ -144,10 +144,6 @@ class ConnectionContext final : public query::Transaction {
     return _side_channel.Get<T>();
   }
 
-  void MarkClusterWritten() noexcept { _cluster_written = true; }
-  bool ClusterWritten() const noexcept { return _cluster_written; }
-  void ClearClusterWritten() noexcept { _cluster_written = false; }
-
   bool InTransactionBlock() const noexcept { return _in_transaction_block; }
   void SetInTransactionBlock(bool value) noexcept {
     _in_transaction_block = value;
@@ -199,7 +195,6 @@ class ConnectionContext final : public query::Transaction {
   duckdb::idx_t _effective_role_id;
   SideChannel _side_channel;
   bool _in_transaction_block = false;
-  bool _cluster_written = false;
   std::atomic<NoticeNode*> _notices{nullptr};
 };
 

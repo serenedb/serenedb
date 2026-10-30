@@ -458,17 +458,20 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
     path.emplace_back(part.GetValue<std::string>());
   }
   const auto qualified = duckdb::QualifiedName::FromPath(std::move(path));
-  auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
-    context, qualified, duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!index || !IsInvertedIndex(*index)) {
+  const duckdb::EntryLookupInfo lookup{duckdb::CatalogType::INDEX_ENTRY,
+                                       qualified};
+  auto found = input.binder
+                 ? input.binder->EntryRetriever().GetEntry(
+                     lookup, duckdb::OnEntryNotFound::RETURN_NULL)
+                 : duckdb::Catalog::GetEntry(
+                     context, lookup, duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!found || found->type != duckdb::CatalogType::INDEX_ENTRY ||
+      !IsInvertedIndex(found->Cast<duckdb::IndexCatalogEntry>())) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", qualified.Name().GetIdentifierName(),
                             "\" does not exist"));
   }
-  if (input.binder) {
-    input.binder->GetStatementProperties().RegisterDBRead(
-      index->ParentCatalog(), context);
-  }
+  auto index = &found->Cast<duckdb::IndexCatalogEntry>();
   const auto& entry = irs::utils::downCast<catalog::InvertedIndexEntry>(*index);
   auto host = index->GetRelation(index->catalog.GetCatalogTransaction(context));
   if (!host) {
@@ -478,6 +481,13 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
               "\" does not exist"));
   }
   auto& relation = *host;
+  if (const auto principal = input.binder ? input.binder->principal : nullptr;
+      principal && relation.type == duckdb::CatalogType::VIEW_ENTRY &&
+      !duckdb::IsUnowned(relation) &&
+      !principal->Can(duckdb::CatalogType::TABLE_ENTRY, relation.permissions,
+                      duckdb::AclMode::Select)) {
+    duckdb::ThrowPermissionDenied(relation);
+  }
   const auto* search_table =
     dynamic_cast<const catalog::SearchTableEntry*>(&relation);
   auto data =

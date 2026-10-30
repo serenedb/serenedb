@@ -272,6 +272,12 @@ duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
   auto entry = input.binder->EntryRetriever().GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::JOB_ENTRY, name},
     duckdb::OnEntryNotFound::THROW_EXCEPTION);
+  if (const auto caller = input.binder->principal ? context.principal : nullptr;
+      caller && !caller->Owns(entry->permissions.owner)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("must be owner of job ", entry->name.GetIdentifierName()));
+  }
   return duckdb::make_uniq<ExecuteJobData>(
     entry->Cast<catalog::JobCatalogEntry>());
 }

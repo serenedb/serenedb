@@ -81,7 +81,6 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/scan/scan_bind.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
@@ -222,6 +221,34 @@ duckdb::LogicalOperator& StatementRoot(duckdb::LogicalOperator& root) {
   return root;
 }
 
+bool HasStatementRules(const duckdb::LogicalOperator& root) {
+  switch (root.type) {
+    case LogicalOperatorType::LOGICAL_EXPLAIN:
+      return !root.children.empty() && HasStatementRules(*root.children[0]);
+    case LogicalOperatorType::LOGICAL_CREATE_TABLE:
+    case LogicalOperatorType::LOGICAL_CREATE_VIEW:
+    case LogicalOperatorType::LOGICAL_CREATE_SEQUENCE:
+    case LogicalOperatorType::LOGICAL_CREATE_MACRO:
+    case LogicalOperatorType::LOGICAL_CREATE_TYPE:
+    case LogicalOperatorType::LOGICAL_CREATE_JOB:
+    case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
+    case LogicalOperatorType::LOGICAL_CREATE_ROLE:
+    case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
+    case LogicalOperatorType::LOGICAL_CREATE_TRIGGER:
+    case LogicalOperatorType::LOGICAL_CREATE_SCHEMA:
+    case LogicalOperatorType::LOGICAL_CREATE_INDEX:
+    case LogicalOperatorType::LOGICAL_DROP:
+    case LogicalOperatorType::LOGICAL_ALTER:
+    case LogicalOperatorType::LOGICAL_ATTACH:
+    case LogicalOperatorType::LOGICAL_DETACH:
+    case LogicalOperatorType::LOGICAL_VACUUM:
+    case LogicalOperatorType::LOGICAL_EXECUTE:
+      return true;
+    default:
+      return false;
+  }
+}
+
 template<typename Info>
 bool PointAtCluster(Info& info, CatalogType type) {
   if (type != CatalogType::DATABASE_ENTRY && type != CatalogType::ROLE_ENTRY) {
@@ -257,13 +284,7 @@ class Enforcer {
  private:
   void Check(duckdb::LogicalOperator& op) {
     switch (op.type) {
-      case LogicalOperatorType::LOGICAL_GET: {
-        auto& get = op.Cast<duckdb::LogicalGet>();
-        if (_enforce || PrincipalFor(get.table_index.index) != _caller) {
-          CheckGet(get);
-        }
-        break;
-      }
+      case LogicalOperatorType::LOGICAL_GET:
       case LogicalOperatorType::LOGICAL_INSERT:
       case LogicalOperatorType::LOGICAL_UPDATE:
       case LogicalOperatorType::LOGICAL_DELETE:
@@ -512,63 +533,6 @@ class Enforcer {
     return *_caller_memberships;
   }
 
-  duckdb::idx_t PrincipalFor(duckdb::idx_t table_index) const {
-    const duckdb::StatementProperties::ViewScope* inner = nullptr;
-    for (const auto& scope : _props.view_scopes) {
-      if (duckdb::IsUnowned(*scope.view)) {
-        continue;
-      }
-      if (scope.begin <= table_index && table_index < scope.end &&
-          (!inner || scope.end - scope.begin < inner->end - inner->begin)) {
-        inner = &scope;
-      }
-    }
-    if (!inner || inner->view->security_invoker) {
-      return _caller;
-    }
-    return inner->view->permissions.owner;
-  }
-
-  void CheckIndexScan(duckdb::LogicalGet& get) {
-    if (get.function.GetName() != "iresearch_scan") {
-      return;
-    }
-    const auto& bind = get.bind_data->Cast<connector::ScanBindData>();
-    if (!bind.relation.inverted_index) {
-      return;
-    }
-    const auto& index = *bind.relation.inverted_index;
-    if (index.catalog.GetCatalogType() !=
-        catalog::SereneDBCatalog::kStorageType) {
-      RequireServerUsage(index.catalog.GetName());
-    }
-    if (!bind.IsViewBacked()) {
-      return;
-    }
-    auto view =
-      index.GetRelation(index.catalog.GetCatalogTransaction(_context));
-    if (!view || view->type != CatalogType::VIEW_ENTRY ||
-        duckdb::IsUnowned(*view)) {
-      return;
-    }
-    if (!ClosureOf(PrincipalFor(get.table_index.index))
-           .Can(CatalogType::TABLE_ENTRY, view->permissions, AclMode::Select)) {
-      duckdb::ThrowPermissionDenied(*view);
-    }
-  }
-
-  void CheckGet(duckdb::LogicalGet& get) {
-    auto table = get.GetTable();
-    if (!table) {
-      CheckIndexScan(get);
-      return;
-    }
-    if (table->catalog.GetCatalogType() !=
-        catalog::SereneDBCatalog::kStorageType) {
-      RequireServerUsage(table->catalog.GetName());
-    }
-  }
-
   void CheckResolved() {
     const bool defines_relation =
       _root.type == LogicalOperatorType::LOGICAL_CREATE_TABLE ||
@@ -617,9 +581,6 @@ class Enforcer {
                                    AclMode::Usage)) {
             duckdb::ThrowPermissionDenied(*entry);
           }
-          break;
-        case CatalogType::JOB_ENTRY:
-          RequireOwner(*entry);
           break;
         default:
           break;
@@ -1282,13 +1243,6 @@ class Enforcer {
       .GetEntry(catalog.GetCatalogTransaction(_context),
                 duckdb::Identifier{name});
   }
-  void RequireServerUsage(const duckdb::Identifier& name) {
-    auto server = FindServer(_context, name);
-    if (server && !_caller_closure.Can(CatalogType::FOREIGN_SERVER_ENTRY,
-                                       server->permissions, AclMode::Usage)) {
-      duckdb::ThrowPermissionDenied(*server);
-    }
-  }
 
   void Stamp(duckdb::CreateInfo& info, CatalogType objtype,
              duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema) {
@@ -1377,7 +1331,9 @@ class Enforcer {
 
 void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan) {
-  Enforcer{context, connection, binder, plan}.Run();
+  if (HasStatementRules(StatementRoot(plan))) {
+    Enforcer{context, connection, binder, plan}.Run();
+  }
 }
 
 namespace {

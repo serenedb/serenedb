@@ -115,7 +115,7 @@ connection sfp_reader user=sfp_reader password=sfp_pw
 statement error
 SELECT count(*) FROM sfp_session.pg_catalog.pg_hba_file_rules;
 ----
-db error: ERROR: permission denied for function pg_hba_file_rules
+db error: ERROR: permission denied for view pg_hba_file_rules
 
 
 connection default

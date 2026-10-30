@@ -24,6 +24,7 @@
 #include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <absl/synchronization/mutex.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 
@@ -109,30 +110,43 @@ void SyncWal(duckdb::AttachedDatabase& db) {
 
 }  // namespace
 
-void OpenPendingStorages() {
+std::vector<MissingStorage> OpenSearchStorages(
+  std::span<const duckdb::reference<catalog::SereneDBCatalog>> catalogs) {
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance());
   duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
-  for (auto& index : InvertedIndexEntries()) {
-    const auto& storage = index.get().Storage();
-    if (!storage || !storage->OpenPending()) {
-      continue;
-    }
+  absl::Mutex mutex;
+  std::vector<MissingStorage> missing;
+  const auto open = [&](const duckdb::CatalogEntry& entry, auto storage,
+                        auto... settings) {
     executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
-      executor, [storage] { storage->OpenPendingWriter(); },
+      executor,
+      [&mutex, &missing, &entry, storage = std::move(storage),
+       ... settings = std::move(settings)] {
+        if (!storage->Open(settings...)) {
+          absl::MutexLock lock{&mutex};
+          missing.push_back({.entry = entry, .path = storage->Path()});
+        }
+      },
       "SearchOpenStorage"));
-  }
-  for (auto& catalog : SereneDBCatalogs()) {
-    for (auto& table : catalog::SearchTableStorages(catalog.get())) {
-      if (!table->OpenPending()) {
-        continue;
+  };
+  for (auto& catalog : catalogs) {
+    for (const catalog::SearchTableEntry& table :
+         catalog::SearchTableEntries(catalog.get())) {
+      open(table, table.Storage());
+    }
+    for (const catalog::InvertedIndexEntry& index :
+         catalog::InvertedIndexEntries(catalog.get())) {
+      if (const auto& storage = index.Storage()) {
+        open(index, storage, catalog::ResolveSettings(index.options));
       }
-      executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
-        executor, [table] { table->OpenPendingWriter(); },
-        "SearchOpenStorage"));
     }
   }
   executor.WorkOnTasks();
+  absl::c_sort(missing, [](const MissingStorage& a, const MissingStorage& b) {
+    return a.entry.get().oid < b.entry.get().oid;
+  });
+  return missing;
 }
 
 void RecoverSearchStorages() {
@@ -153,7 +167,6 @@ void RecoverSearchStorages() {
   };
   for (auto& index : InvertedIndexEntries()) {
     const auto& storage = index.get().Storage();
-    SDB_ASSERT(!storage || !storage->OpenPending());
     if (!storage || !index.get().info) {
       continue;
     }
@@ -163,7 +176,6 @@ void RecoverSearchStorages() {
   for (auto& catalog : SereneDBCatalogs()) {
     auto& db = catalog.get().GetAttached();
     for (auto& table : catalog::SearchTableStorages(catalog.get())) {
-      SDB_ASSERT(!table->OpenPending());
       add_database(db);
       tables.emplace_back(db, std::move(table));
     }

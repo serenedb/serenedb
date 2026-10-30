@@ -97,33 +97,28 @@
 #include "scheduler/job_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
+#include "search/wal_recovery.h"
 
 namespace sdb::catalog {
 namespace {
 
 constexpr uint64_t kPkSequenceCache = uint64_t{1} << 20;
 
-template<typename Storage>
-void OpenReadOnly(const std::filesystem::path& directory, std::string_view kind,
-                  const duckdb::CatalogEntry& entry, duckdb::idx_t tablespace,
-                  Storage& storage) {
+std::string_view StorageKind(const duckdb::CatalogEntry& entry) {
+  return entry.type == duckdb::CatalogType::TABLE_ENTRY ? "search table"
+                                                        : "inverted index";
+}
+
+void RefuseTablespace(const std::filesystem::path& directory,
+                      const duckdb::CatalogEntry& entry,
+                      duckdb::idx_t tablespace) {
   if (tablespace != 0) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("cannot attach \"", directory.string(), "\" read-only: ", kind,
-              " \"", entry.name.GetIdentifierName(),
-              "\" is placed in a tablespace"));
-  }
-  if (storage.Absent()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_FILE),
       ERR_MSG("cannot attach \"", directory.string(),
-              "\" read-only: the files of ", kind, " \"",
-              entry.name.GetIdentifierName(), "\" are missing"),
-      ERR_HINT("A database created in a tablespace on an object store keeps "
-               "them in the tablespace."));
+              "\" read-only: ", StorageKind(entry), " \"",
+              entry.name.GetIdentifierName(), "\" is placed in a tablespace"));
   }
-  storage.OpenReader();
 }
 
 }  // namespace
@@ -579,14 +574,24 @@ void SereneDBCatalog::FinalizeLoad(
   duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path,
                                        _directory->Oid());
   for (const SearchTableEntry& table : SearchTableEntries(*this)) {
-    OpenReadOnly(path, "search table", table, table.Tablespace(),
-                 *table.Storage());
+    RefuseTablespace(path, table, table.Tablespace());
   }
   for (const InvertedIndexEntry& index : InvertedIndexEntries(*this)) {
-    if (const auto& index_storage = index.Storage()) {
-      OpenReadOnly(path, "inverted index", index, index.Tablespace(),
-                   *index_storage);
+    if (index.Storage()) {
+      RefuseTablespace(path, index, index.Tablespace());
     }
+  }
+  const duckdb::reference<SereneDBCatalog> catalogs[] = {*this};
+  if (const auto missing = search::OpenSearchStorages(catalogs);
+      !missing.empty()) {
+    const auto& entry = missing.front().entry.get();
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_FILE),
+      ERR_MSG("cannot attach \"", path.string(), "\" read-only: the files of ",
+              StorageKind(entry), " \"", entry.name.GetIdentifierName(),
+              "\" are missing"),
+      ERR_HINT("A database created in a tablespace on an object store keeps "
+               "them in the tablespace."));
   }
   auto attached = GetAttached().shared_from_this();
   duckdb::MetaTransaction::Get(*context).UseDatabase(attached);

@@ -72,32 +72,15 @@ std::string MemoryRoot(const duckdb::AttachedDatabase& database,
 std::optional<std::string> StoragePath(
   duckdb::AttachedDatabase& database,
   const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
-  StorageOpen open) {
+  bool is_new) {
   if (database.GetStorageManager().InMemory()) {
     return std::nullopt;
   }
   SDB_ASSERT(parent);
-  switch (open) {
-    case StorageOpen::Create:
-      return parent->CreateStorage(oid);
-    case StorageOpen::Open:
-      return parent->OpenStorage(oid);
-    case StorageOpen::Defer:
-      return parent->StoragePath(oid);
-  }
-  SDB_UNREACHABLE();
+  return is_new ? parent->CreateStorage(oid) : parent->StoragePath(oid);
 }
 
 }  // namespace
-
-StorageOpen StorageOpenOf(duckdb::AttachedDatabase& database, bool is_new) {
-  if (is_new) {
-    return StorageOpen::Create;
-  }
-  return database.IsReadOnly() || database.GetStorageManager().IsLoaded()
-           ? StorageOpen::Open
-           : StorageOpen::Defer;
-}
 
 IndexStamp IndexStamp::Read(duckdb::BinaryDeserializer& in) {
   IndexStamp stamp;
@@ -119,9 +102,9 @@ IndexStamp IndexStamp::Read(duckdb::BinaryDeserializer& in) {
 IndexDurability::IndexDurability(
   duckdb::AttachedDatabase& database, std::string name,
   const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
-  StorageOpen open)
+  bool is_new)
   : IndexDurability{database, std::move(name),
-                    StoragePath(database, parent, oid, open), oid} {}
+                    StoragePath(database, parent, oid, is_new), oid} {}
 
 IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
                                  std::string name,
@@ -130,14 +113,7 @@ IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
   : _database{database.shared_from_this()},
     _name{std::move(name)},
     _files{irs::DuckDBEngine::Instance().instance(),
-           path ? *path : MemoryRoot(database, oid)},
-    _absent{!path && !database.GetStorageManager().InMemory()} {}
-
-bool IndexDurability::Locate(const catalog::StorageDirectory& parent,
-                             duckdb::idx_t oid) {
-  _absent = !parent.OpenStorage(oid);
-  return !_absent;
-}
+           path ? *path : MemoryRoot(database, oid)} {}
 
 std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp>
 IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,

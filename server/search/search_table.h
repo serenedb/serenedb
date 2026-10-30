@@ -70,7 +70,7 @@ namespace sdb::search {
 class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                           public MaintainedStore {
  public:
-  // `is_new` opens a fresh index; otherwise the durable one is reopened.
+  // `is_new` opens a fresh index; otherwise Open() opens the durable one.
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
   SearchTable(std::optional<catalog::StorageDirectory> parent,
@@ -103,15 +103,12 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
 
   void MarkDropped() noexcept {
-    if (_writer || _open_pending) {
+    if (_writer) {
       _dropped.store(true, std::memory_order_release);
     }
   }
   std::string Path() const { return _parent->StoragePath(GetTableId()); }
-  bool Absent() const noexcept { return _durability.Absent(); }
-  void OpenReader();
-  bool OpenPending() const noexcept { return _open_pending; }
-  void OpenPendingWriter();
+  [[nodiscard]] bool Open();
 
   // `exclusive_segment` is required of a writer that will record its flushed
   // segments in the WAL -- see irs::IndexWriter::GetBatch.
@@ -316,6 +313,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   duckdb::idx_t _db_id;
   duckdb::idx_t _table_id;
   std::optional<catalog::StorageDirectory> _parent;
+  bool _read_only;
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
   catalog::CompressionByColumn _compression;
@@ -324,7 +322,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   mutable absl::Mutex _layout_mutex;
   Layout _layout ABSL_GUARDED_BY(_layout_mutex);
   std::shared_ptr<irs::IndexWriter> _writer;
-  bool _open_pending = false;
   irs::DirectoryReader _reader;
   std::optional<irs::ScorerOptions> _topk_options;
   std::unique_ptr<irs::Scorer> _topk_scorer;

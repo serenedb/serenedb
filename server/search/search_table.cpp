@@ -116,31 +116,34 @@ SearchTable::SearchTable(std::optional<catalog::StorageDirectory> parent,
   : _db_id{database.oid},
     _table_id{table_id},
     _parent{std::move(parent)},
+    _read_only{database.IsReadOnly()},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
     _compression{DeclaredCompression(columns)},
     _table_columns{TableColumns(columns)},
     _durability{database, absl::StrCat("search table ", table_id), _parent,
-                table_id, StorageOpenOf(database, is_new)} {
+                table_id, is_new} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
   }
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
-  if (StorageOpenOf(database, is_new) == StorageOpen::Defer) {
-    _open_pending = true;
-  } else if (!database.IsReadOnly()) {
-    OpenWriter(is_new);
+  if (is_new) {
+    OpenWriter(true);
   }
   ApplyOptions(options);
 }
 
-void SearchTable::OpenPendingWriter() {
-  SDB_ASSERT(_open_pending);
-  _open_pending = false;
-  if (_durability.Locate(*_parent, _table_id)) {
+bool SearchTable::Open() {
+  if (!_parent->OpenStorage(_table_id)) {
+    return false;
+  }
+  if (_read_only) {
+    _reader = _durability.OpenReader(ReaderOptions()).first;
+  } else {
     OpenWriter(false);
   }
+  return true;
 }
 
 SearchTable::~SearchTable() {
@@ -182,10 +185,6 @@ void SearchTable::OpenWriter(bool is_new) {
       }
     }
   }
-}
-
-void SearchTable::OpenReader() {
-  _reader = _durability.OpenReader(ReaderOptions()).first;
 }
 
 irs::IndexReaderOptions SearchTable::ReaderOptions() const {

@@ -62,9 +62,10 @@ InvertedIndexStorage::InvertedIndexStorage(
   : _index_id{index_id},
     _db_id{database.oid},
     _parent{std::move(parent)},
+    _read_only{database.IsReadOnly()},
     _search{GetSearchEngine()},
     _durability{database, absl::StrCat("inverted index ", index_id), _parent,
-                index_id, StorageOpenOf(database, is_new)} {
+                index_id, is_new} {
   SetTasksSettings(options);
 
   SDB_ASSERT(index_id != 0);
@@ -75,22 +76,21 @@ InvertedIndexStorage::InvertedIndexStorage(
     _topk_scorer = MakeScorer(*scorer_options);
   }
 
-  if (database.IsReadOnly()) {
-    return;
+  if (is_new) {
+    OpenWriter(true, options);
   }
-  if (StorageOpenOf(database, is_new) == StorageOpen::Defer) {
-    _pending_options = options;
-    return;
-  }
-  OpenWriter(is_new, options);
 }
 
-void InvertedIndexStorage::OpenPendingWriter() {
-  SDB_ASSERT(_pending_options);
-  const auto options = *std::exchange(_pending_options, std::nullopt);
-  if (_durability.Locate(*_parent, _index_id)) {
+bool InvertedIndexStorage::Open(const catalog::InvertedIndexSettings& options) {
+  if (!_parent->OpenStorage(_index_id)) {
+    return false;
+  }
+  if (_read_only) {
+    OpenReader();
+  } else {
     OpenWriter(false, options);
   }
+  return true;
 }
 
 void InvertedIndexStorage::OpenWriter(
@@ -156,10 +156,6 @@ InvertedIndexStorage::~InvertedIndexStorage() {
 void InvertedIndexStorage::ApplyOptions(
   const catalog::InvertedIndexSettings& options) {
   SetTasksSettings(options);
-  if (_pending_options) {
-    *_pending_options = options;
-    return;
-  }
   if (!_writer) {
     return;
   }

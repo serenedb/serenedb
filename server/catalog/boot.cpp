@@ -62,8 +62,6 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tablespace.h"
 #include "pg/catalog/oids.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
 #include "search/wal_recovery.h"
 
 ABSL_FLAG(std::string, missing_database, "refuse",
@@ -93,24 +91,13 @@ std::vector<StorageEntry> ListStoragesOrDie(const std::string& directory) {
   }
 }
 
-template<typename Storage>
-void RequirePresent(const Storage& storage, const duckdb::CatalogEntry& entry) {
-  if (storage.Absent()) {
-    SDB_FATAL(STARTUP, "the storage '", storage.Path(), "' of ",
-              entry.name.GetIdentifierName(), " (oid ", entry.oid,
-              ") is missing");
-  }
-}
-
 absl::flat_hash_set<duckdb::idx_t> StorageOids(SereneDBCatalog& catalog) {
   absl::flat_hash_set<duckdb::idx_t> oids;
   for (const SearchTableEntry& table : SearchTableEntries(catalog)) {
-    RequirePresent(*table.Storage(), table);
     oids.insert(table.oid);
   }
   for (const InvertedIndexEntry& index : InvertedIndexEntries(catalog)) {
-    if (const auto& storage = index.Storage()) {
-      RequirePresent(*storage, index);
+    if (index.Storage()) {
       oids.insert(index.oid);
     }
   }
@@ -390,7 +377,17 @@ void InitCatalog(std::string_view directory) {
         "SweepStorages"));
     }
   }
-  search::OpenPendingStorages();
+  std::vector<duckdb::reference<SereneDBCatalog>> catalogs;
+  for (const auto& database : storages) {
+    catalogs.push_back(database.catalog);
+  }
+  if (const auto missing = search::OpenSearchStorages(catalogs);
+      !missing.empty()) {
+    const auto& [entry, path] = missing.front();
+    SDB_FATAL(STARTUP, "the storage '", path, "' of ",
+              entry.get().name.GetIdentifierName(), " (oid ", entry.get().oid,
+              ") is missing");
+  }
   listings.WorkOnTasks();
   RemoveUnownedStorages(storages);
   for (const auto& db : manager.GetDatabases()) {

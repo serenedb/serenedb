@@ -100,14 +100,15 @@ class Worker(threading.Thread):
                     and not self.model.is_shared(key):
                 self.model.declare_shared(key)
 
-    def _scope_for(self, key):
-        if key is None:
-            return "private"
-        if self.model.is_shared(key):
-            return "shared"
-        cands = self.model.candidates(key)
-        if cands is not None and len(cands) > 1:
-            return "shared"
+    def _scope_for(self, op):
+        for key in (op.key, *op.needs):
+            if key is None:
+                continue
+            if self.model.is_shared(key):
+                return "shared"
+            cands = self.model.candidates(key)
+            if cands is not None and len(cands) > 1:
+                return "shared"
         return "private"
 
     def _apply(self, op, outcome):
@@ -184,7 +185,7 @@ class Worker(threading.Thread):
                 outcome, sqlstate, msg = self._execute(op)
                 duration = time.monotonic() - started
                 dead = outcome is Outcome.UNKNOWN_CRASH
-                scope = self._scope_for(op.key)
+                scope = self._scope_for(op)
                 cls = classify.classify(
                     sqlstate if outcome is not Outcome.COMMITTED else None,
                     msg, op.kind, scope,

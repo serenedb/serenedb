@@ -24,11 +24,13 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 : "${SDB_STRESS_SEED:=}"
 : "${SDB_STRESS_OUTDIR:=${WORKSPACE}/out/stress}"
 : "${SDB_STRESS_JUNIT:=}"
+: "${SDB_STRESS_HARNESS:=}"
 
 usage() {
 	cat <<-EOF
 		Usage: $0 [OPTIONS]
 
+		  --harness          run the harness's own pytest tests instead of a stress run
 		  --profile NAME     smoke | soak | soak-tsan | wedge-probe | biglake-reindex-smoke (default ${SDB_STRESS_PROFILE})
 		  --scenario NAME    ddl_churn | ddl_dml_race | dependency_churn |
 		                     serial_churn | tables_only
@@ -47,6 +49,10 @@ while [ $# -gt 0 ]; do
 	-h | --help)
 		usage
 		exit 0
+		;;
+	--harness)
+		SDB_STRESS_HARNESS=1
+		shift
 		;;
 	--profile)
 		SDB_STRESS_PROFILE="$2"
@@ -84,26 +90,33 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-if [[ ! -x "$SERENED" ]]; then
-	echo "[stress] serened not found at $SERENED" >&2
-	exit 1
-fi
-
 PYTHON="${PYTHON:-python3}"
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
 	echo "[stress] python3 not found" >&2
 	exit 1
 fi
 
-if ! "$PYTHON" -c "import psycopg" >/dev/null 2>&1; then
+modules=psycopg
+[[ -n "$SDB_STRESS_HARNESS" ]] && modules=psycopg,pytest
+if ! "$PYTHON" -c "import ${modules}" >/dev/null 2>&1; then
 	VENV="${WORKSPACE}/tests/drivers/python/.venv"
-	if [[ -x "${VENV}/bin/python3" ]] && "${VENV}/bin/python3" -c "import psycopg" >/dev/null 2>&1; then
+	if [[ -x "${VENV}/bin/python3" ]] && "${VENV}/bin/python3" -c "import ${modules}" >/dev/null 2>&1; then
 		PYTHON="${VENV}/bin/python3"
 	else
-		echo "[stress] psycopg not importable and no usable venv at ${VENV}" >&2
-		echo "[stress] provision it with: tests/drivers/python/run.sh (or pip install psycopg[binary])" >&2
+		echo "[stress] ${modules} not importable and no usable venv at ${VENV}" >&2
+		echo "[stress] provision it with: tests/drivers/python/run.sh (or pip install psycopg[binary] pytest)" >&2
 		exit 1
 	fi
+fi
+
+if [[ -n "$SDB_STRESS_HARNESS" ]]; then
+	cd "$SCRIPT_DIR" || exit 1
+	exec "$PYTHON" -m pytest -q -p no:cacheprovider ${SDB_STRESS_JUNIT:+"--junitxml=${SDB_STRESS_JUNIT}/harness.xml"}
+fi
+
+if [[ ! -x "$SERENED" ]]; then
+	echo "[stress] serened not found at $SERENED" >&2
+	exit 1
 fi
 
 args=(--profile "$SDB_STRESS_PROFILE" --binary "$SERENED" --outdir "$SDB_STRESS_OUTDIR")

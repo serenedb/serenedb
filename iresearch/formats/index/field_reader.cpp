@@ -23,10 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
-#ifdef __BMI2__
-#include <immintrin.h>
-#endif
-
 #include <array>
 #include <bit>
 #include <cstring>
@@ -85,18 +81,6 @@ void SetBitOf(std::vector<uint64_t>& words, uint64_t bit) noexcept {
 
 bool BitOf(std::span<const uint64_t> words, uint64_t bit) noexcept {
   return CheckBit(words[bit / kWordBits], bit % kWordBits);
-}
-
-uint64_t SelectInWord(uint64_t bits, uint64_t rank) noexcept {
-#ifdef __BMI2__
-  return static_cast<uint64_t>(
-    std::countr_zero(_pdep_u64(uint64_t{1} << rank, bits)));
-#else
-  for (; rank != 0; --rank) {
-    bits &= bits - 1;
-  }
-  return static_cast<uint64_t>(std::countr_zero(bits));
-#endif
 }
 
 uint32_t Find(const BlockView& view, Probe key,

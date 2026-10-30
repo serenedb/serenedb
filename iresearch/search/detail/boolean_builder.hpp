@@ -227,6 +227,7 @@ inline constexpr bool kScoredLeadWindow =
 
 inline constexpr uint64_t kScoredScanValues = 2;
 inline constexpr uint64_t kWindowPasses = 2;
+inline constexpr uint64_t kMaskWordsPerLeadDoc = 2;
 
 template<typename Family, typename Scoring, typename Ctx>
 Result<Family> MakeScoredLeadWindow(std::span<const PostingClause> must,
@@ -242,6 +243,9 @@ Result<Family> MakeScoredLeadWindow(std::span<const PostingClause> must,
     return {};
   }
   const uint64_t lead_docs = CookieOf(lead).docs_count;
+  if (lead_docs * kMaskWordsPerLeadDoc * kWindowBits < segment.docs_count()) {
+    return {};
+  }
   const auto* const doc = DocOf(FieldOf(lead, nullptr));
   const uint64_t windows = std::min<uint64_t>(
     lead_docs, (segment.docs_count() + kWindowDocs - 1) / kWindowDocs);

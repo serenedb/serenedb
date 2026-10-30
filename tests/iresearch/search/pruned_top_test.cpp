@@ -28,6 +28,7 @@
 #include <duckdb/common/allocator.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <limits>
@@ -112,6 +113,53 @@ std::string ExpansionTerm(doc_id_t i) {
   return absl::StrCat("pfx", Mix(uint64_t{i} * 31 + 7) % 200);
 }
 
+std::string TermsText(doc_id_t i) {
+  std::string text = "doc";
+  for (const auto& spec : kSpecs) {
+    if (spec.has(i)) {
+      for (auto n = spec.freq ? spec.freq(i) : Freq(spec.salt, i); n != 0;
+           --n) {
+        absl::StrAppend(&text, " ", spec.term);
+      }
+    }
+  }
+  for (auto n = Padding(i); n != 0; --n) {
+    absl::StrAppend(&text, " pad");
+  }
+  if (HasExpansion(i)) {
+    absl::StrAppend(&text, " ", ExpansionTerm(i));
+  }
+  return text;
+}
+
+std::string PhrasesText(doc_id_t i) {
+  std::string text = "doc";
+  const auto repeat = [&](uint64_t salt, uint64_t permille,
+                          std::string_view words) {
+    if (Chance(salt, i, permille)) {
+      for (auto n = Freq(salt, i); n != 0; --n) {
+        absl::StrAppend(&text, " ", words);
+      }
+    }
+  };
+  repeat(31, 2, "harbor town");
+  repeat(32, 600, "town");
+  repeat(33, 5, "medal of honor");
+  repeat(34, 10, "medal");
+  repeat(35, 20, "honor");
+  repeat(36, 700, "of");
+  if (Chance(37, i, 3)) {
+    absl::StrAppend(&text, " visit port", Mix(uint64_t{i} * 13 + 5) % 40);
+  }
+  if (Chance(38, i, 500)) {
+    absl::StrAppend(&text, " port", Mix(uint64_t{i} * 17 + 3) % 40);
+  }
+  for (auto n = Padding(i); n != 0; --n) {
+    absl::StrAppend(&text, " pad");
+  }
+  return text;
+}
+
 struct Shape {
   std::vector<std::string_view> must;
   std::vector<std::string_view> must_not;
@@ -129,9 +177,25 @@ irs::Filter::ptr PrefixOf(std::string_view prefix) {
   return filter;
 }
 
+irs::ByPhrase PhraseOf(std::span<const std::string_view> parts) {
+  irs::ByPhrase filter;
+  *filter.mutable_field_id() = kBodyId;
+  for (const auto part : parts) {
+    if (part.ends_with('*')) {
+      filter.mutable_options()->push_back<irs::ByPrefixOptions>().term =
+        irs::bstring{
+          irs::ViewCast<irs::byte_type>(part.substr(0, part.size() - 1))};
+    } else {
+      filter.mutable_options()->push_back<irs::ByTermOptions>().term =
+        irs::bstring{irs::ViewCast<irs::byte_type>(part)};
+    }
+  }
+  return filter;
+}
+
 class PrunedTopTest : public tests::IndexTestBase {
  protected:
-  void Build() {
+  void Build(std::string (*text)(doc_id_t) = TermsText) {
     irs::IndexWriterOptions options;
     options.reader_options.scorer = &_scorer;
     auto writer = open_writer(irs::kOmCreate, std::move(options));
@@ -141,22 +205,7 @@ class PrunedTopTest : public tests::IndexTestBase {
     tests::Document doc;
     doc.insert(body, true, false);
     for (doc_id_t i = 0; i != kDocs; ++i) {
-      std::string text = "doc";
-      for (const auto& spec : kSpecs) {
-        if (spec.has(i)) {
-          for (auto n = spec.freq ? spec.freq(i) : Freq(spec.salt, i); n != 0;
-               --n) {
-            absl::StrAppend(&text, " ", spec.term);
-          }
-        }
-      }
-      for (auto n = Padding(i); n != 0; --n) {
-        absl::StrAppend(&text, " pad");
-      }
-      if (HasExpansion(i)) {
-        absl::StrAppend(&text, " ", ExpansionTerm(i));
-      }
-      body->value(text);
+      body->value(text(i));
       ASSERT_TRUE(Insert(*writer, doc));
     }
     writer->RefreshCommit();
@@ -268,6 +317,10 @@ class PrunedTopTest : public tests::IndexTestBase {
       group->SetMinShouldMatch(1);
       filter.Add(std::move(group), irs::Occur::Must);
     }
+    CheckRanking(filter);
+  }
+
+  void CheckRanking(const irs::Filter& filter) {
     const auto matches = Matches(filter);
     std::vector<irs::score_t> ranked;
     ranked.reserve(matches.size());
@@ -455,6 +508,20 @@ TEST_P(PrunedTopTest, prefix_unions_across_block_kinds) {
          {.should = {"half"}, .should_prefixes = {"pfx"}},
        }) {
     Check(shape);
+  }
+}
+
+TEST_P(PrunedTopTest, phrases_bound_candidates_before_reading_dense_terms) {
+  Build(PhrasesText);
+  for (const auto& parts : std::vector<std::vector<std::string_view>>{
+         {"harbor", "town"},
+         {"medal", "of", "honor"},
+         {"visit", "port*"},
+         {"harb*", "town"},
+         {"town", "of"},
+       }) {
+    SCOPED_TRACE(absl::StrJoin(parts, " "));
+    CheckRanking(PhraseOf(parts));
   }
 }
 

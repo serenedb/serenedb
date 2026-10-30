@@ -105,6 +105,8 @@ class PostingPos {
 
   uint32_t Estimate() const noexcept { return _docs_count; }
 
+  bool Covers(doc_id_t target) const noexcept { return target <= _max_in_leaf; }
+
   Position& Positions() noexcept { return _pos; }
 
   const BlockIndex* Blocks() {

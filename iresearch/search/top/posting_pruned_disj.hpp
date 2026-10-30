@@ -99,7 +99,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
   }
 
   template<typename Visitor>
-  void ForEachScoredBlock(doc_id_t max, Visitor&& visit) {
+  IRS_FORCE_INLINE void ForEachScoredBlock(doc_id_t max, Visitor&& visit) {
     if (_doc >= max) [[unlikely]] {
       return;
     }
@@ -218,6 +218,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
       return;
     }
     _masked = true;
+    _masked_max = _needs_reposition ? doc_limits::invalid() : _max_in_leaf;
     _lazy = nullptr;
     _leaf.Reset({.bitset = nullptr,
                  .words = 0,
@@ -241,12 +242,14 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
       return;
     }
     const auto len = _leaf.Len();
-    _leaf.Materialize(_base, std::end(_docs) - len);
-    if (_lazy != nullptr) {
-      DecodeFreqs();
+    if (_max_in_leaf != _masked_max) {
+      _leaf.Materialize(_base, std::end(_docs) - len);
+      if (_lazy != nullptr) {
+        DecodeFreqs();
+      }
+      _len = len;
+      _scored = false;
     }
-    _len = len;
-    _scored = false;
     const auto* const it = FirstNotBelow(std::end(_docs) - len, _doc);
     _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - it) - 1;
   }
@@ -267,6 +270,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
     }
   }
 
+  doc_id_t _masked_max = doc_limits::invalid();
   bool _masked = false;
 };
 

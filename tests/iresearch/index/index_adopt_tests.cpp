@@ -1574,6 +1574,42 @@ TEST_F(IndexAdoptTest, ACommitJoinsTheFlushItsPooledSegmentIsPinnedTo) {
   EXPECT_EQ(2, counts.at("commit"))
     << "the refresh flushed one transaction of the commit without the other";
 }
+
+TEST_F(IndexAdoptTest, TransactionsListedBeforeThePooledOneJoinItsFlush) {
+  constexpr std::string_view kSwitch = "pause_irs_commit_after_flush_switch";
+  {
+    auto seed = _writer->GetBatch();
+    ASSERT_TRUE(InsertDoc(seed, "seed"));
+    ASSERT_TRUE(seed.Commit(1));
+  }
+  auto exclusive = _writer->GetBatch(/*exclusive_segment=*/true);
+  ASSERT_TRUE(InsertDoc(exclusive, "commit"));
+  auto idle = _writer->GetBatch();
+  auto pooled = _writer->GetBatch();
+  ASSERT_TRUE(InsertDoc(pooled, "commit"));
+
+  ASSERT_TRUE(duckdb::FaultPoints::Arm(kSwitch));
+  std::thread refresh{[&] { EXPECT_TRUE(_writer->RefreshCommit()); }};
+  absl::Cleanup release = [&] {
+    duckdb::FaultPoints::Arm(absl::StrCat(kSwitch, ":release"));
+    refresh.join();
+    duckdb::FaultPoints::Clear();
+  };
+  while (!duckdb::FaultPoints::Disarm(absl::StrCat(kSwitch, ":parked"))) {
+    std::this_thread::yield();
+  }
+
+  irs::IndexWriter::Transaction* commit[] = {&exclusive, &idle, &pooled};
+  irs::IndexWriter::Transaction::RegisterFlush(commit);
+  ASSERT_TRUE(exclusive.Commit(2));
+  ASSERT_TRUE(pooled.Commit(2));
+  std::move(release).Invoke();
+
+  const auto counts = LiveDocsByName(_writer->GetSnapshot());
+  EXPECT_EQ(1, counts.at("seed"));
+  EXPECT_EQ(2, counts.at("commit"))
+    << "the transaction listed before the pooled one stayed in the next flush";
+}
 #endif
 
 TEST_F(IndexAdoptTest, RefreshesRacingCommitsNeverSplitOne) {

@@ -204,8 +204,8 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
                         duckdb::DropInfo& info);
 
  private:
-  duckdb::idx_t Place(duckdb::CatalogTransaction transaction,
-                      duckdb::CreateInfo& info, std::string_view refusal);
+  void Place(duckdb::CatalogTransaction transaction, duckdb::CreateInfo& info,
+             std::string_view refusal);
 
   std::shared_ptr<DatabaseDirectory> _directory;
   CatalogSnapshots _snapshots{*this};

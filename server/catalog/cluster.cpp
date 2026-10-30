@@ -61,9 +61,7 @@
 #include "catalog/catalog.h"
 #include "catalog/database_directory.h"
 #include "catalog/entry/database.h"
-#include "catalog/entry/inverted_index.h"
 #include "catalog/entry/role.h"
-#include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
@@ -306,13 +304,9 @@ bool ClusterCatalog::HoldsTablespaceObjects(
 
 duckdb::Catalog& ClusterCatalog::ReplayUseCatalog(
   duckdb::ClientContext& context, duckdb::idx_t catalog_oid) {
-  duckdb::optional_ptr<duckdb::CatalogEntry> database;
-  GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-    .Scan(GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
-      if (entry.oid == catalog_oid) {
-        database = entry;
-      }
-    });
+  const auto database =
+    EntryById(GetCatalogTransaction(context),
+              duckdb::CatalogType::DATABASE_ENTRY, catalog_oid);
   if (!database) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
                     ERR_MSG("the catalog log names database ", catalog_oid,
@@ -666,6 +660,17 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
   auto& cluster = ClusterOf(context);
   return cluster.GetCatalogSet(type).GetEntry(
     cluster.GetCatalogTransaction(context), duckdb::Identifier{name});
+}
+
+duckdb::CatalogEntry& RequireTablespace(duckdb::ClientContext& context,
+                                        std::string_view name) {
+  auto tablespace =
+    ClusterEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY, name);
+  if (!tablespace) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("tablespace \"", name, "\" does not exist"));
+  }
+  return *tablespace;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntryById(

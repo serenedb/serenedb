@@ -141,6 +141,8 @@ ClusterCatalog& ClusterOf();
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
   duckdb::ClientContext& context, duckdb::CatalogType type,
   std::string_view name);
+duckdb::CatalogEntry& RequireTablespace(duckdb::ClientContext& context,
+                                        std::string_view name);
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntryById(
   duckdb::ClientContext& context, duckdb::CatalogType type, duckdb::idx_t oid);
 

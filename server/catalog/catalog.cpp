@@ -165,62 +165,54 @@ duckdb::unique_ptr<duckdb::Catalog> MakeTemporaryCatalog(
   return duckdb::make_uniq<SereneDBCatalog>(db, nullptr);
 }
 
-duckdb::idx_t SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
-                                     duckdb::CreateInfo& info,
-                                     std::string_view refusal) {
+void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
+                            duckdb::CreateInfo& info,
+                            std::string_view refusal) {
   const auto requested = std::exchange(info.tablespace, duckdb::Identifier{});
   if (info.oid != 0 || !transaction.HasContext()) {
-    return info.tablespace_oid;
+    return;
   }
+  info.tablespace_oid = 0;
   auto& context = transaction.GetContext();
   const bool named = !requested.empty();
-  std::string name;
+  duckdb::optional_ptr<duckdb::CatalogEntry> tablespace;
   if (named) {
-    name = requested.GetIdentifierName();
+    tablespace = RequireTablespace(context, requested.GetIdentifierName());
   } else if (const auto* connection =
                connector::GetSereneDBContextPtr(context)) {
-    name = connection->Get(kDefaultTablespaceSetting).value_or("");
-  }
-  if (name.empty()) {
-    return 0;
-  }
-  auto tablespace =
-    ClusterEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY, name);
-  if (!tablespace) {
-    if (!named) {
-      return 0;
+    const auto name = connection->Get(kDefaultTablespaceSetting).value_or("");
+    if (!name.empty()) {
+      tablespace =
+        ClusterEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY, name);
     }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("tablespace \"", name, "\" does not exist"));
+  }
+  if (!tablespace) {
+    return;
   }
   if (tablespace->oid == pg::kPgGlobalTablespace) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("only shared relations can be placed in pg_global tablespace"));
   }
-  const auto database =
-    GetAttached().IsTemporary()
-      ? nullptr
-      : ClusterEntryById(context, duckdb::CatalogType::DATABASE_ENTRY,
-                         GetAttached().oid);
-  const auto own = database
-                     ? database->Cast<DatabaseCatalogEntry>().Tablespace()
-                     : pg::kPgDefaultTablespace;
-  if (tablespace->oid == own) {
-    return 0;
-  }
+  duckdb::idx_t own = pg::kPgDefaultTablespace;
   if (GetAttached().IsTemporary()) {
     refusal = "temporary objects cannot be placed in a tablespace";
+  } else if (const auto database =
+               ClusterEntryById(context, duckdb::CatalogType::DATABASE_ENTRY,
+                                GetAttached().oid)) {
+    own = database->Cast<DatabaseCatalogEntry>().Tablespace();
+  }
+  if (tablespace->oid == own) {
+    return;
   }
   if (!refusal.empty()) {
     if (!named) {
-      return 0;
+      return;
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), ERR_MSG(refusal));
   }
-  auth::RequireCreatePrivilege(context, *tablespace);
-  info.dependencies.AddDependency(*tablespace);
-  return tablespace->oid;
+  info.tablespace_oid =
+    auth::UseTablespace(context, *tablespace, info.dependencies);
 }
 
 duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
@@ -231,11 +223,10 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   }
   auto& options = info.Base().options;
   const bool search = ReadStorageEngine(options) == TableEngine::Search;
-  info.Base().tablespace_oid =
-    Place(transaction, info.Base(),
-          search ? std::string_view{}
-                 : "only a table created WITH (storage = 'search') can be "
-                   "placed in a tablespace");
+  Place(transaction, info.Base(),
+        search ? std::string_view{}
+               : "only a table created WITH (storage = 'search') can be "
+                 "placed in a tablespace");
   if (search) {
     auto entry =
       duckdb::make_uniq<SearchTableEntry>(*this, schema, info, transaction);
@@ -275,7 +266,7 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
       "an index on a search-backed table is stored with the table and cannot "
       "be placed in a tablespace";
   }
-  info.tablespace_oid = Place(transaction, info, refusal);
+  Place(transaction, info, refusal);
   if (info.index_type != kInvertedIndexTypeName) {
     return duckdb::DuckCatalog::MakeIndexEntry(transaction, schema, info,
                                                relation);
@@ -321,7 +312,6 @@ duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
   duckdb::CreateJobInfo& info) {
   VerifySchedule(info.schedule);
   auto state = std::make_shared<JobState>();
-  state->session.database = GetAttached().shared_from_this();
   if (info.temporary) {
     auto& context = transaction.GetContext();
     state->session = {
@@ -331,6 +321,8 @@ duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
           .GetAttached()
           .shared_from_this(),
       .temporary = GetAttached().shared_from_this()};
+  } else {
+    state->session.database = GetAttached().shared_from_this();
   }
   auto job =
     duckdb::make_uniq<JobCatalogEntry>(*this, schema, info, std::move(state));
@@ -673,10 +665,10 @@ void SereneDBCatalog::FinalizeLoad(
 void SereneDBCatalog::OpenStorages() {
   const duckdb::reference<SereneDBCatalog> catalogs[] = {*this};
   const auto missing = search::OpenSearchStorages(catalogs);
-  if (missing.empty()) {
+  if (!missing) {
     return;
   }
-  const auto& [entry, path] = missing.front();
+  const auto& [entry, path] = *missing;
   const auto& name = entry.get().name.GetIdentifierName();
   if (GetAttached().IsReadOnly()) {
     THROW_SQL_ERROR(

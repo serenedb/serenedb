@@ -85,10 +85,7 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
-#include "catalog/entry/database.h"
-#include "catalog/entry/inverted_index.h"
 #include "catalog/entry/role.h"
-#include "catalog/entry/search_table.h"
 #include "catalog/entry/tablespace.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/scan/scan_bind.h"
@@ -1170,17 +1167,8 @@ class Enforcer {
     }
   }
 
-  duckdb::CatalogEntry& RequireTablespace(std::string_view name) {
-    auto tablespace = ClusterEntry(CatalogType::TABLESPACE_ENTRY, name);
-    if (!tablespace) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("tablespace \"", name, "\" does not exist"));
-    }
-    return *tablespace;
-  }
-
   duckdb::CatalogEntry& AlterableTablespace(std::string_view name) {
-    auto& tablespace = RequireTablespace(name);
+    auto& tablespace = catalog::RequireTablespace(_context, name);
     if (tablespace.internal) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -1812,17 +1800,16 @@ bool Unowned(const duckdb::CatalogEntry& entry) {
          (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
 }
 
-void RequireCreatePrivilege(duckdb::ClientContext& context,
-                            const duckdb::CatalogEntry& entry) {
-  const auto* connection = connector::GetSereneDBContextPtr(context);
-  if (!connection) {
-    return;
+duckdb::idx_t UseTablespace(duckdb::ClientContext& context,
+                            duckdb::CatalogEntry& tablespace,
+                            duckdb::LogicalDependencyList& dependencies) {
+  if (const auto closure = SessionClosure(context);
+      closure &&
+      !closure->Can(tablespace.type, tablespace.permissions, AclMode::Create)) {
+    Denied(tablespace);
   }
-  const auto closure = ClosureFor(&context, connection->GetRoleId());
-  if (!closure->is_superuser &&
-      !closure->Can(entry.type, entry.permissions, AclMode::Create)) {
-    Denied(entry);
-  }
+  dependencies.AddDependency(tablespace);
+  return tablespace.oid;
 }
 
 }  // namespace sdb::auth

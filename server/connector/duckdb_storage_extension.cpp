@@ -100,22 +100,15 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
 duckdb::idx_t PlaceDatabase(duckdb::ClientContext& context,
                             std::string_view name,
                             duckdb::LogicalDependencyList& dependencies) {
-  auto tablespace =
-    catalog::ClusterEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY, name);
-  if (!tablespace) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("tablespace \"", name, "\" does not exist"));
-  }
-  if (tablespace->oid == pg::kPgGlobalTablespace) {
+  auto& tablespace = catalog::RequireTablespace(context, name);
+  if (tablespace.oid == pg::kPgGlobalTablespace) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("pg_global cannot be used as default tablespace"));
   }
-  if (tablespace->oid == pg::kPgDefaultTablespace) {
+  if (tablespace.oid == pg::kPgDefaultTablespace) {
     return 0;
   }
-  auth::RequireCreatePrivilege(context, *tablespace);
-  dependencies.AddDependency(*tablespace);
-  return tablespace->oid;
+  return auth::UseTablespace(context, tablespace, dependencies);
 }
 
 duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(

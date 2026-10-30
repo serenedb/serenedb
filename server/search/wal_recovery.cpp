@@ -110,25 +110,25 @@ void SyncWal(duckdb::AttachedDatabase& db) {
 
 }  // namespace
 
-std::vector<MissingStorage> OpenSearchStorages(
+std::optional<MissingStorage> OpenSearchStorages(
   std::span<const duckdb::reference<catalog::SereneDBCatalog>> catalogs) {
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance());
   duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
   absl::Mutex mutex;
-  std::vector<MissingStorage> missing;
+  std::optional<MissingStorage> missing;
   const auto open = [&](const duckdb::CatalogEntry& entry, auto storage,
                         auto... settings) {
-    if (storage->Opened()) {
-      return;
-    }
     executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
       executor,
       [&mutex, &missing, &entry, storage = std::move(storage),
        ... settings = std::move(settings)] {
-        if (!storage->Open(settings...)) {
-          absl::MutexLock lock{&mutex};
-          missing.push_back({.entry = entry, .path = storage->Path()});
+        if (storage->Open(settings...)) {
+          return;
+        }
+        absl::MutexLock lock{&mutex};
+        if (!missing || entry.oid < missing->entry.get().oid) {
+          missing = MissingStorage{.entry = entry, .path = storage->Path()};
         }
       },
       "SearchOpenStorage"));
@@ -136,19 +136,19 @@ std::vector<MissingStorage> OpenSearchStorages(
   for (auto& catalog : catalogs) {
     for (const catalog::SearchTableEntry& table :
          catalog::SearchTableEntries(catalog.get())) {
-      open(table, table.Storage());
+      if (!table.Storage()->Opened()) {
+        open(table, table.Storage());
+      }
     }
     for (const catalog::InvertedIndexEntry& index :
          catalog::InvertedIndexEntries(catalog.get())) {
-      if (const auto& storage = index.Storage()) {
+      if (const auto& storage = index.Storage();
+          storage && !storage->Opened()) {
         open(index, storage, catalog::ResolveSettings(index.options));
       }
     }
   }
   executor.WorkOnTasks();
-  absl::c_sort(missing, [](const MissingStorage& a, const MissingStorage& b) {
-    return a.entry.get().oid < b.entry.get().oid;
-  });
   return missing;
 }
 

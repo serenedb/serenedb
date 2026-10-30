@@ -22,9 +22,9 @@
 
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/common/helper.hpp>
+#include <optional>
 #include <span>
 #include <string>
-#include <vector>
 
 #include "catalog/catalog.h"
 
@@ -35,7 +35,7 @@ struct MissingStorage {
   std::string path;
 };
 
-std::vector<MissingStorage> OpenSearchStorages(
+std::optional<MissingStorage> OpenSearchStorages(
   std::span<const duckdb::reference<catalog::SereneDBCatalog>> catalogs);
 void RecoverSearchStorages();
 void StartSearchStorageTasks();

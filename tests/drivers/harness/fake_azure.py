@@ -174,8 +174,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if_match = self.headers.get("If-Match")
         return bool(if_match) and if_match != "*" and if_match != blob.etag
 
-    def _exclusive(self) -> bool:
-        return self.headers.get("If-None-Match") == "*"
+    def _occupied(self, container: str, name: str) -> bool:
+        return self.headers.get("If-None-Match") == "*" and (container, name) in self.fake.blobs
 
     def do_HEAD(self) -> None:
         if self._forbidden():
@@ -274,14 +274,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.fake.count("PUT_BLOCK_LIST")
             self._wait()
             ids = [element.text or "" for element in ET.fromstring(body)]
-            exists = False
             with self.fake.lock:
+                exists = self._occupied(container, name)
                 blocks = dict(getattr(self.fake.blobs.get((container, name)), "blocks", {}))
                 blocks.update(self.fake.staged.get((container, name), {}))
-                if self._exclusive() and (container, name) in self.fake.blobs:
-                    blob = None
-                    exists = True
-                elif any(block not in blocks for block in ids):
+                if exists or any(block not in blocks for block in ids):
                     blob = None
                 else:
                     blob = _Blob(b"".join(blocks[block] for block in ids),
@@ -321,7 +318,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self._wait()
         blob = _Blob(body)
         with self.fake.lock:
-            exists = self._exclusive() and (container, name) in self.fake.blobs
+            exists = self._occupied(container, name)
             if not exists:
                 self.fake.blobs[(container, name)] = blob
         if exists:

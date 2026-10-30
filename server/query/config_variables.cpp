@@ -1703,8 +1703,20 @@ const duckdb::case_insensitive_set_view_t kUserSettings = {
 };
 
 const duckdb::case_insensitive_set_view_t kSuperuserReadSettings = {
+  "allowed_directories",
+  "allowed_paths",
+  "extension_directories",
+  "extension_directory",
+  "extension_repository_directory",
+  "file_search_path",
+  "home_directory",
   "http_proxy_password",
   "http_proxy_username",
+  "log_query_path",
+  "profile_output",
+  "profiling_output",
+  "secret_directory",
+  "temp_directory",
 };
 
 bool IsSuperuserReadSetting(duckdb::ClientContext& ctx, std::string_view name) {

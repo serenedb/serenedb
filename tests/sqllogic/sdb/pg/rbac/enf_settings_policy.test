@@ -194,6 +194,35 @@ shown
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SHOW temp_directory;
+----
+db error: ERROR: must be superuser to examine "temp_directory"
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SELECT current_setting('secret_directory');
+----
+db error: ERROR: must be superuser to examine "secret_directory"
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT count(*) AS shown FROM pg_settings WHERE name IN ('temp_directory', 'secret_directory', 'profile_output', 'profiling_output');
+----
+shown
+0
+
+
+query
+SELECT count(*) AS shown FROM duckdb_settings() WHERE name IN ('temp_directory', 'secret_directory');
+----
+shown
+2
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
 statement ok
 SET search_path = public;
 

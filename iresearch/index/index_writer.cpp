@@ -867,12 +867,6 @@ void IndexWriter::Transaction::Reset() noexcept {
   }
 }
 
-void IndexWriter::Transaction::RegisterFlush() noexcept {
-  if (_active.Segment() != nullptr && _active.Flush() == nullptr) {
-    _writer->GetFlushContext()->AddToPending(_active);
-  }
-}
-
 bool IndexWriter::Transaction::CommitImpl(
   uint64_t last_tick, const SourcePosition& position) noexcept try {
   auto* segment = _active.Segment();

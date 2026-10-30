@@ -6,8 +6,8 @@ split: headings
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 Like all programming languages and libraries, SereneDB has its share of idiosyncrasies and inconsistencies.  
-Some are vestiges of our feathered friend's evolution; others are inevitable because we strive to adhere to the [SQL Standard](https://blog.ansi.org/sql-standard-iso-iec-9075-2023-ansi-x3-135/) and specifically to PostgreSQL's dialect (see the [“PostgreSQL Compatibility”](./core-sql-compatibility.md#behavioral-differences-from-postgresql) page for exceptions).
-The rest may simply come down to different preferences, or we may even agree on what _should_ be done but just haven’t gotten around to it yet.
+Some are inevitable because we strive to adhere to the [SQL Standard](https://blog.ansi.org/sql-standard-iso-iec-9075-2023-ansi-x3-135/) and specifically to PostgreSQL's dialect (see the [“PostgreSQL Compatibility”](./core-sql-compatibility.md#behavioral-differences-from-postgresql) page for exceptions).
+The rest come down to different preferences.
 
 Acknowledging these quirks is the best we can do, which is why we have compiled below a list of examples.
 

@@ -51,6 +51,7 @@ duckdb:core:test/sql/transactions/test_commit_cleanup_oom.test	issue	temporary f
 duckdb:core:test/sql/transactions/test_commit_cleanup_oom_index_retry.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/window/test_custom_spooling.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/window/test_window_distinct.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:core:test/sql/window/window_distinct_build_oom.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/window/window_partition_paging.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:cpp:Preserve input order when row ID hashes collide	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:cpp:Test appender_allocator_flush_threshold	issue	temporary files hold buffer bytes nothing wrote (#1883)
@@ -58,6 +59,7 @@ duckdb:cpp:Test buffer manager buffer re-use	issue	temporary files hold buffer b
 duckdb:cpp:Test evicted_data not double-decremented for variable-sized blocks	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:cpp:Test in-memory database initialization argument ""	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:cpp:Test in-memory database initialization argument ":memory:"	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:httpfs:test/sql/storage/encryption/temp_files/encrypted_out_of_core.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/parquet/variant/variant_disabled_shredding_nested.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/copy/return_stats.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/function/variant/variant_array_length.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
@@ -72,8 +74,101 @@ duckdb:core:test/sql/storage/types/variant/test_all_types.test	issue	the VARIANT
 duckdb:core:test/sql/storage/types/variant/test_all_types_single_object.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/types/variant/test_all_types_single_table.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/types/variant/test_all_types_variant.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
+duckdb:iceberg:test/sql/local/iceberg_scans/scan_plan_path.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
+duckdb:iceberg:test/sql/local/scan_tasks_execution.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/compression/alp/alp_tpcds.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
 duckdb:core:test/sql/storage/compression/alprd/alprd_tpcds.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
 duckdb:core:test/sql/storage/tpcds/tpcds_storage.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
 duckdb:core:test/sql/storage/types/variant/tpcds_sf001.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
 duckdb:cpp:Test TPC-DS dsdgen rollback after interrupted optimistic write	issue	a transient segment reaches the file with its unwritten tail (#1282)
+duckdb:core:test/optimizer/partitioned_execution.test_slow	slow	takes 7 min under msan; dev runs it
+duckdb:core:test/parquet/variant/variant_roundtrip.test_slow	slow	takes 5 min under msan; dev runs it
+duckdb:core:test/sql/aoc24/aoc24.test_slow	slow	takes 4 min under msan; dev runs it
+duckdb:core:test/sql/copy/csv/csv_memory_management.test_slow	slow	takes 5 min under msan; dev runs it
+duckdb:core:test/sql/copy/csv/parallel/csv_parallel_tpcds.test_slow	slow	takes 6 min under msan; dev runs it
+duckdb:core:test/sql/copy/csv/parallel_csv_stress_test.test_slow	slow	takes 9 min under msan; dev runs it
+duckdb:core:test/sql/copy/csv/test_copy_gzip_large_block.test_slow	slow	takes 7 min under msan; dev runs it
+duckdb:core:test/sql/copy/csv/test_multiple_big_compressed_csvs.test_slow	slow	takes 5 min under msan; dev runs it
+duckdb:core:test/sql/copy/parquet/writer/parquet_write_tpcds.test_slow	slow	takes 5 min under msan; dev runs it
+duckdb:core:test/sql/copy/partitioned/partitioned_write_tpch.test_slow	slow	takes 3 min under msan; dev runs it
+duckdb:core:test/sql/cte/recursive_cte_aoc2022.test_slow	slow	takes 4 min under msan; dev runs it
+duckdb:core:test/sql/cte/recursive_cte_research.test_slow	slow	takes 4 min under msan; dev runs it
+duckdb:core:test/sql/function/string/test_translate_large.test_slow	slow	takes 10 min under msan; dev runs it
+duckdb:core:test/sql/json/table/read_json_many_files.test_slow	slow	takes 4 min under msan; dev runs it
+duckdb:core:test/sql/json/test_json_struct_projection_pushdown.test_slow	slow	takes 5 min under msan; dev runs it
+duckdb:core:test/sql/merge/merge_into_tpch.test_slow	slow	takes 5 min under msan; dev runs it
+duckdb:core:test/sql/storage/compression/alp/alp_tpch.test_slow	slow	takes 7 min under msan; dev runs it
+duckdb:core:test/sql/storage/compression/alprd/alprd_tpch.test_slow	slow	takes 7 min under msan; dev runs it
+duckdb:core:test/sql/storage/compression/bitpacking/bitpacking_compression_ratio.test_slow	slow	takes 4 min under msan; dev runs it
+duckdb:core:test/sql/storage/compression/bitpacking/bitpacking_compression_ratio_hugeint.test_slow	slow	takes 7 min under msan; dev runs it
+duckdb:core:test/sql/storage/compression/roaring/roaring_bool_compression_ratio.test_slow	slow	takes 8 min under msan; dev runs it
+duckdb:core:test/sql/storage/compression/roaring/roaring_compression_ratio.test_slow	slow	takes 8 min under msan; dev runs it
+duckdb:core:test/sql/storage/compression/zstd/zstd_compression_ratio.test_slow	slow	takes 6 min under msan; dev runs it
+duckdb:core:test/sql/storage/external_file_cache/external_file_cache_parquet_tpcds.test_slow	slow	takes 5 min under msan; dev runs it
+duckdb:core:test/sql/storage/parallel/reclaim_space_batch_insert.test_slow	slow	takes 9 min under msan; dev runs it
+duckdb:core:test/sql/storage/parallel/reclaim_space_primary_key_optimistic.test_slow	slow	takes 6 min under msan; dev runs it
+duckdb:core:test/sql/storage/tpch/tpch_storage.test_slow	slow	takes 7 min under msan; dev runs it
+duckdb:core:test/sql/storage/types/struct/struct_reclaim_space_drop.test_slow	slow	takes 3 min under msan; dev runs it
+duckdb:core:test/sql/storage/vacuum/vacuum_deletes_cleanup.test_slow	slow	takes 4 min under msan; dev runs it
+duckdb:core:test/sql/storage/vacuum/vacuum_deletes_cleanup_older_storage.test_slow	slow	takes 4 min under msan; dev runs it
+duckdb:core:test/sql/tpcds/tpcds_sf001.test_slow	slow	takes 3 min under msan; dev runs it
+duckdb:core:test/sql/tpcds/tpcds_sf1.test_slow	slow	takes 3 min under msan; dev runs it
+duckdb:core:test/sql/tpcds/tpcds_sf1_no_order.test_slow	slow	takes 4 min under msan; dev runs it
+duckdb:core:test/sql/tpch/gzip_csv_auto_detect.test_slow	slow	takes 5 min under msan; dev runs it
+duckdb:core:test/sql/tpch/test_tpch_options.test_slow	slow	takes 10 min under msan; dev runs it
+duckdb:core:test/sql/window/test_window_sort.test_slow	slow	takes 6 min under msan; dev runs it
+duckdb:core:test/sqlite/select3.test_slow	slow	takes 3 min under msan; dev runs it
+duckdb:core:test/sqlite/select4.test_slow	slow	takes 5 min under msan; dev runs it
+duckdb:cpp:Ordering a long join chain greedily evaluates each pair once	slow	takes 11 min under msan; dev runs it
+duckdb:cpp:Test TPC-DS dsdgen parallel output matches sequential output	slow	takes 6 min under msan; dev runs it
+duckdb:spatial:test/sql/join/spatial_join_outer.test_slow	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Families/TokenizerFuzzLoad.ManyValues/nearest_neighbors_1	slow	takes 3 min under msan; dev runs it
+gtest:iresearch-tests:Families/TokenizerInversionLoad.ManyDocuments/nearest_neighbors	slow	takes 4 min under msan; dev runs it
+gtest:iresearch-tests:Families/TokenizerInversionLoad.ManyDocuments/ngram	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Families/TokenizerInversionLoad.ManyDocuments/path_hierarchy	slow	takes 3 min under msan; dev runs it
+gtest:iresearch-tests:Format10Test/Format10TestCase.postings_seek/fs	slow	takes 9 min under msan; dev runs it
+gtest:iresearch-tests:Format10Test/Format10TestCase.postings_seek/memory	slow	takes 9 min under msan; dev runs it
+gtest:iresearch-tests:Format10Test/Format10TestCase.postings_seek/mmap	slow	takes 8 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs0/fs	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs0/memory	slow	takes 7 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs0/mmap	slow	takes 7 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs1/fs	slow	takes 7 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs1/memory	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs1/mmap	slow	takes 7 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs2/fs	slow	takes 7 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs2/memory	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs2/mmap	slow	takes 7 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs3/fs	slow	takes 7 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs3/memory	slow	takes 8 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs3/mmap	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos0/fs	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos0/memory	slow	takes 4 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos0/mmap	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos1/fs	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos1/memory	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos1/mmap	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos2/fs	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos2/memory	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos2/mmap	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos3/fs	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos3/memory	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos3/mmap	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:TokenizerFuzz.BlockFillMatchesPerValue	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:TokenizerFuzz.EdgeCases	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:TokenizerFuzz.HugeValues	slow	takes 4 min under msan; dev runs it
+gtest:iresearch-tests:TokenizerFuzz.Mutation	slow	takes 11 min under msan; dev runs it
+gtest:iresearch-tests:TokenizerInversion.MultiValueDocuments	slow	takes 7 min under msan; dev runs it
+gtest:iresearch-tests:TokenizerInversion.PostingsMatchEmittedTokens	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:acceptor_walk_index_test/AcceptorWalkIndexTestCase.regexp_walk_past_the_row_budget/memory	slow	takes 3 min under msan; dev runs it
+gtest:iresearch-tests:acceptor_walk_index_test/AcceptorWalkIndexTestCase.union_walk_is_the_union_of_its_parts/memory	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:acceptor_walk_index_test/AcceptorWalkIndexTestCase.walks_match_re2_perl0/memory	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:acceptor_walk_index_test/AcceptorWalkIndexTestCase.walks_match_re2_perl3/memory	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs/fs	slow	takes 4 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs/memory	slow	takes 3 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs/mmap	slow	takes 4 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_batched/fs	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_batched/memory	slow	takes 4 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_batched/mmap	slow	takes 4 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_big/memory	slow	takes 16 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.s2sequence/fs	slow	takes 4 min under msan; dev runs it
+iresearch-load:LoadTest	slow	takes 13 min under msan; dev runs it

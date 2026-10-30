@@ -6,9 +6,9 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB implements the SQL dialect of PostgreSQL. Not every PostgreSQL statement parses, and not all underlying functionality is implemented yet. Among the statements that fail to parse are `SAVEPOINT`, `DECLARE ... CURSOR` and `FETCH`, `SELECT ... FOR UPDATE`, `FETCH FIRST`, identity columns, `CREATE DOMAIN`, unlogged tables, materialized views, `CREATE EXTENSION`, `CREATE INDEX CONCURRENTLY` and PL/pgSQL function bodies; SQL-language functions work. `LISTEN`, `NOTIFY` and `UNLISTEN` parse and answer that they are not supported yet.
+SereneDB implements the SQL dialect of PostgreSQL. Not every PostgreSQL statement parses, and not all underlying functionality is implemented. Among the statements that fail to parse are `SAVEPOINT`, `DECLARE ... CURSOR` and `FETCH`, `SELECT ... FOR UPDATE`, `FETCH FIRST ... WITH TIES`, identity columns, `CREATE DOMAIN`, unlogged tables, materialized views, `CREATE EXTENSION`, `CREATE INDEX CONCURRENTLY` and PL/pgSQL function bodies; SQL-language functions work. `LISTEN`, `NOTIFY` and `UNLISTEN` parse and answer that they are not supported.
 
-This page gives a non-exhaustive overview of currently supported core SQL functionality, followed by the [behavioral differences](#behavioral-differences-from-postgresql) where SereneDB intentionally diverges from PostgreSQL. SereneDB strives for full PostgreSQL compatibility, and most features not currently supported will be added over time.
+This page gives a non-exhaustive overview of supported core SQL functionality, followed by the [behavioral differences](#behavioral-differences-from-postgresql) where SereneDB intentionally diverges from PostgreSQL.
 
 For PostgreSQL-specific functionality such as system table support, see the [System Table Compatibility](./system-table-compatibility.md) page.
 
@@ -50,13 +50,13 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Feature               | Support State | Details                                                      |
 |-----------------------|---------------|--------------------------------------------------------------|
 | CREATE ROLE           | Yes           | See [Database Roles](../security/roles.md) |
-| OWNER TO              | Yes           | Tables, views, sequences, schemas, types, jobs; not databases/functions yet |
+| OWNER TO              | Yes           | Tables, views, sequences, schemas, types, jobs; not databases or functions |
 | ALTER ROLE            | Yes           | Attributes, passwords, `VALID UNTIL`, `RENAME TO` |
 | GRANT                 | Yes           | Privileges and role membership, incl. column grants; see [Privileges](../security/privileges.md) |
 | REVOKE                | Yes           | Incl. `GRANT OPTION FOR` |
 | SET ROLE              | Yes           | Enforced; membership required for non-superusers |
 | INHERIT               | Yes           | `INHERIT`/`NOINHERIT` attributes enforced |
-| ALTER DEFAULT PRIVILEGES | Partial    | Accepted and stored, not yet applied to new objects |
+| ALTER DEFAULT PRIVILEGES | Yes        |                                                     |
 | Row Security Policies | No            | See [issue](https://github.com/serenedb/serenedb/issues/212) |
 
 ### Indexes
@@ -258,7 +258,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | position            | Yes           |                                                            |
 | rpad                | Yes           |                                                            |
 | rtrim               | Yes           | Same as `btrim`                                            |
-| substring           | Yes           | Currently not supporting regular expression arguments      |
+| substring           | Yes           |                                                            |
 | trim                | Yes           | Same as `btrim`                                            |
 | upper               | Yes           |                                                            |
 | ^@                  | Yes           |                                                            |
@@ -353,7 +353,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | regexp_like               | Yes           |                                                     |
 | regexp_match              | Yes           |                                                     |
 | regexp_matches            | Partial       |                                                     |
-| regexp_replace            | Partial       | Currently not supporting replacing N'th match       |
+| regexp_replace            | Partial       | The `start` and `N` arguments are not supported      |
 | regexp_split_to_array     | Yes           |                                                     |
 | regexp_split_to_table     | Yes           |                                                     |
 | regexp_substr             | Yes           |                                                     |
@@ -663,7 +663,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | array_upper        | Yes           |                                |
 | array_cardinality  | Yes           | via cardinality()              |
 | trim_array         | Yes           |                                |
-| unnest             | Yes           | No multi-array expansion       |
+| unnest             | Yes           |                                |
 
 #### Range
 | Feature                  | Support State | Details |

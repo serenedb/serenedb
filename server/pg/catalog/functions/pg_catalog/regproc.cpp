@@ -234,7 +234,7 @@ bool IsWordStart(char c) {
 
 std::optional<NameList> SplitNames(std::string_view text) {
   NameList names;
-  size_t pos = 0;
+  duckdb::idx_t pos = 0;
   const auto skip_spaces = [&] {
     while (pos < text.size() && absl::ascii_isspace(text[pos])) {
       ++pos;
@@ -336,7 +336,7 @@ struct Token {
 
 std::vector<Token> Tokenize(std::string_view text) {
   std::vector<Token> tokens;
-  size_t pos = 0;
+  duckdb::idx_t pos = 0;
   while (true) {
     while (pos < text.size() && absl::ascii_isspace(text[pos])) {
       ++pos;

@@ -1204,7 +1204,7 @@ size_t ParseIdent(std::string_view text, bool strict,
     }
     return parts[count++];
   };
-  size_t pos = 0;
+  duckdb::idx_t pos = 0;
   const auto skip_spaces = [&] {
     while (pos < text.size() && absl::ascii_isspace(text[pos])) {
       ++pos;

@@ -118,9 +118,9 @@ class InvertedIndexStorage final
   void OpenReader();
   void OpenPendingWriter();
 
-  auto GetTransaction() {
+  auto GetTransaction(bool exclusive_segment = false) {
     SDB_ASSERT(_writer);
-    return _writer->GetBatch();
+    return _writer->GetBatch(exclusive_segment);
   }
 
   // Delete-log for online CREATE INDEX: open while the build runs, drained

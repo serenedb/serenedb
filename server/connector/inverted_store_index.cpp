@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/container/inlined_vector.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -617,22 +618,22 @@ irs::SourcePosition InvertedStoreIndex::ReplayPosition() const {
 void InvertedStoreIndex::CommitReplay(
   std::span<irs::IndexWriter::Transaction* const> trxs,
   const irs::SourcePosition& position) {
+  absl::InlinedVector<irs::IndexWriter::Transaction*, 16> written;
   uint64_t queries = 0;
   for (auto* trx : trxs) {
     if (trx->GetQueries() != 0) {
-      trx->RegisterFlush();
+      written.push_back(trx);
       queries = std::max<uint64_t>(queries, trx->GetQueries());
     }
   }
-  if (queries == 0) {
+  if (written.empty()) {
     return;
   }
+  irs::IndexWriter::Transaction::RegisterFlush(written);
   const auto tick = _storage->NextTick(queries);
-  for (auto* trx : trxs) {
-    if (trx->GetQueries() != 0) {
-      SDB_ENSURE(trx->Commit(tick, position),
-                 "inverted index replay: commit failed for index ", _index_id);
-    }
+  for (auto* trx : written) {
+    SDB_ENSURE(trx->Commit(tick, position),
+               "inverted index replay: commit failed for index ", _index_id);
   }
 }
 
@@ -738,12 +739,10 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
       return _tokenizers.Acquire(id, context);
     });
     Feed(*writer, trx, results, rows, count);
-    conn->RegisterIndexFlush(_index_id);
     return {};
   }
   if (prepared == 1) {
     Feed(*slots[0].writer, *slots[0].transaction, results, rows, count);
-    conn->RegisterIndexFlush(_index_id);
   } else if (count != 0) {
     if (!_live) {
       _live = std::make_unique<LiveFeed>(db.GetDatabase());
@@ -768,9 +767,6 @@ duckdb::ErrorData InvertedStoreIndex::FinishAppend() {
     live->executor.WorkOnTasks();
   } catch (const std::exception& e) {
     return duckdb::ErrorData{e};
-  }
-  if (auto* conn = CurrentCommittingContext()) {
-    conn->RegisterIndexFlush(_index_id);
   }
   return {};
 }
@@ -860,9 +856,7 @@ bool InvertedStoreIndex::AppendLocal(
   } catch (const std::exception& e) {
     error = duckdb::ErrorData{e};
   }
-  for (const auto& [inverted, prepared] : indexes) {
-    conn->RegisterIndexFlush(inverted->_index_id);
-  }
+  SDB_PARK_ONCE_ON_FAILURE("inverted_local_rows_fed");
   return true;
 }
 
@@ -918,7 +912,6 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
   } else {
     remove(count, [&](size_t i) { return data[fmt.sel->get_index(i)]; });
   }
-  conn->RegisterIndexFlush(_index_id);
 }
 
 idx_t InvertedStoreIndex::TryDelete(

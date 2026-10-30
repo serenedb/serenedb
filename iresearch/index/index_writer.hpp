@@ -23,16 +23,19 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <limits>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -306,7 +309,10 @@ class IndexWriter : private util::Noncopyable {
 
     void Reset() noexcept;
 
-    void RegisterFlush() noexcept;
+    void RegisterFlush() noexcept { RegisterFlush(std::array{this}); }
+
+    template<typename Transactions>
+    static void RegisterFlush(Transactions&& transactions) noexcept;
 
     bool Commit() noexcept {
       auto* segment = _active.Segment();
@@ -793,5 +799,38 @@ class IndexWriter : private util::Noncopyable {
   RootClaim _root_claim;
   std::array<FlushContext, 2> _flush_contexts;
 };
+
+template<typename Transactions>
+void IndexWriter::Transaction::RegisterFlush(
+  Transactions&& transactions) noexcept {
+  static_assert(std::ranges::forward_range<Transactions>);
+  SDB_ASSERT(
+    absl::c_none_of(transactions, [](const auto& trx) { return !trx; }));
+  // Is the commit already in a flush? Only a pooled segment puts it there and
+  // its transaction keeps that flush open, so there is nothing to release.
+  FlushContextPtr flush{nullptr, nullptr};
+  for (const auto& trx : transactions) {
+    if (auto* joined = trx->_active.Flush()) {
+      flush = {joined, [](FlushContext*) noexcept {}};
+      break;
+    }
+  }
+  // Put every transaction that has data and isn't in a flush into it.
+  for (const auto& trx : transactions) {
+    // Nothing written, or already in.
+    if (!trx->_active.Segment() || trx->_active.Flush()) {
+      continue;
+    }
+    // The commit isn't in a flush yet: take the current one, locked against
+    // switching until we return.
+    if (!flush) {
+      flush = trx->_writer->GetFlushContext();
+    }
+    flush->AddToPending(trx->_active);
+  }
+  SDB_ASSERT(absl::c_all_of(transactions, [&](const auto& trx) {
+    return !trx->_active.Segment() || trx->_active.Flush() == flush.get();
+  }));
+}
 
 }  // namespace irs

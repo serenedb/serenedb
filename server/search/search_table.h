@@ -150,6 +150,20 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   irs::SegmentReader OpenFlushedSegment(const irs::SegmentMeta& meta) const;
 
+  // Opens a reader over the segment whose meta file is `meta_file`, which is
+  // how the WAL names a segment a bulk statement adopted. A null reader means
+  // the segment is gone: unlike a flushed segment, whose meta the producing
+  // transaction still holds in memory, a name out of the WAL has to be read
+  // back off disk and pinned first, and between the WAL naming it and this
+  // call a refresh can publish it and a compaction merge it away.
+  //
+  // IndexWriter::AdoptSegment does the same for replay, and in the same
+  // order: read the meta, reference the meta file, then open. It can leave the
+  // data files unpinned between referencing the meta and the open's own
+  // GetRefs because adoption runs where the cleaner cannot; a certifier has no
+  // such cover, so this holds the cleaner off across the whole sequence.
+  irs::SegmentReader OpenNamedSegment(std::string_view meta_file) const;
+
   // Rows committed into this table but not yet published, which the reader
   // above cannot show either way: its inserts are missing from it and its
   // removals are still live in it.
@@ -371,6 +385,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   WriterGenerations _writers;
   std::atomic<bool> _build_in_flight{false};
   PendingDelta _delta;
+  // Held shared while a certifier turns a name out of the WAL into a reader,
+  // exclusively while the cleaner unlinks: see OpenNamedSegment. A name is
+  // only a name, and the cleaner is the only thing that can make it stop
+  // resolving.
+  mutable absl::Mutex _cleanup_mutex;
 
   // Delete log. The open flag is atomic so the commit path can skip the mutex
   // entirely when no build is running, which is the normal case.

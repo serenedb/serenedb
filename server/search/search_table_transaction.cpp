@@ -46,9 +46,41 @@
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_unique_probe.h"
 #include "search/search_table.h"
+#include "search/wal_tail_keys.h"
 
 namespace sdb::search {
 namespace {
+
+// A tail that is not whole cannot be certified against. Every one of these
+// reads back as an empty tail, which is indistinguishable from "nothing was
+// committed" and would admit the duplicate the pass exists to catch, so the
+// commit is refused instead.
+// Which source the unpublished tier comes from. The two answer alike; this is
+// here to measure what they cost, and goes away with the arm that loses.
+bool CertifyFromWal(duckdb::ClientContext& context) {
+  return sdb::GetBoolSetting(context, "sdb_search_pk_certify_from_wal");
+}
+
+void RefuseUncertifiableTail(const WalTail& tail, duckdb::idx_t table_id) {
+  if (!tail.error.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("Cannot check the primary key of search table ",
+                            table_id, ": ", tail.error, "."));
+  }
+  if (tail.lost) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("Cannot check the primary key of search table ", table_id,
+              ": a segment the write-ahead log names is already gone."));
+  }
+  if (tail.stopped_undecided) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("Cannot check the primary key of search table ", table_id,
+              ": the write-ahead log ends in a transaction that has not "
+              "decided yet."));
+  }
+}
 
 uint64_t SerializedSizeHint(const LocalTableChangesEntry& changes) {
   uint64_t size = changes.BufferedBytes();
@@ -283,8 +315,7 @@ void SearchTableTransaction::FlushBuffer(
 }
 
 void SearchTableTransaction::RefuseResurrection(
-  const SearchShardWrites& w,
-  std::span<const PendingGenerationPtr> generations) {
+  const SearchShardWrites& w, std::span<const RowRange> removed) {
   if (w.rewritten_rows.empty()) {
     return;
   }
@@ -293,23 +324,21 @@ void SearchTableTransaction::RefuseResurrection(
   };
   // Ranges on both sides, and a statement rewrites a handful of runs at most,
   // so this is a pair of short walks rather than anything per row.
-  for (const auto& generation : generations) {
-    for (const auto& removed : generation->removed) {
-      for (const auto& row : w.rewritten_rows) {
-        if (overlaps(removed, row)) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
-            ERR_MSG("could not serialize access due to concurrent delete of a "
-                    "row being updated on search table ",
-                    w.shard->GetTableId()));
-        }
+  for (const auto& gone : removed) {
+    for (const auto& row : w.rewritten_rows) {
+      if (overlaps(gone, row)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+          ERR_MSG("could not serialize access due to concurrent delete of a "
+                  "row being updated on search table ",
+                  w.shard->GetTableId()));
       }
     }
   }
 }
 
 void SearchTableTransaction::CertifyKeys(
-  const std::shared_ptr<SearchTable>& shard,
+  duckdb::ClientContext& context, const std::shared_ptr<SearchTable>& shard,
   std::span<const connector::primary_key::KeySlot> slots, bool new_keys) {
   if (slots.empty()) {
     return;
@@ -341,12 +370,41 @@ void SearchTableTransaction::CertifyKeys(
     return;
   }
 
-  const auto sources = shard->ReadCertificationSources();
-  // The lowest mark across this transaction's statements: a key the first
-  // statement wrote is only answered for as far as that statement looked, so
-  // the commit passes have to start from there for all of them.
-  if (!w.certified_mark || sources.delta.mark < *w.certified_mark) {
-    w.certified_mark = sources.delta.mark;
+  // Settled once, on the statement that first reaches a probe, and kept for
+  // the whole transaction: the commit passes and the install have to agree
+  // with this one about where the unpublished rows are, and a SET in between
+  // would otherwise leave them disagreeing.
+  if (!w.certify_from_wal) {
+    w.certify_from_wal = CertifyFromWal(context);
+  }
+
+  irs::DirectoryReader published;
+  WalTail wal;
+  UnpublishedTier tier;
+  PendingDelta::Reading delta;
+  if (*w.certify_from_wal) {
+    auto store = ResolveTailDatabase(*shard);
+    if (!store) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("The database holding search table ",
+                              shard->GetTableId(), " is no longer attached."));
+    }
+    irs::SourcePosition from;
+    std::tie(published, from) = shard->GetSnapshotWithPosition();
+    wal = ReadUnpublishedTail(*shard, *store, context, from, slots, nullptr);
+    RefuseUncertifiableTail(wal, shard->GetTableId());
+    tier = Flatten(wal);
+  } else {
+    auto sources = shard->ReadCertificationSources();
+    // The lowest mark across this transaction's statements: a key the first
+    // statement wrote is only answered for as far as that statement looked, so
+    // the commit passes have to start from there for all of them.
+    if (!w.certified_mark || sources.delta.mark < *w.certified_mark) {
+      w.certified_mark = sources.delta.mark;
+    }
+    published = std::move(sources.reader);
+    delta = std::move(sources.delta);
+    tier = Flatten(delta.generations);
   }
 
   // An UPDATE that leaves the key columns alone asserts no key of its own: it
@@ -363,7 +421,7 @@ void SearchTableTransaction::CertifyKeys(
   // happened to re-assert the key, and misses the plain case where it only
   // removed the row.
   if (!new_keys) {
-    RefuseResurrection(w, sources.delta.generations);
+    RefuseResurrection(w, tier.removed);
     return;
   }
   w.asserts_new_keys = true;
@@ -384,31 +442,17 @@ void SearchTableTransaction::CertifyKeys(
     key_fields.push_back(slot.column);
   }
 
-  std::vector<RowRange> deleted;
+  // A removal of the unpublished tier is as invisible as an insert of it: the
+  // reader still shows the row, and only the publish that applies the removal
+  // stops it doing so. So both sets of ranges mask the same probe.
+  std::vector<RowRange> deleted = std::move(tier.removed);
   for (const auto& op : changes->second.ops) {
     deleted.insert(deleted.end(), op.delete_ranges.begin(),
                    op.delete_ranges.end());
   }
 
-  std::vector<const irs::SubReader*> unpublished;
-  std::vector<const connector::KeyTerms*> unpublished_keys;
-  for (const auto& generation : sources.delta.generations) {
-    for (const auto& segment : generation->segments) {
-      unpublished.push_back(&segment);
-    }
-    for (const auto& key : generation->keys) {
-      unpublished_keys.push_back(&key);
-    }
-    // A removal of this tier is as invisible as an insert of it: the reader
-    // still shows the row, and only the publish that applies the removal
-    // stops it doing so.
-    deleted.insert(deleted.end(), generation->removed.begin(),
-                   generation->removed.end());
-  }
-
-  connector::UniqueProbe probe{new_keys ? &sources.reader : nullptr,
-                               unpublished, unpublished_keys, key_fields,
-                               deleted};
+  connector::UniqueProbe probe{new_keys ? &published : nullptr, tier.segments,
+                               std::move(tier.keys), key_fields, deleted};
 
   std::vector<const irs::SubReader*> segments;
   segments.reserve(readers.size());
@@ -425,16 +469,16 @@ void SearchTableTransaction::CertifyKeys(
   }
 }
 
-void SearchTableTransaction::CertifyAgainst(
-  SearchShardWrites& w, duckdb::idx_t table_id,
-  const irs::DirectoryReader* reader,
-  std::span<const PendingGenerationPtr> generations) {
+void SearchTableTransaction::CertifyAgainst(SearchShardWrites& w,
+                                            duckdb::idx_t table_id,
+                                            const irs::DirectoryReader* reader,
+                                            UnpublishedTier tier) {
   SDB_ASSERT(!w.pk_slots.empty());
-  if (reader == nullptr && generations.empty()) {
+  if (reader == nullptr && tier.Empty()) {
     return;
   }
 
-  RefuseResurrection(w, generations);
+  RefuseResurrection(w, tier.removed);
   if (!w.asserts_new_keys) {
     // Nothing of this transaction's claims a key: every row it wrote carries
     // the key of a row it is replacing, and the check above is what answers
@@ -448,7 +492,9 @@ void SearchTableTransaction::CertifyAgainst(
     key_fields.push_back(slot.column);
   }
 
-  std::vector<RowRange> deleted;
+  // The tier's own ranges are the start of the merged set rather than a source
+  // to copy from: nothing reads them separately past this point.
+  std::vector<RowRange> deleted = std::move(tier.removed);
   if (const auto changes = _changes.find(table_id); changes != _changes.end()) {
     for (const auto& op : changes->second.ops) {
       deleted.insert(deleted.end(), op.delete_ranges.begin(),
@@ -456,20 +502,7 @@ void SearchTableTransaction::CertifyAgainst(
     }
   }
 
-  std::vector<const irs::SubReader*> unpublished;
-  std::vector<const connector::KeyTerms*> unpublished_keys;
-  for (const auto& generation : generations) {
-    for (const auto& segment : generation->segments) {
-      unpublished.push_back(&segment);
-    }
-    for (const auto& key : generation->keys) {
-      unpublished_keys.push_back(&key);
-    }
-    deleted.insert(deleted.end(), generation->removed.begin(),
-                   generation->removed.end());
-  }
-
-  connector::UniqueProbe probe{reader, unpublished, unpublished_keys,
+  connector::UniqueProbe probe{reader, tier.segments, std::move(tier.keys),
                                key_fields, deleted};
 
   std::vector<const irs::SubReader*> segments;
@@ -487,20 +520,66 @@ void SearchTableTransaction::CertifyAgainst(
 }
 
 void SearchTableTransaction::CertifyCommit(SearchShardWrites& w,
-                                           duckdb::idx_t table_id) {
+                                           duckdb::idx_t table_id,
+                                           duckdb::ClientContext& context) {
+  if (*w.certify_from_wal) {
+    auto store = ResolveTailDatabase(*w.shard);
+    if (!store) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("The database holding search table ", table_id,
+                              " is no longer attached."));
+    }
+    // Reader and position as one pair, for the same reason the delta arm takes
+    // its two together: a refresh between them leaves the probe with a reader
+    // from before beside a tail from after, missing what the refresh moved.
+    auto [reader, published] = w.shard->GetSnapshotWithPosition();
+    const auto tail = ReadUnpublishedTail(*w.shard, *store, context, published,
+                                          w.pk_slots, nullptr);
+    RefuseUncertifiableTail(tail, table_id);
+    // Where the in-lock pass resumes. Set even for an empty tail: the pass
+    // still has to cover whatever commits between here and the commit lock.
+    w.wal_boundary = tail.boundary;
+    CertifyAgainst(w, table_id, &reader, Flatten(tail));
+    return;
+  }
   auto sources = w.shard->ClaimCertificationSources(w.certified_mark);
   w.floor = std::move(sources.delta.floor);
+  // `sources` outlives the call: the tier borrows from its generations.
   CertifyAgainst(w, table_id,
                  sources.delta.from_scratch ? &sources.reader : nullptr,
-                 sources.delta.generations);
+                 Flatten(sources.delta.generations));
 }
 
-void SearchTableTransaction::CertifyTail(duckdb::idx_t database) {
+void SearchTableTransaction::CertifyTail(
+  duckdb::idx_t database, duckdb::ClientContext& context,
+  duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> commit_lock) {
   for (auto& [table_id, w] : _writes) {
-    if (!w.floor.Armed() || w.shard->GetDatabaseId() != database) {
+    if (w.shard->GetDatabaseId() != database) {
       continue;
     }
-    CertifyAgainst(w, table_id, nullptr, w.shard->Delta().Extend(w.floor));
+    if (w.wal_boundary) {
+      // Resuming where the pre-lock pass stopped, under the caller's commit
+      // lock: everything committed in between is between those two positions.
+      auto store = ResolveTailDatabase(*w.shard);
+      if (!store) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                        ERR_MSG("The database holding search table ", table_id,
+                                " is no longer attached."));
+      }
+      // Named, not inlined into the call: the tier borrows from the tail, and
+      // a temporary would be gone before the probe read it.
+      const auto tail = ReadUnpublishedTail(
+        *w.shard, *store, context, *w.wal_boundary, w.pk_slots, commit_lock);
+      RefuseUncertifiableTail(tail, table_id);
+      CertifyAgainst(w, table_id, nullptr, Flatten(tail));
+      continue;
+    }
+    if (!w.floor.Armed()) {
+      continue;
+    }
+    // Named for the same reason: the tier borrows from the generations.
+    const auto tail = w.shard->Delta().Extend(w.floor);
+    CertifyAgainst(w, table_id, nullptr, Flatten(tail));
   }
 }
 
@@ -624,6 +703,13 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
     if (w.pk_slots.empty()) {
       continue;
     }
+    // Ahead of every `continue` below, because the install at the end of the
+    // commit reads it and a transaction of deletes alone takes one of them.
+    // Only statements that assert a key reach a probe, and DELETE never does,
+    // so this is the first place such a transaction can be asked at all.
+    if (!w.certify_from_wal) {
+      w.certify_from_wal = CertifyFromWal(context);
+    }
     for (const auto& trx : w.transactions) {
       for (const auto& flushed : trx->Flushed()) {
         w.flushed_segments.push_back(w.shard->OpenFlushedSegment(flushed.meta));
@@ -636,7 +722,7 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
     if (w.pending_keys.empty() && w.flushed_segments.empty()) {
       continue;
     }
-    CertifyCommit(w, table_id);
+    CertifyCommit(w, table_id, context);
   }
   // Between the pass that settles against everything committed and the one
   // under the commit lock that settles against whatever committed since: the
@@ -667,6 +753,16 @@ void SearchTableTransaction::InstallPendingDelta(SearchShardWrites& w,
                                                  duckdb::idx_t table_id,
                                                  uint64_t tick) noexcept {
   if (w.pk_slots.empty()) {
+    return;
+  }
+  // The WAL arm installs nothing: the rows this transaction is committing are
+  // going into the log either way, and reading them back from there is the
+  // whole of what it does differently. Skipping this is most of what it has to
+  // be cheaper by -- a generation per commit, holding its segment readers open
+  // until a refresh prunes it. The flag and not `wal_boundary`, which a
+  // transaction of deletes alone never sets: its removals are in the log too.
+  SDB_ASSERT(w.certify_from_wal);
+  if (*w.certify_from_wal) {
     return;
   }
   // Released once the generation is in: from here the delta itself carries

@@ -640,6 +640,20 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_search_pk_certify_from_wal",
+      {
+        LogicalTypeId::BOOLEAN,
+        "Where a search table's primary-key check looks for rows that are "
+        "committed but not yet published. When false, those rows are kept in "
+        "memory from commit until publication; when true, they are read back "
+        "from the write-ahead log instead, trading that memory for a read on "
+        "each commit that is checked. Both reject the same duplicates. "
+        "Default: false.",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       "sdb_ai_throw_on_error",
       {
         LogicalTypeId::BOOLEAN,

@@ -275,13 +275,14 @@ void SereneDBClientState::TransactionDurable(duckdb::AttachedDatabase& db,
   _connection_ctx->PublishSearch(db.oid);
 }
 
-void SereneDBClientState::TransactionPreWalWrite(duckdb::AttachedDatabase& db,
-                                                 duckdb::ClientContext&) {
+void SereneDBClientState::TransactionPreWalWrite(
+  duckdb::AttachedDatabase& db, duckdb::ClientContext& context,
+  duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> commit_lock) {
   // Ahead of the refresh below, which has side effects this must not follow:
   // a throw from here is how a primary-key conflict rolls the commit back.
   if (db.GetCatalog().GetCatalogType() ==
       catalog::SereneDBCatalog::kStorageType) {
-    _connection_ctx->CertifySearch(db.oid);
+    _connection_ctx->CertifySearch(db.oid, context, commit_lock);
   }
   _connection_ctx->RefreshCreatedIndexes(db.oid);
 }

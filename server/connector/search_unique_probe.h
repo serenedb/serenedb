@@ -41,12 +41,14 @@ class UniqueProbe {
   // since. Leaving it out is the point of such a pass: adding the published
   // segments is most of the cost of building a probe and all of the cost of
   // consulting one.
-  UniqueProbe(
-    const irs::DirectoryReader* reader,
-    std::span<const irs::SubReader* const> unpublished_segments,
-    std::span<const std::vector<irs::bstring>* const> unpublished_keys,
-    std::span<const irs::field_id> key_fields,
-    std::span<const search::RowRange> deleted_ranges);
+  // `unpublished_keys` is taken, not borrowed: the probe sorts it and keeps it
+  // for its lifetime, so a caller that already built the vector hands it over
+  // instead of having it copied.
+  UniqueProbe(const irs::DirectoryReader* reader,
+              std::span<const irs::SubReader* const> unpublished_segments,
+              std::vector<const std::vector<irs::bstring>*> unpublished_keys,
+              std::span<const irs::field_id> key_fields,
+              std::span<const search::RowRange> deleted_ranges);
 
   bool Exists(std::span<const irs::bstring> key_terms);
 

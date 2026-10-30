@@ -1,0 +1,104 @@
+# The commit-lock pass reading its tail out of the WAL, across a checkpoint
+# that rotated it in between.
+#
+# `pause_search_commit_after_certify` parks a committer between its two passes.
+# A checkpoint taken while it is parked retires the generation its pre-lock
+# pass stopped in and starts a new one, so the key the second committer writes
+# lands in a file the first has never read, under a generation number its
+# boundary predates. The pass has to follow the retained chain to find it.
+#
+# Nothing here blocks the checkpoint: an INSERT takes the vacuum lock, and only
+# a statement that writes the catalog or draws a sequence takes the checkpoint
+# lock, so a plain one parked mid-commit leaves checkpoints free to run.
+
+control substitution on
+
+statement ok
+CREATE DATABASE pkwal;
+
+
+statement ok
+CREATE TABLE pkwal.public.t (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', refresh_interval=0, compaction_interval=0);
+
+
+# Already committed, so a loser below cannot be mistaken for the statement-end
+# probe having worked.
+statement ok
+INSERT INTO pkwal.public.t VALUES (0, 'base');
+
+
+statement ok
+SET sdb_faults = 'pause_search_commit_after_certify';
+
+
+connection first
+statement ok
+SET sdb_search_pk_certify_from_wal = true;
+
+
+# Parks past its own pre-lock pass, which found key 1 free.
+connection first
+statement async error
+INSERT INTO pkwal.public.t VALUES (1, 'first');
+----
+db error: ERROR: Failed to commit: Duplicate key on column "id" violates primary key constraint.
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_after_certify:parked';
+
+
+# Takes key 1 while the parked committer is still in the generation it read,
+# so the conflicting row is written there and not into the live WAL below.
+connection second
+statement ok
+SET sdb_search_pk_certify_from_wal = true;
+
+
+connection second
+statement ok
+INSERT INTO pkwal.public.t VALUES (1, 'second');
+
+
+# The rotation, after the conflict is already on disk. It retires the
+# generation holding key 1 to the retained chain and starts a new live one, so
+# a pass that reads only the live WAL now sees an empty tail -- the one answer
+# it cannot tell from "nothing was committed" -- and lets the duplicate
+# through. Finding it means following the chain back.
+connection default
+statement ok
+CHECKPOINT pkwal;
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_after_certify:release';
+
+
+connection first
+wait
+
+
+# refresh_interval=0 keeps every commit above out of the reader, so the rows
+# only read back once a publish is asked for.
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) pkwal.public.t;
+
+
+query
+SELECT id, s FROM pkwal.public.t ORDER BY id;
+----
+id	s
+0	base
+1	second
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+DROP DATABASE pkwal;

@@ -47,6 +47,12 @@
 
 namespace sdb::search {
 
+// The attached database a store belongs to, or null when it is gone. Looked up
+// by oid rather than held, because a store outlives neither the database nor
+// its own detach.
+duckdb::shared_ptr<duckdb::AttachedDatabase> AttachedDatabaseById(
+  duckdb::idx_t id);
+
 struct IndexStamp {
   irs::SourcePosition position;
   std::shared_ptr<const FileManifest> manifest;

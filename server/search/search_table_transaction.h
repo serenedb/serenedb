@@ -41,6 +41,7 @@
 #include "connector/search_key_unique.h"
 #include "search/search_pending_delta.h"
 #include "search/search_table_changes.h"
+#include "search/search_unpublished.h"
 
 namespace duckdb {
 
@@ -112,6 +113,19 @@ struct SearchShardWrites {
   // is installed: what keeps the tail the in-lock pass still has to read from
   // being pruned in between.
   PendingDelta::PruneFloor floor;
+  // The WAL arm's equivalent of the floor, and the reason it needs none: where
+  // the pre-lock pass stopped reading, which is where the in-lock pass starts.
+  // The WAL keeps what it holds whether or not anyone is reading it, so there
+  // is nothing to hold back -- only a place to resume.
+  std::optional<irs::SourcePosition> wal_boundary;
+  // Which source this transaction's unpublished rows come from, settled the
+  // first time it is asked -- a probe, or the commit for a transaction that
+  // reaches no probe. Every later pass and the install follow what was settled
+  // rather than re-reading the setting, so a SET mid-transaction cannot leave
+  // one pass looking where another put them. Unset until then, which is also
+  // why it is not a plain bool: "not asked yet" and "asked, and the answer was
+  // the delta" have to be told apart.
+  std::optional<bool> certify_from_wal;
 };
 
 // Holds a query::Transaction's search-table (TableEngine::Search) state and
@@ -169,7 +183,8 @@ class SearchTableTransaction {
   // published state already holds at the rows it is replacing: an UPDATE whose
   // SET list leaves the key columns alone. Such a statement skips the
   // published tier, which is the expensive one, but not the delta.
-  void CertifyKeys(const std::shared_ptr<SearchTable>& shard,
+  void CertifyKeys(duckdb::ClientContext& context,
+                   const std::shared_ptr<SearchTable>& shard,
                    std::span<const connector::primary_key::KeySlot> slots,
                    bool new_keys);
 
@@ -178,7 +193,9 @@ class SearchTableTransaction {
   // generations installed since its pre-lock pass claimed the delta. That
   // lock is what serializes two committers racing on one key, and throwing
   // from here is what still rolls the loser back.
-  void CertifyTail(duckdb::idx_t database);
+  void CertifyTail(
+    duckdb::idx_t database, duckdb::ClientContext& context,
+    duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> commit_lock);
 
   // Bytes a flush would reclaim for `shard_id`; deletes are not counted.
   uint64_t BufferedBytes(duckdb::idx_t shard_id) const noexcept {
@@ -256,21 +273,22 @@ class SearchTableTransaction {
   // what the statement-end probes settled, arms the floor on it, and puts this
   // transaction's whole key set to what it claimed. Leaves the pass under the
   // commit lock with only the concurrent window to read.
-  void CertifyCommit(SearchShardWrites& w, duckdb::idx_t table_id);
+  void CertifyCommit(SearchShardWrites& w, duckdb::idx_t table_id,
+                     duckdb::ClientContext& context);
 
   // The body both commit passes share: this transaction's keys -- its
-  // unflushed tail and the segments it flushed -- against `generations`, and
-  // against `reader` when the pass has to answer for the published tier too.
+  // unflushed tail and the segments it flushed -- against `tier`, and against
+  // `reader` when the pass has to answer for the published tier too. Takes the
+  // tier in its mode-neutral shape, so neither pass knows whether the rows
+  // came from the delta or from a read of the WAL.
   void CertifyAgainst(SearchShardWrites& w, duckdb::idx_t table_id,
-                      const irs::DirectoryReader* reader,
-                      std::span<const PendingGenerationPtr> generations);
+                      const irs::DirectoryReader* reader, UnpublishedTier tier);
 
-  // Refuses the commit if any of `generations` has already removed a row this
+  // Refuses the commit if `removed` has already taken away a row this
   // transaction is rewriting, which would put its key back after the owner
   // released it. Cheap enough to run on every pass: see `rewritten_rows`.
-  static void RefuseResurrection(
-    const SearchShardWrites& w,
-    std::span<const PendingGenerationPtr> generations);
+  static void RefuseResurrection(const SearchShardWrites& w,
+                                 std::span<const RowRange> removed);
 
   irs::containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,

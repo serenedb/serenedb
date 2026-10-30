@@ -104,8 +104,9 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   void TransactionDurable(duckdb::AttachedDatabase& db,
                           duckdb::ClientContext& context) final;
 
-  void TransactionPreWalWrite(duckdb::AttachedDatabase& db,
-                              duckdb::ClientContext& context) final;
+  void TransactionPreWalWrite(
+    duckdb::AttachedDatabase& db, duckdb::ClientContext& context,
+    duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> commit_lock) final;
 
   void TransactionPreRollback(
     duckdb::MetaTransaction& transaction, duckdb::ClientContext& context,

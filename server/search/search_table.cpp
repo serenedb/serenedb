@@ -35,6 +35,7 @@
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
@@ -191,6 +192,27 @@ irs::IndexReaderOptions SearchTable::ReaderOptions() const {
 
 irs::SegmentReader SearchTable::OpenFlushedSegment(
   const irs::SegmentMeta& meta) const {
+  return irs::SegmentReader{
+    irs::SegmentReaderImpl::Open(*_dir, meta, ReaderOptions())};
+}
+
+irs::SegmentReader SearchTable::OpenNamedSegment(
+  std::string_view meta_file) const {
+  const absl::ReaderMutexLock lock{&_cleanup_mutex};
+  irs::SegmentMeta meta;
+  try {
+    irs::segment_meta::Read(*_dir, meta, meta_file);
+  } catch (const std::exception&) {
+    // The meta went away before the cleaner was held off, which is what a null
+    // reader reports.
+    return {};
+  }
+  if (meta.live_docs_count == 0) {
+    return {};
+  }
+  if (!irs::directory_utils::Reference(*_dir, meta_file)) {
+    return {};
+  }
   return irs::SegmentReader{
     irs::SegmentReaderImpl::Open(*_dir, meta, ReaderOptions())};
 }
@@ -444,7 +466,12 @@ auto SearchTable::CompactUnsafeAsync(
 
 ResultWithTime SearchTable::CleanupUnsafe() {
   const auto begin = std::chrono::steady_clock::now();
-  auto result = _durability.Cleanup(*_dir);
+  // Exclusive against OpenNamedSegment: unlinking is the only thing that can
+  // make a name the WAL handed a certifier stop resolving.
+  auto result = [&] {
+    const absl::MutexLock lock{&_cleanup_mutex};
+    return _durability.Cleanup(*_dir);
+  }();
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)

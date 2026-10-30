@@ -68,7 +68,9 @@ class Transaction : public Config {
   // May throw: runs under the committing database's commit lock, before
   // anything reaches the WAL and before the commit's point of no return, so a
   // primary-key conflict it finds still rolls the transaction back.
-  void CertifySearch(duckdb::idx_t database);
+  void CertifySearch(
+    duckdb::idx_t database, duckdb::ClientContext& context,
+    duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> commit_lock);
 
   void StageSearch(const irs::SourcePosition& position,
                    duckdb::idx_t database) noexcept;

@@ -37,9 +37,10 @@ namespace sdb::connector {
 UniqueProbe::UniqueProbe(
   const irs::DirectoryReader* reader,
   std::span<const irs::SubReader* const> unpublished_segments,
-  std::span<const std::vector<irs::bstring>* const> unpublished_keys,
+  std::vector<const std::vector<irs::bstring>*> unpublished_keys,
   std::span<const irs::field_id> key_fields,
-  std::span<const search::RowRange> deleted_ranges) {
+  std::span<const search::RowRange> deleted_ranges)
+  : _keys{std::move(unpublished_keys)} {
   SDB_ASSERT(!key_fields.empty());
   const size_t published = reader ? reader->size() : 0;
   _segments.reserve(published + unpublished_segments.size());
@@ -51,7 +52,6 @@ UniqueProbe::UniqueProbe(
     AddSegment(*sub, key_fields, deleted_ranges);
   }
 
-  _keys.assign(unpublished_keys.begin(), unpublished_keys.end());
   absl::c_sort(_keys,
                [](const auto* lhs, const auto* rhs) { return *lhs < *rhs; });
   _column_terms.resize(key_fields.size());

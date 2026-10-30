@@ -52,6 +52,8 @@ constexpr duckdb::field_id_t kFieldWalOffset = 2;
 constexpr duckdb::field_id_t kFieldManifest = 3;
 constexpr duckdb::field_id_t kFieldCheckpoint = 4;
 
+}  // namespace
+
 duckdb::shared_ptr<duckdb::AttachedDatabase> AttachedDatabaseById(
   duckdb::idx_t id) {
   auto& manager =
@@ -63,8 +65,6 @@ duckdb::shared_ptr<duckdb::AttachedDatabase> AttachedDatabaseById(
   }
   return nullptr;
 }
-
-}  // namespace
 
 IndexStamp IndexStamp::Read(duckdb::BinaryDeserializer& in) {
   IndexStamp stamp;

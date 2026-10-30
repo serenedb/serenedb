@@ -291,7 +291,7 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   }
   search_txn.FlushBufferTransaction(gstate.table_id);
   // Every row an INSERT writes asserts its key for the first time.
-  search_txn.CertifyKeys(gstate.search_table, gstate.pk_slots,
+  search_txn.CertifyKeys(context, gstate.search_table, gstate.pk_slots,
                          /*new_keys=*/true);
 
   if (_ctas_info) {

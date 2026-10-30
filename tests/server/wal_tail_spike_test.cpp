@@ -74,6 +74,11 @@ std::string WalPath(duckdb::AttachedDatabase& db) {
   return db.GetStorageManager().GetWAL()->GetPath();
 }
 
+duckdb::unique_ptr<duckdb::FileHandle> OpenWal(duckdb::AttachedDatabase& db) {
+  return duckdb::FileSystem::Get(db).OpenFile(
+    WalPath(db), duckdb::FileFlags::FILE_FLAGS_READ);
+}
+
 // Counts what the reader hands back, standing in for a certifier's consumer on
 // a plain table (which has no key columns, so no terms are encoded).
 class CountingCollector final : public duckdb::TableLogStorage,
@@ -161,7 +166,7 @@ TEST(WalTailSpike, DeliversRowsCommittedAfterTheBoundary) {
 
   CountingCollector collector{CountingCollector::Accepts::Everything};
   const auto read = duckdb::ReadWALTail(
-    *attached.db, ctx, WalPath(*attached.db), boundary, end, collector);
+    *attached.db, ctx, OpenWal(*attached.db), boundary, end, collector);
 
   EXPECT_EQ(read.error, "");
   EXPECT_FALSE(read.stopped_undecided);
@@ -178,7 +183,7 @@ TEST(WalTailSpike, DeliversRowsCommittedAfterTheBoundary) {
   // treating a table it has no consumer for as a corrupt WAL.
   CountingCollector skipping{CountingCollector::Accepts::Nothing};
   const auto skipped = duckdb::ReadWALTail(
-    *attached.db, ctx, WalPath(*attached.db), boundary, end, skipping);
+    *attached.db, ctx, OpenWal(*attached.db), boundary, end, skipping);
   EXPECT_EQ(skipped.error, "");
   EXPECT_EQ(skipped.boundary, end);
   EXPECT_EQ(skipping.committed_rows, 0u);
@@ -187,7 +192,7 @@ TEST(WalTailSpike, DeliversRowsCommittedAfterTheBoundary) {
   // Reading the same range again is identical: the read mutates nothing.
   CountingCollector again{CountingCollector::Accepts::Everything};
   const auto second = duckdb::ReadWALTail(
-    *attached.db, ctx, WalPath(*attached.db), boundary, end, again);
+    *attached.db, ctx, OpenWal(*attached.db), boundary, end, again);
   EXPECT_EQ(second.error, "");
   EXPECT_EQ(again.committed_rows, collector.committed_rows);
 
@@ -211,7 +216,7 @@ TEST(WalTailSpike, BoundaryComposesAcrossSuccessiveReads) {
     const auto end = WalSize(*attached.db);
     CountingCollector collector{CountingCollector::Accepts::Everything};
     const auto read = duckdb::ReadWALTail(
-      *attached.db, ctx, WalPath(*attached.db), boundary, end, collector);
+      *attached.db, ctx, OpenWal(*attached.db), boundary, end, collector);
     ASSERT_EQ(read.error, "") << "round " << round;
     EXPECT_EQ(read.boundary, end);
     EXPECT_EQ(collector.committed_rows, 3u) << "round " << round;
@@ -258,7 +263,10 @@ TEST(WalTailSpike, ReadsALogThatIsStillBeingWritten) {
     }
     CountingCollector collector{CountingCollector::Accepts::Everything};
     const auto read =
-      duckdb::ReadWALTail(*attached.db, ctx, path, boundary, end, collector);
+      duckdb::ReadWALTail(*attached.db, ctx,
+                          duckdb::FileSystem::Get(*attached.db)
+                            .OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ),
+                          boundary, end, collector);
     ++reads;
     if (!read.error.empty()) {
       ++failures;

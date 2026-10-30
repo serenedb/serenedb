@@ -767,7 +767,7 @@ class SpecCompiler {
   duckdb::Value Fold(const OptionGroup& group, std::string_view name,
                      const duckdb::ParsedExpression& value) {
     auto binder = duckdb::Binder::CreateBinder(_context);
-    binder->principal = _context.principal;
+    binder->SetPrincipal(_context.principal);
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> select_list;
     std::string error;
     try {

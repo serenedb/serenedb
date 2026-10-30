@@ -126,21 +126,6 @@ bool StoresPermissions(duckdb::Catalog& catalog) {
            catalog.GetAttached().GetStorageManager().GetStorageVersion());
 }
 
-bool IsSchemaMember(CatalogType type) {
-  switch (type) {
-    case CatalogType::TABLE_ENTRY:
-    case CatalogType::VIEW_ENTRY:
-    case CatalogType::SEQUENCE_ENTRY:
-    case CatalogType::MACRO_ENTRY:
-    case CatalogType::TABLE_MACRO_ENTRY:
-    case CatalogType::TYPE_ENTRY:
-    case CatalogType::INDEX_ENTRY:
-      return true;
-    default:
-      return false;
-  }
-}
-
 bool IsRelation(CatalogType type) {
   switch (type) {
     case CatalogType::TABLE_ENTRY:
@@ -416,7 +401,6 @@ class Enforcer {
     if (!_enforce) {
       return _files_authorized;
     }
-    CheckSchemaUsage();
     CheckResolved();
     if (_file_copy) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -787,33 +771,6 @@ class Enforcer {
     }
     for (const auto* entry : _props.resolved_entries) {
       check(entry->ParentCatalog().GetName());
-    }
-  }
-
-  void CheckSchemaUsage() {
-    const auto& resolved = _props.resolved_entries;
-    std::vector<bool> in_view(resolved.size());
-    for (const auto& scope : _props.view_scopes) {
-      for (auto i = scope.resolved_begin;
-           i < scope.resolved_end && i < resolved.size(); ++i) {
-        in_view[i] = true;
-      }
-    }
-    irs::containers::FlatHashSet<const duckdb::CatalogEntry*> checked;
-    for (size_t i = 0; i < resolved.size(); ++i) {
-      const auto& entry = *resolved[i];
-      if (in_view[i] || !IsSchemaMember(entry.type) ||
-          duckdb::IsUnowned(entry) || entry.ParentCatalog().IsSystemCatalog()) {
-        continue;
-      }
-      const auto& schema = entry.ParentSchema(_context);
-      if (schema.internal || !checked.insert(&schema).second) {
-        continue;
-      }
-      if (!_caller_closure.Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
-                               AclMode::Usage)) {
-        duckdb::ThrowPermissionDenied(schema);
-      }
     }
   }
 

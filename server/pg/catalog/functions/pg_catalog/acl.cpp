@@ -385,7 +385,7 @@ duckdb::idx_t RoleIdByName(const auth::RoleGraph& roles,
 }
 
 struct ObjectScope : Session {
-  std::shared_ptr<const auth::RoleGraph> roles;
+  auth::RoleGraphPtr roles;
 };
 
 template<typename F>
@@ -410,8 +410,9 @@ struct ObjectPrivileges {
     return ParsePrivileges(text, F::kModes);
   }
 
-  static bool Check(const auth::RoleClosure& closure, duckdb::idx_t,
-                    const ObjectTarget& target, const PrivilegeModes& modes) {
+  static bool Check(const ObjectScope&, const auth::RoleClosure& closure,
+                    duckdb::idx_t, const ObjectTarget& target,
+                    const PrivilegeModes& modes) {
     return Holds(closure, F::kType, target, modes);
   }
 };
@@ -779,8 +780,8 @@ struct ParameterPrivileges : ObjectPrivileges<ParameterPrivileges> {
     return ObjectTarget{&kBuiltinPermissions};
   }
 
-  static bool Check(const auth::RoleClosure& closure, duckdb::idx_t,
-                    const ObjectTarget&, const PrivilegeModes&) {
+  static bool Check(const ObjectScope&, const auth::RoleClosure& closure,
+                    duckdb::idx_t, const ObjectTarget&, const PrivilegeModes&) {
     return closure.is_superuser;
   }
 };
@@ -794,7 +795,7 @@ struct LargeObjectPrivileges : ObjectPrivileges<LargeObjectPrivileges> {
     return std::nullopt;
   }
 
-  static bool Check(const auth::RoleClosure&, duckdb::idx_t,
+  static bool Check(const ObjectScope&, const auth::RoleClosure&, duckdb::idx_t,
                     const ObjectTarget&, const PrivilegeModes&) {
     SDB_UNREACHABLE();
   }
@@ -812,11 +813,22 @@ struct RolePrivileges {
   static constexpr bool kSuperuserFirst = false;
 
   struct Scope {
-    std::shared_ptr<const auth::RoleGraph> roles;
+    auth::RoleGraphPtr roles;
+    mutable duckdb::idx_t member = kInvalidOid;
+    mutable auth::RoleMemberships memberships;
   };
 
   static Scope Begin(duckdb::ClientContext& context) {
-    return {auth::RolesOf(&context)};
+    return {.roles = auth::RolesOf(&context)};
+  }
+
+  static const auth::RoleMemberships& MembershipsOf(const Scope& scope,
+                                                    duckdb::idx_t member) {
+    if (scope.member != member) {
+      scope.memberships = auth::MembershipsOf(*scope.roles, member);
+      scope.member = member;
+    }
+    return scope.memberships;
   }
 
   static duckdb::idx_t Role(const Scope& scope, duckdb::string_t name) {
@@ -862,18 +874,25 @@ struct RolePrivileges {
     return mask;
   }
 
-  static bool Check(const auth::RoleClosure& closure, duckdb::idx_t member,
-                    duckdb::idx_t role, const RolePrivMask& mask) {
+  static bool Check(const Scope& scope, const auth::RoleClosure& closure,
+                    duckdb::idx_t member, duckdb::idx_t role,
+                    const RolePrivMask& mask) {
     if (closure.is_superuser) {
       return true;
     }
     if (member == role) {
       return mask.usage || mask.member || mask.set;
     }
-    return (mask.usage && closure.MemberOf(role)) ||
-           (mask.member && closure.IsMember(role)) ||
-           (mask.set && closure.CanSet(role)) ||
-           (mask.admin && closure.IsAdminOf(role));
+    if (mask.usage && closure.MemberOf(role)) {
+      return true;
+    }
+    if (!mask.member && !mask.set && !mask.admin) {
+      return false;
+    }
+    const auto& memberships = MembershipsOf(scope, member);
+    return (mask.member && memberships.IsMember(role)) ||
+           (mask.set && memberships.CanSet(role)) ||
+           (mask.admin && memberships.IsAdminOf(role));
   }
 };
 
@@ -930,7 +949,7 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     const auto target = FindObject<F>(_scope, object, rest...);
     const auto& modes = Modes(text);
     if (target) {
-      return F::Check(Closure(role), role, *target, modes);
+      return F::Check(_scope, Closure(role), role, *target, modes);
     }
     if constexpr (F::kSuperuserFirst) {
       if (Closure(role).is_superuser) {
@@ -953,7 +972,7 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
 
   struct RoleClosureOf {
     duckdb::idx_t role;
-    std::shared_ptr<const auth::RoleClosure> closure;
+    auth::RoleAccessRef closure;
   };
 
   const typename F::Modes& Modes(duckdb::string_t text) {

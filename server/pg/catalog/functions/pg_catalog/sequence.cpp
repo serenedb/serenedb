@@ -54,15 +54,14 @@ SequenceProgress ProgressOf(const duckdb::SequenceData& data) {
   return {.last_value = data.counter, .is_called = false};
 }
 
-bool Allows(const std::shared_ptr<const auth::RoleClosure>& closure,
+bool Allows(const auth::RoleAccessRef& closure,
             const duckdb::Permissions& permissions, CatalogType type,
             AclMode modes) {
   return !closure || closure->CanAny(type, permissions, modes);
 }
 
 const duckdb::SequenceCatalogEntry* ReadableSequence(
-  const Session& session,
-  const std::shared_ptr<const auth::RoleClosure>& closure, int64_t oid,
+  const Session& session, const auth::RoleAccessRef& closure, int64_t oid,
   AclMode modes) {
   const auto entry = EntryByOid(session, static_cast<uint64_t>(oid));
   if (!entry || entry->type != CatalogType::SEQUENCE_ENTRY ||

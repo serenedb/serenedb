@@ -154,7 +154,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
     }
     if (!alter.revoke &&
         (oid == target->oid ||
-         auth::ComputeRoleClosure(*auth::RolesOf(&context), target->oid)
+         auth::MembershipsOf(*auth::RolesOf(&context), target->oid)
            .IsMember(oid))) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),

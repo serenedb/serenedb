@@ -23,99 +23,32 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/common/helper.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/transaction/duck_transaction.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
-#include <duckdb/transaction/meta_transaction.hpp>
-#include <iresearch/utils/assert.hpp>
-#include <memory>
-#include <span>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <vector>
 
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/catalog/oids.h"
-#include "pg/connection_context.h"
 
 namespace sdb::auth {
 namespace {
 
-using duckdb::AclItem;
-using duckdb::AclMode;
-using RoleIdSpan = std::span<const duckdb::idx_t>;
-
-bool RolesContain(RoleIdSpan roles, duckdb::idx_t id) {
-  return absl::c_binary_search(roles, id);
-}
-
-bool Reaches(const AclItem& item, RoleIdSpan roles) {
-  return item.grantee == pg::kPublicGrantee ||
-         RolesContain(roles, item.grantee);
-}
-
-AclMode Held(std::span<const duckdb::AclItem> acl, RoleIdSpan roles,
-             AclMode AclItem::* field) {
-  AclMode held = AclMode::NoRights;
-  for (const auto& item : acl) {
-    if (Reaches(item, roles)) {
-      held |= item.*field;
-    }
-  }
-  return held;
-}
-
-bool Allows(std::span<const duckdb::AclItem> stored, duckdb::CatalogType type,
-            duckdb::idx_t owner, RoleIdSpan roles, AclMode need, bool any) {
-  SDB_ASSERT(absl::c_is_sorted(roles),
-             "Allows requires an ascending-sorted roles span");
-  if (need == AclMode::NoRights) {
-    return false;
-  }
-  const auto done = [&](AclMode have) {
-    return any ? (have & need) != AclMode::NoRights : (have & need) == need;
-  };
-  AclMode have = AclMode::NoRights;
-  if (RolesContain(roles, owner)) {
-    have |= duckdb::Permissions::AllPrivileges(type);
-    if (done(have)) {
-      return true;
-    }
-  }
-  if (stored.empty()) {
-    have |= duckdb::Permissions::PublicPrivileges(type);
-    return done(have);
-  }
-  for (const auto& item : stored) {
-    if (!Reaches(item, roles)) {
-      continue;
-    }
-    have |= item.privs;
-    if (done(have)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool ColumnGrants(std::span<const duckdb::AclItem> acl, duckdb::idx_t owner,
-                  RoleIdSpan closure, AclMode need) {
-  return Allows(acl, duckdb::CatalogType::TABLE_ENTRY, owner, closure, need,
-                false);
-}
-
-std::vector<duckdb::idx_t> Reachable(const RoleGraph& graph, duckdb::idx_t role,
+std::vector<duckdb::idx_t> Reachable(const RoleNodes& nodes, duckdb::idx_t role,
                                      bool duckdb::Membership::* option) {
   irs::containers::FlatHashSet<duckdb::idx_t> seen{role};
   std::vector<duckdb::idx_t> work{role};
   while (!work.empty()) {
-    const auto* node = graph.Find(work.back());
+    const auto it = nodes.find(work.back());
     work.pop_back();
-    if (!node) {
+    if (it == nodes.end()) {
       continue;
     }
-    for (const auto& edge : node->member_of) {
-      if ((!option || edge.*option) && graph.Find(edge.role) &&
+    for (const auto& edge : it->second.member_of) {
+      if ((!option || edge.*option) && nodes.contains(edge.role) &&
           seen.insert(edge.role).second) {
         work.emplace_back(edge.role);
       }
@@ -126,38 +59,21 @@ std::vector<duckdb::idx_t> Reachable(const RoleGraph& graph, duckdb::idx_t role,
   return out;
 }
 
-std::shared_ptr<const RoleGraph> BuildRoleGraph(
-  catalog::ClusterCatalog& cluster, duckdb::CatalogTransaction transaction) {
-  auto graph = std::make_shared<RoleGraph>();
-  cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-    .Scan(transaction, [&](duckdb::CatalogEntry& entry) {
-      const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
-      auto& node = graph->nodes[role.oid];
-      node.name = role.name.GetIdentifierName();
-      node.member_of = role.MemberOf();
-      node.options = role.Options();
-      node.is_superuser = role.IsSuperuser();
-    });
-  for (const auto& [oid, node] : graph->nodes) {
-    graph->by_name.emplace(node.name, oid);
+duckdb::vector<duckdb::SecuritySnapshot::Role> InheritClosures(
+  const RoleNodes& nodes) {
+  duckdb::vector<duckdb::SecuritySnapshot::Role> closures;
+  closures.reserve(nodes.size());
+  for (const auto& [oid, node] : nodes) {
+    auto closure = Reachable(nodes, oid, &duckdb::Membership::inherit_option);
+    closures.push_back({.role = oid,
+                        .options = node.options,
+                        .closure = duckdb::vector<duckdb::idx_t>(
+                          closure.begin(), closure.end())});
   }
-  return graph;
+  return closures;
 }
 
-bool WritesCatalog(duckdb::ClientContext& context,
-                   catalog::ClusterCatalog& cluster) {
-  if (!context.transaction.HasActiveTransaction()) {
-    return false;
-  }
-  auto transaction = context.transaction.ActiveTransaction().TryGetTransaction(
-    cluster.GetAttached());
-  return transaction &&
-         transaction->Cast<duckdb::DuckTransaction>().catalog_version >=
-           duckdb::TRANSACTION_ID_START;
-}
-
-std::shared_ptr<const RoleGraph> Publish(catalog::ClusterCatalog& cluster,
-                                         RoleCache& cache) {
+RoleGraphPtr Publish(catalog::ClusterCatalog& cluster, RoleCache& cache) {
   const auto durable =
     duckdb::DuckTransactionManager::Get(cluster.GetAttached())
       .GetDurableSnapshot();
@@ -175,13 +91,13 @@ std::shared_ptr<const RoleGraph> Publish(catalog::ClusterCatalog& cluster,
   if (!cache.roles || durable.catalog_version > cache.version) {
     cache.version = durable.catalog_version;
     cache.roles = std::move(roles);
-    cache.closures.clear();
+    cluster.GetDatabase().PublishSecurity(cache.roles);
   }
   return cache.roles;
 }
 
-std::shared_ptr<const RoleGraph> PublishedRoles(
-  catalog::ClusterCatalog& cluster, RoleCache& cache) {
+RoleGraphPtr PublishedRoles(catalog::ClusterCatalog& cluster,
+                            RoleCache& cache) {
   {
     absl::MutexLock lock{&cache.mutex};
     if (cache.roles) {
@@ -193,18 +109,68 @@ std::shared_ptr<const RoleGraph> PublishedRoles(
 
 }  // namespace
 
+RoleGraph::RoleGraph(RoleNodes nodes_p, duckdb::vector<Role> closures)
+  : duckdb::SecuritySnapshot{std::move(closures)}, nodes{std::move(nodes_p)} {
+  for (const auto& [oid, node] : nodes) {
+    by_name.emplace(node.name, oid);
+  }
+}
+
+RoleGraphPtr BuildRoleGraph(catalog::ClusterCatalog& cluster,
+                            duckdb::CatalogTransaction transaction) {
+  RoleNodes nodes;
+  cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+    .Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+      const auto& role = entry.Cast<catalog::RoleCatalogEntry>();
+      auto& node = nodes[role.oid];
+      node.name = role.name.GetIdentifierName();
+      node.member_of = role.MemberOf();
+      node.options = role.Options();
+      node.is_superuser = role.IsSuperuser();
+    });
+  auto closures = InheritClosures(nodes);
+  return duckdb::make_shared_ptr<const RoleGraph>(std::move(nodes),
+                                                  std::move(closures));
+}
+
 void PublishRoles(catalog::ClusterCatalog& cluster) {
   Publish(cluster, cluster.Roles());
 }
 
-RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role) {
-  RoleClosure out;
+RoleGraphPtr RolesOf(duckdb::ClientContext* context) {
+  if (context && context->security) {
+    return duckdb::shared_ptr_cast<const duckdb::SecuritySnapshot,
+                                   const RoleGraph>(context->security);
+  }
+  auto& cluster =
+    context ? catalog::ClusterOf(*context->db) : catalog::ClusterOf();
+  return PublishedRoles(cluster, cluster.Roles());
+}
+
+RoleAccessRef ClosureFor(duckdb::ClientContext* context, duckdb::idx_t role) {
+  auto graph = RolesOf(context);
+  if (const auto access = graph->Access(role)) {
+    return {std::move(graph), *access};
+  }
+  RoleClosure missing;
+  missing.role = role;
+  return {std::move(graph), missing};
+}
+
+RoleAccessRef SessionClosure(duckdb::ClientContext& context) {
+  if (context.principal_role == duckdb::DConstants::INVALID_INDEX) {
+    return {};
+  }
+  return ClosureFor(&context, context.principal_role);
+}
+
+RoleMemberships MembershipsOf(const RoleGraph& graph, duckdb::idx_t role) {
+  RoleMemberships out;
   if (role == pg::kInvalidOid) {
     return out;
   }
-  out.closure = Reachable(graph, role, &duckdb::Membership::inherit_option);
-  out.members = Reachable(graph, role, nullptr);
-  out.settable = Reachable(graph, role, &duckdb::Membership::set_option);
+  out.members = Reachable(graph.nodes, role, nullptr);
+  out.settable = Reachable(graph.nodes, role, &duckdb::Membership::set_option);
   for (const auto member : out.members) {
     const auto* node = graph.Find(member);
     if (!node) {
@@ -217,104 +183,7 @@ RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role) {
     }
   }
   absl::c_sort(out.admin);
-  if (const auto* node = graph.Find(role)) {
-    out.options = node->options;
-    out.is_superuser = node->is_superuser;
-  }
   return out;
-}
-
-std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context) {
-  auto& cluster =
-    context ? catalog::ClusterOf(*context->db) : catalog::ClusterOf();
-  if (context && WritesCatalog(*context, cluster)) {
-    return BuildRoleGraph(cluster, cluster.GetCatalogTransaction(*context));
-  }
-  return PublishedRoles(cluster, cluster.Roles());
-}
-
-std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
-                                              duckdb::idx_t role) {
-  auto& cluster =
-    context ? catalog::ClusterOf(*context->db) : catalog::ClusterOf();
-  if (context && WritesCatalog(*context, cluster)) {
-    return std::make_shared<const RoleClosure>(ComputeRoleClosure(
-      *BuildRoleGraph(cluster, cluster.GetCatalogTransaction(*context)), role));
-  }
-  auto& cache = cluster.Roles();
-  {
-    absl::MutexLock lock{&cache.mutex};
-    if (cache.roles) {
-      if (const auto it = cache.closures.find(role);
-          it != cache.closures.end()) {
-        return it->second;
-      }
-    }
-  }
-  const auto roles = PublishedRoles(cluster, cache);
-  auto closure =
-    std::make_shared<const RoleClosure>(ComputeRoleClosure(*roles, role));
-  absl::MutexLock lock{&cache.mutex};
-  if (cache.roles == roles) {
-    cache.closures.try_emplace(role, closure);
-  }
-  return closure;
-}
-
-std::shared_ptr<const RoleClosure> SessionClosure(
-  duckdb::ClientContext& context) {
-  const auto* connection = connector::GetSereneDBContextPtr(context);
-  return connection ? ClosureFor(&context, connection->GetRoleId()) : nullptr;
-}
-
-bool RoleClosure::Can(duckdb::CatalogType type, const duckdb::Permissions& perm,
-                      duckdb::AclMode need) const {
-  if (Owns(perm.owner)) {
-    return true;
-  }
-  return Allows(perm.acl, type, perm.owner, closure, need, false);
-}
-
-bool RoleClosure::CanAny(duckdb::CatalogType type,
-                         const duckdb::Permissions& perm,
-                         duckdb::AclMode need) const {
-  if (Owns(perm.owner)) {
-    return true;
-  }
-  return Allows(perm.acl, type, perm.owner, closure, need, true);
-}
-
-duckdb::AclMode RoleClosure::HeldModes(
-  std::span<const duckdb::AclItem> acl) const {
-  return Held(acl, closure, &AclItem::privs);
-}
-
-duckdb::AclMode RoleClosure::GrantableModes(
-  std::span<const duckdb::AclItem> acl) const {
-  return Held(acl, closure, &AclItem::grant_option);
-}
-
-bool RoleClosure::CanColumns(
-  const duckdb::Permissions& perm, duckdb::AclMode need,
-  std::span<const std::span<const duckdb::AclItem>> acls) const {
-  if (Can(duckdb::CatalogType::TABLE_ENTRY, perm, need)) {
-    return true;
-  }
-  return !acls.empty() &&
-         absl::c_all_of(acls, [&](std::span<const duckdb::AclItem> acl) {
-           return ColumnGrants(acl, perm.owner, closure, need);
-         });
-}
-
-bool RoleClosure::CanAnyColumn(
-  const duckdb::Permissions& perm, duckdb::AclMode need,
-  std::span<const std::span<const duckdb::AclItem>> acls) const {
-  if (Can(duckdb::CatalogType::TABLE_ENTRY, perm, need)) {
-    return true;
-  }
-  return absl::c_any_of(acls, [&](std::span<const duckdb::AclItem> acl) {
-    return ColumnGrants(acl, perm.owner, closure, need);
-  });
 }
 
 }  // namespace sdb::auth

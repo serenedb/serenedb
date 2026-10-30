@@ -24,11 +24,10 @@
 #include <absl/synchronization/mutex.h>
 
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/permissions.hpp>
+#include <duckdb/common/shared_ptr.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
-#include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <memory>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -47,23 +46,29 @@ class ClusterCatalog;
 }  // namespace sdb::catalog
 namespace sdb::auth {
 
-struct RoleGraph {
-  struct Node {
-    std::string name;
-    std::vector<duckdb::Membership> member_of;
-    catalog::RoleOption options = catalog::RoleOption::None;
-    bool is_superuser = false;
-  };
+using RoleClosure = duckdb::RoleAccess;
 
-  irs::containers::FlatHashMap<duckdb::idx_t, Node> nodes;
-  irs::containers::FlatHashMap<std::string_view, duckdb::idx_t> by_name;
+struct RoleNode {
+  std::string name;
+  std::vector<duckdb::Membership> member_of;
+  catalog::RoleOption options = catalog::RoleOption::None;
+  bool is_superuser = false;
+};
+
+using RoleNodes = irs::containers::FlatHashMap<duckdb::idx_t, RoleNode>;
+
+class RoleGraph final : public duckdb::SecuritySnapshot {
+ public:
+  using Node = RoleNode;
+
+  RoleGraph(RoleNodes nodes, duckdb::vector<Role> closures);
 
   const Node* Find(duckdb::idx_t role) const {
     auto it = nodes.find(role);
     return it == nodes.end() ? nullptr : &it->second;
   }
 
-  const decltype(nodes)::value_type* FindByName(std::string_view name) const {
+  const RoleNodes::value_type* FindByName(std::string_view name) const {
     const auto it = by_name.find(name);
     return it == by_name.end() ? nullptr : &*nodes.find(it->second);
   }
@@ -72,76 +77,61 @@ struct RoleGraph {
     const auto* node = Find(role);
     return node ? std::string_view{node->name} : std::string_view{};
   }
+
+  const RoleNodes nodes;
+  irs::containers::FlatHashMap<std::string_view, duckdb::idx_t> by_name;
 };
 
-struct RoleClosure {
-  std::vector<duckdb::idx_t> closure;
+using RoleGraphPtr = duckdb::shared_ptr<const RoleGraph>;
+
+class RoleAccessRef {
+ public:
+  RoleAccessRef() = default;
+  RoleAccessRef(RoleGraphPtr graph, const RoleClosure& access)
+    : _graph{std::move(graph)}, _access{access} {}
+
+  explicit operator bool() const noexcept { return static_cast<bool>(_graph); }
+  const RoleClosure* operator->() const noexcept { return &_access; }
+  const RoleClosure& operator*() const noexcept { return _access; }
+
+ private:
+  RoleGraphPtr _graph;
+  RoleClosure _access;
+};
+
+struct RoleMemberships {
   std::vector<duckdb::idx_t> members;
   std::vector<duckdb::idx_t> settable;
   std::vector<duckdb::idx_t> admin;
 
-  catalog::RoleOption options = catalog::RoleOption::None;
-
-  bool is_superuser = false;
-
-  bool Has(catalog::RoleOption option) const {
-    return catalog::HasOption(options, option);
-  }
-
-  bool MemberOf(duckdb::idx_t r) const {
-    return is_superuser || absl::c_binary_search(closure, r);
-  }
-
-  bool Owns(duckdb::idx_t owner) const { return MemberOf(owner); }
-
   bool IsMember(duckdb::idx_t r) const {
     return absl::c_binary_search(members, r);
   }
-
   bool CanSet(duckdb::idx_t r) const {
     return absl::c_binary_search(settable, r);
   }
-
   bool IsAdminOf(duckdb::idx_t r) const {
     return absl::c_binary_search(admin, r);
   }
-
-  bool Can(duckdb::CatalogType type, const duckdb::Permissions& perm,
-           duckdb::AclMode need) const;
-
-  bool CanAny(duckdb::CatalogType type, const duckdb::Permissions& perm,
-              duckdb::AclMode need) const;
-
-  bool CanColumns(const duckdb::Permissions& perm, duckdb::AclMode need,
-                  std::span<const std::span<const duckdb::AclItem>> acls) const;
-
-  bool CanAnyColumn(
-    const duckdb::Permissions& perm, duckdb::AclMode need,
-    std::span<const std::span<const duckdb::AclItem>> acls) const;
-
-  duckdb::AclMode HeldModes(std::span<const duckdb::AclItem> acl) const;
-  duckdb::AclMode GrantableModes(std::span<const duckdb::AclItem> acl) const;
 };
 
 struct RoleCache {
   absl::Mutex mutex;
   duckdb::idx_t version ABSL_GUARDED_BY(mutex) = 0;
-  std::shared_ptr<const RoleGraph> roles ABSL_GUARDED_BY(mutex);
-  irs::containers::FlatHashMap<duckdb::idx_t,
-                               std::shared_ptr<const RoleClosure>>
-    closures ABSL_GUARDED_BY(mutex);
+  RoleGraphPtr roles ABSL_GUARDED_BY(mutex);
 };
 
-std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context);
+RoleGraphPtr RolesOf(duckdb::ClientContext* context);
 
-std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
-                                              duckdb::idx_t role);
+RoleAccessRef ClosureFor(duckdb::ClientContext* context, duckdb::idx_t role);
 
-std::shared_ptr<const RoleClosure> SessionClosure(
-  duckdb::ClientContext& context);
+RoleAccessRef SessionClosure(duckdb::ClientContext& context);
+
+RoleMemberships MembershipsOf(const RoleGraph& graph, duckdb::idx_t role);
+
+RoleGraphPtr BuildRoleGraph(catalog::ClusterCatalog& cluster,
+                            duckdb::CatalogTransaction transaction);
 
 void PublishRoles(catalog::ClusterCatalog& cluster);
-
-RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role);
 
 }  // namespace sdb::auth

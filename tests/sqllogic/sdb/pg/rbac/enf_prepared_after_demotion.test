@@ -1,0 +1,51 @@
+statement ok
+DROP ROLE IF EXISTS epd_kostya;
+
+
+statement ok
+CREATE ROLE epd_kostya SUPERUSER LOGIN PASSWORD 'epd_pw';
+
+
+connection c_epd user=epd_kostya password=epd_pw
+statement ok
+PREPARE epd_databases AS SELECT count(*) > 0 AS found FROM duckdb_databases();
+
+
+connection c_epd user=epd_kostya password=epd_pw
+query
+EXECUTE epd_databases;
+----
+found
+t
+
+
+statement ok
+ALTER ROLE epd_kostya NOSUPERUSER;
+
+
+connection c_epd user=epd_kostya password=epd_pw
+statement error
+EXECUTE epd_databases;
+----
+db error: ERROR: permission denied for function duckdb_databases
+
+
+statement ok
+ALTER ROLE epd_kostya SUPERUSER;
+
+
+connection c_epd user=epd_kostya password=epd_pw
+query
+EXECUTE epd_databases;
+----
+found
+t
+
+
+connection c_epd user=epd_kostya password=epd_pw
+statement ok
+DEALLOCATE ALL;
+
+
+statement ok
+DROP ROLE epd_kostya;

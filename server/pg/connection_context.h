@@ -117,14 +117,17 @@ class ConnectionContext final : public query::Transaction {
   // moves the session role (and resets the effective role to it); the resets
   // restore the login role. Whether SHOW role reports 'none' vs a name is
   // carried by the `role` GUC's own value, not tracked here.
-  void SetEffectiveRole(duckdb::idx_t role) { _effective_role_id = role; }
+  void SetEffectiveRole(duckdb::idx_t role) {
+    _effective_role_id = role;
+    GetClientContext().SetPrincipalRole(role);
+  }
   void SetSessionRole(duckdb::idx_t role) {
     _session_role_id = role;
-    _effective_role_id = role;
+    SetEffectiveRole(role);
   }
   void ResetIdentity() {
     _session_role_id = _login_role_id;
-    _effective_role_id = _login_role_id;
+    SetEffectiveRole(_login_role_id);
   }
 
   auto* GetSendBuffer() const { return _send_buffer; }
@@ -138,6 +141,10 @@ class ConnectionContext final : public query::Transaction {
   T* GetSideChannel() const {
     return _side_channel.Get<T>();
   }
+
+  void MarkClusterWritten() noexcept { _cluster_written = true; }
+  bool ClusterWritten() const noexcept { return _cluster_written; }
+  void ClearClusterWritten() noexcept { _cluster_written = false; }
 
   bool InTransactionBlock() const noexcept { return _in_transaction_block; }
   void SetInTransactionBlock(bool value) noexcept {
@@ -190,6 +197,7 @@ class ConnectionContext final : public query::Transaction {
   duckdb::idx_t _effective_role_id;
   SideChannel _side_channel;
   bool _in_transaction_block = false;
+  bool _cluster_written = false;
   std::atomic<NoticeNode*> _notices{nullptr};
 };
 

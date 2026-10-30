@@ -502,12 +502,14 @@ duckdb::LogicalOperator& StatementRoot(duckdb::LogicalOperator& root) {
 }
 
 template<typename Info>
-void PointAtCluster(Info& info, CatalogType type) {
-  if (type == CatalogType::DATABASE_ENTRY || type == CatalogType::ROLE_ENTRY) {
-    info.GetQualifiedNameMutable() = duckdb::QualifiedName{
-      duckdb::Identifier{catalog::ClusterCatalog::kDatabaseName},
-      duckdb::Identifier{}, info.GetQualifiedName().Name()};
+bool PointAtCluster(Info& info, CatalogType type) {
+  if (type != CatalogType::DATABASE_ENTRY && type != CatalogType::ROLE_ENTRY) {
+    return false;
   }
+  info.GetQualifiedNameMutable() = duckdb::QualifiedName{
+    duckdb::Identifier{catalog::ClusterCatalog::kDatabaseName},
+    duckdb::Identifier{}, info.GetQualifiedName().Name()};
+  return true;
 }
 
 class Enforcer {
@@ -534,7 +536,6 @@ class Enforcer {
     if (!_enforce) {
       return _files_authorized;
     }
-    _props.RegisterDBRead(catalog::ClusterOf(_context), _context);
     CheckSchemaUsage();
     CheckResolved();
     CheckReturning();
@@ -765,6 +766,7 @@ class Enforcer {
           CheckCreateRole(info);
         }
         PointAtCluster(info, CatalogType::ROLE_ENTRY);
+        _connection.MarkClusterWritten();
         break;
       }
       case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER: {
@@ -835,7 +837,9 @@ class Enforcer {
             RequireDatabaseUnused(*database);
           }
         }
-        PointAtCluster(info, info.type);
+        if (PointAtCluster(info, info.type)) {
+          _connection.MarkClusterWritten();
+        }
         break;
       }
       case LogicalOperatorType::LOGICAL_ALTER: {
@@ -855,7 +859,9 @@ class Enforcer {
             CheckAlter(info);
           }
         }
-        PointAtCluster(info, info.GetCatalogType());
+        if (PointAtCluster(info, info.GetCatalogType())) {
+          _connection.MarkClusterWritten();
+        }
         break;
       }
       case LogicalOperatorType::LOGICAL_ATTACH: {
@@ -990,9 +996,20 @@ class Enforcer {
     }
     auto [it, inserted] = _closures.try_emplace(principal);
     if (inserted) {
-      it->second = ComputeRoleClosure(*_roles, principal);
+      if (const auto access = _roles->Access(principal)) {
+        it->second = *access;
+      } else {
+        it->second.role = principal;
+      }
     }
     return it->second;
+  }
+
+  const RoleMemberships& CallerMemberships() {
+    if (!_caller_memberships) {
+      _caller_memberships = MembershipsOf(*_roles, _caller);
+    }
+    return *_caller_memberships;
   }
 
   duckdb::idx_t PrincipalFor(duckdb::idx_t table_index) const {
@@ -1627,7 +1644,7 @@ class Enforcer {
       return _caller;
     }
     const auto owner = RoleId(info.authorization.GetIdentifierName());
-    if (_enforce && owner != _caller && !_caller_closure.CanSet(owner)) {
+    if (_enforce && owner != _caller && !CallerMemberships().CanSet(owner)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("must be able to SET ROLE \"",
                               info.authorization.GetIdentifierName(), "\""));
@@ -1767,7 +1784,7 @@ class Enforcer {
       RequireOwner(entry);
     }
     if (info.new_owner_id != _caller &&
-        !_caller_closure.CanSet(info.new_owner_id)) {
+        !CallerMemberships().CanSet(info.new_owner_id)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("must be able to SET ROLE \"",
                               _roles->NameOf(info.new_owner_id), "\""));
@@ -1982,7 +1999,7 @@ class Enforcer {
                            " roles with the SUPERUSER attribute."));
     }
     if (!_caller_closure.Has(catalog::RoleOption::CreateRole) ||
-        !_caller_closure.IsAdminOf(role.oid)) {
+        !CallerMemberships().IsAdminOf(role.oid)) {
       DenyRoleAction(
         verb, absl::StrCat("Only roles with the CREATEROLE attribute and "
                            "the ADMIN option on role \"",
@@ -1993,7 +2010,7 @@ class Enforcer {
 
   void RequireGrantableRole(std::string_view name) {
     auto role = ClusterEntry(CatalogType::ROLE_ENTRY, name);
-    if (role && !_caller_closure.IsAdminOf(role->oid)) {
+    if (role && !CallerMemberships().IsAdminOf(role->oid)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
         ERR_MSG("permission denied to grant role \"",
@@ -2131,11 +2148,12 @@ class Enforcer {
   duckdb::StatementProperties& _props;
   duckdb::LogicalOperator& _root;
   const duckdb::idx_t _caller;
-  std::shared_ptr<const RoleGraph> _roles;
-  std::shared_ptr<const RoleClosure> _caller_closure_owner;
+  RoleGraphPtr _roles;
+  RoleAccessRef _caller_closure_owner;
   const RoleClosure& _caller_closure;
   const bool _enforce;
   irs::containers::NodeHashMap<duckdb::idx_t, RoleClosure> _closures;
+  std::optional<RoleMemberships> _caller_memberships;
   irs::containers::FlatHashMap<duckdb::idx_t, const duckdb::LogicalGet*>
     _target_scans;
   irs::containers::FlatHashMap<duckdb::idx_t, const duckdb::TableCatalogEntry*>

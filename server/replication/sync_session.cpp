@@ -409,8 +409,9 @@ void SyncSession::UseRole(duckdb::idx_t table_owner) {
       table_owner != pg::kInvalidOid) {
     auto& context = *this->_conn->context;
     const auto closure = auth::ClosureFor(&context, role);
-    if (!closure->is_superuser && !closure->CanSet(table_owner)) {
-      const auto roles = auth::RolesOf(&context);
+    const auto roles = auth::RolesOf(&context);
+    if (!closure->is_superuser &&
+        !auth::MembershipsOf(*roles, role).CanSet(table_owner)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
         ERR_MSG("role \"", roles->NameOf(role), "\" cannot SET ROLE to \"",

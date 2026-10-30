@@ -375,10 +375,10 @@ void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
   auto& conn = connector::GetSereneDBContext(ctx);
   const auto& role = RoleNamed(ctx, name);
   const auto session_role = conn.GetSessionRoleId();
-  const auto session =
-    auth::ComputeRoleClosure(*auth::RolesOf(&ctx), session_role);
-  if (role.oid != session_role && !session.is_superuser &&
-      !session.CanSet(role.oid)) {
+  const auto roles = auth::RolesOf(&ctx);
+  const auto session = roles->Access(session_role);
+  if (role.oid != session_role && !(session && session->is_superuser) &&
+      !auth::MembershipsOf(*roles, session_role).CanSet(role.oid)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied to set role \"", name, "\""));
   }

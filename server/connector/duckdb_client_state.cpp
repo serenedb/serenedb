@@ -333,6 +333,7 @@ void SereneDBClientState::TransactionCommit(
   }
   _connection_ctx->Commit(transaction.global_transaction_id);
   _connection_ctx->RefreshCatalogEpoch(transaction);
+  _connection_ctx->ClearClusterWritten();
   if (transaction.ModifiedDatabase()) {
     catalog::ClusterOf(*context.db).MaybeCompactCatalogLog();
   }
@@ -346,9 +347,15 @@ void SereneDBClientState::TransactionRollback(
   }
   _connection_ctx->Rollback(transaction.global_transaction_id);
   _connection_ctx->RefreshCatalogEpoch(transaction);
+  _connection_ctx->ClearClusterWritten();
 }
 
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
+  if (_connection_ctx->ClusterWritten()) {
+    auto& cluster = catalog::ClusterOf(*context.db);
+    context.InstallSecurity(
+      auth::BuildRoleGraph(cluster, cluster.GetCatalogTransaction(context)));
+  }
   _connection_ctx->OnStatementBegin();
   _query_in_transaction = true;
   progress_source->BeginQuery(context.GetCurrentQuery());
@@ -384,12 +391,9 @@ void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,
       plan.children.empty()) {
     return;
   }
-  const auto principal = _connection_ctx->GetRoleId();
   properties.file_access_authorized = authorized;
-  properties.principal = principal;
   const auto stamp = [&](duckdb::PreparedStatementData& prepared) {
     prepared.properties.file_access_authorized = authorized;
-    prepared.properties.principal = principal;
   };
   for (auto* op = &plan; op;
        op = op->children.empty() ? nullptr : op->children[0].get()) {
@@ -401,15 +405,6 @@ void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,
       break;
     }
   }
-}
-
-duckdb::RebindQueryInfo SereneDBClientState::OnRebindPreparedStatement(
-  duckdb::ClientContext&, duckdb::BindPreparedStatementCallbackInfo& info,
-  duckdb::RebindQueryInfo) {
-  const auto& principal = info.prepared_statement.properties.principal;
-  return principal && *principal == _connection_ctx->GetRoleId()
-           ? duckdb::RebindQueryInfo::DO_NOT_REBIND
-           : duckdb::RebindQueryInfo::ATTEMPT_TO_REBIND;
 }
 
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {

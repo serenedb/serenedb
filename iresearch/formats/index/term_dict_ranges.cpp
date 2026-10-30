@@ -54,7 +54,7 @@ class RangeWalk {
       _from{from},
       _to{to},
       _prefix{field.RangePrefix()},
-      _stride{field.KeyWidth() - field.RangePrefix()} {
+      _stride{field.meta().key_width - field.RangePrefix()} {
     if (!_levels.empty()) {
       std::memcpy(_lower, field.min().data(), _prefix);
       std::memcpy(_upper, field.min().data(), _prefix);

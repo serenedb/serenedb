@@ -377,10 +377,7 @@ class EntriesReader final : public irs::BasicTermReader {
     return {.id = _field->id, .dict = _field->dict};
   }
   irs::FieldProperties properties() const final {
-    return {.ranges = _field->ranges};
-  }
-  uint32_t KeyWidth() const noexcept final {
-    return ::KeyWidth(_field->entries);
+    return {.ranges = _field->ranges, .key_width = KeyWidth(_field->entries)};
   }
 
   void SampleTerms(uint64_t bytes,
@@ -681,7 +678,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       static_cast<const irs::term_dict::TermReaderImpl&>(reader);
     const auto levels = impl.RangeLevels();
     const uint32_t prefix = impl.RangePrefix();
-    const uint32_t stride = impl.KeyWidth() - prefix;
+    const uint32_t stride = impl.meta().key_width - prefix;
     std::vector<irs::bstring> below_keys;
     std::vector<std::vector<irs::doc_id_t>> below;
     for (const auto& entry : entries) {
@@ -750,7 +747,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
                                             2 * kLeafFanout;
     auto bounds = Probes(entries);
     const uint32_t prefix = impl.RangePrefix();
-    const uint32_t stride = impl.KeyWidth() - prefix;
+    const uint32_t stride = impl.meta().key_width - prefix;
     for (const auto& level : levels) {
       for (uint32_t i = 0; i != level.count; ++i) {
         irs::bstring start{reader.min().substr(0, prefix)};
@@ -919,8 +916,8 @@ TEST_P(TermDictTest, fixed_layout_by_key_width) {
     ASSERT_NE(nullptr, reader);
     const auto width = field.entries.front().key.size();
     ASSERT_EQ(width <= irs::term_dict::kMaxStride ? width : 0,
-              reader->KeyWidth());
-    if (reader->KeyWidth() != 0) {
+              reader->meta().key_width);
+    if (reader->meta().key_width != 0) {
       const size_t before = counting.Reads();
       reader->Lookup(field.entries[100].key + irs::byte_type{0});
       ASSERT_EQ(before, counting.Reads());
@@ -952,7 +949,7 @@ TEST_P(TermDictTest, dictless_fields) {
       static_cast<const irs::term_dict::TermReaderImpl&>(*reader);
     ASSERT_EQ(field.entries.size() == 1, impl.Single());
     ASSERT_LE(impl.Blocks(), 1);
-    ASSERT_EQ(KeyWidth(field.entries), reader->KeyWidth());
+    ASSERT_EQ(KeyWidth(field.entries), reader->meta().key_width);
     const size_t before = counting.Reads();
     AssertField(*reader, field.entries);
     AssertWalk(*reader, field.entries,
@@ -1083,7 +1080,7 @@ TEST_P(TermDictTest, single_term_fields) {
       static_cast<const irs::term_dict::TermReaderImpl&>(*reader);
     const bool single = field.entries.size() == 1;
     ASSERT_EQ(single, impl.Single());
-    ASSERT_EQ(KeyWidth(field.entries), reader->KeyWidth());
+    ASSERT_EQ(KeyWidth(field.entries), reader->meta().key_width);
     ASSERT_EQ(field.ranges, reader->meta().ranges);
     const size_t before = counting.Reads();
     AssertField(*reader, field.entries);
@@ -1189,7 +1186,7 @@ TEST_P(TermDictTest, fixed_stride_searches) {
     SCOPED_TRACE(testing::Message("width ") << field.id);
     const auto* reader = Get(field.id);
     ASSERT_NE(nullptr, reader);
-    ASSERT_EQ(field.id, reader->KeyWidth());
+    ASSERT_EQ(field.id, reader->meta().key_width);
     AssertField(*reader, field.entries);
   }
 }
@@ -1214,7 +1211,7 @@ TEST_P(TermDictTest, fixed_stride_tied_heads) {
     SCOPED_TRACE(testing::Message("width ") << field.id);
     const auto* reader = Get(field.id);
     ASSERT_NE(nullptr, reader);
-    ASSERT_EQ(field.id, reader->KeyWidth());
+    ASSERT_EQ(field.id, reader->meta().key_width);
     AssertField(*reader, field.entries);
   }
 }

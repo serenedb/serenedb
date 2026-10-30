@@ -158,12 +158,12 @@ class TermsReader final : public irs::BasicTermReader {
   }
   irs::FieldKey key() const final { return {.id = 1}; }
   irs::FieldProperties properties() const final {
-    return {.ranges = _ladder == Ladder::Adaptive};
-  }
-  uint32_t KeyWidth() const noexcept final {
-    return _ladder == Ladder::Adaptive
-             ? static_cast<uint32_t>(_terms->keys.front().size())
-             : 0;
+    const bool adaptive = _ladder == Ladder::Adaptive;
+    return {
+      .ranges = adaptive,
+      .key_width =
+        adaptive ? static_cast<uint32_t>(_terms->keys.front().size()) : 0,
+    };
   }
 
  private:

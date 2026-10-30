@@ -310,11 +310,10 @@ IvfTermReader::IvfTermReader(
     _count{cluster_offsets.empty() ? 0 : cluster_offsets.size() - 1},
     _meta{postings_id, IndexFeatures::Vec} {
   SDB_ASSERT(qw->BlockSetting().record_size != 0);
+  _meta.key_width = kCentroidTermWidth;
 }
 
 IvfTermReader::~IvfTermReader() = default;
-
-uint32_t IvfTermReader::KeyWidth() const noexcept { return kCentroidTermWidth; }
 
 TermOnlyIterator::ptr IvfTermReader::iterator() const {
   _it = std::make_unique<IvfTermIterator>(_cluster_docs, _cluster_offsets);

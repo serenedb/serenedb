@@ -335,7 +335,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   bstring prefix;
   AppendFieldPrefix(prefix, head.ordinal);
   _prefix_size = static_cast<uint32_t>(prefix.size());
-  _width = head.width;
+  _meta.key_width = head.width;
   uint64_t bytes = 0;
   _min_key.assign(prefix);
   _min_key.append(head.min);
@@ -374,7 +374,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
       for (uint32_t block = _first_block; block != last_block; ++block) {
         slice.push_back(SeparatorAt(separators, block));
       }
-      _root = Root{MakeSeparators(slice), _width != 0};
+      _root = Root{MakeSeparators(slice), _meta.key_width != 0};
       bytes += _root.MemoryBytes();
       if (!head.prefixes.empty()) {
         _prefixes = std::make_unique<PrefixIndex>(
@@ -417,13 +417,13 @@ uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
   _range_prefix = head.range_prefix;
   if (size == 0 || offset > owner.RangesSize() ||
       size > owner.RangesSize() - offset || height > kMaxRangeLevels ||
-      _width == 0 || _range_prefix > _width ||
+      _meta.key_width == 0 || _range_prefix > _meta.key_width ||
       min().substr(0, _range_prefix) != max().substr(0, _range_prefix)) {
     corrupted();
   }
   const auto* p = owner.Load(in, owner.RangesBegin() + offset, size).data();
   const auto* const end = p + size;
-  const uint64_t stride = _width - _range_prefix;
+  const uint64_t stride = _meta.key_width - _range_prefix;
   _levels.reserve(height);
   for (size_t k = 0; k != height; ++k) {
     const auto count = head.range_counts[k];
@@ -581,7 +581,7 @@ uint32_t TermReaderImpl::BlockEnd(bytes_view upper) const {
 
 bool TermReaderImpl::Excludes(bytes_view term) const noexcept {
   return _terms == 0 || term < min() || max() < term ||
-         (_width != 0 && term.size() != _width);
+         (_meta.key_width != 0 && term.size() != _meta.key_width);
 }
 
 PostingMeta TermReaderImpl::Lookup(bytes_view term) const {

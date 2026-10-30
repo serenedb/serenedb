@@ -884,6 +884,52 @@ TEST(InverterScatterTest, UniqueDictDescendingFillSorts) {
   ASSERT_EQ(doc_limits::min(), RowDoc(scattered, 2));
 }
 
+TEST(InverterScatterTest, KeyWidthAndBytesOfLiveTerms) {
+  auto mem = DefaultMemory();
+  FieldsInverter inv{mem};
+  ScatterScratch scratch{mem.rm};
+  ScatteredField scattered{mem, scratch};
+  ColumnarTermReader reader;
+  const auto check = [&](const FieldInverter& field, uint32_t width,
+                         uint64_t bytes) {
+    scattered.Reset(field);
+    reader.Reset(scattered);
+    EXPECT_EQ(width, scattered.KeyWidth());
+    EXPECT_EQ(bytes, scattered.TermBytes());
+    EXPECT_EQ(width, reader.properties().key_width);
+  };
+  const auto primary = [&](field_id id,
+                           std::span<const std::string_view> vals) {
+    auto* field = inv.Emplace(id, IndexFeatures::Freq);
+    std::vector<duckdb::string_t> terms;
+    for (const auto v : vals) {
+      terms.emplace_back(v.data(), static_cast<uint32_t>(v.size()));
+    }
+    EXPECT_TRUE(field->InvertPrimaryKeyBlock(terms, doc_limits::min()));
+    EXPECT_TRUE(field->Log().Size() == 0);
+    return field;
+  };
+  const auto keywords = [&](field_id id,
+                            std::span<const std::string_view> vals) {
+    auto* field = inv.Emplace(id, IndexFeatures::Freq | IndexFeatures::Pos);
+    for (const auto v : vals) {
+      EXPECT_TRUE(InvertKeyword(*field, doc_limits::min(), ToBytesView(v)));
+    }
+    EXPECT_TRUE(field->Log().Size() != 0);
+    return field;
+  };
+
+  const std::string_view sorted[]{"pk_00000001", "pk_00000002", "pk_00000010"};
+  check(*primary(1, sorted), 11, 33);
+  const std::string_view mixed[]{"red", "green", "red"};
+  check(*keywords(2, mixed), 0, 8);
+  const std::string_view descending[]{"pk_00000010", "pk_00000002",
+                                      "pk_00000001"};
+  check(*primary(3, descending), 11, 33);
+  const std::string_view fixed[]{"abc", "xyz", "abc"};
+  check(*keywords(4, fixed), 3, 6);
+}
+
 TEST(InverterScatterTest, UniqueDictSortedFillMatchesRef) {
   constexpr size_t kDocs = 3000;
   std::vector<std::string> vals;

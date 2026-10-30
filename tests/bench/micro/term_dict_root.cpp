@@ -107,13 +107,15 @@ class KeysReader final : public irs::BasicTermReader {
       _keys);
   }
   irs::FieldKey key() const final { return {.id = 1}; }
-  irs::FieldProperties properties() const final { return {}; }
-  uint32_t KeyWidth() const noexcept final {
+  irs::FieldProperties properties() const final {
     const auto width = _keys.front().size();
-    return absl::c_all_of(
-             _keys, [&](const bstring& key) { return key.size() == width; })
-             ? static_cast<uint32_t>(width)
-             : 0;
+    return {
+      .key_width =
+        absl::c_all_of(_keys,
+                       [&](const bstring& key) { return key.size() == width; })
+          ? static_cast<uint32_t>(width)
+          : 0,
+    };
   }
 
  private:

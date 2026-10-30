@@ -142,31 +142,21 @@ class ColumnarTermReader final : public BasicTermReader,
   void Reset(const ScatteredField& scattered) {
     _it.Reset(scattered);
     _scattered = &scattered;
-    _width = 0;
-    _bytes = 0;
-    if (const auto nterms = scattered.TermCount()) {
-      _width = static_cast<uint32_t>(scattered.TermAt(0).GetSize());
-      for (size_t i = 0; i != nterms; ++i) {
-        const auto size = scattered.TermAt(i).GetSize();
-        _bytes += size;
-        if (size != _width) {
-          _width = 0;
-        }
-      }
-    }
   }
-
-  uint32_t KeyWidth() const noexcept final { return _width; }
 
   void SampleTerms(
     uint64_t bytes,
     absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final {
     constexpr size_t kRun = 16;
-    const size_t nterms = _scattered ? _scattered->TermCount() : 0;
-    if (nterms == 0 || _bytes == 0) {
+    if (!_scattered) {
       return;
     }
-    const uint64_t runs = std::max<uint64_t>(1, bytes * nterms / _bytes / kRun);
+    const size_t nterms = _scattered->TermCount();
+    const uint64_t total = _scattered->TermBytes();
+    if (nterms == 0 || total == 0) {
+      return;
+    }
+    const uint64_t runs = std::max<uint64_t>(1, bytes * nterms / total / kRun);
     const size_t stride = std::max<size_t>(kRun, nterms / runs);
     std::array<bytes_view, kRun> run;
     for (size_t i = 0; i < nterms; i += stride) {
@@ -179,7 +169,11 @@ class ColumnarTermReader final : public BasicTermReader,
   }
   const FieldMeta& Meta() const noexcept { return _it.Meta(); }
   FieldKey key() const noexcept final { return KeyOf(Meta()); }
-  FieldProperties properties() const noexcept final { return Meta(); }
+  FieldProperties properties() const noexcept final {
+    FieldProperties props = Meta();
+    props.key_width = _scattered->KeyWidth();
+    return props;
+  }
 
   irs::TermOnlyIterator::ptr iterator() const noexcept final {
     return memory::to_managed<irs::TermOnlyIterator>(_it);
@@ -188,8 +182,6 @@ class ColumnarTermReader final : public BasicTermReader,
  private:
   mutable ColumnarTermIterator _it;
   const ScatteredField* _scattered = nullptr;
-  uint64_t _bytes = 0;
-  uint32_t _width = 0;
 };
 
 }  // namespace irs

@@ -220,7 +220,6 @@ class TermReaderImpl final : public TermReader {
   bytes_view max() const noexcept final {
     return bytes_view{_max_key}.substr(_prefix_size);
   }
-  uint32_t KeyWidth() const noexcept final { return _width; }
   void SampleTerms(
     uint64_t bytes,
     absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final;
@@ -301,7 +300,6 @@ class TermReaderImpl final : public TermReader {
   uint32_t _first_entry = 0;
   uint32_t _first_record = 0;
   uint32_t _last_entry = 0;
-  uint32_t _width = 0;
   bool _has_score_bounds;
   FreqAttr _freq;
   Root _root;

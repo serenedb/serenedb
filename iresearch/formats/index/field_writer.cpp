@@ -344,8 +344,7 @@ void FieldWriter::write(const BasicTermReader& reader) {
   const auto props = reader.properties();
   _pw.SetTermPayloadWriter(reader.PayloadWriter());
   _pw.BeginField(props);
-  const auto width = reader.KeyWidth();
-  _width = width <= kMaxStride ? width : 0;
+  _width = props.key_width <= kMaxStride ? props.key_width : 0;
   if (_width == 0) {
     SampleFsst(reader);
   }

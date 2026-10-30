@@ -20,6 +20,10 @@
 
 #pragma once
 
+#include <algorithm>
+#include <limits>
+#include <span>
+
 #include "iresearch/index/inverter/fields_inverter.hpp"
 
 namespace irs {
@@ -94,6 +98,11 @@ class ScatteredField : util::Noncopyable {
 
   bool AllInline() const noexcept { return _all_inline; }
 
+  uint32_t KeyWidth() const noexcept {
+    return _min_size == _max_size ? _max_size : 0;
+  }
+  uint64_t TermBytes() const noexcept { return _term_bytes; }
+
   uint32_t* const* DocBlocks() const noexcept {
     return _s->docs.empty() ? nullptr : _s->docs.data();
   }
@@ -117,6 +126,18 @@ class ScatteredField : util::Noncopyable {
     return _s->term_starts.empty() ? rank : _s->term_starts[rank];
   }
 
+  void ResetSizes() noexcept {
+    _min_size = std::numeric_limits<uint32_t>::max();
+    _max_size = 0;
+    _term_bytes = 0;
+  }
+  void NoteSize(uint32_t size) noexcept {
+    _min_size = std::min(_min_size, size);
+    _max_size = std::max(_max_size, size);
+    _term_bytes += size;
+  }
+
+  bool SortedTerms(std::span<const duckdb::string_t> terms) noexcept;
   void BuildHistogram(const PostingLogBase& log, size_t vocab);
   void RankLiveTerms(std::span<const duckdb::string_t> entries);
   void RekeyPastSharedPrefix(std::span<const duckdb::string_t> entries,
@@ -138,6 +159,9 @@ class ScatteredField : util::Noncopyable {
   InverterMemory* _mem;
   ScatterScratch* _s;
   const FieldInverter* _field = nullptr;
+  uint64_t _term_bytes = 0;
+  uint32_t _min_size = 0;
+  uint32_t _max_size = 0;
   bool _all_inline = false;
   bool _identity = false;
 };

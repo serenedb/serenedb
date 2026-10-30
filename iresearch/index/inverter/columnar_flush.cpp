@@ -114,8 +114,7 @@ void ScatteredField::Reset(const FieldInverter& field) {
   const auto entries = field.Dictionary().Entries();
   SDB_ASSERT(field.InlineDocs().size() <= entries.size());
   _identity =
-    _all_inline && absl::c_is_sorted(entries.first(field.InlineDocs().size()),
-                                     std::less_equal<>{});
+    _all_inline && SortedTerms(entries.first(field.InlineDocs().size()));
   if (_identity) {
     return;
   }
@@ -199,12 +198,26 @@ void ScatteredField::BuildHistogram(const PostingLogBase& log, size_t vocab) {
   }
 }
 
+bool ScatteredField::SortedTerms(
+  std::span<const duckdb::string_t> terms) noexcept {
+  ResetSizes();
+  for (size_t i = 0; i != terms.size(); ++i) {
+    if (i != 0 && !(terms[i - 1] < terms[i])) {
+      return false;
+    }
+    NoteSize(terms[i].GetSize());
+  }
+  return true;
+}
+
 void ScatteredField::RankLiveTerms(std::span<const duckdb::string_t> entries) {
   auto& ranked = _s->ranked;
   auto& cursors = _s->cursors;
   uint64_t min_key = std::numeric_limits<uint64_t>::max();
   uint64_t max_key = 0;
+  ResetSizes();
   const auto note_live = [&](uint32_t i) {
+    NoteSize(entries[i].GetSize());
     const auto key = PrefixKey(entries[i]);
     min_key = std::min(min_key, key);
     max_key = std::max(max_key, key);

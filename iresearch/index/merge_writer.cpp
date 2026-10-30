@@ -356,7 +356,7 @@ class CompoundFieldIterator final : public BasicTermReader {
 
   FieldKey key() const noexcept final { return KeyOf(Meta()); }
   FieldProperties properties() const noexcept final { return _props; }
-  uint32_t KeyWidth() const noexcept final;
+  uint32_t KeyWidth() const noexcept;
   bool Ranges() const noexcept {
     return absl::c_any_of(_field_iterator_mask, [](const auto& segment) {
       return segment.reader->meta().ranges;
@@ -462,7 +462,7 @@ bool CompoundFieldIterator::Next() {
 uint32_t CompoundFieldIterator::KeyWidth() const noexcept {
   uint32_t width = 0;
   for (const auto& segment : _field_iterator_mask) {
-    const auto source = segment.reader->KeyWidth();
+    const auto source = segment.reader->meta().key_width;
     if (source == 0 || (width != 0 && source != width)) {
       return 0;
     }
@@ -707,6 +707,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     FieldProperties props;
     props.index_features = field_itr.Meta().index_features;
     props.ranges = field_itr.Ranges();
+    props.key_width = field_itr.KeyWidth();
 
     if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
       const auto it = merged_norm_ids.find(field_itr.Meta().id);

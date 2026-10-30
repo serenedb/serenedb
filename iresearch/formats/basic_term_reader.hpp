@@ -55,8 +55,6 @@ struct BasicTermReader : public memory::Managed {
 
   virtual FieldProperties properties() const = 0;
 
-  virtual uint32_t KeyWidth() const noexcept { return 0; }
-
   virtual void SampleTerms(
     uint64_t, absl::FunctionRef<void(std::span<const bytes_view>)>) const {}
 

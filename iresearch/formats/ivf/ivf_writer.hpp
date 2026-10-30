@@ -90,7 +90,6 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   TermOnlyIterator::ptr iterator() const final;
   FieldKey key() const final { return KeyOf(_meta); }
   FieldProperties properties() const final { return _meta; }
-  uint32_t KeyWidth() const noexcept final;
 
   TermPayloadWriter* PayloadWriter() const final {
     SDB_ASSERT(_qw);

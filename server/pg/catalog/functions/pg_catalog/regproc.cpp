@@ -34,6 +34,7 @@
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
@@ -94,7 +95,7 @@ std::nullopt_t Miss(irs::pg::SqlErrorData* soft_error,
   return std::nullopt;
 }
 
-duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
+duckdb::optional_ptr<duckdb::SchemaCatalogEntry> LookupSchema(
   const Session& session, std::string_view name) {
   if (!session.database) {
     return nullptr;
@@ -108,6 +109,16 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
   return session.database->GetSchema(*session.transaction,
                                      duckdb::Identifier{name},
                                      duckdb::OnEntryNotFound::RETURN_NULL);
+}
+
+duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
+  const Session& session, std::string_view name) {
+  auto schema = LookupSchema(session, name);
+  if (schema && !duckdb::CanUseSchema(session.context->principal, *schema)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for schema ", name));
+  }
+  return schema;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> FindInSchema(
@@ -133,7 +144,7 @@ std::optional<uint64_t> SchemaOid(const Session& session,
   if (const auto* system = FindSystemObject(kSystemNamespaces, schema)) {
     return system->oid;
   }
-  if (auto entry = FindSchema(session, schema)) {
+  if (auto entry = LookupSchema(session, schema)) {
     return entry->oid;
   }
   return Miss(soft_error, SQL_ERROR_DATA(

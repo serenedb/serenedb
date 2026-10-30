@@ -367,11 +367,12 @@ std::vector<int64_t> InvertedIndexStorage::AppendDeleteLog(
   if (!_delete_log_open.load(std::memory_order_relaxed)) {
     return rows;
   }
+  const auto begin = _delete_log_rowid_begin.load(std::memory_order_acquire);
   const auto end = _delete_log_rowid_end.load(std::memory_order_relaxed);
   std::vector<int64_t> logged;
   std::vector<int64_t> native;
   for (const auto row : rows) {
-    (row < end ? logged : native).push_back(row);
+    (row < begin || row >= end ? native : logged).push_back(row);
   }
   if (!logged.empty()) {
     _delete_log.emplace_back(std::move(logged));

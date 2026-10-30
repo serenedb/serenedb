@@ -33,8 +33,9 @@ namespace sdb::connector {
 void FeedChunk(DuckDBSinkIndexWriter& writer, duckdb::idx_t count,
                const PkChunk& pk, duckdb::DataChunk& chunk,
                std::span<const FeedColumn> columns,
-               std::span<const ExpressionSlot> expressions) {
-  writer.Init(count, pk);
+               std::span<const ExpressionSlot> expressions,
+               irs::CommitOnFlush* commit_on_flush) {
+  writer.Init(count, pk, commit_on_flush);
   for (const auto& column : columns) {
     if (column.slot >= chunk.ColumnCount()) {
       continue;

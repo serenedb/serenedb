@@ -970,10 +970,11 @@ catalog::ColumnTokenizer& SearchSinkInsertBaseImpl::ResolveTokenizer(
   return tokenizer;
 }
 
-void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk) {
+void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
+                                        irs::CommitOnFlush* commit_on_flush) {
   SDB_ASSERT(batch_size > 0);
   _document.reset();
-  _document.emplace(_trx->Insert(false, batch_size));
+  _document.emplace(_trx->Insert(false, batch_size, commit_on_flush));
   // Insert may flush the segment mid-transaction (a pooled segment with
   // mismatched options, a full segment): cached column writers then point
   // at the flushed segment while the terms land in the fresh one.

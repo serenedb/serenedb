@@ -151,6 +151,10 @@ struct CommitInfo {
   bool reopen_reader = false;
 };
 
+struct CommitOnFlush {
+  bool committed = false;
+};
+
 class IndexWriter : private util::Noncopyable {
  public:
   struct SegmentContext;
@@ -267,8 +271,9 @@ class IndexWriter : private util::Noncopyable {
 
     ~Transaction() { Abort(); }
 
-    Document Insert(bool disable_flush = false, doc_id_t batch_size = 1) {
-      UpdateSegment(disable_flush);
+    Document Insert(bool disable_flush = false, doc_id_t batch_size = 1,
+                    CommitOnFlush* commit_on_flush = nullptr) {
+      UpdateSegment(disable_flush, commit_on_flush);
       return {*_active.Segment(), _queries, batch_size};
     }
 
@@ -351,11 +356,11 @@ class IndexWriter : private util::Noncopyable {
    private:
     bool CommitImpl(uint64_t last_tick,
                     const SourcePosition& position) noexcept;
-    void UpdateSegment(bool disable_flush);
+    void UpdateSegment(bool disable_flush, CommitOnFlush* commit_on_flush);
 
     template<typename Removal>
     void Queue(Removal removal) {
-      UpdateSegment(true);
+      UpdateSegment(true, nullptr);
       _active.Segment()->queries.emplace_back(std::move(removal), _queries++);
     }
 

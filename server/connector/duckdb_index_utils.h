@@ -42,10 +42,13 @@ struct ExpressionSlot {
 // The single feed path shared by every caller that tokenizes a chunk into an
 // inverted index (CREATE INDEX backfill, live insert, recovery replay): open
 // the batch, hand each indexed column and expression value to the sink, close.
-// `writer` already holds the target iresearch transaction.
+// `writer` already holds the target iresearch transaction. `commit_on_flush`
+// (nullable) commits a mid-batch flush and reports it back, which the online
+// build's delete-log tracking follows.
 void FeedChunk(DuckDBSinkIndexWriter& writer, duckdb::idx_t count,
                const PkChunk& pk, duckdb::DataChunk& chunk,
                std::span<const FeedColumn> columns,
-               std::span<const ExpressionSlot> expressions = {});
+               std::span<const ExpressionSlot> expressions = {},
+               irs::CommitOnFlush* commit_on_flush = nullptr);
 
 }  // namespace sdb::connector

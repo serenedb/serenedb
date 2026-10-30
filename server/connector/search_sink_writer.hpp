@@ -107,7 +107,8 @@ class SearchSinkInsertBaseImpl {
     std::vector<IndexedExpression>&& indexed_exprs = {},
     const catalog::InvertedIndexConfig* config = nullptr);
 
-  void InitImpl(size_t batch_size, const PkChunk& pk = {});
+  void InitImpl(size_t batch_size, const PkChunk& pk = {},
+                irs::CommitOnFlush* commit_on_flush = nullptr);
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);
@@ -329,8 +330,9 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                std::move(entry_info_provider), pk_policy},
       _indexed{indexed_columns.begin(), indexed_columns.end()} {}
 
-  void Init(duckdb::idx_t batch_size, const PkChunk& pk) final {
-    InitImpl(batch_size, pk);
+  void Init(duckdb::idx_t batch_size, const PkChunk& pk,
+            irs::CommitOnFlush* commit_on_flush = nullptr) final {
+    InitImpl(batch_size, pk, commit_on_flush);
   }
 
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,

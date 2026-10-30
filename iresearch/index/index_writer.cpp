@@ -742,7 +742,8 @@ void IndexWriter::Transaction::Abort() noexcept {
   SDB_ASSERT(_active.Segment() == nullptr);
 }
 
-void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
+void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
+                                             CommitOnFlush* commit_on_flush) {
   SDB_ASSERT(Valid());
   while (_active.Segment() == nullptr) {  // lazy init
     _active = _writer->GetSegmentContext(_exclusive_segment);
@@ -784,6 +785,16 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
       //  with keeping already flushed data?
       segment.Reset(true);
       throw;
+    }
+    if (commit_on_flush) {
+      if (!Commit()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                        ERR_MSG("commit-on-flush failed: out of memory"));
+      }
+      commit_on_flush->committed = true;
+      SDB_WAIT_ON_FAILURE("pause_create_index_between_batches");
+      UpdateSegment(disable_flush, /*commit_on_flush=*/nullptr);
+      return;
     }
   }
   // Hand the per-op options to the (pooled) writer before it materializes a

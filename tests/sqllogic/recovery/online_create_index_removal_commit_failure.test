@@ -38,7 +38,7 @@ DELETE FROM removal_fail WHERE id < 100;
 
 connection default
 statement ok
-SET sdb_faults = 'pause_index_refresh';
+SET sdb_faults = 'create_index_delete_log_taken';
 
 
 connection default
@@ -48,7 +48,7 @@ SET sdb_faults = '-pause_create_index_mid_build';
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_index_refresh:parked';
+SET sdb_faults = '-create_index_delete_log_taken:parked';
 
 
 connection default
@@ -58,7 +58,7 @@ SET sdb_faults = 'IndexWriter::Transaction::Commit';
 
 connection default
 statement ok
-SET sdb_faults = 'pause_index_refresh:release';
+SET sdb_faults = 'create_index_delete_log_taken:release';
 
 
 wait

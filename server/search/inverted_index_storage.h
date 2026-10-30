@@ -137,9 +137,13 @@ class InvertedIndexStorage final
 
   // Delete-log for online CREATE INDEX: open while the build runs, drained
   // once by TakeDeleteLog after the backfill is committed, then latched
-  // forever. It holds removes for rowids below end -- rows the backfill
-  // copies, which have no position until the copy commits. At/above end the
-  // row came through the live writer during the build and removes go native.
+  // forever. It holds removes for rowids in [begin, end) -- rows whose
+  // backfill copy may still be uncommitted, where a native remove could find
+  // nothing. Outside the window removes go native: below begin the copy is
+  // already committed, at/above end the row came through the live writer
+  // during the build.
+  //   begin: rises as backfill segments commit (stale read = over-log, safe).
+  //   end:   the rowid allocator at build start, fixed.
   // AppendDeleteLog hands back the rows it does not log, all of them once
   // latched; the caller removes those natively (a delete racing publish is an
   // ordinary post-publish remove).
@@ -147,6 +151,9 @@ class InvertedIndexStorage final
   std::vector<irs::TermRemoval> TakeDeleteLog();
   void SetDeleteLogRowidEnd(int64_t end) noexcept {
     _delete_log_rowid_end.store(end, std::memory_order_relaxed);
+  }
+  void SetDeleteLogRowidBegin(int64_t begin) noexcept {
+    _delete_log_rowid_begin.store(begin, std::memory_order_release);
   }
 
   void CommitRemoval(std::shared_ptr<const irs::DocRemoval> removal);
@@ -289,6 +296,7 @@ class InvertedIndexStorage final
   std::atomic<bool> _delete_log_open{false};
   std::atomic<int64_t> _delete_log_rowid_end{
     std::numeric_limits<int64_t>::max()};
+  std::atomic<int64_t> _delete_log_rowid_begin{0};
   std::vector<irs::TermRemoval> _delete_log;
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};

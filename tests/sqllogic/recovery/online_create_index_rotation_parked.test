@@ -1,7 +1,8 @@
-# An online inverted CREATE INDEX cuts its backfill into segments of
-# segment_docs_max docs as it goes rather than once at the end:
-# pause_create_index_mid_build parks each sink thread after a batch, and the
-# finished index carries the several segments those cuts produced.
+# Commit-on-flush cuts and commits backfill batches DURING an online inverted
+# CREATE INDEX rather than flushing once at the end:
+# pause_create_index_between_batches parks each sink thread right after its
+# first cut-and-commit, and the finished index carries the several segments
+# those cuts produced.
 #
 # The segment count is read after the build commits, not while it is parked:
 # an uncommitted index belongs to the building transaction and PG 18 shows it
@@ -25,7 +26,7 @@ INSERT INTO oci_park SELECT g, repeat(md5(g::text), 4) FROM generate_series(1, 5
 
 
 statement ok
-SET sdb_faults = 'pause_create_index_mid_build';
+SET sdb_faults = 'pause_create_index_between_batches';
 
 
 connection builder
@@ -33,8 +34,8 @@ statement async ok
 CREATE INDEX oci_park_idx ON oci_park USING inverted(label) WITH (segment_docs_max = 1000, compaction_interval = 3600000);
 
 
-# The build has parked after a batch, which is the window the fault exists to
-# hold open.
+# The build has parked between batches, which is the window the fault exists
+# to hold open.
 connection default
 query ok retry 40 backoff 250ms
 SELECT count(*) FROM pg_stat_progress_create_index
@@ -45,7 +46,7 @@ count
 
 
 statement ok
-SET sdb_faults = '-pause_create_index_mid_build';
+SET sdb_faults = '-pause_create_index_between_batches';
 
 
 wait
@@ -58,8 +59,9 @@ count
 50000
 
 
-# Several segments, not one: the build cut a segment every segment_docs_max
-# docs, and compaction is disabled for the run.
+# Several committed segments, not one: each parked batch had already been cut
+# and committed before the next one started. A single end-of-build flush would
+# leave exactly one, and compaction is disabled for the run.
 query
 SELECT value::bigint > 1 AS rotated FROM sdb_metrics
 WHERE metric = 'num_segments'

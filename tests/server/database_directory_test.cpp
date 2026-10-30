@@ -215,7 +215,6 @@ TEST_F(DatabaseDirectoryTest, AFailedClaimLeavesTheClaimedDirectory) {
   {
     auto again = std::make_shared<TablespaceRoot>(Path("ts/engine_v1"));
     EXPECT_ANY_THROW(again->Claim());
-    again->Abandon();
   }
   std::this_thread::sleep_for(std::chrono::milliseconds{100});
   EXPECT_TRUE(std::filesystem::exists(_root / "ts" / "engine_v1" / "data"));
@@ -242,26 +241,6 @@ TEST_F(DatabaseDirectoryTest, AKeptTablespaceKeepsItsFilesWhenItsRootGoes) {
   root->Claim();
   root.reset();
   EXPECT_TRUE(std::filesystem::is_directory(_root / "ts" / "engine_v1"));
-}
-
-TEST_F(DatabaseDirectoryTest, ADropWaitsForNoCreationAndBlocksNewOnes) {
-  auto root = std::make_shared<TablespaceRoot>(Path("ts/engine_v1"));
-  auto pin = root->Pin();
-  ASSERT_TRUE(pin);
-  EXPECT_FALSE(root->BeginDrop());
-  pin.reset();
-  auto drop = root->BeginDrop();
-  ASSERT_TRUE(drop);
-  EXPECT_FALSE(root->Pin());
-  EXPECT_FALSE(root->BeginDrop());
-  drop.reset();
-  EXPECT_TRUE(root->Pin());
-  drop = root->BeginDrop();
-  ASSERT_TRUE(drop);
-  root->MarkDropped();
-  drop.reset();
-  EXPECT_FALSE(root->Pin());
-  EXPECT_FALSE(root->BeginDrop());
 }
 
 TEST_F(DatabaseDirectoryTest, UnownedStoragesGoFromADirectory) {

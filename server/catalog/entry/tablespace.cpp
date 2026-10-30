@@ -68,9 +68,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> TablespaceCatalogEntry::Copy(
 }
 
 void TablespaceCatalogEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
-  if (prev_entry.type == duckdb::CatalogType::INVALID) {
+  if (CreatedObject(prev_entry)) {
     SDB_ASSERT(_root);
-    _root->Abandon();
+    _root->MarkDropped();
   }
 }
 

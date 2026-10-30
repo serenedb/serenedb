@@ -293,22 +293,22 @@ events
 # DOCS_TEST: example_011
 
 statement ok
-CREATE TEMPORARY TABLE doc_scratch (n int);
+CREATE TEMPORARY TABLE doc_scratch (kind TEXT, events BIGINT);
 
 # DOCS_TEST_BODY
 
 statement ok
 CREATE TEMPORARY JOB doc_scratch_job AFTER 1 HOUR AS
-    INSERT INTO doc_scratch SELECT n FROM doc_jobs_db.public.doc_session_log;
+    INSERT INTO doc_scratch SELECT kind, events FROM doc_daily WHERE kind = 'audit';
 
 statement ok
 EXECUTE JOB doc_scratch_job;
 
 query
-SELECT n FROM doc_scratch;
+SELECT kind, events FROM doc_scratch;
 ----
-n
-1
+kind	events
+audit	3
 
 query
 SELECT database_name, schema_name, job_name FROM sdb_jobs() WHERE database_name = 'temp';

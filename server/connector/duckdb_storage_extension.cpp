@@ -49,6 +49,7 @@
 #include <system_error>
 #include <vector>
 
+#include "auth/enforce.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -96,6 +97,27 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
   return duckdb::make_uniq<catalog::SereneDBCatalog>(db, std::move(directory));
 }
 
+duckdb::idx_t PlaceDatabase(duckdb::ClientContext& context,
+                            std::string_view name,
+                            duckdb::LogicalDependencyList& dependencies) {
+  auto tablespace =
+    catalog::ClusterEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY, name);
+  if (!tablespace) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("tablespace \"", name, "\" does not exist"));
+  }
+  if (tablespace->oid == pg::kPgGlobalTablespace) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("pg_global cannot be used as default tablespace"));
+  }
+  if (tablespace->oid == pg::kPgDefaultTablespace) {
+    return 0;
+  }
+  auth::RequireCreatePrivilege(context, *tablespace);
+  dependencies.AddDependency(*tablespace);
+  return tablespace->oid;
+}
+
 duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::optional_ptr<duckdb::StorageExtensionInfo> storage_info,
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
@@ -130,7 +152,12 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   if (!entry) {
     duckdb::CreateDatabaseInfo database;
     database.SetName(info.name);
-    database.tablespace_oid = info.tablespace_oid;
+    if (const auto option = options.options.find("tablespace");
+        option != options.options.end()) {
+      database.tablespace_oid = PlaceDatabase(
+        context, option->second.ToString(), database.dependencies);
+      options.options.erase(option);
+    }
     for (const auto* key : {"block_size", "row_group_size"}) {
       if (auto option = options.options.find(key);
           option != options.options.end()) {
@@ -197,6 +224,10 @@ std::vector<std::shared_ptr<search::InvertedIndexStorage>> BoundStorages(
 
 class SereneDBStorageExtension final : public duckdb::StorageExtension {
  public:
+  void OnLoadStorage(duckdb::AttachedDatabase& db) final {
+    db.GetCatalog().Cast<catalog::SereneDBCatalog>().OpenStorages();
+  }
+
   void OnCheckpointBeforeHeader(duckdb::AttachedDatabase& db,
                                 duckdb::CheckpointOptions) final {
     const auto iteration =

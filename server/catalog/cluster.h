@@ -104,6 +104,11 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   void DropTablespace(duckdb::CatalogTransaction transaction,
                       duckdb::DropInfo& info) final;
 
+  duckdb::optional_ptr<duckdb::CatalogEntry> EntryById(
+    duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
+    duckdb::idx_t oid);
+  TablespaceCatalogEntry& Tablespace(duckdb::CatalogTransaction transaction,
+                                     duckdb::idx_t oid);
   std::shared_ptr<TablespaceRoot> TablespaceRootOf(
     duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
   std::shared_ptr<DatabaseDirectory> MakeDatabaseDirectory(
@@ -116,7 +121,8 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
  private:
   void CompactCatalogLog();
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
-  bool HoldsTablespaceObjects(const TablespaceCatalogEntry& tablespace);
+  bool HoldsTablespaceObjects(duckdb::CatalogTransaction transaction,
+                              TablespaceCatalogEntry& tablespace);
 
   std::shared_ptr<TablespaceRoot> _default_root;
   std::mutex _log_mutex;
@@ -129,6 +135,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);
 ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db);
+ClusterCatalog& ClusterOf(duckdb::CatalogTransaction transaction);
 ClusterCatalog& ClusterOf();
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(

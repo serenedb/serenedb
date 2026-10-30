@@ -141,10 +141,7 @@ JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
           .owner = job.permissions.owner,
           .body = std::make_shared<
             const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>>(
-            duckdb::CreateJobInfo::CopyBody(job.Body())),
-          .temporary = job.temporary
-                         ? job.ParentCatalog().GetAttached().shared_from_this()
-                         : nullptr};
+            duckdb::CreateJobInfo::CopyBody(job.Body()))};
 }
 
 size_t HistorySize() {
@@ -192,8 +189,15 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
       duckdb::ExceptionType::CATALOG,
       absl::StrCat("role with OID ", job.owner, " does not exist")};
   }
+  auto temporary = state.session.temporary.lock();
+  const auto database =
+    duckdb::AttachedDatabase::TryGetReference(state.session.database);
+  if (!database || database->GetCatalog().IsDropped() || Dropped(state)) {
+    return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT, "Interrupted!"};
+  }
   auto connection = connector::MakeSystemConnection(
-    user, job.owner, job.catalog.GetIdentifierName(), job.database_oid);
+    user, job.owner, database->GetName().GetIdentifierName(), database->oid,
+    temporary);
   absl::Cleanup log_notices = [&] {
     connection.ctx->ConsumeNotices([&](auto& notice) {
       SDB_WARN(GENERAL, "job \"", job.name.GetIdentifierName(),
@@ -201,21 +205,11 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
     });
   };
   context = connection.conn->context;
-  auto& temporary_objects = context->client_data->temporary_objects;
-  auto own = job.temporary.lock();
-  if (own) {
-    std::swap(own, temporary_objects);
-  }
-  absl::Cleanup restore = [&] {
-    if (own) {
-      std::swap(own, temporary_objects);
-    }
-  };
   context->registered_state->Insert(kJobRunKey,
                                     duckdb::make_shared_ptr<JobRun>(depth));
-  if (!job.schema->parent) {
+  if (!temporary && !job.schema->parent) {
     context->client_data->catalog_search_path->Set(
-      {duckdb::CatalogSearchEntry{job.catalog, job.schema->Name()}},
+      {duckdb::CatalogSearchEntry{database->GetName(), job.schema->Name()}},
       duckdb::CatalogSetPathType::SET_DIRECTLY);
   }
   {

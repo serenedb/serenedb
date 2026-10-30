@@ -114,7 +114,7 @@ Jobs exist only in SereneDB databases, like text search dictionaries: a job in `
 
 ## Temporary jobs
 
-`CREATE TEMPORARY JOB` creates the job in the session's temporary database, `temp`, as `CREATE TEMPORARY TABLE` creates a table there: only the session sees it, it is not persisted, and it is dropped when the session ends, which interrupts a run in progress. Its runs work in that temporary database: the job's schema, `temp.main`, is their search path, so the body reads and writes the session's temporary tables by name and qualifies the tables of a database:
+`CREATE TEMPORARY JOB` creates the job in the session's temporary database, `temp`, as `CREATE TEMPORARY TABLE` creates a table there: only the session sees it, it is not persisted, and it is dropped when the session ends, which interrupts a run in progress, and by `DISCARD TEMP` and `DISCARD ALL`. Its runs see what the session's own statements see: they connect to the session's database, so `current_database()` is that database, and the session's temporary objects come first on the search path, so the body names the session's temporary tables and the database's tables alike:
 
 <SqlLogicTest id="sql/statements/create_job/index/example_011" />
 

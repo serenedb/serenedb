@@ -92,7 +92,7 @@ class InvertedIndexStorage final
   // removes the directory once the last of them lets go. Never set on
   // shutdown or detach, where the directory must survive.
   void MarkDropped() noexcept {
-    if (_writer) {
+    if (!_read_only) {
       _dropped.store(true, std::memory_order_release);
     }
   }
@@ -111,6 +111,7 @@ class InvertedIndexStorage final
   }
 
   bool ReadOnly() const noexcept { return !_writer; }
+  bool Opened() const { return static_cast<bool>(GetInvertedIndexSnapshot()); }
   [[nodiscard]] bool Open(const catalog::InvertedIndexSettings& options);
 
   auto GetTransaction(bool exclusive_segment = false) {

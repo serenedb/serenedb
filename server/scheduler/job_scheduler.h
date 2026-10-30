@@ -84,11 +84,16 @@ struct JobDefinition {
   std::shared_ptr<
     const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>>
     body;
+};
+
+struct JobSession {
+  duckdb::weak_ptr<duckdb::AttachedDatabase> database;
   duckdb::weak_ptr<duckdb::AttachedDatabase> temporary;
 };
 
 struct JobState {
   absl::Mutex mutex;
+  JobSession session;
   JobDefinition definition;
   JobStatus status;
   uint64_t timer = 0;

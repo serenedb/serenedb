@@ -103,11 +103,12 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
 
   void MarkDropped() noexcept {
-    if (_writer) {
+    if (!_read_only) {
       _dropped.store(true, std::memory_order_release);
     }
   }
   std::string Path() const { return _parent->StoragePath(GetTableId()); }
+  bool Opened() const noexcept { return _writer || _reader; }
   [[nodiscard]] bool Open();
 
   // `exclusive_segment` is required of a writer that will record its flushed

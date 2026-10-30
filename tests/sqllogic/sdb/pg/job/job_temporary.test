@@ -71,7 +71,7 @@ DROP JOB jtmp_every;
 
 
 statement ok
-CREATE TEMPORARY JOB jtmp_copy AFTER 1 HOUR AS INSERT INTO ${__DATABASE__}.public.jtmp_kept SELECT max(n) FROM jtmp_scratch;
+CREATE TEMPORARY JOB jtmp_copy AFTER 1 HOUR AS INSERT INTO jtmp_kept SELECT max(n) FROM jtmp_scratch;
 
 
 statement ok
@@ -86,23 +86,28 @@ n
 
 
 statement ok
-CREATE TEMP JOB jtmp_unqualified AFTER 1 HOUR AS INSERT INTO jtmp_kept VALUES (2);
+CREATE TEMPORARY TABLE jtmp_where (db TEXT);
 
 
-statement error
-EXECUTE JOB jtmp_unqualified;
+statement ok
+CREATE TEMP JOB jtmp_database AFTER 1 HOUR AS INSERT INTO jtmp_where SELECT current_database();
+
+
+statement ok
+EXECUTE JOB jtmp_database;
+
+
+query
+SELECT db = current_database() AS session_database FROM jtmp_where;
 ----
-db error: ERROR: Table with name jtmp_kept does not exist!<slt:ignore>
+session_database
+t
 
 
 statement error
 CREATE TEMPORARY JOB ${__DATABASE__}.public.jtmp_misplaced AFTER 1 HOUR AS SELECT 1;
 ----
 db error: ERROR: <slt:ignore>can *only* use the "temp" catalog<slt:ignore>
-
-
-statement ok
-DROP JOB jtmp_unqualified;
 
 
 statement ok
@@ -113,15 +118,19 @@ statement ok
 DROP JOB jtmp_every;
 
 
+statement ok
+CREATE TEMPORARY JOB jtmp_discarded AFTER 1 HOUR AS SELECT 1;
+
+
+statement ok
+DISCARD TEMP;
+
+
 query
 SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = 'temp';
 ----
 jobs
 0
-
-
-statement ok
-DROP TABLE jtmp_scratch;
 
 
 statement ok

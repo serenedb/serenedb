@@ -90,6 +90,7 @@
 #include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tablespace.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/scan/scan_bind.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
@@ -101,8 +102,6 @@ namespace {
 using duckdb::AclMode;
 using duckdb::CatalogType;
 using duckdb::LogicalOperatorType;
-
-constexpr std::string_view kDefaultTablespaceSetting = "default_tablespace";
 
 std::string KindName(CatalogType type) {
   switch (type) {
@@ -478,13 +477,6 @@ class Enforcer {
         auto& create = op.Cast<duckdb::LogicalCreateTable>();
         auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
         RequireUserSchema(create.schema.oid, info);
-        info.tablespace_oid = Place(
-          info.tablespace, create.schema.ParentCatalog(),
-          catalog::ReadStorageEngine(info.options) ==
-              catalog::TableEngine::Search
-            ? std::string_view{}
-            : "only a table created WITH (storage = 'search') can be placed "
-              "in a tablespace");
         Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
         for (auto& serial : create.info->serial_sequences) {
           Stamp(serial.permissions, create.schema.ParentCatalog(),
@@ -571,20 +563,6 @@ class Enforcer {
           RequireOwner(create.table);
           CheckReplace(*create.info);
         }
-        std::string_view refusal;
-        if (create.info->index_type != catalog::kInvertedIndexTypeName) {
-          refusal =
-            "only a search index (USING inverted) can be placed in a "
-            "tablespace";
-        } else if (create.table.type == CatalogType::TABLE_ENTRY &&
-                   !create.table.Cast<duckdb::TableCatalogEntry>()
-                      .IsDuckTable()) {
-          refusal =
-            "an index on a search-backed table is stored with the table and "
-            "cannot be placed in a tablespace";
-        }
-        create.info->tablespace_oid =
-          Place(create.info->tablespace, create.table.ParentCatalog(), refusal);
         break;
       }
       case LogicalOperatorType::LOGICAL_DROP: {
@@ -644,7 +622,6 @@ class Enforcer {
                           ERR_MSG("permission denied to create database"));
         }
         RequireDatabaseNotBeingCreated(info.name);
-        PlaceDatabase(info);
         break;
       }
       case LogicalOperatorType::LOGICAL_DETACH: {
@@ -1222,99 +1199,6 @@ class Enforcer {
     if (_enforce) {
       RequireOwner(tablespace);
     }
-  }
-
-  void UseTablespace(const duckdb::CatalogEntry& tablespace) {
-    if (_enforce &&
-        !_caller_closure.Can(CatalogType::TABLESPACE_ENTRY,
-                             tablespace.permissions, AclMode::Create)) {
-      Denied(tablespace);
-    }
-    const auto& root =
-      tablespace.Cast<catalog::TablespaceCatalogEntry>().Root();
-    SDB_ASSERT(root);
-    auto pin = root->Pin();
-    if (!pin) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-        ERR_MSG("tablespace \"", tablespace.name.GetIdentifierName(),
-                "\" is being dropped"));
-    }
-    _connection.HoldUntilEnd(std::move(pin));
-  }
-
-  duckdb::idx_t Place(const duckdb::Identifier& requested,
-                      duckdb::Catalog& catalog, std::string_view refusal) {
-    const bool named = !requested.empty();
-    std::string name;
-    if (named) {
-      name = requested.GetIdentifierName();
-    } else if (auto setting = _connection.Get(kDefaultTablespaceSetting)) {
-      name = std::move(*setting);
-    }
-    if (name.empty()) {
-      return 0;
-    }
-    const auto tablespace = ClusterEntry(CatalogType::TABLESPACE_ENTRY, name);
-    if (!tablespace) {
-      if (!named) {
-        return 0;
-      }
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("tablespace \"", name, "\" does not exist"));
-    }
-    if (tablespace->oid == pg::kPgGlobalTablespace) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("only shared relations can be placed in pg_global tablespace"));
-    }
-    const bool serenedb =
-      catalog.GetCatalogType() == catalog::SereneDBCatalog::kStorageType;
-    const auto database =
-      serenedb ? ClusterEntry(CatalogType::DATABASE_ENTRY,
-                              catalog.GetName().GetIdentifierName())
-               : nullptr;
-    const auto own =
-      database ? database->Cast<catalog::DatabaseCatalogEntry>().Tablespace()
-               : pg::kPgDefaultTablespace;
-    if (tablespace->oid == own) {
-      return 0;
-    }
-    if (catalog.GetAttached().IsTemporary()) {
-      refusal = "temporary objects cannot be placed in a tablespace";
-    } else if (!serenedb) {
-      refusal =
-        "only an object of a SereneDB database can be placed in a tablespace";
-    }
-    if (!refusal.empty()) {
-      if (!named) {
-        return 0;
-      }
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG(refusal));
-    }
-    UseTablespace(*tablespace);
-    return tablespace->oid;
-  }
-
-  void PlaceDatabase(duckdb::AttachInfo& info) {
-    const auto option = info.options.find("tablespace");
-    if (option == info.options.end()) {
-      return;
-    }
-    const auto name = option->second.ToString();
-    info.options.erase(option);
-    auto& tablespace = RequireTablespace(name);
-    if (tablespace.oid == pg::kPgGlobalTablespace) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("pg_global cannot be used as default tablespace"));
-    }
-    if (tablespace.oid == pg::kPgDefaultTablespace) {
-      return;
-    }
-    UseTablespace(tablespace);
-    info.tablespace_oid = tablespace.oid;
   }
 
   // CREATE OR REPLACE keeps an existing object under its own name, which is the
@@ -1926,6 +1810,19 @@ void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
 bool Unowned(const duckdb::CatalogEntry& entry) {
   return entry.permissions.owner == pg::kInvalidOid ||
          (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
+}
+
+void RequireCreatePrivilege(duckdb::ClientContext& context,
+                            const duckdb::CatalogEntry& entry) {
+  const auto* connection = connector::GetSereneDBContextPtr(context);
+  if (!connection) {
+    return;
+  }
+  const auto closure = ClosureFor(&context, connection->GetRoleId());
+  if (!closure->is_superuser &&
+      !closure->Can(entry.type, entry.permissions, AclMode::Create)) {
+    Denied(entry);
+  }
 }
 
 }  // namespace sdb::auth

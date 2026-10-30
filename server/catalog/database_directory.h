@@ -20,9 +20,6 @@
 
 #pragma once
 
-#include <absl/base/thread_annotations.h>
-#include <absl/synchronization/mutex.h>
-
 #include <atomic>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/file_system.hpp>
@@ -64,8 +61,7 @@ StorageSize StorageBytes(const std::string& directory);
 void RemoveUnowned(std::span<const StorageEntry> entries,
                    const irs::containers::FlatHashSet<duckdb::idx_t>& owned);
 
-class TablespaceRoot final
-  : public std::enable_shared_from_this<TablespaceRoot> {
+class TablespaceRoot final {
  public:
   explicit TablespaceRoot(std::string path);
   ~TablespaceRoot();
@@ -75,24 +71,14 @@ class TablespaceRoot final
   std::string DatabaseDir(duckdb::idx_t oid) const;
 
   void Claim();
-  [[nodiscard]] std::shared_ptr<void> Pin();
-  [[nodiscard]] std::shared_ptr<void> BeginDrop();
-  void MarkDropped();
-  void Abandon();
+  void MarkDropped() noexcept {
+    _dropped.store(true, std::memory_order_release);
+  }
 
  private:
-  enum class State : uint8_t {
-    Live,
-    Dropping,
-    Dropped,
-  };
-
-  mutable absl::Mutex _mutex;
-  State _state ABSL_GUARDED_BY(_mutex) = State::Live;
-  uint32_t _pins ABSL_GUARDED_BY(_mutex) = 0;
-  bool _claimed ABSL_GUARDED_BY(_mutex) = false;
   std::string _path;
   bool _remote;
+  std::atomic_bool _dropped{false};
 };
 
 class DatabaseDirectory;
@@ -133,6 +119,9 @@ class DatabaseDirectory final
   StorageDirectory InTablespace(duckdb::CatalogTransaction transaction,
                                 duckdb::idx_t tablespace);
 
+  void SetTablespaceRoots(std::vector<std::shared_ptr<TablespaceRoot>> roots) {
+    _tablespace_roots = std::move(roots);
+  }
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
@@ -141,8 +130,7 @@ class DatabaseDirectory final
   duckdb::idx_t _oid;
   std::shared_ptr<TablespaceRoot> _root;
   std::filesystem::path _path;
-  absl::Mutex _mutex;
-  std::vector<std::weak_ptr<TablespaceRoot>> _roots ABSL_GUARDED_BY(_mutex);
+  std::vector<std::shared_ptr<TablespaceRoot>> _tablespace_roots;
   std::atomic_bool _dropped{false};
 };
 

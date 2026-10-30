@@ -702,6 +702,71 @@ def test_a_location_is_kept_normalized(tmp_path: Path) -> None:
         sorted(fake.objects)
 
 
+def _wait_parked(conn: psycopg.Connection, point: str) -> None:
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            conn.execute(f"SET sdb_faults = '-{point}:parked'")
+            return
+        except psycopg.Error:
+            assert time.monotonic() < deadline, f"nothing parked at {point}"
+            time.sleep(0.05)
+
+
+@pytest.mark.faults
+@pytest.mark.parametrize("kind", ["s3", "azure"])
+def test_two_tablespaces_racing_for_one_location_leave_one(tmp_path: Path,
+                                                           kind: str) -> None:
+    with FakeS3() if kind == "s3" else FakeAzure() as fake:
+        if kind == "s3":
+            location = f"s3://bucket/claimed-{tmp_path.name}"
+            secret = (f"TYPE s3, KEY_ID 'key', SECRET 'secret', "
+                      f"ENDPOINT '{fake.endpoint}', URL_STYLE 'path', USE_SSL false")
+        else:
+            location = f"az://indexes/claimed-{tmp_path.name}"
+            secret = f"TYPE azure, CONNECTION_STRING '{fake.connection_string}'"
+        failures: list[str] = []
+
+        def claim() -> None:
+            try:
+                with server.connect() as conn:
+                    conn.execute(f"CREATE TABLESPACE first LOCATION '{location}'")
+            except psycopg.Error as error:
+                failures.append(str(error))
+
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            with server.connect() as admin:
+                admin.execute(f"CREATE PERSISTENT SECRET store ({secret}, "
+                              f"SCOPE '{location}')")
+                admin.execute("SET sdb_faults = 'pause_marker_creation'")
+                first = threading.Thread(target=claim)
+                first.start()
+                _wait_parked(admin, "pause_marker_creation")
+                if kind == "s3":
+                    admin.execute(f"CREATE TABLESPACE second LOCATION '{location}'")
+                else:
+                    with pytest.raises(psycopg.Error,
+                                       match="already in use as a tablespace"):
+                        admin.execute(
+                            f"CREATE TABLESPACE second LOCATION '{location}'")
+                admin.execute("SET sdb_faults = 'pause_marker_creation:release'")
+                first.join(timeout=60)
+                assert not first.is_alive()
+                placed = admin.execute(
+                    "SELECT spcname FROM pg_tablespace "
+                    "WHERE spcname IN ('first', 'second')").fetchall()
+        finally:
+            server.stop()
+    if kind == "s3":
+        assert len(failures) == 1 and "File exists" in failures[0], failures
+        assert placed == [("second",)]
+    else:
+        assert not failures, failures
+        assert placed == [("first",)]
+
+
 def test_a_lost_upload_completion_fails_its_statement_and_leaves_no_object(
         tmp_path: Path) -> None:
     location = f"s3://bucket/lost-{tmp_path.name}"

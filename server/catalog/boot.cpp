@@ -381,13 +381,7 @@ void InitCatalog(std::string_view directory) {
   for (const auto& database : storages) {
     catalogs.push_back(database.catalog);
   }
-  if (const auto missing = search::OpenSearchStorages(catalogs);
-      !missing.empty()) {
-    const auto& [entry, path] = missing.front();
-    SDB_FATAL(STARTUP, "the storage '", path, "' of ",
-              entry.get().name.GetIdentifierName(), " (oid ", entry.get().oid,
-              ") is missing");
-  }
+  search::OpenSearchStorages(catalogs);
   listings.WorkOnTasks();
   RemoveUnownedStorages(storages);
   for (const auto& db : manager.GetDatabases()) {

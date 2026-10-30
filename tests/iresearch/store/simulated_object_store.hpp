@@ -67,7 +67,8 @@ class SimulatedObjectStore final : public duckdb::FileSystem {
   }
 
   std::shared_ptr<const Object> Find(std::string_view path) const;
-  uint64_t Publish(const std::string& path, std::string bytes);
+  uint64_t Publish(const std::string& path, std::string bytes,
+                   bool exclusive = false);
 
   void Read(duckdb::FileHandle& handle, void* buffer, int64_t nr_bytes,
             duckdb::idx_t location) final;

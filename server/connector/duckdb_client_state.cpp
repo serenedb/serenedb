@@ -383,11 +383,13 @@ void SetDefaultSearchPath(duckdb::ClientContext& context,
   search_path.Set(std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
 }
 
-SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
-                                      std::string_view database,
-                                      duckdb::idx_t database_id) {
-  SystemConnection system{.conn =
-                            irs::DuckDBEngine::Instance().CreateConnection()};
+SystemConnection MakeSystemConnection(
+  std::string_view user, duckdb::idx_t role, std::string_view database,
+  duckdb::idx_t database_id,
+  duckdb::shared_ptr<duckdb::AttachedDatabase> temporary) {
+  SystemConnection system{
+    .conn = duckdb::make_uniq<duckdb::Connection>(
+      irs::DuckDBEngine::Instance().instance(), std::move(temporary))};
   auto& context = *system.conn->context;
   system.ctx = std::make_shared<ConnectionContext>(
     context, user, std::string_view{}, role, database, database_id, nullptr, 0,

@@ -119,6 +119,9 @@ std::vector<MissingStorage> OpenSearchStorages(
   std::vector<MissingStorage> missing;
   const auto open = [&](const duckdb::CatalogEntry& entry, auto storage,
                         auto... settings) {
+    if (storage->Opened()) {
+      return;
+    }
     executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
       executor,
       [&mutex, &missing, &entry, storage = std::move(storage),

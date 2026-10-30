@@ -134,6 +134,26 @@ db error: ERROR: an index on a search-backed table is stored with the table and 
 
 
 statement error
+CREATE TABLE memory.main.plain_${__DATABASE__} (id INT) TABLESPACE ts_${__DATABASE__};
+----
+db error: ERROR: TABLESPACE is not supported for tables in a duckdb catalog
+
+
+statement ok
+CREATE TABLE memory.main.plain_${__DATABASE__} (id INT);
+
+
+statement error
+CREATE INDEX plain_id_${__DATABASE__} ON memory.main.plain_${__DATABASE__} (id) TABLESPACE ts_${__DATABASE__};
+----
+db error: ERROR: TABLESPACE is not supported for indexes in a duckdb catalog
+
+
+statement ok
+DROP TABLE memory.main.plain_${__DATABASE__};
+
+
+statement error
 CREATE TABLE in_global (id INT) WITH (storage = 'search') TABLESPACE pg_global;
 ----
 db error: ERROR: only shared relations can be placed in pg_global tablespace

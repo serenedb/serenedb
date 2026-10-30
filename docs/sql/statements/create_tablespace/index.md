@@ -99,6 +99,12 @@ Tables without `storage = 'search'` and indexes other than inverted indexes live
 ERROR:  only a table created WITH (storage = 'search') can be placed in a tablespace
 ```
 
+A table or an index in a database other than a SereneDB database, such as `memory` or an attached DuckDB file, takes no `TABLESPACE` clause:
+
+```text
+ERROR:  TABLESPACE is not supported for tables in a duckdb catalog
+```
+
 Create a database in a tablespace:
 
 <SqlLogicTest id="sql/statements/create_tablespace/index/example_007" />
@@ -132,7 +138,9 @@ Renaming a tablespace or changing its owner needs ownership of it. The objects i
 DROP TABLESPACE [ IF EXISTS ] name
 ```
 
-Only the owner of a tablespace, or a superuser, can drop it, and only when it is empty: no database was created in it and no search table or inverted index is placed in it, including those of a database the server left unattached at startup with `--missing_database=skip`. Dropping it removes `engine_v1` at its location; the location itself stays. A new tablespace can use the location once the transactions that began before the drop have ended and `engine_v1` is removed; until then `CREATE TABLESPACE` refuses it. `DROP TABLESPACE` cannot run inside a transaction block, and a tablespace that another session is placing an object in at that moment is not dropped.
+Only the owner of a tablespace, or a superuser, can drop it, and only when it is empty: no database was created in it and no search table or inverted index is placed in it, including those of a database the server left unattached at startup with `--missing_database=skip`. Dropping it removes `engine_v1` at its location; the location itself stays. A new tablespace can use the location once the transactions that began before the drop have ended and `engine_v1` is removed; until then `CREATE TABLESPACE` refuses it. `DROP TABLESPACE` cannot run inside a transaction block.
+
+When one transaction places an object in a tablespace while another drops the tablespace, the one that commits second fails, as with any object that another depends on. A drop fails with `tablespace "name" is not empty` when the placement committed before the drop looked, and with `Could not commit DROP of "name" because a dependency was created after the transaction started` when it commits later; a placement that commits after the drop fails with `Could not commit creation of dependency, subject "name" has been deleted`; the files of an object that fails this way are removed with the tablespace.
 
 <SqlLogicTest id="sql/statements/create_tablespace/index/example_010" />
 

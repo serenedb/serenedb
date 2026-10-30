@@ -69,7 +69,8 @@ class ObjectHandle final : public duckdb::FileHandle {
   void Close() final {
     if (writing) {
       writing = false;
-      version = store.Publish(path, std::move(pending));
+      version =
+        store.Publish(path, std::move(pending), GetFlags().ExclusiveCreate());
     }
   }
 
@@ -138,7 +139,7 @@ std::shared_ptr<const SimulatedObjectStore::Object> SimulatedObjectStore::Find(
 }
 
 uint64_t SimulatedObjectStore::Publish(const std::string& path,
-                                       std::string bytes) {
+                                       std::string bytes, bool exclusive) {
   Request(_put);
   SDB_IF_FAILURE("object_store_put_fails") {
     throw duckdb::IOException("simulated PUT failure for \"%s\"", path);
@@ -148,6 +149,9 @@ uint64_t SimulatedObjectStore::Publish(const std::string& path,
   object->bytes = std::move(bytes);
   object->written = duckdb::Timestamp::GetCurrentTimestamp();
   absl::MutexLock lock{&_mutex};
+  if (exclusive && _objects.contains(path)) {
+    throw duckdb::IOException("Cannot create file \"%s\": File exists", path);
+  }
   object->version = ++_versions;
   const auto version = object->version;
   _objects.insert_or_assign(path, std::move(object));
@@ -189,6 +193,12 @@ duckdb::unique_ptr<duckdb::FileHandle> SimulatedObjectStore::OpenFileExtended(
     if (flags.OpenForReading()) {
       throw duckdb::NotImplementedException(
         "objects under %s are written or read, not both", kPrefix);
+    }
+    if (flags.ReturnNullIfExists()) {
+      Request(_head);
+      if (Find(path)) {
+        return nullptr;
+      }
     }
     auto handle =
       duckdb::make_uniq<ObjectHandle>(*this, path, flags, nullptr, 0, false);

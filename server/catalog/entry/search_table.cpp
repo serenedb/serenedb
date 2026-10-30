@@ -55,8 +55,10 @@
 #include <vector>
 
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/entries_of.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/tablespace.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
@@ -241,6 +243,10 @@ SearchTableEntry::SearchTableEntry(
     _pk_sequence = FreePkSequenceName(transaction, schema, name);
     tags.insert_or_assign(kGeneratedPkSequenceTag,
                           _pk_sequence.GetIdentifierName());
+  }
+  if (_tablespace != 0) {
+    dependencies.AddDependency(
+      ClusterOf(transaction).Tablespace(transaction, _tablespace));
   }
   if (!_storage) {
     _storage = search::SearchTable::Create(
@@ -610,11 +616,12 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Rebuilt(
   auto binder = duckdb::Binder::CreateBinder(context);
   auto bound =
     binder->BindCreateTableInfo(std::move(create), schema, info.bind_mode);
-  info.new_dependencies = duckdb::make_uniq<duckdb::LogicalDependencyList>(
-    bound->Base().dependencies);
-  return duckdb::make_uniq<SearchTableEntry>(
+  auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, schema, *bound, catalog.GetCatalogTransaction(context), _storage,
     triggers);
+  info.new_dependencies =
+    duckdb::make_uniq<duckdb::LogicalDependencyList>(result->dependencies);
+  return result;
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(

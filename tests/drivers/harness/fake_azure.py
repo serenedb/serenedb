@@ -174,6 +174,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if_match = self.headers.get("If-Match")
         return bool(if_match) and if_match != "*" and if_match != blob.etag
 
+    def _exclusive(self) -> bool:
+        return self.headers.get("If-None-Match") == "*"
+
     def do_HEAD(self) -> None:
         if self._forbidden():
             return
@@ -271,16 +274,23 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.fake.count("PUT_BLOCK_LIST")
             self._wait()
             ids = [element.text or "" for element in ET.fromstring(body)]
+            exists = False
             with self.fake.lock:
                 blocks = dict(getattr(self.fake.blobs.get((container, name)), "blocks", {}))
                 blocks.update(self.fake.staged.get((container, name), {}))
-                if any(block not in blocks for block in ids):
+                if self._exclusive() and (container, name) in self.fake.blobs:
+                    blob = None
+                    exists = True
+                elif any(block not in blocks for block in ids):
                     blob = None
                 else:
                     blob = _Blob(b"".join(blocks[block] for block in ids),
                                  {block: blocks[block] for block in ids})
                     self.fake.blobs[(container, name)] = blob
                     self.fake.staged.pop((container, name), None)
+            if exists:
+                self._error(409, "BlobAlreadyExists")
+                return
             if blob is None:
                 self._error(400, "InvalidBlockList")
                 return
@@ -311,7 +321,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self._wait()
         blob = _Blob(body)
         with self.fake.lock:
-            self.fake.blobs[(container, name)] = blob
+            exists = self._exclusive() and (container, name) in self.fake.blobs
+            if not exists:
+                self.fake.blobs[(container, name)] = blob
+        if exists:
+            self._error(409, "BlobAlreadyExists")
+            return
         self._reply(201, headers={"ETag": blob.etag, "Last-Modified": _http_date(blob.modified),
                                   "x-ms-request-server-encrypted": "true"})
 

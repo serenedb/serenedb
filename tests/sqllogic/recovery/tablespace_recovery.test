@@ -64,6 +64,17 @@ datname	spcname
 ts_db	ts
 
 connection after_restart
+statement error
+DROP TABLESPACE ts;
+----
+db error: ERROR: tablespace "ts" is not empty
+
+
+connection after_restart
+statement ok
+ALTER TABLE docs ALTER COLUMN body SET DEFAULT 'none';
+
+connection after_restart
 statement ok
 SET sdb_faults = 'compact_inside_ddl';
 
@@ -109,8 +120,22 @@ statement ok
 DROP DATABASE ts_db;
 
 connection after_rewrite
+statement error
+DROP TABLESPACE ts;
+----
+db error: ERROR: tablespace "ts" is not empty
+
+
+connection after_rewrite
 statement ok
 DROP INDEX notes_idx;
+
+connection after_rewrite
+statement error
+DROP TABLESPACE ts;
+----
+db error: ERROR: tablespace "ts" is not empty
+
 
 connection after_rewrite
 statement ok

@@ -511,8 +511,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._bad_digest()
             return
         obj = _Object(body)
-        with self.fake.lock:
-            self.fake.objects[(bucket, key)] = obj
+        if not self._store(bucket, key, obj):
+            self._xml(412, "<Error><Code>PreconditionFailed</Code></Error>")
+            return
         self._traced("PUT", key, began)
         headers = {"ETag": obj.etag}
         if checksum is not None:
@@ -614,13 +615,21 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             checksum = (f"<ChecksumCRC32C>{_encode_crc32c(expected)}</ChecksumCRC32C>"
                         "<ChecksumType>FULL_OBJECT</ChecksumType>")
         obj = _Object(data)
-        with self.fake.lock:
-            self.fake.objects[(bucket, key)] = obj
+        if not self._store(bucket, key, obj):
+            self._xml(412, "<Error><Code>PreconditionFailed</Code></Error>")
+            return
         if self._dropped("COMPLETE_UPLOAD", key):
             return
         self._xml(200, f'<CompleteMultipartUploadResult xmlns="{NS}"><Bucket>{escape(bucket)}</Bucket>'
                        f"<Key>{escape(key)}</Key><ETag>{escape(obj.etag)}</ETag>{checksum}"
                        "</CompleteMultipartUploadResult>")
+
+    def _store(self, bucket: str, key: str, obj: _Object) -> bool:
+        with self.fake.lock:
+            if self.headers.get("If-None-Match") == "*" and (bucket, key) in self.fake.objects:
+                return False
+            self.fake.objects[(bucket, key)] = obj
+        return True
 
     def do_DELETE(self) -> None:
         bucket, key, query = self._target()

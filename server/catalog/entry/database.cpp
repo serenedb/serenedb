@@ -38,6 +38,7 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(
     _directory{std::move(directory)} {
   comment = info.comment;
   tags = info.tags;
+  dependencies = info.dependencies;
   permissions = info.permissions;
 }
 
@@ -56,6 +57,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {
   info->tags = tags;
   info->options = _options;
   info->tablespace_oid = _tablespace;
+  info->dependencies = dependencies;
   return std::move(info);
 }
 

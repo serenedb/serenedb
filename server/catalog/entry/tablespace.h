@@ -30,6 +30,9 @@
 
 namespace sdb::catalog {
 
+inline constexpr std::string_view kDefaultTablespaceSetting =
+  "default_tablespace";
+
 void RequireUnreservedTablespaceName(std::string_view name);
 
 class TablespaceCatalogEntry final : public duckdb::InCatalogEntry {

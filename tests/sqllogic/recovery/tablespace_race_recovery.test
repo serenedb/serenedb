@@ -1,12 +1,17 @@
 control substitution on
 
-# A tablespace that another transaction is placing an object in is not
-# dropped, nothing is placed in a tablespace while it is being dropped, and a
-# dropped tablespace keeps its location until the transactions that began
-# before the drop end and its files are removed.
+# A tablespace and the objects placed in it are settled the way any catalog
+# object and its dependents are: of a placement and a DROP TABLESPACE, the one
+# that commits second fails. A dropped tablespace keeps its location until the
+# transactions that began before the drop end and its files are removed.
 
 statement ok
 RESET sdb_faults;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY race_english AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
 
 
 statement ok
@@ -18,35 +23,32 @@ CREATE TABLESPACE leaving LOCATION '${__TEST_DIR__}/leaving';
 
 
 statement ok
-SET sdb_faults = 'pause_after_catalog_decision';
+SET sdb_faults = 'pause_tablespace_drop';
 
 
-connection placer
-statement async ok
-CREATE TABLE placed (id INT, body TEXT) WITH (storage = 'search') TABLESPACE contested;
-
-
-connection default
-query ok retry 40 backoff 250ms
-SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CREATE TABLE placed%';
-----
-n
-1
-
-
-connection default
-statement error
+connection dropper
+statement async error
 DROP TABLESPACE contested;
 ----
-db error: ERROR: tablespace "contested" is being used by another transaction
+db error: ERROR: tablespace "contested" is not empty
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_tablespace_drop:parked';
 
 
 connection default
 statement ok
-SET sdb_faults = '-pause_after_catalog_decision';
+CREATE TABLE placed (id INT, body TEXT) WITH (storage = 'search') TABLESPACE contested;
 
 
-connection placer
+connection default
+statement ok
+SET sdb_faults = 'pause_tablespace_drop:release';
+
+
+connection dropper
 wait
 
 
@@ -72,8 +74,10 @@ SET sdb_faults = 'pause_tablespace_drop';
 
 
 connection dropper
-statement async ok
+statement async error
 DROP TABLESPACE leaving;
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "leaving" because a dependency was created after the transaction started
 
 
 connection default
@@ -82,17 +86,8 @@ SET sdb_faults = '-pause_tablespace_drop:parked';
 
 
 connection default
-statement error
-CREATE TABLE late (id INT) WITH (storage = 'search') TABLESPACE leaving;
-----
-db error: ERROR: tablespace "leaving" is being dropped
-
-
-connection default
-statement error
+statement ok
 CREATE DATABASE late_db TABLESPACE leaving;
-----
-db error: ERROR: tablespace "leaving" is being dropped
 
 
 connection default
@@ -106,9 +101,112 @@ wait
 
 connection default
 query
+SELECT d.datname, t.spcname FROM pg_database d JOIN pg_tablespace t ON t.oid = d.dattablespace
+WHERE d.datname = 'late_db';
+----
+datname	spcname
+late_db	leaving
+
+
+connection default
+statement ok
+DROP DATABASE late_db;
+
+
+connection default
+statement ok
+CREATE TABLE notes (id INT, body TEXT);
+
+
+connection default
+statement ok
+INSERT INTO notes VALUES (1, 'red fox');
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_tablespace_drop';
+
+
+connection dropper
+statement async error
+DROP TABLESPACE leaving;
+----
+db error: ERROR: tablespace "leaving" is not empty
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_tablespace_drop:parked';
+
+
+connection default
+statement ok
+CREATE INDEX notes_idx ON notes USING inverted(body race_english) TABLESPACE leaving;
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_tablespace_drop:release';
+
+
+connection dropper
+wait
+
+
+connection default
+query
+SELECT id FROM notes_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+
+
+connection default
+statement ok
+DROP INDEX notes_idx;
+
+
+connection placer
+statement ok
+BEGIN;
+
+
+connection placer
+statement ok
+CREATE TABLE late (id INT, body TEXT) WITH (storage = 'search') TABLESPACE leaving;
+
+
+connection placer
+statement ok
+INSERT INTO late VALUES (1, 'never committed');
+
+
+connection default
+statement ok
+DROP TABLESPACE leaving;
+
+
+connection placer
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "leaving" has been deleted
+
+
+connection default
+query
 SELECT count(*) AS left FROM pg_tablespace WHERE spcname = 'leaving';
 ----
 left
+0
+
+
+connection default
+query
+SELECT count(*) AS tables FROM pg_class WHERE relname = 'late';
+----
+tables
 0
 
 
@@ -122,12 +220,41 @@ files_left
 
 connection default
 statement ok
+ALTER TABLESPACE contested RENAME TO renamed;
+
+
+connection default
+query
+SELECT c.relname, t.spcname FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE c.relname = 'placed';
+----
+relname	spcname
+placed	renamed
+
+
+connection default
+statement error
+DROP TABLESPACE renamed;
+----
+db error: ERROR: tablespace "renamed" is not empty
+
+
+connection default
+statement ok
 DROP TABLE placed;
 
 
 connection default
 statement ok
-DROP TABLESPACE contested;
+DROP TABLESPACE renamed;
+
+
+connection default
+query ok retry 240 backoff 250ms
+SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/contested/**');
+----
+files_left
+0
 
 
 connection holder
@@ -216,3 +343,68 @@ t
 connection default
 statement ok
 DROP TABLESPACE held_once_more;
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) AS tablespaces FROM pg_tablespace WHERE oid < 16384;
+----
+tablespaces
+2
+
+
+connection default
+statement ok
+CREATE TABLESPACE recreated LOCATION '${__TEST_DIR__}/recreated_a';
+
+
+connection default
+statement ok
+DROP TABLESPACE recreated;
+
+
+connection default
+statement ok
+SET sdb_faults = 'catalog_append_fails';
+
+
+connection default
+statement error
+CREATE TABLESPACE recreated LOCATION '${__TEST_DIR__}/recreated_b';
+----
+db error: ERROR: Failed to commit: catalog log: could not append the transaction
+
+
+connection default
+statement ok
+SET sdb_faults = '-catalog_append_fails';
+
+
+connection holder
+statement ok
+COMMIT;
+
+
+connection default
+statement ok retry 240 backoff 250ms
+CREATE TABLESPACE recreated LOCATION '${__TEST_DIR__}/recreated_b';
+
+
+connection default
+statement ok
+DROP TABLESPACE recreated;
+
+
+connection default
+statement ok
+DROP TABLE notes;
+
+
+connection default
+statement ok
+DROP TEXT SEARCH DICTIONARY race_english;

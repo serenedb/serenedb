@@ -41,4 +41,7 @@ void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
 
 bool Unowned(const duckdb::CatalogEntry& entry);
 
+void RequireCreatePrivilege(duckdb::ClientContext& context,
+                            const duckdb::CatalogEntry& entry);
+
 }  // namespace sdb::auth

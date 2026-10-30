@@ -88,6 +88,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
   void FinalizeLoad(duckdb::optional_ptr<duckdb::ClientContext> context) final;
+  void OpenStorages();
   bool AppendLocalIndexes(
     duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
     duckdb::RowGroupCollection& source,
@@ -203,6 +204,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
                         duckdb::DropInfo& info);
 
  private:
+  duckdb::idx_t Place(duckdb::CatalogTransaction transaction,
+                      duckdb::CreateInfo& info, std::string_view refusal);
+
   std::shared_ptr<DatabaseDirectory> _directory;
   CatalogSnapshots _snapshots{*this};
   duckdb::unique_ptr<duckdb::FileHandle> _catalog_log_lock;

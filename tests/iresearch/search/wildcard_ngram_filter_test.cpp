@@ -329,12 +329,29 @@ TEST(WildcardNGramFilterTest, query) {
     counter.Reset();
 
     std::vector<irs::doc_id_t> result;
+    std::vector<irs::doc_id_t> probed;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto docs = prepared.Execute(i);
       while (!irs::doc_limits::eof(docs->Next())) {
         result.push_back(docs->Value());
       }
+      const auto* query = prepared.Query(i);
+      if (!query || irs::QueryBuilder::IsEmpty(*query)) {
+        continue;
+      }
+      const auto end = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
+                                                  (*reader)[i].docs_count());
+      auto probe = query->PlanProbe({}, end - irs::doc_limits::min());
+      if (!probe) {
+        continue;
+      }
+      for (auto doc = irs::doc_limits::min(); doc < end; ++doc) {
+        if (probe->Probe(doc) == doc) {
+          probed.push_back(doc);
+        }
+      }
     }
+    EXPECT_EQ(result, probed);
     return result;
   };
 
@@ -384,6 +401,7 @@ TEST(WildcardNGramFilterTest, query) {
   EXPECT_EQ(ids({0, 1}), execute(MakeFilter(kField, "f%", analyzer, false)));
   EXPECT_EQ(ids({0, 1, 3, 4}),
             execute(MakeFilter(kField, "%o%", analyzer, false)));
+  EXPECT_EQ(ids({0, 1}), execute(MakeFilter(kField, "%foo%", analyzer, false)));
 
   {
     tests::sort::Boost sort;

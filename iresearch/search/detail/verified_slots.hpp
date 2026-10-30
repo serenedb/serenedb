@@ -24,42 +24,42 @@
 #include <utility>
 
 #include "iresearch/search/detail/verified_batch.hpp"
-#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
 
-template<typename NGrams>
-class WildcardNGramSlots {
+template<typename Approx, typename Recipe, bool Lead>
+class VerifiedSlots {
  public:
-  using Recipe = WildcardNGramQuery::Recipe;
-
-  template<typename NGramsArgs>
-  WildcardNGramSlots(std::piecewise_construct_t, NGramsArgs&& ngrams,
-                     const Recipe& recipe)
-    : _ngrams{std::make_from_tuple<NGrams>(std::forward<NGramsArgs>(ngrams))},
-      _pattern{recipe.Make()} {}
+  template<typename ApproxArgs>
+  VerifiedSlots(std::piecewise_construct_t, ApproxArgs&& approx,
+                const Recipe& recipe)
+    : _approx{std::make_from_tuple<Approx>(std::forward<ApproxArgs>(approx))},
+      _verifier{recipe.Make()} {}
 
   doc_id_t Seek(doc_id_t target) {
-    return _batch.Seek(_ngrams, _pattern, target);
+    return _batch.Seek(_approx, _verifier, target);
   }
 
-  doc_id_t Next(doc_id_t) { return _batch.Next(_ngrams, _pattern); }
+  doc_id_t Next(doc_id_t) { return _batch.Next(_approx, _verifier); }
 
-  doc_id_t Probe(doc_id_t target) { return _ngrams.Probe(target); }
+  doc_id_t Probe(doc_id_t target) { return _approx.Probe(target); }
 
   bool Match(doc_id_t doc) {
-    if constexpr (requires(NGrams& ngrams) { ngrams.Next(); }) {
+    if constexpr (Lead) {
       return _batch.Match(doc);
     } else {
-      return _pattern.Check(doc);
+      return _verifier.Check(doc);
     }
   }
 
  private:
-  NGrams _ngrams;
-  WildcardNGramVerifier _pattern;
-  VerifiedBatch<WildcardNGramVerifier> _batch;
+  using Verifier = decltype(std::declval<const Recipe&>().Make());
+
+  Approx _approx;
+  Verifier _verifier;
+  [[no_unique_address]] utils::Need<Lead, VerifiedBatch<Verifier>> _batch;
 };
 
 }  // namespace irs::detail

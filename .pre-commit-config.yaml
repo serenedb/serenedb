@@ -116,6 +116,12 @@ repos:
         entry: python3 scripts/check_fault_points.py
         pass_filenames: false
         always_run: true
+      - id: check-planner-lookups
+        name: Check the fork's planner resolves names through the retriever
+        language: python
+        entry: python3 scripts/check_planner_lookups.py
+        pass_filenames: false
+        always_run: true
       - id: check-substitution-directive
         name: Check sqllogic substitution directive
         language: python

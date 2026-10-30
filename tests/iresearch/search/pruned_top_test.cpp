@@ -89,6 +89,7 @@ inline constexpr Spec kSpecs[]{
    [](doc_id_t i) {
      return i >= 100000 && i < 110000 ? Chance(6, i, 500) : Chance(6, i, 5);
    }},
+  {"edge", 20, [](doc_id_t i) { return i == 5000 || i == 10000; }},
 };
 
 irs::TermClause Clause(std::string_view value) {
@@ -376,6 +377,7 @@ TEST_P(PrunedTopTest, unions_across_block_kinds) {
          {.should = {"cluster", "half"}},
          {.should = {"rare", "sparse", "mid", "dense", "half"}},
          {.should = {"run", "holes", "cluster"}},
+         {.should = {"edge", "run"}},
        }) {
     Check(shape);
   }

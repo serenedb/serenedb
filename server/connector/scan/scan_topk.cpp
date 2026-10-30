@@ -21,11 +21,11 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/top/make.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <numeric>
 

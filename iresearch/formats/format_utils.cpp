@@ -62,16 +62,28 @@ void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
   out.WriteU32(static_cast<uint32_t>(size));
 }
 
-template<typename PinBytes>
-Footer ReadFooterImpl(uint64_t length, const PinBytes& pin,
-                      std::string_view name, const FooterReader* read) {
+struct BytesFile {
+  uint64_t Length() const noexcept { return bytes.size(); }
+  SpanBytes Pin(uint64_t offset, uint64_t size) const noexcept {
+    return {bytes.substr(offset, size)};
+  }
+  void Prefetch(uint64_t, uint64_t) const noexcept {}
+  void Evict(uint64_t, uint64_t) const noexcept {}
+
+  bytes_view bytes;
+};
+
+template<typename File>
+Footer ReadFooterImpl(const File& file, std::string_view name,
+                      const FooterReader* read) {
+  const auto length = file.Length();
   if (length < kTrailerLen) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
                     ERR_MSG("footer: '", name, "' of ", length,
                             " bytes is too short for a trailer"));
   }
   const uint64_t trailer_offset = length - kTrailerLen;
-  const auto trailer = pin(trailer_offset, kTrailerLen);
+  const auto trailer = file.Pin(trailer_offset, kTrailerLen);
   BytesViewInput in{trailer.bytes};
   const auto footer_expected_crc32c = static_cast<uint32_t>(in.ReadI32());
   const auto footer_len = static_cast<uint32_t>(in.ReadI32());
@@ -82,7 +94,8 @@ Footer ReadFooterImpl(uint64_t length, const PinBytes& pin,
               footer_len, " bytes"));
   }
   Footer footer{.data_len = trailer_offset - footer_len};
-  const auto footer_bytes = pin(footer.data_len, footer_len);
+  file.Prefetch(footer.data_len, footer_len);
+  const auto footer_bytes = file.Pin(footer.data_len, footer_len);
   const auto* footer_data = footer_bytes.bytes.data();
   Crc32c footer_actual_crc32c;
   footer_actual_crc32c.process_bytes(footer_data, footer_len);
@@ -111,15 +124,8 @@ Footer ReadFooterImpl(uint64_t length, const PinBytes& pin,
                             duckdb::ErrorData{e}.RawMessage(),
                             "; it was written by a newer release of SereneDB"));
   }
+  file.Evict(footer.data_len, footer_len);
   return footer;
-}
-
-Footer ReadFooterImpl(const InputFile& file, std::string_view name,
-                      const FooterReader* read) {
-  return ReadFooterImpl(
-    file.Length(),
-    [&](uint64_t offset, uint64_t size) { return file.Pin(offset, size); },
-    name, read);
 }
 
 }  // namespace
@@ -140,12 +146,7 @@ Footer ReadFooter(const InputFile& file, std::string_view name,
 }
 
 Footer ReadFooter(bytes_view file, std::string_view name, FooterReader read) {
-  return ReadFooterImpl(
-    file.size(),
-    [&](uint64_t offset, uint64_t size) {
-      return SpanBytes{file.substr(offset, size)};
-    },
-    name, &read);
+  return ReadFooterImpl(BytesFile{.bytes = file}, name, &read);
 }
 
 void PrepareOutput(std::string& str, IndexOutput::ptr& out,

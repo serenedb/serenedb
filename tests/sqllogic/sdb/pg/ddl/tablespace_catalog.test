@@ -30,11 +30,11 @@ SELECT pg_tablespace_size('pg_default') > 0 AS default_holds_databases,
 default_holds_databases	global_holds_the_catalog	default_by_oid	global_by_oid
 t	t	t	t
 
-query
-SELECT pg_tablespace_size(0::oid) IS NULL AS missing_oid;
+statement error
+SELECT pg_tablespace_size(0::oid);
 ----
-missing_oid
-t
+db error: ERROR: tablespace with OID 0 does not exist
+
 
 statement error
 SELECT pg_tablespace_size('missing_${__DATABASE__}');

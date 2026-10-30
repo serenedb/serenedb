@@ -30,6 +30,7 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/path.hpp>
@@ -44,7 +45,6 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <filesystem>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -62,8 +62,8 @@
 #include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 
 namespace sdb::catalog {
 namespace {

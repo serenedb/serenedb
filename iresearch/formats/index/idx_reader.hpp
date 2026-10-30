@@ -58,11 +58,23 @@ struct IvfCentroidMeta {
   uint64_t tree_byte_size = 0;
   uint64_t stats_offset = 0;
   uint64_t stats_byte_size = 0;
+  uint64_t root_byte_size = 0;
+};
+
+struct HnswHeader {
+  uint32_t d = 0;
+  VectorMetric metric = VectorMetric::L2Sqr;
+  VectorQuantization quant = VectorQuantization::None;
+  uint32_t ef_construction = 0;
+  uint32_t record_size = 0;
+  uint64_t rows = 0;
+  bool rotated = false;
 };
 
 struct HnswMeta {
   uint64_t offset = 0;
   uint64_t byte_size = 0;
+  HnswHeader header;
 };
 
 inline constexpr std::string_view kIdxFormatExt = "idx";

@@ -17,6 +17,7 @@ target_sources(
         search_filter_printer.cpp
         duckdb_client_state.cpp
         duckdb_subscription.cpp
+        scan/col_filter_share.cpp
         scan/col_filter_verify.cpp
         scan/deferred_check.cpp
         scan/geo_check.cpp
@@ -38,7 +39,6 @@ target_sources(
         scan/scan_stream.cpp
         scan/scan_topk.cpp
         scan/scan_tsdict.cpp
-        system_table_scan.cpp
         full_scanner.cpp
         index_source_factory.cpp
         index_source_view.cpp

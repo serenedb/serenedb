@@ -1,0 +1,102 @@
+statement ok
+CREATE SCHEMA idd_s;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY idd_s.idd_d AS split_text() WITH (frequency, position);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY idd_d AS split_text() WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE idd_s.idd_t (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO idd_s.idd_t VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga');
+
+
+statement ok
+CREATE INDEX idd_i ON idd_s.idd_t USING inverted (id, body idd_d);
+
+
+statement error
+DROP TEXT SEARCH DICTIONARY idd_s.idd_d;
+----
+db error: ERROR: Cannot drop entry "idd_d" because there are entries that depend on it.
+index "idd_i" depends on tokenizer "idd_d".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY idd_d;
+
+
+query
+SELECT id FROM idd_s.idd_i WHERE body @@ ts_phrase('manga') ORDER BY id;
+----
+id
+2
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY hnsw AS split_text() WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE idd_h (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO idd_h VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga');
+
+
+statement ok
+CREATE INDEX idd_h_i ON idd_h USING inverted (id, body hnsw);
+
+
+statement error
+DROP TEXT SEARCH DICTIONARY hnsw;
+----
+db error: ERROR: Cannot drop entry "hnsw" because there are entries that depend on it.
+index "idd_h_i" depends on tokenizer "hnsw".
+Use DROP...CASCADE to drop all dependents.
+
+
+query
+SELECT id FROM idd_h_i WHERE body @@ ts_phrase('manga') ORDER BY id;
+----
+id
+2
+
+query
+CALL es_create_index('idd_es', '{"mappings":{"properties":{"title":{"type":"text"}}}}');
+----
+acknowledged
+t
+
+statement error
+DROP TEXT SEARCH DICTIONARY es.standard;
+----
+db error: ERROR: Cannot drop entry "standard" because there are entries that depend on it.
+index "idd_es$text" depends on tokenizer "standard".
+Use DROP...CASCADE to drop all dependents.
+
+
+query
+CALL es_drop_index('idd_es');
+----
+acknowledged
+t
+
+statement ok
+DROP TABLE idd_h;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY hnsw;
+
+
+statement ok
+DROP SCHEMA idd_s CASCADE;

@@ -1,4 +1,37 @@
 statement ok
+CREATE TABLE ic_t (a INTEGER, b TEXT);
+
+
+statement ok
+CREATE INDEX ic_dup ON ic_t ((a + 1), (a + 2), a, a);
+
+
+statement ok
+CREATE INDEX ic_named ON ic_t (lower(b), upper(b), (b::INTEGER), (CASE WHEN a > 0 THEN 1 END));
+
+
+query
+SELECT c.relname, a.attnum, a.attname
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname IN ('ic_dup', 'ic_named')
+ORDER BY c.relname, a.attnum;
+----
+relname	attnum	attname
+ic_dup	1	expr
+ic_dup	2	expr1
+ic_dup	3	a
+ic_dup	4	a1
+ic_named	1	lower
+ic_named	2	upper
+ic_named	3	b
+ic_named	4	case
+
+
+statement ok
+DROP TABLE ic_t CASCADE;
+
+
+statement ok
 CREATE TABLE ic_t (id int PRIMARY KEY, v text, w int, UNIQUE (v, w));
 
 

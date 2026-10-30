@@ -1,0 +1,360 @@
+# A CREATE OR REPLACE INDEX or ALTER TABLE cut short by a crash or by a failed
+# commit leaves the table and its indexes as they were. After the restart no
+# file of the unfinished change is left on disk: no segment the search table
+# does not use, and no directory no relation or index owns.
+
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE lx_db (oid BIGINT);
+
+statement ok
+INSERT INTO lx_db SELECT oid FROM pg_database WHERE datname = current_database();
+
+statement ok
+CREATE MACRO lx_dir(file) AS regexp_extract(file, '/engine_v1/[0-9]+/([0-9]+)/', 1);
+
+statement ok
+CREATE MACRO lx_orphans() AS (
+  SELECT count(DISTINCT lx_dir(file))
+  FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
+  WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM lx_db) || '/%'
+    AND lx_dir(file) <> ''
+    AND lx_dir(file)::BIGINT NOT IN (SELECT oid FROM pg_class)
+    AND lx_dir(file)::BIGINT NOT IN (SELECT index_oid FROM duckdb_indexes()));
+
+statement ok
+CREATE MACRO lx_stale_segments(rel) AS (
+  (SELECT count(DISTINCT regexp_extract(file, '/(_[0-9]+)\.[^/]*$', 1))
+   FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
+   WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM lx_db) || '/'
+                   || (SELECT oid FROM pg_class WHERE relname = rel) || '/%'
+     AND regexp_extract(file, '/(_[0-9]+)\.[^/]*$', 1) <> '')
+  - (SELECT value FROM sdb_metrics
+     WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = rel) AND metric = 'num_segments'));
+
+statement ok
+CREATE TABLE lxs (id INT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(1, 1000) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) lxs;
+
+statement ok
+INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(1001, 2000) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) lxs;
+
+statement ok
+INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(2001, 3000) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) lxs;
+
+statement ok
+CREATE INDEX lxs_x ON lxs USING inverted (body);
+
+# ----------------------------------------------------------------------
+# 1. A crash while a replace has rebuilt a segment it has not swapped in.
+# ----------------------------------------------------------------------
+
+connection replacer
+statement ok
+SET search_backfill_group_bytes = 1;
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_swap';
+
+connection replacer
+statement async error connection closed
+CREATE OR REPLACE INDEX lxs_x ON lxs USING inverted (body, id);
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index WHERE relid = 'lxs'::regclass;
+----
+tuples_done
+1000
+
+connection default
+query
+SELECT lx_stale_segments('lxs') > 0 AS unswapped;
+----
+unswapped
+t
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+wait
+
+connection after_swap_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+connection after_swap_crash
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'lxs_x';
+----
+def
+CREATE INDEX lxs_x ON public.lxs USING inverted (body)
+
+connection after_swap_crash
+query
+SELECT (SELECT count(*) FROM lxs) AS n, (SELECT count(*) FROM lxs_x WHERE body = 'fox 2500') AS hit;
+----
+n	hit
+3000	1
+
+connection after_swap_crash
+query
+SELECT lx_stale_segments('lxs') AS stale, lx_orphans() AS orphans;
+----
+stale	orphans
+0	0
+
+connection after_swap_crash
+statement ok
+CREATE OR REPLACE INDEX lxs_x ON lxs USING inverted (body, id);
+
+connection after_swap_crash
+query
+SELECT count(*) AS hit FROM lxs_x WHERE body = 'fox 2500' AND id = 2500;
+----
+hit
+1
+
+# ----------------------------------------------------------------------
+# 2. A crash while a finished replace commits.
+# ----------------------------------------------------------------------
+
+connection after_swap_crash
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+connection after_swap_crash
+statement error connection closed
+CREATE OR REPLACE INDEX lxs_x ON lxs USING inverted (id);
+
+connection after_commit_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'lxs_x';
+----
+def
+CREATE INDEX lxs_x ON public.lxs USING inverted (body, id)
+
+connection after_commit_crash
+query
+SELECT (SELECT count(*) FROM lxs) AS n, (SELECT count(*) FROM lxs_x WHERE body = 'fox 1500' AND id = 1500) AS hit;
+----
+n	hit
+3000	1
+
+connection after_commit_crash
+query
+SELECT lx_stale_segments('lxs') AS stale, lx_orphans() AS orphans;
+----
+stale	orphans
+0	0
+
+# ----------------------------------------------------------------------
+# 3. A crash while an ALTER TABLE commits.
+# ----------------------------------------------------------------------
+
+connection after_commit_crash
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+connection after_commit_crash
+statement error connection closed
+ALTER TABLE lxs SET (refresh_interval = 4321);
+
+connection after_alter_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT reloptions[1] AS refresh FROM pg_class WHERE relname = 'lxs';
+----
+refresh
+refresh_interval=0
+
+connection after_alter_crash
+statement ok
+ALTER TABLE lxs SET (refresh_interval = 1234);
+
+connection after_alter_crash
+query
+SELECT reloptions[1] AS refresh FROM pg_class WHERE relname = 'lxs';
+----
+refresh
+refresh_interval=1234
+
+# ----------------------------------------------------------------------
+# 4. A replace whose commit fails.
+# ----------------------------------------------------------------------
+
+connection after_alter_crash
+statement ok
+SET sdb_faults = 'catalog_append_fails';
+
+connection after_alter_crash
+statement error
+CREATE OR REPLACE INDEX lxs_x ON lxs USING inverted (body);
+----
+db error: ERROR: Failed to commit: catalog log: could not append the transaction
+
+
+connection after_alter_crash
+statement ok
+SET sdb_faults = '-catalog_append_fails';
+
+connection after_alter_crash
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'lxs_x';
+----
+def
+CREATE INDEX lxs_x ON public.lxs USING inverted (body, id)
+
+connection after_alter_crash
+statement ok
+VACUUM (REFRESH_TABLE) lxs;
+
+connection after_alter_crash
+query
+SELECT lx_stale_segments('lxs') AS stale, lx_orphans() AS orphans;
+----
+stale	orphans
+0	0
+
+# A rolled-back replace that rebuilt the segments one by one leaves no file of
+# its own either.
+connection after_alter_crash
+statement ok
+SET search_backfill_group_bytes = 1;
+
+connection after_alter_crash
+statement ok
+BEGIN;
+
+connection after_alter_crash
+statement ok
+CREATE OR REPLACE INDEX lxs_x ON lxs USING inverted (body);
+
+connection after_alter_crash
+statement ok
+ROLLBACK;
+
+connection after_alter_crash
+statement ok
+RESET search_backfill_group_bytes;
+
+connection after_alter_crash
+statement ok
+VACUUM (REFRESH_TABLE) lxs;
+
+connection after_alter_crash
+query
+SELECT lx_stale_segments('lxs') AS stale, lx_orphans() AS orphans;
+----
+stale	orphans
+0	0
+
+connection after_alter_crash
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'lxs_x';
+----
+def
+CREATE INDEX lxs_x ON public.lxs USING inverted (body, id)
+
+connection after_alter_crash
+statement ok
+CREATE INDEX lxs_y ON lxs USING inverted (id);
+
+connection after_alter_crash
+query
+SELECT (SELECT count(*) FROM lxs_x WHERE body = 'fox 42' AND id = 42) AS x, (SELECT count(*) FROM lxs_y WHERE id = 42) AS y;
+----
+x	y
+1	1
+
+# ----------------------------------------------------------------------
+# 5. A crash before a replace on a regular table commits.
+# ----------------------------------------------------------------------
+
+connection after_alter_crash
+statement ok
+CREATE TABLE lxr (id INT PRIMARY KEY, body TEXT);
+
+connection after_alter_crash
+statement ok
+INSERT INTO lxr SELECT i, 'fox ' || i FROM generate_series(1, 1000) s(i);
+
+connection after_alter_crash
+statement ok
+CREATE INDEX lxr_x ON lxr USING inverted (body);
+
+connection after_alter_crash
+statement ok
+SET sdb_faults = 'pause_create_index_before_commit';
+
+connection regular_replacer
+statement async error connection closed
+CREATE OR REPLACE INDEX lxr_x ON lxr USING inverted (body, id);
+
+connection after_alter_crash
+query ok retry 40 backoff 250ms
+SELECT phase FROM pg_stat_progress_create_index WHERE relid = 'lxr'::regclass;
+----
+phase
+finalizing
+
+connection after_alter_crash
+query
+SELECT lx_orphans() AS orphans;
+----
+orphans
+1
+
+connection after_alter_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_alter_crash
+statement error connection closed
+SELECT 1;
+
+wait
+
+connection after_regular_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT regexp_extract(regexp_replace(sql, ' WITH \(.*', ''), 'USING inverted \((.*)\)$', 1) AS keys
+FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'lxr_x';
+----
+keys
+body
+
+connection after_regular_crash
+query
+SELECT count(*) AS hit FROM lxr_x WHERE body = 'fox 7';
+----
+hit
+1
+
+connection after_regular_crash
+query
+SELECT lx_stale_segments('lxs') AS stale, lx_orphans() AS orphans;
+----
+stale	orphans
+0	0

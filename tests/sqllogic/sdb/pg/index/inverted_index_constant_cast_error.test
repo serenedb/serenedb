@@ -1,0 +1,110 @@
+statement ok
+CREATE TABLE iccx (id INT PRIMARY KEY, d DATE, ts TIMESTAMP, b BOOLEAN)
+
+
+statement ok
+CREATE INDEX iccx_idx ON iccx USING inverted (id, d, ts, b)
+
+
+statement ok
+INSERT INTO iccx VALUES (1, '2024-01-02', '2024-01-02 10:00:00', true), (2, '2024-01-03', '2024-01-03 10:00:00', false)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iccx
+
+
+statement error
+SELECT id FROM iccx WHERE d = '19724'::date
+----
+db error: ERROR: invalid date field format: "19724", expected format is (YYYY-MM-DD)
+
+
+statement error
+SELECT id FROM iccx_idx WHERE d = '19724'::date
+----
+db error: ERROR: invalid date field format: "19724", expected format is (YYYY-MM-DD)
+
+
+statement error
+SELECT id FROM iccx_idx WHERE d = 'garbage'::date
+----
+db error: ERROR: invalid date field format: "garbage", expected format is (YYYY-MM-DD)
+
+
+statement error
+SELECT id FROM iccx_idx WHERE d > '19724'::date
+----
+db error: ERROR: invalid date field format: "19724", expected format is (YYYY-MM-DD)
+
+
+statement error
+SELECT id FROM iccx_idx WHERE d BETWEEN '19724'::date AND '2024-01-05'::date
+----
+db error: ERROR: invalid date field format: "19724", expected format is (YYYY-MM-DD)
+
+
+statement error
+SELECT id FROM iccx_idx WHERE d IN ('19724'::date, '2024-01-03'::date)
+----
+db error: ERROR: invalid date field format: "19724", expected format is (YYYY-MM-DD)
+
+
+statement error
+SELECT id FROM iccx WHERE ts = '1704189600000000'::timestamp
+----
+db error: ERROR: timestamp field value out of range: "1704189600000000"
+
+
+statement error
+SELECT id FROM iccx_idx WHERE ts = '1704189600000000'::timestamp
+----
+db error: ERROR: timestamp field value out of range: "1704189600000000"
+
+
+statement error
+SELECT id FROM iccx WHERE b = 'maybe'::boolean
+----
+db error: ERROR: Could not convert string 'maybe' to BOOL
+
+
+statement error
+SELECT id FROM iccx_idx WHERE b = 'maybe'::boolean
+----
+db error: ERROR: Could not convert string 'maybe' to BOOL
+
+
+statement error
+SELECT id FROM iccx_idx WHERE b > 'maybe'::boolean
+----
+db error: ERROR: Could not convert string 'maybe' to BOOL
+
+
+statement error
+SELECT id FROM iccx_idx WHERE b BETWEEN false AND 'maybe'::boolean
+----
+db error: ERROR: Could not convert string 'maybe' to BOOL
+
+
+statement error
+SELECT id FROM iccx_idx WHERE b IN ('maybe'::boolean, true)
+----
+db error: ERROR: Could not convert string 'maybe' to BOOL
+
+
+query
+SELECT id FROM iccx_idx WHERE d = '2024-01-02'::date AND ts < '2024-01-03'::timestamp
+----
+id
+1
+
+
+query
+SELECT id FROM iccx_idx WHERE b = 'yes'::boolean
+----
+id
+1
+
+
+statement ok
+DROP TABLE iccx

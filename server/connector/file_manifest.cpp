@@ -22,13 +22,13 @@
 
 #include <absl/algorithm/container.h>
 
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/serializer.hpp>
 
 #include "core/deletes/iceberg_deletion_vector.hpp"

@@ -60,7 +60,7 @@ DROP ROLE fo_owner;
 db error: ERROR: Cannot drop entry "fo_owner" because there are entries that depend on it.<slt:ignore>
 
 
-# Crash mid-connection; run_serened_loop.sh restarts on the same datadir.
+# Crash mid-connection; the runner restarts it on the same datadir.
 statement ok
 SET sdb_faults = 'crash_on_packet';
 

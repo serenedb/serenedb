@@ -173,7 +173,6 @@ add_executable(
     store/index_input_tests.cpp
     store/simulated_object_store_tests.cpp
     store/store_utils_tests.cpp
-    utils/async_utils_tests.cpp
     utils/bit_packing_tests.cpp
     utils/bit_utils_tests.cpp
     utils/bitset_tests.cpp
@@ -182,6 +181,7 @@ add_executable(
     utils/file_utils_tests.cpp
     utils/fst_builder_test.cpp
     utils/fst_string_weight_test.cpp
+    utils/huge_page_allocator_test.cpp
     utils/json_leaf_test.cpp
     utils/levenshtein_utils_test.cpp
     utils/lower_bound_test.cpp
@@ -201,7 +201,6 @@ add_executable(
     utils/simd_utils_test.cpp
     utils/std_test.cpp
     utils/string_tests.cpp
-    utils/thread_pool_test.cpp
     utils/utf8_utils_test.cpp
     utils/wildcard_utils_test.cpp
     utils/wkb_parser_test.cpp

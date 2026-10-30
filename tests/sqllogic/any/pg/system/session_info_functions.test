@@ -1,0 +1,40 @@
+# SYSTEM_USER and system_user(): the authentication method and the identity
+# the connection authenticated with, NULL when no password was checked. The
+# default connection is trusted on a loopback address and authenticates with
+# a password from another host, as in CI.
+
+query
+SELECT system_user IS NULL OR system_user LIKE ('%:' || session_user) AS keyword,
+       SYSTEM_USER IS NOT DISTINCT FROM system_user AS uppercase_keyword,
+       pg_catalog.system_user() IS NOT DISTINCT FROM system_user AS function,
+       pg_typeof(system_user) AS type;
+----
+keyword	uppercase_keyword	function	type
+t	t	t	text
+
+
+statement ok
+DROP ROLE IF EXISTS session_info_functions_role;
+
+
+statement ok
+CREATE ROLE session_info_functions_role;
+
+
+statement ok
+SET SESSION AUTHORIZATION session_info_functions_role;
+
+
+query
+SELECT session_user, current_user, system_user IS NULL OR system_user NOT LIKE ('%:' || session_user) AS system_user_kept;
+----
+session_user	current_user	system_user_kept
+session_info_functions_role	session_info_functions_role	t
+
+
+statement ok
+RESET SESSION AUTHORIZATION;
+
+
+statement ok
+DROP ROLE session_info_functions_role;

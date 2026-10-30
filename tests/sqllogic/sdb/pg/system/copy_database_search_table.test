@@ -1,0 +1,86 @@
+control substitution on
+
+statement ok
+DROP DATABASE IF EXISTS cdst_src_${__DATABASE__};
+
+statement ok
+DROP DATABASE IF EXISTS cdst_dst_${__DATABASE__};
+
+statement ok
+CREATE DATABASE cdst_src_${__DATABASE__};
+
+statement ok
+CREATE DATABASE cdst_dst_${__DATABASE__};
+
+statement ok
+CREATE TABLE cdst_src_${__DATABASE__}.public.cdst (id INT, body TEXT) WITH (storage = 'search');
+
+statement ok
+COPY FROM DATABASE cdst_src_${__DATABASE__} TO cdst_dst_${__DATABASE__} (SCHEMA);
+
+query
+SELECT table_name FROM duckdb_tables() WHERE database_name = 'cdst_dst_${__DATABASE__}' AND schema_name = 'public' ORDER BY 1;
+----
+table_name
+cdst
+
+statement ok
+INSERT INTO cdst_dst_${__DATABASE__}.public.cdst VALUES (1, 'pudge goes mid');
+
+statement ok
+VACUUM (REFRESH_TABLE) cdst_dst_${__DATABASE__}.public.cdst;
+
+query
+SELECT id, body FROM cdst_dst_${__DATABASE__}.public.cdst;
+----
+id	body
+1	pudge goes mid
+
+statement ok
+DROP DATABASE cdst_src_${__DATABASE__};
+
+statement ok
+DROP DATABASE cdst_dst_${__DATABASE__};
+
+statement ok
+DROP DATABASE IF EXISTS cdst_seq_src_${__DATABASE__};
+
+statement ok
+DROP DATABASE IF EXISTS cdst_seq_dst_${__DATABASE__};
+
+statement ok
+CREATE DATABASE cdst_seq_src_${__DATABASE__};
+
+statement ok
+CREATE DATABASE cdst_seq_dst_${__DATABASE__};
+
+statement ok
+CREATE TABLE cdst_seq_src_${__DATABASE__}.public.cdst_serial (id SERIAL, v INT);
+
+statement ok
+CREATE TABLE cdst_seq_src_${__DATABASE__}.public.cdst_numbered (id INT, body TEXT) WITH (storage = 'search');
+
+statement ok
+COPY FROM DATABASE cdst_seq_src_${__DATABASE__} TO cdst_seq_dst_${__DATABASE__} (SCHEMA);
+
+query
+SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'cdst_seq_dst_${__DATABASE__}' ORDER BY 1;
+----
+sequence_name
+cdst_numbered_pk_seq
+cdst_serial_id_seq
+
+statement ok
+INSERT INTO cdst_seq_dst_${__DATABASE__}.public.cdst_serial (v) VALUES (5);
+
+query
+SELECT id, v FROM cdst_seq_dst_${__DATABASE__}.public.cdst_serial;
+----
+id	v
+1	5
+
+statement ok
+DROP DATABASE cdst_seq_src_${__DATABASE__};
+
+statement ok
+DROP DATABASE cdst_seq_dst_${__DATABASE__};

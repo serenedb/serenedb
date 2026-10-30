@@ -86,9 +86,12 @@ class ColFilterVerify : public irs::detail::TableFilter {
     return _chain.AdmitRow(doc - irs::doc_limits::min());
   }
 
+  double Share() const final;
+
  private:
   std::unique_ptr<irs::ReadContext> _ctx;
   irs::ColFilterChain _chain;
+  std::span<const irs::ColFilterSpec> _active;
   const duckdb::TableFilter* _score_filter = nullptr;
   duckdb::TableFilterState* _score_state = nullptr;
 };

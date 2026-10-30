@@ -29,11 +29,11 @@
 #include <cerrno>
 #include <cstring>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/numeric_utils.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/virtual_file_system.hpp>
 #include <duckdb/main/database.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <thread>
 #include <vector>
 

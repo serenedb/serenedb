@@ -89,8 +89,8 @@ class InputFile {
   bool Hint(uint64_t offset, uint64_t size) const noexcept;
   void Prefetch(uint64_t offset, uint64_t size) const noexcept;
   void PrefetchExtents(std::span<ByteExtent> extents) const noexcept;
+  void Evict(uint64_t offset, uint64_t size) const noexcept;
   bool Resident(uint64_t offset, uint64_t size) const noexcept;
-  void Advise(duckdb::MappedFileAccess access) const noexcept;
 
  private:
   struct MappedSpan {
@@ -434,6 +434,8 @@ using BytesViewInput = BasicInput<true>;
 using IndexInput = BasicInput<false>;
 
 static_assert(sizeof(BytesViewInput) == 4 * sizeof(void*));
+
+void ReadOnce(IndexInput& in, byte_type* b, uint64_t count);
 
 template<typename F>
 auto ResolveInput(const InputFile& file, F&& f) {

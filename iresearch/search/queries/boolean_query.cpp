@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <iterator>
 #include <utility>
 
@@ -128,6 +129,52 @@ void Append(To& to, From& from) {
   to.insert(to.end(), std::make_move_iterator(from.begin()),
             std::make_move_iterator(from.end()));
   from.clear();
+}
+
+struct Expected {
+  uint64_t min;
+  double share;
+};
+
+double ShareOf(uint64_t count, uint32_t docs) noexcept {
+  return docs == 0 ? 0.0
+                   : std::min(1.0, static_cast<double>(count) /
+                                     static_cast<double>(docs));
+}
+
+template<typename Fn>
+void ForEachMatching(const BooleanQuery::PreparedBucket& bucket, Fn&& fn) {
+  for (const auto& clause : bucket.postings) {
+    fn(uint64_t{clause.state.cookie.docs_count},
+       uint64_t{clause.state.cookie.docs_count});
+  }
+  for (const auto& child : bucket.filters) {
+    fn(uint64_t{child->EstimateMin()}, uint64_t{child->EstimateMatches()});
+  }
+}
+
+Expected AllOf(const BooleanQuery::PreparedBucket& bucket, uint32_t docs) {
+  uint64_t sum = 0;
+  uint64_t slack = 0;
+  double share = 1.0;
+  bool first = true;
+  ForEachMatching(bucket, [&](uint64_t min, uint64_t matches) {
+    sum += min;
+    slack += first ? 0 : docs;
+    first = false;
+    share *= ShareOf(matches, docs);
+  });
+  return {.min = sum > slack ? sum - slack : 0, .share = share};
+}
+
+Expected AnyOf(const BooleanQuery::PreparedBucket& bucket, uint32_t docs) {
+  uint64_t least = 0;
+  double miss = 1.0;
+  ForEachMatching(bucket, [&](uint64_t min, uint64_t matches) {
+    least = std::max(least, min);
+    miss *= 1.0 - ShareOf(matches, docs);
+  });
+  return {.min = least, .share = 1.0 - miss};
 }
 
 }  // namespace
@@ -455,23 +502,47 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
     return ClampEstimate(SumEstimate(should) / matching_msm, _segment);
   };
 
+  const auto some_of = [&](uint32_t most) -> Expected {
+    return matching_msm == 1 ? AnyOf(should, docs)
+                             : Expected{.min = 0, .share = ShareOf(most, docs)};
+  };
+
   uint32_t estimate = docs;
+  Expected expected{.min = docs, .share = 1.0};
   if (matching_must != 0) {
     estimate = MinEstimate(must, docs);
+    expected = AllOf(must, docs);
     if (matching_msm != 0) {
-      estimate = std::min(estimate, threshold_estimate());
+      const auto threshold = threshold_estimate();
+      estimate = std::min(estimate, threshold);
+      const auto some = some_of(threshold);
+      expected.min =
+        expected.min + some.min > docs ? expected.min + some.min - docs : 0;
+      expected.share *= some.share;
     }
   } else if (matching_msm != 0) {
     estimate = threshold_estimate();
+    expected = some_of(estimate);
   } else if (!must_not.empty()) {
     if (must.all_docs.empty() && should.all_docs.empty()) {
       return QueryBuilder::Empty();
     }
     estimate = docs - std::min(docs, MaxEstimate(must_not));
   }
+  if (!must_not.empty()) {
+    const auto excluded = SumEstimate(must_not);
+    expected.min = expected.min > excluded ? expected.min - excluded : 0;
+    expected.share *= 1.0 - AnyOf(must_not, docs).share;
+  }
+  const auto least =
+    static_cast<uint32_t>(std::min<uint64_t>(expected.min, estimate));
+  const auto matches =
+    std::clamp(static_cast<uint32_t>(
+                 std::llround(expected.share * static_cast<double>(docs))),
+               least, estimate);
   auto query = memory::make_tracked<BooleanQuery>(
-    _memory, _segment, std::move(_clauses), msm, matching_msm, _boost, estimate,
-    _merge_type);
+    _memory, _segment, std::move(_clauses), msm, matching_msm, _boost, least,
+    matches, estimate, _merge_type);
   query->SetStats(_collector != nullptr ? _collector->Record()
                                         : detail::StatsRecord{});
   return query;

@@ -30,7 +30,7 @@ import oracle
 import quarantine as quarantine_mod
 import quiesce
 import snapshot as snapshot_mod
-from iceberg_rest import IcebergRestFixture
+from services import IcebergRestFixture
 from serened import Serened
 from procutil import raise_open_files, reap_orphans
 from watchdog import ALIVE, WEDGED, Watchdog
@@ -71,11 +71,7 @@ def preflight(dsn):
         with c.cursor() as cur:
             cur.execute("SELECT version()")
             info["server_version"] = cur.fetchone()[0][:120]
-            try:
-                cur.execute("RESET sdb_faults")
-                info["fault_injection"] = True
-            except Exception:
-                info["fault_injection"] = False
+            info["fault_injection"] = os.environ.get("SDB_FAULT_INJECTION", "1") != "0"
             try:
                 cur.execute("SELECT count(*) FROM sdb_catalog_sets()")
                 info["catalog_sets_rows"] = cur.fetchone()[0]

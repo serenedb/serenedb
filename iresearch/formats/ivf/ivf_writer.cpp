@@ -387,9 +387,7 @@ yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   if (built.empty) {
     co_return {};
   }
-  _result = Result{.postings_id = _info.postings_id,
-                   .qw = std::move(qw),
-                   .data = std::move(built)};
+  _result = Result{.qw = std::move(qw), .data = std::move(built)};
   _built = true;
   co_return {};
 }
@@ -403,11 +401,13 @@ void IvfWriter::Flush() {
   const uint64_t stats_offset = out.Position();
   _result.qw->Serialize(out);
   const uint64_t stats_byte_size = out.Position() - stats_offset;
-  _idx->AddIvf(_info.centroids_id,
-               IvfCentroidMeta{.tree_offset = tree_span.offset,
-                               .tree_byte_size = tree_span.byte_size,
-                               .stats_offset = stats_offset,
-                               .stats_byte_size = stats_byte_size});
+  _idx->AddIvf(_info.index_id, IvfCentroidMeta{
+                                 .tree_offset = tree_span.offset,
+                                 .tree_byte_size = tree_span.byte_size,
+                                 .stats_offset = stats_offset,
+                                 .stats_byte_size = stats_byte_size,
+                                 .root_byte_size = tree_span.root_byte_size,
+                               });
 }
 
 const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
@@ -417,10 +417,10 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
   }
   if (!_reader) {
     _reader = std::make_unique<IvfTermReader>(
-      _result.postings_id, _result.data.cluster_docs,
-      _result.data.cluster_offsets, _result.qw.get(),
-      col_reader.Column(_result.postings_id), &ctx, _result.data.d,
-      &_result.data.cluster_centroids, _info.metric == VectorMetric::Cosine);
+      _info.index_id, _result.data.cluster_docs, _result.data.cluster_offsets,
+      _result.qw.get(), col_reader.Column(_info.column_id), &ctx,
+      _result.data.d, &_result.data.cluster_centroids,
+      _info.metric == VectorMetric::Cosine);
   }
   return _reader.get();
 }

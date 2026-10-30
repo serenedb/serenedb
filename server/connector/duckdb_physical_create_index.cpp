@@ -32,6 +32,7 @@
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/execution/execution_context.hpp>
@@ -60,7 +61,6 @@
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
@@ -75,14 +75,14 @@
 #include "connector/index_expression.hpp"
 #include "connector/inverted_index_bind.h"
 #include "connector/inverted_store_index.h"
-#include "connector/pg_logical_types.h"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_backfill.h"
 #include "connector/view_fast_path.h"
+#include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
-#include "pg/sql_utils.h"
+#include "pg/types/logical.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "server/utils/primary_key.h"
@@ -104,8 +104,6 @@ enum class PkShape : uint8_t {
 struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   duckdb::idx_t database_id;
   duckdb::idx_t index_id;
-  std::string schema_name;
-  std::string table_name;
   std::string index_name;
 
   duckdb::idx_t table_id;
@@ -178,8 +176,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
   state->database_id = _database_id;
-  state->schema_name = _schema_entry.name.GetIdentifierName();
-  state->table_name = _relation.name.GetIdentifierName();
   state->index_name = _info->GetIndexName().GetIdentifierName();
 
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
@@ -243,16 +239,21 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     pk_type.id() == duckdb::LogicalTypeId::STRUCT && pk_type != pg::CTID()
       ? PkShape::Struct
       : PkShape::Single;
+  if (_relation.type == duckdb::CatalogType::TABLE_ENTRY &&
+      _relation.Cast<duckdb::TableCatalogEntry>().GetLogStorage() &&
+      !IndexNameTaken(context, *_info, _relation)) {
+    auto& search_table = _relation.Cast<catalog::SearchTableEntry>();
+    search_table.Storage()->ClaimLayout(context,
+                                        search_table.name.GetIdentifierName());
+  }
   if (IsReindexPass()) {
     // The pass carries the index's name, resolved in the schema the statement
     // is qualified with -- the same pair every other lookup in this operator
     // uses.
-    created = duckdb::Catalog::GetEntry<duckdb::DuckIndexEntry>(
-                context,
-                duckdb::QualifiedName{_relation.ParentCatalog().GetName(),
-                                      _schema_entry.name, extras->source_index},
-                duckdb::OnEntryNotFound::RETURN_NULL)
-                .get();
+    const auto source = _schema_entry.GetEntry(
+      _schema_entry.GetCatalogTransaction(context),
+      duckdb::CatalogType::INDEX_ENTRY, extras->source_index);
+    created = source ? &source->Cast<duckdb::IndexCatalogEntry>() : nullptr;
     if (!created) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("REINDEX: source index \"",
@@ -275,12 +276,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       if (const auto& store = index_entry.SearchStore()) {
         state->build_claim =
           store->BeginIndexBuild(index_entry.oid, index_entry.Config());
-        if (!state->build_claim.Claimed()) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
-                          ERR_MSG("an index build is already running on "
-                                  "search table ",
-                                  _relation.oid));
-        }
         SearchBackfillTarget backfill;
         backfill.shard = store;
         backfill.catalog = &_relation.ParentCatalog();

@@ -12,8 +12,14 @@ statement error
 ATTACH ':memory:' AS amsr_mem (TYPE serenedb);
 
 
+statement error
+ATTACH '' AS amsr_nowal (TYPE serenedb, recovery_mode 'NO_WAL_WRITES');
+----
+db error: ERROR: recovery_mode is not supported for a SereneDB database
+
+
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'amsr_mem';
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name IN ('amsr_mem', 'amsr_nowal');
 ----
 n
 0

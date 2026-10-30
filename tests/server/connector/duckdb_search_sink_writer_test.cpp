@@ -38,6 +38,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
+#include "../engine_context.h"
 #include "connector/column_id.h"
 #include "connector/common.h"
 #include "connector/search_remove_filter.hpp"
@@ -117,13 +118,6 @@ duckdb::DatabaseInstance& TestDb() {
   return ::irs::DuckDBEngine::Instance().instance();
 }
 
-// Leaked on purpose: tests_main shuts the engine down before main returns,
-// so a static Connection destructor would outlive it.
-duckdb::ClientContext& TestContext() {
-  static auto* conn = new duckdb::Connection{TestDb()};
-  return *conn->context;
-}
-
 // Builds a flat-storage Vector of typed `T` from a list of values; all rows
 // are valid (no nulls).
 template<typename T>
@@ -199,7 +193,7 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
     static auto gKeywordTokenizer = std::make_shared<catalog::Tokenizer>(
       search::Features{}, irs::analysis::TokenizerConfig{
                             .config = irs::KeywordTokenizer::Options{}});
-    auto tokenizer = gKeywordTokenizer->Acquire(TestContext());
+    auto tokenizer = gKeywordTokenizer->Acquire(sdb::test::EngineContext());
     return {.analyzer = std::move(tokenizer),
             .features = irs::IndexFeatures::None};
   }
@@ -267,7 +261,7 @@ TEST(TokenizerPoolTest, ReturnedGeoLeaseIsUnbound) {
     return ok && consumer.count > 0;
   };
 
-  auto lease = dict->Acquire(TestContext());
+  auto lease = dict->Acquire(sdb::test::EngineContext());
   auto* instance = lease.get();
   ASSERT_TRUE(fill(*lease));
 
@@ -275,7 +269,7 @@ TEST(TokenizerPoolTest, ReturnedGeoLeaseIsUnbound) {
   ASSERT_FALSE(fill(*lease));
   lease.reset();
 
-  auto release = dict->Acquire(TestContext());
+  auto release = dict->Acquire(sdb::test::EngineContext());
   ASSERT_EQ(instance, release.get());
   ASSERT_TRUE(fill(*release));
 }

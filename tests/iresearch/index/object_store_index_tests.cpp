@@ -37,7 +37,6 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/queries/posting_heads.hpp>
 #include <iresearch/store/directory.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <string>
 #include <string_view>

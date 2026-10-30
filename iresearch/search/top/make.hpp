@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <duckdb/common/fault_points.hpp>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -41,7 +42,6 @@
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/search/top/walk.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 

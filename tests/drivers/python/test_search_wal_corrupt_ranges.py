@@ -17,10 +17,13 @@ SERENED_BIN = os.environ.get(
 
 FAULT = "search_delete_wal_empty_range"
 
-pytestmark = pytest.mark.skipif(
-    not (Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)),
-    reason=f"serened binary not found or not executable: {SERENED_BIN}",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not (Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)),
+        reason=f"serened binary not found or not executable: {SERENED_BIN}",
+    ),
+    pytest.mark.faults,
+]
 
 
 def test_empty_row_range_refuses_replay(tmp_path: Path) -> None:
@@ -29,11 +32,6 @@ def test_empty_row_range_refuses_replay(tmp_path: Path) -> None:
     try:
         server.start()
         with psycopg.connect(server.dsn(), autocommit=True) as conn:
-            try:
-                conn.execute(f"SET sdb_faults = '{FAULT}'")
-                conn.execute(f"SET sdb_faults = '-{FAULT}'")
-            except psycopg.Error:
-                pytest.skip("serened is built without fault injection")
             conn.execute("CREATE TABLE ranges (id BIGINT) WITH (storage = 'search')")
             conn.execute("INSERT INTO ranges SELECT i FROM range(0, 1000) r(i)")
             conn.execute("VACUUM (REFRESH_TABLE) ranges")

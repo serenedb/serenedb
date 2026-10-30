@@ -31,15 +31,16 @@
 #include <cstring>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_data.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/statement/multi_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
@@ -482,10 +483,11 @@ bool PgWireSession<Kind>::SetupConnection() {
   _conn->context->SetSchedulerAccount(this->_task->Account());
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = std::make_shared<ConnectionContext>(
-    *_conn->context, user, role, DatabaseName(), database_id, &this->_send,
-    static_cast<int32_t>(_cancel_key >> 32), _cancel);
-  _client_state =
-    &connector::SereneDBClientState::Register(*_conn->context, _connection_ctx);
+    *_conn->context, user, _system_user, role, DatabaseName(), database_id,
+    &this->_send, static_cast<int32_t>(_cancel_key >> 32), _cancel);
+  _client_state = &connector::SereneDBClientState::Register(
+    *_conn->context, _connection_ctx, true);
+  _progress = sdb::pg::ProgressRegistration{_client_state->progress_source};
   _client_state->protocol_state = &_proto;
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
   client_config.get_result_collector = MakeWireCollector;
@@ -529,37 +531,42 @@ bool PgWireSession<Kind>::SetupConnection() {
                               false);
   _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
 
-  for (const auto& [name, value] : _params) {
-    // user/database are consumed by the connection identity; replication and
-    // options are special startup parameters in PG (not GUCs) -- replication is
-    // already handled (replication-mode connections are refused), and routing
-    // either through the GUC layer wrongly rejects the whole connection.
-    if (name == "user" || name == "database" || name == "replication" ||
-        name == "options") {
-      continue;
-    }
+  const auto apply = [&](const std::string& name, const std::string& value) {
     try {
       _connection_ctx->SetSettingChecked(name, value, false);
     } catch (const duckdb::InternalException&) {
       _connection_ctx->SetSetting(name, value, false);
     } catch (const std::exception& exception) {
-      // A valid-but-non-UTF8 client_encoding (LATIN1, WIN1252, ...) is a normal
-      // startup GUC every PG client may send; serenedb is UTF8-only and cannot
-      // transcode, but refusing the whole connection over it is worse than PG,
-      // which accepts it. Keep the session on UTF8 (already reported in the
-      // startup burst) and warn the request was ignored.
       if (name == "client_encoding") {
         _connection_ctx->AddNotice(
           SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING),
                          ERR_MSG("client_encoding \"", value,
                                  "\" is not supported; using \"UTF8\"")));
-        continue;
+        return true;
       }
-      // Prologue boundary: no command loop yet, so convert here and close.
-      // Same ToSqlError funnel as the command loop -- keeps the real sqlstate /
-      // detail / hint instead of forcing 22023 + raw what(). A startup GUC
-      // failure aborts the connection, so PG reports it as FATAL, not ERROR.
       WriteFatalResponse(this->_send, ToSqlError(exception));
+      return false;
+    }
+    return true;
+  };
+  if (const auto options = _params.find("options"); options != _params.end()) {
+    std::vector<StartupSetting> settings;
+    if (auto error = ParseStartupOptions(options->second, settings)) {
+      WriteFatalResponse(this->_send, *error);
+      return false;
+    }
+    for (const auto& [name, value] : settings) {
+      if (!apply(name, value)) {
+        return false;
+      }
+    }
+  }
+  for (const auto& [name, value] : _params) {
+    if (name == "user" || name == "database" || name == "replication" ||
+        name == "options") {
+      continue;
+    }
+    if (!apply(name, value)) {
       return false;
     }
   }
@@ -886,7 +893,8 @@ void PgWireSession<Kind>::CommitAndReportReady() {
   // overlay, so reporting afterwards tells the client the value it actually
   // keeps (and a set-then-reverted SET LOCAL nets to no message).
   ReportChangedParameters();
-  WriteReadyForQuery(this->_send, _txn_state->StatusByte());
+  const auto status = _txn_state->StatusByte();
+  WriteReadyForQuery(this->_send, status);
   this->KickSend();
 }
 
@@ -913,22 +921,10 @@ void PgWireSession<Kind>::WriteCommandTag(
 // is_loopback() sees the v4.
 template<SocketKind Kind>
 void PgWireSession<Kind>::CapturePeerAddress() {
-  if constexpr (Kind == SocketKind::Unix || Kind == SocketKind::Client) {
-    return;  // no IP; the gate treats a unix peer as local via is_local
-  } else {
-    asio_ns::error_code ec;
-    const auto endpoint = this->_socket.Lowest().remote_endpoint(ec);
-    if (ec) {
-      return;  // no usable peer: stays unspecified -> gate fails closed
+  if constexpr (Kind != SocketKind::Unix && Kind != SocketKind::Client) {
+    if (const auto address = this->ClientAddress()) {
+      _peer_addr = *address;
     }
-    const auto address = endpoint.address();
-    if (address.is_v6()) {
-      if (const auto v6 = address.to_v6(); v6.is_v4_mapped()) {
-        _peer_addr = asio_ns::ip::make_address_v4(asio_ns::ip::v4_mapped, v6);
-        return;
-      }
-    }
-    _peer_addr = address;
   }
 }
 
@@ -1096,6 +1092,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
                              UserName(), "\"")));
     co_return false;
   }
+  _system_user = absl::StrCat(hba::MethodName(hba_method), ":", UserName());
   co_return true;
 }
 
@@ -1526,8 +1523,8 @@ yaclib::Task<duckdb::QueryResultState> PgWireSession<Kind>::DriveQuery(
     }
   };
   for (;;) {
-    if (wire) {
-      DrainWire(*wire);
+    if (wire && !DrainWire(*wire)) {
+      _conn->context->Interrupt();
     }
     const auto status =
       pending.ExecuteTask([this] { this->_task->RequestRun(); });
@@ -1870,6 +1867,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
         co_return {};
       }
       co_await publish();
+      batches.Flush();
       co_await WaitCopyInput();
     }
     std::array<uint8_t, kHeader> head;
@@ -1901,6 +1899,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
             co_return {};
           }
           co_await publish();
+          batches.Flush();
           co_await WaitCopyInput();
         }
         const std::string_view chunk = this->_recv.Front();
@@ -2025,7 +2024,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     const uint64_t oid = absl::big_endian::Load32(payload.data());
     payload.remove_prefix(sizeof(uint32_t));
     param_oids.push_back(oid);
-    if (oid != 0 && !IsNumericOid(oid)) {
+    if (oid != 0 && oid != sdb::pg::kUnknown && !IsNumericOid(oid)) {
       type_hints.emplace(
         absl::StrCat(i + 1),
         sdb::pg::Oid2Type(oid, _connection_ctx->GetClientContext()));
@@ -3057,10 +3056,11 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   };
   try {
     if (SetupConnection()) {
+      _cancel_token->role.store(_connection_ctx->GetLoginRoleId(),
+                                std::memory_order_relaxed);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
-        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
       SendStartupBurst();
       this->KickSend();

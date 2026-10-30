@@ -38,8 +38,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/optimizer/matcher/expression_matcher.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_lambda_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
@@ -61,9 +61,9 @@
 #include "connector/column_id.h"
 #include "connector/geo_validate.h"
 #include "connector/index_expression.hpp"
-#include "connector/pg_logical_types.h"
 #include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
+#include "pg/types/logical.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 
@@ -1038,12 +1038,14 @@ void ValidateInvertedIndexKey(std::string_view label,
   ValidateTermDictKey(label, type, opclass.name);
 }
 
+}  // namespace
+
 // An opclass names a dictionary of the index's own schema first -- the index
 // and its dictionary are created together and that schema need not be on the
 // reader's search path -- and otherwise resolves like any other name. A
 // temporary schema holds no dictionaries: its indexes use the session
 // database's.
-duckdb::optional_ptr<const TokenizerCatalogEntry> ResolveOpclassTokenizer(
+duckdb::optional_ptr<TokenizerCatalogEntry> ResolveOpclassTokenizer(
   duckdb::ClientContext& context, duckdb::SchemaCatalogEntry& schema,
   std::string_view name) {
   duckdb::CatalogEntryRetriever retriever{context};
@@ -1059,6 +1061,8 @@ duckdb::optional_ptr<const TokenizerCatalogEntry> ResolveOpclassTokenizer(
   }
   return &dict->Cast<TokenizerCatalogEntry>();
 }
+
+namespace {
 
 // Folds one key's opclass into the field's config, drawing whatever sub-field
 // ids that opclass turns out to need from `next_id`. Merges: a column
@@ -1181,6 +1185,10 @@ bool ContainsRegLike(const duckdb::Expression& expr) {
   if (duckdb::TypeVisitor::Contains(expr.GetReturnType(), pg::IsRegLike)) {
     return true;
   }
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_LAMBDA) {
+    return ContainsRegLike(
+      *expr.Cast<duckdb::BoundLambdaExpression>().LambdaExpr());
+  }
   bool found = false;
   duckdb::ExpressionIterator::EnumerateChildren(
     expr, [&](const duckdb::Expression& child) {
@@ -1189,18 +1197,23 @@ bool ContainsRegLike(const duckdb::Expression& expr) {
   return found;
 }
 
-void ValidateConstantParts(duckdb::Expression& expr,
+void ValidateConstantParts(const duckdb::Expression& expr,
                            duckdb::ClientContext& context) {
-  duckdb::vector<duckdb::reference<duckdb::Expression>> bindings;
-  if (duckdb::FoldableConstantMatcher{}.Match(expr, bindings)) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_LAMBDA) {
+    ValidateConstantParts(
+      *expr.Cast<duckdb::BoundLambdaExpression>().LambdaExpr(), context);
+    return;
+  }
+  if (expr.IsFoldable()) {
     if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
       duckdb::ExpressionExecutor::EvaluateScalar(context, expr);
     }
     return;
   }
   duckdb::ExpressionIterator::EnumerateChildren(
-    expr,
-    [&](duckdb::Expression& child) { ValidateConstantParts(child, context); });
+    expr, [&](const duckdb::Expression& child) {
+      ValidateConstantParts(child, context);
+    });
 }
 
 std::shared_ptr<InvertedIndexConfig> DeriveKeys(
@@ -1246,7 +1259,7 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
 
     if (bare_column) {
       record.field_id = record.column_id;
-      if (search_table && !opclass.IsAnn()) {
+      if (search_table) {
         auto [it, fresh] = term_fields.try_emplace(record.column_id, 0);
         if (fresh) {
           it->second = next_id();
@@ -1285,7 +1298,8 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
     duckdb::optional_ptr<const TokenizerCatalogEntry> dict;
     if (opclass.IsTokenizer()) {
       dict = ResolveOpclassTokenizer(context, entry.ParentSchema(context),
-                                     opclass.name);
+                                     opclass.name)
+               .get();
     }
 
     const auto [slot, fresh] = entries.try_emplace(record.field_id);
@@ -1315,9 +1329,9 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
     ApplyOpclassToEntry(context,
                         entry.ParentSchema(context).name.GetIdentifierName(),
                         label, value_type, opclass, dict, next_id, field);
-    if (auto& ivf = field.column_options.ann_info) {
-      ivf->centroids_id = record.field_id;
-      ivf->postings_id = record.field_id;
+    if (auto& ann = field.column_options.ann_info) {
+      ann->index_id = record.field_id;
+      ann->column_id = bare_column ? record.column_id : record.field_id;
     }
 
     keys.emplace_back(std::move(record));

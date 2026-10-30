@@ -117,3 +117,37 @@ SELECT count(*) AS nulls FROM bdst WHERE maybe IS NULL;
 ----
 nulls
 6666
+
+
+# --- a binary array with more dimensions than its column is bad input ---
+
+statement ok
+COPY (SELECT [[1, 2], [3, 4]]::INTEGER[][] AS a) TO '${__TEST_DIR__}/copy_binary_ndim.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE copy_binary_ndim (a INTEGER[]);
+
+
+statement error
+COPY copy_binary_ndim FROM '${__TEST_DIR__}/copy_binary_ndim.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+query
+SELECT count(*) AS n FROM copy_binary_ndim;
+----
+n
+0
+
+
+statement count 1
+COPY (SELECT ARRAY[ARRAY['a & b'::tsquery]] AS q) TO '${__TEST_DIR__}/copy_binary_tsquery.bin' (FORMAT binary);
+
+
+query
+SELECT hex(content) AS bytes FROM read_blob('${__TEST_DIR__}/copy_binary_tsquery.bin');
+----
+bytes
+5047434F50590AFF0D0A00000000000000000000010000002500000002000000000000001900000001000000010000000100000001000000056120262062FFFF

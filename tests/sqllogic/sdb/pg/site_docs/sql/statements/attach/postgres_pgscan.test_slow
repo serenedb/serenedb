@@ -1,7 +1,7 @@
 control substitution on
 
 # Doc examples for the PostgreSQL section of the ATTACH AND DETACH page.
-# The `_pgscan` filename suffix tells tests/sqllogic/run.sh to bring up a real
+# The `_pgscan` filename suffix tells scripts/ci/test.py to bring up a real
 # postgres backend reachable at ${PGHOST}:${PGPORT}; the postgres_scanner path
 # is exercised through the pg-wire layer. Display SQL (DOCS_TEST_RAW, the `#|`
 # lines) uses the friendly alias `pg`; the runnable body uses the substituted

@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -38,7 +39,6 @@
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
@@ -329,8 +329,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                             pg::ProgressMetrics* progress) {
   SDB_ASSERT(target.shard);
   auto& shard = *target.shard;
-  SDB_ASSERT(shard.BuildInFlight(),
-             "RunSearchTableBackfill requires a held BuildClaim");
+  SDB_ASSERT(shard.BuildInFlight());
   const auto cancelled = [&] { return context.IsInterrupted(); };
 
   // The statement pinned a reader of this shard at bind time and only drops it

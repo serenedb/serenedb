@@ -10,6 +10,8 @@ binary result format.
 
 from __future__ import annotations
 
+import json
+import select
 import socket
 import struct
 import time
@@ -204,6 +206,15 @@ def row_description(msgs):
     return None
 
 
+def await_copied(poller, table, count):
+    deadline = time.time() + 10
+    while first_field(poller.run(
+            "select count(*) from pg_stat_progress_copy "
+            f"where relid = '{table}'::regclass and tuples_processed = {count}")) != b"1":
+        assert time.time() < deadline, f"COPY into {table} never took {count} rows"
+        time.sleep(0.05)
+
+
 def first_field(msgs):
     """First column of the first DataRow as raw bytes (text format)."""
     r = rows(msgs)[0]
@@ -238,6 +249,21 @@ def conn():
     c = WireConn()
     yield c
     c.close()
+
+
+def test_query_of_a_vanished_client_ends(conn):
+    query = "SELECT i, repeat('x', 100) FROM range(3000000) t(i) ORDER BY i -- vanished"
+    victim = WireConn()
+    victim.send("Q", _cstr(query))
+    victim.sock.close()
+    probe = (
+        "SELECT count(*) FROM pg_stat_activity "
+        "WHERE query LIKE '%-- vanished' AND pid <> pg_backend_pid()"
+    )
+    deadline = time.monotonic() + 60
+    while first_field(conn.run_ok(probe)) != b"0":
+        assert time.monotonic() < deadline, "the query outlived its client"
+        time.sleep(0.2)
 
 
 def test_startup_rejects_missing_user():
@@ -322,6 +348,50 @@ def test_startup_non_utf8_client_encoding_accepted_with_warning():
     assert len(warns) == 1, notices(m)
     assert warns[0].get("S") == "WARNING" and warns[0].get("C") == "01000", warns
     assert "LATIN1" in warns[0]["M"] and "UTF8" in warns[0]["M"], warns
+
+
+def test_startup_options_apply_settings():
+    m = _startup_collect(
+        {
+            "options": r"-c statement_timeout=5000 --application-name=raw\ options"
+            r" -cIntervalStyle=iso_8601 -c DateStyle=SQL,\ DMY"
+        }
+    )
+    assert "Z" in types(m) and "E" not in types(m), errors(m)
+    status = dict(param_status(m))
+    assert status.get("application_name") == "raw options", status
+    assert status.get("IntervalStyle") == "iso_8601", status
+    assert status.get("DateStyle") == "SQL, DMY", status
+
+
+@pytest.mark.parametrize(
+    "options, message",
+    [
+        ("-x", "invalid command-line argument for server process: -x"),
+        (
+            "statement_timeout=1",
+            "invalid command-line argument for server process: statement_timeout=1",
+        ),
+        ("-c statement_timeout", "-c statement_timeout requires a value"),
+        ("--statement-timeout", "--statement-timeout requires a value"),
+        ("-c", "invalid command-line argument for server process: -c"),
+    ],
+)
+def test_startup_options_refuse_bad_switches(options, message):
+    m = _startup_collect({"options": options})
+    assert [(e.get("S"), e.get("C"), e.get("M")) for e in errors(m)] == [
+        ("FATAL", "42601", message)
+    ]
+
+
+def test_startup_options_bad_value_is_fatal():
+    m = _startup_collect({"options": "-c statement_timeout=nan"})
+    assert [(e.get("S"), e.get("C")) for e in errors(m)] == [("FATAL", "22023")]
+
+
+def test_startup_parameter_bad_value_is_fatal():
+    m = _startup_collect({"statement_timeout": "nan"})
+    assert [(e.get("S"), e.get("C")) for e in errors(m)] == [("FATAL", "22023")]
 
 
 def test_startup_utf8_client_encoding_no_warning():
@@ -476,9 +546,8 @@ def test_terminate_closes_a_client_that_is_not_reading(conn):
     try:
         pid = int(first_field(victim.run("select pg_backend_pid()")))
         victim.send("Q", _cstr("select repeat('x', 1000) from range(40000)"))
-        time.sleep(1)
+        assert select.select([victim.sock], [], [], 10)[0], "the result never started"
         assert "E" not in types(conn.run(f"select pg_terminate_backend({pid})"))
-        time.sleep(1)
         victim.sock.settimeout(10)
         while victim.sock.recv(1 << 20):
             pass
@@ -552,6 +621,402 @@ def test_char_oid18_param_roundtrip(conn):
     cols = row_description(m)
     assert cols and cols[0][1] == 18, cols  # result type oid 18 ("char")
     assert first_field(m) == b"A"
+
+
+@pytest.mark.parametrize(
+    "param, text",
+    [(b"A", b"A"), (b"\0", b""), (b"\xc3", b"\\303")],
+)
+def test_char_oid18_binary_param(conn, param, text):
+    conn.parse("", "select $1::text", oids=(18,))
+    conn.bind("", "", params=(param,), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == text
+
+
+@pytest.mark.parametrize(
+    "query, value",
+    [
+        ("select 'A'::\"char\"", b"A"),
+        ("select 'abc'::\"char\"", b"a"),
+        ("select ''::\"char\"", b"\0"),
+        ("select '\\303'::\"char\"", b"\xc3"),
+    ],
+)
+def test_char_oid18_binary_result(conn, query, value):
+    conn.parse("", query)
+    conn.bind("", "", result_format=1)
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == value
+
+
+@pytest.mark.parametrize(
+    "param, text",
+    [(b"abc", b"a"), (b"\\101", b"A"), (b"\xc3\xa9", b"\\303"), (b"", b"")],
+)
+def test_char_oid18_text_param(conn, param, text):
+    conn.parse("", "select $1::text", oids=(18,))
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == text
+
+
+@pytest.mark.parametrize(
+    "oid, fmt, param, sqlstate",
+    [
+        (27, 0, b"abc", "22P02"),
+        (18, 1, b"ab", "22P03"),
+        (3904, 0, b"garbage", "22P02"),
+        (3904, 1, b"", "22P03"),
+        (3904, 1, b"\x02", "22P03"),
+        (3904, 1, b"\x02\xff\xff\xff\xfe", "22P03"),
+        (4451, 0, b"{garbage}", "22P02"),
+        (4451, 0, b"garbage", "22P02"),
+        (4451, 1, b"\x00\x00\x00", "22P03"),
+        (4451, 1, b"\xff\xff\xff\xff", "22P03"),
+        (4451, 1, b"\x00\x00\x00\x01", "22P03"),
+        (4451, 1, b"\x00\x00\x00\x01\xff\xff\xff\xfe", "22P03"),
+        (22, 0, b"a b", "22P02"),
+        (1007, 0, b"{{1,2},{3,4}}", "22P02"),
+        (1033, 0, b"garbage", "22P02"),
+        (1033, 0, b"nobody_missing=r/postgres", "42704"),
+        (2205, 0, b"no_such_table_x", "42P01"),
+    ],
+)
+def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
+    conn.parse("", "select $1::text", oids=(oid,))
+    conn.bind("", "", params=(param,), formats=(fmt,))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == [sqlstate]
+
+
+def test_aclitem_text_param_is_canonical(conn):
+    conn.parse("", "select $1::text", oids=(1033,))
+    conn.bind("", "", params=(b'"postgres"=r/postgres',))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == b"postgres=r/postgres"
+
+
+@pytest.mark.parametrize(
+    "query, param, expected",
+    [
+        ("select $1::regclass::text", b"pg_class", b"pg_class"),
+        ("select $1::regclass::text", b"1259", b"pg_class"),
+        ("select $1::regtype::text", b"integer", b"integer"),
+        ("select $1::regnamespace::text", b"pg_catalog", b"pg_catalog"),
+        ("select $1::regproc::text", b"now", b"now"),
+        ("select $1::regrole::text", b"-", b"-"),
+        ("select $1::regprocedure::text", b"now()", b"now()"),
+        ("select $1::regcollation::text", b'"C"', b'"C"'),
+        ("select $1::regconfig::text", b"-", b"-"),
+        ("select $1::regdictionary::text", b"-", b"-"),
+    ],
+)
+def test_reg_text_param(conn, query, param, expected):
+    conn.parse("", query)
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected
+
+
+def test_reg_text_param_names_a_missing_object(conn):
+    conn.parse("", "select $1::regclass")
+    conn.bind("", "", params=(b"raw_no_such_relation",))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == ["42P01"]
+
+
+@pytest.mark.parametrize(
+    "query, param, sqlstate",
+    [
+        ("select $1::regoper", b"@#@", "42883"),
+        ("select $1::regoperator", b"@#@(integer,integer)", "42883"),
+        ("select $1::regoperator", b"-", "22P02"),
+    ],
+)
+def test_reg_text_param_names_a_missing_operator(conn, query, param, sqlstate):
+    conn.parse("", query)
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == [sqlstate]
+
+
+def test_int2vector_array_text_param(conn):
+    conn.parse("", "select array_to_string($1, ',')", oids=(1006,))
+    conn.bind("", "", params=(b'{"1 2","3"}',))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == b"1 2,3"
+
+
+GEOMETRIC_PARAMS = [
+    (600, b"(1,2)", struct.pack("!dd", 1, 2), b"(1,2)"),
+    (601, b"[(1,2),(3,4)]", struct.pack("!dddd", 1, 2, 3, 4), b"[(1,2),(3,4)]"),
+    (
+        602,
+        b"((1,2),(3,4))",
+        struct.pack("!Bidddd", 1, 2, 1, 2, 3, 4),
+        b"((1,2),(3,4))",
+    ),
+    (603, b"(1,2),(3,4)", struct.pack("!dddd", 3, 4, 1, 2), b"(3,4),(1,2)"),
+    (604, b"((1,2),(3,4))", struct.pack("!idddd", 2, 1, 2, 3, 4), b"((1,2),(3,4))"),
+    (628, b"{1,2,3}", struct.pack("!ddd", 1, 2, 3), b"{1,2,3}"),
+    (718, b"<(1,2),3>", struct.pack("!ddd", 1, 2, 3), b"<(1,2),3>"),
+]
+
+
+@pytest.mark.parametrize("oid, text_param, binary_param, text", GEOMETRIC_PARAMS)
+@pytest.mark.parametrize("binary", [False, True])
+def test_geometric_param(conn, oid, text_param, binary_param, text, binary):
+    conn.parse("", "select $1::text", oids=(oid,))
+    if binary:
+        conn.bind("", "", params=(binary_param,), formats=(1,))
+    else:
+        conn.bind("", "", params=(text_param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == text
+
+
+@pytest.mark.parametrize(
+    "oid, sqlstate, message",
+    [
+        (3, "XX000", "cache lookup failed for type 3"),
+        (2970, "0A000", "type txid_snapshot is not supported"),
+    ],
+)
+def test_parse_param_oid_without_a_type(conn, oid, sqlstate, message):
+    conn.parse("", "select $1", oids=(oid,))
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == [sqlstate], errors(m)
+    assert errors(m)[0]["M"] == message
+
+
+def check_user_type_params(conn, name, in_transaction):
+    conn.run_ok(f"create type {name} as enum ('sad', 'ok')")
+    conn.run_ok(f"create table {name}_table (a int)")
+    try:
+        oid, array = (
+            int(v)
+            for v in all_fields(
+                conn.run_ok(
+                    f"select oid, typarray from pg_type where typname = '{name}'"
+                )
+            )
+        )
+        table = int(
+            first_field(conn.run_ok(f"select '{name}_table'::regclass::oid"))
+        )
+        for type_oid, param, text in (
+            (oid, b"ok", b"ok"),
+            (array, b"{sad,ok}", b"{sad,ok}"),
+        ):
+            if in_transaction:
+                conn.run_ok("begin")
+            conn.parse("", "select $1", oids=(type_oid,))
+            conn.bind("", "", params=(param,))
+            conn.execute("")
+            conn.sync()
+            m = conn.drain_to_ready()
+            if in_transaction:
+                conn.run_ok("commit")
+            assert "E" not in types(m), errors(m)
+            assert first_field(m) == text
+        for missing in (table, 1000000000):
+            if in_transaction:
+                conn.run_ok("begin")
+            conn.parse("", "select $1", oids=(missing,))
+            conn.sync()
+            m = conn.drain_to_ready()
+            if in_transaction:
+                conn.run("rollback")
+            assert sqlstates(m) == ["XX000"], errors(m)
+            assert errors(m)[0]["M"] == f"cache lookup failed for type {missing}"
+    finally:
+        conn.run("rollback")
+        conn.run(f"drop table if exists {name}_table")
+        conn.run(f"drop type if exists {name}")
+
+
+def test_parse_param_oid_of_user_types_in_transaction(conn):
+    check_user_type_params(conn, "raw_param_mood_txn", True)
+
+
+def test_parse_param_oid_of_user_types(conn):
+    check_user_type_params(conn, "raw_param_mood", False)
+
+
+def test_parse_param_oid_unknown_is_inferred(conn):
+    conn.parse("", "select $1::int4 + 1", oids=(705,))
+    conn.bind("", "", params=(b"41",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == b"42"
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [("select $1", b"abc"), ("select $1 || 'x'", b"abcx")],
+)
+def test_parse_param_oid_unknown_reads_as_text(conn, query, expected):
+    conn.parse("", query, oids=(705,))
+    conn.bind("", "", params=(b"abc",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected
+
+
+def numeric_send(text):
+    sign = 0x4000 if text.startswith("-") else 0
+    whole, _, fraction = text.lstrip("-").partition(".")
+    whole = whole.lstrip("0")
+    whole = "0" * (-len(whole) % 4) + whole
+    padded = fraction + "0" * (-len(fraction) % 4)
+    groups = [int(whole[i : i + 4]) for i in range(0, len(whole), 4)]
+    groups += [int(padded[i : i + 4]) for i in range(0, len(padded), 4)]
+    weight = len(whole) // 4 - 1
+    while groups and groups[0] == 0:
+        groups.pop(0)
+        weight -= 1
+    while groups and groups[-1] == 0:
+        groups.pop()
+    return struct.pack(
+        f"!hhHH{len(groups)}h", len(groups), weight, sign, len(fraction), *groups
+    )
+
+
+@pytest.mark.parametrize(
+    "query, param, fmt, expected",
+    [
+        ("select $1 = 1.23456", b"1.23456", 0, b"t"),
+        ("select $1 > 1", b"1.0001", 0, b"t"),
+        ("select round($1, 2)", b"1.23456", 0, b"1.23"),
+        ("select $1::text", b"1.23456", 0, b"1.23456"),
+        (
+            "select $1::text",
+            b"123456789012345678901234.5",
+            0,
+            b"123456789012345678901234.5",
+        ),
+        ("select $1 = 1.23456", numeric_send("1.23456"), 1, b"t"),
+        ("select $1::text", numeric_send("-0.000123"), 1, b"-0.000123"),
+    ],
+)
+def test_parse_param_oid_numeric_keeps_its_digits(conn, query, param, fmt, expected):
+    conn.parse("", query, oids=(1700,))
+    conn.bind("", "", params=(param,), formats=(fmt,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    if isinstance(expected, str):
+        assert sqlstates(m) == [expected], errors(m)
+        return
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected, first_field(m)
+
+
+@pytest.mark.parametrize(
+    "oid, param",
+    [(3802, b'\x01{"a": 1}'), (114, b'{"a": 1}')],
+)
+def test_binary_json_param(conn, oid, param):
+    conn.parse("", "select $1::text, $1->>'a'", oids=(oid,))
+    conn.bind("", "", params=(param,), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert all_fields(m) == [b'{"a": 1}', b"1"], all_fields(m)
+
+
+def test_numeric_param_rounds_into_its_column(conn):
+    conn.run_ok("drop table if exists raw_numeric_param")
+    conn.run_ok("create table raw_numeric_param (n numeric(10,4))")
+    conn.parse("", "insert into raw_numeric_param values ($1)", oids=(1700,))
+    conn.bind("", "", params=(b"1.23456",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(conn.run_ok("select n::text from raw_numeric_param")) == (
+        b"1.2346"
+    )
+    conn.run_ok("drop table raw_numeric_param")
+
+
+def parameter_types(msgs):
+    for t, p in msgs:
+        if t == "t":
+            (count,) = struct.unpack("!H", p[:2])
+            return list(struct.unpack(f"!{count}I", p[2 : 2 + 4 * count]))
+    return None
+
+
+@pytest.mark.parametrize(
+    "query, oids, expected",
+    [
+        ("select $1::int4 + 1", (705,), [705]),
+        (
+            "select table_name from information_schema.tables "
+            "where table_name = $1",
+            (),
+            [19],
+        ),
+        ("select $1::pg_lsn", (3220,), [3220]),
+    ],
+)
+def test_describe_reports_resolved_param_types(conn, query, oids, expected):
+    conn.parse("", query, oids=oids)
+    conn.describe("S", "")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert parameter_types(m) == expected, parameter_types(m)
+
+
+@pytest.mark.parametrize(
+    "oid, param, check",
+    [
+        (1700, b"1.5", lambda value: float(value) == 1.5),
+        (1042, b"ab", lambda value: value == b"ab"),
+        (3802, b'{"a": 1}', lambda value: json.loads(value) == {"a": 1}),
+    ],
+)
+def test_parse_param_oid_numeric_bpchar_jsonb(conn, oid, param, check):
+    conn.parse("", "select $1", oids=(oid,))
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert check(first_field(m)), first_field(m)
 
 
 def test_bytea_text_param_decodes_input_syntax(conn):
@@ -1015,6 +1480,31 @@ def test_binary_result_format(conn):
     assert struct.unpack("!i", row[6:10])[0] == 42
 
 
+@pytest.mark.parametrize(
+    "column, source",
+    [
+        ("acldefault('r', 10)", ""),
+        ("table_name", " from information_schema.tables limit 1"),
+    ],
+)
+def test_binary_record_field_type_matches_row_description(conn, column, source):
+    def binary_first_field(query):
+        conn.parse("", query)
+        conn.bind("", "", result_format=1)
+        conn.describe("P", "")
+        conn.execute("")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert "E" not in types(m), errors(m)
+        ((_, oid, _),) = row_description(m)
+        return oid, all_fields(m)[0]
+
+    column_oid, _ = binary_first_field(f"select {column}{source}")
+    _, record = binary_first_field(f"select row({column}){source}")
+    fields, field_oid = struct.unpack("!iI", record[:8])
+    assert (fields, field_oid) == (1, column_oid)
+
+
 def test_portal_paging_and_unlimited_drain(conn):
     conn.parse("", "SELECT i FROM generate_series(1,10) g(i)")
     conn.bind("", "")
@@ -1198,6 +1688,7 @@ def test_portal_dropped_at_committing_sync(conn):
         conn.run_ok("drop table if exists t_pdrop")
 
 
+@pytest.mark.faults
 @pytest.mark.usefixtures("own_server")
 def test_implicit_block_commit_error_replaces_command_complete(conn):
     # PG commits the implicit block in finish_xact_command BEFORE EndCommand
@@ -1212,8 +1703,7 @@ def test_implicit_block_commit_error_replaces_command_complete(conn):
         conn.send("Q", _cstr(sql))
         return conn.drain_to_ready()
 
-    if "E" in types(simple("set sdb_faults='implicit_block_commit'")):
-        pytest.skip("fault injection not enabled in this build")
+    assert "E" not in types(simple("set sdb_faults='implicit_block_commit'"))
     try:
         assert "E" not in types(simple("drop table if exists t_c5"))
         assert "E" not in types(simple("create table t_c5(id int)"))
@@ -1283,6 +1773,7 @@ def test_copy_from_stdin_quoted_upper_case_format(conn):
         conn.run_ok("drop table if exists smoke_copy_fmt_case")
 
 
+@pytest.mark.faults
 @pytest.mark.usefixtures("own_server")
 def test_copy_feeder_error_ends_the_copy(conn):
     # A throw in the COPY FROM STDIN feeder, the io coroutine that hands the
@@ -1290,18 +1781,17 @@ def test_copy_feeder_error_ends_the_copy(conn):
     # whose place in the client's stream is lost. The throw used to end the
     # feeder without telling the COPY: the worker waited for data forever, and
     # the client for the COPY's answer.
-    if "E" in types(conn.run("set sdb_faults='copy_feeder_throw'")):
-        pytest.skip("fault injection not enabled in this build")
+    conn.run_ok("set sdb_faults='copy_feeder_throw'")
     c = WireConn()
     try:
         c.run_ok("drop table if exists t_copy_feeder")
         c.run_ok("create table t_copy_feeder(a int)")
         c.send("Q", _cstr("copy t_copy_feeder from stdin"))
         assert c.read_msg()[0] == "G"
-        c.send("d", b"1\n")
-        c.send("c")
         c.sock.settimeout(10)
-        with pytest.raises(EOFError):
+        with pytest.raises((EOFError, ConnectionError)):
+            c.send("d", b"1\n")
+            c.send("c")
             while True:
                 c.read_msg()
         assert first_field(conn.run("select count(*) from t_copy_feeder")) == b"0"
@@ -1311,10 +1801,36 @@ def test_copy_feeder_error_ends_the_copy(conn):
         conn.run("drop table if exists t_copy_feeder")
 
 
+@pytest.mark.faults
+@pytest.mark.usefixtures("own_server")
+def test_copy_takes_rows_while_the_client_waits(conn):
+    conn.run_ok("set sdb_faults='pause_copy_take_blocked'")
+    c = WireConn()
+    try:
+        conn.run_ok("drop table if exists t_copy_taken")
+        conn.run_ok("create table t_copy_taken(a int)")
+        c.send("Q", _cstr("copy t_copy_taken from stdin"))
+        assert c.read_msg()[0] == "G"
+        deadline = time.time() + 10
+        while "E" in types(conn.run("set sdb_faults='-pause_copy_take_blocked:parked'")):
+            assert time.time() < deadline, "the COPY never waited for data"
+            time.sleep(0.05)
+        conn.run_ok("set sdb_faults='pause_copy_take_blocked:release'")
+        c.send("d", b"1\n2\n")
+        await_copied(conn, "t_copy_taken", 2)
+        c.send("c")
+        m = c.drain_to_ready()
+        assert tags(m) == [b"COPY 2\x00"], errors(m)
+    finally:
+        conn.run("reset sdb_faults")
+        c.close()
+        conn.run("drop table if exists t_copy_taken")
+
+
+@pytest.mark.faults
 @pytest.mark.usefixtures("own_server")
 def test_copy_feeder_wake_outlives_the_session(conn):
-    if "E" in types(conn.run("set sdb_faults='copy_feeder_done_wake'")):
-        pytest.skip("fault injection not enabled in this build")
+    conn.run_ok("set sdb_faults='copy_feeder_done_wake'")
     c = WireConn()
     try:
         conn.run_ok("drop table if exists t_copy_done_wake")
@@ -1322,7 +1838,7 @@ def test_copy_feeder_wake_outlives_the_session(conn):
         c.send("Q", _cstr("copy t_copy_done_wake from stdin"))
         assert c.read_msg()[0] == "G"
         c.send("d", b"1\n")
-        time.sleep(0.5)
+        await_copied(conn, "t_copy_done_wake", 1)
         c.sock.close()
         deadline = time.time() + 10
         while first_field(conn.run(
@@ -1673,7 +2189,11 @@ def test_copy_fail_after_eod_marker_fails_the_copy(conn, options, data):
         conn.send("Q", _cstr(f"copy smoke_eod_fail from stdin{options}"))
         assert conn.read_msg()[0] == "G"
         conn.send("d", data)
-        time.sleep(0.5)
+        poller = WireConn()
+        try:
+            await_copied(poller, "smoke_eod_fail", 2)
+        finally:
+            poller.close()
         conn.send("f", _cstr("client gave up"))
         m = conn.drain_to_ready()
         assert sqlstates(m) == ["57014"], (tags(m), errors(m))
@@ -1694,7 +2214,7 @@ def test_copy_disconnect_after_eod_marker_loads_nothing(conn, options, data):
         c.send("Q", _cstr(f"copy smoke_eod_eof from stdin{options}"))
         assert c.read_msg()[0] == "G"
         c.send("d", data)
-        time.sleep(0.5)
+        await_copied(conn, "smoke_eod_eof", 2)
         c.sock.close()
         deadline = time.time() + 10
         while first_field(conn.run(

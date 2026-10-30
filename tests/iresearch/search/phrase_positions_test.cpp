@@ -33,7 +33,6 @@
 #include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/store/directory.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/string.hpp>
@@ -571,10 +570,10 @@ TEST(PhrasePositionsTest, interval_phrase_scale_agrees_with_reference) {
 }
 
 TEST(PhrasePositionsTest, positions_left_in_cache_blocks) {
-  if (!irs::AddFailurePointDebugging("IndexWriter::CompactOutOfMemory")) {
+  if (!TestEnv::ArmFaultPoint("IndexWriter::CompactOutOfMemory")) {
     GTEST_SKIP() << "built without fault injection";
   }
-  absl::Cleanup clear = [] { irs::ClearFailurePointsDebugging(); };
+  absl::Cleanup clear = [] { TestEnv::ClearFaultPoints(); };
   constexpr uint32_t kPairs = 1 << 20;
   std::string text;
   for (uint32_t i = 0; i != kPairs; ++i) {
@@ -599,7 +598,7 @@ TEST(PhrasePositionsTest, positions_left_in_cache_blocks) {
     ctx.Commit();
     writer->RefreshCommit();
   }
-  irs::ClearFailurePointsDebugging();
+  TestEnv::ClearFaultPoints();
   {
     const irs::DirectoryReader flushed{dir, irs::tests::DefaultReaderOptions()};
     for (const auto& segment : flushed.Meta().index_meta.segments) {

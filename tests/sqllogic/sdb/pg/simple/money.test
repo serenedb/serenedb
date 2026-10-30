@@ -1,0 +1,117 @@
+control substitution on
+
+query
+SELECT '1'::money = 1 AS a, '1'::money = 100::int8 AS b, '1'::money < 2 AS c, '1'::money IN (1, 2) AS d,
+       '1.5'::money = 1.5 AS e, coalesce(NULL::money, 0) AS f;
+----
+a	b	c	d	e	f
+t	f	t	t	t	$0.00
+
+
+query
+SELECT m FROM (SELECT '1'::money AS m UNION SELECT 2) t ORDER BY m;
+----
+m
+$1.00
+$2.00
+
+
+query
+SELECT pg_typeof(s * 7) AS s_type, s * 7 AS s7, pg_typeof(b * 7) AS b_type, b * 7 AS b7, pg_typeof(7 * b) AS rb_type
+FROM (VALUES (2::int2, 3::int8)) t(s, b);
+----
+s_type	s7	b_type	b7	rb_type
+smallint	14	bigint	21	bigint
+
+
+statement ok
+CREATE TABLE money_export (id int, m money);
+
+
+statement count 5
+INSERT INTO money_export VALUES (1, '12.34'), (2, '-0.01'), (3, '92233720368547758.07'), (4, '-92233720368547758.08'), (5, NULL);
+
+
+statement count 5
+COPY (SELECT * FROM money_export ORDER BY id) TO '${__TEST_DIR__}/money_export.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT id, m FROM read_parquet('${__TEST_DIR__}/money_export.parquet') ORDER BY id;
+----
+id	m
+1	12.34
+2	-0.01
+3	92233720368547758.07
+4	-92233720368547758.08
+5	NULL
+
+
+statement ok
+CREATE TABLE money_parquet (id int, m money);
+
+
+statement count 5
+COPY money_parquet FROM '${__TEST_DIR__}/money_export.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT e.id, p.m, p.m = e.m AS same FROM money_export e JOIN money_parquet p ON p.id = e.id ORDER BY e.id;
+----
+id	m	same
+1	$12.34	t
+2	-$0.01	t
+3	$92,233,720,368,547,758.07	t
+4	-$92,233,720,368,547,758.08	t
+5	NULL	NULL
+
+
+statement count 3
+COPY (SELECT * FROM money_export WHERE id IN (1, 2, 5) ORDER BY id) TO '${__TEST_DIR__}/money_export.json' (FORMAT JSON);
+
+
+query
+SELECT id, m FROM read_json('${__TEST_DIR__}/money_export.json', columns = {id: 'INTEGER', m: 'DECIMAL(19,2)'}) ORDER BY id;
+----
+id	m
+1	12.34
+2	-0.01
+5	NULL
+
+
+statement ok
+CREATE TABLE money_json (id int, m money);
+
+
+statement count 3
+COPY money_json FROM '${__TEST_DIR__}/money_export.json' (FORMAT JSON);
+
+
+query
+SELECT e.id, j.m, j.m = e.m AS same FROM money_export e JOIN money_json j ON j.id = e.id ORDER BY e.id;
+----
+id	m	same
+1	$12.34	t
+2	-$0.01	t
+5	NULL	NULL
+
+
+statement count 1
+COPY (SELECT 6 AS id, 95000000000000000.00::DECIMAL(19, 2) AS m) TO '${__TEST_DIR__}/money_too_large.json' (FORMAT JSON);
+
+
+statement count 1
+COPY money_json FROM '${__TEST_DIR__}/money_too_large.json' (FORMAT JSON);
+
+
+query
+SELECT m::text AS m FROM money_json WHERE id = 6;
+----
+m
+$95,000,000,000,000,000.00
+
+
+statement error
+SELECT m + '0'::money FROM money_json WHERE id = 6;
+----
+db error: ERROR: money out of range

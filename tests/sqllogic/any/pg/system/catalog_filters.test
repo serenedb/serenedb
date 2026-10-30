@@ -1,0 +1,40 @@
+query
+SELECT count(*) AS n FROM pg_class WHERE relpartbound IS NULL AND relpartbound IS NOT NULL;
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_type WHERE typdefault IS NULL AND typdefault IS NOT NULL;
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM information_schema.columns WHERE column_default IS NULL AND column_default IS NOT NULL;
+----
+n
+0
+
+
+query
+SELECT (SELECT count(*) FROM pg_class WHERE relpartbound IS NULL OR relpartbound IS NOT NULL) = (SELECT count(*) FROM pg_class) AS same;
+----
+same
+t
+
+
+query
+SELECT relname FROM pg_class WHERE relpartbound IS NULL AND relname = 'pg_class';
+----
+relname
+pg_class
+
+
+query
+SELECT typname FROM pg_type WHERE typdefault IS NULL AND typname = 'int4';
+----
+typname
+int4

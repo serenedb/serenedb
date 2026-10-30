@@ -1,0 +1,131 @@
+statement ok
+CREATE TABLE strn (id INT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO strn VALUES (1), (2), (3);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) strn;
+
+
+statement error
+ALTER SEQUENCE strn_pk_seq RESTART WITH 1;
+----
+db error: ERROR: Cannot change sequence "strn_pk_seq": table "strn" numbers its rows with it
+
+
+statement error
+SELECT setval('strn_pk_seq', 1);
+----
+db error: ERROR: Cannot change sequence "strn_pk_seq": table "strn" numbers its rows with it
+
+
+statement error
+SELECT setval('strn_pk_seq', 1, false);
+----
+db error: ERROR: Cannot change sequence "strn_pk_seq": table "strn" numbers its rows with it
+
+
+statement ok
+INSERT INTO strn VALUES (10), (20), (30);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) strn;
+
+
+statement ok
+DELETE FROM strn WHERE id = 10;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) strn;
+
+
+query
+SELECT id FROM strn ORDER BY id;
+----
+id
+1
+2
+3
+20
+30
+
+
+statement ok
+CREATE TABLE strn_serial (id SERIAL, v INT);
+
+
+statement ok
+INSERT INTO strn_serial (v) VALUES (1), (2);
+
+
+statement ok
+ALTER SEQUENCE strn_serial_id_seq RESTART WITH 10;
+
+
+query
+SELECT setval('strn_serial_id_seq', 20) AS s, nextval('strn_serial_id_seq') AS n;
+----
+s	n
+20	21
+
+
+statement ok
+CREATE SCHEMA strn_other;
+
+
+statement ok
+CREATE SEQUENCE strn_other.strn_far_pk_seq;
+
+
+statement ok
+CREATE TABLE strn_far (id INT, n BIGINT DEFAULT nextval('strn_other.strn_far_pk_seq')) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+ALTER SEQUENCE strn_other.strn_far_pk_seq RESTART WITH 7;
+
+
+statement error
+ALTER SEQUENCE strn_far_pk_seq RESTART WITH 7;
+----
+db error: ERROR: Cannot change sequence "strn_far_pk_seq": table "strn_far" numbers its rows with it
+
+
+statement ok
+INSERT INTO strn_far (id) VALUES (1);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) strn_far;
+
+
+query
+SELECT id, n FROM strn_far;
+----
+id	n
+1	7
+
+
+statement ok
+DROP TABLE strn;
+
+
+statement ok
+DROP TABLE strn_serial;
+
+
+statement ok
+DROP TABLE strn_far;
+
+
+statement ok
+DROP SEQUENCE strn_other.strn_far_pk_seq;
+
+
+statement ok
+DROP SCHEMA strn_other;

@@ -26,8 +26,8 @@
 #include <absl/synchronization/notification.h>
 #include <absl/time/time.h>
 
-#include <iresearch/utils/async_utils.hpp>
 #include <iresearch/utils/ref_counter.hpp>
+#include <thread>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -160,27 +160,27 @@ TEST_F(RefCounterTests, test_ref_counter_waits_only_for_keys_being_removed) {
   absl::Notification proceed;
   absl::Notification other_added;
   absl::Notification removed_added;
-  irs::async_utils::ThreadPool<> pool{3};
+  std::vector<std::jthread> threads;
   absl::Cleanup release = [&] { proceed.Notify(); };
-  ASSERT_TRUE(pool.run([&] {
+  threads.emplace_back([&] {
     refs.RemoveUnused([&](std::vector<int>& unused) {
       removing.Notify();
       proceed.WaitForNotification();
       return unused.size();
     });
-  }));
+  });
   removing.WaitForNotification();
 
-  ASSERT_TRUE(pool.run([&] {
+  threads.emplace_back([&] {
     refs.add(2);
     other_added.Notify();
-  }));
+  });
   EXPECT_TRUE(other_added.WaitForNotificationWithTimeout(absl::Seconds(30)));
 
-  ASSERT_TRUE(pool.run([&] {
+  threads.emplace_back([&] {
     refs.add(1);
     removed_added.Notify();
-  }));
+  });
   EXPECT_FALSE(
     removed_added.WaitForNotificationWithTimeout(absl::Milliseconds(50)));
   std::move(release).Invoke();

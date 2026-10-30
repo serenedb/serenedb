@@ -138,9 +138,17 @@ void AssertFstReadWrite(const std::string& resource) {
   SimpleMemoryAccounter immutable_fst_memory;
   const auto bytes = tests::Bytes(out.file);
   irs::IndexInput in{bytes};
+  uint64_t noticed = 0;
+  uint64_t weights_end = 0;
   std::unique_ptr<irs::immutable_byte_fst> read_fst(
-    irs::immutable_byte_fst::Read(in, immutable_fst_memory));
+    irs::immutable_byte_fst::Read(in, immutable_fst_memory,
+                                  [&](uint64_t at, uint64_t need) {
+                                    EXPECT_LE(noticed, at);
+                                    noticed = at;
+                                    weights_end = at + need;
+                                  }));
   ASSERT_EQ(out.file.Length(), in.Position());
+  ASSERT_EQ(in.Position(), weights_end);
   ASSERT_GT(immutable_fst_memory.Counter(), 0);
   ASSERT_NE(nullptr, read_fst);
   ASSERT_EQ(fst.NumStates(), read_fst->NumStates());

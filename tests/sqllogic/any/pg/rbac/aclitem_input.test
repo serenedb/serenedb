@@ -1,0 +1,197 @@
+statement ok
+DROP ROLE IF EXISTS aclin_reader
+
+statement ok
+DROP ROLE IF EXISTS "aclin two"
+
+statement ok
+CREATE ROLE aclin_reader
+
+statement ok
+CREATE ROLE "aclin two"
+
+query
+SELECT x::aclitem::text AS acl
+FROM (VALUES ('aclin_reader=r*w/postgres'), ('user aclin_reader=r/postgres'), ('group aclin_reader=a/postgres'),
+  ('=r/postgres'), ('"aclin two"=U/postgres'), ('aclin_reader=/postgres'), ('  aclin_reader=r/postgres  '),
+  ('aclin_reader=r'), ('aclin_reader=arwdDxtXUCTcsAm*/postgres')) v(x)
+ORDER BY x COLLATE "C"
+----
+acl
+aclin_reader=r/postgres
+"aclin two"=U/postgres
+=r/postgres
+aclin_reader=/postgres
+aclin_reader=arwdDxtXUCTcsAm*/postgres
+aclin_reader=r/postgres
+aclin_reader=r*w/postgres
+aclin_reader=a/postgres
+aclin_reader=r/postgres
+
+statement error
+SELECT 'aclin_nosuch'::aclitem
+----
+db error: ERROR: unrecognized key word: "aclin_nosuch"
+HINT: ACL key word must be "group" or "user".
+
+
+statement error
+SELECT 'aclin_nosuch=r/postgres'::aclitem
+----
+db error: ERROR: role "aclin_nosuch" does not exist
+
+
+statement error
+SELECT '12345=r/postgres'::aclitem
+----
+db error: ERROR: role "12345" does not exist
+
+
+statement error
+SELECT 'aclin_reader=r/aclin_nosuch'::aclitem
+----
+db error: ERROR: role "aclin_nosuch" does not exist
+
+
+statement error
+SELECT 'aclin_reader=rz/postgres'::aclitem
+----
+db error: ERROR: invalid mode character: must be one of "arwdDxtXUCTcsAm"
+
+
+statement error
+SELECT 'aclin_reader=r/'::aclitem
+----
+db error: ERROR: a name must follow the "/" sign
+
+
+statement error
+SELECT 'group'::aclitem
+----
+db error: ERROR: missing name
+HINT: A name must follow the "group" or "user" key word.
+
+
+statement error
+SELECT 'group aclin_reader'::aclitem
+----
+db error: ERROR: missing "=" sign
+
+
+statement error
+SELECT 'aclin_reader=r/postgres x'::aclitem
+----
+db error: ERROR: extra garbage at the end of the ACL specification
+
+
+query
+SELECT pg_input_is_valid('aclin_reader=r/postgres', 'aclitem') AS valid,
+  pg_input_is_valid('aclin_reader=rz/postgres', 'aclitem') AS invalid_mode,
+  pg_input_is_valid('aclin_nosuch=r/postgres', 'aclitem') AS missing_role
+----
+valid	invalid_mode	missing_role
+t	f	f
+
+query
+SELECT * FROM pg_input_error_info('aclin_nosuch', 'aclitem')
+----
+message	detail	hint	sql_error_code
+unrecognized key word: "aclin_nosuch"	NULL	ACL key word must be "group" or "user".	22P02
+
+query
+SELECT * FROM pg_input_error_info('aclin_nosuch=r/postgres', 'aclitem')
+----
+message	detail	hint	sql_error_code
+role "aclin_nosuch" does not exist	NULL	NULL	42704
+
+query
+SELECT grantee, pg_get_userbyid(grantor) AS grantor, privilege_type, is_grantable
+FROM aclexplode(ARRAY[makeaclitem(12345, 'postgres'::regrole, 'SELECT', true), '"aclin two"=U/postgres'::aclitem])
+ORDER BY grantee, privilege_type
+----
+grantee	grantor	privilege_type	is_grantable
+12345	postgres	SELECT	t
+<slt:ignore>	postgres	USAGE	f
+
+statement ok
+DROP ROLE IF EXISTS "aclin_é"
+
+
+statement ok
+DROP ROLE IF EXISTS "aclin""q"
+
+
+statement ok
+DROP ROLE IF EXISTS aclin_gone
+
+
+statement ok
+CREATE ROLE "aclin_é"
+
+
+statement ok
+CREATE ROLE "aclin""q"
+
+
+query
+SELECT x::aclitem::text AS acl
+FROM (VALUES ('aclin_é=r/postgres'), ('"aclin_é"=w/postgres'), ('"aclin""q"=r/postgres'),
+  ('"aclin""q"=a/"postgres"'), ('=r/"aclin""q"')) v(x)
+ORDER BY x COLLATE "C"
+----
+acl
+"aclin""q"=a/postgres
+"aclin""q"=r/postgres
+"aclin_é"=w/postgres
+=r/"aclin""q"
+"aclin_é"=r/postgres
+
+
+statement ok
+CREATE ROLE aclin_gone
+
+
+statement ok
+CREATE TABLE aclin_store (a aclitem)
+
+
+statement ok
+INSERT INTO aclin_store VALUES ('aclin_gone=r/postgres')
+
+
+statement ok
+DROP ROLE aclin_gone
+
+
+skipif serenedb
+query
+SELECT count(*) AS n FROM aclin_store, aclexplode(ARRAY[a])
+----
+n
+1
+
+
+onlyif serenedb
+statement error
+SELECT count(*) AS n FROM aclin_store, aclexplode(ARRAY[a])
+----
+db error: ERROR: role "aclin_gone" does not exist
+
+
+statement ok
+DROP TABLE aclin_store
+
+
+statement ok
+DROP ROLE "aclin_é"
+
+
+statement ok
+DROP ROLE "aclin""q"
+
+
+statement ok
+DROP ROLE "aclin two"
+
+statement ok
+DROP ROLE aclin_reader

@@ -51,6 +51,28 @@ std::span<ByteExtent> CoalesceExtents(std::span<ByteExtent> extents,
   return extents.first(n);
 }
 
+void ReadOnce(IndexInput& in, byte_type* b, uint64_t count) {
+  const auto* file = in.File();
+  if (!file) {
+    in.ReadData(b, count);
+    return;
+  }
+  constexpr uint64_t kChunk = uint64_t{64} << 20;
+  constexpr uint64_t kAhead = 2 * kChunk;
+  const auto start = in.Position();
+  file->Prefetch(start, std::min(count, kAhead));
+  for (uint64_t done = 0; done < count;) {
+    const auto n = std::min(count - done, kChunk);
+    if (done + kAhead < count) {
+      file->Prefetch(start + done + kAhead,
+                     std::min(count - done - kAhead, kChunk));
+    }
+    in.ReadData(b + done, n);
+    file->Evict(start + done, n);
+    done += n;
+  }
+}
+
 InputFile::InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping)
   : _length{mapping->Size()},
     _kind{std::in_place_type<MappedSpan>, std::move(mapping)} {
@@ -140,6 +162,12 @@ void InputFile::Prefetch(uint64_t offset, uint64_t size) const noexcept {
   }
 }
 
+void InputFile::Evict(uint64_t offset, uint64_t size) const noexcept {
+  if (const auto* span = std::get_if<MappedSpan>(&_kind); span && span->paged) {
+    span->mapping->Evict(offset, size);
+  }
+}
+
 void InputFile::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
   if (std::holds_alternative<CacheBlocks>(_kind)) {
     extents = CoalesceExtents(extents, duckdb::BlockCache::MERGE_GAP);
@@ -205,12 +233,6 @@ bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
   }
   MarkWarm(span, offset, size);
   return fetch;
-}
-
-void InputFile::Advise(duckdb::MappedFileAccess access) const noexcept {
-  if (const auto* span = std::get_if<MappedSpan>(&_kind); span && span->paged) {
-    span->mapping->Advise(access);
-  }
 }
 
 void ThrowPastEnd(const InputFile* file, uint64_t position, uint64_t length) {

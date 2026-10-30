@@ -27,11 +27,13 @@
 
 #include <atomic>
 #include <cstdio>
+#include <duckdb/common/fault_points.hpp>
 #include <filesystem>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/resource_manager.hpp>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #define SOURCE_LOCATION (__FILE__ ":" IRS_TO_STRING(__LINE__))
 
@@ -61,10 +63,23 @@ class TestEnv {
   static std::filesystem::path resource(const std::string& name);
   static std::string MemoryRoot();
 
+  static bool ArmFaultPoint(std::string_view name) {
+#ifdef SDB_FAULT_INJECTION
+    return duckdb::FaultPoints::Arm(name);
+#else
+    return false;
+#endif
+  }
+  static void ClearFaultPoints() noexcept {
+#ifdef SDB_FAULT_INJECTION
+    duckdb::FaultPoints::Clear();
+#endif
+  }
+
   static uint32_t iteration();
 
  private:
-  static void make_directories();
+  static bool make_directories();
   static void parse_command_line();
   static bool prepare();
 

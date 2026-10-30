@@ -29,6 +29,7 @@
 #include <deque>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -48,7 +49,6 @@
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iterator>
 #include <span>
 #include <string>
@@ -981,6 +981,13 @@ PublishedInvertedIndex PublishInvertedIndex(
   duckdb::ClientContext& context, catalog::InvertedIndexEntry& entry,
   duckdb::CatalogEntry& relation,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& bound_exprs) {
+  const bool duck_table = relation.type == duckdb::CatalogType::TABLE_ENTRY;
+  if (duck_table &&
+      !relation.Cast<duckdb::DuckTableEntry>().GetStorage().IsMainTable()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+                    ERR_MSG("Transaction conflict: cannot add an index to a "
+                            "table that has been altered or dropped"));
+  }
   const auto options = catalog::ResolveSettings(entry.options);
   auto storage = search::InvertedIndexStorage::Create(
     entry.catalog.Cast<catalog::SereneDBCatalog>().Directory(
@@ -989,8 +996,7 @@ PublishedInvertedIndex PublishInvertedIndex(
     entry.Config()->top_k_scorer, /*is_new=*/true);
   storage->ApplyOptions(options);
   entry.AdoptStorage(storage);
-  if (relation.type != duckdb::CatalogType::TABLE_ENTRY ||
-      !relation.Cast<duckdb::TableCatalogEntry>().IsDuckTable()) {
+  if (!duck_table) {
     return {std::move(storage), 0};
   }
   auto& table = relation.Cast<duckdb::DuckTableEntry>();

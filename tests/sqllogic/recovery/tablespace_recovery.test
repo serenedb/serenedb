@@ -83,6 +83,7 @@ SELECT 1;
 connection after_rewrite
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT c.relname, t.spcname FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE c.relnamespace <> 'pg_catalog'::regnamespace
 ORDER BY c.relname;
 ----
 relname	spcname

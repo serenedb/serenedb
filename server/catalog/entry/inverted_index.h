@@ -33,6 +33,7 @@
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <limits>
 #include <memory>
@@ -151,7 +152,9 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
 
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
   irs::field_id GetNormColumnId(irs::field_id id) const final;
-  bool HasField(irs::field_id id) const final;
+  irs::FieldKind GetFieldKind(irs::field_id id) const final;
+  const irs::AnnInfo* FindAnn(irs::field_id column,
+                              irs::VectorMetric metric) const noexcept;
 
   const InvertedIndexField* FindEntry(irs::field_id field_id) const noexcept;
   irs::field_id TermField(irs::field_id column_id) const noexcept;
@@ -173,7 +176,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   bool WritesField(const InvertedIndexKey& key) const noexcept {
     return FindKey(key.field_id) == &key;
   }
-  bool StoresExpression(irs::field_id field_id) const noexcept;
+  std::string_view StoredExpression(irs::field_id field_id) const noexcept;
   bool StoresExpressions() const noexcept { return _stores_expressions; }
   bool HasExpressionKeys() const noexcept { return !_expressions.empty(); }
 
@@ -182,6 +185,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   PkPolicy pk;
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
+  irs::containers::FlatHashSet<irs::field_id> table_columns;
 
  private:
   static constexpr uint32_t kNoKey = std::numeric_limits<uint32_t>::max();
@@ -248,6 +252,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
                      duckdb::SchemaCatalogEntry& schema,
                      duckdb::CreateIndexInfo& info,
                      duckdb::optional_ptr<duckdb::TableCatalogEntry> table);
+  ~InvertedIndexEntry() final;
 
   void SetConfig(std::shared_ptr<const InvertedIndexConfig> config) {
     _config = std::move(config);
@@ -273,6 +278,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
 
+  void BeforeDrop(duckdb::CatalogTransaction transaction) final;
   void OnDrop() final;
 
   void CreateReindexJob(duckdb::CatalogTransaction transaction,
@@ -316,6 +322,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   std::shared_ptr<const InvertedIndexConfig> _config;
   duckdb::Identifier _relation_name;
   duckdb::idx_t _tablespace;
+  bool _retired = false;
 };
 
 std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(

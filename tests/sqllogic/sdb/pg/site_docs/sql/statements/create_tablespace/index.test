@@ -12,7 +12,7 @@ statement ok
 DROP TABLESPACE IF EXISTS doc_fast;
 
 statement ok
-DROP ROLE IF EXISTS doc_writer;
+DROP ROLE IF EXISTS doc_ts_writer;
 
 # DOCS_TEST_RAW
 #| CREATE TABLESPACE doc_fast LOCATION '/mnt/nvme/serenedb';
@@ -116,13 +116,13 @@ doc_analytics	doc_fast
 # DOCS_TEST_BODY
 
 statement ok
-CREATE ROLE doc_writer;
+CREATE ROLE doc_ts_writer;
 
 statement ok
-GRANT CREATE ON TABLESPACE doc_fast TO doc_writer;
+GRANT CREATE ON TABLESPACE doc_fast TO doc_ts_writer;
 
 query
-SELECT has_tablespace_privilege('doc_writer', 'doc_fast', 'CREATE') AS can_create;
+SELECT has_tablespace_privilege('doc_ts_writer', 'doc_fast', 'CREATE') AS can_create;
 ----
 can_create
 t
@@ -135,7 +135,7 @@ statement ok
 ALTER TABLESPACE doc_fast RENAME TO doc_nvme;
 
 statement ok
-ALTER TABLESPACE doc_nvme OWNER TO doc_writer;
+ALTER TABLESPACE doc_nvme OWNER TO doc_ts_writer;
 
 # DOCS_TEST: example_010
 
@@ -180,4 +180,4 @@ statement ok
 DROP TABLE doc_notes;
 
 statement ok
-DROP ROLE doc_writer;
+DROP ROLE doc_ts_writer;

@@ -160,7 +160,7 @@ size_t BuiltRootSize(const CentroidsBuilder& builder) {
     MemoryIndexOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
-    byte_size = span.byte_size;
+    byte_size = span.root_byte_size;
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
@@ -191,7 +191,7 @@ void ExpectQueriesRouteToTrueNn(const CentroidsBuilder& builder,
     MemoryIndexOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
-    byte_size = span.byte_size;
+    byte_size = span.root_byte_size;
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
@@ -274,7 +274,7 @@ TEST(centroids_builder_test, multilevel_build_search_id_consistency) {
     MemoryIndexOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
-    byte_size = span.byte_size;
+    byte_size = span.root_byte_size;
     out.Flush();
   }
 
@@ -315,7 +315,7 @@ TEST(centroids_builder_test, gathered_centroid_matches_search) {
     MemoryIndexOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
-    byte_size = span.byte_size;
+    byte_size = span.root_byte_size;
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
@@ -453,7 +453,7 @@ TEST(centroids_builder_test, single_cluster_has_mean_centroid) {
     MemoryIndexOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
-    byte_size = span.byte_size;
+    byte_size = span.root_byte_size;
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
@@ -542,7 +542,7 @@ TEST(centroids_builder_test, cosine_multilevel_build_search_id_consistency) {
     MemoryIndexOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
-    byte_size = span.byte_size;
+    byte_size = span.root_byte_size;
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
@@ -626,7 +626,7 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
     MemoryIndexOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
-    byte_size = span.byte_size;
+    byte_size = span.root_byte_size;
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
@@ -643,6 +643,49 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
     ASSERT_EQ(ids.size(), 1u) << "row " << i;
     EXPECT_EQ(ids[0], build_id[i]) << "row " << i;
   }
+}
+
+TEST(centroids_builder_test, open_reads_exactly_the_root_level) {
+  constexpr uint32_t d = 8;
+  const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/1);
+  size_t levels = 0;
+  size_t root_size = 0;
+  const auto check = [&](const std::vector<float>& sample,
+                         const CentroidsBuildParams& params) {
+    const auto builder = CentroidsBuilder::CreateFromSample(
+      sample, d, VectorMetric::L2Sqr, params);
+    SimpleMemoryAccounter memory;
+    MemoryFile file{memory};
+    CentroidsSpan span;
+    {
+      MemoryIndexOutput out{file};
+      out.WriteU64(0);
+      span = builder.Serialize(out);
+      out.WriteU64(0);
+      out.Flush();
+    }
+    const auto file_bytes = tests::Bytes(file);
+    IndexInput in{file_bytes};
+    in.Seek(span.offset);
+    const auto tree = CentroidsTree::Deserialize(in, span.root_byte_size);
+    levels = tree.Levels();
+    root_size = tree.RootSize();
+
+    EXPECT_EQ(levels == 1, span.root_byte_size == span.byte_size);
+    if (root_size != 0) {
+      EXPECT_EQ(span.offset + span.root_byte_size, in.Position());
+    }
+  };
+
+  check(data, {.posting_size = 1, .max_fanout = 4});
+  EXPECT_GE(levels, 3u);
+  check(data, {.posting_size = 16, .max_fanout = 16});
+  EXPECT_EQ(levels, 2u);
+  check(data, {.posting_size = 256});
+  EXPECT_EQ(levels, 1u);
+  EXPECT_NE(root_size, 0u);
+  check({}, {.posting_size = 1024});
+  EXPECT_EQ(root_size, 0u);
 }
 
 TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
@@ -662,7 +705,7 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
     MemoryIndexOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
-    byte_size = span.byte_size;
+    byte_size = span.root_byte_size;
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
@@ -977,7 +1020,7 @@ TEST(centroids_builder_test, beam_recall_on_boundary_queries) {
     MemoryIndexOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
-    byte_size = span.byte_size;
+    byte_size = span.root_byte_size;
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
@@ -1204,7 +1247,7 @@ TEST(centroids_builder_test,
     MemoryIndexOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
-    byte_size = span.byte_size;
+    byte_size = span.root_byte_size;
     out.Flush();
   }
   const auto file_bytes = tests::Bytes(file);
@@ -1267,7 +1310,7 @@ TEST(centroids_builder_test, root_fanout_capped_at_max_fanout) {
       MemoryIndexOutput out{file};
       const auto span = builder.Serialize(out);
       offset = span.offset;
-      byte_size = span.byte_size;
+      byte_size = span.root_byte_size;
       out.Flush();
     }
     const auto file_bytes = tests::Bytes(file);

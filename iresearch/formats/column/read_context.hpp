@@ -88,6 +88,7 @@ class ReadContext final : public BlockManager,
 
  private:
   void ResetFile(const InputFile* file);
+  bool Maps(uint64_t offset, uint64_t size) const noexcept;
 
   const InputFile* _file = nullptr;
   IndexInput _in;

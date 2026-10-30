@@ -1,0 +1,133 @@
+# A predicate on an indexed column of a search table is read from the columns
+# when it admits much of the segment and the beam is narrow, and taken from the
+# index when it admits few rows. A walk reading the columns that finds the rows
+# near the query rejected goes back to the index. The fault points fail the
+# query the moment a segment picks the columns or goes back to the index.
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE MACRO route_vec(i) AS
+  list_transform(range(16), j -> ((hash(i * 16 + j) % 10000) / 10000.0)::FLOAT)::FLOAT[16];
+
+
+statement ok
+CREATE TABLE route_docs (id INTEGER PRIMARY KEY, half INTEGER, rare INTEGER,
+  far INTEGER, emb FLOAT[16])
+  WITH (storage = 'search', compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX route_docs_l2 ON route_docs
+  USING inverted(id, half, rare, far,
+                 emb hnsw (metric = 'l2', quant = 'none', m = 16));
+
+
+statement ok
+INSERT INTO route_docs
+SELECT i, i % 2, (i % 100 = 0)::INTEGER,
+  (list_sum(route_vec(i)) > 8.0)::INTEGER, route_vec(i)
+FROM range(20000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) route_docs;
+
+
+statement ok
+SET sdb_hnsw_ef_search = 8;
+
+
+statement ok
+SET sdb_faults = 'irs::HnswReadsColumns';
+
+
+statement error
+SELECT id FROM route_docs WHERE half = 0
+  ORDER BY emb <-> route_vec(123456) LIMIT 5;
+----
+db error: ERROR: intentional debug error
+
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM route_docs WHERE rare = 1
+    ORDER BY emb <-> route_vec(123456) LIMIT 5) t;
+----
+count
+5
+
+
+statement ok
+SET sdb_faults = '-irs::HnswReadsColumns';
+
+
+statement ok
+SET sdb_faults = 'irs::HnswColumnsStalled';
+
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM route_docs WHERE half = 0
+    ORDER BY emb <-> route_vec(123456) LIMIT 5) t;
+----
+count
+5
+
+
+statement error
+SELECT id FROM route_docs WHERE far = 1
+  ORDER BY emb <-> list_transform(range(16), j -> 0.0)::FLOAT[16] LIMIT 5;
+----
+db error: ERROR: intentional debug error
+
+
+statement ok
+SET sdb_faults = '-irs::HnswColumnsStalled';
+
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM route_docs WHERE far = 1
+    ORDER BY emb <-> list_transform(range(16), j -> 0.0)::FLOAT[16] LIMIT 5) t;
+----
+count
+5
+
+
+statement ok
+SET sdb_faults = 'irs::HnswReadsColumns';
+
+
+statement ok
+SET sdb_hnsw_column_filter = 'fold';
+
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM route_docs WHERE half = 0
+    ORDER BY emb <-> route_vec(123456) LIMIT 5) t;
+----
+count
+5
+
+
+statement ok
+SET sdb_hnsw_column_filter = 'read';
+
+
+statement ok
+SET sdb_hnsw_filter_mode = 'walk';
+
+
+statement error
+SELECT id FROM route_docs WHERE rare = 1
+  ORDER BY emb <-> route_vec(123456) LIMIT 5;
+----
+db error: ERROR: intentional debug error
+
+
+statement ok
+RESET sdb_faults;

@@ -39,14 +39,13 @@
 #include <iresearch/store/directory.hpp>
 #include <iresearch/store/index_files.hpp>
 #include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/async_utils.hpp>
 #include <iresearch/utils/crc.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -262,15 +261,15 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
     irs::IndexInput in{*in_file};
     std::mutex in_mtx;
     std::mutex mutex;
-    irs::async_utils::ThreadPool<> pool(16);
+    std::vector<std::jthread> threads;
 
     ASSERT_FALSE(!in);
 
     {
       std::lock_guard lock(mutex);
 
-      for (auto i = pool.threads(); i; --i) {
-        pool.run([&in, &in_mtx, &mutex]() -> void {
+      for (size_t i = 0; i < 16; ++i) {
+        threads.emplace_back([&in, &in_mtx, &mutex]() -> void {
           IndexInput input;
 
           {
@@ -292,7 +291,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
       }
     }
 
-    pool.stop();
+    threads.clear();
   }
 }
 
@@ -4237,6 +4236,57 @@ TEST_P(DirectoryTestCase, checksum_covers_bytes_since_previous_call) {
   EXPECT_EQ(irs::Crc32c{}.checksum(), out->Checksum());
 }
 
+TEST_P(DirectoryTestCase, read_once_reads_range_and_advances) {
+  std::vector<irs::byte_type> data(3 * 1024 * 1024 + 123);
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<irs::byte_type>(i * 31 % 251);
+  }
+  {
+    auto out = _dir->Create("read_once");
+    ASSERT_FALSE(!out);
+    out->WriteData(data.data(), data.size());
+    out->Close();
+  }
+
+  const auto in_file =
+    _dir->Open("read_once", duckdb::MappedFileAccess::RANDOM);
+  irs::IndexInput in{*in_file};
+  constexpr size_t kOffset = 4097;
+  std::vector<irs::byte_type> read(data.size() - kOffset - 1);
+  in.Seek(kOffset);
+  irs::ReadOnce(in, read.data(), read.size());
+  ASSERT_EQ(kOffset + read.size(), in.Position());
+  EXPECT_EQ(0, std::memcmp(read.data(), data.data() + kOffset, read.size()));
+  EXPECT_EQ(data.back(), in.ReadByte());
+  EXPECT_TRUE(in.IsEOF());
+}
+
+TEST_P(DirectoryTestCase, evict_keeps_contents) {
+  std::vector<irs::byte_type> data(1024 * 1024 + 321);
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<irs::byte_type>(i * 31 % 251);
+  }
+  {
+    auto out = _dir->Create("evict");
+    ASSERT_FALSE(!out);
+    out->WriteData(data.data(), data.size());
+    out->Close();
+  }
+
+  const auto in_file = _dir->Open("evict", duckdb::MappedFileAccess::RANDOM);
+  irs::IndexInput in{*in_file};
+  std::vector<irs::byte_type> before(data.size());
+  in.ReadData(0, before.data(), before.size());
+  ASSERT_EQ(0, std::memcmp(before.data(), data.data(), data.size()));
+  in_file->Evict(1000, data.size() - 2000);
+  if (const auto span = in_file->Span(); !span.empty()) {
+    EXPECT_EQ(0, std::memcmp(span.data(), data.data(), data.size()));
+  }
+  std::vector<irs::byte_type> after(data.size());
+  in.ReadData(0, after.data(), after.size());
+  EXPECT_EQ(0, std::memcmp(after.data(), data.data(), data.size()));
+}
+
 TEST_P(DirectoryTestCase, input_type_follows_storage) {
   {
     auto out = _dir->Create("file");
@@ -5018,10 +5068,10 @@ TEST(DirectoryTest, memory_segments_are_compacted_when_written) {
 }
 
 TEST(DirectoryTest, memory_segments_without_memory_to_compact_stay_in_blocks) {
-  if (!irs::AddFailurePointDebugging("IndexWriter::CompactOutOfMemory")) {
+  if (!TestEnv::ArmFaultPoint("IndexWriter::CompactOutOfMemory")) {
     GTEST_SKIP() << "built without fault injection";
   }
-  absl::Cleanup clear = [] { irs::ClearFailurePointsDebugging(); };
+  absl::Cleanup clear = [] { TestEnv::ClearFaultPoints(); };
   auto& db = irs::DuckDBEngine::Instance().instance();
   const irs::Directory files{db, TestEnv::MemoryRoot()};
   ::tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
@@ -5037,7 +5087,7 @@ TEST(DirectoryTest, memory_segments_without_memory_to_compact_stay_in_blocks) {
   EXPECT_EQ(1, flushed.live_docs_count());
   EXPECT_LT(0, MemoryFilesInBlocks(files, flushed));
 
-  irs::ClearFailurePointsDebugging();
+  TestEnv::ClearFaultPoints();
   for (const auto& segment : flushed.Meta().index_meta.segments) {
     for (const auto& file : segment.meta.files) {
       files.Compact(file);
@@ -5286,12 +5336,12 @@ TEST_F(DirectoryHookTest, failed_object_removal_is_retried) {
   store->Create("abc")->Close();
   store->Refs().add("abc");
 
-  if (!irs::AddFailurePointDebugging("object_store_delete_fails")) {
+  if (!TestEnv::ArmFaultPoint("object_store_delete_fails")) {
     GTEST_SKIP() << "built without fault injection";
   }
-  absl::Cleanup clear = [] { irs::ClearFailurePointsDebugging(); };
+  absl::Cleanup clear = [] { TestEnv::ClearFaultPoints(); };
   EXPECT_THROW(irs::RemoveUnreferenced(*store), duckdb::IOException);
-  irs::ClearFailurePointsDebugging();
+  TestEnv::ClearFaultPoints();
   ASSERT_TRUE(store->Has("abc"));
 
   EXPECT_EQ(1, irs::RemoveUnreferenced(*store));

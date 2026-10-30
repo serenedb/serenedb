@@ -97,8 +97,6 @@ class IvfIndex final : public AnnIndex {
 
   bool Empty() const noexcept final { return _tree.Empty(); }
 
-  bool HasQuantStats() const noexcept final { return _tree.HasQuantStats(); }
-
   bool SupportsFilter() const noexcept final { return true; }
 
   bool SupportsRange() const noexcept final { return true; }

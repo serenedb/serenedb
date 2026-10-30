@@ -227,3 +227,10 @@ DROP SEQUENCE sf_seq
 
 statement ok
 DROP TYPE sf_mood
+
+
+query
+SELECT DISTINCT parameters FROM duckdb_functions() WHERE function_name = 'arg_max' AND len(parameters) = 3;
+----
+parameters
+{arg,val,N}

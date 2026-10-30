@@ -200,15 +200,17 @@ class HttpSession final
       _conn = irs::DuckDBEngine::Instance().CreateConnection();
       _conn->context->SetSchedulerAccount(_task->Account());
       _connection_ctx = std::make_shared<ConnectionContext>(
-        *_conn->context, user, role, dbname, database_id, nullptr,
-        static_cast<int32_t>(_cancel_key >> 32), _cancel);
+        *_conn->context, user, std::string_view{}, role, dbname, database_id,
+        nullptr, static_cast<int32_t>(_cancel_key >> 32), _cancel);
+      _cancel_token->role.store(role, std::memory_order_relaxed);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
-        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
-      connector::SereneDBClientState::Register(*_conn->context,
-                                               _connection_ctx);
+      _progress =
+        sdb::pg::ProgressRegistration{connector::SereneDBClientState::Register(
+                                        *_conn->context, _connection_ctx, true)
+                                        .progress_source};
       connector::SetDefaultSearchPath(*_conn->context, dbname);
       _conn_user = _user;
     }
@@ -344,6 +346,7 @@ class HttpSession final
       _cancel_token->ctx = nullptr;
     }
     _prepared = {};
+    _progress = {};
     _connection_ctx.reset();
     _conn.reset();
   }
@@ -389,6 +392,7 @@ class HttpSession final
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _connection_ctx;
+  sdb::pg::ProgressRegistration _progress;
   // Statements prepared on _conn; declared after it so they are destroyed
   // first.
   std::array<PreparedCache, kPreparedSlots> _prepared;
@@ -445,9 +449,8 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   auto writer = this->SendWriter();
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
-    asio_ns::error_code peer_ec;
-    const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
-    _peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
+    const auto client = this->ClientAddress();
+    _peer_is_loopback = client && client->is_loopback();
     cpu = SessionMain();
     _handed_off = true;
     _task->Start();

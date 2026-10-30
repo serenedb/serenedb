@@ -19,7 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <absl/synchronization/notification.h>
 #include <simdjson.h>
 
 #include <atomic>
@@ -124,6 +126,23 @@ std::string Content(std::string_view body, size_t message) {
 bool IsPartial(std::string_view body) {
   return Content(body, 0).starts_with("You condense");
 }
+
+struct Held {
+  void Arrive() {
+    if (!first.exchange(true)) {
+      entered.Notify();
+    }
+  }
+
+  void Enter() {
+    Arrive();
+    release.WaitForNotification();
+  }
+
+  std::atomic_bool first = false;
+  absl::Notification entered;
+  absl::Notification release;
+};
 
 struct InFlight {
   int Enter() {
@@ -654,14 +673,16 @@ TEST_F(AIFunctionsTest, InsecureEndpointNeedsOptIn) {
 }
 
 TEST_F(AIFunctionsTest, CancelWhileRequestsWait) {
-  Mock(kChat, [](std::string_view) {
-    std::this_thread::sleep_for(std::chrono::milliseconds{500});
+  auto held = std::make_shared<Held>();
+  Mock(kChat, [held](std::string_view) {
+    held->Enter();
     return Reply{200, ChatReply("ok", "stop", 1)};
   });
   Start();
   std::thread cancel{[&] {
-    std::this_thread::sleep_for(std::chrono::milliseconds{200});
+    held->entered.WaitForNotification();
     _conn.Interrupt();
+    held->release.Notify();
   }};
   auto result = _conn.Query(
     "SELECT ai_generate(range::VARCHAR, secret_name := 'chat') FROM "
@@ -716,13 +737,15 @@ TEST_F(AIFunctionsTest, RetryBackoffDoubles) {
 }
 
 TEST_F(AIFunctionsTest, CancelDuringRetryAfter) {
-  Mock(kChat, [](std::string_view) {
+  auto held = std::make_shared<Held>();
+  Mock(kChat, [held](std::string_view) {
+    held->Arrive();
     return Reply{429, R"({"error":"slow down"})", "Retry-After: 3600\r\n"};
   });
   Start();
   Run("SET sdb_ai_throw_on_error = false");
   std::thread cancel{[&] {
-    std::this_thread::sleep_for(std::chrono::milliseconds{200});
+    held->entered.WaitForNotification();
     _conn.Interrupt();
   }};
   duckdb::unique_ptr<duckdb::QueryResult> result;
@@ -1060,11 +1083,13 @@ TEST_F(AIFunctionsTest, MaximalIntegerSettings) {
 }
 
 TEST_F(AIFunctionsTest, RequestTimeoutFailsRow) {
-  Mock(kChat, [](std::string_view) {
-    std::this_thread::sleep_for(std::chrono::seconds{3});
+  auto held = std::make_shared<Held>();
+  Mock(kChat, [held](std::string_view) {
+    held->Enter();
     return Reply{200, ChatReply("ok", "stop", 1)};
   });
   Start();
+  absl::Cleanup release = [&] { held->release.Notify(); };
   Run("SET sdb_ai_request_timeout = 1");
   Run("SET sdb_ai_max_retries = 0");
   const std::string sql = "SELECT ai_generate('x', secret_name := 'chat')";
@@ -1248,16 +1273,18 @@ TEST_F(AIFunctionsTest, ControlCharactersAreEscaped) {
 }
 
 TEST_F(AIFunctionsTest, CancelWithoutAsyncThreads) {
-  Mock(kChat, [](std::string_view) {
-    std::this_thread::sleep_for(std::chrono::milliseconds{100});
+  auto held = std::make_shared<Held>();
+  Mock(kChat, [held](std::string_view) {
+    held->Enter();
     return Reply{200, ChatReply("ok", "stop", 1)};
   });
   Start();
   Run("SET threads = 1");
   Run("SET async_threads = 0");
   std::thread cancel{[&] {
-    std::this_thread::sleep_for(std::chrono::milliseconds{300});
+    held->entered.WaitForNotification();
     _conn.Interrupt();
+    held->release.Notify();
   }};
   duckdb::unique_ptr<duckdb::QueryResult> result;
   const auto elapsed = Timed([&] {

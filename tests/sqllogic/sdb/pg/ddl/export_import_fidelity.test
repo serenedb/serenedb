@@ -72,11 +72,15 @@ statement ok
 CREATE SEQUENCE s1.done START 1 MAXVALUE 2;
 
 
+statement ok
+CREATE SEQUENCE s1.top START 9223372036854775807;
+
+
 query
-SELECT nextval('"Odd S"."q s"') AS q, nextval('"Odd S"."q s"') AS q2, nextval('s1.wrap') AS w, nextval('s1.wrap') AS w2, nextval('s1.done') AS d, nextval('s1.done') AS d2;
+SELECT nextval('"Odd S"."q s"') AS q, nextval('"Odd S"."q s"') AS q2, nextval('s1.wrap') AS w, nextval('s1.wrap') AS w2, nextval('s1.done') AS d, nextval('s1.done') AS d2, nextval('s1.top') AS t;
 ----
-q	q2	w	w2	d	d2
-5	7	2	1	1	2
+q	q2	w	w2	d	d2	t
+5	7	2	1	1	2	9223372036854775807
 
 
 statement ok
@@ -100,11 +104,13 @@ CREATE MACRO s1.mtf (m s2.mood) AS TABLE (SELECT CAST(m AS text) AS v);
 CREATE SEQUENCE "Odd S"."q s" INCREMENT BY 2 MINVALUE 1 MAXVALUE 9223372036854775807 START 5 NO CYCLE;
 CREATE SEQUENCE s1.done INCREMENT BY 1 MINVALUE 1 MAXVALUE 2 START 1 NO CYCLE;
 CREATE SEQUENCE s1.fresh INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START 9 NO CYCLE;
+CREATE SEQUENCE s1.top INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START 9223372036854775807 NO CYCLE;
 CREATE SEQUENCE s1.wrap INCREMENT BY -1 MINVALUE 1 MAXVALUE 2 START 2 CYCLE;
 CREATE TABLE s1.typed(id INTEGER, m s2.mood, p "Odd S"."My T", ms s2.mood[], arr s2.mood[2], mp MAP(VARCHAR, s1.mood), st STRUCT(k s2.mood), ip INET);
 CREATE TYPE "Odd S"."My T" AS STRUCT(a INTEGER, b s2.mood);
 SELECT setval('"Odd S"."q s"', 7, true);
 SELECT setval('s1.done', 2, true);
+SELECT setval('s1.top', 9223372036854775807, true);
 SELECT setval('s1.wrap', 1, true);
 
 
@@ -162,6 +168,7 @@ sequence_name	start_value	last_value
 done	1	2
 fresh	9	NULL
 q s	5	7
+top	9223372036854775807	9223372036854775807
 wrap	2	1
 
 
@@ -176,6 +183,12 @@ statement error
 SELECT nextval('s1.done');
 ----
 db error: ERROR: nextval: reached maximum value of sequence "done" (2)
+
+
+statement error
+SELECT nextval('s1.top');
+----
+db error: ERROR: nextval: reached maximum value of sequence "top" (9223372036854775807)
 
 
 query

@@ -163,6 +163,8 @@ irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error);
 // internal.
 irs::pg::SqlErrorData ToSqlError(const std::exception& exception);
 
+irs::pg::SqlErrorData ToSqlError(const duckdb::ErrorData& error);
+
 void WriteReadyForQuery(message::Buffer& out, char txn_status);
 
 // NegotiateProtocolVersion ('v'): tells a client that requested a newer minor

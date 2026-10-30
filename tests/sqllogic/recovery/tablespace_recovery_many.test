@@ -93,6 +93,7 @@ spare	keeper	<dir>/many/spare	(empty)
 connection after_crash
 query
 SELECT c.relname, t.spcname FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE c.relnamespace <> 'pg_catalog'::regnamespace
 ORDER BY c.relname;
 ----
 relname	spcname

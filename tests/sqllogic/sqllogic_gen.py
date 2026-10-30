@@ -4,6 +4,8 @@ import sys
 import textwrap
 
 RECORDED = "<recorded>"
+RECORDED_ROWS = "<recorded rows>"
+PART = "<part>"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -25,12 +27,28 @@ class Test:
                                          subsequent_indent="# ")
         self._lines.append("")
 
+    def part(self):
+        self._lines += [PART, ""]
+
+    def parts(self, items, size):
+        for start in range(0, len(items), size):
+            self.part()
+            yield items[start:start + size]
+
     def section(self, title):
         self._lines += textwrap.wrap(title, 78, initial_indent="# --- ",
                                      subsequent_indent="# ")
         self._lines.append("")
 
-    def statement(self, sql):
+    def control(self, setting):
+        self._lines += [f"control {setting}", ""]
+
+    def _condition(self, onlyif, skipif):
+        self._lines += [f"onlyif {onlyif}"] if onlyif else []
+        self._lines += [f"skipif {skipif}"] if skipif else []
+
+    def statement(self, sql, onlyif=None, skipif=None):
+        self._condition(onlyif, skipif)
         self._lines += ["statement ok", sql, ""]
 
     def dictionary(self, name, definition):
@@ -54,6 +72,20 @@ class Test:
 
     def refresh(self, table):
         self.statement(f"VACUUM (REFRESH_TABLE) {table}")
+
+    def query(self, sql, columns=None, rows=1, onlyif=None, skipif=None):
+        header = [] if columns is None else ["\t".join(columns)]
+        if columns is None or rows is None:
+            rows = [[RECORDED_ROWS]]
+        elif isinstance(rows, int):
+            rows = [[RECORDED] * len(columns)] * rows
+        self._condition(onlyif, skipif)
+        self._lines += ["query", sql, "----", *header,
+                        *("\t".join(map(str, row)) for row in rows), ""]
+
+    def error(self, sql, message, onlyif=None, skipif=None):
+        self._condition(onlyif, skipif)
+        self._lines += [f"statement error {message}", sql, ""]
 
     def same_rows(self, actual, expected):
         self._lines += [

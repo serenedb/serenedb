@@ -151,10 +151,13 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
 
+  duckdb::Value Option(std::string_view name) const;
+
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
 
+  void BeforeDrop(duckdb::CatalogTransaction transaction) final;
   void OnDrop() final;
 
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
@@ -172,8 +175,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   }
 
   bool NumbersRowsWith(const duckdb::CatalogEntry& sequence) const final {
-    return sequence.name == _pk_sequence &&
-           sequence.ParentSchemaName() == ParentSchemaName();
+    return sequence.name.GetIdentifierName() ==
+             _pk_sequence.GetIdentifierName() &&
+           sequence.ParentSchemaOid() == ParentSchemaOid();
   }
 
   duckdb::optional_ptr<duckdb::TableLogStorage> GetLogStorage() final {

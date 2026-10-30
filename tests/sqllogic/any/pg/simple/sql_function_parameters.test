@@ -1,0 +1,185 @@
+statement ok
+DROP SCHEMA IF EXISTS fnp CASCADE;
+
+
+statement ok
+CREATE SCHEMA fnp;
+
+
+statement ok
+CREATE FUNCTION fnp.add_one(integer) RETURNS integer LANGUAGE sql RETURN $1 + 1;
+
+
+statement ok
+CREATE FUNCTION fnp.add_mixed(a integer, b integer) RETURNS integer LANGUAGE sql RETURN $1 + b;
+
+
+statement ok
+CREATE FUNCTION fnp.add_atomic(integer, integer) RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT $1 + $2; END;
+
+
+statement ok
+CREATE FUNCTION fnp.add_one_subquery(a integer) RETURNS integer LANGUAGE sql RETURN (SELECT $1 + 1);
+
+
+statement ok
+CREATE FUNCTION fnp.count_below(integer) RETURNS bigint LANGUAGE sql RETURN (SELECT count(*) FROM generate_series(0, 9) t(i) WHERE i < $1);
+
+
+statement ok
+CREATE FUNCTION fnp.in_range(integer) RETURNS boolean LANGUAGE sql BEGIN ATOMIC SELECT EXISTS (SELECT 1 FROM generate_series(0, 9) t(i) WHERE i = $1); END;
+
+
+statement ok
+CREATE FUNCTION fnp.add_one_nested(integer) RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT (SELECT (SELECT $1) + 1); END;
+
+
+statement ok
+CREATE FUNCTION fnp.next_day(d date) RETURNS date LANGUAGE sql RETURN d + 1;
+
+
+statement ok
+CREATE FUNCTION fnp.rel_name(r regclass) RETURNS text LANGUAGE sql RETURN r::text;
+
+
+query
+SELECT fnp.add_one(41) AS a, fnp.add_mixed(40, 2) AS b, fnp.add_atomic(40, 2) AS c, fnp.add_one_subquery(41) AS d, fnp.count_below(4) AS e, fnp.in_range(4) AS f, fnp.in_range(40) AS g, fnp.add_one_nested(41) AS h;
+----
+a	b	c	d	e	f	g	h
+42	42	42	42	4	t	f	42
+
+
+query
+SELECT fnp.next_day('2024-01-31') AS a, fnp.next_day(d => '2024-02-28') AS b, fnp.rel_name('pg_class') AS c, fnp.rel_name(1259) AS d;
+----
+a	b	c	d
+2024-02-01	2024-02-29	pg_class	pg_class
+
+
+statement error (Parameter expressions within macro's are not supported|there is no parameter \$2)
+CREATE FUNCTION fnp.add_missing(integer) RETURNS integer LANGUAGE sql RETURN $2;
+
+
+statement error (does not support the supplied arguments|function fnp\.next_day\(character varying\) does not exist)
+SELECT fnp.next_day('2024-01-31'::varchar);
+
+
+statement ok
+CREATE FUNCTION fnp.doubled(integer) RETURNS integer RETURN $1 * 2;
+
+
+statement ok
+CREATE FUNCTION fnp.plus_one(integer) RETURNS integer BEGIN ATOMIC SELECT $1 + 1; END;
+
+
+statement ok
+CREATE FUNCTION fnp.as_name() RETURNS name LANGUAGE sql AS 'SELECT ''abc''::text';
+
+
+statement ok
+CREATE FUNCTION fnp.text_list() RETURNS text[] LANGUAGE sql AS 'SELECT ARRAY[1, 2]';
+
+
+statement ok
+CREATE FUNCTION fnp.as_interval() RETURNS interval LANGUAGE sql AS 'SELECT ''01:02:03''::time';
+
+
+query
+SELECT fnp.doubled(21) AS a, fnp.plus_one(41) AS b, fnp.as_name()::text AS c, array_to_string(fnp.text_list(), ',') AS d, fnp.as_interval()::text AS e;
+----
+a	b	c	d	e
+42	42	abc	1,2	01:02:03
+
+
+statement ok
+CREATE TABLE fnp.named_rows (id integer, v text);
+
+
+statement ok
+INSERT INTO fnp.named_rows VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+
+statement ok
+CREATE FUNCTION fnp.count_named_below(v text) RETURNS bigint LANGUAGE sql AS 'SELECT count(*) FROM fnp.named_rows WHERE named_rows.v < $1';
+
+
+statement ok
+CREATE FUNCTION fnp.count_named_atomic(v text) RETURNS bigint LANGUAGE sql BEGIN ATOMIC SELECT count(*) FROM fnp.named_rows WHERE named_rows.v < $1; END;
+
+
+query
+SELECT fnp.count_named_below('c') AS a, fnp.count_named_atomic('b') AS b;
+----
+a	b
+2	1
+
+
+statement ok
+CREATE FUNCTION fnp.narrow(smallint) RETURNS text LANGUAGE sql AS 'SELECT ''smallint''';
+
+
+statement ok
+CREATE FUNCTION fnp.narrow(numeric) RETURNS text LANGUAGE sql AS 'SELECT ''numeric''';
+
+
+statement ok
+CREATE FUNCTION fnp.small_only(smallint) RETURNS text LANGUAGE sql AS 'SELECT ''smallint''';
+
+
+query
+SELECT fnp.narrow(5) AS a, fnp.narrow(5::smallint) AS b, fnp.small_only(5::smallint) AS c;
+----
+a	b	c
+numeric	smallint	smallint
+
+
+statement error (does not support the supplied arguments|function fnp\.small_only\(integer\) does not exist)
+SELECT fnp.small_only(5);
+
+
+statement ok
+DROP TYPE IF EXISTS fnp_feeling CASCADE;
+
+
+statement ok
+CREATE TYPE fnp_feeling AS ENUM ('sad', 'ok');
+
+
+statement ok
+CREATE FUNCTION fnp.feeling_text(fnp_feeling) RETURNS text LANGUAGE sql AS 'SELECT $1::text';
+
+
+statement ok
+CREATE FUNCTION fnp.numeric_text(numeric) RETURNS text LANGUAGE sql AS 'SELECT ($1 * 2)::integer::text';
+
+
+query
+SELECT fnp.feeling_text('ok') AS a, pg_get_function_arguments('fnp.feeling_text'::regproc) AS b,
+       fnp.numeric_text(1.5) AS c, pg_get_function_arguments('fnp.numeric_text'::regproc) AS d;
+----
+a	b	c	d
+ok	fnp_feeling	3	numeric
+
+
+statement error (?i)type (with name )?"?no_such_type"? does not exist
+CREATE FUNCTION fnp.missing(no_such_type) RETURNS text LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+DROP SCHEMA fnp CASCADE;
+
+
+statement ok
+DROP TYPE fnp_feeling;
+
+
+statement ok
+CREATE FUNCTION fnp_one(a int) RETURNS int LANGUAGE sql AS 'SELECT a';
+
+
+statement error (DISTINCT specified, but fnp_one is not an aggregate function|"DISTINCT", "FILTER", and "ORDER BY" are only applicable)
+SELECT fnp_one(DISTINCT 1);
+
+
+statement ok
+DROP FUNCTION fnp_one;

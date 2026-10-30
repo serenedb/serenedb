@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <exception>
 #include <iresearch/utils/index_utils.hpp>
@@ -134,7 +135,7 @@ CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
 }
 
 CompactionOptions PinCompactionOptions(SearchTable& table) {
-  std::shared_ptr<const irs::IndexFieldOptions> options = table.Config();
+  auto options = table.CompactionConfig();
   const auto* raw = options.get();
   return {.alive = true, .keepalive = std::move(options), .field_options = raw};
 }
@@ -298,6 +299,7 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
   int stretch = 0;
   try {
     for (;;) {
+      SDB_PARK_ONCE_ON_FAILURE("pause_refresh_loop_head");
       auto idx = weak.lock();
       if (!idx) {
         SDB_TRACE(SEARCH, "maintenance target is deleted, ending ", name,
@@ -332,6 +334,7 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
       }
 
       SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
+      SDB_PARK_ONCE_ON_FAILURE("pause_refresh_loop_before_tick");
 
       co_await yaclib::On(s.executor());
       if (ShouldStop()) {

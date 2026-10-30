@@ -42,11 +42,11 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/database_directory.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/pg_logical_types.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
+#include "pg/types/logical.h"
 #include "replication/subscription_engine.h"
 
 namespace sdb::replication {
@@ -146,7 +146,7 @@ std::optional<idx_t> SubscriptionOriginOid(std::string_view name) {
   if (!name.starts_with("pg_")) {
     return std::nullopt;
   }
-  return pg::OidFromName(name.substr(3));
+  return catalog::OidFromName(name.substr(3));
 }
 
 std::optional<Origin> FindOrigin(duckdb::ClientContext& context,

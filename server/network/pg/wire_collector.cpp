@@ -20,6 +20,7 @@
 
 #include "network/pg/wire_collector.h"
 
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/execution/operator/helper/physical_execute.hpp>
 #include <duckdb/execution/operator/helper/physical_result_collector.hpp>
@@ -28,7 +29,6 @@
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
-#include <iresearch/utils/debugging.hpp>
 
 #include "connector/duckdb_client_state.h"
 #include "network/connection.h"
@@ -39,8 +39,6 @@ namespace {
 
 // The settings template is cloned per lstate (SerializationContext owns a
 // per-lstate types cache and buffer pointer, so it is not copyable as-is).
-// The types cache stays null: record serialization lazily creates it
-// (GetSerializersCache), so flat-typed results skip the allocation.
 sdb::pg::SerializationContext CloneProto(
   const sdb::pg::SerializationContext& proto) {
   sdb::pg::SerializationContext context;

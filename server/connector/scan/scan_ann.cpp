@@ -213,10 +213,12 @@ void CollectUnit(ScanGlobalState& g, AnnLocalState& l) {
     auto* table = BeginVerify(l.col_verify, seg, g, l);
     SDB_ENSURE(g.scorer_obj != nullptr,
                "a scan that ranks by score has a scorer to rank with");
-    auto plan = irs::ann::MakeRoot(seg_query, {.scorer = *g.scorer_obj,
-                                               .fetcher = l.score_fetcher,
-                                               .table = table,
-                                               .k = l.collector->K()});
+    auto plan =
+      irs::ann::MakeRoot(seg_query, {.scorer = *g.scorer_obj,
+                                     .fetcher = l.score_fetcher,
+                                     .table = table,
+                                     .columns = BeginColumnVerify(seg, g, l),
+                                     .k = l.collector->K()});
     EnsurePlanned(plan != nullptr);
     l.root = std::move(plan);
     l.root_seg = unit.seg;

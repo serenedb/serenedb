@@ -73,6 +73,7 @@ QueryBuilder::ptr MultiTermQuery::Finish(
   if (sum == 0) {
     return QueryBuilder::Empty();
   }
+  query->_estimate_min = terms.front().cookie.docs_count;
   query->_estimate_max = ClampEstimate(sum, query->_segment);
   query->_estimate_matches = query->_estimate_max;
   query->_postings = sum;

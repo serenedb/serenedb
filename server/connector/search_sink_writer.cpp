@@ -24,6 +24,7 @@
 
 #include <cstdio>
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
@@ -1133,7 +1134,9 @@ void RemoveGeneratedRows(irs::IndexWriter::Transaction& trx,
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context) {
+  SDB_PARK_ONCE_ON_FAILURE("search_insert_sink_before_config");
   auto config = shard.Config();
+  SDB_PARK_ONCE_ON_FAILURE("search_insert_sink_after_config");
   std::vector<IndexedExpression> indexed_exprs;
   for (const auto& key : config->keys) {
     if (key.normalized_expression.empty() || !config->WritesField(key)) {

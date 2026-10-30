@@ -645,11 +645,13 @@ struct Unestimated : public irs::FilterWithType<Unestimated> {
 
 struct Estimated : public irs::FilterWithType<Estimated> {
   struct Prepared : public irs::QueryBuilder {
-    Prepared(const irs::SubReader& segment, uint32_t est, bool* evaluated)
+    Prepared(const irs::SubReader& segment, uint32_t est, uint32_t est_min,
+             bool* evaluated)
       : QueryBuilder{
           segment,
           static_cast<uint32_t>(std::min<uint64_t>(est, segment.docs_count())),
           irs::QueryKind::Other} {
+      _estimate_min = std::min(est_min, _estimate_max);
       *evaluated = true;
     }
 
@@ -699,7 +701,7 @@ struct Estimated : public irs::FilterWithType<Estimated> {
   irs::QueryBuilder::ptr PrepareSegment(
     const irs::SubReader& segment,
     const irs::PrepareContext& /*ctx*/) const final {
-    return irs::memory::make_managed<Estimated::Prepared>(segment, est,
+    return irs::memory::make_managed<Estimated::Prepared>(segment, est, est_min,
                                                           &evaluated);
   }
 
@@ -709,6 +711,7 @@ struct Estimated : public irs::FilterWithType<Estimated> {
 
   mutable bool evaluated = false;
   uint32_t est{};
+  uint32_t est_min{};
 };
 
 }  // namespace detail
@@ -1477,6 +1480,81 @@ TEST(boolean_query_estimation, and_filter) {
   {
     irs::BooleanFilter root;
     ASSERT_FALSE(root.Valid());
+  }
+}
+
+TEST(boolean_query_estimation, bounds_and_matches) {
+  detail::SegmentReaderMock segment_reader{1000};
+  const auto add = [](irs::BooleanFilter& root, irs::Occur occur,
+                      uint32_t est) {
+    auto& node = AddChild<detail::Estimated>(root, occur);
+    node.est = est;
+    node.est_min = est;
+  };
+
+  {
+    irs::BooleanFilter root;
+    add(root, irs::Occur::Must, 600);
+    add(root, irs::Occur::Must, 700);
+    tests::PreparedFilter prep{root, segment_reader};
+    const auto* query = prep.Query(0);
+    ASSERT_NE(nullptr, query);
+    EXPECT_EQ(300, query->EstimateMin());
+    EXPECT_EQ(420, query->EstimateMatches());
+    EXPECT_EQ(600, query->EstimateMax());
+  }
+
+  {
+    irs::BooleanFilter root;
+    add(root, irs::Occur::Should, 100);
+    add(root, irs::Occur::Should, 300);
+    AsDisjunction(root);
+    tests::PreparedFilter prep{root, segment_reader};
+    const auto* query = prep.Query(0);
+    ASSERT_NE(nullptr, query);
+    EXPECT_EQ(300, query->EstimateMin());
+    EXPECT_EQ(370, query->EstimateMatches());
+    EXPECT_EQ(400, query->EstimateMax());
+  }
+
+  {
+    irs::BooleanFilter root;
+    add(root, irs::Occur::Must, 500);
+    add(root, irs::Occur::MustNot, 100);
+    tests::PreparedFilter prep{root, segment_reader};
+    const auto* query = prep.Query(0);
+    ASSERT_NE(nullptr, query);
+    EXPECT_EQ(400, query->EstimateMin());
+    EXPECT_EQ(450, query->EstimateMatches());
+    EXPECT_EQ(500, query->EstimateMax());
+  }
+
+  {
+    irs::BooleanFilter root;
+    add(root, irs::Occur::Must, 600);
+    add(root, irs::Occur::Should, 100);
+    add(root, irs::Occur::Should, 300);
+    AsDisjunction(root);
+    tests::PreparedFilter prep{root, segment_reader};
+    const auto* query = prep.Query(0);
+    ASSERT_NE(nullptr, query);
+    EXPECT_EQ(0, query->EstimateMin());
+    EXPECT_EQ(222, query->EstimateMatches());
+    EXPECT_EQ(400, query->EstimateMax());
+  }
+
+  {
+    irs::BooleanFilter root;
+    add(root, irs::Occur::Must, 900);
+    add(root, irs::Occur::Should, 300);
+    add(root, irs::Occur::Should, 500);
+    AsDisjunction(root);
+    tests::PreparedFilter prep{root, segment_reader};
+    const auto* query = prep.Query(0);
+    ASSERT_NE(nullptr, query);
+    EXPECT_EQ(400, query->EstimateMin());
+    EXPECT_EQ(585, query->EstimateMatches());
+    EXPECT_EQ(800, query->EstimateMax());
   }
 }
 

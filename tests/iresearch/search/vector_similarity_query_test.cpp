@@ -30,6 +30,7 @@
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/count/make.hpp>
+#include <iresearch/search/detail/vector_filter_util.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
@@ -76,8 +77,8 @@ irs::IndexWriterOptions MakeWriterOptions(
     if (id == kVec) {
       col.compression = compression;
       col.ann_info = irs::AnnInfo{
-        .centroids_id = kVec,
-        .postings_id = kVec,
+        .index_id = kVec,
+        .column_id = kVec,
         .d = kDim,
         .metric = irs::VectorMetric::L2Sqr,
         .quant = {.kind = irs::VectorQuantization::SQ8},
@@ -89,6 +90,7 @@ irs::IndexWriterOptions MakeWriterOptions(
     }
     return col;
   };
+  opts.anns[kVec].push_back(kVec);
   return opts;
 }
 
@@ -140,8 +142,8 @@ irs::ByVectorSimilarity MakeKnnFilter() {
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
-  opts.centroids_id = kVec;
-  opts.postings_id = kVec;
+  opts.column_id = kVec;
+  opts.ann_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;
   opts.quant = irs::VectorQuantization::SQ8;
   opts.nprobe = 1000;
@@ -155,7 +157,16 @@ void AssertQuantizedPath(const irs::SubReader& segment) {
   const auto* ann = segment.Ann(kVec);
   ASSERT_NE(nullptr, ann);
   ASSERT_FALSE(ann->Empty());
-  ASSERT_TRUE(ann->HasQuantStats());
+  ASSERT_EQ(irs::AnnKind::Ivf, ann->Kind());
+  const auto* idx_file = segment.AnnFile();
+  ASSERT_NE(nullptr, idx_file);
+  irs::IndexInput idx_in{*idx_file};
+  const std::vector<float> query(kDim, 0.f);
+  ASSERT_NE(nullptr,
+            irs::ReadQuantizerCodebook(
+              static_cast<const irs::IvfIndex*>(ann)->Tree(), idx_in,
+              irs::VectorQuantization::SQ8, kDim, irs::VectorMetric::L2Sqr,
+              query, irs::CodebookUse::Search));
   const auto* postings = segment.field(kVec);
   ASSERT_NE(nullptr, postings);
   ASSERT_NE(irs::IndexFeatures::None,
@@ -224,8 +235,8 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
-  opts.centroids_id = kVec;
-  opts.postings_id = kVec;
+  opts.column_id = kVec;
+  opts.ann_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;
   opts.quant = irs::VectorQuantization::SQ8;
   opts.radius = 100000.f;
@@ -390,7 +401,7 @@ irs::ByVectorExact MakeExactFilter(float x, float radius, bool inclusive) {
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
   opts.query[0] = x;
-  opts.centroids_id = kVec;
+  opts.ann_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;
   opts.radius = radius;
   opts.inclusive = inclusive;

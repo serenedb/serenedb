@@ -70,6 +70,61 @@ schema_name	job_name	schedule
 jrins_inner	jrins_idx	AFTER INTERVAL '00:15:00'
 
 
+query
+SELECT count(*) FROM ${__DATABASE__}.jrins_outer.jrins_inner.jrins_idx;
+----
+count
+1
+
+
+statement count 1
+COPY (SELECT 2 AS id, 'arelav is skuf' AS body)
+TO '${__TEST_DIR__}/jrins_glob/f2.parquet' (FORMAT PARQUET);
+
+
+statement ok
+EXECUTE JOB ${__DATABASE__}.jrins_outer.jrins_inner.jrins_idx;
+
+
+query
+SELECT count(*) FROM ${__DATABASE__}.jrins_outer.jrins_inner.jrins_idx;
+----
+count
+2
+
+
+statement count 1
+COPY (SELECT 3 AS id, 'invoker' AS body)
+TO '${__TEST_DIR__}/jrins_glob/f3.parquet' (FORMAT PARQUET);
+
+
+statement ok
+REINDEX INDEX jrins_outer.jrins_inner.jrins_idx;
+
+
+query
+SELECT count(*) FROM jrins_outer.jrins_inner.jrins_idx;
+----
+count
+3
+
+
+statement count 1
+COPY (SELECT 4 AS id, 'morphling' AS body)
+TO '${__TEST_DIR__}/jrins_glob/f4.parquet' (FORMAT PARQUET);
+
+
+statement ok
+REINDEX INDEX ${__DATABASE__}.jrins_outer.jrins_inner.jrins_idx;
+
+
+query
+SELECT count(*) FROM ${__DATABASE__}.jrins_outer.jrins_inner.jrins_idx;
+----
+count
+4
+
+
 statement ok
 DROP SCHEMA jrins_outer CASCADE;
 

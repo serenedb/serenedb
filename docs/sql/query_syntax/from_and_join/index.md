@@ -159,7 +159,7 @@ Return the regions for the nations:
 
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/example_024" />
 
-The expressions do not have to be equalities – any predicate can be used:
+The expressions do not have to be equalities - any predicate can be used:
 
 Return the pairs of jobs where one ran longer but cost less:
 
@@ -193,7 +193,7 @@ Anti joins provide the same logic as the `NOT IN` operator, except anti joins ig
 
 #### Semi Join Example
 
-Return a list of city–airport code pairs from the `city_airport` table where the airport name **is available** in the `airport_names` table:
+Return a list of city-airport code pairs from the `city_airport` table where the airport name **is available** in the `airport_names` table:
 
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/example_029" />
 
@@ -203,7 +203,7 @@ This query is equivalent to:
 
 #### Anti Join Example
 
-Return a list of city–airport code pairs from the `city_airport` table where the airport name **is not available** in the `airport_names` table:
+Return a list of city-airport code pairs from the `city_airport` table where the airport name **is not available** in the `airport_names` table:
 
 <SqlLogicTest id="sql/query_syntax/from_and_join/index/example_031" />
 

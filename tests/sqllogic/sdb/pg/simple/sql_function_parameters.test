@@ -1,0 +1,57 @@
+statement ok
+CREATE FUNCTION sfp_fixed(OUT a INTEGER[3]) RETURNS INTEGER[3] LANGUAGE sql AS 'SELECT [1, 2, 3]::INTEGER[3]';
+
+
+query
+SELECT sfp_fixed() AS a;
+----
+a
+{1,2,3}
+
+
+statement ok
+DROP FUNCTION sfp_fixed;
+
+
+statement error
+CREATE FUNCTION sfp_variadic(VARIADIC a int[]) RETURNS int LANGUAGE sql AS 'SELECT 1';
+----
+db error: ERROR: VARIADIC parameters are not supported
+
+
+statement ok
+CREATE FUNCTION sfp_array() RETURNS int[] LANGUAGE sql AS 'SELECT array_value(1, 2, 3)';
+
+
+statement ok
+CREATE MACRO sfp_positive_sum(x) AS sum(x) FILTER (WHERE x > 0);
+
+
+statement ok
+CREATE FUNCTION sfp_union(x UNION(k BIGINT)) RETURNS BIGINT LANGUAGE sql AS 'SELECT union_extract(x, ''k'')';
+
+
+query
+SELECT sfp_array() AS a, abs(x := 1::money) AS b, sfp_union(union_value(k := 1::INT)) AS c;
+----
+a	b	c
+{1,2,3}	1	1
+
+
+query
+SELECT sfp_positive_sum(a) FILTER (WHERE a < 10) AS s FROM (VALUES (1), (5), (20), (-3)) t(a);
+----
+s
+6
+
+
+statement ok
+DROP FUNCTION sfp_union;
+
+
+statement ok
+DROP MACRO sfp_positive_sum;
+
+
+statement ok
+DROP FUNCTION sfp_array;

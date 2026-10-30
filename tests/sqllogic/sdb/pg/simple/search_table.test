@@ -582,9 +582,7 @@ DROP TABLE search_multi;
 
 
 # CREATE TABLE IF NOT EXISTS hitting an existing search table is a no-op: the
-# plan still runs SereneDBSearchInsert, but GetGlobalSinkState returns null, so
-# every sink thread gets a no-op local state and the SELECT's rows are never
-# inserted. The existing rows must survive untouched.
+# SELECT does not run and the existing rows survive untouched.
 statement ok
 CREATE TABLE search_ine (a INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
 

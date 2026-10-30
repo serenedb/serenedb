@@ -43,6 +43,7 @@ inline constexpr std::string_view kCatalogLog = "catalog.wal";
 
 duckdb::FileSystem& StorageFileSystem();
 std::string EngineDirOf(std::string_view location);
+std::optional<duckdb::idx_t> OidFromName(std::string_view name);
 
 struct StorageEntry {
   duckdb::idx_t oid = 0;

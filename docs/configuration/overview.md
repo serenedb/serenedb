@@ -104,7 +104,7 @@ Background maintenance of inverted indexes, and the knobs the search and vector 
 | `sdb_compact_target_segments` | How many segments `VACUUM (COMPACT_*)` leaves in a search table. 0 or 1 merges every segment into one; a larger N splits the segments into N groups and merges each group into one segment, so no single merge holds the whole table. A table with N segments or fewer is left as it is. | `UINTEGER` | `SESSION` | `1` |
 | `sdb_disable_top_k_optimization` | When true, an `ORDER BY <scorer>(...) DESC LIMIT k` query over an inverted index scores every matching document instead of skipping those that cannot reach the top k, so it runs slower. Useful to compare plans or to work around a plan regression. Default: false (optimization on). | `BOOLEAN` | `SESSION` | `off` |
 | `sdb_lookup_join_source_hop` | When true, a query over an inverted index that keeps `k` rows and returns only columns the index does not store reads the rows' `pk` from the index in one `LOOKUP_JOIN` and the columns from the source in a second one, instead of one `LOOKUP_JOIN` that does both. Useful to compare plans. Default: false. | `BOOLEAN` | `SESSION` | `off` |
-| `sdb_hnsw_column_filter` | How an HNSW graph walk answers a predicate only the columnstore can: 'fold' evaluates it over the whole segment before the walk; 'read' reads the columns of each row the walk reaches; 'auto' reads while the walk is expected to reach few enough rows for that to cost less than the fold, weighing what one read costs in the columns' encodings. Default 'auto'. | `VARCHAR` | `SESSION` | `auto` |
+| `sdb_hnsw_column_filter` | How an HNSW graph walk answers a predicate the columnstore can evaluate: 'fold' evaluates one only the columnstore answers over the whole segment before the walk, and takes one the index answers from the index; 'read' reads the columns of each row the walk reaches, including for predicates the index answers; 'auto' reads while the walk is expected to reach few enough rows for that to cost less than the fold, or than the index where the index answers the predicate, weighing what one read costs in the columns' encodings. Default 'auto'. | `VARCHAR` | `SESSION` | `auto` |
 | `sdb_hnsw_ef_search` | Search-time beam width (ef) of each segment's HNSW search. Higher values improve recall at the cost of latency. A value is used as written, floored only at what a segment must return for the query's LIMIT. -1 (the default) lets the engine choose: the index's ef_construction or the LIMIT, whichever is larger, so an untuned query keeps its recall at any LIMIT. With a quantized index every hit of the beam is rescored exactly. | `INTEGER` | `SESSION` | `-1` |
 | `sdb_hnsw_filter_mode` | How an HNSW vector index answers a query with a WHERE: 'auto' picks by the predicate's estimated selectivity, and walks as 'twohop' where a vector's code is long enough that crossing a rejected row costs less than scoring it; 'scan' scores every row the predicate admits; 'walk' walks the graph scoring every neighbour and passing through rejected rows; 'prune' walks scoring and expanding admitted rows only; 'twohop' walks expanding a rejected row's neighbours in its place; 'bridge' walks scoring every neighbour but expanding a rejected row into admitted ones only. Default 'auto'. | `VARCHAR` | `SESSION` | `auto` |
 | `sdb_ivf_max_search_fanout` | Upper bound on the beam of the descent through a multi-level IVF centroid tree, where each level keeps the beam's worth of its nearest centroids and scores only their children. The beam follows sdb_ivf_search_nprobe as the query resolves it; a narrower one scores fewer centroids at some recall cost. Applied after sdb_ivf_min_search_fanout. -1 (the default) leaves the beam unbounded. | `INTEGER` | `SESSION` | `-1` |
@@ -202,7 +202,7 @@ Planning, rewriting and the shape of query output.
 | `late_materialization_lookup_max_rows` | The maximum amount of rows in the LIMIT/TOP_N/SAMPLE for which a scan that can look up rows by their row id is late materialized through a `LOOKUP_JOIN`. `0` disables the `LOOKUP_JOIN`: late materialization then joins on the row ids, up to `late_materialization_max_rows`. | `UBIGINT` | `SESSION` | `2048` |
 | `late_materialization_max_rows` | The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization | `UBIGINT` | `SESSION` | `50` |
 | `match_recognize_max_states` | The maximum number of pattern states `MATCH_RECOGNIZE` explores for a single match before it refuses the pattern (0 = no limit). | `UBIGINT` | `SESSION` | `1000000` |
-| `max_expression_depth` | The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors. | `UBIGINT` | `SESSION` | `1000` |
+| `max_expression_depth` | The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors. Only a superuser can change it. | `UBIGINT` | `SESSION` | `1000` |
 | `max_streaming_buffer_size` | The maximum number of bytes a streaming query result buffers (e.g. 1GB). | `VARCHAR` | `SESSION` | `10.0 MiB` |
 | `merge_join_threshold` | The maximum number of rows on either table to choose a merge join | `UBIGINT` | `SESSION` | `1000` |
 | `nested_loop_join_threshold` | The maximum number of rows on either table to choose a nested loop join | `UBIGINT` | `SESSION` | `5` |
@@ -249,12 +249,14 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `is_superuser` | Shows whether the current session's user is a superuser. | `BOOLEAN` | `SESSION` | `on` |
 | `lock_configuration` | Whether or not configurations can be altered | `BOOLEAN` | `GLOBAL` | `false` |
 | `max_execution_time` | The maximum execution time per query in milliseconds (0 = no limit). | `BIGINT` | `SESSION` | `0` |
+| `max_identifier_length` | Shows the maximum identifier length. SereneDB keeps longer identifiers in full. Read-only. | `INTEGER` | `SESSION` | `63` |
+| `max_index_keys` | Shows the maximum number of index keys. Clients read it as the bound of index and constraint key arrays, such as `pg_index.indkey` and `pg_constraint.conkey`. Read-only. | `INTEGER` | `SESSION` | `32` |
 | `regex_match_operator_semantics` | Deprecated. Configures whether regex match operators use partial or full string matching. | `VARCHAR` | `SESSION` | `partial` |
 | `role` | Sets the current role. | `VARCHAR` | `SESSION` | `none` |
 | `search_path` | Sets the default catalog search path as a comma-separated list of values | `VARCHAR` | `SESSION` | `"$user", public` |
 | `server_encoding` | Shows the server (database) character set encoding. | `VARCHAR` | `SESSION` | `UTF8` |
-| `server_version` | Shows the server version. | `VARCHAR` | `SESSION` | `18.3` |
-| `server_version_num` | Shows the server version as an integer. | `INTEGER` | `SESSION` | `180003` |
+| `server_version` | Shows the server version. | `VARCHAR` | `SESSION` | `18.6` |
+| `server_version_num` | Shows the server version as an integer. | `INTEGER` | `SESSION` | `180006` |
 | `session_authorization` | Sets the current session's user name. | `VARCHAR` | `SESSION` | the session's user |
 | `session_replication_role` | Sets the session's behavior for triggers, as in PostgreSQL: `origin` (the default) and `local` fire the triggers enabled with `ENABLE TRIGGER`, `replica` fires only those enabled with `ENABLE REPLICA TRIGGER` and skips foreign key checks; `ENABLE ALWAYS` triggers fire in every role. Only superusers may change it. The apply worker of a subscription runs as `replica`. | `VARCHAR` | `SESSION` | `origin` |
 | `show_behavior` | Configures how `SHOW` resolves a bare identifier: `auto` describes a table if one exists, else a setting (deprecated); `table` always describes a table; `setting` always describes a setting. | `VARCHAR` | `SESSION` | `SETTING` |
@@ -263,6 +265,9 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `table_function_identifier_conversion` | Deprecated. Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments. | `VARCHAR` | `SESSION` | `DISABLE_IMPLICIT_STRING` |
 | `TimeZone` | Sets the time zone for displaying and interpreting time stamps. | `VARCHAR` | `SESSION` | `Etc/UTC` |
 | `transaction_isolation` | Sets the current transaction's isolation level. | `VARCHAR` | `SESSION` | `repeatable read` |
+| `xmloption` | Whether text read as `xml`, and the argument of `xml_is_well_formed`, must be an XML `document` or may be `content`. | `VARCHAR` | `SESSION` | `content` |
+
+PostgreSQL settings that are not listed here, such as `work_mem`, `lock_timeout` or `shared_buffers`, do not exist in SereneDB: `SET` and `SHOW` fail with `unrecognized configuration parameter`. This includes several of the `SET` lines at the top of a `pg_dump` script.
 
 ### Logical replication
 
@@ -304,7 +309,7 @@ What the server records about itself.
 | `enable_progress_bar` | Tracks the progress of long queries, so that `enable_progress_bar_print` can print it. On in every server session. | `BOOLEAN` | `SESSION` | `true` |
 | `enable_progress_bar_print` | Prints a progress bar for long queries, when `enable_progress_bar` is on. The bar goes to the standard output of the `serened` process, not to the client. | `BOOLEAN` | `SESSION` | `false` |
 | `legacy_metrics_format` | Deprecated. When enabled, profiling output uses the legacy flat format instead of the current grouped format. | `BOOLEAN` | `SESSION` | `off` |
-| `log_query_path` | Specifies the path to which queries should be logged (default: NULL, queries are not logged). Setting the session's own path again reopens the file; a file another session logs to is refused. | `VARCHAR` | `SESSION` |  |
+| `log_query_path` | Specifies the path to which queries should be logged (default: NULL, queries are not logged). Queries are appended to the file, also when the session sets its own path again; a file another session logs to is refused. | `VARCHAR` | `SESSION` |  |
 | `logging_level` | The log level which will be recorded in the log | `VARCHAR` | `GLOBAL` | `INFO` |
 | `logging_mode` | Determines which types of log messages are logged | `VARCHAR` | `GLOBAL` | `LEVEL_ONLY` |
 | `logging_storage` | Set the logging storage (memory/stdout/file/&lt;custom&gt;) | `VARCHAR` | `GLOBAL` | `stdout` |

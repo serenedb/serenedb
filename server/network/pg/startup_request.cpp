@@ -20,8 +20,13 @@
 
 #include "network/pg/startup_request.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
+
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "pg/protocol.h"
 
@@ -108,6 +113,59 @@ StartupRequest ParseStartup(std::string_view payload) {
     payload.remove_prefix(value_end + 1);
   }
   return request;
+}
+
+std::optional<irs::pg::SqlErrorData> ParseStartupOptions(
+  std::string_view options, std::vector<StartupSetting>& settings) {
+  std::vector<std::string> arguments;
+  for (size_t i = 0; i != options.size();) {
+    if (absl::ascii_isspace(static_cast<unsigned char>(options[i]))) {
+      ++i;
+      continue;
+    }
+    auto& argument = arguments.emplace_back();
+    for (bool escaped = false; i != options.size(); ++i) {
+      const char c = options[i];
+      if (!escaped && absl::ascii_isspace(static_cast<unsigned char>(c))) {
+        break;
+      }
+      escaped = !escaped && c == '\\';
+      if (!escaped) {
+        argument += c;
+      }
+    }
+  }
+  for (size_t i = 0; i != arguments.size(); ++i) {
+    const std::string_view argument = arguments[i];
+    const bool long_option = argument.starts_with("--");
+    if (!long_option && !argument.starts_with("-c")) {
+      return SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("invalid command-line argument for server process: ",
+                argument));
+    }
+    auto setting = argument.substr(2);
+    if (!long_option && setting.empty()) {
+      if (++i == arguments.size()) {
+        return SQL_ERROR_DATA(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("invalid command-line argument for server process: ",
+                  argument));
+      }
+      setting = arguments[i];
+    }
+    const auto equal = setting.find('=');
+    if (equal == std::string_view::npos) {
+      return SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG(long_option ? "--" : "-c ", setting, " requires a value"));
+    }
+    std::string name{setting.substr(0, equal)};
+    absl::c_replace(name, '-', '_');
+    settings.push_back(
+      {std::move(name), std::string{setting.substr(equal + 1)}});
+  }
+  return std::nullopt;
 }
 
 }  // namespace sdb::network::pg

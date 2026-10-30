@@ -21,16 +21,18 @@
 #include "catalog/database_directory.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/strip.h>
 
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/store/directory.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -39,7 +41,6 @@
 #include <vector>
 
 #include "catalog/cluster.h"
-#include "pg/pg_types.h"
 #include "scheduler/background_scheduler.h"
 #include "server/utils/lifecycle.h"
 
@@ -136,6 +137,15 @@ std::string EngineDirOf(std::string_view location) {
   return absl::StrCat(location, "/", kEngineDir);
 }
 
+std::optional<duckdb::idx_t> OidFromName(std::string_view name) {
+  duckdb::idx_t oid = 0;
+  if (name.empty() || !absl::c_all_of(name, absl::ascii_isdigit) ||
+      !absl::SimpleAtoi(name, &oid)) {
+    return std::nullopt;
+  }
+  return oid;
+}
+
 std::vector<StorageEntry> ListStorages(const std::string& root) {
   std::vector<StorageEntry> found;
   irs::containers::FlatHashSet<std::string> seen;
@@ -151,7 +161,7 @@ std::vector<StorageEntry> ListStorages(const std::string& root) {
       if (!directory && !absl::ConsumeSuffix(&digits, kStorageMarker)) {
         return;
       }
-      const auto oid = pg::OidFromName(digits);
+      const auto oid = OidFromName(digits);
       if (!oid || !seen.emplace(entry).second) {
         return;
       }

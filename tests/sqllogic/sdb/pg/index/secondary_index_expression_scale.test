@@ -33,12 +33,12 @@ count
 100
 
 
-# An EXPRESSION filter is not pushed as a column TableFilter, so duckdb's index
-# scan (which matches a single indexed column) cannot use this index -- the plan
-# stays SEQ_SCAN + FILTER on the recomputed key, on serenedb and native alike.
-# The index is still maintained and enforces UNIQUE. A filter on a raw indexed
-# column DOES switch to a runtime Index Scan -- see
-# secondary_index_point_lookup.test.
+# A filter on an expression over several columns is not pushed as a column
+# TableFilter, so duckdb's index scan (which matches a single indexed column)
+# cannot use this index -- the plan stays SEQ_SCAN + FILTER on the recomputed
+# key, on serenedb and native alike. The index is still maintained and enforces
+# UNIQUE. A filter on a raw indexed column, or on an expression of one column,
+# DOES switch to a runtime Index Scan -- see secondary_index_point_lookup.test.
 query
 EXPLAIN SELECT j, k FROM pudge_expr_scale WHERE (j + k) = 2000;
 ----

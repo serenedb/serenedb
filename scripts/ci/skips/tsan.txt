@@ -1,0 +1,1 @@
+duckdb:core:test/sql/catalog/function/test_procedure_definition_concurrent.test	issue	ThreadSanitizer's runtime segfaults writing its trace on a mutex unlock under this test's 8 threads (#1913)

@@ -74,6 +74,8 @@ struct DeferredCheck {
 
 struct SearchSpec {
   std::shared_ptr<irs::Filter> filter;
+  std::shared_ptr<const irs::Filter> index_only;
+  std::vector<RowFilter> duals;
   std::vector<DeferredCheck> deferred;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   std::vector<RowFilter> row_filters;
@@ -211,7 +213,7 @@ struct RelationSpec {
     return info && info->IsStored();
   }
   bool StoresExpression(ColumnId field) const noexcept {
-    return inverted_config && inverted_config->StoresExpression(field);
+    return inverted_config && !inverted_config->StoredExpression(field).empty();
   }
   catalog::IndexTokenizers ResolveTokenizers(
     duckdb::ClientContext& context) const {
@@ -248,6 +250,10 @@ struct ScanBindData final : duckdb::FunctionData {
   bool IsViewBacked() const noexcept { return view.has_value(); }
   bool DefersChecks() const noexcept {
     return offsets.requests.empty() && !score.vector;
+  }
+  bool KeepsColumnForms() const noexcept {
+    return score.vector && score.vector->kind == irs::AnnKind::Hnsw &&
+           score.vector->radius == std::numeric_limits<float>::max();
   }
   bool IsMatchAll() const noexcept {
     return search.MatchAll() && !score.vector.has_value();
@@ -314,8 +320,10 @@ struct DeferredColumnFilter {
 
 struct DeferredBuild {
   std::shared_ptr<const irs::Filter> filter;
+  std::shared_ptr<const irs::Filter> index_only;
   std::vector<std::shared_ptr<irs::Scorer>> scorers;
   std::vector<DeferredColumnFilter> column_filters;
+  std::vector<DeferredColumnFilter> dual_filters;
   std::vector<DeferredCheck> checks;
 };
 

@@ -48,10 +48,10 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/network_utils.hpp>
-#include <system_error>
 #include <vector>
 
 #include "index/doc_generator.hpp"
+#include "test_resources.hpp"
 #include "tests_config.hpp"
 #include "tests_shared.hpp"
 
@@ -86,7 +86,13 @@ uint32_t IterationTracker::gSIteration = (std::numeric_limits<uint32_t>::max)();
 const std::string kIresOutputPath("ires_output_path");
 const std::string kIresResourceDir("ires_resource_dir");
 
+constinit duckdb::Connection* gEngineConnection = nullptr;
+
 }  // namespace
+
+duckdb::ClientContext& tests::EngineContext() {
+  return *gEngineConnection->context;
+}
 
 const std::string TestEnv::kTestResults("test_detail.xml");
 
@@ -115,7 +121,9 @@ std::string TestEnv::MemoryRoot() {
 }
 
 bool TestEnv::prepare() {
-  make_directories();
+  if (!make_directories()) {
+    return false;
+  }
 
   // NOTE: --ires_log_level is parsed but currently has no effect: SDB_*
   // levels are now driven by the duckdb LogManager config installed at
@@ -135,7 +143,7 @@ bool TestEnv::prepare() {
   return true;
 }
 
-void TestEnv::make_directories() {
+bool TestEnv::make_directories() {
   std::filesystem::path exec_path(gArgv[0]);
 
   gExecPath = exec_path;
@@ -181,11 +189,13 @@ void TestEnv::make_directories() {
 
   std::filesystem::create_directories(gOutDir);
   if (!mkdtemp(res_dir_templ.data())) {
-    throw std::system_error{errno, std::generic_category(),
-                            "cannot create the test result directory"};
+    std::cerr << "cannot create " << res_dir_templ << ": "
+              << std::strerror(errno) << std::endl;
+    return false;
   }
   gResDir = res_dir_templ;
   (gResPath = gResDir) /= kTestResults;
+  return true;
 }
 
 void TestEnv::parse_command_line() {
@@ -254,7 +264,15 @@ int main(int argc, char* argv[]) {
   // heap-use-after-free.
   irs::DuckDBEngine::Instance().Initialize();
 
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  gEngineConnection = connection.get();
   const int code = TestEnv::initialize(argc, argv);
+  gEngineConnection = nullptr;
+  connection.reset();
+  if (code < 0) {
+    irs::DuckDBEngine::Instance().Shutdown();
+    return EXIT_FAILURE;
+  }
 
   SDB_INFO(IRESEARCH, "Path to test result directory: ",
            TestEnv::test_results_dir().string());

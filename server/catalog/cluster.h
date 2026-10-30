@@ -43,6 +43,7 @@
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "catalog/entry/tablespace.h"
+#include "catalog/snapshot.h"
 
 namespace sdb::catalog {
 
@@ -110,6 +111,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     duckdb::idx_t oid, duckdb::idx_t tablespace);
 
   auth::RoleCache& Roles() noexcept { return _roles; }
+  CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
 
  private:
   void CompactCatalogLog();
@@ -130,6 +132,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   bool _compactable = false;
   std::atomic<duckdb::idx_t> _live_bytes{0};
   auth::RoleCache _roles;
+  CatalogSnapshots _snapshots{*this};
 };
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);

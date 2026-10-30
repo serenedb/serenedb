@@ -260,3 +260,18 @@ DROP TABLE test_from_proc;
 skipif serenedb # TODO(Pasha) Support DDL procedures
 statement ok
 DROP PROCEDURE ddl_proc();
+
+
+statement ok
+CREATE PROCEDURE query_proc() LANGUAGE sql AS 'SELECT 1';
+
+
+statement error
+SELECT query_proc();
+----
+db error: ERROR: query_proc() is a procedure
+HINT: To call a procedure, use CALL.
+
+
+statement ok
+DROP PROCEDURE query_proc();

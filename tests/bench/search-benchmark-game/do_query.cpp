@@ -143,7 +143,7 @@ int main(int argc, const char* argv[]) {
                   argv[0]);
     return 1;
   }
-  irs::RemapExecutable(true);
+  irs::RemapExecutable(SDB_REMAP_EXECUTABLE);
   // DuckDBEngine owns the process-wide DuckDB the cs codec / reader use.
   // Bracket the executor lifetime so the DuckDB instance is destroyed
   // BEFORE static dtors fire (see build_index.cpp main() for the

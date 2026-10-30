@@ -25,12 +25,14 @@
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
+#include <duckdb/planner/planner_extension.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_extension.hpp>
 #include <duckdb/storage/storage_manager.hpp>
@@ -38,7 +40,6 @@
 #include <duckdb/storage/table/index_entry.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <filesystem>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -57,8 +58,9 @@
 #include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
+#include "pg/catalog/functions/functions.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 #include "pg/sql_utils.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -77,7 +79,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
                     ERR_MSG("could not open database directory \"", info.path,
                             "\": ", ec.message()));
   }
-  const auto oid = pg::OidFromName(path.filename().string());
+  const auto oid = catalog::OidFromName(path.filename().string());
   if (!oid) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("\"", path.string(),
@@ -99,6 +101,11 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
+  if (options.recovery_mode != duckdb::RecoveryMode::DEFAULT) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("recovery_mode is not supported for a SereneDB database"));
+  }
   if (options.access_mode == duckdb::AccessMode::READ_ONLY) {
     return AttachReadOnly(db, info, options);
   }
@@ -277,7 +284,12 @@ void RegisterSereneDBStorage(
 }
 
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
-  optimizer::RegisterWrapUnsupportedTypesExtension(db);
+  duckdb::PlannerExtension::Register(
+    duckdb::DBConfig::GetConfig(db),
+    duckdb::PlannerExtension{
+      .post_bind_function = &optimizer::WrapVariantOutputs,
+      .get_sql_value_function = &pg::SystemUserValueFunction,
+    });
   optimizer::RegisterIResearchPlanOptimizer(db);
 }
 

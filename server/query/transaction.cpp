@@ -21,6 +21,7 @@
 #include "query/transaction.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
 
 #include <duckdb/common/error_data.hpp>
@@ -234,20 +235,19 @@ void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
   }
 }
 
-void Transaction::Commit() {
+void Transaction::Commit(duckdb::transaction_t owner) {
+  absl::Cleanup destroy = [this, owner] { Destroy(owner); };
   for (auto& action : _on_commit) {
     action();
   }
-
-  Destroy();
 }
 
-void Transaction::Rollback() {
+void Transaction::Rollback(duckdb::transaction_t owner) {
+  absl::Cleanup destroy = [this, owner] { Destroy(owner); };
   if (_search_txn) {
     _search_txn->Abort();
   }
   RollbackVariables();
-  Destroy();
 }
 
 search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
@@ -299,7 +299,19 @@ void Transaction::RefreshCreatedIndexes(duckdb::idx_t database) {
   }
 }
 
-void Transaction::Destroy() noexcept {
+void Transaction::ClaimSearchLayout(std::shared_ptr<search::SearchTable> table,
+                                    duckdb::transaction_t owner,
+                                    std::string_view name) {
+  if (table->AcquireLayout(owner, name)) {
+    _layout_claims.emplace_back(std::move(table));
+  }
+}
+
+void Transaction::Destroy(duckdb::transaction_t owner) noexcept {
+  for (const auto& table : _layout_claims) {
+    table->ReleaseLayout(owner);
+  }
+  _layout_claims.clear();
   _search_transactions.clear();
   _search_snapshots.clear();
   _feed_columns = {};

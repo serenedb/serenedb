@@ -46,7 +46,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string_utils.hpp>

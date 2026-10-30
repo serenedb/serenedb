@@ -38,11 +38,10 @@
 #include <vector>
 
 #include "pg/command_tag.h"
-#include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
+#include "pg/types/mapping.h"
 #include "query/utils.h"
-#include "server/utils/dtoa.h"
 
 namespace sdb::network::pg {
 namespace {
@@ -614,7 +613,7 @@ void WriteCommandComplete(message::Buffer& out, const sdb::pg::CommandTag& tag,
   if (tag.rowcount) {
     // PG appends the affected/returned count straight into the frame: " 0 <n>"
     // for INSERT (the legacy oid field, always 0), " <n>" for the rest.
-    w.Write(utils::kIntStrMaxLen + 3, [&](auto* data) {
+    w.Write(sdb::pg::kIntStrMaxLen + 3, [&](auto* data) {
       char* buf = reinterpret_cast<char*>(data);
       char* ptr = buf;
       *ptr++ = ' ';
@@ -784,6 +783,16 @@ irs::pg::SqlErrorData ToSqlError(const std::exception& exception) {
   }
   return irs::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
                                .errmsg = exception.what()};
+}
+
+irs::pg::SqlErrorData ToSqlError(const duckdb::ErrorData& error) {
+  try {
+    error.Throw();
+  } catch (const irs::SqlException& e) {
+    return e.error();
+  } catch (...) {
+  }
+  return DuckErrorToSqlData(error);
 }
 
 void WriteEmptyFrame(message::Buffer& out, char type) {

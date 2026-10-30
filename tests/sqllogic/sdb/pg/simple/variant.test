@@ -211,3 +211,32 @@ SELECT id FROM variant_pk WHERE id = 1;
 ----
 id
 1
+
+
+statement ok
+CREATE TABLE variant_inet (id INT, ip INET, net CIDR, payload VARIANT);
+
+
+statement ok
+INSERT INTO variant_inet VALUES (1, '10.0.0.1', '10.0.0.0/8', '{"a": 1}'::json::variant);
+
+
+query
+SELECT w FROM variant_inet w;
+----
+w
+(1,10.0.0.1,10.0.0.0/8,"{""a"":1}")
+
+
+query
+SELECT ROW(ip, payload) AS r FROM variant_inet;
+----
+r
+(10.0.0.1,"{""a"":1}")
+
+
+query
+SELECT ROW('10.0.0.1'::inet, NULL) AS r;
+----
+r
+(10.0.0.1,)

@@ -29,8 +29,8 @@
 #include <filesystem>
 #include <iresearch/store/directory.hpp>
 #include <iresearch/store/index_files.hpp>
-#include <iresearch/utils/async_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <thread>
 
 namespace {
 
@@ -56,7 +56,6 @@ void BmCreateWhileCleaning(benchmark::State& state) {
                            root.string()};
   irs::RefTracker tracker;
   const auto tracked = dir.Observed(tracker);
-  irs::async_utils::ThreadPool<> cleaner{1};
   uint64_t round = 0;
   for (auto _ : state) {
     for (int i = 0; i != kUnused; ++i) {
@@ -66,11 +65,11 @@ void BmCreateWhileCleaning(benchmark::State& state) {
     }
     absl::Notification started;
     absl::Notification cleaned;
-    cleaner.run([&] {
+    const std::jthread cleaner{[&] {
       started.Notify();
       irs::RemoveUnreferenced(dir);
       cleaned.Notify();
-    });
+    }};
     started.WaitForNotification();
     absl::SleepFor(absl::FromChrono(kRemoveLatency / 3));
     const auto began = std::chrono::steady_clock::now();

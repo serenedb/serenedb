@@ -98,6 +98,15 @@ REINDEX INDEX reindex_idx;
 statement ok
 REINDEX INDEX CONCURRENTLY reindex_idx;
 
+statement ok
+REINDEX INDEX ${__DATABASE__}.reindex_idx;
+
+query
+SELECT * FROM serenedb_reindex('reindex_idx', 'public');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
 query
 SELECT count(*) FROM reindex_idx WHERE body @@ ts_phrase('pudge');
 ----

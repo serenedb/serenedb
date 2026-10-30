@@ -121,6 +121,8 @@ class EveryThirdOut final : public irs::detail::TableFilter {
 
   bool Foldable() const noexcept final { return true; }
 
+  double Share() const final { return irs::detail::kUnknownShare; }
+
   uint64_t CountAndClear(doc_id_t base, uint64_t* mask, uint32_t words) final {
     uint64_t count = 0;
     for (uint32_t w = 0; w != words; ++w) {

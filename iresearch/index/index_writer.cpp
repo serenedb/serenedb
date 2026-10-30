@@ -2007,7 +2007,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   std::vector<std::string_view> files_to_sync;
   // +1 for index meta
   files_to_sync.reserve(1 + segments.size());
-  for (auto& [segment, reader, sync] : segments) {
+  for (auto& [segment, reader, sync, place] : segments) {
     const auto& published =
       pending_meta.segments.emplace_back(std::move(segment));
     readers.emplace_back(std::move(reader));

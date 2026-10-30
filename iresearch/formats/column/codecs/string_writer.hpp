@@ -34,7 +34,6 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
-#include "iresearch/formats/column/codecs/string_choice.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -46,6 +45,13 @@ struct RatioHistory {
   uint64_t comp = 0;
 };
 
+constexpr double Ratio(const RatioHistory& hist, double empty) noexcept {
+  if (hist.raw != 0) {
+    return static_cast<double>(hist.comp) / static_cast<double>(hist.raw);
+  }
+  return empty;
+}
+
 enum class FrameLayout : uint8_t {
   Dictionary = 0,
   Wide = 1,
@@ -56,8 +62,7 @@ struct StringTuning {
   std::optional<StringChoice> choice;
   double bytes_per_input = 0;
   bool levels_tuned = false;
-  uint32_t calibration_gap = 1;
-  uint32_t since_calibration = 0;
+  CalibrationClock clock;
   uint64_t last_distinct = 0;
   uint8_t level[kByteCodecCount]{};
   FrameLayout layout[kByteCodecCount]{};
@@ -97,15 +102,20 @@ using SegmentSink = absl::FunctionRef<void(
   StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
   std::span<const std::string_view> parts)>;
 
-using DictionarySink = absl::FunctionRef<uint16_t(std::string_view bytes)>;
-
 bool TrainsDictionary(std::optional<StringChoice> named,
                       const ColCodecParams& params) noexcept;
+
+std::shared_ptr<const TrainedDictionary> TrainDictionary(
+  const StringAccumulator& acc, std::optional<StringChoice> named,
+  const ColCodecParams& params, StringTuning& tuning);
+
+void Adopt(StringTuning& tuning,
+           std::shared_ptr<const TrainedDictionary> dictionary, uint16_t id);
 
 SealOutcome SealSegments(const StringAccumulator& acc,
                          std::optional<StringChoice> named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
-                         SegmentSink sink, DictionarySink dictionaries);
+                         SegmentSink sink);
 
 }  // namespace irs::codecs

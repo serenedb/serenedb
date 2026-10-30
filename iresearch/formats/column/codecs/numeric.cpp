@@ -24,7 +24,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
-#include <array>
 #include <bit>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
@@ -49,14 +48,15 @@
 #include <type_traits>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/compression.hpp"
 #include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/numeric_decoder.hpp"
 #include "iresearch/formats/column/codecs/numeric_kernels.hpp"
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/zstd.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/enum_name.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 /*
@@ -120,10 +120,10 @@ constexpr size_t kSampleFrames = 4;
 constexpr uint32_t kPackedRunRows = 4;
 constexpr double kLz4Penalty = 0.05;
 constexpr double kZstdPenalty = 0.15;
+constexpr uint8_t kLeafLevel = 1;
 
 struct LeafOption {
   NumericLeaf leaf;
-  uint8_t level;
   double penalty;
 
   double Price(uint64_t bytes) const noexcept {
@@ -131,13 +131,13 @@ struct LeafOption {
   }
 };
 
-constexpr LeafOption kLeaflessPlan[] = {{NumericLeaf::None, 0, 0}};
-constexpr LeafOption kRefreshPlan[] = {{NumericLeaf::None, 0, 0},
-                                       {NumericLeaf::Lz4, 1, kLz4Penalty}};
+constexpr LeafOption kLeaflessPlan[] = {{NumericLeaf::None, 0}};
+constexpr LeafOption kRefreshPlan[] = {{NumericLeaf::None, 0},
+                                       {NumericLeaf::Lz4, kLz4Penalty}};
 constexpr LeafOption kCompactionPlan[] = {
-  {NumericLeaf::None, 0, 0},
-  {NumericLeaf::Lz4, 1, kLz4Penalty},
-  {NumericLeaf::Zstd, 1, kZstdPenalty},
+  {NumericLeaf::None, 0},
+  {NumericLeaf::Lz4, kLz4Penalty},
+  {NumericLeaf::Zstd, kZstdPenalty},
 };
 
 struct Candidate {
@@ -158,8 +158,7 @@ struct Candidate {
 
 class Leaves {
  public:
-  size_t Compress(NumericLeaf leaf, uint8_t level, const uint8_t* src,
-                  size_t size) {
+  size_t Compress(NumericLeaf leaf, const uint8_t* src, size_t size) {
     const auto bound =
       leaf == NumericLeaf::Lz4 ? Lz4::Bound(size) : Zstd::Bound(size);
     if (_out.size() < bound) {
@@ -167,11 +166,11 @@ class Leaves {
     }
     const auto* in = reinterpret_cast<const char*>(src);
     if (leaf == NumericLeaf::Lz4) {
-      _lz4.SetLevel(level);
+      _lz4.SetLevel(kLeafLevel);
       return _lz4.Compress(in, size, _out.data(), _out.size());
     }
     auto& zstd = _zstd ? *_zstd : _zstd.emplace();
-    zstd.SetLevel(level);
+    zstd.SetLevel(kLeafLevel);
     return zstd.Compress(in, size, _out.data(), _out.size());
   }
 
@@ -317,9 +316,8 @@ class TypedSealer final : public NumericSealer {
       }
       BuildCandidates(tuning.pick->transform);
       const auto* c = Find(*tuning.pick);
-      const auto option = absl::c_find_if(plan, [&](const auto& o) {
-        return o.leaf == tuning.pick->leaf && o.level == tuning.pick->level;
-      });
+      const auto option = absl::c_find_if(
+        plan, [&](const auto& o) { return o.leaf == tuning.pick->leaf; });
       std::optional<NumericSegment> out;
       bool drift = true;
       if (c && option != plan.end()) {
@@ -332,14 +330,14 @@ class TypedSealer final : public NumericSealer {
         }
       }
       if (!rival_bytes && (!out || drift)) {
-        tuning.Restart();
+        tuning.clock.Restart();
         return std::nullopt;
       }
       if (!out) {
         return SealWith(plan, rival_bytes, tuning, true);
       }
       if (drift) {
-        tuning.Restart();
+        tuning.clock.Restart();
       }
       return out;
     }
@@ -349,7 +347,7 @@ class TypedSealer final : public NumericSealer {
     double best_price = static_cast<double>(*rival_bytes);
     uint64_t best_bytes = *rival_bytes;
     const Candidate* best = nullptr;
-    LeafOption best_leaf{NumericLeaf::None, 0, 0};
+    LeafOption best_leaf{NumericLeaf::None, 0};
     for (const auto& option : plan) {
       for (const auto& c : _candidates) {
         if (c.shuffled && option.leaf == NumericLeaf::None) {
@@ -382,12 +380,10 @@ class TypedSealer final : public NumericSealer {
     }
     std::optional<NumericChoice> pick;
     if (best) {
-      pick = NumericChoice{best->transform, best_leaf.leaf, best_leaf.level,
-                           best->shuffled};
+      pick = NumericChoice{best->transform, best_leaf.leaf, best->shuffled};
     }
     const bool kept = tuning.calibrated && tuning.pick == pick;
-    tuning.gap = kept ? std::min<uint32_t>(tuning.gap * 2, kMaxGap) : 1;
-    tuning.since = 0;
+    tuning.clock.Settle(kept);
     tuning.calibrated = true;
     tuning.pick = pick;
     tuning.bytes_per_row = static_cast<double>(best_bytes) / rows;
@@ -395,8 +391,6 @@ class TypedSealer final : public NumericSealer {
   }
 
  private:
-  static constexpr uint32_t kMaxGap = 16;
-
   static constexpr uint8_t FrameLog2(const Candidate& c,
                                      const LeafOption& option) noexcept {
     if (BitPacked(c.transform)) {
@@ -416,8 +410,6 @@ class TypedSealer final : public NumericSealer {
   NumericSegment Emit(const Candidate& c, const LeafOption& leaf) {
     NumericSegment out{
       .stats = duckdb::BaseStatistics::CreateEmpty(_type),
-      .rows = _values.size(),
-      .choice = {c.transform, leaf.leaf, leaf.level, c.shuffled},
     };
     _stats.Merge(out.stats);
     Write(c, leaf, out.bytes);
@@ -671,7 +663,8 @@ class TypedSealer final : public NumericSealer {
       case NumericTransform::RleFfor:
         return bytes + _run_blocks.Bytes() + _length_blocks.Bytes();
       default:
-        return Align8(static_cast<uint32_t>(bytes + c.dict.size())) +
+        return duckdb::AlignValue<uint32_t, 8>(
+                 static_cast<uint32_t>(bytes + c.dict.size())) +
                _code_blocks.Bytes();
     }
   }
@@ -777,8 +770,7 @@ class TypedSealer final : public NumericSealer {
     for (uint32_t k = 0; k < samples; ++k) {
       const auto f = static_cast<uint32_t>(uint64_t{k} * frames / samples);
       const auto bytes = FrameRaw(c, f, log2);
-      const auto n =
-        _leaves.Compress(option.leaf, option.level, bytes.data(), bytes.size());
+      const auto n = _leaves.Compress(option.leaf, bytes.data(), bytes.size());
       raw += bytes.size();
       comp += std::min<uint64_t>(n, bytes.size());
     }
@@ -793,7 +785,7 @@ class TypedSealer final : public NumericSealer {
     h.width = kWidth;
     h.transform = c.transform;
     h.leaf = option.leaf;
-    h.level = option.level;
+    h.level = option.leaf == NumericLeaf::None ? uint8_t{0} : kLeafLevel;
     h.stored = c.stored;
     h.run_width = c.run_width;
     h.flags = c.shuffled ? kNumericShuffled : 0;
@@ -805,7 +797,7 @@ class TypedSealer final : public NumericSealer {
     h.off_dict = h.off_frames + frames * kNumericFrameMetaSize;
     h.off_data = h.off_dict + static_cast<uint32_t>(c.dict.size());
     if (BitPacked(c.transform)) {
-      h.off_data = Align8(h.off_data);
+      h.off_data = duckdb::AlignValue<uint32_t, 8>(h.off_data);
     }
     h.base = c.base;
     h.raw_bytes = uint64_t{c.items} * c.ItemBytes();
@@ -832,8 +824,8 @@ class TypedSealer final : public NumericSealer {
       m.frame.comp_off = static_cast<uint32_t>(out.size() - h.off_data);
       m.frame.raw_len = static_cast<uint32_t>(bytes.size());
       if (option.leaf != NumericLeaf::None) {
-        const auto n = _leaves.Compress(option.leaf, option.level, bytes.data(),
-                                        bytes.size());
+        const auto n =
+          _leaves.Compress(option.leaf, bytes.data(), bytes.size());
         if (n < bytes.size()) {
           out.append(_leaves.Out(), n);
           m.frame.comp_len = static_cast<uint32_t>(n);
@@ -864,9 +856,9 @@ class TypedSealer final : public NumericSealer {
                "numeric codec: segment too large");
     h.data_size = static_cast<uint32_t>(out.size() - h.off_data);
     auto* head = reinterpret_cast<duckdb::data_ptr_t>(out.data());
-    h.Write(head);
+    duckdb::Store(h, head);
     for (uint32_t f = 0; f < frames; ++f) {
-      metas[f].Store(head + h.off_frames + f * kNumericFrameMetaSize);
+      duckdb::Store(metas[f], head + h.off_frames + f * kNumericFrameMetaSize);
     }
   }
 
@@ -905,26 +897,15 @@ NumericHeader SegmentHeader(const_data_ptr_t base,
   return h;
 }
 
-FrameCache FrameCacheOf(duckdb::ColumnSegment& segment) {
-  const auto& block = segment.GetBlockHandle();
-  const auto& slot = static_cast<const ReadContext&>(block->GetBlockManager())
-                       .CacheSlotOf(block->BlockId());
-  if (!slot.touched) {
-    return {};
-  }
-  return {&segment.GetDatabase().GetObjectCache(), slot.file_id,
-          slot.file_offset, slot.touched};
-}
-
 template<typename T>
 struct ScanState final : duckdb::SegmentScanState {
   ScanState(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle_p)
     : handle{std::move(handle_p)},
-      base{handle.Ptr() + segment.GetBlockOffset()},
-      frames{base, SegmentHeader(base, segment), FrameCacheOf(segment)} {}
+      frames{handle.Ptr() + segment.GetBlockOffset(),
+             SegmentHeader(handle.Ptr() + segment.GetBlockOffset(), segment),
+             &segment.GetDatabase().GetObjectCache(), CacheSlotOf(segment)} {}
 
   duckdb::BufferHandle handle;
-  const_data_ptr_t base;
   FrameDecoder<T> frames;
   duckdb::unique_ptr<duckdb::BaseStatistics> filter_stats;
 };
@@ -1046,7 +1027,8 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
       cache.block != block) {
     const auto* base = handle.Ptr() + segment.GetBlockOffset();
     cache.frames.emplace(base, SegmentHeader(base, segment),
-                         FrameCacheOf(segment));
+                         &segment.GetDatabase().GetObjectCache(),
+                         CacheSlotOf(segment));
     cache.block = block;
   }
   auto& frames = *cache.frames;
@@ -1078,10 +1060,9 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   auto handle = buffer_manager.Pin(segment.GetBlockHandle());
   const auto h = NumericHeader::Parse(handle.Ptr() + segment.GetBlockOffset(),
                                       segment.SegmentSize());
-  constexpr std::array<std::string_view, 3> kLeaves{"none", "lz4", "zstd"};
   duckdb::InsertionOrderPreservingMap<std::string> info;
-  info["transform"] = std::string{NumericTransformName(h.transform)};
-  info["leaf"] = std::string{kLeaves[static_cast<uint8_t>(h.leaf)]};
+  info["transform"] = std::string{SnakeCaseName(h.transform)};
+  info["leaf"] = std::string{SnakeCaseName(h.leaf)};
   info["level"] = absl::StrCat(static_cast<uint32_t>(h.level));
   info["stored"] = absl::StrCat(static_cast<uint32_t>(h.stored));
   info["shuffled"] = h.Shuffled() ? "true" : "false";
@@ -1116,6 +1097,35 @@ duckdb::CompressionFunction MakeFunction(duckdb::PhysicalType physical) {
   return f;
 }
 
+template<typename F>
+std::invoke_result_t<F&, std::type_identity<int8_t>> WithNumericType(
+  duckdb::PhysicalType physical, F&& f) {
+  switch (physical) {
+    case duckdb::PhysicalType::INT8:
+      return f(std::type_identity<int8_t>{});
+    case duckdb::PhysicalType::INT16:
+      return f(std::type_identity<int16_t>{});
+    case duckdb::PhysicalType::INT32:
+      return f(std::type_identity<int32_t>{});
+    case duckdb::PhysicalType::INT64:
+      return f(std::type_identity<int64_t>{});
+    case duckdb::PhysicalType::UINT8:
+      return f(std::type_identity<uint8_t>{});
+    case duckdb::PhysicalType::UINT16:
+      return f(std::type_identity<uint16_t>{});
+    case duckdb::PhysicalType::UINT32:
+      return f(std::type_identity<uint32_t>{});
+    case duckdb::PhysicalType::UINT64:
+      return f(std::type_identity<uint64_t>{});
+    case duckdb::PhysicalType::FLOAT:
+      return f(std::type_identity<float>{});
+    case duckdb::PhysicalType::DOUBLE:
+      return f(std::type_identity<double>{});
+    default:
+      return {};
+  }
+}
+
 }  // namespace
 
 std::optional<NumericSegment> EncodeCodes(std::span<const uint32_t> codes,
@@ -1126,89 +1136,24 @@ std::optional<NumericSegment> EncodeCodes(std::span<const uint32_t> codes,
   return sealer.SealWith(kLeaflessPlan, rival_bytes, tuning, tuning.Due());
 }
 
-bool NumericApplies(duckdb::PhysicalType physical) noexcept {
-  switch (physical) {
-    case duckdb::PhysicalType::INT8:
-    case duckdb::PhysicalType::INT16:
-    case duckdb::PhysicalType::INT32:
-    case duckdb::PhysicalType::INT64:
-    case duckdb::PhysicalType::UINT8:
-    case duckdb::PhysicalType::UINT16:
-    case duckdb::PhysicalType::UINT32:
-    case duckdb::PhysicalType::UINT64:
-    case duckdb::PhysicalType::FLOAT:
-    case duckdb::PhysicalType::DOUBLE:
-      return true;
-    default:
-      return false;
-  }
-}
-
 std::unique_ptr<NumericSealer> NumericSealer::Make(
   const duckdb::LogicalType& type, uint64_t rows) {
-  switch (type.InternalType()) {
-    case duckdb::PhysicalType::INT8:
-      return std::make_unique<TypedSealer<int8_t>>(type, rows);
-    case duckdb::PhysicalType::INT16:
-      return std::make_unique<TypedSealer<int16_t>>(type, rows);
-    case duckdb::PhysicalType::INT32:
-      return std::make_unique<TypedSealer<int32_t>>(type, rows);
-    case duckdb::PhysicalType::INT64:
-      return std::make_unique<TypedSealer<int64_t>>(type, rows);
-    case duckdb::PhysicalType::UINT8:
-      return std::make_unique<TypedSealer<uint8_t>>(type, rows);
-    case duckdb::PhysicalType::UINT16:
-      return std::make_unique<TypedSealer<uint16_t>>(type, rows);
-    case duckdb::PhysicalType::UINT32:
-      return std::make_unique<TypedSealer<uint32_t>>(type, rows);
-    case duckdb::PhysicalType::UINT64:
-      return std::make_unique<TypedSealer<uint64_t>>(type, rows);
-    case duckdb::PhysicalType::FLOAT:
-      return std::make_unique<TypedSealer<float>>(type, rows);
-    case duckdb::PhysicalType::DOUBLE:
-      return std::make_unique<TypedSealer<double>>(type, rows);
-    default:
-      return nullptr;
-  }
+  return WithNumericType(
+    type.InternalType(),
+    [&]<typename T>(std::type_identity<T>) -> std::unique_ptr<NumericSealer> {
+      return std::make_unique<TypedSealer<T>>(type, rows);
+    });
 }
 
 const duckdb::CompressionFunction* NumericFunction(
   duckdb::PhysicalType physical) {
-  using duckdb::PhysicalType;
-  static const auto kInt8 = MakeFunction<int8_t>(PhysicalType::INT8);
-  static const auto kInt16 = MakeFunction<int16_t>(PhysicalType::INT16);
-  static const auto kInt32 = MakeFunction<int32_t>(PhysicalType::INT32);
-  static const auto kInt64 = MakeFunction<int64_t>(PhysicalType::INT64);
-  static const auto kUint8 = MakeFunction<uint8_t>(PhysicalType::UINT8);
-  static const auto kUint16 = MakeFunction<uint16_t>(PhysicalType::UINT16);
-  static const auto kUint32 = MakeFunction<uint32_t>(PhysicalType::UINT32);
-  static const auto kUint64 = MakeFunction<uint64_t>(PhysicalType::UINT64);
-  static const auto kFloat = MakeFunction<float>(PhysicalType::FLOAT);
-  static const auto kDouble = MakeFunction<double>(PhysicalType::DOUBLE);
-  switch (physical) {
-    case PhysicalType::INT8:
-      return &kInt8;
-    case PhysicalType::INT16:
-      return &kInt16;
-    case PhysicalType::INT32:
-      return &kInt32;
-    case PhysicalType::INT64:
-      return &kInt64;
-    case PhysicalType::UINT8:
-      return &kUint8;
-    case PhysicalType::UINT16:
-      return &kUint16;
-    case PhysicalType::UINT32:
-      return &kUint32;
-    case PhysicalType::UINT64:
-      return &kUint64;
-    case PhysicalType::FLOAT:
-      return &kFloat;
-    case PhysicalType::DOUBLE:
-      return &kDouble;
-    default:
-      return nullptr;
-  }
+  return WithNumericType(
+    physical,
+    [&]<typename T>(
+      std::type_identity<T>) -> const duckdb::CompressionFunction* {
+      static const auto kFunction = MakeFunction<T>(physical);
+      return &kFunction;
+    });
 }
 
 }  // namespace irs::codecs

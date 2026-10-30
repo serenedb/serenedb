@@ -90,7 +90,7 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
       SDB_ENSURE(code < h.entry_count, "col codec: corrupted row codes");
       out[kept++] = {.entry = code, .at = at};
     };
-    switch (static_cast<CodesEncoding>(h.codes_encoding)) {
+    switch (h.codes_encoding) {
       case CodesEncoding::Bitpack:
         for (idx_t i = 0; i < count; ++i) {
           if (i + kFetchAhead < count && rows[i + kFetchAhead] < h.row_count) {
@@ -125,7 +125,7 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
     const auto& h = frames.header;
     SDB_ENSURE(row < h.row_count, "col codec: row out of range");
     uint32_t code = 0;
-    switch (static_cast<CodesEncoding>(h.codes_encoding)) {
+    switch (h.codes_encoding) {
       case CodesEncoding::Bitpack:
         code = PackedCode(row, last_group);
         break;
@@ -255,7 +255,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     auto& validity = duckdb::FlatVector::ValidityMutable(view);
     validity.Initialize(count);
     validity.SetInvalid(0);
-    cold_entries = Leaf::kSorted;
+    cold_entries = Sorted(Leaf::kCodec);
     duckdb::StringVector::AddAuxiliaryData(
       view, duckdb::make_uniq<duckdb::VectorBufferHolder>(
               owner->data.GetBufferRef()));
@@ -301,7 +301,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   void LoadCodes() {
     const auto& h = entries.header;
     auto* base = entries.base;
-    if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Numeric)) {
+    if (h.codes_encoding == CodesEncoding::Numeric) {
       code_frames.emplace(base + h.off_codes, CodesHeader(base, h));
       return;
     }
@@ -319,8 +319,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   }
 
   bool Rle() const noexcept {
-    return entries.header.codes_encoding ==
-           static_cast<uint8_t>(CodesEncoding::Rle);
+    return entries.header.codes_encoding == CodesEncoding::Rle;
   }
 
   template<typename Entry>
@@ -381,7 +380,8 @@ struct DictionaryScan final : duckdb::SegmentScanState {
       case duckdb::ExpressionClass::BOUND_OPERATOR: {
         const auto& op = expr.Cast<duckdb::BoundOperatorExpression>();
         const auto& children = op.GetChildren();
-        if (children.empty() || !IsColumn(*children[0])) {
+        if (children.empty() ||
+            !duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0])) {
           return std::nullopt;
         }
         switch (op.GetExpressionType()) {
@@ -396,7 +396,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
             }
             return Normalize({{1, n}});
           case duckdb::ExpressionType::COMPARE_IN:
-            if constexpr (Leaf::kSorted) {
+            if constexpr (Sorted(Leaf::kCodec)) {
               return ResolveIn(children);
             } else {
               return std::nullopt;
@@ -406,7 +406,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
         }
       }
       case duckdb::ExpressionClass::BOUND_FUNCTION:
-        if constexpr (Leaf::kSorted) {
+        if constexpr (Sorted(Leaf::kCodec)) {
           return ResolveComparison(
             expr.Cast<duckdb::BoundFunctionExpression>());
         } else {
@@ -463,15 +463,9 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     if (!duckdb::BoundComparisonExpression::IsComparison(comparison)) {
       return std::nullopt;
     }
-    const auto& left = duckdb::BoundComparisonExpression::Left(fn);
-    const auto& right = duckdb::BoundComparisonExpression::Right(fn);
-    const duckdb::Value* value = nullptr;
-    if (IsColumn(left)) {
-      value = StringConstant(right);
-    } else if (IsColumn(right)) {
-      value = StringConstant(left);
-      comparison = duckdb::FlipComparisonExpression(comparison);
-    }
+    const auto constant =
+      duckdb::ExpressionFilter::TryGetColumnConstantComparison(fn, comparison);
+    const auto* value = constant ? StringConstant(*constant) : nullptr;
     if (!value) {
       return std::nullopt;
     }
@@ -777,7 +771,9 @@ struct DictionaryScan final : duckdb::SegmentScanState {
       return 0;
     }
     const idx_t start_offset = start % kGroup;
-    const idx_t decode_count = GroupPadded(count + start_offset);
+    const idx_t decode_count =
+      duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(count +
+                                                                start_offset);
     ReserveCodes(decode_count);
     auto* src =
       entries.base + h.off_codes + ((start - start_offset) * h.code_width) / 8;

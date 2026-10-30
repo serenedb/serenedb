@@ -106,7 +106,7 @@ class AdjacentRunPolicyTest : public ::testing::Test {
     return names;
   }
 
-  irs::AdjacentRunOptions options{.base = 5};
+  irs::AdjacentRunOptions options;
 };
 
 std::vector<Spec> Equal(size_t count, uint64_t bytes) {
@@ -124,15 +124,9 @@ std::vector<Spec> Equal(size_t count, uint64_t bytes) {
 using Names = std::vector<std::string>;
 
 TEST_F(AdjacentRunPolicyTest, TheDefaultBaseIsSix) {
-  options = irs::AdjacentRunOptions{};
   EXPECT_EQ(Names{}, Pick(Equal(5, 10 * kMiB)));
   EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4", "s5"}),
             Pick(Equal(6, 10 * kMiB)));
-}
-
-TEST_F(AdjacentRunPolicyTest, NeedsBaseSegmentsOfEqualSize) {
-  EXPECT_EQ(Names{}, Pick(Equal(4, 10 * kMiB)));
-  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4"}), Pick(Equal(5, 10 * kMiB)));
 }
 
 TEST_F(AdjacentRunPolicyTest, PrefersFewerBytesPerRemovedSegment) {
@@ -156,13 +150,13 @@ TEST_F(AdjacentRunPolicyTest, ANarrowMergeWidthLowersTheBase) {
 }
 
 TEST_F(AdjacentRunPolicyTest, KeepsABigSegmentOutOfSmallMerges) {
-  auto specs = Equal(6, 10 * kMiB);
+  auto specs = Equal(7, 10 * kMiB);
   specs[0].bytes = 1000 * kMiB;
-  EXPECT_EQ((Names{"s1", "s2", "s3", "s4", "s5"}), Pick(specs));
+  EXPECT_EQ((Names{"s1", "s2", "s3", "s4", "s5", "s6"}), Pick(specs));
 }
 
 TEST_F(AdjacentRunPolicyTest, MergesNeighboursInRowIdOrder) {
-  auto specs = Equal(6, 10 * kMiB);
+  auto specs = Equal(7, 10 * kMiB);
   specs[0].bytes = 1000 * kMiB;
   std::swap(specs[0].range, specs[3].range);
   EXPECT_EQ(Names{}, Pick(specs));
@@ -175,25 +169,27 @@ TEST_F(AdjacentRunPolicyTest, SegmentsWithoutARangeComeLast) {
 }
 
 TEST_F(AdjacentRunPolicyTest, NeverMergesAcrossAReservedSegment) {
-  const auto specs = Equal(11, 10 * kMiB);
-  EXPECT_EQ((Names{"s6", "s7", "s8", "s9", "s10"}), Pick(specs, {"s5"}));
-  EXPECT_EQ(Names{}, Pick(specs, {"s2", "s7"}));
+  const auto specs = Equal(13, 10 * kMiB);
+  EXPECT_EQ((Names{"s7", "s8", "s9", "s10", "s11", "s12"}),
+            Pick(specs, {"s6"}));
+  EXPECT_EQ(Names{}, Pick(specs, {"s2", "s8"}));
 }
 
 TEST_F(AdjacentRunPolicyTest, RespectsTheByteCap) {
-  options.max_bytes = 45 * kMiB;
-  EXPECT_EQ(Names{}, Pick(Equal(5, 10 * kMiB)));
-  options.max_bytes = 50 * kMiB;
-  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4"}), Pick(Equal(5, 10 * kMiB)));
+  options.max_bytes = 55 * kMiB;
+  EXPECT_EQ(Names{}, Pick(Equal(6, 10 * kMiB)));
+  options.max_bytes = 60 * kMiB;
+  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4", "s5"}),
+            Pick(Equal(6, 10 * kMiB)));
 }
 
 TEST_F(AdjacentRunPolicyTest, RespectsTheDocCap) {
-  options.max_docs = 499;
-  EXPECT_EQ(Names{}, Pick(Equal(5, 10 * kMiB)));
+  options.max_docs = 599;
+  EXPECT_EQ(Names{}, Pick(Equal(6, 10 * kMiB)));
 }
 
 TEST_F(AdjacentRunPolicyTest, NeverPassesTheMergeDocLimit) {
-  auto specs = Equal(5, 10 * kMiB);
+  auto specs = Equal(6, 10 * kMiB);
   for (auto& spec : specs) {
     spec.docs = 500'000'000;
     spec.live_docs = 500'000'000;
@@ -202,15 +198,16 @@ TEST_F(AdjacentRunPolicyTest, NeverPassesTheMergeDocLimit) {
 }
 
 TEST_F(AdjacentRunPolicyTest, LongRunsRelaxTheBalanceRule) {
-  auto specs = Equal(10, 10 * kMiB);
-  for (size_t i = 1; i < specs.size(); i += 2) {
-    specs[i].bytes = 20 * kMiB;
-  }
+  const auto alternating = [](size_t count) {
+    auto specs = Equal(count, 10 * kMiB);
+    for (size_t i = 1; i < specs.size(); i += 2) {
+      specs[i].bytes = 20 * kMiB;
+    }
+    return specs;
+  };
   options.max_segments = 4;
-  EXPECT_EQ(Names{}, Pick(specs));
-  options.relax_from = 2;
-  options.relax_to = 10;
-  EXPECT_EQ((Names{"s6", "s7", "s8", "s9"}), Pick(specs));
+  EXPECT_EQ(Names{}, Pick(alternating(39)));
+  EXPECT_EQ((Names{"s36", "s37", "s38", "s39"}), Pick(alternating(40)));
 }
 
 TEST_F(AdjacentRunPolicyTest, TiesGoToTheNewestSegments) {
@@ -219,23 +216,24 @@ TEST_F(AdjacentRunPolicyTest, TiesGoToTheNewestSegments) {
 }
 
 TEST_F(AdjacentRunPolicyTest, SmallSegmentsCountTheSegmentCost) {
-  EXPECT_EQ(Names{}, Pick(Equal(4, kMiB / 10)));
-  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4"}), Pick(Equal(5, kMiB / 10)));
+  EXPECT_EQ(Names{}, Pick(Equal(5, kMiB / 10)));
+  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4", "s5"}),
+            Pick(Equal(6, kMiB / 10)));
 }
 
 TEST_F(AdjacentRunPolicyTest, SegmentsBelowTheFloorCountAsEqual) {
-  auto specs = Equal(5, kMiB / 10);
+  auto specs = Equal(6, kMiB / 10);
   specs[1].bytes = kMiB / 8;
   specs[3].bytes = kMiB / 9;
-  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4"}), Pick(specs));
+  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4", "s5"}), Pick(specs));
 }
 
 TEST_F(AdjacentRunPolicyTest, LiveBytesDecideTheBalance) {
-  auto specs = Equal(5, 10 * kMiB);
+  auto specs = Equal(6, 10 * kMiB);
   specs[2].bytes = 20 * kMiB;
   EXPECT_EQ(Names{}, Pick(specs));
   specs[2].live_docs = 50;
-  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4"}), Pick(specs));
+  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4", "s5"}), Pick(specs));
 }
 
 TEST_F(AdjacentRunPolicyTest, PurgesTheSegmentWithTheMostDeletes) {
@@ -252,9 +250,9 @@ TEST_F(AdjacentRunPolicyTest, PurgesTheSegmentWithTheMostDeletes) {
 }
 
 TEST_F(AdjacentRunPolicyTest, SkipsSegmentsWithoutLiveDocs) {
-  auto specs = Equal(6, 10 * kMiB);
+  auto specs = Equal(7, 10 * kMiB);
   specs[2].live_docs = 0;
-  EXPECT_EQ((Names{"s0", "s1", "s3", "s4", "s5"}), Pick(specs));
+  EXPECT_EQ((Names{"s0", "s1", "s3", "s4", "s5", "s6"}), Pick(specs));
 }
 
 }  // namespace

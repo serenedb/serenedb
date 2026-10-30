@@ -88,15 +88,7 @@ struct FlushedSegmentContext {
     const auto committed = static_cast<doc_id_t>(flushed.docs.size());
     SDB_ASSERT(0 < committed);
     SDB_ASSERT(committed <= docs_count);
-    if (committed != docs_count && flushed.order.Empty()) {
-      flushed.docs_mask.AddRange(doc_limits::min() + committed,
-                                 doc_limits::min() + docs_count);
-    }
-    if (committed != docs_count && !flushed.order.Empty()) {
-      for (auto old = committed; old != docs_count; ++old) {
-        flushed.docs_mask.Add(flushed.order.old2new[old] + doc_limits::min());
-      }
-    }
+    flushed.order.MaskRows(flushed.docs_mask, committed, docs_count);
     if (flushed.docs_mask.Count() == docs_count) {
       return true;
     }
@@ -106,28 +98,14 @@ struct FlushedSegmentContext {
   }
 
   bool CommittedBy(doc_id_t doc, size_t bound) const noexcept {
-    const auto& new2old = flushed.order.new2old;
-    const auto old = new2old.empty() ? doc - doc_limits::min()
-                                     : new2old[doc - doc_limits::min()];
-    return old < bound;
+    return flushed.order.OldRow(doc) < bound;
   }
 
   void RemoveAll(uint64_t tick);
 };
 
 void FlushedSegmentContext::RemoveAll(uint64_t tick) {
-  const auto bound = flushed.docs.UpperBound(tick);
-  if (bound == 0) {
-    return;
-  }
-  if (flushed.order.Empty()) {
-    flushed.docs_mask.AddRange(
-      doc_limits::min(), static_cast<doc_id_t>(bound + doc_limits::min()));
-    return;
-  }
-  for (size_t old = 0; old != bound; ++old) {
-    flushed.docs_mask.Add(flushed.order.old2new[old] + doc_limits::min());
-  }
+  flushed.order.MaskRows(flushed.docs_mask, 0, flushed.docs.UpperBound(tick));
 }
 
 uint64_t SegmentId(const SubReader& segment) {
@@ -136,7 +114,7 @@ uint64_t SegmentId(const SubReader& segment) {
 
 std::vector<DocMap> MergeMaps(CompactionView candidates,
                               const MergeDocMap& doc_map,
-                              const SegmentReaderImpl& merged) {
+                              const SegmentReaderImpl& merged, bool sorted) {
   std::vector<DocMap> maps;
   maps.reserve(candidates.size());
   for (size_t i = 0; i < candidates.size(); ++i) {
@@ -147,7 +125,7 @@ std::vector<DocMap> MergeMaps(CompactionView candidates,
                      .mask = segment.SharedDocsMask(),
                      .next = merged.DocMaps()};
     const auto& remap = doc_map[i].remap;
-    if (remap.id_map.empty()) {
+    if (!sorted) {
       auto& whole = maps.emplace_back(map);
       whole.rank_end = segment.Meta().live_docs_count;
       whole.base = remap.base_id;
@@ -1242,7 +1220,11 @@ void IndexWriter::Clear(const SourcePosition& position) {
   Finish();
 
   std::lock_guard lock{_compacting.lock};
-  RevokeTicketsLocked(/*clear=*/true);
+  for (auto* state : _compacting.tickets) {
+    state->revoked.store(true, std::memory_order_relaxed);
+    state->registered = false;
+  }
+  _compacting.segments.clear();
 }
 
 IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
@@ -1371,41 +1353,28 @@ uint64_t IndexWriter::CurrentSegmentId() const noexcept {
   return _seg_counter.load(std::memory_order_relaxed);
 }
 
-MergeReservation IndexWriter::ReserveMerges(MergePlanner planner,
-                                            LoneSegment lone) {
-  MergeReservation reservation;
-  std::lock_guard lock{_compacting.lock};
-  if (_compacting.floor_requests != 0) {
-    reservation.busy = true;
-    return reservation;
-  }
-  // hold a reference to the last committed state to prevent files from being
-  // deleted by a cleaner during the upcoming compaction
-  // use atomic_load(...) since Finish() may modify the pointer
-  auto snapshot = GetSnapshotImpl();
-  if (snapshot->size() == 0) {
-    return reservation;
-  }
-
-  MergeGroups groups;
-  const auto floor = _compacting.floor;
-  if (floor == 0) {
-    planner(*snapshot, _compacting.segments, groups);
-  } else {
-    CompactingSegments unavailable = _compacting.segments;
-    for (const auto& segment : *snapshot) {
-      if (BelowFloor(segment.Meta().name, floor)) {
-        unavailable.insert(segment.Meta().name);
-      }
+CompactingSegments IndexWriter::UnavailableLocked(
+  const IndexReader& snapshot) const {
+  CompactingSegments unavailable = _compacting.segments;
+  for (const auto& segment : snapshot) {
+    if (BelowFloor(segment.Meta().name, _compacting.floor)) {
+      unavailable.insert(segment.Meta().name);
     }
-    planner(*snapshot, unavailable, groups);
+  }
+  return unavailable;
+}
+
+MergeReservation IndexWriter::ReserveLocked(
+  std::shared_ptr<const DirectoryReaderImpl> snapshot, MergeGroups& groups,
+  LoneSegment lone) {
+  if (const auto floor = _compacting.floor; floor != 0) {
     for (auto& group : groups) {
       std::erase_if(group, [floor](const SubReader* candidate) {
         return BelowFloor(candidate->Meta().name, floor);
       });
     }
   }
-
+  MergeReservation reservation;
   reservation.tickets.reserve(groups.size());
   for (auto& group : groups) {
     if (group.empty() || (group.size() == 1 && lone == LoneSegment::Skip &&
@@ -1432,7 +1401,6 @@ MergeReservation IndexWriter::ReserveMerges(MergePlanner planner,
 #endif
     auto state = std::make_unique<MergeTicket::State>();
     state->snapshot = snapshot;
-    state->options = snapshot->Options();
     state->inputs.reserve(group.size());
     state->candidates.reserve(group.size());
     for (const auto* candidate : group) {
@@ -1462,19 +1430,16 @@ void IndexWriter::ReleaseTicket(MergeTicket::State& state) noexcept {
   _compacting.tickets.erase(&state);
 }
 
-void IndexWriter::RevokeTicketsLocked(bool clear) noexcept {
+void IndexWriter::RevokeTicketsLocked() noexcept {
   for (auto* state : _compacting.tickets) {
     state->revoked.store(true, std::memory_order_relaxed);
-    if (!state->registered || (state->running && !clear)) {
+    if (!state->registered || state->running) {
       continue;
     }
     for (const auto* candidate : state->candidates) {
       _compacting.segments.erase(candidate->Meta().name);
     }
     state->registered = false;
-  }
-  if (clear) {
-    _compacting.segments.clear();
   }
 }
 
@@ -1567,8 +1532,8 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
   result.stats.output_bytes = compaction_segment.meta.byte_size;
   SDB_PARK_ONCE_ON_FAILURE("pause_merge_before_publish");
 
-  auto pending_reader =
-    SegmentReaderImpl::Open(_dir, compaction_segment.meta, state.options);
+  auto pending_reader = SegmentReaderImpl::Open(_dir, compaction_segment.meta,
+                                                GetSnapshotImpl()->Options());
   SDB_ASSERT(pending_reader);
 
   // Commit merge, ensure no concurrent Commit/etc
@@ -1598,7 +1563,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
     }
   }
 
-  auto maps = MergeMaps(candidates, doc_map, *pending_reader);
+  auto maps = MergeMaps(candidates, doc_map, *pending_reader, !_sort.Empty());
   if (!pending) {
     if (changed) {
       DocumentMaskBuilder carried;
@@ -1700,7 +1665,7 @@ IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
   if (_compacting.floor != 0) {
     return {};  // already armed; one holder at a time
   }
-  RevokeTicketsLocked(/*clear=*/false);
+  RevokeTicketsLocked();
   if (!_compacting.segments.empty()) {
     // A compaction is between selecting candidates and minting its output id,
     // so it could still stamp a fresh id on segments below the floor we are
@@ -1921,7 +1886,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
     .db = _db,
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,
-    .sort = &_sort,
+    .sort = _sort.Empty() ? nullptr : &_sort,
     .hnsw_bases = _hnsw_bases.get(),
   };
 }

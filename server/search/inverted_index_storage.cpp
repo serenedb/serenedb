@@ -33,7 +33,6 @@
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/index/merge/merge_order.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/fs_directory.hpp>
@@ -66,7 +65,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   const catalog::InvertedIndexSettings& options,
   const std::optional<irs::ScorerOptions>& top_k_scorer,
   const irs::SortSpec& sort, bool is_new)
-  : MaintainedStore{index_id},
+  : MaintainedStore{index_id, sort},
     _index_id{index_id},
     _db_id{db_id},
     _directory{std::move(directory)},
@@ -75,13 +74,9 @@ InvertedIndexStorage::InvertedIndexStorage(
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
     _segment_docs_max{options.segment_docs_max},
-    _sort{sort},
     _search{GetSearchEngine()},
     _durability{db_id, absl::StrCat("inverted index ", index_id)} {
   SetTasksSettings(options);
-  if (!sort.Empty()) {
-    _tasks_settings.merge_inputs_max = irs::kSortedMergeInputsMax;
-  }
 
   SDB_ASSERT(index_id != 0);
 
@@ -113,10 +108,6 @@ void InvertedIndexStorage::Open() {
   writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
   writer_options.segment_docs_max = _segment_docs_max;
-  writer_options.on_flushed =
-    [id = GetId()](std::span<const irs::SubReader* const> segments) {
-      MergeRegistry::Instance().RecordFlushes(id, segments);
-    };
 #ifdef SDB_DEV
   // Dev safety net: a second IndexWriter opening the same index directory (a
   // lifecycle bug -- two storages/loops on one dir) fails to acquire the lock
@@ -125,7 +116,7 @@ void InvertedIndexStorage::Open() {
 #else
   writer_options.lock_repository = false;  // single-process server owns the dir
 #endif
-  writer_options.sort = _sort;
+  SetWriterOptions(writer_options);
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
   writer_options.key_field = connector::term_dict::kPKFieldId;
@@ -278,29 +269,30 @@ CleanupResult InvertedIndexStorage::CleanupUnsafe() {
 
 auto InvertedIndexStorage::CompactUnsafeAsync(
   const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
-  bool& empty_compaction, const irs::IndexFieldOptions* field_options,
-  const irs::AnnBuildEnv* env, MergeOrigin origin,
-  irs::CompactionResult* outcome, irs::MergeExecutor* executor,
-  irs::LoneSegment lone) -> yaclib::Future<ResultWithTime> {
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  MergeOrigin origin, irs::MergeExecutor& executor, irs::LoneSegment lone)
+  -> yaclib::Future<MergeResult> {
   MergeRecorder recorder{GetId(), origin};
   const auto recorded = recorder.Wrap(policy);
-  co_return co_await AwaitMerge(recorder, empty_compaction, outcome, [&] {
+  auto result = co_await AwaitMerge([&] {
     return _writer->CompactAsync(recorded, field_options, progress, env,
-                                 executor, lone);
+                                 &executor, lone);
   });
+  if (result.res.ok()) {
+    recorder.Finish(result.outcome);
+  } else {
+    recorder.Fail(result.error);
+  }
+  co_return result;
 }
 
 auto InvertedIndexStorage::RunMergeAsync(
   irs::MergeTicket ticket, const irs::MergeProgress& progress,
-  bool& empty_compaction, const irs::IndexFieldOptions* field_options,
-  const irs::AnnBuildEnv* env, uint64_t merge_id,
-  irs::CompactionResult* outcome, irs::MergeExecutor* executor)
-  -> yaclib::Future<ResultWithTime> {
-  MergeRecorder recorder{GetId(), MergeOrigin::Background, merge_id};
-  recorder.Begin(ticket.Candidates());
-  co_return co_await AwaitMerge(recorder, empty_compaction, outcome, [&] {
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  irs::MergeExecutor& executor) -> yaclib::Future<MergeResult> {
+  co_return co_await AwaitMerge([&] {
     return _writer->RunMerge(std::move(ticket), field_options, progress, env,
-                             executor);
+                             &executor);
   });
 }
 
@@ -329,46 +321,38 @@ ResultWithTime InvertedIndexStorage::RefreshUnsafe(
 }
 
 auto InvertedIndexStorage::AwaitMerge(
-  MergeRecorder& recorder, bool& empty_compaction,
-  irs::CompactionResult* outcome,
   absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
-  -> yaclib::Future<ResultWithTime> {
+  -> yaclib::Future<MergeResult> {
   const auto begin = std::chrono::steady_clock::now();
-  empty_compaction = false;
-  auto result = absl::OkStatus();
+  bool empty_compaction = false;
+  MergeResult result;
   try {
-    auto res = co_await merge();
-    if (!res) {
+    result.outcome = co_await merge();
+    if (!result.outcome) {
       SDB_DEBUG(SEARCH, "compaction of Search index '", GetId(),
                 "' merged nothing: cancelled, or every document was removed");
       empty_compaction = true;
-    } else if (res.error != irs::CompactionError::Busy) {
-      empty_compaction = res.size == 0;
+    } else if (result.outcome.error != irs::CompactionError::Busy) {
+      empty_compaction = result.outcome.size == 0;
     }
-    if (outcome) {
-      *outcome = res;
-    }
-    recorder.Finish(std::move(res));
   } catch (const std::exception& e) {
-    const auto message = duckdb::ErrorData{e}.RawMessage();
-    recorder.Fail(message);
-    result = absl::InternalError(
+    result.error = duckdb::ErrorData{e}.RawMessage();
+    result.res = absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
-                   GetId(), "': ", message));
+                   GetId(), "': ", result.error));
   } catch (...) {
-    recorder.Fail("unknown exception");
-    result = absl::InternalError(
+    result.error = "unknown exception";
+    result.res = absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
                    GetId(), "'"));
   }
-  const uint64_t time_ms =
-    std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now() - begin)
-      .count();
-  _maintenance.RecordCompaction(result, empty_compaction, time_ms);
-  co_return ResultWithTime{std::move(result), time_ms};
+  result.time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::steady_clock::now() - begin)
+                     .count();
+  _maintenance.RecordCompaction(result.res, empty_compaction, result.time_ms);
+  co_return result;
 }
 
 void InvertedIndexStorage::PublishSnapshot() {

@@ -20,12 +20,14 @@
 
 #include <gtest/gtest.h>
 
+#include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
+#include <iresearch/formats/format_utils.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -55,6 +57,29 @@ std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
   return std::make_unique<ColReader>(dir, segment_name,
                                      ::irs::DuckDBEngine::Instance().instance(),
                                      IOAdvice::SEQUENTIAL);
+}
+
+uint64_t ColFileId(const Directory& dir, std::string_view segment_name,
+                   duckdb::DatabaseInstance& db) {
+  const auto name = FileName(segment_name);
+  auto in = dir.open(name, IOAdvice::NORMAL);
+  SDB_ASSERT(in);
+  uint64_t file_id = 0;
+  format_utils::ReadFooter(
+    *in, name, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+      footer.Set<duckdb::DatabaseInstance&>(db);
+      footer.ReadOptionalList(
+        kColFieldColumns, "columns",
+        [](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+          list.ReadObject([](duckdb::BinaryDeserializer& obj) {
+            DeserializeColumnMeta(obj);
+          });
+        });
+      file_id = footer.ReadPropertyWithExplicitDefault<uint64_t>(
+        kColFieldFileId, "file_id", 0);
+      footer.Unset<duckdb::DatabaseInstance>();
+    });
+  return file_id;
 }
 
 ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id) {

@@ -20,7 +20,6 @@
 
 #include "iresearch/formats/column/col_reader.hpp"
 
-#include <absl/random/random.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -30,7 +29,6 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/database.hpp>
-#include <limits>
 #include <map>
 #include <utility>
 #include <vector>
@@ -198,9 +196,6 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
         kColFieldFileId, "file_id", 0);
       footer.Unset<duckdb::DatabaseInstance>();
     });
-  if (file_id == 0) {
-    file_id = NewColFileId();
-  }
   for (auto& meta : metas) {
     auto col = ColumnReader::Make(std::move(meta), file_id);
     const auto id = col->Id();
@@ -211,12 +206,6 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
 }
 
 ColReader::~ColReader() = default;
-
-uint64_t NewColFileId() {
-  absl::BitGen gen;
-  return absl::Uniform<uint64_t>(absl::IntervalClosed, gen, 1,
-                                 std::numeric_limits<uint64_t>::max());
-}
 
 const ColumnReader* ColReader::Column(field_id id) const noexcept {
   auto it = _by_id.find(id);

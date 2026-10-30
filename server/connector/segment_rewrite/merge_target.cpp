@@ -125,7 +125,11 @@ MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
     }
   }
 
-  if (!target._table && !target._index) {
+  if (target._table) {
+    target._store = target._table.get();
+  } else if (target._index) {
+    target._store = target._index.get();
+  } else {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", relation, "\" does not exist"));
   }
@@ -146,18 +150,12 @@ irs::DirectoryReader MergeTarget::Snapshot() const {
   return _index->GetInvertedIndexSnapshot()->reader;
 }
 
-const search::TasksSettings& MergeTarget::Settings() const {
-  if (_table) {
-    return _table->GetTasksSettings();
-  }
-  return _index->GetTasksSettings();
-}
-
 search::CompactionOptions MergeTarget::PinOptions() const {
   if (_table) {
     return search::PinCompactionOptions(*_table);
   }
-  return search::PinCompactionOptions(*_index);
+  return {
+    .alive = true, .keepalive = _options, .field_options = _options.get()};
 }
 
 std::string MergeTarget::ColumnName(irs::field_id id) const {
@@ -168,34 +166,28 @@ std::string MergeTarget::ColumnName(irs::field_id id) const {
   return absl::StrCat("#", id);
 }
 
-MergeRun MergeTarget::Compact(const irs::CompactionPolicy& policy,
-                              const irs::MergeProgress& progress,
-                              const irs::IndexFieldOptions* field_options,
-                              search::MergeOrigin origin,
-                              irs::MergeExecutor* executor,
-                              irs::LoneSegment lone) const {
-  MergeRun run;
-  bool empty = false;
+ExecutedMerge MergeTarget::Compact(const irs::CompactionPolicy& policy,
+                                   const irs::MergeProgress& progress,
+                                   const irs::IndexFieldOptions* field_options,
+                                   search::MergeOrigin origin,
+                                   irs::MergeExecutor& executor,
+                                   irs::LoneSegment lone) const {
   const auto* env = &search::AnnBuildEnv();
-  auto [status, time_ms] = _table
-                             ? irs::GetBlocking(_table->CompactUnsafeAsync(
-                                 policy, progress, empty, field_options, env,
-                                 origin, &run.result, executor, lone))
-                             : irs::GetBlocking(_index->CompactUnsafeAsync(
-                                 policy, progress, empty, field_options, env,
-                                 origin, &run.result, executor, lone));
-  if (!status.ok()) {
-    run.error = std::string{status.message()};
-  }
-  return run;
+  auto merged =
+    _table ? irs::GetBlocking(_table->CompactUnsafeAsync(
+               policy, progress, field_options, env, origin, executor, lone))
+           : irs::GetBlocking(_index->CompactUnsafeAsync(
+               policy, progress, field_options, env, origin, executor, lone));
+  return {
+    .outcome = merged.res.ok() ? search::OutcomeOf(merged.outcome)
+                               : search::MergeOutcome::Failed,
+    .stats = std::move(merged.outcome.stats),
+    .error = std::string{merged.res.message()},
+  };
 }
 
 search::MergeScheduler::Lease MergeTarget::TakeOver() const {
-  auto& merges = search::GetSearchEngine().Merges();
-  if (_table) {
-    return merges.TakeOver(_table->MergeRelation());
-  }
-  return merges.TakeOver(_index->MergeRelation());
+  return search::GetSearchEngine().Merges().TakeOver(_store->MergeRelation());
 }
 
 void MergeTarget::Publish() const {
@@ -205,10 +197,6 @@ void MergeTarget::Publish() const {
     search::ThrowIfRefreshFailed(_index->Refresh(), _name);
   }
   Cleanup();
-}
-
-bool MergeTarget::Sorted() const noexcept {
-  return _table ? _table->Sorted() : _index->Sorted();
 }
 
 void MergeTarget::Refresh() const {

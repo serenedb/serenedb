@@ -22,6 +22,7 @@
 
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/table_filter.hpp>
@@ -44,11 +45,6 @@
 #include "connector/view_fast_path.h"
 #include "search/inverted_index_storage.h"
 
-namespace duckdb {
-
-class PhysicalOperator;
-
-}  // namespace duckdb
 namespace sdb::catalog {
 
 class SearchTableEntry;

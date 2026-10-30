@@ -129,11 +129,10 @@ void AppendDistinct(const duckdb::Vector& values, duckdb::idx_t count,
   }
 }
 
-void ScanSampleWindows(
-  std::span<const MergeSource> sources, field_id id,
-  std::span<const std::shared_ptr<ReadContext>> ctxs,
-  absl::FunctionRef<bool(const duckdb::Vector&, duckdb::idx_t)> visit,
-  absl::FunctionRef<void()> close) {
+template<typename Visit, typename Close>
+void ScanSampleWindows(std::span<const MergeSource> sources, field_id id,
+                       std::span<const std::shared_ptr<ReadContext>> ctxs,
+                       Visit&& visit, Close&& close) {
   struct Range {
     size_t source;
     const ColumnReader* col;
@@ -183,9 +182,10 @@ void ScanSampleWindows(
   }
 }
 
+template<typename Sink>
 void SampleDictionary(std::span<const MergeSource> sources, field_id id,
                       std::span<const std::shared_ptr<ReadContext>> ctxs,
-                      absl::FunctionRef<void(std::string_view)> sink) {
+                      Sink&& sink) {
   irs::containers::FlatHashSet<uint64_t> seen;
   std::string window;
   ScanSampleWindows(
@@ -201,10 +201,9 @@ void SampleDictionary(std::span<const MergeSource> sources, field_id id,
     });
 }
 
-void VisitLeaf(
-  const duckdb::Vector& values, duckdb::idx_t count,
-  std::span<const uint32_t> path,
-  absl::FunctionRef<void(const duckdb::Vector&, duckdb::idx_t)> visit) {
+template<typename Visit>
+void VisitLeaf(const duckdb::Vector& values, duckdb::idx_t count,
+               std::span<const uint32_t> path, const Visit& visit) {
   if (path.empty()) {
     visit(values, count);
     return;
@@ -457,9 +456,7 @@ struct ColumnMerger::State {
         const auto take =
           std::min<duckdb::idx_t>(total - pos, STANDARD_VECTOR_SIZE);
         const auto& kept_idx = KeptFor(si, pos);
-        const auto kept_in_window = static_cast<uint64_t>(
-          absl::c_lower_bound(kept_idx, static_cast<duckdb::sel_t>(take)) -
-          kept_idx.begin());
+        const uint64_t kept_in_window = ValuedIn(kept_idx, take);
         if (to_skip >= kept_in_window) {
           to_skip -= kept_in_window;
           continue;
@@ -526,7 +523,7 @@ struct ColumnMerger::State {
             leaf.Close();
           }
         });
-      if (!AllReady(leaves) && Rows(column) <= kSampleWindowsReach &&
+      if (!AllReady(leaves) && fallback &&
           !SampleLeafRowGroups(column, leaves, progress)) {
         return false;
       }
@@ -535,14 +532,8 @@ struct ColumnMerger::State {
       }
     }
     for (auto& leaf : leaves) {
-      std::shared_ptr<const codecs::TrainedDictionary> dictionary;
-      if (auto bytes =
-            leaf.sampler.Ready() ? leaf.sampler.Train() : std::nullopt) {
-        dictionary =
-          std::make_shared<const codecs::TrainedDictionary>(std::move(*bytes));
-      }
       trained.emplace_back(
-        LeafDictionary{std::move(leaf.path), std::move(dictionary)});
+        LeafDictionary{std::move(leaf.path), leaf.sampler.Train()});
     }
     std::lock_guard lock{dictionaries_mutex};
     leaf_dictionaries.emplace(column, std::move(trained));
@@ -924,13 +915,8 @@ std::span<const field_id> ColumnMerger::Columns() const noexcept {
 
 uint64_t ColumnMerger::StoredBytes(field_id column) const {
   uint64_t bytes = 0;
-  for (const auto& source : _state->sources) {
-    if (!source.col_reader) {
-      continue;
-    }
-    if (const auto* col = source.col_reader->Column(column)) {
-      bytes += irs::StoredBytes(*col);
-    }
+  for (size_t input = 0; input != _state->sources.size(); ++input) {
+    bytes += StoredBytes(column, input);
   }
   return bytes;
 }
@@ -1003,10 +989,7 @@ bool ColumnMerger::Train(field_id column, absl::FunctionRef<bool()> progress) {
     if (!progress()) {
       return false;
     }
-    if (auto bytes = sampler.Ready() ? sampler.Train() : std::nullopt) {
-      dictionary =
-        std::make_shared<const codecs::TrainedDictionary>(std::move(*bytes));
-    }
+    dictionary = sampler.Train();
   }
   std::lock_guard lock{shared.dictionaries_mutex};
   shared.dictionaries.emplace(column, std::move(dictionary));
@@ -1084,10 +1067,16 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
       ? EstimateReencode(*source.col_reader, col, *shared.field_options,
                          std::move(dictionary))
       : *EstimateReencode(*source.col_reader, col, *shared.field_options);
+  if (ReencodePays(estimate)) {
+    return MergeRange(column, part, begin, end, output, progress);
+  }
+  std::span<const std::shared_ptr<const codecs::TrainedDictionary>> trained;
+  if (col.HasDictionaries()) {
+    ReadContext ctx{*source.col_reader};
+    trained = *col.Dictionaries(ctx);
+  }
   std::vector<uint16_t> dictionaries;
-  if (ReencodePays(estimate) ||
-      !output.AddCopiedDictionaries(
-        column, ReadDictionaries(*source.col_reader, col), dictionaries)) {
+  if (!output.AddCopiedDictionaries(column, trained, dictionaries)) {
     return MergeRange(column, part, begin, end, output, progress);
   }
   return output.CopyColumnPart(column, part, *source.col_reader, col,

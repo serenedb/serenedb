@@ -25,7 +25,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
-#include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
 #include <array>
@@ -62,6 +61,7 @@ namespace duckdb {
 class DatabaseInstance;
 }
 #include "iresearch/index/directory_reader.hpp"
+#include "iresearch/index/directory_reader_impl.hpp"
 #include "iresearch/index/doc_removal.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -93,10 +93,6 @@ using CompactionPolicy =
                      const CompactingSegments& compacting_segments)>;
 
 using MergeGroups = std::vector<Compaction>;
-
-using MergePlanner = absl::FunctionRef<void(const IndexReader& index,
-                                            const CompactingSegments& reserved,
-                                            MergeGroups& groups)>;
 
 struct MergeReservation {
   std::vector<MergeTicket> tickets;
@@ -469,8 +465,24 @@ class IndexWriter : private util::Noncopyable {
                     LoneSegment lone = LoneSegment::Skip)
     -> yaclib::Future<CompactionResult>;
 
-  MergeReservation ReserveMerges(MergePlanner planner,
-                                 LoneSegment lone = LoneSegment::Skip);
+  MergeReservation ReserveMerges(auto&& planner,
+                                 LoneSegment lone = LoneSegment::Skip) {
+    std::lock_guard lock{_compacting.lock};
+    if (_compacting.floor_requests != 0) {
+      return {.busy = true};
+    }
+    auto snapshot = GetSnapshotImpl();
+    if (snapshot->size() == 0) {
+      return {};
+    }
+    MergeGroups groups;
+    if (_compacting.floor == 0) {
+      planner(*snapshot, _compacting.segments, groups);
+    } else {
+      planner(*snapshot, UnavailableLocked(*snapshot), groups);
+    }
+    return ReserveLocked(std::move(snapshot), groups, lone);
+  }
 
   auto RunMerge(MergeTicket ticket, const IndexFieldOptions* field_options,
                 const MergeProgress& progress, const AnnBuildEnv* env,
@@ -563,8 +575,12 @@ class IndexWriter : private util::Noncopyable {
  private:
   friend class MergeTicket;
 
+  CompactingSegments UnavailableLocked(const IndexReader& snapshot) const;
+  MergeReservation ReserveLocked(
+    std::shared_ptr<const DirectoryReaderImpl> snapshot, MergeGroups& groups,
+    LoneSegment lone);
   void ReleaseTicket(MergeTicket::State& state) noexcept;
-  void RevokeTicketsLocked(bool clear) noexcept;
+  void RevokeTicketsLocked() noexcept;
 
   struct CompactionContext : util::Noncopyable {
     std::vector<SegmentReader> inputs;

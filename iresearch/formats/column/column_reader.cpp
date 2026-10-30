@@ -55,7 +55,6 @@
 #include <utility>
 
 #include "iresearch/formats/column/array_column_reader.hpp"
-#include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
@@ -364,10 +363,6 @@ const codecs::TrainedDictionaries* ColumnReader::Dictionaries(
   return &_dictionaries;
 }
 
-std::string ColumnReader::DictionaryCacheKey(size_t block) const {
-  return codecs::DictionaryCacheKey(_file_id, _segments[block].file_offset);
-}
-
 bool ColumnReader::NullsInData() const noexcept {
   return absl::c_any_of(_segments, [](const ColumnBlockMeta& m) {
     return m.codec->validity ==
@@ -545,10 +540,7 @@ struct ScannedStrings final : duckdb::AuxiliaryDataHolder {
 
 void ColumnReader::CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
                                   duckdb::Vector& result) const {
-  if (s.ctx.use_count() == 0 ||
-      _type.InternalType() != duckdb::PhysicalType::VARCHAR ||
-      duckdb::IsSereneDBCompressionType(
-        segment.GetCompressionFunction().type)) {
+  if (s.ctx.use_count() == 0 || !BorrowsBlockStrings(segment)) {
     return;
   }
   auto& block = segment.GetBlockHandle();

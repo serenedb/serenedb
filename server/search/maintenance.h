@@ -25,8 +25,9 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/directory_cleaner.hpp>
-#include <limits>
+#include <string>
 
 // Background-maintenance vocabulary shared by the maintained iresearch stores
 // (InvertedIndexStorage, SearchTable) and the loops in search/task.h that drive
@@ -41,7 +42,6 @@ struct TasksSettings {
   std::atomic_size_t compaction_max_segments{};
   std::atomic_size_t compaction_max_segments_bytes{};
   std::atomic_size_t compaction_floor_segment_bytes{};
-  std::atomic_size_t merge_inputs_max{std::numeric_limits<size_t>::max()};
 };
 
 enum class RefreshResult {
@@ -58,6 +58,13 @@ enum class RefreshResult {
 struct ResultWithTime {
   absl::Status res;
   uint64_t time_ms;
+};
+
+struct MergeResult {
+  absl::Status res;
+  uint64_t time_ms = 0;
+  irs::CompactionResult outcome;
+  std::string error;
 };
 
 struct CleanupResult {

@@ -37,7 +37,6 @@ namespace irs::codecs::text {
 class FsstChainEncoder {
  public:
   static constexpr ByteCodec kCodec = ByteCodec::Fsst;
-  static constexpr bool kSorted = true;
 
   explicit FsstChainEncoder(StringTuning& tuning, uint32_t target) noexcept
     : _history{tuning.history[static_cast<size_t>(kCodec)]}, _target{target} {}
@@ -58,7 +57,6 @@ class FsstChainEncoder {
   std::string& Data() noexcept { return _data; }
 
  private:
-  double Ratio() const noexcept;
   void Encode(std::span<const std::string_view> entries, uint32_t first_entry);
 
   RatioHistory* _history;

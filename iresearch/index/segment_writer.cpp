@@ -103,16 +103,18 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
     _db{DerefDb(options.db)},
     _fallback_field_options{options.field_options},
     _ann_env{options.ann_env},
-    _sort{options.sort && !options.sort->Empty() ? options.sort : nullptr},
-    _hnsw_bases{options.hnsw_bases} {}
+    _sort{options.sort},
+    _hnsw_bases{options.hnsw_bases} {
+  SDB_ASSERT(!_sort || !_sort->Empty());
+}
 
 void SegmentWriter::FlushFields(FlushState& state,
                                 std::span<const BasicTermReader* const> extra,
-                                std::span<const uint32_t> old2new) {
+                                const DocOrder& order) {
   SDB_ASSERT(_field_writer);
 
   try {
-    _fields.Flush(*_field_writer, state, extra, old2new);
+    _fields.Flush(*_field_writer, state, extra, order);
   } catch (...) {
     _field_writer.reset();
     throw;
@@ -140,7 +142,7 @@ void SegmentWriter::flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask,
     if (_sort) {
       order =
         MakeDocOrder(FlushOrder(_db, *_sort, *_col_writer, buffered_docs()));
-      _col_writer->Commit(buffered_docs(), [] { return true; }, order.new2old);
+      _col_writer->Commit(buffered_docs(), order.new2old);
     } else {
       _col_writer->Commit(buffered_docs());
     }
@@ -160,7 +162,7 @@ void SegmentWriter::flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask,
     std::optional<ReadContext> ivf_ctx;
     const auto cluster_readers =
       PrepareIvfClusterReaders(ann_writers, _col_reader.get(), ivf_ctx);
-    FlushFields(state, cluster_readers, order.old2new);
+    FlushFields(state, cluster_readers, order);
   }
 
   for (const auto& w : ann_writers) {
@@ -178,7 +180,7 @@ void SegmentWriter::flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask,
   } else {
     const auto masked = std::move(_docs_mask).Finish();
     masked.ForEach([&](doc_id_t doc) {
-      docs_mask.Add(order.old2new[doc - doc_limits::min()] + doc_limits::min());
+      docs_mask.Add(order.NewDoc(doc - doc_limits::min()));
     });
     _docs_mask = DocumentMaskBuilder{};
   }

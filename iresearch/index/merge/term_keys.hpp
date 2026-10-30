@@ -23,10 +23,9 @@
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
+#include <deque>
 #include <duckdb/common/sorting/presorted_merge.hpp>
-#include <optional>
-#include <utility>
-#include <vector>
+#include <limits>
 
 #include "iresearch/utils/string.hpp"
 
@@ -38,6 +37,12 @@ struct TermReader;
 class TermKeys final : public duckdb::PresortedMergeInput {
  public:
   static constexpr uint64_t kAnchorStep = 256;
+  static constexpr uint64_t kNoAnchor = std::numeric_limits<uint64_t>::max();
+
+  struct TermAnchor {
+    uint64_t row = kNoAnchor;
+    bytes_view term;
+  };
 
   explicit TermKeys(const TermReader& reader) noexcept : _reader{reader} {}
 
@@ -46,7 +51,7 @@ class TermKeys final : public duckdb::PresortedMergeInput {
 
   const TermReader& Reader() const noexcept { return _reader; }
 
-  std::optional<std::pair<uint64_t, bstring>> Anchor(uint64_t row) const;
+  TermAnchor Anchor(uint64_t row) const;
   void Record(uint64_t row, bytes_view term) const;
 
   void SeekBefore(SeekTermIterator& it, uint64_t row) const;
@@ -54,7 +59,7 @@ class TermKeys final : public duckdb::PresortedMergeInput {
  private:
   const TermReader& _reader;
   mutable absl::Mutex _mutex;
-  mutable std::vector<bstring> _anchors;
+  mutable std::deque<bstring> _anchors;
 };
 
 }  // namespace irs

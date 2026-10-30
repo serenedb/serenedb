@@ -102,11 +102,6 @@ IRS_FORCE_INLINE uint32_t Get(uint32_t* const* blocks, uint64_t i) noexcept {
                [i & ScatterScratch::kBlockMask];
 }
 
-IRS_FORCE_INLINE doc_id_t Remap(std::span<const uint32_t> old2new,
-                                doc_id_t doc) noexcept {
-  return old2new[doc - doc_limits::min()] + doc_limits::min();
-}
-
 template<typename T, typename DocOf>
 void SortByDoc(ManagedVector<T>& items, ManagedVector<T>& spare,
                doc_id_t max_doc, DocOf doc_of) {
@@ -140,11 +135,11 @@ void SortByDoc(ManagedVector<T>& items, ManagedVector<T>& spare,
 }  // namespace
 
 void ScatteredField::RemapInlineDocs(std::span<const doc_id_t> docs,
-                                     std::span<const uint32_t> old2new) {
+                                     const DocOrder& order) {
   auto& out = _s->inline_docs;
   out.resize(docs.size());
   for (size_t r = 0; r != docs.size(); ++r) {
-    out[r] = Remap(old2new, docs[r]);
+    out[r] = order.NewDoc(docs[r] - doc_limits::min());
   }
   if (_s->term_starts.empty()) {
     return;
@@ -155,7 +150,7 @@ void ScatteredField::RemapInlineDocs(std::span<const doc_id_t> docs,
 }
 
 template<TokenLayout kLayout>
-void ScatteredField::RemapLogDocs(std::span<const uint32_t> old2new) {
+void ScatteredField::RemapLogDocs(const DocOrder& order) {
   auto* const* docs = _s->docs.data();
   auto* const* positions = _s->pos.data();
   for (size_t t = 0, n = TermCount(); t != n; ++t) {
@@ -165,7 +160,7 @@ void ScatteredField::RemapLogDocs(std::span<const uint32_t> old2new) {
     doc_id_t prev = 0;
     doc_id_t max_doc = 0;
     for (auto i = begin; i != end; ++i) {
-      const auto doc = Remap(old2new, Get(docs, i));
+      const auto doc = order.NewDoc(Get(docs, i) - doc_limits::min());
       Put(docs, i, doc);
       sorted = sorted && prev <= doc;
       prev = doc;
@@ -221,10 +216,9 @@ void ScatteredField::RemapLogDocs(std::span<const uint32_t> old2new) {
   }
 }
 
-void ScatteredField::Reset(const FieldInverter& field,
-                           std::span<const uint32_t> old2new) {
+void ScatteredField::Reset(const FieldInverter& field, const DocOrder& order) {
   _field = &field;
-  _remapped = !old2new.empty();
+  _remapped = !order.Empty();
   _all_inline = field.Log().Size() == 0;
   SDB_ASSERT(field.InlineDocs().empty() || _all_inline);
   if (field.Log().Size() > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
@@ -245,7 +239,7 @@ void ScatteredField::Reset(const FieldInverter& field,
                                      std::less_equal<>{});
   if (_identity) {
     if (_remapped) {
-      RemapInlineDocs(field.InlineDocs(), old2new);
+      RemapInlineDocs(field.InlineDocs(), order);
     }
     return;
   }
@@ -266,7 +260,7 @@ void ScatteredField::Reset(const FieldInverter& field,
       out[r] = docs[ranked[r].id];
     }
     if (_remapped) {
-      RemapInlineDocs(out, old2new);
+      RemapInlineDocs(out, order);
     }
     return;
   }
@@ -279,7 +273,7 @@ void ScatteredField::Reset(const FieldInverter& field,
       Scatter<false>(log, nocc);
     }
     if (_remapped) {
-      RemapLogDocs<std::decay_t<decltype(log)>::kLayout>(old2new);
+      RemapLogDocs<std::decay_t<decltype(log)>::kLayout>(order);
     }
   });
 }

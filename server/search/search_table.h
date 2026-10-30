@@ -53,25 +53,22 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "search/compaction/merge_planner.h"
 #include "search/compaction/merge_registry.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/search_table_changes.h"
 #include "search/store_stats.h"
 #include "search/writer_generations.h"
-#include "storage_engine/search_engine.h"
 
 namespace duckdb {
 
 class Catalog;
 class ClientContext;
 class DataChunk;
-class TaskScheduler;
 
 }  // namespace duckdb
 namespace sdb::search {
-
-enum class MergeMode : uint8_t;
 
 class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                           public MaintainedStore {
@@ -117,10 +114,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
       _dropped.store(true, std::memory_order_release);
     }
   }
-  bool Dropped() const noexcept {
-    return _dropped.load(std::memory_order_acquire);
+  bool Retired() const noexcept {
+    return _dropped.load(std::memory_order_acquire) || _directory->Detached();
   }
-  bool Retired() const noexcept { return Dropped() || _directory->Detached(); }
   std::filesystem::path Path() const {
     return _directory->StoragePath(GetTableId());
   }
@@ -178,48 +174,30 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void ApplyOptions(const catalog::SearchTableOptions& options);
   void SetDeclaredCompression(catalog::CompressionByColumn compression);
 
-  bool Sorted() const noexcept { return !_sort.Empty(); }
-
   // Launch this table's refresh + compaction loops (via SearchEngine). Call
   // once, after the table is open and recovery (if any) finalized.
   void StartTasks();
 
   // The maintenance ops the loops invoke: RefreshUnsafe publishes pending
-  // inserts, CompactUnsafe merges segments, CleanupUnsafe reclaims unreferenced
-  // files.
+  // inserts, CompactUnsafeAsync merges segments, CleanupUnsafe reclaims
+  // unreferenced files.
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
                                RefreshResult& code);
-  ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
-                               const irs::MergeProgress& progress,
-                               bool& empty_compaction,
-                               const irs::IndexFieldOptions* field_options,
-                               MergeOrigin origin,
-                               irs::MergeExecutor* executor = nullptr,
-                               irs::LoneSegment lone = irs::LoneSegment::Skip) {
-    return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
-                                            field_options, &AnnBuildEnv(),
-                                            origin, nullptr, executor, lone));
-  }
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                           const irs::MergeProgress& progress,
-                          bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,
                           const irs::AnnBuildEnv* env, MergeOrigin origin,
-                          irs::CompactionResult* outcome = nullptr,
-                          irs::MergeExecutor* executor = nullptr,
-                          irs::LoneSegment lone = irs::LoneSegment::Skip)
-    -> yaclib::Future<ResultWithTime>;
-  irs::MergeReservation ReserveMerges(irs::MergePlanner planner) {
-    return _writer->ReserveMerges(planner);
+                          irs::MergeExecutor& executor, irs::LoneSegment lone)
+    -> yaclib::Future<MergeResult>;
+  irs::MergeReservation ReserveMerges(auto&& planner) {
+    return _writer->ReserveMerges(std::forward<decltype(planner)>(planner));
   }
   auto RunMergeAsync(irs::MergeTicket ticket,
-                     const irs::MergeProgress& progress, bool& empty_compaction,
+                     const irs::MergeProgress& progress,
                      const irs::IndexFieldOptions* field_options,
-                     const irs::AnnBuildEnv* env, uint64_t merge_id,
-                     irs::CompactionResult* outcome = nullptr,
-                     irs::MergeExecutor* executor = nullptr)
-    -> yaclib::Future<ResultWithTime>;
+                     const irs::AnnBuildEnv* env, irs::MergeExecutor& executor)
+    -> yaclib::Future<MergeResult>;
   CleanupResult CleanupUnsafe();
 
   const std::optional<irs::ScorerOptions>& TopKScorer() const noexcept {
@@ -229,9 +207,10 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   StoreStats GetStats() const;
 
   [[nodiscard]] absl::Status VacuumRefresh();
-  [[nodiscard]] absl::Status VacuumCompact(
-    MergeMode mode, uint32_t target_segments, duckdb::TaskScheduler& scheduler,
-    const irs::MergeProgress& progress, irs::MergeExecutor* executor = nullptr);
+  [[nodiscard]] absl::Status VacuumCompact(MergeMode mode,
+                                           uint32_t target_segments,
+                                           const irs::MergeProgress& progress,
+                                           irs::MergeExecutor& executor);
 
   [[nodiscard]] std::optional<unsigned> RegisterWriter() {
     return _writers.Register();
@@ -339,10 +318,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void AbortIndexBuild(duckdb::idx_t index_oid) noexcept;
   ReplaySession* BeginReplay(duckdb::AttachedDatabase& db);
   auto AwaitMerge(
-    MergeRecorder& recorder, bool& empty_compaction,
-    irs::CompactionResult* outcome,
     absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
-    -> yaclib::Future<ResultWithTime>;
+    -> yaclib::Future<MergeResult>;
 
   duckdb::idx_t _db_id;
   duckdb::idx_t _table_id;
@@ -354,7 +331,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
   irs::containers::FlatHashSet<irs::field_id> _table_columns;
-  irs::SortSpec _sort;
   std::atomic<bool> _dropped{false};
   mutable absl::Mutex _layout_mutex;
   catalog::CompressionByColumn _compression ABSL_GUARDED_BY(_layout_mutex);

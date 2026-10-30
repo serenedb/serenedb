@@ -24,10 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <span>
-#include <string>
-#include <vector>
 
 #include "iresearch/formats/column/column_reader.hpp"
 
@@ -40,12 +37,9 @@ inline constexpr size_t kMaxColumnDictionaries = 8;
 
 bool BlocksRelocatable(const ColumnReader& column);
 
-std::vector<std::string> ReadDictionaries(const ColReader& reader,
-                                          const ColumnReader& column);
-
-std::optional<ColumnMeta> CopyColumnBlocks(
-  const ColReader& reader, const ColumnReader& column, bool validity,
-  std::span<const uint16_t> dictionaries, ColBlockSink& sink,
-  absl::FunctionRef<bool()> progress);
+bool CopyColumnBlocks(const ColReader& reader, const ColumnReader& column,
+                      bool validity, std::span<const uint16_t> dictionaries,
+                      ColBlockSink& sink, ColumnMeta& meta,
+                      absl::FunctionRef<bool()> progress);
 
 }  // namespace irs

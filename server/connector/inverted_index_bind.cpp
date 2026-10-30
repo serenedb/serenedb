@@ -20,6 +20,7 @@
 
 #include "connector/inverted_index_bind.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/functional/function_ref.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/numbers.h>
@@ -40,7 +41,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_lambda_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
@@ -61,6 +61,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
+#include "catalog/sort_keys.h"
 #include "connector/column_id.h"
 #include "connector/geo_validate.h"
 #include "connector/index_expression.hpp"
@@ -281,17 +282,12 @@ void ValidateColumnCompression(duckdb::ClientContext& context,
             "' is not supported for type ", column_type.ToString()));
 }
 
-struct CompressionSpec {
-  duckdb::CompressionType type;
-  uint8_t compression_level = 0;
-};
-
-CompressionSpec ParseCompressionSpec(duckdb::ClientContext& context,
-                                     std::string_view column_name,
-                                     std::string_view spec) {
+irs::ColumnOptions ParseCompressionSpec(duckdb::ClientContext& context,
+                                        std::string_view column_name,
+                                        std::string_view spec) {
   const auto open = spec.find('(');
   if (open == std::string_view::npos) {
-    return {.type = ParseCompressionName(context, column_name, spec)};
+    return {.compression = ParseCompressionName(context, column_name, spec)};
   }
   auto bad = [&](std::string_view detail) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -301,8 +297,8 @@ CompressionSpec ParseCompressionSpec(duckdb::ClientContext& context,
   if (spec.back() != ')') {
     bad("expected name(compression_level = N)");
   }
-  CompressionSpec out{
-    .type = ParseCompressionName(
+  irs::ColumnOptions out{
+    .compression = ParseCompressionName(
       context, column_name, absl::StripAsciiWhitespace(spec.substr(0, open)))};
   const auto body = spec.substr(open + 1, spec.size() - open - 2);
   for (const auto option : absl::StrSplit(body, ',', absl::SkipWhitespace())) {
@@ -325,16 +321,15 @@ CompressionSpec ParseCompressionSpec(duckdb::ClientContext& context,
   return out;
 }
 
-CompressionSpec ParseCompressionOption(duckdb::ClientContext& context,
-                                       std::string_view kind,
-                                       std::string_view owner_label,
-                                       std::string_view key,
-                                       const duckdb::Value& v,
-                                       const duckdb::LogicalType& value_type) {
+irs::ColumnOptions ParseCompressionOption(
+  duckdb::ClientContext& context, std::string_view kind,
+  std::string_view owner_label, std::string_view key, const duckdb::Value& v,
+  const duckdb::LogicalType& value_type) {
   auto str = GetIndexStringOption(kind, owner_label, key, v);
   auto parsed = ParseCompressionSpec(context, owner_label, str);
-  ValidateColumnCompression(context, owner_label, parsed.type, value_type);
-  catalog::CheckCompressionLevel(owner_label, parsed.type,
+  ValidateColumnCompression(context, owner_label, parsed.compression,
+                            value_type);
+  catalog::CheckCompressionLevel(owner_label, parsed.compression,
                                  parsed.compression_level,
                                  /*columnstore=*/true);
   return parsed;
@@ -717,7 +712,7 @@ void ApplyIncludedOpclass(
     if (key == kCompressionField) {
       const auto spec = ParseCompressionOption(
         context, catalog::kIncludedKind, owner_label, key, raw_val, value_type);
-      entry.column_options.compression = spec.type;
+      entry.column_options.compression = spec.compression;
       entry.column_options.compression_level = spec.compression_level;
     } else if (key == kHyperLogLogField) {
       entry.column_options.hyperloglog =
@@ -1416,18 +1411,16 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   }
   config->top_k_scorer = std::move(top_k_scorer);
   config->pk = pk;
-  for (const auto& order : sort_orders) {
-    const auto& column =
-      relation.Cast<duckdb::TableCatalogEntry>().GetColumns().GetColumn(
-        order.expression->Cast<duckdb::ColumnRefExpression>().GetColumnName());
-    const auto id = static_cast<irs::field_id>(TableColumnId(column));
-    SDB_ASSERT(config->FindEntry(id) && config->FindEntry(id)->IsStored());
-    config->sort.keys.push_back(
-      {.column = id,
-       .descending = order.type == duckdb::OrderType::DESCENDING,
-       .nulls_first =
-         order.null_order == duckdb::OrderByNullType::NULLS_FIRST});
+  if (!sort_orders.empty()) {
+    const auto& columns =
+      relation.Cast<duckdb::TableCatalogEntry>().GetColumns();
+    config->sort = catalog::SortSpecOf(
+      catalog::ResolveSortKeys(columns, sort_orders), columns);
   }
+  SDB_ASSERT(absl::c_all_of(config->sort.keys, [&](const irs::SortKey& key) {
+    const auto* field = config->FindEntry(key.column);
+    return field && field->IsStored();
+  }));
   return config;
 }
 

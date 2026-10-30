@@ -24,7 +24,7 @@
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 
-#include "iresearch/formats/column/codecs/compression.hpp"
+#include "iresearch/formats/column/codecs/registry.hpp"
 
 /*
 Data layout per segment, the list codes of a LIST column's row group when
@@ -127,16 +127,8 @@ duckdb::CompressionFunction MakeFunction(duckdb::PhysicalType physical) {
 
 const duckdb::CompressionFunction* SequenceFunction(
   duckdb::PhysicalType physical) {
-  static const auto list = MakeFunction(duckdb::PhysicalType::LIST);
-  static const auto ubigint = MakeFunction(duckdb::PhysicalType::UINT64);
-  switch (physical) {
-    case duckdb::PhysicalType::LIST:
-      return &list;
-    case duckdb::PhysicalType::UINT64:
-      return &ubigint;
-    default:
-      return nullptr;
-  }
+  static const auto kList = MakeFunction(duckdb::PhysicalType::LIST);
+  return physical == duckdb::PhysicalType::LIST ? &kList : nullptr;
 }
 
 }  // namespace irs::codecs

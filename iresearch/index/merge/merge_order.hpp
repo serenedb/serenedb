@@ -76,7 +76,7 @@ class MergeOrder {
   ManagedVector<uint8_t> _narrow;
   ManagedVector<uint16_t> _wide;
   std::vector<uint64_t> _checkpoints;
-  std::vector<uint64_t> _live;
+  size_t _inputs = 0;
 };
 
 }  // namespace irs

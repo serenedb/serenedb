@@ -20,17 +20,22 @@
 
 #pragma once
 
+#include <zxc_buffer.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 
-struct zxc_cctx_s;
-struct zxc_dctx_s;
-
 namespace irs::codecs {
+
+struct ZxcFree {
+  void operator()(zxc_cctx* ctx) const noexcept { zxc_free_cctx(ctx); }
+  void operator()(zxc_dctx* ctx) const noexcept { zxc_free_dctx(ctx); }
+};
 
 struct Zxc {
   static constexpr ByteCodec kCodec = ByteCodec::Zxc;
@@ -44,10 +49,6 @@ struct Zxc {
   class Compressor {
    public:
     Compressor();
-    ~Compressor();
-
-    Compressor(const Compressor&) = delete;
-    Compressor& operator=(const Compressor&) = delete;
 
     void SetLevel(uint8_t level) noexcept {
       _level = EffectiveLevel<Zxc>(level);
@@ -60,18 +61,14 @@ struct Zxc {
 
    private:
     uint8_t _level = kDefaultLevel;
-    zxc_cctx_s* _ctx;
-    zxc_cctx_s* _block_ctx = nullptr;
+    std::unique_ptr<zxc_cctx, ZxcFree> _ctx;
+    std::unique_ptr<zxc_cctx, ZxcFree> _block_ctx;
     std::string_view _dictionary;
   };
 
   class Decompressor {
    public:
     Decompressor();
-    ~Decompressor();
-
-    Decompressor(const Decompressor&) = delete;
-    Decompressor& operator=(const Decompressor&) = delete;
 
     void SetDictionary(std::string_view dictionary) noexcept;
 
@@ -81,8 +78,8 @@ struct Zxc {
                             size_t want, size_t raw_size) noexcept;
 
    private:
-    zxc_dctx_s* _ctx;
-    zxc_dctx_s* _block_ctx = nullptr;
+    std::unique_ptr<zxc_dctx, ZxcFree> _ctx;
+    std::unique_ptr<zxc_dctx, ZxcFree> _block_ctx;
     std::string_view _dictionary;
   };
 };

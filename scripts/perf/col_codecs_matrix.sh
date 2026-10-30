@@ -30,7 +30,6 @@ BIN="${CM_BIN:-${ROOT}/build_bench/bin/serened}"
 PARQUET="${CM_PARQUET:-${HOME}/data/hits.parquet}"
 ROWS="${CM_ROWS:-0}"
 ARMS="${CM_ARMS:-auto dict_fsst dict_lz4 dict_zstd:1 dict_zxc:3 lz4 zxc:3 fsst zstd uncompressed}"
-TARGETS="default"
 COLS="${CM_COLS:-URL Title Referer SearchPhrase}"
 PORT="${CM_PORT:-6377}"
 RES="${CM_RES:-${ROOT}/scripts/perf/results/col_codecs}"
@@ -88,8 +87,8 @@ psql_ms() { # sql... -> ms of the statements (sum of psql Time: lines), -1 on er
 }
 sql_at() { psql "${CONN}" -X -At -v ON_ERROR_STOP=1 -c "$1"; }
 rss_mb() { awk '/VmHWM/{print int($2/1024)}' "/proc/${SPID}/status" 2>/dev/null || echo 0; }
-row() { # arm target col metric value
-	printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" | tee -a "${OUT}"
+row() { # arm col metric value
+	printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" | tee -a "${OUT}"
 }
 sqlq() { printf '%s' "$1" | sed "s/'/''/g"; }
 
@@ -127,87 +126,84 @@ run_reads() { # phase(cold|hot) -> rows per col x metric
 				done
 				ms="${best}"
 			fi
-			row "${ARM}" "${TARGET}" "${c}" "${phase}_${m}_ms" "${ms}"
+			row "${ARM}" "${c}" "${phase}_${m}_ms" "${ms}"
 		done
 	done
 }
 
 declare -A LIT MID
-for TARGET in ${TARGETS}; do
-	for ARMSPEC in ${ARMS}; do
-		ARM="${ARMSPEC%%:*}"
-		LEVEL=""
-		[[ "${ARMSPEC}" == *:* ]] && LEVEL="${ARMSPEC##*:}"
-		ARM="${ARMSPEC}"
-		codec="${ARMSPEC%%:*}"
-		datadir="${RES}/data_${ARMSPEC//:/_}_${TARGET}"
-		rm -rf "${datadir}"
-		mkdir -p "${datadir}"
-		echo "=== arm ${ARMSPEC} target ${TARGET}"
-		up "${datadir}" || exit 1
-		[[ -n "${THREADS}" ]] && psql "${CONN}" -X -c "SET GLOBAL threads = ${THREADS};" >/dev/null
+for ARMSPEC in ${ARMS}; do
+	LEVEL=""
+	[[ "${ARMSPEC}" == *:* ]] && LEVEL="${ARMSPEC##*:}"
+	ARM="${ARMSPEC}"
+	codec="${ARMSPEC%%:*}"
+	datadir="${RES}/data_${ARMSPEC//:/_}"
+	rm -rf "${datadir}"
+	mkdir -p "${datadir}"
+	echo "=== arm ${ARMSPEC}"
+	up "${datadir}" || exit 1
+	[[ -n "${THREADS}" ]] && psql "${CONN}" -X -c "SET GLOBAL threads = ${THREADS};" >/dev/null
 
-		using=""
-		if [[ "${codec}" != auto ]]; then
-			using=" USING COMPRESSION ${codec}"
-			[[ -n "${LEVEL}" ]] && using+="(compression_level = ${LEVEL})"
-		fi
-		cols_ddl=""
-		sel=""
-		for c in ${COLS}; do
-			cols_ddl+=", \"${c}\" TEXT${using}"
-			sel+=", \"${c}\""
-		done
-		with="storage = 'search', refresh_interval = 0, compaction_interval = 0"
-		limit=""
-		[[ "${ROWS}" -gt 0 ]] && limit=" LIMIT ${ROWS}"
-		psql "${CONN}" -X -v ON_ERROR_STOP=1 -c "CREATE TABLE hits (id BIGINT PRIMARY KEY${cols_ddl}) WITH (${with});" >/dev/null || exit 1
+	using=""
+	if [[ "${codec}" != auto ]]; then
+		using=" USING COMPRESSION ${codec}"
+		[[ -n "${LEVEL}" ]] && using+="(compression_level = ${LEVEL})"
+	fi
+	cols_ddl=""
+	sel=""
+	for c in ${COLS}; do
+		cols_ddl+=", \"${c}\" TEXT${using}"
+		sel+=", \"${c}\""
+	done
+	with="storage = 'search', refresh_interval = 0, compaction_interval = 0"
+	limit=""
+	[[ "${ROWS}" -gt 0 ]] && limit=" LIMIT ${ROWS}"
+	psql "${CONN}" -X -v ON_ERROR_STOP=1 -c "CREATE TABLE hits (id BIGINT PRIMARY KEY${cols_ddl}) WITH (${with});" >/dev/null || exit 1
 
-		if [[ "${PASSES}" -gt 1 ]]; then
-			total=0
-			for ((p = 0; p < PASSES; p++)); do
-				ms=$(psql_ms -c "INSERT INTO hits SELECT file_row_number + ${p} * ${PASS_ROWS} AS id${sel} FROM read_parquet('${PARQUET}', file_row_number := true)${limit};" -c "VACUUM (REFRESH_TABLE) hits;") || exit 1
-				total=$(awk "BEGIN{print ${total} + ${ms}}")
-			done
-			ms="${total}"
-		else
-			ms=$(psql_ms -c "INSERT INTO hits SELECT row_number() OVER () AS id${sel} FROM read_parquet('${PARQUET}')${limit};") || exit 1
-		fi
-		row "${ARM}" "${TARGET}" all insert_ms "${ms}"
-		ms=$(psql_ms -c "VACUUM (REFRESH_TABLE) hits;") || exit 1
-		row "${ARM}" "${TARGET}" all refresh_ms "${ms}"
-		if [[ "${COMPACT}" == 1 ]]; then
-			ms=$(psql_ms -c "VACUUM (COMPACT_TABLE) hits;") || exit 1
-			row "${ARM}" "${TARGET}" all compact_ms "${ms}"
-		fi
-		row "${ARM}" "${TARGET}" all write_rss_mb "$(rss_mb)"
-		NROWS=$(sql_at "SELECT count(*) FROM hits;")
-		row "${ARM}" "${TARGET}" all rows "${NROWS}"
-		for c in ${COLS}; do
-			LIT[$c]=$(sql_at "SELECT \"${c}\" FROM hits WHERE id = 4242;")
-			MID[$c]=$(sql_at "SELECT substr(\"${c}\", 3, 10) FROM hits WHERE id = 4242;")
+	if [[ "${PASSES}" -gt 1 ]]; then
+		total=0
+		for ((p = 0; p < PASSES; p++)); do
+			ms=$(psql_ms -c "INSERT INTO hits SELECT file_row_number + ${p} * ${PASS_ROWS} AS id${sel} FROM read_parquet('${PARQUET}', file_row_number := true)${limit};" -c "VACUUM (REFRESH_TABLE) hits;") || exit 1
+			total=$(awk "BEGIN{print ${total} + ${ms}}")
 		done
-		while IFS=$'\t' read -r c comp segs bytes; do
-			row "${ARM}" "${TARGET}" "${c}" "codec" "${comp}"
-			row "${ARM}" "${TARGET}" "${c}" "segments" "${segs}"
-			row "${ARM}" "${TARGET}" "${c}" "bytes" "${bytes}"
-		done < <(psql "${CONN}" -X -At -F $'\t' -v ON_ERROR_STOP=1 -c "
+		ms="${total}"
+	else
+		ms=$(psql_ms -c "INSERT INTO hits SELECT row_number() OVER () AS id${sel} FROM read_parquet('${PARQUET}')${limit};") || exit 1
+	fi
+	row "${ARM}" all insert_ms "${ms}"
+	ms=$(psql_ms -c "VACUUM (REFRESH_TABLE) hits;") || exit 1
+	row "${ARM}" all refresh_ms "${ms}"
+	if [[ "${COMPACT}" == 1 ]]; then
+		ms=$(psql_ms -c "VACUUM (COMPACT_TABLE) hits;") || exit 1
+		row "${ARM}" all compact_ms "${ms}"
+	fi
+	row "${ARM}" all write_rss_mb "$(rss_mb)"
+	NROWS=$(sql_at "SELECT count(*) FROM hits;")
+	row "${ARM}" all rows "${NROWS}"
+	for c in ${COLS}; do
+		LIT[$c]=$(sql_at "SELECT \"${c}\" FROM hits WHERE id = 4242;")
+		MID[$c]=$(sql_at "SELECT substr(\"${c}\", 3, 10) FROM hits WHERE id = 4242;")
+	done
+	while IFS=$'\t' read -r c comp segs bytes; do
+		row "${ARM}" "${c}" "codec" "${comp}"
+		row "${ARM}" "${c}" "segments" "${segs}"
+		row "${ARM}" "${c}" "bytes" "${bytes}"
+	done < <(psql "${CONN}" -X -At -F $'\t' -v ON_ERROR_STOP=1 -c "
 SELECT column_name, string_agg(DISTINCT compression, ','), count(*),
        sum(TRY_CAST(regexp_extract(segment_info, 'byte_size=(\\d+)', 1) AS BIGINT))
 FROM pragma_storage_info('hits', include_segment_info := true)
 WHERE segment_type <> 'VALIDITY' AND column_name <> 'id'
 GROUP BY column_name ORDER BY column_name;")
-		row "${ARM}" "${TARGET}" all datadir_bytes "$(du -sb "${datadir}" | awk '{print $1}')"
-		row "${ARM}" "${TARGET}" all col_bytes "$(find "${datadir}" -name '*.col' -printf '%s\n' | awk '{s+=$1} END {print s+0}')"
+	row "${ARM}" all datadir_bytes "$(du -sb "${datadir}" | awk '{print $1}')"
+	row "${ARM}" all col_bytes "$(find "${datadir}" -name '*.col' -printf '%s\n' | awk '{s+=$1} END {print s+0}')"
 
-		down
-		up "${datadir}" || exit 1
-		run_reads cold
-		run_reads hot
-		row "${ARM}" "${TARGET}" all read_rss_mb "$(rss_mb)"
-		down
-		[[ "${KEEP}" == 1 ]] || rm -rf "${datadir}"
-	done
+	down
+	up "${datadir}" || exit 1
+	run_reads cold
+	run_reads hot
+	row "${ARM}" all read_rss_mb "$(rss_mb)"
+	down
+	[[ "${KEEP}" == 1 ]] || rm -rf "${datadir}"
 done
 
 echo
@@ -216,39 +212,39 @@ python3 - "${OUT}" <<'EOF'
 import sys, collections
 rows = [l.rstrip("\n").split("\t") for l in open(sys.argv[1])]
 d = collections.defaultdict(dict)
-for arm, target, col, metric, value in rows:
-    d[(arm, target, col)][metric] = value
-arms = sorted({(a, t) for a, t, _ in d})
-cols = sorted({c for _, _, c in d if c != "all"})
+for arm, col, metric, value in rows:
+    d[(arm, col)][metric] = value
+arms = sorted({a for a, _ in d})
+cols = sorted({c for _, c in d if c != "all"})
 def num(v):
     try:
         return float(v)
     except Exception:
         return None
 print("\n== bytes per column (MiB) and write times (s)")
-hdr = f"{'arm':14} {'target':>7} " + " ".join(f"{c:>13}" for c in cols) + f" {'total':>9} {'.col':>9} {'insert':>8} {'refresh':>8} {'compact':>8} {'rss':>6}"
+hdr = f"{'arm':14} " + " ".join(f"{c:>13}" for c in cols) + f" {'total':>9} {'.col':>9} {'insert':>8} {'refresh':>8} {'compact':>8} {'rss':>6}"
 print(hdr)
-for a, t in arms:
+for a in arms:
     cells = []
     tot = 0
     for c in cols:
-        b = num(d[(a, t, c)].get("bytes"))
+        b = num(d[(a, c)].get("bytes"))
         tot += b or 0
         cells.append(f"{(b or 0)/2**20:13.1f}")
-    al = d[(a, t, "all")]
+    al = d[(a, "all")]
     colb = num(al.get("col_bytes")) or 0
     ins = num(al.get("insert_ms")) or 0
     ref = num(al.get("refresh_ms")) or 0
     cmp_ = num(al.get("compact_ms")) or 0
-    print(f"{a:14} {t:>7} " + " ".join(cells) + f" {tot/2**20:9.1f} {colb/2**20:9.1f} {ins/1000:8.1f} {ref/1000:8.1f} {cmp_/1000:8.1f} {al.get('write_rss_mb','-'):>6}")
+    print(f"{a:14} " + " ".join(cells) + f" {tot/2**20:9.1f} {colb/2**20:9.1f} {ins/1000:8.1f} {ref/1000:8.1f} {cmp_/1000:8.1f} {al.get('write_rss_mb','-'):>6}")
 for phase in ("cold", "hot"):
     for m in ("scan", "eq", "like", "gather100k", "gather1m", "points"):
         print(f"\n== {phase} {m} (ms)")
-        print(f"{'arm':14} {'target':>7} " + " ".join(f"{c:>13}" for c in cols))
-        for a, t in arms:
+        print(f"{'arm':14} " + " ".join(f"{c:>13}" for c in cols))
+        for a in arms:
             cells = []
             for c in cols:
-                v = num(d[(a, t, c)].get(f"{phase}_{m}_ms"))
+                v = num(d[(a, c)].get(f"{phase}_{m}_ms"))
                 cells.append(f"{v:13.1f}" if v is not None else f"{'-':>13}")
-            print(f"{a:14} {t:>7} " + " ".join(cells))
+            print(f"{a:14} " + " ".join(cells))
 EOF

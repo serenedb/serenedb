@@ -27,9 +27,8 @@
 #include <optional>
 #include <string_view>
 
-#include "catalog/entry/inverted_index.h"
-#include "catalog/entry/search_table.h"
 #include "pg/catalog/engine/system_table.h"
+#include "pg/catalog/tables/sdb/merge_records.h"
 #include "pg/catalog/tables/tables.h"
 #include "search/compaction/merge_registry.h"
 
@@ -61,19 +60,9 @@ constexpr SystemSql kSdbMergesSql{.oid = kSdbMergesTable,
                                   .replident = 'n',
                                   .columns = kSdbMergesColumns};
 
-constexpr duckdb::CatalogType kStoreTypes[] = {
-  duckdb::CatalogType::INDEX_ENTRY, duckdb::CatalogType::TABLE_ENTRY};
-
 constexpr SystemIndex kStoreIndexes[] = {
   {kSdbMergesSql["relation_id"], SystemLookup::Object},
 };
-
-std::optional<duckdb::timestamp_tz_t> At(int64_t micros) {
-  if (micros == 0) {
-    return std::nullopt;
-  }
-  return duckdb::timestamp_tz_t{micros};
-}
 
 using search::MergeRecord;
 
@@ -112,25 +101,18 @@ class SdbMerges final : public SystemTableScan<kSdbMergesSql> {
     Col<"threads">([](const auto& r) {
       return r.threads == 0 ? std::nullopt : std::optional<uint64_t>{r.threads};
     }),
-    Col<"inputs">([](const auto& r) -> const auto& { return r.stats.inputs; }),
-    Col<"input_docs">([](const auto& r) { return r.stats.input_docs; }),
-    Col<"input_live_docs">(
-      [](const auto& r) { return r.stats.input_live_docs; }),
-    Col<"input_bytes">([](const auto& r) { return r.stats.input_bytes; }),
+    kMergeInputColumns,
     Col<"estimated_bytes">([](const auto& r) { return r.EstimatedBytes(); }));
 
   void Row(const duckdb::IndexCatalogEntry& index) {
-    if (!Allows<"relation_id">(index.oid) ||
-        index.index_type != catalog::kInvertedIndexTypeName ||
-        !index.Cast<catalog::InvertedIndexEntry>().Storage()) {
+    if (!Allows<"relation_id">(index.oid) || !OwnsStore(index)) {
       return;
     }
     Merges(index.oid);
   }
 
   void Row(const duckdb::TableCatalogEntry& table) {
-    if (!Allows<"relation_id">(table.oid) ||
-        !dynamic_cast<const catalog::SearchTableEntry*>(&table)) {
+    if (!Allows<"relation_id">(table.oid) || !OwnsStore(table)) {
       return;
     }
     Merges(table.oid);

@@ -35,7 +35,8 @@ class SearchTable;
 irs::SegmentRange RowIdRange(const irs::SubReader& segment);
 
 irs::CompactionPolicy MakeMergePolicy(
-  const TasksSettings& settings, irs::SegmentRangeOf range_of = RowIdRange);
+  const TasksSettings& settings, size_t inputs_max,
+  irs::SegmentRangeOf range_of = RowIdRange);
 
 struct CompactionOptions {
   bool alive = false;

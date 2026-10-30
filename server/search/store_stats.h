@@ -23,8 +23,14 @@
 #include <absl/status/status.h>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge/merge_order.hpp>
+#include <iresearch/index/merge/sort_spec.hpp>
+#include <limits>
 #include <memory>
+#include <utility>
 
 #include "search/compaction/merge_scheduler.h"
 #include "search/maintenance.h"
@@ -125,11 +131,18 @@ class MaintenanceCounters {
 
 class MaintainedStore {
  public:
-  explicit MaintainedStore(uint64_t relation_id)
-    : _merge_relation{std::make_shared<MergeScheduler::Relation>(relation_id)} {
+  explicit MaintainedStore(uint64_t relation_id, irs::SortSpec sort)
+    : _sort{std::move(sort)},
+      _merge_relation{std::make_shared<MergeScheduler::Relation>(relation_id)} {
   }
 
   auto& GetTasksSettings() noexcept { return _tasks_settings; }
+
+  bool Sorted() const noexcept { return !_sort.Empty(); }
+  size_t MergeInputsMax() const noexcept {
+    return Sorted() ? irs::kSortedMergeInputsMax
+                    : std::numeric_limits<size_t>::max();
+  }
 
   const std::shared_ptr<MergeScheduler::Relation>& MergeRelation()
     const noexcept {
@@ -171,10 +184,13 @@ class MaintainedStore {
       options.compaction_floor_segment_bytes;
   }
 
+  void SetWriterOptions(irs::IndexWriterOptions& options) const;
+
   TasksSettings _tasks_settings;
   MaintenanceCounters _maintenance;
 
  private:
+  const irs::SortSpec _sort;
   const std::shared_ptr<MergeScheduler::Relation> _merge_relation;
   std::atomic<uint32_t> _stale_pressure{0};
 };

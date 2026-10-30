@@ -80,7 +80,6 @@ MergeSimulation Options(size_t threads, size_t at_least = 2) {
   MergeSimulation options;
   options.policy = MergeAtLeast(at_least);
   options.threads = threads;
-  options.helpers_per_merge = threads / 2;
   options.bytes_per_second = double{kMiB};
   return options;
 }
@@ -117,7 +116,7 @@ TEST(SimulatedSegment, KeepsItsRowIdRange) {
 TEST(MergeSimulator, TheAdjacentPolicyMergesInRowIdOrder) {
   auto options = Options(1);
   irs::AdjacentRunOptions adjacent;
-  adjacent.base = 3;
+  adjacent.max_segments = 3;
   options.policy =
     irs::MakeAdjacentRunPolicy(adjacent, SimulatedSegment::RangeOf);
   const auto events = SimulateMerges(
@@ -194,9 +193,9 @@ TEST(MergeSimulator, AMergePurgesDeletedDocs) {
 
 TEST(MergeSimulator, BigMergesTakeHelperThreads) {
   auto options = Options(4);
-  options.small_bytes = kMiB;
+  options.bytes_per_second = double{32 * kMiB};
   const auto events =
-    SimulateMerges({Flush(0, 2 * kMiB), Flush(0, 2 * kMiB)}, options);
+    SimulateMerges({Flush(0, 64 * kMiB), Flush(0, 64 * kMiB)}, options);
   ASSERT_EQ(3, events.size());
   EXPECT_EQ(MergeLane::Big, events[2].lane);
   EXPECT_EQ(3, events[2].threads);
@@ -205,9 +204,9 @@ TEST(MergeSimulator, BigMergesTakeHelperThreads) {
 
 TEST(MergeSimulator, HelpersComeOnlyFromFreeThreads) {
   auto options = Options(2);
-  options.small_bytes = kMiB;
+  options.bytes_per_second = double{32 * kMiB};
   const auto events =
-    SimulateMerges({Flush(0, 2 * kMiB), Flush(0, 2 * kMiB)}, options);
+    SimulateMerges({Flush(0, 64 * kMiB), Flush(0, 64 * kMiB)}, options);
   ASSERT_EQ(3, events.size());
   EXPECT_EQ(MergeLane::Big, events[2].lane);
   EXPECT_EQ(1, events[2].threads);

@@ -70,8 +70,8 @@ struct ReencodeKey {
 
 class ReencodeCache {
  public:
-  std::optional<ReencodeEstimate> Find(field_id column,
-                                       const ReencodeKey& key) const;
+  bool Find(field_id column, const ReencodeKey& key,
+            ReencodeEstimate& estimate) const;
   void Store(field_id column, const ReencodeKey& key,
              const ReencodeEstimate& estimate);
 

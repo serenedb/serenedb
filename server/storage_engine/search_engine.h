@@ -24,20 +24,17 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
 
-namespace duckdb {
+#include "search/compaction/merge_scheduler.h"
 
-class TaskScheduler;
-
-}  // namespace duckdb
 namespace sdb {
 namespace search {
 
 class InvertedIndexStorage;
-class MergeScheduler;
 class SearchTable;
 
 class SearchEngine;

@@ -20,16 +20,15 @@
 
 #pragma once
 
+#include <zstd.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
-
-struct ZSTD_DDict_s;
 
 namespace irs::codecs {
 
@@ -39,21 +38,27 @@ inline constexpr size_t kSamplePieceBytes = 4 * 1024;
 inline constexpr size_t kRowGroupSampleBytes = 1024 * 1024;
 inline constexpr size_t kTrainSampleBytes = 4 * 1024 * 1024;
 
+struct ZstdFree {
+  void operator()(ZSTD_CCtx* ctx) const noexcept { ZSTD_freeCCtx(ctx); }
+  void operator()(ZSTD_DCtx* ctx) const noexcept { ZSTD_freeDCtx(ctx); }
+  void operator()(ZSTD_CDict* dict) const noexcept { ZSTD_freeCDict(dict); }
+  void operator()(ZSTD_DDict* dict) const noexcept { ZSTD_freeDDict(dict); }
+};
+
 class TrainedDictionary {
  public:
   explicit TrainedDictionary(std::string bytes);
-  ~TrainedDictionary();
 
   TrainedDictionary(const TrainedDictionary&) = delete;
   TrainedDictionary& operator=(const TrainedDictionary&) = delete;
 
   std::string_view Bytes() const noexcept { return _bytes; }
-  const ZSTD_DDict_s* ZstdDictionary() const noexcept { return _ddict; }
+  const ZSTD_DDict* ZstdDictionary() const noexcept { return _ddict.get(); }
   uint64_t Id() const noexcept { return _id; }
 
  private:
   std::string _bytes;
-  ZSTD_DDict_s* _ddict;
+  std::unique_ptr<ZSTD_DDict, ZstdFree> _ddict;
   uint64_t _id;
 };
 
@@ -65,7 +70,7 @@ class DictionarySampler {
   void Add(std::span<const std::string_view> entries);
   bool Ready() const noexcept { return _samples.size() >= kTrainSampleBytes; }
   size_t Size() const noexcept { return _samples.size(); }
-  std::optional<std::string> Train();
+  std::shared_ptr<const TrainedDictionary> Train();
 
  private:
   std::string _samples;

@@ -132,10 +132,12 @@ struct MergePlan::State {
         return !aborted.load(std::memory_order_relaxed) && (!outer || outer());
       }},
       env{env},
-      sort{sort && !sort->Empty() ? sort : nullptr},
       hnsw_bases{hnsw_bases},
-      postings{doc_map.size(), this->progress, static_cast<bool>(this->sort),
-               field_options} {}
+      postings{doc_map.size(), this->progress, static_cast<bool>(sort),
+               field_options},
+      key_order{sort ? std::make_unique<KeyOrder>(doc_map, *sort) : nullptr} {
+    SDB_ASSERT(!sort || !sort->Empty());
+  }
 
   const MergeOrder* Order() const noexcept {
     return key_order ? &key_order->Order() : nullptr;
@@ -214,7 +216,8 @@ struct MergePlan::State {
     for (size_t input = 0; input != inputs.size(); ++input) {
       const auto& column = inputs[input];
       const bool copy =
-        column.copyable && (!key_order || key_order->IsolatedBegin(input));
+        column.copyable && (!key_order || key_order->IsolatedBegin(input) !=
+                                            KeyOrder::kNotIsolated);
       cost += copy ? column.bytes / kCopyCostDivisor
                    : EncodeCost(column.bytes, sources[input].alive_count);
     }
@@ -256,14 +259,14 @@ struct MergePlan::State {
     for (size_t input = 0; input != inputs.size(); ++input) {
       const uint64_t rows = sources[input].alive_count;
       const auto begin = key_order->IsolatedBegin(input);
-      if (!begin || !inputs[input].copyable) {
+      if (begin == KeyOrder::kNotIsolated || !inputs[input].copyable) {
         encode_bytes += inputs[input].bytes;
         encode_rows += rows;
         continue;
       }
       copies.push_back({
-        .begin = *begin,
-        .end = *begin + rows,
+        .begin = begin,
+        .end = begin + rows,
         .input = input,
         .cost = inputs[input].bytes / kCopyCostDivisor,
       });
@@ -454,7 +457,7 @@ struct MergePlan::State {
       }
       auto& range = term_ranges.emplace_back(std::make_unique<TermRangeMerge>(
         id, MergedFieldProperties(id, field_meta_map[id], merged_norm_ids),
-        std::move(inputs), static_cast<bool>(sort), progress));
+        std::move(inputs), static_cast<bool>(key_order), progress));
       range->Partition(
         parts,
         {.norms = &*norms, .scorer = scorer, .doc_count = segment.docs_count},
@@ -556,7 +559,6 @@ struct MergePlan::State {
   std::atomic_bool aborted{false};
   MergeProgress progress;
   const AnnBuildEnv* env;
-  const SortSpec* sort;
   HnswBases* hnsw_bases;
   size_t threads = 1;
   duckdb::TaskScheduler* scheduler = nullptr;
@@ -616,14 +618,13 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
               " live documents exceed the segment limit of ", kMergeDocsMax);
     return false;
   }
-  if (s.sort) {
+  if (s.key_order) {
     if (s.doc_map.size() > kSortedMergeInputsMax) {
       SDB_ERROR(IRESEARCH, "Refusing to merge ", s.doc_map.size(),
                 " segments in key order: a sorted merge takes at most ",
                 kSortedMergeInputsMax);
       return false;
     }
-    s.key_order = std::make_unique<KeyOrder>(s.doc_map, *s.sort);
     const auto partitions =
       threads > 1
         ? std::clamp<uint64_t>(live_docs / kRowsPerOrderPartition, 1, threads)

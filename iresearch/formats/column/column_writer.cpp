@@ -52,7 +52,6 @@
 #include <string_view>
 #include <utility>
 
-#include "iresearch/formats/column/codecs/compression.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
@@ -170,23 +169,6 @@ constexpr uint64_t Mix(uint64_t h, uint64_t v) noexcept {
 
 class ListKeys {
  public:
-  static bool Supported(const duckdb::LogicalType& type) {
-    switch (type.InternalType()) {
-      case duckdb::PhysicalType::STRUCT:
-        return absl::c_all_of(
-          duckdb::StructType::GetChildTypes(type),
-          [](const auto& child) { return Supported(child.second); });
-      case duckdb::PhysicalType::LIST:
-        return Supported(duckdb::ListType::GetChildType(type));
-      case duckdb::PhysicalType::ARRAY:
-        return Supported(duckdb::ArrayType::GetChildType(type));
-      case duckdb::PhysicalType::VARCHAR:
-        return true;
-      default:
-        return duckdb::TypeIsConstantSize(type.InternalType());
-    }
-  }
-
   void SetChunk(size_t index, const duckdb::Vector& child,
                 duckdb::idx_t count) {
     if (index >= _chunks.size()) {
@@ -468,9 +450,7 @@ class ListIngest {
  public:
   ListIngest(const duckdb::LogicalType& type, bool borrow,
              uint64_t code_base = 0, uint64_t running = 0)
-    : _child_type{duckdb::ListType::GetChildType(type)},
-      _direct{ListKeys::Supported(_child_type)},
-      _borrow{borrow} {
+    : _child_type{duckdb::ListType::GetChildType(type)}, _borrow{borrow} {
     Reset(code_base, running);
   }
 
@@ -487,7 +467,7 @@ class ListIngest {
       duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(parent);
     const auto& child = duckdb::ListVector::GetChild(vec);
     if (!_dedup &&
-        !(_direct && ++_off_chunks % kProbeEvery == 0 &&
+        !(++_off_chunks % kProbeEvery == 0 &&
           Repetitive(parent, entries, child,
                      duckdb::ListVector::GetListSize(vec), off, count))) {
       AddDistinct(parent, entries, child, off, count);
@@ -549,6 +529,7 @@ class ListIngest {
 
  private:
   static constexpr uint32_t kNoRep = std::numeric_limits<uint32_t>::max();
+  static constexpr uint64_t kNoCode = std::numeric_limits<uint64_t>::max();
   static constexpr uint64_t kProbeEvery = 8;
   static constexpr duckdb::idx_t kProbeRows = 512;
   static constexpr size_t kSource = 0;
@@ -571,7 +552,7 @@ class ListIngest {
     _run = 0;
     _longest_run = 0;
     _sequence = true;
-    _dedup = _direct;
+    _dedup = true;
     _prev = kNoRep;
     _off_chunks = 0;
     OpenWindow();
@@ -608,7 +589,7 @@ class ListIngest {
       const auto& entry = entries[idx];
       uint32_t rep = kNoRep;
       const auto found = FindDirect(entry, rep);
-      _last_code = found ? *found : _next_code++;
+      _last_code = found != kNoCode ? found : _next_code++;
       if constexpr (kCached) {
         if (idx >= _source_codes.size()) {
           _source_codes.resize(idx + 1, 0);
@@ -616,7 +597,7 @@ class ListIngest {
         _source_codes[idx] = _last_code + 1;
       }
       PushCode(_last_code);
-      if (found) {
+      if (found != kNoCode) {
         _sequence = false;
         continue;
       }
@@ -732,11 +713,10 @@ class ListIngest {
                                      static_cast<duckdb::idx_t>(length));
   }
 
-  std::optional<uint64_t> FindDirect(const duckdb::list_entry_t& entry,
-                                     uint32_t& rep) {
+  uint64_t FindDirect(const duckdb::list_entry_t& entry, uint32_t& rep) {
     if (entry.length > STANDARD_VECTOR_SIZE) {
       _prev = kNoRep;
-      return std::nullopt;
+      return kNoCode;
     }
     if (_prev != kNoRep && Matches(_prev, entry)) {
       return _code_base + _reps[_prev].code;
@@ -756,7 +736,7 @@ class ListIngest {
                                head->second});
     head->second = rep;
     _prev = rep;
-    return std::nullopt;
+    return kNoCode;
   }
 
   bool TrackSource(const duckdb::Vector& vec) {
@@ -851,7 +831,6 @@ class ListIngest {
   }
 
   duckdb::LogicalType _child_type;
-  bool _direct;
   bool _borrow;
   bool _dedup = true;
   uint64_t _code_base = 0;
@@ -1061,7 +1040,7 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   const auto named = codecs::ChoiceOf(forced_method);
   codecs::StringAccumulator acc{!named || named->shape == codecs::Shape::Dedup};
   if (!meta.write_string_tuning) {
-    meta.write_string_tuning = std::make_shared<codecs::StringTuning>();
+    meta.write_string_tuning = std::make_unique<codecs::StringTuning>();
   }
   auto& tuning = *meta.write_string_tuning;
   uint64_t rows = 0;
@@ -1074,6 +1053,14 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   }
   tuning.last_distinct = acc.entries.size();
   auto& blocks = WriteCtx().Blocks();
+  if (auto dictionary =
+        codecs::TrainDictionary(acc, named, _codec_params, tuning)) {
+    const auto bytes = dictionary->Bytes();
+    meta.dictionaries.push_back(
+      {.file_offset = blocks.Append(bytes), .byte_size = bytes.size()});
+    codecs::Adopt(tuning, std::move(dictionary),
+                  static_cast<uint16_t>(meta.dictionaries.size()));
+  }
   const auto outcome = codecs::SealSegments(
     acc, named, _codec_params, type, tuning,
     [&](codecs::StringChoice choice, duckdb::BaseStatistics stats,
@@ -1081,11 +1068,6 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
       const auto& codec = *codecs::GetCodec(db, codecs::TypeOf(choice),
                                             duckdb::PhysicalType::VARCHAR);
       CaptureBlock(db, codec, std::move(stats), rows, parts, blocks, meta.data);
-    },
-    [&](std::string_view bytes) {
-      meta.dictionaries.push_back(
-        {.file_offset = blocks.Append(bytes), .byte_size = bytes.size()});
-      return static_cast<uint16_t>(meta.dictionaries.size());
     });
   if (outcome.sealed) {
     return outcome.all_dedup;
@@ -1103,7 +1085,7 @@ bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
     return CompressData(type, chunks, forced, meta);
   }
   if (!meta.write_numeric_tuning) {
-    meta.write_numeric_tuning = std::make_shared<codecs::NumericTuning>();
+    meta.write_numeric_tuning = std::make_unique<codecs::NumericTuning>();
   }
   auto& tuning = *meta.write_numeric_tuning;
   uint64_t rows = 0;
@@ -1125,17 +1107,20 @@ bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
     if (fn->type != tuning.rival) {
       due = true;
     } else if (tuning.Drifted(static_cast<double>(score), row_count)) {
-      tuning.Restart();
+      tuning.clock.Restart();
     }
   }
   if (due || !flush) {
     measure();
   }
+  std::unique_ptr<codecs::NumericSealer> sealer;
   std::optional<codecs::NumericSegment> segment;
   const auto seal = [&](bool full) {
-    auto sealer = codecs::NumericSealer::Make(type, rows);
-    for (const auto& c : chunks) {
-      sealer->Add(c.data);
+    if (!sealer) {
+      sealer = codecs::NumericSealer::Make(type, rows);
+      for (const auto& c : chunks) {
+        sealer->Add(c.data);
+      }
     }
     segment = sealer->Seal(_codec_params,
                            fn ? std::optional<uint64_t>{score} : std::nullopt,
@@ -1157,7 +1142,7 @@ bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
     db,
     *codecs::GetCodec(db, duckdb::CompressionType::COMPRESSION_COL_NUMERIC,
                       type.InternalType()),
-    std::move(segment->stats), segment->rows,
+    std::move(segment->stats), rows,
     std::span<const std::string_view>{&part, 1}, WriteCtx().Blocks(),
     meta.data);
   return false;
@@ -1336,40 +1321,34 @@ void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
                  duckdb::BaseStatistics::CreateEmpty(type), parts.distinct,
                  std::span<const std::string_view>{&payload, 1},
                  WriteCtx().Blocks(), meta.data);
-  } else if (const auto* codec = PlainCodec(type, CodesCodec(parts))) {
-    Compress(*codec, nullptr, type, parts.codes, meta.data);
   } else {
-    CompressData(type, parts.codes, duckdb::CompressionType::COMPRESSION_AUTO,
-                 meta);
+    CompressPlain(type, CodesCodec(parts), parts.codes, meta);
   }
   SealColumn(duckdb::ListType::GetChildType(type), parts.elems,
              parts.elem_count, /*skip_validity=*/false, forced,
              meta.children[0]);
   auto& ends = meta.children[1];
-  if (const auto* codec =
-        PlainCodec(duckdb::LogicalType::UBIGINT,
-                   duckdb::CompressionType::COMPRESSION_BITPACKING)) {
-    Claim(ends, duckdb::LogicalType::UBIGINT);
-    Compress(*codec, nullptr, duckdb::LogicalType::UBIGINT, parts.ends,
-             ends.data);
-    return;
-  }
-  SealColumn(duckdb::LogicalType::UBIGINT, parts.ends, parts.distinct,
-             /*skip_validity=*/true, duckdb::CompressionType::COMPRESSION_AUTO,
-             ends);
+  Claim(ends, duckdb::LogicalType::UBIGINT);
+  CompressPlain(duckdb::LogicalType::UBIGINT,
+                duckdb::CompressionType::COMPRESSION_BITPACKING, parts.ends,
+                ends);
 }
 
-const duckdb::CompressionFunction* ColumnWriter::PlainCodec(
-  const duckdb::LogicalType& type, duckdb::CompressionType codec) const {
+void ColumnWriter::CompressPlain(const duckdb::LogicalType& type,
+                                 duckdb::CompressionType codec,
+                                 std::span<WriteChunk> chunks,
+                                 ColumnMeta& meta) {
   auto& db = WriteCtx().Database();
   const auto physical = type.InternalType();
-  if (Applies(db, ForcedMethod(db, duckdb::CompressionType::COMPRESSION_AUTO),
+  const auto plain =
+    duckdb::DBConfig::GetConfig(db).TryGetCompressionFunction(codec, physical);
+  if (!plain ||
+      Applies(db, ForcedMethod(db, duckdb::CompressionType::COMPRESSION_AUTO),
               physical)) {
-    return nullptr;
+    CompressData(type, chunks, duckdb::CompressionType::COMPRESSION_AUTO, meta);
+    return;
   }
-  return duckdb::DBConfig::GetConfig(db)
-    .TryGetCompressionFunction(codec, physical)
-    .get();
+  Compress(*plain, nullptr, type, chunks, meta.data);
 }
 
 void ColumnWriter::SealVariant(const duckdb::LogicalType& type,
@@ -1476,7 +1455,7 @@ void ColumnWriter::SealColumn(const duckdb::LogicalType& type,
                      SealString(type, chunks, forced, meta), meta);
     return;
   }
-  if (codecs::NumericApplies(type.InternalType())) {
+  if (codecs::NumericFunction(type.InternalType())) {
     SealLeafValidity(chunks, row_count, skip_validity,
                      SealNumeric(type, chunks, forced, meta), meta);
     return;
@@ -1834,18 +1813,15 @@ bool ColumnWriter::TrainsDictionary() const noexcept {
 
 void ColumnWriter::SampleDictionary(std::span<const std::string_view> entries) {
   if (!_meta.write_string_tuning) {
-    _meta.write_string_tuning = std::make_shared<codecs::StringTuning>();
+    _meta.write_string_tuning = std::make_unique<codecs::StringTuning>();
   }
   _meta.write_string_tuning->sampler.Add(entries);
 }
 
 void ColumnWriter::ShareDictionary(
   std::shared_ptr<const codecs::TrainedDictionary> dictionary, uint16_t index) {
-  auto tuning = std::make_shared<codecs::StringTuning>();
-  tuning->sampling_done = true;
-  tuning->dictionary_id = index;
-  tuning->dictionary = std::move(dictionary);
-  _meta.write_string_tuning = std::move(tuning);
+  _meta.write_string_tuning = std::make_unique<codecs::StringTuning>();
+  codecs::Adopt(*_meta.write_string_tuning, std::move(dictionary), index);
 }
 
 void ColumnWriter::ShareLeafDictionary(
@@ -1858,11 +1834,8 @@ void ColumnWriter::ShareLeafDictionary(
     }
     meta = &meta->children[child];
   }
-  auto tuning = std::make_shared<codecs::StringTuning>();
-  tuning->sampling_done = true;
-  tuning->dictionary_id = dictionary ? index : 0;
-  tuning->dictionary = std::move(dictionary);
-  meta->write_string_tuning = std::move(tuning);
+  meta->write_string_tuning = std::make_unique<codecs::StringTuning>();
+  codecs::Adopt(*meta->write_string_tuning, std::move(dictionary), index);
 }
 
 }  // namespace irs

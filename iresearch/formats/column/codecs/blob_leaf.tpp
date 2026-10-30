@@ -55,7 +55,8 @@ struct BlobScan {
 
   template<typename Frames>
   void DecodeFrame(Frames& s, uint32_t f, char* out) {
-    if (f != 0 && s.header.flags == kFrameDictionary && !s.decoded[0]) {
+    if (f != 0 && s.header.flags == FrameDictionary::FirstFrame &&
+        !s.decoded[0]) {
       s.DecodeFrame(0);
     }
     if constexpr (Trainable(Codec::kCodec)) {
@@ -111,7 +112,7 @@ struct BlobScan {
 
   template<typename Frames>
   static std::string_view DictionaryFor(const Frames& s, uint32_t f) noexcept {
-    if (f == 0 || s.header.flags != kFrameDictionary) {
+    if (f == 0 || s.header.flags != FrameDictionary::FirstFrame) {
       return {};
     }
     return {s.heap + s.frame_off[0], s.frames[0].raw_len};
@@ -173,11 +174,11 @@ struct BlobFetch {
 
   void Open(const Header& h, duckdb::data_ptr_t base, PackedReader& lengths,
             uint32_t lo, const FrameMeta& f, bool batched) {
-    const auto end =
-      lo + 1 < h.frame_count
-        ? FrameMeta::Load(base + h.off_frames + (lo + 1) * kFrameMetaSize)
-            .first_entry
-        : h.entry_count;
+    const auto end = lo + 1 < h.frame_count
+                       ? duckdb::Load<FrameMeta>(base + h.off_frames +
+                                                 (lo + 1) * kFrameMetaSize)
+                           .first_entry
+                       : h.entry_count;
     SDB_ENSURE(end > f.first_entry, "col codec: corrupted frame table");
     offsets.resize(end - f.first_entry + 1);
     uint64_t offset = 0;
@@ -202,7 +203,8 @@ struct BlobFetch {
                duckdb::const_data_ptr_t base, uint32_t lo, const FrameMeta& f,
                size_t want, bool batched) {
     const size_t target = !batched && (hits > 1 || dense) ? f.raw_len : want;
-    const bool with_dictionary = h.flags == kFrameDictionary && lo != 0;
+    const bool with_dictionary =
+      h.flags == FrameDictionary::FirstFrame && lo != 0;
     const TrainedDictionary* trained = nullptr;
     if constexpr (Trainable(Codec::kCodec)) {
       trained = TrainedOf(segment, h);
@@ -236,7 +238,7 @@ struct BlobFetch {
       dictionary_ready = true;
     } else if (with_dictionary && !dictionary_ready) {
       trained_loaded = 0;
-      const auto f0 = FrameMeta::Load(base + h.off_frames);
+      const auto f0 = duckdb::Load<FrameMeta>(base + h.off_frames);
       SDB_ENSURE(
         static_cast<uint64_t>(f0.comp_off) + f0.comp_len <= h.data_size,
         "col codec: corrupted frame table");
@@ -306,8 +308,6 @@ struct BlobFetch {
 template<typename Codec>
 struct BlobLeaf {
   static constexpr ByteCodec kCodec = Codec::kCodec;
-  static constexpr bool kSorted = false;
-  static constexpr bool kSparseGroups = false;
   using Scan = BlobScan<Codec>;
   using Fetch = BlobFetch<Codec>;
 };

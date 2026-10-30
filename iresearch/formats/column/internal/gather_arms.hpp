@@ -22,13 +22,30 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
+#include <memory>
+#include <vector>
 
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::column_internal {
 
 inline constexpr duckdb::idx_t kPointDensity = 64;
+
+void FetchPoints(std::unique_ptr<ColumnReader::PointReader>& point,
+                 const ColReader& col_reader, const ColumnReader& column,
+                 std::vector<uint64_t>& rows, duckdb::idx_t count,
+                 const auto& row, duckdb::Vector& out, duckdb::idx_t at) {
+  if (!point) {
+    point = std::make_unique<ColumnReader::PointReader>(col_reader, column);
+  }
+  rows.clear();
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    rows.push_back(row(i));
+  }
+  point->FetchRows(rows, out, at);
+}
 
 template<typename Kind>
 void ScatterRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,

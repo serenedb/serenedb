@@ -103,15 +103,10 @@ class PhraseRows {
     const auto span = hits[n - 1] - hits[0] + 1;
     if ((n == 1 || n * column_internal::kPointDensity < span) &&
         !_column->Type().IsNested()) {
-      if (!_point) {
-        _point =
-          std::make_unique<ColumnReader::PointReader>(*_col_reader, *_column);
-      }
-      _rows.clear();
-      for (const auto doc : hits.first(n)) {
-        _rows.push_back(doc - doc_limits::min());
-      }
-      _point->FetchRows(_rows, out, 0);
+      column_internal::FetchPoints(
+        _point, *_col_reader, *_column, _rows, n,
+        [&](size_t i) -> uint64_t { return hits[i] - doc_limits::min(); }, out,
+        0);
     } else {
       column_internal::GatherRows(*_column, _state, DocRows{hits.first(n)}, out,
                                   0);

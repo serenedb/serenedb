@@ -73,8 +73,7 @@ struct EntryFrames {
       header{Header::Parse(base, segment.SegmentSize())},
       type{segment.GetType()},
       length_reader{base + header.off_lengths, header.length_width} {
-    SDB_ENSURE(header.shape == static_cast<uint8_t>(S) &&
-                 header.codec == static_cast<uint8_t>(Leaf::kCodec) &&
+    SDB_ENSURE(header.shape == S && header.codec == Leaf::kCodec &&
                  header.row_count == segment.count &&
                  uint64_t{header.entry_count} <=
                    uint64_t{header.row_count} + kFirstEntry &&
@@ -110,7 +109,7 @@ struct EntryFrames {
     uint64_t raw = 0;
     for (uint32_t i = 0; i < header.frame_count; ++i) {
       const auto f =
-        FrameMeta::Load(base + header.off_frames + i * kFrameMetaSize);
+        duckdb::Load<FrameMeta>(base + header.off_frames + i * kFrameMetaSize);
       SDB_ENSURE(
         (i == 0 ? f.first_entry == kFirstEntry
                 : f.first_entry > frames[i - 1].first_entry) &&
@@ -165,7 +164,7 @@ struct EntryFrames {
     if (decoded[f]) {
       return;
     }
-    if constexpr (Leaf::kSparseGroups) {
+    if constexpr (Sorted(Leaf::kCodec)) {
       if (sparse) {
         leaf->EnsureEntry(*this, e, f);
         return;
@@ -232,8 +231,7 @@ struct FetchFrames {
       return false;
     }
     header = Header::Parse(base, segment.SegmentSize());
-    SDB_ENSURE(header.shape == static_cast<uint8_t>(shape) &&
-                 header.codec == static_cast<uint8_t>(Leaf::kCodec),
+    SDB_ENSURE(header.shape == shape && header.codec == Leaf::kCodec,
                "col codec: corrupted segment header");
     block = id;
     lengths = PackedReader{base + header.off_lengths, header.length_width};
@@ -251,13 +249,14 @@ struct FetchFrames {
     uint32_t hi = header.frame_count;
     while (hi - lo > 1) {
       const auto mid = lo + (hi - lo) / 2;
-      if (FrameMeta::Load(table + mid * kFrameMetaSize).first_entry <= entry) {
+      if (duckdb::Load<FrameMeta>(table + mid * kFrameMetaSize).first_entry <=
+          entry) {
         lo = mid;
       } else {
         hi = mid;
       }
     }
-    const auto f = FrameMeta::Load(table + lo * kFrameMetaSize);
+    const auto f = duckdb::Load<FrameMeta>(table + lo * kFrameMetaSize);
     SDB_ENSURE(f.first_entry <= entry, "col codec: corrupted frame table");
     leaf.Emit(segment, header, base, lengths, lo, f, entry, result, at,
               batched);
@@ -403,7 +402,9 @@ duckdb::CompressionFunction StringFunction(duckdb::CompressionType type) {
     duckdb::UncompressedFunctions::EmptySkip,
   };
   f.select = Select<Scan>;
-  f.filter = Filter<Scan>;
+  if constexpr (Scan::kShape == Shape::Dedup) {
+    f.filter = Filter<Scan>;
+  }
   f.get_segment_info = SegmentInfo;
   f.validity = Scan::kValidity;
   return f;

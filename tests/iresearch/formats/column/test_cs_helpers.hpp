@@ -89,6 +89,9 @@ std::unique_ptr<ColWriter> MakeCsWriter(Directory& dir,
 std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
                                         std::string_view segment_name);
 
+uint64_t ColFileId(const Directory& dir, std::string_view segment_name,
+                   duckdb::DatabaseInstance& db);
+
 // Open a BLOB column on the given writer; convenience wrapper around
 // Writer::OpenColumn(id, BLOB, ...). Most legacy tests stored bytes per
 // doc -- BLOB matches that shape exactly.

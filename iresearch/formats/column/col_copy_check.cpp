@@ -89,14 +89,15 @@ uint64_t StoredBytes(const ColumnReader& column) {
   return bytes;
 }
 
-std::optional<ReencodeEstimate> ReencodeCache::Find(
-  field_id column, const ReencodeKey& key) const {
+bool ReencodeCache::Find(field_id column, const ReencodeKey& key,
+                         ReencodeEstimate& estimate) const {
   std::lock_guard lock{_mutex};
   const auto it = _entries.find(column);
   if (it == _entries.end() || it->second.key != key) {
-    return std::nullopt;
+    return false;
   }
-  return it->second.estimate;
+  estimate = it->second.estimate;
+  return true;
 }
 
 void ReencodeCache::Store(field_id column, const ReencodeKey& key,
@@ -189,7 +190,7 @@ std::optional<ReencodeEstimate> EstimateReencode(
     .samples = samples,
   };
   auto& cache = reader.Reencodes();
-  if (auto cached = cache.Find(column.Id(), key)) {
+  if (ReencodeEstimate cached; cache.Find(column.Id(), key, cached)) {
     return cached;
   }
   const auto estimate = TrialReencode(reader, column, options, samples, {});

@@ -28,9 +28,8 @@
 #include <duckdb/parser/statement/logical_plan_statement.hpp>
 #include <memory>
 
-#include "connector/segment_rewrite/logical_merge_order.h"
-#include "connector/segment_rewrite/logical_merge_units.h"
 #include "search/compaction/merge_unit_run.h"
+#include "search/compaction/pipeline_merge_operators.h"
 
 namespace sdb::search {
 namespace {
@@ -91,8 +90,7 @@ bool PipelineMergeExecutor::Run(irs::MergePlan& plan) {
     Check(*connection.Query("SET SESSION enable_profiling = 'no_output'"));
   }
   if (plan.OrderPending()) {
-    if (!Execute(connection,
-                 duckdb::make_uniq<connector::LogicalMergeOrder>(plan),
+    if (!Execute(connection, duckdb::make_uniq<LogicalMergeOrder>(plan),
                  _profiles)) {
       return false;
     }
@@ -101,11 +99,10 @@ bool PipelineMergeExecutor::Run(irs::MergePlan& plan) {
   const auto run = std::make_shared<MergeUnitRun>(plan, plan.Started(),
                                                   plan.PostingsPending());
   run->SetInterrupt([&context] { context.Interrupt(); });
-  const bool completed =
-    Execute(connection,
-            duckdb::make_uniq<connector::LogicalMergeUnits>(run, threads,
-                                                            plan.TermRanges()),
-            _profiles);
+  const bool completed = Execute(
+    connection,
+    duckdb::make_uniq<LogicalMergeUnits>(run, threads, plan.TermRanges()),
+    _profiles);
   run->SetInterrupt(nullptr);
   return run->Finish() && completed;
 }

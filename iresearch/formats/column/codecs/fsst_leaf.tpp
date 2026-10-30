@@ -324,10 +324,11 @@ struct FsstFetch {
     uint32_t groups = 0;
     for (uint32_t i = 0; i < h.frame_count; ++i) {
       const auto first =
-        FrameMeta::Load(frames + i * kFrameMetaSize).first_entry;
+        duckdb::Load<FrameMeta>(frames + i * kFrameMetaSize).first_entry;
       const auto end =
         i + 1 < h.frame_count
-          ? FrameMeta::Load(frames + (i + 1) * kFrameMetaSize).first_entry
+          ? duckdb::Load<FrameMeta>(frames + (i + 1) * kFrameMetaSize)
+              .first_entry
           : h.entry_count;
       SDB_ENSURE(end > first, "col codec: corrupted frame table");
       group_base[i] = groups;
@@ -349,8 +350,6 @@ struct FsstFetch {
 
 struct FsstLeaf {
   static constexpr ByteCodec kCodec = ByteCodec::Fsst;
-  static constexpr bool kSorted = true;
-  static constexpr bool kSparseGroups = true;
   using Scan = FsstScan;
   using Fetch = FsstFetch;
 };

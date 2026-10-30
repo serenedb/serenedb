@@ -73,9 +73,6 @@ struct SimulatedFlush {
 struct MergeSimulation {
   irs::CompactionPolicy policy;
   size_t threads = 1;
-  size_t helpers_per_merge = 0;
-  uint64_t small_bytes = uint64_t{64} << 20;
-  absl::Duration aging = absl::Seconds(30);
   double bytes_per_second = double{uint64_t{16} << 20};
 };
 

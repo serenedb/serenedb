@@ -31,6 +31,7 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -38,11 +39,6 @@
 #include "iresearch/types.hpp"
 
 namespace irs {
-namespace codecs {
-
-class TrainedDictionary;
-
-}  // namespace codecs
 
 class ColWriter;
 class ListIngest;
@@ -137,12 +133,13 @@ class ColumnWriter final {
     duckdb::unique_ptr<duckdb::AnalyzeState>& out_state,
     duckdb::idx_t* out_score = nullptr);
 
-  const duckdb::CompressionFunction* PlainCodec(
-    const duckdb::LogicalType& type, duckdb::CompressionType codec) const;
-
   bool CompressData(const duckdb::LogicalType& type,
                     std::span<WriteChunk> chunks,
                     duckdb::CompressionType forced, ColumnMeta& meta);
+
+  void CompressPlain(const duckdb::LogicalType& type,
+                     duckdb::CompressionType codec,
+                     std::span<WriteChunk> chunks, ColumnMeta& meta);
 
   bool SealString(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
                   duckdb::CompressionType forced, ColumnMeta& meta);

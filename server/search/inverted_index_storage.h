@@ -108,10 +108,9 @@ class InvertedIndexStorage final
       _dropped.store(true, std::memory_order_release);
     }
   }
-  bool Dropped() const noexcept {
-    return _dropped.load(std::memory_order_acquire);
+  bool Retired() const noexcept {
+    return _dropped.load(std::memory_order_acquire) || _directory->Detached();
   }
-  bool Retired() const noexcept { return Dropped() || _directory->Detached(); }
   std::filesystem::path Path() const {
     return _directory->StoragePath(_index_id);
   }
@@ -167,25 +166,20 @@ class InvertedIndexStorage final
 
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                           const irs::MergeProgress& progress,
-                          bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,
                           const irs::AnnBuildEnv* env, MergeOrigin origin,
-                          irs::CompactionResult* outcome = nullptr,
-                          irs::MergeExecutor* executor = nullptr,
-                          irs::LoneSegment lone = irs::LoneSegment::Skip)
-    -> yaclib::Future<ResultWithTime>;
+                          irs::MergeExecutor& executor, irs::LoneSegment lone)
+    -> yaclib::Future<MergeResult>;
 
-  irs::MergeReservation ReserveMerges(irs::MergePlanner planner) {
-    return _writer->ReserveMerges(planner);
+  irs::MergeReservation ReserveMerges(auto&& planner) {
+    return _writer->ReserveMerges(std::forward<decltype(planner)>(planner));
   }
 
   auto RunMergeAsync(irs::MergeTicket ticket,
-                     const irs::MergeProgress& progress, bool& empty_compaction,
+                     const irs::MergeProgress& progress,
                      const irs::IndexFieldOptions* field_options,
-                     const irs::AnnBuildEnv* env, uint64_t merge_id,
-                     irs::CompactionResult* outcome = nullptr,
-                     irs::MergeExecutor* executor = nullptr)
-    -> yaclib::Future<ResultWithTime>;
+                     const irs::AnnBuildEnv* env, irs::MergeExecutor& executor)
+    -> yaclib::Future<MergeResult>;
 
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
@@ -249,8 +243,6 @@ class InvertedIndexStorage final
     std::atomic_store(&_file_manifest, std::move(manifest));
   }
 
-  bool Sorted() const noexcept { return !_sort.Empty(); }
-
   void StartTasks() {
     if (_writer) {
       _search.StartTasks(shared_from_this());
@@ -271,10 +263,8 @@ class InvertedIndexStorage final
   template<typename Remove>
   void CommitRemovalWith(const Remove& remove);
   auto AwaitMerge(
-    MergeRecorder& recorder, bool& empty_compaction,
-    irs::CompactionResult* outcome,
     absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
-    -> yaclib::Future<ResultWithTime>;
+    -> yaclib::Future<MergeResult>;
   void PublishSnapshot();
 
   duckdb::idx_t _index_id;
@@ -286,7 +276,6 @@ class InvertedIndexStorage final
   uint64_t _segment_memory_max;
   uint32_t _segment_docs_max;
   bool _absent = false;
-  irs::SortSpec _sort;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;
   IndexDurability _durability;

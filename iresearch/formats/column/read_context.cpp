@@ -223,4 +223,11 @@ void ReadContext::WriteHeader(duckdb::QueryContext /*context*/,
 }
 duckdb::idx_t ReadContext::TotalBlocks() { return 0; }
 
+const ReadContext::CacheSlot& CacheSlotOf(
+  duckdb::ColumnSegment& segment) noexcept {
+  const auto& block = segment.GetBlockHandle();
+  return static_cast<const ReadContext&>(block->GetBlockManager())
+    .CacheSlotOf(block->BlockId());
+}
+
 }  // namespace irs

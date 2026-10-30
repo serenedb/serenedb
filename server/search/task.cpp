@@ -143,8 +143,8 @@ class StorageMergeJob final : public MergeJob {
     return _storage->Retired() || _ticket.Revoked();
   }
 
-  yaclib::Future<MergeOutcome> Run(uint64_t id, const std::atomic_bool& stop,
-                                   size_t helpers) final {
+  yaclib::Future<MergeResult> Run(const std::atomic_bool& stop,
+                                  size_t helpers) final {
     SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {
       THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
     }
@@ -156,14 +156,16 @@ class StorageMergeJob final : public MergeJob {
     SDB_PARK_ONCE_ON_FAILURE("park_compaction_run");
     if (_storage->Retired() || _ticket.Revoked() ||
         _storage->GetTasksSettings().compaction_interval_msec == 0) {
-      co_return MergeOutcome::Cancelled;
+      co_return MergeResult{
+        .outcome = {.error = irs::CompactionError::Cancelled}};
     }
     // Pin the merge's field options for its whole lifetime (storage-specific,
     // see PinCompactionOptions). A target found already dropped has nothing to
     // merge.
     auto opts = PinCompactionOptions(*_storage);
     if (!opts.alive) {
-      co_return MergeOutcome::Cancelled;
+      co_return MergeResult{
+        .outcome = {.error = irs::CompactionError::Cancelled}};
     }
     metrics::Scoped guard{metrics::Gauge::CompactionActive};
     const irs::MergeProgress progress = [&stop] {
@@ -176,21 +178,18 @@ class StorageMergeJob final : public MergeJob {
     PipelineMergeExecutor executor{irs::DuckDBEngine::Instance().instance(),
                                    &GetSearchEngine().MergeTasks(),
                                    1 + granted};
-    bool empty_compaction = false;
-    irs::CompactionResult outcome;
-    auto [res, time_ms] = co_await _storage->RunMergeAsync(
-      std::move(_ticket), progress, empty_compaction, opts.field_options,
-      &AnnBuildEnv(), id, &outcome, &executor);
-    if (!res.ok()) {
-      SDB_WARN(SEARCH, "error after running for ", time_ms,
+    auto merged = co_await _storage->RunMergeAsync(std::move(_ticket), progress,
+                                                   opts.field_options,
+                                                   &AnnBuildEnv(), executor);
+    if (!merged.res.ok()) {
+      SDB_WARN(SEARCH, "error after running for ", merged.time_ms,
                "ms while compacting Search index '", _storage->GetId(),
-               "': ", res.message());
-      co_return MergeOutcome::Failed;
+               "': ", merged.res.message());
+      co_return merged;
     }
     SDB_TRACE(SEARCH, "compaction of Search index '", _storage->GetId(),
-              "' took ", time_ms, "ms");
-    const auto merged = OutcomeOf(outcome);
-    if (Produced(merged)) {
+              "' took ", merged.time_ms, "ms");
+    if (Produced(OutcomeOf(merged.outcome))) {
       _storage->BumpStalePressure();
     }
     co_return merged;
@@ -209,7 +208,8 @@ size_t PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges,
   }
   const auto wanted = merges.Wanted(*relation);
   const auto blocked = merges.Blocked(*relation);
-  const auto policy = MakeMergePolicy(idx->GetTasksSettings());
+  const auto policy =
+    MakeMergePolicy(idx->GetTasksSettings(), idx->MergeInputsMax());
   auto reservation = idx->ReserveMerges(
     [&](const irs::IndexReader& index, const irs::CompactingSegments& reserved,
         irs::MergeGroups& groups) {

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/main/client_context.hpp>
 #include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -43,8 +44,6 @@ enum class MergeMode : uint8_t {
   Segments,
   Optimize,
 };
-
-inline constexpr uint64_t kOptimizeRowGroups = 4;
 
 std::optional<MergeMode> ParseMergeMode(std::string_view name) noexcept;
 
@@ -95,12 +94,13 @@ struct MergeRoundRequest {
   bool exact_target = false;
   uint32_t row_group_size = 0;
   size_t inputs_max = std::numeric_limits<size_t>::max();
-  bool single_output = false;
   std::span<const std::string> segments;
   const CopyChecker* copy_check = nullptr;
 };
 
 PlannedSegment DescribeSegment(const irs::SubReader& segment);
+
+uint32_t DefaultTarget(MergeMode mode, duckdb::ClientContext& context);
 
 MergeRoundPlan PlanMergeRound(const irs::IndexReader& reader,
                               const MergeRoundRequest& request);

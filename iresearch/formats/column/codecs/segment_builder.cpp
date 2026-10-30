@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <cstring>
 #include <duckdb/common/bitpacking.hpp>
+#include <duckdb/common/helper.hpp>
 #include <limits>
 
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -36,8 +37,6 @@ namespace {
 
 using duckdb::BitpackingPrimitives;
 using duckdb::string_t;
-
-constexpr double kMispredicted = 2.0;
 
 uint64_t PrefixKey(std::string_view sv, size_t skip) noexcept {
   char buf[8] = {};
@@ -84,30 +83,17 @@ void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
             uint64_t lcps_bytes, const CodesPlan& codes,
             uint64_t symtab_bytes) noexcept {
   h.off_frames = kHeaderSize;
-  h.off_lengths = Align8(kHeaderSize + frames * kFrameMetaSize);
-  h.off_lcps = Align8(h.off_lengths + lengths_bytes);
-  h.off_codes = Align8(h.off_lcps + lcps_bytes);
-  h.off_runs = Align8(h.off_codes + BitpackingPrimitives::GetRequiredSize(
-                                      codes.codes_count, codes.code_width));
-  h.off_symtab = Align8(h.off_runs + BitpackingPrimitives::GetRequiredSize(
-                                       codes.run_count, codes.run_width));
-  h.off_data = Align8(h.off_symtab + symtab_bytes);
-}
-
-void Record(RatioHistory& hist, uint64_t raw, uint64_t comp,
-            uint32_t target) noexcept {
-  if (hist.raw != 0 && raw != 0 && comp * kDriftMinFraction >= target) {
-    const auto predicted = static_cast<double>(raw) *
-                           static_cast<double>(hist.comp) /
-                           static_cast<double>(hist.raw);
-    const auto actual = static_cast<double>(comp);
-    if (actual > predicted * kMispredicted ||
-        actual * kMispredicted < predicted) {
-      hist = {};
-    }
-  }
-  hist.raw += raw;
-  hist.comp += comp;
+  h.off_lengths =
+    duckdb::AlignValue<uint64_t, 8>(kHeaderSize + frames * kFrameMetaSize);
+  h.off_lcps = duckdb::AlignValue<uint64_t, 8>(h.off_lengths + lengths_bytes);
+  h.off_codes = duckdb::AlignValue<uint64_t, 8>(h.off_lcps + lcps_bytes);
+  h.off_runs = duckdb::AlignValue<uint64_t, 8>(
+    h.off_codes +
+    BitpackingPrimitives::GetRequiredSize(codes.codes_count, codes.code_width));
+  h.off_symtab = duckdb::AlignValue<uint64_t, 8>(
+    h.off_runs +
+    BitpackingPrimitives::GetRequiredSize(codes.run_count, codes.run_width));
+  h.off_data = duckdb::AlignValue<uint64_t, 8>(h.off_symtab + symtab_bytes);
 }
 
 void SegmentBuilder::Begin(Shape shape, uint8_t level, FrameLayout layout,
@@ -165,8 +151,8 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
              "col codec: segment too large");
 
   Header h;
-  h.shape = static_cast<uint8_t>(_shape);
-  h.codec = static_cast<uint8_t>(frames.codec);
+  h.shape = _shape;
+  h.codec = frames.codec;
   h.level = _level;
   h.length_width =
     BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_length);
@@ -195,7 +181,7 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
     _run_ends.push_back(static_cast<uint32_t>(_codes.size()));
     SDB_ASSERT(_run_values.size() == codes.run_count);
   }
-  h.codes_encoding = static_cast<uint8_t>(codes.encoding);
+  h.codes_encoding = codes.encoding;
   h.run_count = static_cast<uint32_t>(codes.run_count);
   h.run_width = codes.run_width;
 
@@ -210,9 +196,9 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
 
   _bytes.assign(static_cast<size_t>(h.off_data), '\0');
   auto* base = reinterpret_cast<duckdb::data_ptr_t>(_bytes.data());
-  h.Write(base);
+  duckdb::Store(h, base);
   for (size_t i = 0; i < frames.frames.size(); ++i) {
-    frames.frames[i].Store(base + h.off_frames + i * kFrameMetaSize);
+    duckdb::Store(frames.frames[i], base + h.off_frames + i * kFrameMetaSize);
   }
   BitpackingPrimitives::PackBuffer<uint32_t, true>(
     base + h.off_lengths, _lengths.data(), _lengths.size(), h.length_width);
@@ -222,15 +208,19 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
   }
   if (_shape == Shape::Dedup) {
     if (codes.encoding == CodesEncoding::Rle) {
-      _run_values.resize(GroupPadded(_run_values.size()), 0);
-      _run_ends.resize(GroupPadded(_run_ends.size()), 0);
+      _run_values.resize(
+        BitpackingPrimitives::RoundUpToAlgorithmGroupSize(_run_values.size()),
+        0);
+      _run_ends.resize(
+        BitpackingPrimitives::RoundUpToAlgorithmGroupSize(_run_ends.size()), 0);
       BitpackingPrimitives::PackBuffer<uint32_t, true>(
         base + h.off_codes, _run_values.data(), _run_values.size(),
         h.code_width);
       BitpackingPrimitives::PackBuffer<uint32_t, true>(
         base + h.off_runs, _run_ends.data(), _run_ends.size(), h.run_width);
     } else {
-      _codes.resize(GroupPadded(_rows), 0);
+      _codes.resize(BitpackingPrimitives::RoundUpToAlgorithmGroupSize(_rows),
+                    0);
       BitpackingPrimitives::PackBuffer<uint32_t, true>(
         base + h.off_codes, _codes.data(), _codes.size(), h.code_width);
       _codes.resize(_rows);
@@ -243,9 +233,11 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
 
   auto stats = duckdb::BaseStatistics::CreateEmpty(_type);
   _stats.Merge(stats);
-  out.choice = StringChoice{_shape, frames.codec};
-  out.level = _level;
-  out.layout = _layout;
+  out.config = {
+    .choice = {_shape, frames.codec},
+    .level = _level,
+    .layout = _layout,
+  };
   out.begin = _next - _rows;
   out.rows = _rows;
   out.entries = _entries.size();

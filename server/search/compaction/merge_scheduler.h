@@ -36,6 +36,7 @@
 #include <yaclib/async/future.hpp>
 
 #include "search/compaction/merge_registry.h"
+#include "search/maintenance.h"
 
 namespace yaclib {
 
@@ -44,8 +45,7 @@ class IExecutor;
 }  // namespace yaclib
 namespace sdb::search {
 
-MergeEstimate EstimateMerge(irs::CompactionView candidates,
-                            uint64_t small_bytes) noexcept;
+MergeEstimate EstimateMerge(irs::CompactionView candidates) noexcept;
 
 class MergeJob {
  public:
@@ -55,20 +55,14 @@ class MergeJob {
 
   virtual bool Stale() const noexcept = 0;
 
-  virtual yaclib::Future<MergeOutcome> Run(uint64_t id,
-                                           const std::atomic_bool& stop,
-                                           size_t helpers) = 0;
+  virtual yaclib::Future<MergeResult> Run(const std::atomic_bool& stop,
+                                          size_t helpers) = 0;
 };
 
 class MergeScheduler {
  public:
   struct Options {
     size_t threads = 1;
-    size_t helpers_per_merge = 0;
-    uint64_t small_bytes = uint64_t{64} << 20;
-    absl::Duration aging = absl::Seconds(30);
-    absl::Duration backoff = absl::Seconds(1);
-    absl::Duration max_backoff = absl::Minutes(5);
     std::function<absl::Time()> now;
     MergeRegistry* registry = nullptr;
     bool gauges = true;
@@ -100,29 +94,13 @@ class MergeScheduler {
     irs::containers::FlatHashMap<std::string, absl::Time> _blocked;
   };
 
-  class Lease {
-   public:
-    Lease() noexcept = default;
-    Lease(Lease&& other) noexcept;
-    Lease& operator=(Lease&& other) noexcept;
-    ~Lease();
+  struct Resume {
+    void operator()(Relation* relation) const noexcept;
 
-    explicit operator bool() const noexcept {
-      return static_cast<bool>(_scheduler);
-    }
-
-   private:
-    friend class MergeScheduler;
-
-    Lease(MergeScheduler& scheduler,
-          std::shared_ptr<Relation> relation) noexcept
-      : _scheduler{&scheduler}, _relation{std::move(relation)} {}
-
-    void Release() noexcept;
-
-    MergeScheduler* _scheduler = nullptr;
-    std::shared_ptr<Relation> _relation;
+    MergeScheduler* scheduler = nullptr;
   };
+
+  using Lease = std::unique_ptr<Relation, Resume>;
 
   MergeScheduler(yaclib::IExecutor& executor, Options options);
   ~MergeScheduler();
@@ -149,7 +127,6 @@ class MergeScheduler {
 
  private:
   struct Entry;
-  class Start;
 
   using Queue = std::vector<std::unique_ptr<Entry>>;
   using Running = irs::containers::FlatHashMap<Entry*, std::unique_ptr<Entry>>;
@@ -168,7 +145,7 @@ class MergeScheduler {
   void UpdateGauges() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   void Pump();
   yaclib::Future<> Execute(Entry& entry);
-  void Finish(Entry& entry, MergeOutcome outcome, std::string error) noexcept;
+  void Finish(Entry& entry, MergeResult result) noexcept;
 
   yaclib::IExecutor& _executor;
   const Options _options;

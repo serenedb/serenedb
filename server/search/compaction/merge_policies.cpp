@@ -39,10 +39,11 @@ irs::SegmentRange RowIdRange(const irs::SubReader& segment) {
 }
 
 irs::CompactionPolicy MakeMergePolicy(const TasksSettings& settings,
+                                      size_t inputs_max,
                                       irs::SegmentRangeOf range_of) {
   irs::AdjacentRunOptions options;
-  options.max_segments = std::min<size_t>(settings.compaction_max_segments,
-                                          settings.merge_inputs_max);
+  options.max_segments =
+    std::min<size_t>(settings.compaction_max_segments, inputs_max);
   options.max_bytes = settings.compaction_max_segments_bytes;
   options.segment_cost = settings.compaction_floor_segment_bytes;
   return irs::MakeAdjacentRunPolicy(options, std::move(range_of));

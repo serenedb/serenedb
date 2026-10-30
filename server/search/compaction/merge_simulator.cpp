@@ -108,8 +108,8 @@ class SimulatedJob final : public MergeJob {
 
   bool Stale() const noexcept final { return false; }
 
-  yaclib::Future<MergeOutcome> Run(uint64_t id, const std::atomic_bool& stop,
-                                   size_t helpers) final;
+  yaclib::Future<MergeResult> Run(const std::atomic_bool& stop,
+                                  size_t helpers) final;
 
   void Finish();
   void Cancel();
@@ -126,7 +126,7 @@ class SimulatedJob final : public MergeJob {
   absl::Time _queued;
   absl::Time _started;
   size_t _helpers = 0;
-  yaclib::Promise<MergeOutcome> _promise;
+  yaclib::Promise<MergeResult> _promise;
 };
 
 class Simulation {
@@ -189,7 +189,7 @@ SimulatedJob::SimulatedJob(Simulation& simulation, Relation& relation,
     _view.emplace_back(&_segments.emplace_back(
       static_cast<const SimulatedSegment&>(*candidate)));
   }
-  _estimate = EstimateMerge(_view, simulation.Options().small_bytes);
+  _estimate = EstimateMerge(_view);
 }
 
 SimulatedJob::~SimulatedJob() {
@@ -208,16 +208,15 @@ void SimulatedJob::ReleaseHelpers() {
   _simulation.Scheduler().ReleaseHelpers(std::exchange(_helpers, 0));
 }
 
-yaclib::Future<MergeOutcome> SimulatedJob::Run(uint64_t,
-                                               const std::atomic_bool&,
-                                               size_t helpers) {
+yaclib::Future<MergeResult> SimulatedJob::Run(const std::atomic_bool&,
+                                              size_t helpers) {
   _helpers = _simulation.Scheduler().TryAcquireHelpers(helpers);
   _started = _simulation.Now();
   const auto threads = static_cast<double>(1 + _helpers);
   const auto seconds = static_cast<double>(_estimate.rewrite_bytes) /
                        (_simulation.Options().bytes_per_second * threads);
   _simulation.Started(*this, _started + absl::Seconds(seconds));
-  auto [future, promise] = yaclib::MakeContract<MergeOutcome>();
+  auto [future, promise] = yaclib::MakeContract<MergeResult>();
   _promise = std::move(promise);
   return std::move(future);
 }
@@ -263,15 +262,18 @@ void SimulatedJob::Finish() {
                             });
   _simulation.Record(_relation, std::move(event));
   _simulation.Finished();
+  const auto merged = _segments.size();
   auto promise = std::move(_promise);
-  std::move(promise).Set(MergeOutcome::Merged);
+  std::move(promise).Set(MergeResult{
+    .outcome = {.size = merged, .error = irs::CompactionError::Ok}});
 }
 
 void SimulatedJob::Cancel() {
   ReleaseHelpers();
   _simulation.Finished();
   auto promise = std::move(_promise);
-  std::move(promise).Set(MergeOutcome::Cancelled);
+  std::move(promise).Set(
+    MergeResult{.outcome = {.error = irs::CompactionError::Cancelled}});
 }
 
 Simulation::Simulation(const MergeSimulation& options,
@@ -280,9 +282,6 @@ Simulation::Simulation(const MergeSimulation& options,
   _scheduler = std::make_unique<MergeScheduler>(
     yaclib::MakeInline(), MergeScheduler::Options{
                             .threads = options.threads,
-                            .helpers_per_merge = options.helpers_per_merge,
-                            .small_bytes = options.small_bytes,
-                            .aging = options.aging,
                             .now = [this] { return _now; },
                             .registry = &_registry,
                             .gauges = false,

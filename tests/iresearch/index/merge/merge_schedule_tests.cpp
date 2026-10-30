@@ -25,7 +25,6 @@
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <optional>
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
@@ -39,6 +38,7 @@ namespace {
 using namespace tests::merge;
 using irs::MergeUnitKind;
 
+constexpr size_t kNoUnit = irs::MergeSchedule::kNoUnit;
 constexpr irs::field_id kHnswColumn = kFirstColumn + 1;
 constexpr irs::field_id kIvfColumn = kFirstColumn + 2;
 
@@ -119,8 +119,8 @@ class MergeScheduleTest : public ::testing::Test {
 
 std::vector<size_t> ClaimAll(irs::MergeSchedule& schedule) {
   std::vector<size_t> claimed;
-  while (const auto unit = schedule.Claim()) {
-    claimed.push_back(*unit);
+  for (auto unit = schedule.Claim(); unit != kNoUnit; unit = schedule.Claim()) {
+    claimed.push_back(unit);
   }
   return claimed;
 }
@@ -151,7 +151,7 @@ TEST_F(MergeScheduleTest, NormsRunFirstThenColumnsBesidePostings) {
   for (size_t unit = 0; unit + 1 < norms; ++unit) {
     schedule.Finish(unit, true);
     EXPECT_EQ(unit + 1, schedule.Claim());
-    EXPECT_EQ(std::nullopt, schedule.Claim());
+    EXPECT_EQ(kNoUnit, schedule.Claim());
   }
   schedule.Finish(norms - 1, true);
   schedule.Finish(postings, true);
@@ -171,17 +171,17 @@ TEST_F(MergeScheduleTest, NormsRunFirstThenColumnsBesidePostings) {
   for (const auto unit : claimed) {
     schedule.Finish(unit, true);
   }
-  EXPECT_EQ(std::nullopt, schedule.Claim());
+  EXPECT_EQ(kNoUnit, schedule.Claim());
   schedule.Finish(held, true);
   EXPECT_EQ(footer, schedule.Claim());
-  EXPECT_EQ(std::nullopt, schedule.Claim());
+  EXPECT_EQ(kNoUnit, schedule.Claim());
   schedule.Finish(footer, true);
   EXPECT_EQ(Find(*plan, MergeUnitKind::Index), schedule.Claim());
   EXPECT_FALSE(schedule.Done());
   schedule.Finish(Find(*plan, MergeUnitKind::Index), true);
   EXPECT_TRUE(schedule.Done());
   EXPECT_TRUE(schedule.Ok());
-  EXPECT_EQ(std::nullopt, schedule.Claim());
+  EXPECT_EQ(kNoUnit, schedule.Claim());
 }
 
 TEST_F(MergeScheduleTest, LongestUnitsAreClaimedFirst) {
@@ -191,13 +191,13 @@ TEST_F(MergeScheduleTest, LongestUnitsAreClaimedFirst) {
   const auto units = plan->Units();
   while (true) {
     const auto unit = schedule.Claim();
-    ASSERT_TRUE(unit.has_value());
-    if (units[*unit].kind == MergeUnitKind::Postings) {
+    ASSERT_NE(kNoUnit, unit);
+    if (units[unit].kind == MergeUnitKind::Postings) {
       continue;
     }
-    schedule.Finish(*unit, true);
-    if (*unit + 1 == units.size() ||
-        units[*unit + 1].kind != MergeUnitKind::Norms) {
+    schedule.Finish(unit, true);
+    if (unit + 1 == units.size() ||
+        units[unit + 1].kind != MergeUnitKind::Norms) {
       break;
     }
   }
@@ -242,15 +242,15 @@ TEST_F(MergeScheduleTest, VectorUnitsRunOneAfterAnotherAfterTheFooter) {
   irs::MergeSchedule schedule{*plan};
   while (true) {
     const auto unit = schedule.Claim();
-    ASSERT_TRUE(unit.has_value());
-    ASSERT_NE(postings, *unit);
-    schedule.Finish(*unit, true);
-    if (*unit == footer) {
+    ASSERT_NE(kNoUnit, unit);
+    ASSERT_NE(postings, unit);
+    schedule.Finish(unit, true);
+    if (unit == footer) {
       break;
     }
   }
   EXPECT_EQ(hnsw, schedule.Claim());
-  EXPECT_EQ(std::nullopt, schedule.Claim());
+  EXPECT_EQ(kNoUnit, schedule.Claim());
   schedule.Finish(hnsw, true);
   EXPECT_EQ(ivf, schedule.Claim());
   schedule.Finish(ivf, true);
@@ -282,15 +282,16 @@ TEST_F(MergeScheduleTest, FailedUnitStopsTheOthers) {
   irs::MergeSchedule schedule{*plan};
   const auto first = schedule.Claim();
   const auto second = schedule.Claim();
-  ASSERT_TRUE(first && second);
-  schedule.Finish(*first, false);
+  ASSERT_NE(kNoUnit, first);
+  ASSERT_NE(kNoUnit, second);
+  schedule.Finish(first, false);
   EXPECT_FALSE(schedule.Ok());
-  EXPECT_EQ(std::nullopt, schedule.Claim());
+  EXPECT_EQ(kNoUnit, schedule.Claim());
   EXPECT_FALSE(schedule.Done());
-  schedule.Finish(*second, true);
+  schedule.Finish(second, true);
   EXPECT_TRUE(schedule.Done());
   EXPECT_FALSE(schedule.Ok());
-  EXPECT_EQ(std::nullopt, schedule.Claim());
+  EXPECT_EQ(kNoUnit, schedule.Claim());
 }
 
 TEST_F(MergeScheduleTest, HeldUnitWaitsForItsRelease) {
@@ -302,17 +303,17 @@ TEST_F(MergeScheduleTest, HeldUnitWaitsForItsRelease) {
   irs::MergeSchedule schedule{*plan};
   schedule.Hold(postings);
   size_t finished = 0;
-  while (const auto unit = schedule.Claim()) {
-    ASSERT_NE(postings, *unit);
-    ASSERT_NE(index, *unit);
-    schedule.Finish(*unit, true);
+  for (auto unit = schedule.Claim(); unit != kNoUnit; unit = schedule.Claim()) {
+    ASSERT_NE(postings, unit);
+    ASSERT_NE(index, unit);
+    schedule.Finish(unit, true);
     ++finished;
   }
   EXPECT_EQ(plan->Units().size() - 2, finished);
   EXPECT_FALSE(schedule.Done());
   schedule.Release(postings);
   EXPECT_EQ(postings, schedule.Claim());
-  EXPECT_EQ(std::nullopt, schedule.Claim());
+  EXPECT_EQ(kNoUnit, schedule.Claim());
   schedule.Finish(postings, true);
   EXPECT_EQ(index, schedule.Claim());
   schedule.Finish(index, true);
@@ -332,10 +333,10 @@ TEST_F(MergeScheduleTest, ReleasedUnitStillWaitsForItsDependencies) {
   schedule.Release(postings);
   while (true) {
     const auto unit = schedule.Claim();
-    ASSERT_TRUE(unit.has_value());
-    ASSERT_NE(postings, *unit);
-    schedule.Finish(*unit, true);
-    if (*unit == ivf) {
+    ASSERT_NE(kNoUnit, unit);
+    ASSERT_NE(postings, unit);
+    schedule.Finish(unit, true);
+    if (unit == ivf) {
       break;
     }
   }
@@ -351,21 +352,21 @@ TEST_F(MergeScheduleTest, FailingTheScheduleStopsTheOthers) {
   schedule.Hold(postings);
   while (true) {
     const auto unit = schedule.Claim();
-    ASSERT_TRUE(unit);
-    schedule.Finish(*unit, true);
-    if (units[*unit + 1].kind != MergeUnitKind::Norms) {
+    ASSERT_NE(kNoUnit, unit);
+    schedule.Finish(unit, true);
+    if (units[unit + 1].kind != MergeUnitKind::Norms) {
       break;
     }
   }
   const auto running = schedule.Claim();
-  ASSERT_TRUE(running);
+  ASSERT_NE(kNoUnit, running);
   schedule.Fail();
   EXPECT_FALSE(schedule.Ok());
-  EXPECT_EQ(std::nullopt, schedule.Claim());
+  EXPECT_EQ(kNoUnit, schedule.Claim());
   schedule.Release(postings);
-  EXPECT_EQ(std::nullopt, schedule.Claim());
+  EXPECT_EQ(kNoUnit, schedule.Claim());
   EXPECT_FALSE(schedule.Done());
-  schedule.Finish(*running, true);
+  schedule.Finish(running, true);
   EXPECT_TRUE(schedule.Done());
   EXPECT_FALSE(schedule.Ok());
 }

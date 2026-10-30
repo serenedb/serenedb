@@ -96,9 +96,11 @@ class ColWriter final {
   uint16_t AddLeafDictionary(field_id id, std::span<const uint32_t> path,
                              std::string_view bytes);
 
-  bool AddCopiedDictionaries(field_id id,
-                             std::span<const std::string> dictionaries,
-                             std::vector<uint16_t>& indexes);
+  bool AddCopiedDictionaries(
+    field_id id,
+    std::span<const std::shared_ptr<const codecs::TrainedDictionary>>
+      dictionaries,
+    std::vector<uint16_t>& indexes);
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 
@@ -110,13 +112,11 @@ class ColWriter final {
 
   std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
 
-  bool Commit(uint64_t target_row);
+  bool Commit(uint64_t target_row, std::span<const uint32_t> new2old = {});
   bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
               std::span<const uint32_t> new2old = {});
 
-  yaclib::Task<bool> ComputeAnn(const AnnBuildEnv* env);
-  yaclib::Task<bool> ComputeAnn(const AnnBuildEnv* env,
-                                absl::FunctionRef<bool()> progress);
+  yaclib::Task<> ComputeAnn(const AnnBuildEnv* env);
   yaclib::Task<> ComputeAnn(field_id column, ColReader& reader,
                             const AnnBuildEnv* env);
 

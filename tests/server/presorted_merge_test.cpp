@@ -38,7 +38,7 @@
 #include <utility>
 #include <vector>
 
-#include "connector/segment_rewrite/logical_presorted_merge.h"
+#include "search/compaction/pipeline_merge_operators.h"
 
 namespace {
 
@@ -223,7 +223,10 @@ class PresortedMergeTest : public ::testing::Test {
     for (idx_t p = 0; p != merge.PartitionCount(); ++p) {
       duckdb::vector<duckdb::PresortedRun> part;
       duckdb::optional_idx unsorted;
-      EXPECT_TRUE(merge.Merge(p, part, [] { return true; }, unsorted));
+      const auto state = merge.BeginMerge(p);
+      EXPECT_TRUE(merge.Merge(
+        *state, part, std::numeric_limits<idx_t>::max(), [] { return true; },
+        unsorted));
       EXPECT_FALSE(unsorted.IsValid());
       runs.insert(runs.end(), part.begin(), part.end());
     }
@@ -382,7 +385,10 @@ TEST_F(PresortedMergeTest, UnsortedInputsAreReported) {
     bool failed = false;
     for (idx_t p = 0; p != merge->PartitionCount() && !failed; ++p) {
       duckdb::vector<duckdb::PresortedRun> runs;
-      failed = !merge->Merge(p, runs, [] { return true; }, unsorted);
+      const auto state = merge->BeginMerge(p);
+      failed = !merge->Merge(
+        *state, runs, std::numeric_limits<idx_t>::max(), [] { return true; },
+        unsorted);
     }
     ASSERT_TRUE(failed);
     EXPECT_EQ(bad, unsorted.GetIndex());
@@ -415,7 +421,10 @@ TEST_F(PresortedMergeTest, InterruptStopsTheMerge) {
   merge->Partition(1);
   duckdb::optional_idx unsorted;
   duckdb::vector<duckdb::PresortedRun> runs;
-  EXPECT_FALSE(merge->Merge(0, runs, [] { return false; }, unsorted));
+  const auto state = merge->BeginMerge(0);
+  EXPECT_FALSE(merge->Merge(
+    *state, runs, std::numeric_limits<idx_t>::max(), [] { return false; },
+    unsorted));
   EXPECT_FALSE(unsorted.IsValid());
 }
 
@@ -523,7 +532,7 @@ TEST_F(PresortedMergeTest, OperatorEmitsEveryPartitionOnSeveralThreads) {
   merge->Partition(8);
   ASSERT_LT(1, merge->PartitionCount());
   Exec("SET threads = 4");
-  auto root = duckdb::make_uniq<sdb::connector::LogicalPresortedMerge>(merge);
+  auto root = duckdb::make_uniq<sdb::search::LogicalPresortedMerge>(merge);
   EXPECT_EQ("PRESORTED_MERGE", root->GetName());
   EXPECT_FALSE(root->RequireOptimizer());
   EXPECT_FALSE(root->SupportSerialization());

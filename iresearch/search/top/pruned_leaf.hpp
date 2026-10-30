@@ -140,7 +140,6 @@ class PrunedLeafBase {
       return true;
     }
 
-    *(std::end(_docs) - 1) = doc_limits::invalid();
     _in = OpenDocInput(meta, doc_in);
     auto& in = In();
     *(std::end(_docs) - 1) = doc_limits::invalid();

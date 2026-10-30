@@ -31,23 +31,6 @@
 namespace irs::index_utils {
 namespace {
 
-// Returns percentage of live documents
-inline double FillFactor(const SegmentInfo& segment) noexcept {
-  return static_cast<double>(segment.live_docs_count) /
-         static_cast<double>(segment.docs_count);
-}
-
-// Returns approximated size of a segment in the absence of removals
-inline size_t SizeWithoutRemovals(const SegmentInfo& segment,
-                                  double fill_factor) noexcept {
-  return static_cast<size_t>(static_cast<double>(segment.byte_size) *
-                             fill_factor);
-}
-
-inline size_t SizeWithoutRemovals(const SegmentInfo& segment) noexcept {
-  return SizeWithoutRemovals(segment, FillFactor(segment));
-}
-
 void PrepareFlush(IndexSegment& segment, bool increment_version) {
   auto& meta = segment.meta;
   SDB_ASSERT(meta.byte_size);  // Ensure segment size is estimated
@@ -107,7 +90,8 @@ CompactionPolicy MakePolicy(const CompactionBytesAccum& options) {
       if (compacting_segments.contains(segment.Meta().name)) {
         continue;  // segment is already under compaction
       }
-      segments.emplace_back(SizeWithoutRemovals(segment.Meta()), &segment);
+      segments.emplace_back(static_cast<size_t>(LiveBytes(segment.Meta())),
+                            &segment);
       all_segment_bytes_size += segments.back().first;
     }
 

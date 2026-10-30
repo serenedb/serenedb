@@ -167,8 +167,9 @@ TEST_F(MergeTicketTest, ReservesDisjointGroupsAndReleasesThem) {
   EXPECT_EQ(Names(), ReservedNames());
 
   const auto second = Names({{2, 3}});
-  reservation.tickets[0].Reset();
-  EXPECT_FALSE(reservation.tickets[0]);
+  {
+    const auto released = std::move(reservation.tickets[0]);
+  }
   EXPECT_TRUE(reservation.tickets[0].Candidates().empty());
   EXPECT_FALSE(reservation.tickets[0].Revoked());
   EXPECT_EQ(second, ReservedNames());
@@ -181,25 +182,25 @@ TEST_F(MergeTicketTest, MovedTicketsKeepOneReservation) {
   AddSegments(2);
   auto reservation = Reserve({{0, 1}});
   ASSERT_EQ(1, reservation.tickets.size());
+  const auto first = Names({{0, 1}});
   irs::MergeTicket moved{std::move(reservation.tickets[0])};
-  EXPECT_FALSE(reservation.tickets[0]);
-  ASSERT_TRUE(moved);
+  EXPECT_TRUE(reservation.tickets[0].Candidates().empty());
+  EXPECT_EQ(first, NamesOf(moved));
 
-  irs::MergeTicket assigned;
-  assigned = std::move(moved);
-  EXPECT_FALSE(moved);
-  ASSERT_TRUE(assigned);
-  auto& self = assigned;
-  assigned = std::move(self);
-  ASSERT_TRUE(assigned);
+  auto& self = moved;
+  moved = std::move(self);
+  EXPECT_EQ(first, NamesOf(moved));
   EXPECT_EQ(Names(), ReservedNames());
 
   AddSegments(2);
   auto other = Reserve({{2, 3}});
   ASSERT_EQ(1, other.tickets.size());
-  assigned = std::move(other.tickets[0]);
+  moved = std::move(other.tickets[0]);
+  EXPECT_TRUE(other.tickets[0].Candidates().empty());
   EXPECT_EQ(Names({{2, 3}}), ReservedNames());
-  assigned = {};
+  {
+    const auto released = std::move(moved);
+  }
   EXPECT_TRUE(ReservedNames().empty());
 }
 

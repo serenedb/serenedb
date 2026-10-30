@@ -26,6 +26,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -36,11 +37,14 @@
 #include <utility>
 
 #include "connector/column_id.h"
+#include "query/config.h"
 #include "search/compaction/copy_check.h"
 #include "search/compaction/merge_policies.h"
 
 namespace sdb::search {
 namespace {
+
+constexpr uint64_t kOptimizeRowGroups = 4;
 
 int64_t FirstRow(const irs::SubReader& segment) {
   const auto rowids = DescribeSegment(segment).rowids;
@@ -103,7 +107,8 @@ void PlanBackground(const irs::IndexReader& reader,
   irs::CompactingSegments picked;
   constexpr std::string_view kReason = "adjacent policy";
   for (const auto& candidates :
-       PickMerges(MakeMergePolicy(settings), reader, {}, request.merges)) {
+       PickMerges(MakeMergePolicy(settings, request.inputs_max), reader, {},
+                  request.merges)) {
     if (candidates.size() == 1 &&
         !irs::HasRemovals(candidates.front()->Meta())) {
       break;
@@ -264,8 +269,7 @@ void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
 
 void PlanCompact(const irs::IndexReader& reader,
                  const MergeRoundRequest& request, MergeRoundPlan& plan) {
-  const auto target =
-    request.single_output ? 1U : std::max<uint32_t>(1, request.target_segments);
+  const auto target = std::max<uint32_t>(1, request.target_segments);
   if (reader.size() <= target) {
     plan.notes.emplace_back(absl::StrCat("already at most ", Segments(target)));
     return;
@@ -356,6 +360,14 @@ PlannedSegment DescribeSegment(const irs::SubReader& segment) {
 
 uint64_t PlannedMerge::EstimatedOutputBytes() const noexcept {
   return static_cast<uint64_t>(irs::LiveBytes(bytes, live_docs, docs));
+}
+
+uint32_t DefaultTarget(MergeMode mode, duckdb::ClientContext& context) {
+  if (mode == MergeMode::Optimize) {
+    return static_cast<uint32_t>(
+      duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
+  }
+  return GetIntSetting(context, "sdb_compact_target_segments");
 }
 
 MergeRoundPlan PlanMergeRound(const irs::IndexReader& reader,

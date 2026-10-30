@@ -29,131 +29,40 @@
 #include <limits>
 
 #include "iresearch/formats/column/codecs/blob_leaf.tpp"
-#include "iresearch/formats/column/codecs/compression.hpp"
 #include "iresearch/formats/column/codecs/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/plain_scan.tpp"
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 /*
-Data layout per PlainScan segment, one block of one column; a text column's
-row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
-+------------------------------------------------------+
-|                        Header                        |
-|   +----------------------------------------------+   |
-|   |   Header (string_layout.hpp), 72 bytes       |   |
-|   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags, trained dictionary id      |
-+------------------------------------------------------+
-|                     Frame table                      |
-|   +----------------------------------------------+   |
-|   |   FrameMeta frames[frame_count]              |   |
-|   +----------------------------------------------+   |
-|   first entry, decoded size and stored range         |
-|   of each frame in Data                              |
-+------------------------------------------------------+
-|                    Entry lengths                     |
-|   +----------------------------------------------+   |
-|   |   bitpacked length[entry_count]              |   |
-|   +----------------------------------------------+   |
-|   one entry per row, empty for a NULL row            |
-+------------------------------------------------------+
-|                         Data                         |
-|   +----------------------------------------------+   |
-|   |   lz4 frames of the concatenated entries     |   |
-|   +----------------------------------------------+   |
-|   frame 0 holds up to 32 KiB and is the              |
-|   dictionary of the later frames of up to 16 KiB;    |
-|   or 64 KiB frames without a dictionary;             |
-|   or 16 KiB frames compressed with the column's      |
-|   trained dictionary, stored once per column         |
-+------------------------------------------------------+
-Sections start at 8-byte boundaries.
-*/
-
-/*
-Data layout per DictionaryScan segment, one block of one column; a text
-column's row group is cut into segments of about kDefaultColSegmentTarget
-encoded bytes:
-+------------------------------------------------------+
-|                        Header                        |
-|   +----------------------------------------------+   |
-|   |   Header (string_layout.hpp), 72 bytes       |   |
-|   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags, trained dictionary id      |
-+------------------------------------------------------+
-|                     Frame table                      |
-|   +----------------------------------------------+   |
-|   |   FrameMeta frames[frame_count]              |   |
-|   +----------------------------------------------+   |
-|   first entry, decoded size and stored range         |
-|   of each frame in Data                              |
-+------------------------------------------------------+
-|                    Entry lengths                     |
-|   +----------------------------------------------+   |
-|   |   bitpacked length[entry_count]              |   |
-|   +----------------------------------------------+   |
-|   entry 0 is NULL, then each distinct value in       |
-|   the order the rows first use it                    |
-+------------------------------------------------------+
-|                      Row codes                       |
-|   +----------------------------------------------+   |
-|   |   bitpacked code[row_count]                  |   |
-|   |   or bitpacked run value[run_count]          |   |
-|   |   or a numeric codec segment                 |   |
-|   +----------------------------------------------+   |
-|   row -> entry, code 0 is NULL                       |
-+------------------------------------------------------+
-|                       Run ends                       |
-|   +----------------------------------------------+   |
-|   |   bitpacked run_end[run_count]               |   |
-|   +----------------------------------------------+   |
-|   run-length row codes only                          |
-+------------------------------------------------------+
-|                         Data                         |
-|   +----------------------------------------------+   |
-|   |   lz4 frames of the concatenated entries     |   |
-|   +----------------------------------------------+   |
-|   frame 0 holds up to 32 KiB and is the              |
-|   dictionary of the later frames of up to 16 KiB;    |
-|   or 64 KiB frames without a dictionary;             |
-|   or 16 KiB frames compressed with the column's      |
-|   trained dictionary, stored once per column         |
-+------------------------------------------------------+
-Sections start at 8-byte boundaries.
+lz4 frames in Data (string_layout.hpp draws the segments): frame 0 holds up
+to 32 KiB and is the dictionary of the later frames of up to 16 KiB; or
+64 KiB frames without a dictionary; or 16 KiB frames compressed with the
+column's trained dictionary, stored once per column.
 */
 
 namespace irs::codecs {
 
 static_assert(Lz4::kMaxLevel == LZ4HC_CLEVEL_MAX);
 
-const duckdb::CompressionFunction* Lz4Function(duckdb::PhysicalType physical) {
+const duckdb::CompressionFunction& Lz4Function() {
   static const auto kFunction =
     text::StringFunction<text::PlainScan<text::BlobLeaf<Lz4>>>(
       duckdb::CompressionType::COMPRESSION_LZ4);
-  return physical == duckdb::PhysicalType::VARCHAR ? &kFunction : nullptr;
+  return kFunction;
 }
 
-const duckdb::CompressionFunction* DictLz4Function(
-  duckdb::PhysicalType physical) {
+const duckdb::CompressionFunction& DictLz4Function() {
   static const auto kFunction =
     text::StringFunction<text::DictionaryScan<text::BlobLeaf<Lz4>>>(
       duckdb::CompressionType::COMPRESSION_DICT_LZ4);
-  return physical == duckdb::PhysicalType::VARCHAR ? &kFunction : nullptr;
+  return kFunction;
 }
 
 size_t Lz4::Bound(size_t raw_size) noexcept {
   SDB_ASSERT(raw_size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
   return static_cast<size_t>(LZ4_compressBound(static_cast<int>(raw_size)));
-}
-
-Lz4::Compressor::~Compressor() {
-  LZ4_freeStream(_dict);
-  LZ4_freeStream(_work);
-  LZ4_freeStreamHC(_hc_dict);
-  LZ4_freeStreamHC(_hc_work);
 }
 
 void Lz4::Compressor::LoadDictionary(std::string_view dictionary) {
@@ -162,17 +71,17 @@ void Lz4::Compressor::LoadDictionary(std::string_view dictionary) {
   const auto size = static_cast<int>(dictionary.size());
   if (_level <= 1) {
     if (!_dict) {
-      _dict = LZ4_createStream();
+      _dict.reset(LZ4_createStream());
       SDB_ENSURE(_dict, "lz4: cannot create a dictionary stream");
     }
-    LZ4_loadDict(_dict, dictionary.data(), size);
+    LZ4_loadDict(_dict.get(), dictionary.data(), size);
   } else {
     if (!_hc_dict) {
-      _hc_dict = LZ4_createStreamHC();
+      _hc_dict.reset(LZ4_createStreamHC());
       SDB_ENSURE(_hc_dict, "lz4: cannot create a dictionary stream");
     }
-    LZ4_resetStreamHC_fast(_hc_dict, _level);
-    LZ4_loadDictHC(_hc_dict, dictionary.data(), size);
+    LZ4_resetStreamHC_fast(_hc_dict.get(), _level);
+    LZ4_loadDictHC(_hc_dict.get(), dictionary.data(), size);
   }
   _dictionary = true;
 }
@@ -196,30 +105,31 @@ size_t Lz4::Compressor::Compress(const char* src, size_t size, char* dst,
   int n = 0;
   if (_level <= 1) {
     if (!_work) {
-      _work = LZ4_createStream();
+      _work.reset(LZ4_createStream());
       SDB_ENSURE(_work, "lz4: cannot create a compression stream");
     }
     if (_dictionary) {
-      LZ4_resetStream_fast(_work);
-      LZ4_attach_dictionary(_work, _dict);
-      n =
-        LZ4_compress_fast_continue(_work, src, dst, src_size, dst_capacity, 1);
+      LZ4_resetStream_fast(_work.get());
+      LZ4_attach_dictionary(_work.get(), _dict.get());
+      n = LZ4_compress_fast_continue(_work.get(), src, dst, src_size,
+                                     dst_capacity, 1);
     } else {
-      n = LZ4_compress_fast_extState_fastReset(_work, src, dst, src_size,
+      n = LZ4_compress_fast_extState_fastReset(_work.get(), src, dst, src_size,
                                                dst_capacity, 1);
     }
   } else {
     if (!_hc_work) {
-      _hc_work = LZ4_createStreamHC();
+      _hc_work.reset(LZ4_createStreamHC());
       SDB_ENSURE(_hc_work, "lz4: cannot create a compression stream");
     }
     if (_dictionary) {
-      LZ4_resetStreamHC_fast(_hc_work, _level);
-      LZ4_attach_HC_dictionary(_hc_work, _hc_dict);
-      n = LZ4_compress_HC_continue(_hc_work, src, dst, src_size, dst_capacity);
+      LZ4_resetStreamHC_fast(_hc_work.get(), _level);
+      LZ4_attach_HC_dictionary(_hc_work.get(), _hc_dict.get());
+      n = LZ4_compress_HC_continue(_hc_work.get(), src, dst, src_size,
+                                   dst_capacity);
     } else {
-      n = LZ4_compress_HC_extStateHC_fastReset(_hc_work, src, dst, src_size,
-                                               dst_capacity, _level);
+      n = LZ4_compress_HC_extStateHC_fastReset(_hc_work.get(), src, dst,
+                                               src_size, dst_capacity, _level);
     }
   }
   SDB_ENSURE(n > 0, "lz4 compression failed");

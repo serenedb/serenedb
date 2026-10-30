@@ -25,9 +25,22 @@
 #include <duckdb/function/compression_function.hpp>
 #include <optional>
 
-#include "iresearch/formats/column/codecs/string_choice.hpp"
+#include "iresearch/formats/column/codecs/byte_codec.hpp"
 
 namespace irs::codecs {
+
+const duckdb::CompressionFunction& DictLz4Function();
+const duckdb::CompressionFunction& Lz4Function();
+const duckdb::CompressionFunction& DictZstdFunction();
+const duckdb::CompressionFunction& ZstdFunction();
+const duckdb::CompressionFunction& DictZxcFunction();
+const duckdb::CompressionFunction& ZxcFunction();
+const duckdb::CompressionFunction& DictFsstFunction();
+const duckdb::CompressionFunction& FsstFunction();
+const duckdb::CompressionFunction* NumericFunction(
+  duckdb::PhysicalType physical);
+const duckdb::CompressionFunction* SequenceFunction(
+  duckdb::PhysicalType physical);
 
 const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
                                             duckdb::CompressionType type,

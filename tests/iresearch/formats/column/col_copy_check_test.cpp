@@ -269,19 +269,22 @@ TEST_F(ColCopyCheckTest, EstimatesAreCachedPerOptions) {
     .row_group_size = kRowGroup,
     .samples = irs::kReencodeSampleRowGroups,
   };
-  EXPECT_EQ(first, _reader->Reencodes().Find(kNumber, key));
-  EXPECT_FALSE(_reader->Reencodes().Find(kText, key));
+  irs::ReencodeEstimate cached;
+  EXPECT_TRUE(_reader->Reencodes().Find(kNumber, key, cached));
+  EXPECT_EQ(*first, cached);
+  EXPECT_FALSE(_reader->Reencodes().Find(kText, key, cached));
 
   const irs::ReencodeEstimate planted{.stored_bytes = 1, .reencoded_bytes = 2};
   _reader->Reencodes().Store(kNumber, key, planted);
   EXPECT_EQ(planted, Estimate(kNumber, options));
 
   key.samples = 1;
-  EXPECT_FALSE(_reader->Reencodes().Find(kNumber, key));
+  EXPECT_FALSE(_reader->Reencodes().Find(kNumber, key, cached));
   const auto single = Estimate(kNumber, options, /*samples=*/1);
   ASSERT_TRUE(single);
   EXPECT_NE(planted, *single);
-  EXPECT_EQ(single, _reader->Reencodes().Find(kNumber, key));
+  EXPECT_TRUE(_reader->Reencodes().Find(kNumber, key, cached));
+  EXPECT_EQ(*single, cached);
 }
 
 }  // namespace

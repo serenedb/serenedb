@@ -1299,7 +1299,7 @@ TEST_F(ColumnCopyTest, CopiedBlocksNamingAMissingDictionaryAreRejected) {
   auto header = irs::codecs::Header::Parse(data, block.byte_size);
   ASSERT_EQ(header.dictionary, 1);
   header.dictionary = 9;
-  header.Write(data);
+  duckdb::Store(header, data);
   {
     auto out = dir.create(file);
     ASSERT_NE(out, nullptr);
@@ -1317,8 +1317,9 @@ TEST_F(ColumnCopyTest, CopiedBlocksNamingAMissingDictionaryAreRejected) {
   irs::ColBlockSink sink{*out};
   constexpr uint16_t kRemapped[] = {2};
   const auto copy = [&] {
+    irs::ColumnMeta copied;
     irs::CopyColumnBlocks(*cs, *cs->Column(kText), true, kRemapped, sink,
-                          [] { return true; });
+                          copied, [] { return true; });
   };
 #ifdef SDB_DEV
   GTEST_FLAG_SET(death_test_style, "threadsafe");

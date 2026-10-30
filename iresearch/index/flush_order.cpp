@@ -128,6 +128,18 @@ std::vector<uint32_t> FlushOrder(duckdb::DatabaseInstance& db,
   return new2old;
 }
 
+void DocOrder::MaskRows(DocumentMaskBuilder& mask, size_t from,
+                        size_t to) const {
+  if (Empty()) {
+    mask.AddRange(static_cast<doc_id_t>(from + doc_limits::min()),
+                  static_cast<doc_id_t>(to + doc_limits::min()));
+    return;
+  }
+  for (auto row = from; row != to; ++row) {
+    mask.Add(NewDoc(row));
+  }
+}
+
 DocOrder MakeDocOrder(std::vector<uint32_t> new2old) {
   DocOrder order;
   if (absl::c_is_sorted(new2old)) {

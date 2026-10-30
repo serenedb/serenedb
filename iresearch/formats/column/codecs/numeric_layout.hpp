@@ -24,7 +24,6 @@
 #include <cstdint>
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/typedefs.hpp>
-#include <string_view>
 
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -82,11 +81,6 @@ struct NumericFrameMeta {
   uint64_t base = 0;
   uint64_t min = 0;
   uint64_t max = 0;
-
-  static NumericFrameMeta Load(duckdb::const_data_ptr_t p) noexcept {
-    return LoadLayout<NumericFrameMeta>(p);
-  }
-  void Store(duckdb::data_ptr_t p) const noexcept { StoreLayout(*this, p); }
 };
 
 static_assert(sizeof(NumericFrameMeta) == kNumericFrameMetaSize);
@@ -94,12 +88,6 @@ static_assert(offsetof(NumericFrameMeta, frame) == 0);
 static_assert(offsetof(NumericFrameMeta, base) == 16);
 static_assert(offsetof(NumericFrameMeta, min) == 24);
 static_assert(offsetof(NumericFrameMeta, max) == 32);
-
-constexpr std::string_view NumericTransformName(NumericTransform t) noexcept {
-  constexpr std::string_view kNames[] = {
-    "raw", "for", "delta", "rle", "dict", "ffor", "rle_ffor", "dict_ffor"};
-  return kNames[static_cast<uint8_t>(t)];
-}
 
 struct NumericHeader {
   uint8_t version = kNumericVersion;
@@ -130,7 +118,7 @@ struct NumericHeader {
                              duckdb::idx_t segment_size) {
     SDB_ENSURE(segment_size >= kNumericHeaderSize,
                "numeric codec: segment smaller than its header");
-    const auto h = LoadLayout<NumericHeader>(p);
+    const auto h = duckdb::Load<NumericHeader>(p);
     SDB_ENSURE(h.version == kNumericVersion,
                "numeric codec: unsupported segment version ", h.version);
     SDB_ENSURE(
@@ -157,8 +145,6 @@ struct NumericHeader {
       "numeric codec: corrupted segment header");
     return h;
   }
-
-  void Write(duckdb::data_ptr_t p) const { StoreLayout(*this, p); }
 };
 
 static_assert(sizeof(NumericHeader) == kNumericHeaderSize);

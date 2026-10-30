@@ -20,10 +20,10 @@
 
 #include "iresearch/formats/column/codecs/fsst.hpp"
 
-#include "iresearch/formats/column/codecs/compression.hpp"
 #include "iresearch/formats/column/codecs/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/fsst_leaf.tpp"
 #include "iresearch/formats/column/codecs/plain_scan.tpp"
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 /*
@@ -140,28 +140,22 @@ Sections start at 8-byte boundaries.
 
 namespace irs::codecs {
 
-const duckdb::CompressionFunction* FsstFunction(duckdb::PhysicalType physical) {
+const duckdb::CompressionFunction& FsstFunction() {
   static const auto kFunction =
     text::StringFunction<text::PlainScan<text::FsstLeaf>>(
       duckdb::CompressionType::COMPRESSION_COL_FSST);
-  return physical == duckdb::PhysicalType::VARCHAR ? &kFunction : nullptr;
+  return kFunction;
 }
 
-const duckdb::CompressionFunction* DictFsstFunction(
-  duckdb::PhysicalType physical) {
+const duckdb::CompressionFunction& DictFsstFunction() {
   static const auto kFunction =
     text::StringFunction<text::DictionaryScan<text::FsstLeaf>>(
       duckdb::CompressionType::COMPRESSION_COL_DICT_FSST);
-  return physical == duckdb::PhysicalType::VARCHAR ? &kFunction : nullptr;
+  return kFunction;
 }
 
-FsstEncoder::~FsstEncoder() { Reset(); }
-
 void FsstEncoder::Reset() noexcept {
-  if (_encoder) {
-    duckdb_fsst_destroy(_encoder);
-    _encoder = nullptr;
-  }
+  _encoder.reset();
   _table_size = 0;
 }
 
@@ -183,19 +177,20 @@ void FsstEncoder::Encode(std::span<const std::string_view> strings,
     total += strings[i].size();
   }
   if (!_encoder) {
-    _encoder = duckdb_fsst_create(n, _in_lengths.data(), _in_ptrs.data(), 0);
+    _encoder.reset(
+      duckdb_fsst_create(n, _in_lengths.data(), _in_ptrs.data(), 0));
     SDB_ENSURE(_encoder, "fsst: cannot build a symbol table");
-    _table_size = duckdb_fsst_export(_encoder, _table);
+    _table_size = duckdb_fsst_export(_encoder.get(), _table);
   }
 
   _out_lengths.resize(n);
   _out_ptrs.resize(n);
   size_t done = 0;
   out.resize_and_overwrite(2 * total + 8, [&](char* buf, size_t size) {
-    done =
-      duckdb_fsst_compress(_encoder, n, _in_lengths.data(), _in_ptrs.data(),
-                           size, reinterpret_cast<unsigned char*>(buf),
-                           _out_lengths.data(), _out_ptrs.data());
+    done = duckdb_fsst_compress(_encoder.get(), n, _in_lengths.data(),
+                                _in_ptrs.data(), size,
+                                reinterpret_cast<unsigned char*>(buf),
+                                _out_lengths.data(), _out_ptrs.data());
     return size;
   });
   SDB_ENSURE(done == n, "fsst: compression ran out of space");

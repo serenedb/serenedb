@@ -204,16 +204,10 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
     search::PipelineMergeExecutor executor{
       *client.db, &duckdb::TaskScheduler::GetScheduler(client), state.threads,
       profiled ? &queries : nullptr};
-    auto run = _job->target.Compact(
+    auto executed = _job->target.Compact(
       search::ExplicitPolicy(names), progress, state.options.field_options,
-      search::MergeOrigin::Sql, &executor, planned.lone);
+      search::MergeOrigin::Sql, executor, planned.lone);
     client.InterruptCheck();
-    ExecutedMerge executed{
-      .outcome = run.error.empty() ? search::OutcomeOf(run.result)
-                                   : search::MergeOutcome::Failed,
-      .stats = std::move(run.result.stats),
-      .error = std::move(run.error),
-    };
     if (executed.stats.inputs.empty()) {
       executed.stats.inputs = std::move(names);
     }

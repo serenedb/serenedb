@@ -144,14 +144,8 @@ void BindInvertedIndexOptions(
 InvertedIndexSettings ResolveSettings(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 
-struct DeclaredCodec {
-  duckdb::CompressionType type = duckdb::CompressionType::COMPRESSION_AUTO;
-  uint8_t compression_level = 0;
-  bool hyperloglog = false;
-};
-
 using CompressionByColumn =
-  irs::containers::FlatHashMap<irs::field_id, DeclaredCodec>;
+  irs::containers::FlatHashMap<irs::field_id, irs::ColumnOptions>;
 
 class InvertedIndexConfig final : public irs::IndexFieldOptions {
  public:
@@ -267,7 +261,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo(
     duckdb::CatalogTransaction transaction) const final;
-  std::string ToSQL() const final;
+  std::string ToSQL() const final { return GetInfo()->ToString(); }
 
   duckdb::vector<duckdb::OrderByNode> SortOrders() const;
 

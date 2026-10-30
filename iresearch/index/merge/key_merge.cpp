@@ -30,6 +30,7 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/create_sort_key.hpp>
 #include <limits>
+#include <optional>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -232,7 +233,7 @@ struct KeyOrder::State {
   const SortSpec& spec;
   std::vector<KeyColumn> keys;
   std::vector<uint64_t> live;
-  std::vector<std::optional<uint64_t>> isolated;
+  std::vector<uint64_t> isolated;
   std::optional<MergeOrder> order;
   duckdb::shared_ptr<duckdb::PresortedMerge> merge;
   std::vector<Part> parts;
@@ -267,7 +268,7 @@ void KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
   }
   uint64_t rows = 0;
   s.live.resize(s.doc_map.size());
-  s.isolated.resize(s.doc_map.size());
+  s.isolated.assign(s.doc_map.size(), kNotIsolated);
   for (size_t i = 0; i != s.doc_map.size(); ++i) {
     auto& input = s.doc_map[i];
     const auto& reader = *input.reader;
@@ -288,11 +289,7 @@ void KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
   }
   s.merge = duckdb::make_shared_ptr<duckdb::PresortedMerge>(
     std::move(types), std::move(modifiers), std::move(inputs));
-  if (scheduler) {
-    s.merge->Partition(partitions, false, *scheduler, threads);
-  } else {
-    s.merge->Partition(partitions);
-  }
+  s.merge->Partition(partitions, false, scheduler, threads);
   s.PlanParts();
 }
 
@@ -393,7 +390,7 @@ void KeyOrder::Finish() {
   s.order->Finish();
 }
 
-std::optional<uint64_t> KeyOrder::IsolatedBegin(size_t input) const noexcept {
+uint64_t KeyOrder::IsolatedBegin(size_t input) const noexcept {
   return _state->isolated[input];
 }
 

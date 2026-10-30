@@ -33,6 +33,7 @@
 #include "search/compaction/merge_registry.h"
 #include "search/compaction/merge_scheduler.h"
 #include "search/maintenance.h"
+#include "search/store_stats.h"
 
 namespace duckdb {
 
@@ -47,8 +48,9 @@ class SearchTable;
 }  // namespace sdb::search
 namespace sdb::connector {
 
-struct MergeRun {
-  irs::CompactionResult result;
+struct ExecutedMerge {
+  search::MergeOutcome outcome = search::MergeOutcome::Running;
+  irs::MergeStats stats;
   std::string error;
 };
 
@@ -61,23 +63,26 @@ class MergeTarget {
   const std::string& Database() const noexcept { return _database; }
   bool ReadOnly() const noexcept { return _read_only; }
   bool IsIndex() const noexcept { return static_cast<bool>(_index); }
-  bool Sorted() const noexcept;
+  bool Sorted() const noexcept { return _store->Sorted(); }
+  size_t MergeInputsMax() const noexcept { return _store->MergeInputsMax(); }
   uint32_t RowGroupSize() const noexcept { return _options->row_group_size; }
   const irs::IndexFieldOptions& FieldOptions() const noexcept {
     return *_options;
   }
 
   irs::DirectoryReader Snapshot() const;
-  const search::TasksSettings& Settings() const;
+  const search::TasksSettings& Settings() const {
+    return _store->GetTasksSettings();
+  }
   search::CompactionOptions PinOptions() const;
   std::string ColumnName(irs::field_id id) const;
 
-  MergeRun Compact(const irs::CompactionPolicy& policy,
-                   const irs::MergeProgress& progress,
-                   const irs::IndexFieldOptions* field_options,
-                   search::MergeOrigin origin,
-                   irs::MergeExecutor* executor = nullptr,
-                   irs::LoneSegment lone = irs::LoneSegment::Skip) const;
+  ExecutedMerge Compact(const irs::CompactionPolicy& policy,
+                        const irs::MergeProgress& progress,
+                        const irs::IndexFieldOptions* field_options,
+                        search::MergeOrigin origin,
+                        irs::MergeExecutor& executor,
+                        irs::LoneSegment lone) const;
   search::MergeScheduler::Lease TakeOver() const;
   void Publish() const;
   void Refresh() const;
@@ -92,6 +97,7 @@ class MergeTarget {
   std::shared_ptr<const catalog::InvertedIndexConfig> _options;
   std::shared_ptr<search::SearchTable> _table;
   std::shared_ptr<search::InvertedIndexStorage> _index;
+  search::MaintainedStore* _store = nullptr;
   irs::containers::FlatHashMap<irs::field_id, std::string> _column_names;
 };
 

@@ -69,12 +69,13 @@ class TermKeyReader final : public duckdb::PresortedMergeReader {
     const auto want = row + 1;
     if (want < _next || want - _next > TermKeys::kAnchorStep) {
       const auto anchor = _keys.Anchor(row);
-      if (anchor && (want < _next || anchor->first >= _next)) {
+      if (anchor.row != TermKeys::kNoAnchor &&
+          (want < _next || anchor.row >= _next)) {
         _it = _keys.Reader().iterator();
-        const bool found = _it->seek(anchor->second);
+        const bool found = _it->seek(anchor.term);
         SDB_ENSURE(found, "TermKeys: a term dictionary lost the term of row ",
-                   anchor->first);
-        _next = anchor->first + 1;
+                   anchor.row);
+        _next = anchor.row + 1;
       } else if (want < _next) {
         _it = _keys.Reader().iterator();
         _next = 0;
@@ -99,14 +100,13 @@ duckdb::unique_ptr<duckdb::PresortedMergeReader> TermKeys::CreateReader()
   return duckdb::make_uniq<TermKeyReader>(*this);
 }
 
-std::optional<std::pair<uint64_t, bstring>> TermKeys::Anchor(
-  uint64_t row) const {
+TermKeys::TermAnchor TermKeys::Anchor(uint64_t row) const {
   std::lock_guard lock{_mutex};
   if (_anchors.empty()) {
-    return std::nullopt;
+    return {};
   }
   const auto k = std::min<uint64_t>(row / kAnchorStep, _anchors.size() - 1);
-  return std::pair{k * kAnchorStep, _anchors[k]};
+  return {.row = k * kAnchorStep, .term = _anchors[k]};
 }
 
 void TermKeys::Record(uint64_t row, bytes_view term) const {
@@ -121,11 +121,11 @@ void TermKeys::SeekBefore(SeekTermIterator& it, uint64_t row) const {
     return;
   }
   uint64_t next = 0;
-  if (const auto anchor = Anchor(row - 1)) {
-    const bool found = it.seek(anchor->second);
+  if (const auto anchor = Anchor(row - 1); anchor.row != kNoAnchor) {
+    const bool found = it.seek(anchor.term);
     SDB_ENSURE(found, "TermKeys: a term dictionary lost the term of row ",
-               anchor->first);
-    next = anchor->first + 1;
+               anchor.row);
+    next = anchor.row + 1;
   }
   for (; next < row; ++next) {
     const bool more = it.next();

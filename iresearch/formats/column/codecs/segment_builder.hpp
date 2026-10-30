@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/vector_size.hpp>
@@ -36,7 +37,6 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/formats/column/codecs/string_choice.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -65,9 +65,6 @@ CodesPlan PlanCodes(Shape shape, uint64_t rows, uint64_t entries,
 void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
             uint64_t lcps_bytes, const CodesPlan& codes,
             uint64_t symtab_bytes) noexcept;
-
-void Record(RatioHistory& hist, uint64_t raw, uint64_t comp,
-            uint32_t target) noexcept;
 
 class DedupScratch {
  public:
@@ -102,10 +99,16 @@ class DedupScratch {
   uint32_t _epoch = 0;
 };
 
-struct Segment {
+struct Config {
   StringChoice choice{};
   uint8_t level = 0;
   FrameLayout layout = FrameLayout::Dictionary;
+
+  bool operator==(const Config&) const = default;
+};
+
+struct Segment {
+  Config config;
   uint64_t begin = 0;
   uint64_t rows = 0;
   uint64_t entries = 0;
@@ -136,7 +139,7 @@ struct EncodedFrames {
   std::span<uint32_t> lcps;
   uint32_t max_lcp = 0;
   std::string_view symtab;
-  uint8_t flags = 0;
+  FrameDictionary flags = FrameDictionary::None;
   uint16_t dictionary = 0;
 };
 
@@ -177,11 +180,13 @@ class SegmentBuilder {
     SDB_ASSERT(_rows != 0);
     if (_shape == Shape::Dedup) {
       _codes.resize(_rows);
-      if constexpr (Leaf::kSorted) {
+      if constexpr (Sorted(Leaf::kCodec)) {
         SortEntries();
       }
     }
-    _lengths.assign(GroupPadded(_entries.size() + FirstEntry()), 0);
+    _lengths.assign(duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(
+                      _entries.size() + FirstEntry()),
+                    0);
     const auto frames = leaf.Finish(
       *this, std::span{_lengths}.subspan(FirstEntry(), _entries.size()));
     WriteSegment(frames, leaf.Data(), out);

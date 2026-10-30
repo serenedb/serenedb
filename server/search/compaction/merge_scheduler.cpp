@@ -20,6 +20,7 @@
 
 #include "search/compaction/merge_scheduler.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
 
 #include <algorithm>
@@ -42,6 +43,10 @@ namespace sdb::search {
 namespace {
 
 constexpr uint64_t kSegmentCost = uint64_t{1} << 20;
+constexpr uint64_t kSmallBytes = uint64_t{64} << 20;
+constexpr absl::Duration kAging = absl::Seconds(30);
+constexpr absl::Duration kBackoff = absl::Seconds(1);
+constexpr absl::Duration kMaxBackoff = absl::Minutes(5);
 
 }  // namespace
 
@@ -56,48 +61,20 @@ struct MergeScheduler::Entry {
   std::atomic_bool stop{false};
 };
 
-class MergeScheduler::Start {
- public:
-  Start(MergeScheduler& scheduler, Entry& entry) noexcept
-    : _scheduler{&scheduler}, _entry{&entry} {}
-
-  Start(Start&& other) noexcept
-    : _scheduler{other._scheduler},
-      _entry{std::exchange(other._entry, nullptr)} {}
-  Start& operator=(Start&&) = delete;
-
-  ~Start() {
-    if (_entry) {
-      _scheduler->Finish(*_entry, MergeOutcome::Cancelled, {});
-    }
-  }
-
-  void operator()() {
-    _scheduler->Execute(*_entry).Detach();
-    _entry = nullptr;
-  }
-
- private:
-  MergeScheduler* _scheduler;
-  Entry* _entry;
-};
-
-MergeEstimate EstimateMerge(irs::CompactionView candidates,
-                            uint64_t small_bytes) noexcept {
-  MergeEstimate estimate{.segments = candidates.size()};
+MergeEstimate EstimateMerge(irs::CompactionView candidates) noexcept {
+  MergeEstimate estimate;
   long double rewrite = 0;
   for (const auto* candidate : candidates) {
-    const auto& meta = candidate->Meta();
-    estimate.bytes += meta.byte_size;
-    rewrite += irs::LiveBytes(meta);
+    rewrite += irs::LiveBytes(candidate->Meta());
   }
   estimate.rewrite_bytes = static_cast<uint64_t>(rewrite);
-  const auto removed = estimate.segments > 1 ? estimate.segments - 1 : 1;
-  estimate.score = static_cast<double>(estimate.rewrite_bytes +
-                                       kSegmentCost * estimate.segments) /
-                   static_cast<double>(removed);
+  const auto segments = candidates.size();
+  const auto removed = segments > 1 ? segments - 1 : 1;
+  estimate.score =
+    static_cast<double>(estimate.rewrite_bytes + kSegmentCost * segments) /
+    static_cast<double>(removed);
   estimate.lane =
-    estimate.rewrite_bytes < small_bytes ? MergeLane::Small : MergeLane::Big;
+    estimate.rewrite_bytes < kSmallBytes ? MergeLane::Small : MergeLane::Big;
   return estimate;
 }
 
@@ -206,7 +183,7 @@ void MergeScheduler::Enqueue(const std::shared_ptr<Relation>& relation,
   auto entry = std::make_unique<Entry>();
   entry->relation = relation;
   const auto candidates = job->Candidates();
-  entry->estimate = EstimateMerge(candidates, _options.small_bytes);
+  entry->estimate = EstimateMerge(candidates);
   SDB_IF_FAILURE("compaction_lane_big") {
     entry->estimate.lane = MergeLane::Big;
   }
@@ -255,36 +232,15 @@ MergeScheduler::Lease MergeScheduler::TakeOver(
     _mutex.Await(absl::Condition(&NoneRunningFor,
                                  static_cast<const Relation*>(relation.get())));
   }
-  return Lease{*this, relation};
+  return Lease{relation.get(), Resume{.scheduler = this}};
 }
 
-MergeScheduler::Lease::Lease(Lease&& other) noexcept
-  : _scheduler{std::exchange(other._scheduler, nullptr)},
-    _relation{std::move(other._relation)} {}
-
-MergeScheduler::Lease& MergeScheduler::Lease::operator=(
-  Lease&& other) noexcept {
-  if (this != &other) {
-    Release();
-    _scheduler = std::exchange(other._scheduler, nullptr);
-    _relation = std::move(other._relation);
-  }
-  return *this;
-}
-
-MergeScheduler::Lease::~Lease() { Release(); }
-
-void MergeScheduler::Lease::Release() noexcept {
-  if (!_scheduler) {
-    return;
-  }
+void MergeScheduler::Resume::operator()(Relation* relation) const noexcept {
   {
-    absl::MutexLock lock{&_scheduler->_mutex};
-    --_relation->_paused;
+    absl::MutexLock lock{&scheduler->_mutex};
+    --relation->_paused;
   }
-  _relation->NudgeCompaction();
-  _scheduler = nullptr;
-  _relation.reset();
+  relation->NudgeCompaction();
 }
 
 void MergeScheduler::Interrupt() noexcept {
@@ -340,7 +296,7 @@ void MergeScheduler::Pump() {
     SDB_IF_FAILURE("hold_merge_dispatch") { return; }
     DropIf(stale, [](const Entry& entry) { return entry.job->Stale(); });
     const auto now = Now();
-    const auto aging = absl::ToDoubleSeconds(_options.aging);
+    const auto aging = absl::ToDoubleSeconds(kAging);
     for (;;) {
       auto best = _queue.end();
       double best_rank = 0;
@@ -372,7 +328,7 @@ void MergeScheduler::Pump() {
       } else {
         ++_big;
         ++relation._running_big;
-        entry->helpers = _options.helpers_per_merge;
+        entry->helpers = _options.threads / 2;
       }
       _registry.Dispatch(entry->id, 1 + entry->helpers);
       auto* raw = entry.get();
@@ -385,29 +341,36 @@ void MergeScheduler::Pump() {
     entry->relation->NudgeCompaction();
   }
   for (auto* entry : started) {
-    yaclib::Submit(_executor, Start{*this, *entry});
+    absl::Cleanup dropped = [this, entry] {
+      Finish(*entry, MergeResult{
+                       .outcome = {.error = irs::CompactionError::Cancelled}});
+    };
+    yaclib::Submit(_executor,
+                   [this, entry, dropped = std::move(dropped)]() mutable {
+                     std::move(dropped).Cancel();
+                     Execute(*entry).Detach();
+                   });
   }
 }
 
 yaclib::Future<> MergeScheduler::Execute(Entry& entry) {
-  auto outcome = MergeOutcome::Failed;
-  std::string error;
+  MergeResult result;
   try {
-    outcome = co_await entry.job->Run(entry.id, entry.stop, entry.helpers);
+    result = co_await entry.job->Run(entry.stop, entry.helpers);
   } catch (const std::exception& e) {
-    error = e.what();
+    result.error = e.what();
     SDB_WARN(SEARCH, "background merge of relation ", entry.relation->Id(),
-             " failed: ", error);
+             " failed: ", result.error);
   } catch (...) {
     SDB_WARN(SEARCH, "background merge of relation ", entry.relation->Id(),
              " failed");
   }
-  Finish(entry, outcome, std::move(error));
+  Finish(entry, std::move(result));
   co_return {};
 }
 
-void MergeScheduler::Finish(Entry& raw, MergeOutcome outcome,
-                            std::string error) noexcept {
+void MergeScheduler::Finish(Entry& raw, MergeResult result) noexcept {
+  const auto outcome = OutcomeOf(result.outcome);
   std::unique_ptr<Entry> entry;
   {
     absl::MutexLock lock{&_mutex};
@@ -430,18 +393,18 @@ void MergeScheduler::Finish(Entry& raw, MergeOutcome outcome,
       ++relation._failures;
       const auto shift = std::min<uint32_t>(relation._failures - 1, 20);
       const auto until =
-        Now() + std::min(_options.max_backoff,
-                         _options.backoff * (int64_t{1} << shift));
+        Now() + std::min(kMaxBackoff, kBackoff * (int64_t{1} << shift));
       for (auto& name : entry->inputs) {
         relation._blocked.insert_or_assign(std::move(name), until);
       }
     }
     UpdateGauges();
   }
-  if (outcome == MergeOutcome::Cancelled) {
+  if (outcome == MergeOutcome::Cancelled && result.outcome.size == 0) {
     _registry.Drop(entry->id);
   } else {
-    _registry.Finish(entry->id, outcome, {}, std::move(error));
+    _registry.Finish(entry->id, outcome, std::move(result.outcome.stats),
+                     std::move(result.error));
   }
   const auto relation = entry->relation;
   entry.reset();

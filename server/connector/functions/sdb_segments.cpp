@@ -38,6 +38,7 @@
 #include <utility>
 #include <vector>
 
+#include "connector/functions/function_values.h"
 #include "connector/functions/rowid_values.h"
 #include "connector/segment_rewrite/merge_target.h"
 #include "search/compaction/copy_check.h"
@@ -78,17 +79,11 @@ duckdb::unique_ptr<duckdb::FunctionData> SegmentsBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  SDB_ASSERT(!input.inputs.empty());
-  if (input.inputs[0].IsNull()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("sdb_segments requires a relation name"));
-  }
   auto data = duckdb::make_uniq<SegmentsBindData>();
-  data->relation = input.inputs[0].GetValue<std::string>();
+  data->relation = ReadRelation(input, "sdb_segments");
   MergeTarget::Resolve(context, data->relation);
-  const auto columns = input.named_parameters.find("columns");
-  SDB_ASSERT(columns != input.named_parameters.end());
-  data->columns = !columns->second.IsNull() && columns->second.GetValue<bool>();
+  const auto& columns = NamedParameter(input, "columns");
+  data->columns = !columns.IsNull() && columns.GetValue<bool>();
   if (data->columns) {
     for (const auto* name : {"segment", "column", "type", "rows", "bytes",
                              "codecs", "reencoded_bytes", "verdict"}) {
@@ -164,16 +159,13 @@ void EmitColumns(SegmentsState& state, duckdb::DataChunk& output) {
     output.data[0].Append(duckdb::Value{row.segment});
     output.data[1].Append(duckdb::Value{row.column});
     output.data[2].Append(duckdb::Value{row.type});
-    output.data[3].Append(
-      duckdb::Value::BIGINT(static_cast<int64_t>(row.rows)));
-    output.data[4].Append(
-      duckdb::Value::BIGINT(static_cast<int64_t>(row.bytes)));
+    output.data[3].Append(Bigint(row.rows));
+    output.data[4].Append(Bigint(row.bytes));
     output.data[5].Append(row.codecs.empty()
                             ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                             : duckdb::Value{row.codecs});
     if (row.reencoded_bytes) {
-      output.data[6].Append(
-        duckdb::Value::BIGINT(static_cast<int64_t>(*row.reencoded_bytes)));
+      output.data[6].Append(Bigint(*row.reencoded_bytes));
       output.data[7].Append(duckdb::Value{row.reencode ? "re-encode" : "copy"});
     } else {
       output.data[6].Append(duckdb::Value{duckdb::LogicalType::BIGINT});
@@ -188,14 +180,10 @@ void EmitSegments(SegmentsState& state, duckdb::DataChunk& output) {
   for (; state.offset < end; ++state.offset) {
     const auto& row = state.rows[state.offset];
     output.data[0].Append(duckdb::Value{row.name});
-    output.data[1].Append(
-      duckdb::Value::BIGINT(static_cast<int64_t>(row.docs)));
-    output.data[2].Append(
-      duckdb::Value::BIGINT(static_cast<int64_t>(row.live_docs)));
-    output.data[3].Append(
-      duckdb::Value::BIGINT(static_cast<int64_t>(row.docs - row.live_docs)));
-    output.data[4].Append(
-      duckdb::Value::BIGINT(static_cast<int64_t>(row.bytes)));
+    output.data[1].Append(Bigint(row.docs));
+    output.data[2].Append(Bigint(row.live_docs));
+    output.data[3].Append(Bigint(row.docs - row.live_docs));
+    output.data[4].Append(Bigint(row.bytes));
     const auto rowids = RowIdValuesOf(row.rowids);
     output.data[5].Append(rowids.min);
     output.data[6].Append(rowids.max);

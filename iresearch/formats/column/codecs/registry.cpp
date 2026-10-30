@@ -20,9 +20,11 @@
 
 #include "iresearch/formats/column/codecs/registry.hpp"
 
-#include <duckdb/main/config.hpp>
+#include <absl/algorithm/container.h>
 
-#include "iresearch/formats/column/codecs/compression.hpp"
+#include <duckdb/main/config.hpp>
+#include <iterator>
+
 #include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/zstd.hpp"
 #include "iresearch/formats/column/codecs/zxc.hpp"
@@ -30,98 +32,88 @@
 namespace irs::codecs {
 namespace {
 
-const duckdb::CompressionFunction* TextFunction(duckdb::CompressionType type,
-                                                duckdb::PhysicalType physical) {
-  switch (type) {
-    case duckdb::CompressionType::COMPRESSION_DICT_LZ4:
-      return DictLz4Function(physical);
-    case duckdb::CompressionType::COMPRESSION_LZ4:
-      return Lz4Function(physical);
-    case duckdb::CompressionType::COMPRESSION_DICT_ZSTD:
-      return DictZstdFunction(physical);
-    case duckdb::CompressionType::COMPRESSION_COL_ZSTD:
-      return ZstdFunction(physical);
-    case duckdb::CompressionType::COMPRESSION_DICT_ZXC:
-      return DictZxcFunction(physical);
-    case duckdb::CompressionType::COMPRESSION_ZXC:
-      return ZxcFunction(physical);
-    case duckdb::CompressionType::COMPRESSION_COL_DICT_FSST:
-      return DictFsstFunction(physical);
-    case duckdb::CompressionType::COMPRESSION_COL_FSST:
-      return FsstFunction(physical);
-    default:
-      return nullptr;
-  }
+using duckdb::CompressionType;
+
+struct TextCodec {
+  CompressionType type;
+  StringChoice choice;
+  const duckdb::CompressionFunction& (*function)();
+};
+
+constexpr TextCodec kTextCodecs[] = {
+  {CompressionType::COMPRESSION_DICT_LZ4,
+   {Shape::Dedup, ByteCodec::Lz4},
+   DictLz4Function},
+  {CompressionType::COMPRESSION_LZ4,
+   {Shape::Plain, ByteCodec::Lz4},
+   Lz4Function},
+  {CompressionType::COMPRESSION_DICT_ZSTD,
+   {Shape::Dedup, ByteCodec::Zstd},
+   DictZstdFunction},
+  {CompressionType::COMPRESSION_COL_ZSTD,
+   {Shape::Plain, ByteCodec::Zstd},
+   ZstdFunction},
+  {CompressionType::COMPRESSION_DICT_ZXC,
+   {Shape::Dedup, ByteCodec::Zxc},
+   DictZxcFunction},
+  {CompressionType::COMPRESSION_ZXC,
+   {Shape::Plain, ByteCodec::Zxc},
+   ZxcFunction},
+  {CompressionType::COMPRESSION_COL_DICT_FSST,
+   {Shape::Dedup, ByteCodec::Fsst},
+   DictFsstFunction},
+  {CompressionType::COMPRESSION_COL_FSST,
+   {Shape::Plain, ByteCodec::Fsst},
+   FsstFunction},
+  {CompressionType::COMPRESSION_ZSTD, {Shape::Plain, ByteCodec::Zstd}, nullptr},
+  {CompressionType::COMPRESSION_DICT_FSST,
+   {Shape::Dedup, ByteCodec::Fsst},
+   nullptr},
+  {CompressionType::COMPRESSION_FSST, {Shape::Plain, ByteCodec::Fsst}, nullptr},
+};
+
+const TextCodec* TextCodecOf(CompressionType type) noexcept {
+  const auto* it = absl::c_find_if(
+    kTextCodecs, [&](const TextCodec& codec) { return codec.type == type; });
+  return it == std::end(kTextCodecs) ? nullptr : it;
 }
 
 }  // namespace
 
 const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
-                                            duckdb::CompressionType type,
+                                            CompressionType type,
                                             duckdb::PhysicalType physical) {
-  if (type == duckdb::CompressionType::COMPRESSION_COL_SEQUENCE) {
+  if (type == CompressionType::COMPRESSION_COL_SEQUENCE) {
     return SequenceFunction(physical);
   }
-  if (type == duckdb::CompressionType::COMPRESSION_COL_NUMERIC) {
+  if (type == CompressionType::COMPRESSION_COL_NUMERIC) {
     return NumericFunction(physical);
   }
-  if (const auto* text = TextFunction(type, physical)) {
-    return text;
+  if (const auto* text = TextCodecOf(type);
+      text && text->function && physical == duckdb::PhysicalType::VARCHAR) {
+    return &text->function();
   }
   return duckdb::DBConfig::GetConfig(db)
     .TryGetCompressionFunction(type, physical)
     .get();
 }
 
-std::optional<StringChoice> ChoiceOf(duckdb::CompressionType type) {
-  switch (type) {
-    case duckdb::CompressionType::COMPRESSION_DICT_LZ4:
-      return StringChoice{Shape::Dedup, ByteCodec::Lz4};
-    case duckdb::CompressionType::COMPRESSION_DICT_ZSTD:
-      return StringChoice{Shape::Dedup, ByteCodec::Zstd};
-    case duckdb::CompressionType::COMPRESSION_ZSTD:
-    case duckdb::CompressionType::COMPRESSION_COL_ZSTD:
-      return StringChoice{Shape::Plain, ByteCodec::Zstd};
-    case duckdb::CompressionType::COMPRESSION_LZ4:
-      return StringChoice{Shape::Plain, ByteCodec::Lz4};
-    case duckdb::CompressionType::COMPRESSION_DICT_FSST:
-    case duckdb::CompressionType::COMPRESSION_COL_DICT_FSST:
-      return StringChoice{Shape::Dedup, ByteCodec::Fsst};
-    case duckdb::CompressionType::COMPRESSION_FSST:
-    case duckdb::CompressionType::COMPRESSION_COL_FSST:
-      return StringChoice{Shape::Plain, ByteCodec::Fsst};
-    case duckdb::CompressionType::COMPRESSION_DICT_ZXC:
-      return StringChoice{Shape::Dedup, ByteCodec::Zxc};
-    case duckdb::CompressionType::COMPRESSION_ZXC:
-      return StringChoice{Shape::Plain, ByteCodec::Zxc};
-    default:
-      return std::nullopt;
+std::optional<StringChoice> ChoiceOf(CompressionType type) {
+  if (const auto* text = TextCodecOf(type)) {
+    return text->choice;
   }
+  return std::nullopt;
 }
 
-duckdb::CompressionType TypeOf(StringChoice choice) noexcept {
-  switch (choice.leaf) {
-    case ByteCodec::Lz4:
-      return choice.shape == Shape::Plain
-               ? duckdb::CompressionType::COMPRESSION_LZ4
-               : duckdb::CompressionType::COMPRESSION_DICT_LZ4;
-    case ByteCodec::Zstd:
-      return choice.shape == Shape::Plain
-               ? duckdb::CompressionType::COMPRESSION_COL_ZSTD
-               : duckdb::CompressionType::COMPRESSION_DICT_ZSTD;
-    case ByteCodec::Zxc:
-      return choice.shape == Shape::Plain
-               ? duckdb::CompressionType::COMPRESSION_ZXC
-               : duckdb::CompressionType::COMPRESSION_DICT_ZXC;
-    case ByteCodec::Fsst:
-      return choice.shape == Shape::Plain
-               ? duckdb::CompressionType::COMPRESSION_COL_FSST
-               : duckdb::CompressionType::COMPRESSION_COL_DICT_FSST;
-  }
-  return duckdb::CompressionType::COMPRESSION_AUTO;
+CompressionType TypeOf(StringChoice choice) noexcept {
+  const auto* it = absl::c_find_if(kTextCodecs, [&](const TextCodec& codec) {
+    return codec.function && codec.choice == choice;
+  });
+  return it == std::end(kTextCodecs) ? CompressionType::COMPRESSION_AUTO
+                                     : it->type;
 }
 
-uint8_t MaxLevel(duckdb::CompressionType type) {
+uint8_t MaxLevel(CompressionType type) {
   const auto choice = ChoiceOf(type);
   if (!choice) {
     return 0;

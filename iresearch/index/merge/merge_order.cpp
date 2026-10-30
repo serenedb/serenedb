@@ -20,8 +20,6 @@
 
 #include "iresearch/index/merge/merge_order.hpp"
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 
 #include "iresearch/utils/assert.hpp"
@@ -29,7 +27,7 @@
 namespace irs {
 
 MergeOrder::MergeOrder(size_t inputs, uint64_t rows, IResourceManager& memory)
-  : _narrow{{memory}}, _wide{{memory}}, _live(inputs, 0) {
+  : _narrow{{memory}}, _wide{{memory}}, _inputs{inputs} {
   SDB_ASSERT(inputs <= kSortedMergeInputsMax);
   if (inputs > kNarrowInputs) {
     _wide.resize(rows);
@@ -39,22 +37,22 @@ MergeOrder::MergeOrder(size_t inputs, uint64_t rows, IResourceManager& memory)
 }
 
 void MergeOrder::Finish() {
-  absl::c_fill(_live, 0);
-  _checkpoints.assign(_live.size(), 0);
+  std::vector<uint64_t> live(_inputs, 0);
+  _checkpoints.assign(_inputs, 0);
   const auto ids = Inputs();
   for (uint64_t row = 0; row != Rows(); ++row) {
-    ++_live[ids[row]];
+    ++live[ids[row]];
     if ((row + 1) % kCheckpointRows == 0) {
-      _checkpoints.insert(_checkpoints.end(), _live.begin(), _live.end());
+      _checkpoints.insert(_checkpoints.end(), live.begin(), live.end());
     }
   }
 }
 
 void MergeOrder::LiveRowsBefore(uint64_t row, std::span<uint64_t> live) const {
   SDB_ASSERT(row <= Rows());
-  SDB_ASSERT(live.size() == _live.size());
+  SDB_ASSERT(live.size() == _inputs);
   const auto checkpoint = row / kCheckpointRows;
-  std::copy_n(_checkpoints.begin() + checkpoint * _live.size(), _live.size(),
+  std::copy_n(_checkpoints.begin() + checkpoint * _inputs, _inputs,
               live.begin());
   const auto ids = Inputs();
   for (auto r = checkpoint * kCheckpointRows; r != row; ++r) {

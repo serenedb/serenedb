@@ -37,7 +37,7 @@ struct SortKey {
 
 std::vector<SortKey> ResolveSortKeys(
   const duckdb::ColumnList& columns,
-  const duckdb::vector<duckdb::OrderByNode>& orders);
+  std::span<const duckdb::OrderByNode> orders);
 
 duckdb::vector<duckdb::OrderByNode> SortOrdersOf(
   std::span<const SortKey> keys, const duckdb::ColumnList& columns);

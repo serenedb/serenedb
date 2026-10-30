@@ -22,6 +22,7 @@
 
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <span>
 
 namespace sdb::search {
 
@@ -39,6 +40,14 @@ StoreStats StoreStats::FromReader(const irs::DirectoryReader& reader) {
     stats.numFiles += meta.files.size();
   }
   return stats;
+}
+
+void MaintainedStore::SetWriterOptions(irs::IndexWriterOptions& options) const {
+  options.sort = _sort;
+  options.on_flushed = [id = _merge_relation->Id()](
+                         std::span<const irs::SubReader* const> segments) {
+    MergeRegistry::Instance().RecordFlushes(id, segments);
+  };
 }
 
 }  // namespace sdb::search

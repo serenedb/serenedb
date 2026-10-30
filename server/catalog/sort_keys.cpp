@@ -33,7 +33,7 @@ namespace sdb::catalog {
 
 std::vector<SortKey> ResolveSortKeys(
   const duckdb::ColumnList& columns,
-  const duckdb::vector<duckdb::OrderByNode>& orders) {
+  std::span<const duckdb::OrderByNode> orders) {
   std::vector<SortKey> keys;
   keys.reserve(orders.size());
   irs::containers::FlatHashSet<duckdb::idx_t> seen;

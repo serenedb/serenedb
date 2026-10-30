@@ -35,7 +35,6 @@
 #include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
-#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
@@ -738,13 +737,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
       auto& table = create->Cast<duckdb::CreateTableInfo>();
       duckdb::TableCatalogEntry::RenameColumn(table.columns, table.constraints,
                                               rename);
-      for (auto& order : table.sort_orders) {
-        auto& column = order.expression->Cast<duckdb::ColumnRefExpression>();
-        if (column.GetColumnName() == rename.old_name) {
-          order.expression =
-            duckdb::make_uniq<duckdb::ColumnRefExpression>(rename.new_name);
-        }
-      }
+      table.sort_orders = SortOrdersOf(_sort_keys, table.columns);
       auto result = Rebuilt(context, info, std::move(create));
       RenameTriggerColumns(context, rename);
       return result;
@@ -825,7 +818,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
   duckdb::ClientContext& context, duckdb::AlterTableInfo& alter) {
-  const auto require_alterable = [&](std::string_view name) {
+  const auto require_alterable = [](std::string_view name) {
     if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
       return;
     }
@@ -849,10 +842,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("option \"", name, "\" expects a constant value"));
       }
-      const auto value =
-        expr->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue();
-      options[name] =
-        OptionConstant(connector::ValidateSetting(context, name, value));
+      options[name] = OptionConstant(connector::ValidateSetting(
+        context, name,
+        expr->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue()));
     }
   } else {
     for (const auto& identifier :

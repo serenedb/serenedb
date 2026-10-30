@@ -516,7 +516,7 @@ class FieldWriter::Impl {
   void EndField(field_id id, FieldProperties props, bytes_view min_term,
                 bytes_view max_term, uint64_t total_doc_freq,
                 uint64_t total_term_freq, uint64_t term_count,
-                std::optional<uint64_t> docs = std::nullopt);
+                uint64_t docs = 0);
 
   // prefix - prefix length (in last_term)
   // begin - index of the first entry in the block
@@ -858,7 +858,7 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
                                  bytes_view min_term, bytes_view max_term,
                                  uint64_t total_doc_freq,
                                  uint64_t total_term_freq, uint64_t term_count,
-                                 std::optional<uint64_t> docs) {
+                                 uint64_t docs) {
   SDB_ASSERT(_blocks_out);
 
   if (!term_count) {
@@ -868,7 +868,7 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
 
   const auto field_stats = _pw.EndField();
   const bool has_score_bounds = field_stats.has_score_bounds;
-  const uint64_t doc_count = docs.value_or(field_stats.docs_count);
+  const uint64_t doc_count = docs != 0 ? docs : field_stats.docs_count;
 
   // cause creation of all final blocks
   Push(kEmptyStringView<byte_type>);

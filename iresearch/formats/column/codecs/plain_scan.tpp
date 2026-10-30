@@ -25,8 +25,6 @@
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
-#include <duckdb/planner/table_filter.hpp>
-#include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <optional>
 #include <utility>
@@ -111,15 +109,6 @@ struct PlainScan final : duckdb::SegmentScanState {
     for (idx_t i = 0; i < count; ++i) {
       writer.WriteStringRef(entries.values[start + rows.get_index(i)]);
     }
-  }
-
-  void Filter(duckdb::Vector& result, idx_t start, idx_t count,
-              duckdb::SelectionVector& sel, idx_t& sel_count,
-              const duckdb::TableFilter&,
-              duckdb::TableFilterState& filter_state) {
-    ScanFlat(result, 0, start, count);
-    duckdb::ColumnSegment::FilterSelection(sel, result, filter_state, count,
-                                           sel_count);
   }
 
   EntryFrames<Shape::Plain, Leaf> entries;

@@ -23,7 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
-#include <optional>
+#include <limits>
 #include <vector>
 
 #include "iresearch/index/field_meta.hpp"
@@ -68,7 +68,7 @@ class CompoundTermIterator : public TermOnlyIterator {
     _runs.clear();
     _run = 0;
     _run_left = 0;
-    _pending.reset();
+    _pending = kNoEntry;
     _pending_at_term = false;
     _min_term.clear();
     _max_term.clear();
@@ -102,6 +102,8 @@ class CompoundTermIterator : public TermOnlyIterator {
   bytes_view MaxTerm() const noexcept { return _max_term; }
 
  private:
+  static constexpr size_t kNoEntry = std::numeric_limits<size_t>::max();
+
   struct TermIteratorImpl {
     SeekTermIterator::ptr it;
     const DocRemap* remap;
@@ -110,7 +112,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   };
 
   void Start();
-  std::optional<size_t> NextEntry();
+  size_t NextEntry();
   bool Refill();
   bytes_view Advance(size_t input);
   void Join(size_t input);
@@ -126,7 +128,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   size_t _run{0};
   uint64_t _run_left{0};
   uint64_t _groups{0};
-  std::optional<size_t> _pending;
+  size_t _pending{kNoEntry};
   bool _pending_at_term{false};
   bool _failed{false};
   mutable bstring _min_term;

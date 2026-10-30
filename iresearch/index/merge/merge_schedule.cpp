@@ -56,10 +56,10 @@ MergeSchedule::MergeSchedule(const MergePlan& plan) {
   }
 }
 
-std::optional<size_t> MergeSchedule::Claim() {
+size_t MergeSchedule::Claim() {
   std::lock_guard lock{_mutex};
   if (_failed || _ready.empty()) {
-    return std::nullopt;
+    return kNoUnit;
   }
   const auto best = absl::c_max_element(_ready, [&](size_t lhs, size_t rhs) {
     return _rank[lhs] != _rank[rhs] ? _rank[lhs] < _rank[rhs] : lhs > rhs;

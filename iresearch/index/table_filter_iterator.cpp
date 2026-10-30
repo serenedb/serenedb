@@ -189,6 +189,20 @@ duckdb::idx_t KeepInRange(const duckdb::Vector& values, duckdb::idx_t count,
   return total;
 }
 
+bool ZoneDead(duckdb::FilterPropagateResult verdict) noexcept {
+  return verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
+         verdict == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL;
+}
+
+const ColumnReader* FilteredColumn(const ColumnReader& column,
+                                   const ColFilterSpec& spec) {
+  if (spec.extract_path.empty()) {
+    return &column;
+  }
+  SDB_ASSERT(spec.extract_type);
+  return DirectExtractLeaf(column, spec.extract_path, *spec.extract_type);
+}
+
 }  // namespace
 
 ColFilterLeaf::ColFilterLeaf(const Filter& filter, const SubReader& segment)
@@ -290,18 +304,13 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
     const auto* column = col_reader.Column(spec.field);
     SDB_ASSERT(column != nullptr,
                "classification resolves filters on absent columns");
-    const auto* reader = column;
+    const auto* reader = FilteredColumn(*column, spec);
     std::unique_ptr<ExtractBinding> extract;
-    if (!spec.extract_path.empty()) {
-      SDB_ASSERT(spec.extract_type != nullptr);
-      reader =
-        DirectExtractLeaf(*column, spec.extract_path, *spec.extract_type);
-      if (reader == nullptr) {
-        extract = std::make_unique<ExtractBinding>();
-        extract->Bind(*column, ctx, spec.extract_path, *spec.extract_type,
-                      &context);
-        reader = column;
-      }
+    if (!reader) {
+      extract = std::make_unique<ExtractBinding>();
+      extract->Bind(*column, ctx, spec.extract_path, *spec.extract_type,
+                    &context);
+      reader = column;
     }
     const auto& type = extract ? *spec.extract_type : reader->Type();
     const bool list_like = type.id() == duckdb::LogicalTypeId::LIST ||
@@ -433,8 +442,7 @@ duckdb::idx_t ColFilterChain::DenseMask(
                      ? f.verdict
                      : duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
     duckdb::idx_t kept = 0;
-    if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
-        z == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL) {
+    if (ZoneDead(z)) {
       f.reader->Skip(f.scan, n);
       std::fill_n(chunk, chunk_words, uint64_t{0});
     } else if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
@@ -504,8 +512,7 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
     const auto z = anchor + span <= f.checked.end
                      ? f.verdict
                      : duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
-    if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
-        z == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL) {
+    if (ZoneDead(z)) {
       survivors = 0;
       break;
     }
@@ -912,8 +919,7 @@ uint64_t ColFilterChain::DeadUntil(uint64_t row) {
       const auto& stats = f.reader->RowGroupStatistics(f.checked.block);
       f.verdict = f.expr->CheckStatistics(stats, *f.state);
     }
-    if (f.verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
-        f.verdict == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL) {
+    if (ZoneDead(f.verdict)) {
       dead_end = std::max<uint64_t>(dead_end, f.checked.end);
     }
   }
@@ -936,11 +942,8 @@ void LiveRowGroups(const ColReader& col_reader,
     if (spec.is_score || spec.row_gather) {
       continue;
     }
-    const auto* reader = col_reader.Column(spec.field);
-    if (reader && !spec.extract_path.empty()) {
-      reader =
-        DirectExtractLeaf(*reader, spec.extract_path, *spec.extract_type);
-    }
+    const auto* column = col_reader.Column(spec.field);
+    const auto* reader = column ? FilteredColumn(*column, spec) : nullptr;
     if (!reader || reader->Type().IsNested()) {
       continue;
     }
@@ -956,10 +959,8 @@ void LiveRowGroups(const ColReader& col_reader,
     }
     for (auto row = begin; row < end; row = z.window.end) {
       z.window = z.reader->Locate(row, z.window);
-      const auto verdict = z.expr->CheckStatistics(
-        z.reader->RowGroupStatistics(z.window.block), *z.state);
-      if (verdict != duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE &&
-          verdict != duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL) {
+      if (!ZoneDead(z.expr->CheckStatistics(
+            z.reader->RowGroupStatistics(z.window.block), *z.state))) {
         return false;
       }
     }

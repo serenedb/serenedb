@@ -243,7 +243,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   void FlushFields(FlushState& state,
                    std::span<const BasicTermReader* const> extra,
-                   std::span<const uint32_t> old2new);
+                   const DocOrder& order);
 
   // Reset body that keeps _field_options; reset() drops them, reset(meta)
   // keeps.

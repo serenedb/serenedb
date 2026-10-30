@@ -32,11 +32,6 @@
 
 namespace irs::codecs {
 
-struct ZstdFree {
-  void operator()(ZSTD_CCtx* ctx) const noexcept { ZSTD_freeCCtx(ctx); }
-  void operator()(ZSTD_DCtx* ctx) const noexcept { ZSTD_freeDCtx(ctx); }
-};
-
 struct Zstd {
   static constexpr ByteCodec kCodec = ByteCodec::Zstd;
   static constexpr uint8_t kDefaultLevel = 1;
@@ -48,10 +43,6 @@ struct Zstd {
   class Compressor {
    public:
     Compressor() : _ctx{ZSTD_createCCtx()} {}
-    ~Compressor();
-
-    Compressor(const Compressor&) = delete;
-    Compressor& operator=(const Compressor&) = delete;
 
     void SetLevel(uint8_t level) noexcept {
       _level = EffectiveLevel<Zstd>(level);
@@ -66,8 +57,8 @@ struct Zstd {
    private:
     uint8_t _level = kDefaultLevel;
     std::unique_ptr<ZSTD_CCtx, ZstdFree> _ctx;
-    ZSTD_CDict* _cdict = nullptr;
-    ZSTD_CDict* _trained_cdict = nullptr;
+    std::unique_ptr<ZSTD_CDict, ZstdFree> _cdict;
+    std::unique_ptr<ZSTD_CDict, ZstdFree> _trained_cdict;
     const ZSTD_CDict* _active = nullptr;
     uint64_t _trained = 0;
     uint8_t _trained_level = 0;
@@ -76,10 +67,6 @@ struct Zstd {
   class Decompressor {
    public:
     Decompressor() : _ctx{ZSTD_createDCtx()} {}
-    ~Decompressor();
-
-    Decompressor(const Decompressor&) = delete;
-    Decompressor& operator=(const Decompressor&) = delete;
 
     void SetDictionary(std::string_view dictionary);
     void SetTrained(const TrainedDictionary& dictionary) noexcept {
@@ -93,7 +80,7 @@ struct Zstd {
 
    private:
     std::unique_ptr<ZSTD_DCtx, ZstdFree> _ctx;
-    ZSTD_DDict* _ddict = nullptr;
+    std::unique_ptr<ZSTD_DDict, ZstdFree> _ddict;
     const ZSTD_DDict* _active = nullptr;
     std::string_view _loaded;
   };

@@ -244,27 +244,28 @@ class ThreadedExecutor final : public irs::MergeExecutor {
     size_t finished = 0;
     auto work = [&] {
       while (true) {
-        std::optional<size_t> unit;
+        size_t unit = irs::MergeSchedule::kNoUnit;
         {
           absl::MutexLock lock{&mutex};
-          for (unit = schedule.Claim(); !unit && !schedule.Done();
+          for (unit = schedule.Claim();
+               unit == irs::MergeSchedule::kNoUnit && !schedule.Done();
                unit = schedule.Claim()) {
             const auto seen = finished;
             const auto changed = [&] { return finished != seen; };
             mutex.Await(absl::Condition{&changed});
           }
         }
-        if (!unit) {
+        if (unit == irs::MergeSchedule::kNoUnit) {
           return;
         }
         const auto begin = std::chrono::steady_clock::now();
-        const bool ok = plan.RunUnit(*unit);
+        const bool ok = plan.RunUnit(unit);
         const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
           std::chrono::steady_clock::now() - begin);
-        _nanos[static_cast<size_t>(plan.Units()[*unit].kind)].fetch_add(
+        _nanos[static_cast<size_t>(plan.Units()[unit].kind)].fetch_add(
           static_cast<uint64_t>(nanos.count()), std::memory_order_relaxed);
         absl::MutexLock lock{&mutex};
-        schedule.Finish(*unit, ok);
+        schedule.Finish(unit, ok);
         ++finished;
       }
     };
@@ -652,7 +653,10 @@ void BM_PresortedMerge(benchmark::State& state) {
       for (auto p = next++; p < partitions; p = next++) {
         part.clear();
         duckdb::optional_idx bad;
-        if (!merge.Merge(p, part, [] { return true; }, bad)) {
+        const auto merge_state = merge.BeginMerge(p);
+        if (!merge.Merge(
+              *merge_state, part, std::numeric_limits<duckdb::idx_t>::max(),
+              [] { return true; }, bad)) {
           failed = true;
           return;
         }

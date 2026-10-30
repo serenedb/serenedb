@@ -24,23 +24,22 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/byte_codec.hpp"
-
 namespace irs::codecs {
+
+struct FsstFree {
+  void operator()(duckdb_fsst_encoder_t* encoder) const noexcept {
+    duckdb_fsst_destroy(encoder);
+  }
+};
 
 class FsstEncoder {
  public:
-  FsstEncoder() = default;
-  ~FsstEncoder();
-
-  FsstEncoder(const FsstEncoder&) = delete;
-  FsstEncoder& operator=(const FsstEncoder&) = delete;
-
   void Encode(std::span<const std::string_view> strings, std::string& out,
               std::vector<uint32_t>& lengths);
 
@@ -51,7 +50,7 @@ class FsstEncoder {
   void Reset() noexcept;
 
  private:
-  duckdb_fsst_encoder_t* _encoder = nullptr;
+  std::unique_ptr<duckdb_fsst_encoder_t, FsstFree> _encoder;
   unsigned char _table[sizeof(duckdb_fsst_decoder_t)];
   size_t _table_size = 0;
   std::vector<size_t> _in_lengths;
@@ -74,11 +73,6 @@ class FsstDecoder {
 
  private:
   duckdb_fsst_decoder_t _decoder{};
-};
-
-struct Fsst {
-  static constexpr ByteCodec kCodec = ByteCodec::Fsst;
-  using Compressor = FsstEncoder;
 };
 
 }  // namespace irs::codecs

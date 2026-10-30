@@ -47,8 +47,6 @@ TrainedDictionary::TrainedDictionary(std::string bytes)
   SDB_ENSURE(_ddict, "zstd: cannot load a trained dictionary");
 }
 
-TrainedDictionary::~TrainedDictionary() { ZSTD_freeDDict(_ddict); }
-
 void DictionarySampler::Add(std::span<const std::string_view> entries) {
   uint64_t total = 0;
   for (const auto e : entries) {
@@ -80,7 +78,10 @@ void DictionarySampler::Add(std::span<const std::string_view> entries) {
   }
 }
 
-std::optional<std::string> DictionarySampler::Train() {
+std::shared_ptr<const TrainedDictionary> DictionarySampler::Train() {
+  if (!Ready()) {
+    return nullptr;
+  }
   std::string dictionary(kTrainedDictionaryBytes, '\0');
   ZDICT_fastCover_params_t params{};
   params.k = 256;
@@ -97,10 +98,10 @@ std::optional<std::string> DictionarySampler::Train() {
     static_cast<unsigned>(sizes.size()), params);
   std::string{}.swap(_samples);
   if (ZDICT_isError(n)) {
-    return std::nullopt;
+    return nullptr;
   }
   dictionary.resize(n);
-  return dictionary;
+  return std::make_shared<const TrainedDictionary>(std::move(dictionary));
 }
 
 }  // namespace irs::codecs

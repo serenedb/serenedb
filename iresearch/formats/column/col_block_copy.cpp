@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/helper.hpp>
 #include <duckdb/main/config.hpp>
 #include <span>
 #include <string>
@@ -42,13 +43,13 @@ void PatchDictionary(std::string& bytes,
                      std::span<const uint16_t> dictionaries) {
   auto* data = reinterpret_cast<duckdb::data_ptr_t>(bytes.data());
   auto header = codecs::Header::Parse(data, bytes.size());
-  if (header.flags != codecs::kTrainedDictionary) {
+  if (header.flags != codecs::FrameDictionary::Trained) {
     return;
   }
   SDB_ENSURE(header.dictionary <= dictionaries.size(),
              "col codec: missing trained dictionary ", header.dictionary);
   header.dictionary = dictionaries[header.dictionary - 1];
-  header.Write(data);
+  duckdb::Store(header, data);
 }
 
 bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
@@ -91,22 +92,6 @@ bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
 
 }  // namespace
 
-std::vector<std::string> ReadDictionaries(const ColReader& reader,
-                                          const ColumnReader& column) {
-  std::vector<std::string> out;
-  if (!column.HasDictionaries()) {
-    return out;
-  }
-  ReadContext ctx{reader};
-  for (const auto& meta : column.DictionaryMetas()) {
-    auto& bytes = out.emplace_back(meta.byte_size, '\0');
-    ctx.Read(meta.file_offset,
-             reinterpret_cast<duckdb::data_ptr_t>(bytes.data()),
-             meta.byte_size);
-  }
-  return out;
-}
-
 bool BlocksRelocatable(const ColumnReader& column) {
   if (column.Type().InternalType() != duckdb::PhysicalType::VARCHAR) {
     return true;
@@ -125,27 +110,23 @@ bool BlocksRelocatable(const ColumnReader& column) {
   });
 }
 
-std::optional<ColumnMeta> CopyColumnBlocks(
-  const ColReader& reader, const ColumnReader& column, bool validity,
-  std::span<const uint16_t> dictionaries, ColBlockSink& sink,
-  absl::FunctionRef<bool()> progress) {
-  ColumnMeta meta;
+bool CopyColumnBlocks(const ColReader& reader, const ColumnReader& column,
+                      bool validity, std::span<const uint16_t> dictionaries,
+                      ColBlockSink& sink, ColumnMeta& meta,
+                      absl::FunctionRef<bool()> progress) {
   meta.id = column.Id();
   meta.type = column.Type();
   ReadContext ctx{reader};
   if (!CopyBlocks(ctx, column.DataBlocks(), dictionaries, sink, meta.data,
                   progress)) {
-    return std::nullopt;
+    return false;
   }
   if (!validity) {
-    return meta;
+    return true;
   }
   if (const auto* stored = column.Validity()) {
-    if (!CopyBlocks(ctx, stored->DataBlocks(), {}, sink, meta.validity,
-                    progress)) {
-      return std::nullopt;
-    }
-    return meta;
+    return CopyBlocks(ctx, stored->DataBlocks(), {}, sink, meta.validity,
+                      progress);
   }
   const duckdb::LogicalType type{duckdb::LogicalTypeId::VALIDITY};
   const auto* empty =
@@ -159,7 +140,7 @@ std::optional<ColumnMeta> CopyColumnBlocks(
     rows.tuple_count = block.tuple_count;
     rows.codec = empty;
   }
-  return meta;
+  return true;
 }
 
 }  // namespace irs

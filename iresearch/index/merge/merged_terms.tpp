@@ -72,12 +72,12 @@ bool CompoundTermIterator<Postings>::Refill() {
 }
 
 template<typename Postings>
-std::optional<size_t> CompoundTermIterator<Postings>::NextEntry() {
+size_t CompoundTermIterator<Postings>::NextEntry() {
   while (_run_left == 0) {
     if (_run + 1 < _runs.size()) {
       ++_run;
     } else if (!Refill()) {
-      return std::nullopt;
+      return kNoEntry;
     }
     _run_left = _runs[_run].count;
   }
@@ -118,31 +118,31 @@ bool CompoundTermIterator<Postings>::next() {
   _current_term = {};
   ++_groups;
 
-  auto head = std::exchange(_pending, std::nullopt);
-  if (!head) {
+  auto head = std::exchange(_pending, kNoEntry);
+  if (head == kNoEntry) {
     head = NextEntry();
-    if (!head) {
+    if (head == kNoEntry) {
       return false;
     }
   }
   _current_term = std::exchange(_pending_at_term, false)
-                    ? _term_iterators[*head].it->value()
-                    : Advance(*head);
-  Join(*head);
+                    ? _term_iterators[head].it->value()
+                    : Advance(head);
+  Join(head);
 
-  while (const auto entry = NextEntry()) {
-    if (_term_iterators[*entry].group == _groups) {
+  for (auto entry = NextEntry(); entry != kNoEntry; entry = NextEntry()) {
+    if (_term_iterators[entry].group == _groups) {
       _pending = entry;
       break;
     }
-    const auto term = Advance(*entry);
+    const auto term = Advance(entry);
     if (term != _current_term) {
       SDB_ASSERT(term > _current_term);
       _pending = entry;
       _pending_at_term = true;
       break;
     }
-    Join(*entry);
+    Join(entry);
   }
 
   return !Aborted();

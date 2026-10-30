@@ -23,7 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <optional>
+#include <limits>
 #include <span>
 #include <utility>
 #include <vector>
@@ -33,6 +33,12 @@
 
 namespace irs {
 namespace {
+
+constexpr long double kBase = 6;
+constexpr long double kMinBase = 2;
+constexpr long double kRelaxFrom = 10;
+constexpr long double kRelaxTo = 50;
+constexpr long double kMaxDeletedShare = 0.25;
 
 struct Candidate {
   const SubReader* segment = nullptr;
@@ -45,7 +51,7 @@ struct Candidate {
 struct Window {
   size_t begin = 0;
   size_t end = 0;
-  long double score = 0;
+  long double score = std::numeric_limits<long double>::max();
 };
 
 Candidate Describe(const SubReader& segment, const SegmentRangeOf& range_of) {
@@ -62,19 +68,15 @@ Candidate Describe(const SubReader& segment, const SegmentRangeOf& range_of) {
 }
 
 long double BaseFor(const AdjacentRunOptions& options, size_t run) noexcept {
-  const auto relax =
-    std::clamp((static_cast<long double>(run) -
-                static_cast<long double>(options.relax_from)) /
-                 (static_cast<long double>(options.relax_to) -
-                  static_cast<long double>(options.relax_from)),
-               0.0L, 1.0L);
-  return std::min(options.base - (options.base - options.min_base) * relax,
+  const auto relax = std::clamp(
+    (static_cast<long double>(run) - kRelaxFrom) / (kRelaxTo - kRelaxFrom),
+    0.0L, 1.0L);
+  return std::min(kBase - (kBase - kMinBase) * relax,
                   static_cast<long double>(options.max_segments));
 }
 
 void ConsiderRun(std::span<const Candidate> segments, size_t begin, size_t end,
-                 const AdjacentRunOptions& options,
-                 std::optional<Window>& best) {
+                 const AdjacentRunOptions& options, Window& best) {
   const auto base = BaseFor(options, end - begin);
   const auto cost = static_cast<long double>(options.segment_cost);
   for (auto first = begin; first != end; ++first) {
@@ -99,7 +101,7 @@ void ConsiderRun(std::span<const Candidate> segments, size_t begin, size_t end,
         continue;
       }
       const auto score = total / (static_cast<long double>(count) - 1.9L);
-      if (!best || score <= best->score) {
+      if (score <= best.score) {
         best = Window{.begin = first, .end = next + 1, .score = score};
       }
     }
@@ -127,7 +129,7 @@ CompactionPolicy MakeAdjacentRunPolicy(AdjacentRunOptions options,
     const auto taken = [&](size_t i) {
       return compacting.contains(segments[i].segment->Meta().name);
     };
-    std::optional<Window> best;
+    Window best;
     for (size_t begin = 0; begin != segments.size();) {
       if (taken(begin)) {
         ++begin;
@@ -140,14 +142,14 @@ CompactionPolicy MakeAdjacentRunPolicy(AdjacentRunOptions options,
       ConsiderRun(segments, begin, end, options, best);
       begin = end;
     }
-    if (best) {
-      for (auto i = best->begin; i != best->end; ++i) {
+    if (best.begin != best.end) {
+      for (auto i = best.begin; i != best.end; ++i) {
         candidates.emplace_back(segments[i].segment);
       }
       return;
     }
     const Candidate* purge = nullptr;
-    auto share = static_cast<long double>(options.max_deleted_share);
+    auto share = kMaxDeletedShare;
     for (size_t i = 0; i != segments.size(); ++i) {
       if (!taken(i) && segments[i].deleted_share > share) {
         purge = &segments[i];

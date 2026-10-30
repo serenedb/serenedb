@@ -20,11 +20,8 @@
 
 #pragma once
 
-namespace duckdb {
+#include <duckdb/main/database.hpp>
 
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace sdb::connector {
 
 void RegisterSdbMaintenanceFunctions(duckdb::DatabaseInstance& db);

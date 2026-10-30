@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
@@ -35,12 +36,9 @@
 
 namespace irs::codecs {
 
-bool NumericApplies(duckdb::PhysicalType physical) noexcept;
-
 struct NumericChoice {
   NumericTransform transform = NumericTransform::Raw;
   NumericLeaf leaf = NumericLeaf::None;
-  uint8_t level = 0;
   bool shuffled = false;
 
   friend bool operator==(const NumericChoice&, const NumericChoice&) = default;
@@ -48,26 +46,35 @@ struct NumericChoice {
 
 struct NumericSegment {
   duckdb::BaseStatistics stats;
-  uint64_t rows = 0;
-  NumericChoice choice;
   std::string bytes;
+};
+
+inline constexpr double kDrift = 1.25;
+
+struct CalibrationClock {
+  static constexpr uint32_t kMaxGap = 16;
+
+  uint32_t gap = 1;
+  uint32_t since = 0;
+
+  bool Due() noexcept { return ++since >= gap; }
+  void Settle(bool kept) noexcept {
+    gap = kept ? std::min(gap * 2, kMaxGap) : 1;
+    since = 0;
+  }
+  void Restart() noexcept { Settle(false); }
 };
 
 struct NumericTuning {
   std::optional<NumericChoice> pick;
   bool calibrated = false;
-  uint32_t gap = 1;
-  uint32_t since = 0;
+  CalibrationClock clock;
   double bytes_per_row = 0;
   duckdb::CompressionType rival = duckdb::CompressionType::COMPRESSION_AUTO;
 
-  bool Due() noexcept { return !calibrated || ++since >= gap; }
+  bool Due() noexcept { return !calibrated || clock.Due(); }
   bool Drifted(double bytes, double rows) const noexcept {
-    return bytes > bytes_per_row * rows * 1.25;
-  }
-  void Restart() noexcept {
-    gap = 1;
-    since = 0;
+    return bytes > bytes_per_row * rows * kDrift;
   }
 };
 

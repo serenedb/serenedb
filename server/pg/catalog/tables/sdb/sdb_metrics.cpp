@@ -29,6 +29,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "pg/catalog/engine/system_table.h"
+#include "pg/catalog/tables/sdb/merge_records.h"
 #include "pg/catalog/tables/tables.h"
 #include "search/compaction/merge_registry.h"
 #include "search/inverted_index_storage.h"
@@ -137,9 +138,6 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
                     "current catalog wal file size in bytes");
   return rows;
 }
-
-constexpr duckdb::CatalogType kStoreTypes[] = {
-  duckdb::CatalogType::INDEX_ENTRY, duckdb::CatalogType::TABLE_ENTRY};
 
 constexpr SystemIndex kStoreIndexes[] = {
   {kSdbMetricsSql["relation_id"], SystemLookup::Object},

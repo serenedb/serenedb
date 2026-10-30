@@ -60,15 +60,10 @@
 
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
-#include "connector/segment_rewrite/logical_merge_order.h"
-#include "connector/segment_rewrite/logical_merge_units.h"
-#include "connector/segment_rewrite/logical_postings_merge.h"
-#include "connector/segment_rewrite/physical_merge_order.h"
-#include "connector/segment_rewrite/physical_merge_units.h"
-#include "connector/segment_rewrite/physical_postings_merge.h"
 #include "gtest/gtest.h"
 #include "search/compaction/merge_unit_run.h"
 #include "search/compaction/pipeline_merge_executor.h"
+#include "search/compaction/pipeline_merge_operators.h"
 
 namespace {
 
@@ -534,8 +529,8 @@ TEST_F(PipelineMergeExecutorTest, OperatorsNameThemselves) {
   ASSERT_TRUE(plan.OrderPending());
   const auto run = std::make_shared<search::MergeUnitRun>(
     plan, std::chrono::steady_clock::now(), plan.PostingsPending());
-  const connector::LogicalMergeOrder order{plan};
-  const connector::LogicalMergeUnits units{run, 1};
+  const search::LogicalMergeOrder order{plan};
+  const search::LogicalMergeUnits units{run, 1, {}};
   EXPECT_EQ("MERGE_ORDER", order.GetName());
   EXPECT_EQ("MERGE_UNITS", units.GetName());
   for (const auto* op :
@@ -546,9 +541,9 @@ TEST_F(PipelineMergeExecutorTest, OperatorsNameThemselves) {
   }
   duckdb::PhysicalPlan physical{duckdb::Allocator::DefaultAllocator()};
   EXPECT_EQ("MERGE_ORDER",
-            physical.Make<connector::PhysicalMergeOrder>(plan).GetName());
+            physical.Make<search::PhysicalMergeOrder>(plan).GetName());
   EXPECT_EQ("MERGE_UNITS",
-            physical.Make<connector::PhysicalMergeUnits>(run, 1).GetName());
+            physical.Make<search::PhysicalMergeUnits>(run, 1).GetName());
 }
 
 TEST_F(PipelineMergeExecutorTest, PostingsMergeInTermRanges) {
@@ -566,12 +561,15 @@ TEST_F(PipelineMergeExecutorTest, PostingsMergeInTermRanges) {
   ASSERT_FALSE(plan.TermRanges().empty());
   auto& range = *plan.TermRanges().front();
   EXPECT_LT(1, range.PartCount());
-  const connector::LogicalPostingsMerge merge{range};
+  const auto run = std::make_shared<search::MergeUnitRun>(
+    plan, std::chrono::steady_clock::now(), false);
+  const search::LogicalPostingsMerge merge{range, duckdb::TableIndex(1), run};
   EXPECT_EQ("POSTINGS_MERGE", merge.GetName());
   EXPECT_FALSE(merge.RequireOptimizer());
   EXPECT_FALSE(merge.SupportSerialization());
   duckdb::PhysicalPlan physical{duckdb::Allocator::DefaultAllocator()};
-  const auto& postings = physical.Make<connector::PhysicalPostingsMerge>(range);
+  const auto& postings =
+    physical.Make<search::PhysicalPostingsMerge>(range, run);
   EXPECT_EQ("POSTINGS_MERGE", postings.GetName());
   const auto params = postings.ParamsToString();
   EXPECT_EQ(std::to_string(range.PartCount()), params.at("Parts"));
@@ -721,8 +719,9 @@ TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheUnitsStillRunning) {
   ASSERT_TRUE(plan.Prepare());
   search::MergeUnitRun run{plan, std::chrono::steady_clock::now(), false};
   std::vector<size_t> ready;
-  while (const auto unit = run.schedule.Claim()) {
-    ready.push_back(*unit);
+  for (auto unit = run.schedule.Claim(); unit != irs::MergeSchedule::kNoUnit;
+       unit = run.schedule.Claim()) {
+    ready.push_back(unit);
   }
   const auto units = plan.Units();
   const auto column = absl::c_find_if(ready, [&](size_t unit) {
@@ -762,7 +761,7 @@ TEST_F(PipelineMergeExecutorTest, MergeUnitsPlanPassesThePlanVerifier) {
   ASSERT_FALSE(plan.TermRanges().empty());
   const auto run = std::make_shared<search::MergeUnitRun>(
     plan, std::chrono::steady_clock::now(), plan.PostingsPending());
-  connector::LogicalMergeUnits units{run, 8, plan.TermRanges()};
+  search::LogicalMergeUnits units{run, 8, plan.TermRanges()};
   units.ResolveOperatorTypes();
   const auto result = duckdb::LogicalPlanVerifier::VerifyAlways(units);
   for (const auto& issue : result.GetIssues()) {
@@ -792,7 +791,7 @@ TEST_F(PipelineMergeExecutorTest, UnitsLeaveThreadsToUnfinishedTermRanges) {
   EXPECT_TRUE(run.MayClaim(1));
   EXPECT_TRUE(run.MayClaim(parts));
   const auto unit = run.schedule.Claim();
-  ASSERT_TRUE(unit);
+  ASSERT_NE(irs::MergeSchedule::kNoUnit, unit);
   EXPECT_FALSE(run.MayClaim(parts));
   EXPECT_FALSE(run.MayClaim(parts + 1));
   EXPECT_TRUE(run.MayClaim(parts + 2));
@@ -808,9 +807,10 @@ TEST_F(PipelineMergeExecutorTest, UnitsLeaveThreadsToUnfinishedTermRanges) {
   EXPECT_TRUE(run.MayClaim(2));
   run.ReleasePostings(plan.FinishPostings());
   EXPECT_TRUE(run.MayClaim(1));
-  run.Run(*unit);
-  while (const auto next = run.schedule.Claim()) {
-    run.Run(*next);
+  run.Run(unit);
+  for (auto next = run.schedule.Claim(); next != irs::MergeSchedule::kNoUnit;
+       next = run.schedule.Claim()) {
+    run.Run(next);
   }
   EXPECT_TRUE(run.schedule.Done());
   EXPECT_TRUE(run.Finish());

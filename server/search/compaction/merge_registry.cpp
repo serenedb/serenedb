@@ -196,13 +196,12 @@ void MergeRegistry::Finish(uint64_t id, MergeOutcome outcome,
   _history.emplace_back(std::move(record));
 }
 
-template<typename Pred>
-std::vector<MergeRecord> MergeRegistry::Active(Pred pred) const {
+std::vector<MergeRecord> MergeRegistry::Active(uint64_t relation_id) const {
   std::vector<MergeRecord> records;
   {
     absl::MutexLock lock{&_mutex};
     for (const auto& [_, record] : _active) {
-      if (pred(record)) {
+      if (record.relation_id == relation_id) {
         records.emplace_back(record);
       }
     }
@@ -213,39 +212,21 @@ std::vector<MergeRecord> MergeRegistry::Active(Pred pred) const {
   return records;
 }
 
-template<typename Pred>
-std::vector<MergeRecord> MergeRegistry::History(Pred pred) const {
+std::vector<MergeRecord> MergeRegistry::History(uint64_t relation_id) const {
+  const auto of_relation = [relation_id](const MergeRecord& record) {
+    return record.relation_id == relation_id;
+  };
   std::vector<MergeRecord> records;
   {
     absl::MutexLock lock{&_mutex};
-    absl::c_copy_if(_history, std::back_inserter(records), pred);
-    absl::c_copy_if(_flushes, std::back_inserter(records), pred);
+    absl::c_copy_if(_history, std::back_inserter(records), of_relation);
+    absl::c_copy_if(_flushes, std::back_inserter(records), of_relation);
   }
   absl::c_stable_sort(records,
                       [](const MergeRecord& lhs, const MergeRecord& rhs) {
                         return lhs.finished_us < rhs.finished_us;
                       });
   return records;
-}
-
-std::vector<MergeRecord> MergeRegistry::Active() const {
-  return Active([](const MergeRecord&) { return true; });
-}
-
-std::vector<MergeRecord> MergeRegistry::Active(uint64_t relation_id) const {
-  return Active([relation_id](const MergeRecord& record) {
-    return record.relation_id == relation_id;
-  });
-}
-
-std::vector<MergeRecord> MergeRegistry::History() const {
-  return History([](const MergeRecord&) { return true; });
-}
-
-std::vector<MergeRecord> MergeRegistry::History(uint64_t relation_id) const {
-  return History([relation_id](const MergeRecord& record) {
-    return record.relation_id == relation_id;
-  });
 }
 
 MergeRecorder::~MergeRecorder() {

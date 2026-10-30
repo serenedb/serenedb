@@ -27,8 +27,6 @@
 
 namespace irs {
 
-MergeTicket::MergeTicket() noexcept = default;
-
 MergeTicket::MergeTicket(IndexWriter& writer,
                          std::unique_ptr<State> state) noexcept
   : _state{state.release(), Release{&writer}} {}

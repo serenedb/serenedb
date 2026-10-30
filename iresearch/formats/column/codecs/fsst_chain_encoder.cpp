@@ -24,6 +24,7 @@
 #include <absl/strings/match.h>
 
 #include <algorithm>
+#include <duckdb/common/bitpacking.hpp>
 
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 
@@ -31,6 +32,23 @@ namespace irs::codecs::text {
 namespace {
 
 constexpr double kFsstFirstRatio = 0.5;
+constexpr double kMispredicted = 2.0;
+
+void Record(RatioHistory& hist, uint64_t raw, uint64_t comp,
+            uint32_t target) noexcept {
+  if (hist.raw != 0 && raw != 0 && comp * kDriftMinFraction >= target) {
+    const auto predicted = static_cast<double>(raw) *
+                           static_cast<double>(hist.comp) /
+                           static_cast<double>(hist.raw);
+    const auto actual = static_cast<double>(comp);
+    if (actual > predicted * kMispredicted ||
+        actual * kMispredicted < predicted) {
+      hist = {};
+    }
+  }
+  hist.raw += raw;
+  hist.comp += comp;
+}
 
 }  // namespace
 
@@ -38,7 +56,9 @@ uint64_t FsstChainEncoder::Estimate(const SegmentBuilder& rows) const noexcept {
   const auto entry_count = rows.Entries().size() + rows.FirstEntry();
   return Packed(entry_count, rows.MaxLen()) +
          (rows.Raw() / kFsstFrameRawBytes + 1) * kFrameMetaSize +
-         static_cast<uint64_t>(static_cast<double>(rows.Raw()) * Ratio());
+         static_cast<uint64_t>(
+           static_cast<double>(rows.Raw()) *
+           Ratio(_history[static_cast<size_t>(_shape)], kFsstFirstRatio));
 }
 
 EncodedFrames FsstChainEncoder::Finish(const SegmentBuilder& rows,
@@ -46,7 +66,9 @@ EncodedFrames FsstChainEncoder::Finish(const SegmentBuilder& rows,
   const auto entries = rows.Entries();
   Encode(entries, rows.FirstEntry());
   absl::c_copy(_entry_lengths, lengths.begin());
-  _lcp_stream.resize(GroupPadded(entries.size() + rows.FirstEntry()), 0);
+  _lcp_stream.resize(duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(
+                       entries.size() + rows.FirstEntry()),
+                     0);
   const auto symtab = _codec.SymbolTable();
   Record(_history[static_cast<size_t>(_shape)], rows.Raw(),
          _data.size() + symtab.size(), _target);
@@ -58,14 +80,6 @@ EncodedFrames FsstChainEncoder::Finish(const SegmentBuilder& rows,
     .max_lcp = _max_lcp,
     .symtab = symtab,
   };
-}
-
-double FsstChainEncoder::Ratio() const noexcept {
-  const auto& hist = _history[static_cast<size_t>(_shape)];
-  if (hist.raw != 0) {
-    return static_cast<double>(hist.comp) / static_cast<double>(hist.raw);
-  }
-  return kFsstFirstRatio;
 }
 
 void FsstChainEncoder::Encode(std::span<const std::string_view> entries,

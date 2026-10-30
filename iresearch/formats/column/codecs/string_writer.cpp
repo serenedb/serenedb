@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <duckdb/common/helper.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <limits>
 #include <memory>
@@ -49,6 +50,7 @@ namespace {
 using duckdb::idx_t;
 using duckdb::string_t;
 using text::BlobEncoder;
+using text::Config;
 using text::DedupScratch;
 using text::FsstChainEncoder;
 using text::kDriftMinFraction;
@@ -61,8 +63,6 @@ constexpr double kPlainWinsBelow = 0.9;
 constexpr uint64_t kPlainMinSaving = 4096;
 constexpr uint64_t kDedupMinRepeat = 2;
 constexpr uint64_t kLz4MaxRatio = 255;
-constexpr double kDrift = 1.25;
-constexpr uint32_t kMaxCalibrationGap = 16;
 constexpr double kLevelTolerance = 0.02;
 constexpr size_t kMaxRungs = 8;
 constexpr double kWideFramesGain = 0.03;
@@ -131,8 +131,7 @@ class SegmentWriter {
           }
         }
         if (scheduled || drift) {
-          seg =
-            Calibrate(seg, row, end, !_tuning.levels_tuned || retune, drift);
+          seg = Calibrate(seg, !_tuning.levels_tuned || retune, drift);
         }
         if (first && seg->Size() > PlainStorageBytes(*seg)) {
           Release(seg);
@@ -140,10 +139,10 @@ class SegmentWriter {
         }
       }
       outcome.all_dedup =
-        outcome.all_dedup && seg->choice.shape == Shape::Dedup;
+        outcome.all_dedup && seg->config.choice.shape == Shape::Dedup;
       RecodeCodes(*seg);
       const std::string_view parts[] = {seg->head, seg->data};
-      sink(seg->choice, std::move(*seg->stats), seg->rows, parts);
+      sink(seg->config.choice, std::move(*seg->stats), seg->rows, parts);
       Release(seg);
       row = end;
       first = false;
@@ -152,14 +151,8 @@ class SegmentWriter {
   }
 
  private:
-  struct Pick {
-    StringChoice choice;
-    uint8_t level;
-    FrameLayout layout;
-  };
-
   void RecodeCodes(Segment& seg) const {
-    if (seg.choice.shape != Shape::Dedup) {
+    if (seg.config.choice.shape != Shape::Dedup) {
       return;
     }
     auto* base = reinterpret_cast<duckdb::data_ptr_t>(seg.head.data());
@@ -174,55 +167,69 @@ class SegmentWriter {
       std::string_view{seg.head}.substr(h.off_symtab, h.symtab_size);
     std::string head{seg.head, 0, h.off_codes};
     head.append(encoded->bytes);
-    head.resize(Align8(head.size()), '\0');
+    head.resize(duckdb::AlignValue<uint64_t, 8>(head.size()), '\0');
     h.off_runs = static_cast<uint32_t>(head.size());
     h.off_symtab = h.off_runs;
     head.append(symtab);
-    head.resize(Align8(head.size()), '\0');
+    head.resize(duckdb::AlignValue<uint64_t, 8>(head.size()), '\0');
     h.off_data = static_cast<uint32_t>(head.size());
-    h.codes_encoding = static_cast<uint8_t>(CodesEncoding::Numeric);
+    h.codes_encoding = CodesEncoding::Numeric;
     h.run_count = 0;
     h.run_width = 0;
-    h.Write(reinterpret_cast<duckdb::data_ptr_t>(head.data()));
+    duckdb::Store(h, reinterpret_cast<duckdb::data_ptr_t>(head.data()));
     seg.head.swap(head);
   }
 
-  Pick Cutter() const noexcept {
+  Config Cutter() const noexcept {
     if (_named) {
-      return {*_named, _params.compression_level, FrameLayout::Dictionary};
+      return {
+        .choice = *_named,
+        .level = _params.compression_level,
+        .layout = FrameLayout::Dictionary,
+      };
     }
     if (_tuning.choice) {
       const auto leaf = Index(_tuning.choice->leaf);
-      return {*_tuning.choice, _tuning.level[leaf], _tuning.layout[leaf]};
+      return {
+        .choice = *_tuning.choice,
+        .level = _tuning.level[leaf],
+        .layout = _tuning.layout[leaf],
+      };
     }
     const bool repeats =
       Repeats(_acc.entries.size(), _acc.row_count - _acc.null_count);
-    return {{repeats ? Shape::Dedup : Shape::Plain, ByteCodec::Lz4},
-            kLz4Fast,
-            FrameLayout::Dictionary};
+    return {
+      .choice = {repeats ? Shape::Dedup : Shape::Plain, ByteCodec::Lz4},
+      .level = kLz4Fast,
+      .layout = FrameLayout::Dictionary,
+    };
   }
 
   bool CalibrationDue() noexcept {
-    if (!_tuning.choice) {
-      return true;
-    }
-    return ++_tuning.since_calibration >= _tuning.calibration_gap;
+    return !_tuning.choice || _tuning.clock.Due();
   }
 
-  Segment* Calibrate(Segment* cut, uint64_t begin, uint64_t end, bool retune,
-                     bool drift) {
+  Segment* Calibrate(Segment* cut, bool retune, bool drift) {
+    _begin = cut->begin;
+    _end = cut->begin + cut->rows;
     _live.clear();
     _live.push_back(cut);
-    const auto base = kLz4Fast;
     const auto tuned = _tuning.layout[Index(ByteCodec::Lz4)];
     const auto layout = retune || tuned == FrameLayout::Dictionary
                           ? FrameLayout::FirstFrame
                           : tuned;
-    auto* dedup =
-      Trial({Shape::Dedup, ByteCodec::Lz4}, base, begin, end, layout);
+    auto* dedup = Trial({
+      .choice = {Shape::Dedup, ByteCodec::Lz4},
+      .level = kLz4Fast,
+      .layout = layout,
+    });
     Segment* plain = nullptr;
     if (PlainMayWin(*dedup)) {
-      plain = Trial({Shape::Plain, ByteCodec::Lz4}, base, begin, end, layout);
+      plain = Trial({
+        .choice = {Shape::Plain, ByteCodec::Lz4},
+        .level = kLz4Fast,
+        .layout = layout,
+      });
     }
     const auto shape =
       plain && PlainWins(*dedup, *plain) ? Shape::Plain : Shape::Dedup;
@@ -230,18 +237,20 @@ class SegmentWriter {
     _smallest = {.bytes = std::numeric_limits<uint64_t>::max()};
     Candidate chosen{.bytes = std::numeric_limits<uint64_t>::max()};
     for (const auto& plan : PlanFor(_params)) {
-      const auto c = Tune(shape, plan, begin, end, retune);
+      const auto c = Tune(shape, plan, retune);
       if (c.bytes < chosen.bytes) {
         chosen = c;
       }
     }
-    const auto& write = _smallest.bytes < chosen.bytes ? _smallest : chosen;
-    Trial({shape, write.leaf}, write.level, begin, end, write.layout);
+    Trial(_smallest.bytes < chosen.bytes ? _smallest.config : chosen.config);
     auto* best = Smallest(shape, shape == Shape::Dedup ? dedup : plain);
     if (_params.tier == WriteTier::Flush &&
-        best->choice.leaf != ByteCodec::Fsst) {
-      if (auto* fsst = Cached({shape, ByteCodec::Fsst}, 0, begin, end,
-                              FrameLayout::Dictionary);
+        best->config.choice.leaf != ByteCodec::Fsst) {
+      if (auto* fsst = Cached({
+            .choice = {shape, ByteCodec::Fsst},
+            .level = 0,
+            .layout = FrameLayout::Dictionary,
+          });
           fsst &&
           static_cast<double>(fsst->Size()) <=
             static_cast<double>(best->Size()) * (1.0 + kFsstPreference)) {
@@ -249,13 +258,9 @@ class SegmentWriter {
       }
     }
     const auto chosen_bytes = best->Size();
-    const StringChoice picked{shape, best->choice.leaf};
+    const StringChoice picked{shape, best->config.choice.leaf};
     const bool kept = _tuning.choice && *_tuning.choice == picked;
-    _tuning.calibration_gap =
-      drift || !kept
-        ? 1
-        : std::min(_tuning.calibration_gap * 2, kMaxCalibrationGap);
-    _tuning.since_calibration = 0;
+    _tuning.clock.Settle(kept && !drift);
     _tuning.levels_tuned = true;
     _tuning.choice = picked;
     _tuning.bytes_per_input =
@@ -272,9 +277,7 @@ class SegmentWriter {
   }
 
   struct Candidate {
-    ByteCodec leaf = ByteCodec::Lz4;
-    uint8_t level = 0;
-    FrameLayout layout = FrameLayout::Dictionary;
+    Config config;
     uint64_t bytes = 0;
   };
 
@@ -283,8 +286,7 @@ class SegmentWriter {
            (leaf == ByteCodec::Lz4 && EffectiveLevel<Lz4>(level) <= 1);
   }
 
-  Candidate Tune(Shape shape, const LeafPlan& plan, uint64_t begin,
-                 uint64_t end, bool retune) {
+  Candidate Tune(Shape shape, const LeafPlan& plan, bool retune) {
     const auto leaf = plan.leaf;
     const auto ladder = plan.ladder;
     auto& tuned = _tuning.level[Index(leaf)];
@@ -301,8 +303,11 @@ class SegmentWriter {
       uint64_t prices[kMaxRungs];
       uint64_t lowest = std::numeric_limits<uint64_t>::max();
       for (size_t r = 0; r < ladder.size(); ++r) {
-        prices[r] =
-          PriceOf(shape, leaf, ladder[r], FrameLayout::Dictionary, begin, end);
+        prices[r] = PriceOf({
+          .choice = {shape, leaf},
+          .level = ladder[r],
+          .layout = FrameLayout::Dictionary,
+        });
         lowest = std::min(lowest, prices[r]);
       }
       while (static_cast<double>(prices[rung]) >
@@ -310,16 +315,22 @@ class SegmentWriter {
         ++rung;
       }
       bytes = prices[rung];
-      const auto wide =
-        PriceOf(shape, leaf, ladder[rung], FrameLayout::Wide, begin, end);
+      const auto wide = PriceOf({
+        .choice = {shape, leaf},
+        .level = ladder[rung],
+        .layout = FrameLayout::Wide,
+      });
       if (static_cast<double>(wide) <
           static_cast<double>(*bytes) * (1.0 - kWideFramesGain)) {
         layout = FrameLayout::Wide;
         bytes = wide;
       }
       if (Trainable(leaf) && _tuning.dictionary) {
-        const auto first = PriceOf(shape, leaf, ladder[rung],
-                                   FrameLayout::FirstFrame, begin, end);
+        const auto first = PriceOf({
+          .choice = {shape, leaf},
+          .level = ladder[rung],
+          .layout = FrameLayout::FirstFrame,
+        });
         if (static_cast<double>(first) <
             static_cast<double>(*bytes) * (1.0 - kUntrainedGain)) {
           layout = FrameLayout::FirstFrame;
@@ -329,33 +340,38 @@ class SegmentWriter {
       tuned_layout = layout;
     }
     tuned = ladder[rung];
-    auto* seg = Cached({shape, leaf}, tuned, begin, end, layout);
+    const Config config{
+      .choice = {shape, leaf},
+      .level = tuned,
+      .layout = layout,
+    };
+    auto* seg = Cached(config);
     if (!seg && Cheap(leaf, tuned)) {
-      seg = Trial({shape, leaf}, tuned, begin, end, layout);
+      seg = Trial(config);
     }
     if (seg) {
-      return {leaf, tuned, layout, seg->Size()};
+      return {.config = config, .bytes = seg->Size()};
     }
     if (!bytes) {
-      bytes = PriceOf(shape, leaf, tuned, layout, begin, end);
+      bytes = PriceOf(config);
     }
-    return {leaf, tuned, layout, *bytes};
+    return {.config = config, .bytes = *bytes};
   }
 
-  void Measure(Shape shape, uint64_t begin, uint64_t end) {
+  void Measure(Shape shape) {
     if (_measured) {
       return;
     }
     _measured = true;
     auto& p = _profile;
     p.shape = shape;
-    p.rows = end - begin;
+    p.rows = _end - _begin;
     p.runs = 0;
     p.raw = 0;
     p.max_len = 0;
     p.entries.clear();
     if (shape == Shape::Plain) {
-      for (auto row = begin; row < end; ++row) {
+      for (auto row = _begin; row < _end; ++row) {
         const auto code = _acc.codes[row];
         Append(code == 0 ? std::string_view{} : _acc.entries[code - 1]);
       }
@@ -363,7 +379,7 @@ class SegmentWriter {
     }
     _dedup.Begin(_acc.entries.size());
     uint32_t last = 0;
-    for (auto row = begin; row < end; ++row) {
+    for (auto row = _begin; row < _end; ++row) {
       const auto code = _acc.codes[row];
       uint32_t local = 0;
       if (code != 0) {
@@ -374,7 +390,7 @@ class SegmentWriter {
           Append(_acc.entries[code - 1]);
         }
       }
-      if (row == begin || local != last) {
+      if (row == _begin || local != last) {
         ++p.runs;
       }
       last = local;
@@ -396,62 +412,56 @@ class SegmentWriter {
     return layout;
   }
 
-  uint64_t PriceOf(Shape shape, ByteCodec leaf, uint8_t level,
-                   FrameLayout layout, uint64_t begin, uint64_t end) {
-    layout = Normalize(leaf, layout);
-    if (const auto* seg = Cached({shape, leaf}, level, begin, end, layout)) {
+  uint64_t PriceOf(Config config) {
+    config.layout = Normalize(config.choice.leaf, config.layout);
+    if (const auto* seg = Cached(config)) {
       return seg->Size();
     }
-    Measure(shape, begin, end);
-    const auto bytes = With(leaf, [&](auto& enc) -> uint64_t {
+    Measure(config.choice.shape);
+    const auto bytes = With(config.choice.leaf, [&](auto& enc) -> uint64_t {
       if constexpr (std::remove_reference_t<decltype(enc)>::kCodec ==
                     ByteCodec::Fsst) {
         SDB_UNREACHABLE();
       } else {
-        return enc.Price(_profile, level, layout, begin);
+        return enc.Price(_profile, config.level, config.layout, _begin);
       }
     });
     if (bytes < _smallest.bytes) {
-      _smallest = {leaf, level, layout, bytes};
+      _smallest = {.config = config, .bytes = bytes};
     }
     return bytes;
   }
 
   Segment* Smallest(Shape shape, Segment* best) const noexcept {
     for (auto* seg : _live) {
-      if (seg->choice.shape == shape && seg->Size() < best->Size()) {
+      if (seg->config.choice.shape == shape && seg->Size() < best->Size()) {
         best = seg;
       }
     }
     return best;
   }
 
-  Segment* Cached(StringChoice choice, uint8_t level, uint64_t begin,
-                  uint64_t end, FrameLayout layout) const noexcept {
+  Segment* Cached(const Config& config) const noexcept {
     for (auto* seg : _live) {
-      if (seg->choice.shape == choice.shape &&
-          seg->choice.leaf == choice.leaf && seg->level == level &&
-          seg->layout == layout && seg->begin == begin &&
-          seg->rows == end - begin) {
+      if (seg->config == config) {
         return seg;
       }
     }
     return nullptr;
   }
 
-  Segment* Trial(StringChoice choice, uint8_t level, uint64_t begin,
-                 uint64_t end, FrameLayout layout = FrameLayout::Dictionary) {
-    layout = Normalize(choice.leaf, layout);
-    if (auto* seg = Cached(choice, level, begin, end, layout)) {
+  Segment* Trial(Config config) {
+    config.layout = Normalize(config.choice.leaf, config.layout);
+    if (auto* seg = Cached(config)) {
       return seg;
     }
     auto* seg = Acquire();
-    With(choice.leaf, [&](auto& enc) {
-      _builder.Begin(choice.shape, level, layout, begin);
-      enc.Begin(choice.shape, level, layout);
-      _builder.AddUntil(enc, end);
+    With(config.choice.leaf, [&](auto& enc) {
+      _builder.Begin(config.choice.shape, config.level, config.layout, _begin);
+      enc.Begin(config.choice.shape, config.level, config.layout);
+      _builder.AddUntil(enc, _end);
       _builder.Finish(enc, *seg);
-      return end;
+      return _end;
     });
     _live.push_back(seg);
     return seg;
@@ -521,7 +531,11 @@ class SegmentWriter {
   Encoder& Get() {
     auto& slot = std::get<std::optional<Encoder>>(_encoders);
     if (!slot) {
-      slot.emplace(_tuning, _params.segment_target);
+      if constexpr (std::is_same_v<Encoder, FsstChainEncoder>) {
+        slot.emplace(_tuning, _params.segment_target);
+      } else {
+        slot.emplace(_tuning);
+      }
     }
     return *slot;
   }
@@ -550,6 +564,8 @@ class SegmentWriter {
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;
   std::vector<Segment*> _live;
+  uint64_t _begin = 0;
+  uint64_t _end = 0;
   Profile _profile;
   bool _measured = false;
   Candidate _smallest;
@@ -614,28 +630,37 @@ bool TrainsDictionary(std::optional<StringChoice> named,
   return !named || Trainable(named->leaf);
 }
 
+std::shared_ptr<const TrainedDictionary> TrainDictionary(
+  const StringAccumulator& acc, std::optional<StringChoice> named,
+  const ColCodecParams& params, StringTuning& tuning) {
+  if (tuning.sampling_done || !TrainsDictionary(named, params)) {
+    return nullptr;
+  }
+  if (!tuning.sampler.Ready()) {
+    tuning.sampler.Add(acc.entries);
+  }
+  if (!tuning.sampler.Ready()) {
+    return nullptr;
+  }
+  tuning.sampling_done = true;
+  return tuning.sampler.Train();
+}
+
+void Adopt(StringTuning& tuning,
+           std::shared_ptr<const TrainedDictionary> dictionary, uint16_t id) {
+  tuning.sampling_done = true;
+  tuning.dictionary_id = dictionary ? id : uint16_t{0};
+  tuning.dictionary = std::move(dictionary);
+  tuning.levels_tuned = false;
+  tuning.clock.Restart();
+}
+
 SealOutcome SealSegments(const StringAccumulator& acc,
                          std::optional<StringChoice> named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
-                         SegmentSink sink, DictionarySink dictionaries) {
+                         SegmentSink sink) {
   SDB_ASSERT(acc.codes.size() == acc.row_count);
-  if (!tuning.sampling_done && TrainsDictionary(named, params)) {
-    if (!tuning.sampler.Ready()) {
-      tuning.sampler.Add(acc.entries);
-    }
-    if (tuning.sampler.Ready()) {
-      tuning.sampling_done = true;
-      if (auto bytes = tuning.sampler.Train()) {
-        tuning.dictionary_id = dictionaries(*bytes);
-        tuning.dictionary =
-          std::make_shared<const TrainedDictionary>(std::move(*bytes));
-        tuning.levels_tuned = false;
-        tuning.calibration_gap = 1;
-        tuning.since_calibration = 0;
-      }
-    }
-  }
   return SegmentWriter{acc, named, params, type, tuning}.Run(sink);
 }
 

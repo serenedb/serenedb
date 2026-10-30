@@ -20,17 +20,27 @@
 
 #pragma once
 
+#include <lz4.h>
+#include <lz4hc.h>
+
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 
-union LZ4_stream_u;
-union LZ4_streamHC_u;
-
 namespace irs::codecs {
+
+struct Lz4Free {
+  void operator()(LZ4_stream_t* stream) const noexcept {
+    LZ4_freeStream(stream);
+  }
+  void operator()(LZ4_streamHC_t* stream) const noexcept {
+    LZ4_freeStreamHC(stream);
+  }
+};
 
 struct Lz4 {
   static constexpr ByteCodec kCodec = ByteCodec::Lz4;
@@ -42,12 +52,6 @@ struct Lz4 {
 
   class Compressor {
    public:
-    Compressor() = default;
-    ~Compressor();
-
-    Compressor(const Compressor&) = delete;
-    Compressor& operator=(const Compressor&) = delete;
-
     void SetLevel(uint8_t level) noexcept {
       _level = EffectiveLevel<Lz4>(level);
       _dictionary = false;
@@ -63,10 +67,10 @@ struct Lz4 {
     bool _dictionary = false;
     uint64_t _trained = 0;
     uint8_t _trained_level = 0;
-    LZ4_stream_u* _dict = nullptr;
-    LZ4_stream_u* _work = nullptr;
-    LZ4_streamHC_u* _hc_dict = nullptr;
-    LZ4_streamHC_u* _hc_work = nullptr;
+    std::unique_ptr<LZ4_stream_t, Lz4Free> _dict;
+    std::unique_ptr<LZ4_stream_t, Lz4Free> _work;
+    std::unique_ptr<LZ4_streamHC_t, Lz4Free> _hc_dict;
+    std::unique_ptr<LZ4_streamHC_t, Lz4Free> _hc_work;
   };
 
   class Decompressor {

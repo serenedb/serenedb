@@ -24,11 +24,13 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/typedefs.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <limits>
 #include <optional>
 #include <type_traits>
@@ -39,6 +41,7 @@
 #include "iresearch/formats/column/codecs/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
 #include "iresearch/formats/column/codecs/zstd.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -54,8 +57,12 @@ class FrameDecoder {
 
  public:
   FrameDecoder(duckdb::const_data_ptr_t base, const NumericHeader& header,
-               FrameCache cache = {})
-    : _base{base}, _h{header}, _cache{cache} {
+               duckdb::ObjectCache* cache = nullptr,
+               const ReadContext::CacheSlot& slot = {})
+    : _base{base},
+      _h{header},
+      _cache{slot.touched ? cache : nullptr},
+      _slot{slot} {
     SDB_ENSURE(_h.width == sizeof(T), "numeric codec: width mismatch");
     if (Blocked()) {
       _per_frame = kFforFrameRows;
@@ -136,35 +143,6 @@ class FrameDecoder {
     }
   }
 
-  void Copy(uint64_t row, uint64_t count, T* out) noexcept {
-    if (!Runs(_h.transform)) {
-      std::memcpy(out, _view + (row - _begin) * sizeof(T), count * sizeof(T));
-      return;
-    }
-    auto pos = static_cast<uint32_t>(row - _begin);
-    const auto end = pos + static_cast<uint32_t>(count);
-    auto r = RunOf(pos);
-    auto* dst = reinterpret_cast<U*>(out);
-    const uint64_t burst_limit = count >= kBurst ? count - kBurst + 1 : 0;
-    uint64_t done = 0;
-    while (pos < end) {
-      const auto stop = std::min(_run_ends[r], end);
-      const U v = _run_values[r];
-      const auto n = stop - pos;
-      if (n <= kBurst && done < burst_limit) {
-        for (uint32_t i = 0; i < kBurst; ++i) {
-          dst[done + i] = v;
-        }
-      } else {
-        std::fill_n(dst + done, n, v);
-      }
-      done += n;
-      pos = stop;
-      ++r;
-    }
-    _hint = r - 1;
-  }
-
   T At(uint64_t row) noexcept {
     U v;
     if (!Runs(_h.transform)) {
@@ -236,6 +214,35 @@ class FrameDecoder {
  private:
   static constexpr uint64_t kNearShare = 32;
 
+  void Copy(uint64_t row, uint64_t count, T* out) noexcept {
+    if (!Runs(_h.transform)) {
+      std::memcpy(out, _view + (row - _begin) * sizeof(T), count * sizeof(T));
+      return;
+    }
+    auto pos = static_cast<uint32_t>(row - _begin);
+    const auto end = pos + static_cast<uint32_t>(count);
+    auto r = RunOf(pos);
+    auto* dst = reinterpret_cast<U*>(out);
+    const uint64_t burst_limit = count >= kBurst ? count - kBurst + 1 : 0;
+    uint64_t done = 0;
+    while (pos < end) {
+      const auto stop = std::min(_run_ends[r], end);
+      const U v = _run_values[r];
+      const auto n = stop - pos;
+      if (n <= kBurst && done < burst_limit) {
+        for (uint32_t i = 0; i < kBurst; ++i) {
+          dst[done + i] = v;
+        }
+      } else {
+        std::fill_n(dst + done, n, v);
+      }
+      done += n;
+      pos = stop;
+      ++r;
+    }
+    _hint = r - 1;
+  }
+
   T Entry(uint32_t code) const {
     SDB_ENSURE(code < _h.dict_count, "numeric codec: corrupted codes");
     return Scaled(
@@ -275,8 +282,8 @@ class FrameDecoder {
 
   NumericFrameMeta MetaAt(uint32_t f) const noexcept {
     SDB_ASSERT(f < _h.frame_count);
-    return NumericFrameMeta::Load(_base + _h.off_frames +
-                                  f * kNumericFrameMetaSize);
+    return duckdb::Load<NumericFrameMeta>(_base + _h.off_frames +
+                                          f * kNumericFrameMetaSize);
   }
 
   NumericFrameMeta Meta(uint32_t f) const {
@@ -350,12 +357,12 @@ class FrameDecoder {
       return Data(m);
     }
     std::string key;
-    if (frame != kNoFrame && _cache.cache) {
+    if (frame != kNoFrame && _cache) {
       if (_segment_key.empty()) {
-        _segment_key = DictionaryCacheKey(_cache.file_id, _cache.file_offset);
+        _segment_key = DictionaryCacheKey(_slot.file_id, _slot.file_offset);
       }
       key = FrameCacheKey(_segment_key, frame);
-      if (auto hit = _cache.cache->Get<DecodedFrame>(key);
+      if (auto hit = _cache->Get<DecodedFrame>(key);
           hit && hit->Bytes().size() == m.frame.raw_len) {
         _held = std::move(hit);
         return _held->Bytes().data();
@@ -375,11 +382,10 @@ class FrameDecoder {
                _zstd->Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
     SDB_ENSURE(ok, "numeric codec: corrupted frame");
     if (!key.empty() && Admitted() &&
-        _cache.cache->GetCurrentMemory() + m.frame.raw_len <=
-          _cache.cache->GetMaxMemory()) {
-      _cache.cache->Put(key,
-                        duckdb::make_shared_ptr<DecodedFrame>(
-                          std::vector<uint8_t>(dst, dst + m.frame.raw_len)));
+        _cache->GetCurrentMemory() + m.frame.raw_len <=
+          _cache->GetMaxMemory()) {
+      _cache->Put(key, duckdb::make_shared_ptr<DecodedFrame>(
+                         std::vector<uint8_t>(dst, dst + m.frame.raw_len)));
     }
     return dst;
   }
@@ -551,8 +557,8 @@ class FrameDecoder {
 
   bool Admitted() noexcept {
     if (_admit < 0) {
-      _admit = _cache.touched &&
-               _cache.touched->exchange(true, std::memory_order_relaxed);
+      _admit = _slot.touched &&
+               _slot.touched->exchange(true, std::memory_order_relaxed);
     }
     return _admit == 1;
   }
@@ -617,7 +623,8 @@ class FrameDecoder {
 
   duckdb::const_data_ptr_t _base;
   NumericHeader _h;
-  FrameCache _cache;
+  duckdb::ObjectCache* _cache;
+  ReadContext::CacheSlot _slot;
   std::string _segment_key;
   duckdb::shared_ptr<DecodedFrame> _held;
   int8_t _admit = -1;

@@ -49,7 +49,6 @@
 #include "connector/query_deadline.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "query/config.h"
 #include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
 #include "search/compaction/pipeline_merge_executor.h"
@@ -256,11 +255,6 @@ std::vector<duckdb::reference<duckdb::Catalog>> AttachedDatabases(
   return out;
 }
 
-uint32_t QueryThreads(duckdb::ClientContext& context) {
-  return static_cast<uint32_t>(
-    duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
-}
-
 struct IndexMerge {
   irs::CompactionPolicy policy;
   irs::LoneSegment lone = irs::LoneSegment::Skip;
@@ -276,7 +270,7 @@ IndexRound IndexMerges(Action action, search::InvertedIndexStorage& inverted,
                        const irs::IndexFieldOptions& field_options,
                        duckdb::ClientContext& context) {
   const auto snapshot = inverted.GetInvertedIndexSnapshot();
-  const size_t inputs_max = inverted.GetTasksSettings().merge_inputs_max;
+  const size_t inputs_max = inverted.MergeInputsMax();
   IndexRound round{.segments = snapshot->reader.size()};
   const search::CopyChecker checker{
     field_options, duckdb::TaskScheduler::GetScheduler(context)};
@@ -284,11 +278,11 @@ IndexRound IndexMerges(Action action, search::InvertedIndexStorage& inverted,
     snapshot->reader,
     action == Action::Compact
       ? search::MergeRoundRequest{.mode = search::MergeMode::Compact,
-                                  .inputs_max = inputs_max,
-                                  .single_output = true}
+                                  .inputs_max = inputs_max}
       : search::MergeRoundRequest{
           .mode = search::MergeMode::Optimize,
-          .target_segments = QueryThreads(context),
+          .target_segments =
+            search::DefaultTarget(search::MergeMode::Optimize, context),
           .row_group_size = field_options.row_group_size,
           .inputs_max = inputs_max,
           .copy_check = &checker});
@@ -326,19 +320,19 @@ void CompactInvertedStorage(Action action,
   const auto lease =
     search::GetSearchEngine().Merges().TakeOver(inverted.MergeRelation());
   const search::ManualCompactionSlot slot;
-  const irs::AnnBuildEnv* env_ptr =
-    slot.AnnEnv() ? slot.AnnEnv() : &search::AnnBuildEnv();
+  const irs::AnnBuildEnv* env_ptr = slot.AnnEnv();
 
   search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
   for (auto more = true; more;) {
     const auto round = IndexMerges(action, inverted, field_options, context);
     for (const auto& merge : round.merges) {
-      bool empty_compaction = false;
       // The merge encodes against the index definition the step captured,
       // which the step holds for the whole call.
-      const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
-        merge.policy, tick, empty_compaction, &field_options, env_ptr,
-        search::MergeOrigin::Vacuum, nullptr, &executor, merge.lone));
+      const auto res =
+        irs::GetBlocking(inverted.CompactUnsafeAsync(
+                           merge.policy, tick, &field_options, env_ptr,
+                           search::MergeOrigin::Vacuum, executor, merge.lone))
+          .res;
       context.InterruptCheck();
       if (!res.ok()) {
         THROW_SQL_ERROR(
@@ -592,13 +586,12 @@ void DispatchInverted(duckdb::ClientContext& context,
       } else if (action == Action::Cleanup) {
         status = search->CleanupUnsafe().res;
       } else {
-        const bool optimize = action == Action::Optimize;
+        const auto mode = action == Action::Optimize
+                            ? search::MergeMode::Optimize
+                            : search::MergeMode::Compact;
         status = search->VacuumCompact(
-          optimize ? search::MergeMode::Optimize : search::MergeMode::Compact,
-          optimize ? QueryThreads(context)
-                   : GetIntSetting(context, "sdb_compact_target_segments"),
-          duckdb::TaskScheduler::GetScheduler(context),
-          [&context] { return StatementRunning(context); }, &executor);
+          mode, search::DefaultTarget(mode, context),
+          [&context] { return StatementRunning(context); }, executor);
         context.InterruptCheck();
       }
       if (!status.ok()) {

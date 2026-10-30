@@ -275,9 +275,9 @@ TEST_F(TermKeysTest, ReadersShareTheirAnchors) {
   EXPECT_EQ(Slice(ids, 2999, 1), Read(*jumper, 2999, 1));
 
   const auto anchor = keys.Anchor(1000);
-  ASSERT_TRUE(anchor.has_value());
-  EXPECT_EQ(768, anchor->first);
-  EXPECT_EQ(ids[768], irs::ViewCast<char>(irs::bytes_view{anchor->second}));
+  ASSERT_NE(irs::TermKeys::kNoAnchor, anchor.row);
+  EXPECT_EQ(768, anchor.row);
+  EXPECT_EQ(ids[768], irs::ViewCast<char>(anchor.term));
 }
 
 TEST_F(TermKeysTest, AnchorsComeFromReads) {
@@ -286,12 +286,12 @@ TEST_F(TermKeysTest, AnchorsComeFromReads) {
   ASSERT_EQ(1, inputs.size());
   const irs::TermKeys keys{*inputs[0]->field(kIdField)};
   EXPECT_EQ(2, keys.Count());
-  EXPECT_FALSE(keys.Anchor(1).has_value());
+  EXPECT_EQ(irs::TermKeys::kNoAnchor, keys.Anchor(1).row);
   const auto reader = keys.CreateReader();
   EXPECT_EQ(std::vector<std::string>{Key("id", 1)}, Read(*reader, 1, 1));
   const auto anchor = keys.Anchor(1);
-  ASSERT_TRUE(anchor.has_value());
-  EXPECT_EQ(0, anchor->first);
+  ASSERT_NE(irs::TermKeys::kNoAnchor, anchor.row);
+  EXPECT_EQ(0, anchor.row);
 }
 
 TEST_F(TermKeysTest, MergedRunsKeepEqualTermsInInputOrder) {

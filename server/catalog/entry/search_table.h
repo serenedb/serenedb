@@ -30,6 +30,8 @@
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
 #include <duckdb/common/table_column.hpp>
+#include <duckdb/parser/column_definition.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/table_log_storage.hpp>
@@ -46,11 +48,9 @@
 namespace duckdb {
 
 class ClientContext;
-class ColumnDefinition;
 struct CreateInfo;
 struct CreateTableInfo;
 struct BoundCreateTableInfo;
-struct SetColumnCompressionInfo;
 
 }  // namespace duckdb
 namespace irs {

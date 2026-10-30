@@ -25,7 +25,6 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/segment_reader.hpp"
 
 namespace irs {
@@ -39,21 +38,14 @@ using CompactionView = std::span<const SubReader* const>;
 
 class MergeTicket {
  public:
-  MergeTicket() noexcept;
-
-  explicit operator bool() const noexcept { return static_cast<bool>(_state); }
-
   CompactionView Candidates() const noexcept;
   bool Revoked() const noexcept;
-
-  void Reset() noexcept { _state.reset(); }
 
  private:
   friend class IndexWriter;
 
   struct State {
     std::weak_ptr<const DirectoryReaderImpl> snapshot;
-    IndexReaderOptions options;
     std::vector<SegmentReader> inputs;
     Compaction candidates;
     std::atomic_bool revoked{false};

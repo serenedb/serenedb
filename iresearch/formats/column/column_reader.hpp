@@ -41,6 +41,8 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/numeric.hpp"
+#include "iresearch/formats/column/codecs/string_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -51,12 +53,6 @@ class CompressionFunction;
 
 }  // namespace duckdb
 namespace irs {
-namespace codecs {
-
-struct NumericTuning;
-struct StringTuning;
-
-}  // namespace codecs
 
 struct BlockWindow {
   size_t block = 0;
@@ -135,8 +131,8 @@ struct ColumnMeta {
   std::vector<ListPart> list_parts;
   duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
   uint64_t write_list_running = 0;
-  std::shared_ptr<codecs::StringTuning> write_string_tuning;
-  std::shared_ptr<codecs::NumericTuning> write_numeric_tuning;
+  std::unique_ptr<codecs::StringTuning> write_string_tuning;
+  std::unique_ptr<codecs::NumericTuning> write_numeric_tuning;
   uint64_t write_list_distinct = 0;
 };
 
@@ -230,6 +226,7 @@ class ColumnReader {
   std::span<const ColumnDictionaryMeta> DictionaryMetas() const noexcept {
     return _dictionary_metas;
   }
+  const codecs::TrainedDictionaries* Dictionaries(ReadContext& ctx) const;
 
   const duckdb::BaseStatistics& MergedStatistics() const noexcept {
     return *_stats;
@@ -266,8 +263,6 @@ class ColumnReader {
                                                      ReadContext& ctx) const {
     return Open(BlockWindow{rg, _offsets[rg], _offsets[rg + 1]}, ctx);
   }
-
-  std::string DictionaryCacheKey(size_t block) const;
 
   ScanState InitScan(ReadContext& ctx) const {
     return InitScan(
@@ -449,7 +444,6 @@ class ColumnReader {
   mutable codecs::TrainedDictionaries _dictionaries;
 
  private:
-  const codecs::TrainedDictionaries* Dictionaries(ReadContext& ctx) const;
   void CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
                       duckdb::Vector& result) const;
   void Readahead(size_t block, ReadContext& ctx, ScanState* s) const noexcept;

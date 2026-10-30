@@ -24,6 +24,7 @@
 #include <deque>
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <duckdb/storage/table/column_segment.hpp>
 #include <string>
 #include <vector>
 
@@ -125,5 +126,8 @@ class ReadContext final : public BlockManager,
   bool _reusable_dictionaries = false;
   std::atomic<size_t> _live_handles{0};
 };
+
+const ReadContext::CacheSlot& CacheSlotOf(
+  duckdb::ColumnSegment& segment) noexcept;
 
 }  // namespace irs

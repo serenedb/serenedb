@@ -24,7 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
+#include <limits>
 #include <vector>
 
 namespace irs {
@@ -33,9 +33,11 @@ class MergePlan;
 
 class MergeSchedule {
  public:
+  static constexpr size_t kNoUnit = std::numeric_limits<size_t>::max();
+
   explicit MergeSchedule(const MergePlan& plan);
 
-  std::optional<size_t> Claim();
+  size_t Claim();
 
   void Hold(size_t unit);
 

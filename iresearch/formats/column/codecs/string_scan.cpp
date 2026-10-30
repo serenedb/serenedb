@@ -24,7 +24,8 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
-#include <array>
+#include <duckdb/common/bitpacking.hpp>
+#include <duckdb/common/helper.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
@@ -35,6 +36,7 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
+#include "iresearch/utils/enum_name.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs::text {
@@ -43,7 +45,8 @@ using duckdb::string_t;
 
 std::vector<uint32_t> Unpack(duckdb::data_ptr_t src, duckdb::idx_t count,
                              uint8_t width) {
-  std::vector<uint32_t> out(GroupPadded(count));
+  std::vector<uint32_t> out(
+    duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(count));
   if (count != 0) {
     duckdb::BitpackingPrimitives::UnPackBuffer<uint32_t>(
       duckdb::data_ptr_cast(out.data()), src, count, width);
@@ -60,13 +63,6 @@ uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
                 uint64_t{lengths.At(e)} * kFsstMaxExpansion;
   }
   return std::max<uint64_t>(capacity, string_t::INLINE_LENGTH + 1);
-}
-
-const ReadContext::CacheSlot& CacheSlotOf(
-  duckdb::ColumnSegment& segment) noexcept {
-  const auto& block = segment.GetBlockHandle();
-  return static_cast<const ReadContext&>(block->GetBlockManager())
-    .CacheSlotOf(block->BlockId());
 }
 
 duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
@@ -89,7 +85,7 @@ NumericHeader CodesHeader(duckdb::const_data_ptr_t base, const Header& h) {
 
 const TrainedDictionary* TrainedOf(duckdb::ColumnSegment& segment,
                                    const Header& header) {
-  if (header.flags != kTrainedDictionary) {
+  if (header.flags != FrameDictionary::Trained) {
     return nullptr;
   }
   const auto* dictionaries = CacheSlotOf(segment).dictionaries;
@@ -133,11 +129,6 @@ EntryRanges Intersect(const EntryRanges& a, const EntryRanges& b) {
   return out;
 }
 
-bool IsColumn(const duckdb::Expression& expr) noexcept {
-  return expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_REF &&
-         expr.GetReturnType().id() == duckdb::LogicalTypeId::VARCHAR;
-}
-
 const duckdb::Value* StringConstant(const duckdb::Expression& expr) noexcept {
   if (expr.GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
     return nullptr;
@@ -153,7 +144,7 @@ uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
                       std::span<const EntryAt> order) {
   const auto* frames = base + h.off_frames;
   const auto meta = [&](uint32_t f) {
-    return FrameMeta::Load(frames + f * kFrameMetaSize);
+    return duckdb::Load<FrameMeta>(frames + f * kFrameMetaSize);
   };
   uint64_t bytes = 0;
   uint32_t counted = h.frame_count;
@@ -202,26 +193,20 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   const auto h = Header::Parse(handle.Ptr() + segment.GetBlockOffset(),
                                segment.SegmentSize());
   duckdb::InsertionOrderPreservingMap<std::string> info;
-  constexpr std::array<std::string_view, kByteCodecCount> kLeafNames{
-    "lz4", "zstd", "fsst", "zxc"};
-  info["shape"] =
-    h.shape == static_cast<uint8_t>(Shape::Dedup) ? "dedup" : "plain";
-  info["codec"] = std::string{kLeafNames[h.codec]};
+  info["shape"] = std::string{SnakeCaseName(h.shape)};
+  info["codec"] = std::string{SnakeCaseName(h.codec)};
   info["level"] = absl::StrCat(static_cast<uint32_t>(h.level));
-  constexpr std::array<std::string_view, 3> kCodesNames{"bitpack", "rle",
-                                                        "numeric"};
-  info["codes"] = std::string{kCodesNames[h.codes_encoding]};
-  if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Numeric)) {
+  info["codes"] = std::string{SnakeCaseName(h.codes_encoding)};
+  if (h.codes_encoding == CodesEncoding::Numeric) {
     const auto codes = CodesHeader(handle.Ptr() + segment.GetBlockOffset(), h);
-    info["codes_transform"] =
-      std::string{NumericTransformName(codes.transform)};
+    info["codes_transform"] = std::string{SnakeCaseName(codes.transform)};
   }
   info["runs"] = absl::StrCat(h.run_count);
   info["entries"] = absl::StrCat(h.entry_count);
   info["frames"] = absl::StrCat(h.frame_count);
-  if (h.flags == kFrameDictionary) {
+  if (h.flags == FrameDictionary::FirstFrame) {
     info["dictionary"] = "first_frame";
-  } else if (h.flags == kTrainedDictionary) {
+  } else if (h.flags == FrameDictionary::Trained) {
     info["dictionary"] = absl::StrCat("trained:", h.dictionary);
   }
   info["raw_bytes"] = absl::StrCat(h.raw_bytes);

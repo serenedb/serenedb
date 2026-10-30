@@ -41,7 +41,6 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_meta.hpp>
-#include <iresearch/index/merge/merge_order.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -97,8 +96,8 @@ catalog::CompressionByColumn SearchTable::DeclaredCompression(
     if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
       compression.emplace(
         column.Oid(),
-        catalog::DeclaredCodec{.type = column.CompressionType(),
-                               .compression_level = column.CompressionLevel()});
+        irs::ColumnOptions{.compression = column.CompressionType(),
+                           .compression_level = column.CompressionLevel()});
     }
   }
   return compression;
@@ -122,7 +121,7 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
                          const duckdb::ColumnList& columns, irs::SortSpec sort)
-  : MaintainedStore{table_id},
+  : MaintainedStore{table_id, std::move(sort)},
     _db_id{db_id},
     _table_id{table_id},
     _directory{std::move(directory)},
@@ -132,12 +131,8 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
     _table_columns{TableColumns(columns)},
-    _sort{std::move(sort)},
     _compression{DeclaredCompression(columns)},
     _durability{db_id, absl::StrCat("search table ", table_id)} {
-  if (!_sort.Empty()) {
-    _tasks_settings.merge_inputs_max = irs::kSortedMergeInputsMax;
-  }
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
@@ -191,13 +186,9 @@ void SearchTable::OpenWriter() {
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
-  writer_options.on_flushed =
-    [id = GetTableId()](std::span<const irs::SubReader* const> segments) {
-      MergeRegistry::Instance().RecordFlushes(id, segments);
-    };
   writer_options.cleanup_on_open = _is_new;
   writer_options.lock_repository = false;
-  writer_options.sort = _sort;
+  SetWriterOptions(writer_options);
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
 
@@ -356,7 +347,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
       }
       auto& declared = declared_compression[key.column_id];
       if (own_codec) {
-        declared.type = options.compression;
+        declared.compression = options.compression;
         declared.compression_level = options.compression_level;
       }
       declared.hyperloglog = declared.hyperloglog || options.hyperloglog;
@@ -527,10 +518,9 @@ void SearchTable::ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept {
 
 auto SearchTable::CompactUnsafeAsync(
   const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
-  bool& empty_compaction, const irs::IndexFieldOptions* field_options,
-  const irs::AnnBuildEnv* env, MergeOrigin origin,
-  irs::CompactionResult* outcome, irs::MergeExecutor* executor,
-  irs::LoneSegment lone) -> yaclib::Future<ResultWithTime> {
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  MergeOrigin origin, irs::MergeExecutor& executor, irs::LoneSegment lone)
+  -> yaclib::Future<MergeResult> {
   MergeRecorder recorder{GetTableId(), origin};
   const irs::CompactionPolicy current_config_policy =
     [&](irs::Compaction& candidates, const irs::IndexReader& index,
@@ -540,63 +530,58 @@ auto SearchTable::CompactUnsafeAsync(
       }
     };
   const auto recorded = recorder.Wrap(current_config_policy);
-  co_return co_await AwaitMerge(recorder, empty_compaction, outcome, [&] {
+  auto result = co_await AwaitMerge([&] {
     return _writer->CompactAsync(recorded, field_options, progress, env,
-                                 executor, lone);
+                                 &executor, lone);
   });
+  if (result.res.ok()) {
+    recorder.Finish(result.outcome);
+  } else {
+    recorder.Fail(result.error);
+  }
+  co_return result;
 }
 
 auto SearchTable::RunMergeAsync(irs::MergeTicket ticket,
                                 const irs::MergeProgress& progress,
-                                bool& empty_compaction,
                                 const irs::IndexFieldOptions* field_options,
-                                const irs::AnnBuildEnv* env, uint64_t merge_id,
-                                irs::CompactionResult* outcome,
-                                irs::MergeExecutor* executor)
-  -> yaclib::Future<ResultWithTime> {
-  MergeRecorder recorder{GetTableId(), MergeOrigin::Background, merge_id};
-  recorder.Begin(ticket.Candidates());
-  co_return co_await AwaitMerge(recorder, empty_compaction, outcome, [&] {
+                                const irs::AnnBuildEnv* env,
+                                irs::MergeExecutor& executor)
+  -> yaclib::Future<MergeResult> {
+  co_return co_await AwaitMerge([&] {
     return _writer->RunMerge(std::move(ticket), field_options, progress, env,
-                             executor);
+                             &executor);
   });
 }
 
 auto SearchTable::AwaitMerge(
-  MergeRecorder& recorder, bool& empty_compaction,
-  irs::CompactionResult* outcome,
   absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
-  -> yaclib::Future<ResultWithTime> {
+  -> yaclib::Future<MergeResult> {
   const auto begin = std::chrono::steady_clock::now();
-  empty_compaction = false;
-  auto result = absl::OkStatus();
+  bool empty_compaction = false;
+  MergeResult result;
   try {
     // iresearch serializes Compact against refresh/DML internally, so a long
     // merge never blocks the refresh chain.
-    auto res = co_await merge();
-    if (!res) {
+    result.outcome = co_await merge();
+    if (!result.outcome) {
       SDB_DEBUG(SEARCH, "compaction of search table ", GetTableId(),
                 " merged nothing: cancelled, or every document was removed");
       empty_compaction = true;
     } else {
-      empty_compaction = res.size == 0;
+      empty_compaction = result.outcome.size == 0;
     }
-    if (outcome) {
-      *outcome = res;
-    }
-    recorder.Finish(std::move(res));
   } catch (const std::exception& e) {
-    const auto message = duckdb::ErrorData{e}.RawMessage();
-    result = absl::InternalError(absl::StrCat(
-      "consolidation failed for search table ", GetTableId(), ": ", message));
-    recorder.Fail(message);
+    result.error = duckdb::ErrorData{e}.RawMessage();
+    result.res =
+      absl::InternalError(absl::StrCat("consolidation failed for search table ",
+                                       GetTableId(), ": ", result.error));
   }
-  const uint64_t time_ms =
-    std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now() - begin)
-      .count();
-  _maintenance.RecordCompaction(result, empty_compaction, time_ms);
-  co_return ResultWithTime{std::move(result), time_ms};
+  result.time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::steady_clock::now() - begin)
+                     .count();
+  _maintenance.RecordCompaction(result.res, empty_compaction, result.time_ms);
+  co_return result;
 }
 
 CleanupResult SearchTable::CleanupUnsafe() {
@@ -626,26 +611,25 @@ absl::Status SearchTable::VacuumRefresh() {
 
 absl::Status SearchTable::VacuumCompact(MergeMode mode,
                                         uint32_t target_segments,
-                                        duckdb::TaskScheduler& scheduler,
                                         const irs::MergeProgress& progress,
-                                        irs::MergeExecutor* executor) {
+                                        irs::MergeExecutor& executor) {
   const auto lease = GetSearchEngine().Merges().TakeOver(MergeRelation());
   RefreshResult code = RefreshResult::Undefined;
   if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
     return res;
   }
   const ManualCompactionSlot slot;
-  const irs::AnnBuildEnv* env = slot.AnnEnv() ? slot.AnnEnv() : &AnnBuildEnv();
+  const irs::AnnBuildEnv* env = slot.AnnEnv();
   for (auto more = true; more;) {
     const auto field_options = CompactionConfig();
-    const CopyChecker checker{*field_options, scheduler};
-    const auto plan = PlanMergeRound(
-      _writer->GetSnapshot(),
-      MergeRoundRequest{.mode = mode,
-                        .target_segments = target_segments,
-                        .row_group_size = _row_group_size,
-                        .inputs_max = _tasks_settings.merge_inputs_max,
-                        .copy_check = &checker});
+    const CopyChecker checker{*field_options, *executor.Scheduler()};
+    const auto plan =
+      PlanMergeRound(_writer->GetSnapshot(),
+                     MergeRoundRequest{.mode = mode,
+                                       .target_segments = target_segments,
+                                       .row_group_size = _row_group_size,
+                                       .inputs_max = MergeInputsMax(),
+                                       .copy_check = &checker});
     more = plan.partial;
     for (const auto& planned : plan.merges) {
       if (!progress()) {
@@ -657,13 +641,11 @@ absl::Status SearchTable::VacuumCompact(MergeMode mode,
       for (const auto& segment : planned.inputs) {
         names.emplace_back(segment.name);
       }
-      bool empty = false;
-      if (auto res =
-            irs::GetReady(CompactUnsafeAsync(ExplicitPolicy(names), progress,
-                                             empty, field_options.get(), env,
-                                             MergeOrigin::Vacuum, nullptr,
-                                             executor, planned.lone))
-              .res;
+      if (auto res = irs::GetReady(
+                       CompactUnsafeAsync(
+                         ExplicitPolicy(names), progress, field_options.get(),
+                         env, MergeOrigin::Vacuum, executor, planned.lone))
+                       .res;
           !res.ok()) {
         return res;
       }

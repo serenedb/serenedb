@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "iresearch/index/flush_order.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
 
 namespace irs {
@@ -86,8 +87,7 @@ class ScatteredField : util::Noncopyable {
   ScatteredField(InverterMemory& mem, ScatterScratch& scratch) noexcept
     : _mem{&mem}, _s{&scratch} {}
 
-  void Reset(const FieldInverter& field,
-             std::span<const uint32_t> old2new = {});
+  void Reset(const FieldInverter& field, const DocOrder& order = {});
 
   const FieldInverter& Field() const noexcept { return *_field; }
   size_t TermCount() const noexcept {
@@ -147,10 +147,9 @@ class ScatteredField : util::Noncopyable {
   uint32_t** AssignBlocks(ManagedVector<uint32_t*>& col, size_t nblocks,
                           size_t& next);
   void RadixSortByKey();
-  void RemapInlineDocs(std::span<const doc_id_t> docs,
-                       std::span<const uint32_t> old2new);
+  void RemapInlineDocs(std::span<const doc_id_t> docs, const DocOrder& order);
   template<TokenLayout kLayout>
-  void RemapLogDocs(std::span<const uint32_t> old2new);
+  void RemapLogDocs(const DocOrder& order);
 
   template<bool kRefs, typename Log>
   void Scatter(const Log& log, uint64_t nocc);

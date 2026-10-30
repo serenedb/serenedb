@@ -41,7 +41,10 @@ namespace sdb::search {
 struct MergeUnitRun {
   MergeUnitRun(irs::MergePlan& plan,
                std::chrono::steady_clock::time_point begin, bool hold_postings)
-    : plan{plan}, schedule{plan}, begin{begin} {
+    : plan{plan},
+      schedule{plan},
+      begin{begin},
+      ranges_left{plan.TermRanges().size()} {
     if (!hold_postings) {
       return;
     }
@@ -90,6 +93,14 @@ struct MergeUnitRun {
     if (waker) {
       waker();
     }
+  }
+
+  void RangeDone() {
+    if (ranges_left.fetch_sub(1) == 1) {
+      ReleasePostings(plan.FinishPostings());
+      return;
+    }
+    Wake();
   }
 
   void SetWaker(std::function<void()> callback) {
@@ -144,6 +155,7 @@ struct MergeUnitRun {
   irs::MergePlan& plan;
   irs::MergeSchedule schedule;
   std::chrono::steady_clock::time_point begin;
+  std::atomic<size_t> ranges_left;
   absl::Mutex mutex;
   std::exception_ptr error;
   std::optional<size_t> held;

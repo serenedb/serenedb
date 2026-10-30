@@ -40,6 +40,7 @@
 #include <iresearch/utils/enum_name.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -47,6 +48,7 @@
 #include <vector>
 
 #include "catalog/persistence/search_table.h"
+#include "connector/functions/function_values.h"
 #include "connector/functions/rowid_values.h"
 #include "search/compaction/merge_policies.h"
 #include "search/compaction/merge_simulator.h"
@@ -212,10 +214,6 @@ duckdb::Value MergeOnly(bool merge, duckdb::Value value) {
   return merge ? std::move(value) : duckdb::Value{value.type()};
 }
 
-duckdb::Value Bigint(uint64_t value) {
-  return duckdb::Value::BIGINT(static_cast<int64_t>(value));
-}
-
 void AppendEvent(duckdb::DataChunk& chunk, size_t number,
                  const search::SimulatedEvent& event) {
   const bool merge = event.type == search::SegmentEvent::Merge;
@@ -376,13 +374,6 @@ class LogicalMergeSimulate final : public duckdb::LogicalExtensionOperator {
   std::shared_ptr<const search::MergeSimulation> _options;
 };
 
-const duckdb::Value& NamedParameter(const duckdb::TableFunctionBindInput& input,
-                                    std::string_view name) {
-  const auto entry = input.named_parameters.find(duckdb::Identifier{name});
-  SDB_ASSERT(entry != input.named_parameters.end());
-  return entry->second;
-}
-
 uint64_t ReadPositive(const duckdb::TableFunctionBindInput& input,
                       std::string_view name, uint64_t fallback) {
   const auto& value = NamedParameter(input, name);
@@ -413,9 +404,9 @@ std::shared_ptr<const search::MergeSimulation> ReadOptions(
     static_cast<uint64_t>(search::SearchEngine::MaxConcurrentCompactions()));
   auto options = std::make_shared<search::MergeSimulation>();
   options->policy =
-    search::MakeMergePolicy(settings, search::SimulatedSegment::RangeOf);
+    search::MakeMergePolicy(settings, std::numeric_limits<size_t>::max(),
+                            search::SimulatedSegment::RangeOf);
   options->threads = threads;
-  options->helpers_per_merge = threads / 2;
   options->bytes_per_second = static_cast<double>(ReadPositive(
     input, "merge_bytes_per_second",
     static_cast<uint64_t>(search::MergeSimulation{}.bytes_per_second)));

@@ -36,15 +36,14 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "connector/functions/function_values.h"
 #include "connector/segment_rewrite/logical_segment_rewrite.h"
 #include "connector/segment_rewrite/merge_target.h"
-#include "query/config.h"
 #include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
 #include "storage_engine/search_engine.h"
@@ -62,13 +61,6 @@ MergeTarget ResolveWritable(duckdb::ClientContext& context,
                             target.Database(), "\": it is attached read-only"));
   }
   return target;
-}
-
-const duckdb::Value& NamedParameter(const duckdb::TableFunctionBindInput& input,
-                                    const char* name) {
-  const auto entry = input.named_parameters.find(name);
-  SDB_ASSERT(entry != input.named_parameters.end());
-  return entry->second;
 }
 
 std::vector<std::string> ReadSegments(
@@ -101,11 +93,10 @@ search::MergeMode ReadMode(const duckdb::TableFunctionBindInput& input) {
             "\": expected background, compact, optimize or segments"));
 }
 
-std::optional<uint32_t> ReadTargetSegments(
-  const duckdb::TableFunctionBindInput& input) {
+uint32_t ReadTargetSegments(const duckdb::TableFunctionBindInput& input) {
   const auto& target = NamedParameter(input, "target_segments");
   if (target.IsNull()) {
-    return std::nullopt;
+    return 0;
   }
   const auto value = target.GetValue<int64_t>();
   if (value < 1) {
@@ -121,12 +112,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
   duckdb::TableIndex bind_index, duckdb::vector<duckdb::Identifier>& names) {
   SDB_ASSERT(input.binder);
   input.binder->SetAlwaysRequireRebind();
-  SDB_ASSERT(!input.inputs.empty());
-  if (input.inputs[0].IsNull()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("sdb_compact requires a relation name"));
-  }
-  const auto relation = input.inputs[0].GetValue<std::string>();
+  const auto relation = ReadRelation(input, "sdb_compact");
   const auto mode = ReadMode(input);
   const auto segments = ReadSegments(input);
   const auto target_segments = ReadTargetSegments(input);
@@ -139,7 +125,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
                     ERR_MSG("sdb_compact segments requires mode segments"));
   }
   if (mode != search::MergeMode::Compact &&
-      mode != search::MergeMode::Optimize && target_segments) {
+      mode != search::MergeMode::Optimize && target_segments != 0) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("sdb_compact target_segments requires mode compact or optimize"));
@@ -155,23 +141,22 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
                               " not found in ", target.Name()));
     }
   }
-  const auto& settings = target.Settings();
-  const auto default_target =
-    mode == search::MergeMode::Optimize
-      ? static_cast<uint32_t>(
-          duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads())
-      : GetIntSetting(context, "sdb_compact_target_segments");
+  auto target_count = target_segments != 0
+                        ? target_segments
+                        : search::DefaultTarget(mode, context);
+  if (target.IsIndex() && mode == search::MergeMode::Compact) {
+    target_count = 1;
+  }
   const search::CopyChecker checker{
     target.FieldOptions(), duckdb::TaskScheduler::GetScheduler(context)};
   search::MergeRoundRequest request{
     .mode = mode,
-    .settings = &settings,
+    .settings = &target.Settings(),
     .merges = search::GetSearchEngine().MergeRoundSize(),
-    .target_segments = target_segments.value_or(default_target),
-    .exact_target = static_cast<bool>(target_segments),
+    .target_segments = target_count,
+    .exact_target = target_segments != 0,
     .row_group_size = target.RowGroupSize(),
-    .inputs_max = settings.merge_inputs_max,
-    .single_output = target.IsIndex(),
+    .inputs_max = target.MergeInputsMax(),
     .segments = segments,
     .copy_check = &checker,
   };
@@ -202,13 +187,8 @@ struct MaintenanceState final : duckdb::GlobalTableFunctionState {
 duckdb::unique_ptr<duckdb::FunctionData> BindRelation(
   duckdb::ClientContext& context, const duckdb::TableFunctionBindInput& input,
   std::string_view function) {
-  SDB_ASSERT(!input.inputs.empty());
-  if (input.inputs[0].IsNull()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(function, " requires a relation name"));
-  }
   auto data = duckdb::make_uniq<MaintenanceBindData>();
-  data->relation = input.inputs[0].GetValue<std::string>();
+  data->relation = ReadRelation(input, function);
   ResolveWritable(context, data->relation, function);
   return data;
 }
@@ -241,10 +221,6 @@ double MillisSince(std::chrono::steady_clock::time_point begin) {
   return std::chrono::duration<double, std::milli>(
            std::chrono::steady_clock::now() - begin)
     .count();
-}
-
-duckdb::Value Bigint(uint64_t value) {
-  return duckdb::Value::BIGINT(static_cast<int64_t>(value));
 }
 
 void RefreshExecute(duckdb::ClientContext& context,

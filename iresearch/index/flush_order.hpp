@@ -20,8 +20,12 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
+
+#include "iresearch/index/document_mask.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace duckdb {
 
@@ -38,6 +42,18 @@ struct DocOrder {
   std::vector<uint32_t> old2new;
 
   bool Empty() const noexcept { return new2old.empty(); }
+
+  doc_id_t NewDoc(size_t row) const noexcept {
+    return static_cast<doc_id_t>(Empty() ? row : old2new[row]) +
+           doc_limits::min();
+  }
+
+  size_t OldRow(doc_id_t doc) const noexcept {
+    const size_t row = doc - doc_limits::min();
+    return Empty() ? row : new2old[row];
+  }
+
+  void MaskRows(DocumentMaskBuilder& mask, size_t from, size_t to) const;
 };
 
 std::vector<uint32_t> FlushOrder(duckdb::DatabaseInstance& db,

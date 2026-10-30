@@ -49,9 +49,29 @@ using sdb::search::MergeJob;
 using sdb::search::MergeLane;
 using sdb::search::MergeOutcome;
 using sdb::search::MergeRegistry;
+using sdb::search::MergeResult;
 using sdb::search::MergeScheduler;
 
 constexpr uint64_t kMiB = uint64_t{1} << 20;
+
+MergeResult ResultOf(MergeOutcome outcome) {
+  switch (outcome) {
+    case MergeOutcome::Merged:
+      return {.outcome = {.size = 1, .error = irs::CompactionError::Ok}};
+    case MergeOutcome::Deferred:
+      return {.outcome = {.size = 1, .error = irs::CompactionError::Pending}};
+    case MergeOutcome::Nothing:
+      return {.outcome = {.error = irs::CompactionError::Ok}};
+    case MergeOutcome::Busy:
+      return {.outcome = {.size = 1, .error = irs::CompactionError::Busy}};
+    case MergeOutcome::Cancelled:
+      return {.outcome = {.error = irs::CompactionError::Cancelled}};
+    case MergeOutcome::Running:
+    case MergeOutcome::Failed:
+      break;
+  }
+  return {};
+}
 
 class SegmentStub final : public irs::SubReader {
  public:
@@ -75,10 +95,9 @@ class SegmentStub final : public irs::SubReader {
 
 struct Board {
   std::vector<std::string> started;
-  std::map<std::string, yaclib::Promise<MergeOutcome>> promises;
+  std::map<std::string, yaclib::Promise<MergeResult>> promises;
   std::map<std::string, const std::atomic_bool*> stops;
   std::map<std::string, size_t> helpers;
-  std::map<std::string, uint64_t> ids;
   absl::Mutex destroyed_mutex;
   std::vector<std::string> destroyed;
   std::set<std::string> stale;
@@ -106,8 +125,8 @@ class FakeJob final : public MergeJob {
 
   bool Stale() const noexcept final { return _board.stale.contains(_name); }
 
-  yaclib::Future<MergeOutcome> Run(uint64_t id, const std::atomic_bool& stop,
-                                   size_t helpers) final {
+  yaclib::Future<MergeResult> Run(const std::atomic_bool& stop,
+                                  size_t helpers) final {
     if (_board.throw_on_run) {
       throw std::runtime_error{"boom"};
     }
@@ -117,8 +136,7 @@ class FakeJob final : public MergeJob {
     _board.started.emplace_back(_name);
     _board.stops[_name] = &stop;
     _board.helpers[_name] = helpers;
-    _board.ids[_name] = id;
-    auto [future, promise] = yaclib::MakeContract<MergeOutcome>();
+    auto [future, promise] = yaclib::MakeContract<MergeResult>();
     _board.promises.emplace(_name, std::move(promise));
     return std::move(future);
   }
@@ -136,7 +154,6 @@ class MergeSchedulerTest : public ::testing::Test {
     size_t threads, yaclib::IExecutor& executor = yaclib::MakeInline()) {
     MergeScheduler::Options options;
     options.threads = threads;
-    options.helpers_per_merge = threads / 2;
     options.now = [this] { return _now; };
     options.registry = &_registry;
     return std::make_unique<MergeScheduler>(executor, std::move(options));
@@ -158,7 +175,7 @@ class MergeSchedulerTest : public ::testing::Test {
     ASSERT_NE(it, _board.promises.end()) << name;
     auto promise = std::move(it->second);
     _board.promises.erase(it);
-    std::move(promise).Set(outcome);
+    std::move(promise).Set(ResultOf(outcome));
   }
 
   bool Started(const std::string& name) const {
@@ -187,14 +204,12 @@ TEST(MergeEstimateTest, LanesAndScores) {
   SegmentStub empty{"c", kMiB, 0, 0};
   const irs::SubReader* const segments[] = {&big, &half, &empty};
 
-  const auto merge = EstimateMerge(segments, 64 * kMiB);
-  EXPECT_EQ(401 * kMiB, merge.bytes);
+  const auto merge = EstimateMerge(segments);
   EXPECT_EQ(350 * kMiB, merge.rewrite_bytes);
-  EXPECT_EQ(3, merge.segments);
   EXPECT_EQ(MergeLane::Big, merge.lane);
   EXPECT_DOUBLE_EQ(static_cast<double>(353 * kMiB) / 2, merge.score);
 
-  const auto purge = EstimateMerge({&segments[1], 1}, 64 * kMiB);
+  const auto purge = EstimateMerge({&segments[1], 1});
   EXPECT_EQ(50 * kMiB, purge.rewrite_bytes);
   EXPECT_EQ(MergeLane::Small, purge.lane);
   EXPECT_DOUBLE_EQ(static_cast<double>(51 * kMiB), purge.score);
@@ -280,25 +295,28 @@ TEST_F(MergeSchedulerTest, CheapMergesGoFirstAndWaitingOnesAge) {
   Enqueue(*scheduler, second, "cheap", 256 * kMiB, 8);
   EXPECT_FALSE(Started("huge"));
   EXPECT_FALSE(Started("cheap"));
-  const auto active = _registry.Active();
-  ASSERT_EQ(3, active.size());
-  EXPECT_FALSE(active[0].Queued());
-  EXPECT_EQ(2, active[0].threads);
-  EXPECT_EQ(_board.ids["blocker"], active[0].id);
-  EXPECT_TRUE(active[1].Queued());
-  EXPECT_EQ(0, active[1].threads);
+  const auto blocking = _registry.Active(1);
+  ASSERT_EQ(1, blocking.size());
+  EXPECT_FALSE(blocking[0].Queued());
+  EXPECT_EQ(2, blocking[0].threads);
+  const auto huge = _registry.Active(2);
+  ASSERT_EQ(1, huge.size());
+  EXPECT_TRUE(huge[0].Queued());
+  EXPECT_EQ(0, huge[0].threads);
   EXPECT_EQ(std::vector<std::string>({"huge.0", "huge.1"}),
-            active[1].stats.inputs);
-  EXPECT_EQ(2, active[1].relation_id);
-  EXPECT_EQ(MergeLane::Big, active[1].lane);
-  EXPECT_GT(active[1].score, active[2].score);
+            huge[0].stats.inputs);
+  EXPECT_EQ(2, huge[0].relation_id);
+  EXPECT_EQ(MergeLane::Big, huge[0].lane);
+  const auto cheap = _registry.Active(3);
+  ASSERT_EQ(1, cheap.size());
+  EXPECT_GT(huge[0].score, cheap[0].score);
   EXPECT_EQ(2, sdb::metrics::Get(sdb::metrics::Gauge::CompactionPending));
   EXPECT_EQ(1, sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
 
   Complete("blocker", MergeOutcome::Merged);
-  const auto history = _registry.History();
+  const auto history = _registry.History(1);
   ASSERT_EQ(1, history.size());
-  EXPECT_EQ(active[0].id, history[0].id);
+  EXPECT_EQ(blocking[0].id, history[0].id);
   EXPECT_EQ(MergeOutcome::Merged, history[0].outcome);
   EXPECT_EQ(1, sdb::metrics::Get(sdb::metrics::Gauge::CompactionPending));
   EXPECT_TRUE(Started("cheap"));
@@ -459,7 +477,7 @@ TEST_F(MergeSchedulerTest, StopDropsTheQueueAndWaitsForRunningMerges) {
   Enqueue(*scheduler, relation, "late", 512 * kMiB);
   EXPECT_TRUE(Destroyed("late"));
   EXPECT_FALSE(Started("late"));
-  EXPECT_TRUE(_registry.Active().empty());
+  EXPECT_TRUE(_registry.Active(1).empty());
   EXPECT_EQ(0, sdb::metrics::Get(sdb::metrics::Gauge::CompactionPending));
   EXPECT_EQ(0, sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
 }
@@ -586,30 +604,29 @@ TEST_F(MergeSchedulerTest, AMergeKeepsOneIdFromTheQueueToTheHistory) {
   auto relation = Relation(1);
   Enqueue(*scheduler, relation, "running", 512 * kMiB);
   Enqueue(*scheduler, relation, "dropped", 512 * kMiB);
-  ASSERT_EQ(2, _registry.Active().size());
+  ASSERT_EQ(2, _registry.Active(1).size());
   scheduler->CancelQueued(*relation);
-  const auto active = _registry.Active();
+  const auto active = _registry.Active(1);
   ASSERT_EQ(1, active.size());
-  EXPECT_EQ(_board.ids["running"], active[0].id);
   EXPECT_FALSE(active[0].Queued());
 
   Complete("running", MergeOutcome::Merged);
-  EXPECT_TRUE(_registry.Active().empty());
-  auto history = _registry.History();
+  EXPECT_TRUE(_registry.Active(1).empty());
+  auto history = _registry.History(1);
   ASSERT_EQ(1, history.size());
   EXPECT_EQ(active[0].id, history[0].id);
   EXPECT_EQ(MergeOutcome::Merged, history[0].outcome);
   EXPECT_EQ(4, history[0].stats.inputs.size());
 
   Enqueue(*scheduler, relation, "revoked", 512 * kMiB);
-  EXPECT_EQ(1, _registry.Active().size());
+  EXPECT_EQ(1, _registry.Active(1).size());
   Complete("revoked", MergeOutcome::Cancelled);
-  EXPECT_TRUE(_registry.Active().empty());
-  EXPECT_EQ(1, _registry.History().size());
+  EXPECT_TRUE(_registry.Active(1).empty());
+  EXPECT_EQ(1, _registry.History(1).size());
 
   _board.throw_on_run = true;
   Enqueue(*scheduler, relation, "thrown", 512 * kMiB, 1);
-  history = _registry.History();
+  history = _registry.History(1);
   ASSERT_EQ(2, history.size());
   EXPECT_EQ(MergeOutcome::Failed, history[1].outcome);
   EXPECT_EQ("boom", history[1].error);
@@ -617,7 +634,7 @@ TEST_F(MergeSchedulerTest, AMergeKeepsOneIdFromTheQueueToTheHistory) {
 
 TEST_F(MergeSchedulerTest, AStoreSeesTheNudgesOfItsRelation) {
   auto scheduler = Make(2);
-  MaintainedStore store{3};
+  MaintainedStore store{3, {}};
   const auto& relation = store.MergeRelation();
   EXPECT_EQ(3, relation->Id());
   scheduler->TakeOver(relation);

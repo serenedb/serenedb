@@ -21,6 +21,7 @@
 #include "iresearch/formats/column/col_writer.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/random/random.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -29,6 +30,7 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/database.hpp>
 #include <iterator>
+#include <limits>
 #include <mutex>
 #include <utility>
 #include <yaclib/coro/await.hpp>
@@ -48,6 +50,12 @@
 
 namespace irs {
 namespace {
+
+uint64_t NewColFileId() {
+  absl::BitGen gen;
+  return absl::Uniform<uint64_t>(absl::IntervalClosed, gen, 1,
+                                 std::numeric_limits<uint64_t>::max());
+}
 
 uint64_t BlockRows(const std::vector<ColumnBlockMeta>& blocks) {
   uint64_t rows = 0;
@@ -274,15 +282,15 @@ bool ColWriter::CopyColumnPart(field_id id, uint32_t part,
     EnsureOut();
     sink = _blocks.get();
   }
-  auto copy =
-    CopyColumnBlocks(reader, column, validity, dictionaries, *sink, progress);
-  if (!copy) {
+  ColumnMeta copy;
+  if (!CopyColumnBlocks(reader, column, validity, dictionaries, *sink, copy,
+                        progress)) {
     return false;
   }
   std::lock_guard lock{_mutex};
   auto& slot = PartOf(id, part);
   SDB_ASSERT(!slot.writer);
-  slot.copy = std::move(*copy);
+  slot.copy = std::move(copy);
   return true;
 }
 
@@ -317,9 +325,11 @@ uint16_t ColWriter::AddLeafDictionary(field_id id,
   return 1;
 }
 
-bool ColWriter::AddCopiedDictionaries(field_id id,
-                                      std::span<const std::string> dictionaries,
-                                      std::vector<uint16_t>& indexes) {
+bool ColWriter::AddCopiedDictionaries(
+  field_id id,
+  std::span<const std::shared_ptr<const codecs::TrainedDictionary>>
+    dictionaries,
+  std::vector<uint16_t>& indexes) {
   std::lock_guard lock{_mutex};
   auto& parts = _parts[id];
   const size_t reserved = parts.own_dictionary == 0 ? 1 : 0;
@@ -327,8 +337,8 @@ bool ColWriter::AddCopiedDictionaries(field_id id,
       kMaxColumnDictionaries) {
     return false;
   }
-  for (const auto& bytes : dictionaries) {
-    indexes.push_back(AppendDictionary(parts, bytes));
+  for (const auto& dictionary : dictionaries) {
+    indexes.push_back(AppendDictionary(parts, dictionary->Bytes()));
   }
   return true;
 }
@@ -445,12 +455,8 @@ void ColWriter::Rollback() noexcept { _out.reset(); }
 
 constexpr auto kNoCancel = [] { return true; };
 
-bool ColWriter::Commit(uint64_t target_row) {
-  return Commit(target_row, kNoCancel);
-}
-
-yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
-  return ComputeAnn(env, kNoCancel);
+bool ColWriter::Commit(uint64_t target_row, std::span<const uint32_t> new2old) {
+  return Commit(target_row, kNoCancel, new2old);
 }
 
 bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
@@ -527,23 +533,19 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
   return true;
 }
 
-yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
-                                         absl::FunctionRef<bool()> progress) {
+yaclib::Task<> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
   if (!_committed || _ann_writers.empty()) {
-    co_return true;
+    co_return {};
   }
   ColReader reader{*_dir, _segment_name, *_db, IOAdvice::SEQUENTIAL};
   for (auto& entry : _ann_writers) {
-    if (!progress()) {
-      co_return false;
-    }
     const auto* col = reader.Column(entry->column_id);
     if (!col) {
       continue;
     }
     co_await entry->writer->Compute(*col, reader.Ctx(), env);
   }
-  co_return true;
+  co_return {};
 }
 
 yaclib::Task<> ColWriter::ComputeAnn(field_id column, ColReader& reader,

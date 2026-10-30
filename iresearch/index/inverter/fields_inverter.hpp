@@ -34,6 +34,7 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/flush_order.hpp"
 #include "iresearch/index/inverter/posting_log.hpp"
 #include "iresearch/index/inverter/term_dictionary.hpp"
 #include "iresearch/index/typed_terms.hpp"
@@ -870,7 +871,7 @@ class FieldsInverter : util::Noncopyable {
 
   void Flush(burst_trie::FieldWriter& fw, FlushState& state,
              std::span<const BasicTermReader* const> extra,
-             std::span<const uint32_t> old2new = {});
+             const DocOrder& order);
 
   size_t MemoryActive() const noexcept {
     return _arena.SizeInBytes() + FieldsMemory();

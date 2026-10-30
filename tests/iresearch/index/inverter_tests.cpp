@@ -936,18 +936,20 @@ void AssertRemappedKeys(std::span<const std::string> vals,
   for (const auto& v : vals) {
     old_terms.emplace_back(v.data(), static_cast<uint32_t>(v.size()));
   }
-  std::vector<uint32_t> old2new(new2old.size());
+  DocOrder order;
+  order.new2old.assign(new2old.begin(), new2old.end());
+  order.old2new.resize(new2old.size());
   for (uint32_t row = 0; row != new2old.size(); ++row) {
     const auto& v = vals[new2old[row]];
     new_terms.emplace_back(v.data(), static_cast<uint32_t>(v.size()));
-    old2new[new2old[row]] = row;
+    order.old2new[new2old[row]] = row;
   }
   ASSERT_TRUE(old_field->InvertPrimaryKeyBlock(old_terms, doc_limits::min()));
   ASSERT_TRUE(new_field->InvertPrimaryKeyBlock(new_terms, doc_limits::min()));
 
   ScatterScratch remapped_scratch{mem.rm};
   ScatteredField remapped{mem, remapped_scratch};
-  remapped.Reset(*old_field, old2new);
+  remapped.Reset(*old_field, order);
   ScatterScratch expected_scratch{mem.rm};
   ScatteredField expected{mem, expected_scratch};
   expected.Reset(*new_field);

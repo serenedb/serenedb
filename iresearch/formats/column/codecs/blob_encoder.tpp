@@ -42,9 +42,8 @@ template<typename Codec>
 class BlobEncoder {
  public:
   static constexpr ByteCodec kCodec = Codec::kCodec;
-  static constexpr bool kSorted = false;
 
-  explicit BlobEncoder(StringTuning& tuning, uint32_t)
+  explicit BlobEncoder(StringTuning& tuning)
     : _tuning{tuning}, _history{tuning.history[static_cast<size_t>(kCodec)]} {}
 
   void Begin(Shape shape, uint8_t level, FrameLayout layout) {
@@ -68,7 +67,9 @@ class BlobEncoder {
 
   uint64_t Estimate(const SegmentBuilder&) const noexcept {
     return (_frames.size() + 1) * kFrameMetaSize + _data.size() +
-           static_cast<uint64_t>(static_cast<double>(_frame.size()) * Ratio());
+           static_cast<uint64_t>(
+             static_cast<double>(_frame.size()) *
+             Ratio(_history[static_cast<size_t>(_shape)], 1.0));
   }
 
   EncodedFrames Finish(const SegmentBuilder& rows,
@@ -195,19 +196,13 @@ class BlobEncoder {
     return DictionaryShape();
   }
 
-  uint8_t Flags() const noexcept {
+  FrameDictionary Flags() const noexcept {
     if (_trained) {
-      return kTrainedDictionary;
+      return FrameDictionary::Trained;
     }
-    return !_dictionary.empty() && _frames.size() > 1 ? kFrameDictionary : 0;
-  }
-
-  double Ratio() const noexcept {
-    const auto& hist = _history[static_cast<size_t>(_shape)];
-    if (hist.raw != 0) {
-      return static_cast<double>(hist.comp) / static_cast<double>(hist.raw);
-    }
-    return 1.0;
+    return !_dictionary.empty() && _frames.size() > 1
+             ? FrameDictionary::FirstFrame
+             : FrameDictionary::None;
   }
 
   void CloseFrame() {

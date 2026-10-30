@@ -22,7 +22,6 @@
 
 #include <absl/strings/str_cat.h>
 
-#include <atomic>
 #include <cstdint>
 #include <duckdb/common/optional_idx.hpp>
 #include <duckdb/common/vector/dictionary_vector.hpp>
@@ -82,12 +81,5 @@ class DecodedFrame final : public duckdb::ObjectCacheEntry {
 inline std::string FrameCacheKey(std::string_view segment, uint32_t frame) {
   return absl::StrCat(segment, "#", frame);
 }
-
-struct FrameCache {
-  duckdb::ObjectCache* cache = nullptr;
-  uint64_t file_id = 0;
-  uint64_t file_offset = 0;
-  std::atomic<bool>* touched = nullptr;
-};
 
 }  // namespace irs::codecs

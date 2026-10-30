@@ -37,6 +37,10 @@ constexpr bool Trainable(ByteCodec leaf) noexcept {
   return leaf == ByteCodec::Lz4 || leaf == ByteCodec::Zstd;
 }
 
+constexpr bool Sorted(ByteCodec leaf) noexcept {
+  return leaf == ByteCodec::Fsst;
+}
+
 template<typename Codec>
 constexpr uint8_t EffectiveLevel(uint8_t level) noexcept {
   if (level == 0) {
@@ -44,5 +48,17 @@ constexpr uint8_t EffectiveLevel(uint8_t level) noexcept {
   }
   return level < Codec::kMaxLevel ? level : Codec::kMaxLevel;
 }
+
+enum class Shape : uint8_t {
+  Dedup = 0,
+  Plain = 1,
+};
+
+struct StringChoice {
+  Shape shape;
+  ByteCodec leaf;
+
+  friend bool operator==(const StringChoice&, const StringChoice&) = default;
+};
 
 }  // namespace irs::codecs

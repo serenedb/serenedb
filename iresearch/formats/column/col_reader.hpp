@@ -54,8 +54,6 @@ inline constexpr duckdb::field_id_t kColFieldColumns = 0;
 inline constexpr duckdb::field_id_t kColFieldNormColumns = 1;
 inline constexpr duckdb::field_id_t kColFieldFileId = 2;
 
-uint64_t NewColFileId();
-
 inline std::string FileName(std::string_view segment_name) {
   return absl::StrCat(segment_name, ".", kFormatExt);
 }

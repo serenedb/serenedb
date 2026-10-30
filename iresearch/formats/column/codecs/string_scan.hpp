@@ -103,9 +103,6 @@ struct ChainEnd {
   uint64_t enc_off;
 };
 
-const ReadContext::CacheSlot& CacheSlotOf(
-  duckdb::ColumnSegment& segment) noexcept;
-
 duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
   duckdb::ColumnSegment& segment);
 
@@ -119,8 +116,6 @@ using EntryRanges = std::vector<std::pair<uint32_t, uint32_t>>;
 EntryRanges Normalize(EntryRanges ranges);
 
 EntryRanges Intersect(const EntryRanges& a, const EntryRanges& b);
-
-bool IsColumn(const duckdb::Expression& expr) noexcept;
 
 const duckdb::Value* StringConstant(const duckdb::Expression& expr) noexcept;
 

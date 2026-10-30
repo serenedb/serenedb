@@ -65,9 +65,7 @@ enum class MergeLane : uint8_t {
 };
 
 struct MergeEstimate {
-  uint64_t bytes = 0;
   uint64_t rewrite_bytes = 0;
-  size_t segments = 0;
   double score = 0;
   MergeLane lane = MergeLane::Big;
 };
@@ -112,17 +110,10 @@ class MergeRegistry {
   void Finish(uint64_t id, MergeOutcome outcome, irs::MergeStats stats,
               std::string error);
 
-  std::vector<MergeRecord> Active() const;
   std::vector<MergeRecord> Active(uint64_t relation_id) const;
-  std::vector<MergeRecord> History() const;
   std::vector<MergeRecord> History(uint64_t relation_id) const;
 
  private:
-  template<typename Pred>
-  std::vector<MergeRecord> Active(Pred pred) const;
-  template<typename Pred>
-  std::vector<MergeRecord> History(Pred pred) const;
-
   mutable absl::Mutex _mutex;
   uint64_t _next_id ABSL_GUARDED_BY(_mutex) = 1;
   irs::containers::NodeHashMap<uint64_t, MergeRecord> _active
@@ -133,24 +124,23 @@ class MergeRegistry {
 
 class MergeRecorder {
  public:
-  MergeRecorder(uint64_t relation_id, MergeOrigin origin,
-                uint64_t id = 0) noexcept
-    : _relation_id{relation_id}, _origin{origin}, _id{id} {}
+  MergeRecorder(uint64_t relation_id, MergeOrigin origin) noexcept
+    : _relation_id{relation_id}, _origin{origin} {}
   MergeRecorder(const MergeRecorder&) = delete;
   MergeRecorder& operator=(const MergeRecorder&) = delete;
   ~MergeRecorder();
 
   irs::CompactionPolicy Wrap(const irs::CompactionPolicy& policy);
-  void Begin(irs::CompactionView candidates);
   void Finish(irs::CompactionResult result);
   void Fail(std::string error);
 
  private:
+  void Begin(irs::CompactionView candidates);
   void Start();
 
   uint64_t _relation_id;
   MergeOrigin _origin;
-  uint64_t _id;
+  uint64_t _id = 0;
   bool _finished = false;
 };
 

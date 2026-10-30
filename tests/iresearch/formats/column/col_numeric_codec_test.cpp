@@ -53,6 +53,7 @@
 #include <string>
 #include <vector>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "gtest/gtest.h"
 #include "tests_shared.hpp"
 
@@ -510,9 +511,9 @@ TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
   auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
   const auto h = irs::codecs::NumericHeader::Parse(block, size);
   ASSERT_EQ(h.transform, irs::codecs::NumericTransform::RleFfor);
-  auto meta = irs::codecs::NumericFrameMeta::Load(block + h.off_frames);
+  auto meta = duckdb::Load<irs::codecs::NumericFrameMeta>(block + h.off_frames);
   meta.base += 1;
-  meta.Store(block + h.off_frames);
+  duckdb::Store(meta, block + h.off_frames);
   {
     std::ofstream out{file, std::ios::binary | std::ios::trunc};
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -714,12 +715,15 @@ TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
   irs::ColReader r{dir, std::string{kSeg}, Db()};
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
+  const auto file_id = irs::tests::ColFileId(dir, kSeg, Db());
   const auto cached_frames = [&] {
     size_t n = 0;
-    for (size_t b = 0; b < col->DataBlocks().size(); ++b) {
+    for (const auto& block : col->DataBlocks()) {
+      const auto key =
+        irs::codecs::DictionaryCacheKey(file_id, block.file_offset);
       for (uint32_t f = 0; f < 256; ++f) {
-        n += cache.Get<irs::codecs::DecodedFrame>(irs::codecs::FrameCacheKey(
-               col->DictionaryCacheKey(b), f)) != nullptr;
+        n += cache.Get<irs::codecs::DecodedFrame>(
+               irs::codecs::FrameCacheKey(key, f)) != nullptr;
       }
     }
     return n;
@@ -869,9 +873,9 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
   auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
   const auto h = irs::codecs::NumericHeader::Parse(block, size);
   ASSERT_GT(h.frame_count, 0);
-  auto meta = irs::codecs::NumericFrameMeta::Load(block + h.off_frames);
+  auto meta = duckdb::Load<irs::codecs::NumericFrameMeta>(block + h.off_frames);
   meta.frame.comp_len = h.data_size + 1;
-  meta.Store(block + h.off_frames);
+  duckdb::Store(meta, block + h.off_frames);
   {
     std::ofstream out{file, std::ios::binary | std::ios::trunc};
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));

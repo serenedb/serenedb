@@ -24,8 +24,8 @@
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <functional>
+#include <limits>
 #include <memory>
-#include <optional>
 #include <span>
 #include <vector>
 
@@ -37,6 +37,8 @@ namespace irs {
 
 class KeyOrder {
  public:
+  static constexpr uint64_t kNotIsolated = std::numeric_limits<uint64_t>::max();
+
   KeyOrder(MergeDocMap& doc_map, const SortSpec& spec);
   ~KeyOrder();
 
@@ -56,7 +58,7 @@ class KeyOrder {
 
   void Finish();
 
-  std::optional<uint64_t> IsolatedBegin(size_t input) const noexcept;
+  uint64_t IsolatedBegin(size_t input) const noexcept;
 
   const MergeOrder& Order() const noexcept;
 

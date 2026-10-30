@@ -1,0 +1,141 @@
+control substitution on
+
+statement ok
+DROP TABLE IF EXISTS eds_secret;
+
+
+statement ok
+DROP ROLE IF EXISTS eds_gone;
+
+
+statement ok
+DROP ROLE IF EXISTS eds_member;
+
+
+statement ok
+DROP ROLE IF EXISTS eds_escalated;
+
+
+statement ok
+CREATE TABLE eds_secret (a integer);
+
+
+statement ok
+INSERT INTO eds_secret VALUES (1);
+
+
+statement ok
+CREATE ROLE eds_gone LOGIN PASSWORD 'eds_pw';
+
+
+statement ok
+CREATE ROLE eds_member LOGIN PASSWORD 'eds_pw';
+
+
+statement ok
+CREATE ROLE eds_target;
+
+
+statement ok
+GRANT eds_target TO eds_member;
+
+
+skipif postgres
+statement ok
+COPY (SELECT 1 AS a) TO '${__TEST_DIR__}/eds_file.csv';
+
+
+connection c_eds user=eds_gone password=eds_pw
+statement error
+SELECT a FROM eds_secret;
+----
+db error: ERROR: permission denied for table eds_secret
+
+
+connection c_eds_member user=eds_member password=eds_pw
+statement ok
+SET ROLE eds_target;
+
+
+statement ok
+DROP ROLE eds_gone;
+
+
+statement ok
+REVOKE eds_target FROM eds_member;
+
+
+statement ok
+DROP ROLE eds_target;
+
+
+connection c_eds user=eds_gone password=eds_pw
+statement error
+SELECT a FROM eds_secret;
+----
+db error: ERROR: permission denied for table eds_secret
+
+
+connection c_eds user=eds_gone password=eds_pw
+statement error
+INSERT INTO eds_secret VALUES (2);
+----
+db error: ERROR: permission denied for table eds_secret
+
+
+connection c_eds user=eds_gone password=eds_pw
+statement error
+CREATE ROLE eds_escalated SUPERUSER;
+----
+db error: ERROR: permission denied to create role<slt:ignore>
+
+
+connection c_eds_member user=eds_member password=eds_pw
+statement error
+SELECT a FROM eds_secret;
+----
+db error: ERROR: permission denied for table eds_secret
+
+
+connection c_eds_member user=eds_member password=eds_pw
+statement error
+CREATE ROLE eds_escalated SUPERUSER;
+----
+db error: ERROR: permission denied to create role<slt:ignore>
+
+
+skipif postgres
+connection c_eds user=eds_gone password=eds_pw
+statement error
+SELECT a FROM read_csv('${__TEST_DIR__}/eds_file.csv');
+----
+db error: ERROR: permission denied to access "<slt:ignore>/eds_file.csv"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+skipif postgres
+connection c_eds user=eds_gone password=eds_pw
+query
+SELECT count(*) AS listed FROM duckdb_tables() WHERE table_name = 'eds_secret';
+----
+listed
+0
+
+
+query
+SELECT a FROM eds_secret;
+----
+a
+1
+
+
+statement ok
+DROP TABLE eds_secret;
+
+
+statement ok
+DROP ROLE eds_member;
+
+
+statement ok
+DROP ROLE IF EXISTS eds_escalated;

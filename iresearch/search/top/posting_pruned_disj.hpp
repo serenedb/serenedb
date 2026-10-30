@@ -156,6 +156,13 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
                        bool required) {
     const auto count = static_cast<uint32_t>(cand_docs.size());
     SDB_ASSERT(count != 0);
+    if (_doc > cand_docs[count - 1]) {
+      if (required) {
+        cand_docs.resize(0);
+        cand_scores.resize(0);
+      }
+      return;
+    }
     Mask();
     ABSL_CACHELINE_ALIGNED doc_id_t docs[2 * kScoreBlock];
     ABSL_CACHELINE_ALIGNED uint32_t slots[2 * kScoreBlock];

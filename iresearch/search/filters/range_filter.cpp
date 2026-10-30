@@ -56,7 +56,8 @@ class ByRangeIterator : public WrappedTermIterator {
   ByRangeIterator(const TermReader& reader,
                   const ByRangeFilterOptions::range_type& range)
     : WrappedTermIterator{reader.IteratorUntil(
-        RangeUpper(range.max, range.max_type))},
+        range.max_type == BoundType::Unbounded ? bytes_view{}
+                                               : bytes_view{range.max})},
       _range{&range} {}
 
   bool next() final {

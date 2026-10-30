@@ -88,9 +88,8 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
 
   void WriteToWAL(duckdb::WriteAheadLog& wal) final {
     SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_written");
-    for (auto& trx : _writes.transactions) {
-      trx->RegisterFlush();
-    }
+    irs::IndexWriter::Transaction::RegisterFlush(_writes.transactions);
+    SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_registered");
     bool set_table = true;
     SDB_IF_FAILURE("search_delete_wal_no_table") { set_table = false; }
     if (set_table) {
@@ -324,9 +323,7 @@ void SearchTableTransaction::Stage(const irs::SourcePosition& position,
     for (const auto& trx : w.transactions) {
       queries += trx->GetQueries();
     }
-    SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_written");
     irs::IndexWriter::Transaction::RegisterFlush(w.transactions);
-    SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_registered");
     w.first_tick = w.shard->NextTick(queries) - queries;
     w.position = position;
     w.shard->MarkStaged(position);

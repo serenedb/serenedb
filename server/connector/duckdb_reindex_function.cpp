@@ -83,6 +83,7 @@
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
+#include "auth/lookup.h"
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -191,7 +192,7 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
   }
   target.database_id = database->GetOid();
   target.schema_path = std::move(schema_path);
-  auto index_entry = duckdb::Catalog::GetEntry(
+  auto index_entry = auth::Lookup(
     context,
     duckdb::EntryLookupInfo{duckdb::CatalogType::INDEX_ENTRY,
                             QualifiedIn(target, duckdb::Identifier{name})},

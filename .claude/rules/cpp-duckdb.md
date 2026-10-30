@@ -21,7 +21,7 @@ paths:
 - A gap in something DuckDB implements is fixed by patching DuckDB's code, and our parallel version is deleted.
 - Vectors: one `Vector` per batch holds data and validity; a vector carries its size (no separate `count`; a writer sets child cardinality); a vector reused across calls is reset first; a table function emits at most `STANDARD_VECTOR_SIZE` rows per call, straight into its output; never `Flatten` or per-cell `GetValue` on hot paths, read through `UnifiedVectorFormat`; JSON is `VARCHAR` with the `JSON` alias, so dispatch on the full type.
 - Internal bulk reads consume vectors inside the pipeline (a table function), never materialize and `Fetch`.
-- The binder checks privileges where it resolves a name: a name from the statement goes through the binder's `entry_retriever`, which checks schema USAGE and CONNECT on another database. `check-planner-lookups` counts the direct `Catalog::GetEntry`/`GetSchema` calls in `src/planner`; a new one is routed, or listed there when it is internal.
+- The binder checks privileges where it resolves a name: a name from the statement goes through the binder's `entry_retriever`, which checks schema USAGE and CONNECT on another database. `check-catalog-lookups` counts the direct `Catalog::GetEntry`/`GetSchema` calls in `src/planner`; a new one is routed, or listed there when it is internal.
 - DuckDB-level targets (`unittest`, extensions) build on upstream's own dependencies: cut a serenedb-only edge instead of making serenedb work their prerequisite.
 
 ## Changing it

@@ -74,6 +74,7 @@
 #include <utility>
 #include <vector>
 
+#include "auth/lookup.h"
 #include "auth/role_closure.h"
 #include "catalog/entry/tokenizer.h"
 #include "pg/option_help.h"
@@ -743,15 +744,18 @@ class CreateTSDictionaryOptions : public OptionsParser {
 
   void BuildDictionary(irs::analysis::TokenizerConfig& out) {
     std::string from = Value<tokenizer_options::kFrom>();
-    auto tokenizer = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-      _context, duckdb::QualifiedName::Parse(from),
-      duckdb::OnEntryNotFound::RETURN_NULL);
+    auto tokenizer =
+      auth::Lookup(_context,
+                   duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
+                                           duckdb::QualifiedName::Parse(from)},
+                   duckdb::OnEntryNotFound::RETURN_NULL);
     if (!tokenizer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("text search dictionary \"", from, "\" does not exist"));
     }
-    out = irs::analysis::Clone(tokenizer->Config());
+    out = irs::analysis::Clone(
+      tokenizer->Cast<catalog::TokenizerCatalogEntry>().Config());
   }
 
   irs::analysis::TokenizerConfig _config;

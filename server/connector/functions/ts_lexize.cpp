@@ -38,6 +38,7 @@
 #include <iresearch/utils/string.hpp>
 #include <variant>
 
+#include "auth/lookup.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/tokenizer.h"
 #include "connector/common.h"
@@ -52,15 +53,17 @@ namespace {
 
 catalog::TokenizerRef LookupTokenizerDict(duckdb::ClientContext& context,
                                           std::string_view dict_name) {
-  auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-    context, duckdb::QualifiedName::Parse(dict_name),
+  auto dict = auth::Lookup(
+    context,
+    duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
+                            duckdb::QualifiedName::Parse(dict_name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("text search dictionary \"", dict_name, "\" does not exist"));
   }
-  return dict->GetTokenizer();
+  return dict->Cast<catalog::TokenizerCatalogEntry>().GetTokenizer();
 }
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(

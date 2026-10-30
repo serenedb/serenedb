@@ -43,6 +43,7 @@
 #include <utility>
 #include <vector>
 
+#include "auth/lookup.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "otel/mapper.h"
@@ -64,20 +65,23 @@ void BindTarget(duckdb::ClientContext& context, std::string_view schema_name,
                 std::string_view table_name, TargetColumns& data,
                 duckdb::vector<duckdb::LogicalType>& return_types,
                 duckdb::vector<duckdb::Identifier>& names) {
-  auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
+  auto table = auth::Lookup(
     context,
-    duckdb::QualifiedName{duckdb::DatabaseManager::GetDefaultDatabase(context),
-                          duckdb::Identifier{schema_name},
-                          duckdb::Identifier{table_name}},
+    duckdb::EntryLookupInfo{
+      duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::QualifiedName{
+        duckdb::DatabaseManager::GetDefaultDatabase(context),
+        duckdb::Identifier{schema_name}, duckdb::Identifier{table_name}}},
     duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!table) {
+  if (!table || table->type != duckdb::CatalogType::TABLE_ENTRY) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", schema_name, ".", table_name,
                             "\" does not exist; create the OpenTelemetry "
                             "schema first"));
   }
   size_t index = 0;
-  for (const auto& column : table->GetColumns().Logical()) {
+  for (const auto& column :
+       table->Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
     return_types.push_back(column.Type());
     names.emplace_back(column.Name().GetIdentifierName());
     data.columns.emplace(column.Name().GetIdentifierName(), index);

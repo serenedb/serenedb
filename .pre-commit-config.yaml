@@ -116,10 +116,10 @@ repos:
         entry: python3 scripts/check_fault_points.py
         pass_filenames: false
         always_run: true
-      - id: check-planner-lookups
-        name: Check the fork's planner resolves names through the retriever
+      - id: check-catalog-lookups
+        name: Check names are resolved through a privilege-checked retriever
         language: python
-        entry: python3 scripts/check_planner_lookups.py
+        entry: python3 scripts/check_catalog_lookups.py
         pass_filenames: false
         always_run: true
       - id: check-substitution-directive

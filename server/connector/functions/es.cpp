@@ -68,6 +68,7 @@
 #include <map>
 #include <string_view>
 
+#include "auth/lookup.h"
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -103,12 +104,19 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> EsSchema(
 
 duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
   duckdb::ClientContext& context, std::string_view index) {
-  return duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-    context,
-    duckdb::QualifiedName{duckdb::DatabaseManager::GetDefaultDatabase(context),
-                          duckdb::Identifier{kEsSchema},
-                          duckdb::Identifier{index}},
-    duckdb::OnEntryNotFound::RETURN_NULL);
+  auto entry =
+    auth::Lookup(context,
+                 duckdb::EntryLookupInfo{
+                   duckdb::CatalogType::TABLE_ENTRY,
+                   duckdb::QualifiedName{
+                     duckdb::DatabaseManager::GetDefaultDatabase(context),
+                     duckdb::Identifier{kEsSchema}, duckdb::Identifier{index}}},
+                 duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!entry || entry->type != duckdb::CatalogType::TABLE_ENTRY) {
+    return nullptr;
+  }
+  context.CheckEntryReference(*entry);
+  return &entry->Cast<duckdb::TableCatalogEntry>();
 }
 
 // Every inverted index over `table`, taken off the schema entry the table
@@ -481,9 +489,10 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
                                     duckdb::Identifier{data.index}};
   // ES "no such index" covers both a missing name and a name that resolves
   // to a non-table relation, so gate the drop on an actual table existing.
-  auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-    context, qname, duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!table) {
+  auto table = auth::Lookup(
+    context, duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, qname},
+    duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!table || table->type != duckdb::CatalogType::TABLE_ENTRY) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }

@@ -53,6 +53,7 @@
 #include <utility>
 #include <vector>
 
+#include "auth/lookup.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/tokenizer.h"
 #include "pg/option_help.h"
@@ -199,8 +200,7 @@ bool FunctionExists(duckdb::ClientContext& ctx,
                     const duckdb::Identifier& name) {
   const auto exists = [&](duckdb::CatalogType type) -> bool {
     const duckdb::EntryLookupInfo lookup{type, duckdb::QualifiedName{name}};
-    return duckdb::Catalog::GetEntry(ctx, lookup,
-                                     duckdb::OnEntryNotFound::RETURN_NULL);
+    return auth::Lookup(ctx, lookup, duckdb::OnEntryNotFound::RETURN_NULL);
   };
   return exists(duckdb::CatalogType::SCALAR_FUNCTION_ENTRY) ||
          exists(duckdb::CatalogType::MACRO_ENTRY) ||
@@ -504,12 +504,11 @@ class SpecCompiler {
   }
 
   bool DictionaryExists(std::string_view name) {
-    return static_cast<bool>(
-      duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-        _context,
-        duckdb::QualifiedName{duckdb::Identifier{}, duckdb::Identifier{},
-                              duckdb::Identifier{name}},
-        duckdb::OnEntryNotFound::RETURN_NULL));
+    return static_cast<bool>(auth::Lookup(
+      _context,
+      duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
+                              duckdb::QualifiedName{duckdb::Identifier{name}}},
+      duckdb::OnEntryNotFound::RETURN_NULL));
   }
 
   [[noreturn]] void ThrowUnknownStage(const duckdb::FunctionExpression& fn) {
@@ -541,19 +540,21 @@ class SpecCompiler {
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG("invalid text search dictionary reference \"", spelled, "\""));
     }
-    const auto tokenizer =
-      duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-        _context,
+    const auto tokenizer = auth::Lookup(
+      _context,
+      duckdb::EntryLookupInfo{
+        duckdb::CatalogType::TOKENIZER_ENTRY,
         duckdb::QualifiedName{
           duckdb::Identifier{},
-          names.size() == 2 ? names[0] : duckdb::Identifier{}, names.back()},
-        duckdb::OnEntryNotFound::RETURN_NULL);
+          names.size() == 2 ? names[0] : duckdb::Identifier{}, names.back()}},
+      duckdb::OnEntryNotFound::RETURN_NULL);
     if (!tokenizer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("text search dictionary \"", spelled, "\" does not exist"));
     }
-    return CompileChain(*Parse(tokenizer->Definition()));
+    return CompileChain(
+      *Parse(tokenizer->Cast<catalog::TokenizerCatalogEntry>().Definition()));
   }
 
   Stage CompileLambda(const duckdb::LambdaExpression& lambda) {

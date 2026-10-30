@@ -41,6 +41,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
+#include "auth/lookup.h"
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
@@ -384,7 +385,7 @@ void DispatchInverted(duckdb::ClientContext& context,
       // No refresh/compact at column granularity.
       break;
     case Scope::Index: {
-      auto entry = duckdb::Catalog::GetEntry(
+      auto entry = auth::Lookup(
         context,
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::INDEX_ENTRY,
@@ -420,7 +421,7 @@ void DispatchInverted(duckdb::ClientContext& context,
                          index->name.GetIdentifierName());
     } break;
     case Scope::Table: {
-      auto entry = duckdb::Catalog::GetEntry(
+      auto entry = auth::Lookup(
         context,
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::TABLE_ENTRY,
@@ -547,7 +548,7 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
   switch (scope) {
     case Scope::Table:
     case Scope::Column: {
-      auto entry = duckdb::Catalog::GetEntry(
+      auto entry = auth::Lookup(
         context,
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::TABLE_ENTRY,
@@ -657,7 +658,7 @@ void VacuumExecute(duckdb::ClientContext& context,
         kSereneDBClientStateKey)) {
     duckdb::idx_t relid = pg::kInvalidOid;
     if (verb->scope == Scope::Table || verb->scope == Scope::Column) {
-      auto table = duckdb::Catalog::GetEntry(
+      auto table = auth::Lookup(
         context,
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::TABLE_ENTRY,

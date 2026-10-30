@@ -105,6 +105,25 @@ connection c_ved user=eue_vedernikoff password=eue_pw
 statement error
 CALL es_refresh('eue_docs');
 ----
+db error: ERROR: permission denied for schema es
+
+
+connection c_ved user=eue_vedernikoff password=eue_pw
+statement error
+CALL es_drop_index('eue_docs');
+----
+db error: ERROR: permission denied for schema es
+
+
+connection c_click user=eue_clickclack password=eue_pw
+statement ok
+GRANT USAGE ON SCHEMA es TO eue_vedernikoff;
+
+
+connection c_ved user=eue_vedernikoff password=eue_pw
+statement error
+CALL es_refresh('eue_docs');
+----
 db error: ERROR: permission denied for table eue_docs
 
 

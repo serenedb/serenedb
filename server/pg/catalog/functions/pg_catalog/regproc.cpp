@@ -47,6 +47,7 @@
 #include <utility>
 #include <vector>
 
+#include "auth/lookup.h"
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "connector/common.h"
@@ -994,9 +995,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> AttachedRelation(
                                    duckdb::Identifier{(*names)[1]},
                                    duckdb::Identifier{(*names)[2]}};
   for (const auto type : kRelationSets) {
-    if (auto entry = duckdb::Catalog::GetEntry(
-          *session.context, duckdb::EntryLookupInfo{type, name},
-          duckdb::OnEntryNotFound::RETURN_NULL)) {
+    if (auto entry =
+          auth::Lookup(*session.context, duckdb::EntryLookupInfo{type, name},
+                       duckdb::OnEntryNotFound::RETURN_NULL)) {
       return entry;
     }
   }

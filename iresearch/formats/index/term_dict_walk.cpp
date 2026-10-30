@@ -28,6 +28,7 @@
 #include <variant>
 #include <vector>
 
+#include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
@@ -270,7 +271,7 @@ class SuffixFilter {
   std::span<const RegexpAcceptor::ExemptKey> _exempt;
   std::vector<uint64_t> _words;
   std::array<uint8_t, kLabels + 1> _starts{};
-  TailSet _tails;
+  analysis::classify::ByteSet _tails;
   std::array<Match, kLabels> _last{};
   bool _coded = false;
 };
@@ -410,7 +411,8 @@ class InfixFilter {
     for (size_t at = 0; at < codes.size(); at += kRestartInterval) {
       const auto count = static_cast<uint32_t>(
         std::min<size_t>(kRestartInterval, codes.size() - at));
-      if (_anchors.Find(codes.data() + at, count) != 0) {
+      if ((analysis::classify::ClassifyByteSet16(codes.data() + at, _anchors) &
+           analysis::classify::LowBits(count)) != 0) {
         return true;
       }
     }
@@ -611,7 +613,7 @@ class InfixFilter {
   uint32_t _hits_block = kNoEntry;
   size_t _hit = 0;
   std::vector<uint32_t> _hits;
-  TailSet _anchors;
+  analysis::classify::ByteSet _anchors;
   bstring _decoded;
   bytes_view _infix;
   std::vector<uint8_t> _bytes;

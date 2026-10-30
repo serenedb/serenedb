@@ -38,7 +38,9 @@
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -529,15 +531,18 @@ void Fuzzy(benchmark::State& state, const std::string& base, uint8_t distance) {
     walks / 1e6, benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
 }
 
-void Infix(benchmark::State& state, const std::string& base) {
+constexpr std::string_view kInfixes[] = {"%ild%", "%onp%", "%ion%", "%elect%"};
+constexpr std::string_view kSuffixes[] = {"%tion", "%nsis", "%ment", "%ly"};
+
+void Wildcards(benchmark::State& state, const std::string& base,
+               std::span<const std::string_view> patterns) {
   const auto& data = Load(base);
   if (!data.error.empty()) {
     state.SkipWithError(data.error);
     return;
   }
   std::vector<std::unique_ptr<const irs::RegexpAcceptor>> acceptors;
-  for (const std::string_view pattern :
-       {"%ild%", "%onp%", "%ion%", "%elect%"}) {
+  for (const auto pattern : patterns) {
     acceptors.push_back(std::make_unique<const irs::RegexpAcceptor>(
       irs::RegexpAcceptor::WildcardTag{},
       irs::ViewCast<irs::byte_type>(pattern)));
@@ -593,7 +598,10 @@ int Main(int argc, char** argv) {
     }
     benchmark::RegisterBenchmark(
       absl::StrCat("infix/", base),
-      [base](benchmark::State& state) { Infix(state, base); });
+      [base](benchmark::State& state) { Wildcards(state, base, kInfixes); });
+    benchmark::RegisterBenchmark(
+      absl::StrCat("suffix/", base),
+      [base](benchmark::State& state) { Wildcards(state, base, kSuffixes); });
     for (const auto name : kCandidates) {
       const auto suffix = absl::StrCat(base, "/", name);
       benchmark::RegisterBenchmark(absl::StrCat("find_hit/", suffix),

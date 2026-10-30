@@ -22,16 +22,13 @@
 
 #include <absl/base/internal/endian.h>
 
-#ifdef __AVX2__
-#include <immintrin.h>
-#endif
-
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstring>
 #include <limits>
 
+#include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
@@ -165,56 +162,6 @@ IRS_FORCE_INLINE inline Header HeaderAt(const BlockView& view,
     .len = ColumnAt(view.lens, view.width, entry),
   };
 }
-
-class TailSet {
- public:
-  void Add(byte_type b) noexcept {
-    _bits[b >> 6] |= uint64_t{1} << (b & 63);
-    auto& rows = b >> 4 < 8 ? _low : _high;
-    rows[b & 0x0F] |= static_cast<byte_type>(1 << ((b >> 4) & 7));
-  }
-
-  bool Contains(byte_type b) const noexcept {
-    return (_bits[b >> 6] >> (b & 63)) & 1;
-  }
-
-  IRS_FORCE_INLINE uint32_t Find(const byte_type* tails,
-                                 uint32_t count) const noexcept {
-    SDB_ASSERT(count <= kRestartInterval);
-#ifdef __AVX2__
-    const auto bytes = _mm_loadu_si128(reinterpret_cast<const __m128i*>(tails));
-    const auto nibble = _mm_set1_epi8(0x0F);
-    const auto lo = _mm_and_si128(bytes, nibble);
-    const auto hi = _mm_and_si128(_mm_srli_epi16(bytes, 4), nibble);
-    const auto rows = _mm_blendv_epi8(_mm_shuffle_epi8(Load(_low), lo),
-                                      _mm_shuffle_epi8(Load(_high), lo),
-                                      _mm_cmpgt_epi8(hi, _mm_set1_epi8(7)));
-    const auto bits = _mm_shuffle_epi8(
-      _mm_setr_epi8(1, 2, 4, 8, 16, 32, 64, -128, 1, 2, 4, 8, 16, 32, 64, -128),
-      hi);
-    const auto found = _mm_cmpeq_epi8(_mm_and_si128(rows, bits), bits);
-    return static_cast<uint32_t>(_mm_movemask_epi8(found)) &
-           ((uint32_t{1} << count) - 1);
-#else
-    uint32_t found = 0;
-    for (uint32_t i = 0; i != count; ++i) {
-      found |= uint32_t{Contains(tails[i])} << i;
-    }
-    return found;
-#endif
-  }
-
- private:
-#ifdef __AVX2__
-  static __m128i Load(const std::array<byte_type, 16>& rows) noexcept {
-    return _mm_load_si128(reinterpret_cast<const __m128i*>(rows.data()));
-  }
-#endif
-
-  std::array<uint64_t, 4> _bits{};
-  alignas(16) std::array<byte_type, 16> _low{};
-  alignas(16) std::array<byte_type, 16> _high{};
-};
 
 inline bytes_view SymbolAt(const duckdb_fsst_decoder_t& decoder,
                            size_t code) noexcept {
@@ -660,13 +607,17 @@ class Cursor {
   }
 
   template<typename Reject>
-  IRS_FORCE_INLINE uint32_t SkipTails(size_t prefix, const TailSet& tails,
+  IRS_FORCE_INLINE uint32_t SkipTails(size_t prefix,
+                                      const analysis::classify::ByteSet& tails,
                                       Reject&& reject) {
     const auto [first, end] = SkipSpan();
     if (first >= end) {
       return kNoSkip;
     }
-    uint32_t candidates = tails.Find(_view.tails + first, end - first);
+    SDB_ASSERT(end - first <= kRestartInterval);
+    uint32_t candidates =
+      analysis::classify::ClassifyByteSet16(_view.tails + first, tails) &
+      analysis::classify::LowBits(end - first);
     const auto* sp = _sp;
     uint32_t entry = first;
     uint32_t lcp = kNoSkip;

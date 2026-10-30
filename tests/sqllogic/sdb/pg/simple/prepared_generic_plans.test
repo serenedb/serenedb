@@ -105,6 +105,50 @@ DEALLOCATE pgp_untyped;
 
 
 statement ok
+PREPARE pgp_class AS SELECT count(*) AS n FROM pg_class WHERE relname = 'pgp_later';
+
+
+query
+EXECUTE pgp_class;
+----
+n
+0
+
+
+statement ok
+CREATE TABLE pgp_later (a integer);
+
+
+query
+EXECUTE pgp_class;
+----
+n
+1
+
+
+query
+EXECUTE pgp_class;
+----
+n
+1
+
+
+query
+SELECT generic_plans, custom_plans FROM pg_prepared_statements WHERE name = 'pgp_class';
+----
+generic_plans	custom_plans
+3	0
+
+
+statement ok
+DEALLOCATE pgp_class;
+
+
+statement ok
+DROP TABLE pgp_later;
+
+
+statement ok
 DROP TABLE pgp_other;
 
 

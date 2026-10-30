@@ -50,6 +50,20 @@ struct SystemFunctionInfo final : duckdb::TableFunctionInfo {
   const SystemTable& table;
 };
 
+class SystemTableVersion final : public duckdb::PlanDataVersion {
+ public:
+  explicit SystemTableVersion(duckdb::Identifier database)
+    : _database{std::move(database)} {}
+
+  bool IsCurrent(duckdb::ClientContext& context) const final {
+    return _database.GetIdentifierName().empty() ||
+           duckdb::DatabaseManager::GetDefaultDatabase(context) == _database;
+  }
+
+ private:
+  duckdb::Identifier _database;
+};
+
 duckdb::BindInfo SystemTableGetBindInfo(
   const duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
   return duckdb::BindInfo{*bind_data->Cast<SystemTableBindData>().entry};
@@ -201,15 +215,23 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
     types.emplace_back(column.Type());
     names.emplace_back(column.Name());
   }
-  return duckdb::make_uniq<SystemTableBindData>(
-    table,
+  auto& catalog =
     duckdb::Catalog::GetCatalog(
       context, duckdb::DatabaseManager::GetDefaultDatabase(context))
-      .Cast<duckdb::DuckCatalog>(),
-    nullptr);
+      .Cast<duckdb::DuckCatalog>();
+  if (input.binder) {
+    input.binder->GetStatementProperties().RegisterDBRead(catalog, context);
+  }
+  return duckdb::make_uniq<SystemTableBindData>(table, catalog, nullptr);
 }
 
 }  // namespace
+
+duckdb::shared_ptr<duckdb::PlanDataVersion>
+SystemTableBindData::GetPlanDataVersion() const {
+  return duckdb::make_shared_ptr<SystemTableVersion>(
+    entry ? duckdb::Identifier{} : catalog.GetName());
+}
 
 duckdb::TableFunction BindSystemTableScan(
   catalog::SystemTableEntry& entry,

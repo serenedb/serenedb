@@ -1,0 +1,80 @@
+statement ok
+DROP TABLE IF EXISTS ecde_t;
+
+
+statement ok
+DROP ROLE IF EXISTS ecde_reader;
+
+
+statement ok
+CREATE ROLE ecde_reader LOGIN PASSWORD 'ecde_pw';
+
+
+statement ok
+CREATE TABLE ecde_t (a integer, secret text);
+
+
+statement ok
+INSERT INTO ecde_t VALUES (1, 'alpha');
+
+
+statement ok
+GRANT SELECT (a) ON ecde_t TO ecde_reader;
+
+
+connection c_ecde user=ecde_reader password=ecde_pw
+query
+SELECT * EXCLUDE (secret) FROM ecde_t;
+----
+a
+1
+
+
+connection c_ecde user=ecde_reader password=ecde_pw
+statement error
+SELECT * EXCLUDE (a) FROM ecde_t;
+----
+db error: ERROR: permission denied for table ecde_t
+
+
+connection c_ecde user=ecde_reader password=ecde_pw
+statement error
+SELECT COLUMNS(*) FROM ecde_t;
+----
+db error: ERROR: permission denied for table ecde_t
+
+
+connection c_ecde user=ecde_reader password=ecde_pw
+statement error
+SELECT COLUMNS('sec.*') FROM ecde_t;
+----
+db error: ERROR: permission denied for table ecde_t
+
+
+connection c_ecde user=ecde_reader password=ecde_pw
+statement error
+SUMMARIZE ecde_t;
+----
+db error: ERROR: permission denied for table ecde_t
+
+
+connection c_ecde user=ecde_reader password=ecde_pw
+statement error
+SELECT struct_pack(COLUMNS(*)) FROM ecde_t;
+----
+db error: ERROR: permission denied for table ecde_t
+
+
+connection c_ecde user=ecde_reader password=ecde_pw
+statement error
+SELECT * REPLACE (a + 1 AS a) FROM ecde_t;
+----
+db error: ERROR: permission denied for table ecde_t
+
+
+statement ok
+DROP TABLE ecde_t;
+
+
+statement ok
+DROP ROLE ecde_reader;

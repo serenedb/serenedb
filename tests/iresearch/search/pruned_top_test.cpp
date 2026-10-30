@@ -435,6 +435,19 @@ TEST_P(PrunedTopTest, required_terms_with_optional_ones) {
   }
 }
 
+TEST_P(PrunedTopTest, required_term_with_sparser_optional_ones) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {.must = {"half"}, .should = {"mid", "sparse"}},
+         {.must = {"dense"}, .should = {"rare", "cluster", "run"}},
+         {.must = {"half"}, .should = {"holes"}},
+         {.must = {"dense"}, .should = {"mid", "single"}},
+         {.must = {"half"}, .should = {"edge", "rare"}},
+       }) {
+    Check(shape);
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(pruned_top_test, PrunedTopTest,
                          ::testing::Combine(::testing::Values(
                            &tests::Directory<&tests::MemoryDirectory>)),

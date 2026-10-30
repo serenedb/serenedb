@@ -43,8 +43,10 @@ class BooleanWindow : public Root {
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
   static constexpr bool kTally = kOptional && irs::detail::Tallies<Optional>();
-  static_assert(kLead != kOptional);
+  static constexpr bool kScoredLead = kLead && kOptional;
+  static_assert(kLead || kOptional);
   static_assert(!kTally || !kExcludes);
+  static_assert(!kScoredLead || (!kTally && !kExcludes));
 
   template<typename LeadArgs, typename OptionalArgs, typename ExcludesArgs>
   BooleanWindow(Table table, std::piecewise_construct_t, LeadArgs&& lead,
@@ -69,7 +71,10 @@ class BooleanWindow : public Root {
       }
       const auto min = next;
       const auto max = std::min<doc_id_t>(min + irs::detail::kWindowDocs, end);
-      if constexpr (kLead) {
+      if constexpr (kScoredLead) {
+        next = _lead.Fill(min, max, _mask, _window);
+        _optional.AddMasked(min, max, _mask, _window);
+      } else if constexpr (kLead) {
         next = _lead.FillOr(min, max, _mask);
         if constexpr (kExcludes) {
           _excludes.Remove(min, max, _mask);

@@ -40,6 +40,8 @@ inline constexpr doc_id_t kWindowBits = BitsRequired<uint64_t>();
 inline constexpr doc_id_t kWindowDocs = kWindowWords * kWindowBits;
 inline constexpr uint32_t kSparseInverse = BitsRequired<doc_id_t>();
 inline constexpr uint32_t kSparseWindow = kWindowDocs / kSparseInverse;
+inline constexpr uint64_t kProbeCost =
+  std::countr_zero(doc_limits::kBlockSize) + 2;
 
 static_assert(kWindowDocs < doc_limits::eof());
 

@@ -154,6 +154,13 @@ class OrGroup {
     });
   }
 
+  doc_id_t AddMasked(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words,
+                     score_t* IRS_RESTRICT scores) {
+    return _leaves.Visit(max, [&](auto& leaf) IRS_FORCE_INLINE {
+      return leaf.AddMasked(min, max, words, scores);
+    });
+  }
+
  private:
   Leaves _leaves;
 };

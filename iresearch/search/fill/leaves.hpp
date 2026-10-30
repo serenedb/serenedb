@@ -83,14 +83,11 @@ class AndLeaves {
   }
 
  private:
-  static constexpr uint64_t kProbeCost =
-    std::countr_zero(doc_limits::kBlockSize) + 2;
-
   IRS_FORCE_INLINE static bool Probes(uint32_t card, Leaf& leaf, doc_id_t min,
                                       doc_id_t max) {
     if constexpr (requires { leaf.FillCost(min, max); }) {
       return card < detail::kSparseWindow &&
-             card * kProbeCost < leaf.FillCost(min, max);
+             card * detail::kProbeCost < leaf.FillCost(min, max);
     } else {
       return card < detail::kSparseWindow;
     }

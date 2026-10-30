@@ -71,6 +71,7 @@ struct Family {
   static constexpr bool kWrapsMerge = false;
   static constexpr bool kLazyGroups = false;
   static constexpr bool kBoostArity = true;
+  static constexpr bool kScoredLeadWindow = true;
 
   static score_t Base(score_t) noexcept { return 0; }
 

@@ -88,6 +88,42 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
     return Add(min, max, nullptr, mask, window);
   }
 
+  doc_id_t AddMasked(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                     score_t* IRS_RESTRICT window)
+    requires(!Counts)
+  {
+    SDB_ASSERT(min < max);
+    if (!this->Start(min, max)) {
+      return _doc;
+    }
+    const auto* const end = std::cend(_docs);
+    if (_left_in_leaf != 0) {
+      const auto* const begin = Behind(end - _left_in_leaf, end, min);
+      const auto* const it = this->template ScoreMasked<MergeType>(
+        begin, end, min, max, mask, window);
+      _left_in_leaf = static_cast<uint32_t>(end - it);
+      if (it != end) {
+        return _doc = *it;
+      }
+    }
+    for (;;) {
+      if (_left_in_list == 0) {
+        return _doc = doc_limits::eof();
+      }
+      const auto len = std::min(_left_in_list, kBlock);
+      _left_in_list -= len;
+      if (!this->template ReadLeafBelow<false>(len, min)) {
+        continue;
+      }
+      const auto* const it = this->template ScoreMasked<MergeType>(
+        Behind(end - len, end, min), end, min, max, mask, window);
+      if (it != end) {
+        _left_in_leaf = static_cast<uint32_t>(end - it);
+        return _doc = *it;
+      }
+    }
+  }
+
  private:
   IRS_FORCE_INLINE doc_id_t Add(doc_id_t min, doc_id_t max,
                                 uint32_t* IRS_RESTRICT counts,

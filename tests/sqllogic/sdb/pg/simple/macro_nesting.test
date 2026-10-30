@@ -791,6 +791,251 @@ i
 1048576
 3145728
 
+query
+SELECT i, mn_range(mn_range(i + 1)::BIGINT) AS r, mn_cte(mn_cte(i + 1)) AS c FROM range(3) t(i) ORDER BY i
+----
+i	r	c
+0	5	9
+1	20	18
+2	54	27
+
+statement ok
+CREATE MACRO mn_pos(x) AS (SELECT x WHERE x > 0)
+
+statement ok
+CREATE MACRO mn_grouped(x) AS (SELECT x GROUP BY x)
+
+statement ok
+CREATE MACRO mn_grand(x) AS (SELECT x + count(*) GROUP BY ())
+
+statement ok
+CREATE MACRO mn_having(x) AS (SELECT x HAVING x > 0)
+
+statement ok
+CREATE MACRO mn_qualify(x) AS (SELECT x QUALIFY row_number() OVER () = 1)
+
+statement ok
+CREATE MACRO mn_sample(x) AS (SELECT x USING SAMPLE 1)
+
+statement ok
+CREATE MACRO mn_counted(x) AS (SELECT x + x + count(*))
+
+query
+SELECT i, mn_pos(i - 1) AS p, mn_grouped(i) AS g, mn_grand(i) AS c, mn_having(i - 1) AS h, mn_qualify(i) AS q, mn_sample(i) AS s, mn_counted(i) AS n, mn_counted(mn_counted(i)) AS nn FROM range(3) t(i) ORDER BY i
+----
+i	p	g	c	h	q	s	n	nn
+0	NULL	0	1	NULL	0	0	1	3
+1	NULL	1	2	NULL	1	1	3	7
+2	1	2	3	1	2	2	5	11
+
+statement ok
+CREATE MACRO mn_nearest(x) AS (SELECT v FROM range(10) r(v) WHERE v <> x ORDER BY abs(v - (SELECT x)), v LIMIT 1)
+
+statement ok
+CREATE MACRO mn_first(x) AS (SELECT v + x + x FROM range(5) r(v) WHERE v >= x ORDER BY v LIMIT 1)
+
+statement ok
+CREATE MACRO mn_exists(x) AS EXISTS (SELECT 1 FROM range(5) r(v) WHERE v = x AND v + x > 0)
+
+statement ok
+CREATE MACRO mn_union(x) AS (SELECT x UNION ALL SELECT x + 1 ORDER BY 1 DESC LIMIT 1)
+
+query
+SELECT i, mn_nearest(mn_nearest(i)) AS n, mn_first(mn_first(i)) AS f, mn_exists((SELECT i)) AS e, mn_union(mn_union(i)) AS u FROM range(3) t(i) ORDER BY i
+----
+i	n	f	e	u
+0	0	0	f	2
+1	1	9	t	3
+2	0	NULL	t	4
+
+statement ok
+CREATE MACRO mn_typed_item(x BIGINT) AS (SELECT x + x)
+
+query
+SELECT i, mn_typed_item(i + 1) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	2
+1	4
+2	6
+
+query
+SELECT mn_typed_item(sum(i)) AS a, mn_typed((SELECT 2)) AS b FROM range(3) t(i)
+----
+a	b
+6	17
+
+statement ok
+CREATE MACRO mn_default(x, d := 1) AS x + d
+
+statement ok
+CREATE MACRO mn_typed_named(x BIGINT) AS mn_default(x, d := 2) + x
+
+statement ok
+CREATE MACRO mn_lambda(x) AS x + list_sum(list_transform([1, 2], lambda y: y + x)) + x
+
+statement ok
+CREATE MACRO mn_typed_lambda(x BIGINT) AS x + list_sum(list_transform([1, 2], lambda y: y + x)) + x
+
+query
+SELECT i, mn_typed_named(i + 1) AS r FROM range(2) t(i) ORDER BY i
+----
+i	r
+0	4
+1	6
+
+query
+SELECT mn_lambda(v) AS untyped, mn_typed_lambda(v) AS typed FROM (VALUES (10)) y(v)
+----
+untyped	typed
+43	43
+
+statement ok
+CREATE MACRO mn_named(x) AS mn_default(x, d := 2) + mn_default(x, d := 3) + x
+
+statement ok
+CREATE MACRO mn_named_param(x) AS mn_default(x := x) + mn_default(x := x + 1)
+
+statement ok
+CREATE MACRO mn_default_twice(x, d := 1) AS x + x + d
+
+statement ok
+CREATE MACRO mn_unused(x, unused) AS x + x
+
+statement ok
+CREATE MACRO mn_from_default(x, d := 1) AS (SELECT x + x + d + v FROM (VALUES (0)) t(v))
+
+query
+SELECT i, mn_named(i + 1) AS a, mn_named_param(i + 1) AS b, mn_default_twice(i + 1, 5) AS c, mn_unused(i + 1, i * 7) AS u, mn_from_default(mn_from(i), 5) AS f FROM range(2) t(i) ORDER BY i
+----
+i	a	b	c	u	f
+0	8	5	7	2	5
+1	11	7	9	4	9
+
+statement ok
+CREATE MACRO mn_agg_lambda(l) AS (SELECT sum(list_sum(list_transform(l, lambda e: e * 2))) FROM range(3) r(v))
+
+statement ok
+CREATE MACRO mn_agg_sub(x) AS (SELECT sum(x + (SELECT 1)) FROM range(3) r(v))
+
+query
+SELECT i, mn_agg_lambda([i, i + 1]) AS l, mn_agg_sub(i) AS s FROM range(2) t(i) ORDER BY i
+----
+i	l	s
+0	6	3
+1	18	6
+
+statement ok
+CREATE MACRO mn_arrow(x, l) AS (SELECT sum(list_sum(list_transform(l, x -> x + 1))) FROM range(2) r(v))
+
+statement error
+SELECT mn_arrow(5, [1, 2])
+----
+db error: ERROR: Invalid lambda parameters! Parameters must be unqualified comma-separated names like x or (x, y).
+
+
+statement ok
+CREATE MACRO mn_callee(e) AS e + 1
+
+statement ok
+CREATE MACRO mn_caller(x) AS mn_callee(count(x))
+
+statement ok
+CREATE OR REPLACE MACRO mn_callee(e) AS (SELECT sum(e) FROM range(2) r(v))
+
+statement error
+SELECT mn_caller(i) AS r FROM range(3) t(i)
+----
+db error: ERROR: aggregate function calls cannot be nested
+
+
+query
+SELECT i + 1 AS j, j + j AS k, k + 0 AS m FROM (VALUES (1, 100)) t(i, j)
+----
+j	k	m
+2	200	200
+
+query
+SELECT i + 1 AS a, mn_default(a, d := 2) + a AS b, b + 0 AS c FROM range(2) t(i) ORDER BY 1
+----
+a	b	c
+1	4	4
+2	6	6
+
+query
+SELECT x + 1 AS k, list_sum(list_transform([10, 20], lambda x: x + k + k)) AS s, s + 0 AS t FROM (VALUES (1)) v(x)
+----
+k	s	t
+2	38	38
+
+query
+SELECT mn_twice((SELECT * FROM (VALUES (21)) v(a))) AS star, mn_twice(count(*) + random() * 0 + 1) AS mixed FROM range(3)
+----
+star	mixed
+42	8
+
+statement ok
+CREATE MACRO mn_volatile_sub(x) AS x + (SELECT count(*) FROM range(3) r(v) WHERE v < x) + random() * 0
+
+query
+SELECT i, mn_volatile_sub(mn_sub(i)) AS r, mn_sub(random() * 0) AS z FROM range(3) t(i) ORDER BY i
+----
+i	r	z
+0	0	0
+1	4	0
+2	7	0
+
+query
+SELECT 5 AS k, mn_out(k + 1) AS r
+----
+k	r
+5	13
+
+statement ok
+CREATE MACRO mn_typed_from(x BIGINT) AS mn_from(x + (SELECT 0))
+
+query
+SELECT i, mn_typed_from(i) AS a, mn_from((SELECT i + 1)) AS b, mn_sub((SELECT 2) + i) AS c FROM range(3) t(i) ORDER BY i
+----
+i	a	b	c
+0	0	2	4
+1	2	4	6
+2	4	6	7
+
+query
+SELECT mn_sub(#1) AS a, mn_sub(#1 + 0) AS b, mn_sub(x := #1) AS c FROM range(3) t(i) ORDER BY 1
+----
+a	b	c
+0	0	0
+2	2	2
+4	4	4
+
+query
+SELECT mn_typed(i + 1) AS r, t.i AS q, i AS u FROM range(3) t(i) ORDER BY u
+----
+r	q	u
+10	0	0
+17	1	1
+24	2	2
+
+statement ok
+CREATE MACRO mn_typed_twice(x BIGINT) AS mn_twice(x) + x
+
+statement ok
+CREATE TABLE mn_check_typed (i BIGINT CHECK (mn_typed_twice(i) > 0))
+
+statement ok
+INSERT INTO mn_check_typed VALUES (1)
+
+statement error
+INSERT INTO mn_check_typed VALUES (-1)
+----
+db error: ERROR: CHECK constraint failed on table "mn_check_typed" with expression CHECK((mn_typed_twice(i) > 0))
+
+
+statement ok
+DROP TABLE mn_check_typed
+
 statement ok
 DROP TABLE mn_alter
 
@@ -799,6 +1044,93 @@ DROP TABLE mn_generated
 
 statement ok
 DROP TABLE mn_check
+
+statement ok
+DROP MACRO mn_typed_twice
+
+statement ok
+DROP MACRO mn_typed_from
+
+statement ok
+DROP MACRO mn_volatile_sub
+
+statement ok
+DROP MACRO mn_caller
+
+statement ok
+DROP MACRO mn_callee
+
+statement ok
+DROP MACRO mn_arrow
+
+statement ok
+DROP MACRO mn_agg_sub
+
+statement ok
+DROP MACRO mn_agg_lambda
+
+statement ok
+DROP MACRO mn_from_default
+
+statement ok
+DROP MACRO mn_unused
+
+statement ok
+DROP MACRO mn_default_twice
+
+statement ok
+DROP MACRO mn_named_param
+
+statement ok
+DROP MACRO mn_named
+
+statement ok
+DROP MACRO mn_typed_lambda
+
+statement ok
+DROP MACRO mn_lambda
+
+statement ok
+DROP MACRO mn_typed_named
+
+statement ok
+DROP MACRO mn_default
+
+statement ok
+DROP MACRO mn_typed_item
+
+statement ok
+DROP MACRO mn_union
+
+statement ok
+DROP MACRO mn_exists
+
+statement ok
+DROP MACRO mn_first
+
+statement ok
+DROP MACRO mn_nearest
+
+statement ok
+DROP MACRO mn_counted
+
+statement ok
+DROP MACRO mn_sample
+
+statement ok
+DROP MACRO mn_qualify
+
+statement ok
+DROP MACRO mn_having
+
+statement ok
+DROP MACRO mn_grand
+
+statement ok
+DROP MACRO mn_grouped
+
+statement ok
+DROP MACRO mn_pos
 
 statement ok
 DROP MACRO mn_twice

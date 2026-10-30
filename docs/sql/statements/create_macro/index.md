@@ -90,11 +90,11 @@ To define macros on arbitrary tables, use the [`query_table` function](../../../
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_036" />
 
-In the body, a parameter is a value of the call: it can stand next to an aggregate, in a `WITH` query or in a nested subquery, and an aggregate over a parameter aggregates the rows of the query it is written in:
+In the body, a parameter is a value of the call: it can stand next to an aggregate, in a `HAVING` clause, in a `WITH` query or in a nested subquery, and an aggregate over a parameter aggregates the rows of the query it is written in:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_040" />
 
-`RETURNS SETOF <type>` returns every row of the body. Called in `FROM`, the function's column is named after the function:
+Without `SETOF`, the function returns the first row of the body, also when its result calls a set-returning function such as `unnest`. `RETURNS SETOF <type>` returns every row of the body. Called in `FROM`, the function's column is named after the function:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_037" />
 

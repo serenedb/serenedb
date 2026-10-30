@@ -17,4 +17,4 @@ statement error
 ALTER TABLE tbl
 ALTER COLUMN col TYPE INTEGER;
 ----
-db error: ERROR: Could not convert string 'asdf' to INT32
+db error: ERROR: Could not convert string 'asdf' to INT32 when casting from source column col

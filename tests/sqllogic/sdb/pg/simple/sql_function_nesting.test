@@ -328,7 +328,117 @@ nested	direct
 ns	ns
 
 statement ok
+CREATE FUNCTION sfn_ts_s(x bigint) RETURNS timestamp_s LANGUAGE sql RETURN make_timestamp_ns(x)
+
+statement ok
+CREATE FUNCTION sfn_ts_ms(x bigint) RETURNS timestamp_ms LANGUAGE sql RETURN make_timestamp_ns(x)
+
+statement ok
+CREATE FUNCTION sfn_ts_us(x bigint) RETURNS timestamp_ns LANGUAGE sql RETURN make_timestamp(x)
+
+query
+SELECT sfn_pick_ts(sfn_ts_s(1)) AS s, sfn_pick_ts(sfn_ts_ms(1)) AS ms, sfn_pick_ts(sfn_ts_us(1)) AS us
+----
+s	ms	us
+ns	ns	us
+
+statement ok
+CREATE TYPE sfn_mood AS ENUM ('sad', 'ok')
+
+statement ok
+CREATE FUNCTION sfn_mood_of(x int) RETURNS sfn_mood LANGUAGE sql RETURN CASE WHEN x > 0 THEN 'ok' ELSE 'sad' END::sfn_mood
+
+statement ok
+CREATE MACRO sfn_pick_mood(t sfn_mood) AS (SELECT 'mood ' || t::VARCHAR WHERE t IS NOT NULL), (t VARCHAR) AS (SELECT 'text ' || t WHERE t IS NOT NULL)
+
+query
+SELECT sfn_pick_mood(sfn_mood_of(1)) AS nested, sfn_pick_mood('sad'::sfn_mood) AS direct
+----
+nested	direct
+mood ok	mood sad
+
+statement ok
+CREATE FUNCTION sfn_window_sum(x bigint) RETURNS bigint LANGUAGE sql RETURN sum(x)
+
+statement ok
+CREATE MACRO sfn_typed_twice(x BIGINT) AS x + x
+
+query
+SELECT i, sfn_typed_twice(sfn_window_sum(i) OVER ()) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	6
+1	6
+2	6
+
+statement ok
+CREATE MACRO sfn_count_plus(y) AS count(*) + y
+
+statement ok
+CREATE MACRO sfn_plain(y) AS y * 2
+
+statement ok
+CREATE FUNCTION sfn_macro_agg(x int) RETURNS bigint LANGUAGE sql AS 'SELECT sfn_count_plus(x) FROM range(3)'
+
+statement ok
+CREATE FUNCTION sfn_macro_plain(x int) RETURNS bigint LANGUAGE sql AS 'SELECT sfn_plain(x) + v FROM range(3) r(v) ORDER BY v DESC LIMIT 1'
+
+statement ok
+CREATE FUNCTION sfn_group_all(x int) RETURNS bigint LANGUAGE sql AS 'SELECT x + count(*) FROM range(3) GROUP BY ALL'
+
+statement ok
+CREATE FUNCTION sfn_qualify(x int) RETURNS bigint LANGUAGE sql AS 'SELECT x + v FROM range(3) r(v) QUALIFY row_number() OVER (ORDER BY v) = 2'
+
+query
+SELECT sfn_macro_agg(10) AS a, sfn_macro_plain(10) AS p, sfn_group_all(10) AS g, sfn_qualify(10) AS q
+----
+a	p	g	q
+13	22	13	11
+
+statement ok
 RESET statement_timeout
+
+statement ok
+DROP FUNCTION sfn_qualify
+
+statement ok
+DROP FUNCTION sfn_group_all
+
+statement ok
+DROP FUNCTION sfn_macro_plain
+
+statement ok
+DROP FUNCTION sfn_macro_agg
+
+statement ok
+DROP MACRO sfn_plain
+
+statement ok
+DROP MACRO sfn_count_plus
+
+statement ok
+DROP MACRO sfn_typed_twice
+
+statement ok
+DROP FUNCTION sfn_window_sum
+
+statement ok
+DROP MACRO sfn_pick_mood
+
+statement ok
+DROP FUNCTION sfn_mood_of
+
+statement ok
+DROP TYPE sfn_mood
+
+statement ok
+DROP FUNCTION sfn_ts_us
+
+statement ok
+DROP FUNCTION sfn_ts_ms
+
+statement ok
+DROP FUNCTION sfn_ts_s
 
 statement ok
 DROP MACRO sfn_pick_ts

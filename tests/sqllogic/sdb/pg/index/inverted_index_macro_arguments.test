@@ -657,6 +657,34 @@ QUERY PLAN
 │ ~1 row                            │
 ╰───────────────────────────────────╯
 
+statement ok
+SET disabled_optimizers = 'expression_rewriter';
+
+query
+SELECT id FROM docs WHERE dup0(lower(s)) @@ ts_regexp('chefchef') ORDER BY id;
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM docs WHERE dup0(lower(s)) @@ ts_regexp('chefchef');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: docs                       │
+│ Lookup: search                    │
+│ Index Filter:                     │
+│ ╭─ Term ────────────────────────╮ │
+│ │ Field: dup0(lower(s))(string) │ │
+│ │ Value: chefchef               │ │
+│ ╰───────────────────────────────╯ │
+│ Projections: id                   │
+│ ~1 row                            │
+╰───────────────────────────────────╯
+
+statement ok
+SET disabled_optimizers = '';
+
 statement error
 SELECT id FROM docs WHERE dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(lower(s))))))))))))))))))))))))) @@ ts_regexp('chef.*');
 ----

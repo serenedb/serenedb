@@ -284,6 +284,86 @@ DROP SEQUENCE fnp_seq;
 
 
 statement ok
+CREATE FUNCTION fnp_positive(x int) RETURNS int LANGUAGE sql AS 'SELECT x WHERE x > 0';
+
+
+statement ok
+CREATE FUNCTION fnp_having(x int) RETURNS int LANGUAGE sql AS 'SELECT x HAVING x > 0';
+
+
+statement ok
+CREATE FUNCTION fnp_grand(x int) RETURNS bigint LANGUAGE sql AS 'SELECT x + count(*) FROM generate_series(1, 3) GROUP BY ()';
+
+
+query
+SELECT i, fnp_positive(i - 1) AS p, fnp_having(i - 1) AS h, fnp_grand(i) AS g FROM generate_series(0, 2) t(i) ORDER BY i;
+----
+i	p	h	g
+0	NULL	NULL	3
+1	NULL	NULL	4
+2	1	1	5
+
+
+statement ok
+CREATE FUNCTION fnp_cte_mixed(x int) RETURNS int LANGUAGE sql AS 'WITH c AS (SELECT g.v AS v FROM generate_series(1, 3) g(v) WHERE v > 0) SELECT x + v FROM c ORDER BY v DESC LIMIT 1';
+
+
+statement ok
+CREATE FUNCTION fnp_cte_sub(x int) RETURNS int LANGUAGE sql AS 'WITH c AS (SELECT (SELECT x) AS y) SELECT y FROM c';
+
+
+statement ok
+CREATE FUNCTION fnp_union(x int) RETURNS int LANGUAGE sql AS 'SELECT x UNION ALL SELECT x + 1 ORDER BY 1 DESC LIMIT 1';
+
+
+statement ok
+CREATE FUNCTION fnp_first(x int) RETURNS int LANGUAGE sql AS 'SELECT x + unnest(ARRAY[1, 2])';
+
+
+statement ok
+CREATE FUNCTION fnp_series(x int) RETURNS int LANGUAGE sql AS 'SELECT x + generate_series(1, 2)';
+
+
+query
+SELECT fnp_cte_mixed(10) AS m, fnp_cte_sub(7) AS s, fnp_union(4) AS u, fnp_first(10) AS f, fnp_series(20) AS g;
+----
+m	s	u	f	g
+13	7	5	11	21
+
+
+statement ok
+DROP FUNCTION fnp_series;
+
+
+statement ok
+DROP FUNCTION fnp_first;
+
+
+statement ok
+DROP FUNCTION fnp_union;
+
+
+statement ok
+DROP FUNCTION fnp_cte_sub;
+
+
+statement ok
+DROP FUNCTION fnp_cte_mixed;
+
+
+statement ok
+DROP FUNCTION fnp_grand;
+
+
+statement ok
+DROP FUNCTION fnp_having;
+
+
+statement ok
+DROP FUNCTION fnp_positive;
+
+
+statement ok
 DROP FUNCTION fnp_vdiff;
 
 

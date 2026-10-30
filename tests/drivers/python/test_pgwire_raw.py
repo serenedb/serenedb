@@ -3636,6 +3636,28 @@ def test_transaction_block_rules_follow_the_block_at_execute(conn):
         other.close()
 
 
+def test_prepared_statement_counts_one_plan_per_execution(conn):
+    other = WireConn()
+    try:
+        conn.run_ok("PREPARE ns_counted AS SELECT 1")
+        _parse_ok(conn, "ns_counted_execute", "EXECUTE ns_counted")
+        other.run_ok("CREATE ROLE ns_counted_role")
+        try:
+            for _ in range(2):
+                m = _execute_named(conn, "ns_counted_execute")
+                assert not errors(m), errors(m)
+        finally:
+            other.run_ok("DROP ROLE ns_counted_role")
+        m = conn.run_ok(
+            "SELECT generic_plans, custom_plans FROM pg_prepared_statements "
+            "WHERE name = 'ns_counted'"
+        )
+        assert all_fields(m) == [b"2", b"0"], all_fields(m)
+    finally:
+        other.close()
+        conn.run_ok("DEALLOCATE ALL")
+
+
 def test_sql_execute_runs_protocol_statement(conn):
     _parse_ok(conn, "ns_exec", "select $1::int4 + 1", oids=(23,))
     m = _simple(conn, "EXECUTE ns_exec(41)")

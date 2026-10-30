@@ -72,7 +72,7 @@ class IndexDurability {
   void MarkStaged(const irs::SourcePosition& position);
   std::optional<uint64_t> NeededWAL() const;
 
-  absl::Status Refresh(irs::IndexWriter& writer, bool wait,
+  absl::Status Refresh(irs::IndexWriter& writer, bool wait, bool force,
                        const irs::ProgressReportCallback& progress,
                        RefreshResult& code, absl::FunctionRef<void()> unchanged,
                        absl::FunctionRef<void()> published);
@@ -104,7 +104,6 @@ class IndexDurability {
                     const FileManifest* manifest,
                     duckdb::BinarySerializer& out);
   void ResolvePendingSave(irs::Directory& dir) const;
-  bool PayloadChanged() const;
   bool CanPersist() const;
   uint64_t RunningCheckpoint(uint64_t generation) const;
   bool CheckpointWritten(uint64_t iteration) const;
@@ -113,8 +112,6 @@ class IndexDurability {
   duckdb::idx_t _db_id;
   std::string _name;
   std::filesystem::path _path;
-  ManifestSource _manifest;
-  std::shared_ptr<const FileManifest> _written_manifest;
   bool _on_disk = false;
   std::atomic<bool> _directory_dirty{true};
   std::atomic<bool> _out_of_sync{false};

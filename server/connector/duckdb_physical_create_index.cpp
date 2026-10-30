@@ -616,7 +616,10 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   if (gstate.file_manifest) {
     inverted_storage.SetFileManifest(gstate.file_manifest);
   }
-  search::ThrowIfRefreshFailed(inverted_storage.Refresh(), gstate.index_name);
+  search::ThrowIfRefreshFailed(
+    inverted_storage.Refresh(
+      nullptr, /*force=*/IsReindexPass() && gstate.file_manifest != nullptr),
+    gstate.index_name);
   if (IsDuckDBTable() && inverted_storage.IsOutOfSync()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("failed to commit index '", gstate.index_name,

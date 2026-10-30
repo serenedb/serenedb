@@ -106,11 +106,11 @@ IndexDurability::OpenWriter(irs::Directory& dir, std::filesystem::path path,
                             ManifestSource manifest) {
   _path = std::move(path);
   _on_disk = on_disk;
-  _manifest = std::move(manifest);
-  options.meta_payload_writer = [this](const irs::SourcePosition& position,
-                                       duckdb::BinarySerializer& out) {
-    _written_manifest = _manifest ? _manifest() : nullptr;
-    WritePayload(position, _written_manifest.get(), out);
+  options.meta_payload_writer = [this, manifest = std::move(manifest)](
+                                  const irs::SourcePosition& position,
+                                  duckdb::BinarySerializer& out) {
+    const auto current = manifest ? manifest() : nullptr;
+    WritePayload(position, current.get(), out);
   };
   IndexStamp stamp;
   options.meta_payload_reader = [&](duckdb::BinaryDeserializer& in) {
@@ -126,7 +126,6 @@ IndexDurability::OpenWriter(irs::Directory& dir, std::filesystem::path path,
   auto writer = irs::IndexWriter::Make(
     dir, irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate,
     std::move(options));
-  _written_manifest = stamp.manifest;
   _position = stamp.position;
   absl::MutexLock lock{&_positions_mutex};
   _published = stamp.position;
@@ -220,7 +219,7 @@ void IndexDurability::MarkPublished() {
 }
 
 absl::Status IndexDurability::Refresh(
-  irs::IndexWriter& writer, bool wait,
+  irs::IndexWriter& writer, bool wait, bool force,
   const irs::ProgressReportCallback& progress, RefreshResult& code,
   absl::FunctionRef<void()> unchanged, absl::FunctionRef<void()> published) {
   code = RefreshResult::NoChanges;
@@ -253,7 +252,7 @@ absl::Status IndexDurability::Refresh(
       were_changes = writer.RefreshBegin({
         .progress = progress,
         .reopen_reader = /* TODO(codeworse) */ false,
-        .payload_changed = PayloadChanged(),
+        .force = force,
       });
       if (were_changes) {
         _directory_dirty.store(true, std::memory_order_relaxed);
@@ -326,7 +325,7 @@ void IndexDurability::PrepareCheckpoint(irs::IndexWriter& writer,
   _checkpoint = iteration;
   absl::Cleanup reset = [&]() noexcept { _checkpoint = 0; };
   try {
-    if (writer.RefreshBegin({.payload_changed = PayloadChanged()})) {
+    if (writer.RefreshBegin()) {
       _directory_dirty.store(true, std::memory_order_relaxed);
     }
   } catch (...) {
@@ -432,10 +431,6 @@ absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
       absl::StrCat("caught exception while cleaning up ", _name));
   }
   return absl::OkStatus();
-}
-
-bool IndexDurability::PayloadChanged() const {
-  return _manifest && _manifest() != _written_manifest;
 }
 
 bool IndexDurability::CanPersist() const {

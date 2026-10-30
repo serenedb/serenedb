@@ -1,0 +1,140 @@
+statement ok
+DROP VIEW IF EXISTS evio_v CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS evio_src;
+
+
+statement ok
+DROP ROLE IF EXISTS evio_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS evio_owner;
+
+
+statement ok
+CREATE ROLE evio_owner LOGIN PASSWORD 'evio_pw';
+
+
+statement ok
+CREATE ROLE evio_reader LOGIN PASSWORD 'evio_pw';
+
+
+statement ok
+CREATE TABLE evio_src(id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO evio_src VALUES (1, 'alpha'), (2, 'beta');
+
+
+statement ok
+GRANT SELECT ON evio_src TO evio_owner;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO evio_owner;
+
+
+connection c_owner user=evio_owner password=evio_pw
+statement ok
+CREATE VIEW evio_v AS SELECT id, body FROM evio_src;
+
+
+connection c_owner user=evio_owner password=evio_pw
+statement ok
+CREATE INDEX evio_v_idx ON evio_v USING inverted (id, body) WITH (reindex_interval=100);
+
+
+connection c_owner user=evio_owner password=evio_pw
+statement ok
+GRANT SELECT ON evio_v TO evio_reader;
+
+
+connection c_reader user=evio_reader password=evio_pw
+query
+SELECT id, body FROM evio_v_idx ORDER BY id;
+----
+id	body
+1	alpha
+2	beta
+
+
+connection default
+statement ok
+REVOKE SELECT ON evio_src FROM evio_owner;
+
+
+statement ok
+INSERT INTO evio_src VALUES (3, 'gamma');
+
+
+connection c_owner user=evio_owner password=evio_pw
+statement error
+SELECT count(*) FROM evio_v;
+----
+db error: ERROR: permission denied for table evio_src
+
+
+connection c_owner user=evio_owner password=evio_pw
+statement error
+REINDEX INDEX evio_v_idx;
+----
+db error: ERROR: permission denied for table evio_src
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) > 0 AS refused FROM sdb_job_runs()
+WHERE database_name = current_database() AND job_name = 'evio_v_idx' AND NOT success
+  AND error = 'permission denied for table evio_src';
+----
+refused
+t
+
+
+connection c_reader user=evio_reader password=evio_pw
+query
+SELECT id, body FROM evio_v_idx ORDER BY id;
+----
+id	body
+1	alpha
+2	beta
+
+
+connection default
+statement ok
+GRANT SELECT ON evio_src TO evio_owner;
+
+
+connection c_reader user=evio_reader password=evio_pw
+query ok retry 40 backoff 250ms
+SELECT id, body FROM evio_v_idx ORDER BY id;
+----
+id	body
+1	alpha
+2	beta
+3	gamma
+
+
+connection default
+statement ok
+DROP VIEW evio_v CASCADE;
+
+
+statement ok
+DROP TABLE evio_src;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM evio_owner;
+
+
+statement ok
+DROP ROLE evio_reader;
+
+
+statement ok
+DROP ROLE evio_owner;

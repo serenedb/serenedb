@@ -53,9 +53,9 @@ class MultiTermCollector final : public FieldPrepareCollector {
                            const PostingMeta& meta) {
     SDB_ASSERT(thread < _threads.size());
     auto& own = _threads[thread];
-    auto it = own.terms.find(term);
-    if (it == own.terms.end()) {
-      it = own.terms.emplace(bstring{term}, Slot{.stats = Allocate(own)}).first;
+    auto [it, inserted] = own.terms.try_emplace(term);
+    if (inserted) {
+      it->second.stats = Allocate(own);
     }
     it->second.counter.Collect(meta);
     return it->second.stats;
@@ -125,12 +125,7 @@ class BlendedTermsCollector final : public FieldPrepareCollector {
 
   void Collect(uint32_t thread, bytes_view term, const PostingMeta& meta) {
     SDB_ASSERT(thread < _threads.size());
-    auto& terms = _threads[thread];
-    auto it = terms.find(term);
-    if (it == terms.end()) {
-      it = terms.emplace(bstring{term}, TermCollector{}).first;
-    }
-    it->second.Collect(meta);
+    _threads[thread].try_emplace(term).first->second.Collect(meta);
   }
 
   void Finish(StatsArena&) final {

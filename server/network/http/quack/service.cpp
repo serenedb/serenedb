@@ -412,22 +412,24 @@ yaclib::Task<> Service::Handle(RequestContext& context,
   Host host{*this, context};
   const auto& task = context.Resumer();
   const duckdb::QuackWaker waker = [task] { task->RequestRun(); };
-  std::shared_ptr<asio_ns::steady_timer> answer_early;
+  std::shared_ptr<asio_ns::steady_timer> prepare_timer;
   const auto waited_enough = std::make_shared<std::atomic<bool>>(false);
   absl::Cleanup stop_timer = [&] {
-    if (answer_early) {
-      answer_early->cancel();
+    if (prepare_timer) {
+      prepare_timer->cancel();
     }
   };
-  bool answers_early = true;
-  SDB_IF_FAILURE("quack_prepare_answers_late") { answers_early = false; }
+  bool prepare_timer_enabled = true;
+  SDB_IF_FAILURE("quack_prepare_answers_late") {
+    prepare_timer_enabled = false;
+  }
   while (!_core.Handle(quack_request, host, waker)) {
-    if (answers_early && !answer_early &&
+    if (prepare_timer_enabled && !prepare_timer &&
         quack_request.Type() == duckdb::MessageType::PREPARE_REQUEST) {
-      answer_early = std::make_shared<asio_ns::steady_timer>(
+      prepare_timer = std::make_shared<asio_ns::steady_timer>(
         context.Io().Context(), kPrepareWait);
-      answer_early->async_wait([timer = answer_early, waited_enough,
-                                task](const asio_ns::error_code& ec) {
+      prepare_timer->async_wait([timer = prepare_timer, waited_enough,
+                                 task](const asio_ns::error_code& ec) {
         if (ec) {
           return;
         }

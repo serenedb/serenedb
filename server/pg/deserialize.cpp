@@ -1266,10 +1266,10 @@ struct RegText {
     const auto lookup = [&] {
       oid = *RegIn(MakeSession(context.client.get()), Kind, data, nullptr);
     };
-    if constexpr (std::is_same_v<Sink, ValueSink>) {
-      context.client->RunFunctionInTransaction(lookup);
-    } else {
+    if (context.client->transaction.HasActiveTransaction()) {
       lookup();
+    } else {
+      context.client->RunFunctionInTransaction(lookup);
     }
     sink.Fixed(static_cast<int64_t>(oid));
     return true;
@@ -1598,7 +1598,7 @@ bool StripWrap(std::string_view& s, char open, char close) {
 // otherwise `raw` is the leaf incl. any surrounding quotes (surrounding
 // whitespace trimmed). Returns false on malformed nesting/quoting.
 template<typename Emit>
-bool ScanArrayItems(std::string_view body, Emit&& emit) {
+bool ScanArrayItems(std::string_view body, char delim, Emit&& emit) {
   size_t i = 0;
   const size_t n = body.size();
   while (i < n && absl::ascii_isspace(body[i])) {
@@ -1653,7 +1653,7 @@ bool ScanArrayItems(std::string_view body, Emit&& emit) {
         return false;
       }
     } else {
-      for (; i < n && body[i] != ','; ++i) {
+      for (; i < n && body[i] != delim; ++i) {
         if (body[i] == '\\' && i + 1 < n) {
           ++i;
         }
@@ -1670,11 +1670,19 @@ bool ScanArrayItems(std::string_view body, Emit&& emit) {
     if (i >= n) {
       return true;
     }
-    if (body[i] != ',') {
+    if (body[i] != delim) {
       return false;
     }
     ++i;
   }
+}
+
+char ArrayDelimiter(const duckdb::LogicalType& type) {
+  const auto* leaf = &type;
+  while (leaf->id() == duckdb::LogicalTypeId::LIST) {
+    leaf = &duckdb::ListType::GetChildType(*leaf);
+  }
+  return GeometricOf(*leaf) == Geometric::Box ? ';' : ',';
 }
 
 // Resolve a non-group array leaf to its value, viewing into `raw` when no
@@ -1855,8 +1863,9 @@ bool DeserializeTextList(DeserializeContext& ctx, std::string_view data,
   const bool nested = child_type.id() == duckdb::LogicalTypeId::LIST &&
                       IsArrayDimension(child_type);
   const auto cur = duckdb::ListVector::GetListSize(vec);
+  const auto delim = ArrayDelimiter(vec.GetType());
   duckdb::idx_t count = 0;
-  if (!ScanArrayItems(body, [&](std::string_view, bool) { ++count; })) {
+  if (!ScanArrayItems(body, delim, [&](std::string_view, bool) { ++count; })) {
     return false;
   }
   duckdb::ListVector::Reserve(vec, cur + count);
@@ -1864,7 +1873,7 @@ bool DeserializeTextList(DeserializeContext& ctx, std::string_view data,
   std::string scratch;
   duckdb::idx_t i = 0;
   bool ok = true;
-  ScanArrayItems(body, [&](std::string_view raw, bool) {
+  ScanArrayItems(body, delim, [&](std::string_view raw, bool) {
     if (!ok) {
       return;
     }
@@ -2011,7 +2020,7 @@ bool DeserializeTextMap(DeserializeContext& ctx, std::string_view data,
     GetRecordFieldDecoders(ctx, vec.GetType(), VarFormat::Text);
   const auto cur = duckdb::ListVector::GetListSize(vec);
   duckdb::idx_t count = 0;
-  if (!ScanArrayItems(body, [&](std::string_view, bool) { ++count; })) {
+  if (!ScanArrayItems(body, ',', [&](std::string_view, bool) { ++count; })) {
     return false;
   }
   duckdb::ListVector::Reserve(vec, cur + count);
@@ -2021,7 +2030,7 @@ bool DeserializeTextMap(DeserializeContext& ctx, std::string_view data,
   std::string field_scratch;
   duckdb::idx_t i = 0;
   bool ok = true;
-  ScanArrayItems(body, [&](std::string_view raw, bool) {
+  ScanArrayItems(body, ',', [&](std::string_view raw, bool) {
     if (!ok) {
       return;
     }
@@ -2714,7 +2723,7 @@ bool TextNumericArrayShape(std::string_view data, NumericShape& shape,
   bool ok = true;
   std::string scratch;
   const bool scanned =
-    ScanArrayItems(body, [&](std::string_view raw, bool group) {
+    ScanArrayItems(body, ',', [&](std::string_view raw, bool group) {
       if (!ok) {
         return;
       }

@@ -438,23 +438,31 @@
 
 - oid: 22
   name: int2_vector
-  pg_typname: int2_vector
-  binary: false
-  text: false
+  pg_typname: int2vector
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["1 2", "0", null]
   skip:
-    all: ["TODO: triage Int2Vector"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 24
   name: regproc
   pg_typname: regproc
-  binary: false
-  text: false
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["now", null]
   skip:
-    all: ["TODO: triage Regproc"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-binary"]
 
 - oid: 27
   name: tid
@@ -467,22 +475,22 @@
 - oid: 28
   name: xid
   pg_typname: xid
-  binary: false
-  text: false
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["42", "0", null]
   skip:
-    all: ["TODO: triage Xid"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 29
   name: cid
   pg_typname: cid
-  binary: false
-  text: false
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["7", "0", null]
   skip:
-    all: ["TODO: triage Cid"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 30
   name: oidvector
@@ -500,7 +508,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgDdlCommand"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 71
   name: pg_type
@@ -510,7 +518,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgType"]
+    all: ["the row type of a catalog table"]
 
 - oid: 75
   name: pg_attribute
@@ -520,7 +528,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgAttribute"]
+    all: ["the row type of a catalog table"]
 
 - oid: 81
   name: pg_proc
@@ -530,7 +538,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgProc"]
+    all: ["the row type of a catalog table"]
 
 - oid: 83
   name: pg_class
@@ -540,7 +548,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgClass"]
+    all: ["the row type of a catalog table"]
 
 - oid: 142
   name: xml
@@ -552,13 +560,14 @@
 
 - oid: 143
   name: xml_array
-  pg_typname: xml_array
-  binary: false
-  text: false
+  pg_typname: "xml[]"
+  cast_sql: "$1::xml[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"<a x=\\\"1\\\">b &amp; c</a>\",text}", "{NULL,\"<a x=\\\"1\\\">b &amp; c</a>\"}", null]
   skip:
-    all: ["TODO: triage XmlArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 194
   name: pg_node_tree
@@ -568,7 +577,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgNodeTree"]
+    all: ["an internal type without text input"]
 
 - oid: 199
   name: json_array
@@ -578,7 +587,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage JsonArray"]
+    all: ["json[] text input reads the whole literal as one JSON document"]
 
 - oid: 210
   name: pg_type_array
@@ -588,7 +597,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgTypeArray"]
+    all: ["the row type of a catalog table"]
 
 - oid: 269
   name: table_am_handler
@@ -598,7 +607,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage TableAmHandler"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 270
   name: pg_attribute_array
@@ -608,17 +617,18 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgAttributeArray"]
+    all: ["the row type of a catalog table"]
 
 - oid: 271
   name: xid8_array
-  pg_typname: xid8_array
-  binary: false
-  text: false
+  pg_typname: "xid8[]"
+  cast_sql: "$1::xid8[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{42,0}", "{NULL,42}", null]
   skip:
-    all: ["TODO: triage Xid8Array"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 272
   name: pg_proc_array
@@ -628,7 +638,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgProcArray"]
+    all: ["the row type of a catalog table"]
 
 - oid: 273
   name: pg_class_array
@@ -638,7 +648,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgClassArray"]
+    all: ["the row type of a catalog table"]
 
 - oid: 325
   name: index_am_handler
@@ -648,7 +658,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage IndexAmHandler"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 600
   name: point
@@ -715,23 +725,25 @@
 
 - oid: 629
   name: line_array
-  pg_typname: line_array
-  binary: false
-  text: false
+  pg_typname: "line[]"
+  cast_sql: "$1::line[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"{1,-1,0}\",\"{0,1,-2.5}\"}", "{NULL,\"{1,-1,0}\"}", null]
   skip:
-    all: ["TODO: triage LineArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 651
   name: cidr_array
-  pg_typname: cidr_array
-  binary: false
-  text: false
+  pg_typname: "cidr[]"
+  cast_sql: "$1::cidr[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{192.168.0.0/16,::1/128}", "{NULL,192.168.0.0/16}", null]
   skip:
-    all: ["TODO: triage CidrArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 705
   name: unknown
@@ -741,7 +753,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Unknown"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 718
   name: circle
@@ -755,13 +767,14 @@
 
 - oid: 719
   name: circle_array
-  pg_typname: circle_array
-  binary: false
-  text: false
+  pg_typname: "circle[]"
+  cast_sql: "$1::circle[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"<(0,0),1>\",\"<(1.5,-2),0.5>\"}", "{NULL,\"<(0,0),1>\"}", null]
   skip:
-    all: ["TODO: triage CircleArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 774
   name: macaddr8
@@ -773,13 +786,14 @@
 
 - oid: 775
   name: macaddr8_array
-  pg_typname: macaddr8_array
-  binary: false
-  text: false
+  pg_typname: "macaddr8[]"
+  cast_sql: "$1::macaddr8[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{08:00:2b:01:02:03:04:05,08:00:2b:ff:fe:01:02:03}", "{NULL,08:00:2b:01:02:03:04:05}", null]
   skip:
-    all: ["TODO: triage Macaddr8Array"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 790
   name: money
@@ -791,323 +805,371 @@
 
 - oid: 791
   name: money_array
-  pg_typname: money_array
-  binary: false
-  text: false
+  pg_typname: "money[]"
+  cast_sql: "$1::money[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"$1,234.56\",-$0.01}", "{NULL,\"$1,234.56\"}", null]
   skip:
-    all: ["TODO: triage MoneyArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1000
   name: bool_array
-  pg_typname: bool_array
-  binary: false
-  text: false
+  pg_typname: "bool[]"
+  cast_sql: "$1::bool[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{t,f}", "{NULL,t}", null]
   skip:
-    all: ["TODO: triage BoolArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1001
   name: bytea_array
-  pg_typname: bytea_array
-  binary: false
-  text: false
+  pg_typname: "bytea[]"
+  cast_sql: "$1::bytea[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"\\\\x\",\"\\\\xdeadbeef\"}", "{NULL,\"\\\\x\"}", null]
   skip:
-    all: ["TODO: triage ByteaArray"]
+    python_psycopg3: ["extended-text", "extended-binary"]
+    python_psycopg2: ["extended-text", "extended-binary"]
+    python_asyncpg: ["extended-text", "extended-binary"]
+    js_pg: ["extended-text", "extended-binary"]
+    js_postgres_js: ["extended-text", "extended-binary"]
+    java_pgjdbc: ["extended-text", "extended-binary"]
+    go_pgx: ["extended-text", "extended-binary"]
+    go_libpq: ["extended-text", "extended-binary"]
+    rust_tokio_postgres: ["extended-text", "extended-binary"]
+    rust_sqlx: ["extended-text", "extended-binary"]
+    csharp_npgsql: ["extended-text", "extended-binary"]
+    php_pdo: ["extended-text", "extended-binary"]
 
 - oid: 1002
   name: char_array
-  pg_typname: char_array
-  binary: false
-  text: false
+  pg_typname: "char[]"
+  cast_sql: "$1::char[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{a,Z}", "{NULL,a}", null]
   skip:
-    all: ["TODO: triage CharArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1003
   name: name_array
-  pg_typname: name_array
-  binary: false
-  text: false
+  pg_typname: "name[]"
+  cast_sql: "$1::name[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{public,pg_catalog}", "{NULL,public}", null]
   skip:
-    all: ["TODO: triage NameArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1005
   name: int2_array
-  pg_typname: int2_array
-  binary: false
-  text: false
+  pg_typname: "int2[]"
+  cast_sql: "$1::int2[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{0,-1}", "{NULL,0}", null]
   skip:
-    all: ["TODO: triage Int2Array"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1006
   name: int2_vector_array
-  pg_typname: int2_vector_array
-  binary: false
-  text: false
+  pg_typname: "int2vector[]"
+  cast_sql: "$1::int2vector[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"1 2\",0}", "{NULL,\"1 2\"}", null]
   skip:
-    all: ["TODO: triage Int2VectorArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1008
   name: regproc_array
-  pg_typname: regproc_array
-  binary: false
-  text: false
+  pg_typname: "regproc[]"
+  cast_sql: "$1::regproc[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{now}", "{NULL,now}", null]
   skip:
-    all: ["TODO: triage RegprocArray"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1010
   name: tid_array
-  pg_typname: tid_array
-  binary: false
-  text: false
+  pg_typname: "tid[]"
+  cast_sql: "$1::tid[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"(0,1)\",\"(4294967295,65535)\"}", "{NULL,\"(0,1)\"}", null]
   skip:
-    all: ["TODO: triage TidArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1011
   name: xid_array
-  pg_typname: xid_array
-  binary: false
-  text: false
+  pg_typname: "xid[]"
+  cast_sql: "$1::xid[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{42,0}", "{NULL,42}", null]
   skip:
-    all: ["TODO: triage XidArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1012
   name: cid_array
-  pg_typname: cid_array
-  binary: false
-  text: false
+  pg_typname: "cid[]"
+  cast_sql: "$1::cid[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{7,0}", "{NULL,7}", null]
   skip:
-    all: ["TODO: triage CidArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1013
   name: oidvector_array
-  pg_typname: oidvector_array
+  pg_typname: "oidvector[]"
+  cast_sql: "$1::oidvector[]"
+  text: true
   binary: false
-  text: false
   array: false
-  samples: []
+  samples: ["{}", "{\"23 25\",\"\"}", "{NULL,\"23 25\"}", null]
   skip:
-    all: ["TODO: triage OidvectorArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1014
   name: bpchar_array
-  pg_typname: bpchar_array
-  binary: false
-  text: false
+  pg_typname: "bpchar[]"
+  cast_sql: "$1::bpchar[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"\",abc}", "{NULL,\"\"}", null]
   skip:
-    all: ["TODO: triage BpcharArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1015
   name: varchar_array
-  pg_typname: varchar_array
-  binary: false
-  text: false
+  pg_typname: "varchar[]"
+  cast_sql: "$1::varchar[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"\",hello}", "{NULL,\"\"}", null]
   skip:
-    all: ["TODO: triage VarcharArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1017
   name: point_array
-  pg_typname: point_array
-  binary: false
-  text: false
+  pg_typname: "point[]"
+  cast_sql: "$1::point[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"(1,2)\",\"(-1.5,1e+300)\"}", "{NULL,\"(1,2)\"}", null]
   skip:
-    all: ["TODO: triage PointArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1018
   name: lseg_array
-  pg_typname: lseg_array
-  binary: false
-  text: false
+  pg_typname: "lseg[]"
+  cast_sql: "$1::lseg[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"[(0,0),(1,1)]\",\"[(1.5,2),(-3,4)]\"}", "{NULL,\"[(0,0),(1,1)]\"}", null]
   skip:
-    all: ["TODO: triage LsegArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1019
   name: path_array
-  pg_typname: path_array
-  binary: false
-  text: false
+  pg_typname: "path[]"
+  cast_sql: "$1::path[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"((0,0),(1,1),(1,0))\",\"[(0,0),(1,1)]\"}", "{NULL,\"((0,0),(1,1),(1,0))\"}", null]
   skip:
-    all: ["TODO: triage PathArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1020
   name: box_array
-  pg_typname: box_array
-  binary: false
-  text: false
+  pg_typname: "box[]"
+  cast_sql: "$1::box[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"(1,1),(0,0)\";\"(2.5,3),(-1,-2)\"}", "{NULL;\"(1,1),(0,0)\"}", null]
   skip:
-    all: ["TODO: triage BoxArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1021
   name: float4_array
-  pg_typname: float4_array
-  binary: false
-  text: false
+  pg_typname: "float4[]"
+  cast_sql: "$1::float4[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{0,-0.5}", "{NULL,0}", null]
   skip:
-    all: ["TODO: triage Float4Array"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1022
   name: float8_array
-  pg_typname: float8_array
-  binary: false
-  text: false
+  pg_typname: "float8[]"
+  cast_sql: "$1::float8[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{0,-0.5}", "{NULL,0}", null]
   skip:
-    all: ["TODO: triage Float8Array"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1027
   name: polygon_array
-  pg_typname: polygon_array
-  binary: false
-  text: false
+  pg_typname: "polygon[]"
+  cast_sql: "$1::polygon[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"((0,0),(1,1),(1,0))\",\"((7,8))\"}", "{NULL,\"((0,0),(1,1),(1,0))\"}", null]
   skip:
-    all: ["TODO: triage PolygonArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1028
   name: oid_array
-  pg_typname: oid_array
-  binary: false
-  text: false
+  pg_typname: "oid[]"
+  cast_sql: "$1::oid[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{0,16}", "{NULL,0}", null]
   skip:
-    all: ["TODO: triage OidArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1033
   name: aclitem
   pg_typname: aclitem
+  text: true
   binary: false
-  text: false
   array: false
-  samples: []
-  skip:
-    all: ["TODO: triage Aclitem"]
+  samples: ["postgres=arwdDxtm/postgres", "=r/postgres", null]
 
 - oid: 1034
   name: aclitem_array
-  pg_typname: aclitem_array
+  pg_typname: "aclitem[]"
+  cast_sql: "$1::aclitem[]"
+  text: true
   binary: false
-  text: false
   array: false
-  samples: []
+  samples: ["{}", "{postgres=arwdDxtm/postgres,=r/postgres}", "{NULL,postgres=arwdDxtm/postgres}", null]
   skip:
-    all: ["TODO: triage AclitemArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1040
   name: macaddr_array
-  pg_typname: macaddr_array
-  binary: false
-  text: false
+  pg_typname: "macaddr[]"
+  cast_sql: "$1::macaddr[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{08:00:2b:01:02:03,ff:ff:ff:ff:ff:ff}", "{NULL,08:00:2b:01:02:03}", null]
   skip:
-    all: ["TODO: triage MacaddrArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1041
   name: inet_array
-  pg_typname: inet_array
-  binary: false
-  text: false
+  pg_typname: "inet[]"
+  cast_sql: "$1::inet[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{127.0.0.1,::1}", "{NULL,127.0.0.1}", null]
   skip:
-    all: ["TODO: triage InetArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1115
   name: timestamp_array
-  pg_typname: timestamp_array
-  binary: false
-  text: false
+  pg_typname: "timestamp[]"
+  cast_sql: "$1::timestamp[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"1970-01-01 00:00:00\",\"2000-01-01 00:00:00\"}", "{NULL,\"1970-01-01 00:00:00\"}", null]
   skip:
-    all: ["TODO: triage TimestampArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1182
   name: date_array
-  pg_typname: date_array
-  binary: false
-  text: false
+  pg_typname: "date[]"
+  cast_sql: "$1::date[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{1970-01-01,2000-01-01}", "{NULL,1970-01-01}", null]
   skip:
-    all: ["TODO: triage DateArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1183
   name: time_array
-  pg_typname: time_array
-  binary: false
-  text: false
+  pg_typname: "time[]"
+  cast_sql: "$1::time[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{00:00:00,12:34:56.789}", "{NULL,00:00:00}", null]
   skip:
-    all: ["TODO: triage TimeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1185
   name: timestamp_tz_array
-  pg_typname: timestamp_tz_array
-  binary: false
-  text: false
+  pg_typname: "timestamptz[]"
+  cast_sql: "$1::timestamptz[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"1970-01-01 00:00:00+00\",\"2026-05-05 12:34:56.789012+00\"}", "{NULL,\"1970-01-01 00:00:00+00\"}", null]
   skip:
-    all: ["TODO: triage TimestampTzArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1187
   name: interval_array
-  pg_typname: interval_array
-  binary: false
-  text: false
+  pg_typname: "interval[]"
+  cast_sql: "$1::interval[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{00:00:00,\"1 day\"}", "{NULL,00:00:00}", null]
   skip:
-    all: ["TODO: triage IntervalArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1231
   name: numeric_array
-  pg_typname: numeric_array
-  binary: false
-  text: false
+  pg_typname: "numeric[]"
+  cast_sql: "$1::numeric[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{0,1}", "{NULL,0}", null]
   skip:
-    all: ["TODO: triage NumericArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1263
   name: cstring_array
@@ -1117,37 +1179,40 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage CstringArray"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 1270
   name: time_tz_array
-  pg_typname: time_tz_array
-  binary: false
-  text: false
+  pg_typname: "timetz[]"
+  cast_sql: "$1::timetz[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{00:00:00+00,12:34:56+02}", "{NULL,00:00:00+00}", null]
   skip:
-    all: ["TODO: triage TimeTzArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1561
   name: bit_array
-  pg_typname: bit_array
+  pg_typname: "bit[]"
+  cast_sql: "$1::bit[]"
+  text: true
   binary: false
-  text: false
   array: false
-  samples: []
+  samples: ["{}", "{10101010}", "{NULL,10101010}", null]
   skip:
-    all: ["TODO: triage BitArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1563
   name: varbit_array
-  pg_typname: varbit_array
+  pg_typname: "varbit[]"
+  cast_sql: "$1::varbit[]"
+  text: true
   binary: false
-  text: false
   array: false
-  samples: []
+  samples: ["{}", "{\"\",1}", "{NULL,\"\"}", null]
   skip:
-    all: ["TODO: triage VarbitArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 1790
   name: refcursor
@@ -1159,23 +1224,32 @@
 
 - oid: 2201
   name: refcursor_array
-  pg_typname: refcursor_array
-  binary: false
-  text: false
+  pg_typname: "refcursor[]"
+  cast_sql: "$1::refcursor[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{portal1,\"\"}", "{NULL,portal1}", null]
   skip:
-    all: ["TODO: triage RefcursorArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 2202
   name: regprocedure
   pg_typname: regprocedure
-  binary: false
-  text: false
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["abs(integer)", null]
   skip:
-    all: ["TODO: triage Regprocedure"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-binary"]
 
 - oid: 2203
   name: regoper
@@ -1185,7 +1259,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Regoper"]
+    all: ["pg_operator lists no operators, so no operator name resolves"]
 
 - oid: 2204
   name: regoperator
@@ -1195,17 +1269,26 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Regoperator"]
+    all: ["pg_operator lists no operators, so no operator name resolves"]
 
 - oid: 2207
   name: regprocedure_array
-  pg_typname: regprocedure_array
-  binary: false
-  text: false
+  pg_typname: "regprocedure[]"
+  cast_sql: "$1::regprocedure[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{abs(integer)}", "{NULL,abs(integer)}", null]
   skip:
-    all: ["TODO: triage RegprocedureArray"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 2208
   name: regoper_array
@@ -1215,7 +1298,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage RegoperArray"]
+    all: ["pg_operator lists no operators, so no operator name resolves"]
 
 - oid: 2209
   name: regoperator_array
@@ -1225,27 +1308,49 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage RegoperatorArray"]
+    all: ["pg_operator lists no operators, so no operator name resolves"]
 
 - oid: 2210
   name: regclass_array
-  pg_typname: regclass_array
-  binary: false
-  text: false
+  pg_typname: "regclass[]"
+  cast_sql: "$1::regclass[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{pg_class}", "{NULL,pg_class}", null]
   skip:
-    all: ["TODO: triage RegclassArray"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-text", "extended-binary"]
+    js_pg: ["extended-binary"]
+    js_postgres_js: ["extended-binary"]
 
 - oid: 2211
   name: regtype_array
-  pg_typname: regtype_array
-  binary: false
-  text: false
+  pg_typname: "regtype[]"
+  cast_sql: "$1::regtype[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{int4,text}", "{NULL,int4}", null]
   skip:
-    all: ["TODO: triage RegtypeArray"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-text", "extended-binary"]
+    js_pg: ["extended-binary"]
+    js_postgres_js: ["extended-binary"]
 
 - oid: 2249
   name: record
@@ -1255,7 +1360,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Record"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 2275
   name: cstring
@@ -1265,7 +1370,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Cstring"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 2276
   name: any
@@ -1275,7 +1380,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Any"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 2277
   name: anyarray
@@ -1285,7 +1390,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Anyarray"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 2278
   name: void
@@ -1295,7 +1400,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Void"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 2279
   name: trigger
@@ -1305,7 +1410,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Trigger"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 2280
   name: language_handler
@@ -1315,7 +1420,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage LanguageHandler"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 2281
   name: internal
@@ -1325,7 +1430,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Internal"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 2283
   name: anyelement
@@ -1335,7 +1440,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Anyelement"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 2287
   name: record_array
@@ -1345,7 +1450,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage RecordArray"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 2776
   name: anynonarray
@@ -1355,7 +1460,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Anynonarray"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 2949
   name: txid_snapshot_array
@@ -1365,17 +1470,18 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage TxidSnapshotArray"]
+    all: ["SereneDB has no txid_snapshot type"]
 
 - oid: 2951
   name: uuid_array
-  pg_typname: uuid_array
-  binary: false
-  text: false
+  pg_typname: "uuid[]"
+  cast_sql: "$1::uuid[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{00000000-0000-0000-0000-000000000000,ffffffff-ffff-ffff-ffff-ffffffffffff}", "{NULL,00000000-0000-0000-0000-000000000000}", null]
   skip:
-    all: ["TODO: triage UuidArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 2970
   name: txid_snapshot
@@ -1385,7 +1491,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage TxidSnapshot"]
+    all: ["SereneDB has no txid_snapshot type"]
 
 - oid: 3115
   name: fdw_handler
@@ -1395,17 +1501,18 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage FdwHandler"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 3221
   name: pg_lsn_array
-  pg_typname: pg_lsn_array
-  binary: false
-  text: false
+  pg_typname: "pg_lsn[]"
+  cast_sql: "$1::pg_lsn[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{0/0,16/B374D848}", "{NULL,0/0}", null]
   skip:
-    all: ["TODO: triage PgLsnArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 3310
   name: tsm_handler
@@ -1415,7 +1522,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage TsmHandler"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 3361
   name: pg_ndistinct
@@ -1425,7 +1532,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgNdistinct"]
+    all: ["an internal type without text input"]
 
 - oid: 3402
   name: pg_dependencies
@@ -1435,7 +1542,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgDependencies"]
+    all: ["an internal type without text input"]
 
 - oid: 3500
   name: anyenum
@@ -1445,7 +1552,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Anyenum"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 3614
   name: tsvector
@@ -1455,7 +1562,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Tsvector"]
+    all: ["SereneDB has no tsvector type"]
 
 - oid: 3642
   name: gtsvector
@@ -1465,7 +1572,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Gtsvector"]
+    all: ["SereneDB has no gtsvector type"]
 
 - oid: 3643
   name: tsvector_array
@@ -1475,7 +1582,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage TsvectorArray"]
+    all: ["SereneDB has no tsvector type"]
 
 - oid: 3644
   name: gtsvector_array
@@ -1485,7 +1592,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage GtsvectorArray"]
+    all: ["SereneDB has no gtsvector type"]
 
 - oid: 3734
   name: regconfig
@@ -1495,7 +1602,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Regconfig"]
+    all: ["no text search configuration or dictionary exists to name"]
 
 - oid: 3735
   name: regconfig_array
@@ -1505,7 +1612,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage RegconfigArray"]
+    all: ["no text search configuration or dictionary exists to name"]
 
 - oid: 3769
   name: regdictionary
@@ -1515,7 +1622,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Regdictionary"]
+    all: ["no text search configuration or dictionary exists to name"]
 
 - oid: 3770
   name: regdictionary_array
@@ -1525,7 +1632,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage RegdictionaryArray"]
+    all: ["no text search configuration or dictionary exists to name"]
 
 - oid: 3807
   name: jsonb_array
@@ -1535,7 +1642,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage JsonbArray"]
+    all: ["SereneDB has no jsonb type"]
 
 - oid: 3831
   name: anyrange
@@ -1545,7 +1652,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Anyrange"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 3838
   name: event_trigger
@@ -1555,17 +1662,18 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage EventTrigger"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 3905
   name: int4_range_array
-  pg_typname: int4_range_array
-  binary: false
-  text: false
+  pg_typname: "int4range[]"
+  cast_sql: "$1::int4range[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"[1,5)\",\"(1,5]\"}", "{NULL,\"[1,5)\"}", null]
   skip:
-    all: ["TODO: triage Int4RangeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 3906
   name: numrange
@@ -1579,13 +1687,14 @@
 
 - oid: 3907
   name: numrange_array
-  pg_typname: numrange_array
-  binary: false
-  text: false
+  pg_typname: "numrange[]"
+  cast_sql: "$1::numrange[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"[1.5,2.5)\",\"(,3]\"}", "{NULL,\"[1.5,2.5)\"}", null]
   skip:
-    all: ["TODO: triage NumrangeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 3908
   name: tsrange
@@ -1599,13 +1708,14 @@
 
 - oid: 3909
   name: tsrange_array
-  pg_typname: tsrange_array
-  binary: false
-  text: false
+  pg_typname: "tsrange[]"
+  cast_sql: "$1::tsrange[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"[\\\"2020-01-01 10:00:00\\\",\\\"2020-01-02 10:00:00\\\")\",\"(,)\"}", "{NULL,\"[\\\"2020-01-01 10:00:00\\\",\\\"2020-01-02 10:00:00\\\")\"}", null]
   skip:
-    all: ["TODO: triage TsrangeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 3910
   name: tstzrange
@@ -1619,13 +1729,14 @@
 
 - oid: 3911
   name: tstzrange_array
-  pg_typname: tstzrange_array
-  binary: false
-  text: false
+  pg_typname: "tstzrange[]"
+  cast_sql: "$1::tstzrange[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"[\\\"2020-01-01 10:00:00+00\\\",)\",empty}", "{NULL,\"[\\\"2020-01-01 10:00:00+00\\\",)\"}", null]
   skip:
-    all: ["TODO: triage TstzrangeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 3912
   name: daterange
@@ -1639,23 +1750,25 @@
 
 - oid: 3913
   name: daterange_array
-  pg_typname: daterange_array
-  binary: false
-  text: false
+  pg_typname: "daterange[]"
+  cast_sql: "$1::daterange[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"[2020-01-01,2020-02-01)\",\"(2020-01-01,infinity]\"}", "{NULL,\"[2020-01-01,2020-02-01)\"}", null]
   skip:
-    all: ["TODO: triage DaterangeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 3927
   name: int8_range_array
-  pg_typname: int8_range_array
-  binary: false
-  text: false
+  pg_typname: "int8range[]"
+  cast_sql: "$1::int8range[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"[1,9223372036854775806]\",empty}", "{NULL,\"[1,9223372036854775806]\"}", null]
   skip:
-    all: ["TODO: triage Int8RangeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 4072
   name: jsonpath
@@ -1665,7 +1778,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Jsonpath"]
+    all: ["SereneDB has no jsonpath type"]
 
 - oid: 4073
   name: jsonpath_array
@@ -1675,57 +1788,102 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage JsonpathArray"]
+    all: ["SereneDB has no jsonpath type"]
 
 - oid: 4090
   name: regnamespace_array
-  pg_typname: regnamespace_array
-  binary: false
-  text: false
+  pg_typname: "regnamespace[]"
+  cast_sql: "$1::regnamespace[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{public,pg_catalog}", "{NULL,public}", null]
   skip:
-    all: ["TODO: triage RegnamespaceArray"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-text", "extended-binary"]
+    js_pg: ["extended-binary"]
+    js_postgres_js: ["extended-binary"]
 
 - oid: 4096
   name: regrole
   pg_typname: regrole
-  binary: false
-  text: false
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["postgres", null]
   skip:
-    all: ["TODO: triage Regrole"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-binary"]
 
 - oid: 4097
   name: regrole_array
-  pg_typname: regrole_array
-  binary: false
-  text: false
+  pg_typname: "regrole[]"
+  cast_sql: "$1::regrole[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{postgres}", "{NULL,postgres}", null]
   skip:
-    all: ["TODO: triage RegroleArray"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 4191
   name: regcollation
   pg_typname: regcollation
-  binary: false
-  text: false
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["\"C\"", null]
   skip:
-    all: ["TODO: triage Regcollation"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-binary"]
 
 - oid: 4192
   name: regcollation_array
-  pg_typname: regcollation_array
-  binary: false
-  text: false
+  pg_typname: "regcollation[]"
+  cast_sql: "$1::regcollation[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"\\\"C\\\"\"}", "{NULL,\"\\\"C\\\"\"}", null]
   skip:
-    all: ["TODO: triage RegcollationArray"]
+    python_psycopg3: ["extended-binary"]
+    java_pgjdbc: ["extended-binary"]
+    go_pgx: ["extended-binary"]
+    go_libpq: ["extended-binary"]
+    rust_tokio_postgres: ["extended-binary"]
+    rust_sqlx: ["extended-binary"]
+    csharp_npgsql: ["extended-binary"]
+    php_pdo: ["extended-binary"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 4451
   name: int4multirange
@@ -1795,7 +1953,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Anymultirange"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 4538
   name: anycompatiblemultirange
@@ -1805,7 +1963,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Anycompatiblemultirange"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 4600
   name: pg_brin_bloom_summary
@@ -1815,7 +1973,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgBrinBloomSummary"]
+    all: ["an internal type without text input"]
 
 - oid: 4601
   name: pg_brin_minmax_multi_summary
@@ -1825,7 +1983,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgBrinMinmaxMultiSummary"]
+    all: ["an internal type without text input"]
 
 - oid: 5017
   name: pg_mcv_list
@@ -1835,7 +1993,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgMcvList"]
+    all: ["an internal type without text input"]
 
 - oid: 5038
   name: pg_snapshot
@@ -1845,7 +2003,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgSnapshot"]
+    all: ["SereneDB has no pg_snapshot type"]
 
 - oid: 5039
   name: pg_snapshot_array
@@ -1855,17 +2013,17 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgSnapshotArray"]
+    all: ["SereneDB has no pg_snapshot type"]
 
 - oid: 5069
   name: xid8
   pg_typname: xid8
-  binary: false
-  text: false
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["42", "0", null]
   skip:
-    all: ["TODO: triage Xid8"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 5077
   name: anycompatible
@@ -1875,7 +2033,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Anycompatible"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 5078
   name: anycompatiblearray
@@ -1885,7 +2043,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Anycompatiblearray"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 5079
   name: anycompatiblenonarray
@@ -1895,7 +2053,7 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Anycompatiblenonarray"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 5080
   name: anycompatiblerange
@@ -1905,164 +2063,169 @@
   array: false
   samples: []
   skip:
-    all: ["TODO: triage Anycompatiblerange"]
+    all: ["a pseudo-type: no value of it reaches a client"]
 
 - oid: 6150
   name: int4_multirange_array
-  pg_typname: int4_multirange_array
-  binary: false
-  text: false
+  pg_typname: "int4multirange[]"
+  cast_sql: "$1::int4multirange[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"{[1,5),[7,9]}\",\"{}\"}", "{NULL,\"{[1,5),[7,9]}\"}", null]
   skip:
-    all: ["TODO: triage Int4MultirangeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 6151
   name: nummultirange_array
-  pg_typname: nummultirange_array
-  binary: false
-  text: false
+  pg_typname: "nummultirange[]"
+  cast_sql: "$1::nummultirange[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"{[1.5,2.5),(3,)}\",\"{}\"}", "{NULL,\"{[1.5,2.5),(3,)}\"}", null]
   skip:
-    all: ["TODO: triage NummultirangeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 6152
   name: tsmultirange_array
-  pg_typname: tsmultirange_array
-  binary: false
-  text: false
+  pg_typname: "tsmultirange[]"
+  cast_sql: "$1::tsmultirange[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"{[\\\"2020-01-01 10:00:00\\\",\\\"2020-01-02 10:00:00\\\")}\",\"{(,)}\"}", "{NULL,\"{[\\\"2020-01-01 10:00:00\\\",\\\"2020-01-02 10:00:00\\\")}\"}", null]
   skip:
-    all: ["TODO: triage TsmultirangeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 6153
   name: tstzmultirange_array
-  pg_typname: tstzmultirange_array
-  binary: false
-  text: false
+  pg_typname: "tstzmultirange[]"
+  cast_sql: "$1::tstzmultirange[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"{[\\\"2020-01-01 10:00:00+00\\\",)}\",\"{}\"}", "{NULL,\"{[\\\"2020-01-01 10:00:00+00\\\",)}\"}", null]
   skip:
-    all: ["TODO: triage TstzmultirangeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 6155
   name: datemultirange_array
-  pg_typname: datemultirange_array
-  binary: false
-  text: false
+  pg_typname: "datemultirange[]"
+  cast_sql: "$1::datemultirange[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"{[2020-01-01,2020-02-01),(2020-03-01,infinity]}\",\"{}\"}", "{NULL,\"{[2020-01-01,2020-02-01),(2020-03-01,infinity]}\"}", null]
   skip:
-    all: ["TODO: triage DatemultirangeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 6157
   name: int8_multirange_array
-  pg_typname: int8_multirange_array
-  binary: false
-  text: false
+  pg_typname: "int8multirange[]"
+  cast_sql: "$1::int8multirange[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"{[1,9223372036854775806]}\",\"{}\"}", "{NULL,\"{[1,9223372036854775806]}\"}", null]
   skip:
-    all: ["TODO: triage Int8MultirangeArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 12241
   name: cardinal_number_array
-  pg_typname: cardinal_number_array
-  binary: false
-  text: false
+  pg_typname: "information_schema.cardinal_number[]"
+  cast_sql: "$1::information_schema.cardinal_number[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{0,5}", "{NULL,0}", null]
   skip:
-    all: ["TODO: triage CardinalNumberArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 12242
   name: cardinal_number
-  pg_typname: cardinal_number
-  binary: false
-  text: false
+  pg_typname: "information_schema.cardinal_number"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["0", "5", null]
   skip:
-    all: ["TODO: triage CardinalNumber"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 12243
   name: character_data_array
-  pg_typname: character_data_array
-  binary: false
-  text: false
+  pg_typname: "information_schema.character_data[]"
+  cast_sql: "$1::information_schema.character_data[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"\",abc}", "{NULL,\"\"}", null]
   skip:
-    all: ["TODO: triage CharacterDataArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 12244
   name: character_data
-  pg_typname: character_data
-  binary: false
-  text: false
+  pg_typname: "information_schema.character_data"
+  text: true
+  binary: true
   array: false
-  samples: []
-  skip:
-    all: ["TODO: triage CharacterData"]
+  samples: ["", "abc", null]
 
 - oid: 12245
   name: sql_identifier_array
-  pg_typname: sql_identifier_array
-  binary: false
-  text: false
+  pg_typname: "information_schema.sql_identifier[]"
+  cast_sql: "$1::information_schema.sql_identifier[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{abc}", "{NULL,abc}", null]
   skip:
-    all: ["TODO: triage SqlIdentifierArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 12246
   name: sql_identifier
-  pg_typname: sql_identifier
-  binary: false
-  text: false
+  pg_typname: "information_schema.sql_identifier"
+  text: true
+  binary: true
   array: false
-  samples: []
-  skip:
-    all: ["TODO: triage SqlIdentifier"]
+  samples: ["abc", null]
 
 - oid: 12250
   name: time_stamp_array
-  pg_typname: time_stamp_array
-  binary: false
-  text: false
+  pg_typname: "information_schema.time_stamp[]"
+  cast_sql: "$1::information_schema.time_stamp[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{\"2024-01-01 12:00:00+00\"}", "{NULL,\"2024-01-01 12:00:00+00\"}", null]
   skip:
-    all: ["TODO: triage TimeStampArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 12251
   name: time_stamp
-  pg_typname: time_stamp
-  binary: false
-  text: false
+  pg_typname: "information_schema.time_stamp"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["2024-01-01 12:00:00+00", null]
   skip:
-    all: ["TODO: triage TimeStamp"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 12252
   name: yes_or_no_array
-  pg_typname: yes_or_no_array
-  binary: false
-  text: false
+  pg_typname: "information_schema.yes_or_no[]"
+  cast_sql: "$1::information_schema.yes_or_no[]"
+  text: true
+  binary: true
   array: false
-  samples: []
+  samples: ["{}", "{YES,NO}", "{NULL,YES}", null]
   skip:
-    all: ["TODO: triage YesOrNoArray"]
+    python_asyncpg: ["extended-text", "extended-binary"]
 
 - oid: 12253
   name: yes_or_no
-  pg_typname: yes_or_no
-  binary: false
-  text: false
+  pg_typname: "information_schema.yes_or_no"
+  text: true
+  binary: true
   array: false
-  samples: []
-  skip:
-    all: ["TODO: triage YesOrNo"]
+  samples: ["YES", "NO", null]

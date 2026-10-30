@@ -46,6 +46,7 @@
 #include <string_view>
 
 #include "auth/role_closure.h"
+#include "auth/role_rules.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/database_directory.h"
@@ -277,6 +278,7 @@ bool ClusterCatalog::IsPinnedEntry(const duckdb::CatalogEntry& entry) const {
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) {
+  auth::CheckCreateRole(transaction, info);
   DeclareModified(transaction, *this);
   auto role = duckdb::DuckCatalog::CreateRole(transaction, info);
   const auto grant = [&](const duckdb::Identifier& member,
@@ -284,7 +286,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
     duckdb::AlterRoleInfo alter{member};
     alter.grant_role = granted.GetIdentifierName();
     alter.admin_option = admin;
-    Alter(transaction, alter);
+    ApplyAlter(transaction, alter);
   };
   for (const auto& name : info.in_roles) {
     grant(role->name, name, false);
@@ -305,13 +307,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
     alter.admin_option = true;
     alter.inherit_option = false;
     alter.set_option = false;
-    Alter(transaction, alter);
+    ApplyAlter(transaction, alter);
   }
   return role;
 }
 
 void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
                               duckdb::DropInfo& info) {
+  auth::CheckDropRole(transaction, info);
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   auto& roles = GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
@@ -342,7 +345,7 @@ void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
       duckdb::AlterRoleInfo alter{member};
       alter.grant_role_id = role->oid;
       alter.revoke = true;
-      Alter(transaction, alter);
+      ApplyAlter(transaction, alter);
     }
   }
   duckdb::DuckCatalog::DropRole(transaction, info);
@@ -350,6 +353,14 @@ void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
 
 void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
                            duckdb::AlterInfo& info) {
+  if (info.type == duckdb::AlterType::ALTER_ROLE) {
+    auth::CheckAlterRole(transaction, info.Cast<duckdb::AlterRoleInfo>());
+  }
+  ApplyAlter(transaction, info);
+}
+
+void ClusterCatalog::ApplyAlter(duckdb::CatalogTransaction transaction,
+                                duckdb::AlterInfo& info) {
   DeclareModified(transaction, *this);
   const auto type = info.GetCatalogType();
   const auto& name = info.GetQualifiedName().Name();

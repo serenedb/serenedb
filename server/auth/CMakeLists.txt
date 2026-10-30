@@ -1,4 +1,4 @@
 target_sources(
     sereneserver
-    PRIVATE enforce.cpp function_privileges.cpp role_closure.cpp
+    PRIVATE enforce.cpp function_privileges.cpp role_closure.cpp role_rules.cpp
 )

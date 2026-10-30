@@ -98,6 +98,8 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
 
  private:
+  void ApplyAlter(duckdb::CatalogTransaction transaction,
+                  duckdb::AlterInfo& info);
   void CompactCatalogLog();
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
 

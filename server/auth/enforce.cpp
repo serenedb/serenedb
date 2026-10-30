@@ -66,7 +66,6 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
-#include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
@@ -89,13 +88,6 @@ void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
               info.GetQualifiedName().Name().GetIdentifierName(), "\""),
       ERR_DETAIL("System catalog modifications are currently disallowed."));
   }
-}
-
-[[noreturn]] void DenyRoleAction(std::string_view verb,
-                                 std::string_view detail) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("permission denied to ", verb, " role"),
-                  ERR_DETAIL(detail));
 }
 
 std::vector<std::span<const duckdb::AclItem>> AllColumnAcls(
@@ -193,7 +185,6 @@ class Enforcer {
       _connection{connection},
       _root{StatementRoot(root)},
       _caller{connection.GetRoleId()},
-      _roles{RolesOf(&context)},
       _caller_closure_owner{ClosureFor(&context, _caller)},
       _caller_closure{*_caller_closure_owner},
       _enforce{!_caller_closure.is_superuser} {}
@@ -228,9 +219,6 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_ROLE: {
         auto& info =
           op.Cast<duckdb::LogicalCreate>().info->Cast<duckdb::CreateRoleInfo>();
-        if (_enforce) {
-          CheckCreateRole(info);
-        }
         PointAtCluster(info, CatalogType::ROLE_ENTRY);
         _connection.MarkClusterWritten();
         break;
@@ -238,9 +226,6 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_DROP: {
         auto& info = *op.Cast<duckdb::LogicalDrop>().info;
         RequireOutsideTransactionBlock(info);
-        if (_enforce && info.type == CatalogType::ROLE_ENTRY) {
-          CheckDropRole(info);
-        }
         RequireDroppableNow(info);
         if (PointAtCluster(info, info.type)) {
           _connection.MarkClusterWritten();
@@ -252,9 +237,6 @@ class Enforcer {
         if (info.type == duckdb::AlterType::ALTER_DATABASE) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                           ERR_MSG("renaming a database is not supported"));
-        }
-        if (info.type == duckdb::AlterType::ALTER_ROLE && _enforce) {
-          CheckAlterRole(info.Cast<duckdb::AlterRoleInfo>());
         }
         if (PointAtCluster(info, info.GetCatalogType())) {
           _connection.MarkClusterWritten();
@@ -369,26 +351,6 @@ class Enforcer {
     }
   }
 
-  const RoleMemberships& CallerMemberships() {
-    if (!_caller_memberships) {
-      _caller_memberships = MembershipsOf(*_roles, _caller);
-    }
-    return *_caller_memberships;
-  }
-
-  void CheckDropRole(const duckdb::DropInfo& info) {
-    if (!_caller_closure.Has(catalog::RoleOption::CreateRole)) {
-      DenyRoleAction("drop",
-                     "Only roles with the CREATEROLE attribute and the ADMIN "
-                     "option on the target roles may drop roles.");
-    }
-    if (auto role =
-          ClusterEntry(CatalogType::ROLE_ENTRY,
-                       info.GetQualifiedName().Name().GetIdentifierName())) {
-      RequireRoleAdmin(*role, "drop");
-    }
-  }
-
   duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
     CatalogType type, std::string_view name) {
     auto& cluster = catalog::ClusterOf(_context);
@@ -475,103 +437,13 @@ class Enforcer {
                                             " other sessions using the "
                                             "database.")));
   }
-  void RequireAttributeGrant(std::string_view verb,
-                             catalog::RoleOption options) {
-    const auto deny = [&](std::string_view attribute) {
-      DenyRoleAction(
-        verb, absl::StrCat("Only roles with the ", attribute, " attribute may ",
-                           verb, " roles with the ", attribute, " attribute."));
-    };
-    if (HasOption(options, catalog::RoleOption::Superuser)) {
-      deny("SUPERUSER");
-    }
-    if (HasOption(options, catalog::RoleOption::CreateDb) &&
-        !_caller_closure.Has(catalog::RoleOption::CreateDb)) {
-      deny("CREATEDB");
-    }
-    if (HasOption(options, catalog::RoleOption::Replication) &&
-        !_caller_closure.Has(catalog::RoleOption::Replication)) {
-      deny("REPLICATION");
-    }
-    if (HasOption(options, catalog::RoleOption::BypassRls) &&
-        !_caller_closure.Has(catalog::RoleOption::BypassRls)) {
-      deny("BYPASSRLS");
-    }
-  }
-
-  void RequireRoleAdmin(const duckdb::CatalogEntry& role,
-                        std::string_view verb) {
-    if (role.Cast<catalog::RoleCatalogEntry>().IsSuperuser()) {
-      DenyRoleAction(
-        verb, absl::StrCat("Only roles with the SUPERUSER attribute may ", verb,
-                           " roles with the SUPERUSER attribute."));
-    }
-    if (!_caller_closure.Has(catalog::RoleOption::CreateRole) ||
-        !CallerMemberships().IsAdminOf(role.oid)) {
-      DenyRoleAction(
-        verb, absl::StrCat("Only roles with the CREATEROLE attribute and "
-                           "the ADMIN option on role \"",
-                           role.name.GetIdentifierName(), "\" may ", verb,
-                           " this role."));
-    }
-  }
-
-  void RequireGrantableRole(std::string_view name) {
-    auto role = ClusterEntry(CatalogType::ROLE_ENTRY, name);
-    if (role && !CallerMemberships().IsAdminOf(role->oid)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("permission denied to grant role \"",
-                role->name.GetIdentifierName(), "\""),
-        ERR_DETAIL("Only roles with the ADMIN option on role \"",
-                   role->name.GetIdentifierName(), "\" may grant this role."));
-    }
-  }
-
-  void CheckCreateRole(const duckdb::CreateRoleInfo& info) {
-    if (!_caller_closure.Has(catalog::RoleOption::CreateRole)) {
-      DenyRoleAction(
-        "create", "Only roles with the CREATEROLE attribute may create roles.");
-    }
-    RequireAttributeGrant("create", info.options);
-    for (const auto& name : info.in_roles) {
-      RequireGrantableRole(name.GetIdentifierName());
-    }
-  }
-
-  void CheckAlterRole(const duckdb::AlterRoleInfo& info) {
-    auto role =
-      ClusterEntry(CatalogType::ROLE_ENTRY,
-                   info.GetQualifiedName().Name().GetIdentifierName());
-    if (!role) {
-      return;
-    }
-    if (!info.grant_role.empty()) {
-      RequireGrantableRole(info.grant_role);
-      return;
-    }
-    if (!info.new_name.empty()) {
-      RequireRoleAdmin(*role, "rename");
-      return;
-    }
-    const bool attributes = info.set_options != catalog::RoleOption::None ||
-                            info.clear_options != catalog::RoleOption::None ||
-                            info.set_conn_limit || info.set_valid_until;
-    if (role->oid != _caller || attributes) {
-      RequireRoleAdmin(*role, "alter");
-      RequireAttributeGrant("alter", info.set_options);
-    }
-  }
-
   duckdb::ClientContext& _context;
   ConnectionContext& _connection;
   duckdb::LogicalOperator& _root;
   const duckdb::idx_t _caller;
-  RoleGraphPtr _roles;
   RoleAccessRef _caller_closure_owner;
   const RoleClosure& _caller_closure;
   const bool _enforce;
-  std::optional<RoleMemberships> _caller_memberships;
 };
 
 }  // namespace

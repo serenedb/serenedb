@@ -377,6 +377,9 @@ TEST_P(PrunedTopTest, single_terms_with_exclusions) {
          {{"cluster"}, {"half", "run"}},
          {{"sparse"}, {"holes", "cluster"}},
          {{"half"}, {"sparse", "rare"}},
+         {{"common"}, {"rare"}},
+         {{"burst"}, {"edge"}},
+         {{"common"}, {"single", "edge"}},
        }) {
     Check(shape);
   }

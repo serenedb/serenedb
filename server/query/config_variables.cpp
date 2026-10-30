@@ -310,15 +310,8 @@ void SetServerDuration(duckdb::ClientContext&, duckdb::SetScope,
     kName, value.ToString(), static_cast<double>(UnitlessMs)))};
 }
 
-void SetReplicationRole(duckdb::ClientContext& ctx, duckdb::SetScope,
+void SetReplicationRole(duckdb::ClientContext&, duckdb::SetScope,
                         duckdb::Value& value) {
-  auto* conn = connector::GetSereneDBContextPtr(ctx);
-  if (conn && !auth::ClosureFor(&ctx, conn->GetRoleId())->is_superuser) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG(
-        "permission denied to set parameter \"session_replication_role\""));
-  }
   const auto role = absl::AsciiStrToLower(value.ToString());
   if (role != "origin" && role != "replica" && role != "local") {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -534,8 +527,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "failure-point registry is "
         "process-global, so an armed point fires for every session.",
         [] { return duckdb::Value{""}; },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
-          RequireFaultSuperuser(ctx);
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto s = value.ToString();
           if (s.starts_with('-')) {
             if (!duckdb::FaultPoints::Disarm(std::string_view{s}.substr(1))) {

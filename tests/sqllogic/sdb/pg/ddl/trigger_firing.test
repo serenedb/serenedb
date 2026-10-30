@@ -252,6 +252,7 @@ statement error
 SET session_replication_role = replica;
 ----
 db error: ERROR: permission denied to set parameter "session_replication_role"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
 
 
 connection default

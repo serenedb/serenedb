@@ -55,6 +55,11 @@ class ConjunctionLeaves {
 
   doc_id_t Next() { return Agree(Lead().Next()); }
 
+  template<typename Admit>
+  doc_id_t Next(doc_id_t end, Admit&& admit) {
+    return Agree(Lead().Next(), end, admit);
+  }
+
   IRS_FORCE_INLINE doc_id_t ProbeRest(doc_id_t target) {
     for (auto it = _leaves.begin() + 1, end = _leaves.end(); it != end; ++it) {
       if (const auto probe = it->Probe(target); probe != target) {
@@ -101,6 +106,28 @@ class ConjunctionLeaves {
         return doc;
       }
       doc = Lead().Seek(probe);
+    }
+    return doc;
+  }
+
+  template<typename Admit>
+  doc_id_t Agree(doc_id_t doc, doc_id_t end, Admit& admit) {
+    while (doc < end) {
+      auto it = _leaves.begin() + 1;
+      const auto end = _leaves.end();
+      for (; it != end; ++it) {
+        if (!it->Covers(doc) && !admit(doc, it)) {
+          doc = Lead().Next();
+          break;
+        }
+        if (const auto probe = it->Probe(doc); probe != doc) {
+          doc = Lead().Seek(probe);
+          break;
+        }
+      }
+      if (it == end) {
+        return doc;
+      }
     }
     return doc;
   }

@@ -1,0 +1,81 @@
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE bff (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 50, compaction_interval = 0);
+
+statement ok
+INSERT INTO bff VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) bff;
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_fed';
+
+connection builder
+statement async ok
+CREATE INDEX bff_idx ON bff USING inverted (tag);
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index
+WHERE relid = 'bff'::regclass;
+----
+tuples_done
+3
+
+connection truncater
+statement ok
+TRUNCATE bff;
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM bff;
+----
+n
+0
+
+connection default
+statement ok
+SET sdb_faults = '-pause_search_backfill_fed';
+
+wait
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) bff;
+
+connection default
+query
+SELECT count(*) AS n FROM bff;
+----
+n
+0
+
+connection default
+query
+SELECT count(*) AS n FROM bff_idx WHERE tag @@ 'a';
+----
+n
+0
+
+connection default
+statement ok
+INSERT INTO bff VALUES (4, 'd');
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) bff;
+
+connection default
+query
+SELECT id FROM bff_idx WHERE tag @@ 'd';
+----
+id
+4
+
+connection default
+statement ok
+DROP TABLE bff;

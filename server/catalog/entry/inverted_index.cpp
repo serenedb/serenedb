@@ -62,6 +62,7 @@
 #include "connector/duckdb_reindex_function.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
+#include "connector/term_dict.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -284,14 +285,33 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
 }
 
 irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
-  const auto it = fields.find(id);
-  if (it == fields.end()) {
+  const auto* entry = FindEntry(id);
+  if (!entry) {
     return irs::field_limits::invalid();
   }
   // Norms live in the field's own synthetic column, allocated with it.
-  return it->second.features.HasFeatures(irs::IndexFeatures::Norm)
-           ? it->second.synthetic_column
+  return entry->features.HasFeatures(irs::IndexFeatures::Norm)
+           ? entry->synthetic_column
            : irs::field_limits::invalid();
+}
+
+irs::FieldKind InvertedIndexConfig::GetFieldKind(irs::field_id id) const {
+  if (id == connector::term_dict::kPKFieldId || LookupField(id).entry) {
+    return irs::FieldKind::Index;
+  }
+  return table_columns.contains(id) ? irs::FieldKind::Column
+                                    : irs::FieldKind::None;
+}
+
+const irs::AnnInfo* InvertedIndexConfig::FindAnn(
+  irs::field_id column, irs::VectorMetric metric) const noexcept {
+  for (const auto id : AnnFields(column)) {
+    const auto& ann = FindEntry(id)->column_options.ann_info;
+    if (ann->metric == metric) {
+      return &*ann;
+    }
+  }
+  return nullptr;
 }
 
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
@@ -365,6 +385,14 @@ InvertedIndexConfig::InvertedIndexConfig(
     if (irs::field_limits::valid(key.column_id)) {
       _column_fields.try_emplace(key.column_id, key.field_id);
     }
+    const auto* entry = FindEntry(key.field_id);
+    SDB_ASSERT(entry);
+    if (const auto& ann = entry->column_options.ann_info) {
+      auto& ids = anns[ann->column_id];
+      if (!absl::c_linear_search(ids, ann->index_id)) {
+        ids.push_back(ann->index_id);
+      }
+    }
     if (key.normalized_expression.empty()) {
       continue;
     }
@@ -372,10 +400,6 @@ InvertedIndexConfig::InvertedIndexConfig(
       _expressions.try_emplace(key.normalized_expression).first->second;
     if (slots.first == kNoKey) {
       slots.first = i;
-    }
-    const auto* entry = FindEntry(key.field_id);
-    if (!entry) {
-      continue;
     }
     if (entry->IsStored()) {
       _stores_expressions = true;
@@ -422,12 +446,14 @@ const InvertedIndexKey* InvertedIndexConfig::FindKey(
   return it == _field_keys.end() ? nullptr : &keys[it->second];
 }
 
-bool InvertedIndexConfig::StoresExpression(
+std::string_view InvertedIndexConfig::StoredExpression(
   irs::field_id field_id) const noexcept {
   const auto* key = FindKey(field_id);
   const auto* entry = FindEntry(field_id);
-  return key && !key->normalized_expression.empty() && entry &&
-         entry->IsStored();
+  if (!key || !entry || !entry->IsStored()) {
+    return {};
+  }
+  return key->normalized_expression;
 }
 
 const InvertedIndexField* InvertedIndexConfig::FindEntry(
@@ -717,17 +743,31 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
   return std::move(result);
 }
 
+void InvertedIndexEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {
+  if (_search_table && transaction.HasContext()) {
+    _search_table->ClaimLayout(transaction.GetContext(),
+                               GetTableName().GetIdentifierName());
+  }
+}
+
 void InvertedIndexEntry::OnDrop() {
   if (_storage) {
     _storage->MarkDropped();
   }
   if (_search_table) {
+    _retired = true;
     _search_table->RemoveIndexConfig(oid);
   }
 }
 
+InvertedIndexEntry::~InvertedIndexEntry() {
+  if (_retired) {
+    _search_table->ReleaseRetiredConfig(oid);
+  }
+}
+
 void InvertedIndexEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
-  if (prev_entry.type == duckdb::CatalogType::INVALID) {
+  if (CreatedObject(prev_entry)) {
     OnDrop();
   }
   duckdb::DuckIndexEntry::Rollback(prev_entry);

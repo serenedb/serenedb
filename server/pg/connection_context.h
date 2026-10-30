@@ -52,6 +52,9 @@ struct ReplBatch;
 }  // namespace sdb::replication
 namespace sdb::pg {
 
+inline constexpr std::string_view kPgServerVersion = "18.6";
+inline constexpr int32_t kPgServerVersionNum = 180006;
+
 class CopyInBatches;
 
 // Outcome of the connect-time login gate. On success `role` is the id of the
@@ -88,14 +91,15 @@ using SideChannel =
 class ConnectionContext final : public query::Transaction {
  public:
   ConnectionContext(duckdb::ClientContext& duckdb_ctx, std::string_view user,
-                    duckdb::idx_t role_id, std::string_view dbname,
-                    duckdb::idx_t database_id, message::Buffer* send_buffer,
-                    int32_t backend_pid,
+                    std::string_view system_user, duckdb::idx_t role_id,
+                    std::string_view dbname, duckdb::idx_t database_id,
+                    message::Buffer* send_buffer, int32_t backend_pid,
                     network::CancelRegistry* cancel_registry);
 
   ~ConnectionContext() final { SDB_ASSERT(!HasNotices()); }
 
   const std::string& user() const { return _user; }
+  const std::string& SystemUser() const { return _system_user; }
   const std::string& GetDatabase() const { return _database_name; }
   duckdb::idx_t GetDatabaseId() const { return _database_id; }
   int32_t GetBackendPid() const { return _backend_pid; }
@@ -175,6 +179,7 @@ class ConnectionContext final : public query::Transaction {
   };
 
   const std::string _user;
+  const std::string _system_user;
   const std::string _database_name;
   const duckdb::idx_t _database_id;
   const int32_t _backend_pid;

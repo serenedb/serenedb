@@ -63,7 +63,7 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   // (locked, case-insensitive) registry lookup on every query.
   static SereneDBClientState& Register(
     duckdb::ClientContext& client_ctx,
-    std::shared_ptr<ConnectionContext> connection_ctx);
+    std::shared_ptr<ConnectionContext> connection_ctx, bool client_backend);
 
   explicit SereneDBClientState(
     std::shared_ptr<ConnectionContext> connection_ctx)
@@ -71,8 +71,7 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
   ~SereneDBClientState() final {
     if (progress_source) {
-      progress_source->Detach();
-      pg::ProgressRegistry::Instance().Unregister(progress_source.get());
+      pg::ProgressRegistry::Instance().CollectTransactions(*progress_source);
     }
   }
 
@@ -142,6 +141,7 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;
+  bool _query_in_transaction = false;
 };
 
 // Helper to get the ConnectionContext from a DuckDB ClientContext.
@@ -157,6 +157,7 @@ void SetDefaultSearchPath(duckdb::ClientContext& context,
 struct SystemConnection {
   duckdb::unique_ptr<duckdb::Connection> conn;
   std::shared_ptr<ConnectionContext> ctx;
+  pg::ProgressRegistration progress;
 };
 
 SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,

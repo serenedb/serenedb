@@ -19,7 +19,7 @@ Every query family below produces a `TSQUERY`. The simplest is a bare string lit
 
 <DocCallout type="tip">
 
-All examples on this page use a `sentences` table whose `b` column is indexed with a lower-casing, non-stemming dictionary. For a full reference of every function and operator, see [Full-Text Search Functions](../../functions/search/full-text.md).
+Most examples on this page use a `sentences` table whose `b` column is indexed with a lower-casing, non-stemming dictionary. For a full reference of every function and operator, see [Full-Text Search Functions](../../functions/search/full-text.md).
 
 </DocCallout>
 
@@ -123,7 +123,7 @@ Without `position` and without the column's text, a phrase of two or more words 
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_023" />
 
-**How fuzzy matching works.** Each query term matches any indexed token within the given [edit distance](https://en.wikipedia.org/wiki/Levenshtein_distance) (insertions, deletions, substitutions):
+**How fuzzy matching works.** Each query term matches any indexed token within the given [edit distance](https://en.wikipedia.org/wiki/Levenshtein_distance): insertions, deletions and substitutions, and by default also a swap of two adjacent characters, which is why `act` matches `cat` at distance 1 above:
 
 | Query | Closest token | Edit distance | `ts_levenshtein(…, 1)` |
 |---|---|:---:|:---:|
@@ -203,6 +203,12 @@ Several wrapper functions read more naturally than `col @@ ts_*(...)` and expand
 A full-text search is a first-class part of the SQL query plan, not a black box bolted on the side. The `@@` predicate compiles to an **`IRESEARCH_SCAN`** over the inverted index, with the matched terms pushed into the scan as its `Index Filter`. `EXPLAIN` shows it:
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan" />
+
+When the query keeps only some of the matches — `ORDER BY … LIMIT k`, a plain `LIMIT`, or `USING SAMPLE k ROWS`, with `k` up to [`late_materialization_lookup_max_rows`](../../../configuration/overview.md#query-execution-and-the-optimizer) (2048 by default) — the columns it only returns are read for the rows it keeps, not for every match. The scan produces just what the sort and the filters need, plus an `iresearch_pk` that identifies each row in the index, and a `LOOKUP_JOIN` above the `TOP_N` or `LIMIT` reads the other columns of the kept rows by it (`Key: iresearch_pk`):
+
+<SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan_lookup_join" />
+
+Columns the index stores (`INCLUDE`d columns) are read from the index, by a `LOOKUP_JOIN` with an `IRESEARCH_SCAN` on its right. Other columns are read from the indexed table or view. When the query also returns stored columns, or its sort or filters already read a column the index does not store, those columns are read by a `LOOKUP_JOIN` with an `INDEX_SOURCE` on its right, keyed by the row's [identity in the source](./views.md#row-identity), which `Key` names as the source does (`Key: rowid` for a table); otherwise the `LOOKUP_JOIN` into the index reads them as well. A query can therefore show two `LOOKUP_JOIN`s, one above the other.
 
 A predicate the index cannot serve shows up as a `Column Filter` instead, checked row by row after the scan. A condition the index can only narrow down — a [phrase without `position`](#phrases-without-positions), a [geo predicate](./geospatial-search.md#how-rows-are-checked) or a re-checked [`ts_like`](../../functions/search/tokenizers/generate_wildcard_ngrams.md) pattern — keeps its lookup in the `Index Filter` and lists the exact check under `Table Filter`, where it runs with the query's other filters.
 

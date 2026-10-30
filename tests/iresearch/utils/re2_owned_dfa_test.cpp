@@ -115,6 +115,8 @@ TEST(Re2OwnedDfaTest, owned_matches_like_shared) {
   }
 }
 
+namespace {
+
 const RE2* g_counted = nullptr;
 size_t g_resets = 0;
 
@@ -123,6 +125,8 @@ void CountReset(const re2::hooks::DFAStateCacheReset&) {
     ++g_resets;
   }
 }
+
+}  // namespace
 
 TEST(Re2OwnedDfaTest, cache_resets_keep_results) {
   auto* previous = re2::hooks::GetDFAStateCacheResetHook();

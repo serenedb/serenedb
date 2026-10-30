@@ -45,8 +45,8 @@ struct AnnExactCodes {
 
 struct VectorFilterOptions {
   std::vector<float> query;
-  field_id centroids_id = field_limits::invalid();
-  field_id postings_id = field_limits::invalid();
+  field_id column_id = field_limits::invalid();
+  field_id ann_id = field_limits::invalid();
   VectorMetric metric = VectorMetric::L2Sqr;
   VectorQuantization quant = VectorQuantization::None;
   uint32_t min_search_fanout = 0;
@@ -55,9 +55,12 @@ struct VectorFilterOptions {
   uint32_t min_ef = 0;
   uint32_t top_k = 0;
   uint32_t posting_size = 0;
+  float rescore_width = 0.f;
   HnswFilterMode hnsw_filter_mode = HnswFilterMode::Auto;
   HnswColumnFilter hnsw_column_filter = HnswColumnFilter::Auto;
   std::shared_ptr<const Filter> inner;
+  std::shared_ptr<const Filter> index_only;
+  bool dual = false;
 
   bool operator==(const VectorFilterOptions& rhs) const noexcept = default;
 };
@@ -70,8 +73,6 @@ struct AnnIndex {
   virtual uint32_t Dim() const noexcept = 0;
 
   virtual bool Empty() const noexcept = 0;
-
-  virtual bool HasQuantStats() const noexcept = 0;
 
   virtual bool SupportsFilter() const noexcept = 0;
 

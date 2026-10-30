@@ -32,7 +32,7 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'mt_s_idx';
 ----
 reloptions
-{}
+NULL
 
 
 statement error
@@ -77,7 +77,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mt_s
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -92,7 +92,7 @@ statement ok
 ALTER TABLE mt_s SET (compaction_interval = 100)
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT value AS segments FROM sdb_metrics
 WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_s');
 ----
@@ -120,7 +120,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mt_s
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -135,7 +135,7 @@ statement ok
 ALTER TABLE mt_s SET (compaction_interval = 100)
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT value AS segments FROM sdb_metrics
 WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_s');
 ----
@@ -163,7 +163,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mt_s
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -178,7 +178,7 @@ statement ok
 ALTER TABLE mt_s RESET (compaction_interval)
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT value AS segments FROM sdb_metrics
 WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_s');
 ----
@@ -194,7 +194,7 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(101, 110) s(i)
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -208,7 +208,7 @@ statement ok
 ALTER TABLE mt_s SET (refresh_interval = 100)
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT count(*) FROM mt_s;
 ----
 count
@@ -223,7 +223,7 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(111, 120) s(i)
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -237,7 +237,7 @@ statement ok
 ALTER TABLE mt_s SET (refresh_interval = 100)
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT count(*) FROM mt_s;
 ----
 count
@@ -252,7 +252,7 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(121, 130) s(i)
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -266,7 +266,7 @@ statement ok
 ALTER TABLE mt_s RESET (refresh_interval)
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT count(*) FROM mt_s;
 ----
 count
@@ -322,7 +322,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mt_t
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -337,7 +337,7 @@ statement ok
 ALTER INDEX mt_t_idx SET (compaction_interval = 100)
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT value AS segments FROM sdb_metrics
 WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_t_idx');
 ----
@@ -365,7 +365,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mt_t
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -380,7 +380,7 @@ statement ok
 ALTER INDEX mt_t_idx SET (compaction_interval = 100)
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT value AS segments FROM sdb_metrics
 WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_t_idx');
 ----
@@ -408,7 +408,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mt_t
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -423,7 +423,7 @@ statement ok
 ALTER INDEX mt_t_idx RESET (compaction_interval)
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT value AS segments FROM sdb_metrics
 WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_t_idx');
 ----
@@ -439,7 +439,7 @@ statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(101, 110) s(i)
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -453,7 +453,7 @@ statement ok
 ALTER INDEX mt_t_idx SET (refresh_interval = 100)
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT count(*) FROM mt_t_idx;
 ----
 count
@@ -468,7 +468,7 @@ statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(111, 120) s(i)
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -482,7 +482,7 @@ statement ok
 ALTER INDEX mt_t_idx SET (refresh_interval = 100)
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT count(*) FROM mt_t_idx;
 ----
 count
@@ -497,7 +497,7 @@ statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(121, 130) s(i)
 
 
-sleep 1s
+sleep 300ms
 
 
 query
@@ -511,7 +511,7 @@ statement ok
 ALTER INDEX mt_t_idx RESET (refresh_interval)
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT count(*) FROM mt_t_idx;
 ----
 count

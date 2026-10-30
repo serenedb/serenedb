@@ -1,0 +1,64 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE pdr (id BIGINT, body TEXT);
+
+
+statement ok
+CREATE INDEX pdr_idx ON pdr USING inverted (id, body)
+  WITH (refresh_interval = 0, compaction_interval = 0) WHERE id % 2 = 0;
+
+
+statement ok
+INSERT INTO pdr SELECT i, 'm' || (i % 7) FROM range(1000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+DELETE FROM pdr WHERE id % 2 = 1 AND id < 100;
+
+
+statement ok
+INSERT INTO pdr SELECT i, 'n' || (i % 7) FROM range(1000, 1100) t(i);
+
+
+statement ok
+DELETE FROM pdr WHERE id % 2 = 1 AND id >= 1000;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pdr;
+----
+n
+1000
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) pdr;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM pdr_idx) AS total,
+       (SELECT count(*) FROM pdr_idx WHERE body @@ 'm3') AS three,
+       (SELECT count(*) FROM pdr_idx WHERE id % 2 = 1) AS odd;
+----
+total	three	odd
+550	71	0

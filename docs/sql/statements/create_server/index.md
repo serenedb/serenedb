@@ -157,8 +157,8 @@ SELECT id FROM archive.public.docs WHERE body @@ 'invoice';
 
 - **Nothing on disk changes.** The database file and the catalog log are opened read-only, and inverted indexes and search tables without a writer. No refresh, compaction or cleanup runs on them, and nothing is written when the server stops.
 - **Search finds refreshed rows.** Rows not yet refreshed into a search table or an inverted index when the directory was last written are not returned by it. Run `VACUUM (REFRESH_TABLE)` before stopping the server to include them.
-- **Writes are refused.** `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`, DDL, `CREATE INDEX` and `nextval` fail as on any read-only attachment, and `VACUUM`, `REINDEX`, `sdb_compact`, `sdb_refresh` and `sdb_cleanup` fail with `it is attached read-only`. `sdb_segments` lists the segments of its search tables and inverted indexes.
-- **`USAGE` on the server is the only privilege checked.** Owners and grants recorded in the directory belong to the other server's roles and are not used.
+- **Writes are refused.** `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`, other DDL and `nextval` fail as on any read-only attachment, and `CREATE INDEX`, `VACUUM`, `REINDEX`, `es_refresh`, `sdb_compact`, `sdb_refresh` and `sdb_cleanup` fail with `it is attached read-only`. `sdb_segments` lists the segments of its search tables and inverted indexes.
+- **`USAGE` on the server is the only privilege checked on the database's own objects.** Owners and grants recorded in the directory belong to the other server's roles and are not used, so a view of the database reads with the privileges of the role that runs the query: a table outside the database that the view reads needs that role's `SELECT`. `has_table_privilege` and the other privilege functions report every privilege on the database's own objects. The system catalogs in its `pg_catalog` and `information_schema` keep the privileges they have in any database.
 - **`DROP SERVER` only detaches.** It never removes files from the directory.
 
 ### Many readers or one writer
@@ -247,7 +247,7 @@ WHERE s.srvname = 'analytics';
 
 </DocCallout>
 
-Two gaps are worth knowing: `srvfdw` is always `0` — the wrapper name is not currently exposed through the catalog — and `pg_foreign_data_wrapper` is an empty compatibility stub, so wrappers cannot be enumerated from SQL. See [System Table Compatibility](../../../compatibility/system-table-compatibility.md).
+`pg_foreign_data_wrapper` lists the three wrappers, and `srvfdw` points at the server's one, so psql's `\des` and `\dew` and `information_schema.foreign_servers` show them. Every role may use the wrappers: each grants `USAGE` to `PUBLIC`, and `CREATE SERVER` needs the `CREATE` privilege on the database instead. See [System Table Compatibility](../../../compatibility/system-table-compatibility.md).
 
 ## Privileges
 

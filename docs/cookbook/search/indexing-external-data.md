@@ -8,7 +8,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 # Indexing External Data
 
-SereneDB can create inverted indexes over external files — Parquet, CSV or ORC files on local disk or S3 — enabling full-text search, phrase queries, fuzzy matching and relevance ranking without importing data into the database. You expose the files through a view over a reader function, then index the view.
+SereneDB can create inverted indexes over external files — Parquet, CSV or JSON files on local disk or S3 — enabling full-text search, phrase queries, fuzzy matching and relevance ranking without importing data into the database. You expose the files through a view over a reader function, then index the view.
 
 ## Expose the files through a view
 

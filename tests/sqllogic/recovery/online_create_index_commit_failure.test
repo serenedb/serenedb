@@ -1,0 +1,77 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE build_fail (id BIGINT, msg TEXT);
+
+
+statement ok
+INSERT INTO build_fail SELECT i, 'm' || (i % 7) FROM range(2000) t(i);
+
+
+statement ok
+SET sdb_faults = 'IndexWriter::Transaction::Commit';
+
+
+statement error failed to commit index 'build_fail_idx': out of memory
+CREATE INDEX build_fail_idx ON build_fail USING inverted (id, msg)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+SET sdb_faults = '-IndexWriter::Transaction::Commit';
+
+
+statement ok
+INSERT INTO build_fail VALUES (2000, 'after');
+
+
+statement ok
+CREATE INDEX build_fail_idx ON build_fail USING inverted (id, msg)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) build_fail;
+
+
+query
+SELECT (SELECT count(*) FROM build_fail_idx) AS total,
+       (SELECT count(*) FROM build_fail_idx WHERE msg @@ 'm3') AS three,
+       (SELECT count(*) FROM build_fail_idx WHERE msg @@ 'after') AS after;
+----
+total	three	after
+2001	286	1
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM build_fail;
+----
+n
+2001
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) build_fail;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM build_fail_idx) AS total,
+       (SELECT count(*) FROM pg_indexes WHERE tablename = 'build_fail') AS indexes;
+----
+total	indexes
+2001	1

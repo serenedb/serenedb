@@ -1,0 +1,377 @@
+query
+SELECT '12.345'::money AS a, '12.344'::money AS b, '-12.345'::money AS c, '(1.5)'::money AS d, '1,000'::money AS e,
+       '$ 1'::money AS f, '- $1'::money AS g, '1-'::money AS h, ''::money AS i, '$'::money AS j, '1.2,3'::money AS k,
+       ' 7 '::money AS l, '+5'::money AS m, '5+'::money AS n, '$5$'::money AS o, '0.005'::money AS p, '0.0049'::money AS q;
+----
+a	b	c	d	e	f	g	h	i	j	k	l	m	n	o	p	q
+$12.35	$12.34	-$12.35	-$1.50	$1,000.00	$1.00	-$1.00	-$1.00	$0.00	$0.00	$1.23	$7.00	$5.00	$5.00	$5.00	$0.01	$0.00
+
+
+statement error
+SELECT '1 USD'::money;
+----
+db error: ERROR: invalid input syntax for type money: "1 USD"<slt:ignore>
+
+
+statement error
+SELECT 'abc'::money;
+----
+db error: ERROR: invalid input syntax for type money: "abc"<slt:ignore>
+
+
+statement error
+SELECT '1e5'::money;
+----
+db error: ERROR: invalid input syntax for type money: "1e5"<slt:ignore>
+
+
+query
+SELECT '92233720368547758.07'::money AS max, '-92233720368547758.08'::money AS min;
+----
+max	min
+$92,233,720,368,547,758.07	-$92,233,720,368,547,758.08
+
+
+statement error
+SELECT '92233720368547758.08'::money;
+----
+db error: ERROR: value "92233720368547758.08" is out of range for type money<slt:ignore>
+
+
+statement error
+SELECT '-92233720368547758.09'::money;
+----
+db error: ERROR: value "-92233720368547758.09" is out of range for type money<slt:ignore>
+
+
+statement error
+SELECT '92233720368547758.075'::money;
+----
+db error: ERROR: value "92233720368547758.075" is out of range for type money<slt:ignore>
+
+
+query
+SELECT '1.00'::money + '2.50'::money AS a, '1'::money - '2.5'::money AS b, '10'::money * 3 AS c, 3 * '10'::money AS d,
+       '10'::money * 2::int2 AS e, 2::int2 * '10'::money AS f, '10'::money * 3000000::int8 AS g, '0.03'::money * 0.5::float8 AS h,
+       '0.05'::money * 0.5::float8 AS i, '0.05'::money * 0.5::float4 AS j, 0.5::float8 * '0.03'::money AS k;
+----
+a	b	c	d	e	f	g	h	i	j	k
+$3.50	-$1.50	$30.00	$30.00	$20.00	$20.00	$30,000,000.00	$0.02	$0.02	$0.02	$0.02
+
+
+query
+SELECT '10'::money / 3 AS a, '-10'::money / 3 AS b, '10'::money / 4::float8 AS c, '1'::money / 3.0::float8 AS d,
+       '10'::money / '3'::money AS e, '10'::money / 2::int2 AS f, '10'::money / 2::int8 AS g, '10'::money / 4::float4 AS h,
+       '-0.05'::money * 0.5::float8 AS i;
+----
+a	b	c	d	e	f	g	h	i
+$3.33	-$3.33	$2.50	$0.33	3.3333333333333335	$5.00	$5.00	$2.50	-$0.02
+
+
+query
+SELECT '1'::money * 2.5 AS a, 2.5 * '1'::money AS b, '1'::money / 2.5 AS c;
+----
+a	b	c
+$2.50	$2.50	$0.40
+
+
+statement error
+SELECT '92233720368547758.07'::money + '0.01'::money;
+----
+db error: ERROR: money out of range<slt:ignore>
+
+
+statement error
+SELECT '-92233720368547758.08'::money - '0.01'::money;
+----
+db error: ERROR: money out of range<slt:ignore>
+
+
+statement error
+SELECT '92233720368547758.07'::money * 2;
+----
+db error: ERROR: money out of range<slt:ignore>
+
+
+statement error
+SELECT '-92233720368547758.08'::money / -1;
+----
+db error: ERROR: money out of range<slt:ignore>
+
+
+statement error
+SELECT '1'::money * 'NaN'::float8;
+----
+db error: ERROR: money out of range<slt:ignore>
+
+
+statement error
+SELECT '1'::money * 'Infinity'::float8;
+----
+db error: ERROR: money out of range<slt:ignore>
+
+
+statement error
+SELECT '1'::money * 1e300::float8;
+----
+db error: ERROR: money out of range<slt:ignore>
+
+
+statement error
+SELECT '10'::money / 0;
+----
+db error: ERROR: division by zero<slt:ignore>
+
+
+statement error
+SELECT '10'::money / 0::float8;
+----
+db error: ERROR: division by zero<slt:ignore>
+
+
+statement error
+SELECT '10'::money / '0'::money;
+----
+db error: ERROR: division by zero<slt:ignore>
+
+
+query
+SELECT '12.34'::money::numeric(10,2) AS a, '-92233720368547758.08'::money::numeric(20,2) AS b, 12.345::numeric::money AS c,
+       (-12.345)::numeric::money AS d, 12.344::numeric::money AS e, 5::money AS f, 5::int8::money AS g, '1'::text::money AS h,
+       '1.5'::money::text AS i;
+----
+a	b	c	d	e	f	g	h	i
+12.34	-92233720368547758.08	$12.35	-$12.35	$12.34	$5.00	$5.00	$1.00	$1.50
+
+
+statement error
+SELECT 92233720368547759::int8::money;
+----
+db error: ERROR: bigint out of range<slt:ignore>
+
+
+statement error
+SELECT 99999999999999999999.99::numeric(22,2)::money;
+----
+db error: ERROR: bigint out of range<slt:ignore>
+
+
+skipif serenedb # money casts to json as a number
+statement error
+SELECT '1'::money::json;
+----
+db error: ERROR: cannot cast type money to json<slt:ignore>
+
+
+onlyif serenedb
+query
+SELECT '1'::money::json;
+----
+json
+1.00
+
+
+query
+SELECT '1'::money < '2'::money AS a, '1'::money = '$1.00'::money AS b, '3'::money >= '2'::money AS c,
+       '1'::money <> '1'::money AS d, '1'::money IN ('1', '2') AS e, coalesce(NULL::money, '0') AS f;
+----
+a	b	c	d	e	f
+t	t	t	f	t	$0.00
+
+
+query
+SELECT cash_words('1234567.89'::money) AS a, cash_words('-0.01'::money) AS b, cash_words('100'::money) AS c,
+       cash_words('110'::money) AS d, cash_words('1'::money) AS e, cash_words('0.99'::money) AS f;
+----
+a	b	c	d	e	f
+One million two hundred thirty four thousand five hundred sixty seven dollars and eighty nine cents	Minus zero dollars and one cent	One hundred dollars and zero cents	One hundred and ten dollars and zero cents	One dollar and zero cents	Zero dollars and ninety nine cents
+
+
+query
+SELECT cash_words('21'::money) AS a, cash_words('120'::money) AS b, cash_words('999.5'::money) AS c,
+       cash_words('1000'::money) AS d, cash_words('1000000'::money) AS e, cash_words('30.3'::money) AS f;
+----
+a	b	c	d	e	f
+Twenty one dollars and zero cents	One hundred twenty dollars and zero cents	Nine hundred ninety nine dollars and fifty cents	One thousand  dollars and zero cents	One million  dollars and zero cents	Thirty dollars and thirty cents
+
+
+query
+SELECT cash_words('-92233720368547758.08'::money) AS a;
+----
+a
+Minus ninety two quadrillion two hundred thirty three trillion seven hundred twenty billion three hundred sixty eight million five hundred forty seven thousand seven hundred fifty eight dollars and eight cents
+
+
+query
+SELECT cashlarger('1'::money, '2'::money) AS a, cashsmaller('1'::money, '2'::money) AS b;
+----
+a	b
+$2.00	$1.00
+
+
+query
+SELECT sum(x) AS s, min(x) AS mn, max(x) AS mx, count(x) AS c FROM (VALUES ('1.10'::money), ('2.20'::money), (NULL), ('-0.30'::money)) t(x);
+----
+s	mn	mx	c
+$3.00	-$0.30	$2.20	3
+
+
+statement error
+SELECT sum(x) FROM (VALUES ('92233720368547758.07'::money), ('0.01'::money)) t(x);
+----
+db error: ERROR: money out of range<slt:ignore>
+
+
+query
+SELECT ARRAY['1234.5'::money, '2'::money, NULL] AS a, ROW('1234.5'::money, '-2'::money) AS b, pg_typeof('1'::money) AS c;
+----
+a	b	c
+{"$1,234.50",$2.00,NULL}	("$1,234.50",-$2.00)	money
+
+
+query
+SELECT ARRAY[ROW('1234.5'::money)] AS a, ROW(ARRAY['1234.5'::money]) AS b, ARRAY[ROW('2'::money)] AS c, ROW(ARRAY['2'::money]) AS d;
+----
+a	b	c	d
+{"(\\"$1,234.50\\")"}	("{""$1,234.50""}")	{($2.00)}	({$2.00})
+
+
+query
+SELECT '{"$1,234.50",$2.00}'::money[] AS a, ('{"$1,234.50",$2.00}'::money[])[1] AS b;
+----
+a	b
+{"$1,234.50",$2.00}	$1,234.50
+
+
+statement ok
+CREATE TABLE money_t (id INT, m money);
+
+
+statement ok
+INSERT INTO money_t VALUES (1, '$1,234.50'), (2, 5), (3, 2.555), (4, NULL), (5, '-0.01');
+
+
+query
+SELECT id, m FROM money_t ORDER BY m NULLS FIRST, id;
+----
+id	m
+4	NULL
+5	-$0.01
+3	$2.56
+2	$5.00
+1	$1,234.50
+
+
+statement ok
+UPDATE money_t SET m = m * 2 WHERE id = 2;
+
+
+query
+SELECT sum(m) AS s, min(m) AS mn, max(m) AS mx, count(m) AS c FROM money_t;
+----
+s	mn	mx	c
+$1,247.05	-$0.01	$1,234.50	4
+
+
+query
+SELECT id FROM money_t WHERE m > '$5' ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT m::text AS t, pg_typeof(m) AS ty FROM money_t WHERE id = 1;
+----
+t	ty
+$1,234.50	money
+
+
+query
+SELECT id, m / 3 AS third, m * 1.5 AS half_again FROM money_t WHERE m IS NOT NULL ORDER BY id;
+----
+id	third	half_again
+1	$411.50	$1,851.75
+2	$3.33	$15.00
+3	$0.85	$3.84
+5	$0.00	-$0.02
+
+
+query
+SELECT m, count(*) AS c FROM money_t GROUP BY m ORDER BY m NULLS LAST;
+----
+m	c
+-$0.01	1
+$2.56	1
+$10.00	1
+$1,234.50	1
+NULL	1
+
+
+statement ok
+DROP TABLE money_t;
+
+
+query
+SELECT 2::int2 * '$1'::money AS a, 2 * '$1'::money AS b, 2::int8 * '$1'::money AS c, 1.5::float4 * '$1'::money AS d,
+       1.5::float8 * '$1'::money AS e, '$1'::money / -1 AS f, '$1'::money / -1::int2 AS g, '$1'::money / -1::int8 AS h,
+       sum('$1'::money) AS i
+FROM generate_series(1, 3);
+----
+a	b	c	d	e	f	g	h	i
+$2.00	$2.00	$2.00	$1.50	$1.50	-$1.00	-$1.00	-$1.00	$3.00
+
+
+statement error
+SELECT '$1'::money * -1e30::float8;
+----
+db error: ERROR: money out of range
+
+
+statement error
+SELECT '$1'::money * 1e308::float8;
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT '$1'::money * 'Infinity'::float8;
+----
+db error: ERROR: money out of range
+
+
+statement error
+SELECT '-92233720368547758.08'::money / -1;
+----
+db error: ERROR: money out of range
+
+
+statement error
+SELECT '92233720368547758070'::money;
+----
+db error: ERROR: value "92233720368547758070" is out of range for type money
+
+
+statement error
+SELECT '92233720368547759'::money;
+----
+db error: ERROR: value "92233720368547759" is out of range for type money
+
+
+statement error
+SELECT '92233720368547758.085'::money;
+----
+db error: ERROR: value "92233720368547758.085" is out of range for type money
+
+
+statement error
+SELECT '1.2.3'::money;
+----
+db error: ERROR: invalid input syntax for type money: "1.2.3"
+
+
+statement error
+SELECT '1.23x'::money;
+----
+db error: ERROR: invalid input syntax for type money: "1.23x"

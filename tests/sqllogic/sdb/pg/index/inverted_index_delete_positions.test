@@ -1,0 +1,434 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY dp_words AS split_text()
+
+
+statement ok
+CREATE TABLE dp (id BIGINT, body VARCHAR, keep BOOLEAN)
+
+
+statement ok
+CREATE INDEX dp_idx ON dp USING inverted(id, body dp_words)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+CREATE INDEX dp_part ON dp USING inverted(id, body dp_words)
+  WITH (refresh_interval = 0, compaction_interval = 0) WHERE keep
+
+
+statement ok
+INSERT INTO dp SELECT i, 'alpha', i % 2 = 0 FROM range(10) r(i)
+
+
+statement ok
+INSERT INTO dp SELECT 100 + i, 'beta', true FROM range(10) r(i)
+
+
+query
+SELECT count(*) FROM dp_idx WHERE body @@ ts_phrase('beta')
+----
+count
+0
+
+
+# A delete of rows not searchable yet leaves them to the refresh that publishes them.
+statement ok
+DELETE FROM dp WHERE id < 3
+
+
+query
+SELECT count(*) FROM dp_idx WHERE body @@ ts_phrase('beta')
+----
+count
+0
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+query
+SELECT count(*) FROM dp_idx WHERE body @@ ts_phrase('beta')
+----
+count
+10
+
+
+query
+SELECT count(*) FROM dp_idx WHERE body @@ ts_phrase('alpha')
+----
+count
+7
+
+
+query
+SELECT count(*) FROM dp_part WHERE body @@ ts_phrase('alpha')
+----
+count
+3
+
+
+query
+SELECT relname, value FROM sdb_metrics m JOIN pg_class c ON m.relation_id = c.oid
+WHERE metric = 'num_live_docs' AND relname IN ('dp_idx', 'dp_part') ORDER BY relname
+----
+relname	value
+dp_idx	17
+dp_part	13
+
+
+# Rows of a partial index's left-out rows and rows already removed remove nothing.
+statement ok
+DELETE FROM dp WHERE id IN (3, 5, 7)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+query
+SELECT relname, value FROM sdb_metrics m JOIN pg_class c ON m.relation_id = c.oid
+WHERE metric = 'num_live_docs' AND relname IN ('dp_idx', 'dp_part') ORDER BY relname
+----
+relname	value
+dp_idx	14
+dp_part	13
+
+
+# An update writes the row under a new row id: the old one leaves both indexes.
+statement ok
+UPDATE dp SET body = 'gamma' WHERE id IN (4, 101)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+query
+SELECT id FROM dp_idx WHERE body @@ ts_phrase('gamma') ORDER BY id
+----
+id
+4
+101
+
+
+query
+SELECT count(*) FROM dp_idx WHERE body @@ (ts_phrase('alpha') || ts_phrase('beta'))
+----
+count
+12
+
+
+query
+SELECT id FROM dp_part WHERE body @@ ts_phrase('gamma') ORDER BY id
+----
+id
+4
+101
+
+
+# A rolled back delete leaves the index alone.
+statement ok
+BEGIN
+
+
+statement ok
+DELETE FROM dp
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+query
+SELECT relname, value FROM sdb_metrics m JOIN pg_class c ON m.relation_id = c.oid
+WHERE metric = 'num_live_docs' AND relname IN ('dp_idx', 'dp_part') ORDER BY relname
+----
+relname	value
+dp_idx	14
+dp_part	13
+
+
+# Inserts and deletes of one transaction, the deletes naming rows of other
+# commits and of the same transaction.
+statement ok
+BEGIN
+
+
+statement ok
+INSERT INTO dp SELECT 200 + i, 'delta', true FROM range(20) r(i)
+
+
+statement ok
+DELETE FROM dp WHERE id >= 210 OR id IN (6, 8)
+
+
+statement ok
+COMMIT
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+query
+SELECT count(*) FROM dp_idx WHERE body @@ ts_phrase('delta')
+----
+count
+10
+
+
+query
+SELECT count(*) FROM dp_idx WHERE body @@ ts_phrase('alpha')
+----
+count
+1
+
+
+# Rows merged into one segment are still removed by their old positions.
+statement ok
+INSERT INTO dp SELECT 300 + i, 'epsilon', true FROM range(30) r(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+statement ok
+INSERT INTO dp SELECT 400 + i, 'epsilon', true FROM range(30) r(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+statement ok
+VACUUM (COMPACT_TABLE) dp
+
+
+statement ok
+DELETE FROM dp WHERE id % 2 = 1 AND id >= 300
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+query
+SELECT count(*) FROM dp_idx WHERE body @@ ts_phrase('epsilon')
+----
+count
+30
+
+
+query
+SELECT relname, value FROM sdb_metrics m JOIN pg_class c ON m.relation_id = c.oid
+WHERE metric = 'num_live_docs' AND relname IN ('dp_idx', 'dp_part') ORDER BY relname
+----
+relname	value
+dp_idx	52
+dp_part	51
+
+
+# A delete of every row.
+statement ok
+DELETE FROM dp
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+query
+SELECT relname, value FROM sdb_metrics m JOIN pg_class c ON m.relation_id = c.oid
+WHERE metric = 'num_live_docs' AND relname IN ('dp_idx', 'dp_part') ORDER BY relname
+----
+relname	value
+dp_idx	0
+dp_part	0
+
+
+# One commit removing rows of two tables.
+statement ok
+CREATE TABLE dq (id BIGINT, body VARCHAR)
+
+
+statement ok
+CREATE INDEX dq_idx ON dq USING inverted(id, body dp_words)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO dp SELECT i, 'zeta', true FROM range(5) r(i)
+
+
+statement ok
+INSERT INTO dq SELECT i, 'zeta' FROM range(5) r(i)
+
+
+statement ok
+BEGIN
+
+
+statement ok
+DELETE FROM dp WHERE id < 2
+
+
+statement ok
+DELETE FROM dq WHERE id >= 2
+
+
+statement ok
+COMMIT
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dq
+
+
+query
+SELECT id FROM dp_idx WHERE body @@ ts_phrase('zeta') ORDER BY id
+----
+id
+2
+3
+4
+
+
+query
+SELECT id FROM dq_idx WHERE body @@ ts_phrase('zeta') ORDER BY id
+----
+id
+0
+1
+
+
+# Rows moving into and out of a partial index, before and after a refresh.
+statement ok
+CREATE TABLE dr (id BIGINT, body VARCHAR, keep BOOLEAN)
+
+
+statement ok
+CREATE INDEX dr_part ON dr USING inverted(id, body dp_words)
+  WITH (refresh_interval = 0, compaction_interval = 0) WHERE keep
+
+
+statement ok
+INSERT INTO dr SELECT i, 'eta', i % 2 = 0 FROM range(10) r(i)
+
+
+statement ok
+UPDATE dr SET keep = NOT keep WHERE id IN (0, 3)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+query
+SELECT id FROM dr_part WHERE body @@ ts_phrase('eta') ORDER BY id
+----
+id
+2
+3
+4
+6
+8
+
+
+statement ok
+UPDATE dr SET keep = NOT keep WHERE id IN (2, 5)
+
+
+statement ok
+INSERT INTO dr SELECT 10 + i, 'eta', i % 2 = 0 FROM range(2) r(i)
+
+
+statement ok
+DELETE FROM dr WHERE id IN (10, 11)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+query
+SELECT id FROM dr_part WHERE body @@ ts_phrase('eta') ORDER BY id
+----
+id
+3
+4
+5
+6
+8
+
+
+statement ok
+CREATE TABLE ds (id BIGINT PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+CREATE INDEX ds_idx ON ds USING inverted(id, body dp_words)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO ds SELECT i, 'seed' FROM range(100) r(i)
+
+
+connection first
+statement ok
+BEGIN
+
+
+connection first
+statement ok
+INSERT INTO ds SELECT i, 'reverted' FROM range(1000, 2000) r(i)
+
+
+connection second
+statement ok
+INSERT INTO ds VALUES (1500, 'winner')
+
+
+connection first
+statement error PRIMARY KEY or UNIQUE constraint violation
+COMMIT
+
+
+connection second
+statement ok
+INSERT INTO ds SELECT i, 'again' FROM range(5000, 6000) r(i)
+
+
+connection second
+statement ok
+VACUUM (REFRESH_TABLE) ds
+
+
+connection second
+statement ok
+DELETE FROM ds WHERE body = 'again' AND id % 2 = 0
+
+
+connection second
+statement ok
+VACUUM (REFRESH_TABLE) ds
+
+
+connection second
+query
+SELECT (SELECT count(*) FROM ds_idx WHERE body @@ ts_phrase('again')) AS again,
+       (SELECT count(*) FROM ds_idx WHERE body @@ ts_phrase('reverted')) AS reverted,
+       (SELECT count(*) FROM ds_idx) AS total
+----
+again	reverted	total
+500	0	601

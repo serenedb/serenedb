@@ -16,26 +16,26 @@ Each entry in the `USING inverted (...)` list is an **indexed column**.
 
 - **Text and scalar columns** may name a [text search dictionary](../create_text_search_dictionary/index.md) (the analyzer). With no dictionary the column is indexed verbatim — one token per value — giving exact, case-sensitive matching suitable for identifiers, tags and categories. Numeric and temporal columns are indexed for [exact and range](../../indexes/inverted/full-text-search.md#range-queries) queries.
 - **Vector columns** use `ivf (...)` or `hnsw (...)` to build an [IVF or HNSW](../../indexes/inverted/vector-search.md) index. `metric` is required; the other options, among them the vector compression `quant`, are listed on the [Vector Search](../../indexes/inverted/vector-search.md) page.
-- **Expressions** — an entry may be a parenthesized expression over one or more columns, e.g. `(lower(name)) my_dict` or `(price * 110 / 100)`. The query must use the identical expression. Aggregates, subqueries, volatile functions (e.g. `random()`) and functions that read the clock, the session or the catalog (e.g. `now()`, `current_user`) are rejected.
+- **Expressions** — an entry may be a parenthesized expression over one or more columns, e.g. `(lower(name)) my_dict` or `(price * 110 / 100)`. The query must use the identical expression. Aggregates, window functions, subqueries, volatile functions (e.g. `random()`) and functions that read the clock, the session or the catalog (e.g. `now()`, `current_user`) are rejected.
 - **JSON** — index a JSON extraction expression such as `(doc ->> 'host') my_dict`, optionally with a dictionary; this indexes exactly the sub-field you search. (See also the [`VARIANT`](../../data_types/variant.md) type for storing typed payloads.)
 - **Generated columns** — index a [generated column](./index.md) the same as any other column (index the column itself, not its defining expression).
 - **Array columns** — a `TEXT[]` / `VARCHAR[]` column is indexed element-by-element; a row matches if any element matches.
 - **`INET` and `CIDR` columns** take no dictionary. The index answers `=`, `IN`, `<`, `<=`, `>`, `>=`, `BETWEEN`, `<<=`, `>>=`, `<<`, `>>` and `&&`; see [Inet](../../data_types/inet.md#indexing).
 
-`HUGEINT`, `DECIMAL`, `UUID` and `INTERVAL` columns cannot be indexed. Composite `ROW(...)` columns are not supported. An inverted index has no column order, so `ASC`, `DESC`, `NULLS FIRST` and `NULLS LAST` after an indexed column are rejected, as PostgreSQL's GIN indexes reject them; [`SORTED BY`](#sort-keys) orders the index's rows instead. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
+Columns of type `UBIGINT`, `HUGEINT`, `UHUGEINT`, `DECIMAL`, `BIGNUM`, `UUID`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be indexed, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays; such a column fails with `Column '<name>' has unsupported type <type> and can not be indexed`. A `GEOMETRY` column is indexed only with a [geo dictionary](../../indexes/inverted/geospatial-search.md). `INCLUDE` stores values of every type. A column or expression is listed once as an indexed key, with one dictionary or none; besides that, only `included()` can list it again. An inverted index has no column order, so `ASC`, `DESC`, `NULLS FIRST` and `NULLS LAST` after an indexed column are rejected, as PostgreSQL's GIN indexes reject them; [`SORTED BY`](#sort-keys) orders the index's rows instead. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
 
-### Operator-class options (feature flags)
+### Feature flags
 
-A column's trailing `WITH (...)` sets per-column **feature flags** controlling what the index records. They are off by default; enable only what your queries need.
+A column takes the **feature flags** of its text search dictionary, which control what the index records; `CREATE INDEX` has no per-column flags, so columns that need different flags use different dictionaries. The flags are off by default; enable only what your queries need.
 
 | Flag | Default | Enables |
 | :--- | :--- | :--- |
-| `frequency` | `false` | Term frequency — required for [relevance scoring](../../indexes/inverted/ranking.md) |
+| `frequency` | `false` | Term frequency — lets [relevance scoring](../../indexes/inverted/ranking.md) rank by how often terms occur; without it every match of a term scores the same |
 | `position` | `false` | Term positions — answer [phrase / proximity](../../indexes/inverted/full-text-search.md#phrase-search) queries from the index alone; without them a phrase needs the column's text in the index ([phrases without positions](../../indexes/inverted/full-text-search.md#phrases-without-positions)) |
-| `offset` | `false` | Character offsets — required for [highlighting](../../indexes/inverted/full-text-search.md#highlighting) |
+| `offset` | `false` | Byte offsets — stored for [highlighting](../../indexes/inverted/full-text-search.md#highlighting); without them `ts_offsets` recomputes them for each matching row |
 | `norm` | `false` | The length-normalization factor used by some scorers |
 
-The same flags can be set on the dictionary itself, in which case every column using it inherits them. See the [feature flags](../create_text_search_dictionary/index.md#feature-flags) reference.
+They are set in the dictionary's `WITH` clause; see the [feature flags](../create_text_search_dictionary/index.md#feature-flags) reference.
 
 ## `INCLUDE` columns
 
@@ -88,6 +88,26 @@ An index on a search table can't be partial: there, `CREATE INDEX … WHERE …`
 ## Indexing tables and views
 
 An inverted index can be built over a base table or a view (including a view over `read_parquet`/`read_csv` on local disk or S3). The index derives each row's identity automatically from the view's source; there is no `pk` option, and only attached external databases accept an explicit key through `key_columns` (see [Row identity](../../indexes/inverted/views.md#row-identity)). The postings are a snapshot of the source, refreshed by `REINDEX INDEX` or the `reindex_interval` option (see [Refreshing the index](../../indexes/inverted/views.md#refreshing-the-index)). See also [Indexing a table vs. a view](../../indexes/inverted/index.md#indexing-a-table-or-a-view).
+
+## Several indexes on a search table column
+
+A search table can have several indexes on the same column or expression, each with its own text search dictionary. A query on the table itself (`FROM <table>`) answers a predicate on that column through the index created first, also after a restart. To search through another of them, query that index (`FROM <index>`).
+
+## Replacing an index
+
+`CREATE OR REPLACE INDEX` rebuilds an inverted index under its name, for example to give a column another dictionary, to give a vector column another quantization, or to add `INCLUDE` columns. The new index indexes every row of the table or view; other connections keep querying the old index until the replacing transaction commits. See [`CREATE OR REPLACE INDEX`](./index.md#create-or-replace-index).
+
+Switch a column from verbatim matching to a lowercasing dictionary:
+
+<SqlLogicTest id="sql/statements/create_index/inverted/example_001" />
+
+## Concurrent changes
+
+The indexes of a search table share its storage. A transaction that creates, replaces or drops an index of a search table, or alters or drops the table, holds the table until it commits or rolls back. Meanwhile any such change from another transaction fails with `search table "<name>" is being changed by another transaction`; retry it once the first transaction ends. Reads and writes of the table are not affected, and one transaction can make any number of these changes.
+
+Writes to a search table never wait for an index change. `CREATE INDEX` and `CREATE OR REPLACE INDEX` on a search table wait for the transactions that wrote to the table before the statement started to commit or roll back, so that their rows are indexed too; cancelling the statement ends the wait.
+
+An inverted index on a regular table or a view has storage of its own, so transactions can create, replace or drop different indexes of the same table or view at the same time.
 
 ## Examples
 

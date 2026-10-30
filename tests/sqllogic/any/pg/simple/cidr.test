@@ -279,3 +279,148 @@ SELECT oid, typname, typelem, typarray, typinput::oid AS typinput, typoutput::oi
 oid	typname	typelem	typarray	typinput	typoutput	typreceive	typsend
 650	cidr	0	651	1267	1427	2498	2499
 651	_cidr	650	0	750	751	2400	2401
+
+
+query
+SELECT '10.0.0.0/8'::cidr AS v4, '10.1.2.3/32'::cidr AS host,
+       '2001:db8::/32'::cidr AS v6, '::1/128'::cidr AS v6_host
+----
+v4	host	v6	v6_host
+10.0.0.0/8	10.1.2.3/32	2001:db8::/32	::1/128
+
+
+query
+SELECT '10/8'::cidr AS a, '128.1'::cidr AS b, '192.168'::cidr AS c,
+       '10.1.2'::cidr AS d, '224'::cidr AS e, '10'::cidr AS f
+----
+a	b	c	d	e	f
+10.0.0.0/8	128.1.0.0/16	192.168.0.0/24	10.1.2.0/24	224.0.0.0/4	10.0.0.0/8
+
+
+statement error
+SELECT '10.1.2.3/8'::cidr
+----
+db error: ERROR: invalid cidr value: "10.1.2.3/8"
+DETAIL: Value has bits set to right of mask.
+
+
+statement error
+SELECT 'not a network'::cidr
+----
+db error: ERROR: invalid input syntax for type cidr: "not a network"
+
+
+query
+SELECT '10.1.2.3/8'::inet::cidr AS truncated, '10.1.2.3'::inet::cidr AS host
+----
+truncated	host
+10.0.0.0/8	10.1.2.3/32
+
+
+query
+SELECT '10.0.0.0/8'::cidr::inet AS i, '10.0.0.0/8'::cidr::text AS t,
+       host('10.0.0.0/8'::cidr) AS h, family('10.0.0.0/8'::cidr) AS f
+----
+i	t	h	f
+10.0.0.0/8	10.0.0.0/8	10.0.0.0	4
+
+
+query
+SELECT '10.0.0.0/8'::cidr = '10.0.0.0/8'::cidr AS same,
+       '10.0.0.0/8'::cidr >>= '10.1.2.3'::inet AS contains
+----
+same	contains
+t	t
+
+
+query
+SELECT '{10.0.0.0/8,192.168.0.0/16}'::cidr[] AS nets
+----
+nets
+{10.0.0.0/8,192.168.0.0/16}
+
+
+query
+SELECT pg_typeof('10.0.0.0/8'::cidr) AS cidr_type,
+       pg_typeof('portal_1'::refcursor) AS refcursor_type,
+       'portal_1'::refcursor AS portal, 'portal_1'::refcursor::text AS portal_text
+----
+cidr_type	refcursor_type	portal	portal_text
+cidr	refcursor	portal_1	portal_1
+
+
+statement ok
+DROP TABLE IF EXISTS cidr_refcursor
+
+
+statement ok
+CREATE TABLE cidr_refcursor (net cidr, cur refcursor)
+
+
+statement ok
+INSERT INTO cidr_refcursor VALUES ('10.0.0.0/8', 'c1'), ('2001:db8::/32', 'c2'), (NULL, NULL)
+
+
+query
+SELECT net, cur FROM cidr_refcursor ORDER BY net
+----
+net	cur
+10.0.0.0/8	c1
+2001:db8::/32	c2
+NULL	NULL
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = 'cidr_refcursor'::regclass AND attnum > 0
+ORDER BY attnum
+----
+attname	type
+net	cidr
+cur	refcursor
+
+
+statement ok
+DROP TABLE cidr_refcursor
+
+
+query
+SELECT abbrev('10.1.0.0/16'::cidr) AS a, abbrev('192.168.0.0/24'::cidr) AS b,
+       abbrev('10.0.0.0/8'::cidr) AS c, abbrev('0.0.0.0/0'::cidr) AS d,
+       abbrev('172.16.0.0/12'::cidr) AS e, abbrev('10.1.2.3/32'::cidr) AS f,
+       abbrev('192.168.1.128/25'::cidr) AS g
+----
+a	b	c	d	e	f	g
+10.1/16	192.168.0/24	10/8	0/0	172.16/12	10.1.2.3/32	192.168.1.128/25
+
+
+query
+SELECT abbrev('2001:db8::/32'::cidr) AS a, abbrev('::/0'::cidr) AS b,
+       abbrev('2001:db8:0:1::/64'::cidr) AS c, abbrev('::ffff:1.2.3.0/120'::cidr) AS d,
+       abbrev('::1.2.3.4/128'::cidr) AS e, abbrev('fe80::/10'::cidr) AS f,
+       abbrev('ff00::/8'::cidr) AS g
+----
+a	b	c	d	e	f	g
+2001:db8/32	::/0	2001:db8::1/64	::ffff:1.2.3/120	::1.2.3.4/128	fe80::/10	ff00::/8
+
+
+query
+SELECT set_masklen('192.168.1.0/24'::cidr, 16) AS v4, set_masklen('2001:db8:1::/48'::cidr, 32) AS v6,
+       set_masklen('10.0.0.0/8'::cidr, -1) AS full, pg_typeof(set_masklen('10.0.0.0/8'::cidr, 16))::text AS t
+----
+v4	v6	full	t
+192.168.0.0/16	2001:db8::/32	10.0.0.0/32	cidr
+
+
+query
+SELECT masklen('10.0.0.0/8'::cidr) AS m, hostmask('10.0.0.0/8'::cidr) AS h
+----
+m	h
+8	0.255.255.255
+
+
+statement error
+SELECT set_masklen('10.0.0.0/8'::cidr, 33)
+----
+db error: ERROR: invalid mask length: 33

@@ -55,10 +55,11 @@ JOIN pg_namespace n
 WHERE (s.schema_name IN ('information_schema')
   OR s.schema_name LIKE 'pg_%')
   AND has_schema_privilege(current_user, s.schema_name, 'USAGE')
+ORDER BY id
 ----
 id	name
 11	pg_catalog
-16387	information_schema
+12240	information_schema
 
 
 # tables: list tables in a schema
@@ -183,8 +184,9 @@ SELECT
             ON n.nspname = s.schema_name
             WHERE (s.schema_name IN ('information_schema')
               OR s.schema_name LIKE 'pg_%')
-                AND has_schema_privilege(current_user, s.schema_name, 'USAGE');
+                AND has_schema_privilege(current_user, s.schema_name, 'USAGE')
+        ORDER BY id;
 ----
 id	name
 11	pg_catalog
-16387	information_schema
+12240	information_schema

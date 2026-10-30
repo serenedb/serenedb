@@ -1,0 +1,68 @@
+target_sources(
+    iresearch
+    PRIVATE
+        column/codecs/dict_fsst.cpp
+        column/codecs/dict_lz4.cpp
+        column/codecs/dict_zstd.cpp
+        column/codecs/dict_zxc.cpp
+        column/codecs/fsst.cpp
+        column/codecs/fsst_chain_encoder.cpp
+        column/codecs/lz4.cpp
+        column/codecs/numeric.cpp
+        column/codecs/registry.cpp
+        column/codecs/segment_builder.cpp
+        column/codecs/sequence.cpp
+        column/codecs/string_scan.cpp
+        column/codecs/string_writer.cpp
+        column/codecs/trained_dictionary.cpp
+        column/codecs/zstd.cpp
+        column/codecs/zxc.cpp
+        column/col_block_copy.cpp
+        column/col_block_sink.cpp
+        column/col_copy_check.cpp
+        column/col_reader.cpp
+        column/col_writer.cpp
+        column/column_reader.cpp
+        column/column_writer.cpp
+        column/internal/write_context.cpp
+        column/merge.cpp
+        column/norm_column_reader.cpp
+        column/norm_writer.cpp
+        column/read_context.cpp
+        column/variant_column_reader.cpp
+        format_utils.cpp
+        index/burst_trie.cpp
+        index/idx_reader.cpp
+        index/idx_writer.cpp
+        index/term_parts.cpp
+        index_meta_reader.cpp
+        index_meta_writer.cpp
+        posting/block_codec.cpp
+        segment_meta_reader.cpp
+        segment_meta_writer.cpp
+)
+
+if(IRESEARCH_BENCH)
+    return()
+endif()
+
+target_sources(
+    iresearch
+    PRIVATE
+        hnsw/hnsw_bases.cpp
+        hnsw/hnsw_graph.cpp
+        hnsw/hnsw_reader.cpp
+        hnsw/hnsw_writer.cpp
+        ivf/centroids.cpp
+        ivf/clustering.cpp
+        ivf/ivf_reader.cpp
+        ivf/ivf_writer.cpp
+        ivf/quantizer.cpp
+        ivf/quantizers/bq.cpp
+        ivf/quantizers/osq.cpp
+        ivf/quantizers/panorama.cpp
+        ivf/quantizers/pq.cpp
+        ivf/quantizers/rabitq.cpp
+        ivf/quantizers/scalar.cpp
+        ivf/quantizers/tq.cpp
+)

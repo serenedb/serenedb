@@ -34,19 +34,19 @@ namespace sdb::connector {
 
 SereneDBSearchTruncate::SereneDBSearchTruncate(
   duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
-  duckdb::idx_t estimated_cardinality, bool clears_shard)
+  duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
                              estimated_cardinality),
-    _table(table),
-    _clears_shard(clears_shard) {}
+    _table(table) {}
 
 duckdb::SourceResultType SereneDBSearchTruncate::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& /*chunk*/,
   duckdb::OperatorSourceInput& /*input*/) const {
   auto& search_txn = GetSereneDBContext(context.client).SearchTxn();
   search_txn.RegisterWriter(_table.Storage(), _table);
-  search_txn.AddSearchTruncate(_table.Storage(), _table.name, _clears_shard);
+  search_txn.AddSearchTruncate(_table.Storage(), _table.name,
+                               context.client.transaction.IsAutoCommit());
   return duckdb::SourceResultType::FINISHED;
 }
 

@@ -48,12 +48,11 @@
 #include "connector/index_expression.hpp"
 #include "connector/inet_terms.h"
 #include "connector/inverted_store_index.h"
-#include "connector/pg_logical_types.h"
 #include "connector/primary_key.h"
+#include "pg/types/logical.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_analyzer_impl.h"
 #include "search/search_table.h"
-#include "search_remove_filter.hpp"
 #include "server/utils/primary_key.h"
 
 namespace duckdb {
@@ -62,8 +61,6 @@ class DataChunk;
 
 }  // namespace duckdb
 namespace sdb::connector {
-
-class SearchRemoveFilter;
 
 using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
@@ -321,31 +318,6 @@ class SearchSinkInsertBaseImpl {
   std::vector<irs::doc_id_t> _null_docs;
 };
 
-class SearchSinkDeleteBaseImpl {
- public:
-  explicit SearchSinkDeleteBaseImpl(irs::IndexWriter::Transaction& trx);
-
-  void InitImpl(size_t batch_size);
-
-  void FinishImpl();
-
-  void DeleteRowImpl(std::string_view row_key);
-
-  void AbortImpl() { _remove_filter.reset(); }
-
- protected:
-  irs::IndexWriter::Transaction* _trx;
-  std::shared_ptr<SearchRemoveFilter> _remove_filter;
-};
-
-std::shared_ptr<const irs::DocRemoval> MakeRowRemoval(
-  std::span<const int64_t> rowids, std::span<const uint64_t> positions);
-
-void CollectRemovedRows(duckdb::DataChunk& chunk,
-                        std::span<const primary_key::PKColumn> columns,
-                        std::vector<int64_t>& rows,
-                        std::vector<uint64_t>& positions);
-
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl {
  public:
@@ -384,25 +356,6 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   irs::containers::FlatHashSet<ColumnId> _indexed;
 };
 
-class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,
-                                           public SearchSinkDeleteBaseImpl {
- public:
-  explicit DuckDBSearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx)
-    : SearchSinkDeleteBaseImpl{trx} {}
-
-  void Init(duckdb::idx_t batch_size, const PkChunk& /*pk*/,
-            irs::CommitOnFlush* /*commit_on_flush*/ = nullptr) final {
-    InitImpl(batch_size);
-  }
-
-  void DeleteRow(std::string_view encoded_pk) final {
-    DeleteRowImpl(encoded_pk);
-  }
-
-  void Finish() final { FinishImpl(); }
-  void Abort() final { AbortImpl(); }
-};
-
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context);
@@ -410,14 +363,7 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const ColumnId> column_ids,
-                            uint64_t pk_base, duckdb::idx_t table_id,
+                            duckdb::idx_t table_id,
                             duckdb::ClientContext& context);
-
-void WriteRebuiltChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
-                                   duckdb::DataChunk& chunk,
-                                   std::span<const ColumnId> column_ids,
-                                   duckdb::idx_t rowid_slot,
-                                   duckdb::idx_t table_id,
-                                   duckdb::ClientContext& context);
 
 }  // namespace sdb::connector

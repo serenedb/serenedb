@@ -57,8 +57,8 @@ Key architectural decisions behind the results:
 
 For technical deep-dives, see the blog series:
 
-- [Search optimization 1: Collecting top-K candidates](https://blog.serenedb.com/search-optimization-1)
-- [Search optimization 2: Block scoring](https://blog.serenedb.com/search-optimization-2)
+- [Search optimization 1: Collecting top-K candidates](https://serenedb.com/blog/search-optimization-1)
+- [Search optimization 2: Block scoring](https://serenedb.com/blog/search-optimization-2)
 
 ## Running the benchmark yourself
 
@@ -73,5 +73,5 @@ Results are generated as a static site you can view locally.
 ## See also
 
 - [Interactive benchmark results](https://serenedb.com/search-benchmark-game)
-- [Full blog post: The C++ search engine that won the game](https://blog.serenedb.com/search-benchmark-game-overview)
+- [Full blog post: The C++ search engine that won the game](https://serenedb.com/blog/search-benchmark-game-overview)
 - [IResearch roadmap](https://github.com/serenedb/serenedb/issues/364)

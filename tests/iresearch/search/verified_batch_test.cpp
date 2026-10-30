@@ -19,8 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <cstdint>
-#include <iresearch/search/lead/two_phase_docs.hpp>
-#include <iresearch/search/lead/verified_batch.hpp>
+#include <iresearch/search/detail/verified_batch.hpp>
+#include <iresearch/search/lead/two_phase.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <random>
 #include <span>
@@ -84,7 +84,7 @@ struct BatchedSlots {
 
   Approx approx;
   Verifier verifier;
-  irs::lead::VerifiedBatch<Verifier> batch;
+  irs::detail::VerifiedBatch<Verifier> batch;
 };
 
 struct PlainSlots {
@@ -157,7 +157,7 @@ TEST(VerifiedBatchTest, NextGrowsTheBatchAndFarSeeksShrinkIt) {
   for (int i = 0; i < 1000; ++i) {
     ASSERT_FALSE(irs::doc_limits::eof(slots.Next(0)));
   }
-  EXPECT_EQ(irs::lead::VerifiedBatch<Verifier>::kMaxSize,
+  EXPECT_EQ(irs::detail::VerifiedBatch<Verifier>::kMaxSize,
             slots.verifier.sizes.back());
 
   irs::doc_id_t target = 2000;

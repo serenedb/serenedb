@@ -22,7 +22,6 @@
 
 #include <absl/base/internal/endian.h>
 
-#include <bit>
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types.hpp>
@@ -34,6 +33,11 @@
 
 #include "server/utils/primary_key.h"
 
+namespace duckdb {
+
+class RowIdDeduplicator;
+
+}  // namespace duckdb
 namespace sdb::connector::primary_key {
 
 std::vector<duckdb::LogicalIndex> KeyColumns(
@@ -50,15 +54,12 @@ void PreparePKFormats(duckdb::DataChunk& chunk,
                       std::span<const PKColumn> columns,
                       std::vector<duckdb::UnifiedVectorFormat>& formats);
 
+duckdb::idx_t KeepFirstRowIds(duckdb::RowIdDeduplicator& seen,
+                              duckdb::DataChunk& chunk, const PKColumn& rowid);
+
 void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
             std::span<const PKColumn> columns, duckdb::idx_t row,
             std::string& key);
-
-// The synthetic rowid of a generated-PK relation, encoded exactly as `Create`
-// encodes the BIGINT column that materialises it.
-inline void AppendGenerated(std::string& key, uint64_t value) {
-  AppendSigned(key, static_cast<int64_t>(value));
-}
 
 inline duckdb::string_t SignedKeyTerm(int64_t value) noexcept {
   static_assert(sizeof(int64_t) <= duckdb::string_t::INLINE_LENGTH);
@@ -67,12 +68,5 @@ inline duckdb::string_t SignedKeyTerm(int64_t value) noexcept {
   buf[0] = static_cast<char>(static_cast<uint8_t>(buf[0]) ^ 0x80);
   return duckdb::string_t{buf, sizeof buf};
 }
-
-inline duckdb::string_t GeneratedKeyTerm(uint64_t generated_id) noexcept {
-  return SignedKeyTerm(std::bit_cast<int64_t>(generated_id));
-}
-
-// The leading bytes every row key of one source file shares.
-std::string PkFilePrefix(uint64_t file_id);
 
 }  // namespace sdb::connector::primary_key

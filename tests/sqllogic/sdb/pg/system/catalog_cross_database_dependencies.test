@@ -184,7 +184,6 @@ WHERE a.rolname IN ('cxd_owner', 'cxd_reader') AND s.classid = 'pg_class'::regcl
 ORDER BY 1, 2
 ----
 rolname	deptype	in_cxd_db
-cxd_owner	a	t
 cxd_owner	o	t
 cxd_reader	a	t
 
@@ -536,6 +535,37 @@ CREATE TABLE cxd_def (id BIGINT DEFAULT nextval('cxd_db.public.cxd_seq'), a INTE
 
 statement ok
 INSERT INTO cxd_def (a) VALUES (1)
+
+
+statement ok
+CREATE VIEW cxd_db.public.cxd_same AS SELECT 1 AS a
+
+
+statement ok
+CREATE VIEW cxd_same AS SELECT a FROM cxd_db.public.cxd_same
+
+
+query
+SELECT a FROM cxd_same
+----
+a
+1
+
+
+statement error
+DROP VIEW cxd_db.public.cxd_same
+----
+db error: ERROR: Cannot drop entry "cxd_same" because there are entries that depend on it.
+view "cxd_same" depends on view "cxd_same".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP VIEW cxd_same
+
+
+statement ok
+DROP VIEW cxd_db.public.cxd_same
 
 
 statement error

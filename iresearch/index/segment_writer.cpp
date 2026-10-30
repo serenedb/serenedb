@@ -28,13 +28,13 @@
 #include "index_meta.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
+#include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
-#include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/store/store_utils.hpp"
@@ -154,7 +154,8 @@ void SegmentWriter::flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask,
   }
 
   if (state.doc_count != 0) {
-    _col_reader = std::make_unique<ColReader>(_dir, _seg_name, _db);
+    _col_reader =
+      std::make_unique<ColReader>(_dir, _seg_name, _db, IOAdvice::SEQUENTIAL);
     _field_writer->SetIdxWriter(idx);
     std::optional<ReadContext> ivf_ctx;
     const auto cluster_readers =

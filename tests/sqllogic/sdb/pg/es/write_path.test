@@ -55,6 +55,15 @@ INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'a', '{"n":1}');
 statement error (?i)failed to parse field \[n\]
 INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'x', '{"n":"oops"}');
 
+statement error (?i)failed to parse field \[n\]
+INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'x', '{"n":18446744073709551615}');
+
+statement error (?i)failed to parse field \[n\]
+INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'x', '{"n":"9223372036854775808"}');
+
+statement error (?i)failed to parse field \[n\]
+INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'x', '{"n":1e300}');
+
 # Trailing content would store invalid JSON in _source.
 statement error (?i)has trailing content
 INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'y', '{"n":1}{"n":2}');
@@ -184,6 +193,82 @@ count	count	sum
 
 query
 CALL es_drop_index('slt_es_big');
+----
+acknowledged
+t
+
+
+statement ok
+CALL es_create_index('slt_es_coerce', '{"mappings":{"properties":{"n":{"type":"long"},"i":{"type":"integer"}}}}');
+
+
+statement count 4
+INSERT INTO es.slt_es_coerce SELECT * FROM es_bulk('slt_es_coerce', '{"index":{"_id":"a"}}
+{"n":2.9,"i":"7.5"}
+{"index":{"_id":"b"}}
+{"n":"1e3","i":-2147483648}
+{"index":{"_id":"c"}}
+{"n":-9e18,"i":2147483647}
+{"index":{"_id":"d"}}
+{"n":"-2.5E1","i":"3"}
+');
+
+
+query
+SELECT _id, n, i FROM es.slt_es_coerce ORDER BY _id;
+----
+_id	n	i
+a	2	7
+b	1000	-2147483648
+c	-9000000000000000000	2147483647
+d	-25	3
+
+
+statement error
+INSERT INTO es.slt_es_coerce SELECT * FROM es_doc('slt_es_coerce', 'x', '{"n":100000000000000000000}');
+----
+db error: ERROR: failed to parse field [n] for index [slt_es_coerce]: expected a 64-bit integer
+
+
+statement error
+INSERT INTO es.slt_es_coerce SELECT * FROM es_doc('slt_es_coerce', 'x', '{"n":-1e300}');
+----
+db error: ERROR: failed to parse field [n] for index [slt_es_coerce]: expected a 64-bit integer
+
+
+statement error
+INSERT INTO es.slt_es_coerce SELECT * FROM es_doc('slt_es_coerce', 'x', '{"n":"1.5x"}');
+----
+db error: ERROR: failed to parse field [n] for index [slt_es_coerce]: expected a 64-bit integer
+
+
+statement error
+INSERT INTO es.slt_es_coerce SELECT * FROM es_doc('slt_es_coerce', 'x', '{"n":true}');
+----
+db error: ERROR: failed to parse field [n] for index [slt_es_coerce]: expected an integer
+
+
+statement error
+INSERT INTO es.slt_es_coerce SELECT * FROM es_doc('slt_es_coerce', 'x', '{"i":2147483648}');
+----
+db error: ERROR: failed to parse field [i] for index [slt_es_coerce]: expected a 32-bit integer
+
+
+statement error
+INSERT INTO es.slt_es_coerce SELECT * FROM es_doc('slt_es_coerce', 'x', '{"i":"-2.2e9"}');
+----
+db error: ERROR: failed to parse field [i] for index [slt_es_coerce]: expected a 32-bit integer
+
+
+query
+SELECT count(*) FROM es.slt_es_coerce;
+----
+count
+4
+
+
+query
+CALL es_drop_index('slt_es_coerce');
 ----
 acknowledged
 t

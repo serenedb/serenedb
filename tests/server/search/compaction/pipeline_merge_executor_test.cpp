@@ -28,6 +28,7 @@
 #include <atomic>
 #include <chrono>
 #include <duckdb.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/settings.hpp>
@@ -47,7 +48,6 @@
 #include <iresearch/index/merge/term_ranges.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -491,11 +491,11 @@ TEST_F(PipelineMergeExecutorTest, AnUnsortedInputFailsTheSortedMerge) {
 }
 
 TEST_F(PipelineMergeExecutorTest, AnIncompleteOrderFailsTheSortedMerge) {
-  if (!irs::AddFailurePointDebugging("irs::KeyOrder::Finish")) {
+  if (!duckdb::FaultPoints::Arm("irs::KeyOrder::Finish")) {
     GTEST_SKIP() << "built without fault injection";
   }
   const absl::Cleanup remove = [] {
-    irs::RemoveFailurePointDebugging("irs::KeyOrder::Finish");
+    duckdb::FaultPoints::Disarm("irs::KeyOrder::Finish");
   };
   const irs::SortSpec spec{{{.column = kGeneratedPKId}}};
   Reopen(spec);
@@ -606,12 +606,12 @@ TEST_F(PipelineMergeExecutorTest, RangePartsAreFreedOnceTheirFieldIsWritten) {
 }
 
 TEST_F(PipelineMergeExecutorTest, PostingsPieceIsReleasedByTheLastRangePart) {
-  if (!irs::AddFailurePointDebugging("pause_postings_merge_finalize")) {
+  if (!duckdb::FaultPoints::Arm("pause_postings_merge_finalize")) {
     GTEST_SKIP() << "built without fault injection";
   }
   const absl::Cleanup remove = [] {
-    irs::RemoveFailurePointDebugging("pause_postings_merge_finalize");
-    irs::RemoveFailurePointDebugging("pause_postings_merge_finalize:release");
+    duckdb::FaultPoints::Disarm("pause_postings_merge_finalize");
+    duckdb::FaultPoints::Disarm("pause_postings_merge_finalize:release");
   };
   const auto reader = _writer->GetSnapshot();
   irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
@@ -627,27 +627,26 @@ TEST_F(PipelineMergeExecutorTest, PostingsPieceIsReleasedByTheLastRangePart) {
   search::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
   bool ok = false;
   std::thread merge{[&] { ok = executor.Run(plan); }};
-  while (
-    !irs::RemoveFailurePointDebugging("pause_postings_merge_finalize:parked")) {
+  while (!duckdb::FaultPoints::Disarm("pause_postings_merge_finalize:parked")) {
     absl::SleepFor(absl::Milliseconds(1));
   }
   EXPECT_FALSE(plan.PostingsPending());
-  irs::AddFailurePointDebugging("pause_postings_merge_finalize:release");
+  duckdb::FaultPoints::Arm("pause_postings_merge_finalize:release");
   merge.join();
   EXPECT_TRUE(ok);
 }
 
 TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheTermRanges) {
-  if (!irs::AddFailurePointDebugging("pause_merge_unit")) {
+  if (!duckdb::FaultPoints::Arm("pause_merge_unit")) {
     GTEST_SKIP() << "built without fault injection";
   }
-  irs::AddFailurePointDebugging("pause_postings_merge_sink");
+  duckdb::FaultPoints::Arm("pause_postings_merge_sink");
   const absl::Cleanup remove = [] {
     for (const auto* point :
          {"pause_merge_unit", "pause_postings_merge_sink",
           "pause_postings_merge_sink:release", "pause_merge_unit_failed",
           "pause_merge_unit_failed:release", "irs::MergeUnit"}) {
-      irs::RemoveFailurePointDebugging(point);
+      duckdb::FaultPoints::Disarm(point);
     }
   };
   const auto reader = _writer->GetSnapshot();
@@ -671,17 +670,17 @@ TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheTermRanges) {
     }
   }};
   const auto await = [](const char* parked) {
-    while (!irs::RemoveFailurePointDebugging(parked)) {
+    while (!duckdb::FaultPoints::Disarm(parked)) {
       absl::SleepFor(absl::Milliseconds(1));
     }
   };
   await("pause_postings_merge_sink:parked");
-  irs::AddFailurePointDebugging("irs::MergeUnit");
-  irs::AddFailurePointDebugging("pause_merge_unit_failed");
-  irs::RemoveFailurePointDebugging("pause_merge_unit");
+  duckdb::FaultPoints::Arm("irs::MergeUnit");
+  duckdb::FaultPoints::Arm("pause_merge_unit_failed");
+  duckdb::FaultPoints::Disarm("pause_merge_unit");
   await("pause_merge_unit_failed:parked");
-  irs::AddFailurePointDebugging("pause_postings_merge_sink:release");
-  irs::AddFailurePointDebugging("pause_merge_unit_failed:release");
+  duckdb::FaultPoints::Arm("pause_postings_merge_sink:release");
+  duckdb::FaultPoints::Arm("pause_merge_unit_failed:release");
   merge.join();
   EXPECT_TRUE(failure);
   size_t left = 0;
@@ -692,12 +691,12 @@ TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheTermRanges) {
 }
 
 TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheUnitsStillRunning) {
-  if (!irs::AddFailurePointDebugging("irs::MergeUnit")) {
+  if (!duckdb::FaultPoints::Arm("irs::MergeUnit")) {
     GTEST_SKIP() << "built without fault injection";
   }
-  irs::RemoveFailurePointDebugging("irs::MergeUnit");
+  duckdb::FaultPoints::Disarm("irs::MergeUnit");
   const absl::Cleanup remove = [] {
-    irs::RemoveFailurePointDebugging("irs::MergeUnit");
+    duckdb::FaultPoints::Disarm("irs::MergeUnit");
   };
   const auto reader = _writer->GetSnapshot();
   irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
@@ -740,9 +739,9 @@ TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheUnitsStillRunning) {
     finished = plan.RunUnit(running);
   }};
   inside.WaitForNotification();
-  irs::AddFailurePointDebugging("irs::MergeUnit");
+  duckdb::FaultPoints::Arm("irs::MergeUnit");
   run.Run(ready.front());
-  irs::RemoveFailurePointDebugging("irs::MergeUnit");
+  duckdb::FaultPoints::Disarm("irs::MergeUnit");
   failed.Notify();
   unit.join();
   EXPECT_FALSE(finished);

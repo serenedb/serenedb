@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <duckdb/common/enums/order_type.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -37,7 +38,6 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/errcodes.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"

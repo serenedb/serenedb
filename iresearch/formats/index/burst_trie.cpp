@@ -29,6 +29,7 @@
 
 #include <array>
 #include <bit>
+#include <duckdb/common/fault_points.hpp>
 #include <optional>
 #include <span>
 #include <variant>
@@ -59,7 +60,6 @@
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/monotonic_buffer.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/fst/fst_builder.hpp"
 #include "iresearch/utils/fst/fst_matcher.hpp"
@@ -750,8 +750,8 @@ void FieldWriter::Impl::prepare(const FlushState& state) {
 void FieldWriter::Impl::write(const BasicTermReader& reader) {
   const auto props = reader.properties();
   const auto index_features = props.index_features;
-  BeginField(props);
   _pw.SetTermPayloadWriter(reader.PayloadWriter());
+  BeginField(props);
 
   uint64_t term_count = 0;
   uint64_t sum_dfreq = 0;
@@ -2809,9 +2809,20 @@ class FieldReader::Impl {
                          IndexInput& blocks_in) {
       blocks_in.Seek(meta.body_offset);
       LoadFromMeta(id, meta, blocks_in);
-      _fst = FST::Read(blocks_in, _owner->_resource_manager);
+      GrowingHint hint;
+      hint.Arm(blocks_in.Position(), blocks_in.Length());
+      _fst = FST::Read(blocks_in, _owner->_resource_manager,
+                       [&](uint64_t at, uint64_t need) {
+                         if (need == 0) {
+                           hint.Advance(blocks_in, at);
+                         } else {
+                           blocks_in.Prefetch(at, need);
+                         }
+                       });
       SDB_ASSERT(_fst);
       _body_offset = meta.body_offset;
+      blocks_in.Evict(meta.body_offset,
+                      blocks_in.Position() - meta.body_offset);
       MapInlineRegion(blocks_in);
       _body_end = InlineEnd();
     }
@@ -3003,7 +3014,6 @@ void FieldReader::Impl::prepare(const ReaderState& state) {
       std::upper_bound(ends.begin(), ends.end(), field.BodyOffset());
     field.SetBlocksBegin(it == ends.begin() ? 0 : *std::prev(it));
   }
-  _terms_in->Advise(IOAdvice::RANDOM);
 }
 
 const TermReader* FieldReader::Impl::field(field_id id) const {

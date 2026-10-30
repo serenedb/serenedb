@@ -25,6 +25,7 @@
 #include <absl/time/time.h>
 
 #include <iresearch/index/index_meta.hpp>
+#include <iterator>
 #include <utility>
 
 #include "search/compaction/merge_planner.h"
@@ -195,12 +196,16 @@ void MergeRegistry::Finish(uint64_t id, MergeOutcome outcome,
   _history.emplace_back(std::move(record));
 }
 
-std::vector<MergeRecord> MergeRegistry::Active() const {
-  absl::MutexLock lock{&_mutex};
+template<typename Pred>
+std::vector<MergeRecord> MergeRegistry::Active(Pred pred) const {
   std::vector<MergeRecord> records;
-  records.reserve(_active.size());
-  for (const auto& [_, record] : _active) {
-    records.emplace_back(record);
+  {
+    absl::MutexLock lock{&_mutex};
+    for (const auto& [_, record] : _active) {
+      if (pred(record)) {
+        records.emplace_back(record);
+      }
+    }
   }
   absl::c_sort(records, [](const MergeRecord& lhs, const MergeRecord& rhs) {
     return lhs.id < rhs.id;
@@ -208,19 +213,39 @@ std::vector<MergeRecord> MergeRegistry::Active() const {
   return records;
 }
 
-std::vector<MergeRecord> MergeRegistry::History() const {
+template<typename Pred>
+std::vector<MergeRecord> MergeRegistry::History(Pred pred) const {
   std::vector<MergeRecord> records;
   {
     absl::MutexLock lock{&_mutex};
-    records.reserve(_history.size() + _flushes.size());
-    records.insert(records.end(), _history.begin(), _history.end());
-    records.insert(records.end(), _flushes.begin(), _flushes.end());
+    absl::c_copy_if(_history, std::back_inserter(records), pred);
+    absl::c_copy_if(_flushes, std::back_inserter(records), pred);
   }
   absl::c_stable_sort(records,
                       [](const MergeRecord& lhs, const MergeRecord& rhs) {
                         return lhs.finished_us < rhs.finished_us;
                       });
   return records;
+}
+
+std::vector<MergeRecord> MergeRegistry::Active() const {
+  return Active([](const MergeRecord&) { return true; });
+}
+
+std::vector<MergeRecord> MergeRegistry::Active(uint64_t relation_id) const {
+  return Active([relation_id](const MergeRecord& record) {
+    return record.relation_id == relation_id;
+  });
+}
+
+std::vector<MergeRecord> MergeRegistry::History() const {
+  return History([](const MergeRecord&) { return true; });
+}
+
+std::vector<MergeRecord> MergeRegistry::History(uint64_t relation_id) const {
+  return History([relation_id](const MergeRecord& record) {
+    return record.relation_id == relation_id;
+  });
 }
 
 MergeRecorder::~MergeRecorder() {

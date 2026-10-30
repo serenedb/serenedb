@@ -199,6 +199,8 @@ class RowRuns final : public irs::detail::TableFilter {
 
   bool Foldable() const noexcept final { return !_bound; }
 
+  double Share() const final { return irs::detail::kUnknownShare; }
+
   irs::doc_id_t Live(irs::doc_id_t doc) final {
     if (KeepsRow(doc)) {
       return doc;
@@ -908,6 +910,36 @@ TEST_P(ScorePruneScoringTestCase, Bm25PrunedVsBaseline) {
   ASSERT_NE(nullptr, filter);
 
   ComparePrunedVsBaseline(reader, *filter, scorer, 15);
+}
+
+TEST_P(ScorePruneScoringTestCase,
+       Bm25LaterSegmentShortListScoresItsCandidates) {
+  auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
+  irs::IndexWriterOptions opts;
+  opts.reader_options.scorer = &scorer;
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  const auto add = [&](std::string_view text, size_t count) {
+    for (size_t i = 0; i != count; ++i) {
+      tests::Document doc;
+      doc.insert(
+        std::make_shared<TokenizedField>(ColumnIdFor("content"), text));
+      ASSERT_TRUE(Insert(*writer, doc.indexed.begin(), doc.indexed.end()));
+    }
+  };
+  add("a x x x x", 100);
+  add("x x x x x", 1890);
+  add("t", 10);
+  writer->RefreshCommit();
+  add("a t", 10);
+  add("x x x x x", 490);
+  writer->RefreshCommit();
+  auto reader = writer->GetSnapshot();
+  ASSERT_EQ(2, reader.size());
+
+  auto filter = ParseQuery("content:a content:t");
+  ASSERT_NE(nullptr, filter);
+
+  ComparePrunedVsBaseline(reader, *filter, scorer, 10);
 }
 
 TEST_P(ScorePruneScoringTestCase, Bm25RequiredOptionalPrunedVsBaseline) {

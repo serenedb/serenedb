@@ -15,8 +15,8 @@ statement ok
 CREATE TABLE ret_gen(a INT, b TEXT) WITH (storage = 'search');
 
 
-# Generated-PK table: the synthetic key is not a column of the relation and must
-# not appear in RETURNING *.
+# Table without a PK: the rowid is not a column of the relation and must not
+# appear in RETURNING *.
 query
 INSERT INTO ret_gen VALUES (1, 'x'), (2, 'y') RETURNING *;
 ----

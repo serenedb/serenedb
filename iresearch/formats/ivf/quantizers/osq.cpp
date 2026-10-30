@@ -42,6 +42,17 @@ constexpr uint32_t kOsqIters = 5;
 constexpr std::array<double, 8> kOsqGrid{0.798, 1.493, 2.051, 2.514,
                                          2.916, 3.278, 3.611, 3.922};
 
+constexpr double OsqStepVariance(uint32_t bits) noexcept {
+  switch (bits) {
+    case 1:
+      return 0.1427;
+    case 2:
+      return 0.1199;
+    default:
+      return 1.0 / 12.0;
+  }
+}
+
 struct OsqTerms {
   float lower = 0.f;
   float step = 0.f;
@@ -582,6 +593,22 @@ class OsqQuantizerReader final : public QuantizerReader {
                       [this](const byte_type* r) { return ScoreRow(r); });
   }
 
+  void ScoreErrors(const byte_type* base, uint32_t record_size,
+                   std::span<const uint32_t> ids, std::span<score_t> /*scores*/,
+                   score_t* errors) final {
+    Errors(
+      [&](size_t i) {
+        return base + static_cast<size_t>(ids[i]) * record_size;
+      },
+      ids.size(), errors);
+  }
+
+  void BlockErrors(std::span<const byte_type> block, std::span<score_t> scores,
+                   score_t* errors) final {
+    Errors([&](size_t i) { return block.data() + i * _lay.record_size; },
+           scores.size(), errors);
+  }
+
   bool Decode(const byte_type* code, float* out) const final {
     if (!_cluster) {
       return false;
@@ -651,6 +678,31 @@ class OsqQuantizerReader final : public QuantizerReader {
   }
 
  private:
+  template<typename Row>
+  void Errors(Row row, size_t n, score_t* errors) const {
+    constexpr float kMetric = M == VectorMetric::L2Sqr ? 2.f : 1.f;
+    const auto d = static_cast<float>(_lay.d);
+    const auto span = static_cast<float>((1U << _lay.bits) - 1);
+    const auto grid = static_cast<float>(kOsqGrid[_lay.bits - 1]);
+    const auto row_unit = static_cast<float>(OsqStepVariance(_lay.bits));
+    const auto query_norm2 = static_cast<float>(_query_norm2);
+    const float query_var = _query.step * _query.step / 12.f;
+    for (size_t i = 0; i < n; ++i) {
+      const OsqTerms t = RowTerms(row(i));
+      float row_norm2 = 0.f;
+      if constexpr (M == VectorMetric::L2Sqr) {
+        row_norm2 = t.extra;
+      } else {
+        const float mean = t.lower + t.step * span / 2.f;
+        const float sd = t.step * span / (2.f * grid);
+        row_norm2 = d * (mean * mean + sd * sd);
+      }
+      const float row_var = row_unit * t.step * t.step;
+      errors[i] =
+        kMetric * std::sqrt(row_norm2 * query_var + query_norm2 * row_var);
+    }
+  }
+
   OsqTerms RowTerms(const byte_type* code) const noexcept {
     OsqTerms t;
     std::memcpy(&t, code + _lay.code_bytes, sizeof(t));
@@ -668,10 +720,13 @@ class OsqQuantizerReader final : public QuantizerReader {
   void KeyQuery() {
     const auto query = _cur->Query();
     double centroid_dot = 0.0;
+    double norm2 = 0.0;
     for (uint32_t i = 0; i < _lay.d; ++i) {
       _res[i] = query[i] - _cluster[i];
       centroid_dot += double{query[i]} * _cluster[i];
+      norm2 += double{_res[i]} * _res[i];
     }
+    _query_norm2 = norm2;
     _query = OsqQuantize(_res.data(), _lay.d, _lay.query_bits, _codes.data());
     if constexpr (M == VectorMetric::InnerProduct) {
       _query.extra = static_cast<float>(centroid_dot);
@@ -718,6 +773,7 @@ class OsqQuantizerReader final : public QuantizerReader {
   OsqLayout _lay;
   const float* _cluster = nullptr;
   float _centroid_dot = 0.f;
+  double _query_norm2 = 0.0;
   OsqTerms _query;
   std::vector<int8_t> _q;
   std::vector<float> _res;

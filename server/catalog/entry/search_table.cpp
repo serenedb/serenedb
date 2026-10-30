@@ -26,7 +26,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
@@ -150,19 +149,6 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
       constant->GetLiteral().ToValue().GetValue<std::string>();
   }
   return result;
-}
-
-duckdb::Identifier FreePkSequenceName(duckdb::CatalogTransaction transaction,
-                                      duckdb::SchemaCatalogEntry& schema,
-                                      const duckdb::Identifier& table) {
-  const auto stem = table.GetIdentifierName() + "_pk_seq";
-  duckdb::Identifier candidate{stem};
-  for (duckdb::idx_t attempt = 1; schema.GetEntry(
-         transaction, duckdb::CatalogType::SEQUENCE_ENTRY, candidate);
-       ++attempt) {
-    candidate = duckdb::Identifier{absl::StrCat(stem, attempt)};
-  }
-  return candidate;
 }
 
 std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
@@ -340,19 +326,11 @@ SearchTableEntry::SearchTableEntry(
   }
   _options = ResolveOptions(base.options);
   _sort_keys = ResolveSortKeys(_columns, base.sort_orders);
-  if (const auto tag = tags.find(kGeneratedPkSequenceTag); tag != tags.end()) {
-    _pk_sequence = duckdb::Identifier{tag->second};
-  } else if (base.oid == 0) {
-    _pk_sequence = FreePkSequenceName(transaction, schema, name);
-    tags.insert_or_assign(kGeneratedPkSequenceTag,
-                          _pk_sequence.GetIdentifierName());
-  }
   if (!_storage) {
     _storage = search::SearchTable::Create(
       catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
       catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
-      _options, search::SearchTable::DeclaredCompression(GetColumns()),
-      SortSpecOf(_sort_keys, GetColumns()));
+      _options, GetColumns(), SortSpecOf(_sort_keys, GetColumns()));
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
 }
@@ -463,11 +441,11 @@ std::string_view AlterName(const duckdb::AlterTableInfo& alter) {
 
 duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
   const irs::DirectoryReader& reader, const duckdb::TableCatalogEntry& table,
-  duckdb::column_t generated_pk) {
+  duckdb::column_t key_column) {
   duckdb::vector<duckdb::ColumnSegmentInfo> result;
   const auto locate = [&](irs::field_id id) -> std::optional<duckdb::idx_t> {
     if (id == connector::kGeneratedPKId) {
-      return generated_pk;
+      return key_column;
     }
     for (const auto& column : table.GetColumns().Physical()) {
       if (connector::TableColumnId(column) == id) {
@@ -506,24 +484,20 @@ bool SearchTableEntry::ScanColumnSegmentInfo(
   if (!reader) {
     return false;
   }
-  result =
-    ColumnSegmentRows(reader, *this, connector::kColumnIdentifierGeneratedPk);
+  result = ColumnSegmentRows(reader, *this, duckdb::COLUMN_IDENTIFIER_ROW_ID);
   return true;
 }
 
 duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {
   duckdb::virtual_column_map_t result;
   const auto keys = connector::primary_key::KeyColumns(*this);
-  result.reserve(keys.size() + 3);
+  result.reserve(keys.size() + 2);
   result.insert({connector::kColumnIdentifierTableOid,
                  duckdb::TableColumn{duckdb::Identifier{"tableoid"},
                                      duckdb::LogicalType::BIGINT}});
-  result.insert({connector::kColumnIdentifierGeneratedPk,
+  result.insert({connector::kColumnIdentifierDocAddress,
                  duckdb::TableColumn{duckdb::Identifier{"rowid"},
                                      duckdb::LogicalType::ROW_TYPE}});
-  result.insert({connector::kColumnIdentifierRowPosition,
-                 duckdb::TableColumn{duckdb::Identifier{"sdb_row_position$"},
-                                     duckdb::LogicalType::UBIGINT}});
   for (size_t i = 0; i != keys.size(); ++i) {
     const auto& column = GetColumns().GetColumn(keys[i]);
     result.insert({connector::kColumnIdentifierPrimaryKeyBase + i,
@@ -533,25 +507,19 @@ duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {
 }
 
 duckdb::vector<duckdb::column_t> SearchTableEntry::GetRowIdColumns() const {
-  return {connector::kColumnIdentifierGeneratedPk,
-          connector::kColumnIdentifierRowPosition};
+  return {connector::kColumnIdentifierDocAddress};
 }
 
-duckdb::optional_ptr<duckdb::SequenceCatalogEntry>
-SearchTableEntry::GeneratedPkSequence(duckdb::ClientContext& context) const {
-  if (_pk_sequence.empty()) {
-    return nullptr;
+void SearchTableEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {
+  if (transaction.HasContext()) {
+    _storage->ClaimLayout(transaction.GetContext(), name.GetIdentifierName());
   }
-  auto entry = ParentSchema(context).GetEntry(
-    catalog.GetCatalogTransaction(context), duckdb::CatalogType::SEQUENCE_ENTRY,
-    _pk_sequence);
-  return entry ? &entry->Cast<duckdb::SequenceCatalogEntry>() : nullptr;
 }
 
 void SearchTableEntry::OnDrop() { _storage->MarkDropped(); }
 
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
-  if (prev_entry.type == duckdb::CatalogType::INVALID) {
+  if (CreatedObject(prev_entry)) {
     OnDrop();
   }
 }
@@ -580,27 +548,34 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::SetColumnCompression(
 }
 
 void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
-                                    duckdb::DataChunk& chunk,
-                                    duckdb::optional_idx row_start) {
+                                    duckdb::DataChunk& chunk) {
   std::vector<connector::ColumnId> column_ids;
   for (const auto& column : _columns.Logical()) {
     column_ids.emplace_back(connector::TableColumnId(column));
   }
-  _storage->ReplayInsert(context, catalog, column_ids, chunk,
-                         row_start.GetIndex());
+  _storage->ReplayInsert(context, catalog, column_ids, chunk);
 }
 
-void SearchTableEntry::ReplayDelete(duckdb::ClientContext&,
-                                    duckdb::DataChunk& chunk) {
-  _storage->ReplayDelete(catalog.GetAttached(), chunk);
+void SearchTableEntry::ReplayDeleteRowPositions(
+  std::shared_ptr<const duckdb::data_t> entry,
+  const duckdb::vector<duckdb::WALFrozenRowPositionGroup>& groups) {
+  _storage->ReplayDeleteRowPositions(catalog.GetAttached(), std::move(entry),
+                                     groups);
 }
 
-void SearchTableEntry::ReplayTruncate(duckdb::ClientContext&) {
+void SearchTableEntry::ReplayRowPositionMaps(
+  std::shared_ptr<const duckdb::data_t> entry, uint64_t source,
+  const duckdb::vector<duckdb::WALFrozenRowPositionMap>& maps) {
+  _storage->ReplayRowPositionMaps(catalog.GetAttached(), std::move(entry),
+                                  source, maps);
+}
+
+void SearchTableEntry::ReplayTruncate() {
   _storage->ReplayTruncate(catalog.GetAttached());
 }
 
 void SearchTableEntry::ReplayAdoptSegments(
-  duckdb::ClientContext&, duckdb::vector<std::string> segments) {
+  duckdb::vector<std::string> segments) {
   _storage->ReplayAdoptSegments(catalog.GetAttached(), std::move(segments));
 }
 
@@ -642,31 +617,52 @@ void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
 duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   auto info = duckdb::TableCatalogEntry::GetInfo();
   auto& options = info->Cast<duckdb::CreateTableInfo>().options;
-  const auto set = [&](std::string_view name, const duckdb::Value& value) {
-    options.insert_or_assign(name, OptionConstant(value));
-  };
-  set(kStorageOption, duckdb::Value{kEngineSearch});
-  set(kRefreshIntervalSetting,
-      duckdb::Value::UINTEGER(_options.refresh_interval_ms));
-  set(kCompactionIntervalSetting,
-      duckdb::Value::UINTEGER(_options.compaction_interval_ms));
-  set(kCleanupIntervalStepSetting,
-      duckdb::Value::UINTEGER(_options.cleanup_interval_step));
-  set(kRowGroupSizeSetting, duckdb::Value::UINTEGER(_options.row_group_size));
-  set(kSegmentMemoryMaxSetting,
-      duckdb::Value::UBIGINT(_options.segment_memory_max));
-  set(kCompactionMaxSegmentsSetting,
-      duckdb::Value::UINTEGER(_options.compaction_max_segments));
-  set(kCompactionMaxSegmentsBytesSetting,
-      duckdb::Value::UBIGINT(_options.compaction_max_segments_bytes));
-  set(kCompactionFloorSegmentBytesSetting,
-      duckdb::Value::UBIGINT(_options.compaction_floor_segment_bytes));
-  if (!_options.optimize_top_k.empty()) {
-    set(kOptimizeTopKSetting, duckdb::Value{_options.optimize_top_k});
+  options.insert_or_assign(kStorageOption,
+                           OptionConstant(duckdb::Value{kEngineSearch}));
+  for (const auto name :
+       {kRefreshIntervalSetting, kCompactionIntervalSetting,
+        kCleanupIntervalStepSetting, kRowGroupSizeSetting,
+        kSegmentMemoryMaxSetting, kCompactionMaxSegmentsSetting,
+        kCompactionMaxSegmentsBytesSetting, kCompactionFloorSegmentBytesSetting,
+        kOptimizeTopKSetting}) {
+    if (const auto value = Option(name); !value.IsNull()) {
+      options.insert_or_assign(name, OptionConstant(value));
+    }
   }
   info->Cast<duckdb::CreateTableInfo>().sort_orders =
     SortOrdersOf(_sort_keys, GetColumns());
   return info;
+}
+
+duckdb::Value SearchTableEntry::Option(std::string_view name) const {
+  if (name == kRefreshIntervalSetting) {
+    return duckdb::Value::UINTEGER(_options.refresh_interval_ms);
+  }
+  if (name == kCompactionIntervalSetting) {
+    return duckdb::Value::UINTEGER(_options.compaction_interval_ms);
+  }
+  if (name == kCleanupIntervalStepSetting) {
+    return duckdb::Value::UINTEGER(_options.cleanup_interval_step);
+  }
+  if (name == kRowGroupSizeSetting) {
+    return duckdb::Value::UINTEGER(_options.row_group_size);
+  }
+  if (name == kSegmentMemoryMaxSetting) {
+    return duckdb::Value::UBIGINT(_options.segment_memory_max);
+  }
+  if (name == kCompactionMaxSegmentsSetting) {
+    return duckdb::Value::UINTEGER(_options.compaction_max_segments);
+  }
+  if (name == kCompactionMaxSegmentsBytesSetting) {
+    return duckdb::Value::UBIGINT(_options.compaction_max_segments_bytes);
+  }
+  if (name == kCompactionFloorSegmentBytesSetting) {
+    return duckdb::Value::UBIGINT(_options.compaction_floor_segment_bytes);
+  }
+  if (name == kOptimizeTopKSetting && !_options.optimize_top_k.empty()) {
+    return duckdb::Value{_options.optimize_top_k};
+  }
+  return duckdb::Value{};
 }
 
 duckdb::TableFunction SearchTableEntry::GetScanFunction(
@@ -730,6 +726,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
   if (info.type != duckdb::AlterType::ALTER_TABLE) {
     return duckdb::TableCatalogEntry::AlterEntry(context, info);
   }
+  _storage->ClaimLayout(context, name.GetIdentifierName());
   auto& alter = info.Cast<duckdb::AlterTableInfo>();
   switch (alter.alter_table_type) {
     case duckdb::AlterTableType::RENAME_TABLE:

@@ -20,17 +20,7 @@
 
 #pragma once
 
-#include "iresearch/search/count/make.hpp"
-#include "iresearch/search/docs/make.hpp"
-#include "iresearch/search/fill/impl.hpp"
-#include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/filters/filter.hpp"
-#include "iresearch/search/hits/make.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/lead/make.hpp"
-#include "iresearch/search/probe/impl.hpp"
-#include "iresearch/search/probe/make.hpp"
-#include "iresearch/search/top/make.hpp"
 
 namespace irs {
 
@@ -39,50 +29,21 @@ class QueryBuilderImpl : public Base {
  public:
   using Base::Base;
 
-  count::Root::ptr PlanCount(const count::Context& ctx) const final {
-    return count::Make(Self(), ctx);
-  }
+  count::Root::ptr PlanCount(const count::Context& ctx) const final;
 
-  docs::Root::ptr PlanDocs(const docs::Context& ctx) const final {
-    return docs::Make(Self(), ctx);
-  }
+  docs::Root::ptr PlanDocs(const docs::Context& ctx) const final;
 
-  hits::Root::ptr PlanScored(const hits::Context& ctx) const final {
-    return hits::Make(Self(), ctx);
-  }
+  hits::Root::ptr PlanScored(const hits::Context& ctx) const final;
 
-  top::Root::ptr PlanTop(const top::Context& ctx) const final {
-    return top::Make(Self(), ctx);
-  }
+  top::Root::ptr PlanTop(const top::Context& ctx) const final;
 
-  lead::Node::ptr PlanLead(const detail::ScoredCtx& ctx) const final {
-    if (!Base::Scores()) {
-      if (auto node = lead::Make(Self())) {
-        return node;
-      }
-    }
-    return lead::Make(Self(), ctx);
-  }
+  lead::Node::ptr PlanLead(const detail::ScoredCtx& ctx) const final;
 
   probe::Node::ptr PlanProbe(const detail::ScoredCtx& ctx,
-                             uint64_t interrogations) const final {
-    if (!Base::Scores()) {
-      if (auto node = probe::Make(Self(), interrogations)) {
-        return node;
-      }
-    }
-    return probe::Make(Self(), ctx, interrogations);
-  }
+                             uint64_t interrogations) const final;
 
   fill::Node::ptr PlanFill(const detail::ScoredCtx& ctx,
-                           ScoreMergeType merge) const final {
-    if (!Base::Scores()) {
-      if (auto node = fill::Make(Self())) {
-        return node;
-      }
-    }
-    return fill::Make(Self(), ctx, merge);
-  }
+                           ScoreMergeType merge) const final;
 
  private:
   const Derived& Self() const noexcept {

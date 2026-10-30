@@ -394,6 +394,11 @@ struct ColumnMerger::State {
     return field_options ? field_options->CodecParams(opts) : ColCodecParams{};
   }
 
+  std::span<const field_id> AnnFields(field_id column) const noexcept {
+    return field_options ? field_options->AnnFields(column)
+                         : std::span<const field_id>{};
+  }
+
   ColumnWriter& OpenPart(field_id column, uint32_t part,
                          ColWriter& output) const {
     const auto opts = Options(column);
@@ -896,6 +901,10 @@ ColumnMerger::ColumnMerger(std::span<const MergeSource> sources,
     }
     state.db = &s.col_reader->Database();
     for (const auto& col : s.col_reader->Columns()) {
+      if (field_options &&
+          field_options->GetFieldKind(col->Id()) == FieldKind::None) {
+        continue;
+      }
       if (state.first_by_id.emplace(col->Id(), col.get()).second) {
         state.ids.emplace_back(col->Id());
       }
@@ -938,7 +947,7 @@ uint32_t ColumnMerger::RowGroupSize() const noexcept {
 
 bool ColumnMerger::Splittable(field_id column) const {
   const auto opts = _state->Options(column);
-  return !opts.hyperloglog && !opts.ann_info &&
+  return !opts.hyperloglog && _state->AnnFields(column).empty() &&
          !duckdb::TypeVisitor::Contains(_state->First(column).Type(),
                                         duckdb::LogicalTypeId::VARIANT);
 }
@@ -1097,8 +1106,9 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
   auto& cw = output.OpenColumn(
     column, shared.First(column).Type(), opts.skip_validity,
     shared.row_group_size, opts.compression, false, shared.CodecParams(opts));
-  if (opts.ann_info) {
-    auto& ann = output.AttachAnn(column, *opts.ann_info);
+  for (const auto ann_field : shared.AnnFields(column)) {
+    auto& ann = output.AttachAnn(
+      column, *shared.field_options->GetColumnOptions(ann_field).ann_info);
     if (!shared.order) {
       ann.SetMergeSources(sources);
     }

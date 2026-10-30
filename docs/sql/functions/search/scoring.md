@@ -40,22 +40,24 @@ Every scorer follows this shape — swap `BM25` for any function in the table ab
 
 ## Requirements {#requirements}
 
-| Requirement | Applies to | What happens without it |
-| :--- | :--- | :--- |
-| `frequency` feature flag on the column | **all** scorers | Scoring is unavailable on the column. |
-| `norm` feature flag on the column | `lm_jm`, `lm_dirichlet`, `indri_dirichlet`, `dfi` | The scorer returns `0` for every row. |
+A scorer runs on any indexed column, but what it can tell apart depends on the column's feature flags:
 
-Set both flags on the text search dictionary used by the indexed column:
+| Feature flag on the column | Read by | Without it |
+| :--- | :--- | :--- |
+| `frequency` | every scorer except `raw_boost`, `idf`, `constant` and `BM25` with `k1 = 0` | Every row that matches a term scores the same for that term, as if the term occurred once. |
+| `norm` | `BM25` with `b` above `0` (the default), `TFIDF` with `with_norms`, `lm_jm`, `lm_dirichlet`, `indri_dirichlet`, `dfi` and `raw_dl` | Every row counts as one token long, so the score ignores the column's length. |
+
+Set both flags on the text search dictionary used by the indexed column; `norm` requires `frequency`:
 
 ```sql
--- term frequency, needed by every scorer
--- document length norms, needed by lm_* and dfi
+-- term frequency, to rank by how often a term occurs
+-- document length norms, to normalize by the column's length
 CREATE TEXT SEARCH DICTIONARY scored_en AS
     split_text() | stem_words('en_US.UTF-8')
     WITH (frequency, position, norm);
 ```
 
-See [token positions and feature flags](../../indexes/inverted/text-analysis.md#token-positions-and-feature-flags) for the full list. `BM25`, `TFIDF`, `raw_tf`, `raw_boost` and `raw_dl` need only `frequency`; the language-model scorers and `dfi` silently score `0` until `norm` is enabled.
+See [token positions and feature flags](../../indexes/inverted/text-analysis.md#token-positions-and-feature-flags) for the full list.
 
 :::note One scorer per index per query
 A single index scan can apply only one scorer function. Two different scorers over the same index in one `SELECT` raise `Only one scorer function is allowed per inverted index`. To compute several scores for the same rows, combine the per-scorer queries with `UNION`.
@@ -77,7 +79,7 @@ In practice **BM25 is the right default** for almost all full-text ranking — i
 
 How they differ, simple to advanced:
 
-- **TF-IDF** rewards a term that is frequent in the document and rare across the collection. It is linear in term frequency, so a few very common terms can dominate.
+- **TF-IDF** rewards a term that is frequent in the document and rare across the collection. Its term-frequency weight has no ceiling (SereneDB uses the square root of the count), so a few very frequent terms can dominate.
 - **BM25** is TF-IDF with two refinements: term-frequency *saturation* (`k1`) so the 10th occurrence counts far less than the 1st, and *length normalization* (`b`) so long documents are not unfairly favored for containing a term more times.
 - **Language models** (`lm_*`) flip the question: instead of weighting terms, they estimate the probability that the document's word distribution would *generate* the query, smoothing each document with the whole-collection distribution so unseen terms do not zero out the score. They tend to track BM25 closely while exposing a single, interpretable smoothing knob.
 - **DFI** is *parameter-free*: it scores a term by how far its observed frequency diverges from what statistical independence would predict, so there is nothing to tune at all.
@@ -96,7 +98,7 @@ The [Okapi BM25](https://en.wikipedia.org/wiki/Okapi_BM25) relevance score.
 | `k1` | `FLOAT` | `1.2` | Term-frequency saturation. Higher = extra occurrences keep mattering; lower = they saturate sooner. |
 | `b` | `FLOAT` | `0.75` | Document-length normalization, in `[0, 1]`. `b = 0` disables it (a.k.a. BM15); `b = 1` fully normalizes by length. |
 
-**How it works.** A term contributes more when it appears often in a document and rarely across the collection, but each extra occurrence adds ever less (controlled by `k1`), and the contribution is scaled down for long documents (controlled by `b`). This is the standard relevance model behind Lucene, Elasticsearch and OpenSearch — start here and tune only if results need it.
+**How it works.** A term contributes more when it appears often in a document and rarely across the collection, but each extra occurrence adds ever less (controlled by `k1`), and the contribution is scaled down for long documents (controlled by `b`). It is the standard relevance model for full-text search — start here and tune only if results need it.
 
 <SqlLogicTest id="sql/functions/full_text_search/bm25" />
 
@@ -115,7 +117,7 @@ The classic [tf–idf](https://en.wikipedia.org/wiki/Tf%E2%80%93idf) (term-frequ
 | :--- | :--- | :--- | :--- |
 | `with_norms` | `BOOLEAN` | `false` | Apply document-length normalization. Requires the `norm` flag on the column to have an effect. |
 
-**How it works.** Each matched term contributes `tf × idf`: more occurrences in the row and rarer occurrence across the collection both raise the score. It is cheaper than BM25 but has no term-frequency saturation, so a handful of very frequent terms can dominate — prefer BM25 unless you specifically want this baseline.
+**How it works.** Each matched term contributes `√tf × idf`: more occurrences in the row and rarer occurrence across the collection both raise the score. It has no term-frequency saturation, so a handful of very frequent terms can dominate — prefer BM25 unless you specifically want this baseline.
 
 <SqlLogicTest id="sql/functions/full_text_search/tfidf" />
 
@@ -134,7 +136,7 @@ With `with_norms = true` the score is divided down for longer documents, which r
 | :--- | :--- | :--- | :--- |
 | `lambda` | `FLOAT` | `0.1` | Smoothing weight in `(0, 1]`: each document's term probabilities are mixed with the collection's by `lambda`. Smaller favors precision on short queries; larger suits longer, verbose queries. |
 
-**How it works.** The model estimates the probability that the document would generate the query, mixing the document's own term distribution with the collection-wide distribution by a *fixed* fraction `lambda`. Requires the `norm` flag (returns `0` without it).
+**How it works.** The model estimates the probability that the document would generate the query, mixing the document's own term distribution with the collection-wide distribution by a *fixed* fraction `lambda`. Reads the `norm` flag: without it every row counts as one token long.
 
 <SqlLogicTest id="sql/functions/full_text_search/lm_jm" />
 
@@ -149,7 +151,7 @@ With `with_norms = true` the score is divided down for longer documents, which r
 | :--- | :--- | :--- | :--- |
 | `mu` | `FLOAT` | `2000` | Dirichlet prior. Larger = more smoothing (the collection prior dominates); set it near your average document length. |
 
-**How it works.** Like `lm_jm`, but the smoothing strength adapts to document length via the prior `mu` — short documents are smoothed proportionally more, which generally ranks short keyword queries better. Requires the `norm` flag (returns `0` without it).
+**How it works.** Like `lm_jm`, but the smoothing strength adapts to document length via the prior `mu` — short documents are smoothed proportionally more, which generally ranks short keyword queries better. Reads the `norm` flag: without it every row counts as one token long.
 
 <SqlLogicTest id="sql/functions/full_text_search/lm_dirichlet" />
 
@@ -164,7 +166,7 @@ The [Indri](https://en.wikipedia.org/wiki/Lemur_Project)/Lemur variant of Dirich
 | :--- | :--- | :--- | :--- |
 | `mu` | `FLOAT` | `2000` | Dirichlet prior, as in `lm_dirichlet`. |
 
-**How it works.** Same smoothing as `lm_dirichlet` but scores are returned in the log domain (typically negative) and the low-score floor clamp is omitted, so values match those produced by the Indri search engine. Use it when you need Indri-comparable scores. Requires the `norm` flag (returns `0` without it).
+**How it works.** Same smoothing as `lm_dirichlet` but scores are returned in the log domain (typically negative) and the low-score floor clamp is omitted, so values match those produced by the Indri search engine. Use it when you need Indri-comparable scores. Reads the `norm` flag: without it every row counts as one token long.
 
 <SqlLogicTest id="sql/functions/full_text_search/indri_dirichlet" />
 
@@ -179,7 +181,7 @@ The [Indri](https://en.wikipedia.org/wiki/Lemur_Project)/Lemur variant of Dirich
 | :--- | :--- | :--- | :--- |
 | `measure` | `VARCHAR` | `'standardized'` | Divergence statistic. One of `'standardized'`, `'saturated'`, `'chi_squared'`. |
 
-**How it works.** For each term the model computes the frequency expected under independence, then scores by how far the observed frequency diverges from it — the `measure` selects which divergence statistic to use. It is *parameter-free* (no `k1`, `b`, `lambda` or `mu`), making it a strong choice when you can't or don't want to tune. Requires the `norm` flag (returns `0` without it).
+**How it works.** For each term the model computes the frequency expected under independence, then scores by how far the observed frequency diverges from it — the `measure` selects which divergence statistic to use. It is *parameter-free* (no `k1`, `b`, `lambda` or `mu`), making it a strong choice when you can't or don't want to tune. Reads the `norm` flag: without it every row counts as one token long.
 
 <SqlLogicTest id="sql/functions/full_text_search/dfi" />
 
@@ -336,5 +338,5 @@ SereneDB has no single `function_score`-style query type. Because a scorer is ju
 
 - [Full-Text Search Functions](./full-text.md) — operators, constructors, parsers
 - [Inverted Index](../../indexes/inverted/index.md) · [Relevance ranking guide](../../indexes/inverted/ranking.md)
-- [Text Analysis](../../indexes/inverted/text-analysis.md#token-positions-and-feature-flags) — the `frequency` and `norm` flags scoring requires
+- [Text Analysis](../../indexes/inverted/text-analysis.md#token-positions-and-feature-flags) — the `frequency` and `norm` flags scorers read
 - [BM25/TFIDF Ranking recipe](../../../cookbook/search/ranking.md) — parameter tuning

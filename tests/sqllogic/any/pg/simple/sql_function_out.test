@@ -1,0 +1,296 @@
+statement ok
+DROP SCHEMA IF EXISTS fno CASCADE;
+
+
+statement ok
+CREATE SCHEMA fno;
+
+
+statement ok
+CREATE FUNCTION fno.split(IN a int, OUT b int, OUT c text) LANGUAGE sql AS 'SELECT a + 1, a::text';
+
+
+statement ok
+CREATE FUNCTION fno.doubled(a int, OUT b bigint) LANGUAGE sql AS 'SELECT a * 2';
+
+
+statement ok
+CREATE FUNCTION fno.swap(INOUT a int, OUT b text) LANGUAGE sql AS 'SELECT a * 10, a::text';
+
+
+statement ok
+CREATE FUNCTION fno.rec(a int, OUT b int, OUT c int) RETURNS record LANGUAGE sql AS 'SELECT a, a + 1';
+
+
+statement ok
+CREATE FUNCTION fno.upto(a int, OUT n int) RETURNS SETOF int LANGUAGE sql AS 'SELECT * FROM generate_series(1, a)';
+
+
+statement ok
+CREATE FUNCTION fno.pairs(a int, OUT x int, OUT y text) RETURNS SETOF record LANGUAGE sql AS 'SELECT g, g::text FROM generate_series(1, a) g';
+
+
+statement ok
+CREATE FUNCTION fno.unnamed(int, OUT int, OUT text) LANGUAGE sql AS 'SELECT $1, $1::text';
+
+
+query
+SELECT * FROM fno.split(5);
+----
+b	c
+6	5
+
+
+query
+SELECT fno.split(5) AS s, (fno.split(5)).c AS c;
+----
+s	c
+(6,5)	5
+
+
+query
+SELECT fno.doubled(4) AS d, pg_typeof(fno.doubled(4)) AS t;
+----
+d	t
+8	bigint
+
+
+query
+SELECT * FROM fno.doubled(4);
+----
+b
+8
+
+
+query
+SELECT x, pg_typeof(x) AS t, x.b FROM fno.doubled(4) AS x;
+----
+x	t	b
+8	bigint	8
+
+
+query
+SELECT * FROM fno.swap(2);
+----
+a	b
+20	2
+
+
+query
+SELECT * FROM fno.rec(1);
+----
+b	c
+1	2
+
+
+query
+SELECT * FROM fno.upto(3) ORDER BY 1;
+----
+n
+1
+2
+3
+
+
+query
+SELECT x FROM fno.upto(2) AS x ORDER BY 1;
+----
+x
+1
+2
+
+
+query
+SELECT * FROM fno.pairs(2) ORDER BY 1;
+----
+x	y
+1	1
+2	2
+
+
+query
+SELECT * FROM fno.unnamed(3);
+----
+column1	column2
+3	3
+
+
+query
+SELECT p.proname, p.prorettype::regtype::text AS rettype, p.proretset, p.pronargs, array_to_string(p.proallargtypes::regtype[], ',') AS alltypes, array_to_string(p.proargmodes, ',') AS modes, array_to_string(p.proargnames, ',') AS names, pg_get_function_arguments(p.oid) AS args, pg_get_function_result(p.oid) AS result FROM pg_proc p WHERE p.pronamespace = 'fno'::regnamespace AND p.proname <> 'unnamed' ORDER BY 1;
+----
+proname	rettype	proretset	pronargs	alltypes	modes	names	args	result
+doubled	bigint	f	1	integer,bigint	i,o	a,b	a integer, OUT b bigint	bigint
+pairs	record	t	1	integer,integer,text	i,o,o	a,x,y	a integer, OUT x integer, OUT y text	SETOF record
+rec	record	f	1	integer,integer,integer	i,o,o	a,b,c	a integer, OUT b integer, OUT c integer	record
+split	record	f	1	integer,integer,text	i,o,o	a,b,c	a integer, OUT b integer, OUT c text	record
+swap	record	f	1	integer,text	b,o	a,b	INOUT a integer, OUT b text	record
+upto	integer	t	1	integer,integer	i,o	a,n	a integer, OUT n integer	SETOF integer
+
+
+statement error OUT and INOUT arguments aren't allowed in TABLE functions
+CREATE FUNCTION fno.bad(a int, OUT b int) RETURNS TABLE(c int) LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE FUNCTION fno.empty(OUT a int, OUT b text) LANGUAGE sql AS 'SELECT 1, ''x'' WHERE false';
+
+
+query
+SELECT a IS NULL AS a, b IS NULL AS b FROM fno.empty();
+----
+a	b
+t	t
+
+
+statement ok
+CREATE FUNCTION fno.two_rows(OUT a int, OUT b int) LANGUAGE sql AS 'SELECT * FROM (VALUES (1, 2), (3, 4)) t ORDER BY 1';
+
+
+query
+SELECT * FROM fno.two_rows();
+----
+a	b
+1	2
+
+
+statement ok
+CREATE FUNCTION fno.random_pair(OUT a float8, OUT b float8) LANGUAGE sql AS 'SELECT r, r FROM (SELECT random() AS r) s';
+
+
+query
+SELECT a = b AS same FROM fno.random_pair();
+----
+same
+t
+
+
+statement ok
+CREATE FUNCTION fno.record_subquery(OUT a int, OUT b int) LANGUAGE sql RETURN (SELECT ROW(1, 2));
+
+
+query
+SELECT * FROM fno.record_subquery();
+----
+a	b
+1	2
+
+
+query
+SELECT (fno.split(5)).*;
+----
+b	c
+6	5
+
+
+statement ok
+CREATE FUNCTION fno.shifted(result int, OUT a int, OUT b int) LANGUAGE sql AS 'SELECT result, result + 1';
+
+
+query
+SELECT * FROM fno.shifted(5);
+----
+a	b
+5	6
+
+
+statement ok
+CREATE FUNCTION fno.next_pair(x int, OUT a int, OUT b int) LANGUAGE sql RETURN (x, x + 1);
+
+
+query
+SELECT a, b FROM fno.next_pair(1);
+----
+a	b
+1	2
+
+
+statement error return type mismatch in function declared to return record
+CREATE FUNCTION fno.too_wide(OUT a int, OUT b int) LANGUAGE sql AS 'SELECT 1, 2, 3';
+
+
+statement error return type mismatch in function declared to return record
+CREATE FUNCTION fno.too_narrow(OUT a int, OUT b int) LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE TYPE fno.mood AS ENUM ('sad', 'ok');
+
+
+statement ok
+CREATE FUNCTION fno.moods(m fno.mood) RETURNS SETOF fno.mood LANGUAGE sql AS 'SELECT m';
+
+
+query
+SELECT m::text AS m FROM fno.moods('ok') AS m;
+----
+m
+ok
+
+
+statement error function result type must be record because of OUT parameters
+CREATE FUNCTION fno.out_as_integer(OUT a integer, OUT b integer) RETURNS integer LANGUAGE sql AS 'SELECT 1, 2';
+
+
+statement error function result type must be record because of OUT parameters
+CREATE FUNCTION fno.out_as_setof(OUT a integer, OUT b integer) RETURNS SETOF integer LANGUAGE sql AS 'SELECT 1, 2';
+
+
+statement error function result type must be integer because of OUT parameters
+CREATE FUNCTION fno.out_as_text(OUT a integer) RETURNS text LANGUAGE sql AS 'SELECT 1';
+
+
+statement error function result type must be integer because of OUT parameters
+CREATE FUNCTION fno.out_as_record(OUT a integer) RETURNS record LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE FUNCTION fno.record_pair(OUT a integer, OUT b integer) RETURNS record LANGUAGE sql AS 'SELECT 1, 2';
+
+
+statement ok
+CREATE FUNCTION fno.same_integer(OUT a int4) RETURNS integer LANGUAGE sql AS 'SELECT 3';
+
+
+statement ok
+CREATE FUNCTION fno.any_scale(OUT a numeric(4,2)) RETURNS numeric LANGUAGE sql AS 'SELECT 1.5';
+
+
+query
+SELECT r.a, r.b, s.a AS s, n.a AS n FROM fno.record_pair() AS r, fno.same_integer() AS s, fno.any_scale() AS n;
+----
+a	b	s	n
+1	2	3	1.5
+
+
+statement ok
+CREATE FUNCTION fno.two_inouts(INOUT integer, INOUT integer) LANGUAGE sql AS 'SELECT $1 * 10, $2 * 10';
+
+
+query
+SELECT * FROM fno.two_inouts(1, 2);
+----
+column1	column2
+10	20
+
+
+statement ok
+DROP SCHEMA fno CASCADE;
+
+
+statement ok
+CREATE FUNCTION fno_array(OUT a int[]) RETURNS int[] LANGUAGE sql AS 'SELECT ARRAY[1]';
+
+
+query
+SELECT fno_array() AS a;
+----
+a
+{1}
+
+
+statement ok
+DROP FUNCTION fno_array;
+
+
+statement error (column "nosuch" does not exist|Referenced column "nosuch" not found)
+SELECT (nosuch).* FROM (SELECT 1) t;

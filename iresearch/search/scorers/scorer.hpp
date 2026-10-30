@@ -24,6 +24,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <cstddef>
 #include <limits>
 #include <optional>
 
@@ -32,6 +33,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/math_utils.hpp"
 
 namespace irs {
@@ -62,6 +64,13 @@ ScaledFreq(const uint32_t* IRS_RESTRICT freq,
     return TermCountToScore(freq[i]);
   }
 }
+
+template<typename T>
+constexpr const T* TryGetValue(const T* value) noexcept {
+  return value;
+}
+
+constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
 inline constexpr uint32_t kMaxFreq = std::numeric_limits<int32_t>::max();
 

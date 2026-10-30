@@ -767,6 +767,48 @@ TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
   ASSERT_EQ(2, windows);
 }
 
+TEST(lazy_bitset_test, unfilled_windows_read_empty_over_reused_memory) {
+  constexpr irs::doc_id_t kDocs = 100000;
+  const std::vector<irs::doc_id_t> docs{3, 60000};
+
+  size_t windows = 0;
+  auto node =
+    irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs), windows);
+  {
+    irs::detail::BitsetStorage dirty{kDocs, irs::memory::kAllocateOnly};
+    std::fill_n(dirty.Words(), dirty.Alloc(), ~uint64_t{0});
+  }
+  irs::detail::LazyBitset set{std::move(node), kDocs,
+                              irs::MakeGenericDocsMask(nullptr)};
+
+  ASSERT_EQ(60000, set.Probe(4));
+  for (irs::doc_id_t doc = kMin; doc <= kDocs; ++doc) {
+    ASSERT_EQ(doc == 3 || doc == 60000, set.Contains(doc)) << doc;
+  }
+  ASSERT_EQ(uint64_t{2}, set.Count());
+}
+
+TEST(lazy_bitset_test, skipped_windows_read_empty_over_reused_memory) {
+  constexpr irs::doc_id_t kDocs = 100000;
+  const std::vector<irs::doc_id_t> docs{3, 20000, 70000};
+
+  size_t windows = 0;
+  auto node =
+    irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs), windows);
+  {
+    irs::detail::BitsetStorage dirty{kDocs, irs::memory::kAllocateOnly};
+    std::fill_n(dirty.Words(), dirty.Alloc(), ~uint64_t{0});
+  }
+  irs::detail::LazyBitset set{std::move(node), kDocs,
+                              irs::MakeGenericDocsMask(nullptr)};
+
+  set.SkipTo(50000);
+  ASSERT_EQ(70000, set.Probe(50000));
+  for (irs::doc_id_t doc = kMin; doc <= kDocs; ++doc) {
+    ASSERT_EQ(doc == 70000, set.Contains(doc)) << doc;
+  }
+}
+
 namespace {
 
 irs::DocumentMaskBuilder MakeBuilder(const std::vector<irs::doc_id_t>& docs) {
@@ -1182,41 +1224,4 @@ TEST(lazy_bitset_test, reaching_past_the_end_of_a_folded_set) {
   ASSERT_TRUE(set.Contains(299));
   ASSERT_FALSE(set.Contains(4));
   ASSERT_EQ(irs::doc_limits::eof(), set.Probe(kDocs + 1));
-}
-
-TEST(docs_mask_test, added_since_visits_only_the_new_removals) {
-  const auto before = MakeMask({1, 5, 64, 70});
-  const auto after = MakeMask({1, 3, 5, 64, 70, 200});
-  std::vector<irs::doc_id_t> added;
-  ASSERT_TRUE(irs::DocumentMask::ForEachAddedSince(
-    &after, &before, [&](irs::doc_id_t doc) { added.emplace_back(doc); }));
-  ASSERT_EQ((std::vector<irs::doc_id_t>{3, 200}), added);
-}
-
-TEST(docs_mask_test, added_since_an_empty_mask_is_every_removal) {
-  const auto none = MakeMask({});
-  const auto after = MakeMask({2, 130});
-  std::vector<irs::doc_id_t> added;
-  ASSERT_TRUE(irs::DocumentMask::ForEachAddedSince(
-    &after, &none, [&](irs::doc_id_t doc) { added.emplace_back(doc); }));
-  ASSERT_EQ((std::vector<irs::doc_id_t>{2, 130}), added);
-  added.clear();
-  ASSERT_TRUE(irs::DocumentMask::ForEachAddedSince(
-    &after, nullptr, [&](irs::doc_id_t doc) { added.emplace_back(doc); }));
-  ASSERT_EQ((std::vector<irs::doc_id_t>{2, 130}), added);
-  ASSERT_TRUE(irs::DocumentMask::ForEachAddedSince(
-    &none, &none, [](irs::doc_id_t) { FAIL(); }));
-  ASSERT_TRUE(irs::DocumentMask::ForEachAddedSince(
-    nullptr, nullptr, [](irs::doc_id_t) { FAIL(); }));
-}
-
-TEST(docs_mask_test, added_since_refuses_a_removal_that_came_back) {
-  const auto nothing = [](irs::doc_id_t) {};
-  const auto after = MakeMask({1});
-  const auto before = MakeMask({1, 5});
-  const auto far_before = MakeMask({1, 300000});
-  ASSERT_FALSE(irs::DocumentMask::ForEachAddedSince(&after, &before, nothing));
-  ASSERT_FALSE(
-    irs::DocumentMask::ForEachAddedSince(&after, &far_before, nothing));
-  ASSERT_FALSE(irs::DocumentMask::ForEachAddedSince(nullptr, &before, nothing));
 }

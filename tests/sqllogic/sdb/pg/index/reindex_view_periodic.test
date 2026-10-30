@@ -6,8 +6,6 @@ control substitution on
 # remove, change, masks, equality roads, broken source), index shapes
 # (pk_term, store_pk=none rebuild road, partial, LIMIT view) and lifecycle
 # (WITH at create, ALTER SET start/retune/stop, drops, races, two loops).
-# Waits follow the sibling background-test shape: retry + backoff for
-# "eventually converges", a plain sleep window for "provably no tick".
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY rvp_en AS
@@ -39,8 +37,14 @@ count
 
 # B1: nothing changes -- ticks run and stay up_to_date; content is stable
 # across a multi-tick window.
-system ok
-sleep 0.6
+statement ok
+CREATE OR REPLACE TEMP TABLE rvp_runs AS SELECT run_count, failure_count FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvp_idx';
+
+query ok retry 400 backoff 250ms
+SELECT run_count >= (SELECT run_count + 2 FROM rvp_runs) AS ticked FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvp_idx';
+----
+ticked
+t
 
 query
 SELECT count(*) FROM rvp_idx;
@@ -154,23 +158,29 @@ SELECT count(*) FROM rvp_idx;
 count
 5
 
-# D4: zeroing the option stops the loop -- a new file stays invisible over
-# a generous multi-interval window; a manual REINDEX still applies it.
+# D4: zeroing the option stops the loop -- a new file stays invisible;
+# a manual REINDEX still applies it.
+statement ok
+ALTER JOB rvp_idx SUSPEND;
+
+query ok retry 400 backoff 250ms
+SELECT running FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvp_idx';
+----
+running
+f
+
 statement ok
 ALTER INDEX rvp_idx SET (reindex_interval=0);
 
-# The window must outlast any tick already IN FLIGHT when the ALTER landed:
-# such a tick lists the glob after the copy below and would legitimately
-# index it (seen under loaded Debug full-suite runs).
-system ok
-sleep 2
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvp_idx';
+----
+jobs
+0
 
 statement count 1
 COPY (SELECT 7 AS id, 'silent after stop' AS body)
 TO '${__TEST_DIR__}/rvp_glob/f6.parquet' (FORMAT PARQUET);
-
-system ok
-sleep 1.2
 
 query
 SELECT count(*) FROM rvp_idx;
@@ -240,8 +250,14 @@ count
 system ok
 mkdir -p $__TEST_DIR__/rvp_hold && mv $__TEST_DIR__/rvp_glob/f*.parquet $__TEST_DIR__/rvp_hold/
 
-system ok
-sleep 0.8
+statement ok
+CREATE OR REPLACE TEMP TABLE rvp_runs AS SELECT run_count, failure_count FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvp_idx';
+
+query ok retry 400 backoff 250ms
+SELECT failure_count >= (SELECT failure_count + 2 FROM rvp_runs) AS failed FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvp_idx';
+----
+failed
+t
 
 query
 SELECT count(*) FROM rvp_idx;
@@ -369,8 +385,14 @@ count
 3
 
 # B1 (iceberg): unmoved snapshot pin -> ticks take the early exit; stable.
-system ok
-sleep 0.6
+statement ok
+CREATE OR REPLACE TEMP TABLE rvp_runs AS SELECT run_count, failure_count FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvp_ice_idx';
+
+query ok retry 400 backoff 250ms
+SELECT run_count >= (SELECT run_count + 2 FROM rvp_runs) AS ticked FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvp_ice_idx';
+----
+ticked
+t
 
 query
 SELECT count(*) FROM rvp_ice_idx;
@@ -440,8 +462,14 @@ id	body
 system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_v9 $__TEST_DIR__/rvp_plain
 
-system ok
-sleep 0.8
+statement ok
+CREATE OR REPLACE TEMP TABLE rvp_runs AS SELECT run_count, failure_count FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvp_ice_idx';
+
+query ok retry 400 backoff 250ms
+SELECT run_count >= (SELECT run_count + 2 FROM rvp_runs) AS ticked FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvp_ice_idx';
+----
+ticked
+t
 
 query
 SELECT id FROM rvp_ice_idx ORDER BY id;

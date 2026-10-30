@@ -31,8 +31,8 @@
 namespace irs {
 namespace {
 
-template<typename T>
-void WriteArray(DataOutput& out, const std::vector<T>& v) {
+template<typename T, typename A>
+void WriteArray(DataOutput& out, const std::vector<T, A>& v) {
   out.WriteU64(v.size());
   if (!v.empty()) {
     out.WriteData(reinterpret_cast<const byte_type*>(v.data()),
@@ -40,12 +40,12 @@ void WriteArray(DataOutput& out, const std::vector<T>& v) {
   }
 }
 
-template<typename T>
-void ReadArray(IndexInput& in, std::vector<T>& v) {
+template<typename T, typename A>
+void ReadArray(IndexInput& in, std::vector<T, A>& v) {
   const auto size = static_cast<size_t>(in.ReadI64());
   v.resize(size);
   if (size != 0) {
-    in.ReadData(reinterpret_cast<byte_type*>(v.data()), sizeof(T) * size);
+    ReadOnce(in, reinterpret_cast<byte_type*>(v.data()), sizeof(T) * size);
   }
 }
 
@@ -63,19 +63,23 @@ void HnswGraphWriter::Reset(size_t nodes, uint32_t m) {
   _graph._max_level = 0;
 }
 
+uint64_t HnswGraph::ComputeOffsets() {
+  _offsets.resize(_levels.size() + 1);
+  uint64_t total = 0;
+  for (size_t i = 0; i < _levels.size(); ++i) {
+    _offsets[i] = total;
+    if (_levels[i] > 1) {
+      total += static_cast<uint64_t>(_levels[i] - 1) * _m;
+    }
+  }
+  _offsets.back() = total;
+  return total;
+}
+
 void HnswGraphWriter::AllocateLinks() {
   auto& levels = _graph._levels;
   _graph._base.assign(levels.size() * size_t{_graph._m0}, kHnswInvalidNode);
-  _graph._offsets.resize(levels.size() + 1);
-  uint64_t total = 0;
-  for (size_t i = 0; i < levels.size(); ++i) {
-    _graph._offsets[i] = total;
-    if (levels[i] > 1) {
-      total += static_cast<uint64_t>(levels[i] - 1) * _graph._m;
-    }
-  }
-  _graph._offsets.back() = total;
-  _graph._upper.assign(total, kHnswInvalidNode);
+  _graph._upper.assign(_graph.ComputeOffsets(), kHnswInvalidNode);
 
   _proc_offsets.resize(levels.size() + 1);
   uint32_t slots = 0;
@@ -92,7 +96,6 @@ void HnswGraph::Serialize(DataOutput& out) const {
   out.WriteU32(_entry);
   out.WriteU32(_max_level);
   WriteArray(out, _levels);
-  WriteArray(out, _offsets);
   WriteArray(out, _base);
   WriteArray(out, _upper);
 }
@@ -104,7 +107,7 @@ HnswGraph HnswGraph::Deserialize(IndexInput& in) {
   g._entry = static_cast<uint32_t>(in.ReadI32());
   g._max_level = static_cast<uint32_t>(in.ReadI32());
   ReadArray(in, g._levels);
-  ReadArray(in, g._offsets);
+  g.ComputeOffsets();
   ReadArray(in, g._base);
   ReadArray(in, g._upper);
   return g;

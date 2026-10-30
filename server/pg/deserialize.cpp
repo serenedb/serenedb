@@ -20,10 +20,13 @@
 
 #include "pg/deserialize.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/numeric/int128.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
 #include <fast_float/fast_float.h>
 
 #include <cstdint>
@@ -49,18 +52,31 @@
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <icu-zone-lut.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "connector/functions/ts_query_codec.h"
-#include "connector/pg_logical_types.h"
 #include "icu-datefunc.hpp"
 #include "icu-helpers.hpp"
-#include "pg/pg_types.h"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
+#include "pg/types/char.h"
+#include "pg/types/geometric.h"
+#include "pg/types/inet.h"
+#include "pg/types/logical.h"
+#include "pg/types/mac.h"
+#include "pg/types/mapping.h"
+#include "pg/types/money.h"
+#include "pg/types/pg_lsn.h"
+#include "pg/types/range.h"
+#include "pg/types/tid.h"
+#include "pg/types/vector.h"
 
 namespace sdb::pg {
 
@@ -202,6 +218,19 @@ struct BoolBin {
 struct VarcharBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    sink.Varchar(data);
+    return true;
+  }
+};
+
+constexpr char kJsonbVersion = 1;
+
+struct JsonBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    if (data.starts_with(kJsonbVersion)) {
+      data.remove_prefix(1);
+    }
     sink.Varchar(data);
     return true;
   }
@@ -460,54 +489,111 @@ struct IntervalBin {
   }
 };
 
+constexpr uint16_t kNumericPositive = 0x0000;
+constexpr uint16_t kNumericNegative = 0x4000;
+constexpr uint16_t kNumericNaN = 0xC000;
+constexpr uint16_t kNumericPositiveInfinity = 0xD000;
+constexpr uint16_t kNumericNegativeInfinity = 0xF000;
+constexpr uint16_t kNumericDscaleMask = 0x3FFF;
+constexpr uint16_t kNumericBase = 10000;
+constexpr int kNumericDigitPow10[] = {1, 10, 100, 1000};
+
+struct PgNumeric {
+  int16_t weight;
+  uint16_t sign;
+  uint16_t dscale;
+  std::string_view digits;
+};
+
+uint16_t ReadNumericWord(std::string_view data, size_t& offset) {
+  if (data.size() - offset < sizeof(uint16_t)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
+                    ERR_MSG("insufficient data left in message"));
+  }
+  const uint16_t word = absl::big_endian::Load16(data.data() + offset);
+  offset += sizeof(uint16_t);
+  return word;
+}
+
+bool ReadPgNumeric(std::string_view data, PgNumeric& value) {
+  size_t offset = 0;
+  const uint16_t ndigits = ReadNumericWord(data, offset);
+  value.weight = static_cast<int16_t>(ReadNumericWord(data, offset));
+  value.sign = ReadNumericWord(data, offset);
+  if (value.sign != kNumericPositive && value.sign != kNumericNegative &&
+      value.sign != kNumericNaN && value.sign != kNumericPositiveInfinity &&
+      value.sign != kNumericNegativeInfinity) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
+                    ERR_MSG("invalid sign in external \"numeric\" value"));
+  }
+  value.dscale = ReadNumericWord(data, offset);
+  if ((value.dscale & kNumericDscaleMask) != value.dscale) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
+                    ERR_MSG("invalid scale in external \"numeric\" value"));
+  }
+  const auto digits = offset;
+  for (uint16_t i = 0; i < ndigits; ++i) {
+    if (ReadNumericWord(data, offset) >= kNumericBase) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
+                      ERR_MSG("invalid digit in external \"numeric\" value"));
+    }
+  }
+  value.digits = data.substr(digits, offset - digits);
+  return offset == data.size();
+}
+
 // PG NUMERIC binary -> an unsigned magnitude (a base-10 integer scaled by
-// `scale`) plus a sign flag; the inverse of WriteAsNumericBinary. The wire is
-// base-10000 digit groups, most significant first, at power-of-10000 `weight`.
-// uint128 holds the full range -- a signed int128 cannot represent 2^127, the
-// magnitude of HUGEINT's minimum. false on NaN or malformed.
-bool PgNumericMagnitude(std::string_view data, int32_t scale, bool& negative,
+// `scale`); the inverse of WriteAsNumericBinary. The wire is base-10000 digit
+// groups, most significant first, at power-of-10000 `weight`. uint128 holds
+// the full range -- a signed int128 cannot represent 2^127, the magnitude of
+// HUGEINT's minimum.
+bool PgNumericMagnitude(const PgNumeric& value, int32_t scale,
                         absl::uint128& magnitude) {
-  if (data.size() < 8) {
-    return false;
-  }
-  const auto ndigits =
-    static_cast<int16_t>(absl::big_endian::Load16(data.data()));
-  const auto weight =
-    static_cast<int16_t>(absl::big_endian::Load16(data.data() + 2));
-  const uint16_t sign = absl::big_endian::Load16(data.data() + 4);
-  if (sign == 0xC000) {  // NaN has no integer/decimal representation
-    return false;
-  }
-  negative = sign == 0x4000;
-  if (ndigits < 0 || data.size() < static_cast<size_t>(8 + ndigits * 2)) {
-    return false;
-  }
+  const auto ndigits = static_cast<int32_t>(value.digits.size() / 2);
+  const int32_t weight = value.weight;
+  const int32_t dscale = value.dscale;
   // Accumulate value*10^scale MSB-first, taking only the decimal digits at
   // exponent >= -scale; the running total never exceeds the final magnitude
   // (concat-then-divide would overflow uint128 on a full-precision
   // DECIMAL(38)). The first digit below -scale feeds half-away-from-zero
   // rounding.
-  static constexpr int kPow10[] = {1, 10, 100, 1000};
+  constexpr auto kMax = std::numeric_limits<absl::uint128>::max();
+  constexpr auto kMaxTenth =
+    absl::MakeUint128(0x1999999999999999, 0x9999999999999999);
   absl::uint128 acc = 0;
+  const bool checked = 4 * (weight + 1) + scale > 38;
   int round_digit = 0;
   bool have_round = false;
-  for (int16_t i = 0; i < ndigits; ++i) {
-    const uint16_t group = absl::big_endian::Load16(data.data() + 8 + i * 2);
+  for (int32_t i = 0; i < ndigits; ++i) {
+    const uint16_t group =
+      absl::big_endian::Load16(value.digits.data() + i * 2);
     for (int k = 3; k >= 0; --k) {
-      const int target = 4 * (weight - i) + k + scale;
+      const int exponent = 4 * (weight - i) + k;
+      const int target = exponent + scale;
+      const int digit =
+        exponent < -dscale ? 0 : (group / kNumericDigitPow10[k]) % 10;
       if (target >= 0) {
-        acc = acc * 10 + (group / kPow10[k]) % 10;
+        if (checked && (acc > kMaxTenth || (acc == kMaxTenth && digit > 5))) {
+          return false;
+        }
+        acc = acc * 10 + digit;
       } else if (target == -1 && !have_round) {
-        round_digit = (group / kPow10[k]) % 10;
+        round_digit = digit;
         have_round = true;
       }
     }
   }
   // Trailing zeros when the least significant group digit sits above -scale.
-  for (int z = 4 * (weight - ndigits + 1) + scale; z > 0; --z) {
+  for (int z = 4 * (weight - ndigits + 1) + scale; z > 0 && acc != 0; --z) {
+    if (acc > kMaxTenth) {
+      return false;
+    }
     acc *= 10;
   }
   if (have_round && round_digit >= 5) {
+    if (acc == kMax) {
+      return false;
+    }
     ++acc;
   }
   magnitude = acc;
@@ -529,29 +615,104 @@ bool MagnitudeToHugeint(bool negative, absl::uint128 magnitude,
   return true;
 }
 
+std::string PgNumericText(const PgNumeric& value) {
+  if (value.sign == kNumericNaN) {
+    return "NaN";
+  }
+  if (value.sign == kNumericPositiveInfinity) {
+    return "Infinity";
+  }
+  if (value.sign == kNumericNegativeInfinity) {
+    return "-Infinity";
+  }
+  const auto ndigits = static_cast<int32_t>(value.digits.size() / 2);
+  const auto group = [&](int32_t i) -> uint16_t {
+    return i < 0 || i >= ndigits
+             ? 0
+             : absl::big_endian::Load16(value.digits.data() + i * 2);
+  };
+  std::string text = value.sign == kNumericNegative ? "-" : "";
+  if (value.weight < 0) {
+    text += '0';
+  }
+  for (int32_t i = 0; i <= value.weight; ++i) {
+    if (i == 0) {
+      absl::StrAppend(&text, group(i));
+    } else {
+      absl::StrAppend(&text, absl::Dec(group(i), absl::kZeroPad4));
+    }
+  }
+  if (value.dscale > 0) {
+    text += '.';
+    const auto end = text.size() + value.dscale;
+    for (int32_t i = value.weight + 1; text.size() < end; ++i) {
+      absl::StrAppend(&text, absl::Dec(group(i), absl::kZeroPad4));
+    }
+    text.resize(end);
+  }
+  return text;
+}
+
+bool IsFinite(const PgNumeric& value) {
+  return value.sign == kNumericPositive || value.sign == kNumericNegative;
+}
+
+bool PgDecimalMagnitude(std::string_view data, const duckdb::LogicalType& type,
+                        bool& negative, absl::uint128& magnitude) {
+  PgNumeric value;
+  if (!ReadPgNumeric(data, value)) {
+    return false;
+  }
+  const auto& limit =
+    duckdb::Hugeint::POWERS_OF_TEN[duckdb::DecimalType::GetWidth(type)];
+  if (!IsFinite(value) ||
+      !PgNumericMagnitude(value, duckdb::DecimalType::GetScale(type),
+                          magnitude) ||
+      magnitude >=
+        absl::MakeUint128(static_cast<uint64_t>(limit.upper), limit.lower)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(value.sign == kNumericNaN ? ERRCODE_FEATURE_NOT_SUPPORTED
+                                         : ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+      ERR_MSG("Could not cast value ", PgNumericText(value), " to ",
+              type.ToString()));
+  }
+  negative = value.sign == kNumericNegative;
+  return true;
+}
+
+[[noreturn]] void ThrowIntegerCastError(const PgNumeric& value,
+                                        duckdb::PhysicalType type) {
+  THROW_SQL_ERROR(ERR_CODE(IsFinite(value) ? ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE
+                                           : ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("Failed to cast decimal value ", PgNumericText(value),
+                          " to type ", duckdb::TypeIdToString(type)));
+}
+
+bool PgIntegerMagnitude(std::string_view data, duckdb::PhysicalType type,
+                        PgNumeric& value, absl::uint128& magnitude) {
+  if (!ReadPgNumeric(data, value)) {
+    return false;
+  }
+  if (!IsFinite(value) || !PgNumericMagnitude(value, 0, magnitude)) {
+    ThrowIntegerCastError(value, type);
+  }
+  return true;
+}
+
 template<typename Phys>
 struct DecimalIntBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     const auto& type = sink.Type();
-    const auto scale = duckdb::DecimalType::GetScale(type);
     bool negative;
     absl::uint128 magnitude;
-    if (!PgNumericMagnitude(data, scale, negative, magnitude) ||
-        magnitude > absl::uint128{static_cast<uint64_t>(
-                      std::numeric_limits<int64_t>::max())}) {
+    if (!PgDecimalMagnitude(data, type, negative, magnitude)) {
       return false;
     }
-    int64_t value = static_cast<int64_t>(absl::Uint128Low64(magnitude));
-    if (negative) {
-      value = -value;
-    }
-    const auto width = duckdb::DecimalType::GetWidth(type);
-    const auto limit = duckdb::NumericHelper::POWERS_OF_TEN[width];
-    if (value <= -limit || value >= limit) {
-      return false;
-    }
-    sink.template Decimal<Phys>(static_cast<Phys>(value), width, scale);
+    const auto value = static_cast<int64_t>(absl::Uint128Low64(magnitude));
+    sink.template Decimal<Phys>(static_cast<Phys>(negative ? -value : value),
+                                duckdb::DecimalType::GetWidth(type),
+                                duckdb::DecimalType::GetScale(type));
     return true;
   }
 };
@@ -563,18 +724,13 @@ struct DecimalHugeintBin {
     bool negative;
     absl::uint128 magnitude;
     duckdb::hugeint_t value;
-    if (!PgNumericMagnitude(data, duckdb::DecimalType::GetScale(type), negative,
-                            magnitude) ||
+    if (!PgDecimalMagnitude(data, type, negative, magnitude) ||
         !MagnitudeToHugeint(negative, magnitude, value)) {
       return false;
     }
-    const auto width = duckdb::DecimalType::GetWidth(type);
-    const auto& limit = duckdb::Hugeint::POWERS_OF_TEN[width];
-    if (value <= -limit || value >= limit) {
-      return false;
-    }
     sink.template Decimal<duckdb::hugeint_t>(
-      value, width, duckdb::DecimalType::GetScale(type));
+      value, duckdb::DecimalType::GetWidth(type),
+      duckdb::DecimalType::GetScale(type));
     return true;
   }
 };
@@ -582,12 +738,16 @@ struct DecimalHugeintBin {
 struct HugeintBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    bool negative;
+    PgNumeric numeric;
     absl::uint128 magnitude;
     duckdb::hugeint_t value;
-    if (!PgNumericMagnitude(data, 0, negative, magnitude) ||
-        !MagnitudeToHugeint(negative, magnitude, value)) {
+    if (!PgIntegerMagnitude(data, duckdb::PhysicalType::INT128, numeric,
+                            magnitude)) {
       return false;
+    }
+    if (!MagnitudeToHugeint(numeric.sign == kNumericNegative, magnitude,
+                            value)) {
+      ThrowIntegerCastError(numeric, duckdb::PhysicalType::INT128);
     }
     sink.Fixed(value);
     return true;
@@ -597,10 +757,14 @@ struct HugeintBin {
 struct UhugeintBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    bool negative;
+    PgNumeric numeric;
     absl::uint128 magnitude;
-    if (!PgNumericMagnitude(data, 0, negative, magnitude) || negative) {
+    if (!PgIntegerMagnitude(data, duckdb::PhysicalType::UINT128, numeric,
+                            magnitude)) {
       return false;
+    }
+    if (numeric.sign == kNumericNegative && magnitude != 0) {
+      ThrowIntegerCastError(numeric, duckdb::PhysicalType::UINT128);
     }
     sink.Fixed(duckdb::uhugeint_t{absl::Uint128High64(magnitude),
                                   absl::Uint128Low64(magnitude)});
@@ -611,11 +775,15 @@ struct UhugeintBin {
 struct UbigintBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    bool negative;
+    PgNumeric numeric;
     absl::uint128 magnitude;
-    if (!PgNumericMagnitude(data, 0, negative, magnitude) || negative ||
-        magnitude > absl::uint128{std::numeric_limits<uint64_t>::max()}) {
+    if (!PgIntegerMagnitude(data, duckdb::PhysicalType::UINT64, numeric,
+                            magnitude)) {
       return false;
+    }
+    if ((numeric.sign == kNumericNegative && magnitude != 0) ||
+        magnitude > absl::uint128{std::numeric_limits<uint64_t>::max()}) {
+      ThrowIntegerCastError(numeric, duckdb::PhysicalType::UINT64);
     }
     sink.Fixed(static_cast<uint64_t>(absl::Uint128Low64(magnitude)));
     return true;
@@ -674,6 +842,66 @@ struct NumberText {
   }
 };
 
+template<auto Read>
+struct ReadFixed {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    const auto value = Read(data);
+    if (!value) {
+      return false;
+    }
+    sink.Fixed(*value);
+    return true;
+  }
+};
+
+template<typename T, auto Parse>
+struct ParseFixed {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    T value = 0;
+    if (Parse(data, value)) {
+      return false;
+    }
+    sink.Fixed(value);
+    return true;
+  }
+};
+
+struct XmlIn {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& context, std::string_view data,
+                     Sink& sink) {
+    if (CheckXml(data, context.SessionXmlOption())) {
+      return false;
+    }
+    sink.Varchar(data);
+    return true;
+  }
+};
+
+struct CharBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    if (data.size() != 1) {
+      return false;
+    }
+    char buffer[kCharText];
+    sink.Varchar(
+      {buffer, WriteChar(static_cast<uint8_t>(data.front()), buffer)});
+    return true;
+  }
+};
+
+struct CharText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    char buffer[kCharText];
+    sink.Varchar({buffer, WriteChar(CharIn(data), buffer)});
+    return true;
+  }
+};
+
 struct VarcharText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
@@ -713,8 +941,17 @@ duckdb::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
   return it->second.get();
 }
 
+XmlOption DeserializeContext::SessionXmlOption() {
+  if (!xml_option) {
+    xml_option = CurrentXmlOption(*client);
+  }
+  return *xml_option;
+}
+
 void FillDeserializeContext(duckdb::ClientContext& client,
                             DeserializeContext& context) {
+  context.client = &client;
+  context.xml_option.reset();
   duckdb::Value value;
   if (!client.TryGetCurrentSetting("TimeZone", value) || value.IsNull()) {
     context.session_calendar.reset();
@@ -1016,6 +1253,58 @@ bool DefaultText::Decode<ValueSink>(DeserializeContext&, std::string_view data,
   return DeserializeTextDefaultInto(data, sink.type, sink.out);
 }
 
+template<RegKind Kind>
+struct RegText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& context, std::string_view data,
+                     Sink& sink) {
+    if (NumberText<int64_t>::Decode(context, data, sink)) {
+      return true;
+    }
+    SDB_ASSERT(context.client);
+    uint64_t oid = kInvalidOid;
+    const auto lookup = [&] {
+      oid = *RegIn(MakeSession(context.client.get()), Kind, data, nullptr);
+    };
+    if (context.client->transaction.HasActiveTransaction()) {
+      lookup();
+    } else {
+      context.client->RunFunctionInTransaction(lookup);
+    }
+    sink.Fixed(static_cast<int64_t>(oid));
+    return true;
+  }
+};
+
+template<typename Sink>
+DeserializationFunction<Sink> RegTextDecoder(RegKind kind) {
+  switch (kind) {
+    case RegKind::Proc:
+      return &RegText<RegKind::Proc>::template Decode<Sink>;
+    case RegKind::Procedure:
+      return &RegText<RegKind::Procedure>::template Decode<Sink>;
+    case RegKind::Oper:
+      return &RegText<RegKind::Oper>::template Decode<Sink>;
+    case RegKind::Operator:
+      return &RegText<RegKind::Operator>::template Decode<Sink>;
+    case RegKind::Class:
+      return &RegText<RegKind::Class>::template Decode<Sink>;
+    case RegKind::Type:
+      return &RegText<RegKind::Type>::template Decode<Sink>;
+    case RegKind::Collation:
+      return &RegText<RegKind::Collation>::template Decode<Sink>;
+    case RegKind::Config:
+      return &RegText<RegKind::Config>::template Decode<Sink>;
+    case RegKind::Dictionary:
+      return &RegText<RegKind::Dictionary>::template Decode<Sink>;
+    case RegKind::Role:
+      return &RegText<RegKind::Role>::template Decode<Sink>;
+    case RegKind::Namespace:
+      return &RegText<RegKind::Namespace>::template Decode<Sink>;
+  }
+  SDB_UNREACHABLE();
+}
+
 struct DefaultBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view, Sink&) {
@@ -1172,16 +1461,13 @@ bool DeserializeBinaryList(DeserializeContext& ctx, std::string_view data,
   // Resolve the leaf element deserializer once (the element type is fixed for
   // the whole array). LIST and MAP each contribute one dimension; ARRAY targets
   // aren't reconstructed by the multi-dim path.
-  const duckdb::LogicalType* leaf = &vec.GetType();
-  for (int32_t d = 0; d < ndim; ++d) {
-    const auto id = leaf->id();
-    if (id == duckdb::LogicalTypeId::LIST || id == duckdb::LogicalTypeId::MAP) {
-      leaf = &duckdb::ListType::GetChildType(*leaf);
-    } else if (id == duckdb::LogicalTypeId::ARRAY) {
+  const auto* leaf = &duckdb::ListType::GetChildType(vec.GetType());
+  for (int32_t d = 1; d < ndim; ++d) {
+    if (leaf->id() == duckdb::LogicalTypeId::ARRAY ||
+        !IsArrayDimension(*leaf)) {
       return false;
-    } else {
-      break;
     }
+    leaf = &duckdb::ListType::GetChildType(*leaf);
   }
   const auto leaf_fn = GetDeserialization<VectorSink>(*leaf, VarFormat::Binary);
   if (leaf_fn == nullptr) {
@@ -1312,7 +1598,7 @@ bool StripWrap(std::string_view& s, char open, char close) {
 // otherwise `raw` is the leaf incl. any surrounding quotes (surrounding
 // whitespace trimmed). Returns false on malformed nesting/quoting.
 template<typename Emit>
-bool ScanArrayItems(std::string_view body, Emit&& emit) {
+bool ScanArrayItems(std::string_view body, char delim, Emit&& emit) {
   size_t i = 0;
   const size_t n = body.size();
   while (i < n && absl::ascii_isspace(body[i])) {
@@ -1367,7 +1653,7 @@ bool ScanArrayItems(std::string_view body, Emit&& emit) {
         return false;
       }
     } else {
-      for (; i < n && body[i] != ','; ++i) {
+      for (; i < n && body[i] != delim; ++i) {
         if (body[i] == '\\' && i + 1 < n) {
           ++i;
         }
@@ -1384,11 +1670,19 @@ bool ScanArrayItems(std::string_view body, Emit&& emit) {
     if (i >= n) {
       return true;
     }
-    if (body[i] != ',') {
+    if (body[i] != delim) {
       return false;
     }
     ++i;
   }
+}
+
+char ArrayDelimiter(const duckdb::LogicalType& type) {
+  const auto* leaf = &type;
+  while (leaf->id() == duckdb::LogicalTypeId::LIST) {
+    leaf = &duckdb::ListType::GetChildType(*leaf);
+  }
+  return GeometricOf(*leaf) == Geometric::Box ? ';' : ',';
 }
 
 // Resolve a non-group array leaf to its value, viewing into `raw` when no
@@ -1566,10 +1860,12 @@ bool DeserializeTextList(DeserializeContext& ctx, std::string_view data,
     return false;
   }
   const auto& child_type = duckdb::ListType::GetChildType(vec.GetType());
-  const bool nested = child_type.id() == duckdb::LogicalTypeId::LIST;
+  const bool nested = child_type.id() == duckdb::LogicalTypeId::LIST &&
+                      IsArrayDimension(child_type);
   const auto cur = duckdb::ListVector::GetListSize(vec);
+  const auto delim = ArrayDelimiter(vec.GetType());
   duckdb::idx_t count = 0;
-  if (!ScanArrayItems(body, [&](std::string_view, bool) { ++count; })) {
+  if (!ScanArrayItems(body, delim, [&](std::string_view, bool) { ++count; })) {
     return false;
   }
   duckdb::ListVector::Reserve(vec, cur + count);
@@ -1577,7 +1873,7 @@ bool DeserializeTextList(DeserializeContext& ctx, std::string_view data,
   std::string scratch;
   duckdb::idx_t i = 0;
   bool ok = true;
-  ScanArrayItems(body, [&](std::string_view raw, bool) {
+  ScanArrayItems(body, delim, [&](std::string_view raw, bool) {
     if (!ok) {
       return;
     }
@@ -1724,7 +2020,7 @@ bool DeserializeTextMap(DeserializeContext& ctx, std::string_view data,
     GetRecordFieldDecoders(ctx, vec.GetType(), VarFormat::Text);
   const auto cur = duckdb::ListVector::GetListSize(vec);
   duckdb::idx_t count = 0;
-  if (!ScanArrayItems(body, [&](std::string_view, bool) { ++count; })) {
+  if (!ScanArrayItems(body, ',', [&](std::string_view, bool) { ++count; })) {
     return false;
   }
   duckdb::ListVector::Reserve(vec, cur + count);
@@ -1734,7 +2030,7 @@ bool DeserializeTextMap(DeserializeContext& ctx, std::string_view data,
   std::string field_scratch;
   duckdb::idx_t i = 0;
   bool ok = true;
-  ScanArrayItems(body, [&](std::string_view raw, bool) {
+  ScanArrayItems(body, ',', [&](std::string_view raw, bool) {
     if (!ok) {
       return;
     }
@@ -1908,7 +2204,8 @@ bool DeserializeTextInet(DeserializeContext&, std::string_view data,
                          duckdb::Vector& vec, duckdb::idx_t row) {
   INET_IPAddress inet;
   try {
-    inet = ipaddress_from_string(data.data(), data.size());
+    inet = Cidr ? cidr_from_string(data.data(), data.size())
+                : ipaddress_from_string(data.data(), data.size());
   } catch (...) {
     return false;
   }
@@ -1923,73 +2220,155 @@ bool DeserializeTextInet(DeserializeContext&, std::string_view data,
   return true;
 }
 
+bool DeserializeTextRange(DeserializeContext& ctx, std::string_view data,
+                          duckdb::Vector& vec, duckdb::idx_t row) {
+  ParsedRange range;
+  if (ParseRange(data, range)) {
+    return false;
+  }
+  auto& children = duckdb::StructVector::GetEntries(vec);
+  const auto bound = [&](duckdb::idx_t child, uint8_t infinite,
+                         std::string_view text) {
+    return (range.flags & (kRangeEmpty | infinite)) ||
+           DecodeChild(ctx, children[child].GetType(), VarFormat::Text, text,
+                       children[child], row);
+  };
+  return bound(kRangeLowerChild, kRangeLowerInfinite, range.lower) &&
+         bound(kRangeUpperChild, kRangeUpperInfinite, range.upper) &&
+         FinishRange(vec, row, range.flags);
+}
+
+bool DeserializeBinaryRange(DeserializeContext& ctx, std::string_view data,
+                            duckdb::Vector& vec, duckdb::idx_t row) {
+  if (data.empty()) {
+    return false;
+  }
+  const auto flags = static_cast<uint8_t>(
+    data[0] & (kRangeEmpty | kRangeLowerInclusive | kRangeUpperInclusive |
+               kRangeLowerInfinite | kRangeUpperInfinite));
+  data.remove_prefix(1);
+  auto& children = duckdb::StructVector::GetEntries(vec);
+  const auto bound = [&](duckdb::idx_t child, uint8_t infinite) {
+    if (flags & (kRangeEmpty | infinite)) {
+      return true;
+    }
+    if (data.size() < 4) {
+      return false;
+    }
+    const auto length = absl::big_endian::Load<int32_t>(data.data());
+    data.remove_prefix(4);
+    if (length < 0 || static_cast<size_t>(length) > data.size()) {
+      return false;
+    }
+    const auto body = data.substr(0, length);
+    data.remove_prefix(length);
+    return DecodeChild(ctx, children[child].GetType(), VarFormat::Binary, body,
+                       children[child], row);
+  };
+  return bound(kRangeLowerChild, kRangeLowerInfinite) &&
+         bound(kRangeUpperChild, kRangeUpperInfinite) && data.empty() &&
+         FinishRange(vec, row, flags);
+}
+
+template<typename Decode>
+bool DecodeMultirange(duckdb::Vector& vec, duckdb::idx_t row,
+                      duckdb::idx_t count, Decode&& decode) {
+  const auto cur = duckdb::ListVector::GetListSize(vec);
+  duckdb::ListVector::Reserve(vec, cur + count);
+  auto& child = duckdb::ListVector::GetChildMutable(vec);
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    if (!decode(child, cur + i)) {
+      return false;
+    }
+  }
+  Out<duckdb::list_entry_t>(vec)[row] = {cur, count};
+  duckdb::ListVector::SetListSize(vec, cur + count);
+  FinishMultirange(vec, row);
+  return true;
+}
+
+bool DeserializeTextMultirange(DeserializeContext& ctx, std::string_view data,
+                               duckdb::Vector& vec, duckdb::idx_t row) {
+  std::vector<std::string_view> ranges;
+  if (SplitMultirange(data, ranges)) {
+    return false;
+  }
+  const auto& range = duckdb::ListType::GetChildType(vec.GetType());
+  auto text = ranges.begin();
+  return DecodeMultirange(
+    vec, row, ranges.size(), [&](duckdb::Vector& child, duckdb::idx_t index) {
+      return DecodeChild(ctx, range, VarFormat::Text, *text++, child, index);
+    });
+}
+
+bool DeserializeBinaryMultirange(DeserializeContext& ctx, std::string_view data,
+                                 duckdb::Vector& vec, duckdb::idx_t row) {
+  if (data.size() < 4) {
+    return false;
+  }
+  const auto count = absl::big_endian::Load<int32_t>(data.data());
+  data.remove_prefix(4);
+  if (count < 0 || static_cast<size_t>(count) > data.size() / 5) {
+    return false;
+  }
+  const auto& range = duckdb::ListType::GetChildType(vec.GetType());
+  return DecodeMultirange(
+           vec, row, static_cast<duckdb::idx_t>(count),
+           [&](duckdb::Vector& child, duckdb::idx_t index) {
+             if (data.size() < 4) {
+               return false;
+             }
+             const auto length = absl::big_endian::Load<int32_t>(data.data());
+             data.remove_prefix(4);
+             if (length < 0 || static_cast<size_t>(length) > data.size()) {
+               return false;
+             }
+             const auto body = data.substr(0, length);
+             data.remove_prefix(length);
+             return DecodeChild(ctx, range, VarFormat::Binary, body, child,
+                                index);
+           }) &&
+         data.empty();
+}
+
 // Thin nested cores: present the LIST/STRUCT/MAP rebuilders with the same
 // Decode interface as the scalar cores, so the GetDeserialization switch
 // dispatches them through SelectDecoder uniformly.
-template<bool Cidr>
-struct InetBin {
+template<NestedVectorFn Fn>
+struct Nested {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
                      Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryInet<Cidr>>(
-      ctx, data, sink);
+    return NestedAdapter<Sink>::template Run<Fn>(ctx, data, sink);
   }
 };
 
-template<bool Cidr>
-struct InetText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextInet<Cidr>>(
-      ctx, data, sink);
-  }
-};
+template<Geometric kKind>
+bool DeserializeTextGeometric(DeserializeContext&, std::string_view data,
+                              duckdb::Vector& vec, duckdb::idx_t row) {
+  return !ParseGeometric(kKind, data, vec, row);
+}
 
-struct ListBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryList>(ctx, data,
-                                                                    sink);
-  }
-};
+template<Geometric kKind>
+bool DeserializeBinaryGeometric(DeserializeContext&, std::string_view data,
+                                duckdb::Vector& vec, duckdb::idx_t row) {
+  return RecvGeometric(kKind, data, vec, row);
+}
 
-struct ListText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextList>(ctx, data,
-                                                                  sink);
+template<typename T, auto Parse>
+bool DeserializeTextVector(DeserializeContext&, std::string_view data,
+                           duckdb::Vector& vec, duckdb::idx_t row) {
+  std::vector<T> values;
+  if (Parse(data, values)) {
+    return false;
   }
-};
-
-struct FixedArrayBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryFixedArray>(
-      ctx, data, sink);
-  }
-};
-
-struct StructBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryStruct>(ctx, data,
-                                                                      sink);
-  }
-};
-
-struct StructText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextStruct>(ctx, data,
-                                                                    sink);
-  }
-};
+  const auto cur = duckdb::ListVector::GetListSize(vec);
+  duckdb::ListVector::Reserve(vec, cur + values.size());
+  absl::c_copy(values, Out<T>(duckdb::ListVector::GetEntry(vec)) + cur);
+  Out<duckdb::list_entry_t>(vec)[row] = {cur, values.size()};
+  duckdb::ListVector::SetListSize(vec, cur + values.size());
+  return true;
+}
 
 // The wire form of a TSQUERY value is its query text (OID 25 in both
 // formats); the struct's tokenizer/boost fields take their defaults.
@@ -1998,24 +2377,6 @@ struct TsqueryCore {
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     sink.Tsquery(data);
     return true;
-  }
-};
-
-struct MapBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryMap>(ctx, data,
-                                                                   sink);
-  }
-};
-
-struct MapText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextMap>(ctx, data,
-                                                                 sink);
   }
 };
 
@@ -2037,10 +2398,17 @@ DeserializationFunction<Sink> GetDeserialization(
     case INTEGER:
       return SelectDecoder<LoadBin<int32_t>, NumberText<int32_t>, Sink>(binary);
     case BIGINT:
+      if (IsTid(type)) {
+        return SelectDecoder<ReadFixed<&TidRecv>,
+                             ParseFixed<int64_t, &TryParseTid>, Sink>(binary);
+      }
       if (binary) {
         return IsOidLike(type)
                  ? &LoadBin<int64_t, uint32_t>::template Decode<Sink>
                  : &LoadBin<int64_t>::template Decode<Sink>;
+      }
+      if (const auto kind = RegKindOf(type)) {
+        return RegTextDecoder<Sink>(*kind);
       }
       return &NumberText<int64_t>::template Decode<Sink>;
     case UTINYINT:
@@ -2053,12 +2421,31 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<LoadBin<uint32_t, int64_t>, NumberText<uint32_t>,
                            Sink>(binary);
     case UBIGINT:
+      if (IsPgLsn(type)) {
+        return SelectDecoder<LoadBin<uint64_t>, ReadFixed<&ParseLsn>, Sink>(
+          binary);
+      }
+      if (IsMacaddr(type)) {
+        return SelectDecoder<ReadFixed<&MacaddrRecv>,
+                             ParseFixed<uint64_t, &TryParseMacaddr>, Sink>(
+          binary);
+      }
+      if (IsMacaddr8(type)) {
+        return SelectDecoder<ReadFixed<&Macaddr8Recv>,
+                             ParseFixed<uint64_t, &TryParseMacaddr8>, Sink>(
+          binary);
+      }
       return SelectDecoder<UbigintBin, NumberText<uint64_t>, Sink>(binary);
     case HUGEINT:
       return SelectDecoder<HugeintBin, HugeintText, Sink>(binary);
     case UHUGEINT:
       return SelectDecoder<UhugeintBin, UhugeintText, Sink>(binary);
     case DECIMAL: {
+      if (IsMoney(type)) {
+        return SelectDecoder<LoadBin<duckdb::hugeint_t, int64_t>,
+                             ParseFixed<duckdb::hugeint_t, &TryParseMoney>,
+                             Sink>(binary);
+      }
       const auto width = duckdb::DecimalType::GetWidth(type);
       if (width <= duckdb::Decimal::MAX_WIDTH_INT16) {
         return SelectDecoder<DecimalIntBin<int16_t>, DecimalText<int16_t>,
@@ -2081,6 +2468,15 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<LoadBin<double>, NumberText<double>, Sink>(binary);
     case VARCHAR:
     case CHAR:
+      if (IsChar(type)) {
+        return SelectDecoder<CharBin, CharText, Sink>(binary);
+      }
+      if (IsXml(type)) {
+        return SelectDecoder<XmlIn, XmlIn, Sink>(binary);
+      }
+      if (binary && type.IsJSONType()) {
+        return &JsonBin::template Decode<Sink>;
+      }
       return SelectDecoder<VarcharBin, VarcharText, Sink>(binary);
     case BLOB:
       return SelectDecoder<BlobBin, BlobText, Sink>(binary);
@@ -2118,23 +2514,55 @@ DeserializationFunction<Sink> GetDeserialization(
     case BIT:
       return SelectDecoder<BitBin, BitText, Sink>(binary);
     case LIST:
-      return SelectDecoder<ListBin, ListText, Sink>(binary);
+      if (IsInt2vector(type)) {
+        return SelectDecoder<
+          Nested<DeserializeBinaryList>,
+          Nested<DeserializeTextVector<int16_t, ParseInt2Vector>>, Sink>(
+          binary);
+      }
+      if (IsOidvector(type)) {
+        return SelectDecoder<
+          Nested<DeserializeBinaryList>,
+          Nested<DeserializeTextVector<int64_t, ParseOidVector>>, Sink>(binary);
+      }
+      if (IsMultirange(type)) {
+        return SelectDecoder<Nested<DeserializeBinaryMultirange>,
+                             Nested<DeserializeTextMultirange>, Sink>(binary);
+      }
+      return SelectDecoder<Nested<DeserializeBinaryList>,
+                           Nested<DeserializeTextList>, Sink>(binary);
     case ARRAY:
-      return SelectDecoder<FixedArrayBin, DefaultText, Sink>(binary);
+      return SelectDecoder<Nested<DeserializeBinaryFixedArray>, DefaultText,
+                           Sink>(binary);
     case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
-        return SelectDecoder<InetBin<false>, InetText<false>, Sink>(binary);
+        return SelectDecoder<Nested<DeserializeBinaryInet<false>>,
+                             Nested<DeserializeTextInet<false>>, Sink>(binary);
       }
       if (IsCidr(type)) {
-        return SelectDecoder<InetBin<true>, InetText<true>, Sink>(binary);
+        return SelectDecoder<Nested<DeserializeBinaryInet<true>>,
+                             Nested<DeserializeTextInet<true>>, Sink>(binary);
       }
       if (connector::IsTSQueryStructType(type)) {
         return &TsqueryCore::template Decode<Sink>;
       }
-      return SelectDecoder<StructBin, StructText, Sink>(binary);
+      if (IsRange(type)) {
+        return SelectDecoder<Nested<DeserializeBinaryRange>,
+                             Nested<DeserializeTextRange>, Sink>(binary);
+      }
+      if (const auto geometric = GeometricOf(type)) {
+        return VisitGeometric(*geometric, [&]<Geometric kKind>() {
+          return SelectDecoder<Nested<DeserializeBinaryGeometric<kKind>>,
+                               Nested<DeserializeTextGeometric<kKind>>, Sink>(
+            binary);
+        });
+      }
+      return SelectDecoder<Nested<DeserializeBinaryStruct>,
+                           Nested<DeserializeTextStruct>, Sink>(binary);
     case MAP:
-      return SelectDecoder<MapBin, MapText, Sink>(binary);
+      return SelectDecoder<Nested<DeserializeBinaryMap>,
+                           Nested<DeserializeTextMap>, Sink>(binary);
     default:
       return SelectDecoder<DefaultBin, DefaultText, Sink>(binary);
   }
@@ -2144,5 +2572,233 @@ template DeserializationFunction<VectorSink> GetDeserialization<VectorSink>(
   const duckdb::LogicalType&, VarFormat);
 template DeserializationFunction<ValueSink> GetDeserialization<ValueSink>(
   const duckdb::LogicalType&, VarFormat);
+
+namespace {
+
+struct NumericShape {
+  int32_t integral = 0;
+  int32_t scale = 0;
+  bool decimal = true;
+};
+
+void Widen(NumericShape& shape, const NumericShape& element) {
+  shape.integral = std::max(shape.integral, element.integral);
+  shape.scale = std::max(shape.scale, element.scale);
+  shape.decimal = shape.decimal && element.decimal;
+}
+
+bool BinaryNumericShape(std::string_view data, NumericShape& shape) {
+  PgNumeric value;
+  if (!ReadPgNumeric(data, value)) {
+    return false;
+  }
+  if (!IsFinite(value)) {
+    shape = {.decimal = false};
+    return true;
+  }
+  shape = {.scale = value.dscale};
+  const int32_t weight = value.weight;
+  for (int32_t i = 0; i < static_cast<int32_t>(value.digits.size() / 2); ++i) {
+    const uint16_t group =
+      absl::big_endian::Load16(value.digits.data() + i * 2);
+    for (int k = 3; k >= 0; --k) {
+      const int32_t exponent = 4 * (weight - i) + k;
+      if (exponent < -shape.scale) {
+        return true;
+      }
+      if ((group / kNumericDigitPow10[k]) % 10 != 0) {
+        shape.integral = std::max(exponent + 1, 0);
+        return true;
+      }
+    }
+  }
+  return true;
+}
+
+struct NumericText {
+  int32_t integer_digits = 0;
+  int32_t first_integer = -1;
+  int32_t fraction_digits = 0;
+  int32_t first_fraction = -1;
+  int32_t exponent = 0;
+};
+
+struct NumericTextOperation {
+  template<typename T, bool Negative>
+  static bool HandleDigit(T& state, uint8_t digit) {
+    if (digit != 0 && state.first_integer < 0) {
+      state.first_integer = state.integer_digits;
+    }
+    ++state.integer_digits;
+    return true;
+  }
+
+  template<typename T, bool Negative>
+  static bool HandleHexDigit(T&, uint8_t) {
+    return false;
+  }
+
+  template<typename T, bool Negative>
+  static bool HandleBinaryDigit(T&, uint8_t) {
+    return false;
+  }
+
+  template<typename T, bool Negative>
+  static bool HandleExponent(T& state, int32_t exponent) {
+    state.exponent = exponent;
+    return true;
+  }
+
+  template<typename T, bool Negative, bool AllowExponent>
+  static bool HandleDecimal(T& state, uint8_t digit) {
+    if (digit != 0 && state.first_fraction < 0) {
+      state.first_fraction = state.fraction_digits;
+    }
+    ++state.fraction_digits;
+    return true;
+  }
+
+  template<typename T, bool Negative>
+  static bool Finalize(T&) {
+    return true;
+  }
+};
+
+void TextNumericShape(std::string_view data, NumericShape& shape) {
+  NumericText text;
+  if (!duckdb::TryIntegerCast<NumericText, true, true, NumericTextOperation,
+                              false>(data.data(), data.size(), text, false)) {
+    shape = {.decimal = false};
+    return;
+  }
+  shape = {.scale = std::max(text.fraction_digits - text.exponent, 0)};
+  if (text.first_integer >= 0) {
+    shape.integral =
+      std::max(text.integer_digits - text.first_integer + text.exponent, 0);
+  } else if (text.first_fraction >= 0) {
+    shape.integral = std::max(text.exponent - text.first_fraction, 0);
+  }
+}
+
+bool BinaryNumericArrayShape(std::string_view data, NumericShape& shape,
+                             int32_t& depth) {
+  if (data.size() < 12) {
+    return false;
+  }
+  const auto ndim = absl::big_endian::Load<int32_t>(data.data());
+  if (ndim < 0 || data.size() < 12 + static_cast<size_t>(ndim) * 8) {
+    return false;
+  }
+  depth = std::max(ndim, 1);
+  for (size_t offset = 12 + static_cast<size_t>(ndim) * 8;
+       offset < data.size();) {
+    if (data.size() - offset < sizeof(int32_t)) {
+      return false;
+    }
+    const auto length = absl::big_endian::Load<int32_t>(data.data() + offset);
+    offset += sizeof(int32_t);
+    if (length == -1) {
+      continue;
+    }
+    if (length < 0 || static_cast<size_t>(length) > data.size() - offset) {
+      return false;
+    }
+    NumericShape element;
+    if (!BinaryNumericShape(data.substr(offset, length), element)) {
+      return false;
+    }
+    Widen(shape, element);
+    offset += length;
+  }
+  return true;
+}
+
+bool TextNumericArrayShape(std::string_view data, NumericShape& shape,
+                           int32_t& depth) {
+  std::string_view body = data;
+  if (!StripWrap(body, '{', '}')) {
+    return false;
+  }
+  int32_t inner = 0;
+  bool ok = true;
+  std::string scratch;
+  const bool scanned =
+    ScanArrayItems(body, ',', [&](std::string_view raw, bool group) {
+      if (!ok) {
+        return;
+      }
+      if (group) {
+        int32_t nested = 0;
+        ok = TextNumericArrayShape(raw, shape, nested);
+        inner = std::max(inner, nested);
+        return;
+      }
+      bool is_null = false;
+      const auto leaf = ResolveArrayLeaf(raw, scratch, is_null);
+      if (!is_null) {
+        NumericShape element;
+        TextNumericShape(leaf, element);
+        Widen(shape, element);
+      }
+    });
+  depth = inner + 1;
+  return scanned && ok;
+}
+
+duckdb::LogicalType ShapeType(const NumericShape& shape,
+                              const duckdb::LogicalType& expected) {
+  constexpr int32_t kMaxWidth = duckdb::Decimal::MAX_WIDTH_DECIMAL;
+  const bool decimal = expected.id() == duckdb::LogicalTypeId::DECIMAL;
+  if (!shape.decimal || shape.integral > kMaxWidth) {
+    return decimal ? expected : duckdb::LogicalType::DECIMAL(kMaxWidth, 0);
+  }
+  if (decimal &&
+      shape.integral <= duckdb::DecimalType::GetWidth(expected) -
+                          duckdb::DecimalType::GetScale(expected) &&
+      shape.scale <= duckdb::DecimalType::GetScale(expected)) {
+    return expected;
+  }
+  const auto scale = std::min(shape.scale, kMaxWidth - shape.integral);
+  return duckdb::LogicalType::DECIMAL(
+    static_cast<uint8_t>(std::max(shape.integral + scale, 1)),
+    static_cast<uint8_t>(scale));
+}
+
+}  // namespace
+
+bool DeclaredNumericType(std::string_view data, VarFormat format, bool array,
+                         duckdb::LogicalType& type) {
+  const bool binary = format == VarFormat::Binary;
+  NumericShape shape;
+  if (!array) {
+    if (binary) {
+      if (!BinaryNumericShape(data, shape)) {
+        return false;
+      }
+    } else {
+      TextNumericShape(data, shape);
+    }
+    type = ShapeType(shape, type);
+    return true;
+  }
+  const auto* element = &type;
+  int32_t levels = 0;
+  while (element->id() == duckdb::LogicalTypeId::LIST) {
+    element = &duckdb::ListType::GetChildType(*element);
+    ++levels;
+  }
+  int32_t depth = 0;
+  if (!(binary ? BinaryNumericArrayShape(data, shape, depth)
+               : TextNumericArrayShape(data, shape, depth))) {
+    return false;
+  }
+  auto result =
+    ShapeType(shape, levels == depth ? *element : duckdb::LogicalType{});
+  for (int32_t i = 0; i < depth; ++i) {
+    result = duckdb::LogicalType::LIST(result);
+  }
+  type = std::move(result);
+  return true;
+}
 
 }  // namespace sdb::pg

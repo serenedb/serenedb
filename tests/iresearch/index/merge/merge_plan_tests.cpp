@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/col_block_copy.hpp>
 #include <iresearch/formats/column/col_block_sink.hpp>
@@ -35,7 +36,6 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iterator>
 #include <numeric>
@@ -1169,11 +1169,11 @@ TEST_F(ColumnCopyTest, AnAbortedPlanStopsItsUnits) {
 }
 
 TEST_F(ColumnCopyTest, StreamedDuckDBStringBlocksAreReencoded) {
-  if (!irs::AddFailurePointDebugging("irs::ColumnWriter::DuckDBStrings")) {
+  if (!duckdb::FaultPoints::Arm("irs::ColumnWriter::DuckDBStrings")) {
     GTEST_SKIP() << "built without fault injection";
   }
   absl::Cleanup remove = [] {
-    irs::RemoveFailurePointDebugging("irs::ColumnWriter::DuckDBStrings");
+    duckdb::FaultPoints::Disarm("irs::ColumnWriter::DuckDBStrings");
   };
   for (size_t s = 0; s != 2; ++s) {
     AddSegment(kEligibleRows, [](auto& doc, size_t row) {
@@ -1217,11 +1217,11 @@ TEST_F(ColumnCopyTest, CopiedDuckDBBlocksBesideTrainedDictionariesCopyAgain) {
   };
   irs::MemoryDirectory dir_trained;
   const auto trained = TrainedSegment(dir_trained);
-  if (!irs::AddFailurePointDebugging("irs::ColumnWriter::DuckDBStrings")) {
+  if (!duckdb::FaultPoints::Arm("irs::ColumnWriter::DuckDBStrings")) {
     GTEST_SKIP() << "built without fault injection";
   }
   absl::Cleanup remove = [] {
-    irs::RemoveFailurePointDebugging("irs::ColumnWriter::DuckDBStrings");
+    duckdb::FaultPoints::Disarm("irs::ColumnWriter::DuckDBStrings");
   };
   AddSegment(40000, [&](auto& doc, size_t row) {
     auto& cw = doc.GetColWriter()->OpenColumn(

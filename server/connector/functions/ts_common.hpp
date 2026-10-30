@@ -179,6 +179,8 @@ void ValidateFilterType(duckdb::LogicalTypeId type_id);
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id);
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id);
+duckdb::Value CastConstant(const duckdb::Value& value,
+                           duckdb::LogicalTypeId type_id);
 
 struct ArgError {
   std::string_view label;
@@ -197,6 +199,10 @@ void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
 template<typename F>
 void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
                       F&& f) {
+  if (value.type().id() != type_id) {
+    WithNumericValue(type_id, CastConstant(value, type_id), std::forward<F>(f));
+    return;
+  }
   switch (term_dict::Classify(type_id)) {
     case term_dict::Kind::NumericI32:
       f(value.GetValue<int32_t>());
@@ -253,6 +259,8 @@ void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
                                               const duckdb::Expression& expr);
+const SearchColumnInfo* FindIndexedExpressionInfo(
+  const FilterContext& ctx, const duckdb::Expression& expr);
 
 // Pointers reference constants in the bound expression tree;
 // nullptr means an unbounded side (NULL).
@@ -289,6 +297,8 @@ struct RegexpArgs {
   irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl;
 };
 RegexpArgs ParseRegexpArgs(const duckdb::BoundFunctionExpression& func);
+
+void CheckLikePattern(std::string_view pattern);
 
 // ts_any/ts_all arg unpacker: handles single TSQUERY, TSQUERY[]
 // (extracts elements), and the optional min_should_match suffix.

@@ -93,9 +93,9 @@
 #include "pg/connection_context.h"
 #include "pg/copy_in_batches.h"
 #include "pg/deserialize.h"
-#include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/serialize.h"
+#include "pg/types/mapping.h"
 #include "server/utils/asio_ns.h"
 #include "server/utils/message_buffer.h"
 
@@ -141,6 +141,20 @@ enum class CopyFormat : uint8_t {
   Text,
   Binary,
   Parquet,
+};
+
+// COPY direction over a stdin/stdout pipe. The patched parser rewrites STDIN /
+// STDOUT to /dev/stdin / /dev/stdout; a COPY to/from a real file classifies as
+// None (it runs through the normal Prepare/Execute path).
+enum class CopyDir : uint8_t {
+  None,
+  FromStdin,
+  ToStdout,
+};
+
+struct CopyKind {
+  CopyDir dir = CopyDir::None;
+  CopyFormat format = CopyFormat::Other;
 };
 
 // Portal / PageCursor / PortalState live in protocol_state.h (with the stores
@@ -317,6 +331,8 @@ class PgWireSession
     duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
     ClosingPending& pending, std::shared_ptr<WireSinkContext> wire);
   yaclib::Task<> RunSimpleQuery(std::string_view query);
+  yaclib::Task<> RunCopy(duckdb::unique_ptr<duckdb::SQLStatement> statement,
+                         CopyKind copy);
   yaclib::Task<> RunCopyFromStdin(
     duckdb::unique_ptr<duckdb::SQLStatement> statement);
   yaclib::Task<> RunCopyToStdout(
@@ -332,15 +348,15 @@ class PgWireSession
   void HandleBind(std::string_view payload);
   void HandleDescribe(std::string_view payload);
   yaclib::Task<> HandleExecute(std::string_view payload);
+  void PlanPortal(Portal& portal);
   // Run a bound Prepared portal: arm the block, then plan/drive once and emit
   // rows (full-drain wire path or cursor paging), or resume a paged portal.
   yaclib::Task<> ExecutePrepared(Portal& portal, uint64_t max_rows);
-  // Run a compound portal: one user command the parser expanded into a body
-  // (ALTER ... DEFAULT <volatile>, PIVOT). Runs the whole body in the session's
-  // implicit block and reports the primary sub-statement's one CommandComplete.
+  // Run the leading statements of a command the parser expanded into several
+  // (TRUNCATE of several tables, ALTER ... ADD COLUMN ... DEFAULT <volatile>)
+  // in the session's implicit block, and plan the last one into the portal for
+  // ExecutePrepared, which reports its one CommandComplete.
   yaclib::Task<> ExecuteCompound(Portal& portal);
-  // Run (and consume) a bound deferred-COPY portal at Execute.
-  yaclib::Task<> RunDeferredCopy(Portal& portal);
   void HandleClose(std::string_view payload);
   // Re-plan a cached statement whose catalog view has moved on (PG's
   // RevalidateCachedQuery at Bind). A no-op -- one shared_ptr compare -- while
@@ -355,7 +371,8 @@ class PgWireSession
     const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& body);
   void DescribeStatement(Statement& stmt);
   void DescribePortal(Portal& portal);
-  PlanPtr ResolvePlan(Statement& stmt, const PlanPtr& plan);
+  PlanPtr ResolvePlan(Statement& stmt, const PlanPtr& plan,
+                      std::span<const duckdb::Value> values);
   BindInfo ParseBindVars(std::string_view cursor, const Statement& stmt,
                          std::string_view statement_name);
 
@@ -428,6 +445,7 @@ class PgWireSession
   // loopback reads as IPv4. Feeds HBA CIDR matching and the passwordless-trust
   // gate (via asio's address::is_loopback()).
   asio_ns::ip::address _peer_addr;
+  std::string _system_user;
   FrameReader _frames;
   // The current command frame's pending _recv consume. Normally the command
   // loop applies it after the handler; COPY FROM STDIN consumes it early (so
@@ -443,6 +461,7 @@ class PgWireSession
   // Owned by _conn's registered_state; cached here to skip the keyed registry
   // lookup on every query. Valid for the connection's lifetime.
   connector::SereneDBClientState* _client_state = nullptr;
+  sdb::pg::ProgressRegistration _progress;
   // Reused across queries (Reset per query); see MakeWireContext.
   std::shared_ptr<WireSinkContext> _wire_ctx;
   // True while a COPY FROM STDIN feeder owns the recv consumer role: RecvLoop

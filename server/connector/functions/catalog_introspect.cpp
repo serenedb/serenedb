@@ -123,7 +123,8 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
   auto& state = input.global_state->Cast<CatalogSetsState>();
   if (!state.loaded) {
     state.loaded = true;
-    if (auto database = catalog::DefaultSereneDBCatalog(context)) {
+    if (auto database = catalog::DefaultDuckCatalog(context);
+        database && catalog::IsSereneDB(*database)) {
       auto& catalog = *database;
       const auto transaction = catalog.GetCatalogTransaction(context);
       for (auto& schema_entry : catalog.GetSchemas(context)) {

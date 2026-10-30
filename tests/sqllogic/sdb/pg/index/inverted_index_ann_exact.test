@@ -185,5 +185,5 @@ pk
 statement ok
 RESET sdb_ann_force_exact;
 
-statement error invalid value for parameter "sdb_ann_oversample"
-SET sdb_ann_oversample = 'inf';
+statement error invalid value for parameter "sdb_ann_rescore_width"
+SET sdb_ann_rescore_width = 'inf';

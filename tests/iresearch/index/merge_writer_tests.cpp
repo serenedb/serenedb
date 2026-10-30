@@ -25,6 +25,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/function/compression_function.hpp>
@@ -39,10 +40,8 @@
 #include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/enum_name.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -91,11 +90,8 @@ inline constexpr irs::field_id kAnotherColumnId =
 
 using tests::FieldIdFor;
 
-irs::Filter::ptr MakeByTerm(std::string_view name, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = FieldIdFor(name);
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
+tests::Terms MakeByTerm(std::string_view name, std::string_view value) {
+  return {FieldIdFor(name), {std::string{value}}};
 }
 
 }  // namespace
@@ -533,13 +529,11 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
 }
 
 TEST_P(MergeWriterTestCase, FieldsPastFourBillionTermsOpen) {
-  if (!irs::AddFailurePointDebugging(
-        "irs::burst_trie::TotalTermFreqPast32Bits")) {
+  if (!duckdb::FaultPoints::Arm("irs::burst_trie::TotalTermFreqPast32Bits")) {
     GTEST_SKIP() << "built without fault injection";
   }
   absl::Cleanup remove = [] {
-    irs::RemoveFailurePointDebugging(
-      "irs::burst_trie::TotalTermFreqPast32Bits");
+    duckdb::FaultPoints::Disarm("irs::burst_trie::TotalTermFreqPast32Bits");
   };
   tests::Document doc;
   auto text = std::make_shared<tests::TextField<std::string_view>>(
@@ -1340,7 +1334,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   irs::SegmentMeta index_segment;
 
   const irs::FunctionFieldOptions field_options{
-    nullptr, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
+    nullptr,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   const irs::SegmentWriterOptions options{
     .db = &::irs::DuckDBEngine::Instance().instance(),
     .field_options = &field_options,

@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/connection.hpp>
@@ -36,7 +37,6 @@
 #include <duckdb/parser/keyword_helper.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -47,8 +47,8 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
 #include "connector/query_deadline.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 #include "query/config.h"
 #include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
@@ -738,12 +738,9 @@ void VacuumExecute(duckdb::ClientContext& context,
   }
 
   auto target = ResolveName(context, bind_data, verb->scope);
-  if (needs_name &&
-      LookupDatabase(context, target.database).GetAttached().IsReadOnly()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_READ_ONLY_SQL_TRANSACTION),
-      ERR_MSG("cannot run VACUUM (", bind_data.option, ") on database \"",
-              target.database, "\": it is attached read-only"));
+  if (needs_name) {
+    catalog::ThrowIfReadOnly(LookupDatabase(context, target.database),
+                             "VACUUM (", bind_data.option, ")");
   }
 
   pg::ProgressMetrics* progress = nullptr;

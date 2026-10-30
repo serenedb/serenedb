@@ -173,6 +173,15 @@ datid	pid	usesysid	application_name	state	query	wait_event_type	wait_event	xact_
 
 
 query
+SELECT pg_typeof(client_addr)::text AS client_addr, pg_typeof(backend_xid)::text AS backend_xid,
+  pg_typeof(backend_xmin)::text AS backend_xmin
+FROM pg_stat_get_activity(pg_backend_pid())
+----
+client_addr	backend_xid	backend_xmin
+inet	xid	xid
+
+
+query
 SELECT * FROM pg_stat_get_subscription(NULL::oid) LIMIT 0
 ----
 subid	relid	pid	leader_pid	received_lsn	last_msg_send_time	last_msg_receipt_time	latest_end_lsn	latest_end_time	worker_type
@@ -185,6 +194,48 @@ slot_name	spill_txns	spill_count	spill_bytes	stream_txns	stream_count	stream_byt
 
 
 query
-SELECT * FROM pg_stat_get_subscription_stats(NULL::oid) LIMIT 0
+SELECT * FROM pg_stat_get_subscription_stats(NULL::oid)
 ----
 subid	apply_error_count	sync_error_count	confl_insert_exists	confl_update_origin_differs	confl_update_exists	confl_update_missing	confl_delete_origin_differs	confl_delete_missing	confl_multiple_unique_conflicts	stats_reset
+NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+
+
+query
+SELECT pg_stat_get_numscans(NULL) IS NULL AS literal,
+       pg_stat_get_numscans(x) IS NULL AS numscans,
+       pg_stat_get_tuples_returned(x) IS NULL AS tuples_returned,
+       pg_stat_get_total_vacuum_time(x) IS NULL AS total_vacuum_time,
+       pg_stat_get_last_vacuum_time(x) IS NULL AS last_vacuum_time
+FROM (VALUES (NULL::oid)) v(x);
+----
+literal	numscans	tuples_returned	total_vacuum_time	last_vacuum_time
+t	t	t	t	t
+
+
+query
+SELECT pg_stat_get_numscans(0) AS numscans,
+       pg_stat_get_total_vacuum_time(0) AS total_vacuum_time,
+       pg_stat_get_last_vacuum_time(0) IS NULL AS last_vacuum_time;
+----
+numscans	total_vacuum_time	last_vacuum_time
+0	0	t
+
+
+query
+SELECT pg_cancel_backend(0) AS cancel_missing,
+       pg_terminate_backend(0) AS terminate_missing,
+       pg_cancel_backend(NULL) IS NULL AS cancel_null,
+       pg_terminate_backend(NULL) IS NULL AS terminate_null;
+----
+cancel_missing	terminate_missing	cancel_null	terminate_null
+f	f	t	t
+
+
+query
+SELECT pg_cancel_backend(p) IS NULL AS cancel, pg_terminate_backend(p) IS NULL AS terminate,
+       width_bucket(p, ARRAY[1, 2, 3]) IS NULL AS bucket, current_setting(n, true) IS NULL AS setting,
+       pg_input_error_info(n, 'integer') IS NULL AS error_info
+FROM (VALUES (NULL::int, NULL::text)) v(p, n);
+----
+cancel	terminate	bucket	setting	error_info
+t	t	t	t	t

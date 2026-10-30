@@ -23,246 +23,81 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <duckdb/common/vector/unified_vector_format.hpp>
-#include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <utility>
 
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/index/file_names.hpp"
-#include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/directory_reader.hpp"
+#include "iresearch/index/segment_reader.hpp"
+#include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/down_cast.hpp"
 
 namespace irs {
 
-DocRemoval DocRemoval::Build(field_id key_column, std::vector<Row> rows) {
-  for (auto& row : rows) {
-    if (row.segment == kNoSegment) {
-      row.doc = 0;
-    }
+DocumentMaskBuilder& DocRemovalBuilder::Group(uint32_t index) {
+  if (_last < _groups.size() && _groups[_last].first == index) {
+    return _groups[_last].second;
   }
-  absl::c_sort(rows, [](const Row& lhs, const Row& rhs) {
-    if (lhs.segment != rhs.segment) {
-      return lhs.segment < rhs.segment;
-    }
-    if (lhs.doc != rhs.doc) {
-      return lhs.doc < rhs.doc;
-    }
-    return lhs.key < rhs.key;
-  });
-  const auto duplicates =
-    std::ranges::unique(rows, [](const Row& lhs, const Row& rhs) {
-      return lhs.segment == rhs.segment && lhs.doc == rhs.doc &&
-             lhs.key == rhs.key;
-    });
-  rows.erase(duplicates.begin(), duplicates.end());
-
-  DocRemoval removal{.key_column = key_column};
-  removal.docs.reserve(rows.size());
-  removal.keys.reserve(rows.size());
-  for (const auto& row : rows) {
-    if (removal.segments.empty() || removal.segments.back() != row.segment) {
-      removal.segments.emplace_back(row.segment);
-      removal.offsets.emplace_back(static_cast<uint32_t>(removal.docs.size()));
-    }
-    removal.docs.emplace_back(row.doc);
-    removal.keys.emplace_back(row.key);
+  auto it = absl::c_lower_bound(
+    _groups, index,
+    [](const auto& group, uint32_t key) { return group.first < key; });
+  if (it == _groups.end() || it->first != index) {
+    it = _groups.emplace(it, index, DocumentMaskBuilder{});
   }
-  removal.offsets.emplace_back(static_cast<uint32_t>(removal.docs.size()));
-  return removal;
-}
-
-size_t DocRemoval::Find(uint64_t segment) const noexcept {
-  const auto it = absl::c_lower_bound(segments, segment);
-  if (it == segments.end() || *it != segment) {
-    return segments.size();
-  }
-  return static_cast<size_t>(it - segments.begin());
-}
-
-void DocRemovalResolver::Prepare(std::span<const DocRemoval* const> removals,
-                                 std::span<const SubReader* const> live) {
-  _fallback.clear();
-  _lookups.clear();
-  std::vector<uint64_t> numbers;
-  numbers.reserve(live.size());
-  for (const auto* segment : live) {
-    if (const auto number = SegmentNumber(segment->Meta().name)) {
-      numbers.emplace_back(*number);
-    }
-  }
-  absl::c_sort(numbers);
-
-  for (const auto* removal : removals) {
-    std::vector<int64_t> keys;
-    for (size_t group = 0; group < removal->segments.size(); ++group) {
-      const auto segment = removal->segments[group];
-      if (segment != DocRemoval::kNoSegment &&
-          absl::c_binary_search(numbers, segment)) {
-        continue;
-      }
-      const auto group_keys = removal->Keys(group);
-      keys.insert(keys.end(), group_keys.begin(), group_keys.end());
-    }
-    if (keys.empty()) {
-      continue;
-    }
-    absl::c_sort(keys);
-    keys.erase(std::ranges::unique(keys).begin(), keys.end());
-    auto* lookup = LookupOf(removal->key_column);
-    if (!lookup) {
-      lookup = &_lookups.emplace_back(Lookup{.column = removal->key_column});
-    }
-    lookup->keys.insert(lookup->keys.end(), keys.begin(), keys.end());
-    _fallback.insert_or_assign(removal, std::move(keys));
-  }
-
-  for (auto& lookup : _lookups) {
-    absl::c_sort(lookup.keys);
-    lookup.keys.erase(std::ranges::unique(lookup.keys).begin(),
-                      lookup.keys.end());
-  }
-}
-
-std::span<const doc_id_t> DocRemovalResolver::PositionalDocs(
-  const DocRemoval& removal, const SubReader& segment) const {
-  const auto number = SegmentNumber(segment.Meta().name);
-  if (!number || *number == DocRemoval::kNoSegment) {
-    return {};
-  }
-  const auto group = removal.Find(*number);
-  if (group == removal.segments.size()) {
-    return {};
-  }
-  const auto docs = removal.Docs(group);
-  const auto end = doc_limits::min() + segment.docs_count();
-  return {docs.begin(), absl::c_lower_bound(docs, end)};
-}
-
-std::span<const doc_id_t> DocRemovalResolver::Docs(const DocRemoval& removal,
-                                                   const SubReader& segment) {
-  const auto positional = PositionalDocs(removal, segment);
-  const auto fallback = _fallback.find(&removal);
-  if (fallback == _fallback.end()) {
-    return positional;
-  }
-  auto* lookup = LookupOf(removal.key_column);
-  SDB_ASSERT(lookup);
-  const auto hits = Resolve(*lookup, segment);
-  if (hits.empty()) {
-    return positional;
-  }
-  _scratch.clear();
-  auto hit = hits.begin();
-  for (const auto key : fallback->second) {
-    hit = std::lower_bound(hit, hits.end(), Hit{key, 0});
-    for (; hit != hits.end() && hit->key == key; ++hit) {
-      _scratch.emplace_back(hit->doc);
-    }
-    if (hit == hits.end()) {
-      break;
-    }
-  }
-  if (_scratch.empty()) {
-    return positional;
-  }
-  absl::c_sort(_scratch);
-  const auto keyed = _scratch.size();
-  _scratch.insert(_scratch.end(), positional.begin(), positional.end());
-  absl::c_inplace_merge(_scratch, _scratch.begin() + keyed);
-  _scratch.erase(std::ranges::unique(_scratch).begin(), _scratch.end());
-  return _scratch;
-}
-
-DocRemovalResolver::Lookup* DocRemovalResolver::LookupOf(field_id column) {
-  const auto it = absl::c_find_if(
-    _lookups, [&](const Lookup& lookup) { return lookup.column == column; });
-  return it == _lookups.end() ? nullptr : &*it;
-}
-
-std::span<const DocRemovalResolver::Hit> DocRemovalResolver::Resolve(
-  Lookup& lookup, const SubReader& segment) {
-  const auto [it, inserted] = lookup.hits.try_emplace(segment.Meta().name);
-  if (inserted) {
-    Scan(lookup, segment, it->second);
-    absl::c_sort(it->second);
-  }
+  _last = static_cast<size_t>(it - _groups.begin());
   return it->second;
 }
 
-void DocRemovalResolver::Scan(const Lookup& lookup, const SubReader& segment,
-                              std::vector<Hit>& hits) {
-  const auto* columns = segment.GetColReader();
-  const auto* column = columns ? columns->Column(lookup.column) : nullptr;
-  if (!column || column->RowCount() == 0) {
-    return;
-  }
-  const std::span<const int64_t> all{lookup.keys};
-  const auto overlaps = [&](const duckdb::BaseStatistics& stats) {
-    if (!duckdb::NumericStats::HasMinMax(stats)) {
-      return all;
-    }
-    const auto first =
-      absl::c_lower_bound(all, duckdb::NumericStats::GetMin<int64_t>(stats));
-    const auto last = std::upper_bound(
-      first, all.end(), duckdb::NumericStats::GetMax<int64_t>(stats));
-    return std::span<const int64_t>{first, last};
-  };
-  if (overlaps(column->MergedStatistics()).empty()) {
-    return;
-  }
-  ReadContext ctx{*columns};
-  auto state = column->InitScan(ctx);
-  ColumnReader::VectorScratch scratch{column->Type()};
-  const auto blocks = column->DataBlocks();
-  const uint64_t total = column->RowCount();
-  uint64_t row = 0;
-  for (size_t b = 0; b < blocks.size() && row < total; ++b) {
-    const uint64_t end =
-      b + 1 < blocks.size() ? column->DataBlockFirstRow(b + 1) : total;
-    const auto keys = overlaps(blocks[b].statistics);
-    if (keys.empty()) {
-      column->Skip(state, end - row);
-      row = end;
+void DocRemovalBuilder::Add(uint32_t index, doc_id_t doc) {
+  Group(index).Add(doc);
+}
+
+void DocRemovalBuilder::AddRange(uint32_t index, doc_id_t first,
+                                 doc_id_t last) {
+  Group(index).AddRange(first, last);
+}
+
+std::shared_ptr<const DocRemoval> DocRemovalBuilder::Finish(
+  const DirectoryReader& reader) && {
+  auto removal = std::make_shared<DocRemoval>();
+  removal->groups.reserve(_groups.size());
+  for (auto& [index, docs] : _groups) {
+    if (docs.Empty()) {
       continue;
     }
-    auto cursor = keys.begin();
-    while (row < end) {
-      const auto take = std::min<uint64_t>(end - row, STANDARD_VECTOR_SIZE);
-      auto& values = scratch.Reset();
-      column->Scan(state, values, take);
-      duckdb::UnifiedVectorFormat format;
-      values.ToUnifiedFormat(take, format);
-      const auto* data = duckdb::UnifiedVectorFormat::GetData<int64_t>(format);
-      for (duckdb::idx_t i = 0; i < take; ++i) {
-        const auto idx = format.sel->get_index(i);
-        if (!format.validity.RowIsValid(idx)) {
-          continue;
-        }
-        const auto value = data[idx];
-        if (value < keys.front() || value > keys.back()) {
-          continue;
-        }
-        if (cursor == keys.end() || *cursor > value) {
-          if (cursor == keys.begin() || *std::prev(cursor) < value) {
-            continue;
-          }
-          cursor = std::lower_bound(keys.begin(), cursor, value);
-        } else if (*cursor < value) {
-          ++cursor;
-          if (cursor != keys.end() && *cursor < value) {
-            cursor = std::lower_bound(cursor, keys.end(), value);
-          }
-        }
-        if (cursor == keys.end() || *cursor != value) {
-          continue;
-        }
-        hits.emplace_back(value,
-                          static_cast<doc_id_t>(row + i) + doc_limits::min());
-      }
-      row += take;
-    }
+    SDB_ASSERT(index < reader.size());
+    const auto& segment =
+      *utils::downCast<SegmentReader>(reader[index]).GetImpl();
+    removal->groups.push_back(
+      {.segment = segment.Id(),
+       .docs = std::move(docs).Finish(DocumentMaskBuilder::kCanonical),
+       .maps = segment.DocMaps()});
   }
+  _groups = {};
+  _last = 0;
+  return removal;
+}
+
+bool MapDocs(const DocMap& map, const DocumentMask& docs,
+             DocumentMaskBuilder& out) {
+  const auto* mask = map.mask.get();
+  const auto before = out.Count();
+  doc_id_t counted = doc_limits::min();
+  uint64_t masked = 0;
+  docs.ForEachRun(mask, [&](doc_id_t first, doc_id_t last) {
+    if (mask) {
+      masked += mask->CountInRange(counted, first);
+      counted = last;
+    }
+    const uint64_t rank = first - doc_limits::min() - masked;
+    const auto from = std::max<uint64_t>(rank, map.rank_begin);
+    const auto to = std::min<uint64_t>(rank + (last - first), map.rank_end);
+    if (from < to) {
+      out.AddRange(static_cast<doc_id_t>(map.base + (from - map.rank_begin)),
+                   static_cast<doc_id_t>(map.base + (to - map.rank_begin)));
+    }
+    return to < map.rank_end;
+  });
+  return out.Count() != before;
 }
 
 }  // namespace irs

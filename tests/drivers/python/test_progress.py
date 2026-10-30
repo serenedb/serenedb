@@ -144,24 +144,14 @@ class GatedSink(io.BytesIO):
 
 DRIVERS = [Psycopg3Driver(), Psycopg2Driver()]
 
-pytestmark = pytest.mark.exclusive
+pytestmark = pytest.mark.usefixtures("own_server_module")
 
 
 @pytest.fixture(scope="module")
-def obs():
+def obs(own_server_module):
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
     yield c
     c.close()
-
-
-@pytest.fixture(scope="module")
-def faults(obs) -> bool:
-    try:
-        obs.execute(f"SET sdb_faults = '{COPY_FROM_FAULT}'")
-        obs.execute(f"SET sdb_faults = '-{COPY_FROM_FAULT}'")
-        return True
-    except psycopg.Error:
-        return False
 
 
 @pytest.fixture(scope="module")

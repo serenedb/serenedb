@@ -1,0 +1,343 @@
+query
+SELECT string_agg(proname, ', ' ORDER BY proname) AS outside FROM pg_proc WHERE oid >= 16384 AND oid < 65536 OR oid >= 131072;
+----
+outside
+NULL
+
+
+query
+SELECT string_agg(collname, ', ' ORDER BY collname) AS outside FROM pg_collation WHERE oid >= 16384 AND oid < 32768 OR oid >= 65536;
+----
+outside
+NULL
+
+
+query
+SELECT count(*) FILTER (WHERE oid < 16384) > 0 AS postgres,
+       count(*) FILTER (WHERE oid >= 16384 AND oid < 65536) AS outside,
+       count(*) FILTER (WHERE oid >= 65536 AND oid < 131072) > 0 AS serenedb
+FROM pg_proc WHERE pronamespace IN (11, 13293);
+----
+postgres	outside	serenedb
+t	0	t
+
+
+query
+SELECT count(*) FILTER (WHERE oid < 16384) > 0 AS postgres,
+       count(*) FILTER (WHERE oid >= 16384 AND oid < 65536) AS outside,
+       count(*) FILTER (WHERE oid >= 65536 AND oid < 131072) > 0 AS serenedb
+FROM pg_proc WHERE pronamespace IN (11, 'information_schema'::regnamespace);
+----
+postgres	outside	serenedb
+t	0	t
+
+
+query
+SELECT count(*) FILTER (WHERE oid < 16384) AS postgres,
+       count(*) FILTER (WHERE oid >= 16384 AND oid < 32768) AS outside,
+       count(*) FILTER (WHERE oid >= 32768 AND oid < 65536) > 0 AS serenedb
+FROM pg_collation;
+----
+postgres	outside	serenedb
+3	0	t
+
+
+query
+SELECT (SELECT count(*) - count(DISTINCT oid) FROM pg_proc) AS proc,
+       (SELECT count(*) - count(DISTINCT oid) FROM pg_type) AS type,
+       (SELECT count(*) - count(DISTINCT oid) FROM pg_class) AS class,
+       (SELECT count(*) - count(DISTINCT oid) FROM pg_namespace) AS namespace,
+       (SELECT count(*) - count(DISTINCT oid) FROM pg_collation) AS collation,
+       (SELECT count(*) - count(DISTINCT oid) FROM pg_am) AS am,
+       (SELECT count(*) - count(DISTINCT oid) FROM pg_opclass) AS opclass,
+       (SELECT count(*) - count(DISTINCT oid) FROM pg_language) AS language,
+       (SELECT count(*) - count(DISTINCT oid) FROM pg_authid) AS authid,
+       (SELECT count(*) - count(DISTINCT oid) FROM pg_database) AS database;
+----
+proc	type	class	namespace	collation	am	opclass	language	authid	database
+0	0	0	0	0	0	0	0	0	0
+
+
+query
+SELECT (SELECT count(*) FROM pg_proc WHERE pronamespace IN (11, 13293) AND oid >= 262144) AS proc,
+       (SELECT count(*) FROM pg_type WHERE typnamespace IN (11, 13293) AND oid >= 262144) AS type,
+       (SELECT count(*) FROM pg_class WHERE relnamespace IN (11, 13293) AND oid >= 262144) AS class,
+       (SELECT count(*) FROM pg_namespace WHERE nspname IN ('pg_catalog', 'information_schema', 'public') AND oid >= 262144) AS namespace,
+       (SELECT count(*) FROM pg_collation WHERE oid >= 262144) AS collation,
+       (SELECT count(*) FROM pg_am WHERE oid >= 262144) AS am,
+       (SELECT count(*) FROM pg_opclass WHERE oid >= 262144) AS opclass,
+       (SELECT count(*) FROM pg_language WHERE oid >= 262144) AS language,
+       (SELECT count(*) FROM pg_authid WHERE (rolname = 'postgres' OR rolname LIKE 'pg\_%') AND oid >= 262144) AS authid,
+       (SELECT count(*) FROM pg_database WHERE datname = 'postgres' AND oid >= 262144) AS database;
+----
+proc	type	class	namespace	collation	am	opclass	language	authid	database
+0	0	0	0	0	0	0	0	0	0
+
+
+query
+SELECT (SELECT count(*) FROM pg_proc WHERE pronamespace IN (11, 'information_schema'::regnamespace) AND oid >= 262144) AS proc,
+       (SELECT count(*) FROM pg_type WHERE typnamespace IN (11, 'information_schema'::regnamespace) AND oid >= 262144) AS type,
+       (SELECT count(*) FROM pg_class WHERE relnamespace IN (11, 'information_schema'::regnamespace) AND oid >= 262144) AS class;
+----
+proc	type	class
+0	0	0
+
+
+query
+SELECT 'pg_roles'::regclass::oid AS pg_roles,
+       'pg_stat_activity'::regclass::oid AS pg_stat_activity,
+       'pg_settings'::regclass::oid AS pg_settings,
+       'pg_stats'::regclass::oid AS pg_stats,
+       'information_schema.tables'::regclass::oid AS tables,
+       'information_schema.columns'::regclass::oid AS columns,
+       'information_schema.sql_features'::regclass::oid AS sql_features,
+       'information_schema'::regnamespace::oid AS information_schema;
+----
+pg_roles	pg_stat_activity	pg_settings	pg_stats	tables	columns	sql_features	information_schema
+12000	12150	12066	12033	12371	12290	12350	12240
+
+
+query
+SELECT n.nspname, c.relname, c.oid, c.reltype, t.typarray
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_type t ON t.oid = c.reltype
+WHERE c.oid IN ('pg_roles'::regclass, 'pg_views'::regclass, 'information_schema.views'::regclass,
+                'information_schema.columns'::regclass, 'information_schema.sql_sizing'::regclass,
+                'information_schema.user_mappings'::regclass)
+ORDER BY c.oid;
+----
+nspname	relname	oid	reltype	typarray
+pg_catalog	pg_roles	12000	12002	12001
+pg_catalog	pg_views	12018	12020	12019
+information_schema	columns	12290	12292	12291
+information_schema	sql_sizing	12359	12361	12360
+information_schema	views	12407	12409	12408
+information_schema	user_mappings	12455	12457	12456
+
+
+query
+SELECT count(*) AS relations,
+       count(*) FILTER (WHERE c.reltype <> c.oid + 2) AS row_type_elsewhere,
+       count(*) FILTER (WHERE t.typarray <> c.oid + 1) AS array_type_elsewhere,
+       min(c.oid) AS first, max(c.oid) AS last
+FROM pg_class c JOIN pg_type t ON t.oid = c.reltype
+WHERE c.oid >= 12000 AND c.oid < 16384;
+----
+relations	row_type_elsewhere	array_type_elsewhere	first	last
+149	0	0	12000	12455
+
+
+query
+SELECT t.typname, t.oid, t.typarray, b.typname AS base
+FROM pg_type t JOIN pg_type b ON b.oid = t.typbasetype
+WHERE t.typnamespace = 'information_schema'::regnamespace AND t.typtype = 'd'
+ORDER BY t.oid;
+----
+typname	oid	typarray	base
+cardinal_number	12242	12241	int4
+character_data	12244	12243	varchar
+sql_identifier	12246	12245	name
+time_stamp	12251	12250	timestamptz
+yes_or_no	12253	12252	varchar
+
+
+query
+SELECT oid, collname FROM pg_collation WHERE collname IN ('default', 'C', 'POSIX', 'nocase', 'noaccent', 'nfc') ORDER BY oid;
+----
+oid	collname
+100	default
+950	C
+951	POSIX
+32855	nfc
+32859	noaccent
+32860	nocase
+
+
+query
+SELECT 'abs(integer)'::regprocedure::oid AS abs_int4,
+       'lower(text)'::regprocedure::oid AS lower,
+       'upper(text)'::regprocedure::oid AS upper,
+       'length(text)'::regprocedure::oid AS length,
+       'sqrt(double precision)'::regprocedure::oid AS sqrt,
+       'now()'::regprocedure::oid AS now;
+----
+abs_int4	lower	upper	length	sqrt	now
+1397	870	871	1317	1344	1299
+
+
+query
+SELECT oid::regprocedure FROM pg_proc WHERE oid IN (1397, 870, 871, 1317) ORDER BY oid;
+----
+oid
+lower(text)
+upper(text)
+length(text)
+abs(integer)
+
+
+query
+SELECT count(*) FROM duckdb_functions() WHERE database_name = 'system' AND (function_oid < 131072 OR function_oid >= 262144);
+----
+count
+0
+
+
+query
+SELECT count(*) > 1000 AS has_builtins FROM duckdb_functions() WHERE database_name = 'system';
+----
+has_builtins
+t
+
+
+query
+SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'system' AND (oid < 131072 OR oid >= 262144);
+----
+count
+0
+
+
+query
+SELECT count(*) FROM duckdb_views() WHERE database_name = 'system' AND (view_oid < 131072 OR view_oid >= 262144);
+----
+count
+0
+
+
+query
+SELECT count(*) FROM duckdb_databases() WHERE database_name = current_database() AND database_oid < 262144;
+----
+count
+0
+
+
+statement ok
+DROP DATABASE IF EXISTS system_oids_other;
+
+
+statement ok
+DROP SCHEMA IF EXISTS system_oids CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS system_oids_role;
+
+
+statement ok
+CREATE DATABASE system_oids_other;
+
+
+connection other database=system_oids_other
+statement ok
+CREATE TABLE system_oids_procs AS
+SELECT oid::int8 AS oid, proname::text AS proname FROM pg_proc WHERE pronamespace IN (11, 13293);
+
+
+connection other database=system_oids_other
+statement ok
+CREATE TABLE system_oids_relations AS
+SELECT oid::int8 AS oid, relname::text AS relname FROM pg_class WHERE relnamespace IN (11, 13293);
+
+
+connection other database=system_oids_other
+statement ok
+CREATE TABLE system_oids_types AS
+SELECT oid::int8 AS oid, typname::text AS typname FROM pg_type WHERE typnamespace IN (11, 13293);
+
+
+connection other database=system_oids_other
+statement ok
+CREATE TABLE system_oids_collations AS
+SELECT oid::int8 AS oid, collname::text AS collname FROM pg_collation;
+
+
+statement ok
+CREATE TEMP TABLE system_oids_here AS
+SELECT 'proc' AS kind, oid::int8 AS oid, proname::text AS name FROM pg_proc WHERE pronamespace IN (11, 13293)
+UNION ALL SELECT 'relation', oid::int8, relname::text FROM pg_class WHERE relnamespace IN (11, 13293)
+UNION ALL SELECT 'type', oid::int8, typname::text FROM pg_type WHERE typnamespace IN (11, 13293)
+UNION ALL SELECT 'collation', oid::int8, collname::text FROM pg_collation;
+
+
+statement ok
+CREATE TEMP TABLE system_oids_there AS
+SELECT 'proc' AS kind, oid, proname AS name FROM system_oids_other.public.system_oids_procs
+UNION ALL SELECT 'relation', oid, relname FROM system_oids_other.public.system_oids_relations
+UNION ALL SELECT 'type', oid, typname FROM system_oids_other.public.system_oids_types
+UNION ALL SELECT 'collation', oid, collname FROM system_oids_other.public.system_oids_collations;
+
+
+query
+SELECT h.kind, h.objects = t.objects AS same_count, h.objects > 0 AS listed,
+       (SELECT count(*) FROM (SELECT oid, name FROM system_oids_here WHERE kind = h.kind
+                              EXCEPT SELECT oid, name FROM system_oids_there WHERE kind = h.kind)) AS only_here,
+       (SELECT count(*) FROM (SELECT oid, name FROM system_oids_there WHERE kind = h.kind
+                              EXCEPT SELECT oid, name FROM system_oids_here WHERE kind = h.kind)) AS only_there
+FROM (SELECT kind, count(*) AS objects FROM system_oids_here GROUP BY kind) h
+JOIN (SELECT kind, count(*) AS objects FROM system_oids_there GROUP BY kind) t ON t.kind = h.kind
+ORDER BY h.kind;
+----
+kind	same_count	listed	only_here	only_there
+collation	t	t	0	0
+proc	t	t	0	0
+relation	t	t	0	0
+type	t	t	0	0
+
+
+statement ok
+CREATE SCHEMA system_oids;
+
+
+statement ok
+CREATE TABLE system_oids.t(id INTEGER PRIMARY KEY, txt TEXT);
+
+
+statement ok
+CREATE INDEX system_oids_txt ON system_oids.t(txt);
+
+
+statement ok
+CREATE VIEW system_oids.v AS SELECT txt FROM system_oids.t;
+
+
+statement ok
+CREATE SEQUENCE system_oids.s;
+
+
+statement ok
+CREATE TYPE system_oids.mood AS ENUM ('sad', 'ok');
+
+
+statement ok
+CREATE FUNCTION system_oids.f(x INTEGER) RETURNS INTEGER LANGUAGE SQL AS 'SELECT x + 1';
+
+
+statement ok
+CREATE ROLE system_oids_role;
+
+
+query
+SELECT kind, count(*) AS objects, bool_and(oid >= 262144) AS user_range
+FROM (SELECT 'relation' AS kind, oid FROM pg_class WHERE relnamespace = 'system_oids'::regnamespace
+      UNION ALL SELECT 'type', oid FROM pg_type WHERE typnamespace = 'system_oids'::regnamespace
+      UNION ALL SELECT 'function', oid FROM pg_proc WHERE pronamespace = 'system_oids'::regnamespace
+      UNION ALL SELECT 'schema', 'system_oids'::regnamespace::oid
+      UNION ALL SELECT 'role', oid FROM pg_authid WHERE rolname = 'system_oids_role'
+      UNION ALL SELECT 'database', oid FROM pg_database WHERE datname = 'system_oids_other') o
+GROUP BY kind ORDER BY kind;
+----
+kind	objects	user_range
+database	1	t
+function	1	t
+relation	5	t
+role	1	t
+schema	1	t
+type	6	t
+
+
+statement ok
+DROP SCHEMA system_oids CASCADE;
+
+
+statement ok
+DROP ROLE system_oids_role;

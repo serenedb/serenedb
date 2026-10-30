@@ -1,0 +1,36 @@
+target_sources(
+    iresearch
+    PRIVATE
+        column_extract.cpp
+        compaction/adjacent_run_policy.cpp
+        compaction/merge_ticket.cpp
+        directory_reader.cpp
+        directory_reader_impl.cpp
+        doc_removal.cpp
+        docs_mask/chunks.cpp
+        document_mask.cpp
+        field_meta.cpp
+        file_names.cpp
+        flush_order.cpp
+        hit_batcher.cpp
+        index_reader.cpp
+        index_writer.cpp
+        inverter/columnar_flush.cpp
+        inverter/fields_inverter.cpp
+        iterators.cpp
+        merge/input_norms.cpp
+        merge/key_merge.cpp
+        merge/merge_order.cpp
+        merge/merge_plan.cpp
+        merge/merge_schedule.cpp
+        merge/merged_postings.cpp
+        merge/norms_unit.cpp
+        merge/postings_unit.cpp
+        merge/term_keys.cpp
+        merge/term_ranges.cpp
+        norm.cpp
+        segment_reader.cpp
+        segment_reader_impl.cpp
+        segment_writer.cpp
+        table_filter_iterator.cpp
+)

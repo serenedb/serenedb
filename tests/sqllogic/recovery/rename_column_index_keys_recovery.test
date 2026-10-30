@@ -1,0 +1,114 @@
+control substitution on
+
+statement ok
+CREATE TABLE rcik_inv (id INT, keep BOOLEAN, body TEXT);
+
+statement ok
+CREATE INDEX rcik_inv_idx ON rcik_inv USING inverted (id, body) WHERE keep;
+
+statement ok
+INSERT INTO rcik_inv VALUES (1, true, 'red'), (2, false, 'red');
+
+statement ok
+ALTER TABLE rcik_inv RENAME COLUMN keep TO kept;
+
+statement ok
+CREATE TABLE rcik_art (a INT, b INT);
+
+statement ok
+CREATE INDEX rcik_art_idx ON rcik_art (a) WHERE b > 5;
+
+statement ok
+INSERT INTO rcik_art VALUES (1, 10), (2, 1);
+
+statement ok
+ALTER TABLE rcik_art RENAME COLUMN b TO c;
+
+statement ok
+CREATE TABLE rcik_gen (id INT, a INT, v INT GENERATED ALWAYS AS (a * 10) VIRTUAL, body TEXT);
+
+statement ok
+CREATE INDEX rcik_gen_idx ON rcik_gen USING inverted (id, body, v);
+
+statement ok
+INSERT INTO rcik_gen (id, a, body) VALUES (1, 1, 'red'), (2, 2, 'blue');
+
+statement ok
+ALTER TABLE rcik_gen RENAME COLUMN v TO w;
+
+query
+SELECT index_name, expressions, regexp_extract(sql, ' WHERE (.*);$', 1) AS predicate FROM duckdb_indexes() WHERE database_name = current_database() AND index_name LIKE 'rcik%' ORDER BY index_name;
+----
+index_name	expressions	predicate
+rcik_art_idx	[a]	(c > 5)
+rcik_gen_idx	[id, body, w]	(empty)
+rcik_inv_idx	[id, body]	kept
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, kept FROM rcik_inv ORDER BY id;
+----
+id	kept
+1	t
+2	f
+
+connection after_crash
+statement ok
+INSERT INTO rcik_inv VALUES (3, true, 'red'), (4, false, 'red');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) rcik_inv;
+
+connection after_crash
+query
+SELECT id FROM rcik_inv_idx WHERE body @@ 'red' ORDER BY id;
+----
+id
+1
+3
+
+connection after_crash
+statement ok
+INSERT INTO rcik_art VALUES (3, 10);
+
+connection after_crash
+query
+SELECT a, c FROM rcik_art ORDER BY a;
+----
+a	c
+1	10
+2	1
+3	10
+
+connection after_crash
+statement ok
+INSERT INTO rcik_gen (id, a, body) VALUES (3, 3, 'red');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) rcik_gen;
+
+connection after_crash
+query
+SELECT id, w FROM rcik_gen_idx WHERE body @@ 'red' ORDER BY id;
+----
+id	w
+1	10
+3	30
+
+connection after_crash
+query
+SELECT index_name, expressions, regexp_extract(sql, ' WHERE (.*);$', 1) AS predicate FROM duckdb_indexes() WHERE database_name = current_database() AND index_name LIKE 'rcik%' ORDER BY index_name;
+----
+index_name	expressions	predicate
+rcik_art_idx	[a]	(c > 5)
+rcik_gen_idx	[id, body, w]	(empty)
+rcik_inv_idx	[id, body]	kept

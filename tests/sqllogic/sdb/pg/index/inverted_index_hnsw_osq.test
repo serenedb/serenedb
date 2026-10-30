@@ -1,5 +1,5 @@
 statement ok
-SET sdb_ann_oversample = 32
+SET sdb_ann_rescore_width = 100
 
 statement ok
 CREATE TABLE hnsw_osq (pk INTEGER PRIMARY KEY, emb FLOAT[8]);

@@ -113,7 +113,7 @@
 //    29-36% for WordTable and Swiss alike. Do not decide anything on it.
 // 4. boost::unordered_flat_set is the best table at every size and by far the
 //    steadiest (CV 0-4%, against absl's 16-36% at small n). It is not linked
-//    into iresearch-static today, so adopting it needs a CMake change; absl is
+//    into iresearch today, so adopting it needs a CMake change; absl is
 //    already there and is enormously better than the radix everywhere it
 //    counts.
 // 5. REFUTED: "the hash was the whole cost". The cheap folded-multiply arms are

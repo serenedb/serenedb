@@ -196,7 +196,7 @@ TEST_P(BufferedColumnTestCase, FlushEmpty) {
       cw.Append(0, v, 1);
       w.Commit(/*target_row=*/1);
     }
-    irs::ColReader r{dir, "flush_empty_typed", Db()};
+    irs::ColReader r{dir, "flush_empty_typed", Db(), irs::IOAdvice::SEQUENTIAL};
     EXPECT_TRUE(r.HasColumn(1));
     const auto* norm = r.NormColumn(3);
     ASSERT_NE(norm, nullptr);
@@ -228,7 +228,7 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
       }
       w.Commit(kRowCount);
     }
-    irs::ColReader r{dir, "dup_zero", Db()};
+    irs::ColReader r{dir, "dup_zero", Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.NormColumn(9);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kRowCount);
@@ -256,7 +256,7 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
       }
       w.Commit(kRowCount);
     }
-    irs::ColReader r{dir, "dup_value", Db()};
+    irs::ColReader r{dir, "dup_value", Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.NormColumn(9);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kRowCount);
@@ -290,7 +290,7 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
       }
       w.Commit(kRowCount);
     }
-    irs::ColReader r{dir, "dup_rg", Db()};
+    irs::ColReader r{dir, "dup_rg", Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.NormColumn(9);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RegionCount(), 3u);
@@ -328,7 +328,7 @@ TEST_P(BufferedColumnTestCase, RareLargeValues) {
     }
     w.Commit(kRowCount);
   }
-  irs::ColReader r{dir, "rare", Db()};
+  irs::ColReader r{dir, "rare", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.NormColumn(9);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RegionCount(), 3u);
@@ -362,7 +362,7 @@ TEST_P(BufferedColumnTestCase, RareLargeValuesEveryRowGroup) {
       }
       w.Commit(kRowCount);
     }
-    irs::ColReader r{dir, "rare_all", Db()};
+    irs::ColReader r{dir, "rare_all", Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.NormColumn(9);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RegionCount(),
@@ -395,7 +395,7 @@ TEST_P(BufferedColumnTestCase, CrowdedBucketOverflows) {
     }
     w.Commit(kRowCount);
   }
-  irs::ColReader r{dir, "crowded", Db()};
+  irs::ColReader r{dir, "crowded", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.NormColumn(9);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RegionCount(), 1u);
@@ -429,7 +429,7 @@ TEST_P(BufferedColumnTestCase, WideRegions) {
     }
     w.Commit(kRowCount);
   }
-  irs::ColReader r{dir, "wide", Db()};
+  irs::ColReader r{dir, "wide", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.NormColumn(9);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RegionCount(), 2u);
@@ -483,7 +483,7 @@ TEST_P(BufferedColumnTestCase, StreamedRegions) {
     nw.Finalize();
     w.Commit(expected.size());
   }
-  irs::ColReader r{dir, "streamed", Db()};
+  irs::ColReader r{dir, "streamed", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.NormColumn(9);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RegionCount(), 3u);

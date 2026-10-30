@@ -20,23 +20,21 @@
 
 #pragma once
 
-#include <absl/functional/any_invocable.h>
-
-#include <algorithm>
 #include <cstdint>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <limits>
 #include <memory>
 #include <span>
 #include <string>
 #include <vector>
 
 #include "connector/column_id.h"
+#include "connector/row_position.h"
 
 namespace duckdb {
 
@@ -45,38 +43,13 @@ class Catalog;
 }  // namespace duckdb
 namespace sdb::search {
 
-struct InlinePk {
-  uint64_t base;
-  uint64_t count;
-};
-
 // Per-search-table, per-transaction write buffer.
 //
-// One collection of rows and one vector of delete rowids, both filled in issue
-// order; nothing reaches iresearch until the buffer is flushed. `ops` records
-// only the things that are not rows -- deletes and truncates -- each carrying
-// the number of insert bands that precede it, so replay can interleave them
-// back into the row stream. Rows between two ops are implicit.
+// One collection of rows, the positions of the deletes since the last flush and
+// the removals the flushes made of the ones before; nothing reaches iresearch
+// until the buffer is flushed.
 struct LocalTableChangesEntry {
-  struct Op {
-    // Insert bands of `pk_segments` that precede this op. Rows the flush
-    // already promoted are gone from the buffer, so their ops sit at 0.
-    uint32_t band_watermark = 0;
-    // Rowids to remove. Empty for a TRUNCATE.
-    std::vector<int64_t> delete_rows;
-    std::vector<uint64_t> delete_positions;
-    bool truncate = false;
-    bool clears_shard = false;
-
-    bool IsTruncate() const noexcept { return truncate; }
-  };
-
-  using EmitFn = absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t) const>;
-  using ApplyFn = absl::AnyInvocable<void(Op&) const>;
-
-  // The buffer. `pk_segments` bands it one entry per Sink chunk.
   std::unique_ptr<duckdb::ColumnDataCollection> collection;
-  std::vector<InlinePk> pk_segments;
   // The shard's stored columns, in chunk order, and the catalog its sink is
   // built against -- both captured with the first buffered chunk so the rows
   // can be replayed into iresearch later, from a commit that never saw the
@@ -84,16 +57,17 @@ struct LocalTableChangesEntry {
   std::vector<connector::ColumnId> column_ids;
   duckdb::Catalog* catalog = nullptr;
 
-  std::vector<Op> ops;
-  size_t applied_ops = 0;
+  irs::DocRemovalBuilder positions;
+  std::vector<std::shared_ptr<const irs::DocRemoval>> removals;
+  bool truncate = false;
+  bool clears_shard = false;
   // Segments a bulk statement flushed, for the record to reference by name.
   std::vector<std::string> segments;
 
   void AppendInsertChunk(duckdb::BufferManager& bm,
                          const duckdb::vector<duckdb::LogicalType>& types,
                          std::span<const connector::ColumnId> cols,
-                         duckdb::Catalog& cat, duckdb::DataChunk& chunk,
-                         uint64_t pk_base) {
+                         duckdb::Catalog& cat, duckdb::DataChunk& chunk) {
     if (collection == nullptr) {
       collection = std::make_unique<duckdb::ColumnDataCollection>(bm, types);
     }
@@ -102,38 +76,41 @@ struct LocalTableChangesEntry {
       catalog = &cat;
     }
     collection->Append(chunk);
-    pk_segments.push_back({pk_base, chunk.size()});
   }
 
-  void AppendDeletes(std::span<const int64_t> rows,
-                     std::span<const uint64_t> positions) {
-    SDB_ENSURE(positions.size() == rows.size(),
-               "search table: ", positions.size(), " row positions for ",
-               rows.size(), " deleted rows");
-    if (rows.empty()) {
-      return;
+  void AppendDeletes(const duckdb::Vector& rows) {
+    auto places = rows.Values<int64_t>();
+    for (duckdb::idx_t i = 0; i < places.size();) {
+      const auto first = static_cast<uint64_t>(places.GetValueUnsafe(i));
+      auto end = first + 1;
+      while (++i < places.size() &&
+             static_cast<uint64_t>(places.GetValueUnsafe(i)) == end) {
+        ++end;
+      }
+      const auto doc = connector::RowPositionDoc(first);
+      positions.AddRange(connector::RowPositionIndex(first), doc,
+                         static_cast<irs::doc_id_t>(doc + (end - first)));
     }
-    auto& op = ops.emplace_back();
-    op.band_watermark = static_cast<uint32_t>(pk_segments.size());
-    op.delete_rows.assign(rows.begin(), rows.end());
-    op.delete_positions.assign(positions.begin(), positions.end());
+  }
+
+  const std::shared_ptr<const irs::DocRemoval>& FinishRemoval(
+    const irs::DirectoryReader& reader) {
+    SDB_ASSERT(!positions.Empty());
+    return removals.emplace_back(std::move(positions).Finish(reader));
   }
 
   // A truncate removes every row, including the ones this transaction has just
-  // written, so everything buffered before it is dead and is dropped here. That
-  // keeps the invariant a truncate is the FIRST op in the buffer -- which is
-  // what stops a segment ever preceding one, since replay adopts a segment
-  // whole and could not mask the part the truncate should have taken.
-  void AppendTruncate(bool clears_shard) {
+  // written, so everything buffered before it is dead and is dropped here. The
+  // record writes the truncate before anything else -- which is what stops a
+  // segment ever preceding one, since replay adopts a segment whole and could
+  // not mask the part the truncate should have taken.
+  void AppendTruncate(bool clears) {
     collection.reset();
-    pk_segments.clear();
-    ops.clear();
-    applied_ops = 0;
+    positions = {};
+    removals.clear();
     segments.clear();
-    auto& op = ops.emplace_back();
-    op.band_watermark = 0;
-    op.truncate = true;
-    op.clears_shard = clears_shard;
+    truncate = true;
+    clears_shard = clears;
   }
 
   void AppendSegments(std::vector<std::string>&& refs) {
@@ -159,55 +136,14 @@ struct LocalTableChangesEntry {
     return collection == nullptr ? 0 : collection->AllocationSize();
   }
 
-  void Visit(size_t first_op, const EmitFn& emit, const ApplyFn& apply) {
-    auto op = ops.begin() + first_op;
-    auto apply_until = [&](size_t band) {
-      for (; op != ops.end() && op->band_watermark <= band; ++op) {
-        apply(*op);
-      }
-    };
-    size_t band = 0;
-    uint64_t band_rows = 0;
-    if (collection != nullptr) {
-      for (auto& chunk : collection->Chunks()) {
-        for (duckdb::idx_t offset = 0; offset < chunk.size();) {
-          if (band_rows == 0) {
-            apply_until(band);
-          }
-          const auto& pk = pk_segments[band];
-          const auto end = std::min<duckdb::idx_t>(
-            chunk.size(), offset + pk.count - band_rows);
-          duckdb::DataChunk slice;
-          slice.InitializeEmpty(collection->Types());
-          slice.Slice(chunk, offset, end);
-          emit(slice, pk.base + band_rows);
-          band_rows += end - offset;
-          offset = end;
-          if (band_rows == pk.count) {
-            ++band;
-            band_rows = 0;
-          }
-        }
-      }
-    }
-    apply_until(std::numeric_limits<size_t>::max());
-  }
-
-  // Drops the buffered rows once a flush has taken ownership of them. The ops
-  // stay: the record has to carry them to commit. `applied_ops` keeps replay
-  // from feeding them a second time, so their stale watermarks are never read.
-  void ClearBufferedRows() {
-    collection.reset();
-    pk_segments.clear();
-  }
+  // Drops the buffered rows once a flush has taken ownership of them. The
+  // removals stay: the record has to carry them to commit.
+  void ClearBufferedRows() { collection.reset(); }
 
   bool ClearsShard() const noexcept {
-    if (ops.empty() || !ops.front().clears_shard) {
-      return false;
-    }
-    SDB_ASSERT(ops.size() == 1,
+    SDB_ASSERT(!clears_shard || (positions.Empty() && removals.empty()),
                "a clearing TRUNCATE must be the only op in its transaction");
-    return true;
+    return clears_shard;
   }
 };
 

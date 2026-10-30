@@ -11,7 +11,7 @@ An [Adaptive Radix Tree (ART)](https://db.in.tum.de/~leis/papers/ART.pdf) is Ser
 
 <DocCallout type="attention">
 
-ART indexes must currently be able to fit in memory during index creation. Avoid creating ART indexes if the index does not fit in memory during index creation.
+An ART index must fit in memory while it is created. Avoid creating an ART index that does not.
 
 </DocCallout>
 
@@ -21,37 +21,37 @@ ART indexes are persisted on disk.
 
 ## Limitations
 
-ART indexes create a secondary copy of the data in a second location. Maintaining that second copy complicates processing. Thus, certain limitations currently apply when it comes to modifying data that is also stored in secondary indexes.
+An ART index keeps a second copy of the data it indexes, so the following limitations apply when modifying that data.
 
 ### Constraint Checking in `UPDATE` Statements
 
-`UPDATE` statements on indexed columns and columns that cannot be updated in place are transformed into a `DELETE` of the original row followed by an `INSERT` of the updated row. This rewrite has performance implications, particularly for wide tables, as entire rows are rewritten instead of only the affected columns. A row whose indexed values the `UPDATE` leaves as they are is updated in place instead, unless the statement sets only indexed columns, sets a column that cannot be updated in place, sets a floating-point, `INTERVAL` or `TIME WITH TIME ZONE` indexed column, or is subject to a `CHECK` constraint over both an indexed and another column it sets. The same applies to the `UPDATE` of `MERGE INTO`, `INSERT ... ON CONFLICT DO UPDATE` and `INSERT OR REPLACE`.
+`UPDATE` statements on indexed columns and columns that cannot be updated in place are transformed into a `DELETE` of the original row followed by an `INSERT` of the updated row. This rewrite has performance implications, particularly for wide tables, as entire rows are rewritten instead of only the affected columns. A row whose indexed values the `UPDATE` leaves as they are is updated in place instead, unless the statement sets only indexed columns, sets a column that cannot be updated in place, or sets a floating-point, `INTERVAL` or `TIME WITH TIME ZONE` indexed column. A `CHECK` constraint over several columns makes every `UPDATE` of the table set all of them, each to itself when the statement doesn't set it. So when a `CHECK` spans an indexed and a non-indexed column, every `UPDATE` of the table deletes and re-inserts each row it touches, even one that sets only columns outside the constraint; a `CHECK` over indexed columns only keeps the in-place path. The same applies to the `UPDATE` of `MERGE INTO`, `INSERT ... ON CONFLICT DO UPDATE` and `INSERT OR REPLACE`.
 
 Additionally, it causes the following constraint-checking limitation of `UPDATE` statements. The same limitation exists in other DBMSs, like PostgreSQL.
 
-In the example below, note how the number of rows exceeds the standard vector size, which is 2048 by default. The `UPDATE` statement is rewritten into a `DELETE`, followed by an `INSERT`. This rewrite happens per chunk of data (2048 rows) moving through the processing pipeline. When updating `i = 2047` to `i = 2048`, we do not yet know that 2048 becomes 2049, and so forth. That is because we have not yet seen that chunk. Thus, we throw a constraint violation.
+In the example below, the table has more than 2048 rows, the number of rows an `UPDATE` processes at a time. The `UPDATE` is rewritten into a `DELETE` followed by an `INSERT`, 2048 rows at a time: when it sets `i = 2047` to `2048`, the row that holds `2048` comes in the next 2048 rows and has not been changed to `2049` yet, so the `UPDATE` fails with a constraint violation.
 
 <SqlLogicTest id="sql/indexes/art/example_001" />
 
-A workaround is to split the `UPDATE` into a `DELETE ... RETURNING ...` followed by an `INSERT`, with some additional logic to (temporarily) store the result of the `DELETE`. All statements should be run inside a transaction via `BEGIN`, and eventually `COMMIT`.
+A workaround is to split the `UPDATE` into a `DELETE` followed by an `INSERT`, in one transaction: copy the rows to a temporary table, delete them from the table, insert them back with their new values, and drop the temporary table.
 
 <SqlLogicTest id="sql/indexes/art/example_002" />
 
-In other clients, you might be able to fetch the result of `DELETE ... RETURNING ...`. Then, you can use that result in a subsequent `INSERT ...` statement.
+A client can do the same without a temporary table: run `DELETE ... RETURNING *` and insert the rows it returns, with their new values, in the same transaction.
 
 ### Over-Eager Constraint Checking in Foreign Keys
 
 This limitation occurs if you meet the following conditions:
 
 -   A table has a `FOREIGN KEY` constraint.
--   There is an `UPDATE` on a composite payload column (e.g., a `LIST` or a `STRUCT`) of the corresponding `PRIMARY KEY` table, which is rewritten into a `DELETE` followed by an `INSERT`.
+-   An `UPDATE` of the corresponding `PRIMARY KEY` table deletes and re-inserts the rows it touches, as described [above](#constraint-checking-in-update-statements). One that sets a payload column of type `LIST`, `ARRAY`, `MAP`, `UNION`, `VARIANT` or `GEOMETRY`, or a `STRUCT` that contains one, always does.
 -   The to-be-deleted row exists in the foreign key table.
 
 If these hold, you'll encounter an unexpected constraint violation:
 
 <SqlLogicTest id="sql/indexes/art/example_003" />
 
-The reason for this is that SereneDB does not yet support “looking ahead”. During the `INSERT`, it is unaware it will reinsert the foreign key value as part of the `UPDATE` rewrite.
+SereneDB does not look ahead: when the `DELETE` removes the row, it does not know that the `INSERT` of the same `UPDATE` puts the key back.
 
 ## See also
 

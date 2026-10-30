@@ -220,10 +220,7 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
   SetLeafScorer(range, column_info);
   auto* options = range.mutable_options();
   auto& rng = options->range;
-  auto cast = bound_val->type() == column_info.logical_type
-                ? *bound_val
-                : bound_val->DefaultCastAs(column_info.logical_type);
-  WithNumericValue(col_type, cast, [&](auto v) {
+  WithNumericValue(col_type, *bound_val, [&](auto v) {
     if (is_lower) {
       irs::SetGranularNumericTerm(rng.min, v);
       rng.min_type = bound_type;
@@ -340,10 +337,7 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
     auto emit_bound = [&](const duckdb::Value& v,
                           irs::ByGranularRangeOptions::terms& boundary,
                           irs::BoundType& bt, bool incl) {
-      auto cast = v.type() == column_info.logical_type
-                    ? v
-                    : v.DefaultCastAs(column_info.logical_type);
-      WithNumericValue(col_type, cast, [&](auto val) {
+      WithNumericValue(col_type, v, [&](auto val) {
         irs::SetGranularNumericTerm(boundary, val);
       });
       bt = incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;

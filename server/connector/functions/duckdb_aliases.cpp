@@ -139,19 +139,7 @@ void AliasTableFunctions(duckdb::ExtensionLoader& loader) {
 
 void AliasScalarFunctions(duckdb::ExtensionLoader& loader) {
   for (const auto name : kScalarFunctions) {
-    auto entry = loader.TryGetFunction(duckdb::Identifier{name});
-    if (!entry) {
-      continue;
-    }
-    auto& source = entry->Cast<duckdb::ScalarFunctionCatalogEntry>();
-    auto functions = source.functions;
-    functions.SetName(AliasFor(name));
-
-    duckdb::CreateScalarFunctionInfo info{std::move(functions)};
-    info.descriptions = source.descriptions;
-    info.alias_of = source.name;
-    info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-    loader.RegisterFunction(std::move(info));
+    RegisterScalarAlias(loader, name, AliasNameFor(name));
   }
 }
 
@@ -202,6 +190,19 @@ void AliasViews(duckdb::DatabaseInstance& db) {
 }
 
 }  // namespace
+
+void RegisterScalarAlias(duckdb::ExtensionLoader& loader,
+                         std::string_view source_name, std::string_view alias) {
+  auto& source = loader.GetFunction(duckdb::Identifier{source_name});
+  auto functions = source.functions;
+  functions.SetName(duckdb::Identifier{alias});
+
+  duckdb::CreateScalarFunctionInfo info{std::move(functions)};
+  info.descriptions = source.descriptions;
+  info.alias_of = source.name;
+  info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+  loader.RegisterFunction(std::move(info));
+}
 
 void RegisterDuckDBAliases(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};

@@ -50,8 +50,11 @@ class CompoundFieldIterator final : public BasicTermReader {
  public:
   static constexpr const size_t kProgressStepFields = size_t{1};
 
-  explicit CompoundFieldIterator(size_t size, const MergeProgress& progress)
-    : _term_itr(progress), _progress(progress, kProgressStepFields) {
+  CompoundFieldIterator(size_t size, const MergeProgress& progress,
+                        const IndexFieldOptions* field_options)
+    : _term_itr(progress),
+      _progress(progress, kProgressStepFields),
+      _field_options{field_options} {
     _field_iterators.reserve(size);
     _field_iterator_mask.reserve(size);
   }
@@ -97,6 +100,7 @@ class CompoundFieldIterator final : public BasicTermReader {
   std::vector<FieldIteratorImpl> _field_iterators;
   mutable CompoundTermIterator<Postings> _term_itr;
   ProgressTracker _progress;
+  const IndexFieldOptions* _field_options;
 };
 
 template<typename Postings>
@@ -127,6 +131,11 @@ bool CompoundFieldIterator<Postings>::Next() {
 
   for (size_t i = 0, count = _field_iterators.size(); i != count; ++i) {
     auto& field_itr = _field_iterators[i];
+    while (_field_options && field_itr.pos < field_itr.ids.size() &&
+           _field_options->GetFieldKind(field_itr.ids[field_itr.pos]) !=
+             FieldKind::Index) {
+      ++field_itr.pos;
+    }
     if (field_itr.pos >= field_itr.ids.size()) {
       continue;
     }
@@ -258,16 +267,20 @@ struct PostingsMerger::Impl {
   using Fields = std::variant<CompoundFieldIterator<CompoundPostings>,
                               CompoundFieldIterator<SortedPostings>>;
 
-  Impl(size_t inputs, const MergeProgress& progress, bool sorted)
-    : fields{sorted ? Fields{std::in_place_index<1>, inputs, progress}
-                    : Fields{std::in_place_index<0>, inputs, progress}} {}
+  Impl(size_t inputs, const MergeProgress& progress, bool sorted,
+       const IndexFieldOptions* field_options)
+    : fields{
+        sorted
+          ? Fields{std::in_place_index<1>, inputs, progress, field_options}
+          : Fields{std::in_place_index<0>, inputs, progress, field_options}} {}
 
   Fields fields;
 };
 
 PostingsMerger::PostingsMerger(size_t inputs, const MergeProgress& progress,
-                               bool sorted)
-  : _impl{std::make_unique<Impl>(inputs, progress, sorted)} {}
+                               bool sorted,
+                               const IndexFieldOptions* field_options)
+  : _impl{std::make_unique<Impl>(inputs, progress, sorted, field_options)} {}
 
 PostingsMerger::~PostingsMerger() = default;
 

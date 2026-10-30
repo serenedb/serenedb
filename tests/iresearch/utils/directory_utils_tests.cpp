@@ -161,7 +161,7 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
     file1->WriteByte(42);
     file1->Flush();
 
-    auto file2 = track_dir.open(file, irs::IOAdvice::NORMAL);
+    auto file2 = track_dir.open(file, irs::IOAdvice::RANDOM);
 
     ASSERT_FALSE(!file2);
     // does nothing in memory_directory, but adds line coverage
@@ -196,7 +196,7 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
     irs::RefTrackingDirectory track_dir(dir);
     auto file1 = dir.create("abc");
     ASSERT_FALSE(!file1);
-    auto file2 = track_dir.open("abc", irs::IOAdvice::NORMAL);
+    auto file2 = track_dir.open("abc", irs::IOAdvice::RANDOM);
     ASSERT_FALSE(!file2);
 
     ASSERT_EQ(0, track_dir.GetRefs().size());
@@ -208,7 +208,7 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
     irs::RefTrackingDirectory track_dir(dir, true);
     auto file1 = dir.create("abc");
     ASSERT_FALSE(!file1);
-    auto file2 = track_dir.open("abc", irs::IOAdvice::NORMAL);
+    auto file2 = track_dir.open("abc", irs::IOAdvice::RANDOM);
     ASSERT_FALSE(!file2);
 
     ASSERT_EQ(1, track_dir.GetRefs().size());
@@ -224,12 +224,12 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
     irs::RefTrackingDirectory track_dir(callback_dir, true);
     auto file1 = dir.create("abc");
     ASSERT_NE(nullptr, file1);
-    auto file2 = track_dir.open("abc", irs::IOAdvice::NORMAL);
+    auto file2 = track_dir.open("abc", irs::IOAdvice::RANDOM);
     ASSERT_NE(nullptr, file2);
 
     ASSERT_EQ(1, track_dir.GetRefs().size());
 
-    auto file3 = dir.open("abc", irs::IOAdvice::NORMAL);
+    auto file3 = dir.open("abc", irs::IOAdvice::RANDOM);
     ASSERT_NE(nullptr, file3);
   }
 
@@ -293,7 +293,7 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
   {
     irs::RefTrackingDirectory track_dir(error_dir, true);
 
-    ASSERT_SQL_ERROR(track_dir.open("abc", irs::IOAdvice::NORMAL),
+    ASSERT_SQL_ERROR(track_dir.open("abc", irs::IOAdvice::RANDOM),
                      ERRCODE_IO_ERROR);
 
     ASSERT_TRUE(track_dir.GetRefs().empty());

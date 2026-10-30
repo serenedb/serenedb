@@ -20,15 +20,29 @@
 
 #include "connector/functions/string.h"
 
+#include <absl/algorithm/container.h>
+#include <absl/crc/crc32c.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_format.h>
 #include <fast_float/fast_float.h>
+#include <libpq-fe.h>
+#include <openssl/evp.h>
 #include <re2/re2.h>
+#include <simdutf.h>
+#include <zlib.h>
 
+#include <array>
+#include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
+#include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types/blob.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/function/scalar/regexp.hpp>
 #include <duckdb/function/scalar/string_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -36,9 +50,11 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 
-#include "connector/pg_logical_types.h"
+#include "connector/common.h"
+#include "pg/catalog/oids.h"
 #include "pg/serialize.h"
 #include "pg/sql_utils.h"
+#include "pg/types/logical.h"
 
 namespace sdb::connector {
 namespace {
@@ -215,35 +231,132 @@ void SetBitFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// convert_from(bytea, encoding) -> text -- ported from PgConvertFrom
+struct EncodingName {
+  std::string name;
+  int32_t encoding = -1;
+};
+
+int32_t Encoding(EncodingName& last, duckdb::string_t name,
+                 std::string_view role) {
+  if (last.encoding < 0 || AsView(name) != last.name) {
+    last.name = AsView(name);
+    last.encoding = pg_char_to_encoding(last.name.c_str());
+    if (last.encoding < 0) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("invalid ", role, " encoding name \"", last.name, "\""));
+    }
+  }
+  return last.encoding;
+}
+
+[[noreturn]] void ThrowNoConversion(int32_t from, int32_t to) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+                  ERR_MSG("default conversion function for encoding \"",
+                          pg_encoding_to_char(from), "\" to \"",
+                          pg_encoding_to_char(to), "\" does not exist"));
+}
+
+std::string ByteSequence(std::string_view bytes, size_t length) {
+  std::string sequence;
+  for (size_t i = 0; i != std::min({length, bytes.size(), size_t{8}}); ++i) {
+    absl::StrAppendFormat(&sequence, "%s0x%02x", i == 0 ? "" : " ",
+                          static_cast<unsigned char>(bytes[i]));
+  }
+  return sequence;
+}
+
+size_t Utf8SequenceLength(char lead) {
+  return std::max<size_t>(
+    irs::utf8_utils::LengthFromChar8<0>(static_cast<irs::byte_type>(lead)), 1);
+}
+
+void CheckEncoding(int32_t encoding, std::string_view bytes) {
+  auto end = std::min(bytes.find('\0'), bytes.size());
+  size_t length = 1;
+  if (encoding == pg::kUtf8Encoding) {
+    if (const auto checked =
+          simdutf::validate_utf8_with_errors(bytes.data(), end);
+        checked.error != simdutf::error_code::SUCCESS) {
+      end = checked.count;
+      length = Utf8SequenceLength(bytes[end]);
+    }
+  }
+  if (end != bytes.size()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_CHARACTER_NOT_IN_REPERTOIRE),
+                    ERR_MSG("invalid byte sequence for encoding \"",
+                            pg_encoding_to_char(encoding),
+                            "\": ", ByteSequence(bytes.substr(end), length)));
+  }
+}
+
 void ConvertFromFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                          duckdb::Vector& result) {
+  EncodingName last;
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t data, duckdb::string_t encoding) -> duckdb::string_t {
-      std::string_view enc(encoding.GetData(), encoding.GetSize());
-      if (enc != "UTF8" && enc != "UTF-8" && enc != "utf8" && enc != "utf-8") {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        ERR_MSG("conversion from ", enc, " is not supported"));
+    [&](duckdb::string_t data, duckdb::string_t name) -> duckdb::string_t {
+      const auto encoding = Encoding(last, name, "source");
+      const auto bytes = AsView(data);
+      switch (encoding) {
+        case pg::kSqlAsciiEncoding:
+          CheckEncoding(encoding, bytes);
+          [[fallthrough]];
+        case pg::kUtf8Encoding:
+          CheckEncoding(pg::kUtf8Encoding, bytes);
+          return duckdb::StringVector::AddString(result, data);
+        case pg::kLatin1Encoding: {
+          CheckEncoding(encoding, bytes);
+          auto text = duckdb::StringVector::EmptyString(
+            result,
+            simdutf::utf8_length_from_latin1(bytes.data(), bytes.size()));
+          const auto written = simdutf::convert_latin1_to_utf8(
+            bytes.data(), bytes.size(), text.GetDataWriteable());
+          SDB_ASSERT(written == text.GetSize());
+          text.Finalize();
+          return text;
+        }
+        default:
+          ThrowNoConversion(encoding, pg::kUtf8Encoding);
       }
-      return duckdb::StringVector::AddString(result, data);
     });
 }
 
-// convert_to(text, encoding) -> bytea -- ported from PgConvertTo
 void ConvertToFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                        duckdb::Vector& result) {
+  EncodingName last;
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t data, duckdb::string_t encoding) -> duckdb::string_t {
-      std::string_view enc(encoding.GetData(), encoding.GetSize());
-      if (enc != "UTF8" && enc != "UTF-8" && enc != "utf8" && enc != "utf-8") {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        ERR_MSG("conversion to ", enc, " is not supported"));
+    [&](duckdb::string_t data, duckdb::string_t name) -> duckdb::string_t {
+      const auto encoding = Encoding(last, name, "destination");
+      switch (encoding) {
+        case pg::kSqlAsciiEncoding:
+        case pg::kUtf8Encoding:
+          return duckdb::StringVector::AddStringOrBlob(result, data);
+        case pg::kLatin1Encoding: {
+          const auto text = AsView(data);
+          auto bytes = duckdb::StringVector::EmptyString(
+            result, simdutf::latin1_length_from_utf8(text.data(), text.size()));
+          if (const auto converted =
+                simdutf::convert_utf8_to_latin1_with_errors(
+                  text.data(), text.size(), bytes.GetDataWriteable());
+              converted.error != simdutf::error_code::SUCCESS) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_UNTRANSLATABLE_CHARACTER),
+              ERR_MSG("character with byte sequence ",
+                      ByteSequence(text.substr(converted.count),
+                                   Utf8SequenceLength(text[converted.count])),
+                      " in encoding \"UTF8\" has no equivalent in encoding "
+                      "\"LATIN1\""));
+          }
+          bytes.Finalize();
+          return bytes;
+        }
+        default:
+          ThrowNoConversion(pg::kUtf8Encoding, encoding);
       }
-      return duckdb::StringVector::AddStringOrBlob(result, data);
     });
 }
 
@@ -262,12 +375,13 @@ void QuoteIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
       const std::string_view str(input.GetData(), input.GetSize());
-      const auto quoted = pg::QuoteIdentifier(str);
-      if (quoted == str) {
+      if (!pg::RequiresQuotes(str)) {
         return input;
       }
-      return duckdb::StringVector::AddString(result, quoted);
+      return duckdb::StringVector::AddString(
+        result, duckdb::KeywordHelper::WriteQuotedAndEscaped(str, '"'));
     });
+  duckdb::StringVector::AddHeapReference(result, args.data[0]);
 }
 
 // octet_length(text) -> int: byte length (DuckDB has it for BLOB/BIT, not
@@ -695,15 +809,17 @@ void LikeEscapeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t pattern, duckdb::string_t escape) -> duckdb::string_t {
-      std::string_view esc_sv{escape.GetData(), escape.GetSize()};
-      if (esc_sv.size() != 1) {
+      const auto escape_text = AsView(escape);
+      if (!escape_text.empty() &&
+          irs::utf8_utils::LengthFromChar8<1>(static_cast<irs::byte_type>(
+            escape_text.front())) != escape_text.size()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_ESCAPE_SEQUENCE),
-          ERR_MSG("invalid escape string: must be one character"));
+          ERR_MSG("invalid escape string"),
+          ERR_HINT("Escape string must be empty or one character."));
       }
-      auto out =
-        LikeEscapePattern({pattern.GetData(), pattern.GetSize()}, esc_sv[0]);
-      return duckdb::StringVector::AddString(result, out);
+      return duckdb::StringVector::AddString(
+        result, LikeEscapePattern(AsView(pattern), escape_text));
     });
 }
 
@@ -911,6 +1027,19 @@ void RegexpInstrFunction(duckdb::DataChunk& args,
   }
 }
 
+bool IsCharBoundary(const char* it, const char* end) {
+  return it == end || (static_cast<irs::byte_type>(*it) & 0xC0) != 0x80;
+}
+
+void VerifyWholeCharacters(re2::StringPiece part, re2::StringPiece input) {
+  const auto* end = input.data() + input.size();
+  if (IsCharBoundary(part.data(), end) &&
+      IsCharBoundary(part.data() + part.size(), end)) [[likely]] {
+    return;
+  }
+  duckdb::regexp_util::VerifyUTF8Result(part.data(), part.size());
+}
+
 // regexp_match(text, pattern) -> text[]
 // Returns capture groups from the first match. If no capture groups,
 // returns the full match. Returns NULL if no match.
@@ -927,6 +1056,7 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
   auto local = duckdb::ExecuteFunctionState::GetFunctionState(state);
   re2::RE2* compiled = local ? &local->Cast<RegexpLocalState>().re : nullptr;
   const auto row_options = OwnedRegexOptions();
+  std::vector<re2::StringPiece> groups;
 
   for (duckdb::idx_t row = 0; row < count; row++) {
     auto text_value = texts[row];
@@ -960,6 +1090,7 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
         rows.WriteNull();
         continue;
       }
+      VerifyWholeCharacters(match, input);
       for (auto& child : rows.WriteList(1)) {
         child.WriteValue(
           duckdb::string_t{match.data(), static_cast<uint32_t>(match.size())});
@@ -967,7 +1098,7 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
       continue;
     }
 
-    std::vector<re2::StringPiece> groups(num_groups + 1);
+    groups.resize(static_cast<size_t>(num_groups) + 1);
     if (!re->Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED,
                    groups.data(), num_groups + 1)) {
       rows.WriteNull();
@@ -977,6 +1108,7 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
     int group = 1;
     for (auto& child : rows.WriteList(static_cast<duckdb::idx_t>(num_groups))) {
       if (groups[group].data()) {
+        VerifyWholeCharacters(groups[group], input);
         child.WriteValue(duckdb::string_t{
           groups[group].data(), static_cast<uint32_t>(groups[group].size())});
       } else {
@@ -987,27 +1119,295 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
   }
 }
 
+std::string_view TrimBytes(std::string_view bytes, std::string_view set) {
+  if (set.empty()) {
+    return bytes;
+  }
+  bytes.remove_prefix(std::min(bytes.find_first_not_of(set), bytes.size()));
+  return bytes.substr(0, bytes.find_last_not_of(set) + 1);
+}
+
+void ByteaTrimFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                       duckdb::Vector& result) {
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
+                                  duckdb::string_t>(
+    args.data[0], args.data[1], result, args.size(),
+    [&](duckdb::string_t data, duckdb::string_t set) {
+      const auto bytes = TrimBytes(AsView(data), AsView(set));
+      return duckdb::StringVector::AddStringOrBlob(result, bytes.data(),
+                                                   bytes.size());
+    });
+}
+
+void Crc32Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                   duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
+    args.data[0], result, args.size(), [](duckdb::string_t data) {
+      return static_cast<int64_t>(crc32_z(
+        0, reinterpret_cast<const Bytef*>(data.GetData()), data.GetSize()));
+    });
+}
+
+void Crc32cFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                    duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
+    args.data[0], result, args.size(), [](duckdb::string_t data) {
+      return static_cast<int64_t>(
+        static_cast<uint32_t>(absl::ComputeCrc32c(AsView(data))));
+    });
+}
+
+template<const EVP_MD* (*Digest)()>
+void ShaFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                 duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
+    args.data[0], result, args.size(), [&](duckdb::string_t data) {
+      std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
+      unsigned int size = 0;
+      if (EVP_Digest(data.GetData(), data.GetSize(), digest.data(), &size,
+                     Digest(), nullptr) != 1) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INTERNAL_ERROR),
+          ERR_MSG("could not compute ", EVP_MD_get0_name(Digest()), " hash"));
+      }
+      return duckdb::StringVector::AddStringOrBlob(
+        result, reinterpret_cast<const char*>(digest.data()), size);
+    });
+}
+
+bool IsIdentStart(unsigned char c) {
+  return c == '_' || absl::ascii_isalpha(c) || c >= 0x80;
+}
+
+bool IsIdentContinuation(unsigned char c) {
+  return absl::ascii_isdigit(c) || c == '$' || IsIdentStart(c);
+}
+
+[[noreturn]] void ThrowInvalidIdentifier(std::string_view text,
+                                         std::string_view detail) {
+  if (detail.empty()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("string is not a valid identifier: \"", text, "\""));
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("string is not a valid identifier: \"", text, "\""),
+                  ERR_DETAIL(detail));
+}
+
+size_t ParseIdent(std::string_view text, bool strict,
+                  std::vector<std::string>& parts) {
+  size_t count = 0;
+  const auto next_part = [&]() -> std::string& {
+    if (count == parts.size()) {
+      parts.emplace_back();
+    }
+    return parts[count++];
+  };
+  duckdb::idx_t pos = 0;
+  const auto skip_spaces = [&] {
+    while (pos < text.size() && absl::ascii_isspace(text[pos])) {
+      ++pos;
+    }
+  };
+  skip_spaces();
+  bool after_dot = false;
+  while (true) {
+    const auto c = pos < text.size() ? text[pos] : '\0';
+    if (c == '"') {
+      auto& part = next_part();
+      if (!duckdb::StringUtil::TryParseQuotedString(text, pos, part)) {
+        ThrowInvalidIdentifier(text, "String has unclosed double quotes.");
+      }
+      if (part.empty()) {
+        ThrowInvalidIdentifier(text, "Quoted identifier must not be empty.");
+      }
+    } else if (IsIdentStart(static_cast<unsigned char>(c))) {
+      const auto start = pos;
+      while (pos < text.size() &&
+             IsIdentContinuation(static_cast<unsigned char>(text[pos]))) {
+        ++pos;
+      }
+      next_part() = absl::AsciiStrToLower(text.substr(start, pos - start));
+    } else if (c == '.') {
+      ThrowInvalidIdentifier(text, "No valid identifier before \".\".");
+    } else if (after_dot) {
+      ThrowInvalidIdentifier(text, "No valid identifier after \".\".");
+    } else {
+      ThrowInvalidIdentifier(text, {});
+    }
+    skip_spaces();
+    if (pos == text.size()) {
+      break;
+    }
+    if (text[pos] != '.') {
+      if (strict) {
+        ThrowInvalidIdentifier(text, {});
+      }
+      break;
+    }
+    after_dot = true;
+    ++pos;
+    skip_spaces();
+  }
+  return count;
+}
+
+void ParseIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                        duckdb::Vector& result) {
+  const auto count = args.size();
+  auto texts = args.data[0].Values<duckdb::string_t>();
+  std::optional<duckdb::VectorIterator<bool>> stricts;
+  if (args.ColumnCount() > 1) {
+    stricts.emplace(args.data[1]);
+  }
+  auto rows =
+    duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(result,
+                                                                         count);
+  std::vector<std::string> parts;
+  for (duckdb::idx_t row = 0; row < count; ++row) {
+    const auto text = texts[row];
+    if (!text.IsValid() || (stricts && !(*stricts)[row].IsValid())) {
+      rows.WriteNull();
+      continue;
+    }
+    const auto size = ParseIdent(AsView(text.GetValue()),
+                                 !stricts || (*stricts)[row].GetValue(), parts);
+    size_t i = 0;
+    for (auto& child : rows.WriteList(size)) {
+      const auto& part = parts[i++];
+      child.WriteValue(
+        duckdb::string_t{part.data(), static_cast<uint32_t>(part.size())});
+    }
+  }
+}
+
+std::optional<uint32_t> UnicodeEscape(std::string_view escape,
+                                      std::string_view tag, size_t digits) {
+  if (!escape.starts_with(tag) || escape.size() < tag.size() + digits) {
+    return std::nullopt;
+  }
+  const auto* begin = escape.data() + tag.size();
+  uint32_t code = 0;
+  const auto [end, error] =
+    fast_float::from_chars(begin, begin + digits, code, 16);
+  if (error != std::errc{} || end != begin + digits) {
+    return std::nullopt;
+  }
+  return code;
+}
+
+[[noreturn]] void ThrowInvalidSurrogatePair() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                  ERR_MSG("invalid Unicode surrogate pair"));
+}
+
+void Unistr(std::string_view text, std::string& out) {
+  uint32_t pair_first = 0;
+  const auto append = [&](uint32_t code) {
+    if (code == 0 || code > 0x10FFFF) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("invalid Unicode code point: ", absl::StrFormat("%04X", code)));
+    }
+    const bool second = code >= 0xDC00 && code <= 0xDFFF;
+    if (pair_first) {
+      if (!second) {
+        ThrowInvalidSurrogatePair();
+      }
+      code = ((pair_first & 0x3FF) << 10) + 0x10000 + (code & 0x3FF);
+      pair_first = 0;
+    } else if (second) {
+      ThrowInvalidSurrogatePair();
+    }
+    if (code >= 0xD800 && code <= 0xDBFF) {
+      pair_first = code;
+      return;
+    }
+    std::array<irs::byte_type, irs::utf8_utils::kMaxCharSize> bytes{};
+    const auto size = irs::utf8_utils::FromChar32(code, bytes.data());
+    out.append(reinterpret_cast<const char*>(bytes.data()), size);
+  };
+  for (size_t pos = 0; pos < text.size();) {
+    if (text[pos] != '\\') {
+      if (pair_first) {
+        ThrowInvalidSurrogatePair();
+      }
+      out.push_back(text[pos++]);
+      continue;
+    }
+    const auto escape = text.substr(pos + 1);
+    if (escape.starts_with('\\')) {
+      if (pair_first) {
+        ThrowInvalidSurrogatePair();
+      }
+      out.push_back('\\');
+      pos += 2;
+    } else if (const auto code = UnicodeEscape(escape, "", 4)) {
+      append(*code);
+      pos += 5;
+    } else if (const auto code = UnicodeEscape(escape, "u", 4)) {
+      append(*code);
+      pos += 6;
+    } else if (const auto code = UnicodeEscape(escape, "+", 6)) {
+      append(*code);
+      pos += 8;
+    } else if (const auto code = UnicodeEscape(escape, "U", 8)) {
+      append(*code);
+      pos += 10;
+    } else {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG("invalid Unicode escape"),
+                      ERR_HINT("Unicode escapes must be \\XXXX, \\+XXXXXX, "
+                               "\\uXXXX, or \\UXXXXXXXX."));
+    }
+  }
+  if (pair_first) {
+    ThrowInvalidSurrogatePair();
+  }
+}
+
+void UnistrFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                    duckdb::Vector& result) {
+  std::string out;
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
+    args.data[0], result, args.size(), [&](duckdb::string_t text) {
+      out.clear();
+      Unistr(AsView(text), out);
+      return duckdb::StringVector::AddString(result, out);
+    });
+}
+
 }  // namespace
 
-std::string LikeEscapePattern(std::string_view pattern, char escape_char) {
-  if (escape_char == '\\') {
+std::string LikeEscapePattern(std::string_view pattern,
+                              std::string_view escape) {
+  if (escape == "\\") {
     return std::string{pattern};
   }
   std::string result;
   result.reserve(pattern.size());
   bool afterescape = false;
-  for (char c : pattern) {
-    if (c == escape_char && !afterescape) {
+  for (size_t i = 0; i != pattern.size();) {
+    if (!afterescape && !escape.empty() && pattern[i] == escape.front() &&
+        pattern.substr(i).starts_with(escape)) {
       result += '\\';
+      i += escape.size();
       afterescape = true;
       continue;
-    } else if (c == '\\' && !afterescape) {
+    }
+    if (pattern[i] == '\\' && !afterescape) {
       result += '\\';
     }
-    result += c;
+    result += pattern[i++];
     afterescape = false;
   }
   return result;
+}
+
+bool LikePatternEndsWithEscape(std::string_view pattern) {
+  const auto escapes_begin = pattern.find_last_not_of('\\') + 1;
+  return (pattern.size() - escapes_begin) % 2 == 1;
 }
 
 void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
@@ -1065,18 +1465,22 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   }
 
   // encode(bytea, text) -> text
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  duckdb::ScalarFunction encode{
     "encode",
     {duckdb::LogicalType::BLOB, duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::VARCHAR,
-    EncodeFunction});
+    EncodeFunction};
+  encode.SetFallible();
+  loader.RegisterFunction(std::move(encode));
 
   // decode(text, text) -> bytea
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  duckdb::ScalarFunction decode{
     "decode",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::BLOB,
-    DecodeFunction});
+    DecodeFunction};
+  decode.SetFallible();
+  loader.RegisterFunction(std::move(decode));
 
   // octet_length(varchar) -> bigint
   loader.RegisterFunction(duckdb::ScalarFunction{"octet_length",
@@ -1140,19 +1544,22 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BLOB,
     SetBitFunction});
 
-  // convert_from(bytea, encoding) -> text
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "convert_from",
-    {duckdb::LogicalType::BLOB, duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::VARCHAR,
-    ConvertFromFunction});
-
-  // convert_to(text, encoding) -> bytea
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "convert_to",
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::BLOB,
-    ConvertToFunction});
+  {
+    duckdb::ScalarFunction convert_from{
+      "convert_from",
+      {duckdb::LogicalType::BLOB, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::VARCHAR,
+      ConvertFromFunction};
+    convert_from.SetFallible();
+    loader.RegisterFunction(convert_from);
+    duckdb::ScalarFunction convert_to{
+      "convert_to",
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::BLOB,
+      ConvertToFunction};
+    convert_to.SetFallible();
+    loader.RegisterFunction(convert_to);
+  }
 
   // pg_client_encoding() -> name
   {
@@ -1202,6 +1609,7 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       nullptr,
       RegexpInitLocalState};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    func.SetFallible();
     loader.RegisterFunction(func);
   }
 
@@ -1210,15 +1618,17 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   // regexp_instr(text, pattern) / regexp_instr(text, pattern, start, n)
   {
     duckdb::ScalarFunctionSet regexp_instr_set("regexp_instr");
-    regexp_instr_set.AddFunction(duckdb::ScalarFunction{
+    duckdb::ScalarFunction instr{
       "regexp_instr",
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BIGINT,
       RegexpInstrFunction,
       RegexpInstrBind,
       nullptr,
-      RegexpInitLocalState});
-    regexp_instr_set.AddFunction(duckdb::ScalarFunction{
+      RegexpInitLocalState};
+    instr.SetFallible();
+    regexp_instr_set.AddFunction(instr);
+    duckdb::ScalarFunction instr_from{
       "regexp_instr",
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
        duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
@@ -1226,7 +1636,9 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       RegexpInstrFunction,
       RegexpInstrBind,
       nullptr,
-      RegexpInitLocalState});
+      RegexpInitLocalState};
+    instr_from.SetFallible();
+    regexp_instr_set.AddFunction(instr_from);
     loader.RegisterFunction(regexp_instr_set);
   }
 
@@ -1235,6 +1647,65 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
 
   // similar_to_escape -- lives in duckdb (src/function/scalar/string/like.cpp),
   // next to like_escape and to the parser rewrite that emits the call.
+
+  const auto blob = duckdb::LogicalType::BLOB;
+  const auto text = duckdb::LogicalType::VARCHAR;
+  {
+    duckdb::ScalarFunctionSet set{"btrim"};
+    for (const auto& function :
+         loader.GetFunction(duckdb::Identifier{"trim"}).functions.functions) {
+      set.AddFunction(function);
+    }
+    set.AddFunction(
+      duckdb::ScalarFunction{set.name, {blob, blob}, blob, ByteaTrimFunction});
+    loader.RegisterFunction(set);
+  }
+
+  struct OperatorAlias {
+    std::string_view name;
+    std::string_view source;
+  };
+  for (const auto& [name, source] : {
+         OperatorAlias{"like", "~~"},
+         OperatorAlias{"notlike", "!~~"},
+       }) {
+    duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
+    for (const auto& function :
+         loader.GetFunction(duckdb::Identifier{source}).functions.functions) {
+      set.AddFunction(function);
+    }
+    loader.RegisterFunction(set);
+  }
+
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "crc32", {blob}, duckdb::LogicalType::BIGINT, Crc32Function});
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "crc32c", {blob}, duckdb::LogicalType::BIGINT, Crc32cFunction});
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{"sha224", {blob}, blob, ShaFunction<EVP_sha224>});
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{"sha384", {blob}, blob, ShaFunction<EVP_sha384>});
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{"sha512", {blob}, blob, ShaFunction<EVP_sha512>});
+
+  {
+    duckdb::ScalarFunctionSet set{"parse_ident"};
+    for (const auto& arguments : {duckdb::vector<duckdb::LogicalType>{text},
+                                  duckdb::vector<duckdb::LogicalType>{
+                                    text, duckdb::LogicalType::BOOLEAN}}) {
+      duckdb::ScalarFunction func{set.name, arguments,
+                                  duckdb::LogicalType::LIST(text),
+                                  ParseIdentFunction};
+      func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+      set.AddFunction(std::move(func));
+    }
+    set.SetFallible();
+    loader.RegisterFunction(set);
+  }
+
+  duckdb::ScalarFunction unistr{"unistr", {text}, text, UnistrFunction};
+  unistr.SetFallible();
+  loader.RegisterFunction(std::move(unistr));
 }
 
 }  // namespace sdb::connector

@@ -195,6 +195,13 @@ class ColumnReader {
     duckdb::SelectionVector sel;
     std::unique_ptr<VectorScratch> list_offsets;
     std::unique_ptr<ListDictionary> list_dict;
+    struct Fetch {
+      std::unique_ptr<duckdb::ColumnSegment> segment;
+      duckdb::ColumnFetchState state;
+    };
+    Fetch fetch;
+    BlockWindow fetch_window{};
+    std::vector<Fetch> retired_fetches;
   };
 
   virtual ~ColumnReader() = default;
@@ -450,6 +457,12 @@ class ColumnReader {
                                               ReadContext& ctx,
                                               ScanState* s = nullptr) const;
   bool NextSegment(BlockWindow& w) const noexcept;
+  bool FetchSparse(ScanState& s, uint64_t anchor,
+                   const duckdb::SelectionVector& sel, duckdb::idx_t hits,
+                   duckdb::Vector& out, duckdb::idx_t at) const;
+  void FetchInto(ScanState& s, std::span<const uint64_t> rows,
+                 duckdb::sel_t* positions, duckdb::Vector& out,
+                 duckdb::idx_t at) const;
   // The span's validity block is the all-valid EMPTY codec (or there is no
   // validity child): the data segment alone is validity-complete there.
   bool ValiditySpanAllValid(ScanState& s, uint64_t anchor,

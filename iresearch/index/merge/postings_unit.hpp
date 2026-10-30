@@ -26,6 +26,7 @@
 #include <memory>
 #include <span>
 
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
@@ -46,8 +47,8 @@ FieldProperties MergedFieldProperties(field_id id, IndexFeatures features,
 
 class PostingsMerger {
  public:
-  PostingsMerger(size_t inputs, const MergeProgress& progress,
-                 bool sorted = false);
+  PostingsMerger(size_t inputs, const MergeProgress& progress, bool sorted,
+                 const IndexFieldOptions* field_options);
   ~PostingsMerger();
 
   PostingsMerger(const PostingsMerger&) = delete;

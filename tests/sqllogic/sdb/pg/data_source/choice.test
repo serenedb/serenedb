@@ -1171,15 +1171,10 @@ QUERY PLAN
 │           b ASC       │
 │ ~2 rows               │
 ╰───────────┬───────────╯
-╭─ PROJECTION ──────────╮
-│ Projections: a, b,    │
-│              val      │
-│ ~2 rows               │
-╰───────────┬───────────╯
 ╭─ SEQ_SCAN ┴───────────╮
 │ Table: t_range        │
 │ Type: Sequential Scan │
-│ Projections: b, a,    │
+│ Projections: a, b,    │
 │              val      │
 │ Column Filter: b > 5  │
 │ ~2 rows               │
@@ -1433,15 +1428,10 @@ QUERY PLAN
 │           c ASC       │
 │ ~4 rows               │
 ╰───────────┬───────────╯
-╭─ PROJECTION ──────────╮
-│ Projections: a, b, c, │
-│              val      │
-│ ~4 rows               │
-╰───────────┬───────────╯
 ╭─ SEQ_SCAN ┴───────────╮
 │ Table: t_range3       │
 │ Type: Sequential Scan │
-│ Projections: a, c, b, │
+│ Projections: a, b, c, │
 │              val      │
 │ Column Filter: a = 1, │
 │                c > 3  │

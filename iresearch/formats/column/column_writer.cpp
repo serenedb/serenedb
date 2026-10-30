@@ -26,6 +26,7 @@
 #include <cstring>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/bitpacking.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/dictionary_vector.hpp>
@@ -58,7 +59,6 @@
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {

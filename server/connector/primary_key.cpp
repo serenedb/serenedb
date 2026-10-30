@@ -20,6 +20,7 @@
 
 #include "connector/primary_key.h"
 
+#include <duckdb/execution/row_id_deduplicator.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 
 #include "connector/key_encoding.h"
@@ -46,18 +47,24 @@ void PreparePKFormats(duckdb::DataChunk& chunk,
   }
 }
 
+duckdb::idx_t KeepFirstRowIds(duckdb::RowIdDeduplicator& seen,
+                              duckdb::DataChunk& chunk, const PKColumn& rowid) {
+  const auto count = chunk.size();
+  duckdb::SelectionVector first{count};
+  const auto kept =
+    seen.Register(chunk.data[rowid.input_col_idx], count, first);
+  if (kept != count) {
+    chunk.Slice(first, kept);
+  }
+  return kept;
+}
+
 void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
             std::span<const PKColumn> columns, duckdb::idx_t row,
             std::string& key) {
   for (size_t i = 0; i != columns.size(); ++i) {
     key_encoding::AppendScalarValue(key, formats[i], row, columns[i].type);
   }
-}
-
-std::string PkFilePrefix(uint64_t file_id) {
-  std::string prefix;
-  AppendUnsigned(prefix, file_id);
-  return prefix;
 }
 
 }  // namespace sdb::connector::primary_key

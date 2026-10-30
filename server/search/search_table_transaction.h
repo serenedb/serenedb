@@ -33,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
 #include "search/search_table_changes.h"
 
@@ -103,8 +104,7 @@ class SearchTableTransaction {
                             duckdb::BufferManager& buffer_manager,
                             const duckdb::vector<duckdb::LogicalType>& types,
                             std::span<const connector::ColumnId> column_ids,
-                            duckdb::Catalog& catalog, duckdb::DataChunk& chunk,
-                            uint64_t pk_base);
+                            duckdb::Catalog& catalog, duckdb::DataChunk& chunk);
 
   // Bytes a flush would reclaim for `shard_id`; deletes are not counted.
   uint64_t BufferedBytes(duckdb::idx_t shard_id) const noexcept {
@@ -112,33 +112,37 @@ class SearchTableTransaction {
     return it == _changes.end() ? 0 : it->second.BufferedBytes();
   }
 
-  // Replays the whole buffer -- rows and removals, in issue order -- into the
-  // shard's exclusive transaction, creating it on first use, and empties the
-  // row buffer. The rows become that transaction's to make durable, so the
-  // record stops carrying a copy of them; the removals stay buffered, since
-  // the record has to carry those either way.
+  // Replays the whole buffer -- rows and removals -- into the shard's exclusive
+  // transaction, creating it on first use, and empties the row buffer. The rows
+  // become that transaction's to make durable, so the record stops carrying a
+  // copy of them; the removals stay buffered, since the record has to carry
+  // those either way.
   void FlushBuffer(const std::shared_ptr<SearchTable>& shard,
                    duckdb::ClientContext& context);
   void FlushBufferTransaction(duckdb::idx_t shard_id);
 
-  // Rowids to remove, in issue order with the buffered rows.
   void AddSearchDeletes(const std::shared_ptr<SearchTable>& shard,
-                        std::span<const int64_t> rows,
-                        std::span<const uint64_t> positions);
+                        const duckdb::Vector& positions);
 
   void AddSearchTruncate(const std::shared_ptr<SearchTable>& shard,
                          const duckdb::Identifier& table_name,
                          bool clears_shard);
 
+  struct PinnedSearchTable {
+    std::shared_ptr<irs::DirectoryReader> reader;
+    std::shared_ptr<const catalog::InvertedIndexConfig> config;
+  };
+
   template<typename Factory>
-  std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(
-    duckdb::idx_t database_id, duckdb::idx_t shard_id, Factory&& make_reader) {
-    auto& reader =
+  const PinnedSearchTable& EnsureSearchTable(duckdb::idx_t database_id,
+                                             duckdb::idx_t shard_id,
+                                             Factory&& make) {
+    auto& pinned =
       _readers.try_emplace(std::pair{database_id, shard_id}).first->second;
-    if (!reader) {
-      reader = std::make_shared<irs::DirectoryReader>(make_reader());
+    if (!pinned.reader) {
+      pinned = make();
     }
-    return reader;
+    return pinned;
   }
 
   bool Empty() const noexcept { return _writes.empty(); }
@@ -161,12 +165,14 @@ class SearchTableTransaction {
     const std::shared_ptr<SearchTable>& shard);
   void ReleaseWriters() noexcept;
 
-  // Replays a buffer into `trx` in issue order, rows and removals interleaved
-  // by watermark. Leaves the buffer untouched; the caller decides whether the
-  // rows are now somebody else's to make durable.
-  static void ReplayBuffer(SearchTable& shard, LocalTableChangesEntry& entry,
-                           irs::IndexWriter::Transaction& trx,
-                           duckdb::ClientContext& context);
+  // Replays a buffer's rows and pending deletes into `trx`. The rows stay
+  // buffered; the caller decides whether they are now somebody else's to make
+  // durable.
+  void ReplayBuffer(SearchTable& shard, LocalTableChangesEntry& entry,
+                    irs::IndexWriter::Transaction& trx,
+                    duckdb::ClientContext& context);
+
+  const irs::DirectoryReader& PinnedReader(const SearchTable& shard) const;
 
   // The shard's exclusive buffer transaction, created on first overrun.
   irs::IndexWriter::Transaction& EnsureBufferTransaction(
@@ -174,7 +180,7 @@ class SearchTableTransaction {
 
   irs::containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
-                               std::shared_ptr<irs::DirectoryReader>>
+                               PinnedSearchTable>
     _readers;
   LocalTableChanges _changes;
 };

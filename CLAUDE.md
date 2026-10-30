@@ -21,14 +21,14 @@ Build and launch: `CONTRIBUTING.md`. Topic rules: `.claude/rules/`, each page lo
 
 ## Done
 
-- A change is done when the same PR has its tests ([testing.md](.claude/rules/testing.md)) and, for anything users can see, its `docs/` page ([docs.md](.claude/rules/docs.md)).
+- A change is done when the same PR has its tests ([testing.md](.claude/rules/testing.md)) covering every changed line ([ci.md](.claude/rules/ci.md)) and, for anything users can see, its `docs/` page ([docs.md](.claude/rules/docs.md)).
 
 ## Running things
 
-- Build and run only what the task needs: the touched targets and the tests that cover the change. Full suites, sanitizer builds and benchmarks only when asked.
+- Build and run only what the task needs: the touched targets and the tests that cover the change. Anything broader goes to a Dev only CI run ([pull-requests.md](.claude/rules/pull-requests.md)); full suites, sanitizer builds and benchmarks run locally only when asked.
 - Run the smallest thing that answers the question, once, with the full output in a log, and answer from the log. A noisy or flaky result is a question to answer, not a reason to rerun or run longer.
 - Wrap a test run in a timeout of 2-3 times its usual duration, so a hang ends itself.
-- Before saying done: `pre-commit run --files <changed files>`, with `SKIP=check-submodule-pointers` while a fork PR is unmerged (it fails by design until then). Never as a git hook: it stashes unstaged changes, breaking a checkout someone else edits.
+- Before saying done: `pre-commit run --files <changed files>`. Never as a git hook: it stashes unstaged changes, breaking a checkout someone else edits.
 
 ## Text
 

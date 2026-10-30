@@ -1,0 +1,126 @@
+# An online inverted CREATE INDEX on a DuckDB table commits its backfill each
+# time it cuts a segment, and a delete of a row whose copy is already committed
+# goes straight to the index; only rows whose copy may still be uncommitted wait
+# in the delete log for the end of the build. pause_create_index_between_batches
+# parks the build right after its first cut-and-commit: the table is one row
+# group, so one sink builds, and with segment_docs_max = 1000 it cuts at its
+# second 2048-row batch. The deletes below land on both sides of that cut, and
+# the published index must hold exactly the rows the table keeps. The progress
+# row appears after the first batch and the cut comes with the second, hence
+# the sleep; a delete that runs before the park is logged instead, which the
+# checks accept as well.
+# Requires SDB_FAULT_INJECTION, like the rest of the recovery suite.
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE ocb(x bigint, label text);
+
+
+statement ok
+INSERT INTO ocb SELECT g, 'r' || g FROM generate_series(1, 50000) g;
+
+
+statement ok
+SET sdb_faults = 'pause_create_index_between_batches';
+
+
+connection builder
+statement async ok
+CREATE INDEX ocb_idx ON ocb USING inverted(label) WITH (segment_docs_max = 1000, compaction_interval = 3600000);
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM pg_stat_progress_create_index
+WHERE relid = 'ocb'::regclass AND phase = 'building index' AND tuples_done > 0;
+----
+count
+1
+
+
+sleep 1s
+
+
+statement ok retry 20 backoff 500ms
+DELETE FROM ocb WHERE x <= 100;
+
+
+statement ok retry 20 backoff 500ms
+DELETE FROM ocb WHERE x BETWEEN 30001 AND 30100;
+
+
+statement ok
+INSERT INTO ocb VALUES (60001, 'fresh_kept'), (60002, 'fresh_deleted');
+
+
+statement ok
+DELETE FROM ocb WHERE label = 'fresh_deleted';
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ocb;
+
+
+statement ok
+SET sdb_faults = '-pause_create_index_between_batches';
+
+
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ocb;
+
+
+query ok retry 20 backoff 500ms
+SELECT count(*) FROM ocb_idx;
+----
+count
+49801
+
+
+query
+SELECT count(*) FROM ocb_idx WHERE label IN ('r1', 'r50', 'r100');
+----
+count
+0
+
+
+query
+SELECT count(*) FROM ocb_idx WHERE label IN ('r30001', 'r30050', 'r30100');
+----
+count
+0
+
+
+query
+SELECT count(*) FROM ocb_idx WHERE label IN ('r101', 'r2048', 'r2049', 'r30000', 'r30101', 'r50000');
+----
+count
+6
+
+
+query
+SELECT count(*) FROM ocb_idx WHERE label = 'fresh_kept';
+----
+count
+1
+
+
+query
+SELECT count(*) FROM ocb_idx WHERE label = 'fresh_deleted';
+----
+count
+0
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+DROP TABLE ocb CASCADE;

@@ -71,7 +71,7 @@ GRANT SELECT, INSERT ON xog_n_iceberg TO xog_n_writer;
 
 
 # The ACL rows show the NON-super owner as grantor.
-query rowsort
+query ? rowsort
 SELECT e FROM (
   SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_n_iceberg'
 ) g WHERE e LIKE 'xog_n_reader=%' OR e LIKE 'xog_n_writer=%';

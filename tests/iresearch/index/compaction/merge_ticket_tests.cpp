@@ -24,11 +24,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <string>
 #include <thread>
@@ -424,14 +424,14 @@ TEST_F(MergeTicketTest, AFailedMergeIsAFailureAndReleased) {
 }
 
 TEST_F(MergeTicketTest, AThrowingUnitFailsTheMergeAndReleasesItsTicket) {
-  if (!irs::AddFailurePointDebugging("irs::MergeUnit")) {
+  if (!duckdb::FaultPoints::Arm("irs::MergeUnit")) {
     GTEST_SKIP() << "built without fault injection";
   }
   AddSegments(2);
   auto reservation = Reserve({{0, 1}});
   ASSERT_EQ(1, reservation.tickets.size());
   EXPECT_ANY_THROW(Run(std::move(reservation.tickets[0])));
-  EXPECT_TRUE(irs::RemoveFailurePointDebugging("irs::MergeUnit"));
+  EXPECT_TRUE(duckdb::FaultPoints::Disarm("irs::MergeUnit"));
   EXPECT_TRUE(ReservedNames().empty());
   EXPECT_EQ(2, _writer->GetSnapshot().size());
   EXPECT_EQ(1, Reserve({{0, 1}}).tickets.size());
@@ -511,12 +511,12 @@ TEST_F(MergeTicketTest, AReservationWaitsForTheCommitThatReplacesItsSegments) {
   auto merge = Reserve({{0, 1}});
   ASSERT_EQ(1, merge.tickets.size());
   ASSERT_EQ(CompactionError::Ok, Run(std::move(merge.tickets[0])).error);
-  if (!irs::AddFailurePointDebugging("pause_irs_commit_before_reader_swap")) {
+  if (!duckdb::FaultPoints::Arm("pause_irs_commit_before_reader_swap")) {
     GTEST_SKIP() << "built without fault injection";
   }
   std::thread committer{[&] { _writer->RefreshCommit(); }};
   while (
-    !irs::ShouldFailDebugging("pause_irs_commit_before_reader_swap:parked")) {
+    !duckdb::FaultPoints::Armed("pause_irs_commit_before_reader_swap:parked")) {
     std::this_thread::yield();
   }
 
@@ -542,8 +542,8 @@ TEST_F(MergeTicketTest, AReservationWaitsForTheCommitThatReplacesItsSegments) {
   }};
   std::this_thread::sleep_for(std::chrono::milliseconds{50});
   EXPECT_FALSE(reserved.load());
-  ASSERT_TRUE(irs::AddFailurePointDebugging(
-    "pause_irs_commit_before_reader_swap:release"));
+  ASSERT_TRUE(
+    duckdb::FaultPoints::Arm("pause_irs_commit_before_reader_swap:release"));
   committer.join();
   planner.join();
   EXPECT_TRUE(reserved.load());

@@ -1,0 +1,54 @@
+query
+SELECT i, NULLIF([i % 2, 1]::INT[2], [0, 1]::INT[2]) IS NULL AS gone,
+       NULLIF([i % 2, 1]::INT[2], [0, 1]::INT[2])[1] AS head
+FROM range(1, 5) t(i)
+ORDER BY i
+----
+i	gone	head
+1	f	1
+2	t	NULL
+3	f	1
+4	t	NULL
+
+
+query
+SELECT i, (NULLIF({'a': i % 2, 'b': 'a long string ' || (i % 2)::TEXT}, {'a': 0, 'b': 'a long string 0'})).a AS a,
+       (NULLIF({'a': i % 2, 'b': 'a long string ' || (i % 2)::TEXT}, {'a': 0, 'b': 'a long string 0'})).b AS b
+FROM range(1, 5) t(i)
+ORDER BY i
+----
+i	a	b
+1	1	a long string 1
+2	NULL	NULL
+3	1	a long string 1
+4	NULL	NULL
+
+
+query
+SELECT i, (NULLIF({'v': [i % 2, 7]::INT[2], 'l': [i % 2]}, {'v': [0, 7]::INT[2], 'l': [0]})).v[2] AS v2,
+       (NULLIF({'v': [i % 2, 7]::INT[2], 'l': [i % 2]}, {'v': [0, 7]::INT[2], 'l': [0]})).l AS l
+FROM range(1, 5) t(i)
+ORDER BY i
+----
+i	v2	l
+1	7	{1}
+2	NULL	NULL
+3	7	{1}
+4	NULL	NULL
+
+
+statement ok
+CREATE TABLE nullif_nested_src AS
+SELECT * FROM (VALUES (1, {'a': 1, 'b': 'x'}), (2, NULL), (3, {'a': 0, 'b': NULL}), (4, {'a': 0, 'b': 'y'})) t(k, s)
+
+
+query
+SELECT k, (s).b AS b, (NULLIF(s, {'a': 0, 'b': 'y'})).b AS n, (s).b AS again, NULLIF(s, {'a': 0, 'b': 'y'}) IS NULL AS gone
+FROM nullif_nested_src
+ORDER BY k
+----
+k	b	n	again	gone
+1	x	x	x	f
+2	NULL	NULL	NULL	t
+3	NULL	NULL	NULL	f
+4	y	NULL	y	t

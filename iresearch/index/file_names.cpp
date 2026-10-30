@@ -38,19 +38,6 @@ std::string FileName(std::string_view prefix, uint64_t gen) {
   return absl::StrCat(prefix, gen);
 }
 
-std::optional<uint64_t> SegmentNumber(std::string_view name) noexcept {
-  if (name.size() < 2 || name.front() != '_') {
-    return std::nullopt;
-  }
-  uint64_t number = 0;
-  const auto* end = name.data() + name.size();
-  const auto [ptr, ec] = fast_float::from_chars(name.data() + 1, end, number);
-  if (ec != std::errc{} || ptr != end) {
-    return std::nullopt;
-  }
-  return number;
-}
-
 void FileName(std::string& result, std::string_view name,
               std::string_view ext) {
   result.clear();
@@ -77,6 +64,16 @@ bool ParseFileName(std::string_view file, std::string_view ext,
 
   name = file.substr(0, dot);
   return true;
+}
+
+bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
+  if (name.size() < 2 || name.front() != '_') {
+    return false;
+  }
+  const auto* begin = name.data() + 1;
+  const auto* end = name.data() + name.size();
+  const auto [ptr, ec] = fast_float::from_chars(begin, end, id);
+  return ec == std::errc{} && (ptr == end || *ptr == '.');
 }
 
 }  // namespace irs

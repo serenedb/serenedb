@@ -1,0 +1,62 @@
+control substitution on
+
+connection caller
+statement ok
+CREATE ROLE signal_backend_${__DATABASE__};
+
+
+connection target
+statement async error canceling statement due to user request
+SELECT pg_sleep(60);
+
+
+connection caller
+query ok retry 80 backoff 250ms
+SELECT count(*) AS active FROM pg_stat_activity
+WHERE datname = current_database() AND pid <> pg_backend_pid() AND state = 'active';
+----
+active
+1
+
+
+connection caller
+statement ok
+SET ROLE signal_backend_${__DATABASE__};
+
+
+connection caller
+statement error
+SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid();
+----
+db error: ERROR: permission denied to cancel query
+DETAIL: Only roles with the SUPERUSER attribute may cancel queries of roles with the SUPERUSER attribute.
+
+
+connection caller
+statement error
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid();
+----
+db error: ERROR: permission denied to terminate process
+DETAIL: Only roles with the SUPERUSER attribute may terminate processes of roles with the SUPERUSER attribute.
+
+
+connection caller
+statement ok
+RESET ROLE;
+
+
+connection caller
+query
+SELECT pg_cancel_backend(pid) AS cancelled FROM pg_stat_activity
+WHERE datname = current_database() AND pid <> pg_backend_pid();
+----
+cancelled
+t
+
+
+wait
+
+
+connection caller
+statement ok
+DROP ROLE signal_backend_${__DATABASE__};

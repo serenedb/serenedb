@@ -20,7 +20,6 @@
 
 #include "connector/duckdb_physical_create_index.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
@@ -31,6 +30,7 @@
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/execution/execution_context.hpp>
@@ -56,10 +56,9 @@
 #include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
-#include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
@@ -74,14 +73,13 @@
 #include "connector/index_expression.hpp"
 #include "connector/inverted_index_bind.h"
 #include "connector/inverted_store_index.h"
-#include "connector/pg_logical_types.h"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_backfill.h"
-#include "connector/view_fast_path.h"
+#include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
-#include "pg/sql_utils.h"
+#include "pg/types/logical.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "server/utils/primary_key.h"
@@ -103,8 +101,6 @@ enum class PkShape : uint8_t {
 struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   duckdb::idx_t database_id;
   duckdb::idx_t index_id;
-  std::string schema_name;
-  std::string table_name;
   std::string index_name;
 
   duckdb::idx_t table_id;
@@ -145,10 +141,7 @@ struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::unique_ptr<DuckDBSearchSinkInsertWriter> writer;
   // Per-chunk scratch, kept at high-water mark: Sink runs once per 2048 rows,
-  // so anything rebuilt on the stack there is an allocation per chunk. row_keys
-  // holds its strings rather than clearing the vector, which would destroy them
-  // and throw away exactly the buffers the pooling is for.
-  std::vector<std::string> row_keys;
+  // so anything rebuilt on the stack there is an allocation per chunk.
   std::vector<duckdb::string_t> key_views;
   std::vector<FeedColumn> columns;
   duckdb::SelectionVector backfill_sel{STANDARD_VECTOR_SIZE};
@@ -177,8 +170,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
   state->database_id = _database_id;
-  state->schema_name = _schema_entry.name.GetIdentifierName();
-  state->table_name = _relation.name.GetIdentifierName();
   state->index_name = _info->GetIndexName().GetIdentifierName();
 
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
@@ -242,16 +233,21 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     pk_type.id() == duckdb::LogicalTypeId::STRUCT && pk_type != pg::CTID()
       ? PkShape::Struct
       : PkShape::Single;
+  if (_relation.type == duckdb::CatalogType::TABLE_ENTRY &&
+      _relation.Cast<duckdb::TableCatalogEntry>().GetLogStorage() &&
+      !IndexNameTaken(context, *_info, _relation)) {
+    auto& search_table = _relation.Cast<catalog::SearchTableEntry>();
+    search_table.Storage()->ClaimLayout(context,
+                                        search_table.name.GetIdentifierName());
+  }
   if (IsReindexPass()) {
     // The pass carries the index's name, resolved in the schema the statement
     // is qualified with -- the same pair every other lookup in this operator
     // uses.
-    created = duckdb::Catalog::GetEntry<duckdb::DuckIndexEntry>(
-                context,
-                duckdb::QualifiedName{_relation.ParentCatalog().GetName(),
-                                      _schema_entry.name, extras->source_index},
-                duckdb::OnEntryNotFound::RETURN_NULL)
-                .get();
+    const auto source = _schema_entry.GetEntry(
+      _schema_entry.GetCatalogTransaction(context),
+      duckdb::CatalogType::INDEX_ENTRY, extras->source_index);
+    created = source ? &source->Cast<duckdb::IndexCatalogEntry>() : nullptr;
     if (!created) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("REINDEX: source index \"",
@@ -275,12 +271,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       if (const auto& store = index_entry.SearchStore()) {
         state->build_claim =
           store->BeginIndexBuild(index_entry.oid, index_entry.Config());
-        if (!state->build_claim.Claimed()) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
-                          ERR_MSG("an index build is already running on "
-                                  "search table ",
-                                  _relation.oid));
-        }
         SearchBackfillTarget backfill;
         backfill.shard = store;
         backfill.catalog = &_relation.ParentCatalog();
@@ -352,15 +342,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   }
   state->index_storage = storage;
   if (extras && extras->Pass() == ReindexPass::Rebuild) {
-    auto trx = storage->GetTransaction();
-    trx.Remove(std::make_shared<irs::All>());
-    trx.RegisterFlush();
-    if (!trx.Commit()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_OUT_OF_MEMORY),
-        ERR_MSG("REINDEX of \"", extras->source_index.GetIdentifierName(),
-                "\": failed to commit the remove-all: out of memory"));
-    }
+    storage->CommitRemoveAll();
   }
 
   state->table_id = _relation.oid;
@@ -525,39 +507,12 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
   if (gstate.pk_term) {
+    SDB_ASSERT(gstate.pk_shape == PkShape::Single);
     key_views.reserve(num_rows);
-    switch (gstate.pk_shape) {
-      case PkShape::Single: {
-        auto& pk_vec = chunk.data[gstate.pk_base_col_idx];
-        auto pks = pk_vec.Values<int64_t>();
-        for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-          key_views.push_back(
-            primary_key::SignedKeyTerm(pks[row].GetValueUnsafe()));
-        }
-      } break;
-      case PkShape::Struct: {
-        // The glob (file, row) halves; pk_term is never set for external
-        // key structs.
-        SDB_ASSERT(gstate.generated_pk_type == FileIndexRowNumberStructType());
-        const auto base = gstate.pk_base_col_idx;
-        duckdb::UnifiedVectorFormat file_fmt;
-        chunk.data[base].ToUnifiedFormat(num_rows, file_fmt);
-        auto* files = duckdb::UnifiedVectorFormat::GetData<uint64_t>(file_fmt);
-        duckdb::UnifiedVectorFormat row_fmt;
-        chunk.data[base + 1].ToUnifiedFormat(num_rows, row_fmt);
-        auto* rows = duckdb::UnifiedVectorFormat::GetData<int64_t>(row_fmt);
-        auto& row_keys = lstate->row_keys;
-        if (row_keys.size() < num_rows) {
-          row_keys.resize(num_rows);
-        }
-        for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-          auto& key = row_keys[row];
-          key.clear();
-          primary_key::AppendUnsigned(key, files[file_fmt.sel->get_index(row)]);
-          primary_key::AppendSigned(key, rows[row_fmt.sel->get_index(row)]);
-          key_views.emplace_back(key.data(), static_cast<uint32_t>(key.size()));
-        }
-      } break;
+    auto pks = chunk.data[gstate.pk_base_col_idx].Values<int64_t>();
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      key_views.push_back(
+        primary_key::SignedKeyTerm(pks[row].GetValueUnsafe()));
     }
     pk.key_terms = key_views;
   }
@@ -570,12 +525,13 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
 
+  const bool tracks_deletes =
+    lstate->uncommitted_min_slot != std::numeric_limits<size_t>::max();
   irs::CommitOnFlush commit_on_flush;
   FeedChunk(*writer, num_rows, pk, chunk, columns, gstate.expression_slots,
-            &commit_on_flush);
+            tracks_deletes ? &commit_on_flush : nullptr);
 
-  if (commit_on_flush.committed &&
-      lstate->uncommitted_min_slot != std::numeric_limits<size_t>::max()) {
+  if (commit_on_flush.committed) {
     auto rowids = chunk.data[gstate.pk_base_col_idx].Values<int64_t>();
     const auto batch_min_rowid = rowids[0].GetValueUnsafe();
     SDB_ASSERT(batch_min_rowid <= rowids[num_rows - 1].GetValueUnsafe());
@@ -650,22 +606,10 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   }
 
   auto& inverted_storage = *gstate.index_storage;
-  auto delete_log = inverted_storage.TakeDeleteLog();
-  if (!delete_log.empty()) {
-    // Sorted rowids encode to lexicographically sorted pk terms, so the
-    // remove filter walks each segment's term dictionary sequentially.
-    absl::c_sort(delete_log);
-    auto trx = inverted_storage.GetTransaction();
-    DuckDBSearchSinkDeleteWriter delete_writer{trx};
-    std::string key;
-    FeedDeletes(delete_writer, key, delete_log.size(),
-                [&](size_t i) { return delete_log[i]; });
-    trx.RegisterFlush();
-    if (!trx.Commit()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
-                      ERR_MSG("failed to replay concurrent deletes for index '",
-                              gstate.index_name, "': out of memory"));
-    }
+  auto deleted = inverted_storage.TakeDeleteLog();
+  SDB_PARK_ONCE_ON_FAILURE("create_index_delete_log_taken");
+  if (!deleted.empty()) {
+    inverted_storage.CommitRemoval(std::move(deleted));
   }
   SDB_IF_FAILURE("refresh_before_manifest_publish") {
     search::ThrowIfRefreshFailed(inverted_storage.Refresh(), gstate.index_name);
@@ -674,6 +618,11 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     inverted_storage.SetFileManifest(gstate.file_manifest);
   }
   search::ThrowIfRefreshFailed(inverted_storage.Refresh(), gstate.index_name);
+  if (IsDuckDBTable() && inverted_storage.IsOutOfSync()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("failed to commit index '", gstate.index_name,
+                            "': the refresh did not commit the build"));
+  }
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
   if (IsDuckDBTable() && !IsReindexPass()) {
     GetSereneDBContext(context).AddCreatedIndex(
@@ -705,6 +654,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   duckdb::PlanIndexInput& input) {
   auto& op = input.op;
   auto& table_catalog = op.table.ParentCatalog();
+  catalog::ThrowIfReadOnly(table_catalog, "CREATE INDEX");
   if (table_catalog.GetCatalogType() !=
       catalog::SereneDBCatalog::kStorageType) {
     THROW_SQL_ERROR(

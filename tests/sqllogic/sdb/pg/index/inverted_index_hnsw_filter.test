@@ -138,6 +138,16 @@ pk
 3
 2
 
+statement ok
+PREPARE hnsw_f_pk AS SELECT pk FROM hnsw_f_idx WHERE pk = $1
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE hnsw_f_pk(250);
+----
+pk
+250
+
 
 query
 SELECT pk FROM hnsw_f_idx
@@ -289,6 +299,39 @@ pk
 
 statement ok
 RESET sdb_hnsw_filter_mode;
+
+statement ok
+SET sdb_ann_force_exact = on;
+
+query
+SELECT pk FROM hnsw_blocks_idx
+  WHERE zone = 'front'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+100
+101
+99
+
+query
+SELECT pk FROM hnsw_blocks_idx
+  WHERE zone = 'back'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+8000
+8001
+8002
+
+query
+SELECT count(*) FROM hnsw_blocks_idx
+  WHERE zone = 'back' AND emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 8000;
+----
+count
+101
+
+statement ok
+RESET sdb_ann_force_exact;
 
 statement ok
 DROP TABLE hnsw_blocks;

@@ -64,8 +64,8 @@ class FullScanner {
                      const duckdb::SelectionVector* live = nullptr,
                      duckdb::idx_t live_count = 0);
 
-  const duckdb::SelectionVector* LastSelection() const noexcept {
-    return _last_sel;
+  const duckdb::SelectionVector* Selection() const noexcept {
+    return _selection;
   }
 
  private:
@@ -82,7 +82,7 @@ class FullScanner {
   irs::ColFilterChain _filters;
   duckdb::buffer_ptr<duckdb::SelectionData> _sel_data;
   duckdb::SelectionVector _sel;
-  const duckdb::SelectionVector* _last_sel = nullptr;
+  const duckdb::SelectionVector* _selection = nullptr;
   uint64_t _scanned_end = 0;
 };
 

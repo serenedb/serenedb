@@ -23,61 +23,49 @@
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <iresearch/index/doc_removal.hpp>
-#include <iresearch/index/file_names.hpp>
 #include <iresearch/types.hpp>
-#include <limits>
-#include <optional>
-#include <string_view>
+#include <span>
 
 namespace sdb::connector {
 
 inline constexpr uint32_t kRowPositionDocBits = 32;
 inline constexpr uint64_t kRowPositionDocMask =
   (uint64_t{1} << kRowPositionDocBits) - 1;
-inline constexpr uint64_t kNoRowPosition = std::numeric_limits<uint64_t>::max();
 
-inline std::optional<uint64_t> SegmentNumber(std::string_view name) noexcept {
-  const auto number = irs::SegmentNumber(name);
-  if (!number || *number >= kRowPositionDocMask) {
-    return std::nullopt;
-  }
-  return number;
+inline uint64_t MakeRowPosition(uint32_t index, irs::doc_id_t doc) noexcept {
+  return uint64_t{index} << kRowPositionDocBits | doc;
 }
 
-inline uint64_t MakeRowPosition(uint64_t segment, irs::doc_id_t doc) noexcept {
-  return segment << kRowPositionDocBits | doc;
-}
-
-inline uint64_t RowPositionSegment(uint64_t position) noexcept {
-  return position >> kRowPositionDocBits;
+inline uint32_t RowPositionIndex(uint64_t position) noexcept {
+  return static_cast<uint32_t>(position >> kRowPositionDocBits);
 }
 
 inline irs::doc_id_t RowPositionDoc(uint64_t position) noexcept {
   return static_cast<irs::doc_id_t>(position & kRowPositionDocMask);
 }
 
-inline irs::DocRemoval::Row RemovedRow(int64_t rowid,
-                                       uint64_t position) noexcept {
-  if (position == kNoRowPosition) {
-    return {irs::DocRemoval::kNoSegment, 0, rowid};
+inline void FillRowPositions(uint32_t index,
+                             std::span<const irs::doc_id_t> docs,
+                             duckdb::Vector& out) {
+  auto positions = duckdb::FlatVector::Writer<duckdb::row_t>(out, docs.size());
+  for (const auto doc : docs) {
+    positions.WriteValue(
+      static_cast<duckdb::row_t>(MakeRowPosition(index, doc)));
   }
-  return {RowPositionSegment(position), RowPositionDoc(position), rowid};
 }
 
-template<typename DocOf>
-void FillRowPositions(std::optional<uint64_t> segment, duckdb::idx_t count,
-                      DocOf&& doc_of, duckdb::Vector& out) {
-  if (!segment) {
-    auto& validity = duckdb::FlatVector::ValidityMutable(out);
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      validity.SetInvalid(i);
-    }
+inline void FillRowPositions(uint32_t index, irs::doc_id_t first,
+                             const duckdb::SelectionVector* sel,
+                             duckdb::idx_t count, duckdb::Vector& out) {
+  if (!sel) {
+    out.Sequence(static_cast<duckdb::row_t>(MakeRowPosition(index, first)), 1,
+                 count);
     return;
   }
-  auto* positions = duckdb::FlatVector::GetDataMutable<uint64_t>(out);
+  auto positions = duckdb::FlatVector::Writer<duckdb::row_t>(out, count);
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    positions[i] = MakeRowPosition(*segment, doc_of(i));
+    positions.WriteValue(static_cast<duckdb::row_t>(MakeRowPosition(
+      index, first + static_cast<irs::doc_id_t>(sel->get_index(i)))));
   }
 }
 

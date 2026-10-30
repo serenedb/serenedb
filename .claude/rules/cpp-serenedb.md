@@ -43,7 +43,7 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 - Never reimplement what abseil, `server/utils/`, `iresearch/utils/` or DuckDB has: use, extend or patch it. No pass-through wrappers around a library call.
 - Algorithms: `absl::c_*` over `std::ranges` and iterator pairs (`check-banned-calls`); a projection becomes a lambda; `std::ranges` only for what absl lacks (`unique`, `min`, `to`, views). Loops over `std::views` pipelines.
 - Strings: `absl::StrCat`/`StrAppend`/`StrJoin`/`StrSplit`, `absl::Substitute` for repeated arguments, `absl::StrFormat`/`FPrintF`/`SNPrintF` for printf-like formatting, `fmt` only where none fits. Never the printf family or `std::format` (`check-banned-calls`; the crash handler's `snprintf` is the exception). No streams.
-- Numbers: `fast_float::from_chars`, checking `ec`; never `std::sto*`, `std::from_chars`, `strto*`, `ato*` (`check-banned-calls`).
+- Numbers: `fast_float::from_chars`, checking `ec`; never `std::sto*`, `std::from_chars`, `strto*`, `ato*` or the scanf family (`check-banned-calls`).
 - `magic_enum` for enum names; `std::span<const T>` over `std::initializer_list<T>` parameters; no RTTI.
 
 ## Strings and containers
@@ -77,6 +77,7 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 - **A new C++ file:** add it to its target in the nearest `CMakeLists.txt` (`scripts/find_unused_sources.py` lists the files nothing builds).
 - **A setting:** define it in `server/query/config_variables.cpp` and document it in the table in `docs/configuration/overview.md`.
 - **A serened flag:** `python3 tests/drivers/python/cli_help.py override --bin <build>/bin/serened` regenerates the CLI reference the docs render.
-- **What pg_catalog and information_schema support:** update `docs/compatibility/system-table-compatibility.md`, then run `python3 scripts/generate_system_table_claims.py`.
-- **Generated tables:** the unicode tables come from `scripts/generate_unicode_tables.py`, `server/pg/system_views.h` and `system_functions.h` from `scripts/update_system_catalog.py`.
+- **What pg_catalog and information_schema support:** update `docs/compatibility/system-table-compatibility.md`; a test generated from it checks its claims.
+- **A type mapping in `server/pg/types/mapping.cpp`:** update `docs/compatibility/data-type-compatibility.md`, then run `python3 scripts/generate_pg_catalog.py`.
+- **Generated tables:** the unicode tables come from `scripts/generate_unicode_tables.py`; `server/pg/catalog/generated/` from `scripts/generate_pg_catalog.py`, which reads PostgreSQL's catalog sources in the `third_party/postgres` submodule.
 - **Anything written to disk:** [storage.md](storage.md).

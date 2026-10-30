@@ -35,11 +35,10 @@
 #include <vector>
 
 #include "pg/command_tag.h"
-#include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
+#include "pg/types/mapping.h"
 #include "query/utils.h"
-#include "server/utils/dtoa.h"
 
 namespace sdb::network::pg {
 namespace {
@@ -127,6 +126,18 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   const auto subtype_it = extra.find("error_subtype");
   const std::string_view subtype =
     subtype_it != extra.end() ? subtype_it->second : std::string_view{};
+  if (subtype == "INVALID_ESCAPE_SEQUENCE") {
+    return ERRCODE_INVALID_ESCAPE_SEQUENCE;
+  }
+  if (subtype == "INVALID_USE_OF_ESCAPE_CHARACTER") {
+    return ERRCODE_INVALID_USE_OF_ESCAPE_CHARACTER;
+  }
+  if (subtype == "NUMERIC_VALUE_OUT_OF_RANGE") {
+    return ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE;
+  }
+  if (subtype == "FEATURE_NOT_SUPPORTED") {
+    return ERRCODE_FEATURE_NOT_SUPPORTED;
+  }
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
     if (subtype == "WRONG_OBJECT_TYPE") {
       return ERRCODE_WRONG_OBJECT_TYPE;
@@ -558,7 +569,7 @@ void WriteCommandComplete(message::Buffer& out, const sdb::pg::CommandTag& tag,
   if (tag.rowcount) {
     // PG appends the affected/returned count straight into the frame: " 0 <n>"
     // for INSERT (the legacy oid field, always 0), " <n>" for the rest.
-    w.Write(utils::kIntStrMaxLen + 3, [&](auto* data) {
+    w.Write(sdb::pg::kIntStrMaxLen + 3, [&](auto* data) {
       char* buf = reinterpret_cast<char*>(data);
       char* ptr = buf;
       *ptr++ = ' ';
@@ -728,6 +739,16 @@ irs::pg::SqlErrorData ToSqlError(const std::exception& exception) {
   }
   return irs::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
                                .errmsg = exception.what()};
+}
+
+irs::pg::SqlErrorData ToSqlError(const duckdb::ErrorData& error) {
+  try {
+    error.Throw();
+  } catch (const irs::SqlException& e) {
+    return e.error();
+  } catch (...) {
+  }
+  return DuckErrorToSqlData(error);
 }
 
 void WriteEmptyFrame(message::Buffer& out, char type) {

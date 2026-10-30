@@ -29,13 +29,17 @@
 #include <vector>
 
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/hnsw/hnsw_reader.hpp"
-#include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+
+#ifndef IRESEARCH_NO_VECTOR
+#include "iresearch/formats/hnsw/hnsw_reader.hpp"
+#include "iresearch/formats/ivf/ivf_reader.hpp"
+#endif
 
 namespace irs {
 
@@ -61,7 +65,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
     return;
   }
 
-  _impl->in = dir.open(filename, IOAdvice::SEQUENTIAL);
+  _impl->in = dir.open(filename, IOAdvice::RANDOM);
 
   format_utils::ReadFooter(
     *_impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
@@ -87,6 +91,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
             _impl->term_dicts.emplace_back(id, std::move(meta));
           });
         });
+#ifndef IRESEARCH_NO_VECTOR
       footer.ReadOptionalList(
         kIdxFieldIvf, "ivf",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -100,13 +105,15 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
               obj.ReadProperty<uint64_t>(3, "stats_offset");
             const auto stats_byte_size =
               obj.ReadProperty<uint64_t>(4, "stats_byte_size");
+            const auto root_byte_size =
+              obj.ReadProperty<uint64_t>(5, "root_byte_size");
             _impl->ann_ends.push_back(tree_offset + tree_byte_size);
             _impl->ann_ends.push_back(stats_offset + stats_byte_size);
 
             auto body = _impl->in->Dup();
             body->Seek(tree_offset);
-            auto entry = CentroidsTree::Deserialize(*body, tree_byte_size);
-            entry.SetQuantStatsLocation(stats_offset, stats_byte_size);
+            auto entry = CentroidsTree::Deserialize(*body, root_byte_size);
+            entry.SetQuantStatsOffset(stats_offset);
 
             const size_t idx = _impl->ann_entries.size();
             _impl->ann_entries.emplace_back(
@@ -119,22 +126,32 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
             const auto id = obj.ReadProperty<uint64_t>(0, "id");
-            const auto offset = obj.ReadProperty<uint64_t>(1, "offset");
-            const auto byte_size = obj.ReadProperty<uint64_t>(2, "byte_size");
-            _impl->ann_ends.push_back(offset + byte_size);
-
-            auto body = _impl->in->Dup();
-            body->Seek(offset);
-            auto header = HnswIndex::ReadHeader(*body);
+            const HnswMeta meta{
+              .offset = obj.ReadProperty<uint64_t>(1, "offset"),
+              .byte_size = obj.ReadProperty<uint64_t>(2, "byte_size"),
+              .header =
+                {
+                  .d = obj.ReadProperty<uint32_t>(3, "d"),
+                  .metric = static_cast<VectorMetric>(
+                    obj.ReadProperty<uint8_t>(4, "metric")),
+                  .quant = static_cast<VectorQuantization>(
+                    obj.ReadProperty<uint8_t>(5, "quant")),
+                  .ef_construction =
+                    obj.ReadProperty<uint32_t>(6, "ef_construction"),
+                  .record_size = obj.ReadProperty<uint32_t>(7, "record_size"),
+                  .rows = obj.ReadProperty<uint64_t>(8, "rows"),
+                  .rotated = obj.ReadProperty<bool>(9, "rotated"),
+                },
+            };
+            _impl->ann_ends.push_back(meta.offset + meta.byte_size);
 
             const size_t idx = _impl->ann_entries.size();
             _impl->ann_entries.emplace_back(
-              id, std::make_unique<HnswIndex>(
-                    header, HnswMeta{.offset = offset, .byte_size = byte_size},
-                    id, hnsw_bases));
+              id, std::make_unique<HnswIndex>(meta, id, hnsw_bases));
             _impl->ann_by_id.emplace(id, idx);
           });
         });
+#endif
     });
 }
 

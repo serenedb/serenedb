@@ -92,6 +92,24 @@ def test_copy_from_stdin_bare_keyword(conn: psycopg.Connection,
         _drop(conn, table_name)
 
 
+def test_copy_from_stdin_reg_names(conn: psycopg.Connection,
+                                   table_name: str) -> None:
+    rows = 100000
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(r regclass, t regtype)')
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN') as cp:
+                cp.write(b"pg_class\tinteger\n" * rows)
+            cur.execute(
+                f'SELECT count(*), min(r::text), max(t::text) '
+                f'FROM public."{table_name}"'
+            )
+            assert cur.fetchone() == (rows, "pg_class", "integer")
+    finally:
+        _drop(conn, table_name)
+
+
 def test_copy_binary_round_trip(conn: psycopg.Connection,
                                 table_name: str) -> None:
     # COPY ... TO STDOUT (FORMAT BINARY) produces the PostgreSQL binary (PGCOPY)

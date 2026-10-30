@@ -1,0 +1,42 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA aisn_o;
+
+statement ok
+CREATE SCHEMA aisn_o.aisn_i;
+
+statement ok
+CREATE SCHEMA aisn_i;
+
+statement ok
+CREATE TABLE aisn_o.aisn_i.t (a INT);
+
+statement ok
+CREATE TABLE aisn_i.t (a INT);
+
+statement ok
+INSERT INTO aisn_o.aisn_i.t VALUES (1), (2), (3);
+
+statement ok
+INSERT INTO aisn_i.t VALUES (10);
+
+statement ok
+CREATE INDEX aisn_idx ON aisn_o.aisn_i.t (a);
+
+statement ok
+CREATE INDEX aisn_idx ON aisn_i.t (a);
+
+query
+SELECT (SELECT count(*) FROM aisn_o.aisn_i.aisn_idx) AS nested,
+  (SELECT count(*) FROM ${__DATABASE__}.aisn_o.aisn_i.aisn_idx) AS qualified,
+  (SELECT count(*) FROM aisn_i.aisn_idx) AS top;
+----
+nested	qualified	top
+3	3	1
+
+statement ok
+DROP SCHEMA aisn_o CASCADE;
+
+statement ok
+DROP SCHEMA aisn_i CASCADE;

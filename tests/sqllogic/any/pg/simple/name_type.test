@@ -1,0 +1,19 @@
+query
+SELECT 'x'::name || 'y' AS concat, pg_typeof(repeat('a', 70)::name)::text AS type;
+----
+concat	type
+xy	name
+
+
+query
+SELECT 'pg_class'::name::regclass AS a, '1'::name::money AS b, '42'::name::oid AS c,
+       '08:00:2b:01:02:03'::name::macaddr AS d, 'x'::name::"char" AS e;
+----
+a	b	c	d	e
+pg_class	$1.00	42	08:00:2b:01:02:03	x
+
+
+statement error
+SELECT 'no_such_relation'::name::regclass;
+----
+db error: ERROR: relation "no_such_relation" does not exist<slt:ignore>

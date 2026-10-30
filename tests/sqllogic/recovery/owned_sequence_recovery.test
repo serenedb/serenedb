@@ -1,18 +1,10 @@
 control substitution on
 
-# A sequence a table owns -- a SERIAL's, and the identity a search table with no
-# declared PK is given -- is read back from the record that created the table,
-# not from a record of its own. Two things that has to leave true after a
-# restart, neither of which any other test asserts:
-#
-# 1. The sequence is a relation of its schema like any other. It hangs off the
-#    table in the containment tree, so a boot that seeds the catalog sets from
-#    the schema's own children alone leaves it out of pg_class entirely.
-# 2. It is bound onto the table version that survived the log. The binding is
-#    what the search-table insert path reads its next identity off -- never a
-#    snapshot, because a CTAS table is in none -- and a table read back from a
-#    record carries none of its own, so any later record for that table (the
-#    COMMENT below is one) would leave the binding on a version nobody holds.
+# A sequence a table owns -- a SERIAL's -- is read back from the record that
+# created the table, not from a record of its own. The sequence is a relation of
+# its schema like any other. It hangs off the table in the containment tree, so
+# a boot that seeds the catalog sets from the schema's own children alone leaves
+# it out of pg_class entirely, which no other test asserts.
 
 statement ok
 CREATE SCHEMA ows;
@@ -23,8 +15,7 @@ CREATE TABLE ows.ser(id SERIAL, note TEXT);
 statement ok
 INSERT INTO ows.ser(note) VALUES ('a'), ('b');
 
-# A search table with no PRIMARY KEY: its identity column is generated, and the
-# sequence behind it is owned the same way.
+# A search table owns no sequence: its rowid is the row's position.
 statement ok
 CREATE TABLE ows.st(a INTEGER, txt TEXT) WITH (storage = 'search');
 
@@ -50,8 +41,7 @@ ser_id_seq	S
 
 # The entries as the statements that created them left them, so the comparison
 # after the restart is against what this session actually holds rather than a
-# literal. A generated PK's sequence is one of these too: it is owned the same
-# way and it is what the search-table insert path advances.
+# literal.
 statement ok
 CREATE TABLE ows.before(entry_type TEXT, name TEXT,
                         PRIMARY KEY (entry_type, name));
@@ -67,7 +57,6 @@ WHERE entry_type = 'Sequence' ORDER BY name;
 ----
 entry_type	name
 Sequence	ser_id_seq
-Sequence	st_pk_seq
 
 
 statement ok
@@ -84,7 +73,7 @@ SELECT count(*) FROM ows.ser;
 count
 2
 
-# 1. The owned sequence is back in the schema's relation namespace.
+# The owned sequence is back in the schema's relation namespace.
 connection after_crash
 query
 SELECT relname, relkind FROM pg_class c
@@ -106,7 +95,6 @@ FROM ows.before b ORDER BY 1, 2;
 entry_type	name	after
 Schema	ows	1
 Sequence	ser_id_seq	1
-Sequence	st_pk_seq	1
 Table	ser	1
 Table	st	1
 
@@ -121,8 +109,6 @@ moved_on
 t
 
 
-# 2. The generated identity of the search table still resolves, which is what
-# the insert path reads off the table itself.
 connection after_crash
 statement ok
 INSERT INTO ows.st VALUES (2, 'two');
@@ -133,10 +119,10 @@ VACUUM (REFRESH_TABLE) ows.st;
 
 connection after_crash
 query
-SELECT count(*) AS rows FROM ows.st;
+SELECT count(*) AS rows, count(DISTINCT rowid) AS rowids FROM ows.st;
 ----
-rows
-2
+rows	rowids
+2	2
 
 
 connection after_crash

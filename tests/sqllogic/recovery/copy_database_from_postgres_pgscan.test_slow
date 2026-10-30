@@ -1,0 +1,37 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS cdpga_${__DATABASE__} (TYPE postgres);
+
+statement ok
+CALL postgres_execute('cdpga_${__DATABASE__}', 'CREATE DATABASE cdpgdb_${__DATABASE__}', use_transaction := false);
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=cdpgdb_${__DATABASE__} user=${PGUSER}' AS cdpg_${__DATABASE__} (TYPE postgres);
+
+statement ok
+CREATE SCHEMA cdpg_${__DATABASE__}.cdpg_s;
+
+statement ok
+CREATE DATABASE cdpg_dst_${__DATABASE__};
+
+statement ok
+COPY FROM DATABASE cdpg_${__DATABASE__} TO cdpg_dst_${__DATABASE__} (SCHEMA);
+
+query
+SELECT schema_name FROM duckdb_schemas() WHERE database_name = 'cdpg_dst_${__DATABASE__}' AND schema_name = 'cdpg_s';
+----
+schema_name
+cdpg_s
+
+statement ok
+DROP DATABASE cdpg_dst_${__DATABASE__};
+
+statement ok
+DETACH cdpg_${__DATABASE__};
+
+statement ok
+CALL postgres_execute('cdpga_${__DATABASE__}', 'DROP DATABASE cdpgdb_${__DATABASE__}', use_transaction := false);
+
+statement ok
+DETACH cdpga_${__DATABASE__};

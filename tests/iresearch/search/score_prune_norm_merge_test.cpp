@@ -145,11 +145,8 @@ class IdField final : public tests::Ifield {
   mutable MixedAnalyzer _analyzer;
 };
 
-auto MakeByTerm(irs::field_id field, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = field;
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
+tests::Terms MakeByTerm(irs::field_id field, std::string_view value) {
+  return {field, {std::string{value}}};
 }
 
 class ScorePruneNormMergeCase : public tests::IndexTestBase {
@@ -503,13 +500,9 @@ TEST_P(ScorePruneNormMergeCase, NormMergeWithMask) {
   }
   writer->RefreshCommit();
 
-  // Remove "a_1" (count=2) and "a_3" (count=4) from segment A. The
-  // filter must outlive Commit() per IndexWriter::Transaction::Remove
-  // contract, so keep them as named locals.
-  auto rm1 = MakeByTerm(kId, "a_1");
-  auto rm2 = MakeByTerm(kId, "a_3");
-  tests::Remove(*writer, *rm1);
-  tests::Remove(*writer, *rm2);
+  // Remove "a_1" (count=2) and "a_3" (count=4) from segment A.
+  tests::Remove(*writer, MakeByTerm(kId, "a_1"));
+  tests::Remove(*writer, MakeByTerm(kId, "a_3"));
   writer->RefreshCommit();
 
   for (size_t i = 0; i < std::size(kB); ++i) {

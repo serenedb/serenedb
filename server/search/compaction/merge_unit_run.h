@@ -26,12 +26,12 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <duckdb/common/fault_points.hpp>
 #include <exception>
 #include <functional>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/merge_schedule.hpp>
 #include <iresearch/index/merge/term_ranges.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <mutex>
 #include <optional>
 #include <utility>

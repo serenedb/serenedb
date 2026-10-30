@@ -122,6 +122,7 @@ statement error
 SELECT '192.168.1.5/24'::CIDR;
 ----
 db error: ERROR: invalid cidr value: "192.168.1.5/24"
+DETAIL: Value has bits set to right of mask.
 
 
 # DOCS_TEST: example_009

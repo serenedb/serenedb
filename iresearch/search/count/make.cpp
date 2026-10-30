@@ -18,63 +18,18 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/search/count/make.hpp"
+
 #include <span>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/count/make_boolean.hpp"
-#include "iresearch/search/count/plan.hpp"
+#include "iresearch/search/count/family.hpp"
+#include "iresearch/search/count/subtract.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
-#include "iresearch/search/detail/ngram_of.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
-#include "iresearch/search/queries/approx_query.hpp"
+#include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
-#include "iresearch/search/queries/ngram_similarity_query.hpp"
-#include "iresearch/search/queries/phrase_query.hpp"
-#include "iresearch/search/queries/query_builder_impl.hpp"
 
 namespace irs::count {
-
-Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
-  const auto& state = query.State();
-  const auto* const field = state.Reader();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (terms.size() == 1) {
-    return MakeTerm(detail::ClauseOf(terms.front(), field), query.Segment(),
-                    ctx);
-  }
-  if (ctx.table == nullptr && SubtractsPair(terms)) {
-    if (auto subtracted = MakeSubtractDisjunction(
-          detail::ClauseOf(terms.front(), field),
-          detail::ClauseOf(terms.back(), field), query.Segment(), ctx)) {
-      return subtracted;
-    }
-  }
-  return MakeDisjunctionOfTerms(
-    terms, field, *detail::DocOf(*field),
-    static_cast<doc_id_t>(query.Segment().docs_count()), ctx);
-}
-
-Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
-  return detail::ResolveMatch(
-    query, [&] { return MakeFixedPhraseSlop(query, ctx); },
-    [&] { return MakeFixedPhraseIntervals(query, ctx); },
-    [&] { return MakeFixedPhrase(query, ctx); });
-}
-
-Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx) {
-  return detail::ResolveMatch(
-    query, [&] { return MakeVariadicPhraseSlop(query, ctx); },
-    [&] { return MakeVariadicPhraseIntervals(query, ctx); },
-    [&] { return MakeVariadicPhrase(query, ctx); });
-}
-
-Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {
-  return query.Every() ? MakeNGramAll(query, ctx) : MakeNGram(query, ctx);
-}
-
-Root::ptr Make(const ApproxQuery& query, const Context& ctx) {
-  return query.Approx().PlanCount(ctx);
-}
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
@@ -82,6 +37,22 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   }
   const detail::FoldReachScope reach{ctx.span};
   return query.PlanCount(ctx);
+}
+
+Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
+  const auto& state = query.State();
+  const auto* const field = state.Reader();
+  const std::span<const MultiTermState::Entry> terms{state.Terms()};
+  if (ctx.table == nullptr &&
+      SubtractsPair(terms,
+                    static_cast<doc_id_t>(query.Segment().docs_count()))) {
+    if (auto subtracted = MakeSubtractDisjunction(
+          detail::ClauseOf(terms.front(), field),
+          detail::ClauseOf(terms.back(), field), query.Segment(), ctx)) {
+      return subtracted;
+    }
+  }
+  return detail::MakeQuery<Family>(query, ctx);
 }
 
 }  // namespace irs::count

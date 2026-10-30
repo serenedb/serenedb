@@ -135,8 +135,20 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
   _ranges.emplace_back(offset, size);
   _cache_slots.push_back(slot);
   ++_live_handles;
-  return RegisterBlock(
+  auto handle = RegisterBlock(
     id, duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(size));
+  if (Maps(offset, size)) {
+    handle->GetMemory().SetMemoryUsage(0);
+  }
+  return handle;
+}
+
+bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
+  return _mapping && offset % 8 == 0 &&
+         offset +
+             duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(
+               size) <=
+           _mapping->Size();
 }
 
 void ReadContext::UnregisterBlock(duckdb::block_id_t id) {
@@ -151,9 +163,15 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
   if (id >= _ranges.size()) {
     return BlockManager::CreateBlock(block_id, source_buffer);
   }
-  return duckdb::make_uniq<duckdb::Block>(
-    *_allocator, block_id, static_cast<duckdb::idx_t>(_ranges[id].second),
-    /*block_header_size=*/0);
+  const auto [offset, size] = _ranges[id];
+  if (Maps(offset, size)) {
+    return duckdb::make_uniq<duckdb::Block>(*_allocator, block_id, *_mapping,
+                                            offset, size,
+                                            /*block_header_size=*/0);
+  }
+  return duckdb::make_uniq<duckdb::Block>(*_allocator, block_id,
+                                          static_cast<duckdb::idx_t>(size),
+                                          /*block_header_size=*/0);
 }
 
 void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
@@ -162,8 +180,7 @@ void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
              "ReadContext::Read: unregistered block ", block.id);
   const auto [offset, size] = _ranges[id];
   SDB_ASSERT(block.Size() >= size, "block buffer sector-rounds up");
-  if (_mapping && offset % 8 == 0 &&
-      offset + block.Size() <= _mapping->Size()) {
+  if (Maps(offset, block.Size())) {
     block.Read(context, *_mapping, offset);
     return;
   }

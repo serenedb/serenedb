@@ -234,8 +234,8 @@ statement async ok
 VACUUM (COMPACT_TABLE) rt;
 
 connection after_race
-statement ok
-SELECT pg_sleep(2);
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_compact_before_publish:parked';
 
 connection after_race
 statement ok
@@ -247,7 +247,7 @@ VACUUM (REFRESH_TABLE) rt;
 
 connection after_race
 statement ok
-SET sdb_faults = '-pause_search_compact_before_publish';
+SET sdb_faults = 'pause_search_compact_before_publish:release';
 
 wait
 

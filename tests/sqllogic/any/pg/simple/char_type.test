@@ -1,0 +1,91 @@
+control substitution on
+
+query
+SELECT 'abc'::"char" AS a, 'abcd'::"char" AS b, '\101'::"char" AS c, '\377'::"char" AS d, 'é'::"char" AS e, ''::"char" AS f, '\777'::"char" AS g, '\000'::"char" AS h;
+----
+a	b	c	d	e	f	g	h
+a	a	A	\\377	\\303	(empty)	\\377	(empty)
+
+
+query
+SELECT '\1'::"char" AS a, '\1011'::"char" AS b, '\8xx'::"char" AS c, '\/12'::"char" AS d, '\18x'::"char" AS e, '\1x1'::"char" AS f;
+----
+a	b	c	d	e	f
+\\	\\	\\	\\	\\	\\
+
+
+query
+SELECT 'xyz'::text::"char" AS a, 'xy'::varchar::"char" AS b, 'xy'::name::"char" AS c, 'é'::"char"::text AS d, length('é'::"char"::text) AS e, '\303'::"char" = 'é'::"char" AS f;
+----
+a	b	c	d	e	f
+x	x	x	\\303	4	t
+
+
+query
+SELECT '{abc,de,"\\101"}'::"char"[] AS a, ARRAY['abc', 'é']::"char"[] AS b;
+----
+a	b
+{a,d,A}	{a,"\\\\303"}
+
+
+query
+SELECT 65::"char" AS a, (-1)::"char" AS b, (-128)::"char" AS c, 127::"char"::text = chr(127) AS d, 0::"char" AS e, 92::"char" AS f;
+----
+a	b	c	d	e	f
+A	\\377	\\200	t	(empty)	\\
+
+
+query
+SELECT 'A'::"char"::integer AS a, '\377'::"char"::integer AS b, '\200'::"char"::integer AS c, ''::"char"::integer AS d, 'abc'::text::"char"::integer AS e, NULL::"char"::integer AS f;
+----
+a	b	c	d	e	f
+65	-1	-128	0	97	NULL
+
+
+statement error
+SELECT 128::"char";
+----
+db error: ERROR: "char" out of range
+
+
+statement error
+SELECT (-129)::"char";
+----
+db error: ERROR: "char" out of range
+
+
+statement ok
+CREATE TABLE char_values (id int, c "char");
+
+
+statement ok
+COPY (SELECT 1, 'abc' UNION ALL SELECT 2, 'é' UNION ALL SELECT 3, '\101' UNION ALL SELECT 4, '') TO '${__TEST_DIR__}/char_values.txt' (FORMAT text);
+
+
+statement ok
+COPY char_values FROM '${__TEST_DIR__}/char_values.txt' (FORMAT text);
+
+
+statement ok
+INSERT INTO char_values VALUES (5, 'xyz'), (6, '\377');
+
+
+statement ok
+INSERT INTO char_values SELECT 7, 66::"char";
+
+
+query
+SELECT id, c, c::text AS t, c::integer AS i FROM char_values ORDER BY id;
+----
+id	c	t	i
+1	a	a	97
+2	\\303	\\303	-61
+3	A	A	65
+4	(empty)	(empty)	0
+5	x	x	120
+6	\\377	\\377	-1
+7	B	B	66
+
+
+statement ok
+DROP TABLE char_values;

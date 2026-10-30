@@ -21,7 +21,9 @@
 #pragma once
 
 #include "iresearch/search/detail/geo_parsers.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/filters/geo_filter.hpp"
+#include "iresearch/search/queries/geo_query.hpp"
 
 #define IRS_GEO_PARSERS(F, ...)     \
   F(SourceJsonParser, __VA_ARGS__)  \
@@ -30,10 +32,16 @@
   F(S2ShapeParser, __VA_ARGS__)     \
   F(S2PointParser, __VA_ARGS__)
 
-#define IRS_GEO_DISTANCE_ACCEPTORS(F)                        \
-  IRS_GEO_PARSERS(F, GeoDistanceAcceptor<false>)             \
-  IRS_GEO_PARSERS(F, GeoDistanceAcceptor<true>)              \
-  IRS_GEO_PARSERS(F, GeoDistanceRangeAcceptor<false, false>) \
-  IRS_GEO_PARSERS(F, GeoDistanceRangeAcceptor<false, true>)  \
-  IRS_GEO_PARSERS(F, GeoDistanceRangeAcceptor<true, false>)  \
-  IRS_GEO_PARSERS(F, GeoDistanceRangeAcceptor<true, true>)
+#define IRS_GEO_DISTANCE_ACCEPTORS(F, ...)                                \
+  IRS_GEO_PARSERS(F, __VA_ARGS__, GeoDistanceAcceptor<false>)             \
+  IRS_GEO_PARSERS(F, __VA_ARGS__, GeoDistanceAcceptor<true>)              \
+  IRS_GEO_PARSERS(F, __VA_ARGS__, GeoDistanceRangeAcceptor<false, false>) \
+  IRS_GEO_PARSERS(F, __VA_ARGS__, GeoDistanceRangeAcceptor<false, true>)  \
+  IRS_GEO_PARSERS(F, __VA_ARGS__, GeoDistanceRangeAcceptor<true, false>)  \
+  IRS_GEO_PARSERS(F, __VA_ARGS__, GeoDistanceRangeAcceptor<true, true>)
+
+#define IRS_MAKE_GEO_DOCS(Parser, Family, ...) \
+  IRS_MAKE_DOCS(Family, GeoKind, GeoQuery<Parser, __VA_ARGS__>);
+
+#define IRS_MAKE_GEO_SCORED(Parser, Family, ...) \
+  IRS_MAKE_SCORED(Family, GeoKind, GeoQuery<Parser, __VA_ARGS__>);

@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <duckdb/common/fault_points.hpp>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -52,7 +53,6 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/async.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/misc.hpp"
@@ -81,8 +81,12 @@ struct ColumnRange {
 };
 
 void ComputeFieldMeta(FieldMetaMapT& field_meta_map,
-                      IndexFeatures& index_features, const SubReader& reader) {
+                      IndexFeatures& index_features, const SubReader& reader,
+                      const IndexFieldOptions* field_options) {
   for (auto id : reader.field_ids()) {
+    if (field_options && field_options->GetFieldKind(id) != FieldKind::Index) {
+      continue;
+    }
     const auto* term_reader = reader.field(id);
     SDB_ASSERT(term_reader);
     const auto& field_meta = term_reader->meta();
@@ -130,7 +134,8 @@ struct MergePlan::State {
       env{env},
       sort{sort && !sort->Empty() ? sort : nullptr},
       hnsw_bases{hnsw_bases},
-      postings{doc_map.size(), this->progress, static_cast<bool>(this->sort)} {}
+      postings{doc_map.size(), this->progress, static_cast<bool>(this->sort),
+               field_options} {}
 
   const MergeOrder* Order() const noexcept {
     return key_order ? &key_order->Order() : nullptr;
@@ -385,16 +390,20 @@ struct MergePlan::State {
     size_t last_ann = footer;
     if (field_options) {
       for (const auto id : columns->Columns()) {
-        const auto& ann = field_options->GetColumnOptions(id).ann_info;
-        if (!ann) {
+        const auto anns = field_options->AnnFields(id);
+        if (anns.empty()) {
           continue;
         }
         last_ann = units.size();
-        units.push_back({.kind = MergeUnitKind::Ann,
-                         .id = id,
-                         .cost = columns->StoredBytes(id) * kAnnCostPerByte});
+        units.push_back(
+          {.kind = MergeUnitKind::Ann,
+           .id = id,
+           .cost = columns->StoredBytes(id) * kAnnCostPerByte * anns.size()});
         deps.push_back({last_ann - 1});
-        ivf = ivf || ann->kind == AnnKind::Ivf;
+        for (const auto ann : anns) {
+          ivf = ivf || field_options->GetColumnOptions(ann).ann_info->kind ==
+                         AnnKind::Ivf;
+        }
       }
     }
     uint64_t input_bytes = 0;
@@ -467,7 +476,8 @@ struct MergePlan::State {
   bool BuildAnn(field_id column) {
     MergeStepClock clock{profile};
     if (!ann_reader) {
-      ann_reader = std::make_unique<ColReader>(col_dir, segment.name, db);
+      ann_reader = std::make_unique<ColReader>(col_dir, segment.name, db,
+                                               IOAdvice::SEQUENTIAL);
     }
     GetBlocking(col_writer->ComputeAnn(column, *ann_reader, env).ToFuture());
     clock.Lap(MergeStep::Ann);
@@ -478,7 +488,8 @@ struct MergePlan::State {
     MergeStepClock clock{profile};
     if (ivf && segment.docs_count != 0) {
       ann_writers = col_writer->TakeAnnWriters();
-      col_reader = std::make_unique<ColReader>(col_dir, segment.name, db);
+      col_reader = std::make_unique<ColReader>(col_dir, segment.name, db,
+                                               IOAdvice::SEQUENTIAL);
       cluster_readers =
         PrepareIvfClusterReaders(ann_writers, col_reader.get(), ivf_ctx);
       for (const auto* reader : cluster_readers) {
@@ -624,8 +635,8 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
     for (auto& input : s.doc_map) {
       const auto& reader = *input.reader;
       const auto docs_count = reader.docs_count();
+      input.remap.base_id = base_id;
       if (reader.live_docs_count() == docs_count) {
-        input.remap.base_id = base_id;
         base_id += static_cast<doc_id_t>(docs_count);
       } else {
         base_id = ComputeDocIds(input.remap.id_map, reader, base_id);
@@ -637,7 +648,8 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
     s.segment.docs_count = base_id - doc_limits::min();
   }
   for (const auto& input : s.doc_map) {
-    ComputeFieldMeta(s.field_meta_map, s.index_features, *input.reader);
+    ComputeFieldMeta(s.field_meta_map, s.index_features, *input.reader,
+                     s.field_options);
     s.postings.Add(*input.reader, input.remap);
   }
   s.segment.live_docs_count = s.segment.docs_count;

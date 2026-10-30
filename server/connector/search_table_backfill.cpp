@@ -22,35 +22,40 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
-#include <absl/strings/numbers.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
+#include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/segment_reader.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "connector/duckdb_client_state.h"
 #include "connector/full_scanner.h"
 #include "connector/search_sink_writer.hpp"
-#include "connector/term_dict.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 #include "search/search_table.h"
@@ -58,19 +63,12 @@
 namespace sdb::connector {
 namespace {
 
-// Segment names are "_<decimal id>" (irs::FileName(uint64_t)).
-bool SegmentIdOf(std::string_view name, uint64_t& id) {
-  return name.size() > 1 && name.front() == '_' &&
-         absl::SimpleAtoi(name.substr(1), &id);
-}
-
 // How long to back off when the floor cannot be armed because a compaction is
 // mid-flight. Compactions finish, so this only paces the retry.
 constexpr absl::Duration kArmRetry = absl::Milliseconds(50);
 
 struct RowSource {
   std::vector<irs::ColumnstoreProjection> projections;
-  duckdb::idx_t rowid_slot = 0;
   duckdb::DataChunk chunk;
   irs::ColFilterStateCache filter_states;
   duckdb::SelectionVector live{STANDARD_VECTOR_SIZE +
@@ -81,19 +79,12 @@ struct RowSource {
 // copyable.
 void InitRowSource(duckdb::ClientContext& context,
                    const SearchBackfillTarget& target, RowSource& source) {
-  source.projections.reserve(target.column_ids.size() + 1);
-  duckdb::vector<duckdb::LogicalType> types = target.column_types;
+  source.projections.reserve(target.column_ids.size());
   for (size_t i = 0; i < target.column_ids.size(); ++i) {
     source.projections.emplace_back(irs::ColumnstoreProjection{
       .output_slot = i, .column_id = target.column_ids[i]});
   }
-  // The rowid is a stored column like any other (kPKFieldId is kGeneratedPKId
-  // by definition), read here so each rebuilt row keeps its identity.
-  source.rowid_slot = target.column_ids.size();
-  source.projections.emplace_back(irs::ColumnstoreProjection{
-    .output_slot = source.rowid_slot, .column_id = term_dict::kPKFieldId});
-  types.push_back(duckdb::LogicalType::BIGINT);
-  source.chunk.Initialize(duckdb::Allocator::Get(context), types);
+  source.chunk.Initialize(duckdb::Allocator::Get(context), target.column_types);
 }
 
 // Feeds every live row of `sub` into `sink`. A segment with deletes is scanned
@@ -133,8 +124,8 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
         chunk.Slice(source.live, keep);
       }
     }
-    WriteRebuiltChunkToSearchSink(sink, chunk, target.column_ids,
-                                  source.rowid_slot, target.table_id, context);
+    WriteChunkToSearchSink(sink, chunk, target.column_ids, target.table_id,
+                           context);
     fed += chunk.size();
   }
   return fed;
@@ -145,9 +136,55 @@ struct Slice {
   irs::IndexWriter::Transaction trx;
   std::unique_ptr<SearchSinkInsertBaseImpl> sink;
   std::vector<const irs::SubReader*> segments;
-  // Views into `trx`, which outlives them: it is aborted after the swap.
-  std::vector<std::string_view> adopted;
+  std::span<const irs::IndexWriter::FlushedSegment> flushed;
 };
+
+void AppendReplacements(const Slice& slice,
+                        std::vector<irs::IndexWriter::Replacement>& out) {
+  const auto first = out.size();
+  for (const auto& flushed : slice.flushed) {
+    out.push_back({.meta_file = flushed.filename});
+  }
+  size_t i = 0;
+  uint64_t used = 0;
+  for (const auto* sub : slice.segments) {
+    const auto& segment =
+      *irs::utils::downCast<irs::SegmentReader>(*sub).GetImpl();
+    const uint64_t live = sub->live_docs_count();
+    for (uint64_t rank = 0; rank < live;) {
+      SDB_ENSURE(i < slice.flushed.size(),
+                 "search-table build: fed more rows than its segments hold");
+      const auto& flushed = slice.flushed[i];
+      const uint64_t docs = flushed.meta.docs_count;
+      const auto take = std::min(live - rank, docs - used);
+      const irs::DocMap source{.source = segment.Id(),
+                               .mask = segment.SharedDocsMask()};
+      auto& absorbed = out[first + i].absorbed;
+      if (flushed.order.Empty()) {
+        auto& map = absorbed.emplace_back(source);
+        map.rank_begin = static_cast<irs::doc_id_t>(rank);
+        map.rank_end = static_cast<irs::doc_id_t>(rank + take);
+        map.base = static_cast<irs::doc_id_t>(irs::doc_limits::min() + used);
+      } else {
+        irs::DocMapRuns runs{source, absorbed};
+        for (uint64_t row = 0; row != take; ++row) {
+          runs.Add(
+            static_cast<irs::doc_id_t>(rank + row),
+            static_cast<irs::doc_id_t>(irs::doc_limits::min() +
+                                       flushed.order.old2new[used + row]));
+        }
+      }
+      rank += take;
+      used += take;
+      if (used == docs) {
+        ++i;
+        used = 0;
+      }
+    }
+  }
+  SDB_ENSURE(i == slice.flushed.size(),
+             "search-table build: fed fewer rows than its segments hold");
+}
 
 // By bytes, not by segment count: sizes are uneven, and a group is only as
 // fast as its heaviest slice.
@@ -196,14 +233,13 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
       }
       return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
     }
+    SDB_WAIT_ON_FAILURE("pause_search_backfill_fed");
     if (target.shard->TruncatedAfter(snapshot)) {
       return duckdb::TaskExecutionResult::TASK_FINISHED;
     }
     // On the worker, like SereneDBSearchInsert::Combine: serialising this tail
     // costs more than the feeding it follows.
-    for (const auto& segment : slice.trx.FlushAndFsync()) {
-      slice.adopted.push_back(segment.filename);
-    }
+    slice.flushed = slice.trx.FlushAndFsync();
     return duckdb::TaskExecutionResult::TASK_FINISHED;
   }
 
@@ -268,35 +304,22 @@ bool RebuildGroup(duckdb::ClientContext& context,
     executor.WorkOnTasks();
   }
 
-  std::vector<std::string_view> replaced;
-  replaced.reserve(group.size());
-  for (const auto* sub : group) {
-    replaced.push_back(sub->Meta().name);
-  }
-  std::vector<std::string_view> adopted;
-  for (auto& slice : slices) {
-    adopted.insert(adopted.end(), slice->adopted.begin(), slice->adopted.end());
-  }
-
   // Parks the build with this group read and flushed but not yet swapped in --
-  // the window every mid-build delete has to survive, and the only one where
-  // the delete-log rather than the adopt tick is what saves the row.
+  // the window every mid-build delete has to survive, and the one where the
+  // swap carries it through the absorbed doc maps.
   SDB_WAIT_ON_FAILURE("pause_search_backfill_before_swap");
 
-  bool truncated = false;
+  if (shard.TruncatedAfter(snapshot)) {
+    abort_all();
+    shard.Publish();
+    return false;
+  }
+  std::vector<irs::IndexWriter::Replacement> adopted;
+  for (const auto& slice : slices) {
+    AppendReplacements(*slice, adopted);
+  }
   try {
-    shard.ReplaceSegments(
-      replaced, adopted, [&](irs::IndexWriter::QueryContext& removal) {
-        auto [rowids, truncate] = shard.DrainDeleteLog();
-        if (truncate > snapshot) {
-          truncated = true;
-          return false;
-        }
-        if (auto rows = MakeRowRemoval(rowids, {})) {
-          removal = {std::move(rows), irs::writer_limits::kMinTick};
-        }
-        return true;
-      });
+    shard.ReplaceSegments(group, std::move(adopted));
   } catch (const irs::SqlException& e) {
     THROW_SQL_ERROR(
       ERR_CODE(e.error().errcode),
@@ -312,10 +335,6 @@ bool RebuildGroup(duckdb::ClientContext& context,
   }
   // Need explicit call here so on Publish we don't have pending transactions.
   abort_all();
-  if (truncated) {
-    shard.Publish();
-    return false;
-  }
   SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_before_publish");
   shard.Publish();
   return true;
@@ -328,8 +347,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                             pg::ProgressMetrics* progress) {
   SDB_ASSERT(target.shard);
   auto& shard = *target.shard;
-  SDB_ASSERT(shard.BuildInFlight(),
-             "RunSearchTableBackfill requires a held BuildClaim");
+  SDB_ASSERT(shard.BuildInFlight());
   const auto cancelled = [&] { return context.IsInterrupted(); };
 
   // The statement pinned a reader of this shard at bind time and only drops it
@@ -340,8 +358,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   GetSereneDBContext(context).TryDropSearchReader(target.catalog->GetOid(),
                                                   target.table_id);
 
-  shard.OpenDeleteLog();
-  absl::Cleanup close_log = [&shard] { shard.CloseDeleteLog(); };
+  shard.WatchTruncates();
 
   shard.DrainPriorWriters(cancelled);
   shard.Publish();
@@ -383,9 +400,8 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
     uint64_t live = 0;
     uint64_t bytes = 0;
     for (const auto& sub : reader) {
-      uint64_t id = 0;
-      if (!SegmentIdOf(sub.Meta().name, id) || id > floor.Floor() ||
-          sub.live_docs_count() == 0) {
+      const auto& segment = irs::utils::downCast<irs::SegmentReader>(sub);
+      if (segment.GetImpl()->Id() > floor.Floor()) {
         continue;
       }
       live += sub.live_docs_count();
@@ -410,9 +426,6 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
       SDB_IMMEDIATE_ABORT();
     }
   }
-  // Nothing below the floor is left to reissue against, but a delete that
-  // landed after the last group's drain is in the log; it already reached the
-  // adopted segments through the normal path, so dropping it is safe.
 }
 
 }  // namespace sdb::connector

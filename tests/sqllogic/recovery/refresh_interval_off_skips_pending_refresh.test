@@ -19,10 +19,11 @@ count
 
 
 statement ok
-SET sdb_faults = 'slow_search_task'
+SET sdb_faults = 'pause_refresh_loop_before_tick'
 
 
-sleep 1s
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_refresh_loop_before_tick:parked'
 
 
 statement ok
@@ -34,10 +35,15 @@ INSERT INTO rt SELECT i, 'fox' FROM generate_series(11, 20) s(i)
 
 
 statement ok
-RESET sdb_faults
+SET sdb_faults = 'pause_refresh_loop_head'
 
 
-sleep 6s
+statement ok
+SET sdb_faults = 'pause_refresh_loop_before_tick:release'
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_refresh_loop_head:parked'
 
 
 query
@@ -45,6 +51,10 @@ SELECT count(*) FROM rt;
 ----
 count
 10
+
+
+statement ok
+RESET sdb_faults
 
 
 statement ok

@@ -237,6 +237,11 @@ void SimulatedJob::Finish() {
   for (const auto& segment : _segments) {
     event.inputs.emplace_back(segment.Meta().name);
   }
+  const auto place = absl::c_find_if(_relation.segments,
+                                     [&](const Segment& segment) {
+                                       return Merges(segment.name);
+                                     }) -
+                     _relation.segments.begin();
   std::erase_if(_relation.segments, [&](const Segment& segment) {
     if (!Merges(segment.name)) {
       return false;
@@ -248,13 +253,14 @@ void SimulatedJob::Finish() {
   });
   event.live_docs = event.docs;
   event.bytes = _estimate.rewrite_bytes;
-  _relation.segments.emplace_back(Segment{
-    .name = event.segment,
-    .docs = event.docs,
-    .live_docs = event.live_docs,
-    .bytes = event.bytes,
-    .rowids = event.rowids,
-  });
+  _relation.segments.insert(_relation.segments.begin() + place,
+                            Segment{
+                              .name = event.segment,
+                              .docs = event.docs,
+                              .live_docs = event.live_docs,
+                              .bytes = event.bytes,
+                              .rowids = event.rowids,
+                            });
   _simulation.Record(_relation, std::move(event));
   _simulation.Finished();
   auto promise = std::move(_promise);

@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/connection.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -37,7 +38,6 @@
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <numeric>
@@ -512,11 +512,11 @@ TEST_F(SortedMergeTest, KeysMissingOrNullAtTheEndSortAsNulls) {
 }
 
 TEST_F(SortedMergeTest, AnIncompleteOrderFailsTheMerge) {
-  if (!irs::AddFailurePointDebugging("irs::KeyOrder::Finish")) {
+  if (!duckdb::FaultPoints::Arm("irs::KeyOrder::Finish")) {
     GTEST_SKIP() << "built without fault injection";
   }
   const absl::Cleanup remove = [] {
-    irs::RemoveFailurePointDebugging("irs::KeyOrder::Finish");
+    duckdb::FaultPoints::Disarm("irs::KeyOrder::Finish");
   };
   AddSegment(Keys(0, 2, 300));
   AddSegment(Keys(1, 2, 300));

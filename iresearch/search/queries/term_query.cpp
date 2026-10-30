@@ -39,6 +39,7 @@ TermQuery::TermQuery(const SubReader& segment, const TermReader* reader,
     _boost{boost} {
   SDB_ASSERT(reader != nullptr);
   SDB_ASSERT(cookie.docs_count != 0);
+  _estimate_min = cookie.docs_count;
   SetStats(stats);
 }
 

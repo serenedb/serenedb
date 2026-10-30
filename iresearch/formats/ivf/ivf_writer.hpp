@@ -38,7 +38,6 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace duckdb {
@@ -107,6 +106,11 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
     return _qw->PendingLanes();
   }
 
+  uint32_t Alignment() const noexcept final {
+    SDB_ASSERT(_qw);
+    return _qw->BlockSetting().alignment;
+  }
+
  private:
   std::span<const doc_id_t> _cluster_docs;
   std::span<const uint64_t> _cluster_offsets;
@@ -135,8 +139,6 @@ class IvfWriter final : public AnnWriter {
 
   AnnKind Kind() const noexcept final { return AnnKind::Ivf; }
 
-  field_id ColumnId() const noexcept final { return _info.centroids_id; }
-
   bool Empty() const noexcept final { return !_built; }
 
   yaclib::Task<> Compute(const ColumnReader& col, ReadContext& ctx,
@@ -147,11 +149,10 @@ class IvfWriter final : public AnnWriter {
   VectorMetric Metric() const noexcept { return _info.metric; }
 
   const BasicTermReader* ClusterReader(ReadContext& ctx,
-                                       const ColReader& col_reader);
+                                       const ColReader& col_reader) final;
 
  private:
   struct Result {
-    field_id postings_id;
     std::unique_ptr<QuantizerWriter> qw;
     BuiltIvf data;
   };
@@ -161,29 +162,5 @@ class IvfWriter final : public AnnWriter {
   bool _built = false;
   std::unique_ptr<IvfTermReader> _reader;
 };
-
-inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
-  std::span<const std::unique_ptr<AnnWriter>> writers, ColReader* col_reader,
-  std::optional<ReadContext>& ctx) {
-  std::vector<const BasicTermReader*> out;
-  if (col_reader == nullptr || writers.empty()) {
-    return out;
-  }
-  ctx.emplace(*col_reader);
-  out.reserve(writers.size());
-  for (const auto& w : writers) {
-    if (!w) {
-      continue;
-    }
-    if (w->Kind() != AnnKind::Ivf) {
-      continue;
-    }
-    auto& ivf = irs::utils::downCast<IvfWriter>(*w);
-    if (const auto* r = ivf.ClusterReader(ctx.value(), *col_reader)) {
-      out.push_back(r);
-    }
-  }
-  return out;
-}
 
 }  // namespace irs

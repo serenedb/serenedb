@@ -86,8 +86,8 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "connector/scan/scan_bind.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 #include "pg/progress_registry.h"
 
 namespace sdb::auth {
@@ -141,16 +141,22 @@ std::string KindName(CatalogType type) {
                           entry.name.GetIdentifierName()));
 }
 
+void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
+  if (const auto* system =
+        pg::FindSystemObject(pg::kSystemNamespaces, schema)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied to create \"", system->name, ".",
+              info.GetQualifiedName().Name().GetIdentifierName(), "\""),
+      ERR_DETAIL("System catalog modifications are currently disallowed."));
+  }
+}
+
 [[noreturn]] void DenyRoleAction(std::string_view verb,
                                  std::string_view detail) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                   ERR_MSG("permission denied to ", verb, " role"),
                   ERR_DETAIL(detail));
-}
-
-bool Unowned(const duckdb::CatalogEntry& entry) {
-  return entry.permissions.owner == pg::kInvalidOid ||
-         entry.ParentCatalog().GetAttached().IsReadOnly();
 }
 
 bool StoresPermissions(duckdb::Catalog& catalog) {
@@ -452,6 +458,7 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_TABLE: {
         auto& create = op.Cast<duckdb::LogicalCreateTable>();
         auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
+        RequireUserSchema(create.schema.oid, info);
         Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
         for (auto& serial : create.info->serial_sequences) {
           Stamp(serial.permissions, create.schema.ParentCatalog(),
@@ -471,6 +478,7 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_JOB:
       case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
+        RequireUserSchema(create.schema->oid, *create.info);
         Stamp(*create.info, DefaultObjType(op.type), create.schema,
               OwnerFor(*create.info));
         if (_enforce) {
@@ -498,6 +506,7 @@ class Enforcer {
       }
       case LogicalOperatorType::LOGICAL_CREATE_TRIGGER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
+        RequireUserSchema(create.schema->oid, *create.info);
         Stamp(*create.info, CatalogType::TRIGGER_ENTRY, create.schema);
         if (_enforce) {
           CheckCreateTrigger(create.info->Cast<duckdb::CreateTriggerInfo>());
@@ -517,6 +526,7 @@ class Enforcer {
         auto& create = op.Cast<duckdb::LogicalCreateIndex>();
         if (_enforce) {
           RequireOwner(create.table);
+          CheckReplace(*create.info);
         }
         break;
       }
@@ -626,6 +636,9 @@ class Enforcer {
   duckdb::idx_t PrincipalFor(duckdb::idx_t table_index) const {
     const duckdb::StatementProperties::ViewScope* inner = nullptr;
     for (const auto& scope : _props.view_scopes) {
+      if (Unowned(*scope.view)) {
+        continue;
+      }
       if (scope.begin <= table_index && table_index < scope.end &&
           (!inner || scope.end - scope.begin < inner->end - inner->begin)) {
         inner = &scope;
@@ -1103,6 +1116,10 @@ class Enforcer {
       }
       return;
     }
+    if (info.type == CatalogType::SECRET_ENTRY) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied: superuser required"));
+    }
     if (!IsSchemaScoped(info.type)) {
       return;
     }
@@ -1175,7 +1192,7 @@ class Enforcer {
   }
 
   duckdb::idx_t GranteeId(std::string_view name) {
-    return name == "PUBLIC" ? duckdb::ACL_ID_PUBLIC : RoleId(name);
+    return name == "public" ? duckdb::ACL_ID_PUBLIC : RoleId(name);
   }
 
   duckdb::idx_t SchemaOwner(const duckdb::CreateSchemaInfo& info) {
@@ -1713,6 +1730,11 @@ class Enforcer {
 void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan) {
   Enforcer{context, connection, binder, plan}.Run();
+}
+
+bool Unowned(const duckdb::CatalogEntry& entry) {
+  return entry.permissions.owner == pg::kInvalidOid ||
+         (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
 }
 
 }  // namespace sdb::auth

@@ -34,13 +34,17 @@
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
+#include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/col_block_copy.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/hnsw/hnsw_writer.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
-#include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+
+#ifndef IRESEARCH_NO_VECTOR
+#include "iresearch/formats/hnsw/hnsw_writer.hpp"
+#include "iresearch/formats/ivf/ivf_writer.hpp"
+#endif
 
 namespace irs {
 namespace {
@@ -225,8 +229,10 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   }
   auto& cw = OpenColumn(id, std::move(type), opts.skip_validity, row_group_size,
                         opts.compression, opts.hyperloglog, codec_params);
-  if (opts.ann_info) {
-    AttachAnn(id, *opts.ann_info);
+  if (_field_options) {
+    for (const auto ann : _field_options->AnnFields(id)) {
+      AttachAnn(id, *_field_options->GetColumnOptions(ann).ann_info);
+    }
   }
   return cw;
 }
@@ -386,9 +392,9 @@ NormColumnWriter& ColWriter::StreamNormColumn(field_id id) {
 
 AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   std::lock_guard lock{_mutex};
-  if (auto it = _ann_by_id.find(column_id); it != _ann_by_id.end()) {
+  if (auto it = _ann_by_id.find(info.index_id); it != _ann_by_id.end()) {
     auto& existing = *it->second;
-    SDB_ASSERT(existing.info == info,
+    SDB_ASSERT(existing.info == info && existing.column_id == column_id,
                "ColWriter::AttachAnn: re-attach with mismatched AnnInfo on "
                "column ",
                column_id);
@@ -399,18 +405,20 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   auto entry = std::make_unique<AnnEntry>();
   entry->column_id = column_id;
   switch (info.kind) {
+#ifndef IRESEARCH_NO_VECTOR
     case AnnKind::Ivf:
       entry->writer = std::make_unique<IvfWriter>(info);
       break;
     case AnnKind::Hnsw:
       entry->writer = std::make_unique<HnswWriter>(info, _hnsw_bases);
       break;
+#endif
     default:
       SDB_UNREACHABLE();
   }
   entry->info = std::move(info);
   auto& back = *_ann_writers.emplace_back(std::move(entry));
-  _ann_by_id.emplace(column_id, &back);
+  _ann_by_id.emplace(back.info.index_id, &back);
   return *back.writer;
 }
 
@@ -524,7 +532,7 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
   if (!_committed || _ann_writers.empty()) {
     co_return true;
   }
-  ColReader reader{*_dir, _segment_name, *_db};
+  ColReader reader{*_dir, _segment_name, *_db, IOAdvice::SEQUENTIAL};
   for (auto& entry : _ann_writers) {
     if (!progress()) {
       co_return false;
@@ -541,10 +549,14 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
 yaclib::Task<> ColWriter::ComputeAnn(field_id column, ColReader& reader,
                                      const AnnBuildEnv* env) {
   SDB_ASSERT(_committed);
-  const auto it = _ann_by_id.find(column);
-  SDB_ASSERT(it != _ann_by_id.end());
-  if (const auto* col = reader.Column(column)) {
-    co_await it->second->writer->Compute(*col, reader.Ctx(), env);
+  const auto* col = reader.Column(column);
+  if (!col) {
+    co_return {};
+  }
+  for (auto& entry : _ann_writers) {
+    if (entry->column_id == column) {
+      co_await entry->writer->Compute(*col, reader.Ctx(), env);
+    }
   }
   co_return {};
 }

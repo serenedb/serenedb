@@ -79,6 +79,8 @@ struct DeferredCheck {
 
 struct SearchSpec {
   std::shared_ptr<irs::Filter> filter;
+  std::shared_ptr<const irs::Filter> index_only;
+  std::vector<RowFilter> duals;
   std::vector<DeferredCheck> deferred;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   std::vector<RowFilter> row_filters;
@@ -216,7 +218,7 @@ struct RelationSpec {
     return info && info->IsStored();
   }
   bool StoresExpression(ColumnId field) const noexcept {
-    return inverted_config && inverted_config->StoresExpression(field);
+    return inverted_config && !inverted_config->StoredExpression(field).empty();
   }
   catalog::IndexTokenizers ResolveTokenizers(
     duckdb::ClientContext& context) const {
@@ -255,8 +257,16 @@ struct ScanBindData final : duckdb::FunctionData {
   bool DefersChecks() const noexcept {
     return offsets.requests.empty() && !score.vector;
   }
+  bool KeepsColumnForms() const noexcept {
+    return score.vector && score.vector->kind == irs::AnnKind::Hnsw &&
+           score.vector->radius == std::numeric_limits<float>::max();
+  }
   bool IsMatchAll() const noexcept {
     return search.MatchAll() && !score.vector.has_value();
+  }
+  bool ReadsEveryRow() const noexcept {
+    return IsMatchAll() && search.deferred.empty() &&
+           search.row_filters.empty() && !score.HasTopK() && !ts_dict.Active();
   }
 
   using ColumnVisitor =
@@ -294,16 +304,16 @@ duckdb::TableFunction BindSearchTableScan(
   duckdb::ClientContext& context, catalog::SearchTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
 
+bool LooksUpByPk(const ScanBindData& bind);
+
+duckdb::idx_t ScanColumnOfStorage(const ScanBindData& bind,
+                                  duckdb::idx_t storage_index);
+
 std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind);
 
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind);
 
 double SegmentBeamShare(double k, size_t segments) noexcept;
-
-double AnnOversample(duckdb::ClientContext& context,
-                     const VectorScorerOptions& vs, bool& chosen_here);
-
-double OversamplePool(double factor, double count) noexcept;
 
 uint32_t ClampCandidates(double pool, double k, uint64_t live) noexcept;
 
@@ -318,8 +328,10 @@ struct DeferredColumnFilter {
 
 struct DeferredBuild {
   std::shared_ptr<const irs::Filter> filter;
+  std::shared_ptr<const irs::Filter> index_only;
   std::vector<std::shared_ptr<irs::Scorer>> scorers;
   std::vector<DeferredColumnFilter> column_filters;
+  std::vector<DeferredColumnFilter> dual_filters;
   std::vector<DeferredCheck> checks;
 };
 

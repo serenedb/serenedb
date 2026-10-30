@@ -24,11 +24,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <duckdb/common/fault_points.hpp>
 #include <exception>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
 #include <utility>
 #include <yaclib/coro/await.hpp>

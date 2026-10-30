@@ -23,6 +23,7 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_config.hpp>
@@ -30,7 +31,6 @@
 #include <duckdb/main/query_profiler.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parallel/thread_context.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/enum_name.hpp>
 #include <string>
 #include <utility>

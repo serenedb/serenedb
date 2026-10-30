@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <exception>
@@ -203,6 +204,9 @@ class StorageMergeJob final : public MergeJob {
 template<typename Storage>
 size_t PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges,
                   const std::shared_ptr<MergeScheduler::Relation>& relation) {
+  if constexpr (std::is_same_v<Storage, SearchTable>) {
+    SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");
+  }
   const auto wanted = merges.Wanted(*relation);
   const auto blocked = merges.Blocked(*relation);
   const auto policy = MakeMergePolicy(idx->GetTasksSettings());
@@ -268,6 +272,7 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
   int stretch = 0;
   try {
     for (;;) {
+      SDB_PARK_ONCE_ON_FAILURE("pause_refresh_loop_head");
       auto idx = weak.lock();
       if (!idx) {
         SDB_TRACE(SEARCH, "maintenance target is deleted, ending ", name,
@@ -302,6 +307,7 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
       }
 
       SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
+      SDB_PARK_ONCE_ON_FAILURE("pause_refresh_loop_before_tick");
 
       co_await yaclib::On(s.executor());
       if (ShouldStop()) {

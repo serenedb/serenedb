@@ -726,7 +726,8 @@ struct HnswInsertJob {
     auto& slot = _slots[worker];
     if (!slot) {
       slot = std::make_unique<WorkerSlot>(_factory.Make());
-      slot->scratch.search.visited.Reset(_rows);
+      slot->scratch.search.visited.Reset(_rows,
+                                         HnswWalkVisits(_ef, _graph.M0()));
       if (_window.base) {
         slot->dist.SetWindow(_window.base, _window.first, _window.count);
       }
@@ -800,7 +801,7 @@ auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
   {
     auto dist = factory.Make();
     HnswBuildScratch scratch;
-    scratch.search.visited.Reset(rows);
+    scratch.search.visited.Reset(rows, HnswWalkVisits(ef, graph.M0()));
     for (size_t i = 0; i < serial; ++i) {
       dist.SetQuery(nodes[i]);
       HnswInsert(graph, nodes[i], dist, ef, scratch);
@@ -936,10 +937,11 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
 
   auto dist = factory.Make();
   HnswBuildScratch scratch;
-  scratch.search.visited.Reset(rows);
+  scratch.search.visited.Reset(rows,
+                               HnswWalkVisits(ef_construction, graph.M0()));
   HealScratch heal;
-  heal.seen.Reset(rows);
-  heal.walked.Reset(src_rows);
+  heal.seen.Reset(rows, HnswWalkVisits(graph.M0(), graph.M0()));
+  heal.walked.Reset(src_rows, HnswWalkVisits(graph.M0(), graph.M0()));
   for (const auto& [src_node, node, level] : to_heal) {
     dist.SetQuery(node);
     HealNode(graph, src_graph, remap, dist, src_node, node, level, scratch,
@@ -1334,14 +1336,14 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   const auto ef = _info.ef_construction;
   SDB_ASSERT(m != 0 && ef != 0);
   const auto donor =
-    PickMergeDonor(_merge_sources, _info.centroids_id, _d, _info.metric, m);
+    PickMergeDonor(_merge_sources, _info.index_id, _d, _info.metric, m);
 
   if (_qw && RotatesCodes(_info, _d)) {
     auto vectors =
       LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);
     const bool enough = PanoramaEnough(valid, _d);
-    const auto basis = AcquireBasis(_bases, _info.centroids_id, donor, vectors,
-                                    valid, _d, enough);
+    const auto basis =
+      AcquireBasis(_bases, _info.index_id, donor, vectors, valid, _d, enough);
     if (basis && enough) {
       RotateForPanorama(vectors, valid.size(), _d, *basis, env, _rotation);
       const auto stats = EncodeRotated(vectors, valid, env);
@@ -1369,8 +1371,8 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     _vectors = LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);
     if (RotationApplies(_info.metric, _d)) {
       const bool enough = PanoramaEnough(valid, _d);
-      const auto basis = AcquireBasis(_bases, _info.centroids_id, donor,
-                                      _vectors, valid, _d, enough);
+      const auto basis = AcquireBasis(_bases, _info.index_id, donor, _vectors,
+                                      valid, _d, enough);
       if (basis && enough) {
         RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation);
         _norms = RowNorms(_vectors, valid.size(), _d);
@@ -1430,13 +1432,15 @@ void HnswWriter::Flush() {
   auto& out = _idx->BlocksOut();
   const uint64_t offset = out.Position();
 
-  out.WriteU32(_d);
-  out.WriteU32(static_cast<uint32_t>(_info.metric));
-  out.WriteU32(static_cast<uint32_t>(_info.quant.kind));
-  out.WriteU32(_info.ef_construction);
-  out.WriteU32(_record_size);
-  out.WriteU64(_rows);
-  out.WriteByte(_rotation.empty() ? 0 : 1);
+  const HnswHeader header{
+    .d = _d,
+    .metric = _info.metric,
+    .quant = _info.quant.kind,
+    .ef_construction = _info.ef_construction,
+    .record_size = _record_size,
+    .rows = _rows,
+    .rotated = !_rotation.empty(),
+  };
   const auto write_floats = [&](std::span<const float> values) {
     out.WriteData(reinterpret_cast<const byte_type*>(values.data()),
                   values.size() * sizeof(float));
@@ -1456,9 +1460,11 @@ void HnswWriter::Flush() {
     write_floats(_qw ? _tails : _norms);
   }
 
-  _idx->AddHnsw(
-    _info.centroids_id,
-    HnswMeta{.offset = offset, .byte_size = out.Position() - offset});
+  _idx->AddHnsw(_info.index_id, HnswMeta{
+                                  .offset = offset,
+                                  .byte_size = out.Position() - offset,
+                                  .header = header,
+                                });
 
   _vectors.clear();
   _vectors.shrink_to_fit();

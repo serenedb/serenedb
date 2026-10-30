@@ -29,41 +29,66 @@
 #include <chrono>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
+#include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/merge/merge_order.hpp>
-#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
-#include <mutex>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/search_sink_writer.hpp"
+#include "pg/connection_context.h"
 #include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
 #include "search/inverted_index_storage.h"
+#include "search/row_position_wal.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
+namespace {
+
+irs::containers::FlatHashSet<irs::field_id> TableColumns(
+  const duckdb::ColumnList& columns) {
+  irs::containers::FlatHashSet<irs::field_id> ids;
+  for (const auto& column : columns.Logical()) {
+    ids.insert(connector::TableColumnId(column));
+  }
+  return ids;
+}
+
+template<typename Config>
+std::vector<Config> WithConfig(std::vector<Config> configs, Config config) {
+  const auto it = absl::c_upper_bound(
+    configs, config.oid,
+    [](duckdb::idx_t oid, const Config& other) { return oid < other.oid; });
+  configs.insert(it, std::move(config));
+  return configs;
+}
+
+}  // namespace
 
 catalog::CompressionByColumn SearchTable::DeclaredCompression(
   const duckdb::ColumnList& columns) {
@@ -86,6 +111,8 @@ struct SearchTable::ReplaySession {
   };
 
   irs::IndexWriter::Transaction trx;
+  irs::DocRemoval removal;
+  irs::containers::FlatHashMap<uint64_t, std::vector<irs::DocMap>> doc_maps;
   std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
   std::vector<PendingAdopt> adopts;
 };
@@ -94,17 +121,19 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
                          bool in_memory, bool read_only, duckdb::idx_t db_id,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
-                         catalog::CompressionByColumn compression,
-                         irs::SortSpec sort)
+                         const duckdb::ColumnList& columns, irs::SortSpec sort)
   : MaintainedStore{table_id},
     _db_id{db_id},
     _table_id{table_id},
     _directory{std::move(directory)},
     _is_new{is_new},
+    _in_memory{in_memory},
+    _read_only{read_only},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
-    _compression{std::move(compression)},
+    _table_columns{TableColumns(columns)},
     _sort{std::move(sort)},
+    _compression{DeclaredCompression(columns)},
     _durability{db_id, absl::StrCat("search table ", table_id)} {
   if (!_sort.Empty()) {
     _tasks_settings.merge_inputs_max = irs::kSortedMergeInputsMax;
@@ -114,12 +143,18 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _topk_scorer = MakeScorer(*_topk_options);
   }
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
-  if (read_only) {
-    OpenDirectory();
-  } else {
-    OpenWriter(in_memory);
+  if (is_new) {
+    Open();
   }
   ApplyOptions(options);
+}
+
+void SearchTable::Open() {
+  if (_read_only) {
+    OpenDirectory();
+  } else {
+    OpenWriter();
+  }
 }
 
 void SearchTable::ApplyOptions(const catalog::SearchTableOptions& options) {
@@ -129,9 +164,9 @@ void SearchTable::ApplyOptions(const catalog::SearchTableOptions& options) {
 
 void SearchTable::SetDeclaredCompression(
   catalog::CompressionByColumn compression) {
-  std::unique_lock lock(_table_lock);
+  absl::MutexLock lock{&_layout_mutex};
   _compression = std::move(compression);
-  RebuildConfig(_configs, _building_index);
+  RebuildConfig(_layout.configs, _layout.building_index);
 }
 
 SearchTable::~SearchTable() {
@@ -145,10 +180,11 @@ SearchTable::~SearchTable() {
   catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _table_id);
 }
 
-void SearchTable::OpenWriter(bool in_memory) {
+void SearchTable::OpenWriter() {
+  SDB_ASSERT(!_writer);
   irs::ResourceManagementOptions resource_manager;
   auto opened = OpenStorageDirectory(*_directory, GetTableId(), _is_new,
-                                     in_memory, resource_manager);
+                                     _in_memory, resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 
@@ -222,6 +258,7 @@ void SearchTable::StartTasks() {
 
 ResultWithTime SearchTable::RefreshUnsafe(
   bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
+  SDB_ASSERT(_writer);
   const auto begin = std::chrono::steady_clock::now();
   auto result =
     _durability.Refresh(*_writer, wait, progress, code, [] {}, [] {});
@@ -244,8 +281,7 @@ StoreStats SearchTable::GetStats() const {
 }
 
 void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
-  SDB_ASSERT(_build_in_flight.load(std::memory_order_acquire),
-             "DrainPriorWriters requires a held BuildClaim");
+  SDB_ASSERT(BuildInFlight());
   if (!_writers.Drain(cancelled, kWriterWaitPoll)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_QUERY_CANCELED),
@@ -255,60 +291,49 @@ void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
   }
 }
 
-void SearchTable::OpenDeleteLog() {
-  absl::MutexLock lock{&_delete_log_mutex};
-  _delete_log.clear();
+void SearchTable::WatchTruncates() {
+  absl::MutexLock lock{&_truncate_mutex};
   _build_truncate = {};
-  _delete_log_open.store(true, std::memory_order_release);
 }
 
 void SearchTable::RecordTruncateForBuild(const irs::SourcePosition& position) {
-  absl::MutexLock lock{&_delete_log_mutex};
-  if (!_delete_log_open.load(std::memory_order_relaxed)) {
-    return;
-  }
+  absl::MutexLock lock{&_truncate_mutex};
   _build_truncate = std::max(_build_truncate, position);
-}
-
-void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
-  if (rows.empty()) {
-    return;
-  }
-  absl::MutexLock lock{&_delete_log_mutex};
-  if (!_delete_log_open.load(std::memory_order_relaxed)) {
-    return;
-  }
-  _delete_log.insert(_delete_log.end(), rows.begin(), rows.end());
-}
-
-void SearchTable::CloseDeleteLog() {
-  absl::MutexLock lock{&_delete_log_mutex};
-  _delete_log_open.store(false, std::memory_order_release);
-  _delete_log.clear();
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::Config()
   const {
-  std::shared_lock lock(_table_lock);
-  return _config;
+  absl::ReaderMutexLock lock{&_layout_mutex};
+  return _layout.config;
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::ScanConfig()
   const {
-  std::shared_lock lock(_table_lock);
-  return _scan_config;
+  absl::ReaderMutexLock lock{&_layout_mutex};
+  return _layout.scan_config;
+}
+
+bool SearchTable::IsCurrentConfig(const irs::IndexFieldOptions* options) const {
+  absl::ReaderMutexLock lock{&_layout_mutex};
+  return _layout.compaction_config.get() == options;
+}
+
+std::shared_ptr<const catalog::InvertedIndexConfig>
+SearchTable::CompactionConfig() {
+  absl::MutexLock lock{&_layout_mutex};
+  if (_layout.compaction_stale) {
+    RebuildConfig(_layout.configs, _layout.building_index);
+  }
+  return _layout.compaction_config;
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
-  std::span<const IndexConfig> configs,
+  std::span<const IndexConfig> configs, std::span<const IndexConfig> retired,
   std::optional<duckdb::idx_t> skip) const {
   std::vector<catalog::InvertedIndexKey> keys;
   catalog::InvertedIndexFields fields;
   auto declared_compression = _compression;
-  for (const auto& index : configs) {
-    if (index.oid == skip) {
-      continue;
-    }
+  const auto add = [&](const IndexConfig& index) {
     for (const auto& [id, field] : index.config->fields) {
       fields.emplace(id, field);
     }
@@ -336,73 +361,118 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
       }
       declared.hyperloglog = declared.hyperloglog || options.hyperloglog;
     }
+  };
+  for (const auto& index : configs) {
+    if (index.oid != skip) {
+      add(index);
+    }
   }
+  absl::c_for_each(retired, add);
   auto merged = std::make_shared<catalog::InvertedIndexConfig>(
     std::move(keys), std::move(fields));
   merged->pk = {.index_term = false, .column = catalog::PkColumnKind::None};
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
   merged->declared_compression = std::move(declared_compression);
+  merged->table_columns = _table_columns;
   return merged;
 }
 
 template<typename Configs>
 void SearchTable::RebuildConfig(Configs&& configs,
                                 std::optional<duckdb::idx_t> building_index) {
-  auto config = MergeConfigs(configs, std::nullopt);
+  auto config = MergeConfigs(configs, {}, std::nullopt);
   auto scan_config =
-    building_index ? MergeConfigs(configs, building_index) : config;
+    building_index ? MergeConfigs(configs, {}, building_index) : config;
+  auto compaction_config =
+    _layout.retired.empty()
+      ? config
+      : MergeConfigs(configs, _layout.retired, std::nullopt);
   SDB_IF_FAILURE("SearchTable::RebuildConfig") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  _configs = std::forward<Configs>(configs);
-  _building_index = building_index;
-  _config = std::move(config);
-  _scan_config = std::move(scan_config);
+  _layout.configs = std::forward<Configs>(configs);
+  _layout.building_index = building_index;
+  _layout.config = std::move(config);
+  _layout.scan_config = std::move(scan_config);
+  _layout.compaction_config = std::move(compaction_config);
+  _layout.compaction_stale = false;
 }
 
 void SearchTable::MergeIndexConfig(
   duckdb::idx_t index_oid,
   std::shared_ptr<const catalog::InvertedIndexConfig> config) {
-  std::unique_lock lock(_table_lock);
-  auto configs = _configs;
-  configs.emplace_back(index_oid, std::move(config));
-  RebuildConfig(std::move(configs), _building_index);
+  absl::MutexLock lock{&_layout_mutex};
+  RebuildConfig(
+    WithConfig(_layout.configs, IndexConfig{index_oid, std::move(config)}),
+    _layout.building_index);
+}
+
+void SearchTable::ClaimLayout(duckdb::ClientContext& context,
+                              std::string_view name) {
+  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
+    connection->ClaimSearchLayout(
+      shared_from_this(),
+      duckdb::MetaTransaction::Get(context).global_transaction_id, name);
+  }
+}
+
+bool SearchTable::AcquireLayout(duckdb::transaction_t owner,
+                                std::string_view name) {
+  SDB_ASSERT(owner != kNoLayoutOwner);
+  absl::MutexLock lock{&_layout_mutex};
+  if (_layout.owner == owner) {
+    return false;
+  }
+  if (_layout.owner != kNoLayoutOwner) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_IN_USE),
+      ERR_MSG("search table \"", name,
+              "\" is being changed by another transaction"),
+      ERR_HINT("Retry once that transaction commits or rolls back."));
+  }
+  _layout.owner = owner;
+  return true;
+}
+
+void SearchTable::ReleaseLayout(duckdb::transaction_t owner) noexcept {
+  absl::MutexLock lock{&_layout_mutex};
+  SDB_ASSERT(_layout.owner == owner);
+  _layout.owner = kNoLayoutOwner;
 }
 
 SearchTable::BuildClaim SearchTable::BeginIndexBuild(
   duckdb::idx_t index_oid,
   std::shared_ptr<const catalog::InvertedIndexConfig> config) {
-  if (_build_in_flight.exchange(true, std::memory_order_acq_rel)) {
-    return {};
-  }
   BuildClaim claim{*this, index_oid};
-  std::unique_lock lock(_table_lock);
-  SDB_ASSERT(!_building_index);
-  auto configs = _configs;
-  configs.emplace_back(index_oid, std::move(config));
-  RebuildConfig(std::move(configs), index_oid);
+  absl::MutexLock lock{&_layout_mutex};
+  SDB_ASSERT(!_layout.building_index);
+  RebuildConfig(
+    WithConfig(_layout.configs, IndexConfig{index_oid, std::move(config)}),
+    index_oid);
   return claim;
 }
 
 void SearchTable::FinishIndexBuild(duckdb::idx_t index_oid) noexcept {
-  std::unique_lock lock(_table_lock);
-  if (_building_index != index_oid) {
+  absl::MutexLock lock{&_layout_mutex};
+  if (_layout.building_index != index_oid) {
     return;
   }
-  _building_index.reset();
-  _scan_config = _config;
+  _layout.building_index.reset();
+  _layout.scan_config = _layout.config;
 }
 
 void SearchTable::AbortIndexBuild(duckdb::idx_t index_oid) noexcept {
-  std::unique_lock lock(_table_lock);
-  if (_building_index != index_oid) {
+  absl::MutexLock lock{&_layout_mutex};
+  if (_layout.building_index != index_oid) {
     return;
   }
-  _building_index.reset();
-  std::erase_if(
-    _configs, [&](const IndexConfig& index) { return index.oid == index_oid; });
-  _config = _scan_config;
+  _layout.building_index.reset();
+  std::erase_if(_layout.configs, [&](const IndexConfig& index) {
+    return index.oid == index_oid;
+  });
+  _layout.config = _layout.scan_config;
+  _layout.compaction_stale = true;
 }
 
 void SearchTable::BuildClaim::Finish() noexcept { Release(/*finished=*/true); }
@@ -416,19 +486,26 @@ void SearchTable::BuildClaim::Release(bool finished) noexcept {
   } else {
     _table->AbortIndexBuild(_index_oid);
   }
-  _table->_build_in_flight.store(false, std::memory_order_release);
   _table = nullptr;
 }
 
+bool SearchTable::BuildInFlight() const {
+  absl::ReaderMutexLock lock{&_layout_mutex};
+  return static_cast<bool>(_layout.building_index);
+}
+
 void SearchTable::RemoveIndexConfig(duckdb::idx_t index_oid) {
-  std::unique_lock lock(_table_lock);
-  if (std::erase_if(_configs, [&](const IndexConfig& index) {
-        return index.oid == index_oid;
-      }) == 0) {
+  absl::MutexLock lock{&_layout_mutex};
+  const auto it = absl::c_find_if(
+    _layout.configs,
+    [&](const IndexConfig& index) { return index.oid == index_oid; });
+  if (it == _layout.configs.end()) {
     return;
   }
-  if (_building_index == index_oid) {
-    _building_index.reset();
+  _layout.retired.push_back(*it);
+  _layout.configs.erase(it);
+  if (_layout.building_index == index_oid) {
+    _layout.building_index.reset();
   }
   // only for remove we want removal to stay in case of merge configs failure
   // as this is DROP INDEX / Rollback and catalog already marked index as gone
@@ -436,7 +513,16 @@ void SearchTable::RemoveIndexConfig(duckdb::idx_t index_oid) {
   // updated but at least any next DLL will fix this and "stalled" fields will
   // be not emitted anymore. If we leave _configs without deletion this will be
   // not fixed until restart.
-  RebuildConfig(_configs, _building_index);
+  RebuildConfig(_layout.configs, _layout.building_index);
+}
+
+void SearchTable::ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept {
+  absl::MutexLock lock{&_layout_mutex};
+  if (std::erase_if(_layout.retired, [&](const IndexConfig& index) {
+        return index.oid == index_oid;
+      }) != 0) {
+    _layout.compaction_stale = true;
+  }
 }
 
 auto SearchTable::CompactUnsafeAsync(
@@ -446,7 +532,14 @@ auto SearchTable::CompactUnsafeAsync(
   irs::CompactionResult* outcome, irs::MergeExecutor* executor,
   irs::LoneSegment lone) -> yaclib::Future<ResultWithTime> {
   MergeRecorder recorder{GetTableId(), origin};
-  const auto recorded = recorder.Wrap(policy);
+  const irs::CompactionPolicy current_config_policy =
+    [&](irs::Compaction& candidates, const irs::IndexReader& index,
+        const irs::CompactingSegments& compacting_segments) {
+      if (IsCurrentConfig(field_options)) {
+        policy(candidates, index, compacting_segments);
+      }
+    };
+  const auto recorded = recorder.Wrap(current_config_policy);
   co_return co_await AwaitMerge(recorder, empty_compaction, outcome, [&] {
     return _writer->CompactAsync(recorded, field_options, progress, env,
                                  executor, lone);
@@ -537,15 +630,15 @@ absl::Status SearchTable::VacuumCompact(MergeMode mode,
                                         const irs::MergeProgress& progress,
                                         irs::MergeExecutor* executor) {
   const auto lease = GetSearchEngine().Merges().TakeOver(MergeRelation());
-  const auto field_options = Config();
   RefreshResult code = RefreshResult::Undefined;
   if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
     return res;
   }
-  const CopyChecker checker{*field_options, scheduler};
   const ManualCompactionSlot slot;
   const irs::AnnBuildEnv* env = slot.AnnEnv() ? slot.AnnEnv() : &AnnBuildEnv();
   for (auto more = true; more;) {
+    const auto field_options = CompactionConfig();
+    const CopyChecker checker{*field_options, scheduler};
     const auto plan = PlanMergeRound(
       _writer->GetSnapshot(),
       MergeRoundRequest{.mode = mode,
@@ -574,7 +667,7 @@ absl::Status SearchTable::VacuumCompact(MergeMode mode,
           !res.ok()) {
         return res;
       }
-      SDB_WAIT_ON_FAILURE("pause_search_compact_before_publish");
+      SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
       if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res;
           !res.ok()) {
         return res;
@@ -618,7 +711,7 @@ SearchTable::ReplaySession* SearchTable::BeginReplay(
 void SearchTable::ReplayInsert(duckdb::ClientContext& context,
                                duckdb::Catalog& catalog,
                                std::span<const connector::ColumnId> column_ids,
-                               duckdb::DataChunk& chunk, uint64_t row_start) {
+                               duckdb::DataChunk& chunk) {
   auto* session = BeginReplay(catalog.GetAttached());
   if (!session) {
     return;
@@ -628,26 +721,61 @@ void SearchTable::ReplayInsert(duckdb::ClientContext& context,
                                                          catalog, context);
   }
   connector::WriteChunkToSearchSink(*session->sink, chunk, column_ids,
-                                    row_start, _table_id, context);
+                                    _table_id, context);
 }
 
-void SearchTable::ReplayDelete(duckdb::AttachedDatabase& db,
-                               duckdb::DataChunk& chunk) {
+void SearchTable::ReplayDeleteRowPositions(
+  duckdb::AttachedDatabase& db, std::shared_ptr<const duckdb::data_t> entry,
+  std::span<const duckdb::WALFrozenRowPositionGroup> groups) {
   auto* session = BeginReplay(db);
   if (!session) {
     return;
   }
-  auto& rows = chunk.data[0];
-  SDB_ASSERT(rows.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
-  session->trx.Remove(connector::MakeRowRemoval(
-    std::span<const int64_t>{duckdb::FlatVector::GetData<int64_t>(rows),
-                             chunk.size()},
-    {}));
+  if (groups.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                    ERR_MSG("Malformed doc removal: it names no segment"));
+  }
+  for (const auto& group : groups) {
+    session->removal.groups.push_back(
+      {.segment = group.segment,
+       .docs =
+         irs::DocumentMask{{entry, group.docs.data()}, group.docs.size()}});
+  }
+}
+
+void SearchTable::ReplayRowPositionMaps(
+  duckdb::AttachedDatabase& db, std::shared_ptr<const duckdb::data_t> entry,
+  uint64_t source, std::span<const duckdb::WALFrozenRowPositionMap> maps) {
+  auto* session = BeginReplay(db);
+  if (!session) {
+    return;
+  }
+  auto& doc_maps = session->doc_maps[source];
+  doc_maps.clear();
+  doc_maps.reserve(maps.size());
+  for (const auto& map : maps) {
+    if (source >= map.target) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATA_CORRUPTED),
+        ERR_MSG("Malformed doc map: it does not lead to a newer segment"));
+    }
+    doc_maps.push_back({.source = source,
+                        .target = map.target,
+                        .mask = map.mask.empty()
+                                  ? nullptr
+                                  : std::make_shared<const irs::DocumentMask>(
+                                      std::shared_ptr<const irs::byte_type>{
+                                        entry, map.mask.data()},
+                                      map.mask.size()),
+                        .rank_begin = map.rank_begin,
+                        .rank_end = map.rank_end,
+                        .base = map.base});
+  }
 }
 
 void SearchTable::ReplayTruncate(duckdb::AttachedDatabase& db) {
   if (auto* session = BeginReplay(db)) {
-    session->trx.Remove(std::make_shared<irs::All>());
+    session->trx.RemoveAll();
   }
 }
 
@@ -668,6 +796,10 @@ bool SearchTable::FinishReplay(duckdb::AttachedDatabase& db) {
   }
   auto& session = *_replay;
   session.sink.reset();
+  if (!session.removal.groups.empty()) {
+    session.trx.Remove(ReplayRemoval(std::move(session.removal),
+                                     _writer->GetSnapshot(), session.doc_maps));
+  }
   auto& storage = db.GetStorageManager();
   const irs::SourcePosition end{
     storage.GetBlockManager().GetCheckpointIteration(), storage.GetWALSize()};

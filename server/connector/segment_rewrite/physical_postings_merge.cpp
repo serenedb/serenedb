@@ -21,12 +21,12 @@
 #include "connector/segment_rewrite/physical_postings_merge.h"
 
 #include <atomic>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/index/merge/term_ranges.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <memory>
 #include <string>
 #include <utility>

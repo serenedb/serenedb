@@ -1,0 +1,254 @@
+control substitution on
+
+# DROP ... IF EXISTS of every object kind: a missing object is skipped, an
+# existing one is dropped.
+
+
+statement ok
+CREATE TABLE die_base (id INT, body TEXT);
+
+
+# --- tables and views ---
+
+statement ok
+DROP TABLE IF EXISTS die_s;
+
+
+statement ok
+CREATE TABLE die_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+DROP TABLE IF EXISTS die_s;
+
+
+statement ok
+CREATE TEMP TABLE die_tt (a INT);
+
+
+statement ok
+DROP TABLE IF EXISTS die_tt;
+
+
+statement ok
+DROP TABLE IF EXISTS die_tt;
+
+
+statement ok
+CREATE TEMP VIEW die_tv AS SELECT 1 AS a;
+
+
+statement ok
+DROP VIEW IF EXISTS die_tv;
+
+
+statement ok
+DROP VIEW IF EXISTS die_tv;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('die_s', 'die_tt', 'die_tv');
+----
+n
+0
+
+
+# --- indexes ---
+
+statement ok
+CREATE UNIQUE INDEX die_u ON die_base (id);
+
+
+statement ok
+DROP INDEX IF EXISTS die_u;
+
+
+statement ok
+DROP INDEX IF EXISTS die_u;
+
+
+statement ok
+CREATE TABLE die_st (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE INDEX die_st_idx ON die_st USING inverted (body);
+
+
+statement ok
+DROP INDEX IF EXISTS die_st_idx;
+
+
+statement ok
+DROP INDEX IF EXISTS die_st_idx;
+
+
+statement ok
+CREATE VIEW die_v AS SELECT id, body FROM die_base;
+
+
+statement ok
+CREATE INDEX die_v_idx ON die_v USING inverted (body);
+
+
+statement ok
+DROP INDEX IF EXISTS die_v_idx;
+
+
+statement ok
+DROP INDEX IF EXISTS die_v_idx;
+
+
+query
+SELECT count(*) AS n FROM pg_indexes WHERE indexname IN ('die_u', 'die_st_idx', 'die_v_idx');
+----
+n
+0
+
+
+# --- routines ---
+
+statement ok
+CREATE MACRO die_m(x) AS x + 1;
+
+
+statement ok
+DROP MACRO IF EXISTS die_m;
+
+
+statement ok
+DROP MACRO IF EXISTS die_m;
+
+
+statement ok
+CREATE MACRO die_tm() AS TABLE SELECT 1 AS x;
+
+
+statement ok
+DROP MACRO TABLE IF EXISTS die_tm;
+
+
+statement ok
+DROP MACRO TABLE IF EXISTS die_tm;
+
+
+statement ok
+CREATE FUNCTION die_f(x INT) RETURNS INT AS 'SELECT x' LANGUAGE SQL;
+
+
+statement ok
+DROP FUNCTION IF EXISTS die_f(INT);
+
+
+statement ok
+DROP FUNCTION IF EXISTS die_f(INT);
+
+
+statement ok
+CREATE PROCEDURE die_p() LANGUAGE sql AS $$ SELECT 1 $$;
+
+
+statement ok
+DROP PROCEDURE IF EXISTS die_p();
+
+
+statement ok
+DROP PROCEDURE IF EXISTS die_p();
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname IN ('die_m', 'die_tm', 'die_f', 'die_p');
+----
+n
+0
+
+
+# --- dictionaries, secrets, roles ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY die_d AS split_text(case := 'lower');
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS die_d;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS die_d;
+
+
+statement ok
+CREATE SECRET die_sec_${__DATABASE__} (TYPE s3, KEY_ID 'k');
+
+
+statement ok
+DROP SECRET IF EXISTS die_sec_${__DATABASE__};
+
+
+statement ok
+DROP SECRET IF EXISTS die_sec_${__DATABASE__};
+
+
+statement ok
+CREATE PERSISTENT SECRET die_psec_${__DATABASE__} (TYPE s3, KEY_ID 'k');
+
+
+statement ok
+DROP PERSISTENT SECRET IF EXISTS die_psec_${__DATABASE__};
+
+
+statement ok
+DROP PERSISTENT SECRET IF EXISTS die_psec_${__DATABASE__};
+
+
+query
+SELECT count(*) AS n FROM duckdb_secrets()
+WHERE name IN ('die_sec_${__DATABASE__}', 'die_psec_${__DATABASE__}');
+----
+n
+0
+
+
+statement ok
+CREATE USER die_u_${__DATABASE__};
+
+
+statement ok
+DROP USER IF EXISTS die_u_${__DATABASE__};
+
+
+statement ok
+DROP USER IF EXISTS die_u_${__DATABASE__};
+
+
+query
+SELECT count(*) AS n FROM pg_roles WHERE rolname = 'die_u_${__DATABASE__}';
+----
+n
+0
+
+
+# --- kinds SereneDB does not support ---
+
+statement error
+DROP MATERIALIZED VIEW IF EXISTS die_mv;
+----
+db error: ERROR: Cannot drop MATERIALIZED VIEW yet
+
+
+statement error
+DROP COLLATION IF EXISTS die_coll;
+----
+db error: ERROR: Cannot drop collation yet
+
+
+statement ok
+DROP TABLE die_st;
+
+
+statement ok
+DROP VIEW die_v;
+
+
+statement ok
+DROP TABLE die_base;

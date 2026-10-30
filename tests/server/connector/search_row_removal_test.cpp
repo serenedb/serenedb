@@ -18,24 +18,27 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <duckdb.hpp>
+#include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/enums/wal_type.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <future>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
-#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/segment_reader.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iterator>
 #include <limits>
@@ -43,58 +46,105 @@
 #include <mutex>
 #include <numeric>
 #include <random>
+#include <ranges>
 #include <set>
+#include <span>
+#include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
-#include "connector/column_id.h"
+#include "../search_test_utils.h"
+#include "connector/primary_key.h"
 #include "connector/row_position.h"
-#include "connector/search_sink_writer.hpp"
+#include "connector/term_dict.h"
 #include "gtest/gtest.h"
-#include "search/search_table_changes.h"
+#include "search/inverted_index_storage.h"
+#include "search/row_position_wal.h"
 
 namespace {
 
 using namespace sdb;
 using namespace sdb::connector;
+using test::EngineDb;
+using test::IdOf;
+using test::OneRowSegments;
 
-duckdb::DatabaseInstance& TestDb() {
-  return ::irs::DuckDBEngine::Instance().instance();
+irs::IndexWriterOptions WriterOptions() {
+  irs::IndexWriterOptions options;
+  options.db = &EngineDb();
+  options.reader_options.db = &EngineDb();
+  options.key_field = term_dict::kPKFieldId;
+  return options;
 }
 
-duckdb::ClientContext& TestContext() {
-  static auto* conn = new duckdb::Connection{TestDb()};
-  return *conn->context;
+void WriteRows(irs::IndexWriter::Transaction& trx,
+               std::span<const int64_t> rowids, bool index_term = false) {
+  std::vector<duckdb::string_t> keys;
+  std::vector<int64_t> values;
+  for (size_t first = 0; first < rowids.size(); first += STANDARD_VECTOR_SIZE) {
+    const auto chunk = rowids.subspan(
+      first, std::min<size_t>(STANDARD_VECTOR_SIZE, rowids.size() - first));
+    duckdb::Vector ids{duckdb::LogicalType::ROW_TYPE, chunk.size()};
+    std::ranges::copy(chunk, duckdb::FlatVector::GetDataMutable<int64_t>(ids));
+    keys.clear();
+    values.clear();
+    for (const auto rowid : chunk) {
+      values.emplace_back(rowid * 10);
+      if (index_term) {
+        keys.emplace_back(primary_key::SignedKeyTerm(rowid));
+      }
+    }
+    test::WriteValues(
+      trx, values, PkChunk{.key_terms = keys, .column = &ids},
+      PkPolicy{.index_term = index_term, .column = catalog::PkColumnKind::Has});
+  }
 }
 
-catalog::ColumnTokenizer KeywordTokenizer(irs::field_id) {
-  static auto gTokenizer = std::make_shared<catalog::Tokenizer>(
-    search::Features{},
-    irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});
-  return {.analyzer = gTokenizer->Acquire(TestContext()),
-          .features = irs::IndexFeatures::None};
+std::shared_ptr<const irs::DocRemoval> MakeRemoval(
+  std::span<const uint64_t> positions, const irs::DirectoryReader& snapshot) {
+  irs::DocRemovalBuilder builder;
+  for (const auto position : positions) {
+    builder.Add(RowPositionIndex(position), RowPositionDoc(position));
+  }
+  return std::move(builder).Finish(snapshot);
 }
 
-constexpr ColumnId kValueColumn{1};
-
-std::vector<irs::doc_id_t> ResolveDocs(
-  const irs::DocRemoval& removal, std::span<const irs::SubReader* const> live,
-  const irs::SubReader& segment) {
-  irs::DocRemovalResolver resolver;
-  const std::array<const irs::DocRemoval*, 1> removals{&removal};
-  resolver.Prepare(removals, live);
-  const auto docs = resolver.Docs(removal, segment);
-  return {docs.begin(), docs.end()};
+irs::DocRemoval AsLogged(const irs::DocRemoval& removal) {
+  irs::DocRemoval logged;
+  for (const auto& group : removal.groups) {
+    irs::DocumentMaskBuilder docs;
+    docs.Merge(group.docs);
+    logged.groups.push_back(
+      {.segment = group.segment, .docs = std::move(docs).Finish()});
+  }
+  return logged;
 }
 
-TEST(RowPositionTest, RemovedRowSplitsThePosition) {
-  const auto placed = RemovedRow(42, MakeRowPosition(7, 9));
-  EXPECT_EQ(7, placed.segment);
-  EXPECT_EQ(9, placed.doc);
-  EXPECT_EQ(42, placed.key);
-  const auto unplaced = RemovedRow(-3, kNoRowPosition);
-  EXPECT_EQ(irs::DocRemoval::kNoSegment, unplaced.segment);
-  EXPECT_EQ(-3, unplaced.key);
+using MapsBySource =
+  irs::containers::FlatHashMap<uint64_t, std::vector<irs::DocMap>>;
+
+irs::DocRemoval Rows(
+  std::initializer_list<std::pair<uint64_t, irs::doc_id_t>> rows) {
+  std::map<uint64_t, irs::DocumentMaskBuilder> groups;
+  for (const auto& [segment, doc] : rows) {
+    groups[segment].Add(doc);
+  }
+  irs::DocRemoval removal;
+  for (auto& [segment, docs] : groups) {
+    removal.groups.push_back(
+      {.segment = segment, .docs = std::move(docs).Finish()});
+  }
+  return removal;
+}
+
+MapsBySource Logged(const irs::IndexWriter& writer,
+                    std::span<const irs::DocRemoval* const> removals) {
+  MapsBySource doc_maps;
+  writer.VisitDocMaps(removals, [&](const std::vector<irs::DocMap>& maps) {
+    doc_maps.insert_or_assign(maps.front().source, maps);
+  });
+  return doc_maps;
 }
 
 const irs::CompactionPolicy& FullMerge() {
@@ -105,45 +155,22 @@ const irs::CompactionPolicy& FullMerge() {
 
 class SearchRowRemovalTest : public ::testing::Test {
  protected:
-  void SetUp() override { Open(); }
+  void SetUp() override { Open(irs::kOmCreate); }
 
   void TearDown() override { _writer.reset(); }
 
-  void Open() {
-    irs::IndexWriterOptions options;
-    options.db = &TestDb();
-    options.reader_options.db = &TestDb();
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+  void Open(irs::OpenMode mode) {
+    _writer = irs::IndexWriter::Make(_dir, mode, WriterOptions());
   }
 
-  static void WriteRows(irs::IndexWriter::Transaction& trx,
-                        std::span<const int64_t> rowids) {
-    DuckDBSearchSinkInsertWriter sink{
-      trx, KeywordTokenizer, std::array<ColumnId, 1>{kValueColumn},
-      NoEntryInfoProvider(),
-      PkPolicy{.index_term = false, .column = catalog::PkColumnKind::Has}};
-    for (size_t first = 0; first < rowids.size();
-         first += STANDARD_VECTOR_SIZE) {
-      const auto n =
-        std::min<size_t>(STANDARD_VECTOR_SIZE, rowids.size() - first);
-      duckdb::Vector ids{duckdb::LogicalType::BIGINT, n};
-      duckdb::Vector values{duckdb::LogicalType::BIGINT, n};
-      auto* id_data = duckdb::FlatVector::GetDataMutable<int64_t>(ids);
-      auto* value_data = duckdb::FlatVector::GetDataMutable<int64_t>(values);
-      for (size_t i = 0; i < n; ++i) {
-        id_data[i] = rowids[first + i];
-        value_data[i] = rowids[first + i] * 10;
-      }
-      sink.Init(n, PkChunk{.column = &ids});
-      sink.SwitchColumn(
-        ColumnDescriptor{kValueColumn, duckdb::LogicalType::BIGINT}, values, n);
-      sink.Finish();
-    }
+  void Reopen() {
+    _writer.reset();
+    Open(irs::kOmAppend);
   }
 
-  void Insert(std::span<const int64_t> rowids) {
+  void Insert(std::span<const int64_t> rowids, bool index_term = false) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    WriteRows(trx, rowids);
+    WriteRows(trx, rowids, index_term);
     ASSERT_TRUE(trx.Commit());
     _writer->RefreshCommit();
     _model.insert(rowids.begin(), rowids.end());
@@ -154,11 +181,6 @@ class SearchRowRemovalTest : public ::testing::Test {
     std::iota(rowids.begin(), rowids.end(), first);
     Insert(rowids);
   }
-
-  struct Located {
-    int64_t rowid;
-    uint64_t position;
-  };
 
   static std::vector<int64_t> ReadRowids(const irs::SubReader& segment) {
     std::vector<int64_t> out;
@@ -187,26 +209,36 @@ class SearchRowRemovalTest : public ::testing::Test {
     return out;
   }
 
-  std::map<int64_t, uint64_t> LivePositions() const {
-    std::map<int64_t, uint64_t> out;
-    const auto reader = _writer->GetSnapshot();
-    for (const auto& segment : reader) {
-      const auto number = SegmentNumber(segment.Meta().name);
-      EXPECT_TRUE(number.has_value());
+  static std::vector<std::pair<int64_t, uint64_t>> LiveRows(
+    const irs::DirectoryReader& reader) {
+    std::vector<std::pair<int64_t, uint64_t>> out;
+    for (uint32_t index = 0; index != reader.size(); ++index) {
+      const auto& segment = reader[index];
       const auto rowids = ReadRowids(segment);
-      auto mask = segment.MaskedDocs();
+      const auto mask = segment.MaskedDocs();
       for (size_t row = 0; row < rowids.size(); ++row) {
         const auto doc =
           static_cast<irs::doc_id_t>(row) + irs::doc_limits::min();
-        if (mask.Contains(doc)) {
-          continue;
+        if (!mask.Contains(doc)) {
+          out.emplace_back(rowids[row], MakeRowPosition(index, doc));
         }
-        EXPECT_TRUE(
-          out.emplace(rowids[row], MakeRowPosition(*number, doc)).second)
-          << "rowid " << rowids[row] << " is alive twice";
       }
     }
     return out;
+  }
+
+  static std::map<int64_t, uint64_t> PositionsIn(
+    const irs::DirectoryReader& reader) {
+    std::map<int64_t, uint64_t> out;
+    for (const auto& [rowid, position] : LiveRows(reader)) {
+      EXPECT_TRUE(out.emplace(rowid, position).second)
+        << "rowid " << rowid << " is alive twice";
+    }
+    return out;
+  }
+
+  std::map<int64_t, uint64_t> LivePositions() const {
+    return PositionsIn(_writer->GetSnapshot());
   }
 
   std::set<int64_t> Live() const {
@@ -217,39 +249,94 @@ class SearchRowRemovalTest : public ::testing::Test {
     return out;
   }
 
-  std::vector<uint64_t> PositionsOf(std::span<const int64_t> rowids) const {
-    const auto positions = LivePositions();
+  static std::vector<uint64_t> PositionsOf(const irs::DirectoryReader& reader,
+                                           std::span<const int64_t> rowids) {
+    const auto positions = PositionsIn(reader);
     std::vector<uint64_t> out;
     for (const auto rowid : rowids) {
       const auto it = positions.find(rowid);
-      out.push_back(it == positions.end() ? kNoRowPosition : it->second);
+      EXPECT_NE(positions.end(), it) << "rowid " << rowid << " is not alive";
+      if (it != positions.end()) {
+        out.push_back(it->second);
+      }
     }
     return out;
   }
 
-  void Remove(std::span<const int64_t> rowids,
-              std::span<const uint64_t> positions) {
-    auto trx = _writer->GetBatch();
-    if (auto removal = MakeRowRemoval(rowids, positions)) {
-      trx.Remove(std::move(removal));
-    }
-    ASSERT_TRUE(trx.Commit());
-    _writer->RefreshCommit();
-    for (const auto rowid : rowids) {
-      _model.erase(rowid);
-    }
+  std::vector<uint64_t> PositionsOf(std::span<const int64_t> rowids) const {
+    return PositionsOf(_writer->GetSnapshot(), rowids);
   }
 
-  void RemoveDecoyed(std::span<const int64_t> keys,
-                     std::span<const uint64_t> positions,
-                     std::span<const int64_t> victims) {
+  template<typename Removal>
+  void Commit(Removal removal, std::span<const int64_t> victims) {
     auto trx = _writer->GetBatch();
-    trx.Remove(MakeRowRemoval(keys, positions));
+    trx.Remove(std::move(removal));
     ASSERT_TRUE(trx.Commit());
     _writer->RefreshCommit();
     for (const auto rowid : victims) {
       _model.erase(rowid);
     }
+  }
+
+  void Remove(const irs::DirectoryReader& snapshot,
+              std::span<const uint64_t> positions,
+              std::span<const int64_t> victims) {
+    Commit(MakeRemoval(positions, snapshot), victims);
+  }
+
+  void Remove(std::span<const uint64_t> positions,
+              std::span<const int64_t> victims) {
+    Remove(_writer->GetSnapshot(), positions, victims);
+  }
+
+  void RemoveReplayed(const irs::DirectoryReader& snapshot,
+                      std::span<const uint64_t> positions,
+                      std::span<const int64_t> victims) {
+    const auto removal = MakeRemoval(positions, snapshot);
+    const std::array<const irs::DocRemoval*, 1> removals{removal.get()};
+    const auto maps = Logged(*_writer, removals);
+    Commit(
+      search::ReplayRemoval(AsLogged(*removal), _writer->GetSnapshot(), maps),
+      victims);
+  }
+
+  void Remove(std::span<const int64_t> victims) {
+    Remove(PositionsOf(victims), victims);
+  }
+
+  std::vector<std::string> FlushCopy(std::span<const int64_t> rowids) {
+    auto build = _writer->GetBatch(/*exclusive_segment=*/true);
+    WriteRows(build, rowids);
+    std::vector<std::string> metas;
+    for (const auto& flushed : build.FlushAndFsync()) {
+      metas.emplace_back(flushed.filename);
+    }
+    build.Abort();
+    return metas;
+  }
+
+  void ReplaceAll(const irs::DirectoryReader& snapshot,
+                  const std::vector<std::string>& metas) {
+    std::vector<const irs::SubReader*> replaced;
+    std::vector<irs::DocMap> absorbed;
+    irs::doc_id_t base = irs::doc_limits::min();
+    for (const auto& sub : snapshot) {
+      const auto& segment =
+        *irs::utils::downCast<irs::SegmentReader>(sub).GetImpl();
+      const auto live = segment.Meta().live_docs_count;
+      replaced.emplace_back(&sub);
+      absorbed.push_back({.source = IdOf(sub),
+                          .mask = segment.SharedDocsMask(),
+                          .rank_begin = 0,
+                          .rank_end = live,
+                          .base = base});
+      base += live;
+    }
+    ASSERT_EQ(1, metas.size());
+    std::vector<irs::IndexWriter::Replacement> replacements;
+    replacements.push_back(
+      {.meta_file = metas.front(), .absorbed = std::move(absorbed)});
+    _writer->ReplaceSegments(replaced, std::move(replacements));
   }
 
   void ExpectModel() const {
@@ -263,33 +350,15 @@ class SearchRowRemovalTest : public ::testing::Test {
   std::set<int64_t> _model;
 };
 
-TEST(RowPositionTest, SegmentNumberParsesWriterNames) {
-  EXPECT_EQ(0, SegmentNumber("_0"));
-  EXPECT_EQ(7, SegmentNumber("_7"));
-  EXPECT_EQ(123456, SegmentNumber("_123456"));
-  EXPECT_EQ(kRowPositionDocMask - 1,
-            SegmentNumber(absl::StrCat("_", kRowPositionDocMask - 1)));
-}
-
-TEST(RowPositionTest, SegmentNumberRejectsEverythingElse) {
-  for (const auto* name : {"", "_", "7", "a7", "_7a", "_-7", "_+7", "_ 7",
-                           "__7", "_0x10", "_99999999999999999999999999"}) {
-    EXPECT_FALSE(SegmentNumber(name).has_value()) << name;
-  }
-  EXPECT_FALSE(SegmentNumber(absl::StrCat("_", kRowPositionDocMask)));
-  EXPECT_FALSE(SegmentNumber(absl::StrCat("_", kRowPositionDocMask + 1)));
-}
-
 TEST(RowPositionTest, PositionRoundTrips) {
-  for (const uint64_t segment :
-       {uint64_t{0}, uint64_t{1}, uint64_t{77}, kRowPositionDocMask - 1}) {
+  for (const uint32_t index : {uint32_t{0}, uint32_t{1}, uint32_t{77},
+                               std::numeric_limits<uint32_t>::max()}) {
     for (const irs::doc_id_t doc :
          {irs::doc_limits::min(), irs::doc_id_t{2}, irs::doc_id_t{1 << 20},
           std::numeric_limits<irs::doc_id_t>::max() - 1}) {
-      const auto position = MakeRowPosition(segment, doc);
-      EXPECT_EQ(segment, RowPositionSegment(position));
+      const auto position = MakeRowPosition(index, doc);
+      EXPECT_EQ(index, RowPositionIndex(position));
       EXPECT_EQ(doc, RowPositionDoc(position));
-      EXPECT_NE(kNoRowPosition, position);
     }
   }
 }
@@ -300,21 +369,57 @@ TEST(RowPositionTest, PositionsOrderBySegmentThenDoc) {
             MakeRowPosition(2, irs::doc_limits::min()));
 }
 
+TEST(RowPositionTest, FillRowPositions) {
+  const std::vector<irs::doc_id_t> docs{10, 12, 14, 16};
+  duckdb::Vector from_docs{duckdb::LogicalType::ROW_TYPE, 4};
+  FillRowPositions(7, docs, from_docs);
+  duckdb::SelectionVector sel{4};
+  for (duckdb::idx_t i = 0; i < 4; ++i) {
+    sel.set_index(i, 2 * i);
+  }
+  duckdb::Vector from_sel{duckdb::LogicalType::ROW_TYPE, 4};
+  FillRowPositions(7, 10, &sel, 4, from_sel);
+  duckdb::Vector from_run{duckdb::LogicalType::ROW_TYPE, 4};
+  FillRowPositions(7, 10, nullptr, 4, from_run);
+  EXPECT_EQ(duckdb::VectorType::SEQUENCE_VECTOR, from_run.GetVectorType());
+  for (const auto* out : {&from_docs, &from_sel, &from_run}) {
+    EXPECT_EQ(4, out->size());
+  }
+  for (duckdb::idx_t i = 0; i < 4; ++i) {
+    EXPECT_EQ(MakeRowPosition(7, docs[i]),
+              static_cast<uint64_t>(from_docs.GetValue(i).GetValue<int64_t>()));
+    EXPECT_EQ(MakeRowPosition(7, docs[i]),
+              static_cast<uint64_t>(from_sel.GetValue(i).GetValue<int64_t>()));
+    EXPECT_EQ(MakeRowPosition(7, static_cast<irs::doc_id_t>(10 + i)),
+              static_cast<uint64_t>(from_run.GetValue(i).GetValue<int64_t>()));
+  }
+}
+
+TEST(RowPositionTest, FillRowPositionsOfHighIndexes) {
+  constexpr auto kLast = std::numeric_limits<irs::doc_id_t>::max();
+  const std::vector<irs::doc_id_t> docs{kLast - 2, kLast - 1, kLast};
+  for (const uint32_t index :
+       {uint32_t{0}, uint32_t{1} << 31, uint32_t{3000000000},
+        std::numeric_limits<uint32_t>::max()}) {
+    duckdb::Vector from_docs{duckdb::LogicalType::ROW_TYPE, 3};
+    FillRowPositions(index, docs, from_docs);
+    duckdb::Vector from_run{duckdb::LogicalType::ROW_TYPE, 3};
+    FillRowPositions(index, docs[0], nullptr, 3, from_run);
+    for (const auto* out : {&from_docs, &from_run}) {
+      for (duckdb::idx_t i = 0; i < 3; ++i) {
+        const auto position =
+          static_cast<uint64_t>(out->GetValue(i).GetValue<int64_t>());
+        EXPECT_EQ(index, RowPositionIndex(position)) << index << " " << i;
+        EXPECT_EQ(docs[i], RowPositionDoc(position)) << index << " " << i;
+      }
+    }
+  }
+}
+
 TEST_F(SearchRowRemovalTest, EmptyRemovalRemovesNothing) {
   InsertRange(0, 10);
   Remove({}, {});
   ExpectModel();
-}
-
-TEST_F(SearchRowRemovalTest, DuplicateRowidsInASegmentAreAllRemoved) {
-  const std::vector<int64_t> rowids{1, 2, 2, 3, 2};
-  Insert(rowids);
-  const std::vector<int64_t> victims{2};
-  Remove(victims, {});
-  const auto snapshot = _writer->GetSnapshot();
-  EXPECT_EQ(2, snapshot.live_docs_count());
-  const auto live = Live();
-  EXPECT_EQ((std::set<int64_t>{1, 3}), live);
 }
 
 TEST_F(SearchRowRemovalTest, PositionsRemoveExactlyTheirRows) {
@@ -325,109 +430,161 @@ TEST_F(SearchRowRemovalTest, PositionsRemoveExactlyTheirRows) {
   for (int64_t r = 0; r < 3000; r += 7) {
     victims.push_back(r);
   }
-  Remove(victims, PositionsOf(victims));
+  Remove(victims);
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, LivePositionsNeverConsultTheKeys) {
-  InsertRange(0, 5000);
-  InsertRange(5000, 5000);
-  const std::vector<int64_t> victims{3, 4999, 5000, 9999};
-  const std::vector<int64_t> decoys{4, 4998, 5001, 9998};
-  RemoveDecoyed(decoys, PositionsOf(victims), victims);
-  ExpectModel();
-}
-
-TEST_F(SearchRowRemovalTest, RowidsWithoutPositionsAreResolvedByScan) {
-  InsertRange(0, 3000);
-  InsertRange(3000, 3000);
-  const std::vector<int64_t> victims{0, 1, 2999, 3000, 5999, 4242};
-  Remove(victims, {});
-  ExpectModel();
-}
-
-TEST_F(SearchRowRemovalTest, UnknownRowidsAreIgnored) {
-  InsertRange(0, 100);
-  const std::vector<int64_t> victims{-5, 100, 1000000,
-                                     std::numeric_limits<int64_t>::max(),
-                                     std::numeric_limits<int64_t>::min()};
-  Remove(victims, {});
-  ExpectModel();
-  EXPECT_EQ(100, Live().size());
-}
-
-TEST_F(SearchRowRemovalTest, MixedPlacedAndUnplacedRows) {
+TEST_F(SearchRowRemovalTest, StalePositionsAreRemappedThroughTwoMerges) {
   InsertRange(0, 2000);
   InsertRange(2000, 2000);
-  const std::vector<int64_t> victims{10, 20, 2010, 2020, 3999};
-  auto positions = PositionsOf(victims);
-  positions[1] = kNoRowPosition;
-  positions[3] = kNoRowPosition;
-  Remove(victims, positions);
-  ExpectModel();
-}
-
-TEST_F(SearchRowRemovalTest, StalePositionOfACompactedSegmentFallsBack) {
-  InsertRange(0, 2000);
-  InsertRange(2000, 2000);
+  std::vector<int64_t> victims;
+  for (int64_t r = 3; r < 4000; r += 13) {
+    victims.push_back(r);
+  }
+  const auto snapshot = _writer->GetSnapshot();
+  const auto positions = PositionsOf(snapshot, victims);
+  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  _writer->RefreshCommit();
+  const std::vector<int64_t> early{1, 2};
+  Remove(early);
   InsertRange(4000, 2000);
-  std::vector<int64_t> victims;
-  for (int64_t r = 5; r < 6000; r += 11) {
-    victims.push_back(r);
-  }
-  const auto positions = PositionsOf(victims);
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   _writer->RefreshCommit();
   ASSERT_EQ(1, _writer->GetSnapshot().size());
-  Remove(victims, positions);
+  Remove(snapshot, positions, victims);
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, RemovalDuringAPendingCompactionIsRemapped) {
+TEST_F(SearchRowRemovalTest, StalePositionsAfterAReopenNeedTheMapsTheyCarry) {
   InsertRange(0, 3000);
   InsertRange(3000, 3000);
+  const std::vector<int64_t> early{10, 3011};
+  Remove(early);
   std::vector<int64_t> victims;
-  for (int64_t r = 1; r < 6000; r += 13) {
+  for (int64_t r = 1; r < 6000; r += 17) {
     victims.push_back(r);
   }
-  const auto positions = PositionsOf(victims);
-  std::vector<int64_t> decoys;
-  for (const auto rowid : victims) {
-    decoys.emplace_back(rowid + 1);
+  irs::DocRemoval logged;
+  MapsBySource maps;
+  {
+    const auto snapshot = _writer->GetSnapshot();
+    const auto positions = PositionsOf(snapshot, victims);
+    ASSERT_TRUE(_writer->Compact(FullMerge()));
+    _writer->RefreshCommit();
+    const auto removal = MakeRemoval(positions, snapshot);
+    const std::array<const irs::DocRemoval*, 1> removals{removal.get()};
+    maps = Logged(*_writer, removals);
+    logged = AsLogged(*removal);
   }
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
-  RemoveDecoyed(decoys, positions, victims);
+  ASSERT_FALSE(maps.empty());
+  Reopen();
   ASSERT_EQ(1, _writer->GetSnapshot().size());
+  Commit(search::ReplayRemoval(AsLogged(logged), _writer->GetSnapshot(), {}),
+         {});
+  ExpectModel();
+  Commit(search::ReplayRemoval(std::move(logged), _writer->GetSnapshot(), maps),
+         victims);
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, RemovalInFlightDuringAMergeIsRemapped) {
-  InsertRange(0, 3000);
-  InsertRange(3000, 3000);
-  std::vector<int64_t> victims;
-  std::vector<int64_t> decoys;
-  for (int64_t r = 2; r < 6000; r += 17) {
-    victims.emplace_back(r);
-    decoys.emplace_back(r + 1);
-  }
-  const auto positions = PositionsOf(victims);
-  auto trx = _writer->GetBatch();
-  trx.Remove(MakeRowRemoval(decoys, positions));
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
-  ASSERT_TRUE(trx.Commit());
-  _writer->RefreshCommit();
-  for (const auto rowid : victims) {
-    _model.erase(rowid);
-  }
-  ASSERT_EQ(1, _writer->GetSnapshot().size());
-  ExpectModel();
+constexpr uint64_t kGone = 1000000;
+constexpr uint64_t kAlsoGone = 1000001;
+
+TEST(ReplayRemovalTest, ARecoveredSegmentKeepsItsDocsAndSlot) {
+  const auto live = IdOf(OneRowSegments()[2]);
+  const auto removal =
+    search::ReplayRemoval(Rows({{live, 1}}), OneRowSegments(), {});
+  ASSERT_EQ(1, removal->groups.size());
+  EXPECT_EQ(live, removal->groups[0].segment);
+  EXPECT_TRUE(removal->groups[0].docs.Contains(1));
+  EXPECT_EQ(irs::utils::downCast<irs::SegmentReader>(OneRowSegments()[2])
+              .GetImpl()
+              ->DocMaps(),
+            removal->groups[0].maps);
+}
+
+TEST(ReplayRemovalTest, AGoneSegmentFollowsItsMapsToARecoveredOne) {
+  const auto live = IdOf(OneRowSegments()[3]);
+  MapsBySource maps;
+  maps.emplace(
+    kGone,
+    std::vector<irs::DocMap>{
+      {.source = kGone, .target = kAlsoGone, .rank_end = 10, .base = 5}});
+  maps.emplace(
+    kAlsoGone,
+    std::vector<irs::DocMap>{
+      {.source = kAlsoGone, .target = live, .rank_end = 20, .base = 1}});
+  const auto removal =
+    search::ReplayRemoval(Rows({{kGone, 2}}), OneRowSegments(), maps);
+  ASSERT_EQ(1, removal->groups.size());
+  EXPECT_EQ(live, removal->groups[0].segment);
+  EXPECT_EQ(1, removal->groups[0].docs.Count());
+  EXPECT_TRUE(removal->groups[0].docs.Contains(6));
+}
+
+TEST(ReplayRemovalTest, AGoneSegmentWithoutMapsIsDropped) {
+  EXPECT_TRUE(search::ReplayRemoval(Rows({{kGone, 1}}), OneRowSegments(), {})
+                ->groups.empty());
+}
+
+TEST(ReplayRemovalTest, AMapOfARecoveredSegmentIsIgnored) {
+  const auto live = IdOf(OneRowSegments()[2]);
+  MapsBySource maps;
+  maps.emplace(
+    live,
+    std::vector<irs::DocMap>{
+      {.source = live, .target = IdOf(OneRowSegments()[3]), .rank_end = 1}});
+  const auto removal =
+    search::ReplayRemoval(Rows({{live, 1}}), OneRowSegments(), maps);
+  ASSERT_EQ(1, removal->groups.size());
+  EXPECT_EQ(live, removal->groups[0].segment);
+}
+
+TEST(ReplayRemovalTest, ASourceSplitAcrossTargetsKeepsEveryWindow) {
+  const auto first = IdOf(OneRowSegments()[1]);
+  const auto second = IdOf(OneRowSegments()[4]);
+  MapsBySource maps;
+  maps.emplace(
+    kGone,
+    std::vector<irs::DocMap>{
+      {.source = kGone, .target = first, .rank_end = 5},
+      {.source = kGone, .target = second, .rank_begin = 5, .rank_end = 10}});
+  const auto removal = search::ReplayRemoval(
+    Rows({{kGone, 1}, {kGone, 2}, {kGone, 6}, {kGone, 10}}), OneRowSegments(),
+    maps);
+  ASSERT_EQ(2, removal->groups.size());
+  EXPECT_EQ(first, removal->groups[0].segment);
+  EXPECT_EQ(2, removal->groups[0].docs.Count());
+  EXPECT_TRUE(removal->groups[0].docs.Contains(1));
+  EXPECT_TRUE(removal->groups[0].docs.Contains(2));
+  EXPECT_EQ(second, removal->groups[1].segment);
+  EXPECT_EQ(2, removal->groups[1].docs.Count());
+  EXPECT_TRUE(removal->groups[1].docs.Contains(1));
+  EXPECT_TRUE(removal->groups[1].docs.Contains(5));
+}
+
+TEST(ReplayRemovalTest, AWindowWithoutRemovedDocsGetsNoGroup) {
+  const auto first = IdOf(OneRowSegments()[1]);
+  const auto second = IdOf(OneRowSegments()[4]);
+  MapsBySource maps;
+  maps.emplace(
+    kGone,
+    std::vector<irs::DocMap>{
+      {.source = kGone, .target = first, .rank_end = 5},
+      {.source = kGone, .target = second, .rank_begin = 5, .rank_end = 10}});
+  const auto removal =
+    search::ReplayRemoval(Rows({{kGone, 7}}), OneRowSegments(), maps);
+  ASSERT_EQ(1, removal->groups.size());
+  EXPECT_EQ(second, removal->groups[0].segment);
+  EXPECT_EQ(1, removal->groups[0].docs.Count());
+  EXPECT_TRUE(removal->groups[0].docs.Contains(2));
 }
 
 TEST_F(SearchRowRemovalTest, CompactionAfterRemovalKeepsRowsRemoved) {
   InsertRange(0, 3000);
   InsertRange(3000, 3000);
-  std::vector<int64_t> victims{0, 2999, 3000, 5999, 1234};
-  Remove(victims, PositionsOf(victims));
+  const std::vector<int64_t> victims{0, 2999, 3000, 5999, 1234};
+  Remove(victims);
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   _writer->RefreshCommit();
   ExpectModel();
@@ -438,7 +595,7 @@ TEST_F(SearchRowRemovalTest, SegmentFullyRemovedDisappears) {
   InsertRange(100, 100);
   std::vector<int64_t> victims(100);
   std::iota(victims.begin(), victims.end(), 0);
-  Remove(victims, PositionsOf(victims));
+  Remove(victims);
   EXPECT_EQ(1, _writer->GetSnapshot().size());
   ExpectModel();
 }
@@ -446,10 +603,10 @@ TEST_F(SearchRowRemovalTest, SegmentFullyRemovedDisappears) {
 TEST_F(SearchRowRemovalTest, AlreadyRemovedRowsAreNoOps) {
   InsertRange(0, 500);
   const std::vector<int64_t> victims{1, 2, 3};
-  const auto positions = PositionsOf(victims);
-  Remove(victims, positions);
-  Remove(victims, positions);
-  Remove(victims, {});
+  const auto snapshot = _writer->GetSnapshot();
+  const auto positions = PositionsOf(snapshot, victims);
+  Remove(snapshot, positions, victims);
+  Remove(snapshot, positions, victims);
   ExpectModel();
   EXPECT_EQ(497, Live().size());
 }
@@ -457,27 +614,7 @@ TEST_F(SearchRowRemovalTest, AlreadyRemovedRowsAreNoOps) {
 TEST_F(SearchRowRemovalTest, DuplicatesInOneRemovalAreHarmless) {
   InsertRange(0, 500);
   const std::vector<int64_t> victims{9, 9, 9, 10, 10};
-  const auto positions = PositionsOf(victims);
-  Remove(victims, positions);
-  ExpectModel();
-}
-
-TEST_F(SearchRowRemovalTest, PositionPastTheSegmentEndIsIgnored) {
-  InsertRange(0, 50);
-  const auto live = LivePositions();
-  const auto segment = RowPositionSegment(live.begin()->second);
-  const std::vector<int64_t> victims{999};
-  const std::vector<uint64_t> positions{
-    MakeRowPosition(segment, irs::doc_limits::min() + 50)};
-  Remove(victims, positions);
-  EXPECT_EQ(50, Live().size());
-}
-
-TEST_F(SearchRowRemovalTest, PositionOfAnUnknownSegmentUsesTheRowid) {
-  InsertRange(0, 50);
-  const std::vector<int64_t> victims{7};
-  const std::vector<uint64_t> positions{MakeRowPosition(4000000, 1)};
-  Remove(victims, positions);
+  Remove(victims);
   ExpectModel();
 }
 
@@ -493,31 +630,23 @@ TEST_F(SearchRowRemovalTest, InterleavedRowidsAcrossSegmentsAndBlocks) {
   for (int64_t r = 3; r < 300000; r += 97) {
     victims.push_back(r);
   }
-  Remove(victims, {});
+  Remove(victims);
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, SequentialRowidsAcrossManyBlocks) {
-  InsertRange(0, 400000);
-  std::vector<int64_t> victims;
-  for (int64_t r = 0; r < 400000; r += 1013) {
-    victims.push_back(r);
-  }
-  victims.push_back(399999);
-  Remove(victims, {});
-  ExpectModel();
-}
-
-TEST_F(SearchRowRemovalTest, ManyKeyedRemovalsInOneCommit) {
+TEST_F(SearchRowRemovalTest, ManyRemovalsInOneCommit) {
   InsertRange(0, 4000);
   InsertRange(4000, 4000);
   InsertRange(8000, 4000);
+  const auto snapshot = _writer->GetSnapshot();
+  const auto positions = PositionsIn(snapshot);
   auto trx = _writer->GetBatch();
   for (int64_t chunk = 0; chunk < 50; ++chunk) {
-    const std::array<int64_t, 2> rowids{chunk * 7, 11999 - chunk * 5};
-    trx.Remove(MakeRowRemoval(rowids, {}));
-    _model.erase(rowids[0]);
-    _model.erase(rowids[1]);
+    const std::array<uint64_t, 2> places{positions.at(chunk * 7),
+                                         positions.at(11999 - chunk * 5)};
+    trx.Remove(MakeRemoval(places, snapshot));
+    _model.erase(chunk * 7);
+    _model.erase(11999 - chunk * 5);
   }
   ASSERT_TRUE(trx.Commit());
   _writer->RefreshCommit();
@@ -527,482 +656,295 @@ TEST_F(SearchRowRemovalTest, ManyKeyedRemovalsInOneCommit) {
 TEST_F(SearchRowRemovalTest, ManyStalePositionsInOneCommit) {
   InsertRange(0, 4000);
   InsertRange(4000, 4000);
-  const auto before = LivePositions();
+  const auto snapshot = _writer->GetSnapshot();
+  const auto before = PositionsIn(snapshot);
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   _writer->RefreshCommit();
   auto trx = _writer->GetBatch();
   for (int64_t chunk = 0; chunk < 40; ++chunk) {
-    const std::array<int64_t, 1> rowids{chunk * 199};
-    const std::array<uint64_t, 1> positions{before.at(rowids[0])};
-    trx.Remove(MakeRowRemoval(rowids, positions));
-    _model.erase(rowids[0]);
+    const std::array<uint64_t, 1> positions{before.at(chunk * 199)};
+    trx.Remove(MakeRemoval(positions, snapshot));
+    _model.erase(chunk * 199);
   }
   ASSERT_TRUE(trx.Commit());
   _writer->RefreshCommit();
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, ResolverMergesPositionalAndKeyedDocs) {
-  InsertRange(0, 1000);
-  const auto reader = _writer->GetSnapshot();
-  ASSERT_EQ(1, reader.size());
-  const auto number = *SegmentNumber(reader[0].Meta().name);
-  const std::array<int64_t, 5> rowids{900, 7, 5, 300, 300};
-  const std::array<uint64_t, 5> positions{
-    MakeRowPosition(number, irs::doc_limits::min() + 900),
-    MakeRowPosition(number + 1, irs::doc_limits::min() + 7), kNoRowPosition,
-    MakeRowPosition(number, irs::doc_limits::min() + 300), kNoRowPosition};
-  const auto removal = MakeRowRemoval(rowids, positions);
-  const std::array<const irs::SubReader*, 1> live{&reader[0]};
-  EXPECT_EQ((std::vector<irs::doc_id_t>{
-              irs::doc_limits::min() + 5, irs::doc_limits::min() + 7,
-              irs::doc_limits::min() + 300, irs::doc_limits::min() + 900}),
-            ResolveDocs(*removal, live, reader[0]));
-  irs::DocRemovalResolver resolver;
-  const std::array<const irs::DocRemoval*, 1> removals{removal.get()};
-  resolver.Prepare(removals, live);
-  const auto positional = resolver.PositionalDocs(*removal, reader[0]);
-  EXPECT_EQ((std::vector<irs::doc_id_t>{irs::doc_limits::min() + 300,
-                                        irs::doc_limits::min() + 900}),
-            std::vector<irs::doc_id_t>(positional.begin(), positional.end()));
-}
-
-TEST_F(SearchRowRemovalTest, ResolverAnswersEachRemovalWithItsOwnKeys) {
-  InsertRange(0, 1000);
-  const auto reader = _writer->GetSnapshot();
-  const std::array<int64_t, 2> first_keys{1, 5};
-  const std::array<int64_t, 2> second_keys{3, 999};
-  const auto first = MakeRowRemoval(first_keys, {});
-  const auto second = MakeRowRemoval(second_keys, {});
-  const auto unprepared = MakeRowRemoval(second_keys, {});
-  irs::DocRemovalResolver resolver;
-  const std::array<const irs::DocRemoval*, 2> removals{first.get(),
-                                                       second.get()};
-  resolver.Prepare(removals, {});
-  auto docs = resolver.Docs(*first, reader[0]);
-  EXPECT_EQ((std::vector<irs::doc_id_t>{2, 6}),
-            std::vector<irs::doc_id_t>(docs.begin(), docs.end()));
-  docs = resolver.Docs(*second, reader[0]);
-  EXPECT_EQ((std::vector<irs::doc_id_t>{4, 1000}),
-            std::vector<irs::doc_id_t>(docs.begin(), docs.end()));
-  docs = resolver.Docs(*first, reader[0]);
-  EXPECT_EQ((std::vector<irs::doc_id_t>{2, 6}),
-            std::vector<irs::doc_id_t>(docs.begin(), docs.end()));
-  EXPECT_TRUE(resolver.Docs(*unprepared, reader[0]).empty());
-}
-
-TEST_F(SearchRowRemovalTest, ResolverKeepsKeyColumnsApart) {
-  InsertRange(0, 100);
-  const auto reader = _writer->GetSnapshot();
-  const std::array<int64_t, 2> keys{4, 2000};
-  const auto by_rowid = MakeRowRemoval(keys, {});
-  std::vector<irs::DocRemoval::Row> rows{{irs::DocRemoval::kNoSegment, 0, 4}};
-  const auto by_other = std::make_shared<const irs::DocRemoval>(
-    irs::DocRemoval::Build(kGeneratedPKId + 1000, std::move(rows)));
-  const std::array<int64_t, 1> missing_keys{2000};
-  const auto missing = MakeRowRemoval(missing_keys, {});
-  irs::DocRemovalResolver resolver;
-  const std::array<const irs::DocRemoval*, 3> removals{
-    by_rowid.get(), by_other.get(), missing.get()};
-  resolver.Prepare(removals, {});
-  const auto docs = resolver.Docs(*by_rowid, reader[0]);
-  EXPECT_EQ((std::vector<irs::doc_id_t>{irs::doc_limits::min() + 4}),
-            std::vector<irs::doc_id_t>(docs.begin(), docs.end()));
-  EXPECT_TRUE(resolver.Docs(*by_other, reader[0]).empty());
-  EXPECT_TRUE(resolver.Docs(*missing, reader[0]).empty());
-}
-
-TEST_F(SearchRowRemovalTest, ResolverPrunesSegmentsOutsideTheRange) {
-  InsertRange(0, 1000);
-  InsertRange(1000000, 1000);
-  const std::array<int64_t, 1> rowids{500};
-  const auto removal = MakeRowRemoval(rowids, {});
-  const auto reader = _writer->GetSnapshot();
-  size_t hits = 0;
-  for (const auto& segment : reader) {
-    hits += ResolveDocs(*removal, {}, segment).size();
-  }
-  EXPECT_EQ(1, hits);
-}
-
-TEST_F(SearchRowRemovalTest, ResolverSkipsBlocksWithoutTargets) {
-  InsertRange(0, 400000);
-  const auto reader = _writer->GetSnapshot();
-  ASSERT_EQ(1, reader.size());
-  const auto* column = reader[0].GetColReader()->Column(kGeneratedPKId);
-  ASSERT_NE(nullptr, column);
-  ASSERT_GT(column->DataBlocks().size(), 2);
-  const std::array<int64_t, 2> rowids{5, 7};
-  EXPECT_EQ((std::vector<irs::doc_id_t>{irs::doc_limits::min() + 5,
-                                        irs::doc_limits::min() + 7}),
-            ResolveDocs(*MakeRowRemoval(rowids, {}), {}, reader[0]));
-  const std::array<int64_t, 3> spread{5, 7, 399999};
-  EXPECT_EQ((std::vector<irs::doc_id_t>{irs::doc_limits::min() + 5,
-                                        irs::doc_limits::min() + 7,
-                                        irs::doc_limits::min() + 399999}),
-            ResolveDocs(*MakeRowRemoval(spread, {}), {}, reader[0]));
-}
-
-TEST_F(SearchRowRemovalTest, ResolverIgnoresSegmentsWithoutTheRowidColumn) {
-  {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    DuckDBSearchSinkInsertWriter sink{
-      trx, KeywordTokenizer, std::array<ColumnId, 1>{kValueColumn},
-      NoEntryInfoProvider(),
-      PkPolicy{.index_term = false, .column = catalog::PkColumnKind::None}};
-    duckdb::Vector values{duckdb::LogicalType::BIGINT, 3};
-    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(values);
-    data[0] = 1;
-    data[1] = 2;
-    data[2] = 3;
-    sink.Init(3, PkChunk{});
-    sink.SwitchColumn(
-      ColumnDescriptor{kValueColumn, duckdb::LogicalType::BIGINT}, values, 3);
-    sink.Finish();
-    ASSERT_TRUE(trx.Commit());
-    _writer->RefreshCommit();
-  }
+TEST_F(SearchRowRemovalTest,
+       SegmentsWithoutTheRowidColumnAreRemovedByPosition) {
+  auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+  test::WriteValues(trx, std::array<int64_t, 3>{1, 2, 3});
+  ASSERT_TRUE(trx.Commit());
+  _writer->RefreshCommit();
   const auto reader = _writer->GetSnapshot();
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(nullptr, reader[0].GetColReader()->Column(kGeneratedPKId));
-  const std::array<int64_t, 2> rowids{1, 2};
-  EXPECT_TRUE(ResolveDocs(*MakeRowRemoval(rowids, {}), {}, reader[0]).empty());
-
-  const std::vector<int64_t> victims{1, 2, 3};
-  auto trx = _writer->GetBatch();
-  trx.Remove(MakeRowRemoval(victims, {}));
-  ASSERT_TRUE(trx.Commit());
-  _writer->RefreshCommit();
-  EXPECT_EQ(3, _writer->GetSnapshot().live_docs_count());
+  const std::vector<uint64_t> positions{MakeRowPosition(0, 2)};
+  Remove(reader, positions, {});
+  EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
 }
 
-TEST_F(SearchRowRemovalTest, ResolverSkipsNullRowids) {
-  auto write = [&](std::initializer_list<std::optional<int64_t>> rowids) {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    DuckDBSearchSinkInsertWriter sink{
-      trx, KeywordTokenizer, std::array<ColumnId, 1>{kValueColumn},
-      NoEntryInfoProvider(),
-      PkPolicy{.index_term = false, .column = catalog::PkColumnKind::Has}};
-    const auto n = rowids.size();
-    duckdb::Vector ids{duckdb::LogicalType::BIGINT, n};
-    duckdb::Vector values{duckdb::LogicalType::BIGINT, n};
-    auto* id_data = duckdb::FlatVector::GetDataMutable<int64_t>(ids);
-    auto* value_data = duckdb::FlatVector::GetDataMutable<int64_t>(values);
-    size_t i = 0;
-    for (const auto& rowid : rowids) {
-      id_data[i] = rowid.value_or(1000 + static_cast<int64_t>(i));
-      value_data[i] = static_cast<int64_t>(i);
-      if (!rowid) {
-        duckdb::FlatVector::ValidityMutable(ids).SetInvalid(i);
-      }
-      ++i;
+TEST_F(SearchRowRemovalTest, ReplaceSegmentsCarriesARemovalAppliedBeforeIt) {
+  InsertRange(0, 1000);
+  InsertRange(1000, 1000);
+  const std::vector<int64_t> early{7, 1007};
+  Remove(early);
+  const auto snapshot = _writer->GetSnapshot();
+  const auto copy =
+    LiveRows(snapshot) | std::views::keys | std::ranges::to<std::vector>();
+  const auto metas = FlushCopy(copy);
+
+  const std::vector<int64_t> victims{1, 2, 998, 1500};
+  Remove(victims);
+  ReplaceAll(snapshot, metas);
+  _writer->RefreshCommit();
+  ASSERT_EQ(1, _writer->GetSnapshot().size());
+  ExpectModel();
+}
+
+TEST_F(SearchRowRemovalTest, RemovalAndInsertInOneTransactionInEitherOrder) {
+  InsertRange(0, 100);
+  for (const bool remove_first : {true, false}) {
+    const std::vector<int64_t> victims{remove_first ? 5 : 6};
+    const std::vector<int64_t> rows{remove_first ? 200 : 300};
+    const auto snapshot = _writer->GetSnapshot();
+    const auto removal = MakeRemoval(PositionsOf(snapshot, victims), snapshot);
+    auto trx = _writer->GetBatch();
+    if (remove_first) {
+      trx.Remove(removal);
+      WriteRows(trx, rows);
+    } else {
+      WriteRows(trx, rows);
+      trx.Remove(removal);
     }
-    sink.Init(n, PkChunk{.column = &ids});
-    sink.SwitchColumn(
-      ColumnDescriptor{kValueColumn, duckdb::LogicalType::BIGINT}, values, n);
-    sink.Finish();
     ASSERT_TRUE(trx.Commit());
     _writer->RefreshCommit();
+    _model.erase(victims.front());
+    _model.insert(rows.begin(), rows.end());
+    ExpectModel();
+  }
+}
+
+TEST_F(SearchRowRemovalTest, LongRunsOfPositionsRemoveTheirRows) {
+  InsertRange(0, 10000);
+  InsertRange(10000, 10000);
+  std::vector<int64_t> victims(9000);
+  std::iota(victims.begin(), victims.end(), 5500);
+  const auto snapshot = _writer->GetSnapshot();
+  const auto positions = PositionsOf(snapshot, victims);
+  const auto removal = MakeRemoval(positions, snapshot);
+  ASSERT_EQ(2, removal->groups.size());
+  EXPECT_GT(128, removal->groups[0].docs.FrozenSize() +
+                   removal->groups[1].docs.FrozenSize());
+  Remove(snapshot, positions, victims);
+  ExpectModel();
+}
+
+TEST_F(SearchRowRemovalTest, SegmentIdsPast32BitsAreRemovedByPosition) {
+  _writer.reset();
+  {
+    auto out = _dir.create("_4294967294");
+    ASSERT_TRUE(out);
+  }
+  auto options = WriterOptions();
+  options.cleanup_on_open = false;
+  _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+  InsertRange(0, 100);
+  InsertRange(100, 100);
+  const auto snapshot = _writer->GetSnapshot();
+  ASSERT_EQ(2, snapshot.size());
+  for (const auto& segment : snapshot) {
+    EXPECT_LE(std::numeric_limits<uint32_t>::max(), IdOf(segment));
+  }
+  const std::vector<int64_t> victims{3, 150};
+  const auto positions = PositionsOf(snapshot, victims);
+  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  _writer->RefreshCommit();
+  ASSERT_EQ(1, _writer->GetSnapshot().size());
+  Remove(snapshot, positions, victims);
+  ExpectModel();
+}
+
+TEST(WalRowPositionMapsTest, EntryTypesRoundTripTheirNames) {
+  for (const auto type : {duckdb::WALType::DELETE_ROW_POSITIONS,
+                          duckdb::WALType::ROW_POSITION_MAPS}) {
+    EXPECT_EQ(type, duckdb::EnumUtil::FromString<duckdb::WALType>(
+                      duckdb::EnumUtil::ToChars(type)));
+  }
+}
+
+TEST_F(SearchRowRemovalTest, RowIdTermsRemoveTheLiveCopyOfTheirKey) {
+  Insert(std::vector<int64_t>{5, 6, 7, 8}, /*index_term=*/true);
+  Commit(irs::TermRemoval{{8, 5}}, std::vector<int64_t>{5, 8});
+  Insert(std::vector<int64_t>{5, 8, 9}, /*index_term=*/true);
+  Commit(irs::TermRemoval{{8, -3, 6, 100, 5, 8}},
+         std::vector<int64_t>{5, 6, 8});
+  ASSERT_EQ(2, _writer->GetSnapshot().size());
+  ExpectModel();
+}
+
+TEST_F(SearchRowRemovalTest, RowIdTermsOfOneCommitRemoveTogether) {
+  Insert(std::vector<int64_t>{1, 2, 3}, /*index_term=*/true);
+  Insert(std::vector<int64_t>{4, 5, 6}, /*index_term=*/true);
+  {
+    auto trx = _writer->GetBatch();
+    trx.Remove(irs::TermRemoval{{5, 2}});
+    trx.Remove(irs::TermRemoval{{2, 6, 9}});
+    ASSERT_TRUE(trx.Commit());
+  }
+  {
+    auto trx = _writer->GetBatch();
+    trx.Remove(irs::TermRemoval{{1}});
+    ASSERT_TRUE(trx.Commit());
+  }
+  _writer->RefreshCommit();
+  _model = {3, 4};
+  ExpectModel();
+}
+
+TEST_F(SearchRowRemovalTest, RowIdTermsReachRowsFlushedInTheSameCommit) {
+  Insert(std::vector<int64_t>{1, 2}, /*index_term=*/true);
+  const auto write = [&](std::vector<int64_t> rowids) {
+    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+    WriteRows(trx, rowids, /*index_term=*/true);
+    ASSERT_TRUE(trx.Commit());
   };
-  write({10, std::nullopt, 12, 13});
-  write({std::nullopt, std::nullopt});
-  const auto reader = _writer->GetSnapshot();
-  ASSERT_EQ(2, reader.size());
-  const std::array<int64_t, 5> rowids{10, 12, 1000, 1001, 1002};
-  const auto removal = MakeRowRemoval(rowids, {});
-  irs::DocRemovalResolver resolver;
-  const std::array<const irs::DocRemoval*, 1> removals{removal.get()};
-  resolver.Prepare(removals, {});
-  size_t hits = 0;
-  for (const auto& segment : reader) {
-    hits += resolver.Docs(*removal, segment).size();
+  write({3, 4});
+  {
+    auto trx = _writer->GetBatch();
+    trx.Remove(irs::TermRemoval{{2, 4}});
+    ASSERT_TRUE(trx.Commit());
   }
-  EXPECT_EQ(2, hits);
-}
-
-TEST_F(SearchRowRemovalTest, MakeRowRemovalGroupsRowsBySegment) {
-  EXPECT_EQ(nullptr, MakeRowRemoval({}, {}));
-  const std::array<int64_t, 4> rowids{5, 6, 3, 3};
-  const std::array<uint64_t, 4> positions{MakeRowPosition(2, 7),
-                                          MakeRowPosition(1, 3), kNoRowPosition,
-                                          kNoRowPosition};
-  const auto removal = MakeRowRemoval(rowids, positions);
-  ASSERT_NE(nullptr, removal);
-  EXPECT_EQ(kGeneratedPKId, removal->key_column);
-  EXPECT_EQ((std::vector<uint64_t>{1, 2, irs::DocRemoval::kNoSegment}),
-            removal->segments);
-  EXPECT_EQ((std::vector<irs::doc_id_t>{3, 7, 0}), removal->docs);
-  EXPECT_EQ((std::vector<int64_t>{6, 5, 3}), removal->keys);
-  const auto unplaced = MakeRowRemoval(rowids, {});
-  ASSERT_NE(nullptr, unplaced);
-  EXPECT_EQ((std::vector<uint64_t>{irs::DocRemoval::kNoSegment}),
-            unplaced->segments);
-  EXPECT_EQ((std::vector<int64_t>{3, 5, 6}), unplaced->keys);
-}
-
-class FakeSegment final : public irs::SubReader {
- public:
-  FakeSegment(std::string name, uint32_t docs) {
-    _info.name = std::move(name);
-    _info.docs_count = docs;
-    _info.live_docs_count = docs;
-  }
-
-  uint64_t CountMappedMemory() const final { return 0; }
-  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
-  const irs::SegmentInfo& Meta() const final { return _info; }
-  const irs::DocumentMask* docs_mask() const final { return nullptr; }
-  irs::lead::Node::ptr docs_iterator() const final { return nullptr; }
-  std::span<const irs::field_id> field_ids() const final { return {}; }
-  const irs::TermReader* field(irs::field_id) const final { return nullptr; }
-
- private:
-  irs::SegmentInfo _info;
-};
-
-TEST(DocRemovalResolverTest, UnparseableSegmentGetsNoPositionalDocs) {
-  const FakeSegment bogus{"bogus", 10};
-  const FakeSegment numbered{"_3", 10};
-  const std::array<int64_t, 2> rowids{1, 2};
-  const std::array<uint64_t, 2> positions{MakeRowPosition(3, 2),
-                                          MakeRowPosition(3, 5)};
-  const auto removal = MakeRowRemoval(rowids, positions);
-  const std::array<const irs::SubReader*, 2> live{&bogus, &numbered};
-  EXPECT_TRUE(ResolveDocs(*removal, live, bogus).empty());
-  EXPECT_EQ((std::vector<irs::doc_id_t>{2, 5}),
-            ResolveDocs(*removal, live, numbered));
-}
-
-TEST(DocRemovalResolverTest,
-     SegmentNumberedLikeTheSentinelGetsNoPositionalDocs) {
-  const FakeSegment sentinel{irs::FileName(irs::DocRemoval::kNoSegment), 10};
-  const std::array<int64_t, 1> rowids{1};
-  const auto removal = MakeRowRemoval(rowids, {});
-  ASSERT_EQ(irs::DocRemoval::kNoSegment, removal->segments.front());
-  irs::DocRemovalResolver resolver;
-  const std::array<const irs::DocRemoval*, 1> removals{removal.get()};
-  const std::array<const irs::SubReader*, 1> live{&sentinel};
-  resolver.Prepare(removals, live);
-  EXPECT_TRUE(resolver.PositionalDocs(*removal, sentinel).empty());
-  EXPECT_TRUE(resolver.Docs(*removal, sentinel).empty());
-}
-
-TEST(DocRemovalResolverTest, PositionsPastTheSegmentEndAreCut) {
-  const FakeSegment segment{"_3", 4};
-  const std::array<int64_t, 3> rowids{1, 2, 3};
-  const std::array<uint64_t, 3> positions{
-    MakeRowPosition(3, 4), MakeRowPosition(3, 5), MakeRowPosition(3, 9)};
-  const auto removal = MakeRowRemoval(rowids, positions);
-  const std::array<const irs::SubReader*, 1> live{&segment};
-  EXPECT_EQ((std::vector<irs::doc_id_t>{4}),
-            ResolveDocs(*removal, live, segment));
-}
-
-TEST(DocRemovalResolverTest, VanishedTargetsFallBackToASegmentWithoutRowids) {
-  const FakeSegment other{"_9", 10};
-  const std::array<int64_t, 1> rowids{1};
-  const std::array<uint64_t, 1> positions{MakeRowPosition(3, 2)};
-  const auto removal = MakeRowRemoval(rowids, positions);
-  const std::array<const irs::SubReader*, 1> live{&other};
-  EXPECT_TRUE(ResolveDocs(*removal, live, other).empty());
-}
-
-TEST(RowPositionTest, FillRowPositions) {
-  duckdb::Vector out{duckdb::LogicalType::UBIGINT, 4};
-  FillRowPositions(
-    std::optional<uint64_t>{7}, 4,
-    [](duckdb::idx_t i) { return static_cast<irs::doc_id_t>(10 + 2 * i); },
-    out);
-  const auto* data = duckdb::FlatVector::GetData<uint64_t>(out);
-  for (duckdb::idx_t i = 0; i < 4; ++i) {
-    EXPECT_TRUE(duckdb::FlatVector::Validity(out).RowIsValid(i));
-    EXPECT_EQ(MakeRowPosition(7, static_cast<irs::doc_id_t>(10 + 2 * i)),
-              data[i]);
-  }
-  duckdb::Vector null_out{duckdb::LogicalType::UBIGINT, 4};
-  FillRowPositions(
-    std::nullopt, 3, [](duckdb::idx_t) { return irs::doc_id_t{1}; }, null_out);
-  for (duckdb::idx_t i = 0; i < 3; ++i) {
-    EXPECT_FALSE(duckdb::FlatVector::Validity(null_out).RowIsValid(i));
-  }
-  EXPECT_TRUE(duckdb::FlatVector::Validity(null_out).RowIsValid(3));
-}
-
-TEST(LocalTableChangesTest, EachDeleteChunkIsItsOwnOp) {
-  search::LocalTableChangesEntry entry;
-  const std::array<int64_t, 2> rows{1, 2};
-  const std::array<uint64_t, 2> positions{MakeRowPosition(1, 1),
-                                          MakeRowPosition(1, 2)};
-  entry.AppendDeletes(rows, positions);
-  entry.AppendDeletes(rows, positions);
-  ASSERT_EQ(2, entry.ops.size());
-  EXPECT_EQ(2, entry.ops[1].delete_rows.size());
-  EXPECT_EQ(2, entry.ops[1].delete_positions.size());
-
-  entry.pk_segments.push_back({0, 10});
-  entry.AppendDeletes(rows, positions);
-  ASSERT_EQ(3, entry.ops.size());
-  EXPECT_EQ(1, entry.ops[2].band_watermark);
-
-  entry.AppendDeletes({}, {});
-  ASSERT_EQ(3, entry.ops.size());
-
-  entry.AppendTruncate(false);
-  ASSERT_EQ(1, entry.ops.size());
-  entry.AppendDeletes(rows, positions);
-  ASSERT_EQ(2, entry.ops.size());
-  EXPECT_TRUE(entry.ops[0].IsTruncate());
-  EXPECT_FALSE(entry.ops[1].IsTruncate());
-}
-
-TEST(CollectRemovedRowsTest, ReadsRowidsAndPositions) {
-  duckdb::DataChunk chunk;
-  chunk.InitializeEmpty(duckdb::vector<duckdb::LogicalType>{
-    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BIGINT,
-    duckdb::LogicalType::UBIGINT});
-  duckdb::Vector text{duckdb::LogicalType::VARCHAR, 3};
-  duckdb::Vector rowid{duckdb::LogicalType::BIGINT, 3};
-  duckdb::Vector position{duckdb::LogicalType::UBIGINT, 3};
-  auto* rowids = duckdb::FlatVector::GetDataMutable<int64_t>(rowid);
-  auto* positions = duckdb::FlatVector::GetDataMutable<uint64_t>(position);
-  for (int i = 0; i < 3; ++i) {
-    rowids[i] = 100 + i;
-    positions[i] = MakeRowPosition(4, irs::doc_limits::min() + i);
-  }
-  duckdb::FlatVector::ValidityMutable(position).SetInvalid(1);
-  chunk.data[0].Reference(text);
-  chunk.data[1].Reference(rowid);
-  chunk.data[2].Reference(position);
-  chunk.SetCardinality(3);
-
-  std::vector<int64_t> rows;
-  std::vector<uint64_t> places;
-  const std::vector<primary_key::PKColumn> both{
-    {1, duckdb::LogicalType::BIGINT}, {2, duckdb::LogicalType::UBIGINT}};
-  CollectRemovedRows(chunk, both, rows, places);
-  EXPECT_EQ((std::vector<int64_t>{100, 101, 102}), rows);
-  EXPECT_EQ((std::vector<uint64_t>{MakeRowPosition(4, 1), kNoRowPosition,
-                                   MakeRowPosition(4, 3)}),
-            places);
-}
-
-TEST_F(SearchRowRemovalTest, RemovalReachesReplacementSegments) {
-  InsertRange(0, 1000);
-  std::vector<std::string> sources;
-  for (const auto& segment : _writer->GetSnapshot()) {
-    sources.emplace_back(segment.Meta().name);
-  }
-  const std::vector<int64_t> victims{0, 500, 999};
-  const auto positions = PositionsOf(victims);
-
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  std::vector<int64_t> copy(1000);
-  std::iota(copy.begin(), copy.end(), 0);
-  WriteRows(build, copy);
-  std::vector<std::string> metas;
-  for (const auto& flushed : build.FlushAndFsync()) {
-    metas.emplace_back(flushed.filename);
-  }
-  build.Abort();
-
-  const auto removal = MakeRowRemoval(victims, positions);
-  auto trx = _writer->GetBatch();
-  trx.Remove(removal);
-  ASSERT_TRUE(trx.Commit());
-
-  std::vector<std::string_view> replaced{sources.begin(), sources.end()};
-  std::vector<std::string_view> adopted{metas.begin(), metas.end()};
-  _writer->ReplaceSegments(
-    replaced, adopted, [](irs::IndexWriter::QueryContext&) { return true; });
+  write({4});
   _writer->RefreshCommit();
-  for (const auto rowid : victims) {
-    _model.erase(rowid);
-  }
+  _model = {1, 3, 4};
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, ReplaceSegmentsCarriesARowidRemoval) {
-  InsertRange(0, 1000);
-  std::vector<std::string> sources;
-  for (const auto& segment : _writer->GetSnapshot()) {
-    sources.emplace_back(segment.Meta().name);
-  }
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  std::vector<int64_t> copy(1000);
-  std::iota(copy.begin(), copy.end(), 0);
-  WriteRows(build, copy);
-  std::vector<std::string> metas;
-  for (const auto& flushed : build.FlushAndFsync()) {
-    metas.emplace_back(flushed.filename);
-  }
-  build.Abort();
-
-  const std::vector<int64_t> victims{1, 2, 998};
-  const auto removal = MakeRowRemoval(victims, {});
-  std::vector<std::string_view> replaced{sources.begin(), sources.end()};
-  std::vector<std::string_view> adopted{metas.begin(), metas.end()};
-  _writer->ReplaceSegments(replaced, adopted,
-                           [&](irs::IndexWriter::QueryContext& out) {
-                             out = {removal, irs::writer_limits::kMinTick};
-                             return true;
-                           });
-  _writer->RefreshCommit();
-  for (const auto rowid : victims) {
-    _model.erase(rowid);
-  }
+TEST_F(SearchRowRemovalTest, RowIdTermsReachAMergedInSegment) {
+  std::vector<int64_t> rowids(4000);
+  std::iota(rowids.begin(), rowids.end(), 0);
+  Insert(std::span{rowids}.first(2000), /*index_term=*/true);
+  Insert(std::span{rowids}.subspan(2000), /*index_term=*/true);
+  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  const std::vector<int64_t> victims{7, 1999, 2000, 3999};
+  Commit(irs::TermRemoval{victims}, victims);
+  ASSERT_EQ(1, _writer->GetSnapshot().size());
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, RemovalBeforeAnInsertInOneTransaction) {
+TEST_F(SearchRowRemovalTest, RowIdTermsPassACopyTheirCommitCarriesOut) {
+  for (int64_t round = 0; round != 8; ++round) {
+    const int64_t base = round * 10;
+    const std::vector<int64_t> keys{base, base + 1, base + 2, base + 3};
+    Insert(std::vector<int64_t>{base, base + 1, base + 2, base + 3, base + 4},
+           /*index_term=*/true);
+    Insert(std::vector<int64_t>{base + 5}, /*index_term=*/true);
+    std::promise<void> merging;
+    std::promise<void> resume;
+    std::atomic_bool parked{false};
+    irs::CompactionResult merged;
+    std::thread merge{[&, resumed = resume.get_future()] {
+      merged = _writer->Compact(FullMerge(), nullptr, [&] {
+        if (!parked.exchange(true)) {
+          merging.set_value();
+          resumed.wait();
+        }
+        return true;
+      });
+    }};
+    if (merging.get_future().wait_for(std::chrono::seconds{60}) !=
+        std::future_status::ready) {
+      merge.join();
+      FAIL() << "the merge never reached its progress callback";
+    }
+    Commit(irs::TermRemoval{keys}, keys);
+    for (const auto key : keys) {
+      Insert(std::vector<int64_t>{key}, /*index_term=*/true);
+    }
+    {
+      auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+      WriteRows(trx, std::vector<int64_t>{base + 6}, /*index_term=*/true);
+      EXPECT_TRUE(trx.Commit());
+    }
+    EXPECT_TRUE(_writer->RefreshBegin());
+    resume.set_value();
+    merge.join();
+    EXPECT_EQ(irs::CompactionError::Pending, merged.error);
+    _writer->RefreshFinish();
+    _model.insert(base + 6);
+    Commit(irs::TermRemoval{keys}, keys);
+    ExpectModel();
+  }
+}
+
+TEST_F(SearchRowRemovalTest, ValidAndPastTheEndPositionsInOneRemoval) {
   InsertRange(0, 100);
-  auto trx = _writer->GetBatch();
-  const std::vector<int64_t> victims{5, 200};
-  const auto removal = MakeRowRemoval(victims, {});
-  trx.Remove(removal);
-  std::vector<int64_t> later{200, 201};
-  WriteRows(trx, later);
-  ASSERT_TRUE(trx.Commit());
-  _writer->RefreshCommit();
-  _model.erase(5);
-  _model.insert(200);
-  _model.insert(201);
+  const auto live = LivePositions();
+  const auto index = RowPositionIndex(live.at(0));
+  const std::vector<int64_t> victims{3, 50};
+  const std::vector<uint64_t> positions{
+    live.at(3), MakeRowPosition(index, irs::doc_limits::min() + 1000),
+    live.at(50)};
+  Remove(positions, victims);
+  ExpectModel();
+  EXPECT_EQ(98, Live().size());
+}
+
+TEST_F(SearchRowRemovalTest,
+       PositionPastTheEndDuringAPendingCompactionIsIgnored) {
+  InsertRange(0, 2000);
+  InsertRange(2000, 2000);
+  const auto snapshot = _writer->GetSnapshot();
+  const auto live = PositionsIn(snapshot);
+  const auto index = RowPositionIndex(live.at(0));
+  const std::vector<int64_t> victims{10, 2010};
+  const std::vector<uint64_t> positions{
+    live.at(10), MakeRowPosition(index, irs::doc_limits::min() + 5000),
+    live.at(2010)};
+  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  Remove(snapshot, positions, victims);
+  ASSERT_EQ(1, _writer->GetSnapshot().size());
+  ExpectModel();
+  EXPECT_EQ(3998, Live().size());
+}
+
+TEST_F(SearchRowRemovalTest, RemovingEveryRowEmptiesTheIndex) {
+  InsertRange(0, 3000);
+  InsertRange(3000, 3000);
+  std::vector<int64_t> victims(6000);
+  std::iota(victims.begin(), victims.end(), 0);
+  Remove(victims);
+  EXPECT_EQ(0, _writer->GetSnapshot().size());
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, InsertBeforeARemovalInOneTransaction) {
-  InsertRange(0, 100);
-  auto trx = _writer->GetBatch();
-  std::vector<int64_t> earlier{300, 301};
-  WriteRows(trx, earlier);
-  const std::vector<int64_t> victims{6, 300};
-  const auto removal = MakeRowRemoval(victims, {});
-  trx.Remove(removal);
-  ASSERT_TRUE(trx.Commit());
-  _writer->RefreshCommit();
-  _model.erase(6);
-  _model.insert(301);
-  ExpectModel();
-}
-
-TEST_F(SearchRowRemovalTest, SeveralRemovalsInOneCommit) {
+TEST_F(SearchRowRemovalTest, RemoveAllTakesEveryCommittedRow) {
   InsertRange(0, 3000);
   InsertRange(3000, 3000);
   auto trx = _writer->GetBatch();
-  for (int64_t k = 0; k < 6; ++k) {
-    std::vector<int64_t> victims;
-    for (int64_t r = k; r < 6000; r += 600) {
-      victims.push_back(r);
-    }
-    const auto positions =
-      k % 2 == 0 ? PositionsOf(victims) : std::vector<uint64_t>{};
-    const auto removal = MakeRowRemoval(victims, positions);
-    trx.Remove(removal);
-    for (const auto rowid : victims) {
-      _model.erase(rowid);
-    }
-  }
+  trx.RemoveAll();
+  const std::vector<int64_t> later{7000, 7001};
+  WriteRows(trx, later);
   ASSERT_TRUE(trx.Commit());
   _writer->RefreshCommit();
+  _model.clear();
+  _model.insert(later.begin(), later.end());
+  ExpectModel();
+}
+
+TEST_F(SearchRowRemovalTest, RemoveAllSparesRowsWrittenAfterIt) {
+  InsertRange(0, 100);
+  auto trx = _writer->GetBatch();
+  const std::vector<int64_t> earlier{500, 501};
+  WriteRows(trx, earlier);
+  trx.RemoveAll();
+  const std::vector<int64_t> later{600};
+  WriteRows(trx, later);
+  ASSERT_TRUE(trx.Commit());
+  _writer->RefreshCommit();
+  _model = {600};
   ExpectModel();
 }
 
@@ -1024,13 +966,13 @@ TEST_F(SearchRowRemovalTest, RandomizedAgainstAModel) {
       }
       continue;
     }
-    const auto live = LivePositions();
+    const auto snapshot = _writer->GetSnapshot();
     std::vector<int64_t> victims;
     std::vector<uint64_t> positions;
-    for (const auto& [rowid, position] : live) {
+    for (const auto& [rowid, position] : PositionsIn(snapshot)) {
       if (rng() % 9 == 0) {
         victims.push_back(rowid);
-        positions.push_back(rng() % 5 == 0 ? kNoRowPosition : position);
+        positions.push_back(position);
       }
     }
     if (rng() % 3 == 0) {
@@ -1039,7 +981,11 @@ TEST_F(SearchRowRemovalTest, RandomizedAgainstAModel) {
     if (rng() % 4 == 0) {
       _writer->RefreshCommit();
     }
-    Remove(victims, positions);
+    if (round % 2 == 0) {
+      Remove(snapshot, positions, victims);
+    } else {
+      RemoveReplayed(snapshot, positions, victims);
+    }
     ExpectModel();
   }
   _writer->RefreshCommit();
@@ -1074,10 +1020,10 @@ TEST_F(SearchRowRemovalTest, ConcurrentInsertRemoveCompact) {
     removers.emplace_back([&, t] {
       std::mt19937_64 rng{static_cast<uint64_t>(100 + t)};
       while (!stop.load()) {
-        const auto live = LivePositions();
+        const auto snapshot = _writer->GetSnapshot();
         std::vector<int64_t> victims;
         std::vector<uint64_t> positions;
-        for (const auto& [rowid, position] : live) {
+        for (const auto& [rowid, position] : PositionsIn(snapshot)) {
           if (rng() % 50 == 0) {
             victims.push_back(rowid);
             positions.push_back(position);
@@ -1087,9 +1033,17 @@ TEST_F(SearchRowRemovalTest, ConcurrentInsertRemoveCompact) {
           std::this_thread::yield();
           continue;
         }
-        const auto removal = MakeRowRemoval(victims, positions);
+        auto removal = MakeRemoval(positions, snapshot);
+        const std::array<const irs::DocRemoval*, 1> removals{removal.get()};
+        _writer->VisitDocMaps(removals,
+                              [](const std::vector<irs::DocMap>& maps) {
+                                for (const auto& map : maps) {
+                                  EXPECT_EQ(maps.front().source, map.source);
+                                  EXPECT_LT(map.source, map.target);
+                                }
+                              });
         auto trx = _writer->GetBatch();
-        trx.Remove(removal);
+        trx.Remove(std::move(removal));
         EXPECT_TRUE(trx.Commit());
         std::lock_guard lock{mutex};
         removed.insert(victims.begin(), victims.end());
@@ -1109,6 +1063,11 @@ TEST_F(SearchRowRemovalTest, ConcurrentInsertRemoveCompact) {
   }};
   for (auto& thread : threads) {
     thread.join();
+  }
+  for (bool idle = true; idle;) {
+    std::this_thread::yield();
+    std::lock_guard lock{mutex};
+    idle = removed.empty();
   }
   stop.store(true);
   for (auto& thread : removers) {

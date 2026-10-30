@@ -1,0 +1,28 @@
+# A function that can fail is evaluated only on the rows a filter keeps,
+# also when the column is read from checkpointed, dictionary-compressed storage.
+
+statement ok
+CREATE TABLE sif_sizes (size TEXT, valid BOOLEAN);
+
+
+statement ok
+INSERT INTO sif_sizes
+SELECT CASE WHEN i % 2 = 0 THEN '1 kB' ELSE 'bogus' END, i % 2 = 0
+FROM generate_series(1, 3000) AS i;
+
+
+statement ok
+FORCE CHECKPOINT;
+
+
+query
+SELECT count(pg_size_bytes(size)) AS valid_sizes, sum(pg_size_bytes(size)) AS bytes
+FROM sif_sizes
+WHERE valid;
+----
+valid_sizes	bytes
+1500	1536000
+
+
+statement ok
+DROP TABLE sif_sizes;

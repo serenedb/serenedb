@@ -113,9 +113,16 @@ class MergeRegistry {
               std::string error);
 
   std::vector<MergeRecord> Active() const;
+  std::vector<MergeRecord> Active(uint64_t relation_id) const;
   std::vector<MergeRecord> History() const;
+  std::vector<MergeRecord> History(uint64_t relation_id) const;
 
  private:
+  template<typename Pred>
+  std::vector<MergeRecord> Active(Pred pred) const;
+  template<typename Pred>
+  std::vector<MergeRecord> History(Pred pred) const;
+
   mutable absl::Mutex _mutex;
   uint64_t _next_id ABSL_GUARDED_BY(_mutex) = 1;
   irs::containers::NodeHashMap<uint64_t, MergeRecord> _active

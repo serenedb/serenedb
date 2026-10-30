@@ -1,0 +1,217 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE g AS SELECT TIMESTAMP '2023-11-28 00:00:00' + INTERVAL (i * 17) MINUTE AS ts, (TIMESTAMP '2023-11-28 00:00:00' + INTERVAL (i * 17) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2023-11-28' + (i % 700)::INTEGER)::DATE AS d, (i % 5)::SMALLINT AS sev, i AS v FROM range(60000) t(i);
+
+statement ok
+INSERT INTO g VALUES (NULL, NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE dst AS SELECT tstz, v FROM (SELECT TIMESTAMPTZ '2025-03-28 00:00:00+00' + INTERVAL (i * 41) MINUTE AS tstz, i AS v FROM range(0, 400) t(i) UNION ALL SELECT TIMESTAMPTZ '2025-10-24 00:00:00+00' + INTERVAL (i * 41) MINUTE, 1000 + i FROM range(0, 400) t(i) UNION ALL SELECT TIMESTAMPTZ '2024-12-31 12:00:00+00' + INTERVAL (i * 41) MINUTE, 2000 + i FROM range(0, 100) t(i));
+
+query
+EXPLAIN SELECT year(ts), month(ts), count(*) FROM g GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────╮
+│ Projections:                                             │
+│ "year"(__internal_date_trunc_month_unbucket(#0, 1, 0)),  │
+│ "month"(__internal_date_trunc_month_unbucket(#0, 1, 0)), │
+│ #1                                                       │
+│ ~30,000 rows                                             │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────┴────────────────────────────╮
+│ Groups: #0                                               │
+│ Aggregates: count_star()                                 │
+│ ~30,000 rows                                             │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ PROJECTION ────────────────┴────────────────────────────╮
+│ Projections:                                             │
+│ __internal_date_trunc_month_bucket(ts, 1, 0)             │
+│ ~60,001 rows                                             │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴────────────────────────────╮
+│ Table: g                                                 │
+│ Type: Sequential Scan                                    │
+│ Projections: ts                                          │
+│ ~60,001 rows                                             │
+╰──────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT year(ts), month(ts), day(ts), count(*) FROM g GROUP BY 1, 2, 3;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────╮
+│ Projections:                                                 │
+│ "year"(__internal_date_trunc_unbucket(#0, 86400000000, 0)),  │
+│ "month"(__internal_date_trunc_unbucket(#0, 86400000000, 0)), │
+│ "day"(__internal_date_trunc_unbucket(#0, 86400000000, 0)),   │
+│ #1                                                           │
+│ ~30,000 rows                                                 │
+╰───────────────────────────────┬──────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ───────┴──────────────────────────────╮
+│ Groups: #0                                                   │
+│ Aggregates: count_star()                                     │
+│ ~30,000 rows                                                 │
+╰───────────────────────────────┬──────────────────────────────╯
+╭─ PROJECTION ──────────────────┴──────────────────────────────╮
+│ Projections:                                                 │
+│ __internal_date_trunc_bucket(ts, 86400000000, 0)             │
+│ ~60,001 rows                                                 │
+╰───────────────────────────────┬──────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────┴──────────────────────────────╮
+│ Table: g                                                     │
+│ Type: Sequential Scan                                        │
+│ Projections: ts                                              │
+│ ~60,001 rows                                                 │
+╰──────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT isoyear(ts), week(ts), count(*) FROM g GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────╮
+│ Projections:                                                              │
+│ isoyear(__internal_date_trunc_unbucket(#0, 604800000000, -259200000000)), │
+│ "week"(__internal_date_trunc_unbucket(#0, 604800000000, -259200000000)),  │
+│ #1                                                                        │
+│ ~30,000 rows                                                              │
+╰─────────────────────────────────────┬─────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────────┴─────────────────────────────────────╮
+│ Groups: #0                                                                │
+│ Aggregates: count_star()                                                  │
+│ ~30,000 rows                                                              │
+╰─────────────────────────────────────┬─────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────┴─────────────────────────────────────╮
+│ Projections:                                                              │
+│ __internal_date_trunc_bucket(ts, 604800000000, -259200000000)             │
+│ ~60,001 rows                                                              │
+╰─────────────────────────────────────┬─────────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────────┴─────────────────────────────────────╮
+│ Table: g                                                                  │
+│ Type: Sequential Scan                                                     │
+│ Projections: ts                                                           │
+│ ~60,001 rows                                                              │
+╰───────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT year(ts), week(ts), count(*) FROM g GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────╮
+│ Projections:                                             │
+│ __internal_decompress_integral_bigint(#0, 2023),         │
+│ CAST(#1 AS BIGINT), #2                                   │
+│ ~30,000 rows                                             │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────┴────────────────────────────╮
+│ Groups: #0, #1                                           │
+│ Aggregates: count_star()                                 │
+│ ~30,000 rows                                             │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ PROJECTION ────────────────┴────────────────────────────╮
+│ Projections:                                             │
+│ __internal_compress_integral_utinyint("year"(ts), 2023), │
+│ CAST("week"(ts) AS TINYINT)                              │
+│ ~60,001 rows                                             │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴────────────────────────────╮
+│ Table: g                                                 │
+│ Type: Sequential Scan                                    │
+│ Projections: ts                                          │
+│ ~60,001 rows                                             │
+╰──────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT year(tstz), month(tstz), count(*) FROM dst GROUP BY 1, 2;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────╮
+│ Projections:                                              │
+│ "year"(__internal_icu_date_trunc_unbucket('month', #0)),  │
+│ "month"(__internal_icu_date_trunc_unbucket('month', #0)), │
+│ #1                                                        │
+│ ~450 rows                                                 │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────┴─────────────────────────────╮
+│ Groups: #0                                                │
+│ Aggregates: count_star()                                  │
+│ ~450 rows                                                 │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ PROJECTION ────────────────┴─────────────────────────────╮
+│ Projections:                                              │
+│ __internal_icu_date_trunc_bucket('month', tstz)           │
+│ ~900 rows                                                 │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴─────────────────────────────╮
+│ Table: dst                                                │
+│ Type: Sequential Scan                                     │
+│ Projections: tstz                                         │
+│ ~900 rows                                                 │
+╰───────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT y, m, count(*) FROM (SELECT year(ts) AS y, month(ts) AS m FROM g) GROUP BY y, m;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────╮
+│ Projections: y, m, #1                         │
+│ ~59,999 rows                                  │
+╰───────────────────────┬───────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ───────────────────────╮
+│ Groups: #0                                    │
+│ Aggregates: count_star()                      │
+│ ~59,999 rows                                  │
+╰───────────────────────┬───────────────────────╯
+╭─ PROJECTION ──────────┴───────────────────────╮
+│ Projections: #0                               │
+│ ~60,001 rows                                  │
+╰───────────────────────┬───────────────────────╯
+╭─ PROJECTION ──────────┴───────────────────────╮
+│ Projections: #0, CAST(#1 AS TINYINT)          │
+│ ~60,001 rows                                  │
+╰───────────────────────┬───────────────────────╯
+╭─ PROJECTION ──────────┴───────────────────────╮
+│ Projections:                                  │
+│ __internal_date_trunc_month_bucket(ts, 1, 0), │
+│ NULL::BIGINT                                  │
+│ ~60,001 rows                                  │
+╰───────────────────────┬───────────────────────╯
+╭─ SEQ_SCAN ────────────┴───────────────────────╮
+│ Table: g                                      │
+│ Type: Sequential Scan                         │
+│ Projections: ts                               │
+│ ~60,001 rows                                  │
+╰───────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT DISTINCT year(d), quarter(d) FROM g;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────╮
+│ Projections:                                     │
+│ __internal_decompress_integral_bigint(#0, 2023), │
+│ CAST(#1 AS BIGINT)                               │
+│ ~60,001 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ HASH_GROUP_BY ─────────┴────────────────────────╮
+│ Groups: #0, #1                                   │
+│ ~60,001 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections:                                     │
+│ __internal_compress_integral_utinyint(#0, 2023), │
+│ CAST(#1 AS TINYINT)                              │
+│ ~60,001 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections: "year"(d), "quarter"(d)             │
+│ ~60,001 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ──────────────┴────────────────────────╮
+│ Table: g                                         │
+│ Type: Sequential Scan                            │
+│ Projections: d                                   │
+│ ~60,001 rows                                     │
+╰──────────────────────────────────────────────────╯

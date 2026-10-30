@@ -1,0 +1,213 @@
+statement ok
+DROP VIEW IF EXISTS htp_rk_view;
+
+
+statement ok
+DROP TABLE IF EXISTS htp_rk_t;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS htp_rk_seq;
+
+
+statement ok
+DROP ROLE IF EXISTS htp_rk_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS htp_rk_owner;
+
+
+statement ok
+CREATE ROLE htp_rk_owner;
+
+
+statement ok
+CREATE ROLE htp_rk_reader LOGIN PASSWORD 'htp_rk_reader_pw';
+
+
+statement ok
+CREATE TABLE htp_rk_t (id INT PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE INDEX htp_rk_t_v ON htp_rk_t (v);
+
+
+statement ok
+CREATE SEQUENCE htp_rk_seq;
+
+
+statement ok
+CREATE VIEW htp_rk_view AS SELECT id, v FROM htp_rk_t;
+
+
+statement ok
+ALTER TABLE htp_rk_t OWNER TO htp_rk_owner;
+
+
+statement ok
+ALTER SEQUENCE htp_rk_seq OWNER TO htp_rk_owner;
+
+
+statement ok
+GRANT SELECT ON htp_rk_t TO htp_rk_reader;
+
+
+statement ok
+GRANT SELECT ON htp_rk_view TO htp_rk_reader;
+
+
+statement ok
+GRANT SELECT ON SEQUENCE htp_rk_seq TO htp_rk_reader;
+
+
+query
+SELECT has_table_privilege('htp_rk_owner', 'htp_rk_seq', 'SELECT') AS own_sel,
+       has_table_privilege('htp_rk_owner', 'htp_rk_seq', 'UPDATE') AS own_upd,
+       has_table_privilege('htp_rk_owner', 'htp_rk_seq', 'INSERT') AS own_ins,
+       has_table_privilege('htp_rk_reader', 'htp_rk_seq', 'SELECT') AS rd_sel,
+       has_table_privilege('htp_rk_reader', 'htp_rk_seq', 'UPDATE') AS rd_upd,
+       has_table_privilege('htp_rk_seq', 'INSERT') AS su_ins;
+----
+own_sel	own_upd	own_ins	rd_sel	rd_upd	su_ins
+t	t	f	t	f	t
+
+
+query
+SELECT has_table_privilege('htp_rk_reader', 'htp_rk_seq'::regclass, 'SELECT') AS rd_sel,
+       has_table_privilege('htp_rk_reader', 'htp_rk_seq'::regclass, 'UPDATE') AS rd_upd,
+       has_any_column_privilege('htp_rk_reader', 'htp_rk_seq', 'SELECT') AS rd_any_col,
+       has_any_column_privilege('htp_rk_owner', 'htp_rk_seq', 'INSERT') AS own_any_col_ins,
+       has_any_column_privilege('htp_rk_seq'::regclass, 'SELECT') AS su_any_col;
+----
+rd_sel	rd_upd	rd_any_col	own_any_col_ins	su_any_col
+t	f	t	f	t
+
+
+statement error
+SELECT has_table_privilege('htp_rk_seq', 'USAGE');
+----
+db error: ERROR: unrecognized privilege type: "USAGE"
+
+
+query
+SELECT has_table_privilege('htp_rk_owner', 'htp_rk_t_v', 'SELECT') AS own_idx,
+       has_table_privilege('htp_rk_reader', 'htp_rk_t_v', 'SELECT') AS rd_idx,
+       has_table_privilege('htp_rk_owner', 'htp_rk_t_pkey', 'SELECT') AS own_pkey,
+       has_table_privilege('htp_rk_reader', 'htp_rk_t_pkey', 'SELECT') AS rd_pkey,
+       has_table_privilege('htp_rk_reader', 'htp_rk_t_v'::regclass, 'SELECT') AS rd_idx_oid,
+       has_table_privilege('htp_rk_owner', 'htp_rk_t_pkey'::regclass, 'SELECT') AS own_pkey_oid,
+       has_any_column_privilege('htp_rk_reader', 'htp_rk_t_v', 'SELECT') AS rd_idx_any_col;
+----
+own_idx	rd_idx	own_pkey	rd_pkey	rd_idx_oid	own_pkey_oid	rd_idx_any_col
+t	f	t	f	f	t	f
+
+
+query
+SELECT has_table_privilege('htp_rk_reader', 'htp_rk_view', 'SELECT') AS tbl_name,
+       has_table_privilege(r.oid, 'htp_rk_view', 'SELECT') AS tbl_role_oid,
+       has_any_column_privilege('htp_rk_reader', 'htp_rk_view', 'SELECT') AS any_col_name,
+       has_column_privilege('htp_rk_reader', 'htp_rk_view', 'v', 'SELECT') AS col_name,
+       has_column_privilege('htp_rk_reader', 'htp_rk_view', 2::int2, 'SELECT') AS col_attnum,
+       has_column_privilege(r.oid, 'htp_rk_view'::regclass, 2::int2, 'SELECT') AS col_oid_attnum,
+       has_column_privilege(r.oid, 'htp_rk_view'::regclass, 3::int2, 'SELECT') AS col_oid_no_attnum,
+       has_column_privilege('htp_rk_reader', 'htp_rk_view', 'v', 'UPDATE') AS col_update
+FROM pg_roles r WHERE r.rolname = 'htp_rk_reader';
+----
+tbl_name	tbl_role_oid	any_col_name	col_name	col_attnum	col_oid_attnum	col_oid_no_attnum	col_update
+t	t	t	t	t	t	NULL	f
+
+
+statement error
+SELECT has_column_privilege('htp_rk_reader', 'htp_rk_view', 'nope', 'SELECT');
+----
+db error: ERROR: column "nope" of relation "htp_rk_view" does not exist
+
+
+query
+SELECT has_column_privilege('htp_rk_owner', 'htp_rk_t_v', 'v', 'SELECT') AS own_idx_col,
+       has_column_privilege('htp_rk_reader', 'htp_rk_t_v', 'v', 'SELECT') AS rd_idx_col,
+       has_column_privilege('htp_rk_owner', 'htp_rk_t_pkey', 'id', 'SELECT') AS own_pkey_col,
+       has_column_privilege('htp_rk_reader', 'htp_rk_t_pkey', 1::int2, 'SELECT') AS rd_pkey_attnum,
+       has_column_privilege('htp_rk_owner', 'htp_rk_t_v', 2::int2, 'SELECT') AS own_idx_past_end;
+----
+own_idx_col	rd_idx_col	own_pkey_col	rd_pkey_attnum	own_idx_past_end
+t	f	t	f	NULL
+
+
+statement error
+SELECT has_column_privilege('htp_rk_owner', 'htp_rk_t_v', 'w', 'SELECT');
+----
+db error: ERROR: column "w" of relation "htp_rk_t_v" does not exist
+
+
+connection c_htp_rk user=htp_rk_reader password=htp_rk_reader_pw
+query
+SELECT has_table_privilege('htp_rk_view'::regclass, 'SELECT') AS view_tbl,
+       has_any_column_privilege('htp_rk_view'::regclass, 'SELECT') AS view_any_col,
+       has_column_privilege('htp_rk_view'::regclass, 1::int2, 'SELECT') AS view_col,
+       has_table_privilege('htp_rk_seq'::regclass, 'SELECT') AS seq_tbl,
+       has_table_privilege('htp_rk_t_v'::regclass, 'SELECT') AS idx_tbl,
+       has_table_privilege('information_schema.tables'::regclass, 'SELECT') AS sys_view_tbl,
+       has_any_column_privilege('information_schema.tables'::regclass, 'SELECT') AS sys_view_any_col,
+       has_column_privilege('information_schema.tables'::regclass, 1::int2, 'SELECT') AS sys_view_col;
+----
+view_tbl	view_any_col	view_col	seq_tbl	idx_tbl	sys_view_tbl	sys_view_any_col	sys_view_col
+t	t	t	t	f	t	t	t
+
+
+statement ok
+CREATE TEMP TABLE htp_rk_temp (id INT);
+
+
+statement ok
+CREATE TEMP VIEW htp_rk_temp_view AS SELECT 1 AS x;
+
+
+statement ok
+CREATE TEMP SEQUENCE htp_rk_temp_seq;
+
+
+query
+SELECT has_table_privilege('htp_rk_temp'::regclass, 'SELECT') AS tbl,
+       has_any_column_privilege('htp_rk_temp'::regclass, 'SELECT') AS any_col,
+       has_column_privilege('htp_rk_temp'::regclass, 1::int2, 'SELECT') AS col,
+       has_table_privilege('htp_rk_temp_view'::regclass, 'SELECT') AS view_tbl,
+       has_table_privilege('htp_rk_temp_seq'::regclass, 'SELECT') AS seq_tbl,
+       has_sequence_privilege('htp_rk_temp_seq'::regclass, 'USAGE') AS seq_usage;
+----
+tbl	any_col	col	view_tbl	seq_tbl	seq_usage
+t	t	t	t	t	t
+
+
+statement ok
+DROP VIEW htp_rk_temp_view;
+
+
+statement ok
+DROP TABLE htp_rk_temp;
+
+
+statement ok
+DROP SEQUENCE htp_rk_temp_seq;
+
+
+statement ok
+DROP VIEW htp_rk_view;
+
+
+statement ok
+DROP TABLE htp_rk_t;
+
+
+statement ok
+DROP SEQUENCE htp_rk_seq;
+
+
+statement ok
+DROP ROLE htp_rk_reader;
+
+
+statement ok
+DROP ROLE htp_rk_owner;

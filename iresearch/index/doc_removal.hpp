@@ -20,84 +20,104 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
+
+#include <bit>
 #include <cstdint>
-#include <limits>
-#include <span>
-#include <string>
+#include <memory>
 #include <vector>
 
+#include "iresearch/index/document_mask.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
-struct SubReader;
+class DirectoryReader;
+struct DocMapsSlot;
 
-struct DocRemoval {
-  static constexpr uint64_t kNoSegment = std::numeric_limits<uint64_t>::max();
-
-  struct Row {
-    uint64_t segment;
-    doc_id_t doc;
-    int64_t key;
-  };
-
-  static DocRemoval Build(field_id key_column, std::vector<Row> rows);
-
-  size_t Find(uint64_t segment) const noexcept;
-
-  std::span<const doc_id_t> Docs(size_t group) const noexcept {
-    return {docs.data() + offsets[group], docs.data() + offsets[group + 1]};
-  }
-
-  std::span<const int64_t> Keys(size_t group) const noexcept {
-    return {keys.data() + offsets[group], keys.data() + offsets[group + 1]};
-  }
-
-  field_id key_column = field_limits::invalid();
-  std::vector<uint64_t> segments;
-  std::vector<uint32_t> offsets;
-  std::vector<doc_id_t> docs;
-  std::vector<int64_t> keys;
+struct DocMap {
+  uint64_t source = 0;
+  uint64_t target = 0;
+  std::shared_ptr<const DocumentMask> mask;
+  doc_id_t rank_begin = 0;
+  doc_id_t rank_end = 0;
+  doc_id_t base = doc_limits::min();
+  std::shared_ptr<const DocMapsSlot> next;
 };
 
-class DocRemovalResolver {
+struct DocMapsSlot {
+  std::vector<DocMap> maps;
+};
+
+class DocMapRuns {
  public:
-  void Prepare(std::span<const DocRemoval* const> removals,
-               std::span<const SubReader* const> live);
+  DocMapRuns(DocMap source, std::vector<DocMap>& maps) noexcept
+    : _source{std::move(source)}, _maps{maps}, _first{maps.size()} {}
 
-  std::span<const doc_id_t> Docs(const DocRemoval& removal,
-                                 const SubReader& segment);
-
-  std::span<const doc_id_t> PositionalDocs(const DocRemoval& removal,
-                                           const SubReader& segment) const;
+  void Add(doc_id_t rank, doc_id_t doc) {
+    if (_maps.size() == _first || _maps.back().rank_end != rank ||
+        _maps.back().base + (rank - _maps.back().rank_begin) != doc) {
+      auto& run = _maps.emplace_back(_source);
+      run.rank_begin = rank;
+      run.base = doc;
+    }
+    _maps.back().rank_end = rank + 1;
+  }
 
  private:
-  struct Hit {
-    int64_t key;
-    doc_id_t doc;
-
-    bool operator<(const Hit& rhs) const noexcept {
-      return key < rhs.key || (key == rhs.key && doc < rhs.doc);
-    }
-  };
-
-  struct Lookup {
-    field_id column;
-    std::vector<int64_t> keys;
-    irs::containers::FlatHashMap<std::string, std::vector<Hit>> hits;
-  };
-
-  Lookup* LookupOf(field_id column);
-  std::span<const Hit> Resolve(Lookup& lookup, const SubReader& segment);
-  static void Scan(const Lookup& lookup, const SubReader& segment,
-                   std::vector<Hit>& hits);
-
-  irs::containers::FlatHashMap<const DocRemoval*, std::vector<int64_t>>
-    _fallback;
-  std::vector<Lookup> _lookups;
-  std::vector<doc_id_t> _scratch;
+  DocMap _source;
+  std::vector<DocMap>& _maps;
+  size_t _first;
 };
+
+struct DocRemoval {
+  struct Group {
+    uint64_t segment = 0;
+    DocumentMask docs;
+    std::shared_ptr<const DocMapsSlot> maps;
+  };
+
+  std::vector<Group> groups;
+};
+
+struct TermRemoval {
+  static bytes_view Term(int64_t key,
+                         byte_type (&buf)[sizeof(int64_t)]) noexcept {
+    absl::big_endian::Store64(
+      buf, std::bit_cast<uint64_t>(key) ^ (uint64_t{1} << 63));
+    return {buf, sizeof(int64_t)};
+  }
+
+  static int64_t Key(bytes_view term) noexcept {
+    SDB_ASSERT(term.size() == sizeof(int64_t));
+    return std::bit_cast<int64_t>(absl::big_endian::Load64(term.data()) ^
+                                  (uint64_t{1} << 63));
+  }
+
+  std::vector<int64_t> terms;
+};
+
+class DocRemovalBuilder {
+ public:
+  void Add(uint32_t index, doc_id_t doc);
+  void AddRange(uint32_t index, doc_id_t first, doc_id_t last);
+
+  bool Empty() const noexcept { return _groups.empty(); }
+
+  std::shared_ptr<const DocRemoval> Finish(const DirectoryReader& reader) &&;
+
+ private:
+  DocumentMaskBuilder& Group(uint32_t index);
+
+  std::vector<std::pair<uint32_t, DocumentMaskBuilder>> _groups;
+  size_t _last = 0;
+};
+
+bool MapDocs(const DocMap& map, const DocumentMask& docs,
+             DocumentMaskBuilder& out);
 
 }  // namespace irs

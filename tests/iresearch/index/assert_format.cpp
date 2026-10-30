@@ -380,7 +380,8 @@ class TermIterator : public irs::SeekTermIterator {
       return false;
     }
 
-    _prev = _next, ++_next;
+    _prev = _next;
+    ++_next;
     Position();
     return true;
   }

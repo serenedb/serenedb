@@ -1,5 +1,7 @@
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,7 +13,7 @@ sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "
 
 import ci  # noqa: E402
 import generated  # noqa: E402
-from testlib import cli, scheduler  # noqa: E402
+from testlib import cli, proc, scheduler  # noqa: E402
 from testlib.scheduler import (FAILED, INTERRUPTED, PASSED, SKIPPED, Outcome, Result,  # noqa: E402
                                Unit)
 from testlib.suites import duckdb, gtest, sqllogic  # noqa: E402
@@ -314,6 +316,32 @@ def test_croaring_tests_run_in_the_croaring_checkout_where_their_data_paths_lead
                         exec=lambda argv, cwd: calls.append((argv, cwd)) or "ran")
     assert unit.run(r) == "ran"
     assert calls == [([str(tests / "format_portability_unit")], tmp_path / "src" / "third_party" / "croaring")]
+
+
+def alive(pid):
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[-1].split()[0]
+    except OSError:
+        return False
+    return state != "Z"
+
+
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="reads /proc")
+def test_a_stuck_unit_dumps_and_kills_the_server_its_test_started_in_its_own_session(tmp_path):
+    pid_file = tmp_path / "server.pid"
+    test = ("import subprocess, sys, time\n"
+            "server = subprocess.Popen(['sleep', '600'], start_new_session=True)\n"
+            "open(sys.argv[1], 'w').write(str(server.pid))\n"
+            "time.sleep(600)\n")
+    result = proc.run([sys.executable, "-c", test, pid_file], env=dict(os.environ), cwd=tmp_path,
+                      log_path=tmp_path / "log.txt", timeout=3.0, stack_dir=tmp_path / "stacks")
+    server = int(pid_file.read_text())
+    assert result.stuck
+    assert any(path.name.endswith(f"-{server}.txt") for path in result.stacks)
+    deadline = time.monotonic() + 10
+    while alive(server) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not alive(server)
 
 
 def test_a_single_shard_runs_in_the_build_job_and_more_go_to_test_jobs():

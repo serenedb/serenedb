@@ -42,8 +42,6 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <duckdb/parser/parsed_data/create_role_info.hpp>
-#include <duckdb/parser/parsed_data/create_schema_info.hpp>
-#include <duckdb/parser/parsed_data/create_sequence_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/detach_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
@@ -59,7 +57,6 @@
 #include <duckdb/planner/operator/logical_execute.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_vacuum.hpp>
-#include <duckdb/storage/storage_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -112,12 +109,6 @@ void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
                   ERR_DETAIL(detail));
 }
 
-bool StoresPermissions(duckdb::Catalog& catalog) {
-  return !catalog.IsDuckCatalog() || catalog.GetAttached().IsTemporary() ||
-         duckdb::IsSereneDBStorageVersion(
-           catalog.GetAttached().GetStorageManager().GetStorageVersion());
-}
-
 bool IsRelation(CatalogType type) {
   switch (type) {
     case CatalogType::TABLE_ENTRY:
@@ -128,36 +119,6 @@ bool IsRelation(CatalogType type) {
     default:
       return false;
   }
-}
-
-CatalogType DefaultObjType(LogicalOperatorType type) {
-  switch (type) {
-    case LogicalOperatorType::LOGICAL_CREATE_SEQUENCE:
-      return CatalogType::SEQUENCE_ENTRY;
-    case LogicalOperatorType::LOGICAL_CREATE_MACRO:
-      return CatalogType::MACRO_ENTRY;
-    case LogicalOperatorType::LOGICAL_CREATE_TYPE:
-      return CatalogType::TYPE_ENTRY;
-    case LogicalOperatorType::LOGICAL_CREATE_JOB:
-      return CatalogType::JOB_ENTRY;
-    case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
-      return CatalogType::TOKENIZER_ENTRY;
-    default:
-      return CatalogType::TABLE_ENTRY;
-  }
-}
-
-void MergeGrant(duckdb::vector<duckdb::AclItem>& acl,
-                const duckdb::AclItem& item) {
-  auto it = absl::c_find_if(acl, [&](const duckdb::AclItem& existing) {
-    return existing.grantee == item.grantee && existing.grantor == item.grantor;
-  });
-  if (it == acl.end()) {
-    acl.emplace_back(item);
-    return;
-  }
-  it->privs |= item.privs;
-  it->grant_option |= item.grant_option;
 }
 
 std::vector<std::span<const duckdb::AclItem>> AllColumnAcls(
@@ -223,9 +184,7 @@ bool HasStatementRules(const duckdb::LogicalOperator& root) {
     case LogicalOperatorType::LOGICAL_CREATE_JOB:
     case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
     case LogicalOperatorType::LOGICAL_CREATE_ROLE:
-    case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
     case LogicalOperatorType::LOGICAL_CREATE_TRIGGER:
-    case LogicalOperatorType::LOGICAL_CREATE_SCHEMA:
     case LogicalOperatorType::LOGICAL_DROP:
     case LogicalOperatorType::LOGICAL_ALTER:
     case LogicalOperatorType::LOGICAL_ATTACH:
@@ -275,13 +234,7 @@ class Enforcer {
         break;
       case LogicalOperatorType::LOGICAL_CREATE_TABLE: {
         auto& create = op.Cast<duckdb::LogicalCreateTable>();
-        auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
-        RequireUserSchema(create.schema.oid, info);
-        Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
-        for (auto& serial : create.info->serial_sequences) {
-          Stamp(serial.permissions, create.schema.ParentCatalog(),
-                CatalogType::SEQUENCE_ENTRY, &create.schema, _caller);
-        }
+        RequireUserSchema(create.schema.oid, create.info->Base());
         break;
       }
       case LogicalOperatorType::LOGICAL_CREATE_VIEW:
@@ -289,11 +242,10 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_MACRO:
       case LogicalOperatorType::LOGICAL_CREATE_TYPE:
       case LogicalOperatorType::LOGICAL_CREATE_JOB:
-      case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER: {
+      case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
+      case LogicalOperatorType::LOGICAL_CREATE_TRIGGER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
         RequireUserSchema(create.schema->oid, *create.info);
-        Stamp(*create.info, DefaultObjType(op.type), create.schema,
-              OwnerFor(*create.info));
         break;
       }
       case LogicalOperatorType::LOGICAL_CREATE_ROLE: {
@@ -304,23 +256,6 @@ class Enforcer {
         }
         PointAtCluster(info, CatalogType::ROLE_ENTRY);
         _connection.MarkClusterWritten();
-        break;
-      }
-      case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER: {
-        auto& create = op.Cast<duckdb::LogicalCreate>();
-        Stamp(*create.info, CatalogType::FOREIGN_SERVER_ENTRY, nullptr);
-        break;
-      }
-      case LogicalOperatorType::LOGICAL_CREATE_TRIGGER: {
-        auto& create = op.Cast<duckdb::LogicalCreate>();
-        RequireUserSchema(create.schema->oid, *create.info);
-        Stamp(*create.info, CatalogType::TRIGGER_ENTRY, create.schema);
-        break;
-      }
-      case LogicalOperatorType::LOGICAL_CREATE_SCHEMA: {
-        auto& create = op.Cast<duckdb::LogicalCreate>();
-        Stamp(*create.info, CatalogType::SCHEMA_ENTRY, nullptr,
-              SchemaOwner(create.info->Cast<duckdb::CreateSchemaInfo>()));
         break;
       }
       case LogicalOperatorType::LOGICAL_DROP: {
@@ -402,6 +337,8 @@ class Enforcer {
         break;
       }
       case LogicalOperatorType::LOGICAL_CREATE_INDEX:
+      case LogicalOperatorType::LOGICAL_CREATE_SCHEMA:
+      case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
       case LogicalOperatorType::LOGICAL_INVALID:
       case LogicalOperatorType::LOGICAL_PROJECTION:
       case LogicalOperatorType::LOGICAL_FILTER:
@@ -530,19 +467,6 @@ class Enforcer {
 
   duckdb::idx_t GranteeId(std::string_view name) {
     return name == "public" ? duckdb::ACL_ID_PUBLIC : RoleId(name);
-  }
-
-  duckdb::idx_t SchemaOwner(const duckdb::CreateSchemaInfo& info) {
-    if (info.authorization.empty()) {
-      return _caller;
-    }
-    const auto owner = RoleId(info.authorization.GetIdentifierName());
-    if (_enforce && owner != _caller && !CallerMemberships().CanSet(owner)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("must be able to SET ROLE \"",
-                              info.authorization.GetIdentifierName(), "\""));
-    }
-    return owner;
   }
 
   duckdb::idx_t RoleSpecId(std::string_view name) {
@@ -937,76 +861,6 @@ class Enforcer {
     return catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
       .GetEntry(catalog.GetCatalogTransaction(_context),
                 duckdb::Identifier{name});
-  }
-
-  void Stamp(duckdb::CreateInfo& info, CatalogType objtype,
-             duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema) {
-    Stamp(info, objtype, schema, _caller);
-  }
-
-  duckdb::idx_t OwnerFor(const duckdb::CreateInfo& info) {
-    if (info.type != CatalogType::SEQUENCE_ENTRY) {
-      return _caller;
-    }
-    const auto& sequence = info.Cast<duckdb::CreateSequenceInfo>();
-    if (!sequence.serial) {
-      return _caller;
-    }
-    const auto table =
-      FindEntry(CatalogType::TABLE_ENTRY,
-                duckdb::QualifiedName::FromPath(
-                  {sequence.owned_by.begin(), sequence.owned_by.end() - 1}));
-    return table ? table->permissions.owner : _caller;
-  }
-
-  void Stamp(duckdb::CreateInfo& info, CatalogType objtype,
-             duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema,
-             duckdb::idx_t owner) {
-    Stamp(info.permissions,
-          schema ? schema->ParentCatalog()
-                 : duckdb::Catalog::GetCatalog(
-                     _context, info.GetQualifiedName().Catalog()),
-          objtype, schema, owner);
-  }
-
-  void Stamp(duckdb::Permissions& permissions, duckdb::Catalog& catalog,
-             CatalogType objtype,
-             duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema,
-             duckdb::idx_t owner) {
-    if (!StoresPermissions(catalog)) {
-      return;
-    }
-    permissions.owner = owner;
-    duckdb::vector<duckdb::AclItem> acl;
-    const auto apply = [&](const duckdb::Permissions& holder,
-                           duckdb::idx_t scope) {
-      for (const auto& defaults : holder.defaults) {
-        if (defaults.role != owner || defaults.objtype != objtype ||
-            defaults.scope != scope) {
-          continue;
-        }
-        if (acl.empty()) {
-          acl = duckdb::Permissions::AclDefault(objtype, owner);
-        }
-        for (const auto& item : defaults.acl) {
-          MergeGrant(acl, item);
-        }
-      }
-    };
-    const auto database = ClusterEntry(
-      CatalogType::DATABASE_ENTRY,
-      schema ? schema->ParentCatalog().GetName().GetIdentifierName()
-             : duckdb::DatabaseManager::GetDefaultDatabase(_context)
-                 .GetIdentifierName());
-    if (database) {
-      if (schema) {
-        apply(database->permissions, schema->oid);
-      }
-      apply(database->permissions, 0);
-    }
-    if (!acl.empty()) {
-      permissions.acl = std::move(acl);
-    }
   }
 
   duckdb::ClientContext& _context;

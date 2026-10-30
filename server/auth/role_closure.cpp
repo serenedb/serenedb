@@ -65,10 +65,13 @@ duckdb::vector<duckdb::SecuritySnapshot::Role> InheritClosures(
   closures.reserve(nodes.size());
   for (const auto& [oid, node] : nodes) {
     auto closure = Reachable(nodes, oid, &duckdb::Membership::inherit_option);
-    closures.push_back({.role = oid,
-                        .options = node.options,
-                        .closure = duckdb::vector<duckdb::idx_t>(
-                          closure.begin(), closure.end())});
+    auto settable = Reachable(nodes, oid, &duckdb::Membership::set_option);
+    closures.push_back(
+      {.role = oid,
+       .options = node.options,
+       .closure = duckdb::vector<duckdb::idx_t>(closure.begin(), closure.end()),
+       .settable =
+         duckdb::vector<duckdb::idx_t>(settable.begin(), settable.end())});
   }
   return closures;
 }

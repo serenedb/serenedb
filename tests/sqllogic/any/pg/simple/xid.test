@@ -1,8 +1,8 @@
 query
-SELECT '18446744073709551615'::xid8 AS max, '-1'::xid8 AS wrapped, ' 42 '::xid8 AS spaced, '0x10'::xid8 AS hex, '010'::xid8 AS octal, '-18446744073709551615'::xid8 AS one;
+SELECT '18446744073709551615'::xid8 AS max, '-1'::xid8 AS wrapped, ' 67 '::xid8 AS spaced, '0x43'::xid8 AS hex, '0103'::xid8 AS octal, '-18446744073709551615'::xid8 AS one;
 ----
 max	wrapped	spaced	hex	octal	one
-18446744073709551615	18446744073709551615	42	16	8	1
+18446744073709551615	18446744073709551615	67	67	67	1
 
 
 statement error
@@ -12,31 +12,31 @@ db error: ERROR: value "18446744073709551616" is out of range for type xid8<slt:
 
 
 statement error
-SELECT 'abc'::xid8;
+SELECT 'mrbeast'::xid8;
 ----
-db error: ERROR: invalid input syntax for type xid8: "abc"<slt:ignore>
+db error: ERROR: invalid input syntax for type xid8: "mrbeast"<slt:ignore>
 
 
 query
 SELECT '18446744073709551615'::xid8 > '9223372036854775808'::xid8 AS gt, max(x)::text AS max, min(x)::text AS min
-FROM (VALUES ('18446744073709551615'::xid8), ('9223372036854775808'::xid8), ('1'::xid8)) t(x);
+FROM (VALUES ('18446744073709551615'::xid8), ('9223372036854775808'::xid8), ('67'::xid8)) t(x);
 ----
 gt	max	min
-t	18446744073709551615	1
+t	18446744073709551615	67
 
 
 query
-SELECT ARRAY['18446744073709551615'::xid8, '0'::xid8] AS a;
+SELECT ARRAY['18446744073709551615'::xid8, '67'::xid8] AS a;
 ----
 a
-{18446744073709551615,0}
+{18446744073709551615,67}
 
 
 query
-SELECT '-1'::xid AS xid, '-2147483648'::xid AS min_int4, ' 7'::oid AS oid, '0x10'::cid AS cid, '-1'::oid AS oid_wrapped, '-1'::cid AS cid_wrapped;
+SELECT '-1'::xid AS xid, '-2147483648'::xid AS min_int4, ' 67'::oid AS oid, '0x43'::cid AS cid, '-1'::oid AS oid_wrapped, '-1'::cid AS cid_wrapped;
 ----
 xid	min_int4	oid	cid	oid_wrapped	cid_wrapped
-4294967295	2147483648	7	16	4294967295	4294967295
+4294967295	2147483648	67	67	4294967295	4294967295
 
 
 statement error
@@ -52,15 +52,15 @@ db error: ERROR: value "-2147483649" is out of range for type oid<slt:ignore>
 
 
 statement error
-SELECT '09'::oid;
+SELECT '069'::oid;
 ----
-db error: ERROR: invalid input syntax for type oid: "09"<slt:ignore>
+db error: ERROR: invalid input syntax for type oid: "069"<slt:ignore>
 
 
 statement error
-SELECT '1 2'::cid;
+SELECT '6 7'::cid;
 ----
-db error: ERROR: invalid input syntax for type cid: "1 2"<slt:ignore>
+db error: ERROR: invalid input syntax for type cid: "6 7"<slt:ignore>
 
 
 statement error
@@ -76,14 +76,14 @@ db error: ERROR: invalid input syntax for type xid: ""<slt:ignore>
 
 
 query
-SELECT '4294967295 -1 0x10'::oidvector AS v;
+SELECT '4294967295 -1 0x43'::oidvector AS v;
 ----
 v
-4294967295 4294967295 16
+4294967295 4294967295 67
 
 
 statement error
-SELECT '1 18446744073709551616'::oidvector;
+SELECT '67 18446744073709551616'::oidvector;
 ----
 db error: ERROR: value "18446744073709551616" is out of range for type oid<slt:ignore>
 
@@ -97,10 +97,10 @@ db error: ERROR: value "4294967296" is out of range for type oid<slt:ignore>
 
 onlyif serenedb
 query
-SELECT '4294967296'::oid::text AS oid, '9223372036854775807'::oid::text AS max, '1 4294967296'::oidvector::text AS v;
+SELECT '4294967296'::oid::text AS oid, '9223372036854775807'::oid::text AS max, '67 4294967296'::oidvector::text AS v;
 ----
 oid	max	v
-4294967296	9223372036854775807	1 4294967296
+4294967296	9223372036854775807	67 4294967296
 
 
 statement error
@@ -110,7 +110,7 @@ db error: ERROR: value "9223372036854775808" is out of range for type oid<slt:ig
 
 
 query
-SELECT pg_input_is_valid('42', 'xid8') AS a, pg_input_is_valid('-5', 'oid') AS b, pg_input_is_valid('x', 'xid') AS c, pg_input_is_valid('18446744073709551616', 'xid8') AS d;
+SELECT pg_input_is_valid('67', 'xid8') AS a, pg_input_is_valid('-67', 'oid') AS b, pg_input_is_valid('mrbeast', 'xid') AS c, pg_input_is_valid('18446744073709551616', 'xid8') AS d;
 ----
 a	b	c	d
 t	t	f	f
@@ -124,28 +124,28 @@ value "9223372036854775808" is out of range for type oid	NULL	NULL	22003
 
 
 query
-SELECT * FROM pg_input_error_info('0xg', 'xid8');
+SELECT * FROM pg_input_error_info('0xbeast', 'xid8');
 ----
 message	detail	hint	sql_error_code
-invalid input syntax for type xid8: "0xg"	NULL	NULL	22P02
+invalid input syntax for type xid8: "0xbeast"	NULL	NULL	22P02
 
 
 statement ok
-CREATE TABLE xid8_table (x xid8);
+CREATE TABLE beast_xid8 (x xid8);
 
 
 statement ok
-INSERT INTO xid8_table VALUES ('18446744073709551615'), ('9223372036854775808'), ('0');
+INSERT INTO beast_xid8 VALUES ('18446744073709551615'), ('9223372036854775808'), ('67');
 
 
 query
-SELECT x FROM xid8_table ORDER BY x;
+SELECT x FROM beast_xid8 ORDER BY x;
 ----
 x
-0
+67
 9223372036854775808
 18446744073709551615
 
 
 statement ok
-DROP TABLE xid8_table;
+DROP TABLE beast_xid8;

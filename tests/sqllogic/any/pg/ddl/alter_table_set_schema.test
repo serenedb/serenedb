@@ -1,184 +1,184 @@
 statement ok
-CREATE SCHEMA atss_a
+CREATE SCHEMA mrbeast
 
 statement ok
-CREATE SCHEMA atss_b
+CREATE SCHEMA feastables
 
 statement ok
-CREATE TABLE atss_a.t (id INT PRIMARY KEY, v TEXT)
+CREATE TABLE mrbeast.videos (id INT PRIMARY KEY, title TEXT)
 
 statement ok
-CREATE INDEX atss_t_v_idx ON atss_a.t (v)
+CREATE INDEX videos_title_idx ON mrbeast.videos (title)
 
 statement ok
-INSERT INTO atss_a.t VALUES (1, 'a'), (2, 'b')
+INSERT INTO mrbeast.videos VALUES (6, 'last to leave'), (7, 'squid game')
 
 statement ok
-ALTER TABLE atss_a.t SET SCHEMA atss_b
+ALTER TABLE mrbeast.videos SET SCHEMA feastables
 
 query
-SELECT id, v FROM atss_b.t ORDER BY id
+SELECT id, title FROM feastables.videos ORDER BY id
 ----
-id	v
-1	a
-2	b
+id	title
+6	last to leave
+7	squid game
 
 query
-SELECT to_regclass('atss_a.t') IS NULL AS gone, to_regclass('atss_b.t') IS NOT NULL AS moved
+SELECT to_regclass('mrbeast.videos') IS NULL AS gone, to_regclass('feastables.videos') IS NOT NULL AS moved
 ----
 gone	moved
 t	t
 
 statement error does not exist
-SELECT * FROM atss_a.t
+SELECT * FROM mrbeast.videos
 
 query
-SELECT schemaname, indexname FROM pg_indexes WHERE indexname = 'atss_t_v_idx'
+SELECT schemaname, indexname FROM pg_indexes WHERE indexname = 'videos_title_idx'
 ----
 schemaname	indexname
-atss_b	atss_t_v_idx
+feastables	videos_title_idx
 
 statement ok
-INSERT INTO atss_b.t VALUES (3, 'c')
+INSERT INTO feastables.videos VALUES (67, 'beast games')
 
 statement error (23505)
-INSERT INTO atss_b.t VALUES (1, 'x')
+INSERT INTO feastables.videos VALUES (6, 'chocolate bar')
 
 query
-SELECT id FROM atss_b.t WHERE v = 'c'
+SELECT id FROM feastables.videos WHERE title = 'beast games'
 ----
 id
-3
+67
 
 statement ok
-ALTER TABLE atss_b.t SET SCHEMA atss_b
+ALTER TABLE feastables.videos SET SCHEMA feastables
 
 statement ok
-ALTER TABLE IF EXISTS atss_a.missing SET SCHEMA atss_b
+ALTER TABLE IF EXISTS mrbeast.missing SET SCHEMA feastables
 
 statement error does not exist
-ALTER TABLE atss_a.missing SET SCHEMA atss_b
+ALTER TABLE mrbeast.missing SET SCHEMA feastables
 
-statement error atss_nosuch.*does not exist
-ALTER TABLE atss_b.t SET SCHEMA atss_nosuch
+statement error beastland.*does not exist
+ALTER TABLE feastables.videos SET SCHEMA beastland
 
 statement ok
-CREATE TABLE atss_a.t (x INT)
+CREATE TABLE mrbeast.videos (views INT)
 
 statement error
-ALTER TABLE atss_a.t SET SCHEMA atss_b
+ALTER TABLE mrbeast.videos SET SCHEMA feastables
 ----
-db error: ERROR: relation "t" already exists in schema "atss_b"
+db error: ERROR: relation "videos" already exists in schema "feastables"
 
 
 statement ok
 BEGIN
 
 statement ok
-ALTER TABLE atss_b.t SET SCHEMA public
+ALTER TABLE feastables.videos SET SCHEMA public
 
 statement ok
 ROLLBACK
 
 query
-SELECT count(*) AS n FROM atss_b.t
+SELECT count(*) AS n FROM feastables.videos
 ----
 n
 3
 
 statement ok
-DROP TABLE atss_a.t
+DROP TABLE mrbeast.videos
 
 statement ok
 BEGIN
 
 statement ok
-ALTER TABLE atss_b.t SET SCHEMA atss_a
+ALTER TABLE feastables.videos SET SCHEMA mrbeast
 
 statement ok
-INSERT INTO atss_a.t VALUES (4, 'd')
+INSERT INTO mrbeast.videos VALUES (676, 'six seven')
 
 statement ok
 COMMIT
 
 query
-SELECT id, v FROM atss_a.t ORDER BY id
+SELECT id, title FROM mrbeast.videos ORDER BY id
 ----
-id	v
-1	a
-2	b
-3	c
-4	d
+id	title
+6	last to leave
+7	squid game
+67	beast games
+676	six seven
 
 statement ok
-CREATE TABLE atss_a.s (id SERIAL, v TEXT)
+CREATE TABLE mrbeast.subscribers (id SERIAL, name TEXT)
 
 statement ok
-INSERT INTO atss_a.s (v) VALUES ('a')
+INSERT INTO mrbeast.subscribers (name) VALUES ('karl')
 
 statement ok
-ALTER TABLE atss_a.s SET SCHEMA atss_b
+ALTER TABLE mrbeast.subscribers SET SCHEMA feastables
 
 statement ok
-INSERT INTO atss_b.s (v) VALUES ('b')
+INSERT INTO feastables.subscribers (name) VALUES ('chandler')
 
 query
-SELECT id, v FROM atss_b.s ORDER BY id
+SELECT id, name FROM feastables.subscribers ORDER BY id
 ----
-id	v
-1	a
-2	b
+id	name
+1	karl
+2	chandler
 
 query
-SELECT pg_get_serial_sequence('atss_b.s', 'id') AS seq
+SELECT pg_get_serial_sequence('feastables.subscribers', 'id') AS seq
 ----
 seq
-atss_b.s_id_seq
+feastables.subscribers_id_seq
 
 statement ok
-CREATE ROLE atss_role
+CREATE ROLE atss_mrbeast
 
 statement ok
-GRANT USAGE, CREATE ON SCHEMA atss_a TO atss_role
+GRANT USAGE, CREATE ON SCHEMA mrbeast TO atss_mrbeast
 
 statement ok
-GRANT USAGE ON SCHEMA atss_b TO atss_role
+GRANT USAGE ON SCHEMA feastables TO atss_mrbeast
 
 statement ok
-CREATE TABLE atss_a.owned (x INT)
+CREATE TABLE mrbeast.chocolate (bars INT)
 
 statement ok
-ALTER TABLE atss_a.owned OWNER TO atss_role
+ALTER TABLE mrbeast.chocolate OWNER TO atss_mrbeast
 
 statement ok
-SET ROLE atss_role
+SET ROLE atss_mrbeast
 
 statement error
-ALTER TABLE atss_a.owned SET SCHEMA atss_b
+ALTER TABLE mrbeast.chocolate SET SCHEMA feastables
 ----
-db error: ERROR: permission denied for schema atss_b
+db error: ERROR: permission denied for schema feastables
 
 
 statement ok
 RESET ROLE
 
 statement ok
-GRANT CREATE ON SCHEMA atss_b TO atss_role
+GRANT CREATE ON SCHEMA feastables TO atss_mrbeast
 
 statement ok
-SET ROLE atss_role
+SET ROLE atss_mrbeast
 
 statement ok
-ALTER TABLE atss_a.owned SET SCHEMA atss_b
+ALTER TABLE mrbeast.chocolate SET SCHEMA feastables
 
 statement ok
 RESET ROLE
 
 statement ok
-DROP SCHEMA atss_b CASCADE
+DROP SCHEMA feastables CASCADE
 
 statement ok
-DROP SCHEMA atss_a CASCADE
+DROP SCHEMA mrbeast CASCADE
 
 statement ok
-DROP ROLE atss_role
+DROP ROLE atss_mrbeast

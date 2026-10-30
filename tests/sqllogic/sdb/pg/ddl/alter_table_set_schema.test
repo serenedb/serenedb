@@ -1,188 +1,188 @@
 statement ok
-CREATE SCHEMA atsd_a;
+CREATE SCHEMA mrbeast;
 
 
 statement ok
-CREATE SCHEMA atsd_b;
+CREATE SCHEMA feastables;
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY atsd_dict AS
+CREATE TEXT SEARCH DICTIONARY beast_dict AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
     WITH (frequency, position);
 
 
 statement ok
-CREATE TABLE atsd_a.docs (id INTEGER PRIMARY KEY, body TEXT);
+CREATE TABLE mrbeast.videos (id INTEGER PRIMARY KEY, title TEXT);
 
 
 statement ok
-CREATE INDEX atsd_docs_idx ON atsd_a.docs USING inverted (body atsd_dict);
+CREATE INDEX videos_idx ON mrbeast.videos USING inverted (title beast_dict);
 
 
 statement ok
-INSERT INTO atsd_a.docs VALUES (1, 'alpha bravo'), (2, 'charlie delta');
+INSERT INTO mrbeast.videos VALUES (6, 'mrbeast squid game'), (7, 'feastables chocolate');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) atsd_a.docs;
+VACUUM (REFRESH_TABLE) mrbeast.videos;
 
 
 statement ok
-ALTER TABLE atsd_a.docs SET SCHEMA atsd_b;
+ALTER TABLE mrbeast.videos SET SCHEMA feastables;
 
 
 query
-SELECT schemaname, tablename, indexname FROM pg_indexes WHERE indexname = 'atsd_docs_idx';
+SELECT schemaname, tablename, indexname FROM pg_indexes WHERE indexname = 'videos_idx';
 ----
 schemaname	tablename	indexname
-atsd_b	docs	atsd_docs_idx
+feastables	videos	videos_idx
 
 
 query
-SELECT id FROM atsd_b.atsd_docs_idx WHERE body @@ ts_phrase('charlie');
+SELECT id FROM feastables.videos_idx WHERE title @@ ts_phrase('feastables');
 ----
 id
-2
+7
 
 
 statement ok
-INSERT INTO atsd_b.docs VALUES (3, 'charlie echo');
+INSERT INTO feastables.videos VALUES (67, 'feastables six seven');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) atsd_b.docs;
+VACUUM (REFRESH_TABLE) feastables.videos;
 
 
 query
-SELECT id FROM atsd_b.atsd_docs_idx WHERE body @@ ts_phrase('charlie') ORDER BY id;
+SELECT id FROM feastables.videos_idx WHERE title @@ ts_phrase('feastables') ORDER BY id;
 ----
 id
-2
-3
+7
+67
 
 
 statement ok
-CREATE TABLE atsd_a.viewed (id INTEGER);
+CREATE TABLE mrbeast.subscribers (id INTEGER);
 
 
 statement ok
-CREATE VIEW atsd_a.viewer AS SELECT id FROM atsd_a.viewed;
+CREATE VIEW mrbeast.subscriber_count AS SELECT id FROM mrbeast.subscribers;
 
 
 statement error
-ALTER TABLE atsd_a.viewed SET SCHEMA atsd_b;
+ALTER TABLE mrbeast.subscribers SET SCHEMA feastables;
 ----
-db error: ERROR: Cannot alter entry "viewed" because there are entries that depend on it.
-view "viewer" depends on table "viewed".
+db error: ERROR: Cannot alter entry "subscribers" because there are entries that depend on it.
+view "subscriber_count" depends on table "subscribers".
 Drop the dependent entries first and recreate them after the change.
 
 
 statement error
-ALTER TABLE atsd_a.viewer SET SCHEMA atsd_b;
+ALTER TABLE mrbeast.subscriber_count SET SCHEMA feastables;
 ----
-db error: ERROR: "viewer" is not a table
+db error: ERROR: "subscriber_count" is not a table
 DETAIL: This operation is not supported for views.
 
 
 statement ok
-DROP VIEW atsd_a.viewer;
+DROP VIEW mrbeast.subscriber_count;
 
 
 statement ok
-ALTER TABLE atsd_a.viewed SET SCHEMA atsd_b;
+ALTER TABLE mrbeast.subscribers SET SCHEMA feastables;
 
 
 statement ok
-CREATE TABLE atsd_a.search (id INTEGER PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE mrbeast.beast_games (id INTEGER PRIMARY KEY, title TEXT) WITH (storage = 'search');
 
 
 statement error
-ALTER TABLE atsd_a.search SET SCHEMA atsd_b;
+ALTER TABLE mrbeast.beast_games SET SCHEMA feastables;
 ----
-db error: ERROR: ALTER TABLE ... SET SCHEMA is not supported for table "search"
+db error: ERROR: ALTER TABLE ... SET SCHEMA is not supported for table "beast_games"
 
 
 statement ok
-CREATE TABLE atsd_a.plain_t (id INTEGER);
+CREATE TABLE mrbeast.chocolate (id INTEGER);
 
 
 statement ok
-CREATE INDEX atsd_plain ON atsd_a.plain_t (id);
+CREATE INDEX chocolate_idx ON mrbeast.chocolate (id);
 
 
 statement error
-ALTER TABLE atsd_a.atsd_plain SET SCHEMA atsd_b;
+ALTER TABLE mrbeast.chocolate_idx SET SCHEMA feastables;
 ----
-db error: ERROR: Table with name atsd_plain does not exist!
+db error: ERROR: Table with name chocolate_idx does not exist!
 <slt:ignore>
 
 
 statement ok
-CREATE TABLE atsd_a.serial_t (id SERIAL, v TEXT);
+CREATE TABLE mrbeast.crew (id SERIAL, name TEXT);
 
 
 statement ok
-INSERT INTO atsd_a.serial_t (v) VALUES ('a');
+INSERT INTO mrbeast.crew (name) VALUES ('karl');
 
 
 statement ok
-ALTER TABLE atsd_a.serial_t SET SCHEMA atsd_b;
+ALTER TABLE mrbeast.crew SET SCHEMA feastables;
 
 
 statement ok
-INSERT INTO atsd_b.serial_t (v) VALUES ('b');
+INSERT INTO feastables.crew (name) VALUES ('chandler');
 
 
 query
-SELECT id, v FROM atsd_b.serial_t ORDER BY id;
+SELECT id, name FROM feastables.crew ORDER BY id;
 ----
-id	v
-1	a
-2	b
+id	name
+1	karl
+2	chandler
 
 
 query
-SELECT pg_get_serial_sequence('atsd_b.serial_t', 'id') AS seq;
+SELECT pg_get_serial_sequence('feastables.crew', 'id') AS seq;
 ----
 seq
-atsd_b.serial_t_id_seq
+feastables.crew_id_seq
 
 
 statement ok
-CREATE SEQUENCE atsd_a.shared_seq;
+CREATE SEQUENCE mrbeast.six_seven_seq START 67;
 
 
 statement ok
-CREATE TABLE atsd_a.uses_seq (id BIGINT DEFAULT nextval('atsd_a.shared_seq'));
+CREATE TABLE mrbeast.tickets (id BIGINT DEFAULT nextval('mrbeast.six_seven_seq'));
 
 
 statement ok
-CREATE TABLE atsd_a.also_uses_seq (id BIGINT DEFAULT nextval('atsd_a.shared_seq'));
+CREATE TABLE mrbeast.more_tickets (id BIGINT DEFAULT nextval('mrbeast.six_seven_seq'));
 
 
 statement ok
-ALTER TABLE atsd_a.uses_seq SET SCHEMA atsd_b;
+ALTER TABLE mrbeast.tickets SET SCHEMA feastables;
 
 
 statement ok
-INSERT INTO atsd_b.uses_seq DEFAULT VALUES;
+INSERT INTO feastables.tickets DEFAULT VALUES;
 
 
 query
-SELECT id FROM atsd_b.uses_seq;
+SELECT id FROM feastables.tickets;
 ----
 id
-1
+67
 
 
 statement ok
-DROP SCHEMA atsd_b CASCADE;
+DROP SCHEMA feastables CASCADE;
 
 
 statement ok
-DROP SCHEMA atsd_a CASCADE;
+DROP SCHEMA mrbeast CASCADE;
 
 
 statement ok
-DROP TEXT SEARCH DICTIONARY atsd_dict;
+DROP TEXT SEARCH DICTIONARY beast_dict;

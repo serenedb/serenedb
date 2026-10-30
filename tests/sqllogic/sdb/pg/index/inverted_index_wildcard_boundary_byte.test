@@ -1,74 +1,74 @@
 statement ok
-CREATE TEXT SEARCH DICTIONARY wbb_dict AS
+CREATE TEXT SEARCH DICTIONARY beast_dict AS
     generate_wildcard_ngrams(split_text_csv(' '), 3)
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY wbb_pos_dict AS
+CREATE TEXT SEARCH DICTIONARY beast_pos_dict AS
     generate_wildcard_ngrams(split_text_csv(' '), 3)
     WITH (frequency, position)
 
 statement ok
-CREATE TABLE wbb_t (id INTEGER PRIMARY KEY, v VARCHAR)
+CREATE TABLE beast_t (id INTEGER PRIMARY KEY, v VARCHAR)
 
 statement ok
-INSERT INTO wbb_t VALUES
-    (1, 'bcd'),
-    (2, 'xbcdx'),
-    (3, 'cd'),
-    (4, 'a' || chr(31) || 'bcd'),
-    (5, 'bcd' || chr(31) || 'e'),
-    (6, 'a' || chr(31) || 'bcd' || chr(31) || 'e'),
-    (7, chr(31) || 'cd'),
-    (8, 'ÿbc'),
-    (9, 'aÿ'),
+INSERT INTO beast_t VALUES
+    (1, 'beast'),
+    (2, 'mrbeasts'),
+    (3, 'east'),
+    (4, 'mr' || chr(31) || 'beast'),
+    (5, 'beast' || chr(31) || 'games'),
+    (6, 'mr' || chr(31) || 'beast' || chr(31) || 'games'),
+    (7, chr(31) || 'east'),
+    (8, 'ÿ67'),
+    (9, '67ÿ'),
     (10, 'ÿ')
 
 statement ok
-CREATE INDEX wbb_idx ON wbb_t USING inverted (id, v wbb_dict)
+CREATE INDEX beast_idx ON beast_t USING inverted (id, v beast_dict)
 
 statement ok
-CREATE INDEX wbb_pos_idx ON wbb_t USING inverted (id, v wbb_pos_dict)
+CREATE INDEX beast_pos_idx ON beast_t USING inverted (id, v beast_pos_dict)
 
 statement ok
-VACUUM (REFRESH_TABLE) wbb_t
+VACUUM (REFRESH_TABLE) beast_t
 
 query
-SELECT list_transform(generate_wildcard_ngrams('a' || chr(31) || 'b', 3), x -> hex(x)) AS control,
-       list_transform(generate_wildcard_ngrams('ÿb', 3), x -> hex(x)) AS latin
+SELECT list_transform(generate_wildcard_ngrams('6' || chr(31) || '7', 3), x -> hex(x)) AS control,
+       list_transform(generate_wildcard_ngrams('ÿ7', 3), x -> hex(x)) AS latin
 ----
 control	latin
-{FF611F,611F62,1F62FF,62FF}	{FFC3BF62,C3BF62FF,62FF}
+{FF361F,361F37,1F37FF,37FF}	{FFC3BF37,C3BF37FF,37FF}
 
 query
-SELECT id FROM wbb_t WHERE v LIKE 'b%' ORDER BY id
+SELECT id FROM beast_t WHERE v LIKE 'b%' ORDER BY id
 ----
 id
 1
 5
 
 query
-SELECT id FROM wbb_idx WHERE v @@ ts_like('b%') ORDER BY id
+SELECT id FROM beast_idx WHERE v @@ ts_like('b%') ORDER BY id
 ----
 id
 1
 5
 
 query
-SELECT id FROM wbb_pos_idx WHERE v @@ ts_like('b%') ORDER BY id
+SELECT id FROM beast_pos_idx WHERE v @@ ts_like('b%') ORDER BY id
 ----
 id
 1
 5
 
 query
-SELECT id FROM wbb_idx WHERE v LIKE 'b%' ORDER BY id
+SELECT id FROM beast_idx WHERE v LIKE 'b%' ORDER BY id
 ----
 id
 1
 5
 
 query
-SELECT id FROM wbb_t WHERE v LIKE '%d' ORDER BY id
+SELECT id FROM beast_t WHERE v LIKE '%t' ORDER BY id
 ----
 id
 1
@@ -77,7 +77,7 @@ id
 7
 
 query
-SELECT id FROM wbb_idx WHERE v @@ ts_like('%d') ORDER BY id
+SELECT id FROM beast_idx WHERE v @@ ts_like('%t') ORDER BY id
 ----
 id
 1
@@ -86,7 +86,7 @@ id
 7
 
 query
-SELECT id FROM wbb_pos_idx WHERE v @@ ts_like('%d') ORDER BY id
+SELECT id FROM beast_pos_idx WHERE v @@ ts_like('%t') ORDER BY id
 ----
 id
 1
@@ -95,19 +95,19 @@ id
 7
 
 query
-SELECT id FROM wbb_pos_idx WHERE v @@ ts_like('bcd') ORDER BY id
+SELECT id FROM beast_pos_idx WHERE v @@ ts_like('beast') ORDER BY id
 ----
 id
 1
 
 query
-SELECT id FROM wbb_pos_idx WHERE v @@ ts_like('cd') ORDER BY id
+SELECT id FROM beast_pos_idx WHERE v @@ ts_like('east') ORDER BY id
 ----
 id
 3
 
 query
-SELECT id FROM wbb_idx WHERE v @@ ts_like('%bcd%') ORDER BY id
+SELECT id FROM beast_idx WHERE v @@ ts_like('%beast%') ORDER BY id
 ----
 id
 1
@@ -117,52 +117,52 @@ id
 6
 
 query
-SELECT id FROM wbb_idx WHERE v @@ ts_regexp('(?s)b.*') ORDER BY id
+SELECT id FROM beast_idx WHERE v @@ ts_regexp('(?s)b.*') ORDER BY id
 ----
 id
 1
 5
 
 query
-SELECT id FROM wbb_idx WHERE v @@ ts_like('%' || chr(31) || 'b%') ORDER BY id
+SELECT id FROM beast_idx WHERE v @@ ts_like('%' || chr(31) || 'b%') ORDER BY id
 ----
 id
 4
 6
 
 query
-SELECT id FROM wbb_t WHERE v LIKE 'ÿ%' ORDER BY id
+SELECT id FROM beast_t WHERE v LIKE 'ÿ%' ORDER BY id
 ----
 id
 8
 10
 
 query
-SELECT id FROM wbb_idx WHERE v @@ ts_like('ÿ%') ORDER BY id
+SELECT id FROM beast_idx WHERE v @@ ts_like('ÿ%') ORDER BY id
 ----
 id
 8
 10
 
 query
-SELECT id FROM wbb_idx WHERE v @@ ts_like('%ÿ') ORDER BY id
+SELECT id FROM beast_idx WHERE v @@ ts_like('%ÿ') ORDER BY id
 ----
 id
 9
 10
 
 query
-SELECT id FROM wbb_pos_idx WHERE v @@ ts_like('ÿ') ORDER BY id
+SELECT id FROM beast_pos_idx WHERE v @@ ts_like('ÿ') ORDER BY id
 ----
 id
 10
 
 query
-EXPLAIN SELECT id FROM wbb_idx WHERE v @@ ts_like('b%')
+EXPLAIN SELECT id FROM beast_idx WHERE v @@ ts_like('b%')
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
-│ Index: wbb_idx           │
+│ Index: beast_idx         │
 │ Lookup: table            │
 │ Index Filter:            │
 │ ╭─ Wildcard NGram ─────╮ │
@@ -178,10 +178,10 @@ QUERY PLAN
 ╰──────────────────────────╯
 
 statement ok
-DROP TABLE wbb_t
+DROP TABLE beast_t
 
 statement ok
-DROP TEXT SEARCH DICTIONARY wbb_pos_dict
+DROP TEXT SEARCH DICTIONARY beast_pos_dict
 
 statement ok
-DROP TEXT SEARCH DICTIONARY wbb_dict
+DROP TEXT SEARCH DICTIONARY beast_dict

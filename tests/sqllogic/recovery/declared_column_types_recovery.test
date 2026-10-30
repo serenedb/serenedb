@@ -1,7 +1,7 @@
 control substitution on
 
 statement ok
-CREATE TABLE dctr_checkpointed (v varchar(10), c char(3), j jsonb, n numeric, t text);
+CREATE TABLE beast_checkpointed (title varchar(67), code char(6), meta jsonb, views numeric, bio text);
 
 
 statement ok
@@ -9,15 +9,15 @@ FORCE CHECKPOINT;
 
 
 statement ok
-CREATE TABLE dctr_logged (v varchar(10), c char(3), j jsonb, n numeric, t text);
+CREATE TABLE beast_logged (title varchar(67), code char(6), meta jsonb, views numeric, bio text);
 
 
 statement ok
-ALTER TABLE dctr_logged ALTER COLUMN t TYPE varchar(20);
+ALTER TABLE beast_logged ALTER COLUMN bio TYPE varchar(76);
 
 
 statement ok
-ALTER TABLE dctr_logged ADD COLUMN added jsonb;
+ALTER TABLE beast_logged ADD COLUMN feastables jsonb;
 
 
 statement ok
@@ -25,33 +25,33 @@ SET sdb_faults = 'crash_on_packet';
 
 
 statement error connection closed
-SELECT 1;
+SELECT 67;
 
 
 connection after_crash
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT 1;
+SELECT 67;
 
 
 connection after_crash
 query
 SELECT table_name, column_name, data_type, character_maximum_length, numeric_precision
 FROM information_schema.columns
-WHERE table_name IN ('dctr_checkpointed', 'dctr_logged')
+WHERE table_name IN ('beast_checkpointed', 'beast_logged')
 ORDER BY table_name, ordinal_position;
 ----
 table_name	column_name	data_type	character_maximum_length	numeric_precision
-dctr_checkpointed	v	character varying	10	NULL
-dctr_checkpointed	c	character	3	NULL
-dctr_checkpointed	j	jsonb	NULL	NULL
-dctr_checkpointed	n	numeric	NULL	NULL
-dctr_checkpointed	t	text	NULL	NULL
-dctr_logged	v	character varying	10	NULL
-dctr_logged	c	character	3	NULL
-dctr_logged	j	jsonb	NULL	NULL
-dctr_logged	n	numeric	NULL	NULL
-dctr_logged	t	character varying	20	NULL
-dctr_logged	added	jsonb	NULL	NULL
+beast_checkpointed	title	character varying	67	NULL
+beast_checkpointed	code	character	6	NULL
+beast_checkpointed	meta	jsonb	NULL	NULL
+beast_checkpointed	views	numeric	NULL	NULL
+beast_checkpointed	bio	text	NULL	NULL
+beast_logged	title	character varying	67	NULL
+beast_logged	code	character	6	NULL
+beast_logged	meta	jsonb	NULL	NULL
+beast_logged	views	numeric	NULL	NULL
+beast_logged	bio	character varying	76	NULL
+beast_logged	feastables	jsonb	NULL	NULL
 
 
 connection after_crash
@@ -66,25 +66,25 @@ SET sdb_faults = 'crash_on_packet';
 
 connection after_crash
 statement error connection closed
-SELECT 1;
+SELECT 67;
 
 
 connection after_checkpoint
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT 1;
+SELECT 67;
 
 
 connection after_checkpoint
 query
 SELECT attname, format_type(atttypid, atttypmod) AS type
 FROM pg_attribute
-WHERE attrelid = 'dctr_logged'::regclass AND attnum > 0
+WHERE attrelid = 'beast_logged'::regclass AND attnum > 0
 ORDER BY attnum;
 ----
 attname	type
-v	character varying(10)
-c	character(3)
-j	jsonb
-n	numeric
-t	character varying(20)
-added	jsonb
+title	character varying(67)
+code	character(6)
+meta	jsonb
+views	numeric
+bio	character varying(76)
+feastables	jsonb

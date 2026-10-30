@@ -1,159 +1,159 @@
 statement ok
-CREATE TABLE dct (v varchar, v10 varchar(10), cv character varying(20), t text, c5 char(5), c character, nc nchar(2), j json, jb jsonb, n numeric, n102 numeric(10,2), d decimal, va varchar(7)[], jba jsonb[]);
+CREATE TABLE beast (channel varchar, title varchar(67), tagline character varying(76), bio text, code char(6), grade character, tier nchar(7), stats json, meta jsonb, views numeric, price numeric(7,6), prize decimal, tags varchar(67)[], metas jsonb[]);
 
 
 query
 SELECT column_name, data_type, udt_name, character_maximum_length, numeric_precision, numeric_scale
 FROM information_schema.columns
-WHERE table_name = 'dct'
+WHERE table_name = 'beast'
 ORDER BY ordinal_position;
 ----
 column_name	data_type	udt_name	character_maximum_length	numeric_precision	numeric_scale
-v	character varying	varchar	NULL	NULL	NULL
-v10	character varying	varchar	10	NULL	NULL
-cv	character varying	varchar	20	NULL	NULL
-t	text	text	NULL	NULL	NULL
-c5	character	bpchar	5	NULL	NULL
-c	character	bpchar	1	NULL	NULL
-nc	character	bpchar	2	NULL	NULL
-j	json	json	NULL	NULL	NULL
-jb	jsonb	jsonb	NULL	NULL	NULL
-n	numeric	numeric	NULL	NULL	NULL
-n102	numeric	numeric	NULL	10	2
-d	numeric	numeric	NULL	NULL	NULL
-va	ARRAY	_varchar	NULL	NULL	NULL
-jba	ARRAY	_jsonb	NULL	NULL	NULL
+channel	character varying	varchar	NULL	NULL	NULL
+title	character varying	varchar	67	NULL	NULL
+tagline	character varying	varchar	76	NULL	NULL
+bio	text	text	NULL	NULL	NULL
+code	character	bpchar	6	NULL	NULL
+grade	character	bpchar	1	NULL	NULL
+tier	character	bpchar	7	NULL	NULL
+stats	json	json	NULL	NULL	NULL
+meta	jsonb	jsonb	NULL	NULL	NULL
+views	numeric	numeric	NULL	NULL	NULL
+price	numeric	numeric	NULL	7	6
+prize	numeric	numeric	NULL	NULL	NULL
+tags	ARRAY	_varchar	NULL	NULL	NULL
+metas	ARRAY	_jsonb	NULL	NULL	NULL
 
 
 query
 SELECT attname, format_type(atttypid, atttypmod) AS type, atttypmod
 FROM pg_attribute
-WHERE attrelid = 'dct'::regclass AND attnum > 0
+WHERE attrelid = 'beast'::regclass AND attnum > 0
 ORDER BY attnum;
 ----
 attname	type	atttypmod
-v	character varying	-1
-v10	character varying(10)	14
-cv	character varying(20)	24
-t	text	-1
-c5	character(5)	9
-c	character(1)	5
-nc	character(2)	6
-j	json	-1
-jb	jsonb	-1
-n	numeric	-1
-n102	numeric(10,2)	655366
-d	numeric	-1
-va	character varying(7)[]	11
-jba	jsonb[]	-1
+channel	character varying	-1
+title	character varying(67)	71
+tagline	character varying(76)	80
+bio	text	-1
+code	character(6)	10
+grade	character(1)	5
+tier	character(7)	11
+stats	json	-1
+meta	jsonb	-1
+views	numeric	-1
+price	numeric(7,6)	458762
+prize	numeric	-1
+tags	character varying(67)[]	71
+metas	jsonb[]	-1
 
 
 statement ok
-ALTER TABLE dct ADD COLUMN added varchar(3);
+ALTER TABLE beast ADD COLUMN six varchar(6);
 
 
 statement ok
-ALTER TABLE dct ALTER COLUMN t TYPE varchar(30);
+ALTER TABLE beast ALTER COLUMN bio TYPE varchar(67);
 
 
 statement ok
-ALTER TABLE dct ALTER COLUMN jb TYPE json;
+ALTER TABLE beast ALTER COLUMN meta TYPE json;
 
 
 statement ok
-ALTER TABLE dct ALTER COLUMN v TYPE text;
+ALTER TABLE beast ALTER COLUMN channel TYPE text;
 
 
 query
 SELECT attname, format_type(atttypid, atttypmod) AS type
 FROM pg_attribute
-WHERE attrelid = 'dct'::regclass AND attname IN ('added', 't', 'jb', 'v')
+WHERE attrelid = 'beast'::regclass AND attname IN ('six', 'bio', 'meta', 'channel')
 ORDER BY attnum;
 ----
 attname	type
-v	text
-t	character varying(30)
-jb	json
-added	character varying(3)
+channel	text
+bio	character varying(67)
+meta	json
+six	character varying(6)
 
 
 statement ok
-CREATE TABLE dct_as AS SELECT v10, n FROM dct;
+CREATE TABLE beast_as AS SELECT title, views FROM beast;
 
 
 skipif serenedb
 query
 SELECT attname, format_type(atttypid, atttypmod) AS type
 FROM pg_attribute
-WHERE attrelid = 'dct_as'::regclass AND attnum > 0
+WHERE attrelid = 'beast_as'::regclass AND attnum > 0
 ORDER BY attnum;
 ----
 attname	type
-v10	character varying(10)
-n	numeric
+title	character varying(67)
+views	numeric
 
 
 onlyif serenedb
 query
 SELECT attname, format_type(atttypid, atttypmod) AS type
 FROM pg_attribute
-WHERE attrelid = 'dct_as'::regclass AND attnum > 0
+WHERE attrelid = 'beast_as'::regclass AND attnum > 0
 ORDER BY attnum;
 ----
 attname	type
-v10	text
-n	numeric(38,10)
+title	text
+views	numeric(38,10)
 
 
 statement ok
-INSERT INTO dct (jb, n, d) VALUES ('{"a": [1, 2]}', 12345678901234.123456789, 98765432109876543210.0123456789);
+INSERT INTO beast (meta, views, prize) VALUES ('{"mrbeast": [6, 7]}', 67676767676767.676767676, 67676767676767676767.6767676767);
 
 
 query
-SELECT jb -> 'a' AS a, to_jsonb(1) AS one, to_jsonb('x'::text) AS x, to_jsonb('{"b": 2}'::json) ->> 'b' AS j FROM dct;
+SELECT meta -> 'mrbeast' AS six_seven, to_jsonb(67) AS sixty_seven, to_jsonb('mrbeast'::text) AS beast, to_jsonb('{"six": 7}'::json) ->> 'six' AS seven FROM beast;
 ----
-a	one	x	j
-[1, 2]	1	"x"	2
+six_seven	sixty_seven	beast	seven
+[6, 7]	67	"mrbeast"	7
 
 
 skipif serenedb
 query
-SELECT n::text AS n, d::text AS d FROM dct;
+SELECT views::text AS views, prize::text AS prize FROM beast;
 ----
-n	d
-12345678901234.123456789	98765432109876543210.0123456789
+views	prize
+67676767676767.676767676	67676767676767676767.6767676767
 
 
 onlyif serenedb
 query
-SELECT n::text AS n, d::text AS d FROM dct;
+SELECT views::text AS views, prize::text AS prize FROM beast;
 ----
-n	d
-12345678901234.1234567890	98765432109876543210.0123456789
+views	prize
+67676767676767.6767676760	67676767676767676767.6767676767
 
 
 statement ok
-CREATE TABLE dct_bare (b bpchar, n numeric);
+CREATE TABLE beast_bare (six bpchar, seven numeric);
 
 
 query
 SELECT attname, format_type(atttypid, atttypmod) AS type, atttypmod
 FROM pg_attribute
-WHERE attrelid = 'dct_bare'::regclass AND attnum > 0
+WHERE attrelid = 'beast_bare'::regclass AND attnum > 0
 ORDER BY attnum;
 ----
 attname	type	atttypmod
-b	bpchar	-1
-n	numeric	-1
+six	bpchar	-1
+seven	numeric	-1
 
 
 statement ok
-DROP TABLE dct_bare;
+DROP TABLE beast_bare;
 
 
 statement ok
-DROP TABLE dct_as;
+DROP TABLE beast_as;
 
 
 statement ok
-DROP TABLE dct;
+DROP TABLE beast;

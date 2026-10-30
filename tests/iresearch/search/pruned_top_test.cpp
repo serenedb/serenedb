@@ -434,6 +434,8 @@ TEST_P(PrunedTopTest, prefix_exclusions) {
          {.must = {"mid", "dense"}, .must_not_prefixes = {"pfx"}},
          {.must = {"half"}, .must_not_prefixes = {"pfx1"}},
          {.must = {"dense", "half"}, .must_not_prefixes = {"pfx"}},
+         {.must = {"common"}, .must_not_prefixes = {"pfx"}},
+         {.must = {"rare"}, .must_not_prefixes = {"pfx"}},
        }) {
     Check(shape);
   }

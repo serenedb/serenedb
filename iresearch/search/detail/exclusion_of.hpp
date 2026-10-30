@@ -83,22 +83,38 @@ class ExcludeCosts {
     const auto dirty = [&](double sparse) {
       return 1.0 - std::exp(-block * sparse / s);
     };
+    double sparse = static_cast<double>(SumDocs(terms));
+    for (const auto& child : filters) {
+      SDB_ASSERT(child);
+      sparse += ChildClauseCost(*child, docs_count).sparse;
+    }
+    const double leaf = static_cast<double>(doc_limits::kBlockSize);
+    const double lead_blocks = std::max(1.0, s / block);
+    const double batches =
+      per_doc ? c : lead_blocks * (1.0 - std::exp(-c / lead_blocks));
+    const double probed =
+      per_doc ? c : batches + std::max(c - batches, 0.0) * dirty(sparse);
+    const double spread = _windows * (1.0 - std::exp(-c / _windows));
+    double probed_lazy = 0;
     double eager = 0;
-    double sparse = 0;
     double hits = 0;
     double exact = 0;
     const auto add = [&](const ClauseCost& clause) {
       const auto d = static_cast<double>(clause.docs);
       const auto leaves = static_cast<double>(clause.leaves);
       if (clause.mask) {
-        _probes += per_doc ? c * clause.probe
-                           : blocks * clause.block_probe +
-                               c * dirty(clause.sparse) * clause.probe;
+        const double probes = per_doc
+                                ? c * clause.probe
+                                : blocks * clause.block_probe +
+                                    c * dirty(clause.sparse) * clause.probe;
         const double refill = touched * kMaskWindowCost;
-        _lazy += refill + clause.lazy_fill * (touched / _windows);
+        const double lazy = refill + clause.lazy_fill * (touched / _windows);
+        _probes += probes;
+        _probed_probes += probes;
+        _lazy += lazy;
+        probed_lazy += lazy;
         _filled += clause.fill + refill;
         eager += clause.fill;
-        sparse += clause.sparse;
         return;
       }
       const double reach = d * std::min(1.0, c / s);
@@ -123,12 +139,26 @@ class ExcludeCosts {
                      ? kWindowNestedRefillCost
                      : kWindowChildRefillCost +
                          kWindowChildSeekCost * (1.0 - touched / _windows));
-      _lazy += refill + clause.lazy_fill * (touched / _windows);
+      const double lazy = refill + clause.lazy_fill * (touched / _windows);
+      _lazy += lazy;
+      if (clause.exact && clause.leaves == 1) {
+        const double advances =
+          probed > 0 ? probed * (1.0 - std::exp(-d / probed)) : 0.0;
+        _probed_probes +=
+          probed * kLeafProbeCost + advances * static_cast<double>(kProbeCost) +
+          std::min(advances, std::max(1.0, d / leaf)) *
+            (kStepBaseCost + kStepJumpCost + leaf * kDecodeCost) +
+          clause.matches * share * clause.hit;
+        probed_lazy +=
+          spread * kWindowRefillCost + clause.lazy_fill * (spread / _windows);
+      } else {
+        _probed_probes += probes;
+        probed_lazy += lazy;
+      }
       _filled += (clause.exact ? kFilledCost * d : clause.fill) + refill;
       eager += clause.exact    ? clause.fill
                : clause.nested ? clause.fill + _windows * kEagerNestedWindowCost
                                : clause.fill + _windows * kEagerChildWindowCost;
-      sparse += clause.sparse;
       hits += d * share;
       exact += clause.exact ? 1.0 : 0.0;
     };
@@ -136,15 +166,16 @@ class ExcludeCosts {
       add(TermClauseCost(CookieOf(terms[i]).docs_count, docs_count));
     }
     for (const auto& child : filters) {
-      SDB_ASSERT(child);
       add(ChildClauseCost(*child, docs_count));
     }
     if (exact > 1.0) {
       _probes += (per_doc ? c : c * dirty(sparse)) * kLeafProbeCost * exact;
     }
-    _window = _lazy + (per_doc ? c * kWindowTestCost
-                               : blocks * kWindowBlockCost +
-                                   c * dirty(sparse) * kWindowDirtyTestCost);
+    const double tests = per_doc ? c * kWindowTestCost
+                                 : blocks * kWindowBlockCost +
+                                     c * dirty(sparse) * kWindowDirtyTestCost;
+    _window = _lazy + tests;
+    _probed_window = probed_lazy + tests;
     const double built = _words * kBitClearCost + eager;
     _bitset =
       built +
@@ -175,7 +206,7 @@ class ExcludeCosts {
   }
 
   ExcludeForm Probed(bool bitsets) const noexcept {
-    return Form(bitsets, _window, _bitset, _probes);
+    return Form(bitsets, _probed_window, _bitset, _probed_probes);
   }
 
   ExcludeForm Windowed(bool bitsets) const noexcept {
@@ -213,9 +244,11 @@ class ExcludeCosts {
   double _words = 0;
   double _windows = 0;
   double _probes = 0;
+  double _probed_probes = 0;
   double _lazy = 0;
   double _filled = 0;
   double _window = 0;
+  double _probed_window = 0;
   double _bitset = 0;
   double _bitset_lead = 0;
 };

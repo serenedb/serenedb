@@ -191,6 +191,7 @@ struct Shape {
   std::vector<std::string_view> must_not;
   std::vector<Phrase> must_not_phrases;
   std::vector<std::string_view> must_not_prefixes;
+  std::vector<std::vector<std::string_view>> must_unions;
 };
 
 class BooleanWindowTest : public tests::IndexTestBase {
@@ -221,10 +222,19 @@ class BooleanWindowTest : public tests::IndexTestBase {
     SCOPED_TRACE(absl::StrCat("+", absl::StrJoin(shape.must, " +"), " -",
                               absl::StrJoin(shape.must_not, " -"), " phrases ",
                               shape.must_not_phrases.size(), " -",
-                              absl::StrJoin(shape.must_not_prefixes, "* -")));
+                              absl::StrJoin(shape.must_not_prefixes, "* -"),
+                              " unions ", shape.must_unions.size()));
     irs::BooleanFilter filter;
     for (const auto term : shape.must) {
       filter.Add(Clause(term), irs::Occur::Must);
+    }
+    for (const auto& terms : shape.must_unions) {
+      auto any = std::make_unique<irs::BooleanFilter>();
+      for (const auto term : terms) {
+        any->Add(Clause(term), irs::Occur::Should);
+      }
+      any->SetMinShouldMatch(1);
+      filter.Add(std::move(any), irs::Occur::Must);
     }
     for (const auto term : shape.must_not) {
       filter.Add(Clause(term), irs::Occur::MustNot);
@@ -241,7 +251,11 @@ class BooleanWindowTest : public tests::IndexTestBase {
       const auto expands = [&](std::string_view prefix) {
         return HasExpansion(i) && ExpansionTerm(i).starts_with(prefix);
       };
+      const auto any = [&](const auto& terms) {
+        return absl::c_any_of(terms, has);
+      };
       if (absl::c_all_of(shape.must, has) &&
+          absl::c_all_of(shape.must_unions, any) &&
           absl::c_none_of(shape.must_not, has) &&
           absl::c_none_of(shape.must_not_phrases, has) &&
           absl::c_none_of(shape.must_not_prefixes, expands)) {
@@ -403,6 +417,23 @@ TEST_P(BooleanWindowTest, phrase_exclusions) {
          {{"cluster", "dense"},
           {"rare"},
           {{"half", "dense"}, {"mid", "sparse"}}},
+       }) {
+    Check(shape);
+  }
+}
+
+TEST_P(BooleanWindowTest, conjunctions_of_unions) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {.must_unions = {{"sparse", "rare"}, {"mid", "half"}}},
+         {.must_unions = {{"rare", "single"},
+                          {"half", "dense"},
+                          {"run", "mid"}}},
+         {.must_unions = {{"cluster", "holes"}, {"dense", "sparse"}}},
+         {.must = {"sparse"},
+          .must_unions = {{"half", "mid"}, {"dense", "run"}}},
+         {.must = {"half"}, .must_unions = {{"sparse", "rare"}}},
+         {.must = {"rare", "dense"}, .must_unions = {{"cluster", "mid"}}},
        }) {
     Check(shape);
   }

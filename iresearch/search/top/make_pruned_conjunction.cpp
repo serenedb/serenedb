@@ -69,16 +69,10 @@ Root::ptr MakePrunedConjunction(
                                           .boost = posting.boost});
     };
     const auto docs = static_cast<doc_id_t>(segment.docs_count());
-    const uint64_t candidates =
-      uint64_t{terms.front().state.cookie.docs_count} *
-      irs::detail::kWindowDocs / std::max<doc_id_t>(docs, 1);
     std::vector<size_t> joined;
     joined.reserve(size - 1);
     for (size_t i = 1; i != size; ++i) {
-      const uint64_t member = terms[i].state.cookie.docs_count;
-      if (!irs::detail::DensePosting(member, docs) ||
-          candidates * (docs - std::min<uint64_t>(member, docs)) / docs >
-            irs::detail::kWindowWords) {
+      if (!irs::detail::DensePosting(terms[i].state.cookie.docs_count, docs)) {
         joined.push_back(i);
       }
     }

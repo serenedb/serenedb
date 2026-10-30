@@ -1,0 +1,92 @@
+control substitution on
+
+statement ok
+DROP SCHEMA IF EXISTS es CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS eed_creator;
+
+
+statement ok
+DROP ROLE IF EXISTS eed_reader;
+
+
+statement ok
+CREATE ROLE eed_creator LOGIN PASSWORD 'eed_pw';
+
+
+statement ok
+CREATE ROLE eed_reader LOGIN PASSWORD 'eed_pw';
+
+
+statement ok
+GRANT CREATE ON DATABASE ${__DATABASE__} TO eed_creator;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE eed_creator GRANT USAGE ON SCHEMAS TO eed_reader;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE eed_creator GRANT SELECT ON TABLES TO eed_reader;
+
+
+connection c_creator user=eed_creator password=eed_pw
+statement ok
+CALL es_create_index('eed_docs', '{"mappings":{"properties":{"title":{"type":"keyword"}}}}');
+
+
+connection c_reader user=eed_reader password=eed_pw
+query
+SELECT count(*) AS docs FROM es.eed_docs;
+----
+docs
+0
+
+
+connection c_reader user=eed_reader password=eed_pw
+query
+CALL es_mapping('eed_docs');
+----
+mappings
+{"properties":{"title":{"type":"keyword"}}}
+
+
+connection c_reader user=eed_reader password=eed_pw
+statement error
+INSERT INTO es.eed_docs (_id, title, _source) VALUES ('1', 't', '{}');
+----
+db error: ERROR: permission denied for table eed_docs
+
+
+connection c_creator user=eed_creator password=eed_pw
+query
+CALL es_drop_index('eed_docs');
+----
+acknowledged
+t
+
+
+statement ok
+DROP SCHEMA es CASCADE;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE eed_creator REVOKE USAGE ON SCHEMAS FROM eed_reader;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE eed_creator REVOKE SELECT ON TABLES FROM eed_reader;
+
+
+statement ok
+REVOKE CREATE ON DATABASE ${__DATABASE__} FROM eed_creator;
+
+
+statement ok
+DROP ROLE eed_creator;
+
+
+statement ok
+DROP ROLE eed_reader;

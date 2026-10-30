@@ -87,6 +87,7 @@ void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error,
                  data.errmsg);
       return;
     case ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION:
+    case ERRCODE_INSUFFICIENT_PRIVILEGE:
       WriteError(writer, HttpStatus::Forbidden, "security_exception",
                  data.errmsg);
       return;

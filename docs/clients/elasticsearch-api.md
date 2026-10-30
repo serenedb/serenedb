@@ -57,6 +57,21 @@ serened ./data --listen 'postgres://127.0.0.1:7890,http://127.0.0.1:9200?api=es'
 curl -s -H 'Authorization: Bearer s3cret' http://127.0.0.1:9200/_cat/indices
 ```
 
+## Privileges
+
+An index is a table in the `es` schema (see [Indices in SQL](#indices-in-sql)), so a request needs the [privileges](../security/privileges.md) its role would need in SQL:
+
+| Request | Privilege |
+|---|---|
+| `PUT /<index>` | `CREATE` on the `es` schema, or on the database while `es` does not exist |
+| writing documents | `INSERT` on the index's table |
+| reading documents, searching | `SELECT` on the index's table |
+| `GET /<index>`, `HEAD /<index>`, `GET /<index>/_mapping` | any privilege on the index's table |
+| `POST /<index>/_refresh` | `MAINTAIN` on the index's table |
+| `DELETE /<index>` | ownership of the index's table |
+
+Every request on an existing index also needs `USAGE` on the `es` schema. The role that creates an index owns its table, and the `es` schema when the request creates it; the role's `ALTER DEFAULT PRIVILEGES` apply to both, as they do to `CREATE TABLE` and `CREATE SCHEMA`.
+
 ## Indices and mappings
 
 `PUT /<index>` creates an index from the `properties` of its `mappings`:
@@ -495,7 +510,7 @@ Errors use the Elasticsearch envelope:
 | 400 | `invalid_index_name_exception` | an index name outside the naming rules |
 | 400 | `resource_already_exists_exception` | the index already exists |
 | 400 | `query_shard_exception` | a sort or aggregation on a field that is not in the mapping |
-| 403 | `security_exception` | the role does not exist or cannot log in |
+| 403 | `security_exception` | the role does not exist or cannot log in, or lacks a [privilege](#privileges) the request needs |
 | 404 | `index_not_found_exception` | the index does not exist |
 | 404 | `resource_not_found_exception` | `_source/<id>` for a missing document |
 | 404 | `search_context_missing_exception` | a scroll ID that does not decode |

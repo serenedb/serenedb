@@ -57,7 +57,7 @@ Startup leaves a table that exists as it is, and checks that every table has eve
 
 For a schema of your own, start the listener with `create_schema=false`: see [Your own schema](#your-own-schema).
 
-A table dropped or changed after startup fails each export to it with `503` until it is fixed: `the OpenTelemetry schema is missing: …` for a dropped table, and `invalid OpenTelemetry schema: column … is …, expected …` for a changed one. Other failures follow the OTLP retry rules: rejected data answers `400`, which clients do not retry, and a transient server condition (a transaction conflict, out of memory, shutdown) answers `503`, which they do.
+A table dropped or changed after startup fails each export to it with `503` until it is fixed: `the OpenTelemetry schema is missing: …` for a dropped table, and `invalid OpenTelemetry schema: column … is …, expected …` for a changed one. Other failures follow the OTLP retry rules: rejected data answers `400` and a role without `INSERT` on a table the export writes to answers `403` (`PERMISSION_DENIED`), which clients do not retry, and a transient server condition (a transaction conflict, out of memory, shutdown) answers `503`, which they do.
 
 Each export is written in one transaction, so a failed export stores nothing: a metrics export whose points span several `otel_metrics_*` tables is written to all of them or to none, and a client retry cannot duplicate the tables that succeeded the first time.
 

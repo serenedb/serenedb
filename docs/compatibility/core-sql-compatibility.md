@@ -56,7 +56,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | REVOKE                | Yes           | Incl. `GRANT OPTION FOR` |
 | SET ROLE              | Yes           | Enforced; membership required for non-superusers |
 | INHERIT               | Yes           | `INHERIT`/`NOINHERIT` attributes enforced |
-| ALTER DEFAULT PRIVILEGES | Yes        |                                                     |
+| ALTER DEFAULT PRIVILEGES | Yes        | Applied to the objects the role creates afterwards, in the whole database or in one schema |
 | Row Security Policies | No            | See [issue](https://github.com/serenedb/serenedb/issues/212) |
 
 ### Indexes

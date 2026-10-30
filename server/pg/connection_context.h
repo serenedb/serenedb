@@ -120,6 +120,7 @@ class ConnectionContext final : public query::Transaction {
   void SetEffectiveRole(duckdb::idx_t role) {
     _effective_role_id = role;
     GetClientContext().SetPrincipalRole(role);
+    GetClientContext().session_user = EffectiveUserName();
   }
   void SetSessionRole(duckdb::idx_t role) {
     _session_role_id = role;

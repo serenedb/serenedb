@@ -1,0 +1,101 @@
+statement ok
+DROP SCHEMA IF EXISTS espu_team CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS espu_vedernikoff CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS espu_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS espu_team;
+
+
+statement ok
+CREATE ROLE espu_team;
+
+
+statement ok
+CREATE ROLE espu_vedernikoff LOGIN PASSWORD 'espu_pw';
+
+
+statement ok
+GRANT espu_team TO espu_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA espu_vedernikoff AUTHORIZATION espu_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA espu_team AUTHORIZATION espu_team;
+
+
+connection c_espu user=espu_vedernikoff password=espu_pw
+statement ok
+SET search_path = "$user";
+
+
+connection c_espu user=espu_vedernikoff password=espu_pw
+query
+SELECT current_schema() AS cur;
+----
+cur
+espu_vedernikoff
+
+
+connection c_espu user=espu_vedernikoff password=espu_pw
+statement ok
+SET ROLE espu_team;
+
+
+connection c_espu user=espu_vedernikoff password=espu_pw
+query
+SELECT current_schema() AS cur;
+----
+cur
+espu_team
+
+
+connection c_espu user=espu_vedernikoff password=espu_pw
+statement ok
+CREATE TABLE espu_made (a integer);
+
+
+query
+SELECT table_schema FROM information_schema.tables WHERE table_name = 'espu_made';
+----
+table_schema
+espu_team
+
+
+connection c_espu user=espu_vedernikoff password=espu_pw
+statement ok
+RESET ROLE;
+
+
+connection c_espu user=espu_vedernikoff password=espu_pw
+query
+SELECT current_schema() AS cur;
+----
+cur
+espu_vedernikoff
+
+
+statement ok
+DROP SCHEMA espu_team CASCADE;
+
+
+statement ok
+DROP SCHEMA espu_vedernikoff CASCADE;
+
+
+statement ok
+DROP ROLE espu_vedernikoff;
+
+
+statement ok
+DROP ROLE espu_team;

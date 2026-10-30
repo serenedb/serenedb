@@ -127,6 +127,18 @@ inline double DocsEmitCost(double docs, double words) noexcept {
   return kEmitWordCost * words * (1.0 - std::exp(-docs / words));
 }
 
+inline constexpr double kLeafReadCost =
+  kStepBaseCost + kStepJumpCost +
+  2.0 * static_cast<double>(doc_limits::kBlockSize) * kDecodeCost;
+inline constexpr double kBoundCheckCost = kStepJumpCost + kHitCost;
+
+inline double LeadProbeCost(uint64_t lead_docs, uint64_t docs) noexcept {
+  const auto per_lead = static_cast<double>(docs) /
+                        static_cast<double>(std::max<uint64_t>(lead_docs, 1));
+  return std::min(1.0, per_lead) * kStepBaseCost +
+         per_lead / static_cast<double>(doc_limits::kBlockSize) * kLeafReadCost;
+}
+
 inline ClauseCost TermClauseCost(uint64_t docs, doc_id_t docs_count) noexcept {
   const auto d = static_cast<double>(docs);
   return {.docs = docs,

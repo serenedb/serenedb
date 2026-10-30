@@ -132,6 +132,37 @@ class PhraseSlots {
     return _matcher.DocFreqBound();
   }
 
+  template<typename Gates>
+  void Gate(Gates&& gates) {
+    uint64_t lead = 0;
+    for (const auto& leaf : LeavesOf(_leaves.Lead())) {
+      lead += leaf.Estimate();
+    }
+    for (size_t i = 1; i != _leaves.Size(); ++i) {
+      _gated[i] = gates(lead, LeavesOf(_leaves.begin()[i]));
+      _gating |= _gated[i];
+    }
+  }
+
+  bool Gating() const noexcept { return _gating; }
+
+  template<typename Admit>
+  doc_id_t Next(doc_id_t, doc_id_t end, Admit&& admit)
+    requires(kHasFreqBound)
+  {
+    return _leaves.Next(end, [&](doc_id_t candidate, Slot* cold) {
+      if (!_gated[static_cast<size_t>(cold - _leaves.begin())]) {
+        return true;
+      }
+      auto* slot = _leaves.begin();
+      auto freq = DocFreqOf(*slot);
+      while (++slot != cold) {
+        freq = std::min(freq, DocFreqOf(*slot));
+      }
+      return admit(candidate, _matcher.FreqBoundOf(freq));
+    });
+  }
+
   bool MatchOrdered(doc_id_t)
     requires(kHasFreqBound)
   {
@@ -178,6 +209,21 @@ class PhraseSlots {
  private:
   using Leaves = ConjunctionLeaves<Slot, N>;
 
+  static std::span<Leaf> LeavesOf(Slot& slot) noexcept {
+    if constexpr (kVariadic) {
+      return slot.Leaves();
+    } else {
+      return {&slot, 1};
+    }
+  }
+
+  static uint32_t DocFreqOf(Slot& slot) {
+    if constexpr (kVariadic) {
+      slot.OnMatch();
+    }
+    return slot.Positions().DocFreq();
+  }
+
   void Collect() {
     if constexpr (kVariadic) {
       for (auto& slot : _leaves) {
@@ -190,6 +236,9 @@ class PhraseSlots {
   Matcher _matcher;
   Leaves _leaves;
   [[no_unique_address]] utils::Need<kVariadic, Leaf*> _bound{};
+  containers::Fixed<bool, N> _gated{
+    _leaves.Size(), [](bool& gated, size_t) noexcept { gated = false; }};
+  bool _gating = false;
 };
 
 }  // namespace irs::detail

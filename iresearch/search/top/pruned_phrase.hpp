@@ -78,6 +78,13 @@ class PrunedPhrase : public Root {
       });
       _bound_source = std::move(source);
     }
+    _slots.Gate([](uint64_t lead, auto leaves) {
+      double cost = 0;
+      for (const auto& leaf : leaves) {
+        cost += irs::detail::LeadProbeCost(lead, leaf.Estimate());
+      }
+      return cost > irs::detail::kBoundCheckCost;
+    });
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
@@ -161,11 +168,50 @@ class PrunedPhrase : public Root {
   doc_id_t BoundFirst(doc_id_t doc, doc_id_t end,
                       LoserScoreCollector& collector) {
     FlushBatch(collector);
-    for (; doc < end && _seen != kWindow; doc = _slots.Next(doc)) {
+    doc = _slots.Gating() ? Bound<true>(doc, end, collector)
+                          : Bound<false>(doc, end, collector);
+    if (_seen >= kWindow) {
+      if (_passed * kPassShare > _seen) {
+        _interval = std::min(2 * _interval, kMaxInterval);
+        _skip = _interval;
+      } else {
+        _interval = 1;
+      }
+      _seen = 0;
+      _passed = 0;
+    }
+    return doc;
+  }
+
+  template<bool Gated>
+  doc_id_t Bound(doc_id_t doc, doc_id_t end, LoserScoreCollector& collector) {
+    auto fetched = doc_limits::invalid();
+    const auto admit = [&](doc_id_t candidate, uint32_t bound) {
+      if (fetched != candidate) {
+        fetched = candidate;
+        _fetcher.Fetch(candidate);
+      }
+      _freqs[0] = bound;
+      if (_score.Score() > collector.ScoreThreshold()) {
+        return true;
+      }
+      ++_seen;
+      return false;
+    };
+    const auto next = [&] {
+      if constexpr (Gated) {
+        return _slots.Next(doc, end, admit);
+      } else {
+        return _slots.Next(doc);
+      }
+    };
+    for (; doc < end && _seen < kWindow; doc = next()) {
       ++_seen;
       const auto bound = _slots.FreqBound();
       _freqs[0] = bound;
-      _fetcher.Fetch(doc);
+      if (!Gated || fetched != doc) {
+        _fetcher.Fetch(doc);
+      }
       auto score = _score.Score();
       if (score <= collector.ScoreThreshold()) {
         continue;
@@ -181,17 +227,11 @@ class PrunedPhrase : public Root {
       }
       _admit.Add(collector, score, doc);
     }
-    if (_seen == kWindow) {
-      if (_passed * kPassShare > _seen) {
-        _interval = std::min(2 * _interval, kMaxInterval);
-        _skip = _interval;
-      } else {
-        _interval = 1;
-      }
-      _seen = 0;
-      _passed = 0;
+    if constexpr (Gated) {
+      return _slots.Seek(doc);
+    } else {
+      return doc;
     }
-    return doc;
   }
 
   void FlushBatch(LoserScoreCollector& collector) {

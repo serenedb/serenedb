@@ -113,7 +113,16 @@ struct Shape {
   std::vector<std::vector<std::string_view>> any;
   std::vector<std::string_view> should;
   std::vector<std::string_view> must_not_prefixes;
+  std::vector<std::string_view> should_prefixes;
 };
+
+irs::Filter::ptr PrefixOf(std::string_view prefix) {
+  auto filter = std::make_unique<irs::ByPrefix>();
+  *filter->mutable_field_id() = kBodyId;
+  filter->mutable_options()->term =
+    irs::bstring{irs::ViewCast<irs::byte_type>(prefix)};
+  return filter;
+}
 
 class PrunedTopTest : public tests::IndexTestBase {
  protected:
@@ -213,11 +222,12 @@ class PrunedTopTest : public tests::IndexTestBase {
   }
 
   void Check(const Shape& shape) {
-    SCOPED_TRACE(absl::StrCat("+", absl::StrJoin(shape.must, " +"), " -",
-                              absl::StrJoin(shape.must_not, " -"), " any ",
-                              shape.any.size(), " ",
-                              absl::StrJoin(shape.should, " "), " -",
-                              absl::StrJoin(shape.must_not_prefixes, "* -")));
+    SCOPED_TRACE(
+      absl::StrCat("+", absl::StrJoin(shape.must, " +"), " -",
+                   absl::StrJoin(shape.must_not, " -"), " any ",
+                   shape.any.size(), " ", absl::StrJoin(shape.should, " "),
+                   " -", absl::StrJoin(shape.must_not_prefixes, "* -"), "* ",
+                   absl::StrJoin(shape.should_prefixes, "* ")));
     irs::BooleanFilter filter;
     for (const auto term : shape.must) {
       filter.Add(Clause(term), irs::Occur::Must);
@@ -226,14 +236,13 @@ class PrunedTopTest : public tests::IndexTestBase {
       filter.Add(Clause(term), irs::Occur::MustNot);
     }
     for (const auto prefix : shape.must_not_prefixes) {
-      auto excluded = std::make_unique<irs::ByPrefix>();
-      *excluded->mutable_field_id() = kBodyId;
-      excluded->mutable_options()->term =
-        irs::bstring{irs::ViewCast<irs::byte_type>(prefix)};
-      filter.Add(std::move(excluded), irs::Occur::MustNot);
+      filter.Add(PrefixOf(prefix), irs::Occur::MustNot);
     }
     for (const auto term : shape.should) {
       filter.Add(Clause(term), irs::Occur::Should);
+    }
+    for (const auto prefix : shape.should_prefixes) {
+      filter.Add(PrefixOf(prefix), irs::Occur::Should);
     }
     if (shape.must.empty() && shape.any.empty()) {
       filter.SetMinShouldMatch(1);
@@ -391,6 +400,23 @@ TEST_P(PrunedTopTest, prefix_exclusions) {
          {.must = {"mid", "dense"}, .must_not_prefixes = {"pfx"}},
          {.must = {"half"}, .must_not_prefixes = {"pfx1"}},
          {.must = {"dense", "half"}, .must_not_prefixes = {"pfx"}},
+       }) {
+    Check(shape);
+  }
+}
+
+TEST_P(PrunedTopTest, prefix_unions_across_block_kinds) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {.should_prefixes = {"pfx"}},
+         {.should_prefixes = {"m"}},
+         {.should_prefixes = {"s"}},
+         {.should_prefixes = {"h"}},
+         {.should_prefixes = {"r"}},
+         {.should_prefixes = {"c"}},
+         {.should_prefixes = {"d"}},
+         {.should_prefixes = {"pfx1", "m"}},
+         {.should = {"half"}, .should_prefixes = {"pfx"}},
        }) {
     Check(shape);
   }

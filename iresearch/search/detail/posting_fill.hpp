@@ -80,10 +80,10 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   }
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    Walk(
+    return Walk(
       min, max,
-      [&](const doc_id_t* docs, uint32_t n)
-        IRS_FORCE_INLINE { Scatter<false>(docs, n, min, mask, [](size_t) {}); },
+      [&](size_t offset)
+        IRS_FORCE_INLINE { SetBit(mask[offset / kBits], offset % kBits); },
       [&](uint32_t lo, uint32_t hi)
         IRS_FORCE_INLINE { SetBitRange(mask, lo, hi); },
       [&] {
@@ -96,14 +96,13 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
           mask[w] |= bits;
         });
       });
-    return Seek(max);
   }
 
   doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    Walk(
+    return Walk(
       min, max,
-      [&](const doc_id_t* docs, uint32_t n)
-        IRS_FORCE_INLINE { Scatter<true>(docs, n, min, mask, [](size_t) {}); },
+      [&](size_t offset)
+        IRS_FORCE_INLINE { UnsetBit(mask[offset / kBits], offset % kBits); },
       [&](uint32_t lo, uint32_t hi)
         IRS_FORCE_INLINE { ClearBitRange(mask, lo, hi); },
       [&] {
@@ -116,7 +115,6 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
           mask[w] &= ~bits;
         });
       });
-    return Seek(max);
   }
 
   doc_id_t FillSum(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
@@ -258,6 +256,29 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
 #endif
   }
 
+  IRS_FORCE_INLINE uint32_t ScanIn(uint32_t at,
+                                   doc_id_t target) const noexcept {
+    SDB_ASSERT(at < kBlock);
+    SDB_ASSERT(_docs[kBlock - 1] >= target);
+#ifdef __AVX2__
+    const auto key = _mm256_set1_epi32(static_cast<int32_t>(target));
+    for (;; at += 8) {
+      const auto docs =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(_docs.data() + at));
+      const auto below = static_cast<uint32_t>(
+        _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(key, docs))));
+      if (below != 0xFF) {
+        return at + static_cast<uint32_t>(std::countr_one(below));
+      }
+    }
+#else
+    while (_docs[at] < target) {
+      ++at;
+    }
+    return at;
+#endif
+  }
+
   IRS_FORCE_INLINE bool HasBit(doc_id_t doc) const noexcept {
     const uint32_t bit = doc - _cursor.base - 1;
     const uint64_t word = _bitset[std::min(bit / kBits, _words - 1)];
@@ -275,35 +296,52 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
     return base + 1 + w * kBits + static_cast<uint32_t>(std::countr_zero(word));
   }
 
-  template<typename OnDocs, typename OnRun, typename OnBits>
-  IRS_FORCE_INLINE void Walk(doc_id_t min, doc_id_t max, OnDocs&& on_docs,
-                             OnRun&& on_run, OnBits&& on_bits) {
+  template<typename Mark, typename OnRun, typename OnBits>
+  IRS_FORCE_INLINE doc_id_t Walk(doc_id_t min, doc_id_t max, Mark&& mark,
+                                 OnRun&& on_run, OnBits&& on_bits) {
     SDB_ASSERT(min < max);
+    if (_kind == Kind::Docs && max <= _last && _docs[_at] >= min) {
+      _at = MarkUntil(_at, min, max, mark);
+      return _docs[_at];
+    }
+    return WalkLeaves(min, max, mark, on_run, on_bits);
+  }
+
+  template<typename Mark, typename OnRun, typename OnBits>
+  IRS_FORCE_INLINE doc_id_t WalkLeaves(doc_id_t min, doc_id_t max, Mark& mark,
+                                       OnRun& on_run, OnBits& on_bits) {
     if (!Reach(min)) {
-      return;
+      return doc_limits::eof();
     }
     for (;;) {
       const auto base = _cursor.base;
       if (base + 1 >= max) {
-        return;
+        return Seek(max);
       }
       if (_kind == Kind::Docs) {
         const auto first = _docs[_at] >= min ? _at : SeekIn(_at, min);
-        const auto stop = _last < max ? kBlock : SeekIn(first, max);
-        if (first != stop) {
-          on_docs(_docs.data() + first, stop - first);
+        if (_last >= max) {
+          _at = MarkUntil(first, min, max, mark);
+          return _docs[_at];
         }
-        _at = stop;
+        Scatter(_docs.data() + first, kBlock - first, min, mark);
+        _at = kBlock;
       } else if (_kind == Kind::Bitset) {
         on_bits();
+        if (_last >= max) {
+          return NextBit(max);
+        }
       } else {
         const doc_id_t lo = std::max<doc_id_t>(min, base + 1);
         const auto hi =
           static_cast<doc_id_t>(std::min<uint64_t>(uint64_t{_last} + 1, max));
         on_run(lo - min, hi - min);
+        if (_last >= max) {
+          return max;
+        }
       }
-      if (_last + 1 >= max || _left_in_list == 0) {
-        return;
+      if (_left_in_list == 0) {
+        return doc_limits::eof();
       }
       Load(_last);
     }
@@ -312,10 +350,12 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   template<typename Write>
   doc_id_t FillScored(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                       Write&& write) {
-    Walk(
+    return Walk(
       min, max,
-      [&](const doc_id_t* docs, uint32_t n)
-        IRS_FORCE_INLINE { Scatter<false>(docs, n, min, mask, write); },
+      [&](size_t offset) IRS_FORCE_INLINE {
+        SetBit(mask[offset / kBits], offset % kBits);
+        write(offset);
+      },
       [&](uint32_t lo, uint32_t hi) IRS_FORCE_INLINE {
         SetBitRange(mask, lo, hi);
         for (auto offset = lo; offset != hi; ++offset) {
@@ -331,32 +371,35 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
           }
         });
       });
-    return Seek(max);
   }
 
-  template<bool Clear, typename Write>
+  template<typename Mark>
+  IRS_FORCE_INLINE uint32_t MarkUntil(uint32_t at, doc_id_t min, doc_id_t max,
+                                      Mark& mark) const noexcept {
+    if (uint64_t{_len} * kBits > _last - _cursor.base) {
+      const auto stop = ScanIn(at, max);
+      Scatter(_docs.data() + at, stop - at, min, mark);
+      return stop;
+    }
+    for (auto doc = _docs[at]; doc < max; doc = _docs[++at]) {
+      mark(size_t{doc - min});
+    }
+    return at;
+  }
+
+  template<typename Mark>
   IRS_FORCE_INLINE static void Scatter(const doc_id_t* IRS_RESTRICT docs,
                                        uint32_t n, doc_id_t min,
-                                       uint64_t* IRS_RESTRICT words,
-                                       Write&& write) noexcept {
-    const auto mark = [&](uint32_t i) IRS_FORCE_INLINE {
-      const size_t offset = docs[i] - min;
-      if constexpr (Clear) {
-        UnsetBit(words[offset / kBits], offset % kBits);
-      } else {
-        SetBit(words[offset / kBits], offset % kBits);
-      }
-      write(offset);
-    };
+                                       Mark& mark) noexcept {
     const auto quarter = n / 4;
     for (uint32_t i = 0; i != quarter; ++i) {
-      mark(i);
-      mark(quarter + i);
-      mark(2 * quarter + i);
-      mark(3 * quarter + i);
+      mark(size_t{docs[i] - min});
+      mark(size_t{docs[quarter + i] - min});
+      mark(size_t{docs[2 * quarter + i] - min});
+      mark(size_t{docs[3 * quarter + i] - min});
     }
     for (auto i = 4 * quarter; i != n; ++i) {
-      mark(i);
+      mark(size_t{docs[i] - min});
     }
   }
 

@@ -184,7 +184,7 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
   }
 
   void Row(duckdb::SequenceCatalogEntry& sequence) {
-    if (!Allows<"attrelid">(sequence.oid) || NumbersRows(sequence)) {
+    if (!Allows<"attrelid">(sequence.oid)) {
       return;
     }
     static const std::array<duckdb::LogicalType, 3> kTypes{

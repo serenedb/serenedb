@@ -1,0 +1,52 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY itu_d AS split_text_csv(' ')
+  WITH (frequency, position);
+
+statement ok
+CREATE TABLE itu (id INTEGER PRIMARY KEY, body TEXT, n INTEGER);
+
+statement ok
+INSERT INTO itu VALUES
+  (1, 'fox', 10),
+  (2, 'fox fox', 20),
+  (3, 'fox fox fox', 30),
+  (4, 'fox fox fox fox', 40),
+  (5, 'dog', 50);
+
+statement ok
+CREATE INDEX itu_idx ON itu USING inverted(id, body itu_d) INCLUDE (n)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+VACUUM (REFRESH_TABLE) itu;
+
+statement ok
+PREPARE itu_q AS
+  SELECT id, unnest(CASE WHEN n >= 30 THEN NULL ELSE ARRAY[n] END) AS u
+  FROM itu_idx WHERE body @@ 'fox'
+  ORDER BY bm25(itu_idx.tableoid) DESC LIMIT $1;
+
+query
+EXECUTE itu_q(2);
+----
+id	u
+2	20
+1	10
+
+query
+SELECT id, unnest(CASE WHEN n >= 30 THEN NULL ELSE ARRAY[n] END) AS u
+FROM itu_idx WHERE body @@ 'fox'
+ORDER BY bm25(itu_idx.tableoid) DESC LIMIT 2;
+----
+id	u
+2	20
+1	10
+
+statement ok
+DEALLOCATE itu_q;
+
+statement ok
+DROP TABLE itu;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY itu_d;

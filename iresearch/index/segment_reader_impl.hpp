@@ -39,6 +39,7 @@ namespace irs {
 
 class ColReader;
 class NormColumnReader;
+struct DocMapsSlot;
 
 class SegmentReaderImpl final : public SubReader {
   struct PrivateTag final {
@@ -68,6 +69,16 @@ class SegmentReaderImpl final : public SubReader {
   const SegmentInfo& Meta() const final { return _info; }
 
   const DocumentMask* docs_mask() const final { return _docs_mask.get(); }
+
+  const std::shared_ptr<const DocumentMask>& SharedDocsMask() const noexcept {
+    return _docs_mask;
+  }
+
+  uint64_t Id() const noexcept { return _id; }
+
+  const std::shared_ptr<DocMapsSlot>& DocMaps() const noexcept {
+    return _doc_maps;
+  }
 
   lead::Node::ptr docs_iterator() const final;
 
@@ -100,6 +111,8 @@ class SegmentReaderImpl final : public SubReader {
   FileRefs _refs;
   SegmentInfo _info;
   std::shared_ptr<const DocumentMask> _docs_mask;
+  uint64_t _id = 0;
+  std::shared_ptr<DocMapsSlot> _doc_maps;
   std::shared_ptr<ColumnData> _data;
   std::shared_ptr<burst_trie::FieldReader> _field_reader;
 };

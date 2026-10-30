@@ -80,7 +80,6 @@
 #include "pg/types/tid.h"
 #include "pg/types/xml.h"
 #include "query/config.h"
-#include "server/utils/dtoa.h"
 
 namespace sdb::pg {
 namespace {
@@ -733,7 +732,7 @@ struct IntBinCore {
 template<typename Read>
 struct IntTextCore {
   using Value = Read;
-  static constexpr uint32_t kMaxBytes = utils::kIntStrMaxLen;
+  static constexpr uint32_t kMaxBytes = kIntStrMaxLen;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
     char* buf = reinterpret_cast<char*>(dst);
     char* end = absl::numbers_internal::FastIntToBuffer(v, buf);
@@ -805,7 +804,7 @@ struct FloatBinCore {
 template<typename T, bool Precise>
 struct FloatTextCore {
   using Value = T;
-  static constexpr uint32_t kMaxBytes = utils::kNumberStrMaxLen;
+  static constexpr uint32_t kMaxBytes = kNumberStrMaxLen;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, SerializationContext& ctx,
                                         Value v) {
     return WriteFloat<Precise>(v, ctx.extra_float_digits,
@@ -1321,43 +1320,6 @@ bool RecordItemNeedsQuoting(std::string_view s) {
     }
   }
   return false;
-}
-
-std::optional<RegKind> RegKindOf(const duckdb::LogicalType& type) {
-  if (IsRegtype(type)) {
-    return RegKind::Type;
-  }
-  if (IsRegclass(type)) {
-    return RegKind::Class;
-  }
-  if (IsRegnamespace(type)) {
-    return RegKind::Namespace;
-  }
-  if (IsRegproc(type)) {
-    return RegKind::Proc;
-  }
-  if (IsRegprocedure(type)) {
-    return RegKind::Procedure;
-  }
-  if (IsRegoper(type)) {
-    return RegKind::Oper;
-  }
-  if (IsRegoperator(type)) {
-    return RegKind::Operator;
-  }
-  if (IsRegrole(type)) {
-    return RegKind::Role;
-  }
-  if (IsRegconfig(type)) {
-    return RegKind::Config;
-  }
-  if (IsRegdictionary(type)) {
-    return RegKind::Dictionary;
-  }
-  if (IsRegcollation(type)) {
-    return RegKind::Collation;
-  }
-  return std::nullopt;
 }
 
 bool RecordHasArrayTrigger(SerializationContext& ctx,

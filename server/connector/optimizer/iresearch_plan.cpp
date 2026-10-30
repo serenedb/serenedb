@@ -1579,21 +1579,21 @@ bool ClaimSearchConjuncts(
   if (!deferring && !duals.empty()) {
     auto rest = std::make_unique<irs::BooleanFilter>();
     connector::FilterScorers rest_scorers;
-    if (absl::c_all_of(index_only, [&](const IndexOnly& claimed) {
-          return TryClaimIResearchConjunctImpl(
-            *rest, claimed.conjunct, getter, expr_getter, context,
-            &rest_scorers, nullptr, claimed.mode);
-        })) {
-      if (!rest->Empty()) {
-        irs::Filter::ptr filter = std::move(rest);
-        connector::EnsureIncludeSides(*filter);
-        irs::Optimize(filter, {.scored = false,
-                               .analyzed_fields = analyzed_fields,
-                               .null_markers = &null_markers});
-        scan.search.index_only = std::move(filter);
-      }
-      scan.search.duals = std::move(duals);
+    for (const auto& claimed : index_only) {
+      const bool reclaimed = TryClaimIResearchConjunctImpl(
+        *rest, claimed.conjunct, getter, expr_getter, context, &rest_scorers,
+        nullptr, claimed.mode);
+      SDB_ENSURE(reclaimed);
     }
+    if (!rest->Empty()) {
+      irs::Filter::ptr filter = std::move(rest);
+      connector::EnsureIncludeSides(*filter);
+      irs::Optimize(filter, {.scored = false,
+                             .analyzed_fields = analyzed_fields,
+                             .null_markers = &null_markers});
+      scan.search.index_only = std::move(filter);
+    }
+    scan.search.duals = std::move(duals);
   }
 
   const bool has_clauses = !root_and->Empty();
@@ -2064,6 +2064,20 @@ duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
       value = value.DefaultCastAs(param.GetReturnType());
     }
     return duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(value));
+  }
+  if (!with_values && duckdb::BoundCastExpression::IsCast(*expr)) {
+    auto& cast = expr->Cast<duckdb::BoundFunctionExpression>();
+    auto& child = duckdb::BoundCastExpression::ChildMutable(cast);
+    if (child->GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_PARAMETER) {
+      if (auto value = ShapeValue(duckdb::BoundCastExpression::TargetType(cast))
+                         .DefaultTryCastAs(child->GetReturnType());
+          value && !value->IsNull()) {
+        child =
+          duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(*value));
+        return expr;
+      }
+    }
   }
   duckdb::ExpressionIterator::EnumerateChildren(
     *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {

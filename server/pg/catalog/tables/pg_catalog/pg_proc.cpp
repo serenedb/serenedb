@@ -72,10 +72,6 @@ bool ReturnsTable(const duckdb::MacroFunction& macro) {
   return ReturnsSet(macro) && !macro.return_names.empty();
 }
 
-duckdb::idx_t ArgumentOid(const duckdb::LogicalType& type) {
-  return type.id() == duckdb::LogicalTypeId::UNKNOWN ? 0 : CatalogTypeOid(type);
-}
-
 bool HasOutputArguments(const duckdb::MacroFunction& macro) {
   return ReturnsTable(macro) || !macro.parameter_modes.empty();
 }
@@ -116,9 +112,9 @@ auto Arguments(const duckdb::MacroFunction& macro) {
 auto AllArgTypes(const duckdb::MacroFunction& macro) {
   return Arguments(macro) |
          std::views::transform([&macro](Argument argument) -> duckdb::idx_t {
-           return argument.mode == 'o' || argument.mode == 't'
-                    ? CatalogTypeOid(macro.return_types[argument.output])
-                    : ArgumentOid(macro.types[argument.input]);
+           return CatalogTypeOid(argument.mode == 'o' || argument.mode == 't'
+                                   ? macro.return_types[argument.output]
+                                   : macro.types[argument.input]);
          });
 }
 
@@ -212,7 +208,7 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
                : kRecord;
     }),
     Col<"proargtypes">([](const auto& row) {
-      return row.macro.types | std::views::transform(ArgumentOid);
+      return row.macro.types | std::views::transform(CatalogTypeOid);
     }),
     Col<"proallargtypes">([](const auto& row) {
       return HasOutputArguments(row.macro)

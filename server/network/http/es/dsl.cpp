@@ -20,8 +20,11 @@
 
 #include "network/http/es/dsl.h"
 
+#include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <absl/strings/strip.h>
 #include <simdjson.h>
 
 #include <string_view>
@@ -90,10 +93,17 @@ int64_t Int(JsonValue value, std::string_view what) {
   return v;
 }
 
+bool IsJsonInteger(std::string_view token) {
+  absl::ConsumePrefix(&token, "-");
+  return !token.empty() && token.front() != '0' &&
+         absl::c_all_of(token, absl::ascii_isdigit);
+}
+
 // A term/range scalar as a SQL literal: strings quoted (the column's type
 // drives any cast, e.g. a date column compared to an ISO string), numbers
-// embedded as their exact JSON token, booleans as keywords.
-std::string Scalar(JsonValue value, std::string_view what) {
+// embedded as their exact JSON token, booleans as keywords; against a string
+// column every value is its JSON text.
+std::string Scalar(JsonValue value, std::string_view what, bool as_text) {
   simdjson::ondemand::json_type type;
   if (value.type().get(type) != simdjson::SUCCESS) {
     Fail(absl::StrCat("malformed value for [", what, "]"));
@@ -103,20 +113,24 @@ std::string Scalar(JsonValue value, std::string_view what) {
       return SqlLiteral(String(value, what));
     case simdjson::ondemand::json_type::number: {
       std::string_view token = value.raw_json_token();
-      if (value.get_number().error() != simdjson::SUCCESS) {
-        Fail(absl::StrCat("malformed number for [", what, "]"),
-             "parsing_exception");
-      }
       while (!token.empty() && (token.back() == ' ' || token.back() == '\n' ||
                                 token.back() == '\t' || token.back() == '\r')) {
         token.remove_suffix(1);
       }
-      return std::string{token};
+      if (value.get_number().error() != simdjson::SUCCESS &&
+          !IsJsonInteger(token)) {
+        Fail(absl::StrCat("malformed number for [", what, "]"),
+             "parsing_exception");
+      }
+      return as_text ? SqlLiteral(token) : std::string{token};
     }
     case simdjson::ondemand::json_type::boolean: {
       bool v = false;
       if (value.get_bool().get(v) != simdjson::SUCCESS) {
         Fail(absl::StrCat("malformed value for [", what, "]"));
+      }
+      if (as_text) {
+        return SqlLiteral(v ? "true" : "false");
       }
       return v ? "TRUE" : "FALSE";
     }
@@ -220,6 +234,8 @@ Clause TranslateTerm(JsonValue value, const FieldTypes& fields) {
       Fail("[term] supports exactly one field");
     }
     const auto field = Key(entry);
+    const auto field_type = FieldType(fields, field);
+    const bool as_text = field_type == "text" || field_type == "keyword";
     auto body = Value(entry);
     simdjson::ondemand::json_type type;
     if (body.type().get(type) != simdjson::SUCCESS) {
@@ -233,21 +249,19 @@ Clause TranslateTerm(JsonValue value, const FieldTypes& fields) {
           Fail(
             absl::StrCat("[term] parameter [", key, "] is not supported yet"));
         }
-        literal = Scalar(Value(param), field);
+        literal = Scalar(Value(param), field, as_text);
       }
       if (literal.empty()) {
         Fail("[term] requires a value");
       }
     } else {
-      literal = Scalar(body, field);
+      literal = Scalar(body, field, as_text);
     }
-    const auto field_type = FieldType(fields, field);
     if (field_type.data() == nullptr) {
       out.sql = kMatchNone;
     } else if (field_type == "text") {
-      out.sql = absl::StrCat(
-        SqlIdentifier(field), " @@ ts_tokenize(",
-        literal.front() == '\'' ? literal : SqlLiteral(literal), ")");
+      out.sql =
+        absl::StrCat(SqlIdentifier(field), " @@ ts_tokenize(", literal, ")");
       out.uses_match = true;
     } else {
       out.sql = absl::StrCat(SqlIdentifier(field), " = ", literal);
@@ -269,7 +283,9 @@ Clause TranslateRange(JsonValue value, const FieldTypes& fields) {
       Fail("[range] supports exactly one field");
     }
     const auto field = Key(entry);
-    unmapped = FieldType(fields, field).data() == nullptr;
+    const auto field_type = FieldType(fields, field);
+    unmapped = field_type.data() == nullptr;
+    const bool as_text = field_type == "text" || field_type == "keyword";
     const auto ident = SqlIdentifier(field);
     std::vector<std::string> parts;
     for (auto param : Object(Value(entry), "range")) {
@@ -287,7 +303,8 @@ Clause TranslateRange(JsonValue value, const FieldTypes& fields) {
         Fail(
           absl::StrCat("[range] parameter [", key, "] is not supported yet"));
       }
-      parts.push_back(absl::StrCat(ident, op, Scalar(Value(param), field)));
+      parts.push_back(
+        absl::StrCat(ident, op, Scalar(Value(param), field, as_text)));
     }
     if (parts.empty()) {
       Fail("[range] requires at least one bound");

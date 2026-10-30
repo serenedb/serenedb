@@ -50,7 +50,7 @@ class PgDatabase final : public SystemTableScan<kPgDatabaseSql> {
       Col<"datname">(&duckdb::CatalogEntry::name),
       Col<"datdba">(
         [](const auto& database) { return database.permissions.owner; }),
-      Col<"encoding">([](const auto&) { return 6; }),
+      Col<"encoding">([](const auto&) { return kUtf8Encoding; }),
       Col<"datlocprovider">([](const auto&) { return 'c'; }),
       Col<"datallowconn">([](const auto&) { return true; }),
       Col<"datconnlimit">([](const auto&) { return -1; }),

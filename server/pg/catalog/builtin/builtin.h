@@ -58,7 +58,7 @@ constexpr const auto* FindByOid(const Rows& rows, Key oid) {
 }
 
 template<typename Index, typename Rows>
-constexpr auto OidIndex(const Rows& rows) {
+consteval auto OidIndex(const Rows& rows) {
   std::array<Index, kBuiltinTypeOidLimit> index{};
   for (size_t i = 0; i < std::size(rows); ++i) {
     index[rows[i].oid] = static_cast<Index>(i + 1);
@@ -112,7 +112,7 @@ inline constexpr BuiltinType kPgTypes[] = {
 #include "pg/catalog/generated/builtin_types.gen.inc"
 };
 
-constexpr BuiltinType SdbType(int32_t oid, std::string_view name,
+consteval BuiltinType SdbType(int32_t oid, std::string_view name,
                               int32_t array) {
   return {.oid = oid,
           .name = name,
@@ -129,7 +129,7 @@ constexpr BuiltinType SdbType(int32_t oid, std::string_view name,
           .typmod = -1};
 }
 
-constexpr BuiltinType SdbArray(int32_t oid, std::string_view name,
+consteval BuiltinType SdbArray(int32_t oid, std::string_view name,
                                int32_t elem) {
   auto row = *FindByOid(kPgTypes, kInt4Array);
   row.oid = oid;

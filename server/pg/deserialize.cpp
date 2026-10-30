@@ -65,6 +65,7 @@
 #include "connector/functions/ts_query_codec.h"
 #include "icu-datefunc.hpp"
 #include "icu-helpers.hpp"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/types/char.h"
 #include "pg/types/geometric.h"
 #include "pg/types/inet.h"
@@ -1252,6 +1253,58 @@ bool DefaultText::Decode<ValueSink>(DeserializeContext&, std::string_view data,
   return DeserializeTextDefaultInto(data, sink.type, sink.out);
 }
 
+template<RegKind Kind>
+struct RegText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& context, std::string_view data,
+                     Sink& sink) {
+    if (NumberText<int64_t>::Decode(context, data, sink)) {
+      return true;
+    }
+    SDB_ASSERT(context.client);
+    uint64_t oid = kInvalidOid;
+    const auto lookup = [&] {
+      oid = *RegIn(MakeSession(context.client.get()), Kind, data, nullptr);
+    };
+    if (context.client->transaction.HasActiveTransaction()) {
+      lookup();
+    } else {
+      context.client->RunFunctionInTransaction(lookup);
+    }
+    sink.Fixed(static_cast<int64_t>(oid));
+    return true;
+  }
+};
+
+template<typename Sink>
+DeserializationFunction<Sink> RegTextDecoder(RegKind kind) {
+  switch (kind) {
+    case RegKind::Proc:
+      return &RegText<RegKind::Proc>::template Decode<Sink>;
+    case RegKind::Procedure:
+      return &RegText<RegKind::Procedure>::template Decode<Sink>;
+    case RegKind::Oper:
+      return &RegText<RegKind::Oper>::template Decode<Sink>;
+    case RegKind::Operator:
+      return &RegText<RegKind::Operator>::template Decode<Sink>;
+    case RegKind::Class:
+      return &RegText<RegKind::Class>::template Decode<Sink>;
+    case RegKind::Type:
+      return &RegText<RegKind::Type>::template Decode<Sink>;
+    case RegKind::Collation:
+      return &RegText<RegKind::Collation>::template Decode<Sink>;
+    case RegKind::Config:
+      return &RegText<RegKind::Config>::template Decode<Sink>;
+    case RegKind::Dictionary:
+      return &RegText<RegKind::Dictionary>::template Decode<Sink>;
+    case RegKind::Role:
+      return &RegText<RegKind::Role>::template Decode<Sink>;
+    case RegKind::Namespace:
+      return &RegText<RegKind::Namespace>::template Decode<Sink>;
+  }
+  SDB_UNREACHABLE();
+}
+
 struct DefaultBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view, Sink&) {
@@ -1545,7 +1598,7 @@ bool StripWrap(std::string_view& s, char open, char close) {
 // otherwise `raw` is the leaf incl. any surrounding quotes (surrounding
 // whitespace trimmed). Returns false on malformed nesting/quoting.
 template<typename Emit>
-bool ScanArrayItems(std::string_view body, Emit&& emit) {
+bool ScanArrayItems(std::string_view body, char delim, Emit&& emit) {
   size_t i = 0;
   const size_t n = body.size();
   while (i < n && absl::ascii_isspace(body[i])) {
@@ -1600,7 +1653,7 @@ bool ScanArrayItems(std::string_view body, Emit&& emit) {
         return false;
       }
     } else {
-      for (; i < n && body[i] != ','; ++i) {
+      for (; i < n && body[i] != delim; ++i) {
         if (body[i] == '\\' && i + 1 < n) {
           ++i;
         }
@@ -1617,11 +1670,19 @@ bool ScanArrayItems(std::string_view body, Emit&& emit) {
     if (i >= n) {
       return true;
     }
-    if (body[i] != ',') {
+    if (body[i] != delim) {
       return false;
     }
     ++i;
   }
+}
+
+char ArrayDelimiter(const duckdb::LogicalType& type) {
+  const auto* leaf = &type;
+  while (leaf->id() == duckdb::LogicalTypeId::LIST) {
+    leaf = &duckdb::ListType::GetChildType(*leaf);
+  }
+  return GeometricOf(*leaf) == Geometric::Box ? ';' : ',';
 }
 
 // Resolve a non-group array leaf to its value, viewing into `raw` when no
@@ -1802,8 +1863,9 @@ bool DeserializeTextList(DeserializeContext& ctx, std::string_view data,
   const bool nested = child_type.id() == duckdb::LogicalTypeId::LIST &&
                       IsArrayDimension(child_type);
   const auto cur = duckdb::ListVector::GetListSize(vec);
+  const auto delim = ArrayDelimiter(vec.GetType());
   duckdb::idx_t count = 0;
-  if (!ScanArrayItems(body, [&](std::string_view, bool) { ++count; })) {
+  if (!ScanArrayItems(body, delim, [&](std::string_view, bool) { ++count; })) {
     return false;
   }
   duckdb::ListVector::Reserve(vec, cur + count);
@@ -1811,7 +1873,7 @@ bool DeserializeTextList(DeserializeContext& ctx, std::string_view data,
   std::string scratch;
   duckdb::idx_t i = 0;
   bool ok = true;
-  ScanArrayItems(body, [&](std::string_view raw, bool) {
+  ScanArrayItems(body, delim, [&](std::string_view raw, bool) {
     if (!ok) {
       return;
     }
@@ -1958,7 +2020,7 @@ bool DeserializeTextMap(DeserializeContext& ctx, std::string_view data,
     GetRecordFieldDecoders(ctx, vec.GetType(), VarFormat::Text);
   const auto cur = duckdb::ListVector::GetListSize(vec);
   duckdb::idx_t count = 0;
-  if (!ScanArrayItems(body, [&](std::string_view, bool) { ++count; })) {
+  if (!ScanArrayItems(body, ',', [&](std::string_view, bool) { ++count; })) {
     return false;
   }
   duckdb::ListVector::Reserve(vec, cur + count);
@@ -1968,7 +2030,7 @@ bool DeserializeTextMap(DeserializeContext& ctx, std::string_view data,
   std::string field_scratch;
   duckdb::idx_t i = 0;
   bool ok = true;
-  ScanArrayItems(body, [&](std::string_view raw, bool) {
+  ScanArrayItems(body, ',', [&](std::string_view raw, bool) {
     if (!ok) {
       return;
     }
@@ -2345,6 +2407,9 @@ DeserializationFunction<Sink> GetDeserialization(
                  ? &LoadBin<int64_t, uint32_t>::template Decode<Sink>
                  : &LoadBin<int64_t>::template Decode<Sink>;
       }
+      if (const auto kind = RegKindOf(type)) {
+        return RegTextDecoder<Sink>(*kind);
+      }
       return &NumberText<int64_t>::template Decode<Sink>;
     case UTINYINT:
       return SelectDecoder<LoadBin<uint8_t, int16_t>, NumberText<uint8_t>,
@@ -2658,7 +2723,7 @@ bool TextNumericArrayShape(std::string_view data, NumericShape& shape,
   bool ok = true;
   std::string scratch;
   const bool scanned =
-    ScanArrayItems(body, [&](std::string_view raw, bool group) {
+    ScanArrayItems(body, ',', [&](std::string_view raw, bool group) {
       if (!ok) {
         return;
       }

@@ -19,6 +19,7 @@ ruleset over a superuser (loopback) connection, then runs the source-IP matrix.
 import argparse
 import os
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -89,6 +90,7 @@ sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "harness"))
 
 from serened import Serened as _Serened  # noqa: E402
+from serened import reserve_port  # noqa: E402
 
 
 def Serened(binary: str) -> _Serened:
@@ -336,10 +338,123 @@ def set_hba(port: int, ruleset: str):
         raise RuntimeError(f"SET hba failed: {proc.stderr.strip()}")
 
 
+def proxy_probe(port: int, header: str, timeout: float = 5.0) -> str:
+    s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    try:
+        s.sendall(header.encode() + _startup("postgres", "postgres"))
+        tag = s.recv(1)
+        if not tag:
+            return BROKEN
+        if tag == b"E":
+            return REJECTED
+        if tag == b"R":
+            _recvn(s, 4)
+            sub = struct.unpack("!I", _recvn(s, 4))[0]
+            return TRUST if sub == 0 else AUTH_REQUESTED
+        return BROKEN
+    except (socket.timeout, ConnectionError):
+        return BROKEN
+    finally:
+        s.close()
+
+
+PROXY_HBA = ("host all all 203.0.113.0/24  reject\n"
+             "host all all 198.51.100.0/24 trust\n"
+             "host all all 0.0.0.0/0       reject\n")
+
+PROXY_CASES = [
+    ("PROXY TCP4 203.0.113.7 127.0.0.1 40000 5432\r\n", REJECTED),
+    ("PROXY TCP4 198.51.100.7 127.0.0.1 40000 5432\r\n", TRUST),
+    ("PROXY UNKNOWN\r\n", REJECTED),
+    ("PROXY TCP6 ::ffff:198.51.100.7 ::1 40000 5432\r\n", TRUST),
+    ("PROXY TCP6 ::ffff:203.0.113.7 ::1 40000 5432\r\n", REJECTED),
+    ("PROXY TCP6 2001:db8::7 ::1 40000 5432\r\n", REJECTED),
+]
+
+HTTP_PROXY_CASES = [
+    ("PROXY TCP4 203.0.113.7 127.0.0.1 40000 9200\r\n", True),
+    ("PROXY UNKNOWN\r\n", True),
+    ("PROXY TCP4 127.0.0.1 127.0.0.1 40000 9200\r\n", False),
+    ("PROXY TCP6 ::ffff:127.0.0.1 ::1 40000 9200\r\n", False),
+    ("PROXY TCP6 2001:db8::7 ::1 40000 9200\r\n", True),
+]
+
+
+def http_proxy_unauthorized(port: int, header: str,
+                            timeout: float = 5.0) -> bool:
+    s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    try:
+        s.sendall(header.encode() + b"GET / HTTP/1.1\r\n"
+                  b"Host: localhost\r\nAuthorization: Basic cG9zdGdyZXM6\r\n"
+                  b"Connection: close\r\n\r\n")
+        status = s.recv(64).split(b"\r\n", 1)[0]
+        return status.split(b" ")[1:2] == [b"401"]
+    finally:
+        s.close()
+
+
+TLS_PEM = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                       "..", "resources", "ca.pem")
+
+
+def https_unauthorized(port: int, timeout: float = 5.0) -> bool:
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    raw = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    with ctx.wrap_socket(raw, server_hostname="localhost") as s:
+        s.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\n"
+                  b"Authorization: Basic cG9zdGdyZXM6\r\n"
+                  b"Connection: close\r\n\r\n")
+        status = s.recv(64).split(b"\r\n", 1)[0]
+        return status.split(b" ")[1:2] == [b"401"]
+
+
+def run_proxy(binary: str, failures: list) -> None:
+    reserved = [reserve_port(), reserve_port(), reserve_port()]
+    proxy_port, http_port, https_port = (r.getsockname()[1] for r in reserved)
+    srv = Serened(binary)
+    srv.host = "127.0.0.1"
+    srv.extra_args = [
+        f"--listen=postgres://127.0.0.1:{srv.port},"
+        f"postgres://127.0.0.1:{proxy_port}?proxy_protocol=require,"
+        f"http://127.0.0.1:{http_port}?api=es&proxy_protocol=require,"
+        f"https://127.0.0.1:{https_port}?api=es&cert={TLS_PEM}&key={TLS_PEM}"]
+    try:
+        for r in reserved:
+            r.close()
+        srv.start()
+        set_hba(srv.port, PROXY_HBA)
+        for header, want in PROXY_CASES:
+            got = proxy_probe(proxy_port, header)
+            ok = got == want
+            print(f"[{'OK' if ok else 'FAIL'}] proxy: {header.strip()} -> {got} "
+                  f"(want {want})")
+            if not ok:
+                failures.append(("proxy", f"{header.strip()}: {got}!={want}"))
+        for header, want in HTTP_PROXY_CASES:
+            got = http_proxy_unauthorized(http_port, header)
+            ok = got == want
+            print(f"[{'OK' if ok else 'FAIL'}] http proxy: {header.strip()} -> "
+                  f"unauthorized={got} (want {want})")
+            if not ok:
+                failures.append(("http proxy",
+                                 f"{header.strip()}: {got}!={want}"))
+        got = https_unauthorized(https_port)
+        print(f"[{'FAIL' if got else 'OK'}] https loopback -> "
+              f"unauthorized={got} (want False)")
+        if got:
+            failures.append(("https", f"loopback: {got}!=False"))
+    finally:
+        srv.graceful_stop()
+        srv.stop()
+
+
 def run(binary: str) -> int:
+    failures = []
+    run_proxy(binary, failures)
     srv = Serened(binary)
     port = srv.port
-    failures = []
     try:
         srv.start()
 
@@ -372,6 +487,7 @@ def run(binary: str) -> int:
         # reads the ruleset back from pg_hba_file_rules -- the purpose-built
         # harness for crash-durability.
     finally:
+        srv.graceful_stop()
         srv.stop()
 
     if failures:

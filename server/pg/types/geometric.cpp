@@ -2164,7 +2164,7 @@ class TextWriter {
   void Text(std::string_view text) { _write(text); }
 
   void Number(double value) {
-    char buffer[utils::kNumberStrMaxLen];
+    char buffer[kNumberStrMaxLen];
     _write({buffer, _extra_float_digits > 0
                       ? WriteFloat<true>(value, _extra_float_digits, buffer)
                       : WriteFloat<false>(value, _extra_float_digits, buffer)});

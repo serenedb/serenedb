@@ -727,10 +727,6 @@ void RegisterTSQueryAliasCasts(duckdb::ExtensionLoader& loader) {
 }
 
 void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
-  // BOOLEAN -> TSQUERY: lets `true` / `false` flow into any TSQUERY
-  // position. The runtime function throws -- which makes the cast
-  // non-foldable, so the BoundCastExpression survives in the bound
-  // tree. The walker intercepts it and emits irs::All / irs::Empty.
   auto bool_cast_bind =
     +[](duckdb::BindCastInput&, const duckdb::LogicalType&,
         const duckdb::LogicalType&) -> duckdb::BoundCastInfo {
@@ -744,7 +740,7 @@ void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
   };
   loader.RegisterCastFunction(duckdb::LogicalType::BOOLEAN, MakeTSQueryType(),
                               bool_cast_bind,
-                              /*implicit_cast_cost=*/0);
+                              /*implicit_cast_cost=*/50);
 
   auto boost_bool_cast_bind =
     +[](duckdb::BindCastInput&, const duckdb::LogicalType& source,
@@ -769,13 +765,10 @@ void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
   loader.RegisterCastFunction(duckdb::LogicalType::BOOLEAN,
                               MakeModifierTSQueryType(), boost_bool_cast_bind,
                               /*implicit_cast_cost=*/50);
-  // Cost 0: this is the WHERE-clause coercion DuckDB inserts when a
-  // `(predicate)::boost(K)` cast appears at the predicate root (the
-  // WhereBinder unconditionally adds a cast to BOOLEAN).
   loader.RegisterCastFunction(MakeModifierTSQueryType(),
                               duckdb::LogicalType::BOOLEAN,
                               boost_bool_cast_bind,
-                              /*implicit_cast_cost=*/0);
+                              /*implicit_cast_cost=*/50);
 }
 
 void RegisterTSQueryCombineRule(duckdb::ExtensionLoader& loader) {
@@ -1066,6 +1059,23 @@ void RegisterTSQueryParserFunctions(duckdb::ExtensionLoader& loader) {
   }
 }
 
+duckdb::unique_ptr<duckdb::FunctionData> BindBooleanOperand(
+  duckdb::BindScalarFunctionInput& input) {
+  auto& arguments = input.GetArguments();
+  auto& types = input.GetBoundFunction().GetArguments();
+  for (duckdb::idx_t i = 0; i != arguments.size(); ++i) {
+    if (types[i].id() == duckdb::LogicalTypeId::BOOLEAN) {
+      arguments[i] = duckdb::BoundCastExpression::AddCastToType(
+        input.GetClientContext(),
+        duckdb::BoundCastExpression::AddCastToType(
+          input.GetClientContext(), std::move(arguments[i]), types[i]),
+        MakeTSQueryType());
+      types[i] = MakeTSQueryType();
+    }
+  }
+  return nullptr;
+}
+
 void RegisterTSQueryOperators(duckdb::ExtensionLoader& loader) {
   for (auto name : {kTSQueryOr, kTSQueryAnd}) {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
@@ -1074,6 +1084,15 @@ void RegisterTSQueryOperators(duckdb::ExtensionLoader& loader) {
       TSQConstructor({MakeTSQueryType(), duckdb::LogicalType::VARCHAR}));
     set.AddFunction(
       TSQConstructor({duckdb::LogicalType::VARCHAR, MakeTSQueryType()}));
+    for (auto arguments :
+         {duckdb::vector<duckdb::LogicalType>{MakeTSQueryType(),
+                                              duckdb::LogicalType::BOOLEAN},
+          duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::BOOLEAN,
+                                              MakeTSQueryType()}}) {
+      auto function = TSQConstructor(std::move(arguments));
+      function.SetBindCallback(BindBooleanOperand);
+      set.AddFunction(std::move(function));
+    }
     loader.RegisterFunction(std::move(set));
   }
 

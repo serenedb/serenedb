@@ -949,6 +949,8 @@ class DeadRange final : public irs::detail::TableFilter {
 
   bool Foldable() const noexcept final { return true; }
 
+  double Share() const final { return irs::detail::kUnknownShare; }
+
   uint64_t CountAndClear(irs::doc_id_t base, uint64_t* mask,
                          uint32_t words) final {
     const uint64_t live = Narrow(base, mask, mask, nullptr, words);

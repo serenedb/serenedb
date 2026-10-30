@@ -1,0 +1,314 @@
+statement ok
+CREATE TABLE ljs (id INTEGER, k INTEGER, url VARCHAR, payload VARCHAR)
+WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO ljs
+SELECT i, i % 3000,
+       CASE WHEN i % 3000 % 7 = 0 THEN 'https://google.com/' ELSE 'https://example.com/' END || i,
+       'payload-' || i || '-long-enough-to-not-inline'
+FROM range(0, 3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ljs;
+
+statement ok
+INSERT INTO ljs
+SELECT i, i % 3000,
+       CASE WHEN i % 3000 % 7 = 0 THEN 'https://google.com/' ELSE 'https://example.com/' END || i,
+       'payload-' || i || '-long-enough-to-not-inline'
+FROM range(3000, 6000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ljs;
+
+statement ok
+INSERT INTO ljs
+SELECT i, i % 3000,
+       CASE WHEN i % 3000 % 7 = 0 THEN 'https://google.com/' ELSE 'https://example.com/' END || i,
+       'payload-' || i || '-long-enough-to-not-inline'
+FROM range(6000, 9000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ljs;
+
+statement ok
+DELETE FROM ljs WHERE id < 3000 AND id % 14 = 0;
+
+statement ok
+VACUUM (REFRESH_TABLE) ljs;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM ljs;
+----
+segments	n
+3	8785
+
+query
+EXPLAIN SELECT id, k, payload FROM ljs WHERE url LIKE '%google%' ORDER BY k, id LIMIT 6;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ──────────────────────╮
+│ Key: rowid                         │
+│ ~6 rows                            │
+╰──────────────────┬─────────────────╯
+                   ├────────────────────────────────╮
+╭─ TOP_N ──────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ─────╮
+│ Top: 6                             │  │ Index: ljs           │
+│ Order By: k ASC, id ASC            │  │ Lookup: search       │
+│ ~6 rows                            │  │ Projections: payload │
+╰──────────────────┬─────────────────╯  │ ~6 rows              │
+╭─ IRESEARCH_SCAN ─┴─────────────────╮  ╰──────────────────────╯
+│ Index: ljs                         │
+│ Lookup: search                     │
+│ Projections: id, k, rowid          │
+│ Column Filter:                     │
+│ contains(url, 'google'),           │
+│ optional: Dynamic Filter (k <= ?)  │
+│ ~1,757 rows                        │
+╰────────────────────────────────────╯
+
+query
+SELECT id, k, payload FROM ljs WHERE url LIKE '%google%' ORDER BY k, id LIMIT 6;
+----
+id	k	payload
+3000	0	payload-3000-long-enough-to-not-inline
+6000	0	payload-6000-long-enough-to-not-inline
+7	7	payload-7-long-enough-to-not-inline
+3007	7	payload-3007-long-enough-to-not-inline
+6007	7	payload-6007-long-enough-to-not-inline
+3014	14	payload-3014-long-enough-to-not-inline
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE payload = 'payload-' || id || '-long-enough-to-not-inline' AND k = id % 3000) AS matching
+FROM (SELECT id, k, payload FROM ljs WHERE url LIKE '%google%' ORDER BY k, id LIMIT 1000);
+----
+n	matching
+1000	1000
+
+statement ok
+SET late_materialization_lookup_max_rows = 0;
+
+query
+SELECT id, k, payload FROM ljs WHERE url LIKE '%google%' ORDER BY k, id LIMIT 6;
+----
+id	k	payload
+3000	0	payload-3000-long-enough-to-not-inline
+6000	0	payload-6000-long-enough-to-not-inline
+7	7	payload-7-long-enough-to-not-inline
+3007	7	payload-3007-long-enough-to-not-inline
+6007	7	payload-6007-long-enough-to-not-inline
+3014	14	payload-3014-long-enough-to-not-inline
+
+statement ok
+RESET late_materialization_lookup_max_rows;
+
+statement ok
+VACUUM (COMPACT_TABLE) ljs;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM ljs;
+----
+segments	n
+1	8785
+
+query
+SELECT id, k, payload FROM ljs WHERE url LIKE '%google%' ORDER BY k, id LIMIT 6;
+----
+id	k	payload
+3000	0	payload-3000-long-enough-to-not-inline
+6000	0	payload-6000-long-enough-to-not-inline
+7	7	payload-7-long-enough-to-not-inline
+3007	7	payload-3007-long-enough-to-not-inline
+6007	7	payload-6007-long-enough-to-not-inline
+3014	14	payload-3014-long-enough-to-not-inline
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE payload = 'payload-' || id || '-long-enough-to-not-inline' AND k = id % 3000) AS matching
+FROM (SELECT id, k, payload FROM ljs WHERE url LIKE '%google%' ORDER BY k, id LIMIT 1000);
+----
+n	matching
+1000	1000
+
+statement ok
+DROP TABLE ljs;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ljd_words AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm, offset);
+
+statement ok
+CREATE TABLE ljd (id INTEGER PRIMARY KEY, k INTEGER, body VARCHAR, payload VARCHAR, note VARCHAR);
+
+statement ok
+CREATE INDEX ljd_idx ON ljd USING inverted (id, k, body ljd_words) INCLUDE (k, payload)
+WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO ljd
+SELECT i, i % 3000,
+       CASE WHEN i % 3000 % 7 = 0 THEN 'red fox pad' ELSE 'blue cat pad' END || i,
+       'payload-' || i || '-long-enough-to-not-inline',
+       'note-' || i
+FROM range(0, 3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ljd;
+
+statement ok
+INSERT INTO ljd
+SELECT i, i % 3000,
+       CASE WHEN i % 3000 % 7 = 0 THEN 'red fox pad' ELSE 'blue cat pad' END || i,
+       'payload-' || i || '-long-enough-to-not-inline',
+       'note-' || i
+FROM range(3000, 6000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ljd;
+
+statement ok
+INSERT INTO ljd
+SELECT i, i % 3000,
+       CASE WHEN i % 3000 % 7 = 0 THEN 'red fox pad' ELSE 'blue cat pad' END || i,
+       'payload-' || i || '-long-enough-to-not-inline',
+       'note-' || i
+FROM range(6000, 9000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ljd;
+
+statement ok
+DELETE FROM ljd WHERE id < 3000 AND id % 14 = 0;
+
+statement ok
+VACUUM (REFRESH_TABLE) ljd;
+
+query
+SELECT count(DISTINCT iresearch_pk >> 32) AS segments, count(*) AS n FROM ljd_idx;
+----
+segments	n
+3	8785
+
+statement error
+SELECT rowid FROM ljd_idx LIMIT 1;
+----
+db error: ERROR: cannot open relation "ljd_idx"
+DETAIL: This operation is not supported for indexes.
+
+
+statement error
+UPDATE ljd_idx SET note = 'x' WHERE id = 7;
+----
+db error: ERROR: cannot open relation "ljd_idx"
+DETAIL: This operation is not supported for indexes.
+
+
+statement error
+DELETE FROM ljd_idx WHERE id = 7;
+----
+db error: ERROR: cannot open relation "ljd_idx"
+DETAIL: This operation is not supported for indexes.
+
+
+query
+EXPLAIN SELECT id, k, payload, note FROM ljd_idx WHERE body @@ ts_phrase('fox') ORDER BY k, id LIMIT 6;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ─────────────────────╮
+│ Key: rowid                        │
+│ ~6 rows                           │
+╰─────────────────┬─────────────────╯
+                  ├─────────────────────────────────────────────╮
+╭─ LOOKUP_JOIN ───┴─────────────────╮                 ╭─ INDEX_SOURCE ────╮
+│ Key: iresearch_pk                 │                 │ Lookup: table     │
+│ ~6 rows                           │                 │ Projections: note │
+╰─────────────────┬─────────────────╯                 │ ~6 rows           │
+                  ├────────────────────────────────╮  ╰───────────────────╯
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ─────╮
+│ Top: 6                            │  │ Index: ljd_idx       │
+│ Order By: k ASC, id ASC           │  │ Projections: payload │
+│ ~6 rows                           │  │ ~6 rows              │
+╰─────────────────┬─────────────────╯  ╰──────────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: ljd_idx                    │
+│ Lookup: table                     │
+│ Index Filter:                     │
+│ ╭─ Term ──────────────╮           │
+│ │ Field: body(string) │           │
+│ │ Value: fox          │           │
+│ ╰─────────────────────╯           │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k <= ?) │
+│ Projections: id (l), k (i),       │
+│              iresearch_pk, pk     │
+│ ~1,757 rows                       │
+╰───────────────────────────────────╯
+
+query
+SELECT id, k, payload, note FROM ljd_idx WHERE body @@ ts_phrase('fox') ORDER BY k, id LIMIT 6;
+----
+id	k	payload	note
+3000	0	payload-3000-long-enough-to-not-inline	note-3000
+6000	0	payload-6000-long-enough-to-not-inline	note-6000
+7	7	payload-7-long-enough-to-not-inline	note-7
+3007	7	payload-3007-long-enough-to-not-inline	note-3007
+6007	7	payload-6007-long-enough-to-not-inline	note-6007
+3014	14	payload-3014-long-enough-to-not-inline	note-3014
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE payload = 'payload-' || id || '-long-enough-to-not-inline' AND note = 'note-' || id AND k = id % 3000) AS matching
+FROM (SELECT id, k, payload, note FROM ljd_idx WHERE body @@ ts_phrase('fox') ORDER BY k, id LIMIT 1000);
+----
+n	matching
+1000	1000
+
+statement ok
+SET late_materialization_lookup_max_rows = 0;
+
+query
+SELECT id, k, payload, note FROM ljd_idx WHERE body @@ ts_phrase('fox') ORDER BY k, id LIMIT 6;
+----
+id	k	payload	note
+3000	0	payload-3000-long-enough-to-not-inline	note-3000
+6000	0	payload-6000-long-enough-to-not-inline	note-6000
+7	7	payload-7-long-enough-to-not-inline	note-7
+3007	7	payload-3007-long-enough-to-not-inline	note-3007
+6007	7	payload-6007-long-enough-to-not-inline	note-6007
+3014	14	payload-3014-long-enough-to-not-inline	note-3014
+
+statement ok
+RESET late_materialization_lookup_max_rows;
+
+statement ok
+VACUUM (COMPACT_TABLE) ljd;
+
+query
+SELECT count(DISTINCT iresearch_pk >> 32) AS segments, count(*) AS n FROM ljd_idx;
+----
+segments	n
+1	8785
+
+query
+SELECT id, k, payload, note FROM ljd_idx WHERE body @@ ts_phrase('fox') ORDER BY k, id LIMIT 6;
+----
+id	k	payload	note
+3000	0	payload-3000-long-enough-to-not-inline	note-3000
+6000	0	payload-6000-long-enough-to-not-inline	note-6000
+7	7	payload-7-long-enough-to-not-inline	note-7
+3007	7	payload-3007-long-enough-to-not-inline	note-3007
+6007	7	payload-6007-long-enough-to-not-inline	note-6007
+3014	14	payload-3014-long-enough-to-not-inline	note-3014
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE payload = 'payload-' || id || '-long-enough-to-not-inline' AND note = 'note-' || id AND k = id % 3000) AS matching
+FROM (SELECT id, k, payload, note FROM ljd_idx WHERE body @@ ts_phrase('fox') ORDER BY k, id LIMIT 1000);
+----
+n	matching
+1000	1000
+
+statement ok
+DROP TABLE ljd;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ljd_words;

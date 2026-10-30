@@ -393,6 +393,24 @@ SELECT a FROM tsq_idx WHERE b @@ ts_regexp('(abc');
 db error: ERROR: invalid regular expression: missing ): (abc
 
 
+# A pattern ending in a lone backslash is invalid, like any other RE2 error.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('ab\');
+----
+db error: ERROR: invalid regular expression: trailing \
+
+
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('a\.b\');
+----
+db error: ERROR: invalid regular expression: trailing \
+
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('qu\.ck') ORDER BY a;
+----
+a
+
 statement error
 SELECT a FROM tsq_idx WHERE b @@ ts_regexp('\d+', 'posix');
 ----
@@ -2747,6 +2765,224 @@ SELECT a FROM tsq_idx WHERE regexp_matches(b, 'sl[a-z]+') ORDER BY a;
 ----
 a
 3
+
+# ~, regexp_matches and regexp_like match anywhere in the value, through the
+# index as on the table.
+statement ok
+CREATE TABLE tsq_rx (id INTEGER PRIMARY KEY, msg VARCHAR);
+
+statement ok
+CREATE INDEX tsq_rx_idx ON tsq_rx USING inverted (id, msg);
+
+statement ok
+INSERT INTO tsq_rx VALUES (1, 'abc123'), (2, 'xyz'), (3, '42'), (4, 'line' || chr(10) || '7');
+
+statement ok
+VACUUM (REFRESH_TABLE) tsq_rx;
+
+query
+SELECT id FROM tsq_rx WHERE msg ~ '[0-9]+' ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg ~ '[0-9]+' ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM tsq_rx_idx WHERE regexp_matches(msg, '[0-9]+') ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM tsq_rx_idx WHERE regexp_like(msg, 'b[a-z]') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg !~ '[0-9]+' ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM tsq_rx_idx WHERE regexp_matches(msg, '^[0-9]+$') ORDER BY id;
+----
+id
+3
+
+query
+SELECT id FROM tsq_rx_idx WHERE regexp_matches(msg, '^li[a-z]+$') ORDER BY id;
+----
+id
+
+query
+EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '[0-9]+';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: tsq_rx_idx                     │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Automaton ───────────────────────╮ │
+│ │ Field: msg(string)                │ │
+│ │ Pattern: (?s:.*)(?:[0-9]+)(?s:.*) │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+SELECT id FROM tsq_rx WHERE msg ~ '[a-z]\Q1' ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg ~ '[a-z]\Q1' ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '[a-z]\Q1';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────╮
+│ Index: tsq_rx_idx                         │
+│ Lookup: table                             │
+│ Index Filter:                             │
+│ ╭─ Automaton ───────────────────────────╮ │
+│ │ Field: msg(string)                    │ │
+│ │ Pattern: (?s:.*)(?:[a-z]\\Q1\\E)(?s:.*) │ │
+│ ╰───────────────────────────────────────╯ │
+│ Projections: id                           │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg ~ '[a-z]\Q1\E2' ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '[a-z]\Q1\E2';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────╮
+│ Index: tsq_rx_idx                          │
+│ Lookup: table                              │
+│ Index Filter:                              │
+│ ╭─ Automaton ────────────────────────────╮ │
+│ │ Field: msg(string)                     │ │
+│ │ Pattern: (?s:.*)(?:[a-z]\\Q1\\E2)(?s:.*) │ │
+│ ╰────────────────────────────────────────╯ │
+│ Projections: id                            │
+│ ~1 row                                     │
+╰────────────────────────────────────────────╯
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg ~ '^[a-z]+[0-9]+$' ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '^[a-z]+[0-9]+$';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: tsq_rx_idx           │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Automaton ─────────────╮ │
+│ │ Field: msg(string)      │ │
+│ │ Pattern: ^[a-z]+[0-9]+$ │ │
+│ ╰─────────────────────────╯ │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg ~ '^[a-z]+' ORDER BY id;
+----
+id
+1
+2
+4
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg ~ '[0-9]$' ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg ~ '(?m)^7' ORDER BY id;
+----
+id
+4
+
+query
+EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '(?m)^7';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: tsq_rx_idx                     │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Automaton ───────────────────────╮ │
+│ │ Field: msg(string)                │ │
+│ │ Pattern: (?s:.*)(?:(?m)^7)(?s:.*) │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg ~ '^x|7' ORDER BY id;
+----
+id
+2
+4
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg ~ '[a-z]([0-9]+$)' ORDER BY id;
+----
+id
+1
+
+statement ok
+PREPARE tsq_rx_quoted AS SELECT id FROM tsq_rx_idx WHERE msg ~ $1 ORDER BY id;
+
+query
+EXECUTE tsq_rx_quoted('[a-z]\Q1');
+----
+id
+1
+
+statement error
+EXECUTE tsq_rx_quoted('(');
+----
+db error: ERROR: missing ): (
+
+
+statement ok
+DEALLOCATE tsq_rx_quoted;
 
 # Mixing built-ins.
 query

@@ -187,30 +187,18 @@ bool ExtractMaskRows(duckdb::IcebergMultiFileList& list,
     case duckdb::IcebergDeleteType::POSITIONAL_DELETE: {
       // Like the DV arm: remove the WHOLE current row set. Rows the index
       // already dropped match nothing -- pure re-pay, never wrong.
-      const auto* rows =
-        static_cast<const duckdb::IcebergPositionalDeleteData&>(*data)
-          .invalid_rows.get();
-      const auto count = roaring::api::roaring64_bitmap_get_cardinality(rows);
-      mask.rows.resize(count);
-      roaring::api::roaring64_bitmap_to_uint64_array(
-        rows, reinterpret_cast<uint64_t*>(mask.rows.data()));
+      mask.rows = {
+        data, static_cast<const duckdb::IcebergPositionalDeleteData&>(*data)
+                .invalid_rows.get()};
       return true;
     }
     case duckdb::IcebergDeleteType::DELETION_VECTOR: {
       // A DV replaces its predecessor wholesale, and the manifest keeps no
       // copy of what was applied: remove the WHOLE current DV. Rows the
       // index already dropped match nothing -- pure re-pay, never wrong.
-      const auto& dv =
-        static_cast<const duckdb::IcebergDeletionVectorData&>(*data);
-      for (const auto& [high, bitmap] : dv.bitmaps) {
-        if (bitmap.isEmpty()) {
-          continue;
-        }
-        mask.dv.emplace_back(high, bitmap);
-      }
-      absl::c_sort(mask.dv, [](const auto& lhs, const auto& rhs) {
-        return lhs.first < rhs.first;
-      });
+      mask.dv = {
+        data,
+        &static_cast<const duckdb::IcebergDeletionVectorData&>(*data).bitmaps};
       return true;
     }
   }
@@ -254,7 +242,9 @@ bool IcebergObserve::TryMask(size_t listing_idx,
   if (equality_new) {
     eq_covered.push_back({live, entry.file_id, listing_idx});
   }
-  del_masks.push_back(std::move(mask));
+  if (mask.rows || mask.dv) {
+    del_masks.push_back(std::move(mask));
+  }
   return true;
 }
 

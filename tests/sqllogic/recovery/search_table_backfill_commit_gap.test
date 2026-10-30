@@ -30,7 +30,7 @@ tuples_done
 
 connection default
 statement ok
-SET sdb_faults = 'pause_search_commit_before_delete_log';
+SET sdb_faults = 'pause_search_commit_before_build_truncate';
 
 connection deleter
 statement async ok
@@ -38,7 +38,7 @@ DELETE FROM bcg WHERE id = 2;
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
+SET sdb_faults = '-pause_search_commit_before_build_truncate:parked';
 
 connection default
 statement ok
@@ -74,7 +74,7 @@ SET sdb_faults = 'pause_index_refresh_lock_wait:release';
 
 connection default
 statement ok
-SET sdb_faults = 'pause_search_commit_before_delete_log:release';
+SET sdb_faults = 'pause_search_commit_before_build_truncate:release';
 
 wait
 

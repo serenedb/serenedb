@@ -510,3 +510,63 @@ DROP TABLE random_normal_first;
 
 statement ok
 DROP TABLE random_normal_second;
+
+
+query
+SELECT 1e15::float8::text AS a, 999999999999999::float8::text AS b, 1234567890123456.7::float8::text AS c,
+       0.0001::float8::text AS d, 0.00009::float8::text AS e, (-1e15)::float8::text AS f, 1e16::float8::text AS g,
+       '-0'::float8::text AS h, 0.5::float8::text AS i, 'x' || 1e15::float8 AS j;
+----
+a	b	c	d	e	f	g	h	i	j
+1e+15	999999999999999	1.2345678901234568e+15	0.0001	9e-05	-1e+15	1e+16	-0	0.5	x1e+15
+
+
+query
+SELECT 1000000::float4::text AS a, 999999::float4::text AS b, 123456789::float4::text AS c,
+       1234567.5::float4::text AS d, 0.0001::float4::text AS e, 0.00009::float4::text AS f, 123456.5::float4::text AS g;
+----
+a	b	c	d	e	f	g
+1e+06	999999	1.2345679e+08	1.2345675e+06	0.0001	9e-05	123456.5
+
+
+skipif pg-wire-extended
+query
+SELECT 1e15::float8 AS a, 0.0001::float8 AS b, 1234567890123456.7::float8 AS c, 1000000::float4 AS d,
+       123456789::float4 AS e;
+----
+a	b	c	d	e
+1e+15	0.0001	1.2345678901234568e+15	1e+06	1.2345679e+08
+
+query
+SELECT (-2147483648)::int4 % (-1)::int4 AS i, (-9223372036854775808)::int8 % (-1)::int8 AS b,
+       (-32768)::int2 % (-1)::int2 AS s, 7 % (-1) AS p;
+----
+i	b	s	p
+0	0	0	0
+
+
+statement ok
+SET extra_float_digits = 0;
+
+
+query
+SELECT (1::float8 / 3)::text AS a, (1::float4 / 3::float4)::text AS b, 1e15::float8::text AS c,
+       123456789::float4::text AS d;
+----
+a	b	c	d
+0.333333333333333	0.333333	1e+15	1.23457e+08
+
+
+statement ok
+SET extra_float_digits = -3;
+
+
+query
+SELECT (1::float8 / 3)::text AS a, (1::float4 / 3::float4)::text AS b;
+----
+a	b
+0.333333333333	0.333
+
+
+statement ok
+RESET extra_float_digits;

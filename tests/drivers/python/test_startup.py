@@ -208,6 +208,31 @@ def test_cleartext_password_on_a_unix_socket(tmp_path: Path,
         server.stop()
 
 
+def test_startup_parameters_on_a_unix_socket(tmp_path: Path,
+                                             socket_dir: Path) -> None:
+    server = _Server(tmp_path / "data", f"postgres://{socket_dir}?port=5432")
+    try:
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                conn = psycopg.connect(
+                    host=str(socket_dir), port=5432, user="postgres",
+                    dbname="postgres", application_name="unix_startup",
+                    options="-c statement_timeout=5s")
+                break
+            except psycopg.OperationalError:
+                assert (server.proc.poll() is None
+                        and time.monotonic() < deadline), server.output()
+                time.sleep(0.2)
+        with conn:
+            assert conn.execute(
+                "SELECT current_setting('application_name'), "
+                "current_setting('statement_timeout')").fetchone() == (
+                    "unix_startup", "5s")
+    finally:
+        server.stop()
+
+
 def _qemu_x86_64() -> str | None:
     if platform.machine() != "x86_64":
         return None

@@ -147,7 +147,7 @@ A mapped field takes a single JSON value. An array fails with `400 mapper_parsin
 | Mapping type | Accepts |
 |---|---|
 | `text`, `keyword` | strings |
-| `long`, `integer` | numbers and numeric strings such as `"42"`; a fraction is dropped, so `12.9` becomes `12` |
+| `long`, `integer` | numbers and numeric strings such as `"42"` inside the type's range; a fraction is dropped, so `12.9` becomes `12` |
 | `double`, `float` | numbers and numeric strings |
 | `boolean` | `true`, `false`, `"true"` and `"false"` |
 | `date` | ISO 8601 strings (an offset is converted to UTC) and epoch milliseconds as a JSON number |
@@ -292,6 +292,7 @@ A `match`, `match_phrase` or `term` on a `text` field is a full-text clause. The
 
 - A clause names one field. A field that is not in the mapping matches nothing.
 - `match` and `match_phrase` take a string. Use `term` or `range` for numbers.
+- On a `text` or `keyword` field, a number or boolean in `term` or `range` is compared as its JSON text, so `{"term": {"code": 42}}` matches `"42"` and not `"042"`.
 - Malformed numeric values in `term` or `range` fail with `400 parsing_exception` for both `_search` and `_count`.
 - `range` bounds on a `date` field are ISO 8601 strings in UTC, like `"2026-09-02"` or `"2026-09-02T10:30:00Z"`. Epoch milliseconds and date math such as `now-30d` fail with `400`.
 - Other clause types fail with `400` and `query type [...] is not supported yet`, for example `terms`, `prefix`, `wildcard`, `fuzzy`, `exists`, `ids`, `multi_match`, `query_string` and `nested`. Parameters beyond the ones in the table fail the same way, for example `boost`, `fuzziness`, `slop` and `format`.

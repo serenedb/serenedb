@@ -28,6 +28,7 @@
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/search/detail/table_filter.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <limits>
 #include <optional>
 
@@ -133,9 +134,7 @@ std::optional<Interval> IntervalOf(const duckdb::Expression& expr,
       duckdb::BoundBetweenExpression::LowerComparisonType(func), *lo, domain);
     const auto upper = ComparisonInterval(
       duckdb::BoundBetweenExpression::UpperComparisonType(func), *hi, domain);
-    if (!lower || !upper) {
-      return std::nullopt;
-    }
+    SDB_ASSERT(lower && upper);
     return Interval{.lo = lower->lo, .hi = upper->hi};
   }
   if (!duckdb::BoundComparisonExpression::IsComparison(type)) {
@@ -193,8 +192,7 @@ std::optional<double> ShareOf(const duckdb::Expression& expr,
       return std::nullopt;
     }
     case duckdb::ExpressionType::COMPARE_NOTEQUAL: {
-      if (!domain || expr.GetExpressionClass() !=
-                       duckdb::ExpressionClass::BOUND_FUNCTION) {
+      if (!domain) {
         return std::nullopt;
       }
       const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();

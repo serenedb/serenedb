@@ -67,6 +67,8 @@ std::string TypeIdentity(const Session& session, uint64_t oid);
 std::string ProcIdentity(const Session& session, uint64_t oid);
 
 std::string_view RegOut(const Session& session, RegKind kind, uint64_t oid);
+std::optional<RegKind> RegKindOf(const duckdb::LogicalType& type);
+
 std::optional<uint64_t> RegIn(const Session& session, RegKind kind,
                               std::string_view text,
                               irs::pg::SqlErrorData* soft_error);

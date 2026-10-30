@@ -195,3 +195,8 @@
 	path = third_party/geographiclib-c
 	url = https://github.com/serenedb/geographiclib-c.git
 	shallow = true
+[submodule "third_party/cmocka"]
+	path = third_party/cmocka
+	url = https://gitlab.com/cmocka/cmocka.git
+	shallow = true
+	update = none

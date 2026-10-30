@@ -1,8 +1,7 @@
-# Commit-on-flush rotation: an online inverted CREATE INDEX commits each
-# segment as soon as it fills (segment_docs_max here), so the published index
-# consists of many independently committed segments instead of one giant
-# final publish. compaction_interval is pushed out of the test window so the
-# committed segments stay observable.
+# Segment rotation: an online inverted CREATE INDEX cuts a segment as soon as
+# one fills (segment_docs_max here), so the published index consists of many
+# segments instead of one giant one. compaction_interval is pushed out of the
+# test window so the segments stay observable.
 
 
 statement ok

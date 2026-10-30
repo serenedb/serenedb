@@ -56,7 +56,7 @@ class Types:
         return row.typelem, self.by_oid[row.typelem].typrelid != 0
 
 
-def catalog_columns(gen, relation, types):
+def catalog_columns(relation, types):
     columns, fixed_not_null = [], True
     for name, type_name, force in relation.columns:
         row = types.by_name[type_name]
@@ -204,7 +204,7 @@ def relations(gen, coded, types):
     for name, relation in gen.relations.items():
         out.append((relation.oid, 'pg_catalog', name, 'r', relation.shared,
                     *gen.row_types[name], 'n',
-                    catalog_columns(gen, relation, types), keys(gen, name)))
+                    catalog_columns(relation, types), keys(gen, name)))
     for table in gen.initdb.tables.values():
         out.append((table.oid, 'information_schema', table.name, 'r', False,
                     table.row_type, table.row_array_type, 'd',

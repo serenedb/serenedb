@@ -1,5 +1,7 @@
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,7 +13,7 @@ sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "
 
 import ci  # noqa: E402
 import generated  # noqa: E402
-from testlib import cli, scheduler  # noqa: E402
+from testlib import cli, proc, scheduler  # noqa: E402
 from testlib.scheduler import (FAILED, INTERRUPTED, PASSED, SKIPPED, Outcome, Result,  # noqa: E402
                                Unit)
 from testlib.suites import duckdb, gtest, sqllogic  # noqa: E402
@@ -149,15 +151,17 @@ def test_a_changed_test_source_picks_the_compiled_tests_it_defines(monkeypatch, 
              unit("gtest:serenedb-tests:batch:Else.Fails+0", members=("gtest:serenedb-tests:Else.Fails",)),
              unit("duckdb:cpp:batch:Test a thing+0", members=("duckdb:cpp:Test a thing",)),
              unit("gtest:re2-tests:batch:Search.Literal+1",
-                  members=("gtest:re2-tests:Search.Literal", "gtest:re2-tests:Set.Unanchored"))]
+                  members=("gtest:re2-tests:Search.Literal", "gtest:re2-tests:Set.Unanchored")),
+             unit("croaring:toplevel_unit"), unit("croaring:cpp_unit")]
     files = {"tests/server/plain_test.cpp": "TEST(Plain, Works) {}\nTEST_P(Param, Runs) {}\n"
                                             "TYPED_TEST(Typed, Holds) {}\n",
              "third_party/duckdb/test/api/test_thing.cpp": 'TEST_CASE("Test a thing", "[api]") {}\n',
-             "third_party/re2/re2/testing/search_test.cc": "TEST(Search, Literal) {}\n"}
+             "third_party/re2/re2/testing/search_test.cc": "TEST(Search, Literal) {}\n",
+             "third_party/croaring/tests/toplevel_unit.c": ""}
     _, tests = changed(monkeypatch, tmp_path, files, units)
     assert tests == {"gtest:serenedb-tests:Plain.Works", "gtest:serenedb-tests:Each/Param.Runs/0",
                      "gtest:serenedb-tests:Typed/1.Holds", "duckdb:cpp:Test a thing",
-                     "gtest:re2-tests:Search.Literal"}
+                     "gtest:re2-tests:Search.Literal", "croaring:toplevel_unit"}
     picked, _ = changed(monkeypatch, tmp_path, files, units, compiled=False)
     assert picked == []
 
@@ -165,7 +169,8 @@ def test_a_changed_test_source_picks_the_compiled_tests_it_defines(monkeypatch, 
 @pytest.mark.parametrize("config,args,targets", [
     ("perf", [], "serened iresearch-examples serenedb-bench-micro search-benchmark-game"),
     ("dev", [], "serened iresearch-examples serenedb-bench-micro search-benchmark-game "
-                "iresearch-load-tests iresearch-tests re2-tests serenedb-tests unittest"),
+                "croaring-tests iresearch-load-tests iresearch-tests re2-tests serenedb-tests "
+                "unittest"),
     ("asan", ["--suite", "sqllogic", "--suite", "gtest", "--changed", "origin/main"],
      "serened serenedb-tests"),
     ("tsan", ["--suite", "gtest", "--suite", "re2", "--suite", "duckdb", "--duckdb-suite", "core"],
@@ -268,8 +273,75 @@ def test_only_the_changed_postgres_tests_run_beside_every_other_suite(monkeypatc
     (None, ""), ("changed", "--postgres changed --changed origin/main"), ("all", "--postgres all")])
 def test_select_suites_adds_the_postgres_validation(capsys, postgres, expected):
     ci.cmd_select_suites(SimpleNamespace(corpus=False, everything=True, iresearch=False, re2=False,
-                                         duckdb_suites="", no_duckdb=False, postgres=postgres))
+                                         croaring=False, duckdb_suites="", no_duckdb=False,
+                                         postgres=postgres))
     assert capsys.readouterr().out.strip() == expected
+
+
+@pytest.mark.parametrize("croaring", [False, True])
+def test_select_suites_runs_the_croaring_tests_a_diff_opens(capsys, croaring):
+    ci.cmd_select_suites(SimpleNamespace(corpus=False, everything=False, iresearch=False, re2=False,
+                                         croaring=croaring, duckdb_suites="", no_duckdb=False,
+                                         postgres=None))
+    assert ("--suite croaring" in capsys.readouterr().out) is croaring
+
+
+def test_every_croaring_test_binary_is_a_unit_unless_skipped(tmp_path):
+    tests = tmp_path / "bin" / "croaring-tests"
+    tests.mkdir(parents=True)
+    for name in ("toplevel_unit", "cpp_unit", "threads_unit"):
+        (tests / name).write_text("")
+    ctx = SimpleNamespace(
+        build=SimpleNamespace(croaring_tests=True, bin=lambda name: tmp_path / "bin" / name),
+        timing=Timing(), config=SimpleNamespace(slowdown=1.0), timeout_floor=180.0, skips=[])
+    skips = [SimpleNamespace(pattern="croaring:threads_unit", kind="issue", reason="flaky")]
+    units = gtest.croaring_units(ctx, None, skips)
+    assert [u.id for u in units] == ["croaring:cpp_unit", "croaring:toplevel_unit"]
+    assert [uid for uid, _ in ctx.skips] == ["croaring:threads_unit"]
+    ctx.build.croaring_tests = False
+    assert gtest.croaring_units(ctx, None, skips) == []
+
+
+def test_croaring_tests_run_in_the_croaring_checkout_where_their_data_paths_lead(tmp_path):
+    tests = tmp_path / "build" / "bin" / "croaring-tests"
+    tests.mkdir(parents=True)
+    (tests / "format_portability_unit").write_text("")
+    ctx = SimpleNamespace(
+        root=tmp_path / "src",
+        build=SimpleNamespace(croaring_tests=True, bin=lambda name: tmp_path / "build" / "bin" / name),
+        timing=Timing(), config=SimpleNamespace(slowdown=1.0), timeout_floor=180.0, skips=[])
+    [unit] = gtest.croaring_units(ctx, None, [])
+    calls = []
+    r = SimpleNamespace(tmp=tmp_path / "tmp", outcome=lambda res: res,
+                        exec=lambda argv, cwd: calls.append((argv, cwd)) or "ran")
+    assert unit.run(r) == "ran"
+    assert calls == [([str(tests / "format_portability_unit")], tmp_path / "src" / "third_party" / "croaring")]
+
+
+def alive(pid):
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[-1].split()[0]
+    except OSError:
+        return False
+    return state != "Z"
+
+
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="reads /proc")
+def test_a_stuck_unit_dumps_and_kills_the_server_its_test_started_in_its_own_session(tmp_path):
+    pid_file = tmp_path / "server.pid"
+    test = ("import subprocess, sys, time\n"
+            "server = subprocess.Popen(['sleep', '600'], start_new_session=True)\n"
+            "open(sys.argv[1], 'w').write(str(server.pid))\n"
+            "time.sleep(600)\n")
+    result = proc.run([sys.executable, "-c", test, pid_file], env=dict(os.environ), cwd=tmp_path,
+                      log_path=tmp_path / "log.txt", timeout=3.0, stack_dir=tmp_path / "stacks")
+    server = int(pid_file.read_text())
+    assert result.stuck
+    assert any(path.name.endswith(f"-{server}.txt") for path in result.stacks)
+    deadline = time.monotonic() + 10
+    while alive(server) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not alive(server)
 
 
 def test_a_single_shard_runs_in_the_build_job_and_more_go_to_test_jobs():

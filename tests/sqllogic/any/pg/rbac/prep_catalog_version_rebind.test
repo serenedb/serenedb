@@ -118,7 +118,7 @@ PREPARE pcv_selmop AS SELECT mop FROM pcv_ledger;
 
 
 connection c_ved3 user=pcv_vedernikoff password=pcv_vedernikoff_pw
-query rowsort
+query ? rowsort
 EXECUTE pcv_selmop;
 ----
 mop
@@ -163,7 +163,7 @@ PREPARE pcv_selcc AS SELECT clickclack FROM pcv_ledger;
 
 
 connection c_ved4 user=pcv_vedernikoff password=pcv_vedernikoff_pw
-query rowsort
+query ? rowsort
 EXECUTE pcv_selcc;
 ----
 clickclack
@@ -178,7 +178,7 @@ ALTER TABLE pcv_ledger ADD COLUMN extra int;
 
 # Re-binds (version moved), but the read of clickclack is still authorized + valid.
 connection c_ved4 user=pcv_vedernikoff password=pcv_vedernikoff_pw
-query rowsort
+query ? rowsort
 EXECUTE pcv_selcc;
 ----
 clickclack
@@ -200,7 +200,7 @@ GRANT SELECT (clickclack) ON pcv_ledger TO pcv_vedernikoff;
 
 
 connection c_ved4 user=pcv_vedernikoff password=pcv_vedernikoff_pw
-query rowsort
+query ? rowsort
 EXECUTE pcv_selcc;
 ----
 clickclack

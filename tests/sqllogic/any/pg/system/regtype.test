@@ -148,17 +148,32 @@ double precision
 query
 SELECT '23'::regtype AS by_oid,
        '4294967295'::regtype::oid AS max_oid,
-       to_regtype('4294967296') IS NULL AS too_big,
-       to_regclass('4294967296') IS NULL AS class_too_big;
+       to_regtype('9223372036854775808') IS NULL AS too_big,
+       to_regclass('9223372036854775808') IS NULL AS class_too_big;
 ----
 by_oid	max_oid	too_big	class_too_big
 integer	4294967295	t	t
 
 
 statement error
+SELECT '9223372036854775808'::regtype;
+----
+db error: ERROR: value "9223372036854775808" is out of range for type oid
+
+
+skipif serenedb
+statement error
 SELECT '4294967296'::regtype;
 ----
 db error: ERROR: value "4294967296" is out of range for type oid
+
+
+onlyif serenedb
+query
+SELECT '4294967296'::regtype::text AS type, to_regclass('4294967296')::text AS relation;
+----
+type	relation
+4294967296	4294967296
 
 
 query

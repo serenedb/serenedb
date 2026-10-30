@@ -453,10 +453,11 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   SDB_IF_FAILURE("connector::ScanBind") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  const duckdb::QualifiedName qualified{
-    duckdb::Identifier{input.inputs[0].GetValue<std::string>()},
-    duckdb::Identifier{input.inputs[1].GetValue<std::string>()},
-    duckdb::Identifier{input.inputs[2].GetValue<std::string>()}};
+  duckdb::vector<duckdb::Identifier> path;
+  for (const auto& part : duckdb::ListValue::GetChildren(input.inputs[0])) {
+    path.emplace_back(part.GetValue<std::string>());
+  }
+  const auto qualified = duckdb::QualifiedName::FromPath(std::move(path));
   auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
     context, qualified, duckdb::OnEntryNotFound::RETURN_NULL);
   if (!index || !IsInvertedIndex(*index)) {
@@ -537,9 +538,6 @@ bool LooksUpByPk(const ScanBindData& bind) {
 }
 
 std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind) {
-  if (bind.relation.IsSearchTable()) {
-    return duckdb::LogicalType::ROW_TYPE;
-  }
   if (!LooksUpByPk(bind)) {
     return std::nullopt;
   }
@@ -738,18 +736,15 @@ DeferredBuild BuildDeferredFilter(
   if (!out.dual_filters.empty() && !index_only.empty()) {
     auto rest = std::make_unique<irs::BooleanFilter>();
     FilterScorers rest_scorers;
-    if (MakeSearchFilter(*rest, index_only, getter, context, expr_getter,
-                         &rest_scorers)
-          .ok()) {
-      irs::Filter::ptr rest_filter = std::move(rest);
-      EnsureIncludeSides(*rest_filter);
-      irs::Optimize(rest_filter, {.scored = false,
-                                  .analyzed_fields = ctx.analyzed_fields,
-                                  .null_markers = &null_markers});
-      out.index_only = std::move(rest_filter);
-    } else {
-      out.dual_filters.clear();
-    }
+    const auto rest_status = MakeSearchFilter(
+      *rest, index_only, getter, context, expr_getter, &rest_scorers);
+    SDB_ENSURE(rest_status.ok(), rest_status.message());
+    irs::Filter::ptr rest_filter = std::move(rest);
+    EnsureIncludeSides(*rest_filter);
+    irs::Optimize(rest_filter, {.scored = false,
+                                .analyzed_fields = ctx.analyzed_fields,
+                                .null_markers = &null_markers});
+    out.index_only = std::move(rest_filter);
   }
   return out;
 }

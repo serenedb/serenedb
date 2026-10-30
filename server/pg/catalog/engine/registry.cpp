@@ -156,7 +156,7 @@ constexpr SystemMacro kTableStubs[] = {
 };
 
 static_assert(absl::c_is_sorted(kScalarStubs,
-                                [](const auto& lhs, const auto& rhs) {
+                                [](const auto& lhs, const auto& rhs) consteval {
                                   return lhs.name < rhs.name;
                                 }));
 

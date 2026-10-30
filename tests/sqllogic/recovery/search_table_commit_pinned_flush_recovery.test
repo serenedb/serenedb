@@ -1,0 +1,123 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET GLOBAL checkpoint_threshold = '256KB';
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE pinned_docs (id BIGINT, msg TEXT)
+  WITH (storage = 'search', refresh_interval = 20, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO pinned_docs SELECT i, 'm' || (i % 7) FROM range(100) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pinned_docs;
+
+
+statement ok
+SET sdb_faults = 'pause_index_refresh';
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_index_refresh:parked';
+
+
+statement ok
+INSERT INTO pinned_docs VALUES (-1, 'm6');
+
+
+statement ok
+SET sdb_faults = 'search_wal_transactions_written';
+
+
+connection writer
+statement ok
+SET threads = 1;
+
+
+connection writer
+statement ok
+BEGIN;
+
+
+connection writer
+statement ok
+INSERT INTO pinned_docs SELECT i, 'm' || (i % 7) FROM range(100, 1100) t(i);
+
+
+connection writer
+statement ok
+DELETE FROM pinned_docs WHERE id < 10;
+
+
+connection writer
+statement async ok
+COMMIT;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_wal_transactions_written:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_index_refresh:release';
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_wal_transactions_written:release';
+
+
+wait
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_index_refresh';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch:release';
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_index_refresh:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(DISTINCT id) AS ids, min(id) AS lo, max(id) AS hi FROM pinned_docs;
+----
+n	ids	lo	hi
+1091	1091	-1	1099

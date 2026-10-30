@@ -12,7 +12,7 @@
 
 ## Forks
 
-Every submodule under `third_party/` is our fork; the in-tree directories there are ordinary serenedb code.
+Every submodule under `third_party/` is our fork, except the upstream ones `scripts/check_submodule_pointers.py` excludes (`cmocka`, `yaclib`); the in-tree directories there are ordinary serenedb code.
 
 - A fork change is a PR into the fork's current version branch (`vYYYY.MM.DD`, the one main's gitlink is on), and the serenedb PR points the gitlink at that PR's head: CI builds both together. Until the fork PR lands, the PR's `pre-commit` job reports the gitlink as pending with a pending `pre-commit` status, which blocks the merge; `scripts/check_submodule_pointers.py` runs the same check locally (exit 3: pending).
 - Fork PRs land by fast-forward, so their commits, with the hashes CI built, are the fork history reviewers keep: one concern per commit, complete across every path it spans, a conventional subject with a scope (`fix(planner): ...`), every message final.

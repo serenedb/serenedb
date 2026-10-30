@@ -1,0 +1,114 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE pinned_rows (id BIGINT, msg TEXT);
+
+
+statement ok
+CREATE INDEX pinned_rows_idx ON pinned_rows USING inverted (id, msg)
+  WITH (refresh_interval = 20, compaction_interval = 0);
+
+
+statement ok
+SET sdb_faults = 'pause_index_refresh';
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_index_refresh:parked';
+
+
+statement ok
+INSERT INTO pinned_rows SELECT i, 'm' || (i % 7) FROM range(100) t(i);
+
+
+statement ok
+SET sdb_faults = 'inverted_local_rows_fed';
+
+
+connection writer
+statement ok
+SET threads = 4;
+
+
+connection writer
+statement async ok
+INSERT INTO pinned_rows SELECT i, 'm' || (i % 7) FROM range(100, 40100) t(i);
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-inverted_local_rows_fed:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_index_refresh:release';
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'inverted_local_rows_fed:release';
+
+
+wait
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_index_refresh';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch:release';
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_index_refresh:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pinned_rows;
+----
+n
+40100
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) pinned_rows;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM pinned_rows_idx) AS total,
+       (SELECT count(*) FROM pinned_rows_idx WHERE msg @@ 'm3') AS three;
+----
+total	three
+40100	5729

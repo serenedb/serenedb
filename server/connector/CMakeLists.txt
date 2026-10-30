@@ -6,7 +6,6 @@ target_sources(
         offsets_collector.cpp
         search_sink_writer.cpp
         search_table_backfill.cpp
-        search_remove_filter.cpp
         duckdb_storage_extension.cpp
         index_expression.cpp
         inverted_index_bind.cpp
@@ -59,6 +58,7 @@ target_sources(
         duckdb_physical_create_index.cpp
         duckdb_index_utils.cpp
         duckdb_reindex_function.cpp
+        reindex_removes.cpp
         file_manifest.cpp
         duckdb_vacuum_function.cpp
         duckdb_physical_search_truncate.cpp

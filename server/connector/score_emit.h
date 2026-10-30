@@ -103,7 +103,7 @@ struct VectorScorerOptions {
       case ScoreEmit::Identity:
         return radius;
       case ScoreEmit::SqrtNeg:
-        return radius * radius;
+        return std::copysign(radius * radius, radius);
       case ScoreEmit::OneMinus:
         return 1.0f - radius;
       case ScoreEmit::Negate:

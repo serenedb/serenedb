@@ -1,0 +1,27 @@
+statement ok
+CREATE TABLE sample_top_n (id INT);
+
+
+statement ok
+INSERT INTO sample_top_n SELECT i FROM range(300000) t(i);
+
+
+query
+SELECT id FROM sample_top_n USING SAMPLE 100 PERCENT (bernoulli) ORDER BY id DESC LIMIT 3;
+----
+id
+299999
+299998
+299997
+
+
+query
+SELECT id FROM sample_top_n USING SAMPLE 100 PERCENT (bernoulli) ORDER BY id LIMIT 2 OFFSET 1;
+----
+id
+1
+2
+
+
+statement ok
+DROP TABLE sample_top_n;

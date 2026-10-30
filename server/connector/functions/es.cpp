@@ -708,28 +708,35 @@ FieldValue ReadFieldValue(simdjson::ondemand::value& value,
 // ES default coercion: numeric fields accept JSON strings ("42") and
 // truncate floating points; real corpora (e.g. rally's pmc) depend on it.
 int64_t CoerceInt64(simdjson::ondemand::value& value, const FieldValue& read,
-                    std::string_view index, std::string_view field) {
+                    std::string_view index, std::string_view field,
+                    std::string_view expected) {
+  double d = 0;
   if (read.type == simdjson::ondemand::json_type::number) {
     // One scan of the number, whichever of the three shapes it turns out to be.
-    if (simdjson::ondemand::number parsed;
-        value.get_number().get(parsed) == simdjson::SUCCESS) {
-      if (parsed.is_int64()) {
-        return parsed.get_int64();
-      }
-      if (parsed.is_uint64()) {
-        return static_cast<int64_t>(parsed.get_uint64());
-      }
-      return static_cast<int64_t>(parsed.get_double());
+    simdjson::ondemand::number parsed;
+    if (value.get_number().get(parsed) != simdjson::SUCCESS ||
+        parsed.is_uint64()) {
+      ThrowFieldParseError(index, field, expected);
     }
+    if (parsed.is_int64()) {
+      return parsed.get_int64();
+    }
+    d = parsed.get_double();
   } else if (read.type == simdjson::ondemand::json_type::string) {
     if (int64_t v = 0; absl::SimpleAtoi(read.text, &v)) {
       return v;
     }
-    if (double d = 0; absl::SimpleAtod(read.text, &d)) {
-      return static_cast<int64_t>(d);
+    if (read.text.find_first_of(".eE") == std::string_view::npos ||
+        !absl::SimpleAtod(read.text, &d)) {
+      ThrowFieldParseError(index, field, expected);
     }
+  } else {
+    ThrowFieldParseError(index, field, "an integer");
   }
-  ThrowFieldParseError(index, field, "an integer");
+  if (!(d >= -0x1p63 && d < 0x1p63)) {
+    ThrowFieldParseError(index, field, expected);
+  }
+  return static_cast<int64_t>(d);
 }
 
 double CoerceDouble(simdjson::ondemand::value& value, const FieldValue& read,
@@ -773,14 +780,15 @@ bool WriteDocField(duckdb::Vector& vec, duckdb::idx_t row,
     }
     case duckdb::LogicalTypeId::BIGINT: {
       duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] =
-        CoerceInt64(value, read, index, field);
+        CoerceInt64(value, read, index, field, "a 64-bit integer");
       return true;
     }
     case duckdb::LogicalTypeId::INTEGER: {
-      const int64_t v = CoerceInt64(value, read, index, field);
+      constexpr std::string_view kExpected = "a 32-bit integer";
+      const int64_t v = CoerceInt64(value, read, index, field, kExpected);
       if (v < std::numeric_limits<int32_t>::min() ||
           v > std::numeric_limits<int32_t>::max()) {
-        ThrowFieldParseError(index, field, "a 32-bit integer");
+        ThrowFieldParseError(index, field, kExpected);
       }
       duckdb::FlatVector::GetDataMutable<int32_t>(vec)[row] =
         static_cast<int32_t>(v);

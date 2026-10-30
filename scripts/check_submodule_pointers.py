@@ -44,6 +44,7 @@ VERSION_BRANCH = re.compile(r"^v20\d{2}\.\d{2}\.\d{2}$")
 GITHUB_URL = re.compile(r"^https://github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?$")
 
 EXCLUDED = {
+    "third_party/cmocka",  # upstream remote, no serenedb version branches
     "third_party/yaclib",  # upstream remote, no serenedb version branches
 }
 

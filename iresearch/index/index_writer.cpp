@@ -23,16 +23,19 @@
 
 #include "index_writer.hpp"
 
-#include <absl/container/flat_hash_map.h>
+#include <absl/algorithm/container.h>
+#include <absl/functional/overload.h>
 #include <absl/strings/str_cat.h>
-#include <fast_float/fast_float.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <new>
 #include <ranges>
 #include <shared_mutex>
 #include <type_traits>
+#include <variant>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
@@ -51,6 +54,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/async.hpp"
 #include "iresearch/utils/directory_utils.hpp"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/resource_manager.hpp"
@@ -95,261 +99,47 @@ struct FlushedSegmentContext {
     return false;
   }
 
-  void Remove(const IndexWriter::QueryContext& query);
+  void RemoveAll(uint64_t tick);
 };
 
-bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
-                       const IndexWriter::QueryContext& query,
-                       const SubReader& reader) {
-  // A deletion never scores, so nothing under it collects statistics. The
-  // batch's own deletions so far are handed over: a document an earlier query
-  // of this batch removed is not alive, and the segment's mask predates it.
-  auto prepared =
-    query.filter->PrepareSegment(reader, {.pending_docs_mask = &deleted_docs});
-
-  if (!prepared) [[unlikely]] {
-    return false;  // skip invalid prepared filters
-  }
-
-  auto plan = prepared->PlanLead({});
-
-  if (!plan) [[unlikely]] {
-    return false;  // skip a query kind that has no plan
-  }
-
-  auto it_mask = reader.MaskedDocs();
-  bool modified = false;
-  for (auto doc_id = plan->Next(); !doc_limits::eof(doc_id);
-       doc_id = plan->Next()) {
-    // if the indexed doc_id was already masked then it should be skipped
-    if (it_mask.Contains(doc_id)) {
-      continue;
-    }
-    modified |= deleted_docs.Add(doc_id);
-  }
-
-  return modified;
-}
-
-void FlushedSegmentContext::Remove(const IndexWriter::QueryContext& query) {
-  const auto bound = flushed.docs.UpperBound(query.tick);
+void FlushedSegmentContext::RemoveAll(uint64_t tick) {
+  const auto bound = flushed.docs.UpperBound(tick);
   if (bound == 0) {
     return;
   }
-
-  auto& document_mask = flushed.docs_mask;
-
-  // A deletion never scores, so nothing under it collects statistics. The
-  // batch's own deletions so far are handed over: a document an earlier query
-  // of this batch removed is not alive, and the segment's mask predates it.
-  auto prepared = query.filter->PrepareSegment(
-    *reader, {.pending_docs_mask = &document_mask});
-
-  if (!prepared) [[unlikely]] {
-    return;  // Skip invalid prepared filters
-  }
-
-  auto plan = prepared->PlanLead({});
-
-  if (!plan) [[unlikely]] {
-    return;  // Skip a query kind that has no plan
-  }
-
-  for (auto doc = plan->Next();
-       !doc_limits::eof(doc) && doc - doc_limits::min() < bound;
-       doc = plan->Next()) {
-    document_mask.Add(doc);
-  }
+  flushed.docs_mask.AddRange(doc_limits::min(),
+                             static_cast<doc_id_t>(bound + doc_limits::min()));
 }
 
-struct CandidateMapping {
-  const SubReader* new_segment{};
-  struct Old {
-    const SubReader* segment{};
-    size_t index{};  // within merge_writer
-  } old;
-};
-
-// mapping: name -> { new segment, old segment }
-using CandidatesMapping =
-  absl::flat_hash_map<std::string_view, CandidateMapping>;
-
-struct MapCandidatesResult {
-  // Number of mapped candidates.
-  size_t count{0};
-  bool has_removals{false};
-};
-
-// candidates_mapping output mapping
-// candidates candidates for mapping
-// segments map against a specified segments
-MapCandidatesResult MapCandidates(CandidatesMapping& candidates_mapping,
-                                  CompactionView candidates,
-                                  const auto& index) {
-  size_t num_candidates = 0;
-  candidates_mapping.reserve(candidates.size());
-  for (const auto* candidate : candidates) {
-    candidates_mapping.emplace(
-      candidate->Meta().name,
-      CandidateMapping{.old = {candidate, num_candidates++}});
-  }
-
-  size_t found = 0;
-  bool has_removals = false;
-  const auto candidate_not_found = candidates_mapping.end();
-
-  for (const auto& segment : index) {
-    const auto& meta = segment.Meta();
-    const auto it = candidates_mapping.find(meta.name);
-
-    if (candidate_not_found == it) {
-      // not a candidate
-      continue;
-    }
-
-    auto& mapping = it->second;
-    const auto* new_segment = mapping.new_segment;
-
-    if (new_segment && new_segment->Meta().version >= meta.version) {
-      // mapping already has a newer segment version
-      continue;
-    }
-
-    SDB_ASSERT(mapping.old.segment);
-    if constexpr (std::is_same_v<SegmentReader,
-                                 std::decay_t<decltype(segment)>>) {
-      mapping.new_segment = segment.GetImpl().get();
-    } else {
-      mapping.new_segment = &segment;
-    }
-
-    // FIXME(gnusi): can't we just check pointers?
-    SDB_ASSERT(mapping.old.segment);
-    has_removals |= (meta.version != mapping.old.segment->Meta().version);
-
-    if (++found == num_candidates) {
-      break;
-    }
-  }
-
-  return {found, has_removals};
+uint64_t SegmentId(const SubReader& segment) {
+  return utils::downCast<SegmentReader>(segment).GetImpl()->Id();
 }
 
-bool MapRemovals(const CandidatesMapping& candidates_mapping,
-                 const MergeWriter& merger, DocumentMaskBuilder& docs_mask) {
-  for (auto& mapping : candidates_mapping) {
-    const auto& segment_mapping = mapping.second;
-    const auto* new_segment = segment_mapping.new_segment;
-    SDB_ASSERT(new_segment);
-    const auto& new_meta = new_segment->Meta();
-    SDB_ASSERT(segment_mapping.old.segment);
-    const auto& old_meta = segment_mapping.old.segment->Meta();
-
-    if (new_meta.version != old_meta.version) {
-      const auto& merge_ctx = merger[segment_mapping.old.index];
-      auto merged_itr = merge_ctx.reader->docs_iterator();
-      auto current_itr = new_segment->docs_iterator();
-
-      // this only masks documents of a single segment
-      // this works due to the current architectural approach of segments,
-      // either removals are new and will be applied during flush_all()
-      // or removals are in the docs_mask and still be applied by the reader
-      // passed to the merge_writer
-
-      // no more docs in merged reader
-      auto merged = merged_itr->Next();
-      auto current = doc_limits::invalid();
-      if (doc_limits::eof(merged)) {
-        current = current_itr->Next();
-        if (!doc_limits::eof(current)) {
-          SDB_WARN(IRESEARCH, "Failed to map removals for compacted segment '",
-                   old_meta.name, "' version '", old_meta.version,
-                   "' from current segment '", new_meta.name, "' version '",
-                   new_meta.version, "', current segment has doc_id '", current,
-                   "' not present in the compacted segment");
-
-          return false;  // current reader has unmerged docs
-        }
-
-        continue;  // continue wih next mapping
-      }
-
-      // mask all remaining doc_ids
-      current = current_itr->Next();
-      if (doc_limits::eof(current)) {
-        do {
-          SDB_ASSERT(!merge_ctx.remap.IsMasked(merged));
-          docs_mask.Add(merge_ctx.remap.Remap(merged));
-          merged = merged_itr->Next();
-        } while (!doc_limits::eof(merged));
-
-        continue;  // continue wih next mapping
-      }
-
-      // validate that all docs in the current reader were merged, and add any
-      // removed docs to the merged mask
-      for (;;) {
-        while (merged < current) {
-          SDB_ASSERT(!merge_ctx.remap.IsMasked(merged));
-          docs_mask.Add(merge_ctx.remap.Remap(merged));
-
-          merged = merged_itr->Next();
-          if (doc_limits::eof(merged)) {
-            SDB_WARN(IRESEARCH,
-                     "Failed to map removals for compacted segment '",
-                     old_meta.name, "' version '", old_meta.version,
-                     "' from current segment '", new_meta.name, "' version '",
-                     new_meta.version, "', current segment has doc_id '",
-                     current, "' not present in the compacted segment");
-
-            return false;  // current reader has unmerged docs
-          }
-        }
-
-        if (merged > current) {
-          SDB_WARN(IRESEARCH, "Failed to map removals for compacted segment '",
-                   old_meta.name, "' version '", old_meta.version,
-                   "' from current segment '", new_meta.name, "' version '",
-                   new_meta.version, "', current segment has doc_id '", current,
-                   "' not present in the compacted segment");
-
-          return false;  // current reader has unmerged docs
-        }
-
-        // no more docs in merged reader
-        merged = merged_itr->Next();
-        if (doc_limits::eof(merged)) {
-          current = current_itr->Next();
-          if (!doc_limits::eof(current)) {
-            SDB_WARN(IRESEARCH,
-                     "Failed to map removals for compacted segment '",
-                     old_meta.name, "' version '", old_meta.version,
-                     "' from current segment '", new_meta.name, "' version '",
-                     new_meta.version, "', current segment has doc_id '",
-                     current, "' not present in the compacted segment");
-
-            return false;  // current reader has unmerged docs
-          }
-
-          break;  // continue wih next mapping
-        }
-
-        // mask all remaining doc_ids
-        current = current_itr->Next();
-        if (doc_limits::eof(current)) {
-          do {
-            SDB_ASSERT(!merge_ctx.remap.IsMasked(merged));
-            docs_mask.Add(merge_ctx.remap.Remap(merged));
-            merged = merged_itr->Next();
-          } while (!doc_limits::eof(merged));
-
-          break;  // continue wih next mapping
-        }
-      }
-    }
+std::vector<DocMap> MergeMaps(CompactionView candidates,
+                              const MergeWriter& merger,
+                              const SegmentReaderImpl& merged) {
+  std::vector<DocMap> maps;
+  maps.reserve(candidates.size());
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    const auto& segment =
+      *utils::downCast<SegmentReader>(*candidates[i]).GetImpl();
+    maps.push_back({.source = segment.Id(),
+                    .target = merged.Id(),
+                    .mask = segment.SharedDocsMask(),
+                    .rank_end = segment.Meta().live_docs_count,
+                    .base = merger[i].remap.base_id,
+                    .next = merged.DocMaps()});
   }
+  return maps;
+}
 
-  return true;
+void CarryRemovals(const DocMap& map, const SubReader* source,
+                   DocumentMaskBuilder& carried) {
+  if (source == nullptr) {
+    carried.AddRange(map.base, map.base + (map.rank_end - map.rank_begin));
+  } else if (const auto* mask = source->docs_mask()) {
+    MapDocs(map, *mask, carried);
+  }
 }
 
 std::string ToString(CompactionView compaction) {
@@ -398,16 +188,6 @@ Sync SyncOf(bool durable, bool meta_written) noexcept {
   return meta_written ? Sync::Meta : Sync::None;
 }
 
-bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
-  if (name.size() < 2 || name.front() != '_') {
-    return false;
-  }
-  const auto* begin = name.data() + 1;
-  const auto* end = name.data() + name.size();
-  const auto [ptr, ec] = fast_float::from_chars(begin, end, id);
-  return ec == std::errc{} && (ptr == end || *ptr == '.');
-}
-
 uint64_t MaxSegmentId(const Directory& dir) {
   uint64_t max_id = 0;
   dir.visit([&max_id](std::string_view name) {
@@ -419,30 +199,50 @@ uint64_t MaxSegmentId(const Directory& dir) {
   return max_id;
 }
 
-DocumentMaskBuilder CopyMask(const auto& segment) {
-  if (const auto* mask = segment.docs_mask(); mask) {
-    return DocumentMaskBuilder{*mask};
-  } else {
-    return DocumentMaskBuilder{};
-  }
-}
-
 struct PublishedSegment {
   IndexSegment segment;
   SegmentReader reader;
   Sync sync;
 };
 
-std::vector<const IndexWriter::QueryContext*> CollectQueries(
-  std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments) {
-  std::vector<const IndexWriter::QueryContext*> queries;
-  for (const auto& segment : segments) {
-    SDB_ASSERT(segment != nullptr);
-    for (const auto& query : segment->queries) {
-      queries.emplace_back(&query);
+void SortUnique(std::vector<int64_t>& terms) {
+  if (!absl::c_is_sorted(terms)) {
+    absl::c_sort(terms);
+  }
+  terms.erase(std::unique(terms.begin(), terms.end()), terms.end());
+}
+
+void RemoveTerms(std::span<const int64_t> keys, field_id key_field,
+                 const SubReader& segment, const auto& remove) {
+  const auto* field = segment.field(key_field);
+  if (!field) {
+    return;
+  }
+  const auto first = absl::c_lower_bound(keys, TermRemoval::Key(field->min()));
+  const auto last =
+    std::upper_bound(first, keys.end(), TermRemoval::Key(field->max()));
+  if (first == last) {
+    return;
+  }
+  auto terms = field->iterator();
+  TermPostings::ptr postings;
+  byte_type buf[sizeof(int64_t)];
+  doc_id_t docs[doc_limits::kBlockSize];
+  for (auto key = first; key != last; ++key) {
+    if (!terms->seek(TermRemoval::Term(*key, buf))) {
+      continue;
+    }
+    if (const auto& meta = terms->cookie(); meta.docs_count == 1) {
+      remove(*key, doc_limits::min() + meta.doc_delta);
+      continue;
+    }
+    postings = terms->ReusePostings(IndexFeatures::None, std::move(postings));
+    while (const auto n = postings->NextDocs(docs, nullptr)) {
+      for (uint32_t i = 0; i != n; ++i) {
+        remove(*key, docs[i]);
+      }
     }
   }
-  return queries;
 }
 
 struct PublishResult {
@@ -450,11 +250,25 @@ struct PublishResult {
   bool modified = false;
 };
 
-PublishResult UpdateExisting(
-  const DirectoryReaderImpl& committed_reader,
-  const CompactingSegments& segment_mask,
-  std::span<const IndexWriter::QueryContext* const> queries, Directory& dir,
-  const ProgressReportCallback& progress) {
+bool MergePublished(DocumentMaskBuilder& removed,
+                    const DocumentMask* published) {
+  if (removed.Empty()) {
+    return false;
+  }
+  if (published == nullptr) {
+    return true;
+  }
+  const auto masked = published->Count();
+  removed.Merge(*published);
+  return removed.Count() > masked;
+}
+
+PublishResult UpdateExisting(const DirectoryReaderImpl& committed_reader,
+                             const CompactingSegments& segment_mask,
+                             uint64_t all_tick,
+                             std::span<DocumentMaskBuilder> removed,
+                             Directory& dir,
+                             const ProgressReportCallback& progress) {
   const auto& committed_meta = committed_reader.Meta();
   const size_t committed_reader_size = committed_reader.size();
   size_t current_segment_index = 0;
@@ -462,153 +276,73 @@ PublishResult UpdateExisting(
   PublishResult result;
   result.segments.reserve(committed_reader_size);
 
-  for (DocumentMaskBuilder deleted_docs;
-       const auto& existing_segment : committed_reader.GetReaders()) {
+  for (const auto& existing_segment : committed_reader.GetReaders()) {
+    const auto segment_index = current_segment_index++;
     const auto& index_segment =
-      committed_meta.index_meta.segments[current_segment_index];
-    progress("Stage 1: Apply removals to the existing segments",
-             current_segment_index++, committed_reader_size);
+      committed_meta.index_meta.segments[segment_index];
+    progress("Stage 1: Apply removals to the existing segments", segment_index,
+             committed_reader_size);
 
     // skip already masked segments
     if (segment_mask.contains(existing_segment->Meta().name)) {
       continue;
     }
 
-    SDB_ASSERT(deleted_docs.Empty());
-
-    // mask documents matching filters from segment_contexts
-    // (i.e. from new operations)
-    for (const auto* query : queries) {
-      // FIXME(gnusi): optimize PK queries
-      RemoveFromSegment(deleted_docs, *query, existing_segment);
+    if (all_tick != writer_limits::kMinTick) {
+      result.modified = true;
+      continue;
     }
 
-    // Write docs_mask if masks added
-    if (const size_t num_removals = deleted_docs.Count(); num_removals) {
-      if (existing_segment.live_docs_count() == num_removals) {
-        deleted_docs.Clear();
-        result.modified = true;
-        continue;
-      }
-
-      // Append removals
-      IndexSegment segment{.meta = index_segment.meta};
-      segment.meta.docs_mask = [&] {
-        auto docs_mask = CopyMask(existing_segment);
-        docs_mask.Merge(deleted_docs);
-        return std::make_shared<const DocumentMask>(
-          std::move(docs_mask).Finish());
-      }();
-
-      // Write with new mask
-      index_utils::FlushIndexSegment(dir, segment, true);
-      deleted_docs.Clear();
-      auto reader = existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
-
-      result.segments.emplace_back(
-        std::move(segment), SegmentReader{std::move(reader)}, Sync::Meta);
-    } else {
+    auto& docs_mask = removed[segment_index];
+    if (!MergePublished(docs_mask, existing_segment.docs_mask())) {
       result.segments.emplace_back(index_segment, existing_segment, Sync::None);
+      continue;
     }
+    if (docs_mask.Count() == existing_segment.docs_count()) {
+      result.modified = true;
+      continue;
+    }
+
+    // Append removals
+    IndexSegment segment{.meta = index_segment.meta};
+    segment.meta.docs_mask =
+      std::make_shared<const DocumentMask>(std::move(docs_mask).Finish());
+
+    // Write with new mask
+    index_utils::FlushIndexSegment(dir, segment, true);
+    auto reader = existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
+
+    result.segments.emplace_back(std::move(segment),
+                                 SegmentReader{std::move(reader)}, Sync::Meta);
   }
   return result;
 }
 
-struct AddIncomingResult : PublishResult {
-  CompactingSegments replaced;
-};
-
-AddIncomingResult AddIncoming(
-  auto& incoming_segments, std::span<const PublishedSegment> existing,
-  std::span<const IndexWriter::QueryContext* const> queries, Directory& dir,
-  const ProgressReportCallback& progress) {
+PublishResult AddIncoming(auto& incoming_segments, uint64_t all_tick,
+                          std::span<DocumentMaskBuilder> removed,
+                          Directory& dir,
+                          const ProgressReportCallback& progress) {
   size_t current_incoming_index = 0;
 
-  AddIncomingResult result;
+  PublishResult result;
   for (auto& incoming : incoming_segments) {
-    progress("Stage 2: Handling incoming segments", current_incoming_index++,
+    const auto incoming_index = current_incoming_index++;
+    progress("Stage 2: Handling incoming segments", incoming_index,
              incoming_segments.size());
 
     SDB_ASSERT(incoming.reader);
+    if (all_tick != writer_limits::kMinTick && incoming.tick <= all_tick) {
+      result.modified = true;
+      continue;
+    }
     auto& meta = incoming.segment.meta;
     auto& reader = incoming.reader;
-    DocumentMaskBuilder docs_mask;
-
-    bool docs_mask_modified = false;
-
-    const CompactionView candidates{incoming.compaction_ctx.candidates};
-
-    const auto pending_compaction = incoming.compaction_ctx.merger.has_value();
-
-    if (pending_compaction) {
-      // Pending compaction request
-      CandidatesMapping mappings;
-      const auto [count, has_removals] = MapCandidates(
-        mappings, candidates,
-        std::views::transform(existing, &PublishedSegment::reader));
-
-      if (count != candidates.size()) {
-        // At least one candidate is missing in pending meta can't finish
-        // compaction
-        SDB_DEBUG(IRESEARCH, "Failed to finish merge for segment '", meta.name,
-                  "', found only '", count, "' out of '", candidates.size(),
-                  "' candidates");
-
-        continue;  // Skip this particular compaction
-      }
-
-      // Have some changes, apply removals
-      if (has_removals) {
-        if (!MapRemovals(mappings, *incoming.compaction_ctx.merger,
-                         docs_mask)) {
-          // Compacted segment has docs missing from 'segments'
-          SDB_DEBUG(IRESEARCH, "Failed to finish merge for segment '",
-                    meta.name,
-                    "', due to removed documents still present "
-                    "the compaction candidates");
-
-          continue;  // Skip this particular compaction
-        }
-
-        // We're done with removals for pending compaction
-        // they have been already applied to candidates above
-        // and successfully remapped to compacted segment
-        docs_mask_modified |= true;
-      }
-
-      // Mask mapped candidates segments from the to-be added new segment
-      for (const auto& mapping : mappings) {
-        const auto* candidate = mapping.second.old.segment;
-        SDB_ASSERT(candidate);
-        result.replaced.emplace(candidate->Meta().name);
-      }
-    } else {
-      // During compaction doc_mask could be already populated even for just
-      // merged segment. Pending already adopted/compacted segment, apply
-      // removals mask documents matching filters from segment_contexts
-      // (i.e. from new operations)
-      for (const auto* query : queries) {
-        // skip queries which not affect this
-        if (incoming.tick <= query->tick) {
-          // FIXME(gnusi): optimize PK queries
-          docs_mask_modified |= RemoveFromSegment(docs_mask, *query, *reader);
-        }
-      }
-      if (incoming.removal) {
-        docs_mask_modified |= RemoveFromSegment(
-          docs_mask, {incoming.removal, writer_limits::kMinTick}, *reader);
-      }
-    }
-
+    auto docs_mask = std::move(removed[incoming_index]);
     const auto* published = reader->docs_mask();
-    size_t masked = 0;
+    size_t masked = published != nullptr ? published->Count() : 0;
+    const bool docs_mask_modified = MergePublished(docs_mask, published);
     if (docs_mask_modified) {
-      if (published != nullptr) {
-        docs_mask.Merge(*published);
-      }
       masked = docs_mask.Count();
-    } else if (published != nullptr) {
-      masked = published->Count();
     }
 
     // Skip empty segments
@@ -623,9 +357,9 @@ AddIncomingResult AddIncoming(
         std::make_shared<const DocumentMask>(std::move(docs_mask).Finish());
     }
 
-    if (docs_mask_modified || pending_compaction) {
-      index_utils::FlushIndexSegment(dir, incoming.segment,
-                                     !pending_compaction);
+    const bool unwritten = incoming.segment.filename.empty();
+    if (docs_mask_modified || unwritten) {
+      index_utils::FlushIndexSegment(dir, incoming.segment, !unwritten);
     }
 
     if (docs_mask_modified) {
@@ -634,7 +368,7 @@ AddIncomingResult AddIncoming(
 
     result.segments.emplace_back(
       std::move(incoming.segment), SegmentReader{std::move(reader)},
-      SyncOf(candidates.empty(), docs_mask_modified));
+      SyncOf(incoming.compaction_ctx.candidates.empty(), docs_mask_modified));
     result.modified = true;
   }
   return result;
@@ -642,7 +376,6 @@ AddIncomingResult AddIncoming(
 
 std::vector<FlushedSegmentContext> OpenFlushed(
   std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments,
-  std::span<const IndexWriter::QueryContext* const> queries,
   const Directory& dir, const IndexReaderOptions& reader_options,
   const ProgressReportCallback& progress) {
   // count total number of segments once
@@ -666,7 +399,6 @@ std::vector<FlushedSegmentContext> OpenFlushed(
     for (auto& flushed : segment->flushed) {
       SDB_ASSERT(flushed.committed_docs == flushed.docs.size());
       SDB_ASSERT(!flushed.docs.empty());
-      const auto flushed_first_tick = flushed.docs.TickAt(0);
       progress("Stage 3: Creating new/reopen old segments",
                current_flushed_segments++, total_flushed_segments);
 
@@ -677,20 +409,148 @@ std::vector<FlushedSegmentContext> OpenFlushed(
       auto reader = SegmentReaderImpl::Open(dir, flushed.meta, reader_options);
       SDB_ASSERT(reader);
 
-      auto& segment_ctx = segment_ctxs.emplace_back(std::move(reader), flushed);
-
-      // mask documents matching filters from all flushed segment_contexts
-      // (i.e. from new operations)
-      for (const auto* query : queries) {
-        // skip queries which not affect this FlushedSegment
-        if (flushed_first_tick <= query->tick) {
-          // FIXME(gnusi): optimize PK queries
-          segment_ctx.Remove(*query);
-        }
-      }
+      segment_ctxs.emplace_back(std::move(reader), flushed);
     }
   }
   return segment_ctxs;
+}
+
+struct RemovalTarget {
+  const SegmentReaderImpl* reader;
+  DocumentMaskBuilder* removed;
+};
+
+using RemovalTargets = containers::FlatHashMap<uint64_t, RemovalTarget>;
+
+void ResolveRemoval(const DocRemoval& removal, const RemovalTargets& targets) {
+  const auto removed_of = [&](uint64_t id) -> DocumentMaskBuilder* {
+    const auto it = targets.find(id);
+    return it != targets.end() ? it->second.removed : nullptr;
+  };
+  const auto follow = [&](this const auto& self, const DocMapsSlot& slot,
+                          const DocumentMask& docs) -> void {
+    for (const auto& map : slot.maps) {
+      if (auto* removed = removed_of(map.target)) {
+        MapDocs(map, docs, *removed);
+      } else if (DocumentMaskBuilder moved; MapDocs(map, docs, moved)) {
+        SDB_ASSERT(map.next != nullptr);
+        self(*map.next, std::move(moved).Take());
+      }
+    }
+  };
+  for (const auto& group : removal.groups) {
+    if (auto* removed = removed_of(group.segment)) {
+      removed->Merge(group.docs);
+    } else if (group.maps != nullptr) {
+      follow(*group.maps, group.docs);
+    }
+  }
+}
+
+void ResolveTerms(const TermRemoval& removal, field_id key_field, uint64_t tick,
+                  std::span<FlushedSegmentContext> flushed) {
+  for (auto& segment : flushed) {
+    const auto end = static_cast<doc_id_t>(
+      doc_limits::min() + segment.flushed.docs.UpperBound(tick));
+    RemoveTerms(removal.terms, key_field, *segment.reader,
+                [&](int64_t, doc_id_t doc) {
+                  if (doc < end) {
+                    segment.flushed.docs_mask.Add(doc);
+                  }
+                });
+  }
+}
+
+uint64_t ResolveRemovals(
+  std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments,
+  const DirectoryReaderImpl& committed_reader,
+  const CompactingSegments& segment_mask, const auto& incoming,
+  const auto& merges, std::span<FlushedSegmentContext> flushed,
+  std::span<DocumentMaskBuilder> removed, field_id key_field) {
+  if (merges.empty() && absl::c_all_of(segments, [](const auto& segment) {
+        return segment->queries.empty();
+      })) {
+    return writer_limits::kMinTick;
+  }
+  const auto& readers = committed_reader.GetReaders();
+  RemovalTargets targets;
+  targets.reserve(removed.size());
+  for (size_t i = 0; i != readers.size(); ++i) {
+    const auto& reader = *readers[i].GetImpl();
+    const bool replaced = segment_mask.contains(reader.Meta().name);
+    targets.emplace(reader.Id(),
+                    RemovalTarget{&reader, replaced ? nullptr : &removed[i]});
+  }
+  for (size_t i = 0; i != incoming.size(); ++i) {
+    const auto& reader = *incoming[i].reader;
+    targets.emplace(reader.Id(),
+                    RemovalTarget{&reader, &removed[readers.size() + i]});
+  }
+  for (const auto& [source, unlinked] : merges) {
+    const auto it = targets.find(source);
+    const auto* current = it != targets.end() ? it->second.reader : nullptr;
+    for (const auto& map :
+         current != nullptr ? current->DocMaps()->maps : unlinked) {
+      const auto target = targets.find(map.target);
+      SDB_ASSERT(target != targets.end() && target->second.removed != nullptr);
+      CarryRemovals(map, current, *target->second.removed);
+    }
+  }
+  uint64_t all_tick = writer_limits::kMinTick;
+  std::vector<const TermRemoval*> term_removals;
+  for (const auto& segment : segments) {
+    SDB_ASSERT(segment != nullptr);
+    for (const auto& entry : segment->queries) {
+      std::visit(
+        absl::Overload{[&](const std::shared_ptr<const DocRemoval>& positions) {
+                         ResolveRemoval(*positions, targets);
+                       },
+                       [&](const TermRemoval& terms) {
+                         ResolveTerms(terms, key_field, entry.tick, flushed);
+                         term_removals.emplace_back(&terms);
+                       },
+                       [&](IndexWriter::QueuedRemoval::AllDocs) {
+                         all_tick = std::max(all_tick, entry.tick);
+                       }},
+        entry.removal);
+    }
+  }
+  if (term_removals.empty()) {
+    return all_tick;
+  }
+  std::vector<int64_t> unsettled;
+  if (term_removals.size() == 1) {
+    unsettled = term_removals.front()->terms;
+  } else {
+    unsettled = term_removals | std::views::transform(&TermRemoval::terms) |
+                std::views::join | std::ranges::to<std::vector>();
+    SortUnique(unsettled);
+  }
+  std::vector<int64_t> settled;
+  for (const auto& target : targets | std::views::values) {
+    if (!target.removed) {
+      continue;
+    }
+    const auto masked = target.reader->MaskedDocs();
+    settled.clear();
+    RemoveTerms(unsettled, key_field, *target.reader,
+                [&](int64_t key, doc_id_t doc) {
+                  if (!masked.Contains(doc) && target.removed->Add(doc)) {
+                    settled.emplace_back(key);
+                  }
+                });
+    auto next = settled.begin();
+    std::erase_if(unsettled, [&](int64_t key) {
+      while (next != settled.end() && *next < key) {
+        ++next;
+      }
+      return next != settled.end() && *next == key;
+    });
+    if (unsettled.empty()) {
+      break;
+    }
+  }
+  return all_tick;
 }
 
 PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
@@ -837,6 +697,12 @@ IndexWriter::Transaction::FlushAndFsync() {
   return flushed;
 }
 
+void IndexWriter::Transaction::Remove(TermRemoval removal) {
+  SDB_ASSERT(_writer->_key_field != field_limits::invalid());
+  SortUnique(removal.terms);
+  Queue(std::move(removal));
+}
+
 void IndexWriter::Transaction::Reset() noexcept {
   // TODO(mbkkt) rename Reset() to Rollback()
   if (auto* segment = _active.Segment(); segment != nullptr) {
@@ -844,16 +710,11 @@ void IndexWriter::Transaction::Reset() noexcept {
   }
 }
 
-void IndexWriter::Transaction::RegisterFlush() noexcept {
-  if (_active.Segment() != nullptr && _active.Flush() == nullptr) {
-    _writer->GetFlushContext()->AddToPending(_active);
-  }
-}
-
 bool IndexWriter::Transaction::CommitImpl(
   uint64_t last_tick, const SourcePosition& position) noexcept try {
   auto* segment = _active.Segment();
   SDB_ASSERT(segment != nullptr);
+  SDB_IF_FAILURE("IndexWriter::Transaction::Commit") { throw std::bad_alloc{}; }
   segment->Commit(_queries, last_tick);
   _writer->GetFlushContext()->Emplace(std::move(_active), position);
   SDB_ASSERT(_active.Segment() == nullptr);
@@ -1016,6 +877,7 @@ void IndexWriter::FlushContext::Reset() noexcept {
   }
 
   incoming.clear();
+  doc_maps.clear();
   segments.clear();
   position = {};
   segment_mask.clear();
@@ -1036,6 +898,39 @@ void IndexWriter::Cleanup(FlushContext& curr) noexcept {
     for (const auto* candidate : candidates) {
       _compacting.segments.erase(candidate->Meta().name);
     }
+  }
+  if (!curr.doc_maps.empty()) {
+    auto ctx = GetFlushContext();
+    std::lock_guard lock{ctx->pending_mutex};
+    SwapDocMaps(curr);
+  }
+}
+
+void IndexWriter::SwapDocMaps(FlushContext& flushed) noexcept {
+  if (flushed.doc_maps.empty()) {
+    return;
+  }
+  for (const auto& segment : _committed_reader->GetReaders()) {
+    const auto& reader = *segment.GetImpl();
+    if (const auto it = flushed.doc_maps.find(reader.Id());
+        it != flushed.doc_maps.end()) {
+      reader.DocMaps()->maps.swap(it->second);
+    }
+  }
+}
+
+void IndexWriter::FlushContext::Absorb(std::vector<DocMap>&& maps) {
+  containers::FlatHashMap<uint64_t, size_t> counts;
+  for (const auto& map : maps) {
+    ++counts[map.source];
+  }
+  doc_maps.reserve(doc_maps.size() + counts.size());
+  for (const auto [source, count] : counts) {
+    auto& slot = doc_maps[source];
+    slot.reserve(slot.size() + count);
+  }
+  for (auto& map : maps) {
+    doc_maps.find(map.source)->second.push_back(std::move(map));
   }
 }
 
@@ -1353,6 +1248,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
     std::move(options.meta_payload_writer), std::move(reader));
   writer->_db = options.db;
   writer->_ann_env = options.ann_env;
+  writer->_key_field = options.key_field;
   writer->_hnsw_bases = std::move(hnsw_bases);
   // Wrap the provider callbacks into the fallback options (tests).
   if (options.column_options || options.norm_column_id) {
@@ -1543,116 +1439,56 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   const auto current_committed_reader = _committed_reader;
   SDB_ASSERT(current_committed_reader != nullptr);
   const bool pending = _pending_state.Valid();
-  // Guard against concurrent Commit/etc
+  auto ctx = GetFlushContext();
   if (pending) {
-    auto ctx = GetFlushContext();
     lock.unlock();
-    // after some transaction was started:
-    if (committed_reader != current_committed_reader) {
-      // If some segment already not in current reader
-      // and we're waiting commit -- abort
-      auto begin = current_committed_reader->begin();
-      auto end = current_committed_reader->end();
-      for (const auto* candidate : candidates) {
-        std::string_view id{candidate->Meta().name};
-        if (end == std::find_if(begin, end, [id](const SubReader& s) {
-              // FIXME(gnusi): compare pointers?
-              return id == s.Meta().name;
-            })) {
-          SDB_DEBUG(
-            IRESEARCH, "Failed to start compaction for index generation '",
-            committed_reader->Meta().index_meta.gen, "', not found segment ",
-            candidate->Meta().name, " in committed state");
-          result.error = CompactionError::Busy;
-          co_return result;
-        }
-      }
-    }
-    auto refs = dir.GetRefs();
-    // Prevent concurrent modification of incoming segments
-    std::lock_guard ctx_lock{ctx->pending_mutex};
-    // register compaction for the next transaction
-    ctx->incoming.emplace_back(
-      std::move(compaction_segment), writer_limits::kMaxTick,
-      // skip removals, will accumulate removals from existing candidates
-      std::move(refs),              // do not forget to track refs
-      std::move(candidates),        // compaction context candidates
-      std::move(pending_reader),    // compacted reader
-      std::move(committed_reader),  // compaction context meta
-      std::move(merger));
-    SDB_TRACE(IRESEARCH, "Compaction id='", run_id,
-              "' successfully finished: pending");
-    result.error = CompactionError::Pending;
-    co_return result;
   }
-
-  // before new transaction was started:
-  CandidatesMapping mappings;
-  if (committed_reader != current_committed_reader) {
-    // there was a Commit(s) since compaction was started
-    const auto [count, has_removals] =
-      MapCandidates(mappings, candidates, *current_committed_reader);
-    if (count != candidates.size()) {
-      // at least one candidate is missing can't finish compaction
+  const bool changed = committed_reader != current_committed_reader;
+  containers::FlatHashMap<uint64_t, const SubReader*> current;
+  if (changed) {
+    current.reserve(current_committed_reader->size());
+    for (const SubReader& segment : *current_committed_reader) {
+      current.emplace(SegmentId(segment), &segment);
+    }
+    if (!absl::c_all_of(candidates, [&](const SubReader* candidate) {
+          return current.contains(SegmentId(*candidate));
+        })) {
       SDB_DEBUG(IRESEARCH, "Failed to finish compaction id='", run_id,
                 "' for segment '", compaction_segment.meta.name,
-                "', found only '", count, "' out of '", candidates.size(),
-                "' candidates");
+                "': a candidate left the committed state");
       result.error = CompactionError::Busy;
       co_return result;
     }
+  }
 
-    // handle removals if something changed
-    if (has_removals) {
-      DocumentMaskBuilder docs_mask;
-      if (!MapRemovals(mappings, merger, docs_mask)) {
-        // compacted segment has docs missing from
-        // current_committed_meta->segments()
-        SDB_DEBUG(IRESEARCH, "Failed to finish compaction id='", run_id,
-                  "' for segment '", compaction_segment.meta.name,
-                  "', due removed documents still present "
-                  "the compaction candidates");
-
-        result.error = CompactionError::Busy;
-        co_return result;
+  auto maps = MergeMaps(candidates, merger, *pending_reader);
+  if (!pending) {
+    if (changed) {
+      DocumentMaskBuilder carried;
+      for (const auto& map : maps) {
+        CarryRemovals(map, current.at(map.source), carried);
       }
-
-      SDB_ASSERT(!docs_mask.Empty());
-      compaction_segment.meta.docs_mask =
-        std::make_shared<const DocumentMask>(std::move(docs_mask).Finish());
+      if (!carried.Empty()) {
+        compaction_segment.meta.docs_mask =
+          std::make_shared<const DocumentMask>(std::move(carried).Finish());
+      }
+    }
+    index_utils::FlushIndexSegment(dir, compaction_segment, false);
+    if (compaction_segment.meta.docs_mask) {
+      pending_reader = pending_reader->UpdateMeta(dir, compaction_segment.meta);
     }
   }
-
-  index_utils::FlushIndexSegment(dir, compaction_segment, false);
-
-  if (compaction_segment.meta.docs_mask) {
-    pending_reader = pending_reader->UpdateMeta(dir, compaction_segment.meta);
-  }
-
   auto refs = dir.GetRefs();
-  auto ctx = GetFlushContext();
   std::lock_guard ctx_lock{ctx->pending_mutex};
   auto& segment_mask = ctx->segment_mask;
-  segment_mask.reserve(segment_mask.size() + mappings.size() +
-                       candidates.size());
+  segment_mask.reserve(segment_mask.size() + candidates.size());
+  ctx->incoming.reserve(ctx->incoming.size() + 1);
+  ctx->Absorb(std::move(maps));
   const auto& pending_segment = ctx->incoming.emplace_back(
-    std::move(compaction_segment), writer_limits::kMinTick,
-    // removals must be applied to the compacted segment
-    std::move(refs),             // do not forget to track refs
-    std::move(candidates),       // compaction context candidates
-    std::move(pending_reader),   // compacted reader
-    std::move(committed_reader)  // compaction context meta
-  );
-  // noexcept part: mask compacted segments
+    std::move(compaction_segment), std::move(refs), std::move(candidates),
+    std::move(pending_reader), std::move(committed_reader));
   for (const auto* candidate : pending_segment.compaction_ctx.candidates) {
     segment_mask.emplace(candidate->Meta().name);
-  }
-  if (!mappings.empty()) {
-    for (const auto& segment : *current_committed_reader) {
-      if (mappings.contains(segment.Meta().name)) {
-        segment_mask.emplace(segment.Meta().name);
-      }
-    }
   }
   SDB_TRACE(IRESEARCH, "Compaction id='", run_id,
             "' successfully finished: Name='",
@@ -1660,7 +1496,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
             "', docs_count=", pending_segment.segment.meta.docs_count,
             ", live_docs_count=", pending_segment.segment.meta.live_docs_count,
             ", size=", pending_segment.segment.meta.byte_size);
-  result.error = CompactionError::Ok;
+  result.error = pending ? CompactionError::Pending : CompactionError::Ok;
   co_return result;
 }
 
@@ -1733,11 +1569,9 @@ IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
   return {*this, floor};
 }
 
-void IndexWriter::ReplaceSegments(
-  std::span<const std::string_view> replaced,
-  std::span<const std::string_view> adopted_metas,
-  absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider) {
-  if (replaced.empty() && adopted_metas.empty()) {
+void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,
+                                  std::vector<Replacement> replacements) {
+  if (replaced.empty() && replacements.empty()) {
     return;
   }
 
@@ -1749,11 +1583,12 @@ void IndexWriter::ReplaceSegments(
     std::shared_ptr<const SegmentReaderImpl> reader;
   };
   std::vector<Adopted> adopted;
-  adopted.reserve(adopted_metas.size());
-  for (const auto meta_file : adopted_metas) {
+  adopted.reserve(replacements.size());
+  std::vector<DocMap> maps;
+  for (auto& replacement : replacements) {
     Adopted entry;
-    entry.segment.filename = meta_file;
-    segment_meta::Read(_dir, entry.segment.meta, meta_file);
+    entry.segment.filename = replacement.meta_file;
+    segment_meta::Read(_dir, entry.segment.meta, replacement.meta_file);
     if (entry.segment.meta.live_docs_count == 0) {
       continue;  // nothing to adopt; the sources are still replaced
     }
@@ -1766,6 +1601,11 @@ void IndexWriter::ReplaceSegments(
     entry.reader = SegmentReaderImpl::Open(_dir, entry.segment.meta,
                                            GetSnapshotImpl()->Options());
     entry.refs.emplace_back(std::move(meta_ref));
+    for (auto& map : replacement.absorbed) {
+      map.target = entry.reader->Id();
+      map.next = entry.reader->DocMaps();
+      maps.push_back(std::move(map));
+    }
     adopted.push_back(std::move(entry));
   }
 
@@ -1783,7 +1623,8 @@ void IndexWriter::ReplaceSegments(
   auto committed_reader = GetSnapshotImpl();
   Compaction candidates;
   candidates.reserve(replaced.size());
-  for (const auto name : replaced) {
+  for (const auto* replaced_segment : replaced) {
+    const auto& name = replaced_segment->Meta().name;
     const SubReader* found = nullptr;
     for (const auto& segment : *committed_reader) {
       if (segment.Meta().name == name) {
@@ -1795,18 +1636,11 @@ void IndexWriter::ReplaceSegments(
       // Not a lost race: a removal that takes a segment's last live doc masks
       // the whole segment out rather than giving it a docs_mask (PrepareFlush
       // stage 1), so a source whose rows were all deleted while the caller was
-      // rebuilding it is simply gone. Nothing left to mask, and the caller's
-      // replacement is still adopted -- whatever deleted those rows reaches the
-      // replacement too, by tick if the removal is still pending and through
-      // the host's own reissue if it was already applied.
+      // rebuilding it is simply gone. Nothing left to mask; the commit masks
+      // its rows in the replacement.
       continue;
     }
     candidates.push_back(found);
-  }
-
-  QueryContext::FilterPtr removal;
-  if (!removal_provider(removal)) {
-    return;
   }
 
   auto flush = GetFlushContext();
@@ -1822,22 +1656,18 @@ void IndexWriter::ReplaceSegments(
     masked.emplace_back(
       flush->masked_names.emplace_back(candidate->Meta().name));
   }
+  flush->Absorb(std::move(maps));
 
   // Mutating tail
-  // No merger: the replacements are already written, so PrepareFlush applies
-  // pending removals by tick rather than remapping them through a merge. The
-  // pinned reader rides along so the files it names survive until the commit
-  // publishes them.
+  // The replacements are already written, and the commit carries what reached
+  // the replaced segments since through their doc maps. The pinned reader rides
+  // along so the files it names survive until the commit publishes them.
   for (auto& entry : adopted) {
     // A copy per segment: the ctor takes the pin by rvalue, and every segment
     // needs its own so the files stay referenced until the commit.
-    // MinTick used here as pending removes must reach replaced segments.
-    flush->incoming
-      .emplace_back(std::move(entry.segment), writer_limits::kMinTick,
-                    std::move(entry.refs), Compaction{},
-                    std::move(entry.reader),
-                    decltype(committed_reader){committed_reader})
-      .removal = removal;
+    flush->incoming.emplace_back(
+      std::move(entry.segment), std::move(entry.refs), Compaction{},
+      std::move(entry.reader), decltype(committed_reader){committed_reader});
   }
   for (const auto name : masked) {
     segment_mask.emplace(name);
@@ -1849,7 +1679,7 @@ IndexWriter::FlushContextPtr IndexWriter::GetFlushContext() const noexcept
   auto* ctx = _flush_context.load(std::memory_order_relaxed);
   for (;;) {
     const bool lock = ctx->context_mutex.try_lock_shared();
-    auto* curr = _flush_context.load(std::memory_order_relaxed);
+    auto* curr = _flush_context.load(std::memory_order_acquire);
     if (lock) {
       if (ctx == curr) [[likely]] {
         return {ctx, [](FlushContext* ctx)
@@ -1868,7 +1698,8 @@ IndexWriter::FlushContextPtr IndexWriter::SwitchFlushContext() noexcept {
   SDB_ASSERT(!_pending_state.Valid());
   auto* ctx = _flush_context.load(std::memory_order_relaxed);
   absl::MutexLock lock{&ctx->context_mutex};
-  _flush_context.store(ctx->next, std::memory_order_relaxed);
+  SwapDocMaps(*ctx);
+  _flush_context.store(ctx->next, std::memory_order_release);
   return {ctx, [](FlushContext* ctx) noexcept {
             absl::MutexLock lock{&ctx->context_mutex};
             ctx->Reset();
@@ -1974,24 +1805,26 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   auto& dir = *ctx->dir;
   const auto& committed_reader = *_committed_reader;
-  const auto queries = CollectQueries(ctx->segments);
+  auto segment_ctxs =
+    OpenFlushed(ctx->segments, dir, committed_reader.Options(), progress);
+  std::vector<DocumentMaskBuilder> removed(committed_reader.size() +
+                                           ctx->incoming.size());
+  const auto all_tick = ResolveRemovals(
+    ctx->segments, committed_reader, ctx->segment_mask, ctx->incoming,
+    ctx->doc_maps, segment_ctxs, removed, _key_field);
 
   // Stage 1
   // update document_mask for existing (i.e. sealed) segments
-  auto existing =
-    UpdateExisting(committed_reader, ctx->segment_mask, queries, dir, progress);
+  auto existing = UpdateExisting(committed_reader, ctx->segment_mask, all_tick,
+                                 removed, dir, progress);
 
   // Stage 2
   // Add incoming segments registered by compaction, adoption or replacement
-  auto incoming =
-    AddIncoming(ctx->incoming, existing.segments, queries, dir, progress);
+  auto incoming = AddIncoming(
+    ctx->incoming, all_tick,
+    std::span{removed}.subspan(committed_reader.size()), dir, progress);
 
-  // For pending compaction we need to filter out compaction
-  // candidates after applying them
   auto segments = std::move(existing.segments);
-  std::erase_if(segments, [&](const PublishedSegment& entry) {
-    return incoming.replaced.contains(entry.segment.meta.name);
-  });
   segments.insert(segments.end(),
                   std::make_move_iterator(incoming.segments.begin()),
                   std::make_move_iterator(incoming.segments.end()));
@@ -2005,8 +1838,9 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   // Stage 3
   // create new segments
-  auto segment_ctxs = OpenFlushed(ctx->segments, queries, dir,
-                                  committed_reader.Options(), progress);
+  for (auto& segment_ctx : segment_ctxs) {
+    segment_ctx.RemoveAll(all_tick);
+  }
   auto flushed = PublishFlushed(segment_ctxs, dir, progress);
   segments.insert(segments.end(),
                   std::make_move_iterator(flushed.segments.begin()),
@@ -2045,7 +1879,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   }
 #endif
 
-  const bool modified = IsInitialCommit(committed_reader.Meta()) ||
+  const bool modified = info.payload_changed ||
+                        IsInitialCommit(committed_reader.Meta()) ||
                         existing.modified || incoming.modified ||
                         flushed.modified || !files_to_sync.empty();
 
@@ -2163,6 +1998,7 @@ void IndexWriter::Finish() {
   }
 
   // noexcept part!
+  _pending_state.ctx->doc_maps.clear();
   _pending_state.StartReset(*this);
   // after this line transaction is successful (only noexcept operations below)
   std::atomic_store_explicit(&_committed_reader,

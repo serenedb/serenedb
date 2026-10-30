@@ -31,6 +31,7 @@
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
@@ -185,6 +186,27 @@ size_t CountMatches(const irs::DirectoryReader& reader,
     count += plan->Run(irs::doc_limits::min(), irs::doc_limits::eof());
   }
   return count;
+}
+
+// Helper: the documents matching a filter, as a removal of their positions.
+std::shared_ptr<const irs::DocRemoval> MatchingDocs(
+  const irs::DirectoryReader& reader, const irs::Filter& filter) {
+  irs::DocRemovalBuilder removal;
+  for (uint32_t index = 0; index != reader.size(); ++index) {
+    auto query = filter.PrepareSegment(reader[index], {});
+    if (!query) {
+      continue;
+    }
+    auto plan = query->PlanLead({});
+    if (!plan) {
+      continue;
+    }
+    for (auto doc = plan->Next(); !irs::doc_limits::eof(doc);
+         doc = plan->Next()) {
+      removal.Add(index, doc);
+    }
+  }
+  return std::move(removal).Finish(reader);
 }
 
 // Index five sample documents about information retrieval topics.
@@ -375,7 +397,7 @@ void RemoveDocuments(irs::IndexWriter& writer,
   auto filter = ParseQuery("databases", kTitleColumnId, tokenizer);
   {
     auto trx = writer.GetBatch();
-    trx.Remove(*filter);
+    trx.Remove(MatchingDocs(writer.GetSnapshot(), *filter));
     trx.Commit();
   }
   writer.RefreshCommit();

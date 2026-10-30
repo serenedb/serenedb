@@ -9,11 +9,11 @@ import DocCallout from "@site/src/components/DocCallout";
 
 Besides compatibility with the PostgreSQL SQL dialect and protocol, SereneDB also supports a large part of the PostgreSQL system table catalog in the pg_catalog schema. These system tables contain information about the system state in the form of metadata. This metadata is often used by external tools and clients to interact with the database system for introspection and reflection, e.g., to show which tables exist.
 
-This page provides an overview of the currently supported system tables and views.
+This page provides an overview of the supported system tables and views.
 
 - 🟢 Supported
 - 🟡 Stubbed for compatibility: These do not contain actual content and exist solely for compatibility purposes, as SereneDB does not share PostgreSQL's codebase or internal architecture
-- 🔴 Not yet supported
+- 🔴 Not supported
 
 ## System Tables
 
@@ -133,7 +133,7 @@ System views provide convenient access to system information. System tables ofte
 
 ### SereneDB System Views
 
-SereneDB does not currently expose additional system views beyond the PostgreSQL-compatible ones listed above.
+SereneDB exposes no system views beyond the PostgreSQL-compatible ones listed above.
 
 ## Information Schema
 

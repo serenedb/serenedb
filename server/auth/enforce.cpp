@@ -1117,6 +1117,10 @@ class Enforcer {
       }
       return;
     }
+    if (info.type == CatalogType::SECRET_ENTRY) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied: superuser required"));
+    }
     if (!IsSchemaScoped(info.type)) {
       return;
     }
@@ -1189,7 +1193,7 @@ class Enforcer {
   }
 
   duckdb::idx_t GranteeId(std::string_view name) {
-    return name == "PUBLIC" ? duckdb::ACL_ID_PUBLIC : RoleId(name);
+    return name == "public" ? duckdb::ACL_ID_PUBLIC : RoleId(name);
   }
 
   duckdb::idx_t SchemaOwner(const duckdb::CreateSchemaInfo& info) {

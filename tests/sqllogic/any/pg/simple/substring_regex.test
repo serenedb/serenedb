@@ -1,0 +1,47 @@
+query
+SELECT substring('abc' from 'b.') AS a, substring('abc', 'b.') AS b, substring('ac' from 'a(b)?c') IS NULL AS c,
+       substring('abc' from 'a(b)?c') AS d, substring('xyz' from 'a(b)?c') IS NULL AS e, substring('foobar' from 'o+') AS f,
+       substring('héllo' from 'é.') AS j
+----
+a	b	c	d	e	f	j
+bc	bc	t	b	t	oo	él
+
+
+query
+SELECT substring('abc' from 2) AS g, substring('abc', '2') IS NULL AS h, substr('abc', '2') AS i,
+       substring('abc', NULL) IS NULL AS k
+----
+g	h	i	k
+bc	t	bc	t
+
+
+statement ok
+PREPARE substring_regex_untyped AS SELECT substring($1, $2) AS m
+
+
+query
+EXECUTE substring_regex_untyped('abc', 'b.')
+----
+m
+bc
+
+
+statement ok
+DEALLOCATE substring_regex_untyped
+
+
+statement error (parentheses \(\) not balanced|missing \))
+SELECT substring('abc' from '(')
+
+
+query
+SELECT id, substring(s from p) AS m
+FROM (VALUES (1, 'abc', 'b'), (2, 'abc', '(c)'), (3, 'abc', 'x'), (4, NULL, 'a'), (5, 'abc', NULL)) t(id, s, p)
+ORDER BY id
+----
+id	m
+1	b
+2	c
+3	NULL
+4	NULL
+5	NULL

@@ -22,8 +22,10 @@
 
 #include <duckdb/main/config.hpp>
 
+#include "pg/types/aclitem.h"
 #include "pg/types/bytea.h"
 #include "pg/types/char.h"
+#include "pg/types/float.h"
 #include "pg/types/function.h"
 #include "pg/types/geometric.h"
 #include "pg/types/mac.h"
@@ -43,7 +45,9 @@ void RegisterTypes(duckdb::DatabaseInstance& db) {
   RegisterRegTypes(casts);
   RegisterPgLsn(casts, functions);
   RegisterBytea(casts);
+  RegisterAclitem(casts);
   RegisterChar(casts);
+  RegisterFloat(casts);
   RegisterVectors(casts);
   RegisterTid(casts);
   RegisterMacaddr(casts, functions);

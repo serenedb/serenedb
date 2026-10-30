@@ -73,19 +73,14 @@ constexpr std::pair<std::string_view, double> kTimeUnits[] = {
 
 int64_t ParseDurationMillis(std::string_view name, std::string_view text,
                             double unitless_ms) {
-  const auto invalid = [&] {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("invalid value for parameter \"", name, "\": \"", text, "\""),
-      ERR_HINT("Valid units for this parameter are \"us\", "
-               "\"ms\", \"s\", \"min\", \"h\", and \"d\"."));
-  };
   const auto trimmed = absl::StripAsciiWhitespace(text);
   double number = 0;
   const auto [ptr, ec] = fast_float::from_chars(
     trimmed.data(), trimmed.data() + trimmed.size(), number);
-  if (ec != std::errc{}) {
-    invalid();
+  if (ec != std::errc{} || !std::isfinite(number)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"", name, "\": \"", text, "\""));
   }
   const auto unit = absl::StripLeadingAsciiWhitespace(
     trimmed.substr(static_cast<size_t>(ptr - trimmed.data())));
@@ -96,7 +91,11 @@ int64_t ParseDurationMillis(std::string_view name, std::string_view text,
         return time_unit.first == unit;
       });
     if (it == std::end(kTimeUnits)) {
-      invalid();
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("invalid value for parameter \"", name, "\": \"", text, "\""),
+        ERR_HINT("Valid units for this parameter are \"us\", "
+                 "\"ms\", \"s\", \"min\", \"h\", and \"d\"."));
     }
     scale = it->second;
   }
@@ -305,22 +304,11 @@ void RequireSuperuser(duckdb::ClientContext& ctx, std::string_view name,
 }
 
 template<irs::utils::detail::FixedString Name, int64_t UnitlessMs>
-void SetServerDuration(duckdb::ClientContext& ctx, duckdb::SetScope,
+void SetServerDuration(duckdb::ClientContext&, duckdb::SetScope,
                        duckdb::Value& value) {
   constexpr std::string_view kName{Name};
-  RequireSuperuser(ctx, kName,
-                   "Only roles with the SUPERUSER attribute may change "
-                   "server-wide replication settings.");
   value = duckdb::Value{FormatDuration(ParseDurationMillis(
     kName, value.ToString(), static_cast<double>(UnitlessMs)))};
-}
-
-template<irs::utils::detail::FixedString Name>
-void SetServerCount(duckdb::ClientContext& ctx, duckdb::SetScope,
-                    duckdb::Value&) {
-  RequireSuperuser(ctx, std::string_view{Name},
-                   "Only roles with the SUPERUSER attribute may change "
-                   "server-wide replication settings.");
 }
 
 void SetReplicationRole(duckdb::ClientContext& ctx, duckdb::SetScope,
@@ -341,12 +329,6 @@ void SetReplicationRole(duckdb::ClientContext& ctx, duckdb::SetScope,
                     ERR_HINT("Available values: origin, replica, local."));
   }
   value = duckdb::Value{role};
-}
-
-void RequireHbaSuperuser(duckdb::ClientContext& ctx) {
-  RequireSuperuser(ctx, "hba",
-                   "Only roles with the SUPERUSER attribute may change the "
-                   "host-based authentication ruleset.");
 }
 
 #ifdef SDB_FAULT_INJECTION
@@ -526,16 +508,14 @@ constexpr std::pair<std::string_view, VariableDescription>
         "force-prepended so a bad ruleset cannot lock you out; an empty value "
         "restores the default (SCRAM for every role). Server-global.",
         [] { return duckdb::Value{""}; },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
-          RequireHbaSuperuser(ctx);
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           if (auto err =
                 network::pg::hba::SetHbaFromTextString(value.ToString())) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid hba ruleset: ", *err));
           }
         },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope) {
-          RequireHbaSuperuser(ctx);
+        [](duckdb::ClientContext&, duckdb::SetScope) {
           // RESET => default
           if (auto err = network::pg::hba::SetHbaFromTextString("")) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG(*err));
@@ -1501,7 +1481,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "How many tables one subscription copies at the same time during "
         "its initial synchronization. Server-wide, superuser only.",
         [] { return duckdb::Value::UINTEGER(2); },
-        SetServerCount<"max_sync_workers_per_subscription">,
+        nullptr,
         nullptr,
         duckdb::SetScope::GLOBAL,
       },
@@ -1650,8 +1630,13 @@ const duckdb::case_insensitive_set_view_t kSuperuserSettings = {
   "max_expression_depth",
 };
 
-void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name) {
-  if (kSuperuserSettings.contains(name)) {
+void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name,
+                           bool global) {
+  if (global) {
+    RequireSuperuser(ctx, name,
+                     "Only roles with the SUPERUSER attribute may change the "
+                     "server-wide value of a parameter.");
+  } else if (kSuperuserSettings.contains(name)) {
     RequireSuperuser(
       ctx, name,
       "Only roles with the SUPERUSER attribute may change this parameter.");

@@ -418,8 +418,8 @@ a	b
 20	q
 30	r
 
-# UPDATE on a generated-PK table: the new row is minted a fresh generated PK
-# (the old row is removed by its old rowid). Rows stay reachable by value.
+# UPDATE on a table without a PK: the old row is removed by its position and the
+# new row takes a position of its own. Rows stay reachable by value.
 statement ok
 UPDATE search_genpk SET b = 'Q' WHERE a = 20;
 
@@ -434,8 +434,7 @@ a	b
 20	Q
 30	r
 
-# DELETE on a generated-PK table: the rowid is the synthetic PK, materialised
-# from the stored kGeneratedPKId column for row identity.
+# DELETE on a table without a PK: the rowid is the row's position.
 statement ok
 DELETE FROM search_genpk WHERE a >= 20;
 
@@ -708,8 +707,8 @@ statement ok
 DROP TABLE search_gen_upd;
 
 
-# Generated-PK search table: UPDATE recomputes the generated column over the new
-# row (reinserted under a fresh generated PK).
+# Search table without a PK: UPDATE recomputes the generated column over the new
+# row.
 statement ok
 CREATE TABLE search_gen_upd_gpk (w INTEGER, h INTEGER,
   area INTEGER GENERATED ALWAYS AS (w * h) STORED) WITH (storage = 'search');
@@ -917,10 +916,9 @@ statement ok
 DROP TABLE comp_genpk;
 
 
-# Dropping a search table with NO explicit primary key must tear down its
-# auto-generated PK sequence too (owned-sequence teardown, now in
-# SearchTableDrop::Finalize). Reusing the name afterwards proves the catalog --
-# table def + tombstone + owned sequence -- was fully released.
+# Dropping a search table with NO explicit primary key releases its name.
+# Reusing the name afterwards proves the catalog -- table def + tombstone -- was
+# fully released.
 statement ok
 CREATE TABLE drop_nopk (a INTEGER, b TEXT) WITH (storage = 'search');
 

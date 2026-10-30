@@ -1,0 +1,79 @@
+control substitution on
+
+statement ok
+CREATE TABLE copy_text_reg_names (p TEXT, pp TEXT, cl TEXT, ty TEXT, co TEXT, cf TEXT, di TEXT, ro TEXT, ns TEXT);
+
+
+statement ok
+INSERT INTO copy_text_reg_names VALUES ('now', 'now()', 'pg_class', 'integer', '"C"', '-', '-', '-', 'pg_catalog');
+
+
+statement count 1
+COPY copy_text_reg_names TO '${__TEST_DIR__}/copy_text_reg_names.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE copy_text_reg_values (p regproc, pp regprocedure, cl regclass, ty regtype, co regcollation, cf regconfig, di regdictionary, ro regrole, ns regnamespace);
+
+
+statement count 1
+COPY copy_text_reg_values FROM '${__TEST_DIR__}/copy_text_reg_names.txt' (FORMAT text);
+
+
+query
+SELECT p::text AS p, pp::text AS pp, cl::text AS cl, ty::text AS ty, co::text AS co, cf::text AS cf, di::text AS di, ro::text AS ro, ns::text AS ns FROM copy_text_reg_values;
+----
+p	pp	cl	ty	co	cf	di	ro	ns
+now	now()	pg_class	integer	"C"	-	-	-	pg_catalog
+
+
+statement ok
+CREATE TABLE copy_text_reg_ops (o TEXT);
+
+
+statement ok
+INSERT INTO copy_text_reg_ops VALUES ('@#@');
+
+
+statement count 1
+COPY copy_text_reg_ops TO '${__TEST_DIR__}/copy_text_reg_ops.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE copy_text_reg_oper (o regoper);
+
+
+statement error
+COPY copy_text_reg_oper FROM '${__TEST_DIR__}/copy_text_reg_ops.txt' (FORMAT text);
+----
+db error: ERROR: operator does not exist: @#@
+
+
+statement ok
+CREATE TABLE copy_text_reg_operator (o regoperator);
+
+
+statement error
+COPY copy_text_reg_operator FROM '${__TEST_DIR__}/copy_text_reg_ops.txt' (FORMAT text);
+----
+db error: ERROR: expected a left parenthesis
+
+
+statement ok
+DROP TABLE copy_text_reg_names;
+
+
+statement ok
+DROP TABLE copy_text_reg_values;
+
+
+statement ok
+DROP TABLE copy_text_reg_ops;
+
+
+statement ok
+DROP TABLE copy_text_reg_oper;
+
+
+statement ok
+DROP TABLE copy_text_reg_operator;

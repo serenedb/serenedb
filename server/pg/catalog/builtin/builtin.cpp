@@ -50,7 +50,7 @@ static_assert(absl::c_is_sorted(kBuiltinTypes, kByOid) &&
               absl::c_is_sorted(kProcs, kByOid) &&
               absl::c_is_sorted(kCollations, kByOid));
 
-constexpr void VisitRowTypes(auto&& visit) {
+consteval void VisitRowTypes(auto&& visit) {
   for (const auto* sql : kGeneratedTables) {
     if (sql->row_type != 0) {
       visit(sql->oid, sql->schema, sql->name, sql->row_type,

@@ -1,0 +1,97 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE mw (id BIGINT, v TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO mw SELECT i, 'a' || i FROM generate_series(0, 999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mw;
+
+
+statement ok
+INSERT INTO mw SELECT i, 'b' || i FROM generate_series(1000, 1999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mw;
+
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments FROM mw;
+----
+segments
+2
+
+
+statement ok
+SET sdb_faults = 'search_wal_transactions_written';
+
+
+connection deleter
+statement async ok
+DELETE FROM mw WHERE id % 7 = 3;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_wal_transactions_written:parked';
+
+
+connection default
+statement ok
+VACUUM (COMPACT_TABLE) mw;
+
+
+connection default
+query
+SELECT count(DISTINCT rowid >> 32) AS segments FROM mw;
+----
+segments
+1
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_wal_transactions_written:release';
+
+
+wait
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s FROM mw;
+----
+n	s
+1714	1712857
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) mw;
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id % 7 = 3) AS deleted FROM mw;
+----
+n	deleted
+1714	0

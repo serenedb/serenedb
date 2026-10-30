@@ -151,89 +151,20 @@ struct ExplodedAcl {
   bool grantable;
 };
 
-class AclReader {
- public:
-  explicit AclReader(std::string_view text) : _text{text} {}
-
-  std::string_view Role() {
-    if (duckdb::idx_t pos = 0;
-        duckdb::StringUtil::TryParseQuotedString(_text, pos, _buffer)) {
-      _text.remove_prefix(pos);
-      return _buffer;
-    }
-    const auto end = _text.find_first_of("=/");
-    const auto role = _text.substr(0, end);
-    _text.remove_prefix(role.size());
-    return role;
-  }
-
-  bool Skip(char c) {
-    if (_text.empty() || _text.front() != c) {
-      return false;
-    }
-    _text.remove_prefix(1);
-    return true;
-  }
-
-  std::string_view Privileges() {
-    const auto privileges = _text.substr(0, _text.find('/'));
-    _text.remove_prefix(privileges.size());
-    return privileges;
-  }
-
- private:
-  std::string_view _text;
-  std::string _buffer;
-};
-
-int64_t RoleIdOf(const auth::RoleGraph& roles, std::string_view name) {
-  if (name.empty()) {
-    return static_cast<int64_t>(kPublicGrantee);
-  }
-  if (const auto* role = roles.FindByName(name)) {
-    return static_cast<int64_t>(role->first);
-  }
-  int64_t oid = 0;
-  if (absl::SimpleAtoi(name, &oid)) {
-    return oid;
-  }
-  return 0;
-}
-
 void ExplodeAcl(const auth::RoleGraph& roles, std::string_view text,
                 std::vector<ExplodedAcl>& rows) {
-  AclReader reader{text};
-  const auto grantee = RoleIdOf(roles, reader.Role());
-  if (!reader.Skip('=')) {
-    return;
-  }
-  const auto privileges = reader.Privileges();
-  int64_t grantor = 0;
-  if (reader.Skip('/')) {
-    grantor = RoleIdOf(roles, reader.Role());
-  }
-  AclMode held = AclMode::NoRights;
-  AclMode grantable = AclMode::NoRights;
-  for (size_t i = 0; i < privileges.size(); ++i) {
-    const auto it = absl::c_find_if(kAclPrivileges, [&](const AclPrivilege& p) {
-      return p.chr == privileges[i];
-    });
-    if (it == kAclPrivileges.end()) {
-      continue;
-    }
-    held |= it->mode;
-    if (i + 1 < privileges.size() && privileges[i + 1] == '*') {
-      grantable |= it->mode;
-      ++i;
-    }
+  duckdb::AclItem item{};
+  if (auto error = ParseAcl(text, roles, true, item)) {
+    THROW_SQL_ERROR_FROM_DATA(std::move(*error));
   }
   for (const auto& privilege : kAclPrivileges) {
-    if ((held & privilege.mode) != AclMode::NoRights) {
+    if ((item.privs & privilege.mode) != AclMode::NoRights) {
       rows.emplace_back(ExplodedAcl{
-        .grantor = grantor,
-        .grantee = grantee,
+        .grantor = static_cast<int64_t>(item.grantor),
+        .grantee = static_cast<int64_t>(item.grantee),
         .privilege = privilege.name,
-        .grantable = (grantable & privilege.mode) != AclMode::NoRights});
+        .grantable =
+          (item.grant_option & privilege.mode) != AclMode::NoRights});
     }
   }
 }
@@ -814,6 +745,27 @@ struct TablespacePrivileges : ObjectPrivileges<TablespacePrivileges> {
   }
 };
 
+struct LanguagePrivileges : ObjectPrivileges<LanguagePrivileges> {
+  static constexpr std::string_view kName = "has_language_privilege";
+  static constexpr CatalogType kType = CatalogType::TYPE_ENTRY;
+  static constexpr AclMode kModes = AclMode::Usage;
+  static constexpr bool kSuperuserFirst = true;
+
+  static uint64_t Resolve(const Session&, std::string_view name) {
+    if (const auto* language = FindSystemObject(kSystemLanguages, name)) {
+      return language->oid;
+    }
+    ThrowUndefinedObject("language", name);
+  }
+
+  static std::optional<ObjectTarget> Find(const Session&, uint64_t oid) {
+    if (!FindSystemObject(kSystemLanguages, oid)) {
+      return std::nullopt;
+    }
+    return ObjectTarget{&kBuiltinPermissions};
+  }
+};
+
 struct ParameterPrivileges : ObjectPrivileges<ParameterPrivileges> {
   static constexpr std::string_view kName = "has_parameter_privilege";
   static constexpr AclMode kModes = AclMode::Set | AclMode::AlterSystem;
@@ -1132,6 +1084,7 @@ void RegisterAclFunctions(duckdb::ExtensionLoader& loader) {
   RegisterPrivilegeFunctions<ForeignDataWrapperPrivileges, ByName, ByOid>(
     loader);
   RegisterPrivilegeFunctions<TablespacePrivileges, ByName, ByOid>(loader);
+  RegisterPrivilegeFunctions<LanguagePrivileges, ByName, ByOid>(loader);
   RegisterPrivilegeFunctions<ParameterPrivileges, ByName>(loader);
   RegisterPrivilegeFunctions<LargeObjectPrivileges, ByOid>(loader);
   RegisterPrivilegeFunctions<RolePrivileges, ByName, ByOid>(loader);

@@ -968,7 +968,7 @@ def test_discard_all_drops_driver_prepared_statements():
         assert c.execute("SELECT %s::INTEGER", (5,)).fetchone() == (5,)
         c.execute("DISCARD ALL", prepare=False)
         assert _protocol_statements(c) == []
-        assert c.execute("SELECT %s::INTEGER", (6,)).fetchone() == (6,)
+        assert c.execute("SELECT %s::INTEGER + 1", (6,)).fetchone() == (7,)
 
 
 def test_prepared_multi_statement_command_runs_every_execute():

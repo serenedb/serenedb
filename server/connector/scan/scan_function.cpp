@@ -648,8 +648,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanDeserialize(
 duckdb::TableFunction CreateIResearchScanFunction() {
   duckdb::TableFunction func{
     "iresearch_scan",
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
-     duckdb::LogicalType::VARCHAR},
+    {duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
     IResearchScanFunction,
     ScanBind,
     IResearchScanInitGlobal,

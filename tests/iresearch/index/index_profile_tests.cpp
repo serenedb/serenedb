@@ -23,7 +23,6 @@
 
 #include <absl/synchronization/notification.h>
 
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -259,22 +258,19 @@ class IndexProfileTestCase : public tests::IndexTestBase {
             }
 
             {
-              irs::Filter::ptr filter = std::make_unique<irs::ByTerm>();
               auto key_name = csv_doc_template.indexed.begin()->Name();
               auto key_id = csv_doc_template.indexed.begin()->Id();
               auto key_term =
                 csv_doc_template.indexed.get<tests::StringField>(key_name)
                   ->value();
+              auto removal = tests::RemovalOf(
+                *writer, tests::Terms{key_id, {std::string{key_term}}});
               auto value_name = (++(csv_doc_template.indexed.begin()))->Name();
               auto value_term =
                 csv_doc_template.indexed.get<tests::StringField>(value_name)
                   ->value();
               std::string updated_term(value_term.data(), value_term.size());
 
-              auto& filter_impl = static_cast<irs::ByTerm&>(*filter);
-              *filter_impl.mutable_field_id() = key_id;
-              filter_impl.mutable_options()->term =
-                irs::ViewCast<irs::byte_type>(key_term);
               // double up term
               updated_term.append(value_term.data(), value_term.size());
               csv_doc_template.indexed.get<tests::StringField>(value_name)
@@ -288,7 +284,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
               REGISTER_TIMER_NAMED_DETAILED("update");
               {
                 auto ctx = writer->GetBatch();
-                ctx.Remove(std::move(filter));
+                ctx.Remove(std::move(removal));
                 {
                   auto d = ctx.Insert();
                   EXPECT_TRUE(

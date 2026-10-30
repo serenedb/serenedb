@@ -31,7 +31,6 @@
 
 namespace sdb::pg {
 
-inline constexpr size_t kMacaddrText = sizeof("08:00:2b:01:02:03") - 1;
 inline constexpr size_t kMacaddr8Text = sizeof("08:00:2b:ff:fe:01:02:03") - 1;
 inline constexpr size_t kMacaddrBytes = 6;
 inline constexpr size_t kMacaddr8Bytes = 8;

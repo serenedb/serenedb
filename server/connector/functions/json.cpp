@@ -40,6 +40,7 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -1477,7 +1478,9 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
       "json_extract_path", {JSON}, JSON, JsonExtractPathFunction};
     func.GetSignature().AddArgs("args", VARCHAR).AddKwargs("kwargs", VARCHAR);
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    duckdb::CreateScalarFunctionInfo info{std::move(func)};
+    info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+    loader.RegisterFunction(std::move(info));
   }
 
   // json_extract_path_text(json, VARIADIC text) -> text
@@ -1486,7 +1489,9 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
       "json_extract_path_text", {JSON}, VARCHAR, JsonExtractPathTextFunction};
     func.GetSignature().AddArgs("args", VARCHAR).AddKwargs("kwargs", VARCHAR);
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    duckdb::CreateScalarFunctionInfo info{std::move(func)};
+    info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+    loader.RegisterFunction(std::move(info));
   }
 
   // Internal names for #> / #>> operators (takes json, text[])

@@ -57,7 +57,7 @@ struct TableFilter {
 
   virtual PointRead PointReads() const noexcept { return PointRead::None; }
 
-  virtual double Share() const { return kUnknownShare; }
+  virtual double Share() const = 0;
 
   virtual bool Admits(doc_id_t doc) {
     Rewind();

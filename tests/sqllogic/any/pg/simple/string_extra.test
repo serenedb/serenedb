@@ -461,6 +461,13 @@ convert_from
 hello
 
 
+query
+SELECT 'x' || true AS concatenated, pg_typeof('x' || true) AS type, true || 'x' AS reversed;
+----
+concatenated	type	reversed
+xtrue	text	truex
+
+
 # convert_to
 
 query
@@ -468,6 +475,112 @@ SELECT convert_to('hello', 'UTF8') = 'hello'::bytea AS ok;
 ----
 ok
 t
+
+
+query
+SELECT convert_from('\x41e9'::bytea, 'LATIN1') AS latin1, convert_from('\x41c3a9'::bytea, 'Unicode') AS unicode,
+       convert_from('\x41'::bytea, 'SQL_ASCII') AS ascii, convert_to('xé', 'iso_8859_1') AS to_latin1,
+       convert_to('xé', 'utf-8') AS to_utf8, convert_to('xé', 'SQL_ASCII') AS to_ascii;
+----
+latin1	unicode	ascii	to_latin1	to_utf8	to_ascii
+Aé	Aé	A	\\x78e9	\\x78c3a9	\\x78c3a9
+
+
+statement error
+SELECT convert_from('\x41c328'::bytea, 'UTF8');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xc3 0x28
+
+
+statement error
+SELECT convert_from('\x41e282'::bytea, 'UTF8');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xe2 0x82
+
+
+statement error
+SELECT convert_from('\x4100'::bytea, 'UTF8');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0x00
+
+
+statement error
+SELECT convert_from('\x4100'::bytea, 'SQL_ASCII');
+----
+db error: ERROR: invalid byte sequence for encoding "SQL_ASCII": 0x00
+
+
+statement error
+SELECT convert_from('\x41ff'::bytea, 'SQL_ASCII');
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xff
+
+
+statement error
+SELECT convert_from('\x4100'::bytea, 'LATIN1');
+----
+db error: ERROR: invalid byte sequence for encoding "LATIN1": 0x00
+
+
+statement error
+SELECT convert_from('\x41'::bytea, 'nosuch');
+----
+db error: ERROR: invalid source encoding name "nosuch"
+
+
+statement error
+SELECT convert_from('\x41'::bytea, 'MULE_INTERNAL');
+----
+db error: ERROR: default conversion function for encoding "MULE_INTERNAL" to "UTF8" does not exist
+
+
+query
+SELECT id, convert_from(b, e) AS s FROM (VALUES (1, '\x41'::bytea, 'UTF8'), (2, '\x42'::bytea, 'UTF8'),
+  (3, '\x43e9'::bytea, 'LATIN1'), (4, '\x44'::bytea, 'SQL_ASCII')) t(id, b, e) ORDER BY id;
+----
+id	s
+1	A
+2	B
+3	Cé
+4	D
+
+
+query
+SELECT id, encode(convert_to(s, e), 'hex') AS h FROM (VALUES (1, 'A', 'UTF8'), (2, 'Bé', 'UTF8'),
+  (3, 'Cé', 'LATIN1'), (4, 'D', 'LATIN1')) t(id, s, e) ORDER BY id;
+----
+id	h
+1	41
+2	42c3a9
+3	43e9
+4	44
+
+
+statement error
+SELECT convert_to('x€', 'LATIN1');
+----
+db error: ERROR: character with byte sequence 0xe2 0x82 0xac in encoding "UTF8" has no equivalent in encoding "LATIN1"
+
+
+statement error
+SELECT convert_to('x', 'nosuch');
+----
+db error: ERROR: invalid destination encoding name "nosuch"
+
+
+skipif serenedb
+query
+SELECT convert_to('x', 'WIN1252') AS win1252;
+----
+win1252
+\\x78
+
+
+onlyif serenedb
+statement error
+SELECT convert_to('x', 'WIN1252');
+----
+db error: ERROR: default conversion function for encoding "UTF8" to "WIN1252" does not exist
 
 
 # normalize

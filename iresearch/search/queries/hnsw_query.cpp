@@ -511,8 +511,9 @@ std::vector<uint32_t> AdmittedSeeds(detail::LazyBitset& set,
 
 auto SetDocs(detail::LazyBitset& set) {
   return [&set](auto&& visit) {
-    for (auto doc = set.Probe(doc_limits::min());
-         !doc_limits::eof(doc) && visit(doc); doc = set.Probe(doc + 1)) {
+    for (auto doc = set.Probe(doc_limits::min()); !doc_limits::eof(doc);
+         doc = set.Probe(doc + 1)) {
+      visit(doc);
     }
   };
 }
@@ -530,9 +531,7 @@ auto IndexDocs(const QueryBuilder& inner, detail::TableFilter* table,
         n = table->Narrow(docs.data(), nullptr, n);
       }
       for (uint32_t i = 0; i < n; ++i) {
-        if (!visit(docs[i])) {
-          return;
-        }
+        visit(docs[i]);
       }
     }
   };
@@ -544,13 +543,10 @@ void HnswScanTopK(Docs&& docs, const HnswGraph& graph, Dist& dist, uint32_t ef,
   constexpr size_t kBatch = 256;
   s.nearest.clear();
   s.batch.clear();
-  const auto size = graph.Size();
   size_t limit = std::min<size_t>(kBatch, ef);
   docs([&](doc_id_t doc) {
     const auto node = static_cast<uint32_t>(doc - doc_limits::min());
-    if (node >= size) {
-      return false;
-    }
+    SDB_ASSERT(node < graph.Size());
     if (graph.LevelOf(node) != 0) {
       s.batch.push_back(node);
       if (s.batch.size() == limit) {
@@ -558,7 +554,6 @@ void HnswScanTopK(Docs&& docs, const HnswGraph& graph, Dist& dist, uint32_t ef,
         limit = std::min(kBatch, 2 * limit);
       }
     }
-    return true;
   });
   if (!s.batch.empty()) {
     HnswAdmit(dist, ef, s);
@@ -781,18 +776,14 @@ bool HnswQuery::ScansByColumn() const {
 }
 
 void HnswQuery::ScanColumn(HnswSearchScratch& s) const {
+  SDB_ASSERT(_inner);
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
   detail::RawVectorReader reader{*_exact, *_segment.GetColReader(), _d};
   reader.SetQuery(_query, _metric);
   std::vector<doc_id_t> docs;
   HnswColumnDist dist{.reader = &reader, .docs = &docs};
-  if (_inner) {
-    HnswScanTopK(IndexDocs(*_inner, nullptr, docs_count), _data->graph, dist,
-                 _ef, s);
-    return;
-  }
-  auto set = detail::MakeDocSet(nullptr, docs_count);
-  HnswScanTopK(SetDocs(set), _data->graph, dist, _ef, s);
+  HnswScanTopK(IndexDocs(*_inner, nullptr, docs_count), _data->graph, dist, _ef,
+               s);
 }
 
 void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,

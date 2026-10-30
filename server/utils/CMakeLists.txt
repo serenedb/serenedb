@@ -5,7 +5,6 @@ add_library(
     STATIC
     app_server.cpp
     drain_gate.cpp
-    dtoa.cpp
     file_utils.cpp
     files.cpp
     init.cpp

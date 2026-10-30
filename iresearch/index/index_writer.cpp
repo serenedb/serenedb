@@ -844,29 +844,6 @@ void IndexWriter::Transaction::Reset() noexcept {
   }
 }
 
-void IndexWriter::Transaction::RegisterFlush(
-  std::span<Transaction* const> transactions) noexcept {
-  FlushContext* target = nullptr;
-  for (auto* trx : transactions) {
-    SDB_ASSERT(trx->_writer == transactions.front()->_writer);
-    if (auto* flush = trx->_active.Flush()) {
-      SDB_ASSERT(!target || target == flush);
-      target = flush;
-    }
-  }
-  FlushContextPtr current{nullptr, nullptr};
-  for (auto* trx : transactions) {
-    if (!trx->_active.Segment() || trx->_active.Flush()) {
-      continue;
-    }
-    if (!target) {
-      current = trx->_writer->GetFlushContext();
-      target = current.get();
-    }
-    target->AddToPending(trx->_active);
-  }
-}
-
 bool IndexWriter::Transaction::CommitImpl(
   uint64_t last_tick, const SourcePosition& position) noexcept try {
   auto* segment = _active.Segment();

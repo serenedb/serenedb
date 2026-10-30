@@ -739,9 +739,7 @@ TEST_P(Format10TestCase, ires336) {
   irs::FieldMeta field_meta;
   field_meta.id = kFieldId;
   {
-    tests::MockTermReader term_reader{
-      trms, field_meta, (terms.empty() ? irs::bytes_view{} : *terms.begin()),
-      (terms.empty() ? irs::bytes_view{} : *terms.rbegin())};
+    tests::MockTermReader term_reader{trms, field_meta};
     irs::IdxWriter idx{*dir, segment_name};
     irs::term_dict::FieldWriter fw{/*compaction=*/true};
     fw.SetIdxWriter(idx);

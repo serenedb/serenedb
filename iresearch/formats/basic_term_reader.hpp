@@ -55,9 +55,6 @@ struct BasicTermReader : public memory::Managed {
 
   virtual FieldProperties properties() const = 0;
 
-  virtual bytes_view min() const = 0;
-  virtual bytes_view max() const = 0;
-
   virtual uint32_t KeyWidth() const noexcept { return 0; }
 
   virtual void SampleTerms(

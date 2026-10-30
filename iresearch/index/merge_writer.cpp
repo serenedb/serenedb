@@ -219,9 +219,6 @@ class CompoundTermIterator : public TermOnlyIterator {
     _doc_itr.Clear();
     _term_iterator_mask.clear();
     _term_iterators.clear();
-    _min_term.clear();
-    _max_term.clear();
-    _has_min_term = false;
   }
 
   const FieldMeta& Meta() const noexcept { return *_meta; }
@@ -237,18 +234,7 @@ class CompoundTermIterator : public TermOnlyIterator {
 
   TermPostings::ptr postings(IndexFeatures features) const final;
 
-  bytes_view value() const noexcept final {
-    if (!_has_min_term) [[unlikely]] {
-      _has_min_term = true;
-      _min_term = _current_term;
-    }
-    SDB_ASSERT(_max_term <= _current_term);
-    _max_term = _current_term;
-    return _current_term;
-  }
-
-  bytes_view MinTerm() const noexcept { return _min_term; }
-  bytes_view MaxTerm() const noexcept { return _max_term; }
+  bytes_view value() const noexcept final { return _current_term; }
 
  private:
   struct TermIteratorImpl {
@@ -261,10 +247,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   const FieldMeta* _meta{};
   std::vector<size_t> _term_iterator_mask;
   std::vector<TermIteratorImpl> _term_iterators;
-  mutable bstring _min_term;
-  mutable bstring _max_term;
   mutable CompoundPostings _doc_itr;
-  mutable bool _has_min_term{false};
   ProgressTracker _progress;
 };
 
@@ -373,8 +356,6 @@ class CompoundFieldIterator final : public BasicTermReader {
 
   FieldKey key() const noexcept final { return KeyOf(Meta()); }
   FieldProperties properties() const noexcept final { return _props; }
-  bytes_view min() const noexcept final { return _term_itr.MinTerm(); }
-  bytes_view max() const noexcept final { return _term_itr.MaxTerm(); }
   uint32_t KeyWidth() const noexcept final;
   bool Ranges() const noexcept {
     return absl::c_any_of(_field_iterator_mask, [](const auto& segment) {

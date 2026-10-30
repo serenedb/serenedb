@@ -384,16 +384,6 @@ class EntriesReader final : public irs::BasicTermReader {
   irs::FieldProperties properties() const final {
     return {.ranges = _field->ranges};
   }
-  irs::bytes_view min() const final {
-    return _field->entries.empty()
-             ? irs::bytes_view{}
-             : irs::bytes_view{_field->entries.front().key};
-  }
-  irs::bytes_view max() const final {
-    return _field->entries.empty()
-             ? irs::bytes_view{}
-             : irs::bytes_view{_field->entries.back().key};
-  }
   uint32_t KeyWidth() const noexcept final {
     return ::KeyWidth(_field->entries);
   }

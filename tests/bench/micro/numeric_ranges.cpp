@@ -160,8 +160,6 @@ class TermsReader final : public irs::BasicTermReader {
   irs::FieldProperties properties() const final {
     return {.ranges = _ladder == Ladder::Adaptive};
   }
-  bytes_view min() const final { return _terms->keys.front(); }
-  bytes_view max() const final { return _terms->keys.back(); }
   uint32_t KeyWidth() const noexcept final {
     return _ladder == Ladder::Adaptive
              ? static_cast<uint32_t>(_terms->keys.front().size())

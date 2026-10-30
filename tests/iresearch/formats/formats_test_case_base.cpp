@@ -720,9 +720,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     Terms<SortedTermsT::iterator> terms(sorted_terms.begin(),
                                         sorted_terms.end());
     tests::MockTermReader term_reader{
-      terms, irs::FieldMeta{field.id, field.index_features},
-      (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.begin()),
-      (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.rbegin())};
+      terms, irs::FieldMeta{field.id, field.index_features}};
 
     irs::IdxWriter idx{dir(), "segment_name"};
     irs::term_dict::FieldWriter writer{/*compaction=*/false};

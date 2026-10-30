@@ -230,12 +230,8 @@ class BatchingTermIterator final : public irs::TermOnlyIterator {
 
 class MockTermReader final : public irs::BasicTermReader {
  public:
-  explicit MockTermReader(irs::TermIterator& it, irs::FieldMeta meta,
-                          irs::bytes_view min_term, irs::bytes_view max_term)
-    : _it{it},
-      _meta{std::move(meta)},
-      _min_term{min_term},
-      _max_term(max_term) {}
+  MockTermReader(irs::TermIterator& it, irs::FieldMeta meta)
+    : _it{it}, _meta{std::move(meta)} {}
 
  private:
   irs::TermOnlyIterator::ptr iterator() const final {
@@ -244,13 +240,9 @@ class MockTermReader final : public irs::BasicTermReader {
   const irs::FieldMeta& meta() const { return _meta; }
   irs::FieldKey key() const final { return irs::KeyOf(meta()); }
   irs::FieldProperties properties() const final { return meta(); }
-  irs::bytes_view min() const final { return _min_term; }
-  irs::bytes_view max() const final { return _max_term; }
 
   mutable BatchingTermIterator _it;
   irs::FieldMeta _meta;
-  irs::bytes_view _min_term;
-  irs::bytes_view _max_term;
 };
 
 class FormatTestCase : public IndexTestBase {

@@ -108,8 +108,6 @@ class KeysReader final : public irs::BasicTermReader {
   }
   irs::FieldKey key() const final { return {.id = 1}; }
   irs::FieldProperties properties() const final { return {}; }
-  bytes_view min() const final { return _keys.front(); }
-  bytes_view max() const final { return _keys.back(); }
   uint32_t KeyWidth() const noexcept final {
     const auto width = _keys.front().size();
     return absl::c_all_of(

@@ -142,13 +142,10 @@ class ColumnarTermReader final : public BasicTermReader,
   void Reset(const ScatteredField& scattered) {
     _it.Reset(scattered);
     _scattered = &scattered;
-    _min = _max = {};
     _width = 0;
     _bytes = 0;
     if (const auto nterms = scattered.TermCount()) {
-      _min = AsBytesView(scattered.TermAt(0));
-      _max = AsBytesView(scattered.TermAt(nterms - 1));
-      _width = static_cast<uint32_t>(_min.size());
+      _width = static_cast<uint32_t>(scattered.TermAt(0).GetSize());
       for (size_t i = 0; i != nterms; ++i) {
         const auto size = scattered.TermAt(i).GetSize();
         _bytes += size;
@@ -159,8 +156,6 @@ class ColumnarTermReader final : public BasicTermReader,
     }
   }
 
-  bytes_view(min)() const noexcept final { return _min; }
-  bytes_view(max)() const noexcept final { return _max; }
   uint32_t KeyWidth() const noexcept final { return _width; }
 
   void SampleTerms(
@@ -193,8 +188,6 @@ class ColumnarTermReader final : public BasicTermReader,
  private:
   mutable ColumnarTermIterator _it;
   const ScatteredField* _scattered = nullptr;
-  bytes_view _min{};
-  bytes_view _max{};
   uint64_t _bytes = 0;
   uint32_t _width = 0;
 };

@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <span>
 #include <type_traits>
 #include <utility>
 
@@ -31,6 +32,7 @@
 #include "iresearch/index/docs_mask/kernels.hpp"
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -302,6 +304,21 @@ inline GenericDocsMask MakeGenericDocsMask(const SubReader& segment) noexcept {
 
 inline doc_id_t LiveEnd(const SubReader& segment) noexcept {
   return static_cast<doc_id_t>(doc_limits::min() + segment.docs_count());
+}
+
+template<typename Visit>
+bool VisitLive(GenericDocsMask& mask, doc_id_t begin, doc_id_t end,
+               Visit&& visit) {
+  uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
+  for (auto window = begin; window < end;) {
+    const auto count = std::min<doc_id_t>(end - window, detail::kWindowDocs);
+    const auto alive = mask.FillLive(window, count, live);
+    if (!visit(window, std::span<const uint32_t>{live, alive})) {
+      return false;
+    }
+    window += count;
+  }
+  return true;
 }
 
 }  // namespace irs

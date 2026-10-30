@@ -22,11 +22,30 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
+#include <memory>
+#include <vector>
 
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::column_internal {
+
+inline constexpr duckdb::idx_t kPointDensity = 64;
+
+void FetchPoints(std::unique_ptr<ColumnReader::PointReader>& point,
+                 const ColReader& col_reader, const ColumnReader& column,
+                 std::vector<uint64_t>& rows, duckdb::idx_t count,
+                 const auto& row, duckdb::Vector& out, duckdb::idx_t at) {
+  if (!point) {
+    point = std::make_unique<ColumnReader::PointReader>(col_reader, column);
+  }
+  rows.clear();
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    rows.push_back(row(i));
+  }
+  point->FetchRows(rows, out, at);
+}
 
 template<typename Kind>
 void ScatterRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,
@@ -58,19 +77,14 @@ void DenseRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,
   SDB_ASSERT(hits <= span && span <= STANDARD_VECTOR_SIZE);
   const uint64_t cur = self.Kind::GatherCursor(s);
   SDB_ASSERT(anchor >= cur, "GatherDense requires ascending rows");
-  if (hits == span) {
-    if (anchor > cur) {
-      self.Kind::Skip(s, anchor - cur);
-    }
-    self.Kind::Scan(s, out, span);
-    return;
-  }
   if (hits * 32 >= span) {
     if (anchor > cur) {
       self.Kind::Skip(s, anchor - cur);
     }
-    self.Kind::ScanCount(s, out, span, 0);
-    out.Slice(sel, hits);
+    self.Kind::Scan(s, out, span);
+    if (hits != span) {
+      out.Slice(sel, hits);
+    }
     return;
   }
   ScatterRuns(self, s, anchor, sel, hits, out, 0);

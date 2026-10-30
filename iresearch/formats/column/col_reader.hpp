@@ -30,6 +30,7 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/col_copy_check.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -51,6 +52,7 @@ inline constexpr std::string_view kFormatExt = "col";
 
 inline constexpr duckdb::field_id_t kColFieldColumns = 0;
 inline constexpr duckdb::field_id_t kColFieldNormColumns = 1;
+inline constexpr duckdb::field_id_t kColFieldFileId = 2;
 
 inline std::string FileName(std::string_view segment_name) {
   return absl::StrCat(segment_name, ".", kFormatExt);
@@ -78,10 +80,12 @@ class ColReader final {
     return _ctx.HasIn() ? _ctx.In().Reopen() : nullptr;
   }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
+  ReencodeCache& Reencodes() const noexcept { return _reencodes; }
 
  private:
   duckdb::DatabaseInstance* _db;
   ReadContext _ctx;
+  mutable ReencodeCache _reencodes;
   std::vector<std::unique_ptr<ColumnReader>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnReader*> _by_id;
   std::vector<std::unique_ptr<NormColumnReader>> _norm_columns;

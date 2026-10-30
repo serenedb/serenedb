@@ -22,6 +22,7 @@
 
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/table_filter.hpp>
@@ -234,6 +235,7 @@ struct ScanBindData final : duckdb::FunctionData {
   PlanCacheSpec plan_cache;
   LookupSpec lookup;
   std::optional<ViewSpec> view;
+  bool share_payloads = false;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<ScanBindData>(*this);
@@ -291,6 +293,8 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
 inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.function.bind == &ScanBind;
 }
+
+void ShareScanPayloads(const duckdb::PhysicalOperator& write_input);
 
 duckdb::TableFunction BindSearchTableScan(
   duckdb::ClientContext& context, catalog::SearchTableEntry& entry,

@@ -42,7 +42,9 @@
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__SSE2__) && \
   defined(NDEBUG) && !defined(ABSL_HAVE_ADDRESS_SANITIZER) &&         \
-  !defined(ABSL_HAVE_THREAD_SANITIZER) && !defined(ABSL_HAVE_MEMORY_SANITIZER)
+  !defined(ABSL_HAVE_THREAD_SANITIZER) &&                             \
+  !defined(ABSL_HAVE_MEMORY_SANITIZER) &&                             \
+  !defined(__LLVM_INSTR_PROFILE_GENERATE)
 #define IRS_REMAP_EXECUTABLE 1
 #include <emmintrin.h>
 #endif

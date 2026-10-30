@@ -29,7 +29,9 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "pg/catalog/engine/system_table.h"
+#include "pg/catalog/tables/sdb/merge_records.h"
 #include "pg/catalog/tables/tables.h"
+#include "search/compaction/merge_registry.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "search/store_stats.h"
@@ -83,6 +85,35 @@ constexpr IndexMetric kIndexMetrics[] = {
    "average time of the last few consolidations, in ms"},
 };
 
+struct MergeLoad {
+  uint64_t queued = 0;
+  uint64_t running = 0;
+  uint64_t pending_bytes = 0;
+};
+
+struct MergeMetric {
+  std::string_view metric;
+  uint64_t MergeLoad::* field;
+  std::string_view description;
+};
+
+constexpr MergeMetric kMergeMetrics[] = {
+  {"merges_queued", &MergeLoad::queued, "background merges waiting to run"},
+  {"merges_running", &MergeLoad::running, "merges running now"},
+  {"merge_pending_bytes", &MergeLoad::pending_bytes,
+   "estimated bytes that the queued and running merges will write"},
+};
+
+MergeLoad LoadOf(duckdb::idx_t relation) {
+  MergeLoad load;
+  for (const auto& record :
+       search::MergeRegistry::Instance().Active(relation)) {
+    ++(record.Queued() ? load.queued : load.running);
+    load.pending_bytes += record.EstimatedBytes();
+  }
+  return load;
+}
+
 struct Metric {
   std::string_view metric;
   int64_t value;
@@ -108,9 +139,6 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
   return rows;
 }
 
-constexpr duckdb::CatalogType kStoreTypes[] = {
-  duckdb::CatalogType::INDEX_ENTRY, duckdb::CatalogType::TABLE_ENTRY};
-
 constexpr SystemIndex kStoreIndexes[] = {
   {kSdbMetricsSql["relation_id"], SystemLookup::Object},
 };
@@ -118,6 +146,12 @@ constexpr SystemIndex kStoreIndexes[] = {
 struct StoreMetric {
   const IndexMetric& metric;
   const StoreStats& stats;
+  duckdb::idx_t relation;
+};
+
+struct StoreMergeMetric {
+  const MergeMetric& metric;
+  const MergeLoad& load;
   duckdb::idx_t relation;
 };
 
@@ -138,6 +172,12 @@ class SdbMetrics final : public SystemTableScan<kSdbMetricsSql> {
     Col<"value">([](const auto& row) { return row.stats.*row.metric.field; }),
     Col<"description">([](const auto& row) { return row.metric.description; }),
     Col<"relation_id">(&StoreMetric::relation));
+
+  static constexpr auto kStoreMergeMetric = Shape<kSql, const StoreMergeMetric>(
+    Col<"metric">([](const auto& row) { return row.metric.metric; }),
+    Col<"value">([](const auto& row) { return row.load.*row.metric.field; }),
+    Col<"description">([](const auto& row) { return row.metric.description; }),
+    Col<"relation_id">(&StoreMergeMetric::relation));
 
   void Row(const Metric& metric) { Emit<kMetric>(metric); }
 
@@ -166,6 +206,10 @@ class SdbMetrics final : public SystemTableScan<kSdbMetricsSql> {
   void Store(const StoreStats& stats, duckdb::idx_t relation) {
     for (const auto& metric : kIndexMetrics) {
       Emit<kStoreMetric>({metric, stats, relation});
+    }
+    const auto load = LoadOf(relation);
+    for (const auto& metric : kMergeMetrics) {
+      Emit<kStoreMergeMetric>({metric, load, relation});
     }
   }
 };

@@ -1,0 +1,62 @@
+# dict_fsst on a search table is the columnstore's own codec: a sorted,
+# front-coded dictionary of FSST-encoded suffixes with no per-string limit and
+# segments that are never rewound to a block. Strings of ~24 KiB used to push
+# such a column to Uncompressed (duckdb's dict_fsst declines a row group at
+# 16 KiB); now they compress, and the segments are re-read after a restart.
+
+control substitution on
+
+
+statement ok
+CREATE TABLE dfs (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO dfs SELECT a, repeat('x' || a || '-', 4000) FROM range(200) t(a);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dfs;
+
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression, count(*) >= 1 AS segments
+FROM pragma_storage_info('dfs') WHERE column_name = 'v' AND segment_type <> 'VALIDITY';
+----
+compression	segments
+DICT_FSST	t
+
+
+query
+SELECT count(*) AS mismatches, max(length(v)) AS longest FROM dfs WHERE v IS DISTINCT FROM repeat('x' || a || '-', 4000);
+----
+mismatches	longest
+0	NULL
+
+
+query
+SELECT a FROM dfs WHERE v = repeat('x150-', 4000);
+----
+a
+150
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT count(*) AS mismatches FROM dfs WHERE v IS DISTINCT FROM repeat('x' || a || '-', 4000);
+----
+mismatches
+0

@@ -97,8 +97,8 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
                      const irs::SourcePosition& snapshot) {
   const auto* col_reader = sub.GetColReader();
   SDB_ENSURE(col_reader, "search-table build: segment has no columnstore");
-  FullScanner scanner{
-    *col_reader, source.projections, {}, &context, source.filter_states};
+  FullScanner scanner{*col_reader, source.projections,   {},
+                      &context,    source.filter_states, false};
   const bool has_mask = sub.docs_mask() != nullptr;
   auto mask = irs::MakeGenericDocsMask(sub.docs_mask());
   const uint64_t docs = sub.Meta().docs_count;
@@ -154,15 +154,24 @@ void AppendReplacements(const Slice& slice,
     for (uint64_t rank = 0; rank < live;) {
       SDB_ENSURE(i < slice.flushed.size(),
                  "search-table build: fed more rows than its segments hold");
-      const uint64_t docs = slice.flushed[i].meta.docs_count;
+      const auto& flushed = slice.flushed[i];
+      const uint64_t docs = flushed.meta.docs_count;
       const auto take = std::min(live - rank, docs - used);
-      out[first + i].absorbed.push_back({
-        .source = segment.Id(),
-        .mask = segment.SharedDocsMask(),
-        .rank_begin = static_cast<irs::doc_id_t>(rank),
-        .rank_end = static_cast<irs::doc_id_t>(rank + take),
-        .base = static_cast<irs::doc_id_t>(irs::doc_limits::min() + used),
-      });
+      const irs::DocMap source{.source = segment.Id(),
+                               .mask = segment.SharedDocsMask()};
+      auto& absorbed = out[first + i].absorbed;
+      if (flushed.order.Empty()) {
+        auto& map = absorbed.emplace_back(source);
+        map.rank_begin = static_cast<irs::doc_id_t>(rank);
+        map.rank_end = static_cast<irs::doc_id_t>(rank + take);
+        map.base = flushed.order.NewDoc(used);
+      } else {
+        irs::DocMapRuns runs{source, absorbed};
+        for (uint64_t row = 0; row != take; ++row) {
+          runs.Add(static_cast<irs::doc_id_t>(rank + row),
+                   flushed.order.NewDoc(used + row));
+        }
+      }
       rank += take;
       used += take;
       if (used == docs) {
@@ -364,7 +373,9 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                               "search table ",
                               target.table_id));
     }
+    SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_floor_pending");
     absl::SleepFor(kArmRetry);
+    shard.Publish();
   }
 
   // Groups by byte budget: peak disk is ~2x one group, and each publish is

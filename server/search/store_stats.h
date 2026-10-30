@@ -23,8 +23,16 @@
 #include <absl/status/status.h>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge/merge_order.hpp>
+#include <iresearch/index/merge/sort_spec.hpp>
+#include <limits>
+#include <memory>
+#include <utility>
 
+#include "search/compaction/merge_scheduler.h"
 #include "search/maintenance.h"
 
 namespace irs {
@@ -123,17 +131,31 @@ class MaintenanceCounters {
 
 class MaintainedStore {
  public:
+  explicit MaintainedStore(uint64_t relation_id, irs::SortSpec sort)
+    : _sort{std::move(sort)},
+      _merge_relation{std::make_shared<MergeScheduler::Relation>(relation_id)} {
+  }
+
   auto& GetTasksSettings() noexcept { return _tasks_settings; }
+
+  bool Sorted() const noexcept { return !_sort.Empty(); }
+  size_t MergeInputsMax() const noexcept {
+    return Sorted() ? irs::kSortedMergeInputsMax
+                    : std::numeric_limits<size_t>::max();
+  }
+
+  const std::shared_ptr<MergeScheduler::Relation>& MergeRelation()
+    const noexcept {
+    return _merge_relation;
+  }
 
   // Wake the compaction coordinator: a refresh that produced new segments bumps
   // this generation so the coordinator re-evaluates without waiting for its
   // timer. The coordinator polls CompactionGeneration() during its backoff
   // wait.
-  void NudgeCompaction() noexcept {
-    _compaction_gen.fetch_add(1, std::memory_order_release);
-  }
+  void NudgeCompaction() noexcept { _merge_relation->NudgeCompaction(); }
   uint64_t CompactionGeneration() const noexcept {
-    return _compaction_gen.load(std::memory_order_acquire);
+    return _merge_relation->CompactionGeneration();
   }
 
   // Demand-driven cleanup: a non-empty compaction leaves unreferenced files, so
@@ -162,11 +184,14 @@ class MaintainedStore {
       options.compaction_floor_segment_bytes;
   }
 
+  void SetWriterOptions(irs::IndexWriterOptions& options) const;
+
   TasksSettings _tasks_settings;
   MaintenanceCounters _maintenance;
 
  private:
-  std::atomic<uint64_t> _compaction_gen{0};
+  const irs::SortSpec _sort;
+  const std::shared_ptr<MergeScheduler::Relation> _merge_relation;
   std::atomic<uint32_t> _stale_pressure{0};
 };
 

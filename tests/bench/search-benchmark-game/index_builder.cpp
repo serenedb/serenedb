@@ -26,6 +26,7 @@
 #include <atomic>
 #include <cstdio>
 #include <duckdb/main/database.hpp>
+#include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -194,8 +195,9 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
   }
 
   // compaction threads
-  const irs::index_utils::CompactionTier compaction_options;
-  auto policy = irs::index_utils::MakePolicy(compaction_options);
+  auto policy = irs::MakeAdjacentRunPolicy(
+    irs::AdjacentRunOptions{},
+    [](const irs::SubReader&) { return irs::SegmentRange{}; });
 
   for (size_t i = _opts.compaction_threads; i; --i) {
     threads.emplace_back([&] {

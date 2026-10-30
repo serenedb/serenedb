@@ -281,7 +281,7 @@ IndexOutput::ptr MemoryDirectory::create(std::string_view name) {
         _files.erase(it);
       }
     };
-    file = std::make_unique<MemoryFile>(_files.get_allocator().Manager());
+    file = std::make_shared<MemoryFile>(_files.get_allocator().Manager());
   }
 
   return IndexOutput::ptr{new ChecksumMemoryIndexOutput{*file}};
@@ -329,7 +329,7 @@ IndexInput::ptr MemoryDirectory::open(std::string_view name,
       ERR_CODE(ERRCODE_UNDEFINED_FILE),
       ERR_MSG("Failed to open file '", name, "': No such file or directory"));
   }
-  return std::make_unique<MemoryIndexInput>(*it->second);
+  return std::make_unique<MemoryIndexInput>(it->second);
 }
 
 bool MemoryDirectory::remove(std::string_view name) noexcept {

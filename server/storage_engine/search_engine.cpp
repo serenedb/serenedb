@@ -24,6 +24,7 @@
 #include <absl/strings/escaping.h>
 
 #include <algorithm>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
@@ -37,6 +38,7 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "scheduler/background_scheduler.h"
+#include "search/compaction/merge_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
@@ -46,6 +48,25 @@
 namespace sdb::search {
 
 SearchEngine::SearchEngine() { gInstance = this; }
+
+SearchEngine::~SearchEngine() { gInstance = nullptr; }
+
+void SearchEngine::RequestStop() noexcept {
+  _stopping.store(true, std::memory_order_release);
+  _merges->Interrupt();
+}
+
+size_t SearchEngine::TryAcquireCompactions(size_t wanted) noexcept {
+  return _merges->TryAcquireHelpers(wanted);
+}
+
+void SearchEngine::ReleaseCompactions(size_t count) noexcept {
+  _merges->ReleaseHelpers(count);
+}
+
+size_t SearchEngine::MergeRoundSize() const noexcept {
+  return _merges->RoundSize();
+}
 
 int SearchEngine::MaxConcurrentCompactions() noexcept {
   return std::max<int>(1, static_cast<int>(CountLogicalCores()) / 4 - 1);
@@ -73,11 +94,11 @@ uint32_t AnnAcquireAllWorkers(uint32_t want, uint32_t held) noexcept {
 }  // namespace
 
 ManualCompactionSlot::ManualCompactionSlot() noexcept
-  : _held{GetSearchEngine().TryAcquireCompaction()} {}
+  : _held{GetSearchEngine().TryAcquireCompactions(1) == 1} {}
 
 ManualCompactionSlot::~ManualCompactionSlot() {
   if (_held) {
-    GetSearchEngine().ReleaseCompaction();
+    GetSearchEngine().ReleaseCompactions(1);
   }
 }
 
@@ -89,14 +110,24 @@ const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
 }
 
 void SearchEngine::start() {
+  const auto threads = static_cast<size_t>(MaxConcurrentCompactions());
+  _merge_tasks = std::make_unique<duckdb::TaskScheduler>(
+    irs::DuckDBEngine::Instance().instance());
+  _merge_tasks->SetThreads(threads, 0);
+  _merge_tasks->RelaunchThreads();
+  _merges = std::make_unique<MergeScheduler>(
+    BackgroundScheduler::instance().executor(),
+    MergeScheduler::Options{.threads = threads});
   StartSearchStorageTasks();
   SDB_DEBUG(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
 
 void SearchEngine::stop() {
   _stopping.store(true, std::memory_order_release);
+  _merges->Stop();
   _loops.Done();
   _loops.Wait();
+  _merge_tasks->Join();
 }
 
 template<typename Storage>

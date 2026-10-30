@@ -127,7 +127,7 @@ class ExactScanner {
  private:
   struct Validity {
     Validity(const ColReader& columns, const ColumnReader& column)
-      : reader{columns, column} {}
+      : reader{columns, column, true} {}
 
     ColumnReader::PointReader reader;
     duckdb::Vector scratch{duckdb::LogicalType::BOOLEAN, 1};

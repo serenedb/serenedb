@@ -31,9 +31,11 @@ namespace irs {
 
 class IdxWriter;
 struct BasicTermReader;
+struct FieldProperties;
 struct FlushState;
 struct IResourceManager;
 struct ReaderState;
+struct TermPart;
 struct TermReader;
 
 }  // namespace irs
@@ -50,6 +52,8 @@ class FieldWriter final {
   void SetIdxWriter(IdxWriter& idx) noexcept;
   void prepare(const FlushState& state);
   void write(const BasicTermReader& reader);
+  void write(field_id id, const FieldProperties& props,
+             std::span<const TermPart> parts, uint64_t doc_count);
   void end();
 
  private:

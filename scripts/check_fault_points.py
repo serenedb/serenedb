@@ -93,9 +93,6 @@ KNOWN_MISSING_SOURCE_FAULTS = {
 # Source faults that no test exercises yet. Each is a deliberate, documented
 # gap rather than a silent skip; remove an entry once a test covers it.
 KNOWN_UNTESTED_SOURCE_FAULTS = {
-    # Search compaction task fault points; no recovery test drives compaction yet.
-    "SearchCompactionTask::compactUnsafe",
-    "SearchCompactionTask::lockInvertedIndexStorage",
     # Search refresh task fault points; cleanup/lock paths untested.
     "SearchRefreshTask::cleanupUnsafe",
     "SearchRefreshTask::lockInvertedIndexStorage",
@@ -135,7 +132,7 @@ def scan_sources(dirs):
     parks = set()
     for path in (p for d in dirs for p in walk_files(d, SOURCE_EXTS)):
         text = read(path)
-        if "FAIL" not in text and "Fail" not in text:
+        if "FAIL" not in text and "FaultPoints" not in text:
             continue
         for m in SOURCE_DEF.finditer(text):
             faults.setdefault(m.group(1), f"{rel(path)}:{lineno(text, m.start())}")
@@ -174,7 +171,7 @@ def main():
     for path in walk_files(TEST_DIR, TESTNET_EXTS):
         text = read(path)
         has_set = "sdb_faults" in text
-        has_lit = "FAIL" in text or "Fail" in text
+        has_lit = "FAIL" in text or "FaultPoints" in text
         if not has_set and not has_lit:
             continue
         normalized = rel(path)

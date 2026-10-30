@@ -69,6 +69,19 @@ inline bool HasRemovals(const SegmentInfo& meta) noexcept {
   return meta.live_docs_count != meta.docs_count;
 }
 
+inline long double LiveBytes(uint64_t bytes, uint64_t live_docs,
+                             uint64_t docs) noexcept {
+  if (docs == 0) {
+    return 0;
+  }
+  return static_cast<long double>(bytes) * static_cast<long double>(live_docs) /
+         static_cast<long double>(docs);
+}
+
+inline long double LiveBytes(const SegmentInfo& meta) noexcept {
+  return LiveBytes(meta.byte_size, meta.live_docs_count, meta.docs_count);
+}
+
 static_assert(std::is_nothrow_move_constructible_v<SegmentMeta>);
 static_assert(std::is_nothrow_move_assignable_v<SegmentMeta>);
 

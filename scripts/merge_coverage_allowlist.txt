@@ -1,0 +1,27 @@
+# Lines the merge coverage gate accepts as uncovered: path:line or path:first-last, then the reason.
+iresearch/index/merge/postings_unit.cpp:368-371 CompoundTermIterator::GetMutable exists for the Attribute interface; merges read attributes only through get()
+iresearch/index/merge/postings_unit.cpp:468 only zero-doc terms give the shared empty postings, and only IVF cluster fields have them, which a merge rebuilds or drops before their terms are read
+iresearch/index/merge/merge_plan.cpp:568 the refusal of an invalid norm column id is covered by MergeCharacterizationTest.InvalidNormColumnIdIsRefused, a death test whose child process dies before it writes its profile
+iresearch/index/merge/merge_plan.cpp:640 the implicit default of an exhaustive switch over MergeUnitKind
+iresearch/index/merge/merge_plan.cpp:657-658 the return after an exhaustive switch over MergeUnitKind
+iresearch/formats/column/col_block_sink.cpp:63-64 a string over 4 GiB cannot be built in a test; the check guards the 32-bit length prefix of an overflow string
+server/search/compaction/merge_planner.cpp:105-106 the merge policies offer a single segment only when it has deletes; the check mirrors CompactAsync so EXPLAIN matches the merge
+server/search/compaction/merge_planner.cpp:262 the implicit default of an exhaustive switch over MergeMode
+server/search/compaction/merge_planner.cpp:272 the return after an exhaustive switch over MergeMode
+server/search/compaction/merge_planner.cpp:303-305 every planned merge has documents
+server/search/compaction/merge_planner.cpp:314 the implicit default of an exhaustive switch over MergeMode
+server/search/compaction/merge_policies.cpp:58 the index's database was detached after the merge checked that its storage is not retired and before it pinned the options; DROP DATABASE retires the storage first, so a parked merge stops at that check
+server/search/compaction/merge_policies.cpp:66-68 the index was dropped while its compaction options were being pinned
+server/search/compaction/merge_policies.cpp:74 the database-detached race of line 58
+server/connector/functions/sdb_segments.cpp:113-114 every search-table and index segment carries the generated row key with its range
+server/connector/segment_rewrite/segment_rewrite_job.cpp:65-75 every search-table and index segment carries the generated row key with its range
+server/connector/segment_rewrite/segment_rewrite_job.cpp:97-101 every segment has the generated row key column, so a merge has columns
+server/connector/segment_rewrite/segment_rewrite_job.cpp:126 the return after an exhaustive switch over irs::MergeStep
+server/search/compaction/merge_registry.cpp:70 the implicit default of an exhaustive switch over MergeOrigin
+server/search/compaction/merge_registry.cpp:78 the return after an exhaustive switch over MergeOrigin
+server/search/compaction/merge_registry.cpp:82 the implicit default of an exhaustive switch over MergeOutcome
+server/search/compaction/merge_registry.cpp:98 the return after an exhaustive switch over MergeOutcome
+server/search/compaction/merge_registry.cpp:102 the implicit default of an exhaustive switch over irs::CompactionError
+server/search/compaction/merge_registry.cpp:114 the return after an exhaustive switch over irs::CompactionError
+server/pg/sdb_catalog/sdb_merges.cpp:200-203 every flushed segment carries the generated row key with its range, and a merge records its inputs before it can fail; only a merge whose policy never ran, which an allocation failure alone causes, has no range
+server/search/task.cpp:165-167 an index whose options cannot be pinned although its storage is not retired: only between RemoveIndex and OnDrop inside FinalizeCommit of its DROP INDEX

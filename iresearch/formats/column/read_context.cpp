@@ -25,6 +25,7 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/block.hpp>
+#include <duckdb/storage/storage_info.hpp>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/types.hpp"
@@ -81,6 +82,7 @@ void ReadContext::Reset(const ColReader& reader) {
 void ReadContext::ResetMapping() {
   _mapping.reset();
   _ranges.clear();
+  _cache_slots.clear();
   if (!_in) {
     return;
   }
@@ -128,11 +130,13 @@ void ReadContext::Read(duckdb::idx_t position, duckdb::data_ptr_t target,
 }
 
 duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
-  uint64_t offset, uint64_t size) {
+  uint64_t offset, uint64_t size, CacheSlot slot) {
   const auto id = static_cast<duckdb::block_id_t>(_ranges.size());
   _ranges.emplace_back(offset, size);
+  _cache_slots.push_back(slot);
   ++_live_handles;
-  auto handle = RegisterBlock(id);
+  auto handle = RegisterBlock(
+    id, duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(size));
   if (Maps(offset, size)) {
     handle->GetMemory().SetMemoryUsage(0);
   }
@@ -159,7 +163,6 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
   if (id >= _ranges.size()) {
     return BlockManager::CreateBlock(block_id, source_buffer);
   }
-  SDB_ASSERT(source_buffer == nullptr);
   const auto [offset, size] = _ranges[id];
   if (Maps(offset, size)) {
     return duckdb::make_uniq<duckdb::Block>(*_allocator, block_id, *_mapping,
@@ -219,5 +222,12 @@ void ReadContext::WriteHeader(duckdb::QueryContext /*context*/,
   THROW_SQL_ERROR(ERR_MSG("ReadContext::WriteHeader on read-only context"));
 }
 duckdb::idx_t ReadContext::TotalBlocks() { return 0; }
+
+const ReadContext::CacheSlot& CacheSlotOf(
+  duckdb::ColumnSegment& segment) noexcept {
+  const auto& block = segment.GetBlockHandle();
+  return static_cast<const ReadContext&>(block->GetBlockManager())
+    .CacheSlotOf(block->BlockId());
+}
 
 }  // namespace irs

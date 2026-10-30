@@ -112,6 +112,13 @@ class DocumentMask final {
 
   MaskKind Kind() const noexcept { return _kind; }
 
+  template<typename Visitor>
+  void ForEach(Visitor&& visitor) const {
+    for (const auto doc : _set) {
+      visitor(static_cast<doc_id_t>(doc));
+    }
+  }
+
   uint64_t RunsBound() const noexcept;
 
   uint32_t ContainerCount() const noexcept {

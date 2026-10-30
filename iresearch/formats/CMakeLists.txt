@@ -1,6 +1,21 @@
 target_sources(
     iresearch
     PRIVATE
+        column/codecs/fsst.cpp
+        column/codecs/fsst_chain_encoder.cpp
+        column/codecs/lz4.cpp
+        column/codecs/numeric.cpp
+        column/codecs/registry.cpp
+        column/codecs/segment_builder.cpp
+        column/codecs/sequence.cpp
+        column/codecs/string_scan.cpp
+        column/codecs/string_writer.cpp
+        column/codecs/trained_dictionary.cpp
+        column/codecs/zstd.cpp
+        column/codecs/zxc.cpp
+        column/col_block_copy.cpp
+        column/col_block_sink.cpp
+        column/col_copy_check.cpp
         column/col_reader.cpp
         column/col_writer.cpp
         column/column_reader.cpp
@@ -15,6 +30,7 @@ target_sources(
         index/burst_trie.cpp
         index/idx_reader.cpp
         index/idx_writer.cpp
+        index/term_parts.cpp
         index_meta_reader.cpp
         index_meta_writer.cpp
         posting/block_codec.cpp

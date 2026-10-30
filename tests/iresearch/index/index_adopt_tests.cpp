@@ -2258,7 +2258,7 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
 
   bool removed = false;
-  const irs::MergeWriter::FlushProgress progress = [&] {
+  const irs::MergeProgress progress = [&] {
     if (!removed) {
       removed = true;
       auto del = _writer->GetBatch();
@@ -2323,18 +2323,20 @@ TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {
   // says "written later".
   bool attempted = false;
   bool held = true;
-  const irs::MergeWriter::FlushProgress progress = [&] {
+  const irs::MergeProgress progress = [&] {
     if (!attempted) {
       attempted = true;
       held = _writer->ArmCompactionFloor().Held();
     }
     return true;
   };
-  ASSERT_TRUE(_writer->Compact(kFullMerge, nullptr, progress));
+  EXPECT_EQ(irs::CompactionError::Cancelled,
+            _writer->Compact(kFullMerge, nullptr, progress).error);
   ASSERT_TRUE(attempted) << "the progress callback never ran";
   EXPECT_FALSE(held) << "armed a floor while a merge was in flight";
 
-  ASSERT_TRUE(_writer->RefreshCommit());
+  EXPECT_FALSE(_writer->RefreshCommit());
+  EXPECT_EQ(2, _writer->GetSnapshot().size());
 
   // Idle again, it arms -- so the refusal above was the in-flight merge.
   auto guard = _writer->ArmCompactionFloor();

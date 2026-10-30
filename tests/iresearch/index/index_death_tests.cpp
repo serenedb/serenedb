@@ -1944,7 +1944,7 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
     // components. Each compaction attempt allocates a fresh
     // segment id (NextSegmentId()), so after `_3.col` fails the next
     // attempt's segment is `_4`, the one after is `_5`, etc. Order
-    // matches the order files are created during MergeWriter::Flush:
+    // matches the order files are created during MergeSegments:
     // cs writer is opened first (in OpenColumnstoreContexts), then
     // postings, then term index/data, etc.
     dir.RegisterFailure(FailingDirectory::Failure::CREATE,

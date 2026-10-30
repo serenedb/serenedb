@@ -25,6 +25,9 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/store/directory_cleaner.hpp>
+#include <string>
 
 // Background-maintenance vocabulary shared by the maintained iresearch stores
 // (InvertedIndexStorage, SearchTable) and the loops in search/task.h that drive
@@ -55,6 +58,19 @@ enum class RefreshResult {
 struct ResultWithTime {
   absl::Status res;
   uint64_t time_ms;
+};
+
+struct MergeResult {
+  absl::Status res;
+  uint64_t time_ms = 0;
+  irs::CompactionResult outcome;
+  std::string error;
+};
+
+struct CleanupResult {
+  absl::Status res;
+  uint64_t time_ms = 0;
+  irs::RemovedFiles removed;
 };
 
 }  // namespace sdb::search

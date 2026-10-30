@@ -44,10 +44,12 @@
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 
+#include "iresearch/formats/ann_build_env.hpp"
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/index/compaction/merge_ticket.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
@@ -59,12 +61,15 @@ namespace duckdb {
 class DatabaseInstance;
 }
 #include "iresearch/index/directory_reader.hpp"
+#include "iresearch/index/directory_reader_impl.hpp"
 #include "iresearch/index/doc_removal.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader_options.hpp"
-#include "iresearch/index/merge_writer.hpp"
+#include "iresearch/index/merge/doc_map.hpp"
+#include "iresearch/index/merge/merge_plan.hpp"
+#include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/utils/string.hpp"
@@ -81,14 +86,23 @@ enum OpenMode {
 
 ENABLE_BITMASK_ENUM(OpenMode);
 
-using Compaction = std::vector<const SubReader*>;
-using CompactionView = std::span<const SubReader* const>;
-
 using CompactingSegments = absl::flat_hash_set<std::string_view>;
 
 using CompactionPolicy =
   std::function<void(Compaction& candidates, const IndexReader& index,
                      const CompactingSegments& compacting_segments)>;
+
+using MergeGroups = std::vector<Compaction>;
+
+struct MergeReservation {
+  std::vector<MergeTicket> tickets;
+  bool busy = false;
+};
+
+enum class LoneSegment : uint8_t {
+  Skip,
+  Rewrite,
+};
 
 enum class CompactionError : uint32_t {
   Fail = 0,
@@ -98,6 +112,8 @@ enum class CompactionError : uint32_t {
   Pending,
 
   Busy,
+
+  Cancelled,
 };
 
 struct CompactionResult {
@@ -105,7 +121,12 @@ struct CompactionResult {
 
   CompactionError error{CompactionError::Fail};
 
-  operator bool() const noexcept { return error != CompactionError::Fail; }
+  MergeStats stats{};
+
+  operator bool() const noexcept {
+    return error != CompactionError::Fail &&
+           error != CompactionError::Cancelled;
+  }
 };
 
 struct SegmentOptions {
@@ -118,6 +139,9 @@ struct SegmentOptions {
 
 using ProgressReportCallback =
   std::function<void(std::string_view phase, size_t current, size_t total)>;
+
+using FlushedSegmentsCallback =
+  std::function<void(std::span<const SubReader* const> segments)>;
 
 struct IndexWriterOptions : public SegmentOptions {
   IndexReaderOptions reader_options;
@@ -142,6 +166,10 @@ struct IndexWriterOptions : public SegmentOptions {
   const AnnBuildEnv* ann_env = nullptr;
 
   field_id key_field = field_limits::invalid();
+
+  SortSpec sort;
+
+  FlushedSegmentsCallback on_flushed;
 
   IndexWriterOptions() {}
 };
@@ -428,12 +456,38 @@ class IndexWriter : private util::Noncopyable {
 
   CompactionResult Compact(const CompactionPolicy& policy,
                            const IndexFieldOptions* field_options = nullptr,
-                           const MergeWriter::FlushProgress& progress = {});
+                           const MergeProgress& progress = {});
 
   auto CompactAsync(const CompactionPolicy& policy,
                     const IndexFieldOptions* field_options,
-                    const MergeWriter::FlushProgress& progress,
-                    const AnnBuildEnv* env) -> yaclib::Future<CompactionResult>;
+                    const MergeProgress& progress, const AnnBuildEnv* env,
+                    MergeExecutor* executor = nullptr,
+                    LoneSegment lone = LoneSegment::Skip)
+    -> yaclib::Future<CompactionResult>;
+
+  MergeReservation ReserveMerges(auto&& planner,
+                                 LoneSegment lone = LoneSegment::Skip) {
+    std::lock_guard lock{_compacting.lock};
+    if (_compacting.floor_requests != 0) {
+      return {.busy = true};
+    }
+    auto snapshot = GetSnapshotImpl();
+    if (snapshot->size() == 0) {
+      return {};
+    }
+    MergeGroups groups;
+    if (_compacting.floor == 0) {
+      planner(*snapshot, _compacting.segments, groups);
+    } else {
+      planner(*snapshot, UnavailableLocked(*snapshot), groups);
+    }
+    return ReserveLocked(std::move(snapshot), groups, lone);
+  }
+
+  auto RunMerge(MergeTicket ticket, const IndexFieldOptions* field_options,
+                const MergeProgress& progress, const AnnBuildEnv* env,
+                MergeExecutor* executor = nullptr)
+    -> yaclib::Future<CompactionResult>;
 
   void AdoptSegment(std::string_view meta_file, uint64_t tick,
                     const SourcePosition& position = {});
@@ -443,19 +497,24 @@ class IndexWriter : private util::Noncopyable {
     CompactionFloorGuard() = default;
     CompactionFloorGuard(IndexWriter& writer, uint64_t floor) noexcept
       : _writer{&writer}, _floor{floor} {}
+    explicit CompactionFloorGuard(IndexWriter& writer) noexcept
+      : _writer{&writer}, _pending{true} {}
     CompactionFloorGuard(CompactionFloorGuard&& rhs) noexcept
-      : _writer{std::exchange(rhs._writer, nullptr)}, _floor{rhs._floor} {}
+      : _writer{std::exchange(rhs._writer, nullptr)},
+        _floor{rhs._floor},
+        _pending{rhs._pending} {}
     CompactionFloorGuard& operator=(CompactionFloorGuard&& rhs) noexcept {
       if (this != &rhs) {
         Release();
         _writer = std::exchange(rhs._writer, nullptr);
         _floor = rhs._floor;
+        _pending = rhs._pending;
       }
       return *this;
     }
     ~CompactionFloorGuard() { Release(); }
 
-    bool Held() const noexcept { return _writer != nullptr; }
+    bool Held() const noexcept { return _writer && !_pending; }
     uint64_t Floor() const noexcept { return _floor; }
 
    private:
@@ -463,6 +522,7 @@ class IndexWriter : private util::Noncopyable {
 
     IndexWriter* _writer = nullptr;
     uint64_t _floor = 0;
+    bool _pending = false;
   };
 
   CompactionFloorGuard ArmCompactionFloor();
@@ -513,24 +573,32 @@ class IndexWriter : private util::Noncopyable {
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
  private:
+  friend class MergeTicket;
+
+  CompactingSegments UnavailableLocked(const IndexReader& snapshot) const;
+  MergeReservation ReserveLocked(
+    std::shared_ptr<const DirectoryReaderImpl> snapshot, MergeGroups& groups,
+    LoneSegment lone);
+  void ReleaseTicket(MergeTicket::State& state) noexcept;
+  void RevokeTicketsLocked() noexcept;
+
   struct CompactionContext : util::Noncopyable {
-    std::shared_ptr<const DirectoryReaderImpl> compaction_reader;
+    std::vector<SegmentReader> inputs;
     Compaction candidates;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<CompactionContext>);
 
   struct IncomingSegment {
-    IncomingSegment(
-      IndexSegment&& segment, FileRefs&& refs,
-      Compaction&& compaction_candidates,
-      std::shared_ptr<const SegmentReaderImpl>&& reader,
-      std::shared_ptr<const DirectoryReaderImpl>&& compaction_reader) noexcept
+    IncomingSegment(IndexSegment&& segment, FileRefs&& refs,
+                    Compaction&& compaction_candidates,
+                    std::shared_ptr<const SegmentReaderImpl>&& reader,
+                    std::vector<SegmentReader>&& inputs) noexcept
       : tick{writer_limits::kMinTick},
         segment{std::move(segment)},
         refs{std::move(refs)},
         reader{std::move(reader)},
-        compaction_ctx{.compaction_reader = std::move(compaction_reader),
+        compaction_ctx{.inputs = std::move(inputs),
                        .candidates = std::move(compaction_candidates)} {}
 
     IncomingSegment(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
@@ -559,17 +627,21 @@ class IndexWriter : private util::Noncopyable {
     FlushedSegment() = default;
     explicit FlushedSegment(IndexSegment&& segment,
                             DocumentMaskBuilder&& docs_mask, DocContexts&& docs,
-                            size_t committed_docs) noexcept
+                            size_t committed_docs, DocOrder&& order) noexcept
       : IndexSegment{std::move(segment)},
         docs_mask{std::move(docs_mask)},
         docs{std::move(docs)},
-        committed_docs{committed_docs} {
+        committed_docs{committed_docs},
+        order{std::move(order)} {
       SDB_ASSERT(this->docs.size() == meta.docs_count);
+      SDB_ASSERT(this->order.Empty() ||
+                 this->order.new2old.size() == meta.docs_count);
     }
 
     DocumentMaskBuilder docs_mask;
     DocContexts docs;
     size_t committed_docs;
+    DocOrder order;
     bool meta_on_disk = false;
   };
 
@@ -726,6 +798,7 @@ class IndexWriter : private util::Noncopyable {
   struct PendingBase {
     FlushContextPtr ctx{nullptr, nullptr};
     SourcePosition position;
+    size_t flushed = 0;
 
     void StartReset(IndexWriter& writer) noexcept {
       auto* curr = ctx.get();
@@ -768,6 +841,7 @@ class IndexWriter : private util::Noncopyable {
 
   PendingContext PrepareFlush(const CommitInfo& info);
   void ApplyFlush(PendingContext&& context);
+  void ReportFlushed(const DirectoryReaderImpl& commit, size_t count) noexcept;
 
   FlushContextPtr GetFlushContext() const noexcept;
   FlushContextPtr SwitchFlushContext() noexcept;
@@ -789,13 +863,17 @@ class IndexWriter : private util::Noncopyable {
   duckdb::DatabaseInstance* _db = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
   field_id _key_field = field_limits::invalid();
+  SortSpec _sort;
+  FlushedSegmentsCallback _on_flushed;
   std::unique_ptr<HnswBases> _hnsw_bases;
   std::shared_ptr<const IndexFieldOptions> _field_options;
   absl::Mutex _commit_lock;
   struct {
     std::recursive_mutex lock;
     CompactingSegments segments;
+    irs::containers::FlatHashSet<MergeTicket::State*> tickets;
     uint64_t floor = 0;
+    uint32_t floor_requests = 0;
   } _compacting;
   Directory& _dir;
   std::atomic<FlushContext*> _flush_context;

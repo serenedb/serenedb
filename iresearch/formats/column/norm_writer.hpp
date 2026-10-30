@@ -30,7 +30,7 @@
 
 namespace irs {
 
-class IndexOutput;
+class ColBlockSink;
 
 inline constexpr uint32_t kNormCodes = 16;
 inline constexpr uint32_t kNormDirect = kNormCodes - 1;
@@ -103,9 +103,9 @@ inline uint64_t NormTableSize(const NormRegionMeta& region) noexcept {
 
 class NormColumnWriter final {
  public:
-  using Open = std::function<IndexOutput&()>;
+  using Open = std::function<ColBlockSink&()>;
 
-  NormColumnWriter(field_id id, uint32_t row_group_size, IndexOutput& out);
+  NormColumnWriter(field_id id, uint32_t row_group_size, ColBlockSink& blocks);
 
   NormColumnWriter(field_id id, uint32_t row_group_size, Open open);
 
@@ -115,6 +115,14 @@ class NormColumnWriter final {
   void Append(uint64_t target_row, uint32_t value);
 
   void PadTo(uint64_t target);
+
+  void StageAll() noexcept;
+
+  void Reorder(std::span<const uint32_t> new2old);
+
+  uint64_t StagedBytes() const noexcept {
+    return _values.size() * sizeof(uint32_t);
+  }
 
   void OpenRegion(const NormStats& planned);
 
@@ -142,9 +150,10 @@ class NormColumnWriter final {
   void End();
 
   field_id _id;
-  IndexOutput* _out = nullptr;
+  ColBlockSink* _blocks = nullptr;
   Open _open;
   uint32_t _row_group_size;
+  uint32_t _staged_row_group_size = 0;
   NormColumnMeta _meta;
   std::vector<uint32_t> _values;
   NormRegionMeta _region;

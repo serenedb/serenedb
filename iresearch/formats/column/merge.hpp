@@ -20,8 +20,10 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
-#include <functional>
+#include <memory>
 #include <span>
 
 #include "iresearch/index/column_info.hpp"
@@ -30,18 +32,58 @@
 namespace irs {
 
 struct SubReader;
+struct DocRemap;
 
 class ColReader;
 class ColWriter;
+class MergeOrder;
 
 struct MergeSource {
   const SubReader* reader;
   const ColReader* col_reader;
   uint64_t alive_count;
+  const DocRemap* remap = nullptr;
 };
 
-bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
+class ColumnMerger {
+ public:
+  ColumnMerger(std::span<const MergeSource> sources,
                const IndexFieldOptions* field_options,
-               const std::function<bool()>& progress = {});
+               const MergeOrder* order = nullptr);
+  ~ColumnMerger();
+
+  ColumnMerger(const ColumnMerger&) = delete;
+  ColumnMerger& operator=(const ColumnMerger&) = delete;
+
+  std::span<const field_id> Columns() const noexcept;
+
+  uint64_t StoredBytes(field_id column) const;
+
+  uint64_t StoredBytes(field_id column, size_t input) const;
+
+  uint32_t RowGroupSize() const noexcept;
+
+  bool Splittable(field_id column) const;
+
+  bool HoldsText(field_id column) const;
+
+  bool Copyable(field_id column, size_t input) const;
+
+  bool Merge(field_id column, ColWriter& output,
+             absl::FunctionRef<bool()> progress);
+
+  bool Train(field_id column, absl::FunctionRef<bool()> progress);
+
+  bool MergeRange(field_id column, uint32_t part, uint64_t begin, uint64_t end,
+                  ColWriter& output, absl::FunctionRef<bool()> progress);
+
+  bool CopyRange(field_id column, uint32_t part, size_t input, uint64_t begin,
+                 uint64_t end, ColWriter& output,
+                 absl::FunctionRef<bool()> progress);
+
+ private:
+  struct State;
+  std::unique_ptr<State> _state;
+};
 
 }  // namespace irs

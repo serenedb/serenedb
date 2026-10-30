@@ -53,6 +53,27 @@ struct DocMapsSlot {
   std::vector<DocMap> maps;
 };
 
+class DocMapRuns {
+ public:
+  DocMapRuns(DocMap source, std::vector<DocMap>& maps) noexcept
+    : _source{std::move(source)}, _maps{maps}, _first{maps.size()} {}
+
+  void Add(doc_id_t rank, doc_id_t doc) {
+    if (_maps.size() == _first || _maps.back().rank_end != rank ||
+        _maps.back().base + (rank - _maps.back().rank_begin) != doc) {
+      auto& run = _maps.emplace_back(_source);
+      run.rank_begin = rank;
+      run.base = doc;
+    }
+    _maps.back().rank_end = rank + 1;
+  }
+
+ private:
+  DocMap _source;
+  std::vector<DocMap>& _maps;
+  size_t _first;
+};
+
 struct DocRemoval {
   struct Group {
     uint64_t segment = 0;

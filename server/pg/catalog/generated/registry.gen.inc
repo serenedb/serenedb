@@ -39,6 +39,8 @@ constexpr SystemTable* kSystemTables[] = {
   &gPgTrigger,
   &gPgTsDict,
   &gPgType,
+  &gSdbCompactHistory,
+  &gSdbMerges,
   &gSdbMetrics,
   &gSdbProgress,
   &gSdbSettings,

@@ -73,6 +73,10 @@ add_executable(
     analysis/wordnet_synonyms_tokenizer_tests.cpp
     duckdb/immutable_strings_tests.cpp
     duckdb/validity_mask_tests.cpp
+    formats/column/col_block_sink_test.cpp
+    formats/column/col_codecs_test.cpp
+    formats/column/col_copy_check_test.cpp
+    formats/column/col_numeric_codec_test.cpp
     formats/column/column_reader_test.cpp
     formats/columnstore2_test.cpp
     formats/docs_slack_test.cpp
@@ -86,10 +90,14 @@ add_executable(
     formats/ivf/centroids_test.cpp
     formats/ivf/quantizer_test.cpp
     formats/posting/block_codec_test.cpp
+    formats/posting/growing_hint_test.cpp
     formats/posting_alloc_test.cpp
     formats/sparse_bitmap_test.cpp
     index/assert_format.cpp
     index/buffered_column_test.cpp
+    index/compaction/adjacent_run_policy_tests.cpp
+    index/compaction/flushed_segments_tests.cpp
+    index/compaction/merge_ticket_tests.cpp
     index/compaction_policy_tests.cpp
     index/doc_generator.cpp
     index/doc_removal_tests.cpp
@@ -103,6 +111,18 @@ add_executable(
     index/index_tests.cpp
     index/inverter_oracle_test.cpp
     index/inverter_tests.cpp
+    index/merge/input_norms_tests.cpp
+    index/merge/merge_ann_tests.cpp
+    index/merge/merge_characterization_tests.cpp
+    index/merge/merge_oracle_tests.cpp
+    index/merge/merge_plan_tests.cpp
+    index/merge/merge_schedule_tests.cpp
+    index/merge/sorted_merge_tests.cpp
+    index/merge/support/parallel_merge.cpp
+    index/merge/support/segment_dump.cpp
+    index/merge/support/segment_gen.cpp
+    index/merge/term_keys_tests.cpp
+    index/merge/term_ranges_tests.cpp
     index/merge_writer_tests.cpp
     index/norm_test.cpp
     index/segment_writer_tests.cpp
@@ -159,10 +179,12 @@ add_executable(
     search/token_phrase_test.cpp
     search/top_terms_selector_test.cpp
     search/vector_similarity_query_test.cpp
+    search/verified_batch_test.cpp
     search/wildcard_filter_test.cpp
     search/wildcard_ngram_filter_test.cpp
     store/directory_cleaner_tests.cpp
     store/directory_test_case.cpp
+    store/memory_directory_tests.cpp
     store/memory_index_output_tests.cpp
     store/store_utils_tests.cpp
     utils/bit_packing_tests.cpp
@@ -192,6 +214,7 @@ add_executable(
     utils/ref_counter_tests.cpp
     utils/regexp_ngram_test.cpp
     utils/regexp_utils_test.cpp
+    utils/serializer_tests.cpp
     utils/simd_utils_test.cpp
     utils/std_test.cpp
     utils/string_tests.cpp
@@ -204,6 +227,13 @@ add_executable(
 target_link_libraries(
     iresearch-tests
     PRIVATE iresearch-test-support search-benchmark-common
+)
+target_include_directories(
+    iresearch-tests
+    SYSTEM
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
 )
 sdb_link_duckdb_extensions(iresearch-tests)
 

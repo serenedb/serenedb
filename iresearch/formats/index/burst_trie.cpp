@@ -29,6 +29,9 @@
 
 #include <array>
 #include <bit>
+#include <duckdb/common/fault_points.hpp>
+#include <optional>
+#include <span>
 #include <variant>
 #include <vector>
 
@@ -38,6 +41,7 @@
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/index/term_parts.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/reader.hpp"
 #include "iresearch/formats/posting/writer.hpp"
@@ -56,6 +60,7 @@
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/monotonic_buffer.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/fst/fst_builder.hpp"
 #include "iresearch/utils/fst/fst_matcher.hpp"
 #include "iresearch/utils/fst/fst_string_ref_weight.hpp"
@@ -498,6 +503,9 @@ class FieldWriter::Impl {
 
   void write(const BasicTermReader& reader);
 
+  void write(field_id id, const FieldProperties& props,
+             std::span<const TermPart> parts, uint64_t doc_count);
+
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
 
  private:
@@ -507,7 +515,8 @@ class FieldWriter::Impl {
 
   void EndField(field_id id, FieldProperties props, bytes_view min_term,
                 bytes_view max_term, uint64_t total_doc_freq,
-                uint64_t total_term_freq, uint64_t doc_count);
+                uint64_t total_term_freq, uint64_t term_count,
+                uint64_t docs = 0);
 
   // prefix - prefix length (in last_term)
   // begin - index of the first entry in the block
@@ -799,6 +808,43 @@ void FieldWriter::Impl::write(const BasicTermReader& reader) {
            term_count);
 }
 
+void FieldWriter::Impl::write(field_id id, const FieldProperties& props,
+                              std::span<const TermPart> parts,
+                              uint64_t doc_count) {
+  BeginField(props);
+  _pw.SetTermPayloadWriter(nullptr);
+  uint64_t term_count = 0;
+  uint64_t sum_dfreq = 0;
+  uint64_t sum_tfreq = 0;
+  bstring min_term;
+  bstring max_term;
+  for (const auto& part : parts) {
+    sum_dfreq += part.total_doc_freq;
+    sum_tfreq += part.total_term_freq;
+    if (part.term_count == 0) {
+      continue;
+    }
+    const auto bases = _pw.Append(part.doc, part.pos, part.pay);
+    TermPartReader terms{part.terms, props.index_features};
+    while (terms.Next()) {
+      auto meta = terms.Meta();
+      meta.doc_start += bases.doc;
+      meta.pos_start += bases.pos;
+      meta.pay_start += bases.pay;
+      const auto term = terms.Term();
+      if (term_count == 0) {
+        min_term.assign(term);
+      }
+      Push(term);
+      _stack.emplace_back(term, std::move(meta), _compaction);
+      ++term_count;
+    }
+    max_term.assign(terms.Term());
+  }
+  EndField(id, props, min_term, max_term, sum_dfreq, sum_tfreq, term_count,
+           doc_count);
+}
+
 void FieldWriter::Impl::BeginField(const FieldProperties& meta) {
   SDB_ASSERT(_blocks_out);
 
@@ -811,8 +857,8 @@ void FieldWriter::Impl::BeginField(const FieldProperties& meta) {
 void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
                                  bytes_view min_term, bytes_view max_term,
                                  uint64_t total_doc_freq,
-                                 uint64_t total_term_freq,
-                                 uint64_t term_count) {
+                                 uint64_t total_term_freq, uint64_t term_count,
+                                 uint64_t docs) {
   SDB_ASSERT(_blocks_out);
 
   if (!term_count) {
@@ -820,7 +866,9 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
     return;
   }
 
-  const auto [has_score_bounds, doc_count] = _pw.EndField();
+  const auto field_stats = _pw.EndField();
+  const bool has_score_bounds = field_stats.has_score_bounds;
+  const uint64_t doc_count = docs != 0 ? docs : field_stats.docs_count;
 
   // cause creation of all final blocks
   Push(kEmptyStringView<byte_type>);
@@ -872,6 +920,9 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
   meta.doc_count = doc_count;
   meta.total_doc_freq = total_doc_freq;
   meta.total_term_freq = total_term_freq;
+  SDB_IF_FAILURE("irs::burst_trie::TotalTermFreqPast32Bits") {
+    meta.total_term_freq += uint64_t{1} << 32;
+  }
   meta.has_score_bounds = has_score_bounds != 0;
   meta.body_offset = body_offset;
   meta.norm = props.norm;
@@ -899,6 +950,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   const FieldMeta& meta() const noexcept final { return _field; }
   size_t size() const noexcept final { return _terms_count; }
   uint64_t docs_count() const noexcept final { return _doc_count; }
+  uint64_t total_term_freq() const noexcept final { return _total_term_freq; }
   bytes_view min() const noexcept final { return _min_term; }
   bytes_view max() const noexcept final { return _max_term; }
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
@@ -935,7 +987,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   const byte_type* _inline_region{};
   std::unique_ptr<byte_type[]> _inline_copy;
   bool _has_score_bounds{};
-  FreqAttr _freq;
+  uint64_t _total_term_freq{};
 };
 
 void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta,
@@ -948,23 +1000,14 @@ void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta,
   _inline_size = in.ReadV64();
   _min_term = ReadString<bstring>(in);
   _max_term = ReadString<bstring>(in);
-  const auto total =
+  _total_term_freq =
     IndexFeatures::None != (meta.features & IndexFeatures::Freq)
       ? meta.total_term_freq
       : meta.total_doc_freq;
-  // TODO(mbkkt) for what reason we store uint64_t if we read to uint32_t
-  SDB_ENSURE(total <= std::numeric_limits<uint32_t>::max(),
-             "TermReaderBase: total_term_freq ", total,
-             " exceeds uint32_t::max");
-  _freq.value = static_cast<uint32_t>(total);
   _has_score_bounds = meta.has_score_bounds;
 }
 
-Attribute* TermReaderBase::GetMutable(TypeInfo::type_id type) noexcept {
-  if (irs::Type<FreqAttr>::id() == type) {
-    return &_freq;
-  }
-
+Attribute* TermReaderBase::GetMutable(TypeInfo::type_id) noexcept {
   return nullptr;
 }
 
@@ -1717,7 +1760,7 @@ class TermIteratorBase {
   std::vector<Arc> _sstate;
   std::vector<BlockIterator> _block_stack;
   BlockIterator* _cur_block{};
-  GrowingHint _hint;
+  TreeWalkHint _hint;
   bool _hinted = false;
 };
 
@@ -2874,11 +2917,8 @@ class FieldReader::Impl {
         return;
       }
       const auto& in = *_owner->_terms_in;
-      for (uint64_t i = 0; i != kBlocksProbes; ++i) {
-        if (!in.Resident(_blocks_begin + size * i / kBlocksProbes, 1)) {
-          in.Prefetch(_blocks_begin, size);
-          return;
-        }
+      if (!file_utils::SampledResident(in, _blocks_begin, size)) {
+        in.Prefetch(_blocks_begin, size);
       }
     }
 
@@ -2910,7 +2950,6 @@ class FieldReader::Impl {
 
    private:
     static constexpr uint64_t kMaxBlocksPrefetch = uint64_t{256} << 20;
-    static constexpr uint64_t kBlocksProbes = 4;
     static constexpr int kWideStart = 128;
 
     FieldReader::Impl* _owner;
@@ -2994,6 +3033,11 @@ void FieldWriter::SetIdxWriter(IdxWriter& idx) noexcept {
 void FieldWriter::prepare(const FlushState& state) { _impl->prepare(state); }
 
 void FieldWriter::write(const BasicTermReader& reader) { _impl->write(reader); }
+
+void FieldWriter::write(field_id id, const FieldProperties& props,
+                        std::span<const TermPart> parts, uint64_t doc_count) {
+  _impl->write(id, props, parts, doc_count);
+}
 
 void FieldWriter::end() { _impl->end(); }
 

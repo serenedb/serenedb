@@ -1,0 +1,107 @@
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE TABLE iiss (id INTEGER, k INTEGER, body VARCHAR);
+
+
+statement ok
+INSERT INTO iiss SELECT i, (i * 7919) % 1009, 'w' || (i % 13) FROM range(2400000) t(i);
+
+
+statement ok
+CREATE INDEX iiss_idx ON iiss USING inverted (body) SORTED BY (k DESC)
+  WITH (segment_docs_max = 1, refresh_interval = 0, compaction_interval = 0);
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('iiss_idx');
+----
+segments	docs
+1172	2400000
+
+
+statement ok
+VACUUM (COMPACT_INDEX) iiss_idx;
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('iiss_idx');
+----
+segments	docs
+1	2400000
+
+
+query
+SELECT outcome, cardinality(inputs) AS inputs, input_docs FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'iiss_idx') AND type = 'merge'
+ORDER BY id;
+----
+outcome	inputs	input_docs
+merged	149	304896
+merged	1024	2400000
+
+
+query
+SELECT count(*) AS n, list(k) = list(k ORDER BY k DESC) AS sorted FROM iiss_idx;
+----
+n	sorted
+2400000	t
+
+
+query
+SELECT count(*) AS n, sum(id) AS total FROM iiss_idx WHERE body @@ 'w3';
+----
+n	total
+184616	221539292308
+
+
+statement ok
+CREATE INDEX iiss_opt ON iiss USING inverted (body) SORTED BY (k)
+  WITH (segment_docs_max = 1, refresh_interval = 0, compaction_interval = 0);
+
+
+query
+SELECT count(*) AS segments FROM sdb_segments('iiss_opt');
+----
+segments
+1172
+
+
+query
+SELECT merge, outcome, cardinality(inputs) AS inputs
+FROM sdb_compact('iiss_opt', mode := 'optimize', target_segments := 1);
+----
+merge	outcome	inputs
+1	merged	149
+
+
+query
+SELECT merge, outcome, cardinality(inputs) AS inputs
+FROM sdb_compact('iiss_opt', mode := 'optimize', target_segments := 1);
+----
+merge	outcome	inputs
+1	merged	1024
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('iiss_opt');
+----
+segments	docs
+1	2400000
+
+
+query
+SELECT count(*) AS n, list(k) = list(k ORDER BY k) AS sorted FROM iiss_opt;
+----
+n	sorted
+2400000	t
+
+
+statement ok
+DROP TABLE iiss CASCADE;
+
+
+statement ok
+RESET threads;

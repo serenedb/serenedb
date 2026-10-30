@@ -1,0 +1,83 @@
+statement ok
+CREATE TABLE seg_order (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+INSERT INTO seg_order SELECT i, 'a' FROM generate_series(1, 4) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) seg_order
+
+
+statement ok
+INSERT INTO seg_order VALUES (5, 'b')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) seg_order
+
+
+statement ok
+INSERT INTO seg_order VALUES (6, 'c')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) seg_order
+
+
+statement ok
+INSERT INTO seg_order SELECT i, 'd' FROM generate_series(7, 10) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) seg_order
+
+
+statement ok
+INSERT INTO seg_order SELECT i, 'e' FROM generate_series(11, 12) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) seg_order
+
+
+query
+SELECT segment, docs, rowid_min, rowid_max
+FROM sdb_segments('seg_order')
+ORDER BY segment
+----
+segment	docs	rowid_min	rowid_max
+_1	4	NULL	NULL
+_2	1	NULL	NULL
+_3	1	NULL	NULL
+_4	4	NULL	NULL
+_5	2	NULL	NULL
+
+
+query
+SELECT outcome, input_docs, output
+FROM sdb_compact('seg_order', mode := 'segments', segments := ['_2', '_3'])
+----
+outcome	input_docs	output
+merged	2	_6
+
+
+query
+SELECT merge, outcome, inputs, input_docs
+FROM sdb_compact('seg_order', mode := 'compact', target_segments := 2)
+ORDER BY merge
+----
+merge	outcome	inputs	input_docs
+1	merged	{_1,_6}	6
+2	merged	{_4,_5}	6
+
+
+query
+SELECT count(*) AS total, count(DISTINCT id) AS ids, min(id) AS first,
+       max(id) AS last
+FROM seg_order
+----
+total	ids	first	last
+12	12	1	12

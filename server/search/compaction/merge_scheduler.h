@@ -1,0 +1,162 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <absl/base/thread_annotations.h>
+#include <absl/synchronization/mutex.h>
+#include <absl/time/time.h>
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <iresearch/index/compaction/merge_ticket.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <memory>
+#include <string>
+#include <vector>
+#include <yaclib/async/future.hpp>
+
+#include "search/compaction/merge_registry.h"
+#include "search/maintenance.h"
+
+namespace yaclib {
+
+class IExecutor;
+
+}  // namespace yaclib
+namespace sdb::search {
+
+MergeEstimate EstimateMerge(irs::CompactionView candidates) noexcept;
+
+class MergeJob {
+ public:
+  virtual ~MergeJob() = default;
+
+  virtual irs::CompactionView Candidates() const noexcept = 0;
+
+  virtual bool Stale() const noexcept = 0;
+
+  virtual yaclib::Future<MergeResult> Run(const std::atomic_bool& stop,
+                                          size_t helpers) = 0;
+};
+
+class MergeScheduler {
+ public:
+  struct Options {
+    size_t threads = 1;
+    std::function<absl::Time()> now;
+    MergeRegistry* registry = nullptr;
+    bool gauges = true;
+  };
+
+  class Relation {
+   public:
+    explicit Relation(uint64_t id) noexcept : _id{id} {}
+
+    uint64_t Id() const noexcept { return _id; }
+
+    void NudgeCompaction() noexcept {
+      _compaction_gen.fetch_add(1, std::memory_order_release);
+    }
+    uint64_t CompactionGeneration() const noexcept {
+      return _compaction_gen.load(std::memory_order_acquire);
+    }
+
+   private:
+    friend class MergeScheduler;
+
+    uint64_t _id;
+    std::atomic<uint64_t> _compaction_gen{0};
+    size_t _queued = 0;
+    size_t _running = 0;
+    size_t _running_big = 0;
+    uint32_t _paused = 0;
+    uint32_t _failures = 0;
+    irs::containers::FlatHashMap<std::string, absl::Time> _blocked;
+  };
+
+  struct Resume {
+    void operator()(Relation* relation) const noexcept;
+
+    MergeScheduler* scheduler = nullptr;
+  };
+
+  using Lease = std::unique_ptr<Relation, Resume>;
+
+  MergeScheduler(yaclib::IExecutor& executor, Options options);
+  ~MergeScheduler();
+
+  MergeScheduler(const MergeScheduler&) = delete;
+  MergeScheduler& operator=(const MergeScheduler&) = delete;
+
+  size_t Wanted(const Relation& relation) const;
+  std::vector<std::string> Blocked(Relation& relation) const;
+  size_t FreeThreads() const;
+
+  void Enqueue(const std::shared_ptr<Relation>& relation,
+               std::unique_ptr<MergeJob> job);
+  void CancelQueued(const Relation& relation);
+  void StopRunning(const Relation& relation);
+  Lease TakeOver(const std::shared_ptr<Relation>& relation);
+  void Interrupt() noexcept;
+  void Stop();
+
+  size_t RoundSize() const noexcept { return RelationCap() + 1; }
+
+  size_t TryAcquireHelpers(size_t wanted) noexcept;
+  void ReleaseHelpers(size_t count) noexcept;
+
+ private:
+  struct Entry;
+
+  using Queue = std::vector<std::unique_ptr<Entry>>;
+  using Running = irs::containers::FlatHashMap<Entry*, std::unique_ptr<Entry>>;
+
+  size_t BigThreads() const noexcept;
+  size_t RelationCap() const noexcept;
+  bool Admits(const Entry& entry) const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  bool NoneRunning() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  static bool NoneRunningFor(const Relation* relation);
+  absl::Time Now() const;
+  void Drop(Queue& dropped) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  template<typename Pred>
+  void DropIf(Queue& dropped, Pred pred) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  template<typename Pred>
+  void StopIf(Pred pred) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  void UpdateGauges() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  void Pump();
+  yaclib::Future<> Execute(Entry& entry);
+  void Finish(Entry& entry, MergeResult result) noexcept;
+
+  yaclib::IExecutor& _executor;
+  const Options _options;
+  MergeRegistry& _registry;
+  mutable absl::Mutex _mutex;
+  bool _stopping ABSL_GUARDED_BY(_mutex) = false;
+  size_t _threads ABSL_GUARDED_BY(_mutex) = 0;
+  size_t _big ABSL_GUARDED_BY(_mutex) = 0;
+  size_t _small ABSL_GUARDED_BY(_mutex) = 0;
+  Queue _queue ABSL_GUARDED_BY(_mutex);
+  Running _running ABSL_GUARDED_BY(_mutex);
+};
+
+}  // namespace sdb::search

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
@@ -123,7 +124,18 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   std::atomic_uint32_t done_rgs{0};
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
+  bool all_live = true;
+  std::vector<uint32_t> live_rgs;
   std::unique_ptr<OrderedUnits> ordered;
+
+  uint32_t LiveBefore(uint32_t rg) const noexcept {
+    return all_live ? rg
+                    : static_cast<uint32_t>(absl::c_lower_bound(live_rgs, rg) -
+                                            live_rgs.begin());
+  }
+  uint32_t LiveCount() const noexcept {
+    return all_live ? rg_count : static_cast<uint32_t>(live_rgs.size());
+  }
 };
 
 class ScanBarrier {

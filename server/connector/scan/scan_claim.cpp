@@ -289,11 +289,24 @@ bool ConstantCount(const irs::Filter& filter) {
   return terms == 1 && others == 0;
 }
 
-void TakeUnit(ScanLocalState& l, ScanUnit unit) {
+void TakeUnit(ScanGlobalState& g, ScanLocalState& l, ScanUnit unit) {
+  const auto& work = g.Segment(unit.seg);
   l.unit = unit;
   l.has_unit = true;
   l.current_seg = unit.seg;
-  l.rg_units += unit.rg_end - unit.rg_begin;
+  l.rg_units += work.LiveBefore(unit.rg_end) - work.LiveBefore(unit.rg_begin);
+}
+
+uint32_t ClaimEnd(const ScanGlobalState& g, const SegmentWork& work,
+                  uint32_t begin) {
+  if (work.all_live) {
+    return begin + std::max<uint32_t>(1, (work.rg_count - begin) / g.workers);
+  }
+  const auto first = work.LiveBefore(begin);
+  const auto take =
+    std::max<uint32_t>(1, (work.LiveCount() - first) / g.workers);
+  return first + take < work.LiveCount() ? work.live_rgs[first + take]
+                                         : work.rg_count;
 }
 
 bool ClaimRowGroups(ScanGlobalState& g, ScanLocalState& l, uint32_t seg) {
@@ -303,15 +316,11 @@ bool ClaimRowGroups(ScanGlobalState& g, ScanLocalState& l, uint32_t seg) {
     if (begin >= work.rg_count) {
       return false;
     }
-    const auto take =
-      std::max<uint32_t>(1, (work.rg_count - begin) / g.workers);
-    if (work.next_rg.compare_exchange_weak(begin, begin + take,
-                                           std::memory_order_relaxed,
-                                           std::memory_order_relaxed)) {
-      TakeUnit(l, {.seg = seg,
-                   .rg_begin = begin,
-                   .rg_end = begin + take,
-                   .whole = false});
+    const auto end = ClaimEnd(g, work, begin);
+    if (work.next_rg.compare_exchange_weak(
+          begin, end, std::memory_order_relaxed, std::memory_order_relaxed)) {
+      TakeUnit(g, l,
+               {.seg = seg, .rg_begin = begin, .rg_end = end, .whole = false});
       return true;
     }
   }
@@ -337,7 +346,7 @@ bool ClaimOrderedUnit(ScanGlobalState& g, ScanLocalState& l) {
       heap.pop_back();
       if (auto* ordered = g.Segment(head.id).ordered.get()) {
         const auto k = ordered->next++;
-        TakeUnit(l, ordered->units[k]);
+        TakeUnit(g, l, ordered->units[k]);
         if (ordered->next < ordered->units.size()) {
           heap.push_back({head.id, ordered->keys[ordered->next]});
           absl::c_push_heap(heap, heap_order);
@@ -394,16 +403,33 @@ bool Join(ScanGlobalState& g, ScanLocalState& l) {
   for (;;) {
     uint32_t best = std::numeric_limits<uint32_t>::max();
     uint32_t most = 0;
-    for (uint32_t w = 0; w != g.workers; ++w) {
-      const auto seg = g.joinable[w].load(std::memory_order_relaxed);
-      if (seg == std::numeric_limits<uint32_t>::max()) {
-        continue;
-      }
+    const auto consider = [&](uint32_t seg) {
       const auto& work = g.Segment(seg);
       const auto next = work.next_rg.load(std::memory_order_relaxed);
-      if (next < work.rg_count && work.rg_count - next > most) {
-        most = work.rg_count - next;
+      if (next >= work.rg_count) {
+        return;
+      }
+      const auto left = work.LiveCount() - work.LiveBefore(next);
+      if (best == std::numeric_limits<uint32_t>::max() || left > most) {
+        most = left;
         best = seg;
+      }
+    };
+    for (uint32_t w = 0; w != g.workers; ++w) {
+      if (const auto seg = g.joinable[w].load(std::memory_order_relaxed);
+          seg != std::numeric_limits<uint32_t>::max()) {
+        consider(seg);
+      }
+    }
+    if (best == std::numeric_limits<uint32_t>::max()) {
+      const auto claimed = std::min(
+        g.next_segment.load(std::memory_order_relaxed), g.live_segments);
+      for (uint32_t i = 0; i != claimed; ++i) {
+        const auto seg = g.segment_order[i];
+        if (g.Segment(seg).claim.load(std::memory_order_relaxed) ==
+            SegmentWork::kSplit) {
+          consider(seg);
+        }
       }
     }
     if (best == std::numeric_limits<uint32_t>::max()) {
@@ -459,6 +485,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const bool constant_count = g.shape == ScanShape::Count &&
                               g.col_filters.empty() && where &&
                               ConstantCount(*where);
+  irs::ColFilterStateCache states;
+  irs::ColFilterClassification cls;
   uint64_t parallel = 0;
   uint64_t rgs = 0;
   auto run_end = g.live_segments;
@@ -476,9 +504,17 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
                      std::memory_order_relaxed);
     if (split) {
       run_end = i;
+      if (const auto* col_reader = sub.GetColReader();
+          col_reader && !g.col_filters.empty() && threads > 1 &&
+          work.rg_count > threads) {
+        ClassifySegmentColFilters(sub, g, g.col_filters, states, cls, false);
+        irs::LiveRowGroups(*col_reader, cls.active, context, states, docs,
+                           g.rg_size, work.live_rgs);
+        work.all_live = work.live_rgs.size() == work.rg_count;
+      }
     }
     work.run_end = run_end;
-    parallel += split ? work.rg_count : 1;
+    parallel += split ? std::max<uint32_t>(1, work.LiveCount()) : 1;
     rgs += work.rg_count;
   }
   if (g.stats_stage) {
@@ -524,10 +560,11 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
       if (work.claim.load(std::memory_order_relaxed) == SegmentWork::kWhole) {
         if (g.next_segment.compare_exchange_weak(
               i, i + 1, std::memory_order_relaxed, std::memory_order_relaxed)) {
-          TakeUnit(l, {.seg = seg,
-                       .rg_begin = 0,
-                       .rg_end = work.rg_count,
-                       .whole = true});
+          TakeUnit(g, l,
+                   {.seg = seg,
+                    .rg_begin = 0,
+                    .rg_end = work.rg_count,
+                    .whole = true});
           return true;
         }
         continue;
@@ -553,7 +590,7 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
       auto& work = g.Segment(seg);
       if (work.claim.load(std::memory_order_relaxed) == SegmentWork::kWhole) {
         TakeUnit(
-          l,
+          g, l,
           {.seg = seg, .rg_begin = 0, .rg_end = work.rg_count, .whole = true});
         return true;
       }

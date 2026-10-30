@@ -791,13 +791,13 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
         irs::IsSubsetOf(irs::IndexFeatures::Norm, actual_meta.index_features),
         irs::field_limits::valid(actual_meta.norm));
 
-      auto* actual_freq = irs::get<irs::FreqAttr>(*actual_terms);
-      ASSERT_NE(nullptr, actual_freq);
       if (irs::IndexFeatures::None !=
           (expected_field->second.index_features & irs::IndexFeatures::Freq)) {
-        ASSERT_EQ(expected_field->second.total_freq(), actual_freq->value);
+        ASSERT_EQ(expected_field->second.total_freq(),
+                  actual_terms->total_term_freq());
       } else {
-        ASSERT_EQ(expected_field->second.total_doc_freq(), actual_freq->value);
+        ASSERT_EQ(expected_field->second.total_doc_freq(),
+                  actual_terms->total_term_freq());
       }
 
       const auto field_features =

@@ -27,8 +27,11 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/constants.hpp>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
 #include <duckdb/common/table_column.hpp>
+#include <duckdb/parser/column_definition.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/table_log_storage.hpp>
@@ -39,6 +42,7 @@
 #include <vector>
 
 #include "catalog/persistence/search_table.h"
+#include "catalog/sort_keys.h"
 #include "query/config_variable_names.h"
 
 namespace duckdb {
@@ -105,6 +109,15 @@ TableEngine ReadStorageEngine(
     duckdb::unique_ptr<duckdb::ParsedExpression>>& options);
 
 void RequireSearchTableIndexOption(std::string_view name);
+duckdb::PhysicalType LeafPhysicalType(const duckdb::LogicalType& type);
+duckdb::vector<duckdb::PhysicalType> LeafPhysicalTypes(
+  const duckdb::LogicalType& type);
+bool SearchTableOnly(duckdb::CompressionType type) noexcept;
+void CheckCompressionLevel(std::string_view column_name,
+                           duckdb::CompressionType type, uint8_t level,
+                           bool columnstore);
+void CheckColumnCompression(const duckdb::ColumnDefinition& column,
+                            TableEngine engine);
 
 using persistence::SearchTableOptions;
 
@@ -186,10 +199,13 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
     duckdb::unique_ptr<duckdb::CreateInfo> create) const;
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterOptions(
     duckdb::ClientContext& context, duckdb::AlterTableInfo& alter);
+  duckdb::unique_ptr<duckdb::CatalogEntry> SetColumnCompression(
+    duckdb::ClientContext& context, duckdb::SetColumnCompressionInfo& info);
 
   duckdb::ColumnList _columns;
   std::shared_ptr<search::SearchTable> _storage;
   SearchTableOptions _options;
+  std::vector<SortKey> _sort_keys;
 };
 
 std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(

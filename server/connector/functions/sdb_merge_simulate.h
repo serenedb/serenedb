@@ -20,36 +20,10 @@
 
 #pragma once
 
-#include <tuple>
-#include <utility>
+#include <duckdb/main/database.hpp>
 
-#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
-#include "iresearch/utils/type_limits.hpp"
+namespace sdb::connector {
 
-namespace irs::detail {
+void RegisterSdbMergeSimulateFunction(duckdb::DatabaseInstance& db);
 
-template<typename NGrams>
-class WildcardNGramSlots {
- public:
-  using Recipe = WildcardNGramQuery::Recipe;
-
-  template<typename NGramsArgs>
-  WildcardNGramSlots(std::piecewise_construct_t, NGramsArgs&& ngrams,
-                     const Recipe& recipe)
-    : _ngrams{std::make_from_tuple<NGrams>(std::forward<NGramsArgs>(ngrams))},
-      _pattern{recipe.Make()} {}
-
-  doc_id_t Seek(doc_id_t target) { return _ngrams.Seek(target); }
-
-  doc_id_t Next(doc_id_t) { return _ngrams.Next(); }
-
-  doc_id_t Probe(doc_id_t target) { return _ngrams.Probe(target); }
-
-  bool Match(doc_id_t doc) { return _pattern.Check(doc); }
-
- private:
-  NGrams _ngrams;
-  WildcardNGramVerifier _pattern;
-};
-
-}  // namespace irs::detail
+}  // namespace sdb::connector

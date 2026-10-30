@@ -1,0 +1,62 @@
+# Segments written while an IVF index existed keep its cluster postings after
+# DROP INDEX. Merging them with the remaining indexes must drop that field
+# instead of writing it as plain postings.
+
+statement ok
+CREATE TABLE dv (id BIGINT PRIMARY KEY, vec FLOAT[3], txt TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX dv_ivf ON dv USING inverted (vec ivf(metric='l2'));
+
+statement ok
+CREATE INDEX dv_txt ON dv USING inverted (txt);
+
+statement ok
+INSERT INTO dv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3],
+  'w' || (i % 10) FROM range(500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) dv;
+
+statement ok
+DROP INDEX dv_ivf;
+
+statement ok
+INSERT INTO dv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3],
+  'w' || (i % 10) FROM range(500, 1000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) dv;
+
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'dv');
+----
+segments
+2
+
+statement ok
+VACUUM (COMPACT_TABLE) dv;
+
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'dv');
+----
+segments
+1
+
+query
+SELECT count(*), count(vec) FROM dv;
+----
+count	count
+1000	1000
+
+query
+SELECT count(*) FROM dv_txt WHERE txt = 'w3';
+----
+count
+100
+
+statement ok
+DROP TABLE dv;

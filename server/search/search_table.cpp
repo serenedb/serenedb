@@ -58,6 +58,8 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
+#include "search/compaction/copy_check.h"
+#include "search/compaction/merge_planner.h"
 #include "search/inverted_index_storage.h"
 #include "search/row_position_wal.h"
 #include "search/scorer_options.h"
@@ -66,17 +68,6 @@
 
 namespace sdb::search {
 namespace {
-
-catalog::CompressionByColumn DeclaredCompression(
-  const duckdb::ColumnList& columns) {
-  catalog::CompressionByColumn compression;
-  for (const auto& column : columns.Logical()) {
-    if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
-      compression.emplace(column.Oid(), column.CompressionType());
-    }
-  }
-  return compression;
-}
 
 irs::containers::FlatHashSet<irs::field_id> TableColumns(
   const duckdb::ColumnList& columns) {
@@ -98,6 +89,20 @@ std::vector<Config> WithConfig(std::vector<Config> configs, Config config) {
 
 }  // namespace
 
+catalog::CompressionByColumn SearchTable::DeclaredCompression(
+  const duckdb::ColumnList& columns) {
+  catalog::CompressionByColumn compression;
+  for (const auto& column : columns.Logical()) {
+    if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
+      compression.emplace(
+        column.Oid(),
+        irs::ColumnOptions{.compression = column.CompressionType(),
+                           .compression_level = column.CompressionLevel()});
+    }
+  }
+  return compression;
+}
+
 struct SearchTable::ReplaySession {
   struct PendingAdopt {
     std::string meta_file;
@@ -115,8 +120,9 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
                          bool in_memory, bool read_only, duckdb::idx_t db_id,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
-                         const duckdb::ColumnList& columns)
-  : _db_id{db_id},
+                         const duckdb::ColumnList& columns, irs::SortSpec sort)
+  : MaintainedStore{table_id, std::move(sort)},
+    _db_id{db_id},
     _table_id{table_id},
     _directory{std::move(directory)},
     _is_new{is_new},
@@ -124,8 +130,8 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _read_only{read_only},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
-    _compression{DeclaredCompression(columns)},
     _table_columns{TableColumns(columns)},
+    _compression{DeclaredCompression(columns)},
     _durability{db_id, absl::StrCat("search table ", table_id)} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
@@ -144,6 +150,18 @@ void SearchTable::Open() {
   } else {
     OpenWriter();
   }
+}
+
+void SearchTable::ApplyOptions(const catalog::SearchTableOptions& options) {
+  SetTasksSettings(options);
+  NudgeCompaction();
+}
+
+void SearchTable::SetDeclaredCompression(
+  catalog::CompressionByColumn compression) {
+  absl::MutexLock lock{&_layout_mutex};
+  _compression = std::move(compression);
+  RebuildConfig(_layout.configs, _layout.building_index);
 }
 
 SearchTable::~SearchTable() {
@@ -170,6 +188,7 @@ void SearchTable::OpenWriter() {
   writer_options.segment_memory_max = _segment_memory_max;
   writer_options.cleanup_on_open = _is_new;
   writer_options.lock_repository = false;
+  SetWriterOptions(writer_options);
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
 
@@ -304,12 +323,35 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   std::optional<duckdb::idx_t> skip) const {
   std::vector<catalog::InvertedIndexKey> keys;
   catalog::InvertedIndexFields fields;
+  auto declared_compression = _compression;
   const auto add = [&](const IndexConfig& index) {
     for (const auto& [id, field] : index.config->fields) {
       fields.emplace(id, field);
     }
     keys.insert(keys.end(), index.config->keys.begin(),
                 index.config->keys.end());
+    for (const auto& key : index.config->keys) {
+      if (key.field_id == key.column_id ||
+          !irs::field_limits::valid(key.column_id)) {
+        continue;
+      }
+      const auto* field = index.config->FindEntry(key.field_id);
+      if (!field) {
+        continue;
+      }
+      const auto& options = field->column_options;
+      const bool own_codec =
+        options.compression != duckdb::CompressionType::COMPRESSION_AUTO;
+      if (!own_codec && !options.hyperloglog) {
+        continue;
+      }
+      auto& declared = declared_compression[key.column_id];
+      if (own_codec) {
+        declared.compression = options.compression;
+        declared.compression_level = options.compression_level;
+      }
+      declared.hyperloglog = declared.hyperloglog || options.hyperloglog;
+    }
   };
   for (const auto& index : configs) {
     if (index.oid != skip) {
@@ -322,7 +364,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   merged->pk = {.index_term = false, .column = catalog::PkColumnKind::None};
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
-  merged->declared_compression = _compression;
+  merged->declared_compression = std::move(declared_compression);
   merged->table_columns = _table_columns;
   return merged;
 }
@@ -475,14 +517,11 @@ void SearchTable::ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept {
 }
 
 auto SearchTable::CompactUnsafeAsync(
-  const irs::CompactionPolicy& policy,
-  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
-  -> yaclib::Future<ResultWithTime> {
-  const auto begin = std::chrono::steady_clock::now();
-  empty_compaction = false;
-  auto result = absl::OkStatus();
-  SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");
+  const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  MergeOrigin origin, irs::MergeExecutor& executor, irs::LoneSegment lone)
+  -> yaclib::Future<MergeResult> {
+  MergeRecorder recorder{GetTableId(), origin};
   const irs::CompactionPolicy current_config_policy =
     [&](irs::Compaction& candidates, const irs::IndexReader& index,
         const irs::CompactingSegments& compacting_segments) {
@@ -490,40 +529,73 @@ auto SearchTable::CompactUnsafeAsync(
         policy(candidates, index, compacting_segments);
       }
     };
+  const auto recorded = recorder.Wrap(current_config_policy);
+  auto result = co_await AwaitMerge([&] {
+    return _writer->CompactAsync(recorded, field_options, progress, env,
+                                 &executor, lone);
+  });
+  if (result.res.ok()) {
+    recorder.Finish(result.outcome);
+  } else {
+    recorder.Fail(result.error);
+  }
+  co_return result;
+}
+
+auto SearchTable::RunMergeAsync(irs::MergeTicket ticket,
+                                const irs::MergeProgress& progress,
+                                const irs::IndexFieldOptions* field_options,
+                                const irs::AnnBuildEnv* env,
+                                irs::MergeExecutor& executor)
+  -> yaclib::Future<MergeResult> {
+  co_return co_await AwaitMerge([&] {
+    return _writer->RunMerge(std::move(ticket), field_options, progress, env,
+                             &executor);
+  });
+}
+
+auto SearchTable::AwaitMerge(
+  absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
+  -> yaclib::Future<MergeResult> {
+  const auto begin = std::chrono::steady_clock::now();
+  bool empty_compaction = false;
+  MergeResult result;
   try {
     // iresearch serializes Compact against refresh/DML internally, so a long
     // merge never blocks the refresh chain.
-    const auto res = co_await _writer->CompactAsync(
-      current_config_policy, field_options, progress, env);
-    if (!res) {
+    result.outcome = co_await merge();
+    if (!result.outcome) {
       SDB_DEBUG(SEARCH, "compaction of search table ", GetTableId(),
                 " merged nothing: cancelled, or every document was removed");
       empty_compaction = true;
     } else {
-      empty_compaction = (res.size == 0);  // nothing merged -> idle round
+      empty_compaction = result.outcome.size == 0;
     }
   } catch (const std::exception& e) {
-    result = absl::InternalError(
-      absl::StrCat("consolidation failed for search table ", GetTableId(), ": ",
-                   duckdb::ErrorData{e}.RawMessage()));
+    result.error = duckdb::ErrorData{e}.RawMessage();
+    result.res =
+      absl::InternalError(absl::StrCat("consolidation failed for search table ",
+                                       GetTableId(), ": ", result.error));
   }
-  const uint64_t time_ms =
-    std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now() - begin)
-      .count();
-  _maintenance.RecordCompaction(result, empty_compaction, time_ms);
-  co_return ResultWithTime{std::move(result), time_ms};
+  result.time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::steady_clock::now() - begin)
+                     .count();
+  _maintenance.RecordCompaction(result.res, empty_compaction, result.time_ms);
+  co_return result;
 }
 
-ResultWithTime SearchTable::CleanupUnsafe() {
+CleanupResult SearchTable::CleanupUnsafe() {
   const auto begin = std::chrono::steady_clock::now();
-  auto result = _durability.Cleanup(*_dir);
+  auto removed = _durability.Cleanup(*_dir);
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
-  _maintenance.RecordCleanup(result, time_ms);
-  return {std::move(result), time_ms};
+  _maintenance.RecordCleanup(removed.status(), time_ms);
+  if (!removed.ok()) {
+    return {.res = std::move(removed).status(), .time_ms = time_ms};
+  }
+  return {.time_ms = time_ms, .removed = *removed};
 }
 
 absl::Status SearchTable::VacuumRefresh() {
@@ -531,62 +603,62 @@ absl::Status SearchTable::VacuumRefresh() {
   if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
     return res;
   }
+  if (code == RefreshResult::Done) {
+    NudgeCompaction();
+  }
   return CleanupUnsafe().res;
 }
 
-absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
-  static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
-  const auto target = std::max<uint32_t>(1, target_segments);
+absl::Status SearchTable::VacuumCompact(MergeMode mode,
+                                        uint32_t target_segments,
+                                        const irs::MergeProgress& progress,
+                                        irs::MergeExecutor& executor) {
+  const auto lease = GetSearchEngine().Merges().TakeOver(MergeRelation());
   RefreshResult code = RefreshResult::Undefined;
   if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
     return res;
   }
   const ManualCompactionSlot slot;
   const irs::AnnBuildEnv* env = slot.AnnEnv();
-  for (size_t pass = 0; pass < 8; ++pass) {
-    std::vector<std::vector<std::string>> buckets;
-    {
-      const auto snapshot = _writer->GetSnapshot();
-      if (snapshot.size() <= target) {
+  for (auto more = true; more;) {
+    const auto field_options = CompactionConfig();
+    const CopyChecker checker{*field_options, *executor.Scheduler()};
+    const auto plan =
+      PlanMergeRound(_writer->GetSnapshot(),
+                     MergeRoundRequest{.mode = mode,
+                                       .target_segments = target_segments,
+                                       .row_group_size = _row_group_size,
+                                       .inputs_max = MergeInputsMax(),
+                                       .copy_check = &checker});
+    more = plan.partial;
+    for (const auto& planned : plan.merges) {
+      if (!progress()) {
+        more = false;
         break;
       }
-      buckets.resize(target);
-      for (size_t i = 0; i < snapshot.size(); ++i) {
-        buckets[i % target].emplace_back(snapshot[i].Meta().name);
+      std::vector<std::string> names;
+      names.reserve(planned.inputs.size());
+      for (const auto& segment : planned.inputs) {
+        names.emplace_back(segment.name);
+      }
+      if (auto res = irs::GetReady(
+                       CompactUnsafeAsync(
+                         ExplicitPolicy(names), progress, field_options.get(),
+                         env, MergeOrigin::Vacuum, executor, planned.lone))
+                       .res;
+          !res.ok()) {
+        return res;
+      }
+      SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
+      if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res;
+          !res.ok()) {
+        return res;
+      }
+      if (auto res = CleanupUnsafe().res; !res.ok()) {
+        return res;
       }
     }
-    absl::Status status;
-    bool merged = false;
-    for (const auto& names : buckets) {
-      const irs::CompactionPolicy bucket =
-        [&names](irs::Compaction& candidates, const irs::IndexReader& reader,
-                 const irs::CompactingSegments& busy) {
-          for (size_t i = 0; i < reader.size(); ++i) {
-            const auto& segment = reader[i];
-            const auto& name = segment.Meta().name;
-            if (!busy.contains(name) && absl::c_linear_search(names, name)) {
-              candidates.emplace_back(&segment);
-            }
-          }
-        };
-      bool empty = false;
-      const auto field_options = CompactionConfig();
-      status.Update(
-        irs::GetBlocking(CompactUnsafeAsync(bucket, kProgress, empty,
-                                            field_options.get(), env))
-          .res);
-      merged = merged || !empty;
-    }
-    if (!status.ok()) {
-      return status;
-    }
-    SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
-    if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-      return res;
-    }
-    if (!merged) {
-      break;
-    }
+    more = more && _writer->GetSnapshot().size() < plan.segments;
   }
   return CleanupUnsafe().res;
 }

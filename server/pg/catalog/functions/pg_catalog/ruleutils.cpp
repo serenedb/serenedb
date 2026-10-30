@@ -296,6 +296,7 @@ struct IndexShape {
   std::string_view method;
   std::vector<IndexElement> keys;
   std::vector<IndexElement> includes;
+  std::string sorted;
   std::string options;
   std::string where;
 };
@@ -363,6 +364,24 @@ IndexShape ShapeOf(const Session& session,
     }
     (included ? shape.includes : shape.keys).emplace_back(std::move(element));
   }
+  if (const auto* inverted =
+        dynamic_cast<const catalog::InvertedIndexEntry*>(&index)) {
+    std::vector<std::string> sorted;
+    for (const auto& order : inverted->SortOrders()) {
+      auto key = IndexAttribute(*order.expression);
+      const bool descending = order.type == duckdb::OrderType::DESCENDING;
+      const bool nulls_first =
+        order.null_order == duckdb::OrderByNullType::NULLS_FIRST;
+      if (descending) {
+        absl::StrAppend(&key, " DESC");
+      }
+      if (nulls_first != descending) {
+        absl::StrAppend(&key, nulls_first ? " NULLS FIRST" : " NULLS LAST");
+      }
+      sorted.push_back(std::move(key));
+    }
+    shape.sorted = absl::StrJoin(sorted, ", ");
+  }
   if (index.where_clause) {
     shape.where = ExpressionText(*index.where_clause);
   }
@@ -425,6 +444,9 @@ Definition IndexDefinition(const Session& session, int64_t oid, int64_t column,
   if (!shape->includes.empty()) {
     absl::StrAppend(&definition, " INCLUDE (", definitions(shape->includes),
                     ")");
+  }
+  if (!shape->sorted.empty()) {
+    absl::StrAppend(&definition, " SORTED BY (", shape->sorted, ")");
   }
   if (!shape->options.empty()) {
     absl::StrAppend(&definition, " WITH (", shape->options, ")");

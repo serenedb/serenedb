@@ -152,6 +152,36 @@ db error: ERROR: cannot run VACUUM (refresh_database) on database "sfx_snap": it
 
 
 statement error
+VACUUM (CLEANUP_TABLE) sfx_snap.public.sfx_notes;
+----
+db error: ERROR: cannot run VACUUM (cleanup_table) on database "sfx_snap": it is attached read-only
+
+
+statement error
+SELECT * FROM sdb_compact('sfx_snap.public.sfx_notes');
+----
+db error: ERROR: cannot run sdb_compact on database "sfx_snap": it is attached read-only
+
+
+statement error
+SELECT * FROM sdb_refresh('sfx_snap.public.sfx_docs_idx');
+----
+db error: ERROR: cannot run sdb_refresh on database "sfx_snap": it is attached read-only
+
+
+statement error
+SELECT * FROM sdb_cleanup('sfx_snap.public.sfx_notes');
+----
+db error: ERROR: cannot run sdb_cleanup on database "sfx_snap": it is attached read-only
+
+
+query
+SELECT count(*) > 0 AS listed FROM sdb_segments('sfx_snap.public.sfx_notes');
+----
+listed
+t
+
+statement error
 REINDEX INDEX sfx_snap.public.sfx_view_idx;
 ----
 db error: ERROR: cannot run REINDEX on database "sfx_snap": it is attached read-only

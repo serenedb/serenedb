@@ -125,6 +125,7 @@ class MockPostingsField final : public irs::TermReader {
   const irs::FieldMeta& meta() const final { return _meta; }
   size_t size() const final { return 1; }
   uint64_t docs_count() const final { return _docs_count; }
+  uint64_t total_term_freq() const final { return 0; }
   irs::bytes_view min() const final { return {}; }
   irs::bytes_view max() const final { return {}; }
   bool HasScoreBounds() const final { return _has_score_bounds; }

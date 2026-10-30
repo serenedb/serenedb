@@ -345,7 +345,8 @@ regen() {
 	fi
 	local commit=$base
 	if [[ "$tree" != "$base_tree" ]]; then
-		commit=$(git -C "$scratch/duckdb" commit-tree "$tree" -p "$base" -m "$message")
+		commit=$(git -C "$scratch/duckdb" -c user.name="$(git -C "$DUCKDB" config user.name)" \
+			-c user.email="$(git -C "$DUCKDB" config user.email)" commit-tree "$tree" -p "$base" -m "$message")
 		git -C "$scratch/duckdb" update-ref refs/heads/regen "$commit"
 		git -C "$DUCKDB" fetch --quiet --no-tags "$scratch/duckdb" refs/heads/regen
 	elif [[ -z "$old_regen" ]]; then

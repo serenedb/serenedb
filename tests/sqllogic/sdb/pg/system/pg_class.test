@@ -208,6 +208,8 @@ oid	relname	reltablespace	relkind
 16785	sdb_metrics	0	r
 16786	sdb_progress	0	r
 16787	pg_stat_progress_create_table_as	0	v
+16788	sdb_merges	0	r
+16789	sdb_compact_history	0	r
 
 
 statement ok

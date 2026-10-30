@@ -14,4 +14,5 @@ target_sources(
         entry/subscription.cpp
         entry/system_table.cpp
         entry/tokenizer.cpp
+        sort_keys.cpp
 )

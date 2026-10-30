@@ -37,7 +37,9 @@ target_include_directories(
 target_include_directories(
     iresearch
     SYSTEM
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
     PUBLIC
         ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
         ${CMAKE_SOURCE_DIR}/third_party/magic_enum
@@ -86,7 +88,10 @@ target_link_libraries(
         absl::failure_signal_handler
         absl::stacktrace
         absl::symbolize
+        duckdb_fsst
+        lz4_static
         simdutf
+        zxc::zxc_lib
 )
 
 if(IRESEARCH_BENCH)
@@ -106,5 +111,5 @@ target_include_directories(
 target_link_libraries(
     iresearch
     PUBLIC OpenSSL::Crypto OpenSSL::SSL fasttext-static faiss s2
-    PRIVATE lz4_static stemmer-static
+    PRIVATE stemmer-static
 )

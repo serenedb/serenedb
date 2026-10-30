@@ -144,6 +144,7 @@ hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single s
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
 home_directory	(empty)	Sets the home directory of the database instance.
 http_client_pool_capacity	<slt:ignore>	HTTP client pool capacity derived from CPU and async thread counts unless explicitly set
+http_connect_timeout_ms	2000	How long connecting to an HTTP server, TLS included, may take before the request is retried (in milliseconds); never longer than http_timeout
 http_keep_alive	on	Keep alive connections. Setting this to false can help when running into connection failures
 http_proxy	(empty)	The HTTP proxy host. Defaults to the HTTP_PROXY environment variable.
 http_proxy_password	(empty)	The password for the HTTP proxy.
@@ -494,6 +495,7 @@ hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single s
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
 home_directory	(empty)	Sets the home directory of the database instance.
 http_client_pool_capacity	<slt:ignore>	HTTP client pool capacity derived from CPU and async thread counts unless explicitly set
+http_connect_timeout_ms	2000	How long connecting to an HTTP server, TLS included, may take before the request is retried (in milliseconds); never longer than http_timeout
 http_keep_alive	on	Keep alive connections. Setting this to false can help when running into connection failures
 http_proxy	(empty)	The HTTP proxy host. Defaults to the HTTP_PROXY environment variable.
 http_proxy_password	(empty)	The password for the HTTP proxy.

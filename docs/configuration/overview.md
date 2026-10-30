@@ -356,6 +356,7 @@ Local paths, remote object stores and the external file cache.
 | `hf_max_per_page` | Debug option to limit number of items returned in list requests. | `UBIGINT` | `SESSION` | `0` |
 | `home_directory` | Sets the home directory used by the system | `VARCHAR` | `SESSION` |  |
 | `http_client_pool_capacity` | Capacity of the HTTP client pool. Unless set, the larger of twice the number of CPU cores (at least 16) and the number of async I/O threads (`async_threads`), at most an eighth of the server's open-file limit. | `BIGINT` | `GLOBAL` | automatic |
+| `http_connect_timeout_ms` | How long connecting to an HTTP server, TLS included, may take before the request is retried (in milliseconds); never longer than http_timeout | `UBIGINT` | `SESSION` | `2000` |
 | `http_keep_alive` | Keep alive connections. Setting this to false can help when running into connection failures | `BOOLEAN` | `SESSION` | `true` |
 | `http_proxy` | HTTP proxy host | `VARCHAR` | `GLOBAL` |  |
 | `http_proxy_password` | Password for HTTP proxy | `VARCHAR` | `GLOBAL` |  |

@@ -87,7 +87,7 @@ Every upload to S3 carries the CRC32C checksum of the whole file, which the stor
 
 Every read of an index file asks for the version of the object the index found when it opened the file. A file that was replaced in the bucket after that fails the query with an error saying the file changed after it was opened, instead of returning other bytes.
 
-A read from S3 fails when it takes longer than `http_timeout` plus one second for every MiB it asks for, and `http_retries` retries it, so a store that answers too slowly fails the query instead of holding it.
+A read from S3 fails when it takes longer than `http_timeout` plus one second for every MiB it asks for, and `http_retries` retries it, so a store that answers too slowly fails the query instead of holding it. A connection that is not established within `http_connect_timeout_ms`, two seconds by default, is given up and the request retried on a new one; a request that never reached the store is retried whatever its kind, uploads included.
 
 ## Limits
 

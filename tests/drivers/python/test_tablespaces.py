@@ -350,6 +350,39 @@ def _create_secret(server: _Server, store: _Store, location: str,
     _create_tablespace(server, tablespace or location)
 
 
+def test_a_store_that_never_accepts_fails_within_the_connect_timeout(
+        tmp_path: Path) -> None:
+    hole = socket.socket()
+    hole.bind(("127.0.0.1", 0))
+    hole.listen(0)
+    port = hole.getsockname()[1]
+    queued = []
+    for _ in range(4):
+        filler = socket.socket()
+        filler.setblocking(False)
+        filler.connect_ex(("127.0.0.1", port))
+        queued.append(filler)
+    location = f"s3://bucket/hole-{tmp_path.name}"
+    server = _Server(tmp_path / "data")
+    try:
+        assert server.wait_ready(), server.output()
+        with server.connect() as conn:
+            conn.execute(
+                "CREATE PERSISTENT SECRET hole_store (TYPE s3, KEY_ID 'key', "
+                f"SECRET 'secret', ENDPOINT '127.0.0.1:{port}', URL_STYLE 'path', "
+                f"USE_SSL false, SCOPE '{location}')")
+            began = time.monotonic()
+            with pytest.raises(psycopg.Error):
+                conn.execute(f"CREATE TABLESPACE hole LOCATION '{location}'")
+            elapsed = time.monotonic() - began
+    finally:
+        server.stop()
+        for filler in queued:
+            filler.close()
+        hole.close()
+    assert elapsed < 20, elapsed
+
+
 def test_index_files_on_s3(tmp_path: Path, s3_store: _Store) -> None:
     prefix = f"tablespace-{tmp_path.name}"
     location = f"s3://{s3_store.bucket}/{prefix}"

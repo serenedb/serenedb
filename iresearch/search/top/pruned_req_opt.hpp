@@ -64,7 +64,7 @@ class PrunedReqOpt : public Root {
       const auto lead_max = _lead.MaxScore(last);
       const auto optional_max = _optional.OpenWindow(doc, last);
       if (lead_max + optional_max <= threshold) {
-        doc = _lead.Seek(last + 1);
+        doc = _lead.SkipTo(last + 1);
         continue;
       }
       if (const auto drivers = _optional.Drivers(lead_max, threshold);

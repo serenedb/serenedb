@@ -1,0 +1,203 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE jbsr_log (via TEXT, v TEXT);
+
+
+statement ok
+CREATE TABLE "Jbsr_Q" (via TEXT);
+
+
+statement ok
+CREATE TABLE jbsr_q (via TEXT);
+
+
+statement ok
+CREATE JOB jbsr_checkpointed AFTER 1 HOUR AS 'INSERT INTO jbsr_log SELECT ''checkpointed'', (7 / 2)::TEXT; INSERT INTO Jbsr_Q VALUES (''checkpointed'');';
+
+
+statement ok
+CREATE JOB jbsr_one AFTER 1 HOUR AS 'INSERT INTO jbsr_log SELECT ''one'', (7 / 2)::TEXT';
+
+
+statement ok
+CREATE JOB jbsr_parent AFTER 1 HOUR AS 'CREATE JOB jbsr_child AFTER 1 HOUR AS ''INSERT INTO jbsr_log SELECT ''''child'''', (7 / 2)::TEXT; INSERT INTO Jbsr_Q VALUES (''''child'''');''';
+
+
+statement ok
+FORCE CHECKPOINT;
+
+
+statement ok
+CREATE JOB jbsr_logged AFTER 1 HOUR AS 'INSERT INTO jbsr_log SELECT ''logged'', (7 / 2)::TEXT; INSERT INTO Jbsr_Q VALUES (''logged'');';
+
+
+statement ok
+CREATE JOB jbsr_parent_script AFTER 1 HOUR AS 'CREATE JOB jbsr_child_script AFTER 1 HOUR AS ''INSERT INTO jbsr_log SELECT ''''child script'''', (7 / 2)::TEXT; INSERT INTO Jbsr_Q VALUES (''''child script'''');''; SELECT 1;';
+
+
+statement ok
+CREATE JOB jbsr_global AFTER 1 HOUR AS 'INSERT INTO jbsr_log SELECT ''global'', (7 / 2)::TEXT; SELECT 1;';
+
+
+statement ok
+CREATE JOB jbsr_deep AFTER 1 HOUR AS 'SELECT 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1; SELECT 1;';
+
+
+statement ok
+SET integer_division = false;
+
+
+statement ok
+SET regex_match_operator_semantics = 'full';
+
+
+statement ok
+CREATE JOB jbsr_duckdb AFTER 1 HOUR AS 'INSERT INTO jbsr_log SELECT ''duckdb'', (7 / 2)::TEXT || '' '' || (''abc'' ~ ''b'')::TEXT; SELECT 1;';
+
+
+statement ok
+RESET integer_division;
+
+
+statement ok
+RESET regex_match_operator_semantics;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection r1
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT job_name FROM sdb_jobs() WHERE starts_with(job_name, 'jbsr_') ORDER BY job_name;
+----
+job_name
+jbsr_checkpointed
+jbsr_deep
+jbsr_duckdb
+jbsr_global
+jbsr_logged
+jbsr_one
+jbsr_parent
+jbsr_parent_script
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_checkpointed;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_one;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_logged;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_duckdb;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_parent;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_child;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_parent_script;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_child_script;
+
+
+connection r1
+statement ok
+SET GLOBAL integer_division = false;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_global;
+
+
+connection r1
+statement ok
+SET GLOBAL integer_division = true;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_global;
+
+
+connection r1
+statement ok
+SET GLOBAL max_expression_depth = 20;
+
+
+connection r1
+statement error
+EXECUTE JOB jbsr_deep;
+----
+db error: ERROR: Max expression depth limit of 20 exceeded. Use "SET max_expression_depth TO x" to increase the maximum expression depth.
+
+
+connection r1
+statement ok
+RESET GLOBAL max_expression_depth;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_deep;
+
+
+connection r1
+query
+SELECT via, v FROM jbsr_log ORDER BY via, v;
+----
+via	v
+checkpointed	3
+child	3
+child script	3
+duckdb	3 true
+global	3
+global	3.5
+logged	3
+one	3
+
+
+connection r1
+query
+SELECT via FROM jbsr_q ORDER BY via;
+----
+via
+checkpointed
+child
+child script
+logged
+
+
+connection r1
+query
+SELECT via FROM "Jbsr_Q" ORDER BY via;
+----
+via

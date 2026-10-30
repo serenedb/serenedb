@@ -171,7 +171,7 @@ class NormReaderBase : public NormReader {
     }
     const auto epoch = file_utils::ResidencyEpoch();
     const bool valid = _column->Residency().Valid(epoch);
-    if (_verified && valid) {
+    if (valid) {
       const auto& residency = _column->Residency();
       if (docs[n - 1] < _window_end) {
         const auto span = _column->Window(_window);
@@ -264,7 +264,6 @@ class NormReaderBase : public NormReader {
   bool Probe(const doc_id_t* docs, size_t n, uint32_t epoch,
              bool valid) noexcept {
     Set(_probed_at + _window);
-    _verified = true;
     _probe = _window == _probe_end ? std::min(_probe * 2, kMaxProbe) : 1;
     auto last = _window + _probe - 1;
     if (n > 1 && (uint64_t{docs[n - 1] - docs[0]} + 1) * _bytes <=
@@ -443,7 +442,6 @@ class NormReaderBase : public NormReader {
   uint32_t _bytes = 0;
   bool _window_done = false;
   bool _dense = false;
-  bool _verified = false;
   doc_id_t _window_first = 0;
   doc_id_t _window_end = 0;
   size_t _window = 0;

@@ -296,8 +296,7 @@ class PostingReader {
   void Read(const PostingMeta& meta, bool has_score_bounds, bool has_freq,
             Sink& sink) {
     if (meta.inline_size != 0) {
-      InlineInput inline_in{meta.Inline()};
-      BytesViewInput& in = inline_in;
+      BytesViewInput in{meta.Inline()};
       ReadPosting(meta, in, Enc(), Holes(), Docs(), has_score_bounds, has_freq,
                   sink);
       return;

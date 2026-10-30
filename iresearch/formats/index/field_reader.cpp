@@ -125,7 +125,11 @@ PostingMeta DecodeRecord(const TermReaderImpl& field, const BlockView& view,
   uint32_t count = 0;
   auto cursor = FieldRecords(field, view, block, entry, count);
   PostingMeta meta;
-  DecodeRecords(cursor, count, field.meta().index_features, meta);
+  uint64_t inline_end = 0;
+  DecodeRecords(cursor, count, field.meta().index_features, meta, inline_end);
+  if (meta.inline_size != 0) {
+    meta.inline_data = field.ResolveInline(inline_end, meta.inline_size);
+  }
   return meta;
 }
 
@@ -347,13 +351,15 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
       corrupted();
     }
     std::memcpy(record.bytes.data(), head.record.data(), size);
+    uint64_t inline_end = 0;
     if (PostingsReader::DecodeDetached(record.bytes.data(), head.features,
-                                       _single) != size ||
+                                       _single, inline_end) != size ||
         head.record_inline.size() != _single.inline_size) {
       corrupted();
     }
-    std::memcpy(_single.inline_data.data(), head.record_inline.data(),
-                _single.inline_size);
+    if (_single.inline_size != 0) {
+      _single.inline_data = owner.KeepInline(head.record_inline);
+    }
   } else {
     _max_key.assign(prefix);
     _max_key.append(head.max);
@@ -400,8 +406,13 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
     if (_blocks == 1) {
       _small = owner.CopyBlock(_first_block, in.Length());
       if (inline_size != 0) {
-        _small_inline =
-          owner.Copy(owner.InlineBegin() + _inline_base, inline_size);
+        _small_inline = {owner.InlineRegion() + _inline_base, inline_size};
+        if (owner.Base()) {
+          const auto copy = owner.Copy(owner.InlineBegin() + _inline_base,
+                                       inline_size + kSlack);
+          _small_inline = {copy.data(),
+                           std::min(inline_size, copy.size() - kSlack)};
+        }
       }
     }
   }
@@ -457,28 +468,6 @@ uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
     corrupted();
   }
   return _levels.capacity() * sizeof(RangeLevel);
-}
-
-void TermReaderImpl::ReadInline(PostingMeta& meta, BlockBuffer& buffer) const {
-  const uint64_t begin = Small() ? _inline_base : 0;
-  const uint64_t end =
-    Small() ? _inline_base + _small_inline.size() : InlineEnd() - InlineBegin();
-  if (meta.inline_end < begin + meta.inline_size || meta.inline_end > end) {
-    Corrupted("inline postings", _meta.id);
-  }
-  const uint64_t at = meta.inline_end - meta.inline_size;
-  if (Small()) {
-    std::memcpy(meta.inline_data.data(), _small_inline.data() + (at - begin),
-                meta.inline_size);
-    return;
-  }
-  const uint64_t offset = InlineBegin() + at;
-  if (const auto* base = _owner->Base()) {
-    std::memcpy(meta.inline_data.data(), base + offset, meta.inline_size);
-    return;
-  }
-  Reopened(buffer, _owner->Input())
-    .ReadData(offset, meta.inline_data.data(), meta.inline_size);
 }
 
 void TermReaderImpl::SampleTerms(
@@ -538,7 +527,7 @@ const byte_type* TermReaderImpl::Block(size_t block,
 }
 
 void TermReaderImpl::PrefetchLookup(uint32_t block) const {
-  if (Small()) {
+  if (Small() || !_owner->Base()) {
     return;
   }
   const auto span = InlineSpan(block);
@@ -601,11 +590,7 @@ PostingMeta TermReaderImpl::Lookup(bytes_view term) const {
   if (entry == kNoEntry) {
     return {};
   }
-  auto meta = DecodeRecord(*this, view, block, entry);
-  if (meta.inline_size != 0) {
-    ReadInline(meta, buffer);
-  }
-  return meta;
+  return DecodeRecord(*this, view, block, entry);
 }
 
 void TermReaderImpl::LookupBatch(std::span<const bytes_view> terms,
@@ -623,6 +608,7 @@ void TermReaderImpl::LookupBatch(std::span<const bytes_view> terms,
   PaddedKey padded;
   uint32_t last = kNoBlock;
   bytes_view last_term;
+  const bool mapped = _owner->Base() != nullptr;
   for (size_t i = 0; i != terms.size(); ++i) {
     const auto term = terms[i];
     if (Excludes(term)) {
@@ -638,7 +624,8 @@ void TermReaderImpl::LookupBatch(std::span<const bytes_view> terms,
                          : BlockFrom(last, padded.Key());
     if (block != last) {
       ranges.emplace_back(BlockOffset(block), BlockOffset(block + 1));
-      if (const auto span = InlineSpan(block); span.from != span.to) {
+      const auto span = mapped ? InlineSpan(block) : InlinePages::Span{};
+      if (span.from != span.to) {
         ranges.emplace_back(span.from, span.to);
       }
     }
@@ -666,12 +653,6 @@ void TermReaderImpl::LookupBatch(std::span<const bytes_view> terms,
       continue;
     }
     out[i] = DecodeRecord(*this, view, parsed, entry);
-  }
-
-  for (auto& meta : out) {
-    if (meta.inline_size != 0) {
-      ReadInline(meta, buffer);
-    }
   }
 }
 
@@ -741,7 +722,6 @@ bytes_view FieldReader::Copy(uint64_t offset, uint64_t size) {
     copy.resize(size);
     _pending.push_back({.offset = offset, .size = size, .data = copy.data()});
   }
-  SDB_ASSERT(copy.size() == size);
   return copy;
 }
 
@@ -818,8 +798,13 @@ Separators FieldReader::Bind(TermsMeta& terms) {
     Corrupted("inline starts");
   }
   if (_inline_size != 0) {
+    if (InlineEnd() > _in->Length() || _in->Length() - InlineEnd() < kSlack) {
+      Corrupted("inline postings");
+    }
     _inline_pages =
       InlinePages{terms.inline_starts, blocks, _inline_offset, _inline_size};
+    _inline_region = _base ? _base + _inline_offset
+                           : Copy(_inline_offset, _inline_size + kSlack).data();
   }
   Account(_spans.capacity() * sizeof(SpanningBlock) +
           _inline_pages.MemoryBytes() +
@@ -850,6 +835,14 @@ void FieldReader::prepare(const ReaderState& state) {
   }
   _pr.prepare(state, features);
 
+  uint64_t single_inline = 0;
+  for (const auto& head : heads) {
+    single_inline += head.record_inline.size();
+  }
+  if (single_inline != 0) {
+    _single_inline.reserve(single_inline + kSlack);
+    Account(_single_inline.capacity());
+  }
   _keys.reserve(heads.size());
   _by_id.reserve(heads.size());
   for (size_t i = 0; i != heads.size(); ++i) {
@@ -865,7 +858,18 @@ void FieldReader::prepare(const ReaderState& state) {
     }
     _keys.push_back(head.key);
   }
+  if (single_inline != 0) {
+    _single_inline.resize(_single_inline.size() + kSlack);
+  }
   FillCopies();
+}
+
+const byte_type* FieldReader::KeepInline(bytes_view bytes) {
+  SDB_ASSERT(_single_inline.size() + bytes.size() + kSlack <=
+             _single_inline.capacity());
+  const auto at = _single_inline.size();
+  _single_inline.insert(_single_inline.end(), bytes.begin(), bytes.end());
+  return _single_inline.data() + at;
 }
 
 const TermReader* FieldReader::field(FieldKey key) const {

@@ -183,9 +183,18 @@ void RangeWriter::Add(bytes_view term, const PostingMeta& meta) {
           });
 }
 
+void RangeWriter::Keep(Piece& piece, const PostingMeta& meta) noexcept {
+  piece.meta = meta;
+  if (meta.inline_size != 0) {
+    std::memcpy(piece.inline_bytes.data(), meta.inline_data, meta.inline_size);
+    piece.meta.inline_data = piece.inline_bytes.data();
+  }
+}
+
 void RangeWriter::Push(size_t level, const Child& child) {
   auto& range = _levels[level];
   if (child.docs_count >= kHeavyDocs) {
+    SDB_ASSERT(child.meta.inline_size == 0);
     Close(level);
     Release(level);
     auto& held = range.held;
@@ -201,7 +210,7 @@ void RangeWriter::Push(size_t level, const Child& child) {
   auto& group = range.group;
   if (range.children == 0) {
     group.key.assign(child.key);
-    group.meta = child.meta;
+    Keep(group, child.meta);
     group.first = child.index;
   }
   if (level != 0) {
@@ -247,6 +256,8 @@ void RangeWriter::Release(size_t level) {
       piece.meta);
     TeeLeaf();
     piece.docs_count = piece.meta.docs_count;
+  } else if (piece.meta.inline_size != 0) {
+    piece.meta.inline_data = piece.inline_bytes.data();
   }
   _record.Clear();
   _pw->EncodeAbsolute(_record, piece.meta);

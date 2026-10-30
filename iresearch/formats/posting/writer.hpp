@@ -21,7 +21,6 @@
 #pragma once
 
 #include <bit>
-#include <cstring>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/basic_term_reader.hpp"
@@ -187,6 +186,7 @@ class PostingsWriter final {
     // absolute address of the first
     // entry in the block
     _last_state.clear();
+    _inline_end = 0;
   }
 
   void Encode(BufferedOutput& out, const PostingMeta& meta) {
@@ -295,6 +295,7 @@ class PostingsWriter final {
 
   BlockIndexWriter _index;
   bstring _tail;
+  uint64_t _inline_end = 0;
   PostingMeta _last_state;    // Last final term state
   bitset _docs;               // Set of all processed documents
   IndexOutput::ptr _doc_out;  // Postings (doc + freq)
@@ -421,16 +422,16 @@ void PostingsWriter::EncodeRecord(BufferedOutput& out, const PostingMeta& meta,
   }
 
   const auto doc_start = _last_state.doc_start;
-  const auto inline_end = _last_state.inline_end;
   if (inlined) {
     out.WriteByte(meta.inline_size);
     if constexpr (Detached) {
-      SDB_ASSERT(inline_end == 0 || inline_end == inline_at);
-      if (inline_end == 0) {
+      SDB_ASSERT(_inline_end == 0 || _inline_end == inline_at);
+      if (_inline_end == 0) {
         out.WriteV64(inline_at);
       }
+      _inline_end = inline_at + meta.inline_size;
     } else {
-      out.WriteData(meta.inline_data.data(), meta.inline_size);
+      out.WriteData(meta.inline_data, meta.inline_size);
     }
   } else if (!single) {
     out.WriteV64(meta.doc_start - doc_start);
@@ -465,8 +466,6 @@ void PostingsWriter::EncodeRecord(BufferedOutput& out, const PostingMeta& meta,
   }
 
   _last_state = meta;
-  _last_state.inline_end =
-    Detached && inlined ? inline_at + meta.inline_size : inline_end;
   if (inlined || single) {
     _last_state.doc_start = doc_start;
   }
@@ -506,7 +505,7 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
     });
     WriteDocBlock(out);
     if (_tail.size() <= PostingMeta::kInlineBytes) {
-      std::memcpy(meta.inline_data.data(), _tail.data(), _tail.size());
+      meta.inline_data = _tail.data();
       meta.inline_size = static_cast<uint8_t>(_tail.size());
     } else {
       _doc_out->WriteData(_tail.data(), _tail.size());
@@ -630,6 +629,7 @@ inline void PostingsWriter::BeginField(const FieldProperties& meta) {
   PrepareWriters(meta);
   _docs.clear();
   _last_state.clear();
+  _inline_end = 0;
 
   // It's needed because offsets block should be aligned with positions block.
   // But it's possible that fields have different features set.

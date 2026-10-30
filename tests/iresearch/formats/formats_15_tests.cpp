@@ -258,6 +258,7 @@ class Format15TestCase : public tests::FormatTestCase {
   struct ReadMeta {
     irs::PostingMeta meta;
     std::unique_ptr<irs::PostingsReader> reader;
+    tests::Records records;
   };
 
   ReadMeta WriteReadMeta(irs::Directory& dir, DocsView docs,
@@ -377,9 +378,8 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   auto reader = std::make_unique<irs::PostingsReader>();
   reader->prepare(state, features);
 
-  irs::bstring in_data(in->Length() - in->Position(), 0);
-  in->ReadData(&in_data[0], in_data.size());
-  const auto* begin = in_data.c_str();
+  auto records = tests::ReadRecords(*in);
+  const auto* begin = records.data.get();
 
   irs::PostingMeta read_meta;
   begin += reader->decode(begin, features, read_meta);
@@ -396,9 +396,9 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
     EXPECT_EQ(posting_meta.doc_delta, read_meta.doc_delta);
   }
 
-  EXPECT_EQ(begin, in_data.data() + in_data.size());
+  EXPECT_EQ(begin, records.end);
 
-  return {read_meta, std::move(reader)};
+  return {read_meta, std::move(reader), std::move(records)};
 }
 
 void Format15TestCase::AssertPostingsWalk(irs::PostingsReader& reader,
@@ -592,7 +592,8 @@ void Format15TestCase::AssertPostings(DocsView docs,
 
   auto dir = get_directory(*this);
   ASSERT_NE(nullptr, dir);
-  auto [meta, reader] = WriteReadMeta(*dir, docs, scorer_ptr, field_features);
+  auto [meta, reader, records] =
+    WriteReadMeta(*dir, docs, scorer_ptr, field_features);
   ASSERT_NE(nullptr, reader);
 
   ASSERT_EQ((field_features & features), features);
@@ -639,7 +640,7 @@ void Format15TestCase::AssertPruned(DocsView docs, uint32_t threshold) {
 
   auto dir = get_directory(*this);
   ASSERT_NE(nullptr, dir);
-  auto [meta, reader] = WriteReadMeta(*dir, docs, scorer_ptr, kFreq);
+  auto [meta, reader, records] = WriteReadMeta(*dir, docs, scorer_ptr, kFreq);
   ASSERT_NE(nullptr, reader);
 
   irs::FieldMeta field_meta;

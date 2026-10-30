@@ -277,7 +277,7 @@ class TermReaderImpl final : public TermReader {
   uint32_t RangePrefix() const noexcept { return _range_prefix; }
   uint64_t InlineBegin() const noexcept;
   uint64_t InlineEnd() const noexcept;
-  void ReadInline(PostingMeta& meta, BlockBuffer& buffer) const;
+  const byte_type* ResolveInline(uint64_t end, uint8_t size) const;
 
  private:
   bool Excludes(bytes_view term) const noexcept;
@@ -350,6 +350,7 @@ class FieldReader final {
   }
   uint64_t InlineBegin() const noexcept { return _inline_offset; }
   uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
+  const byte_type* InlineRegion() const noexcept { return _inline_region; }
   InlinePages::Span InlineSpan(uint32_t block) const noexcept {
     return _inline_pages.Of(block);
   }
@@ -358,6 +359,7 @@ class FieldReader final {
   bytes_view Load(IndexInput& in, uint64_t offset, uint64_t size);
   bytes_view Copy(uint64_t offset, uint64_t size);
   const byte_type* CopyBlock(uint32_t block, uint64_t length);
+  const byte_type* KeepInline(bytes_view bytes);
 
  private:
   struct PendingCopy {
@@ -384,7 +386,9 @@ class FieldReader final {
   std::vector<SpanningBlock> _spans;
   InlinePages _inline_pages;
   containers::NodeHashMap<uint64_t, bstring> _copies;
+  std::vector<byte_type> _single_inline;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
+  const byte_type* _inline_region = nullptr;
   uint64_t _first_page = 0;
   uint64_t _inline_offset = 0;
   uint64_t _inline_size = 0;
@@ -420,6 +424,22 @@ inline uint64_t TermReaderImpl::InlineBegin() const noexcept {
 
 inline uint64_t TermReaderImpl::InlineEnd() const noexcept {
   return _owner->InlineEnd();
+}
+
+inline const byte_type* TermReaderImpl::ResolveInline(uint64_t end,
+                                                      uint8_t size) const {
+  const byte_type* base = _owner->InlineRegion();
+  uint64_t begin = 0;
+  uint64_t limit = InlineEnd() - InlineBegin();
+  if (Small()) {
+    base = _small_inline.data();
+    begin = _inline_base;
+    limit = _inline_base + _small_inline.size();
+  }
+  if (end < begin + size || end > limit) [[unlikely]] {
+    Corrupted("inline postings", _meta.id);
+  }
+  return base + (end - size - begin);
 }
 
 }  // namespace irs::term_dict

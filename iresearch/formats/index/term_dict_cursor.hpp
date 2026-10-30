@@ -515,9 +515,11 @@ inline const byte_type* GroupStart(const BlockView& view,
 }
 
 inline void DecodeRecords(const byte_type*& record, uint32_t count,
-                          IndexFeatures features, PostingMeta& meta) noexcept {
+                          IndexFeatures features, PostingMeta& meta,
+                          uint64_t& inline_end) noexcept {
   for (; count != 0; --count) {
-    record += PostingsReader::DecodeDetached(record, features, meta);
+    record +=
+      PostingsReader::DecodeDetached(record, features, meta, inline_end);
   }
 }
 
@@ -855,22 +857,27 @@ class Cursor {
     const auto features = _field->meta().index_features;
     if (_record != kNoEntry && _record < _entry &&
         _record / kRecordInterval == _entry / kRecordInterval) {
-      DecodeRecords(_records, _entry - _record, features, _meta);
+      DecodeRecords(_records, _entry - _record, features, _meta, _inline_end);
     } else {
       uint32_t count = 0;
       _records = FieldRecords(*_field, _view, _block, _entry, count);
       _meta.clear();
-      DecodeRecords(_records, count, features, _meta);
+      _inline_end = 0;
+      DecodeRecords(_records, count, features, _meta, _inline_end);
     }
     if (_meta.inline_size != 0) {
-      if (!_field->Small()) {
-        InlineAhead(_field->InlineBegin() + _meta.inline_end -
-                    _meta.inline_size);
+      _meta.inline_data = _field->ResolveInline(_inline_end, _meta.inline_size);
+      if (!_field->Small() && _field->Owner().Base()) {
+        InlineAhead(_field->InlineBegin() + _inline_end - _meta.inline_size);
       }
-      _field->ReadInline(_meta, _buffer);
     }
     _record = _entry;
     return _meta;
+  }
+
+  uint64_t InlineAt() const noexcept {
+    SDB_ASSERT(_record == _entry && _meta.inline_size != 0);
+    return _inline_end - _meta.inline_size;
   }
 
   bool LowerBound(Probe probe) {
@@ -1163,6 +1170,7 @@ class Cursor {
   const byte_type* _records = nullptr;
   std::array<PendingSuffix, kRestartInterval> _pending;
   PostingMeta _meta;
+  uint64_t _inline_end = 0;
   KeyBuffer _peek;
   size_t _peeked = 0;
   PaddedKey _probe;

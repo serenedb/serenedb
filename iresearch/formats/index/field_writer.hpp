@@ -22,6 +22,7 @@
 
 #include <fsst.h>
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -121,6 +122,7 @@ class FieldWriter final {
   bstring _key;
   bstring _min;
   PostingMeta _single;
+  std::array<byte_type, PostingMeta::kInlineBytes> _single_inline{};
   IdxWriter* _idx = nullptr;
   IndexOutput* _out = nullptr;
   uint64_t _terms = 0;

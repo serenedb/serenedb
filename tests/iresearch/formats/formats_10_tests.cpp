@@ -112,9 +112,8 @@ class Format10TestCase : public tests::FormatTestCase {
       irs::PostingsReader reader;
       reader.prepare(state, field.index_features);
 
-      irs::bstring in_data(in->Length() - in->Position(), 0);
-      in->ReadData(&in_data[0], in_data.size());
-      const auto* begin = in_data.c_str();
+      const auto records = tests::ReadRecords(*in);
+      const auto* begin = records.data.get();
 
       // read term attributes
       {
@@ -238,7 +237,7 @@ class Format10TestCase : public tests::FormatTestCase {
         }
       }
 
-      ASSERT_EQ(begin, in_data.data() + in_data.size());
+      ASSERT_EQ(begin, records.end);
     }
   }
 };
@@ -333,9 +332,8 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     irs::PostingsReader reader;
     reader.prepare(state, field.index_features);
 
-    irs::bstring in_data(in->Length() - in->Position(), 0);
-    in->ReadData(&in_data[0], in_data.size());
-    const auto* begin = in_data.c_str();
+    const auto records = tests::ReadRecords(*in);
+    const auto* begin = records.data.get();
 
     // read term0 attributes & postings
     {
@@ -386,7 +384,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
     }
 
-    ASSERT_EQ(begin, in_data.data() + in_data.size());
+    ASSERT_EQ(begin, records.end);
   }
 }
 
@@ -405,6 +403,7 @@ TEST_P(Format10TestCase, postings_read_write) {
     {2, 10}, {7, 10}, {9, 10}, {19, 10}};
   irs::PostingsWriter writer;
   irs::PostingMeta meta0, meta1;  // must be destroyed before writer
+  irs::bstring inline0, inline1;
 
   // write postings
   {
@@ -431,6 +430,8 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       writer.Encode(*out, meta0);
+      inline0.assign(meta0.Inline());
+      meta0.inline_data = inline0.data();
     }
     // write postings for term1
     {
@@ -439,6 +440,8 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       writer.Encode(*out, meta1);
+      inline1.assign(meta1.Inline());
+      meta1.inline_data = inline1.data();
     }
 
     ASSERT_NE(0, meta0.inline_size);
@@ -464,9 +467,8 @@ TEST_P(Format10TestCase, postings_read_write) {
     irs::PostingsReader reader;
     reader.prepare(state, field.index_features);
 
-    irs::bstring in_data(in->Length() - in->Position(), 0);
-    in->ReadData(&in_data[0], in_data.size());
-    const auto* begin = in_data.c_str();
+    const auto records = tests::ReadRecords(*in);
+    const auto* begin = records.data.get();
 
     // cumulative attribute
     irs::PostingMeta read_meta;
@@ -517,7 +519,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
     }
 
-    ASSERT_EQ(begin, in_data.data() + in_data.size());
+    ASSERT_EQ(begin, records.end);
   }
 }
 
@@ -964,9 +966,8 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         irs::PostingsReader reader;
         reader.prepare(state, field.index_features);
 
-        irs::bstring in_data(in->Length() - in->Position(), 0);
-        in->ReadData(&in_data[0], in_data.size());
-        const auto* begin = in_data.c_str();
+        const auto records = tests::ReadRecords(*in);
+        const auto* begin = records.data.get();
 
         irs::PostingMeta read_meta;
         begin += reader.decode(begin, field.index_features, read_meta);
@@ -1033,7 +1034,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
           }
         }
 
-        ASSERT_EQ(begin, in_data.data() + in_data.size());
+        ASSERT_EQ(begin, records.end);
       }
     };
 

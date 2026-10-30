@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <cstring>
 #include <iterator>
 #include <limits>
 #include <span>
@@ -411,6 +412,10 @@ void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
   if (_terms++ == 0) {
     _min.assign(term);
     _single = meta;
+    if (meta.inline_size != 0) {
+      std::memcpy(_single_inline.data(), meta.inline_data, meta.inline_size);
+      _single.inline_data = _single_inline.data();
+    }
     _key.clear();
     AppendFieldPrefix(_key, _ordinal++);
     _prefix_size = static_cast<uint32_t>(_key.size());

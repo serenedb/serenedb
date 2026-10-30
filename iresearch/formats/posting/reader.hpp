@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <cstring>
 #include <iresearch/utils/assert.hpp>
 
 #include "iresearch/formats/format_utils.hpp"
@@ -72,13 +71,14 @@ class PostingsReader final {
 
   static size_t decode(const byte_type* in, IndexFeatures field_features,
                        PostingMeta& state) {
-    return DecodeRecord<false>(in, field_features, state);
+    uint64_t inline_end = 0;
+    return DecodeRecord<false>(in, field_features, state, inline_end);
   }
 
   static size_t DecodeDetached(const byte_type* in,
-                               IndexFeatures field_features,
-                               PostingMeta& state) {
-    return DecodeRecord<true>(in, field_features, state);
+                               IndexFeatures field_features, PostingMeta& state,
+                               uint64_t& inline_end) {
+    return DecodeRecord<true>(in, field_features, state, inline_end);
   }
 
   TermPostings::ptr Postings(IndexFeatures field_features,
@@ -94,7 +94,8 @@ class PostingsReader final {
   template<bool Detached>
   IRS_FORCE_INLINE static size_t DecodeRecord(const byte_type* in,
                                               IndexFeatures field_features,
-                                              PostingMeta& state);
+                                              PostingMeta& state,
+                                              uint64_t& inline_end);
 
   template<typename FieldTraits, typename Factory>
   static auto IteratorImpl(IndexFeatures enabled, Factory&& factory);
@@ -131,8 +132,10 @@ inline void PostingsReader::prepare(const ReaderState& state,
 }
 
 template<bool Detached>
-IRS_FORCE_INLINE size_t PostingsReader::DecodeRecord(
-  const byte_type* in, IndexFeatures features, PostingMeta& posting_meta) {
+IRS_FORCE_INLINE size_t PostingsReader::DecodeRecord(const byte_type* in,
+                                                     IndexFeatures features,
+                                                     PostingMeta& posting_meta,
+                                                     uint64_t& inline_end) {
   const auto* p = in;
 
   SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Vec) ||
@@ -159,12 +162,9 @@ IRS_FORCE_INLINE size_t PostingsReader::DecodeRecord(
     SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
     posting_meta.inline_size = size;
     if constexpr (Detached) {
-      const uint64_t at = posting_meta.inline_end == 0
-                            ? vread<uint64_t>(p)
-                            : posting_meta.inline_end;
-      posting_meta.inline_end = at + size;
+      inline_end = (inline_end == 0 ? vread<uint64_t>(p) : inline_end) + size;
     } else {
-      std::memcpy(posting_meta.inline_data.data(), p, size);
+      posting_meta.inline_data = p;
       p += size;
     }
   } else {

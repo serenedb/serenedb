@@ -27,6 +27,7 @@
 #include <deque>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/basic_term_reader.hpp>
+#include <iresearch/formats/posting/block_codec.hpp>
 #include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/iterators.hpp>
@@ -34,11 +35,26 @@
 #include <iresearch/search/detail/resolve.hpp>
 #include <iresearch/search/lead/node.hpp>
 #include <iresearch/search/lead/posting_docs.hpp>
+#include <memory>
 #include <unordered_set>
 
 #include "index/index_tests.hpp"
 
 namespace tests {
+
+struct Records {
+  std::unique_ptr<irs::byte_type[]> data;
+  const irs::byte_type* end;
+};
+
+inline Records ReadRecords(irs::IndexInput& in) {
+  const uint64_t size = in.Length() - in.Position();
+  auto data =
+    std::make_unique<irs::byte_type[]>(size + irs::block_codec::kInSlack);
+  in.ReadData(data.get(), size);
+  const auto* end = data.get() + size;
+  return {std::move(data), end};
+}
 
 class SeekPostings : public irs::lead::Node {
  public:

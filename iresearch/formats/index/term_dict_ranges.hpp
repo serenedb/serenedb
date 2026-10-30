@@ -45,6 +45,7 @@ class RangeWriter final {
     bstring key;
     std::vector<doc_id_t> docs;
     PostingMeta meta;
+    std::array<byte_type, PostingMeta::kInlineBytes> inline_bytes{};
     uint64_t docs_count = 0;
     uint32_t first = 0;
     bool join = false;
@@ -70,6 +71,7 @@ class RangeWriter final {
     uint32_t index;
   };
 
+  static void Keep(Piece& piece, const PostingMeta& meta) noexcept;
   void Push(size_t level, const Child& child);
   void Close(size_t level);
   void Release(size_t level);

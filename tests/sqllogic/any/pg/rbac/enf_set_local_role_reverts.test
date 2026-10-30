@@ -1,0 +1,110 @@
+statement ok
+DROP TABLE IF EXISTS eslr_secret;
+
+
+statement ok
+DROP ROLE IF EXISTS eslr_login;
+
+
+statement ok
+DROP ROLE IF EXISTS eslr_target;
+
+
+statement ok
+CREATE ROLE eslr_login LOGIN NOINHERIT PASSWORD 'eslr_pw';
+
+
+statement ok
+CREATE ROLE eslr_target;
+
+
+statement ok
+GRANT eslr_target TO eslr_login;
+
+
+statement ok
+CREATE TABLE eslr_secret (a integer);
+
+
+statement ok
+GRANT SELECT ON eslr_secret TO eslr_target;
+
+
+connection c_eslr user=eslr_login password=eslr_pw
+statement ok
+BEGIN;
+
+
+connection c_eslr user=eslr_login password=eslr_pw
+statement ok
+SET LOCAL ROLE eslr_target;
+
+
+connection c_eslr user=eslr_login password=eslr_pw
+query
+SELECT current_user AS current, count(*) AS rows FROM eslr_secret;
+----
+current	rows
+eslr_target	0
+
+
+connection c_eslr user=eslr_login password=eslr_pw
+statement ok
+COMMIT;
+
+
+connection c_eslr user=eslr_login password=eslr_pw
+query
+SELECT current_user AS current;
+----
+current
+eslr_login
+
+
+connection c_eslr user=eslr_login password=eslr_pw
+statement error
+SELECT count(*) FROM eslr_secret;
+----
+db error: ERROR: permission denied for table eslr_secret
+
+
+connection c_eslr user=eslr_login password=eslr_pw
+statement ok
+BEGIN;
+
+
+connection c_eslr user=eslr_login password=eslr_pw
+statement ok
+SET ROLE eslr_target;
+
+
+connection c_eslr user=eslr_login password=eslr_pw
+statement ok
+ROLLBACK;
+
+
+connection c_eslr user=eslr_login password=eslr_pw
+query
+SELECT current_user AS current;
+----
+current
+eslr_login
+
+
+connection c_eslr user=eslr_login password=eslr_pw
+statement error
+SELECT count(*) FROM eslr_secret;
+----
+db error: ERROR: permission denied for table eslr_secret
+
+
+statement ok
+DROP TABLE eslr_secret;
+
+
+statement ok
+DROP ROLE eslr_target;
+
+
+statement ok
+DROP ROLE eslr_login;

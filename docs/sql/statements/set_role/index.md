@@ -41,7 +41,7 @@ Setting a role that does not exist is an error:
 ## Notes
 
 - Setting a role you are not a member of fails with `permission denied to set role "..."` (superusers are exempt).
-- The switch lasts for the session (until `RESET ROLE`, another `SET ROLE`, or disconnect).
+- The switch lasts for the session (until `RESET ROLE`, another `SET ROLE`, or disconnect). `SET LOCAL ROLE` switches only until the current transaction ends, and a `SET ROLE` made in a transaction that rolls back is undone with it. `SET SESSION ROLE` is the same as `SET ROLE`.
 
 ## See also
 

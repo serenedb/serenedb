@@ -2593,8 +2593,6 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
   // cursor survives across Flush (which does not commit) but not Sync, as in
   // postgres. A leading BEGIN/COMMIT/ROLLBACK is excluded: it must reach the
   // transaction operator itself, not run wrapped in our block.
-  _connection_ctx->SetInTransactionBlock(
-    !this->_conn->context->transaction.IsAutoCommit());
   if (prepared.GetStatementType() !=
       duckdb::StatementType::TRANSACTION_STATEMENT) {
     _txn_state->Arm();
@@ -3136,6 +3134,8 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
     }
 
     _dispatch_consume = frame.recv_consume;
+    _connection_ctx->SetInTransactionBlock(
+      !this->_conn->context->transaction.IsAutoCommit());
     try {
       switch (type) {
         case PQ_MSG_QUERY:

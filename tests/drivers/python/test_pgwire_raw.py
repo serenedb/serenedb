@@ -3609,6 +3609,33 @@ def test_discard_all_in_a_transaction_block_is_25001(conn):
     assert not errors(conn.run("DISCARD ALL"))
 
 
+def _execute_named(conn, name):
+    conn.bind("", name)
+    conn.execute("")
+    conn.sync()
+    return conn.drain_to_ready()
+
+
+def test_transaction_block_rules_follow_the_block_at_execute(conn):
+    other = WireConn()
+    try:
+        _parse_ok(conn, "ns_block_drop", "DROP DATABASE IF EXISTS ns_block_absent")
+        _parse_ok(conn, "ns_block_discard", "DISCARD ALL")
+        other.run_ok("CREATE ROLE ns_block_role")
+        try:
+            m = _execute_named(conn, "ns_block_drop")
+            assert not errors(m), errors(m)
+            assert not errors(_simple(conn, "BEGIN"))
+            assert sqlstates(_execute_named(conn, "ns_block_drop")) == ["25001"]
+            assert not errors(_simple(conn, "ROLLBACK"))
+            m = _execute_named(conn, "ns_block_discard")
+            assert not errors(m), errors(m)
+        finally:
+            other.run_ok("DROP ROLE ns_block_role")
+    finally:
+        other.close()
+
+
 def test_sql_execute_runs_protocol_statement(conn):
     _parse_ok(conn, "ns_exec", "select $1::int4 + 1", oids=(23,))
     m = _simple(conn, "EXECUTE ns_exec(41)")

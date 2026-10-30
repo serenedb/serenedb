@@ -51,6 +51,7 @@
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
 #include <duckdb/parser/parsed_data/detach_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -68,6 +69,7 @@
 #include <duckdb/planner/operator/logical_delete.hpp>
 #include <duckdb/planner/operator/logical_detach.hpp>
 #include <duckdb/planner/operator/logical_drop.hpp>
+#include <duckdb/planner/operator/logical_execute.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
@@ -633,32 +635,11 @@ class Enforcer {
       }
       case LogicalOperatorType::LOGICAL_DROP: {
         auto& info = *op.Cast<duckdb::LogicalDrop>().info;
-        if (info.type == CatalogType::DATABASE_ENTRY &&
-            !_context.transaction.IsAutoCommit()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-            ERR_MSG("DROP DATABASE cannot run inside a transaction block"));
-        }
-        if (info.type == CatalogType::PREPARED_STATEMENT &&
-            info.extra_drop_info &&
-            info.extra_drop_info->Cast<duckdb::ExtraDropDiscardInfo>().target ==
-              duckdb::DiscardTarget::ALL &&
-            !_context.transaction.IsAutoCommit()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-            ERR_MSG("DISCARD ALL cannot run inside a transaction block"));
-        }
+        RequireOutsideTransactionBlock(info);
         if (_enforce) {
           CheckDrop(info);
         }
-        if (info.type == CatalogType::DATABASE_ENTRY) {
-          auto database = duckdb::DatabaseManager::Get(_context).GetDatabase(
-            info.GetQualifiedName().Name());
-          if (database && database->GetCatalog().GetCatalogType() ==
-                            catalog::SereneDBCatalog::kStorageType) {
-            RequireDatabaseUnused(*database);
-          }
-        }
+        RequireDroppableNow(info);
         if (PointAtCluster(info, info.type)) {
           _connection.MarkClusterWritten();
         }
@@ -763,6 +744,16 @@ class Enforcer {
                           ERR_MSG("permission denied: superuser required"));
         }
         break;
+      case LogicalOperatorType::LOGICAL_EXECUTE: {
+        const auto& unbound =
+          op.Cast<duckdb::LogicalExecute>().prepared->unbound_statement;
+        if (unbound && unbound->type == duckdb::StatementType::DROP_STATEMENT) {
+          const auto& info = *unbound->Cast<duckdb::DropStatement>().info;
+          RequireOutsideTransactionBlock(info);
+          RequireDroppableNow(info);
+        }
+        break;
+      }
       case LogicalOperatorType::LOGICAL_INVALID:
       case LogicalOperatorType::LOGICAL_PROJECTION:
       case LogicalOperatorType::LOGICAL_FILTER:
@@ -799,7 +790,6 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_TRIGGER:
       case LogicalOperatorType::LOGICAL_EXPLAIN:
       case LogicalOperatorType::LOGICAL_PREPARE:
-      case LogicalOperatorType::LOGICAL_EXECUTE:
       case LogicalOperatorType::LOGICAL_TRANSACTION:
       case LogicalOperatorType::LOGICAL_SET:
       case LogicalOperatorType::LOGICAL_RESET:
@@ -1552,6 +1542,36 @@ class Enforcer {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
                       ERR_MSG("database \"", name.GetIdentifierName(),
                               "\" is being created by another transaction"));
+    }
+  }
+
+  void RequireOutsideTransactionBlock(const duckdb::DropInfo& info) {
+    if (!_connection.InTransactionBlock()) {
+      return;
+    }
+    if (info.type == CatalogType::DATABASE_ENTRY) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+        ERR_MSG("DROP DATABASE cannot run inside a transaction block"));
+    }
+    if (info.type == CatalogType::PREPARED_STATEMENT && info.extra_drop_info &&
+        info.extra_drop_info->Cast<duckdb::ExtraDropDiscardInfo>().target ==
+          duckdb::DiscardTarget::ALL) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+        ERR_MSG("DISCARD ALL cannot run inside a transaction block"));
+    }
+  }
+
+  void RequireDroppableNow(const duckdb::DropInfo& info) {
+    if (info.type != CatalogType::DATABASE_ENTRY) {
+      return;
+    }
+    auto database = duckdb::DatabaseManager::Get(_context).GetDatabase(
+      info.GetQualifiedName().Name());
+    if (database && database->GetCatalog().GetCatalogType() ==
+                      catalog::SereneDBCatalog::kStorageType) {
+      RequireDatabaseUnused(*database);
     }
   }
 

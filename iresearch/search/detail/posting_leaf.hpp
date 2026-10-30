@@ -379,6 +379,7 @@ class PostingLeaf {
     _last = *(std::end(_docs) - 1);
   }
 
+  template<bool Score = true>
   bool ReadLeafBelow(uint32_t len, doc_id_t min) {
     static_assert(Shape.scored && Shape.freqs && Shape.enc);
     auto& in = In();
@@ -389,7 +390,9 @@ class PostingLeaf {
       return false;
     }
     block_io::ReadTail<block_io::kFreqBias>(len, in, _enc.data, _freqs.data);
-    ScoreLeaf(kBlock - len, len);
+    if constexpr (Score) {
+      ScoreLeaf(kBlock - len, len);
+    }
     return true;
   }
 
@@ -452,6 +455,38 @@ class PostingLeaf {
       AddDoc<MergeType, Counts>(*begin, *scores, min, counts, mask, window);
     }
     SDB_ASSERT(begin != end);
+    return begin;
+  }
+
+  template<ScoreMergeType MergeType>
+  const doc_id_t* ScoreMasked(const doc_id_t* begin, const doc_id_t* end,
+                              doc_id_t min, doc_id_t max,
+                              const uint64_t* IRS_RESTRICT mask,
+                              score_t* IRS_RESTRICT window) {
+    static_assert(Shape.scored && Shape.freqs);
+    doc_id_t docs[kBlock];
+    uint32_t freqs[kBlock];
+    uint32_t offsets[kBlock];
+    uint32_t hits = 0;
+    const auto* const first = std::cbegin(_docs);
+    for (; begin != end && *begin < max; ++begin) {
+      const auto offset = static_cast<uint32_t>(*begin - min);
+      docs[hits] = *begin;
+      freqs[hits] = _freqs.data[begin - first];
+      offsets[hits] = offset;
+      hits +=
+        static_cast<uint32_t>((mask[offset / kBits] >> (offset % kBits)) & 1);
+    }
+    if (hits != 0) {
+      score_t scores[kBlock];
+      _provider.freq.value = freqs;
+      _score.fetcher->Fetch(std::span<const doc_id_t>{docs, hits});
+      _score.score.Score(scores, static_cast<scores_size_t>(hits));
+      _provider.freq.value = _freqs.data;
+      for (uint32_t i = 0; i != hits; ++i) {
+        irs::Merge<MergeType>(window[offsets[i]], scores[i]);
+      }
+    }
     return begin;
   }
 

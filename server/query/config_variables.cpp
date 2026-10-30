@@ -56,6 +56,7 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/types/xml.h"
+#include "pg/version.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "scheduler/job_scheduler.h"

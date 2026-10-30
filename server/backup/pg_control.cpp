@@ -23,6 +23,7 @@
 #include <absl/base/no_destructor.h>
 #include <absl/crc/crc32c.h>
 #include <absl/random/random.h>
+#include <absl/strings/str_cat.h>
 #include <absl/time/clock.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -38,104 +39,39 @@
 #include <string>
 #include <system_error>
 
+#include "pg/version.h"
 #include "utils/file_utils.h"
 
 namespace sdb::backup {
 namespace {
 
-constexpr uint32_t kPgControlVersion = 1800;
-constexpr uint32_t kCatalogVersion = 202506291;
-constexpr size_t kPgControlFileSize = 8192;
-constexpr int32_t kDbInProduction = 6;
+#include "pg/catalog/generated/pg_control.gen.inc"
+
 constexpr int32_t kWalLevelReplica = 1;
 constexpr uint32_t kBlockSize = 8192;
-// PostgreSQL's FirstNormalUnloggedLSN, which initdb and pg_resetwal write.
-constexpr uint64_t kFirstNormalUnloggedLsn = 1000;
 
-struct PgCheckPoint {
-  uint64_t redo;
-  uint32_t this_timeline;
-  uint32_t prev_timeline;
-  bool full_page_writes;
-  int32_t wal_level;
-  uint64_t next_xid;
-  uint32_t next_oid;
-  uint32_t next_multi;
-  uint32_t next_multi_offset;
-  uint32_t oldest_xid;
-  uint32_t oldest_xid_db;
-  uint32_t oldest_multi;
-  uint32_t oldest_multi_db;
-  int64_t time;
-  uint32_t oldest_commit_ts_xid;
-  uint32_t newest_commit_ts_xid;
-  uint32_t oldest_active_xid;
-};
+static_assert(sizeof(ControlFileData) <= kPgControlMaxSafeSize);
 
-struct PgControlData {
-  uint64_t system_identifier;
-  uint32_t pg_control_version;
-  uint32_t catalog_version_no;
-  int32_t state;
-  int64_t time;
-  uint64_t checkpoint;
-  PgCheckPoint checkpoint_copy;
-  uint64_t unlogged_lsn;
-  uint64_t min_recovery_point;
-  uint32_t min_recovery_point_tli;
-  uint64_t backup_start_point;
-  uint64_t backup_end_point;
-  bool backup_end_required;
-  int32_t wal_level;
-  bool wal_log_hints;
-  int32_t max_connections;
-  int32_t max_worker_processes;
-  int32_t max_wal_senders;
-  int32_t max_prepared_xacts;
-  int32_t max_locks_per_xact;
-  bool track_commit_timestamp;
-  uint32_t max_align;
-  double float_format;
-  uint32_t blcksz;
-  uint32_t relseg_size;
-  uint32_t xlog_blcksz;
-  uint32_t xlog_seg_size;
-  uint32_t name_data_len;
-  uint32_t index_max_keys;
-  uint32_t toast_max_chunk_size;
-  uint32_t loblksize;
-  bool float8_by_val;
-  uint32_t data_checksum_version;
-  bool default_char_signedness;
-  std::array<char, 32> mock_authentication_nonce;
-  uint32_t crc;
-};
-
-static_assert(offsetof(PgControlData, pg_control_version) == 8);
-static_assert(offsetof(PgControlData, catalog_version_no) == 12);
-static_assert(offsetof(PgControlData, checkpoint) == 32);
-static_assert(sizeof(PgControlData) <= kPgControlFileSize);
-
-uint32_t ControlCrc(const PgControlData& data) {
+uint32_t ControlCrc(const ControlFileData& data) {
   return static_cast<uint32_t>(absl::ComputeCrc32c(std::string_view{
-    reinterpret_cast<const char*>(&data), offsetof(PgControlData, crc)}));
+    reinterpret_cast<const char*>(&data), offsetof(ControlFileData, crc)}));
 }
 
-PgControlData MakeControl(const ControlState& state) {
-  PgControlData data{};
+ControlFileData MakeControl(const ControlState& state) {
+  ControlFileData data{};
   const auto now = absl::ToUnixSeconds(absl::Now());
   data.system_identifier = state.system_identifier;
   data.pg_control_version = kPgControlVersion;
-  data.catalog_version_no = kCatalogVersion;
-  data.state = kDbInProduction;
+  data.catalog_version_no = kCatalogVersionNo;
+  data.state = DbState::kDbInProduction;
   data.time = now;
-  data.checkpoint = state.checkpoint;
-  data.checkpoint_copy.redo = state.checkpoint;
-  data.checkpoint_copy.this_timeline = kTimeline;
-  data.checkpoint_copy.prev_timeline = kTimeline;
-  data.checkpoint_copy.full_page_writes = true;
-  data.checkpoint_copy.wal_level = kWalLevelReplica;
-  data.checkpoint_copy.time = now;
+  data.check_point = state.checkpoint;
+  data.check_point_copy.redo = state.checkpoint;
+  data.check_point_copy.this_time_line_id = kTimeline;
+  data.check_point_copy.prev_time_line_id = kTimeline;
+  data.check_point_copy.full_page_writes = true;
+  data.check_point_copy.wal_level = kWalLevelReplica;
+  data.check_point_copy.time = now;
   data.unlogged_lsn = kFirstNormalUnloggedLsn;
   data.wal_level = kWalLevelReplica;
   data.max_connections = 100;
@@ -143,7 +79,7 @@ PgControlData MakeControl(const ControlState& state) {
   data.max_wal_senders = 10;
   data.max_locks_per_xact = 64;
   data.max_align = 8;
-  data.float_format = 1234567.0;
+  data.float_format = kFloatformatValue;
   data.blcksz = kBlockSize;
   data.relseg_size = 131072;
   data.xlog_blcksz = kBlockSize;
@@ -184,7 +120,7 @@ std::optional<ControlState> ReadPgControl(
     }
     utils::file_utils::ThrowFileError("open", path.string(), errno);
   }
-  PgControlData data{};
+  ControlFileData data{};
   const auto size = ::read(fd, &data, sizeof(data));
   const int error = errno;
   ::close(fd);
@@ -199,7 +135,7 @@ std::optional<ControlState> ReadPgControl(
       ERR_MSG("\"", path.string(), "\" is not a valid SereneDB control file"));
   }
   return ControlState{.system_identifier = data.system_identifier,
-                      .checkpoint = data.checkpoint};
+                      .checkpoint = data.check_point};
 }
 
 void WritePgControl(const std::filesystem::path& data_dir,
@@ -228,7 +164,8 @@ void EnsurePgVersion(const std::filesystem::path& data_dir) {
   if (ec) {
     utils::file_utils::ThrowFileError("check", path.string(), ec);
   }
-  utils::file_utils::Spit(path.string(), "18\n", true);
+  utils::file_utils::Spit(path.string(),
+                          absl::StrCat(pg::kPgMajorVersion, "\n"), true);
   utils::file_utils::SyncDirectory(data_dir);
 }
 

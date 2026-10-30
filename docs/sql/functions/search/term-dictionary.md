@@ -40,6 +40,8 @@ The `ts_dict_*` aggregates read an inverted index's on-disk dictionary, so they 
 | [`ts_dict_min(column)`](#ts_dict_min) | The smallest live term. |
 | [`ts_dict_max(column)`](#ts_dict_min) | The greatest live term. |
 
+`ts_dict_agg`, `ts_dict_min` and `ts_dict_max` return text, so they reject a column whose dictionary emits binary terms, such as [`collate_tokens`](./tokenizers/collate_tokens.md) or [`generate_wildcard_ngrams`](./tokenizers/generate_wildcard_ngrams.md), with `column has no text term dictionary`; `ts_dict_raw_agg` lists those terms.
+
 #### `ts_dict_agg` and the aligned lists {#ts_dict_agg}
 
 All list aggregates over the same column are positionally aligned, so `unnest` zips them into rows.

@@ -45,6 +45,7 @@ using RuneSet = std::vector<Runes>;
 
 constexpr size_t kMaxDepth = 256;
 constexpr size_t kMaxVisits = 100000;
+constexpr char32_t kEdge = re2::Runemax + 1;
 
 struct TreeDeleter {
   void operator()(re2::Regexp* re) const noexcept { re->Decref(); }
@@ -179,9 +180,13 @@ bool MayFold(re2::Rune rune) noexcept {
   return rune >= 0x80 || absl::ascii_isalpha(static_cast<unsigned char>(rune));
 }
 
-bstring Utf8(const Runes& runes) {
+bstring Utf8(const Runes& runes, byte_type boundary) {
   bstring out;
   for (const auto r : runes) {
+    if (r == kEdge) {
+      out += boundary;
+      continue;
+    }
     char utf8[re2::UTFmax];
     const auto rune = static_cast<re2::Rune>(r);
     const int n = re2::runetochar(utf8, &rune);
@@ -298,9 +303,7 @@ class Extractor {
   }
 
  private:
-  Info Edge() const {
-    return {.has_exact = true, .exact = {Runes(1, _boundary)}};
-  }
+  Info Edge() const { return {.has_exact = true, .exact = {Runes(1, kEdge)}}; }
 
   Info Exact(RuneSet set) {
     Info info{.has_exact = true, .exact = std::move(set)};
@@ -409,8 +412,7 @@ class Extractor {
       }
     };
     for (const auto rune : runes) {
-      _poisoned = _poisoned || IsSurrogate(rune) ||
-                  static_cast<char32_t>(rune) == _boundary;
+      _poisoned = _poisoned || IsSurrogate(rune);
       if (fold && MayFold(rune)) {
         flush();
         pieces.push_back(rune < 0x80 ? AsciiCases(rune) : AnyChar());
@@ -446,8 +448,7 @@ class Extractor {
     set.reserve(size);
     for (const auto& range : cc) {
       for (auto rune = range.lo; rune <= range.hi; ++rune) {
-        _poisoned = _poisoned || IsSurrogate(rune) ||
-                    static_cast<char32_t>(rune) == _boundary;
+        _poisoned = _poisoned || IsSurrogate(rune);
         set.emplace_back(1, static_cast<char32_t>(rune));
       }
     }
@@ -594,8 +595,9 @@ class Extractor {
     }
     GramQuery any{.kind = Kind::None};
     for (const auto& s : set) {
-      any = Combine(Kind::Or, std::move(any),
-                    GramQuery{.kind = Kind::Literal, .literal = Utf8(s)});
+      any = Combine(
+        Kind::Or, std::move(any),
+        GramQuery{.kind = Kind::Literal, .literal = Utf8(s, _boundary)});
     }
     match = Combine(Kind::And, std::move(match), std::move(any));
   }
@@ -607,7 +609,7 @@ class Extractor {
   }
 
   size_t _n;
-  char32_t _boundary;
+  byte_type _boundary;
   GramQueryLimits _limits;
   size_t _visits{0};
   bool _poisoned{false};
@@ -739,7 +741,7 @@ class LikeShape {
     }
     auto& bytes = _tokens.back().bytes;
     for (auto rune : runes) {
-      if (IsSurrogate(rune) || rune == _boundary) {
+      if (IsSurrogate(rune)) {
         return false;
       }
       char utf8[re2::UTFmax];
@@ -781,7 +783,7 @@ GramPlan ExtractGramQuery(bytes_view pattern, RegexpSyntax syntax,
                           size_t gram_size, byte_type boundary,
                           const GramQueryLimits& limits) {
   SDB_ASSERT(gram_size != 0);
-  SDB_ASSERT(boundary < 0x80);
+  SDB_ASSERT(boundary >= 0xF8);
   const auto tree = ParseTree(pattern, syntax);
   if (!tree) {
     return {.query = {.kind = Kind::None}};

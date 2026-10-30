@@ -314,6 +314,20 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   }
 
   const auto [kind, agg_name] = *fn_info;
+  if (kind == TsDictColKind::Term) {
+    const auto tokenizer =
+      found.bind_data->relation.ResolveTokenizers(context).Acquire(
+        index->TermField(col_id));
+    const auto output = tokenizer.analyzer ? tokenizer.analyzer->Traits().output
+                                           : duckdb::LogicalTypeId::VARCHAR;
+    if (output != duckdb::LogicalTypeId::VARCHAR) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG(fn, "(): column has no text term dictionary"),
+                      ERR_HINT("its dictionary produces ",
+                               duckdb::LogicalTypeIdToString(output),
+                               " tokens, which ts_dict_raw_agg returns"));
+    }
+  }
   return MakeTsDictAggregate(root, context, found, index->TermField(col_id),
                              col_id, kind, agg_name,
                              col_ref->Binding().table_index, agg.GetAlias());

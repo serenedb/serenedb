@@ -14,7 +14,14 @@ statement ok
 INSERT INTO wbb_t VALUES
     (1, 'bcd'),
     (2, 'xbcdx'),
-    (3, 'cd')
+    (3, 'cd'),
+    (4, 'a' || chr(31) || 'bcd'),
+    (5, 'bcd' || chr(31) || 'e'),
+    (6, 'a' || chr(31) || 'bcd' || chr(31) || 'e'),
+    (7, chr(31) || 'cd'),
+    (8, 'ÿbc'),
+    (9, 'aÿ'),
+    (10, 'ÿ')
 
 statement ok
 CREATE INDEX wbb_idx ON wbb_t USING inverted (id, v wbb_dict)
@@ -26,27 +33,11 @@ statement ok
 VACUUM (REFRESH_TABLE) wbb_t
 
 query
-SELECT id FROM wbb_idx WHERE v @@ ts_like('b%') ORDER BY id
+SELECT list_transform(generate_wildcard_ngrams('a' || chr(31) || 'b', 3), x -> hex(x)) AS control,
+       list_transform(generate_wildcard_ngrams('ÿb', 3), x -> hex(x)) AS latin
 ----
-id
-1
-
-statement ok
-INSERT INTO wbb_t VALUES
-    (4, 'a' || chr(31) || 'bcd'),
-    (5, 'bcd' || chr(31) || 'e'),
-    (6, 'a' || chr(31) || 'bcd' || chr(31) || 'e'),
-    (7, chr(31) || 'cd')
-
-statement ok
-VACUUM (REFRESH_TABLE) wbb_t
-
-query
-SELECT list_contains(generate_wildcard_ngrams('bcd', 3), chr(31)) AS plain,
-       list_contains(generate_wildcard_ngrams('a' || chr(31) || 'bcd', 3), chr(31)) AS marked
-----
-plain	marked
-f	t
+control	latin
+{FF611F,611F62,1F62FF,62FF}	{FFC3BF62,C3BF62FF,62FF}
 
 query
 SELECT id FROM wbb_t WHERE v LIKE 'b%' ORDER BY id
@@ -139,17 +130,52 @@ id
 4
 6
 
-statement ok
-DELETE FROM wbb_t WHERE id > 3
-
-statement ok
-VACUUM (REFRESH_TABLE) wbb_t
-
 query
-SELECT id FROM wbb_pos_idx WHERE v @@ ts_like('b%') ORDER BY id
+SELECT id FROM wbb_t WHERE v LIKE 'ÿ%' ORDER BY id
 ----
 id
-1
+8
+10
+
+query
+SELECT id FROM wbb_idx WHERE v @@ ts_like('ÿ%') ORDER BY id
+----
+id
+8
+10
+
+query
+SELECT id FROM wbb_idx WHERE v @@ ts_like('%ÿ') ORDER BY id
+----
+id
+9
+10
+
+query
+SELECT id FROM wbb_pos_idx WHERE v @@ ts_like('ÿ') ORDER BY id
+----
+id
+10
+
+query
+EXPLAIN SELECT id FROM wbb_idx WHERE v @@ ts_like('b%')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: wbb_idx           │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Wildcard NGram ─────╮ │
+│ │ Field: v(string)     │ │
+│ │ Pattern: (?s)\\Ab.*\\z │ │
+│ │ Syntax: perl         │ │
+│ │ Has Pos: false       │ │
+│ │ Query: "\\xffb"       │ │
+│ │ Verify: false        │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~2 rows                  │
+╰──────────────────────────╯
 
 statement ok
 DROP TABLE wbb_t

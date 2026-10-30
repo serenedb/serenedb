@@ -1,0 +1,62 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY tdb_wild AS generate_wildcard_ngrams(keyword(), 3)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tdb_collate AS collate_tokens('en_US.UTF-8')
+
+statement ok
+CREATE TABLE tdb_t (id INTEGER PRIMARY KEY, w VARCHAR, c VARCHAR, k VARCHAR)
+
+statement ok
+CREATE INDEX tdb_idx ON tdb_t USING inverted (id, w tdb_wild, c tdb_collate, k)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO tdb_t VALUES (1, 'ab', 'x', 'red'), (2, 'ab', 'y', 'blue')
+
+statement ok
+VACUUM (REFRESH_TABLE) tdb_t
+
+statement error
+SELECT ts_dict_agg(w) FROM tdb_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+
+
+statement error
+SELECT ts_dict_max(w) FROM tdb_idx
+----
+db error: ERROR: ts_dict_max(): column has no text term dictionary
+HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+
+
+statement error
+SELECT ts_dict_agg(c) FROM tdb_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+
+
+query
+SELECT list_sort(list_transform(ts_dict_raw_agg(w), x -> hex(x))) AS grams,
+       ts_dict_count(w) AS counts
+FROM tdb_idx
+----
+grams	counts
+{6162FF,62FF,FF6162}	{2,2,2}
+
+query
+SELECT list_sort(ts_dict_agg(k)) AS colors FROM tdb_idx
+----
+colors
+{blue,red}
+
+statement ok
+DROP TABLE tdb_t
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tdb_collate
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tdb_wild

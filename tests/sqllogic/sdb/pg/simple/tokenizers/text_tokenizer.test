@@ -1626,26 +1626,18 @@ CREATE TEXT SEARCH DICTIONARY wildcard_bad_inner AS
 db error: ERROR: split_text_csv(): required option "delimiter" not given
 
 
-# --- ts_lexize: wildcard tokens contain 0xFF boundary sentinels.
-# ts_lexize is typed VARCHAR[], but DuckDB's `Value::Value(string)`
-# validates UTF-8 -- so element-wise materialisation through `unnest`
-# would reject the raw bytes. Casting `ts_lexize(...)::BLOB[]` before
-# the unnest routes each token through the BLOB Value path (no
-# validation), and `encode(t, 'escape')` then renders the bytes with
-# `\\377` for the 0xFF sentinel and printable ASCII passed through as-is.
-
 query
 SELECT encode(t, 'escape')
 FROM unnest(ts_lexize('wildcard_default', 'hello')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
-\\037he
+\\377he
 ell
 hel
 llo
-lo\\037
-o\\037
+lo\\377
+o\\377
 
 
 query
@@ -1654,12 +1646,12 @@ FROM unnest(ts_lexize('wildcard_ngram2', 'hello')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
-\\037h
+\\377h
 el
 he
 ll
 lo
-o\\037
+o\\377
 
 
 query
@@ -1668,15 +1660,15 @@ FROM unnest(ts_lexize('wildcard_default', 'hello world')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
-\\037he
-\\037wo
-d\\037
+\\377he
+\\377wo
+d\\377
 ell
 hel
-ld\\037
+ld\\377
 llo
-lo\\037
-o\\037
+lo\\377
+o\\377
 orl
 rld
 wor
@@ -1688,12 +1680,12 @@ FROM unnest(ts_lexize('wildcard_ngram5_seg', 'quick')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
-\\037quic
-ck\\037
-ick\\037
-k\\037
+\\377quic
+ck\\377
+ick\\377
+k\\377
 quick
-uick\\037
+uick\\377
 
 
 query
@@ -1702,16 +1694,16 @@ FROM unnest(ts_lexize('wildcard_text_base', 'Fox juMps')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
-\\037fo
-\\037ju
+\\377fo
+\\377ju
 fox
 jum
 mps
-ox\\037
-ps\\037
-s\\037
+ox\\377
+ps\\377
+s\\377
 ump
-x\\037
+x\\377
 
 
 # GEOPOINT TEMPLATE

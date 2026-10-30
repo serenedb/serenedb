@@ -23,7 +23,6 @@
 
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 
-#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 
 #include <duckdb/common/types/vector.hpp>
@@ -144,18 +143,6 @@ ByPhraseOptions LiteralGrams(analysis::NGramTokenizer& ngram,
     }
   }
   return part;
-}
-
-bool HasBoundary(const GramQuery& query) {
-  if (query.kind == GramQuery::Kind::Literal) {
-    return absl::c_linear_search(query.literal, kBoundary);
-  }
-  return absl::c_any_of(query.children, HasBoundary);
-}
-
-bool HoldsBoundary(const SubReader& segment, field_id field) {
-  const auto* reader = segment.field(field);
-  return reader && reader->Lookup(bytes_view{&kBoundary, 1}).docs_count != 0;
 }
 
 bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
@@ -295,11 +282,7 @@ QueryBuilder::ptr ByWildcardNGram::PrepareSegment(
   sub_ctx.collector = nullptr;
   auto approx =
     GramQueryPreparer{*this, segment, ctx, sub_ctx}.Prepare(opts.query);
-  const auto& matcher =
-    opts.boundary_matcher && HoldsBoundary(segment, field_id())
-      ? opts.boundary_matcher
-      : opts.matcher;
-  return Wrap(segment, ctx, sub_ctx.boost, matcher, opts.store_field_id,
+  return Wrap(segment, ctx, sub_ctx.boost, opts.matcher, opts.store_field_id,
               std::move(approx));
 }
 
@@ -322,20 +305,12 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   }
   ValueAnalyzer value_analyzer;
   ValueTokens tokens;
-  const bool exact =
-    SplitLiterals(query, ngram, value_analyzer, tokens, has_pos, grams) &&
-    plan.exact;
-  if (exact && !HasBoundary(query)) {
+  if (SplitLiterals(query, ngram, value_analyzer, tokens, has_pos, grams) &&
+      plan.exact) {
     return;
   }
   auto re = std::make_shared<const re2::RE2>(ViewCast<char>(regexp),
                                              RegexpOptions(syntax));
-  if (exact) {
-    if (re->ok()) {
-      boundary_matcher = std::move(re);
-    }
-    return;
-  }
   if (!re->ok()) {
     if (re->error_code() == re2::RE2::ErrorPatternTooLarge) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),

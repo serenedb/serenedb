@@ -1,1 +1,4 @@
-target_sources(sereneserver PRIVATE enforce.cpp role_closure.cpp)
+target_sources(
+    sereneserver
+    PRIVATE enforce.cpp role_closure.cpp superuser_functions.cpp
+)

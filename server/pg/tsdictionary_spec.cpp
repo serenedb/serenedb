@@ -767,6 +767,7 @@ class SpecCompiler {
   duckdb::Value Fold(const OptionGroup& group, std::string_view name,
                      const duckdb::ParsedExpression& value) {
     auto binder = duckdb::Binder::CreateBinder(_context);
+    binder->principal = _context.principal;
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> select_list;
     std::string error;
     try {
@@ -777,6 +778,8 @@ class SpecCompiler {
       if (!select_list[0]->IsFoldable()) {
         error = "the value is not a constant";
       }
+    } catch (const duckdb::PermissionException&) {
+      throw;
     } catch (const std::exception& e) {
       error = duckdb::ErrorData{e}.RawMessage();
     }
@@ -789,6 +792,8 @@ class SpecCompiler {
       try {
         return duckdb::ExpressionExecutor::EvaluateScalar(
           _context, *projection.expressions[0], true);
+      } catch (const duckdb::PermissionException&) {
+        throw;
       } catch (const std::exception& e) {
         error = duckdb::ErrorData{e}.RawMessage();
       }

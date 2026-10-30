@@ -174,6 +174,10 @@ SereneDBClientState& SereneDBClientState::Register(
       "session_authorization"};
     return !kHidden.contains(name) && IsReadableSetting(ctx, name);
   };
+  client_ctx.setting_readable = [](duckdb::ClientContext& ctx,
+                                   const std::string& name) {
+    return IsReadableSetting(ctx, name);
+  };
   client_ctx.entry_visibility = auth::CanSee;
   client_ctx.database_visibility = auth::CanSeeDatabase;
   client_ctx.file_access_handler = auth::CheckFileAccess;

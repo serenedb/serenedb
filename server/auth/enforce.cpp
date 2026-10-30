@@ -26,6 +26,7 @@
 #include <absl/time/time.h>
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/function_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -33,7 +34,6 @@
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/exception.hpp>
-#include <duckdb/function/scalar/sequence_utils.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -42,7 +42,6 @@
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
-#include <duckdb/parser/parsed_data/bound_pragma_info.hpp>
 #include <duckdb/parser/parsed_data/create_foreign_server_info.hpp>
 #include <duckdb/parser/parsed_data/create_role_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
@@ -54,28 +53,17 @@
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/planner/binder.hpp>
-#include <duckdb/planner/expression/bound_columnref_expression.hpp>
-#include <duckdb/planner/expression/bound_constant_expression.hpp>
-#include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/logical_operator.hpp>
-#include <duckdb/planner/logical_operator_visitor.hpp>
 #include <duckdb/planner/operator/logical_alter.hpp>
 #include <duckdb/planner/operator/logical_attach.hpp>
 #include <duckdb/planner/operator/logical_copy_to_file.hpp>
 #include <duckdb/planner/operator/logical_create.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
-#include <duckdb/planner/operator/logical_delete.hpp>
 #include <duckdb/planner/operator/logical_detach.hpp>
 #include <duckdb/planner/operator/logical_drop.hpp>
 #include <duckdb/planner/operator/logical_execute.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
-#include <duckdb/planner/operator/logical_insert.hpp>
-#include <duckdb/planner/operator/logical_merge_into.hpp>
-#include <duckdb/planner/operator/logical_pragma.hpp>
-#include <duckdb/planner/operator/logical_projection.hpp>
-#include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/operator/logical_vacuum.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -206,65 +194,6 @@ std::vector<std::span<const duckdb::AclItem>> AllColumnAcls(
 
 bool IsRename(const duckdb::AlterInfo& info) {
   return static_cast<bool>(info.GetNewName());
-}
-
-bool IsSuperuserFunction(std::string_view name) {
-  static const irs::containers::FlatHashSet<std::string_view> kFunctions = {
-    "checkpoint",
-    "clickhouse_clear_cache",
-    "clickhouse_configure_pool",
-    "clickhouse_execute",
-    "clickhouse_lookup",
-    "clickhouse_query",
-    "clickhouse_scan",
-    "clickhouse_scan_pushdown",
-    "create_external_resource",
-    "dbgen",
-    "deregister_external_resource",
-    "destroy_external_resource",
-    "disable_logging",
-    "dsdgen",
-    "duckdb_databases",
-    "duckdb_external_file_cache",
-    "duckdb_external_resource_types",
-    "duckdb_external_resources",
-    "duckdb_log_contexts",
-    "duckdb_logs",
-    "duckdb_secrets",
-    "duckdb_table_sample",
-    "duckdb_temporary_files",
-    "enable_logging",
-    "force_checkpoint",
-    "iceberg_to_ducklake",
-    "json_serialize_plan",
-    "pg_clear_cache",
-    "pg_show_replication_origin_status",
-    "postgres_attach",
-    "postgres_configure_pool",
-    "postgres_execute",
-    "postgres_lookup",
-    "postgres_query",
-    "postgres_scan",
-    "postgres_scan_pushdown",
-    "pragma_database_size",
-    "pragma_metadata_info",
-    "pragma_storage_info",
-    "register_external_resource",
-    "register_external_resource_type",
-    "sdb_databases",
-    "sdb_external_file_cache",
-    "sdb_external_resource_types",
-    "sdb_external_resources",
-    "sdb_log_contexts",
-    "sdb_logs",
-    "sdb_secrets",
-    "sdb_table_sample",
-    "sdb_temporary_files",
-    "truncate_duckdb_logs",
-    "truncate_sdb_logs",
-    "which_secret",
-  };
-  return kFunctions.contains(name);
 }
 
 bool IsFileFreeFunction(std::string_view name) {
@@ -402,16 +331,6 @@ bool IsFileFreeFunction(std::string_view name) {
   return kFunctions.contains(name);
 }
 
-bool IsServerPragma(std::string_view name) {
-  static const irs::containers::FlatHashSet<std::string_view> kPragmas = {
-    "add_parquet_key",
-    "disable_checkpoint_on_shutdown",
-    "enable_checkpoint_on_shutdown",
-    "force_checkpoint",
-  };
-  return kPragmas.contains(name);
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> FindServer(
   duckdb::ClientContext& context, const duckdb::Identifier& name) {
   for (const auto& db :
@@ -508,30 +427,6 @@ class Enforcer {
 
  private:
   void Check(duckdb::LogicalOperator& op) {
-    auto visit = [&](duckdb::Expression& expr) {
-      if (expr.GetExpressionType() != duckdb::ExpressionType::BOUND_FUNCTION) {
-        return;
-      }
-      const auto& name = expr.Cast<duckdb::BoundFunctionExpression>()
-                           .Function()
-                           .GetName()
-                           .GetIdentifierName();
-      if (name == "nextval" || name == "currval" || name == "setval") {
-        if (_enforce) {
-          CheckSequenceCall(expr.Cast<duckdb::BoundFunctionExpression>(), name);
-        }
-      } else if (_enforce && name == "current_setting") {
-        CheckSettingRead(expr.Cast<duckdb::BoundFunctionExpression>());
-      } else if (_enforce && IsSuperuserFunction(name)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                        ERR_MSG("permission denied for function ", name));
-      }
-    };
-    duckdb::LogicalOperatorVisitor::EnumerateExpressions(
-      op, [&](duckdb::unique_ptr<duckdb::Expression>* child) {
-        duckdb::ExpressionIterator::EnumerateExpression(*child, visit);
-      });
-
     switch (op.type) {
       case LogicalOperatorType::LOGICAL_GET: {
         auto& get = op.Cast<duckdb::LogicalGet>();
@@ -694,14 +589,6 @@ class Enforcer {
         }
         break;
       }
-      case LogicalOperatorType::LOGICAL_PRAGMA:
-        if (_enforce && IsServerPragma(op.Cast<duckdb::LogicalPragma>()
-                                         .info->function.GetName()
-                                         .GetIdentifierName())) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                          ERR_MSG("permission denied: superuser required"));
-        }
-        break;
       case LogicalOperatorType::LOGICAL_VACUUM: {
         auto& vacuum = op.Cast<duckdb::LogicalVacuum>();
         if (!_enforce || !vacuum.table || duckdb::IsUnowned(*vacuum.table)) {
@@ -788,6 +675,7 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_MATERIALIZED_CTE:
       case LogicalOperatorType::LOGICAL_SECURE_VIEW:
       case LogicalOperatorType::LOGICAL_TRIGGER:
+      case LogicalOperatorType::LOGICAL_PRAGMA:
       case LogicalOperatorType::LOGICAL_EXPLAIN:
       case LogicalOperatorType::LOGICAL_PREPARE:
       case LogicalOperatorType::LOGICAL_TRANSACTION:
@@ -872,11 +760,6 @@ class Enforcer {
   void CheckGet(duckdb::LogicalGet& get) {
     auto table = get.GetTable();
     if (!table) {
-      const auto& name = get.function.GetName().GetIdentifierName();
-      if (_enforce && IsSuperuserFunction(name)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                        ERR_MSG("permission denied for function ", name));
-      }
       CheckIndexScan(get);
       return;
     }
@@ -904,57 +787,6 @@ class Enforcer {
     }
     for (const auto* entry : _props.resolved_entries) {
       check(entry->ParentCatalog().GetName());
-    }
-  }
-
-  void CheckSequenceCall(const duckdb::BoundFunctionExpression& function,
-                         std::string_view name) {
-    const auto& bind = function.BindInfo();
-    if (!bind) {
-      return;
-    }
-    const auto& sequence = bind->Cast<duckdb::NextvalBindData>().sequence;
-    if (duckdb::IsUnowned(sequence)) {
-      return;
-    }
-    const auto& permissions = sequence.permissions;
-    const bool allowed =
-      name == "nextval"
-        ? _caller_closure.CanAny(CatalogType::SEQUENCE_ENTRY, permissions,
-                                 AclMode::Usage | AclMode::Update)
-      : name == "currval"
-        ? _caller_closure.CanAny(CatalogType::SEQUENCE_ENTRY, permissions,
-                                 AclMode::Usage | AclMode::Select)
-        : _caller_closure.Can(CatalogType::SEQUENCE_ENTRY, permissions,
-                              AclMode::Update);
-    if (!allowed) {
-      duckdb::ThrowPermissionDenied(sequence);
-    }
-  }
-
-  void CheckSettingRead(const duckdb::BoundFunctionExpression& function) {
-    const auto& children = function.GetChildren();
-    if (children.empty()) {
-      return;
-    }
-    const auto& key = *children[0];
-    if (key.GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
-      if (children.size() == 1) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-          ERR_MSG("must be superuser to examine a parameter by a computed "
-                  "name"));
-      }
-      return;
-    }
-    const auto& value = key.Cast<duckdb::BoundConstantExpression>().GetValue();
-    if (value.IsNull()) {
-      return;
-    }
-    const auto name = value.ToString();
-    if (!IsReadableSetting(_context, name)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("must be superuser to examine \"", name, "\""));
     }
   }
 
@@ -1027,13 +859,6 @@ class Enforcer {
         continue;
       }
       switch (entry->type) {
-        case CatalogType::MACRO_ENTRY:
-        case CatalogType::TABLE_MACRO_ENTRY:
-          if (!_caller_closure.Can(entry->type, entry->permissions,
-                                   AclMode::Execute)) {
-            duckdb::ThrowPermissionDenied(*entry);
-          }
-          break;
         case CatalogType::TYPE_ENTRY:
           if (defines_relation &&
               !_caller_closure.Can(entry->type, entry->permissions,
@@ -1856,7 +1681,7 @@ bool EntryVisible(duckdb::ClientContext& context,
   }
   if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY ||
        entry.type == CatalogType::SCALAR_FUNCTION_ENTRY) &&
-      IsSuperuserFunction(entry.name.GetIdentifierName())) {
+      entry.Cast<duckdb::FunctionEntry>().superuser_only) {
     return false;
   }
   if (entry.internal || duckdb::IsUnowned(entry)) {

@@ -4,6 +4,7 @@ add_library(
     serene
     STATIC
     app_server.cpp
+    drain_gate.cpp
     file_utils.cpp
     files.cpp
     init.cpp

@@ -23,6 +23,7 @@ target_link_libraries(
 target_include_directories(sereneserver PUBLIC ${CMAKE_SOURCE_DIR}/server)
 
 add_subdirectory(auth)
+add_subdirectory(backup)
 add_subdirectory(catalog)
 add_subdirectory(connector)
 add_subdirectory(docs)

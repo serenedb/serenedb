@@ -54,6 +54,7 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
+#include "utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {
@@ -147,9 +148,8 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
     return;
   }
   for (const auto& db :
-       duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
-    if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType &&
-        !quiesce(*db)) {
+       SereneDBDatabases(duckdb::DatabaseManager::Get(GetDatabase()))) {
+    if (!quiesce(*db)) {
       return;
     }
   }
@@ -172,12 +172,9 @@ void ClusterCatalog::CompactCatalogLog() {
   rewrite->Initialize();
   duckdb::WriteCatalogEntries(*rewrite, *this);
   for (const auto& db :
-       duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
-    auto& catalog = db->GetCatalog();
-    if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType) {
-      duckdb::WriteCatalogEntries(*rewrite,
-                                  catalog.Cast<duckdb::DuckCatalog>());
-    }
+       SereneDBDatabases(duckdb::DatabaseManager::Get(GetDatabase()))) {
+    duckdb::WriteCatalogEntries(*rewrite,
+                                db->GetCatalog().Cast<duckdb::DuckCatalog>());
   }
   duckdb::DatabaseManager::Get(GetDatabase())
     .RetainPrepared(
@@ -202,11 +199,35 @@ void ClusterCatalog::CompactCatalogLog() {
   }
   _live_bytes.store(size, std::memory_order_relaxed);
   try {
-    SyncDirectory(std::filesystem::path{path}.parent_path());
+    utils::file_utils::SyncDirectory(std::filesystem::path{path}.parent_path());
   } catch (const std::exception& e) {
     SDB_FATAL(GENERAL,
               "catalog log rewrite: ", duckdb::ErrorData{e}.RawMessage());
   }
+}
+
+duckdb::idx_t ClusterCatalog::SnapshotCatalogLog(
+  const std::filesystem::path& link) {
+  std::error_code ec;
+  duckdb::idx_t size = 0;
+  {
+    auto lock = GetAttached().GetStorageManager().GetCommitLock();
+    const auto log = CatalogLog();
+    if (!log) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                      ERR_MSG("the catalog log is not open"));
+    }
+    std::filesystem::create_hard_link(log->GetPath(), link, ec);
+    if (!ec) {
+      size = std::filesystem::file_size(link, ec);
+    }
+  }
+  if (ec) {
+    utils::file_utils::ThrowFileError("snapshot the catalog log as",
+                                      link.string(), ec);
+  }
+  utils::file_utils::SyncDirectory(link.parent_path());
+  return size;
 }
 
 bool ClusterCatalog::HoldsPreparedBatch(duckdb::idx_t oid,

@@ -1,0 +1,85 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE bcrash (x BIGINT);
+
+
+statement ok
+INSERT INTO bcrash VALUES (1);
+
+
+connection holder
+query
+SELECT pg_backup_start('bcrash') IS NOT NULL AS started;
+----
+started
+t
+
+
+connection default
+statement ok
+INSERT INTO bcrash VALUES (2);
+
+
+connection default
+query
+SELECT count(*) > 0 AS cut FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
+----
+cut
+t
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT x FROM bcrash ORDER BY x;
+----
+x
+1
+2
+
+
+connection after_crash
+query
+SELECT
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/backup/%') AS backup_files,
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/subscriptions.hold') AS hold_files,
+  count(*) FILTER (WHERE file LIKE '%/backup_label%') AS labels
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/**');
+----
+backup_files	hold_files	labels
+0	0	0
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+query
+SELECT pg_backup_start('after crash') IS NOT NULL AS started;
+----
+started
+t
+
+
+connection after_crash
+query
+SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label FROM pg_backup_stop();
+----
+label
+t

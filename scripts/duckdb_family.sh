@@ -131,6 +131,7 @@ setup_format_tools() {
 }
 
 setup_regen_tools() {
+	PATH="$FORMAT_VENV/bin:$PATH"
 	if [[ ! -x "$GENERATE_VENV/bin/python" ]]; then
 		python3 -m venv "$GENERATE_VENV"
 		make -s -C "$DUCKDB" PYTHON="$GENERATE_VENV/bin/python" generate-files-deps >/dev/null

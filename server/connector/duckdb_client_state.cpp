@@ -258,6 +258,10 @@ void SereneDBClientState::TransactionPreCommit(
       }
     }
   }
+  if (transaction.ModifiedDatabase() || !written.empty()) {
+    _connection_ctx->EnterCommitGate();
+    SDB_PARK_ONCE_ON_FAILURE("pause_commit_in_gate");
+  }
   tls_committing_ctx = _connection_ctx.get();
 }
 
@@ -344,6 +348,7 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   copy_stdin_done = false;
   progress_source->EndQuery();
   _connection_ctx->OnStatementEnd();
+  _connection_ctx->LeaveCommitGate();
 }
 
 void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,

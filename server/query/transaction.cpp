@@ -245,6 +245,12 @@ void Transaction::Commit(duckdb::transaction_t owner) {
   }
 }
 
+void Transaction::EnterCommitGate() {
+  if (!_commit_pass) {
+    _commit_pass = backup::CommitGate().Enter();
+  }
+}
+
 void Transaction::Rollback(duckdb::transaction_t owner) {
   absl::Cleanup destroy = [this, owner] { Destroy(owner); };
   if (_search_txn) {
@@ -311,6 +317,7 @@ void Transaction::ClaimSearchLayout(std::shared_ptr<search::SearchTable> table,
 }
 
 void Transaction::Destroy(duckdb::transaction_t owner) noexcept {
+  _commit_pass.Release();
   for (const auto& table : _layout_claims) {
     table->ReleaseLayout(owner);
   }

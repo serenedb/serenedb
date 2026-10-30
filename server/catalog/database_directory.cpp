@@ -21,66 +21,83 @@
 #include "catalog/database_directory.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/no_destructor.h>
+#include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include <absl/synchronization/mutex.h>
 
 #include <cerrno>
 #include <cstring>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
-#include <iresearch/utils/pg/errcodes.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <system_error>
 #include <utility>
 #include <vector>
 
 #include "scheduler/background_scheduler.h"
 #include "server/utils/lifecycle.h"
+#include "utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {
 
-void CreateDirectory(const std::filesystem::path& path) {
-  std::error_code ec;
-  if (!std::filesystem::create_directory(path, ec)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_IO_ERROR),
-      ERR_MSG("could not create directory \"", path.string(),
-              "\": ", ec ? ec.message() : std::string{"it already exists"}));
-  }
-  SyncDirectory(path.parent_path());
+using Removal = absl::AnyInvocable<void()>;
+
+struct RemovalGate {
+  std::atomic_bool deferring{false};
+  absl::Mutex mutex;
+  std::vector<Removal> deferred ABSL_GUARDED_BY(mutex);
+};
+
+RemovalGate& Gate() {
+  static absl::NoDestructor<RemovalGate> gGate;
+  return *gGate;
 }
 
-void RemoveTree(const std::filesystem::path& path) {
-  duckdb::TaskScheduler::BlockingScope blocking;
-  RemoveDirectory(path);
-}
-
-template<typename Removal>
 void RunRemoval(Removal&& removal) {
+  if (auto& gate = Gate(); gate.deferring.load()) {
+    absl::MutexLock lock{&gate.mutex};
+    if (gate.deferring.load()) {
+      gate.deferred.push_back(std::move(removal));
+      return;
+    }
+  }
   if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
     removal();
     return;
   }
-  BackgroundScheduler::instance().Run(std::forward<Removal>(removal)).Detach();
+  BackgroundScheduler::instance().Run(std::move(removal)).Detach();
 }
 
 }  // namespace
 
-void SyncDirectory(const std::filesystem::path& directory) {
-  const int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-  const bool synced = fd >= 0 && ::fsync(fd) == 0;
-  const int error = errno;
-  if (fd >= 0) {
-    ::close(fd);
+void DeferRemovals() noexcept {
+  [[maybe_unused]] const bool was_deferring = Gate().deferring.exchange(true);
+  SDB_ASSERT(!was_deferring);
+}
+
+void ResumeRemovals() {
+  std::vector<Removal> deferred;
+  {
+    auto& gate = Gate();
+    absl::MutexLock lock{&gate.mutex};
+    gate.deferring.store(false);
+    deferred.swap(gate.deferred);
   }
-  if (!synced) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("could not fsync directory \"", directory.string(),
-                            "\": ", std::strerror(error)));
+  for (auto& removal : deferred) {
+    RunRemoval(std::move(removal));
   }
+}
+
+void CreateDirectory(const std::filesystem::path& path) {
+  std::error_code ec;
+  if (!std::filesystem::create_directory(path, ec)) {
+    utils::file_utils::ThrowFileError("create directory", path.string(),
+                                      ec ? ec.value() : EEXIST);
+  }
+  utils::file_utils::SyncDirectory(path.parent_path());
 }
 
 void RemoveDirectory(const std::filesystem::path& path) {
@@ -102,6 +119,11 @@ void RemoveDirectory(const std::filesystem::path& path) {
   if (ec) {
     SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
   }
+}
+
+void RemoveTree(const std::filesystem::path& path) noexcept {
+  duckdb::TaskScheduler::BlockingScope blocking;
+  RemoveDirectory(path);
 }
 
 DatabaseDirectory::DatabaseDirectory(std::filesystem::path path)
@@ -138,9 +160,7 @@ std::optional<std::filesystem::path> DatabaseDirectory::OpenStorage(
     return path;
   }
   if (ec && ec != std::errc::no_such_file_or_directory) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("could not open directory \"", path.string(),
-                            "\": ", ec.message()));
+    utils::file_utils::ThrowFileError("open directory", path.string(), ec);
   }
   return std::nullopt;
 }

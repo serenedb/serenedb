@@ -14,6 +14,11 @@ hand, from the PostgreSQL source in third_party/postgres:
   src/backend/catalog/objectaddress.c
                                    the object classes pg_describe_object,
                                    pg_identify_object and pg_get_acl accept
+  src/include/catalog/pg_control.h, catversion.h
+                                   the control file pg_basebackup copies and
+                                   backup tools read
+  meson.build                      the version server_version and PG_VERSION
+                                   report
 
 PostgreSQL numbers the objects initdb creates while it runs, so the source
 holds no OIDs for them; they are numbered here in the order the SQL files
@@ -40,7 +45,8 @@ import argparse
 import os
 import sys
 
-from pg_catalog import builtins, claims, functions, relations, source, views
+from pg_catalog import (builtins, claims, control, functions, relations,
+                        source, views)
 from pg_catalog.common import REPO_ROOT, write
 from pg_catalog.generator import Generator
 
@@ -53,6 +59,7 @@ def outputs():
         constants, types = builtins.generate(gen)
         relations.generate(gen, constants, types)
         functions.generate(gen, constants, types, views.generate(gen))
+        control.generate(gen)
         out.update(gen.outputs)
     return out
 

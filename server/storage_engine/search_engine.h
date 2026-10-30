@@ -21,12 +21,16 @@
 
 #pragma once
 
+#include <absl/status/status.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
+
+#include "utils/drain_gate.h"
 
 namespace sdb {
 namespace search {
@@ -121,7 +125,11 @@ class SearchEngine final {
     return std::max(0, MaxConcurrentCompactions() - cur);
   }
 
+  bool IsBackupActive() const noexcept { return _maintenance.IsClosed(); }
+  utils::DrainGate& Maintenance() noexcept { return _maintenance; }
+
  private:
+  utils::DrainGate _maintenance;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
   std::atomic<uint32_t> _running_ann_workers{0};
@@ -132,6 +140,18 @@ class SearchEngine final {
 };
 
 inline SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }
+
+inline bool IsBackupActive() noexcept {
+  return GetSearchEngine().IsBackupActive();
+}
+
+inline utils::DrainGate::Pass ClaimMaintenance() noexcept {
+  return GetSearchEngine().Maintenance().TryEnter();
+}
+
+inline absl::Status BackupInProgressError() {
+  return absl::UnavailableError("a backup is in progress");
+}
 
 inline uint32_t AnnAcquireWorkers(uint32_t want, uint32_t held) noexcept {
   return GetSearchEngine().AcquireAnnWorkers(want, held);

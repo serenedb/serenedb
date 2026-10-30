@@ -43,6 +43,7 @@ enum class ProgressCommand : int64_t {
   Analyze,
   Vacuum,
   Reindex,
+  BaseBackup,
 };
 
 enum class ProgressIoType : int64_t {
@@ -81,6 +82,13 @@ enum class Vacuum : int64_t {
 enum class Reindex : int64_t {
   WaitingForReindex = 1,
   Refreshing = 2,
+};
+
+enum class BaseBackup : int64_t {
+  Initializing = 1,
+  WaitingForCheckpoint = 2,
+  WaitingForMaintenance = 3,
+  WaitingForCommits = 4,
 };
 
 }  // namespace progress_phase

@@ -191,6 +191,7 @@ class InvertedIndexStorage final
 
   void PrepareCheckpoint(uint64_t iteration);
   void FinishCheckpoint();
+  bool HasPendingCheckpoint() { return _durability.HasPendingCheckpoint(); }
 
   uint64_t NextTick(uint64_t queries) noexcept {
     return _writer->NextTick(queries);
@@ -288,7 +289,6 @@ class InvertedIndexStorage final
   std::unique_ptr<irs::Scorer> _topk_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
   absl::Mutex _reindex_mutex;
-  absl::CondVar _reindex_cv;
   bool _reindex_in_flight ABSL_GUARDED_BY(_reindex_mutex) = false;
   uint32_t _reindex_waiters ABSL_GUARDED_BY(_reindex_mutex) = 0;
 

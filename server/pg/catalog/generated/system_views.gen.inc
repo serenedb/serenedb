@@ -1139,21 +1139,7 @@
       FROM pg_stat_get_progress_info('CLUSTER') AS S
           LEFT JOIN pg_database D ON S.datid = D.oid)"},
 {"pg_catalog", "pg_stat_progress_create_index", 12216, 12218, 12217, false, "", {}},
-{"pg_catalog", "pg_stat_progress_basebackup", 12219, 12221, 12220, false, "",
- R"(SELECT
-          S.pid AS pid,
-          CASE S.param1 WHEN 0 THEN 'initializing'
-                        WHEN 1 THEN 'waiting for checkpoint to finish'
-                        WHEN 2 THEN 'estimating backup size'
-                        WHEN 3 THEN 'streaming database files'
-                        WHEN 4 THEN 'waiting for wal archiving to finish'
-                        WHEN 5 THEN 'transferring wal files'
-                        END AS phase,
-          CASE S.param2 WHEN -1 THEN NULL ELSE S.param2 END AS backup_total,
-          S.param3 AS backup_streamed,
-          S.param4 AS tablespaces_total,
-          S.param5 AS tablespaces_streamed
-      FROM pg_stat_get_progress_info('BASEBACKUP') AS S)"},
+{"pg_catalog", "pg_stat_progress_basebackup", 12219, 12221, 12220, false, "", {}},
 {"pg_catalog", "pg_stat_progress_copy", 12222, 12224, 12223, false, "",
  R"(SELECT
           S.pid AS pid, S.datid AS datid, D.datname AS datname,

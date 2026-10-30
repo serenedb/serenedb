@@ -55,4 +55,10 @@
 // TODO(mkornaukhov) Should use `__builtin_trap()` for clang and gcc,
 // but it makes recovery tests two times longer.
 // immediate program termination
-#define SDB_IMMEDIATE_ABORT() std::quick_exit(75)
+namespace irs {
+
+inline constexpr int kPlannedCrashExitCode = 75;
+
+}  // namespace irs
+
+#define SDB_IMMEDIATE_ABORT() std::quick_exit(::irs::kPlannedCrashExitCode)

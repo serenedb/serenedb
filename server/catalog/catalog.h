@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <atomic>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_set.hpp>
@@ -27,14 +29,18 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "catalog/database_directory.h"
 #include "catalog/entry/foreign_server.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
 #include "catalog/entry/subscription.h"
 #include "catalog/entry/tokenizer.h"
 #include "catalog/snapshot.h"
@@ -201,6 +207,16 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   std::atomic_bool _detached{false};
 };
 
+duckdb::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> SereneDBDatabases(
+  duckdb::DatabaseManager& manager);
+
+void ForEachSearchStorage(
+  SereneDBCatalog& catalog,
+  std::optional<absl::FunctionRef<void(SearchTableEntry&)>> table,
+  std::optional<absl::FunctionRef<void(InvertedIndexEntry&)>> index);
+
+std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
+  SereneDBCatalog& catalog);
 duckdb::optional_ptr<duckdb::DuckCatalog> DefaultDuckCatalog(
   duckdb::ClientContext& context);
 

@@ -20,9 +20,7 @@
 
 #pragma once
 
-#include <cstdint>
 #include <duckdb/common/named_parameter_map.hpp>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>

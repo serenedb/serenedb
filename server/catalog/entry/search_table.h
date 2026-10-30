@@ -192,7 +192,4 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   SearchTableOptions _options;
 };
 
-std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
-  duckdb::DuckCatalog& catalog);
-
 }  // namespace sdb::catalog

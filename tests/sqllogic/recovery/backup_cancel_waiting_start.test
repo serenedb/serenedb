@@ -1,0 +1,113 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE bcw_docs (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TABLE bcw_plain (id BIGINT);
+
+
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+
+connection parked
+statement async ok
+INSERT INTO bcw_docs VALUES (1, 'parked');
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+
+connection starter
+statement async error
+SELECT pg_backup_start('bcw_cancel_me');
+----
+db error: ERROR: canceling statement due to user request
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT phase, backup_total, backup_streamed, tablespaces_total, tablespaces_streamed
+FROM pg_stat_progress_basebackup;
+----
+phase	backup_total	backup_streamed	tablespaces_total	tablespaces_streamed
+waiting for in-flight commits	0	0	0	0
+
+
+connection default
+statement ok
+SELECT pg_cancel_backend(pid) FROM pg_stat_progress_basebackup;
+
+
+connection starter
+statement error
+SELECT * FROM pg_backup_stop();
+----
+db error: ERROR: backup is not in progress
+HINT: Did you call pg_backup_start()?
+
+
+connection inserter
+statement async ok
+INSERT INTO bcw_plain VALUES (1);
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS committed FROM bcw_plain;
+----
+committed
+1
+
+
+connection default
+query
+SELECT count(*) AS cut FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
+----
+cut
+0
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs:release';
+
+
+wait
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT pg_backup_start('bcw_after') IS NOT NULL AS started;
+----
+started
+t
+
+
+query
+SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label FROM pg_backup_stop();
+----
+label
+t
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bcw_docs;
+
+
+query
+SELECT id, body FROM bcw_docs ORDER BY id;
+----
+id	body
+1	parked

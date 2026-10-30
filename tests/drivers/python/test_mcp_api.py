@@ -413,6 +413,26 @@ def test_check_sql_refuses_what_it_would_run(conn):
         assert is_error and text.startswith("check_sql:"), text
 
 
+def test_check_sql_never_runs_the_statement(conn):
+    import psycopg
+    from spec_loader import conn_kwargs
+
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
+        pg.execute("DROP TABLE IF EXISTS drv_mcp_kept")
+        pg.execute("CREATE TABLE drv_mcp_kept (a INT)")
+        pg.execute("INSERT INTO drv_mcp_kept VALUES (1)")
+        try:
+            for sql in ("ANALYZE DELETE FROM drv_mcp_kept",
+                        "(ANALYZE) DELETE FROM drv_mcp_kept",
+                        "analyze verbose DELETE FROM drv_mcp_kept"):
+                text, _ = call_tool(conn, "check_sql", {"sql": sql})
+                assert text.startswith("Invalid: Parser Error"), (sql, text)
+            kept = pg.execute("SELECT count(*) FROM drv_mcp_kept").fetchone()[0]
+            assert kept == 1
+        finally:
+            pg.execute("DROP TABLE drv_mcp_kept")
+
+
 def test_search_docs_reads_questions_and_pasted_errors(conn):
     for query in ("How do I create an inverted index?",
                   "Alias: `base64` (see Catalog Error: x)",

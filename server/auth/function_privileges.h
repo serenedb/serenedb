@@ -24,6 +24,6 @@
 
 namespace sdb::auth {
 
-void RegisterSuperuserFunctions(duckdb::DBConfig& config);
+void RegisterFunctionPrivileges(duckdb::DBConfig& config);
 
 }  // namespace sdb::auth

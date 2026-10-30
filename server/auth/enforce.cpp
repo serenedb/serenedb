@@ -56,7 +56,6 @@
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_alter.hpp>
 #include <duckdb/planner/operator/logical_attach.hpp>
-#include <duckdb/planner/operator/logical_copy_to_file.hpp>
 #include <duckdb/planner/operator/logical_create.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
@@ -181,141 +180,6 @@ bool IsRename(const duckdb::AlterInfo& info) {
   return static_cast<bool>(info.GetNewName());
 }
 
-bool IsFileFreeFunction(std::string_view name) {
-  static const irs::containers::FlatHashSet<std::string_view> kFunctions = {
-    "aclexplode",
-    "check_peg_parser",
-    "disable_profiling",
-    "docs",
-    "duckdb_approx_database_count",
-    "duckdb_available_metrics",
-    "duckdb_columns",
-    "duckdb_connection_count",
-    "duckdb_constraints",
-    "duckdb_coordinate_systems",
-    "duckdb_dependencies",
-    "duckdb_eviction_queues",
-    "duckdb_extension_repositories",
-    "duckdb_functions",
-    "duckdb_indexes",
-    "duckdb_keywords",
-    "duckdb_memory",
-    "duckdb_optimizers",
-    "duckdb_prepared_statements",
-    "duckdb_schemas",
-    "duckdb_secret_type_parameters",
-    "duckdb_secret_types",
-    "duckdb_sequences",
-    "duckdb_settings",
-    "duckdb_tables",
-    "duckdb_triggers",
-    "duckdb_types",
-    "duckdb_variables",
-    "duckdb_views",
-    "enable_profiling",
-    "es_bulk",
-    "es_bulk_source",
-    "es_cat_indices",
-    "es_create_index",
-    "es_doc",
-    "es_drop_index",
-    "es_mapping",
-    "es_refresh",
-    "execute_job",
-    "generate_series",
-    "icu_calendar_names",
-    "iresearch_scan",
-    "json_array_elements",
-    "json_array_elements_text",
-    "json_each",
-    "json_each_text",
-    "json_execute_serialized_sql",
-    "json_object_keys",
-    "json_populate_recordset",
-    "json_tree",
-    "object",
-    "objects",
-    "otel_parse_logs",
-    "otel_parse_metrics_exponential_histogram",
-    "otel_parse_metrics_gauge",
-    "otel_parse_metrics_histogram",
-    "otel_parse_metrics_sum",
-    "otel_parse_metrics_summary",
-    "otel_parse_traces",
-    "otel_source_logs",
-    "otel_source_metrics_exponential_histogram",
-    "otel_source_metrics_gauge",
-    "otel_source_metrics_histogram",
-    "otel_source_metrics_sum",
-    "otel_source_metrics_summary",
-    "otel_source_traces",
-    "pg_extension_update_paths",
-    "pg_prepared_statement",
-    "pg_show_all_settings",
-    "pg_stat_get_subscription",
-    "pg_stat_get_subscription_stats",
-    "pg_tablespace_databases",
-    "pg_timezone_names",
-    "pragma_collations",
-    "pragma_platform",
-    "pragma_show",
-    "pragma_table_info",
-    "pragma_user_agent",
-    "pragma_version",
-    "query",
-    "query_table",
-    "range",
-    "range_st",
-    "repeat",
-    "repeat_row",
-    "repl_src",
-    "sdb_approx_database_count",
-    "sdb_available_metrics",
-    "sdb_catalog_sets",
-    "sdb_columns",
-    "sdb_connection_count",
-    "sdb_constraints",
-    "sdb_coordinate_systems",
-    "sdb_deferred_catalog",
-    "sdb_dependencies",
-    "sdb_eviction_queues",
-    "sdb_extension_repositories",
-    "sdb_functions",
-    "sdb_indexes",
-    "sdb_job_runs",
-    "sdb_jobs",
-    "sdb_keywords",
-    "sdb_memory",
-    "sdb_optimizers",
-    "sdb_prepared_statements",
-    "sdb_schemas",
-    "sdb_secret_type_parameters",
-    "sdb_secret_types",
-    "sdb_sequences",
-    "sdb_settings",
-    "sdb_tables",
-    "sdb_triggers",
-    "sdb_types",
-    "sdb_variables",
-    "sdb_views",
-    "search",
-    "seq_scan",
-    "serenedb_reindex",
-    "serenedb_vacuum",
-    "sql_tokenize",
-    "summary",
-    "system_table_scan",
-    "test_all_types",
-    "test_vector_types",
-    "tpcds_answers",
-    "tpcds_queries",
-    "tpch_answers",
-    "tpch_queries",
-    "unnest",
-  };
-  return kFunctions.contains(name);
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> FindServer(
   duckdb::ClientContext& context, const duckdb::Identifier& name) {
   for (const auto& db :
@@ -393,20 +257,14 @@ class Enforcer {
       _caller_closure{*_caller_closure_owner},
       _enforce{!_caller_closure.is_superuser} {}
 
-  bool Run() {
+  void Run() {
     if (_enforce) {
       CheckDatabaseConnect();
     }
     Check(_root);
-    if (!_enforce) {
-      return _files_authorized;
+    if (_enforce) {
+      CheckResolved();
     }
-    CheckResolved();
-    if (_file_copy) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("permission denied to COPY to a file"));
-    }
-    return _files_authorized;
   }
 
  private:
@@ -414,13 +272,7 @@ class Enforcer {
     switch (op.type) {
       case LogicalOperatorType::LOGICAL_GET: {
         auto& get = op.Cast<duckdb::LogicalGet>();
-        const auto principal = PrincipalFor(get.table_index.index);
-        if (!get.GetTable() &&
-            !IsFileFreeFunction(get.function.GetName().GetIdentifierName()) &&
-            !ClosureOf(principal).is_superuser) {
-          _files_authorized = false;
-        }
-        if (_enforce || principal != _caller) {
+        if (_enforce || PrincipalFor(get.table_index.index) != _caller) {
           CheckGet(get);
         }
         break;
@@ -597,12 +449,6 @@ class Enforcer {
         }
         return;
       }
-      case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
-        if (_enforce &&
-            op.Cast<duckdb::LogicalCopyToFile>().file_path != "/dev/stdout") {
-          _file_copy = true;
-        }
-        break;
       case LogicalOperatorType::LOGICAL_EXPORT:
       case LogicalOperatorType::LOGICAL_LOAD:
       case LogicalOperatorType::LOGICAL_UPDATE_EXTENSIONS:
@@ -659,6 +505,7 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_MATERIALIZED_CTE:
       case LogicalOperatorType::LOGICAL_SECURE_VIEW:
       case LogicalOperatorType::LOGICAL_TRIGGER:
+      case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
       case LogicalOperatorType::LOGICAL_PRAGMA:
       case LogicalOperatorType::LOGICAL_EXPLAIN:
       case LogicalOperatorType::LOGICAL_PREPARE:
@@ -1580,32 +1427,16 @@ class Enforcer {
   const bool _enforce;
   irs::containers::NodeHashMap<duckdb::idx_t, RoleClosure> _closures;
   std::optional<RoleMemberships> _caller_memberships;
-  bool _file_copy = false;
-  bool _files_authorized = true;
 };
 
 }  // namespace
 
-bool EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
+void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan) {
-  return Enforcer{context, connection, binder, plan}.Run();
+  Enforcer{context, connection, binder, plan}.Run();
 }
 
 namespace {
-
-bool ScopeAuthorized(duckdb::ClientContext& context, const RoleClosure& caller,
-                     const duckdb::ClientContext::FileAccessScope& scope) {
-  for (const duckdb::ViewCatalogEntry& view : scope.views) {
-    if (duckdb::IsUnowned(view)) {
-      continue;
-    }
-    if (view.security_invoker) {
-      break;
-    }
-    return ClosureFor(&context, view.permissions.owner)->is_superuser;
-  }
-  return caller.is_superuser;
-}
 
 bool DatabaseVisible(duckdb::ClientContext& context,
                      const ConnectionContext& connection,
@@ -1739,30 +1570,6 @@ void CheckEntryReference(duckdb::ClientContext& context,
       !EntryVisible(context, *connection, *closure, entry)) {
     duckdb::ThrowPermissionDenied(entry);
   }
-}
-
-void CheckFileAccess(duckdb::ClientContext& context, const std::string& path) {
-  if (path == "/dev/stdin" || path == "/dev/stdout") {
-    return;
-  }
-  const auto closure = SessionClosure(context);
-  if (!closure) {
-    return;
-  }
-  bool authorized = closure->is_superuser;
-  if (const auto scope = context.file_access_scope) {
-    authorized = scope->catalog || ScopeAuthorized(context, *closure, *scope);
-  } else if (const auto properties = context.ActiveStatementProperties();
-             properties && properties->file_access_authorized) {
-    authorized = *properties->file_access_authorized;
-  }
-  if (authorized) {
-    return;
-  }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("permission denied to access \"", path, "\""),
-                  ERR_DETAIL("Only roles with the SUPERUSER attribute may "
-                             "access server files and URLs."));
 }
 
 }  // namespace sdb::auth

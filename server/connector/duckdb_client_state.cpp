@@ -32,8 +32,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/planner/operator/logical_execute.hpp>
-#include <duckdb/planner/operator/logical_prepare.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
@@ -180,7 +178,6 @@ SereneDBClientState& SereneDBClientState::Register(
   };
   client_ctx.entry_visibility = auth::CanSee;
   client_ctx.database_visibility = auth::CanSeeDatabase;
-  client_ctx.file_access_handler = auth::CheckFileAccess;
   client_ctx.entry_reference_handler = auth::CheckEntryReference;
 
   client_ctx.isolation_level_validator =
@@ -389,26 +386,7 @@ void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,
                                       duckdb::Binder& binder,
                                       duckdb::LogicalOperator& plan,
                                       duckdb::StatementProperties& properties) {
-  const bool authorized =
-    auth::EnforcePlan(context, *_connection_ctx, binder, plan);
-  if (plan.type == duckdb::LogicalOperatorType::LOGICAL_EXECUTE &&
-      plan.children.empty()) {
-    return;
-  }
-  properties.file_access_authorized = authorized;
-  const auto stamp = [&](duckdb::PreparedStatementData& prepared) {
-    prepared.properties.file_access_authorized = authorized;
-  };
-  for (auto* op = &plan; op;
-       op = op->children.empty() ? nullptr : op->children[0].get()) {
-    if (op->type == duckdb::LogicalOperatorType::LOGICAL_EXECUTE) {
-      stamp(*op->Cast<duckdb::LogicalExecute>().prepared);
-    } else if (op->type == duckdb::LogicalOperatorType::LOGICAL_PREPARE) {
-      stamp(*op->Cast<duckdb::LogicalPrepare>().prepared);
-    } else {
-      break;
-    }
-  }
+  auth::EnforcePlan(context, *_connection_ctx, binder, plan);
 }
 
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {

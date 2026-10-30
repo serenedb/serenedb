@@ -234,9 +234,9 @@ InvertedIndexStorage::ReindexClaim::~ReindexClaim() {
 }
 
 absl::Status InvertedIndexStorage::Refresh(
-  const irs::ProgressReportCallback& progress) {
+  const irs::ProgressReportCallback& progress, bool force) {
   RefreshResult code = RefreshResult::Undefined;
-  return RefreshUnsafe(/*wait=*/true, progress, code).res;
+  return RefreshUnsafe(/*wait=*/true, progress, code, force).res;
 }
 
 StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
@@ -273,11 +273,12 @@ auto InvertedIndexStorage::CompactUnsafeAsync(
 }
 
 ResultWithTime InvertedIndexStorage::RefreshUnsafe(
-  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
+  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code,
+  bool force) {
   SDB_ASSERT(_writer);
   auto begin = std::chrono::steady_clock::now();
   auto result = _durability.Refresh(
-    *_writer, wait, progress, code,
+    *_writer, wait, force, progress, code,
     [&] {
       StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
         _writer->GetSnapshot(), GetFileManifest()));

@@ -232,8 +232,8 @@ ResultWithTime SearchTable::RefreshUnsafe(
   bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
   SDB_ASSERT(_writer);
   const auto begin = std::chrono::steady_clock::now();
-  auto result =
-    _durability.Refresh(*_writer, wait, progress, code, [] {}, [] {});
+  auto result = _durability.Refresh(
+    *_writer, wait, /*force=*/false, progress, code, [] {}, [] {});
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)

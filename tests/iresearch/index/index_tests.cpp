@@ -11191,7 +11191,7 @@ TEST_P(IndexTestCase11, initial_commit_payload) {
   ASSERT_EQ(reader, writer->GetSnapshot());
 }
 
-TEST_P(IndexTestCase11, changed_payload_commits_without_changes) {
+TEST_P(IndexTestCase11, forced_commit_writes_a_meta_without_changes) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
   const auto* doc = gen.next();
@@ -11212,7 +11212,7 @@ TEST_P(IndexTestCase11, changed_payload_commits_without_changes) {
   ASSERT_FALSE(writer->RefreshCommit());
   ASSERT_EQ(reader, writer->GetSnapshot());
 
-  ASSERT_TRUE(writer->RefreshCommit({.payload_changed = true}));
+  ASSERT_TRUE(writer->RefreshCommit({.force = true}));
   const auto changed = writer->GetSnapshot();
   ASSERT_NE(reader, changed);
   ASSERT_EQ(input_payload, ReadMetaPayload(dir(), changed));

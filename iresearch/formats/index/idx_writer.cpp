@@ -60,11 +60,7 @@ IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name)
   _impl->filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
 }
 
-IdxWriter::~IdxWriter() {
-  if (_impl && _impl->out) {
-    Rollback();
-  }
-}
+IdxWriter::~IdxWriter() = default;
 
 void IdxWriter::EnsureOut() {
   if (_impl->out) {
@@ -153,13 +149,6 @@ void IdxWriter::Commit() {
     }
   });
   _impl->out.reset();
-}
-
-void IdxWriter::Rollback() noexcept {
-  _impl->out.reset();
-  _impl->ivf_entries.clear();
-  _impl->hnsw_entries.clear();
-  _impl->terms = {};
 }
 
 }  // namespace irs

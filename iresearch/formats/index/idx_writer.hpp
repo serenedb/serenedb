@@ -53,7 +53,6 @@ class IdxWriter final {
   void SetTerms(term_dict::TermsMeta terms) noexcept;
 
   void Commit();
-  void Rollback() noexcept;
 
  private:
   void EnsureOut();

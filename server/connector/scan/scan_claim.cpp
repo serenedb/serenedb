@@ -507,7 +507,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       if (const auto* col_reader = sub.GetColReader();
           col_reader && !g.col_filters.empty() && threads > 1 &&
           work.rg_count > threads) {
-        ClassifySegmentColFilters(sub, g, states, cls, false);
+        ClassifySegmentColFilters(sub, g, g.col_filters, states, cls, false);
         irs::LiveRowGroups(*col_reader, cls.active, context, states, docs,
                            g.rg_size, work.live_rgs);
         work.all_live = work.live_rgs.size() == work.rg_count;

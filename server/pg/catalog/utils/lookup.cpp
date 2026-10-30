@@ -39,7 +39,6 @@
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <vector>
 
-#include "auth/enforce.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"

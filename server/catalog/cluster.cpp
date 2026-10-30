@@ -21,6 +21,8 @@
 #include "catalog/cluster.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
+#include <absl/time/time.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -55,12 +57,51 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
+#include "pg/progress_registry.h"
 
 namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kRootRole = "postgres";
 constexpr duckdb::idx_t kCompactionFloor = duckdb::idx_t{1} << 20;
+
+void RequireDatabaseUnused(duckdb::ClientContext& context,
+                           duckdb::AttachedDatabase& database) {
+  if (duckdb::DatabaseManager::GetDefaultDatabase(context) ==
+      database.GetName()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                    ERR_MSG("cannot drop the currently open database"));
+  }
+  auto& catalog = database.GetCatalog().Cast<duckdb::DuckCatalog>();
+  size_t subscriptions = 0;
+  catalog.GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
+    .Scan([&](duckdb::CatalogEntry&) { ++subscriptions; });
+  if (subscriptions != 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_IN_USE),
+      ERR_MSG("database \"", database.GetName().GetIdentifierName(),
+              "\" is being used by logical replication subscription"),
+      ERR_DETAIL(subscriptions == 1 ? std::string{"There is 1 subscription."}
+                                    : absl::StrCat("There are ", subscriptions,
+                                                   " subscriptions.")));
+  }
+  const auto* connection = connector::GetSereneDBContextPtr(context);
+  const auto others = pg::ProgressRegistry::Instance().OtherSessions(
+    static_cast<int64_t>(database.oid),
+    connection ? connection->GetBackendPid() : 0, absl::Seconds(5));
+  if (others == 0) {
+    return;
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_OBJECT_IN_USE),
+    ERR_MSG("database \"", database.GetName().GetIdentifierName(),
+            "\" is being accessed by other users"),
+    ERR_DETAIL(others == 1 ? std::string{"There is 1 other session using "
+                                         "the database."}
+                           : absl::StrCat("There are ", others,
+                                          " other sessions using the "
+                                          "database.")));
+}
 
 }  // namespace
 
@@ -383,6 +424,16 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateDatabase(
 
 void ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
                                   duckdb::DropInfo& info) {
+  auto& context = transaction.GetContext();
+  if (const auto* connection = connector::GetSereneDBContextPtr(context)) {
+    connection->PreventInTransactionBlock("DROP DATABASE");
+  }
+  if (auto database = duckdb::DatabaseManager::Get(context).GetDatabase(
+        info.GetQualifiedName().Name());
+      database && database->GetCatalog().GetCatalogType() ==
+                    SereneDBCatalog::kStorageType) {
+    RequireDatabaseUnused(context, *database);
+  }
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropDatabase(transaction, info);

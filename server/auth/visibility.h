@@ -26,18 +26,9 @@ namespace duckdb {
 
 class AttachedDatabase;
 class ClientContext;
-class LogicalOperator;
 
 }  // namespace duckdb
-namespace sdb {
-
-class ConnectionContext;
-
-}  // namespace sdb
 namespace sdb::auth {
-
-void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
-                 duckdb::LogicalOperator& plan);
 
 bool CanSee(duckdb::ClientContext& context, duckdb::CatalogEntry& entry);
 

@@ -32,6 +32,11 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/parser/parsed_data/extra_drop_info.hpp>
+#include <duckdb/parser/statement/drop_statement.hpp>
+#include <duckdb/planner/operator/logical_attach.hpp>
+#include <duckdb/planner/operator/logical_drop.hpp>
+#include <duckdb/planner/operator/logical_execute.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
@@ -46,10 +51,11 @@
 #include <iresearch/utils/system_compiler.hpp>
 #include <utility>
 
-#include "auth/enforce.h"
 #include "auth/role_closure.h"
+#include "auth/visibility.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "connector/duckdb_storage_extension.h"
 #include "connector/inverted_store_index.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
@@ -387,7 +393,40 @@ void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,
                                       duckdb::Binder& binder,
                                       duckdb::LogicalOperator& plan,
                                       duckdb::StatementProperties& properties) {
-  auth::EnforcePlan(context, *_connection_ctx, plan);
+  const auto discard_all = [](const duckdb::DropInfo& info) {
+    return info.type == duckdb::CatalogType::PREPARED_STATEMENT &&
+           info.extra_drop_info &&
+           info.extra_drop_info->Cast<duckdb::ExtraDropDiscardInfo>().target ==
+             duckdb::DiscardTarget::ALL;
+  };
+  auto* root = &plan;
+  if ((plan.type == duckdb::LogicalOperatorType::LOGICAL_PREPARE ||
+       plan.type == duckdb::LogicalOperatorType::LOGICAL_EXECUTE) &&
+      !plan.children.empty()) {
+    root = plan.children[0].get();
+  }
+  switch (root->type) {
+    case duckdb::LogicalOperatorType::LOGICAL_ATTACH:
+      RequireDatabaseNotBeingCreated(
+        context, root->Cast<duckdb::LogicalAttach>().info->name);
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_DROP:
+      if (discard_all(*root->Cast<duckdb::LogicalDrop>().info)) {
+        _connection_ctx->PreventInTransactionBlock("DISCARD ALL");
+      }
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_EXECUTE: {
+      const auto& unbound =
+        root->Cast<duckdb::LogicalExecute>().prepared->unbound_statement;
+      if (unbound && unbound->type == duckdb::StatementType::DROP_STATEMENT &&
+          discard_all(*unbound->Cast<duckdb::DropStatement>().info)) {
+        _connection_ctx->PreventInTransactionBlock("DISCARD ALL");
+      }
+      break;
+    }
+    default:
+      break;
+  }
 }
 
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {

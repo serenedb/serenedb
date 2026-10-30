@@ -111,4 +111,13 @@ std::string ConnectionContext::SessionUserName() const {
   return RoleName(*auth::RolesOf(&GetClientContext()), _session_role_id, _user);
 }
 
+void ConnectionContext::PreventInTransactionBlock(
+  std::string_view statement) const {
+  if (_in_transaction_block) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG(statement, " cannot run inside a transaction block"));
+  }
+}
+
 }  // namespace sdb

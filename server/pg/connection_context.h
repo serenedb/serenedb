@@ -148,6 +148,7 @@ class ConnectionContext final : public query::Transaction {
   void SetInTransactionBlock(bool value) noexcept {
     _in_transaction_block = value;
   }
+  void PreventInTransactionBlock(std::string_view statement) const;
 
   // Notices are an intrusive MPSC stack (Strand-style): producers on any
   // thread CAS-push; the single consumer exchanges the head out and reverses

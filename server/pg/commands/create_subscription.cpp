@@ -75,15 +75,6 @@ bool IsSuperuser(ConnectionContext& conn_ctx) {
     ->is_superuser;
 }
 
-void PreventInTransactionBlock(ConnectionContext& conn_ctx,
-                               std::string_view statement) {
-  if (conn_ctx.InTransactionBlock()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-      ERR_MSG(statement, " cannot run inside a transaction block"));
-  }
-}
-
 bool ParseBool(std::string_view option, const duckdb::Value& value) {
   if (value.type().id() == duckdb::LogicalTypeId::BOOLEAN) {
     return value.GetValue<bool>();
@@ -752,9 +743,8 @@ void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
   CheckConnInfo(conn_ctx, info);
   info.permissions.owner = role;
   if (info.create_slot) {
-    PreventInTransactionBlock(conn_ctx,
-                              "CREATE SUBSCRIPTION ... WITH (create_slot = "
-                              "true)");
+    conn_ctx.PreventInTransactionBlock(
+      "CREATE SUBSCRIPTION ... WITH (create_slot = true)");
   }
 
   auto& catalog = CatalogOf(conn_ctx);
@@ -808,7 +798,7 @@ void DropSubscription(ConnectionContext& conn_ctx, std::string_view name,
   RequireOwner(conn_ctx, subscription);
   const auto& config = subscription.Config();
   if (!config.slot_name.empty()) {
-    PreventInTransactionBlock(conn_ctx, "DROP SUBSCRIPTION");
+    conn_ctx.PreventInTransactionBlock("DROP SUBSCRIPTION");
   }
   auto definition = DefinitionOf(subscription);
   const auto oid = subscription.oid;
@@ -907,7 +897,7 @@ void AlterSubscription(ConnectionContext& conn_ctx, std::string_view name,
           ERR_HINT("Use ALTER SUBSCRIPTION ... SET PUBLICATION ... WITH "
                    "(refresh = false)."));
       }
-      PreventInTransactionBlock(conn_ctx, "ALTER SUBSCRIPTION with refresh");
+      conn_ctx.PreventInTransactionBlock("ALTER SUBSCRIPTION with refresh");
       RefreshRelations(conn_ctx, *definition, options.copy_data.value_or(true));
     }
   } else if (action == "refresh_publication") {
@@ -917,7 +907,7 @@ void AlterSubscription(ConnectionContext& conn_ctx, std::string_view name,
                       ERR_MSG("ALTER SUBSCRIPTION ... REFRESH is not allowed "
                               "for disabled subscriptions"));
     }
-    PreventInTransactionBlock(conn_ctx, "ALTER SUBSCRIPTION ... REFRESH");
+    conn_ctx.PreventInTransactionBlock("ALTER SUBSCRIPTION ... REFRESH");
     RefreshRelations(conn_ctx, *definition, options.copy_data.value_or(true));
   } else if (action == "skip") {
     const auto options = ParseOptions(options_map, Allowed::Lsn);
@@ -1006,8 +996,8 @@ void AlterSubscription(ConnectionContext& conn_ctx, std::string_view name,
                                 "subscription that does not have a slot "
                                 "name"));
       }
-      PreventInTransactionBlock(conn_ctx,
-                                "ALTER SUBSCRIPTION ... SET (failover)");
+      conn_ctx.PreventInTransactionBlock(
+        "ALTER SUBSCRIPTION ... SET (failover)");
     }
     ApplySetOptions(conn_ctx, options, *definition);
     if (failover_changed) {

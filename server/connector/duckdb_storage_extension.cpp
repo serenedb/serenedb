@@ -266,4 +266,20 @@ void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
   optimizer::RegisterIResearchPlanOptimizer(db);
 }
 
+void RequireDatabaseNotBeingCreated(duckdb::ClientContext& context,
+                                    const duckdb::Identifier& name) {
+  auto database = duckdb::DatabaseManager::Get(context).GetDatabase(name);
+  if (!database || database->GetCatalog().GetCatalogType() !=
+                     catalog::SereneDBCatalog::kStorageType) {
+    return;
+  }
+  auto& cluster = catalog::ClusterOf(context);
+  if (!cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+         .GetEntry(cluster.GetCatalogTransaction(context), name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
+                    ERR_MSG("database \"", name.GetIdentifierName(),
+                            "\" is being created by another transaction"));
+  }
+}
+
 }  // namespace sdb::connector

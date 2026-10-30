@@ -444,6 +444,9 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);
+
+std::optional<duckdb::ExpressionType> DefaultComparison(
+  const duckdb::TableFilter& filter, const duckdb::LogicalType& column_type);
 bool FinishUnit(ScanGlobalState& g, ScanLocalState& l);
 
 void ClassifySegmentColFilters(

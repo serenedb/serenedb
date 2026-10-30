@@ -96,7 +96,7 @@ class ColumnWriter final {
   void Compress(const duckdb::CompressionFunction& picked,
                 duckdb::unique_ptr<duckdb::AnalyzeState> state,
                 const duckdb::LogicalType& codec_type,
-                std::span<WriteChunk> chunks,
+                std::span<WriteChunk> chunks, bool count_defaults,
                 std::vector<ColumnBlockMeta>& sink);
 
   void SealValidity(std::span<WriteChunk> chunks, uint64_t row_count,

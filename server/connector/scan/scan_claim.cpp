@@ -541,7 +541,11 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   if (ordered) {
     BuildOrderedHeap(g);
   }
-  if (g.remote && bind.IsMatchAll() &&
+  const bool counted_from_defaults =
+    g.shape == ScanShape::Count && g.col_filters.size() == 1 &&
+    DefaultComparison(*g.col_filters.front().filter,
+                      g.col_filters.front().type);
+  if (g.remote && bind.IsMatchAll() && !counted_from_defaults &&
       (g.shape == ScanShape::ColScan || g.shape == ScanShape::Count)) {
     PrefetchScanStart(g);
   }

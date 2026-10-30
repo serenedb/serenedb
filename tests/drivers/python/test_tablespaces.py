@@ -1574,8 +1574,8 @@ def test_cold_late_materialization_reads_columns_in_one_round(
 
 
 @pytest.mark.parametrize("query", [
-    "SELECT count(*) FROM narrow WHERE v <> 0",
-    "SELECT v % 7, count(*) FROM narrow WHERE v <> 0 GROUP BY ALL ORDER BY ALL",
+    "SELECT count(*) FROM narrow WHERE v <> 1",
+    "SELECT v % 7, count(*) FROM narrow WHERE v <> 1 GROUP BY ALL ORDER BY ALL",
     "SELECT sum(v % 7) FROM narrow",
 ])
 def test_cold_column_scan_reads_its_columns_in_one_round(
@@ -1603,6 +1603,33 @@ def test_cold_column_scan_reads_its_columns_in_one_round(
             server.stop()
     assert rows == expected
     _one_round(log, ".col")
+
+
+def test_cold_count_of_default_values_reads_no_column(tmp_path: Path) -> None:
+    location = f"s3://bucket/defaults-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret",
+                                          "bucket"), location)
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE TABLE sparse WITH (storage = 'search') TABLESPACE idx AS "
+                    "SELECT i AS id, CASE WHEN i % 50 = 0 THEN i + 1 ELSE 0 END AS v "
+                    "FROM range(2000000) t(i)")
+                conn.execute("VACUUM (REFRESH_TABLE) sparse")
+                conn.execute("SET GLOBAL enable_external_file_cache = false")
+                conn.execute("SET GLOBAL enable_external_file_cache = true")
+                fake.log = []
+                counts = conn.execute(
+                    "SELECT (SELECT count(*) FROM sparse WHERE v <> 0), "
+                    "(SELECT count(*) FROM sparse WHERE v = 0)").fetchone()
+                log, fake.log = fake.log, None
+        finally:
+            server.stop()
+    assert counts == (40000, 1960000)
+    assert not [entry for entry in log if entry["key"].endswith(".col")], log
 
 
 def test_cold_count_reads_its_postings_in_one_round(tmp_path: Path) -> None:

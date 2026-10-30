@@ -1536,6 +1536,75 @@ def test_cold_top_k_reads_postings_and_columns_in_one_round(
     assert len(_one_round(log, ".col")) == segments
 
 
+def test_cold_late_materialization_reads_columns_in_one_round(
+        tmp_path: Path) -> None:
+    location = f"s3://bucket/lookup-{tmp_path.name}"
+    query = ("SELECT * FROM wide WHERE a LIKE '%ab%' "
+             "ORDER BY b LIMIT 5")
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret",
+                                          "bucket"), location)
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE TABLE wide WITH (storage = 'search') TABLESPACE idx AS "
+                    "SELECT i AS id, md5(i::TEXT) AS a, md5((-i)::TEXT) AS b, "
+                    + ", ".join(
+                        f"md5((i + {k})::TEXT) || md5((i * {k})::TEXT) AS {c}"
+                        for k, c in ((2, "c"), (3, "d"), (4, "e"), (5, "f")))
+                    + " FROM range(200000) t(i)")
+                conn.execute("VACUUM (REFRESH_TABLE) wide")
+                plan = "\n".join(row[-1] for row in conn.execute(
+                    "EXPLAIN " + query).fetchall())
+                expected = conn.execute(query).fetchall()
+                conn.execute("SET GLOBAL enable_external_file_cache = false")
+                conn.execute("SET GLOBAL enable_external_file_cache = true")
+                conn.execute(query.replace("*", "b", 1)).fetchall()
+                fake.latency = 0.1
+                fake.log = []
+                rows = conn.execute(query).fetchall()
+                log, fake.log = fake.log, None
+        finally:
+            server.stop()
+    assert "LOOKUP_JOIN" in plan, plan
+    assert rows == expected
+    assert len(_one_round(log, ".col")) >= 4, log
+
+
+@pytest.mark.parametrize("query", [
+    "SELECT count(*) FROM narrow WHERE v <> 0",
+    "SELECT v % 7, count(*) FROM narrow WHERE v <> 0 GROUP BY ALL ORDER BY ALL",
+    "SELECT sum(v % 7) FROM narrow",
+])
+def test_cold_column_scan_reads_its_columns_in_one_round(
+        tmp_path: Path, query: str) -> None:
+    location = f"s3://bucket/scan-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret",
+                                          "bucket"), location)
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE TABLE narrow WITH (storage = 'search') TABLESPACE idx AS "
+                    "SELECT i AS id, hash(i) AS v FROM range(2000000) t(i)")
+                conn.execute("VACUUM (REFRESH_TABLE) narrow")
+                expected = conn.execute(query).fetchall()
+                conn.execute("SET GLOBAL enable_external_file_cache = false")
+                conn.execute("SET GLOBAL enable_external_file_cache = true")
+                fake.latency = 0.1
+                fake.log = []
+                rows = conn.execute(query).fetchall()
+                log, fake.log = fake.log, None
+        finally:
+            server.stop()
+    assert rows == expected
+    _one_round(log, ".col")
+
+
 def test_cold_count_reads_its_postings_in_one_round(tmp_path: Path) -> None:
     location = f"s3://bucket/counts-{tmp_path.name}"
     segments = 4

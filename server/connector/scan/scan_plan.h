@@ -48,6 +48,9 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
                    const ScanBindData& bind_data,
                    duckdb::TableFunctionInitInput& input);
 
+void UseSnapshot(ScanGlobalState& state, duckdb::ClientContext& context,
+                 const ScanBindData& bind_data);
+
 void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
                         const ScanBindData& bind_data);
 

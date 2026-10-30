@@ -41,6 +41,7 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
+#include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -454,6 +455,19 @@ void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
   }
   state.deferred_checks = std::move(built.checks);
   AddDeferredChecks(state, state.deferred_checks);
+}
+
+void UseSnapshot(ScanGlobalState& state, duckdb::ClientContext& context,
+                 const ScanBindData& bind_data) {
+  state.scan = &bind_data;
+  state.snapshot = bind_data.Snapshot(context);
+  state.reader = &state.snapshot->reader;
+  state.total_segments = state.reader->size();
+  state.rg_size = bind_data.relation.row_group_size != 0
+                    ? bind_data.relation.row_group_size
+                    : DEFAULT_ROW_GROUP_SIZE;
+  const auto& impl = state.snapshot->reader.GetImpl();
+  state.remote = impl && impl->Dir().Kind() == irs::StorageKind::Remote;
 }
 
 void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,

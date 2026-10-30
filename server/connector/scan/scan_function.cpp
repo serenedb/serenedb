@@ -238,13 +238,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       ERR_MSG("ts_offsets() requires an inverted index scan in the same "
               "sub-query"));
   }
-  state->scan = &ss;
-  state->snapshot = ss.Snapshot(context);
-  const auto& snapshot = *state->snapshot;
-  state->reader = &snapshot.reader;
-  state->total_segments = snapshot.reader.size();
-  const auto& impl = snapshot.reader.GetImpl();
-  state->remote = impl && impl->Dir().Kind() == irs::StorageKind::Remote;
+  UseSnapshot(*state, context, ss);
   if (ss.plan_cache.deferred) {
     ApplyDeferredClaim(*state, context, ss);
   }
@@ -329,7 +323,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     state->filter = where ? where.get() : &MatchAllFilter();
   }
   if (state->remote) {
-    PrefetchTerms(*state->filter, snapshot.reader);
+    PrefetchTerms(*state->filter, *state->reader);
   }
   state->queries.resize(state->total_segments);
 

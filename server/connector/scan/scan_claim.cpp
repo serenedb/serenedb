@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -416,6 +417,52 @@ bool Join(ScanGlobalState& g, ScanLocalState& l) {
   }
 }
 
+void PrefetchScanStart(const ScanGlobalState& g) {
+  std::vector<irs::field_id> fields;
+  for (const auto& filter : g.col_filters) {
+    if (!filter.is_score && !filter.zonemap_only) {
+      fields.push_back(filter.field);
+    }
+  }
+  if (g.col_filters.empty()) {
+    for (const auto& projection : g.cs_projections) {
+      fields.push_back(static_cast<irs::field_id>(projection.column_id));
+    }
+  }
+  if (fields.empty()) {
+    return;
+  }
+  std::vector<irs::ByteExtent> extents;
+  uint64_t bytes = 0;
+  for (const auto seg : g.segment_order) {
+    const auto& sub = (*g.reader)[seg];
+    const auto* col_reader = sub.GetColReader();
+    const uint64_t docs = sub.Meta().docs_count;
+    if (!col_reader) {
+      continue;
+    }
+    extents.clear();
+    for (uint64_t begin = 0;
+         begin < docs && bytes < duckdb::BlockCache::MAX_FILE_IN_FLIGHT;
+         begin += g.rg_size) {
+      const auto last = std::min(docs, begin + g.rg_size) - 1;
+      const auto from = extents.size();
+      for (const auto field : fields) {
+        if (const auto* column = col_reader->Column(field)) {
+          column->CollectBlocks(begin, last, extents);
+        }
+      }
+      for (auto i = from; i != extents.size(); ++i) {
+        bytes += extents[i].size;
+      }
+    }
+    col_reader->PrefetchExtents(extents);
+    if (bytes >= duckdb::BlockCache::MAX_FILE_IN_FLIGHT) {
+      return;
+    }
+  }
+}
+
 }  // namespace
 
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
@@ -423,9 +470,6 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const bool scan_ordered =
     bind.scan_order.has_value() &&
     (g.shape == ScanShape::Stream || g.shape == ScanShape::ColScan);
-
-  g.rg_size = bind.relation.row_group_size != 0 ? bind.relation.row_group_size
-                                                : DEFAULT_ROW_GROUP_SIZE;
 
   g.order = ReadOrder(context, scan_ordered);
   const bool ordered = g.order == OrderMode::Order;
@@ -496,6 +540,10 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
 
   if (ordered) {
     BuildOrderedHeap(g);
+  }
+  if (g.remote && bind.IsMatchAll() &&
+      (g.shape == ScanShape::ColScan || g.shape == ScanShape::Count)) {
+    PrefetchScanStart(g);
   }
 }
 

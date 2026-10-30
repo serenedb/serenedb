@@ -157,7 +157,8 @@ void InputFile::Prefetch(uint64_t offset, uint64_t size) const noexcept {
   }
   const auto* blocks = std::get_if<CacheBlocks>(&_kind);
   try {
-    blocks->cache->Prefetch(blocks->blocks, offset, size);
+    blocks->cache->Prefetch(blocks->blocks, offset, size,
+                            duckdb::BlockCachePrefetch::HINT);
   } catch (...) {
   }
 }
@@ -169,11 +170,20 @@ void InputFile::Evict(uint64_t offset, uint64_t size) const noexcept {
 }
 
 void InputFile::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
-  if (std::holds_alternative<CacheBlocks>(_kind)) {
-    extents = CoalesceExtents(extents, duckdb::BlockCache::MERGE_GAP);
+  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
+  if (!blocks) {
+    for (const auto& extent : extents) {
+      Prefetch(extent.offset, extent.size);
+    }
+    return;
   }
-  for (const auto& extent : extents) {
-    Prefetch(extent.offset, extent.size);
+  try {
+    for (const auto& extent :
+         CoalesceExtents(extents, duckdb::BlockCache::MERGE_GAP)) {
+      blocks->cache->Prefetch(blocks->blocks, extent.offset, extent.size,
+                              duckdb::BlockCachePrefetch::NEED);
+    }
+  } catch (...) {
   }
 }
 

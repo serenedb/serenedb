@@ -1,0 +1,101 @@
+statement ok
+CREATE TABLE sysc (a int, b text);
+
+
+statement ok
+INSERT INTO sysc VALUES (1, 'x'), (2, 'y'), (3, 'z');
+
+
+query
+SELECT pg_typeof(ctid)::text AS ctid, pg_typeof(xmin)::text AS xmin, pg_typeof(xmax)::text AS xmax, pg_typeof(cmin)::text AS cmin, pg_typeof(cmax)::text AS cmax
+FROM sysc
+LIMIT 1;
+----
+ctid	xmin	xmax	cmin	cmax
+tid	xid	xid	cid	cid
+
+
+query
+SELECT * FROM sysc ORDER BY a;
+----
+a	b
+1	x
+2	y
+3	z
+
+
+query
+SELECT count(DISTINCT ctid) AS rows, min(xmax::text) AS xmax, min(cmin::text) AS cmin, max(cmax::text) AS cmax FROM sysc;
+----
+rows	xmax	cmin	cmax
+3	0	0	0
+
+
+onlyif serenedb
+query
+SELECT a, ctid, xmin, xmax, cmin, cmax FROM sysc ORDER BY a;
+----
+a	ctid	xmin	xmax	cmin	cmax
+1	(0,0)	0	0	0	0
+2	(0,1)	0	0	0	0
+3	(0,2)	0	0	0	0
+
+
+query
+SELECT a FROM sysc WHERE ctid = (SELECT ctid FROM sysc WHERE b = 'y');
+----
+a
+2
+
+
+query
+SELECT s.a FROM sysc s ORDER BY s.ctid DESC;
+----
+a
+3
+2
+1
+
+
+statement ok
+DELETE FROM sysc WHERE ctid = (SELECT ctid FROM sysc WHERE b = 'z');
+
+
+statement ok
+UPDATE sysc SET b = 'w' WHERE ctid IN (SELECT ctid FROM sysc WHERE a = 1);
+
+
+query
+SELECT a, b FROM sysc ORDER BY a;
+----
+a	b
+1	w
+2	y
+
+
+statement ok
+CREATE TABLE sysc_dup (a int);
+
+
+statement ok
+INSERT INTO sysc_dup VALUES (1), (1), (2), (2), (2);
+
+
+statement ok
+DELETE FROM sysc_dup x USING sysc_dup y WHERE x.a = y.a AND x.ctid > y.ctid;
+
+
+query
+SELECT a FROM sysc_dup ORDER BY a;
+----
+a
+1
+2
+
+
+statement ok
+DROP TABLE sysc_dup;
+
+
+statement ok
+DROP TABLE sysc;

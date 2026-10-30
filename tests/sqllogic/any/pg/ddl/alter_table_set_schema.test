@@ -1,0 +1,184 @@
+statement ok
+CREATE SCHEMA atss_a
+
+statement ok
+CREATE SCHEMA atss_b
+
+statement ok
+CREATE TABLE atss_a.t (id INT PRIMARY KEY, v TEXT)
+
+statement ok
+CREATE INDEX atss_t_v_idx ON atss_a.t (v)
+
+statement ok
+INSERT INTO atss_a.t VALUES (1, 'a'), (2, 'b')
+
+statement ok
+ALTER TABLE atss_a.t SET SCHEMA atss_b
+
+query
+SELECT id, v FROM atss_b.t ORDER BY id
+----
+id	v
+1	a
+2	b
+
+query
+SELECT to_regclass('atss_a.t') IS NULL AS gone, to_regclass('atss_b.t') IS NOT NULL AS moved
+----
+gone	moved
+t	t
+
+statement error does not exist
+SELECT * FROM atss_a.t
+
+query
+SELECT schemaname, indexname FROM pg_indexes WHERE indexname = 'atss_t_v_idx'
+----
+schemaname	indexname
+atss_b	atss_t_v_idx
+
+statement ok
+INSERT INTO atss_b.t VALUES (3, 'c')
+
+statement error (23505)
+INSERT INTO atss_b.t VALUES (1, 'x')
+
+query
+SELECT id FROM atss_b.t WHERE v = 'c'
+----
+id
+3
+
+statement ok
+ALTER TABLE atss_b.t SET SCHEMA atss_b
+
+statement ok
+ALTER TABLE IF EXISTS atss_a.missing SET SCHEMA atss_b
+
+statement error does not exist
+ALTER TABLE atss_a.missing SET SCHEMA atss_b
+
+statement error atss_nosuch.*does not exist
+ALTER TABLE atss_b.t SET SCHEMA atss_nosuch
+
+statement ok
+CREATE TABLE atss_a.t (x INT)
+
+statement error
+ALTER TABLE atss_a.t SET SCHEMA atss_b
+----
+db error: ERROR: relation "t" already exists in schema "atss_b"
+
+
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE atss_b.t SET SCHEMA public
+
+statement ok
+ROLLBACK
+
+query
+SELECT count(*) AS n FROM atss_b.t
+----
+n
+3
+
+statement ok
+DROP TABLE atss_a.t
+
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE atss_b.t SET SCHEMA atss_a
+
+statement ok
+INSERT INTO atss_a.t VALUES (4, 'd')
+
+statement ok
+COMMIT
+
+query
+SELECT id, v FROM atss_a.t ORDER BY id
+----
+id	v
+1	a
+2	b
+3	c
+4	d
+
+statement ok
+CREATE TABLE atss_a.s (id SERIAL, v TEXT)
+
+statement ok
+INSERT INTO atss_a.s (v) VALUES ('a')
+
+statement ok
+ALTER TABLE atss_a.s SET SCHEMA atss_b
+
+statement ok
+INSERT INTO atss_b.s (v) VALUES ('b')
+
+query
+SELECT id, v FROM atss_b.s ORDER BY id
+----
+id	v
+1	a
+2	b
+
+query
+SELECT pg_get_serial_sequence('atss_b.s', 'id') AS seq
+----
+seq
+atss_b.s_id_seq
+
+statement ok
+CREATE ROLE atss_role
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA atss_a TO atss_role
+
+statement ok
+GRANT USAGE ON SCHEMA atss_b TO atss_role
+
+statement ok
+CREATE TABLE atss_a.owned (x INT)
+
+statement ok
+ALTER TABLE atss_a.owned OWNER TO atss_role
+
+statement ok
+SET ROLE atss_role
+
+statement error
+ALTER TABLE atss_a.owned SET SCHEMA atss_b
+----
+db error: ERROR: permission denied for schema atss_b
+
+
+statement ok
+RESET ROLE
+
+statement ok
+GRANT CREATE ON SCHEMA atss_b TO atss_role
+
+statement ok
+SET ROLE atss_role
+
+statement ok
+ALTER TABLE atss_a.owned SET SCHEMA atss_b
+
+statement ok
+RESET ROLE
+
+statement ok
+DROP SCHEMA atss_b CASCADE
+
+statement ok
+DROP SCHEMA atss_a CASCADE
+
+statement ok
+DROP ROLE atss_role

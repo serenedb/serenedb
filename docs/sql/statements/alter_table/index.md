@@ -86,6 +86,12 @@ The `RENAME TO` clause renames an entire table, changing its name in the schema.
 All the changes made by `ALTER TABLE` fully respect the transactional semantics, i.e., they will not be visible to other transactions until committed, and can be fully reverted through a rollback.
 -->
 
+## `SET SCHEMA`
+
+<SqlLogicTest id="sql/statements/alter_table/index/example_038" />
+
+The `SET SCHEMA` clause moves a table into another schema, keeping its rows, together with its indexes and the sequences it owns, such as those of its `SERIAL` columns. The target schema must exist and must not already hold a relation of that name, and moving a table needs the `CREATE` privilege on the target schema. Moving a table into the schema it is already in changes nothing. A table that a view, a function, a trigger or another table uses can't be moved, the same as for `RENAME TO`; neither can a search table. Views, sequences and indexes don't take `SET SCHEMA` themselves.
+
 ## `RENAME COLUMN`
 
 To rename a column of a table, use the `RENAME` or `RENAME COLUMN` clauses:

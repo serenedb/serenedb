@@ -61,6 +61,8 @@ Copy only the schema (catalog elements) but not any data:
 
 If a list of columns is specified, `COPY` will only copy the data in the specified columns from the file. If there are any columns in the table that are not in the column list, `COPY ... FROM` will insert the default values for those columns.
 
+A statement that names the format, as `FORMAT csv` or `CSV`, reads the CSV dialect of PostgreSQL: a comma between values, double quotes, a doubled quote inside a quoted value, no header, and an unquoted empty value read as `NULL` while a quoted one (`""`) is an empty string. Nothing is detected from the file unless `AUTO_DETECT true` asks for it. Without a format, a CSV file's delimiter, quoting and header are detected.
+
 Copy the contents of a comma-separated file `test.csv` without a header into the table `test`:
 
 <SqlLogicTest id="sql/statements/copy/index/example_013" />

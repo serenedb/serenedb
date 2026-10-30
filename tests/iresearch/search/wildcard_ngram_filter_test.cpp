@@ -714,25 +714,17 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
 
     const auto check = [&](std::string_view pattern, irs::RegexpSyntax syntax) {
       const re2::RE2 re{pattern, irs::RegexpOptions(syntax)};
-      const auto marked = [&](irs::doc_id_t doc) {
-        return kValues[doc - kBase].find('\x1F') != std::string_view::npos;
-      };
       for (const bool has_pos : {true, false}) {
         const auto q =
           MakeRegexpFilter(kField, pattern, analyzer, has_pos, syntax);
-        const bool decided = !q.options().matcher;
         std::vector<irs::doc_id_t> expected;
         for (size_t i = 0; i != std::size(kValues); ++i) {
           const auto doc = kBase + static_cast<irs::doc_id_t>(i);
-          if (re.ok() && !(decided && marked(doc)) &&
-              re2::RE2::FullMatch(kValues[i], re)) {
+          if (re.ok() && re2::RE2::FullMatch(kValues[i], re)) {
             expected.push_back(doc);
           }
         }
-        auto actual = execute(q, nullptr);
-        if (decided) {
-          std::erase_if(actual, marked);
-        }
+        const auto actual = execute(q, nullptr);
         EXPECT_EQ(expected, actual)
           << "pattern: " << pattern << ", n: " << n << ", pos: " << has_pos
           << ", query: " << irs::ToString(q.options().query);

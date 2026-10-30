@@ -1,0 +1,90 @@
+control substitution on
+
+statement ok
+CREATE TABLE dctr_checkpointed (v varchar(10), c char(3), j jsonb, n numeric, t text);
+
+
+statement ok
+FORCE CHECKPOINT;
+
+
+statement ok
+CREATE TABLE dctr_logged (v varchar(10), c char(3), j jsonb, n numeric, t text);
+
+
+statement ok
+ALTER TABLE dctr_logged ALTER COLUMN t TYPE varchar(20);
+
+
+statement ok
+ALTER TABLE dctr_logged ADD COLUMN added jsonb;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT table_name, column_name, data_type, character_maximum_length, numeric_precision
+FROM information_schema.columns
+WHERE table_name IN ('dctr_checkpointed', 'dctr_logged')
+ORDER BY table_name, ordinal_position;
+----
+table_name	column_name	data_type	character_maximum_length	numeric_precision
+dctr_checkpointed	v	character varying	10	NULL
+dctr_checkpointed	c	character	3	NULL
+dctr_checkpointed	j	jsonb	NULL	NULL
+dctr_checkpointed	n	numeric	NULL	NULL
+dctr_checkpointed	t	text	NULL	NULL
+dctr_logged	v	character varying	10	NULL
+dctr_logged	c	character	3	NULL
+dctr_logged	j	jsonb	NULL	NULL
+dctr_logged	n	numeric	NULL	NULL
+dctr_logged	t	character varying	20	NULL
+dctr_logged	added	jsonb	NULL	NULL
+
+
+connection after_crash
+statement ok
+FORCE CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_checkpoint
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = 'dctr_logged'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type
+v	character varying(10)
+c	character(3)
+j	jsonb
+n	numeric
+t	character varying(20)
+added	jsonb

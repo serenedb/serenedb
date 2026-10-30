@@ -4,23 +4,11 @@ control substitution on
 
 # DOCS_TEST_BODY
 
-query
+statement error
 SELECT 1.0 / 0.0 AS x;
 ----
-x
-Infinity
+db error: ERROR: division by zero
 
-query
-SELECT 0.0 / 0.0 AS x;
-----
-x
-NaN
-
-query
-SELECT -1.0 / 0.0 AS x;
-----
-x
--Infinity
 
 query
 SELECT 'Infinity'::FLOAT / 'Infinity'::FLOAT AS x;
@@ -50,16 +38,23 @@ Infinity
 
 # DOCS_TEST_BODY
 
-query
-SELECT
-    ln(0) AS ln_zero,
-    ln(-1) AS ln_negative,
-    sqrt(-1) AS sqrt_negative,
-    exp(1000) AS exp_overflow,
-    power(0, -1) AS zero_to_negative_power;
+statement error
+SELECT ln(0) AS ln_zero;
 ----
-ln_zero	ln_negative	sqrt_negative	exp_overflow	zero_to_negative_power
--Infinity	NaN	NaN	Infinity	Infinity
+db error: ERROR: cannot take logarithm of zero
+
+
+statement error
+SELECT sqrt(-1) AS sqrt_negative;
+----
+db error: ERROR: cannot take square root of a negative number
+
+
+query
+SELECT exp(1000) AS exp_overflow;
+----
+exp_overflow
+Infinity
 
 # DOCS_TEST: example_002
 

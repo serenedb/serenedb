@@ -44,9 +44,6 @@ irs::pg::SqlErrorData OutOfRange(std::string_view text, std::string_view type) {
     ERR_MSG("value \"", text, "\" is out of range for type ", type));
 }
 
-// PostgreSQL reads these types with strtoul(text, &end, 0): whitespace around
-// the number, a 0x or 0 prefix for hex or octal, and a minus sign that negates
-// modulo 2^64.
 std::optional<irs::pg::SqlErrorData> TryParseUnsigned(std::string_view text,
                                                       std::string_view type,
                                                       uint64_t& value) {
@@ -88,8 +85,6 @@ std::optional<irs::pg::SqlErrorData> TryParseUnsigned(std::string_view text,
   return std::nullopt;
 }
 
-// A 32-bit type takes the unsigned values and, wrapped around, the negative
-// ones that fit an int4.
 std::optional<uint32_t> Narrow(uint64_t value) {
   const auto narrow = static_cast<uint32_t>(value);
   if (value != narrow &&
@@ -116,7 +111,6 @@ std::optional<irs::pg::SqlErrorData> TryParse32(std::string_view text,
 
 }  // namespace
 
-// Object identifiers are 64-bit: a value above 4294967295 names an object too.
 std::optional<irs::pg::SqlErrorData> TryParseOid(std::string_view text,
                                                  int64_t& value) {
   uint64_t parsed = 0;

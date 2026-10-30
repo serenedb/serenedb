@@ -224,6 +224,9 @@ void WildcardTokenizer::EmitTerms(TokenSink& sink, size_t from) {
     const auto* term = it;
     it += size;
     EmitTermGrams<Identity, Layout>(sink, term, size);
+    if (std::memchr(term + 1, kBoundary, size - 2)) {
+      sink.Emit<Layout>(&kBoundary, 1);
+    }
   }
 }
 

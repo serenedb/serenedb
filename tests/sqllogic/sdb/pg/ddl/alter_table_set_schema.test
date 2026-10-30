@@ -1,0 +1,188 @@
+statement ok
+CREATE SCHEMA atsd_a;
+
+
+statement ok
+CREATE SCHEMA atsd_b;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY atsd_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE atsd_a.docs (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX atsd_docs_idx ON atsd_a.docs USING inverted (body atsd_dict);
+
+
+statement ok
+INSERT INTO atsd_a.docs VALUES (1, 'alpha bravo'), (2, 'charlie delta');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) atsd_a.docs;
+
+
+statement ok
+ALTER TABLE atsd_a.docs SET SCHEMA atsd_b;
+
+
+query
+SELECT schemaname, tablename, indexname FROM pg_indexes WHERE indexname = 'atsd_docs_idx';
+----
+schemaname	tablename	indexname
+atsd_b	docs	atsd_docs_idx
+
+
+query
+SELECT id FROM atsd_b.atsd_docs_idx WHERE body @@ ts_phrase('charlie');
+----
+id
+2
+
+
+statement ok
+INSERT INTO atsd_b.docs VALUES (3, 'charlie echo');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) atsd_b.docs;
+
+
+query
+SELECT id FROM atsd_b.atsd_docs_idx WHERE body @@ ts_phrase('charlie') ORDER BY id;
+----
+id
+2
+3
+
+
+statement ok
+CREATE TABLE atsd_a.viewed (id INTEGER);
+
+
+statement ok
+CREATE VIEW atsd_a.viewer AS SELECT id FROM atsd_a.viewed;
+
+
+statement error
+ALTER TABLE atsd_a.viewed SET SCHEMA atsd_b;
+----
+db error: ERROR: Cannot alter entry "viewed" because there are entries that depend on it.
+view "viewer" depends on table "viewed".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement error
+ALTER TABLE atsd_a.viewer SET SCHEMA atsd_b;
+----
+db error: ERROR: "viewer" is not a table
+DETAIL: This operation is not supported for views.
+
+
+statement ok
+DROP VIEW atsd_a.viewer;
+
+
+statement ok
+ALTER TABLE atsd_a.viewed SET SCHEMA atsd_b;
+
+
+statement ok
+CREATE TABLE atsd_a.search (id INTEGER PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement error
+ALTER TABLE atsd_a.search SET SCHEMA atsd_b;
+----
+db error: ERROR: ALTER TABLE ... SET SCHEMA is not supported for table "search"
+
+
+statement ok
+CREATE TABLE atsd_a.plain_t (id INTEGER);
+
+
+statement ok
+CREATE INDEX atsd_plain ON atsd_a.plain_t (id);
+
+
+statement error
+ALTER TABLE atsd_a.atsd_plain SET SCHEMA atsd_b;
+----
+db error: ERROR: Table with name atsd_plain does not exist!
+<slt:ignore>
+
+
+statement ok
+CREATE TABLE atsd_a.serial_t (id SERIAL, v TEXT);
+
+
+statement ok
+INSERT INTO atsd_a.serial_t (v) VALUES ('a');
+
+
+statement ok
+ALTER TABLE atsd_a.serial_t SET SCHEMA atsd_b;
+
+
+statement ok
+INSERT INTO atsd_b.serial_t (v) VALUES ('b');
+
+
+query
+SELECT id, v FROM atsd_b.serial_t ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+query
+SELECT pg_get_serial_sequence('atsd_b.serial_t', 'id') AS seq;
+----
+seq
+atsd_b.serial_t_id_seq
+
+
+statement ok
+CREATE SEQUENCE atsd_a.shared_seq;
+
+
+statement ok
+CREATE TABLE atsd_a.uses_seq (id BIGINT DEFAULT nextval('atsd_a.shared_seq'));
+
+
+statement ok
+CREATE TABLE atsd_a.also_uses_seq (id BIGINT DEFAULT nextval('atsd_a.shared_seq'));
+
+
+statement ok
+ALTER TABLE atsd_a.uses_seq SET SCHEMA atsd_b;
+
+
+statement ok
+INSERT INTO atsd_b.uses_seq DEFAULT VALUES;
+
+
+query
+SELECT id FROM atsd_b.uses_seq;
+----
+id
+1
+
+
+statement ok
+DROP SCHEMA atsd_b CASCADE;
+
+
+statement ok
+DROP SCHEMA atsd_a CASCADE;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY atsd_dict;

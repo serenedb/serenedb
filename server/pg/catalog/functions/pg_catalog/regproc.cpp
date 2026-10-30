@@ -77,7 +77,6 @@ std::string QualifiedOutName(std::string_view schema, std::string_view name) {
 namespace {
 
 constexpr size_t kMaxFunctionArgs = 100;
-constexpr int32_t kMaxAttrSize = 10 * 1024 * 1024;
 constexpr int32_t kMaxNumericPrecision = 1000;
 constexpr int32_t kMinNumericScale = -1000;
 constexpr int32_t kMaxNumericScale = 1000;

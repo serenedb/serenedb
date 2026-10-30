@@ -124,6 +124,7 @@ def transition_shapes(zone, ts):
 
 t.part()
 t.statement("SET TimeZone = 'Europe/Berlin';")
+t.statement("SET ieee_floating_point_ops = true;")
 t.statement("CREATE TABLE g AS SELECT TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE AS ts, "
             "(TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE)::TIMESTAMPTZ AS tstz, "
             "(DATE '2024-12-28' + (i % 300)::INTEGER)::DATE AS d, (i % 1000)::DOUBLE AS price, "

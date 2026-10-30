@@ -46,11 +46,12 @@ struct Attribute {
   int16_t attnum;
   const duckdb::LogicalType& type;
   const SystemSqlColumn* system = nullptr;
+  const duckdb::LogicalType* declared = nullptr;
   mutable std::optional<ColumnType> described = std::nullopt;
 
   const ColumnType& Described() const {
     if (!described) {
-      described = DescribeColumn(type, system);
+      described = DescribeColumn(type, declared, system);
     }
     return *described;
   }
@@ -140,7 +141,8 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
             {},
             Attnum(column),
             column.Type(),
-            system.empty() ? nullptr : &system[column.Logical().index]},
+            system.empty() ? nullptr : &system[column.Logical().index],
+            &column.DeclaredType()},
            column,
            not_null});
       }

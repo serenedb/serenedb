@@ -351,15 +351,15 @@ Over the PostgreSQL wire protocol (for example via `psql` or any PostgreSQL driv
 
 ## IEEE Floating-Point Operation Semantics
 
-SereneDB follows IEEE floating-point operation semantics, so a floating-point division by zero returns `Infinity`, `NaN` or `-Infinity`:
+A floating-point division by zero fails with `division by zero`, as in PostgreSQL; with `error_on_division_by_zero` off, it returns `NULL`:
 
 <SqlLogicTest id="configuration/pragmas/example_071" />
 
-If you would like to turn this off, run:
+To follow IEEE floating-point operation semantics instead, run:
 
 <SqlLogicTest id="configuration/pragmas/example_064" />
 
-Then a floating-point division by zero fails, because `error_on_division_by_zero` is on by default; with `error_on_division_by_zero` off, it returns `NULL`:
+Then a floating-point division by zero returns `Infinity`, `NaN` or `-Infinity`:
 
 <SqlLogicTest id="configuration/pragmas/example_072" />
 

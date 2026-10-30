@@ -1,0 +1,81 @@
+control substitution on
+
+statement ok
+COPY (SELECT ('x,"a' || chr(10) || 'b"' || chr(13) || chr(10) || 'y,z' || chr(13) || chr(10))::BLOB)
+TO '${__TEST_DIR__}/crlf_quoted_lf.csv' (FORMAT BLOB);
+
+
+statement ok
+COPY (SELECT ('x,,"",z' || chr(13) || chr(10))::BLOB)
+TO '${__TEST_DIR__}/crlf_empty.csv' (FORMAT BLOB);
+
+
+statement ok
+COPY (SELECT ('a;b' || chr(10) || '1;2' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/semicolon_header.csv' (FORMAT BLOB);
+
+
+statement ok
+CREATE TABLE csv_two (a varchar, b varchar);
+
+
+statement ok
+COPY csv_two FROM '${__TEST_DIR__}/crlf_quoted_lf.csv' (FORMAT csv);
+
+
+query
+SELECT a, replace(b, chr(10), '|') AS b FROM csv_two ORDER BY a;
+----
+a	b
+x	a|b
+y	z
+
+
+statement ok
+CREATE TABLE csv_four (a varchar, b varchar, c varchar, d varchar);
+
+
+statement ok
+COPY csv_four FROM '${__TEST_DIR__}/crlf_empty.csv' (FORMAT csv);
+
+
+query
+SELECT a, b IS NULL AS b_null, c IS NULL AS c_null, c = '' AS c_empty, d FROM csv_four;
+----
+a	b_null	c_null	c_empty	d
+x	t	f	t	z
+
+
+statement error
+COPY csv_two FROM '${__TEST_DIR__}/semicolon_header.csv' (FORMAT csv);
+----
+db error: ERROR: CSV Error on Line: 1
+Original Line: a;b
+Expected Number of Columns: 2 Found: 1
+<slt:ignore>
+
+
+statement ok
+COPY csv_two FROM '${__TEST_DIR__}/semicolon_header.csv' (FORMAT csv, AUTO_DETECT true);
+
+
+query
+SELECT a, b FROM csv_two WHERE a = '1';
+----
+a	b
+1	2
+
+
+statement ok
+DELETE FROM csv_two;
+
+
+statement ok
+COPY csv_two FROM '${__TEST_DIR__}/semicolon_header.csv';
+
+
+query
+SELECT a, b FROM csv_two;
+----
+a	b
+1	2

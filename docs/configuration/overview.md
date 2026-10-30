@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serened shell` has other defaults for some options, such as `integer_division` (`false`), `preserve_identifier_case` (`preserve_case`) and the default schema (`main`).
+SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serened shell` has other defaults for some options, such as `integer_division` (`false`), `ieee_floating_point_ops` (`true`), `preserve_identifier_case` (`preserve_case`) and the default schema (`main`).
 
 The configuration options can be set using either the [`SET` statement](../sql/statements/set/index.md) or the [`PRAGMA` statement](../configuration/pragmas.md). They can be reset to their original values using the [`RESET` statement](../sql/statements/set/index.md#reset).
 
@@ -202,7 +202,6 @@ Planning, rewriting and the shape of query output.
 | `late_materialization_lookup_max_rows` | The maximum amount of rows in the LIMIT/TOP_N/SAMPLE for which a scan that can look up rows by their row id is late materialized through a `LOOKUP_JOIN`. `0` disables the `LOOKUP_JOIN`: late materialization then joins on the row ids, up to `late_materialization_max_rows`. | `UBIGINT` | `SESSION` | `2048` |
 | `late_materialization_max_rows` | The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization | `UBIGINT` | `SESSION` | `50` |
 | `match_recognize_max_states` | The maximum number of pattern states `MATCH_RECOGNIZE` explores for a single match before it refuses the pattern (0 = no limit). | `UBIGINT` | `SESSION` | `1000000` |
-| `max_expression_depth` | The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors. Only a superuser can change it. | `UBIGINT` | `SESSION` | `1000` |
 | `max_streaming_buffer_size` | The maximum number of bytes a streaming query result buffers (e.g. 1GB). | `VARCHAR` | `SESSION` | `10.0 MiB` |
 | `merge_join_threshold` | The maximum number of rows on either table to choose a merge join | `UBIGINT` | `SESSION` | `1000` |
 | `nested_loop_join_threshold` | The maximum number of rows on either table to choose a nested loop join | `UBIGINT` | `SESSION` | `5` |
@@ -518,7 +517,7 @@ Everything that does not fall into the groups above.
 | `geometry_always_xy` | Ignore the axis order a coordinate reference system defines and always treat coordinates as (easting, northing) instead of, for example, (latitude, longitude). | `BOOLEAN` | `SESSION` | NULL |
 | `geometry_minimum_shredding_size` | Minimum size of a rowgroup to enable GEOMETRY shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup | `BIGINT` | `GLOBAL` | `30000` |
 | `httpfs_connection_caching` | Enable connection caching for HTTP requests | `BOOLEAN` | `GLOBAL` | `true` |
-| `ieee_floating_point_ops` | Use IEEE 754 floating-point operations: dividing a floating-point number by zero returns `Infinity`, `-Infinity` or `NaN` instead of failing or returning NULL. | `BOOLEAN` | `SESSION` | `true` |
+| `ieee_floating_point_ops` | Use IEEE 754 floating-point operations: dividing a floating-point number by zero returns `Infinity`, `-Infinity` or `NaN` instead of failing or returning NULL, and math functions such as `ln` and `sqrt` return `NaN` or `±Infinity` for an argument outside their domain instead of failing. | `BOOLEAN` | `SESSION` | `false` |
 | `ignore_unknown_crs` | Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data. | `BOOLEAN` | `SESSION` | `false` |
 | `index_scan_max_count` | The maximum index scan count sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage \* total_row_count) rows match, we perform an index scan instead of a table scan. | `UBIGINT` | `GLOBAL` | `2048` |
 | `index_scan_percentage` | The index scan percentage sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage \* total_row_count) rows match, we perform an index scan instead of a table scan. | `DOUBLE` | `GLOBAL` | `0.001` |

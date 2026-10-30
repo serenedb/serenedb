@@ -133,6 +133,7 @@ struct ByWildcardNGramOptions {
   std::vector<ByPhraseOptions> grams;
   bool has_pos{false};
   std::shared_ptr<const re2::RE2> matcher;
+  std::shared_ptr<const re2::RE2> boundary_matcher;
   field_id store_field_id{irs::field_limits::invalid()};
 
   bool operator==(const ByWildcardNGramOptions& other) const noexcept {

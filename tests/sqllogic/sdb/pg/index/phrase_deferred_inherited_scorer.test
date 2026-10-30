@@ -31,8 +31,8 @@ SELECT id, round(BM25(pdi_pos_idx.tableoid)::numeric, 4) AS score FROM pdi_pos_i
 WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
 id	score
-1	0.632
-2	0.632
+1	0.6324
+2	0.6324
 
 query
 SELECT id, round(constant(pdi_pos_idx.tableoid, 2.0)::numeric, 4) AS score FROM pdi_pos_idx
@@ -40,8 +40,8 @@ WHERE ((body @@ 'quick' AND body @@ ts_phrase('quick brown'))::score('bm25(1.2, 
 ORDER BY id
 ----
 id	score
-1	0.632
-2	0.632
+1	0.6324
+2	0.6324
 
 query
 SELECT id, round(constant(pdi_text_idx.tableoid, 2.0)::numeric, 4) AS score FROM pdi_text_idx
@@ -49,8 +49,8 @@ WHERE ((body @@ 'quick' AND body @@ ts_phrase('quick brown'))::score('bm25(1.2, 
 ORDER BY id
 ----
 id	score
-1	0.632
-2	0.632
+1	0.6324
+2	0.6324
 
 query
 SELECT id, round(constant(pdi_text_idx.tableoid, 2.0)::numeric, 4) AS score FROM pdi_text_idx
@@ -58,7 +58,7 @@ WHERE ((body @@ 'fox' AND body @@ ts_phrase('quick brown'))::score('bm25(1.2, 0.
 ORDER BY id
 ----
 id	score
-1	0.632
+1	0.6324
 
 query
 EXPLAIN SELECT id, round(constant(pdi_text_idx.tableoid, 2.0)::numeric, 4) AS score FROM pdi_text_idx
@@ -100,7 +100,7 @@ WHERE ((body @@ 'fox' AND body @@ ts_phrase('quick brown'))::score('constant(3)'
 ORDER BY id
 ----
 id	score
-1	3.000
+1	3.0000
 
 query
 SELECT id, round(BM25(pdi_text_idx.tableoid)::numeric, 4) AS score FROM pdi_text_idx
@@ -108,7 +108,7 @@ WHERE ((body @@ 'fox' AND body @@ ts_phrase('quick brown'))::score('constant(3)'
 ORDER BY id
 ----
 id	score
-1	3.000
+1	3.0000
 
 query
 EXPLAIN SELECT id, round(BM25(pdi_text_idx.tableoid)::numeric, 4) AS score FROM pdi_text_idx
@@ -155,7 +155,7 @@ WHERE ((body @@ 'fox' AND body @@ ts_phrase('quick brown'))::score(NULL))::merge
 ORDER BY id
 ----
 id	score
-1	0.000
+1	0.0000
 
 query
 SELECT id, round(BM25(pdi_text_idx.tableoid)::numeric, 4) AS score FROM pdi_text_idx
@@ -163,7 +163,7 @@ WHERE ((body @@ 'fox' AND body @@ ts_phrase('quick brown'))::score(NULL))::merge
 ORDER BY id
 ----
 id	score
-1	0.000
+1	0.0000
 
 query
 EXPLAIN SELECT id, round(BM25(pdi_text_idx.tableoid)::numeric, 4) AS score FROM pdi_text_idx
@@ -209,7 +209,7 @@ WHERE body @@ 'fox' AND (body @@ 'quick' AND body @@ ts_phrase('quick brown'))::
 ORDER BY id
 ----
 id	score
-1	6.418
+1	6.4176
 
 query
 SELECT id, round(BM25(pdi_text_idx.tableoid)::numeric, 4) AS score FROM pdi_text_idx
@@ -217,7 +217,7 @@ WHERE body @@ 'fox' AND (body @@ 'quick' AND body @@ ts_phrase('quick brown'))::
 ORDER BY id
 ----
 id	score
-1	6.418
+1	6.4176
 
 query
 EXPLAIN SELECT id FROM pdi_text_idx
@@ -263,7 +263,7 @@ WHERE body @@ 'fox' AND (body @@ 'quick' AND body @@ ts_phrase('quick brown'))::
 ORDER BY id
 ----
 id	score
-1	3.050
+1	3.0500
 
 query
 SELECT id, round(constant(pdi_text_idx.tableoid, 2.0)::numeric, 4) AS score FROM pdi_text_idx
@@ -271,7 +271,7 @@ WHERE body @@ 'fox' AND (body @@ 'quick' AND body @@ ts_phrase('quick brown'))::
 ORDER BY id
 ----
 id	score
-1	3.050
+1	3.0500
 
 query
 EXPLAIN SELECT id FROM pdi_text_idx

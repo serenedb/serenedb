@@ -4,6 +4,16 @@ SELECT 42 / 0;
 db error: ERROR: division by zero
 
 
+statement error (22012)
+SELECT 42 / 0;
+
+statement error (22012)
+SELECT 42::numeric / 0;
+
+statement error (22012)
+SELECT 42::float8 / 0;
+
+
 statement error
 SELECT 42 % 0;
 ----
@@ -76,11 +86,17 @@ SELECT interval '1 day' / 0;
 db error: ERROR: division by zero
 
 
+skipif serenedb
 query
 SELECT 'NaN'::float8 / 0 AS nan8, 'NaN'::float4 / 0::float4 AS nan4;
 ----
 nan8	nan4
 NaN	NaN
+
+
+onlyif serenedb
+statement error (22012)
+SELECT 'NaN'::float8 / 0 AS nan8, 'NaN'::float4 / 0::float4 AS nan4;
 
 
 query

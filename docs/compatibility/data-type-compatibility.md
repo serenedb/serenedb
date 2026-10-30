@@ -49,7 +49,7 @@ The coordinates of the geometric types print as `float8` values do, so `point(1e
 | int8range                    | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | interval                     | 🟡            | Field restrictions are ignored: `'1 year 2 mons'::interval year` keeps the months. |
 | json                         | 🟢            |         |
-| jsonb                        | 🔴            | Use `json`. A parameter a client sends as `jsonb` is read as `json`. |
+| jsonb                        | 🟡            | A `jsonb` value is a `json` value: it keeps its text as written, where PostgreSQL normalizes key order, duplicate keys and whitespace, and the operators and functions on it, `to_jsonb` included, return `json`. A column declared `jsonb` is `jsonb` in `information_schema.columns` and `pg_attribute`. |
 | jsonpath                     | 🔴            |         |
 | line                         | 🟡            | `=` compares the coefficients, where PostgreSQL tests for the same line, so `line '{1,-1,0}' = line '{2,-2,0}'` is false. The other comparison operators, `ORDER BY`, `DISTINCT` and `GROUP BY` compare the coefficients one by one, where PostgreSQL refuses them. A column of this type cannot be indexed. |
 | lseg                         | 🟡            | The comparison operators `<`, `<=`, `>` and `>=` compare the end points one by one, where PostgreSQL compares lengths. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
@@ -57,7 +57,7 @@ The coordinates of the geometric types print as `float8` values do, so `point(1e
 | macaddr8                     | 🟢            |         |
 | money                        | 🟡            | Values read and print in the `C` locale's format, such as `$1,234.56`: there is no `lc_monetary` setting. A number compared or combined with `money`, as in `m = 5` or `COALESCE(m, 0)`, is read as an amount, where PostgreSQL raises an error. Parquet files hold an amount as a decimal number of dollars, such as `12.34`. |
 | name                         | 🟡            | A value is not cut to 63 bytes: `length(repeat('x', 70)::name)` is `70`. |
-| numeric                      | 🟡            | Without a precision, `numeric` is `numeric(18,3)` and rounds to three fractional digits. The precision is at most 38, and `NaN` is not supported. |
+| numeric                      | 🟡            | Without a precision, `numeric` holds up to 28 integer and 10 fractional digits, rounds further fractional digits and prints all ten, so `1.5::numeric` is `1.5000000000`; a column declared so is `numeric` without precision and scale in `information_schema.columns` and `pg_attribute`. The precision is at most 38, and `NaN` is not supported. |
 | nummultirange                | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits, as for `numrange`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | numrange                     | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits: `numrange(1.25, 2.5)` is `[1.250,2.500)`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | oid                          | 🟡            | Object identifiers are 64-bit: `oid` and the `reg*` types take a number above `4294967295`, such as `'4294967296'::oid`, where PostgreSQL reports it out of range. |
@@ -86,7 +86,7 @@ The coordinates of the geometric types print as `float8` values do, so `point(1e
 | regrole                      | 🟢            |         |
 | regtype                      | 🟢            |         |
 | text                         | 🟢            |         |
-| tid                          | 🟡            | Tables have no `ctid` column. |
+| tid                          | 🟢            |         |
 | time                         | 🟡            | A precision such as `time(2)` is not accepted. |
 | timestamp                    | 🟡            | A precision keeps milliseconds or microseconds: `timestamp(2)` keeps three fractional digits. |
 | timestamptz                  | 🟡            | A precision such as `timestamptz(2)` is not accepted. |

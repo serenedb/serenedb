@@ -177,7 +177,7 @@ Table macros as well as scalar macros defined using scalar subqueries cannot be 
 
 ### Recursive Functions
 
-Defining recursive functions is not supported. A recursive macro expands until it exceeds the expression-depth limit (`max_expression_depth`, `1000` by default). For example, the following macro – supposed to compute the *n*th number of the Fibonacci sequence – fails (the example lowers `max_expression_depth` so the failure is immediate):
+Defining recursive functions is not supported. A recursive macro expands until the expansion runs out of stack, and the statement fails with `stack depth limit exceeded`. For example, the following macro – supposed to compute the *n*th number of the Fibonacci sequence – fails:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_031" />
 

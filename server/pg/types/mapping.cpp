@@ -21,9 +21,12 @@
 #include "pg/types/mapping.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/match.h>
 
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/common/extension_type_info.hpp>
+#include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/expression/type_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
@@ -102,7 +105,7 @@ constexpr PgTypeMapping kMappings[] = {
   {kPgDependencies, &PG_DEPENDENCIES, true},
   {kRegconfig, &REGCONFIG, true},
   {kRegdictionary, &REGDICTIONARY, true},
-  {kJsonb, []() -> duckdb::LogicalType { return duckdb::LogicalType::JSON(); }, false},
+  {kJsonb, []() -> duckdb::LogicalType { return duckdb::LogicalType::JSON(); }, true},
   {kInt4Range, &INT4RANGE, true},
   {kNumrange, &NUMRANGE, true},
   {kTsrange, &TSRANGE, true},
@@ -177,6 +180,61 @@ std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
     return std::nullopt;
   }
   return it->second.GetValue<uint64_t>();
+}
+
+const duckdb::TypeExpression* AsTypeExpression(
+  const duckdb::ParsedExpression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::TYPE) {
+    return nullptr;
+  }
+  return &expr.Cast<duckdb::TypeExpression>();
+}
+
+bool Names(const duckdb::TypeExpression& type, std::string_view name) {
+  return type.GetCatalog().empty() && type.GetSchema().empty() &&
+         absl::EqualsIgnoreCase(type.GetTypeName().GetIdentifierName(), name);
+}
+
+int32_t DeclaredLength(const duckdb::TypeExpression& type) {
+  const auto& modifiers = type.GetChildren();
+  int64_t length = 0;
+  if (modifiers.size() != 1 ||
+      modifiers[0]->GetExpressionClass() != duckdb::ExpressionClass::CONSTANT ||
+      !modifiers[0]
+         ->Cast<duckdb::ConstantExpression>()
+         .GetLiteral()
+         .TryGetInt64(length) ||
+      length < 1 || length > kMaxAttrSize) {
+    return -1;
+  }
+  return static_cast<int32_t>(length) + kVarHdrSz;
+}
+
+struct DeclaredType {
+  int32_t oid;
+  int32_t typmod;
+};
+
+std::optional<DeclaredType> DeclaredBuiltin(const duckdb::TypeExpression& type,
+                                            const duckdb::LogicalType& bound) {
+  if (bound.id() == TypeId::VARCHAR && !bound.HasAlias()) {
+    if (Names(type, "varchar")) {
+      return DeclaredType{kVarchar, DeclaredLength(type)};
+    }
+    if (Names(type, "bpchar")) {
+      return DeclaredType{kBpchar, DeclaredLength(type)};
+    }
+    return std::nullopt;
+  }
+  if (bound.IsJSONType() && Names(type, "jsonb")) {
+    return DeclaredType{kJsonb, -1};
+  }
+  if (bound.id() == TypeId::DECIMAL && !bound.HasAlias() &&
+      type.GetChildren().empty() &&
+      (Names(type, "decimal") || Names(type, "numeric"))) {
+    return DeclaredType{kNumeric, -1};
+  }
+  return std::nullopt;
 }
 
 const BuiltinType* FindAliasedType(const duckdb::LogicalType& type,
@@ -550,6 +608,32 @@ ColumnType DescribeColumnType(const duckdb::LogicalType& type) {
     result.len = 4;
     result.byval = true;
     result.storage = 'p';
+  }
+  return result;
+}
+
+ColumnType DescribeColumnType(const duckdb::LogicalType& type,
+                              const duckdb::LogicalType& declared) {
+  auto result = DescribeColumnType(type);
+  if (declared.id() != TypeId::UNBOUND) {
+    return result;
+  }
+  const auto* expr =
+    AsTypeExpression(*duckdb::UnboundType::GetTypeExpression(declared));
+  const auto* bound = &type;
+  bool array = false;
+  while (expr && bound->id() == TypeId::LIST && Names(*expr, "list") &&
+         expr->GetChildren().size() == 1) {
+    expr = AsTypeExpression(*expr->GetChildren()[0]);
+    bound = &duckdb::ListType::GetChildType(*bound);
+    array = true;
+  }
+  if (!expr) {
+    return result;
+  }
+  if (const auto builtin = DeclaredBuiltin(*expr, *bound)) {
+    result.oid = array ? FindBuiltinType(builtin->oid)->array : builtin->oid;
+    result.typmod = builtin->typmod;
   }
   return result;
 }

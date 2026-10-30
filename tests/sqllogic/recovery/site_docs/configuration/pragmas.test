@@ -542,6 +542,23 @@ Did you mean "<slt:ignore>"?
 
 # DOCS_TEST_BODY
 
+statement error
+SELECT 1.0 / 0.0 AS a;
+----
+db error: ERROR: division by zero
+
+
+# DOCS_TEST: example_064
+
+# DOCS_TEST_BODY
+
+statement ok
+SET ieee_floating_point_ops = true;
+
+# DOCS_TEST: example_072
+
+# DOCS_TEST_BODY
+
 query
 SELECT
     1.0 / 0.0 AS a,
@@ -550,22 +567,6 @@ SELECT
 ----
 a	b	c
 Infinity	NaN	-Infinity
-
-# DOCS_TEST: example_064
-
-# DOCS_TEST_BODY
-
-statement ok
-SET ieee_floating_point_ops = false;
-
-# DOCS_TEST: example_072
-
-# DOCS_TEST_BODY
-
-statement error
-SELECT 1.0 / 0.0 AS a;
-----
-db error: ERROR: Division by zero in expression (1 // 0). Use TRY(...) to return NULL for this expression, or SET error_on_division_by_zero=false to return NULL for all divisions by zero.
 
 
 # DOCS_TEST: example_067

@@ -157,8 +157,8 @@ WHERE (body @@ (ts_phrase('quick') ## ts_starts_with('br')))::score('constant(1)
 ORDER BY id
 ----
 id	score
-1	1.117
-2	1.117
+1	1.1171
+2	1.1171
 
 query
 SELECT id, round(BM25(pdc_text_idx.tableoid)::numeric, 4) AS score FROM pdc_text_idx
@@ -167,8 +167,8 @@ WHERE (body @@ (ts_phrase('quick') ## ts_starts_with('br')))::score('constant(1)
 ORDER BY id
 ----
 id	score
-1	1.117
-2	1.117
+1	1.1171
+2	1.1171
 
 query
 EXPLAIN SELECT id, round(BM25(pdc_text_idx.tableoid)::numeric, 4) AS score FROM pdc_text_idx

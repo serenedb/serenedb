@@ -25,12 +25,12 @@
 
 #include <duckdb/common/optional.hpp>
 #include <duckdb/common/random_engine.hpp>
+#include <duckdb/common/stack_depth.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/main/settings.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -187,13 +187,8 @@ duckdb::unique_ptr<duckdb::FunctionData> ArrayFillBind(
   const auto element = input.GetArguments()[0]->GetReturnType();
   CheckPolymorphicType(element);
   const auto ndims = BoundDimensionCount(input);
-  const auto max_dims =
-    duckdb::Settings::Get<duckdb::MaxExpressionDepthSetting>(
-      input.GetClientContext());
-  if (ndims > max_dims) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-                    ERR_MSG("number of array dimensions (", ndims,
-                            ") exceeds the maximum allowed (", max_dims, ")"));
+  if (ndims > duckdb::StackDepth::NestingLimit()) {
+    duckdb::StackDepth::Throw();
   }
   auto type = element;
   for (size_t i = 0; i < ndims; ++i) {

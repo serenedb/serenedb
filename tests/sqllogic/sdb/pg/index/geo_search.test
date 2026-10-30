@@ -1597,9 +1597,9 @@ WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.
 ORDER BY id
 ----
 id	score
-1	1.251
-3	1.251
-4	1.293
+1	1.2507
+3	1.2507
+4	1.2931
 
 query
 SELECT id, round(BM25(places_idx.tableoid)::numeric, 4) AS score
@@ -1608,9 +1608,9 @@ WHERE (ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37
 ORDER BY id
 ----
 id	score
-1	1.251
-3	1.251
-4	1.293
+1	1.2507
+3	1.2507
+4	1.2931
 
 statement ok
 CREATE TABLE geo_pt_s2 (id INTEGER PRIMARY KEY, geo JSON)

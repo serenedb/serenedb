@@ -1,0 +1,161 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY wbb_dict AS
+    generate_wildcard_ngrams(split_text_csv(' '), 3)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wbb_pos_dict AS
+    generate_wildcard_ngrams(split_text_csv(' '), 3)
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE wbb_t (id INTEGER PRIMARY KEY, v VARCHAR)
+
+statement ok
+INSERT INTO wbb_t VALUES
+    (1, 'bcd'),
+    (2, 'xbcdx'),
+    (3, 'cd')
+
+statement ok
+CREATE INDEX wbb_idx ON wbb_t USING inverted (id, v wbb_dict)
+
+statement ok
+CREATE INDEX wbb_pos_idx ON wbb_t USING inverted (id, v wbb_pos_dict)
+
+statement ok
+VACUUM (REFRESH_TABLE) wbb_t
+
+query
+SELECT id FROM wbb_idx WHERE v @@ ts_like('b%') ORDER BY id
+----
+id
+1
+
+statement ok
+INSERT INTO wbb_t VALUES
+    (4, 'a' || chr(31) || 'bcd'),
+    (5, 'bcd' || chr(31) || 'e'),
+    (6, 'a' || chr(31) || 'bcd' || chr(31) || 'e'),
+    (7, chr(31) || 'cd')
+
+statement ok
+VACUUM (REFRESH_TABLE) wbb_t
+
+query
+SELECT list_contains(generate_wildcard_ngrams('bcd', 3), chr(31)) AS plain,
+       list_contains(generate_wildcard_ngrams('a' || chr(31) || 'bcd', 3), chr(31)) AS marked
+----
+plain	marked
+f	t
+
+query
+SELECT id FROM wbb_t WHERE v LIKE 'b%' ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM wbb_idx WHERE v @@ ts_like('b%') ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM wbb_pos_idx WHERE v @@ ts_like('b%') ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM wbb_idx WHERE v LIKE 'b%' ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM wbb_t WHERE v LIKE '%d' ORDER BY id
+----
+id
+1
+3
+4
+7
+
+query
+SELECT id FROM wbb_idx WHERE v @@ ts_like('%d') ORDER BY id
+----
+id
+1
+3
+4
+7
+
+query
+SELECT id FROM wbb_pos_idx WHERE v @@ ts_like('%d') ORDER BY id
+----
+id
+1
+3
+4
+7
+
+query
+SELECT id FROM wbb_pos_idx WHERE v @@ ts_like('bcd') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM wbb_pos_idx WHERE v @@ ts_like('cd') ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM wbb_idx WHERE v @@ ts_like('%bcd%') ORDER BY id
+----
+id
+1
+2
+4
+5
+6
+
+query
+SELECT id FROM wbb_idx WHERE v @@ ts_regexp('(?s)b.*') ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM wbb_idx WHERE v @@ ts_like('%' || chr(31) || 'b%') ORDER BY id
+----
+id
+4
+6
+
+statement ok
+DELETE FROM wbb_t WHERE id > 3
+
+statement ok
+VACUUM (REFRESH_TABLE) wbb_t
+
+query
+SELECT id FROM wbb_pos_idx WHERE v @@ ts_like('b%') ORDER BY id
+----
+id
+1
+
+statement ok
+DROP TABLE wbb_t
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wbb_pos_dict
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wbb_dict

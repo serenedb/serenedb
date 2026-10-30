@@ -42,7 +42,6 @@ ORDER BY attnum
 attname	type
 c_bit	bit varying
 c_bool	boolean
-c_bpchar	text
 c_cardinal_number	information_schema.cardinal_number
 c_char	"char"
 c_character_data	information_schema.character_data
@@ -51,7 +50,6 @@ c_float8	double precision
 c_int2	smallint
 c_int4	integer
 c_int8	bigint
-c_numeric	numeric(18,3)
 c_sql_identifier	information_schema.sql_identifier
 c_time	time without time zone
 c_time_stamp	information_schema.time_stamp
@@ -59,7 +57,7 @@ c_timestamp	timestamp without time zone
 c_timestamptz	timestamp with time zone
 c_timetz	time with time zone
 c_varbit	bit varying
-c_varchar	text
+c_varchar	character varying
 c_yes_or_no	information_schema.yes_or_no
 
 

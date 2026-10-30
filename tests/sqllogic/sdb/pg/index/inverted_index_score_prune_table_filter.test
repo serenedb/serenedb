@@ -276,11 +276,11 @@ WHERE (body @@ 'w2' OR body @@ 'w4' OR body @@ 'w6') AND n = 1
 ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 5;
 ----
 score
-2.014
-2.014
-2.014
-2.014
-2.014
+2.0143
+2.0143
+2.0143
+2.0143
+2.0143
 
 
 query
@@ -290,7 +290,7 @@ SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score
   ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
 ----
 count	bool_and	round	round
-100	t	1.765	2.014
+100	t	1.7652	2.0143
 
 
 query
@@ -300,7 +300,7 @@ SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score
   ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
 ----
 count	bool_and	round	round
-100	t	1.150	1.204
+100	t	1.1496	1.2040
 
 
 query
@@ -310,7 +310,7 @@ SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score
   ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
 ----
 count	bool_and	round	round
-100	t	0.480	0.491
+100	t	0.4799	0.4908
 
 
 query
@@ -320,7 +320,7 @@ SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score
   ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
 ----
 count	bool_and	round	round
-100	t	1.765	2.014
+100	t	1.7652	2.0143
 
 
 statement ok
@@ -338,7 +338,7 @@ SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score
   ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
 ----
 count	bool_and	round	round
-100	t	1.765	2.014
+100	t	1.7652	2.0143
 
 
 query
@@ -370,7 +370,7 @@ SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score
   ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
 ----
 count	bool_and	round	round
-100	t	1.647	1.720
+100	t	1.6473	1.7197
 
 
 statement ok
@@ -383,11 +383,11 @@ WHERE (body @@ 'w2' OR body @@ 'w4' OR body @@ 'w6') AND n = 1
 ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 5;
 ----
 score
-2.014
-2.014
-2.014
-2.014
-2.014
+2.0143
+2.0143
+2.0143
+2.0143
+2.0143
 
 
 query
@@ -397,7 +397,7 @@ SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score
   ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
 ----
 count	bool_and	round	round
-100	t	1.765	2.014
+100	t	1.7652	2.0143
 
 
 query
@@ -407,7 +407,7 @@ SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score
   ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
 ----
 count	bool_and	round	round
-100	t	1.150	1.204
+100	t	1.1496	1.2040
 
 
 query
@@ -417,7 +417,7 @@ SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score
   ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
 ----
 count	bool_and	round	round
-100	t	0.480	0.491
+100	t	0.4799	0.4908
 
 
 query
@@ -427,7 +427,7 @@ SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score
   ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
 ----
 count	bool_and	round	round
-100	t	1.765	2.014
+100	t	1.7652	2.0143
 
 
 query
@@ -437,7 +437,7 @@ SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score
   ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
 ----
 count	bool_and	round	round
-100	t	1.647	1.720
+100	t	1.6473	1.7197
 
 
 statement ok

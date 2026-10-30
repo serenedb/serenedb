@@ -1,0 +1,156 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA atssr_a;
+
+
+statement ok
+CREATE SCHEMA atssr_b;
+
+
+statement ok
+CREATE TABLE atssr_a.checkpointed (id INT PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO atssr_a.checkpointed VALUES (1, 'x');
+
+
+statement ok
+ALTER TABLE atssr_a.checkpointed SET SCHEMA atssr_b;
+
+
+statement ok
+FORCE CHECKPOINT;
+
+
+statement ok
+CREATE TABLE atssr_a.logged (id INT PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE INDEX atssr_logged_v_idx ON atssr_a.logged (v);
+
+
+statement ok
+INSERT INTO atssr_a.logged VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+ALTER TABLE atssr_a.logged SET SCHEMA atssr_b;
+
+
+statement ok
+INSERT INTO atssr_b.logged VALUES (3, 'c');
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_schema IN ('atssr_a', 'atssr_b')
+ORDER BY table_schema, table_name;
+----
+table_schema	table_name
+atssr_b	checkpointed
+atssr_b	logged
+
+
+connection after_crash
+query
+SELECT id, v FROM atssr_b.logged ORDER BY id;
+----
+id	v
+1	a
+2	b
+3	c
+
+
+connection after_crash
+query
+SELECT schemaname, indexname FROM pg_indexes WHERE indexname = 'atssr_logged_v_idx';
+----
+schemaname	indexname
+atssr_b	atssr_logged_v_idx
+
+
+connection after_crash
+query
+SELECT id FROM atssr_b.logged WHERE v = 'b';
+----
+id
+2
+
+
+connection after_crash
+statement ok
+FORCE CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_checkpoint
+query
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_schema IN ('atssr_a', 'atssr_b')
+ORDER BY table_schema, table_name;
+----
+table_schema	table_name
+atssr_b	checkpointed
+atssr_b	logged
+
+
+connection after_checkpoint
+query
+SELECT id, v FROM atssr_b.checkpointed ORDER BY id;
+----
+id	v
+1	x
+
+
+connection after_checkpoint
+query
+SELECT schemaname, indexname FROM pg_indexes WHERE indexname = 'atssr_logged_v_idx';
+----
+schemaname	indexname
+atssr_b	atssr_logged_v_idx
+
+
+connection after_checkpoint
+statement ok
+INSERT INTO atssr_b.logged VALUES (4, 'd');
+
+
+connection after_checkpoint
+query
+SELECT count(*) AS n FROM atssr_b.logged;
+----
+n
+4

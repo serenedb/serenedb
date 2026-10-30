@@ -293,7 +293,7 @@
     {"cat":"sentence","q":"The default is selected from the file extension (e.g., .parquet results in a Parquet file being written/read).","expect":["/docs/sql/statements/copy"]},
     {"cat":"sentence","q":"The CREATE INDEX clause does not support the OR REPLACE modifier.","expect":["/docs/sql/statements/create_index"]},
     {"cat":"sentence","q":"Generated columns — index a generated column the same as any other column (index the column itself, not its defining expression).","expect":["/docs/sql/statements/create_index/inverted"]},
-    {"cat":"sentence","q":"Use \"SET max_expression_depth TO x\" to increase the maximum expression depth.","expect":["/docs/sql/statements/create_macro"]},
+    {"cat":"sentence","q":"A recursive macro expands until the expansion runs out of stack, and the statement fails with stack depth limit exceeded.","expect":["/docs/sql/statements/create_macro"]},
     {"cat":"sentence","q":"REPLICATION, BYPASSRLS, and SYSID are accepted for PostgreSQL compatibility and have no effect.","expect":["/docs/sql/statements/create_role"]},
     {"cat":"sentence","q":"The CREATE SCHEMA statement creates a schema in the catalog.","expect":["/docs/sql/statements/create_schema"]},
     {"cat":"sentence","q":"Warning When using the command line client, the CREATE SECRET statements are stored in your SereneDB history as plain text.","expect":["/docs/sql/statements/create_secret"]},

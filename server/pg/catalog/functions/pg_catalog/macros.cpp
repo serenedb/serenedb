@@ -441,6 +441,7 @@ constexpr SystemMacro kMacros[] = {
         SELECT NULL::bigint, NULL::pg_lsn, NULL::pg_lsn WHERE false;
       END;)"},
   {"pg_catalog", "pg_my_temp_schema", "() AS 0::oid"},
+  {"pg_catalog", "to_jsonb", "(v) AS to_json(v)"},
   {"pg_catalog", "make_interval",
    R"((years INTEGER := 0, months INTEGER := 0, weeks INTEGER := 0,
        days INTEGER := 0, hours INTEGER := 0, mins INTEGER := 0,

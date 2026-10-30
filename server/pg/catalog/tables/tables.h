@@ -71,8 +71,10 @@ inline std::span<const SystemSqlColumn> SystemColumns(
 }
 
 inline ColumnType DescribeColumn(const duckdb::LogicalType& type,
+                                 const duckdb::LogicalType* declared,
                                  const SystemSqlColumn* system) {
-  auto described = DescribeColumnType(type);
+  auto described =
+    declared ? DescribeColumnType(type, *declared) : DescribeColumnType(type);
   if (system) {
     described.collation = system->collation;
     described.ndims = system->ndims;

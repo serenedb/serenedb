@@ -28,7 +28,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Foreign Keys            | Yes           | Enforced; over-eager on some `UPDATE`s |
 | Named Constraints       | Yes           |  |
 | Exclusion Constraints   | No            | See [issue](https://github.com/serenedb/serenedb/issues/205) |
-| System Columns          | No            | See [issue](https://github.com/serenedb/serenedb/issues/202) |
+| System Columns          | Partial       | Every table has `tableoid`, `ctid`, `xmin`, `xmax`, `cmin` and `cmax`. `ctid` identifies a row and orders rows by their position, but its block and offset don't name storage pages, and the row a `ctid` names can move after `VACUUM` or a checkpoint. `xmin`, `xmax`, `cmin` and `cmax` are always `0`. |
 
 ### Table Modification (ALTER TABLE)
 | Feature            | Support State | Details                                                      |
@@ -45,6 +45,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | COLUMN TYPE        | Yes           | Not on a column that has a `CHECK` constraint |
 | RENAME COLUMN      | Yes           |  |
 | RENAME TO          | Yes           |  |
+| SET SCHEMA         | Partial       | Moves a table with its indexes and owned sequences; not a view, a sequence or a search table, nor a table that a view, a function, a trigger or another table uses |
 
 ### Privileges
 | Feature               | Support State | Details                                                      |
@@ -563,7 +564,7 @@ An operator with a string literal on one side, as in `point '(1,2)' <-> '(3,4)'`
 
 Most of the PostgreSQL `json` functions below are supported. SereneDB also provides JSON access through the [`JSON` column type](../data_import_and_export/json/json_type.md) and SereneDB-style functions -- `json_extract`, `json_extract_string`, `json_keys`, `json_type`, `json_valid` and more (see [JSON Functions](../data_import_and_export/json/json_functions.md)). The PostgreSQL accessor operators `->`, `->>`, `#>` and `#>>` are supported.
 
-Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jsonb`-only operators are unavailable. A query parameter a client sends as `jsonb` is read as `JSON`.
+The `jsonb` type is a `json` value that keeps its text as written (see [`jsonb`](./data-type-compatibility.md)); the `jsonb_*` functions and the `jsonb`-only operators are unavailable. A query parameter a client sends as `jsonb` is read as `JSON`.
 
 | Feature | Support State | Details |
 |---|---|---|
@@ -582,7 +583,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | `@?` | No | Use `json_exists()` |
 | `@@` | No | No JSON-path predicate |
 | to_json | Yes |  |
-| to_jsonb | No | Use `to_json` |
+| to_jsonb | Yes | Returns `json`, as `to_json` does |
 | array_to_json | Yes |  |
 | json_array | Yes |  |
 | row_to_json | Yes |  |
@@ -649,7 +650,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | array_append       | Yes           |                                |
 | array_cat          | Yes           |                                |
 | array_dims         | Yes           |                                |
-| array_fill         | Yes           | Lower bounds must be 1; dimensions taken from a column fill one-dimensional arrays unless written as `ARRAY[...]`; up to `max_expression_depth` dimensions (1000 by default) |
+| array_fill         | Yes           | Lower bounds must be 1; dimensions taken from a column fill one-dimensional arrays unless written as `ARRAY[...]`; as many dimensions as the stack holds, where more fail with `stack depth limit exceeded` |
 | array_lower        | Yes           |                                |
 | array_ndims        | Yes           |                                |
 | array_position     | Yes           |                                |
@@ -855,19 +856,17 @@ Even where a feature is supported, SereneDB intentionally diverges from PostgreS
 
 ### Floating-Point Arithmetic
 
-SereneDB and PostgreSQL handle floating-point arithmetic differently for division by zero. SereneDB conforms to the [IEEE Standard for Floating-Point Arithmetic (IEEE 754)](https://en.wikipedia.org/wiki/IEEE_754) for both division by zero and operations involving infinity values. PostgreSQL returns an error for division by zero but aligns with IEEE 754 for handling infinity values. In SereneDB:
+A division by zero raises `division by zero`, as in PostgreSQL, and operations involving infinity values follow the [IEEE Standard for Floating-Point Arithmetic (IEEE 754)](https://en.wikipedia.org/wiki/IEEE_754) on both engines. One case differs: `'NaN'::float8 / 0` raises the error too, where PostgreSQL returns `NaN`. [`SET ieee_floating_point_ops = true`](../configuration/pragmas.md#ieee-floating-point-operation-semantics) makes a division by zero return `Infinity`, `NaN` or `-Infinity` instead. In SereneDB:
 
 <SqlLogicTest id="sql/dialect/postgresql_compatibility/example_001" />
 
-On an attached PostgreSQL, the same division by zero raises an error instead (operations involving infinity follow IEEE 754 on both engines):
+On an attached PostgreSQL:
 
 <SqlLogicTest id="compatibility/postgresql_comparisons_pgscan/example_006" />
 
-Mathematical functions follow IEEE 754 the same way: an argument outside a function's domain, or a result too large for `double precision`, gives `NaN` or `±Infinity` where PostgreSQL raises an error:
+Mathematical functions raise PostgreSQL's errors for an argument outside their domain, such as `ln(0)` or `sqrt(-1)`. A result too large for `double precision`, such as `exp(1000)`, is `Infinity`, where PostgreSQL reports an overflow. With `ieee_floating_point_ops` on, an argument outside the domain gives `NaN` or `±Infinity` too:
 
 <SqlLogicTest id="sql/dialect/postgresql_compatibility/example_017" />
-
-The two-argument `log(b, x)` raises an error for a zero or negative argument, as in PostgreSQL.
 
 ### Integer Division Operator (`//`)
 

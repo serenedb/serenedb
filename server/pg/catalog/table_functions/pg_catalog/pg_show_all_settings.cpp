@@ -166,9 +166,7 @@ class PgShowAllSettings final : public SystemTableScan<kPgShowAllSettingsSql> {
     Col<"category">(
       [](const auto&) { return std::string_view{"Customized Options"}; }),
     Col<"context">([](const auto& row) {
-      return std::string_view{
-        IsUnchangeableSetting(row.name.GetIdentifierName()) ? "internal"
-                                                            : "user"};
+      return SettingContext(row.name.GetIdentifierName());
     }),
     Col<"vartype">([](const auto& row) {
       return VarType(row.option ? duckdb::DBConfig::ParseLogicalType(

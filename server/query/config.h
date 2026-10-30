@@ -83,6 +83,8 @@ bool IsUnchangeableSetting(std::string_view name);
 void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name,
                            duckdb::SetScope scope, bool is_set);
 
+std::string_view SettingContext(std::string_view name);
+
 bool IsReadableSetting(duckdb::ClientContext& ctx, std::string_view name);
 
 class Config {

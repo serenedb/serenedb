@@ -28,6 +28,7 @@
 #include <duckdb/common/allocator.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <limits>
 #include <memory>
@@ -100,11 +101,18 @@ bool AlmostEqual(irs::score_t lhs, irs::score_t rhs) {
     testing::internal::FloatingPoint<irs::score_t>{rhs});
 }
 
+bool HasExpansion(doc_id_t i) noexcept { return Chance(7, i, 300); }
+
+std::string ExpansionTerm(doc_id_t i) {
+  return absl::StrCat("pfx", Mix(uint64_t{i} * 31 + 7) % 200);
+}
+
 struct Shape {
   std::vector<std::string_view> must;
   std::vector<std::string_view> must_not;
   std::vector<std::vector<std::string_view>> any;
   std::vector<std::string_view> should;
+  std::vector<std::string_view> must_not_prefixes;
 };
 
 class PrunedTopTest : public tests::IndexTestBase {
@@ -129,6 +137,9 @@ class PrunedTopTest : public tests::IndexTestBase {
       }
       for (auto n = Padding(i); n != 0; --n) {
         absl::StrAppend(&text, " pad");
+      }
+      if (HasExpansion(i)) {
+        absl::StrAppend(&text, " ", ExpansionTerm(i));
       }
       body->value(text);
       ASSERT_TRUE(Insert(*writer, doc));
@@ -205,13 +216,21 @@ class PrunedTopTest : public tests::IndexTestBase {
     SCOPED_TRACE(absl::StrCat("+", absl::StrJoin(shape.must, " +"), " -",
                               absl::StrJoin(shape.must_not, " -"), " any ",
                               shape.any.size(), " ",
-                              absl::StrJoin(shape.should, " ")));
+                              absl::StrJoin(shape.should, " "), " -",
+                              absl::StrJoin(shape.must_not_prefixes, "* -")));
     irs::BooleanFilter filter;
     for (const auto term : shape.must) {
       filter.Add(Clause(term), irs::Occur::Must);
     }
     for (const auto term : shape.must_not) {
       filter.Add(Clause(term), irs::Occur::MustNot);
+    }
+    for (const auto prefix : shape.must_not_prefixes) {
+      auto excluded = std::make_unique<irs::ByPrefix>();
+      *excluded->mutable_field_id() = kBodyId;
+      excluded->mutable_options()->term =
+        irs::bstring{irs::ViewCast<irs::byte_type>(prefix)};
+      filter.Add(std::move(excluded), irs::Occur::MustNot);
     }
     for (const auto term : shape.should) {
       filter.Add(Clause(term), irs::Occur::Should);
@@ -359,6 +378,19 @@ TEST_P(PrunedTopTest, unions_with_exclusions) {
          {.must_not = {"mid"}, .should = {"sparse", "half"}},
          {.must_not = {"holes"}, .should = {"rare", "dense", "run"}},
          {.must_not = {"rare", "cluster"}, .should = {"mid", "dense"}},
+       }) {
+    Check(shape);
+  }
+}
+
+TEST_P(PrunedTopTest, prefix_exclusions) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {.should = {"mid", "dense"}, .must_not_prefixes = {"pfx"}},
+         {.should = {"rare", "half", "sparse"}, .must_not_prefixes = {"pfx"}},
+         {.must = {"mid", "dense"}, .must_not_prefixes = {"pfx"}},
+         {.must = {"half"}, .must_not_prefixes = {"pfx1"}},
+         {.must = {"dense", "half"}, .must_not_prefixes = {"pfx"}},
        }) {
     Check(shape);
   }

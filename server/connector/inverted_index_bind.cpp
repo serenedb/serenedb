@@ -1042,7 +1042,9 @@ void ValidateInvertedIndexKey(std::string_view label,
 
 // An opclass names a dictionary of the index's own schema first -- the index
 // and its dictionary are created together and that schema need not be on the
-// reader's search path -- and otherwise resolves like any other name.
+// reader's search path -- and otherwise resolves like any other name. A
+// temporary schema holds no dictionaries: its indexes use the session
+// database's.
 duckdb::optional_ptr<TokenizerCatalogEntry> ResolveOpclassTokenizer(
   duckdb::ClientContext& context, duckdb::SchemaCatalogEntry& schema,
   std::string_view name) {
@@ -1052,7 +1054,9 @@ duckdb::optional_ptr<TokenizerCatalogEntry> ResolveOpclassTokenizer(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
                             duckdb::QualifiedName::Parse(name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!dict || &dict->ParentCatalog() != &schema.ParentCatalog()) {
+  if (!dict ||
+      &dict->ParentCatalog() !=
+        catalog::DictionaryCatalog(context, schema.ParentCatalog()).get()) {
     return nullptr;
   }
   return &dict->Cast<TokenizerCatalogEntry>();

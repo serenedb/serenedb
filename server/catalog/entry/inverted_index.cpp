@@ -53,6 +53,7 @@
 #include <string>
 
 #include "catalog/catalog.h"
+#include "catalog/entry/entries_of.h"
 #include "catalog/entry/job.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
@@ -308,16 +309,33 @@ const irs::AnnInfo* InvertedIndexConfig::FindAnn(
   return nullptr;
 }
 
+duckdb::optional_ptr<duckdb::Catalog> DictionaryCatalog(
+  duckdb::ClientContext& context, duckdb::Catalog& catalog) {
+  if (catalog.GetAttached().IsTemporary()) {
+    return DefaultSereneDBCatalog(context).get();
+  }
+  return catalog;
+}
+
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
                                  duckdb::Catalog& catalog,
                                  const InvertedIndexConfig& config)
   : _context{&context} {
-  auto& serene = catalog.Cast<SereneDBCatalog>();
+  const bool temporary = catalog.GetAttached().IsTemporary();
+  auto dictionaries = DictionaryCatalog(context, catalog);
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
     if (field.HasTextDictionary()) {
       const auto dict =
-        serene.FindIn<TokenizerCatalogEntry>(&context, field.text_dictionary);
+        dictionaries
+          ? dictionaries->Cast<SereneDBCatalog>().FindIn<TokenizerCatalogEntry>(
+              &context, field.text_dictionary)
+          : nullptr;
+      if (!dict && temporary) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("text search dictionary with OID ",
+                                field.text_dictionary, " does not exist"));
+      }
       if (!dict) {
         continue;
       }
@@ -530,7 +548,8 @@ InvertedIndexEntry::InvertedIndexEntry(
   duckdb::CreateIndexInfo& info,
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table)
   : duckdb::DuckIndexEntry{catalog, schema, info, DataTableInfoOf(table)},
-    _relation_name{info.table} {
+    _relation_name{info.table},
+    _tablespace{info.tablespace_oid} {
   if (table && !table->IsDuckTable()) {
     _search_table = table->Cast<SearchTableEntry>().Storage();
   }
@@ -545,6 +564,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo() const {
   auto info = duckdb::IndexCatalogEntry::GetInfo();
   info->Cast<duckdb::CreateIndexInfo>().options.insert_or_assign(
     kPayloadOption, Pack(ToPersisted()));
+  info->tablespace_oid = _tablespace;
   return info;
 }
 
@@ -776,20 +796,10 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
 
 std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(
   duckdb::DuckCatalog& catalog) {
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  catalog.ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
-  std::vector<duckdb::reference<InvertedIndexEntry>> indexes;
-  for (auto& schema : schemas) {
-    schema.get().Scan(
-      duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        if (connector::IsInvertedIndex(
-              entry.Cast<duckdb::IndexCatalogEntry>())) {
-          indexes.emplace_back(entry.Cast<InvertedIndexEntry>());
-        }
-      });
-  }
-  return indexes;
+  const auto inverted = [](duckdb::CatalogEntry& entry) {
+    return connector::IsInvertedIndex(entry.Cast<duckdb::IndexCatalogEntry>());
+  };
+  return EntriesOf<InvertedIndexEntry>(catalog, inverted);
 }
 
 }  // namespace sdb::catalog

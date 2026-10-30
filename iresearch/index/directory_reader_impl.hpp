@@ -27,7 +27,8 @@
 #include "iresearch/index/composite_reader_impl.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/segment_reader.hpp"
-#include "iresearch/store/directory_attributes.hpp"
+#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
@@ -68,7 +69,7 @@ class DirectoryReaderImpl final
                       const IndexReaderOptions& opts, DirectoryMeta&& meta,
                       ReadersType&& readers);
 
-  const Directory& _dir;
+  Directory _dir;
   FileRefs _file_refs;
   DirectoryMeta _meta;
   IndexReaderOptions _opts;

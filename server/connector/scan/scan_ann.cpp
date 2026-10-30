@@ -238,7 +238,7 @@ void PublishHits(ScanGlobalState& g, AnnLocalState& l) {
   }
 }
 
-void Merge(ScanGlobalState& g) {
+void Merge(ScanGlobalState& g, AnnLocalState& l) {
   auto& t = g.topk;
   auto& a = g.ann;
   if (!g.has_lookup_filter) {
@@ -246,7 +246,7 @@ void Merge(ScanGlobalState& g) {
       absl::MutexLock lock{&a.best_mutex};
       t.answer.assign(a.best.begin(), a.best.end());
     }
-    PlanFetch(g);
+    PlanFetch(g, l);
     return;
   }
   {
@@ -258,7 +258,7 @@ void Merge(ScanGlobalState& g) {
   t.answer.assign(
     t.hits.begin(),
     t.hits.begin() + std::min<size_t>(t.hits.size(), t.verify_first));
-  PlanFetch(g);
+  PlanFetch(g, l);
 }
 
 std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, RankedLocalState& l,
@@ -316,7 +316,7 @@ void FillShortAnswer(ScanGlobalState& g, RankedLocalState& l) {
   }
   t.answer = RankExactly(g, l, t.limit);
   t.answer.resize(std::min<size_t>(t.answer.size(), t.limit));
-  PlanFetch(g);
+  PlanFetch(g, l);
 }
 
 }  // namespace
@@ -354,6 +354,7 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
     verified += take;
     SortByAddress(hits);
     const auto units = FetchUnitsOf(hits, g.rg_size);
+    PrefetchColumns(g, l, hits, units);
     for (size_t u = 0; u < units.size(); ++u) {
       const auto& unit = units[u];
       const std::span<const irs::ScoreDoc> part{hits.data() + unit.first,
@@ -429,7 +430,7 @@ void RunAnnScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
     g.topk.published.fetch_add(1, std::memory_order_acq_rel);
   }
   RunAnswerStages(ctx, input, g, l, output, [&] {
-    Merge(g);
+    Merge(g, l);
     FillShortAnswer(g, l);
   });
 }

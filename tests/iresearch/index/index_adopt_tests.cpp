@@ -27,22 +27,25 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <filesystem>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/directory_utils.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "hook_file_system.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
 #include "tests_shared.hpp"
@@ -50,34 +53,36 @@
 namespace {
 
 // Counts how many times each file is created, so a test can pin "written once".
-class CountingDirectory : public tests::DirectoryMock {
+class CountingFileSystem final : public tests::HookFileSystem {
  public:
-  explicit CountingDirectory(irs::Directory& impl)
-    : tests::DirectoryMock{impl} {}
+  CountingFileSystem() : tests::HookFileSystem{tests::DatabaseFileSystem()} {}
 
-  irs::IndexOutput::ptr create(std::string_view name) final {
-    auto out = tests::DirectoryMock::create(name);
-    ++_creates[std::string{name}];
-    return out;
-  }
+  void OnCreated(std::string_view name) final { ++_creates[std::string{name}]; }
 
   size_t Creates(std::string_view name) const {
     const auto it = _creates.find(std::string{name});
     return it == _creates.end() ? 0 : it->second;
   }
 
-  bool sync(std::span<const std::string_view> files) noexcept final {
-    for (const auto file : files) {
-      _synced.emplace_back(file);
-    }
-    return tests::DirectoryMock::sync(files);
+  void OnSync(std::string_view name) final { _synced.emplace_back(name); }
+
+  void OnSyncDirectory() final {
+    _synced_before_directory.push_back(_synced.size());
   }
 
-  std::vector<std::string> TakeSynced() { return std::exchange(_synced, {}); }
+  std::vector<std::string> TakeSynced() {
+    _synced_before_directory.clear();
+    return std::exchange(_synced, {});
+  }
+
+  const std::vector<size_t>& SyncedBeforeDirectory() const {
+    return _synced_before_directory;
+  }
 
  private:
   std::map<std::string, size_t> _creates;
   std::vector<std::string> _synced;
+  std::vector<size_t> _synced_before_directory;
 };
 
 class IndexAdoptTest : public TestBase {
@@ -92,16 +97,16 @@ class IndexAdoptTest : public TestBase {
   void TearDown() override {
     _writer.reset();
     _dir.reset();
-    _impl.reset();
+    _fs.reset();
     TestBase::TearDown();
     std::filesystem::remove_all(_path);
   }
 
   void Open(irs::OpenMode mode, bool cleanup_on_open = true,
             uint32_t segment_docs_max = 0) {
-    _impl = std::make_unique<irs::MMapDirectory>(
-      _path, irs::DirectoryAttributes{}, GetResourceManager().options);
-    _dir = std::make_unique<CountingDirectory>(*_impl);
+    _fs = std::make_unique<CountingFileSystem>();
+    _dir.emplace(irs::DuckDBEngine::Instance().instance(), *_fs,
+                 _path.string());
     auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
     options.cleanup_on_open = cleanup_on_open;
     options.segment_docs_max = segment_docs_max;
@@ -112,7 +117,7 @@ class IndexAdoptTest : public TestBase {
   void Restart(bool cleanup_on_open, uint32_t segment_docs_max = 0) {
     _writer.reset();
     _dir.reset();
-    _impl.reset();
+    _fs.reset();
     Open(irs::kOmAppend | irs::kOmCreate, cleanup_on_open, segment_docs_max);
   }
 
@@ -154,10 +159,7 @@ class IndexAdoptTest : public TestBase {
     return by_term;
   }
 
-  bool Exists(std::string_view name) const {
-    bool exists = false;
-    return _dir->exists(exists, name) && exists;
-  }
+  bool Exists(std::string_view name) const { return _dir->Has(name); }
 
   static std::vector<std::string> MetaFilesOf(
     std::span<const irs::IndexWriter::FlushedSegment> flushed) {
@@ -180,8 +182,8 @@ class IndexAdoptTest : public TestBase {
   }
 
   std::filesystem::path _path;
-  std::unique_ptr<irs::MMapDirectory> _impl;
-  std::unique_ptr<CountingDirectory> _dir;
+  std::unique_ptr<CountingFileSystem> _fs;
+  std::optional<irs::Directory> _dir;
   irs::IndexWriter::ptr _writer;
 };
 
@@ -206,6 +208,30 @@ TEST_F(IndexAdoptTest, FlushAndFsyncReportsEveryFlushedSegment) {
     }
   }
   EXPECT_EQ(3, docs);
+  trx.Abort();
+}
+
+TEST_F(IndexAdoptTest, FlushAndFsyncSyncsTheDirectoryAfterTheFiles) {
+  Restart(/*cleanup_on_open=*/true, /*segment_docs_max=*/1);
+
+  auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+  for (size_t i = 0; i < 2; ++i) {
+    ASSERT_TRUE(InsertDoc(trx, "value" + std::to_string(i)));
+  }
+  _fs->TakeSynced();
+
+  const auto flushed = trx.FlushAndFsync();
+  ASSERT_EQ(2, flushed.size());
+  const auto directory_syncs = _fs->SyncedBeforeDirectory();
+  const auto synced = _fs->TakeSynced();
+  auto named = FilesOf(flushed);
+  absl::c_move(MetaFilesOf(flushed), std::back_inserter(named));
+  for (const auto& file : named) {
+    EXPECT_TRUE(absl::c_linear_search(synced, file)) << file << " not synced";
+  }
+  ASSERT_FALSE(directory_syncs.empty()) << "the directory was not synced";
+  EXPECT_EQ(synced.size(), directory_syncs.back())
+    << "the directory was synced before the files";
   trx.Abort();
 }
 
@@ -252,7 +278,7 @@ TEST_F(IndexAdoptTest, LaterTransactionReusingTheContextLeavesOurSegmentAlone) {
       << "a segment absorbed both transactions";
   }
   // And ours was still not rewritten at publish.
-  EXPECT_EQ(1, _dir->Creates(our_meta));
+  EXPECT_EQ(1, _fs->Creates(our_meta));
 }
 
 // SegmentContext::Rollback must cut only the tail past committed_flushed_docs.
@@ -336,10 +362,10 @@ TEST_F(IndexAdoptTest, AdoptSegmentRepublishesFlushedRows) {
   for (const auto& meta_file : adopt) {
     _writer->AdoptSegment(meta_file, /*tick=*/7);
   }
-  _dir->TakeSynced();
+  _fs->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
-  const auto synced = _dir->TakeSynced();
+  const auto synced = _fs->TakeSynced();
   ASSERT_EQ(1, synced.size());
   EXPECT_TRUE(synced.front().starts_with("pending_segments_"));
 
@@ -377,7 +403,7 @@ TEST_F(IndexAdoptTest, AdoptedSegmentBesideACompactionIsNotResynced) {
   ASSERT_TRUE(_writer->Compact(kFullMerge));
   _writer->AdoptSegment(adopt.front(), 20);
 
-  _dir->TakeSynced();
+  _fs->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
 
   const auto snapshot = _writer->GetSnapshot();
@@ -392,7 +418,7 @@ TEST_F(IndexAdoptTest, AdoptedSegmentBesideACompactionIsNotResynced) {
                       segment.meta.files.end());
     }
   }
-  auto synced = _dir->TakeSynced();
+  auto synced = _fs->TakeSynced();
   ASSERT_FALSE(synced.empty());
   EXPECT_TRUE(synced.back().starts_with("pending_segments_"));
   synced.pop_back();
@@ -514,16 +540,16 @@ TEST_F(IndexAdoptTest, EarlyFlushedMetaIsWrittenOnce) {
   ASSERT_EQ(1, flushed.size());
   const std::string meta_file = flushed.front().filename;
   ASSERT_FALSE(meta_file.empty());
-  EXPECT_EQ(1, _dir->Creates(meta_file)) << "FlushAndFsync wrote it";
+  EXPECT_EQ(1, _fs->Creates(meta_file)) << "FlushAndFsync wrote it";
 
   ASSERT_TRUE(trx.Commit(/*last_tick=*/1));
-  _dir->TakeSynced();
+  _fs->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
 
-  EXPECT_EQ(1, _dir->Creates(meta_file))
+  EXPECT_EQ(1, _fs->Creates(meta_file))
     << "the publish rewrote a meta that was already on disk unchanged";
-  const auto synced = _dir->TakeSynced();
+  const auto synced = _fs->TakeSynced();
   ASSERT_EQ(1, synced.size());
   EXPECT_TRUE(synced.front().starts_with("pending_segments_"));
 }
@@ -543,19 +569,19 @@ TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
     remover.Remove(ByName("doomed"));
     ASSERT_TRUE(remover.Commit(/*last_tick=*/2));
   }
-  _dir->TakeSynced();
+  _fs->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
   // The early file is still the one FlushAndFsync made; the masked meta went to
   // a bumped version, so the publish did write.
-  EXPECT_EQ(1, _dir->Creates(early_meta));
+  EXPECT_EQ(1, _fs->Creates(early_meta));
   ASSERT_EQ(1, _writer->GetSnapshot().size());
   const auto& published = _writer->GetSnapshot().begin()->Meta();
   EXPECT_GT(published.version, 0u) << "a masked segment must bump its version";
 
   const auto snapshot = _writer->GetSnapshot();
-  const auto synced = _dir->TakeSynced();
+  const auto synced = _fs->TakeSynced();
   ASSERT_EQ(2, synced.size());
   EXPECT_EQ(snapshot.Meta().index_meta.segments.front().filename, synced[0]);
   EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
@@ -583,7 +609,7 @@ TEST_F(IndexAdoptTest, RemovalFromALargeMaskSyncsOnlyTheNewMeta) {
       }
       ASSERT_TRUE(remover.Commit(++tick));
     }
-    _dir->TakeSynced();
+    _fs->TakeSynced();
     ASSERT_TRUE(_writer->RefreshCommit());
 
     const auto snapshot = _writer->GetSnapshot();
@@ -596,7 +622,7 @@ TEST_F(IndexAdoptTest, RemovalFromALargeMaskSyncsOnlyTheNewMeta) {
       [](std::string_view file) { return file.ends_with(".sm"); }))
       << "round " << round;
 
-    const auto synced = _dir->TakeSynced();
+    const auto synced = _fs->TakeSynced();
     ASSERT_EQ(2, synced.size()) << "round " << round;
     EXPECT_EQ(segment.filename, synced[0]);
     EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
@@ -623,7 +649,7 @@ TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
   _writer->AdoptSegment(adopt.front(), /*tick=*/7);
 
   // Before the commit that publishes it.
-  irs::directory_utils::RemoveAllUnreferenced(*_dir);
+  irs::RemoveAllUnreferenced(*_dir);
   EXPECT_TRUE(Exists(adopt.front()))
     << adopt.front() << " (meta file) was reclaimed before publish";
   for (const auto& file : data_files) {
@@ -645,7 +671,9 @@ TEST_F(IndexAdoptTest, AdoptSegmentRejectsAnUnreadableMeta) {
   ASSERT_EQ(1, adopt.size());
 
   Restart(/*cleanup_on_open=*/false);
-  ASSERT_NE(nullptr, _dir->create(adopt.front()));
+  auto out = _dir->Create(adopt.front());
+  ASSERT_NE(nullptr, out);
+  out->Close();
   ASSERT_SQL_ERROR(_writer->AdoptSegment(adopt.front(), /*tick=*/1),
                    ERRCODE_INDEX_CORRUPTED);
 
@@ -672,7 +700,7 @@ TEST_F(IndexAdoptTest, AbortLeavesFlushedFilesUnreferenced) {
   }
   ASSERT_FALSE(files.empty());
 
-  irs::directory_utils::RemoveAllUnreferenced(*_dir);
+  irs::RemoveAllUnreferenced(*_dir);
   for (const auto& file : files) {
     EXPECT_FALSE(Exists(file)) << file << " is still pinned after Abort";
   }
@@ -740,7 +768,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count())
     << "a flushed-but-unadopted segment must not be visible";
 
-  _dir->TakeSynced();
+  _fs->TakeSynced();
   Replace(*_writer, sources, replacement);
   ASSERT_TRUE(_writer->RefreshCommit());
 
@@ -750,7 +778,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
   EXPECT_EQ(replacement_name, after.front());
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
     << "the sources' rows are still reachable, so both halves were published";
-  const auto synced = _dir->TakeSynced();
+  const auto synced = _fs->TakeSynced();
   ASSERT_EQ(1, synced.size());
   EXPECT_TRUE(synced.front().starts_with("pending_segments_"));
 }
@@ -824,7 +852,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsInTheAdoptGeneration) {
   ASSERT_EQ(1, _writer->GetSnapshot().live_docs_count());
 
   // Reissued into the swap itself rather than after it.
-  _dir->TakeSynced();
+  _fs->TakeSynced();
   Replace(*_writer, sources, replacement, ByName("doomed"));
   ASSERT_TRUE(_writer->RefreshCommit());
 
@@ -833,7 +861,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsInTheAdoptGeneration) {
 
   const auto snapshot = _writer->GetSnapshot();
   ASSERT_EQ(1, snapshot.size());
-  const auto synced = _dir->TakeSynced();
+  const auto synced = _fs->TakeSynced();
   ASSERT_EQ(2, synced.size());
   EXPECT_EQ(snapshot.Meta().index_meta.segments.front().filename, synced[0]);
   EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
@@ -1340,14 +1368,14 @@ TEST_F(IndexAdoptTest,
     ASSERT_TRUE(del.Commit(20));
   }
 
-  _dir->TakeSynced();
+  _fs->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
 
   const auto snapshot = _writer->GetSnapshot();
   ASSERT_EQ(4, snapshot.size());
   EXPECT_EQ(5, snapshot.live_docs_count());
 
-  const auto synced = _dir->TakeSynced();
+  const auto synced = _fs->TakeSynced();
   size_t rewritten = 0;
   for (const auto& segment : snapshot.Meta().index_meta.segments) {
     if (segment.meta.docs_mask) {
@@ -1402,7 +1430,7 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
     ASSERT_TRUE(del.Commit(30));
   }
 
-  _dir->TakeSynced();
+  _fs->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
 
   const auto snapshot = _writer->GetSnapshot();
@@ -1415,7 +1443,7 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
     EXPECT_FALSE(file.ends_with(".sm")) << file << " is a chain link";
   }
 
-  auto synced = _dir->TakeSynced();
+  auto synced = _fs->TakeSynced();
   ASSERT_FALSE(synced.empty());
   EXPECT_TRUE(synced.back().starts_with("pending_segments_"));
   synced.pop_back();
@@ -1470,7 +1498,7 @@ TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {
 // --- why a build must adopt before it aborts --------------------------------
 //
 // Transaction::Abort resets the segment context, and SegmentContext::Reset ends
-// in dir.clear_refs(): the transaction's own references to the files it
+// in refs.Clear(): the transaction's own references to the files it
 // flushed are released. A cleanup pass between that and the adoption would then
 // be free to unlink them. ReplaceSegments takes its own references, so calling
 // it FIRST keeps the files pinned across the abort.
@@ -1494,7 +1522,7 @@ TEST_F(IndexAdoptTest, ReplaceBeforeAbortSurvivesCleanup) {
   // The order the build uses: reference through adoption, then abort.
   Replace(*_writer, sources, replacement);
   build.Abort();
-  irs::directory_utils::RemoveAllUnreferenced(*_dir);
+  irs::RemoveAllUnreferenced(*_dir);
 
   for (const auto& file : files) {
     EXPECT_TRUE(Exists(file)) << file << " was reclaimed before the commit";
@@ -1522,7 +1550,7 @@ TEST_F(IndexAdoptTest, AbortBeforeReplaceLosesTheFilesToCleanup) {
   // The wrong order, kept as documentation of the hazard rather than as a
   // contract: after Abort nothing references the flushed files.
   build.Abort();
-  irs::directory_utils::RemoveAllUnreferenced(*_dir);
+  irs::RemoveAllUnreferenced(*_dir);
 
   bool any_gone = false;
   for (const auto& file : files) {
@@ -1533,8 +1561,7 @@ TEST_F(IndexAdoptTest, AbortBeforeReplaceLosesTheFilesToCleanup) {
        "ordering note in search_table_backfill.cpp can be dropped";
   // And the swap correctly refuses rather than adopting a segment whose files
   // are gone.
-  ASSERT_SQL_ERROR(Replace(*_writer, sources, replacement),
-                   ERRCODE_UNDEFINED_FILE);
+  ASSERT_THROW(Replace(*_writer, sources, replacement), duckdb::IOException);
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
     << "the original row must still be there";
 }

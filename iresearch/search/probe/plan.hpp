@@ -47,12 +47,10 @@ Result ResolvePostingDocs(const detail::PostingClause& posting, Make&& make) {
     return make.template operator()<SinglePostingDocs>(meta);
   }
   const auto& own = *posting.state.reader;
-  return detail::ResolveInput(
-    *detail::DocOf(own), [&]<typename Input> -> Result {
-      return make.template operator()<detail::PostingProbe<Input>>(
-        meta, *detail::DocOf(own), detail::LayoutOf(own),
-        detail::BoundsOf(own));
-    });
+  return ResolveInput(*detail::DocOf(own), [&]<typename Input> -> Result {
+    return make.template operator()<detail::PostingProbe<Input>>(
+      meta, *detail::DocOf(own), detail::LayoutOf(own), detail::BoundsOf(own));
+  });
 }
 
 template<typename Scoring>
@@ -102,7 +100,7 @@ Node::ptr MakeWindowDisjunction(std::span<const Term> terms,
                                 const detail::TermScoring& scoring,
                                 const detail::ScoredCtx& ctx,
                                 score_t absorbed) {
-  const IndexInput* doc = nullptr;
+  const InputFile* doc = nullptr;
   std::vector<detail::FillNode::ptr> rest;
   if (!detail::CollectDense(terms, filters, field, doc, rest,
                             [&](const QueryBuilder& child) {

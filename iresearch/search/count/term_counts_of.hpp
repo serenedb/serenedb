@@ -34,7 +34,7 @@ namespace irs::count {
 template<typename Input>
 class TermCountsOf : public TermCounts {
  public:
-  TermCountsOf(detail::LazyBitset& set, const IndexInput& doc,
+  TermCountsOf(detail::LazyBitset& set, const InputFile& doc,
                IndexFeatures layout, bool bounds) noexcept
     : _set{set}, _reader{doc}, _doc{&doc}, _layout{layout}, _bounds{bounds} {}
 
@@ -117,7 +117,7 @@ class TermCountsOf : public TermCounts {
   detail::LazyBitset& _set;
   std::vector<std::unique_ptr<detail::PostingProbe<Input>>> _probes;
   detail::PostingReader<Input> _reader;
-  const IndexInput* _doc;
+  const InputFile* _doc;
   IndexFeatures _layout;
   bool _bounds;
 };

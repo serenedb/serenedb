@@ -1677,7 +1677,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
                irs::SqlException);
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(regexp_filter_test, RegexpFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

@@ -632,12 +632,9 @@ int Main(int argc, char** argv) {
       std::printf("%-12s no EncodeInto\n", cfg.name.c_str());
       continue;
     }
-    bstring framed;
-    {
-      BytesOutput out{framed};
-      writer->Serialize(out);
-    }
-    const bstring blob = framed.substr(sizeof(uint64_t));
+    BytesOutput framed;
+    writer->Serialize(framed);
+    const bstring blob{framed.Bytes().substr(sizeof(uint64_t))};
     auto stats = MakeQuantizerStats(cfg.quant, d, blob, metric, true);
 
     std::vector<std::vector<size_t>> hits(nq,

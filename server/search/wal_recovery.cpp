@@ -24,6 +24,7 @@
 #include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <absl/synchronization/mutex.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 
@@ -59,18 +60,6 @@ namespace {
 
 using BoundIndexHandle =
   duckdb::IndexWriteHandle<connector::InvertedStoreIndex>;
-
-struct FinishReplayTask final : duckdb::BaseExecutorTask {
-  FinishReplayTask(duckdb::TaskExecutor& executor,
-                   absl::AnyInvocable<void()> finish)
-    : BaseExecutorTask{executor}, finish{std::move(finish)} {}
-
-  void ExecuteTask() final { finish(); }
-
-  std::string TaskType() const final { return "SearchFinishReplay"; }
-
-  absl::AnyInvocable<void()> finish;
-};
 
 std::vector<duckdb::reference<catalog::SereneDBCatalog>> SereneDBCatalogs() {
   std::vector<duckdb::reference<catalog::SereneDBCatalog>> catalogs;
@@ -121,6 +110,45 @@ void SyncWal(duckdb::AttachedDatabase& db) {
 
 }  // namespace
 
+std::vector<MissingStorage> OpenSearchStorages(
+  std::span<const duckdb::reference<catalog::SereneDBCatalog>> catalogs) {
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
+    irs::DuckDBEngine::Instance().instance());
+  duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
+  absl::Mutex mutex;
+  std::vector<MissingStorage> missing;
+  const auto open = [&](const duckdb::CatalogEntry& entry, auto storage,
+                        auto... settings) {
+    executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+      executor,
+      [&mutex, &missing, &entry, storage = std::move(storage),
+       ... settings = std::move(settings)] {
+        if (!storage->Open(settings...)) {
+          absl::MutexLock lock{&mutex};
+          missing.push_back({.entry = entry, .path = storage->Path()});
+        }
+      },
+      "SearchOpenStorage"));
+  };
+  for (auto& catalog : catalogs) {
+    for (const catalog::SearchTableEntry& table :
+         catalog::SearchTableEntries(catalog.get())) {
+      open(table, table.Storage());
+    }
+    for (const catalog::InvertedIndexEntry& index :
+         catalog::InvertedIndexEntries(catalog.get())) {
+      if (const auto& storage = index.Storage()) {
+        open(index, storage, catalog::ResolveSettings(index.options));
+      }
+    }
+  }
+  executor.WorkOnTasks();
+  absl::c_sort(missing, [](const MissingStorage& a, const MissingStorage& b) {
+    return a.entry.get().oid < b.entry.get().oid;
+  });
+  return missing;
+}
+
 void RecoverSearchStorages() {
   const auto begin = std::chrono::steady_clock::now();
   std::vector<std::pair<std::optional<BoundIndexHandle>,
@@ -155,13 +183,14 @@ void RecoverSearchStorages() {
   for (auto& db : databases) {
     SyncWal(db);
   }
-  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
-    irs::DuckDBEngine::Instance().instance())};
   std::atomic_size_t replayed{0};
   std::atomic_size_t replayed_tables{0};
+  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
+    irs::DuckDBEngine::Instance().instance())};
   for (auto& [index, storage] : recovering) {
-    executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
-      executor, [&replayed, index = std::move(index), storage]() mutable {
+    executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+      executor,
+      [&replayed, index = std::move(index), storage]() mutable {
         if (index && (*index)->FinishReplay()) {
           replayed.fetch_add(1, std::memory_order_relaxed);
         }
@@ -169,11 +198,13 @@ void RecoverSearchStorages() {
           SDB_WARN(SEARCH, "refresh of index '", storage->GetId(),
                    "' after WAL replay failed: ", status.message());
         }
-      }));
+      },
+      "SearchFinishReplay"));
   }
   for (auto& [db, table] : tables) {
-    executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
-      executor, [&replayed_tables, &db = db.get(), table] {
+    executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+      executor,
+      [&replayed_tables, &db = db.get(), table] {
         if (table->FinishReplay(db)) {
           replayed_tables.fetch_add(1, std::memory_order_relaxed);
         }
@@ -181,7 +212,8 @@ void RecoverSearchStorages() {
           SDB_WARN(SEARCH, "refresh of search table '", table->GetTableId(),
                    "' after WAL replay failed: ", status.message());
         }
-      }));
+      },
+      "SearchFinishReplay"));
   }
   executor.WorkOnTasks();
   for (auto& catalog : SereneDBCatalogs()) {

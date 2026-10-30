@@ -20,8 +20,6 @@
 
 #include "iresearch/formats/index/idx_reader.hpp"
 
-#include <absl/strings/str_cat.h>
-
 #include <cstring>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/types.hpp>
@@ -30,6 +28,7 @@
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
@@ -44,7 +43,7 @@
 namespace irs {
 
 struct IdxReader::Impl {
-  IndexInput::ptr in;
+  std::unique_ptr<InputFile> file;
   std::vector<std::pair<field_id, std::unique_ptr<AnnIndex>>> ann_entries;
   irs::containers::FlatHashMap<field_id, size_t> ann_by_id;
   std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
@@ -52,23 +51,16 @@ struct IdxReader::Impl {
 };
 
 IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
-                     HnswBases* hnsw_bases)
+                     bool present, HnswBases* hnsw_bases)
   : _impl{std::make_unique<Impl>()} {
-  const auto filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
-  bool exists = false;
-  if (!dir.exists(exists, filename)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_IO_ERROR),
-      ERR_MSG("Failed to check existence of file, path: ", filename));
-  }
-  if (!exists) {
+  if (!present) {
     return;
   }
-
-  _impl->in = dir.open(filename, IOAdvice::RANDOM);
+  const auto filename = FileName(segment_name, kIdxFormatExt);
+  _impl->file = dir.Open(filename, duckdb::MappedFileAccess::RANDOM);
 
   format_utils::ReadFooter(
-    *_impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+    *_impl->file, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
       footer.ReadOptionalList(
         kIdxFieldTermDict, "term_dict",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -110,9 +102,9 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
             _impl->ann_ends.push_back(tree_offset + tree_byte_size);
             _impl->ann_ends.push_back(stats_offset + stats_byte_size);
 
-            auto body = _impl->in->Dup();
-            body->Seek(tree_offset);
-            auto entry = CentroidsTree::Deserialize(*body, root_byte_size);
+            IndexInput body{*_impl->file};
+            body.Seek(tree_offset);
+            auto entry = CentroidsTree::Deserialize(body, root_byte_size);
             entry.SetQuantStatsOffset(stats_offset);
 
             const size_t idx = _impl->ann_entries.size();
@@ -177,8 +169,6 @@ std::span<const uint64_t> IdxReader::AnnEnds() const noexcept {
   return _impl->ann_ends;
 }
 
-IndexInput::ptr IdxReader::ReopenIn() const {
-  return _impl->in ? _impl->in->Reopen() : IndexInput::ptr{};
-}
+const InputFile* IdxReader::File() const noexcept { return _impl->file.get(); }
 
 }  // namespace irs

@@ -24,6 +24,7 @@
 
 #include <duckdb/storage/shared_object_cache.hpp>
 #include <memory>
+#include <streambuf>
 #include <string>
 #include <string_view>
 
@@ -31,6 +32,14 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::fast_text {
+
+class TextBuf final : public std::streambuf {
+ public:
+  explicit TextBuf(std::string_view text) noexcept {
+    auto* data = const_cast<char*>(text.data());
+    setg(data, data, data + text.size());
+  }
+};
 
 class Model final : public fasttext::ImmutableFastText,
                     public duckdb::ObjectCacheEntry {

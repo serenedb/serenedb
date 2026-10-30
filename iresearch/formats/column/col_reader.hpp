@@ -37,11 +37,6 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
 class ColumnReader;
@@ -58,8 +53,8 @@ inline std::string FileName(std::string_view segment_name) {
 
 class ColReader final {
  public:
-  ColReader(const Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db, IOAdvice advice);
+  ColReader(const Directory& dir, std::string_view segment_name, bool present,
+            duckdb::MappedFileAccess access);
   ~ColReader();
 
   ColReader(const ColReader&) = delete;
@@ -74,13 +69,20 @@ class ColReader final {
   const NormColumnReader* NormColumn(field_id id) const noexcept;
   ReadContext& Ctx() noexcept { return _ctx; }
 
-  IndexInput::ptr ReopenIn() const {
-    return _ctx.HasIn() ? _ctx.In().Reopen() : nullptr;
+  const InputFile* File() const noexcept { return _file.get(); }
+  void PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
+    if (_file) {
+      _file->PrefetchExtents(extents);
+    }
   }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
 
  private:
+  ColReader(duckdb::DatabaseInstance& db, std::string_view segment_name,
+            std::unique_ptr<InputFile> file);
+
   duckdb::DatabaseInstance* _db;
+  std::unique_ptr<InputFile> _file;
   ReadContext _ctx;
   std::vector<std::unique_ptr<ColumnReader>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnReader*> _by_id;

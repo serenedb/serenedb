@@ -52,8 +52,6 @@ class SegmentReader final : public SubReader {
   SegmentReader* operator->() noexcept { return this; }
   const SegmentReader* operator->() const noexcept { return this; }
 
-  uint64_t CountMappedMemory() const final;
-
   const SegmentInfo& Meta() const final;
 
   lead::Node::ptr docs_iterator() const final;
@@ -67,7 +65,7 @@ class SegmentReader final : public SubReader {
 
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;
-  IndexInput::ptr ReopenAnn() const final;
+  const InputFile* AnnFile() const final;
   const ColReader* GetColReader() const final;
 
   const std::shared_ptr<const SegmentReaderImpl>& GetImpl() const noexcept {

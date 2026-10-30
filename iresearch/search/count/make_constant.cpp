@@ -51,7 +51,6 @@ template<typename InputType>
 class TermRange : public detail::PostingBatch<InputType, false> {
   using Base = detail::PostingBatch<InputType, false>;
 
-  using Base::_in;
   using Base::_last;
   using Base::_left_in_list;
   using Base::_walk;
@@ -61,7 +60,7 @@ class TermRange : public detail::PostingBatch<InputType, false> {
   using Base::SkipFreqs;
 
  public:
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                IndexFeatures layout, bool bounds, bool freq) {
     _docs_count = meta.docs_count;
     this->SetFreqLen(freq);
@@ -79,7 +78,7 @@ class TermRange : public detail::PostingBatch<InputType, false> {
       }
       return _docs_count - Below(_cached, doc);
     }
-    const auto left = _walk.Seek(doc, *_in);
+    const auto left = _walk.Seek(doc, In());
     if (left == 0) {
       return 0;
     }
@@ -182,8 +181,8 @@ class TermCount : public Root {
     if (!_ranks) {
       const auto& own = *_posting.state.reader;
       const auto& doc = *detail::DocOf(own);
-      _ranks = detail::ResolveInput(
-        doc, [&]<typename Input> -> std::unique_ptr<RankSource> {
+      _ranks =
+        ResolveInput(doc, [&]<typename Input> -> std::unique_ptr<RankSource> {
           auto out = std::make_unique<RankSourceOf<Input>>();
           out->impl.Prepare(_posting.state.cookie, doc, detail::LayoutOf(own),
                             detail::BoundsOf(own), detail::FreqOf(own));

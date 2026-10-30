@@ -45,6 +45,7 @@
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_sequence_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_data/create_tablespace_info.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
 #include <duckdb/parser/parsed_data/detach_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
@@ -84,7 +85,11 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/entry/database.h"
+#include "catalog/entry/inverted_index.h"
 #include "catalog/entry/role.h"
+#include "catalog/entry/search_table.h"
+#include "catalog/entry/tablespace.h"
 #include "connector/scan/scan_bind.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
@@ -96,6 +101,8 @@ namespace {
 using duckdb::AclMode;
 using duckdb::CatalogType;
 using duckdb::LogicalOperatorType;
+
+constexpr std::string_view kDefaultTablespaceSetting = "default_tablespace";
 
 std::string KindName(CatalogType type) {
   switch (type) {
@@ -124,6 +131,8 @@ std::string KindName(CatalogType type) {
       return "subscription";
     case CatalogType::JOB_ENTRY:
       return "job";
+    case CatalogType::TABLESPACE_ENTRY:
+      return "tablespace";
     default:
       return "object";
   }
@@ -244,9 +253,19 @@ duckdb::LogicalOperator& StatementRoot(duckdb::LogicalOperator& root) {
   return root;
 }
 
+void RequireOutsideTransaction(duckdb::ClientContext& context,
+                               std::string_view statement) {
+  if (!context.transaction.IsAutoCommit()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG(statement, " cannot run inside a transaction block"));
+  }
+}
+
 template<typename Info>
 void PointAtCluster(Info& info, CatalogType type) {
-  if (type == CatalogType::DATABASE_ENTRY || type == CatalogType::ROLE_ENTRY) {
+  if (type == CatalogType::DATABASE_ENTRY || type == CatalogType::ROLE_ENTRY ||
+      type == CatalogType::TABLESPACE_ENTRY) {
     info.GetQualifiedNameMutable() = duckdb::QualifiedName{
       duckdb::Identifier{catalog::ClusterCatalog::kDatabaseName},
       duckdb::Identifier{}, info.GetQualifiedName().Name()};
@@ -459,6 +478,13 @@ class Enforcer {
         auto& create = op.Cast<duckdb::LogicalCreateTable>();
         auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
         RequireUserSchema(create.schema.oid, info);
+        info.tablespace_oid = Place(
+          info.tablespace, create.schema.ParentCatalog(),
+          catalog::ReadStorageEngine(info.options) ==
+              catalog::TableEngine::Search
+            ? std::string_view{}
+            : "only a table created WITH (storage = 'search') can be placed "
+              "in a tablespace");
         Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
         for (auto& serial : create.info->serial_sequences) {
           Stamp(serial.permissions, create.schema.ParentCatalog(),
@@ -496,6 +522,23 @@ class Enforcer {
         PointAtCluster(info, CatalogType::ROLE_ENTRY);
         break;
       }
+      case LogicalOperatorType::LOGICAL_CREATE_TABLESPACE: {
+        auto& info = op.Cast<duckdb::LogicalCreate>()
+                       .info->Cast<duckdb::CreateTablespaceInfo>();
+        RequireOutsideTransaction(_context, "CREATE TABLESPACE");
+        if (_enforce) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+            ERR_MSG("permission denied to create tablespace \"",
+                    info.GetQualifiedName().Name().GetIdentifierName(), "\""),
+            ERR_HINT("Must be superuser to create a tablespace."));
+        }
+        info.permissions.owner = info.owner.empty()
+                                   ? _caller
+                                   : RoleSpecId(info.owner.GetIdentifierName());
+        PointAtCluster(info, CatalogType::TABLESPACE_ENTRY);
+        break;
+      }
       case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
         Stamp(*create.info, CatalogType::FOREIGN_SERVER_ENTRY, nullptr);
@@ -528,24 +571,35 @@ class Enforcer {
           RequireOwner(create.table);
           CheckReplace(*create.info);
         }
+        std::string_view refusal;
+        if (create.info->index_type != catalog::kInvertedIndexTypeName) {
+          refusal =
+            "only a search index (USING inverted) can be placed in a "
+            "tablespace";
+        } else if (create.table.type == CatalogType::TABLE_ENTRY &&
+                   !create.table.Cast<duckdb::TableCatalogEntry>()
+                      .IsDuckTable()) {
+          refusal =
+            "an index on a search-backed table is stored with the table and "
+            "cannot be placed in a tablespace";
+        }
+        create.info->tablespace_oid =
+          Place(create.info->tablespace, create.table.ParentCatalog(), refusal);
         break;
       }
       case LogicalOperatorType::LOGICAL_DROP: {
         auto& info = *op.Cast<duckdb::LogicalDrop>().info;
-        if (info.type == CatalogType::DATABASE_ENTRY &&
-            !_context.transaction.IsAutoCommit()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-            ERR_MSG("DROP DATABASE cannot run inside a transaction block"));
+        if (info.type == CatalogType::DATABASE_ENTRY) {
+          RequireOutsideTransaction(_context, "DROP DATABASE");
+        }
+        if (info.type == CatalogType::TABLESPACE_ENTRY) {
+          RequireOutsideTransaction(_context, "DROP TABLESPACE");
         }
         if (info.type == CatalogType::PREPARED_STATEMENT &&
             info.extra_drop_info &&
             info.extra_drop_info->Cast<duckdb::ExtraDropDiscardInfo>().target ==
-              duckdb::DiscardTarget::ALL &&
-            !_context.transaction.IsAutoCommit()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-            ERR_MSG("DISCARD ALL cannot run inside a transaction block"));
+              duckdb::DiscardTarget::ALL) {
+          RequireOutsideTransaction(_context, "DISCARD ALL");
         }
         if (_enforce) {
           CheckDrop(info);
@@ -573,6 +627,8 @@ class Enforcer {
           if (_enforce) {
             CheckAlterRole(info.Cast<duckdb::AlterRoleInfo>());
           }
+        } else if (info.type == duckdb::AlterType::ALTER_TABLESPACE) {
+          CheckRenameTablespace(info);
         } else {
           if (_enforce) {
             CheckAlter(info);
@@ -581,14 +637,16 @@ class Enforcer {
         PointAtCluster(info, info.GetCatalogType());
         break;
       }
-      case LogicalOperatorType::LOGICAL_ATTACH:
+      case LogicalOperatorType::LOGICAL_ATTACH: {
+        auto& info = *op.Cast<duckdb::LogicalAttach>().info;
         if (_enforce && !_caller_closure.Has(catalog::RoleOption::CreateDb)) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                           ERR_MSG("permission denied to create database"));
         }
-        RequireDatabaseNotBeingCreated(
-          op.Cast<duckdb::LogicalAttach>().info->name);
+        RequireDatabaseNotBeingCreated(info.name);
+        PlaceDatabase(info);
         break;
+      }
       case LogicalOperatorType::LOGICAL_DETACH: {
         const auto name =
           op.Cast<duckdb::LogicalDetach>().info->name.GetIdentifierName();
@@ -1116,6 +1174,13 @@ class Enforcer {
       }
       return;
     }
+    if (info.type == CatalogType::TABLESPACE_ENTRY) {
+      if (auto tablespace = ClusterEntry(CatalogType::TABLESPACE_ENTRY,
+                                         name.Name().GetIdentifierName())) {
+        RequireOwner(*tablespace);
+      }
+      return;
+    }
     if (info.type == CatalogType::SECRET_ENTRY) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied: superuser required"));
@@ -1126,6 +1191,130 @@ class Enforcer {
     if (auto entry = FindEntry(info.type, name)) {
       RequireOwner(*entry);
     }
+  }
+
+  duckdb::CatalogEntry& RequireTablespace(std::string_view name) {
+    auto tablespace = ClusterEntry(CatalogType::TABLESPACE_ENTRY, name);
+    if (!tablespace) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("tablespace \"", name, "\" does not exist"));
+    }
+    return *tablespace;
+  }
+
+  duckdb::CatalogEntry& AlterableTablespace(std::string_view name) {
+    auto& tablespace = RequireTablespace(name);
+    if (tablespace.internal) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("tablespace \"", name, "\" is a system tablespace"),
+        ERR_DETAIL("A system tablespace cannot be renamed, given to another "
+                   "owner or granted on."));
+    }
+    return tablespace;
+  }
+
+  void CheckRenameTablespace(const duckdb::AlterInfo& info) {
+    catalog::RequireUnreservedTablespaceName(
+      info.GetNewName()->GetIdentifierName());
+    auto& tablespace =
+      AlterableTablespace(info.GetQualifiedName().Name().GetIdentifierName());
+    if (_enforce) {
+      RequireOwner(tablespace);
+    }
+  }
+
+  void UseTablespace(const duckdb::CatalogEntry& tablespace) {
+    if (_enforce &&
+        !_caller_closure.Can(CatalogType::TABLESPACE_ENTRY,
+                             tablespace.permissions, AclMode::Create)) {
+      Denied(tablespace);
+    }
+    const auto& root =
+      tablespace.Cast<catalog::TablespaceCatalogEntry>().Root();
+    SDB_ASSERT(root);
+    auto pin = root->Pin();
+    if (!pin) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+        ERR_MSG("tablespace \"", tablespace.name.GetIdentifierName(),
+                "\" is being dropped"));
+    }
+    _connection.HoldUntilEnd(std::move(pin));
+  }
+
+  duckdb::idx_t Place(const duckdb::Identifier& requested,
+                      duckdb::Catalog& catalog, std::string_view refusal) {
+    const bool named = !requested.empty();
+    std::string name;
+    if (named) {
+      name = requested.GetIdentifierName();
+    } else if (auto setting = _connection.Get(kDefaultTablespaceSetting)) {
+      name = std::move(*setting);
+    }
+    if (name.empty()) {
+      return 0;
+    }
+    const auto tablespace = ClusterEntry(CatalogType::TABLESPACE_ENTRY, name);
+    if (!tablespace) {
+      if (!named) {
+        return 0;
+      }
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("tablespace \"", name, "\" does not exist"));
+    }
+    if (tablespace->oid == pg::kPgGlobalTablespace) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("only shared relations can be placed in pg_global tablespace"));
+    }
+    const bool serenedb =
+      catalog.GetCatalogType() == catalog::SereneDBCatalog::kStorageType;
+    const auto database =
+      serenedb ? ClusterEntry(CatalogType::DATABASE_ENTRY,
+                              catalog.GetName().GetIdentifierName())
+               : nullptr;
+    const auto own =
+      database ? database->Cast<catalog::DatabaseCatalogEntry>().Tablespace()
+               : pg::kPgDefaultTablespace;
+    if (tablespace->oid == own) {
+      return 0;
+    }
+    if (catalog.GetAttached().IsTemporary()) {
+      refusal = "temporary objects cannot be placed in a tablespace";
+    } else if (!serenedb) {
+      refusal =
+        "only an object of a SereneDB database can be placed in a tablespace";
+    }
+    if (!refusal.empty()) {
+      if (!named) {
+        return 0;
+      }
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG(refusal));
+    }
+    UseTablespace(*tablespace);
+    return tablespace->oid;
+  }
+
+  void PlaceDatabase(duckdb::AttachInfo& info) {
+    const auto option = info.options.find("tablespace");
+    if (option == info.options.end()) {
+      return;
+    }
+    const auto name = option->second.ToString();
+    info.options.erase(option);
+    auto& tablespace = RequireTablespace(name);
+    if (tablespace.oid == pg::kPgGlobalTablespace) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("pg_global cannot be used as default tablespace"));
+    }
+    if (tablespace.oid == pg::kPgDefaultTablespace) {
+      return;
+    }
+    UseTablespace(tablespace);
+    info.tablespace_oid = tablespace.oid;
   }
 
   // CREATE OR REPLACE keeps an existing object under its own name, which is the
@@ -1245,6 +1434,9 @@ class Enforcer {
 
   duckdb::CatalogEntry& ResolveTarget(duckdb::AlterPermissionsInfo& info) {
     const auto& name = info.GetQualifiedName();
+    if (info.entry_catalog_type == CatalogType::TABLESPACE_ENTRY) {
+      return AlterableTablespace(name.Name().GetIdentifierName());
+    }
     if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
       auto& schema =
         duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name());
@@ -1346,6 +1538,7 @@ class Enforcer {
                               _roles->NameOf(info.new_owner_id), "\""));
     }
     if (entry.type != CatalogType::SCHEMA_ENTRY &&
+        entry.type != CatalogType::TABLESPACE_ENTRY &&
         !ClosureOf(info.new_owner_id)
            .Can(CatalogType::SCHEMA_ENTRY,
                 entry.ParentSchema(_context).permissions, AclMode::Create)) {
@@ -1433,9 +1626,7 @@ class Enforcer {
 
   duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
     CatalogType type, std::string_view name) {
-    auto& cluster = catalog::ClusterOf(_context);
-    return cluster.GetCatalogSet(type).GetEntry(
-      cluster.GetCatalogTransaction(_context), duckdb::Identifier{name});
+    return catalog::ClusterEntry(_context, type, name);
   }
 
   void RequireDatabasePrivilege(AclMode need) {

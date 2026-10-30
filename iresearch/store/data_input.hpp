@@ -22,247 +22,436 @@
 
 #pragma once
 
-#include <duckdb/common/serializer/read_stream.hpp>
+#include <algorithm>
+#include <cstddef>
+#include <cstring>
+#include <duckdb/common/memory_mapped_file.hpp>
+#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iterator>
 #include <memory>
-#include <streambuf>
+#include <span>
+#include <string>
+#include <utility>
+#include <variant>
 
 #include "iresearch/utils/bytes_utils.hpp"
-#include "iresearch/utils/noncopyable.hpp"
+#include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-enum class IOAdvice : uint32_t;
-
-class DataInput : public duckdb::ReadStream {
- public:
-  static constexpr bool kVolatileAlways = false;
-
-  enum class Type {
-    Generic,
-    BytesViewInput,
-  };
-
-  virtual byte_type ReadByte() = 0;
-
-  virtual uint64_t Position() const noexcept = 0;
-  virtual uint64_t Length() const noexcept = 0;
-
-  virtual int16_t ReadI16() = 0;
-  virtual int32_t ReadI32() = 0;
-  virtual int64_t ReadI64() = 0;
-  virtual uint32_t ReadV32() = 0;
-  virtual uint64_t ReadV64() = 0;
-
-  virtual void SkipV32() = 0;
-  virtual void SkipV64() = 0;
-
-  virtual void Skip(uint64_t count) = 0;
-
-  // If supported, provides access to an internal buffer containing
-  // the requested 'count' of bytes. Stream guarantees that buffer is immutable
-  // and will reside in memory while underlying stream is open
-  // and before the next read operation.
-  virtual const byte_type* ReadVolatile(uint64_t count) = 0;
-
-  // If supported, provides access to an internal buffer containing
-  // the requested 'count' of bytes. Stream guarantees that buffer is immutable
-  // and will reside in memory while underlying stream is open.
-  virtual const byte_type* ReadStable(uint64_t count) = 0;
-
-  using duckdb::ReadStream::ReadData;
-
-  // @note calling "ReadByte()" on a stream in EOF state is undefined behavior
-  virtual bool IsEOF() const noexcept = 0;
-
-  virtual Type GetType() const noexcept { return Type::Generic; }
-
-  // TODO(mbkkt) Remove this
-  using iterator_category = std::forward_iterator_tag;
-  using value_type = byte_type;
-  using pointer = void;
-  using reference = void;
-  using difference_type = ptrdiff_t;
-
-  IRS_FORCE_INLINE byte_type operator*(this auto& self) {
-    return self.ReadByte();
-  }
-  IRS_FORCE_INLINE auto& operator++(this auto& self) noexcept { return self; }
-  IRS_FORCE_INLINE auto& operator++(this auto& self, int) noexcept {
-    return self;
-  }
+struct ByteExtent {
+  uint64_t offset = 0;
+  uint64_t size = 0;
 };
 
-class IndexInput : public DataInput {
- public:
-  using ptr = std::unique_ptr<IndexInput>;
+std::span<ByteExtent> CoalesceExtents(std::span<ByteExtent> extents,
+                                      uint64_t gap) noexcept;
 
-  virtual void Seek(uint64_t pos) = 0;
-
-  using DataInput::ReadStable;
-  virtual const byte_type* ReadStable(uint64_t offset, uint64_t count) = 0;
-
-  using DataInput::ReadVolatile;
-  virtual const byte_type* ReadVolatile(uint64_t offset, uint64_t count) = 0;
-
-  using DataInput::ReadData;
-  virtual void ReadData(uint64_t offset, byte_type* b, size_t count) = 0;
-
-  // TODO(mbkkt) now they're both implemented the same they,
-  // also it doesn't look like all users aware. Maybe we should remove dup?
-  virtual ptr Dup() const = 0;     // thread-unsafe fd copy (offset preserved)
-  virtual ptr Reopen() const = 0;  // thread-safe fd copy (offset preserved)
-
-  // Checksum from the current position to a specified offset
-  // without changing current position.
-  // TODO(mbkkt) Maybe change offset to count?
-  virtual uint32_t Checksum(uint64_t offset) const = 0;
-
-  virtual uint64_t CountMappedMemory() const { return 0; }
-
-  virtual void Prefetch(uint64_t, uint64_t) const noexcept {}
-
-  virtual void Evict(uint64_t, uint64_t) const noexcept {}
-
-  virtual bool Resident(uint64_t, uint64_t) const noexcept { return false; }
-
-  virtual bool Warm(uint64_t, uint64_t) const noexcept { return false; }
-
-  virtual void MarkWarm(uint64_t, uint64_t) const noexcept {}
-
-  IndexInput& operator=(const IndexInput&) = delete;
-
- protected:
-  IndexInput() = default;
-  IndexInput(const IndexInput&) = default;
+struct PinnedBytes {
+  bytes_view bytes;
+  duckdb::BlockCachePin pin;
 };
 
-void ReadOnce(IndexInput& in, byte_type* b, size_t count);
+struct SpanBytes {
+  bytes_view bytes;
+};
 
-class InputBuf final : public std::streambuf, util::Noncopyable {
+struct CursorPin {
+  duckdb::BlockCachePin pin;
+  duckdb::BlockCacheReadAhead ahead;
+};
+
+struct CursorBlock {
+  uint64_t start = 0;
+  std::unique_ptr<CursorPin> pinned;
+};
+
+class InputFile {
  public:
-  using char_type = std::streambuf::char_type;
-  using int_type = std::streambuf::int_type;
+  explicit InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping);
+  InputFile(duckdb::BlockCache& cache,
+            duckdb::shared_ptr<duckdb::BlockCacheFile> blocks) noexcept;
+  InputFile(const InputFile&) = delete;
+  InputFile& operator=(const InputFile&) = delete;
 
-  explicit InputBuf(IndexInput* in);
+  uint64_t Length() const noexcept { return _length; }
+  const std::string& Path() const noexcept;
+  bool Contiguous() const noexcept {
+    return std::holds_alternative<MappedSpan>(_kind);
+  }
+  bytes_view Span() const noexcept { return _span; }
+  bool Paged() const noexcept;
+  bytes_view Refill(uint64_t position, CursorBlock& block, bool ahead) const;
+  PinnedBytes Pin(uint64_t offset, uint64_t size) const;
 
-  std::streamsize showmanyc() final;
-
-  std::streamsize xsgetn(char_type* s, std::streamsize size) final;
-
-  int_type uflow() final;
-
-  int_type underflow() final;
-
-  operator IndexInput&() { return *_in; }
-  IndexInput* Internal() const { return _in; }
+  bool Hint(uint64_t offset, uint64_t size) const noexcept;
+  void Prefetch(uint64_t offset, uint64_t size) const noexcept;
+  void PrefetchExtents(std::span<ByteExtent> extents) const noexcept;
+  void Evict(uint64_t offset, uint64_t size) const noexcept;
+  bool Resident(uint64_t offset, uint64_t size) const noexcept;
 
  private:
-  IndexInput* _in;
+  struct MappedSpan {
+    std::unique_ptr<duckdb::MemoryMappedFile> mapping;
+    file_utils::ResidencyMap residency;
+    bool paged = false;
+  };
+
+  struct CacheBlocks {
+    duckdb::BlockCache* cache;
+    duckdb::shared_ptr<duckdb::BlockCacheFile> blocks;
+  };
+
+  bool Warm(const MappedSpan& span, uint64_t offset,
+            uint64_t size) const noexcept;
+  void MarkWarm(const MappedSpan& span, uint64_t offset,
+                uint64_t size) const noexcept;
+  bytes_view SpanWindow(uint64_t offset, uint64_t size) const noexcept;
+
+  uint64_t _length;
+  bytes_view _span;
+  std::variant<MappedSpan, CacheBlocks> _kind;
 };
 
-class BufferedIndexInput : public IndexInput {
+[[noreturn]] void ThrowPastEnd(const InputFile* file, uint64_t position,
+                               uint64_t length);
+
+template<bool Contiguous>
+class BasicInput {
  public:
-  const byte_type* ReadStable(uint64_t count) noexcept final { return nullptr; }
-  const byte_type* ReadStable(uint64_t offset, uint64_t count) noexcept final {
-    return nullptr;
+  static constexpr bool kContiguous = Contiguous;
+  using Pinned = std::conditional_t<Contiguous, SpanBytes, PinnedBytes>;
+
+  BasicInput() noexcept = default;
+  explicit BasicInput(bytes_view bytes) noexcept
+    : _begin{bytes.data()},
+      _pos{bytes.data()},
+      _end{bytes.data() + bytes.size()} {}
+  explicit BasicInput(const InputFile& file) noexcept : _file{&file} {
+    SDB_ASSERT(!Contiguous || file.Contiguous());
+    const auto span = file.Span();
+    _begin = _pos = span.data();
+    _end = span.data() + span.size();
   }
 
-  const byte_type* ReadVolatile(uint64_t count) final;
-  const byte_type* ReadVolatile(uint64_t offset, uint64_t count) final {
-    return nullptr;
+  BasicInput(const BasicInput&) noexcept
+    requires(Contiguous)
+  = default;
+  BasicInput(BasicInput&&) noexcept
+    requires(Contiguous)
+  = default;
+  BasicInput(BasicInput&& other) noexcept
+    requires(!Contiguous)
+    : _begin{std::exchange(other._begin, nullptr)},
+      _pos{std::exchange(other._pos, nullptr)},
+      _end{std::exchange(other._end, nullptr)},
+      _file{other._file},
+      _block{std::move(other._block)} {}
+  BasicInput& operator=(const BasicInput&) noexcept
+    requires(Contiguous)
+  = default;
+  BasicInput& operator=(BasicInput&&) noexcept
+    requires(Contiguous)
+  = default;
+  BasicInput& operator=(BasicInput&& other) noexcept
+    requires(!Contiguous)
+  {
+    if (this != &other) {
+      _begin = std::exchange(other._begin, nullptr);
+      _pos = std::exchange(other._pos, nullptr);
+      _end = std::exchange(other._end, nullptr);
+      _file = other._file;
+      _block = std::move(other._block);
+    }
+    return *this;
   }
 
-  byte_type ReadByte() final;
-  using DataInput::ReadData;
-  void ReadData(byte_type* b, uint64_t count) final;
-  void ReadData(duckdb::QueryContext, byte_type* b, uint64_t count) final {
-    BufferedIndexInput::ReadData(b, count);
+  explicit operator bool() const noexcept {
+    return _file != nullptr || _begin != nullptr;
   }
-  void ReadData(uint64_t offset, byte_type* b, size_t count) final {
+
+  IRS_FORCE_INLINE byte_type ReadByte() {
+    if constexpr (!Contiguous) {
+      if (_pos == _end) [[unlikely]] {
+        return ReadByteSlow();
+      }
+    }
+    SDB_ASSERT(_pos < _end);
+    return *_pos++;
+  }
+  IRS_FORCE_INLINE int16_t ReadI16() { return ReadFixed<uint16_t>(); }
+  IRS_FORCE_INLINE int32_t ReadI32() { return ReadFixed<uint32_t>(); }
+  IRS_FORCE_INLINE int64_t ReadI64() { return ReadFixed<uint64_t>(); }
+  IRS_FORCE_INLINE uint32_t ReadV32() { return ReadVarint<uint32_t>(); }
+  IRS_FORCE_INLINE uint64_t ReadV64() { return ReadVarint<uint64_t>(); }
+
+  IRS_FORCE_INLINE void ReadData(byte_type* b, uint64_t count) {
+    if (count > Remain()) [[unlikely]] {
+      return ReadDataSlow(b, count);
+    }
+    if (count != 0) [[likely]] {
+      std::memcpy(b, _pos, count);
+      _pos += count;
+    }
+  }
+  void ReadData(uint64_t offset, byte_type* b, uint64_t count)
+    requires(!Contiguous)
+  {
     Seek(offset);
     ReadData(b, count);
   }
 
-  int16_t ReadI16() final {
-    return Remain() < sizeof(uint16_t) ? irs::read<uint16_t>(*this)
-                                       : irs::read<uint16_t>(_begin);
+  IRS_FORCE_INLINE uint64_t Position() const noexcept {
+    const auto offset = static_cast<uint64_t>(_pos - _begin);
+    if constexpr (Contiguous) {
+      return offset;
+    } else {
+      return _block.start + offset;
+    }
   }
-  int32_t ReadI32() final {
-    return Remain() < sizeof(uint32_t) ? irs::read<uint32_t>(*this)
-                                       : irs::read<uint32_t>(_begin);
+  uint64_t Length() const noexcept {
+    if constexpr (!Contiguous) {
+      if (_file != nullptr) {
+        return _file->Length();
+      }
+    }
+    return static_cast<uint64_t>(_end - _begin);
   }
-  int64_t ReadI64() final {
-    return Remain() < sizeof(uint64_t) ? irs::read<uint64_t>(*this)
-                                       : irs::read<uint64_t>(_begin);
-  }
-  uint32_t ReadV32() final {
-    return Remain() < bytes_io<uint32_t>::kMaxVSize
-             ? irs::vread<uint32_t>(*this)
-             : irs::vread<uint32_t>(_begin);
-  }
-  uint64_t ReadV64() final {
-    return Remain() < bytes_io<uint64_t>::kMaxVSize
-             ? irs::vread<uint64_t>(*this)
-             : irs::vread<uint64_t>(_begin);
-  }
+  bool IsEOF() const noexcept { return Position() >= Length(); }
 
-  void SkipV32() final {
-    Remain() < bytes_io<uint32_t>::kMaxVSize ? irs::vskip<uint32_t>(*this)
-                                             : irs::vskip<uint32_t>(_begin);
+  IRS_FORCE_INLINE void Seek(uint64_t position) {
+    if constexpr (Contiguous) {
+      SDB_ASSERT(position <= Length());
+      _pos = _begin + position;
+    } else if (const auto offset = position - _block.start;
+               offset <= static_cast<uint64_t>(_end - _begin)) [[likely]] {
+      _pos = _begin + offset;
+    } else {
+      SeekOutside(position);
+    }
   }
-  void SkipV64() final {
-    Remain() < bytes_io<uint64_t>::kMaxVSize ? irs::vskip<uint64_t>(*this)
-                                             : irs::vskip<uint64_t>(_begin);
+  IRS_FORCE_INLINE void Skip(uint64_t count) {
+    if constexpr (Contiguous) {
+      Consume(count);
+    } else if (count <= Remain()) [[likely]] {
+      _pos += count;
+    } else {
+      SeekOutside(Position() + count);
+    }
   }
-
-  uint64_t Position() const noexcept final { return _start + Offset(); }
-
-  void Skip(uint64_t count) final { Seek(Position() + count); }
-  void Seek(uint64_t pos) final;
-
-  BufferedIndexInput(const BufferedIndexInput&) = delete;
-  BufferedIndexInput& operator=(const BufferedIndexInput&) = delete;
-
- protected:
-  BufferedIndexInput() = default;
-
-  void reset(byte_type* buf, uint64_t size, uint64_t start) noexcept {
-    _buf = buf;
-    _begin = buf;
-    _end = buf;
-    _buf_size = size;
-    _start = start;
+  IRS_FORCE_INLINE void Consume(uint64_t count) noexcept {
+    SDB_ASSERT(count <= Remain());
+    _pos += count;
   }
 
-  virtual void SeekInternal(uint64_t pos) = 0;
-
-  virtual size_t ReadInternal(byte_type* b, size_t count) = 0;
-
-  // returns number of reamining bytes in the buffer
-  IRS_FORCE_INLINE uint64_t Remain() const noexcept {
-    return std::distance(_begin, _end);
+  const byte_type* Current() const noexcept
+    requires(Contiguous)
+  {
+    return _pos;
   }
+  IRS_FORCE_INLINE bytes_view Peek(uint64_t count)
+    requires(!Contiguous)
+  {
+    if (count <= Remain()) [[likely]] {
+      return {_pos, count};
+    }
+    return PeekSlow(count);
+  }
+
+  IRS_FORCE_INLINE Pinned Pin(uint64_t count) {
+    if constexpr (Contiguous) {
+      SDB_ASSERT(count <= Remain());
+    } else if (_block.pinned || count > Remain()) [[unlikely]] {
+      return PinSlow(count);
+    }
+    const bytes_view bytes{_pos, count};
+    _pos += count;
+    return {.bytes = bytes};
+  }
+  IRS_FORCE_INLINE Pinned Pin(uint64_t offset, uint64_t count) const {
+    const auto length = static_cast<uint64_t>(_end - _begin);
+    if constexpr (Contiguous) {
+      SDB_ASSERT(offset <= length && count <= length - offset);
+    } else if (_block.pinned || offset > length || count > length - offset)
+      [[unlikely]] {
+      return PinSlow(offset, count);
+    }
+    return {.bytes = {_begin + offset, count}};
+  }
+
+  const InputFile* File() const noexcept { return _file; }
 
  private:
-  // number of bytes between begin_ & end_
-  uint64_t Refill();
+  struct Bytes {
+    using iterator_category = std::input_iterator_tag;
+    using value_type = byte_type;
+    using difference_type = std::ptrdiff_t;
+    using pointer = const byte_type*;
+    using reference = byte_type;
 
-  // number of elements between current position and beginning of the buffer
-  IRS_FORCE_INLINE uint64_t Offset() const noexcept {
-    return std::distance(_buf, _begin);
+    byte_type operator*() const { return in.ReadByte(); }
+    Bytes& operator++() noexcept { return *this; }
+
+    BasicInput& in;
+  };
+
+  IRS_FORCE_INLINE uint64_t Remain() const noexcept {
+    return static_cast<uint64_t>(_end - _pos);
   }
 
-  // number of valid bytes in the buffer
-  IRS_FORCE_INLINE uint64_t Size() const noexcept {
-    return std::distance(_buf, _end);
+  template<typename T>
+  IRS_FORCE_INLINE T ReadFixed() {
+    if constexpr (!Contiguous) {
+      if (Remain() < sizeof(T)) [[unlikely]] {
+        Bytes bytes{*this};
+        return irs::read<T>(bytes);
+      }
+    }
+    return irs::read<T>(_pos);
   }
 
-  byte_type* _buf = nullptr;  // buffer itself
-  byte_type* _begin = _buf;   // current position in the buffer
-  byte_type* _end = _buf;     // end of the valid bytes in the buffer
-  uint64_t _start = 0;        // position of the buffer in file
-  uint64_t _buf_size = 0;     // size of the buffer in bytes
+  template<typename T>
+  IRS_FORCE_INLINE T ReadVarint() {
+    if constexpr (!Contiguous) {
+      if (Remain() < bytes_io<T>::kMaxVSize) [[unlikely]] {
+        Bytes bytes{*this};
+        return irs::vread<T>(bytes);
+      }
+    }
+    return irs::vread<T>(_pos);
+  }
+
+  IRS_NO_INLINE bytes_view PeekSlow(uint64_t count) {
+    if (_pos == _end && Refill(true) && count <= Remain()) {
+      return {_pos, count};
+    }
+    return {};
+  }
+
+  IRS_NO_INLINE byte_type ReadByteSlow() {
+    if (!Refill(true)) {
+      ThrowPastEnd(_file, Position(), Length());
+    }
+    return *_pos++;
+  }
+
+  IRS_NO_INLINE Pinned PinSlow(uint64_t count) {
+    if (_file == nullptr) {
+      ThrowPastEnd(_file, Position(), Length());
+    }
+    if (count <= Remain()) {
+      if (auto pin = _block.pinned->pin.Share(
+            static_cast<uint64_t>(_pos - _begin), count);
+          pin.IsValid()) {
+        const bytes_view bytes{_pos, count};
+        _pos += count;
+        return {.bytes = bytes, .pin = std::move(pin)};
+      }
+    }
+    auto pinned = _file->Pin(Position(), count);
+    Skip(count);
+    return pinned;
+  }
+
+  IRS_NO_INLINE Pinned PinSlow(uint64_t offset, uint64_t count) const {
+    if (_file == nullptr) {
+      ThrowPastEnd(_file, offset, Length());
+    }
+    if (_block.pinned && offset >= _block.start) {
+      const auto at = offset - _block.start;
+      const auto length = static_cast<uint64_t>(_end - _begin);
+      if (at <= length && count <= length - at) {
+        if (auto pin = _block.pinned->pin.Share(at, count); pin.IsValid()) {
+          return {.bytes = {_begin + at, count}, .pin = std::move(pin)};
+        }
+      }
+    }
+    return _file->Pin(offset, count);
+  }
+
+  IRS_NO_INLINE void ReadDataSlow(byte_type* b, uint64_t count) {
+    if constexpr (!Contiguous) {
+      if (_file != nullptr) {
+        const auto at = Position();
+        const auto from = at + Remain();
+        const auto to = at + count;
+        if (from / duckdb::BlockCache::BLOCK_SIZE !=
+            (to - 1) / duckdb::BlockCache::BLOCK_SIZE) {
+          _file->Prefetch(from, to - from);
+        }
+        do {
+          if (_pos == _end && !Refill(false)) {
+            break;
+          }
+          const auto chunk = std::min(count, Remain());
+          std::memcpy(b, _pos, chunk);
+          _pos += chunk;
+          b += chunk;
+          count -= chunk;
+        } while (count != 0);
+        if (count == 0) {
+          return;
+        }
+      }
+    }
+    ThrowPastEnd(_file, Position(), Length());
+  }
+
+  void SeekOutside(uint64_t position) {
+    if (_file == nullptr) {
+      _pos = _end;
+      return;
+    }
+    if (_block.pinned) {
+      _block.pinned->pin.Reset();
+    }
+    _begin = _pos = _end = nullptr;
+    _block.start = position;
+  }
+
+  bool Refill(bool ahead) {
+    const auto position = Position();
+    if (_file == nullptr || position >= _file->Length()) {
+      return false;
+    }
+    const auto window = _file->Refill(position, _block, ahead);
+    _begin = window.data();
+    _end = window.data() + window.size();
+    _pos = _begin + (position - _block.start);
+    return _pos != _end;
+  }
+
+  const byte_type* _begin = nullptr;
+  const byte_type* _pos = nullptr;
+  const byte_type* _end = nullptr;
+  const InputFile* _file = nullptr;
+  [[no_unique_address]] utils::Need<!Contiguous, CursorBlock> _block;
 };
+
+using BytesViewInput = BasicInput<true>;
+using IndexInput = BasicInput<false>;
+
+static_assert(sizeof(BytesViewInput) == 4 * sizeof(void*));
+
+void ReadOnce(IndexInput& in, byte_type* b, uint64_t count);
+
+template<typename F>
+auto ResolveInput(const InputFile& file, F&& f) {
+  if (file.Contiguous()) {
+    return f.template operator()<BytesViewInput>();
+  }
+  return f.template operator()<IndexInput>();
+}
+
+template<typename F>
+auto ResolveInput(const InputFile& doc, const InputFile& pos,
+                  const InputFile* pay, F&& f) {
+  if (doc.Contiguous() && pos.Contiguous() && (!pay || pay->Contiguous())) {
+    return f.template operator()<BytesViewInput>();
+  }
+  return f.template operator()<IndexInput>();
+}
 
 }  // namespace irs

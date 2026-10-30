@@ -1072,7 +1072,7 @@ TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(NormTest, NormTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

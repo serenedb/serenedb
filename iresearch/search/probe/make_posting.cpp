@@ -84,19 +84,18 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
         });
     }
   }
-  return detail::ResolveInput(
-    *detail::DocOf(own), [&]<typename Input> -> Node::ptr {
-      if (!scores) {
-        using Leaf = detail::PlainProbeScored<Input>;
-        return memory::make_managed<Impl<Leaf>>(meta, *detail::DocOf(own),
-                                                detail::LayoutOf(own),
-                                                detail::BoundsOf(own));
-      }
-      using Leaf = detail::PostingProbeScored<Input>;
-      return memory::make_managed<Impl<Leaf>>(
-        meta, *detail::DocOf(own), segment, own,
-        recipe.Args(posting.stats, posting.boost));
-    });
+  return ResolveInput(*detail::DocOf(own), [&]<typename Input> -> Node::ptr {
+    if (!scores) {
+      using Leaf = detail::PlainProbeScored<Input>;
+      return memory::make_managed<Impl<Leaf>>(meta, *detail::DocOf(own),
+                                              detail::LayoutOf(own),
+                                              detail::BoundsOf(own));
+    }
+    using Leaf = detail::PostingProbeScored<Input>;
+    return memory::make_managed<Impl<Leaf>>(
+      meta, *detail::DocOf(own), segment, own,
+      recipe.Args(posting.stats, posting.boost));
+  });
 }
 
 }  // namespace irs::probe

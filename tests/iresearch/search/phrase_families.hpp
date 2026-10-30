@@ -36,8 +36,9 @@
 #include <iresearch/search/probe/node.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/top/root.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/bit_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <map>
 #include <span>
@@ -256,7 +257,8 @@ class FamilyIndex {
     _reader = irs::DirectoryReader{_dir, irs::tests::DefaultReaderOptions()};
   }
 
-  irs::MemoryDirectory _dir;
+  irs::Directory _dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
 
  private:
   irs::doc_id_t End(size_t segment) const {

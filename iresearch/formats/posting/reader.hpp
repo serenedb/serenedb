@@ -35,13 +35,13 @@
 
 namespace irs {
 
-inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
-                         const ReaderState& state, std::string_view ext) {
-  SDB_ASSERT(!in);
+inline std::unique_ptr<InputFile> PrepareInput(std::string& str,
+                                               const ReaderState& state,
+                                               std::string_view ext) {
   irs::FileName(str, state.meta->name, ext);
-  in = state.dir->open(str, advice);
-
-  format_utils::ReadFooter(*in, str);
+  auto file = state.dir->Open(str, duckdb::MappedFileAccess::RANDOM);
+  format_utils::ReadFooter(*file, str);
+  return file;
 }
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
@@ -49,21 +49,8 @@ inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 class PostingsReader final {
  public:
   PostingsHandles Handles() const noexcept {
-    return {.doc = _doc_in.get(), .pos = _pos_in.get(), .pay = _pay_in.get()};
-  }
-
-  uint64_t CountMappedMemory() const {
-    uint64_t bytes = 0;
-    if (_doc_in != nullptr) {
-      bytes += _doc_in->CountMappedMemory();
-    }
-    if (_pos_in != nullptr) {
-      bytes += _pos_in->CountMappedMemory();
-    }
-    if (_pay_in != nullptr) {
-      bytes += _pay_in->CountMappedMemory();
-    }
-    return bytes;
+    return {
+      .doc = _doc_file.get(), .pos = _pos_file.get(), .pay = _pay_file.get()};
   }
 
   // features - the set of features available for segment
@@ -77,10 +64,6 @@ class PostingsReader final {
                              const PostingMeta& meta, bool has_score_bounds,
                              TermPostings::ptr reuse = {}) const;
 
-  std::unique_ptr<IndexInput> ReopenPayload() const {
-    return _pay_in ? _pay_in->Reopen() : nullptr;
-  }
-
  private:
   template<typename FieldTraits, typename Factory>
   static auto IteratorImpl(IndexFeatures enabled, Factory&& factory);
@@ -89,9 +72,9 @@ class PostingsReader final {
   static auto IteratorImpl(IndexFeatures field_features,
                            IndexFeatures required_features, Factory&& factory);
 
-  IndexInput::ptr _doc_in;
-  IndexInput::ptr _pos_in;
-  IndexInput::ptr _pay_in;
+  std::unique_ptr<InputFile> _doc_file;
+  std::unique_ptr<InputFile> _pos_file;
+  std::unique_ptr<InputFile> _pay_file;
 };
 
 inline void PostingsReader::prepare(const ReaderState& state,
@@ -103,16 +86,14 @@ inline void PostingsReader::prepare(const ReaderState& state,
     (features & (IndexFeatures::Offs | IndexFeatures::Vec));
 
   // prepare document input
-  PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state, PostingsWriter::kDocExt);
+  _doc_file = PrepareInput(buf, state, PostingsWriter::kDocExt);
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state,
-                 PostingsWriter::kPosExt);
+    _pos_file = PrepareInput(buf, state, PostingsWriter::kPosExt);
   }
 
   if (needs_pay) {
-    PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
-                 PostingsWriter::kPayExt);
+    _pay_file = PrepareInput(buf, state, PostingsWriter::kPayExt);
   }
 }
 
@@ -242,14 +223,6 @@ auto PostingsReader::IteratorImpl(IndexFeatures field_features,
   }
 }
 
-auto ResolveInputType(DataInput::Type type, auto&& f) {
-  if (type == DataInput::Type::BytesViewInput) {
-    return f.template operator()<BytesViewInput>();
-  } else {
-    return f.template operator()<IndexInput>();
-  }
-}
-
 inline TermPostings::ptr PostingsReader::Postings(
   IndexFeatures field_features, IndexFeatures required_features,
   const PostingMeta& meta, bool has_score_bounds,
@@ -261,17 +234,21 @@ inline TermPostings::ptr PostingsReader::Postings(
   return IteratorImpl(
     field_features, required_features,
     [&]<typename IteratorTraits, typename FieldTraits> -> TermPostings::ptr {
-      return ResolveInputType(
-        _doc_in->GetType(), [&]<typename InputType> -> TermPostings::ptr {
-          using Stream = PostingsStream<IteratorTraits, FieldTraits, InputType>;
-          if (!reuse) {
-            reuse = memory::make_managed<Stream>();
-          }
-          SDB_ASSERT(dynamic_cast<Stream*>(reuse.get()) != nullptr);
-          static_cast<Stream&>(*reuse).Prepare(meta, *_doc_in, _pos_in.get(),
-                                               _pay_in.get(), has_score_bounds);
-          return std::move(reuse);
-        });
+      const auto make = [&]<typename InputType> -> TermPostings::ptr {
+        using Stream = PostingsStream<IteratorTraits, FieldTraits, InputType>;
+        if (!reuse) {
+          reuse = memory::make_managed<Stream>();
+        }
+        SDB_ASSERT(dynamic_cast<Stream*>(reuse.get()) != nullptr);
+        static_cast<Stream&>(*reuse).Prepare(meta, *_doc_file, _pos_file.get(),
+                                             _pay_file.get(), has_score_bounds);
+        return std::move(reuse);
+      };
+      if constexpr (IteratorTraits::Position()) {
+        return ResolveInput(*_doc_file, *_pos_file, _pay_file.get(), make);
+      } else {
+        return ResolveInput(*_doc_file, make);
+      }
     });
 }
 

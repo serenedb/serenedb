@@ -43,6 +43,10 @@ As an alternative to reconnecting, switch to the new database within the current
 
 The options are stored with the database, so the server opens it with them again after a restart. `BLOCK_SIZE` is fixed once the file exists; `ROW_GROUP_SIZE` applies to the row groups written from then on. Any other option is refused.
 
+## Tablespace
+
+`[WITH] TABLESPACE [=] name` creates the database in a [tablespace](../create_tablespace/index.md): its file and write-ahead log live there when the tablespace is a local directory, and its search tables and indexes go there unless they name another tablespace. In a tablespace on an object store, the database file stays in the data directory and its search tables and indexes go to the tablespace. Without `TABLESPACE`, a database is created in `pg_default`, the data directory. `pg_database.dattablespace` shows the tablespace of a database, and a tablespace holding a database cannot be dropped.
+
 A database created inside a transaction is visible to other sessions only once that transaction commits. Until then, creating a database of the same name from another session fails.
 
 ## Dropping a database

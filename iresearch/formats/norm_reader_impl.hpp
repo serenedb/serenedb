@@ -152,6 +152,7 @@ class NormReaderBase : public NormReader {
   }
 
   IRS_FORCE_INLINE void Touched(const doc_id_t* docs, size_t n) noexcept {
+    SDB_ASSERT(docs[0] >= _region->first_doc && docs[n - 1] < _region->end_doc);
     if (_bytes == 0) {
       return;
     }
@@ -170,7 +171,7 @@ class NormReaderBase : public NormReader {
     }
     const auto epoch = file_utils::ResidencyEpoch();
     const bool valid = _column->Residency().Valid(epoch);
-    if (_verified && valid) {
+    if (valid) {
       const auto& residency = _column->Residency();
       if (docs[n - 1] < _window_end) {
         const auto span = _column->Window(_window);
@@ -263,7 +264,6 @@ class NormReaderBase : public NormReader {
   bool Probe(const doc_id_t* docs, size_t n, uint32_t epoch,
              bool valid) noexcept {
     Set(_probed_at + _window);
-    _verified = true;
     _probe = _window == _probe_end ? std::min(_probe * 2, kMaxProbe) : 1;
     auto last = _window + _probe - 1;
     if (n > 1 && (uint64_t{docs[n - 1] - docs[0]} + 1) * _bytes <=
@@ -442,7 +442,6 @@ class NormReaderBase : public NormReader {
   uint32_t _bytes = 0;
   bool _window_done = false;
   bool _dense = false;
-  bool _verified = false;
   doc_id_t _window_first = 0;
   doc_id_t _window_end = 0;
   size_t _window = 0;
@@ -456,12 +455,13 @@ class NormReaderBase : public NormReader {
   score_t _avg;
 };
 
-template<bool Multi>
+template<bool Multi, bool Paged>
 class PersistedNormReader : public NormReaderBase {
  public:
   explicit PersistedNormReader(const NormColumnReader& column) noexcept
     : NormReaderBase{column} {
     SDB_ASSERT(Multi || column.RegionCount() == 1);
+    SDB_ASSERT(Paged == column.Paged());
     Position(column.Region(0));
   }
 
@@ -480,7 +480,7 @@ class PersistedNormReader : public NormReaderBase {
         Position(_column->Locate(doc));
       }
     }
-    Touched(&doc, 1);
+    Track(&doc, 1);
     return ReadOne(doc);
   }
 
@@ -496,6 +496,12 @@ class PersistedNormReader : public NormReaderBase {
   }
 
  private:
+  IRS_FORCE_INLINE void Track(const doc_id_t* docs, size_t n) noexcept {
+    if constexpr (Paged) {
+      Touched(docs, n);
+    }
+  }
+
   IRS_FORCE_INLINE void Fetch(const doc_id_t* docs, uint32_t* values,
                               size_t n) {
     SDB_ASSERT(std::is_sorted(docs, docs + n));
@@ -506,7 +512,7 @@ class PersistedNormReader : public NormReaderBase {
         return;
       }
     }
-    Touched(docs, n);
+    Track(docs, n);
     Read(docs, values, n);
   }
 
@@ -520,7 +526,7 @@ class PersistedNormReader : public NormReaderBase {
       while (j != n && docs[j] < _region->end_doc) {
         ++j;
       }
-      Touched(docs + i, j - i);
+      Track(docs + i, j - i);
       Read(docs + i, values + i, j - i);
       i = j;
     }
@@ -530,10 +536,14 @@ class PersistedNormReader : public NormReaderBase {
 inline memory::managed_ptr<NormReader> MakePersistedNormReader(
   const NormColumnReader& column) {
   SDB_ASSERT(column.RegionCount() > 0);
-  if (column.RegionCount() == 1) {
-    return memory::make_managed<PersistedNormReader<false>>(column);
-  }
-  return memory::make_managed<PersistedNormReader<true>>(column);
+  const auto make = [&]<bool Paged> -> memory::managed_ptr<NormReader> {
+    if (column.RegionCount() == 1) {
+      return memory::make_managed<PersistedNormReader<false, Paged>>(column);
+    }
+    return memory::make_managed<PersistedNormReader<true, Paged>>(column);
+  };
+  return column.Paged() ? make.template operator()<true>()
+                        : make.template operator()<false>();
 }
 
 }  // namespace irs

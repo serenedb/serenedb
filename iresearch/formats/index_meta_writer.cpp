@@ -22,8 +22,7 @@
 
 #include "iresearch/formats/index_meta_writer.hpp"
 
-#include <absl/strings/str_cat.h>
-
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/storage/storage_info.hpp>
 
@@ -48,7 +47,7 @@ std::string index_meta::FileName(uint64_t gen) {
   return irs::FileName(kPrefix, gen);
 }
 
-bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
+bool IndexMetaWriter::prepare(const Directory& dir, IndexMeta& meta,
                               std::string& pending_filename,
                               std::string& filename,
                               const SourcePosition& position) {
@@ -61,7 +60,7 @@ bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
   pending_filename = PendingFileName(meta.gen);
   filename = index_meta::FileName(meta.gen);
 
-  auto out = dir.create(pending_filename);
+  auto out = dir.CreateWhole(pending_filename);
 
   format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta_out) {
     meta_out.WriteProperty<uint64_t>(
@@ -86,9 +85,10 @@ bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
         [&](duckdb::BinarySerializer& obj) { _payload(position, obj); });
     }
   });
+  out->Close();
 
   // Only noexcept operations below
-  _dir = &dir;
+  _dir = dir;
   _pending_gen = meta.gen;
 
   return true;
@@ -102,19 +102,12 @@ bool IndexMetaWriter::commit() {
   const auto src = PendingFileName(_pending_gen);
   const auto dst = index_meta::FileName(_pending_gen);
 
-  if (!_dir->rename(src, dst)) {
-    _pending_gen = index_gen_limits::invalid();
-    _dir = nullptr;
-
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("Failed to rename file, src path: '", src,
-                            "' dst path: '", dst, "'"));
-  }
+  _dir->Rename(src, dst);
 
   // only noexcept operations below
   // clear pending state
   _pending_gen = index_gen_limits::invalid();
-  _dir = nullptr;
+  _dir.reset();
 
   return true;
 }
@@ -131,9 +124,8 @@ void IndexMetaWriter::rollback() noexcept {
   } catch (const std::exception& e) {
     SDB_ERROR(
       IRESEARCH,
-      absl::StrCat(
-        "Caught error while generating file name for index meta, reason: ",
-        e.what()));
+      "Caught error while generating file name for index meta, reason: ",
+      e.what());
     return;
   } catch (...) {
     SDB_ERROR(IRESEARCH,
@@ -141,13 +133,19 @@ void IndexMetaWriter::rollback() noexcept {
     return;
   }
 
-  if (!_dir->remove(seg_file)) {  // suppress all errors
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Failed to remove file, path: ", seg_file));
+  try {
+    if (!_dir->Remove(seg_file)) {
+      SDB_ERROR(IRESEARCH, "Failed to remove file, path: ", seg_file);
+    }
+  } catch (const std::exception& e) {
+    SDB_ERROR(IRESEARCH, "Failed to remove file, path: ", seg_file,
+              ", reason: ", duckdb::ErrorData{e}.RawMessage());
+  } catch (...) {
+    SDB_ERROR(IRESEARCH, "Failed to remove file, path: ", seg_file);
   }
 
   // clear pending state
-  _dir = nullptr;
+  _dir.reset();
   _pending_gen = index_gen_limits::invalid();
 }
 

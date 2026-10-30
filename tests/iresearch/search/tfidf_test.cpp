@@ -175,7 +175,7 @@ void TfidfTestCase::TestQueryNorms() {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -226,7 +226,7 @@ void TfidfTestCase::TestQueryNorms() {
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       scores.emplace_back(score_value);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -394,7 +394,7 @@ TEST_P(TfidfTestCase, test_phrase) {
       score.Score(&score_value, 1);
 
       irs::BytesViewInput in;
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
       sorted.emplace(score_value, irs::ReadString<std::string>(in));
     }
 
@@ -457,7 +457,7 @@ TEST_P(TfidfTestCase, test_phrase) {
       score.Score(&score_value, 1);
 
       irs::BytesViewInput in;
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
       sorted.emplace(score_value, irs::ReadString<std::string>(in));
     }
 
@@ -526,7 +526,7 @@ TEST_P(TfidfTestCase, test_query) {
     while (!irs::doc_limits::eof(docs->Next())) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -635,7 +635,7 @@ TEST_P(TfidfTestCase, test_query) {
       for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
-        in.reset(values.Get(docs->Value()));
+        in = irs::BytesViewInput{values.Get(docs->Value())};
 
         auto str_seq = irs::ReadString<std::string>(in);
         auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -759,7 +759,7 @@ TEST_P(TfidfTestCase, test_query) {
       while (!irs::doc_limits::eof(docs->Next())) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
-        in.reset(values.Get(docs->Value()));
+        in = irs::BytesViewInput{values.Get(docs->Value())};
 
         irs::score_t score_value{};
         score.Score(&score_value, 1);
@@ -873,7 +873,7 @@ TEST_P(TfidfTestCase, test_query) {
       while (!irs::doc_limits::eof(docs->Next())) {
         fetcher.Fetch(docs->Value());
         docs->FetchScoreArgs(0);
-        in.reset(values.Get(docs->Value()));
+        in = irs::BytesViewInput{values.Get(docs->Value())};
 
         irs::score_t score_value{};
         score.Score(&score_value, 1);
@@ -922,7 +922,7 @@ TEST_P(TfidfTestCase, test_query) {
     for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -967,7 +967,7 @@ TEST_P(TfidfTestCase, test_query) {
     for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1012,7 +1012,7 @@ TEST_P(TfidfTestCase, test_query) {
     for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1057,7 +1057,7 @@ TEST_P(TfidfTestCase, test_query) {
     for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1103,7 +1103,7 @@ TEST_P(TfidfTestCase, test_query) {
     for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1258,7 +1258,7 @@ TEST_P(TfidfTestCase, test_order) {
     for (irs::score_t score_value{}; !irs::doc_limits::eof(docs->Next());) {
       fetcher.Fetch(docs->Value());
       docs->FetchScoreArgs(0);
-      in.reset(values.Get(docs->Value()));
+      in = irs::BytesViewInput{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1278,7 +1278,7 @@ TEST_P(TfidfTestCase, test_order) {
   counter.Reset();
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 TEST_P(TfidfTestCase, test_query_norms) { TestQueryNorms(); }
 

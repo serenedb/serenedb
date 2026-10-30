@@ -70,6 +70,24 @@ VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
   FinishStats(std::move(stats));
 }
 
+void VariantColumnReader::CollectBlocks(uint64_t first, uint64_t last,
+                                        std::vector<ByteExtent>& out) const {
+  ColumnReader::CollectBlocks(first, last, out);
+  if (first >= _row_count) {
+    return;
+  }
+  const auto count = std::min(last, _row_count - 1) - first + 1;
+  ForEachVariantRun(
+    first, count,
+    [&](size_t rg, duckdb::idx_t local, duckdb::idx_t run, duckdb::idx_t) {
+      const auto& vrg = _variant_rgs[rg];
+      vrg.unshredded->CollectBlocks(local, local + run - 1, out);
+      if (vrg.shredded) {
+        vrg.shredded->CollectBlocks(local, local + run - 1, out);
+      }
+    });
+}
+
 void VariantColumnReader::NewOutputVector(ScanState& s) const {
   ColumnReader::NewOutputVector(s);
   if (!s.variant) {

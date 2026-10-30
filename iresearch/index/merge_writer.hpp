@@ -32,6 +32,7 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
@@ -42,8 +43,6 @@ class DatabaseInstance;
 }
 
 namespace irs {
-
-struct TrackingDirectory;
 
 struct DocRemap {
   explicit DocRemap(IResourceManager& rm) noexcept : id_map{{rm}} {}
@@ -78,7 +77,7 @@ class MergeWriter : public util::Noncopyable {
     DocRemap remap;
   };
 
-  explicit MergeWriter(Directory& dir,
+  explicit MergeWriter(const Directory& dir,
                        const SegmentWriterOptions& options) noexcept
     : _dir{dir},
       _readers{{options.resource_manager}},
@@ -110,7 +109,7 @@ class MergeWriter : public util::Noncopyable {
   }
 
  private:
-  Directory& _dir;
+  Directory _dir;
   ManagedVector<ReaderCtx> _readers;
   ScorerPtr _scorer;
   duckdb::DatabaseInstance& _db;

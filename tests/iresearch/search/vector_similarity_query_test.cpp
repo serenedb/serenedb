@@ -38,7 +38,8 @@
 #include <iresearch/search/hits/make.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <map>
 
@@ -113,7 +114,7 @@ void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc, float x) {
 
 // Docs 1..n with emb = [doc, 0, 0, 0].
 irs::DirectoryReader BuildIndex(
-  irs::Directory& dir, irs::doc_id_t n,
+  const irs::Directory& dir, irs::doc_id_t n,
   irs::IndexWriterOptions opts = MakeWriterOptions()) {
   auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
   EXPECT_NE(nullptr, writer);
@@ -157,12 +158,13 @@ void AssertQuantizedPath(const irs::SubReader& segment) {
   ASSERT_NE(nullptr, ann);
   ASSERT_FALSE(ann->Empty());
   ASSERT_EQ(irs::AnnKind::Ivf, ann->Kind());
-  auto idx_in = segment.ReopenAnn();
-  ASSERT_NE(nullptr, idx_in);
+  const auto* idx_file = segment.AnnFile();
+  ASSERT_NE(nullptr, idx_file);
+  irs::IndexInput idx_in{*idx_file};
   const std::vector<float> query(kDim, 0.f);
   ASSERT_NE(nullptr,
             irs::ReadQuantizerCodebook(
-              static_cast<const irs::IvfIndex*>(ann)->Tree(), *idx_in,
+              static_cast<const irs::IvfIndex*>(ann)->Tree(), idx_in,
               irs::VectorQuantization::SQ8, kDim, irs::VectorMetric::L2Sqr,
               query, irs::CodebookUse::Search));
   const auto* postings = segment.field(kVec);
@@ -196,7 +198,8 @@ class VectorSimilarityQueryTest : public ::testing::Test {
   }
 
   irs::doc_id_t _docs = 0;
-  irs::MemoryDirectory _dir;
+  irs::Directory _dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   irs::DirectoryReader _reader;
   irs::ByVectorSimilarity _filter;
   irs::ColumnArgsFetcher _fetcher;
@@ -474,7 +477,8 @@ class RerankExactDistancesTest
     }
   }
 
-  irs::MemoryDirectory _dir;
+  irs::Directory _dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   irs::DirectoryReader _reader;
 };
 

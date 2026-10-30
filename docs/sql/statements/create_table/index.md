@@ -54,6 +54,8 @@ They can be created using the `CREATE TEMP TABLE` or the `CREATE TEMPORARY TABLE
 
 Temporary tables reside in memory rather than on disk even when connecting to a persistent SereneDB, but if the `temp_directory` [configuration](../../../configuration/overview.md) is set, data will be spilled to disk if memory becomes constrained.
 
+A temporary table can have [inverted indexes](../create_index/inverted.md). They are kept in memory too, laid out so that queries read them as fast as an index on a local disk, are visible only to the session, and are dropped with the table; [`VACUUM (OPTIMIZE_IN_MEMORY_TABLE)`](../vacuum/index.md#optimizing-in-memory-indexes--optimize_in_memory_table) lays out what was written when memory was short. Their text search dictionaries come from the session's database, and dropping a dictionary that such an index uses makes queries on the index fail. A temporary table cannot be a search table (`WITH (storage = 'search')`), and neither it nor its indexes can be placed in a [tablespace](../create_tablespace/index.md).
+
 Create a temporary table from a CSV file (automatically detecting column names and types):
 
 <SqlLogicTest id="sql/statements/create_table/index/example_009" />
@@ -103,6 +105,10 @@ Or:
 <SqlLogicTest id="sql/statements/create_table/index/example_017" />
 
 It is not possible to create tables using CTAS statements with constraints (primary keys, check constraints, etc.).
+
+## Tablespace
+
+`TABLESPACE name` puts the files of a search table, one created `WITH (storage = 'search')`, in a [tablespace](../create_tablespace/index.md): after `WITH (...)` and `ON COMMIT`, or before `AS` in a CTAS. Without it, a search table goes to the tablespace `default_tablespace` names, else to its database's. Other tables live in the database file, so they take no `TABLESPACE` other than their database's.
 
 ## Check Constraints
 

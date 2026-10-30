@@ -856,7 +856,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_same_score) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(doc_collector_test, DocCollectorTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

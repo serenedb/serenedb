@@ -570,8 +570,8 @@ class PhraseSlopMatcher {
   uint32_t _end_offset{0};
 };
 
-template<bool Offs, bool HasFreq, size_t N = 0>
+template<typename Input, bool Offs, bool HasFreq, size_t N = 0>
 using FixedPhraseSlopMatcher =
-  PhraseSlopMatcher<FixedTermPosition<Offs>, Offs, HasFreq, N>;
+  PhraseSlopMatcher<FixedTermPosition<Offs, Input>, Offs, HasFreq, N>;
 
 }  // namespace irs

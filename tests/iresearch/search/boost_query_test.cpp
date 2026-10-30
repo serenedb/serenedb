@@ -332,7 +332,7 @@ TEST_P(BoostQueryTestCase, OptimizerPreservesMixedDistinct) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(boost_query_test, BoostQueryTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

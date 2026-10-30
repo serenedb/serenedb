@@ -24,107 +24,52 @@
 #pragma once
 
 #include <array>
-#include <bit>
 #include <iresearch/store/directory.hpp>
-#include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/type_id.hpp>
 #include <memory>
+#include <string>
+#include <string_view>
+#include <tuple>
 
+#include "store/simulated_object_store.hpp"
 #include "tests_shared.hpp"
 
 class TestBase;
 
 namespace tests {
 
-template<typename Impl, typename... Args>
-std::shared_ptr<irs::Directory> MakePhysicalDirectory(
-  const TestBase* test, irs::DirectoryAttributes attrs, Args&&... args) {
-  if (test) {
-    const auto dir_path = test->test_dir() / "index";
-    std::filesystem::create_directories(dir_path);
+std::shared_ptr<irs::Directory> MemoryDirectory(const TestBase* test);
+std::shared_ptr<irs::Directory> LocalDirectory(const TestBase* test);
+std::shared_ptr<irs::Directory> ObjectStoreDirectory(const TestBase* test);
 
-    auto dir = std::make_unique<Impl>(std::forward<Args>(args)..., dir_path,
-                                      std::move(attrs),
-                                      test->GetResourceManager().options);
+irs::SimulatedObjectStore& ObjectStore();
 
-    return {dir.release(), [dir_path = std::move(dir_path)](irs::Directory* p) {
-              std::filesystem::remove_all(dir_path);
-              delete p;
-            }};
-  }
-
-  return nullptr;
-}
-
-std::shared_ptr<irs::Directory> MemoryDirectory(const TestBase*,
-                                                irs::DirectoryAttributes attrs);
-std::shared_ptr<irs::Directory> FsDirectory(const TestBase*,
-                                            irs::DirectoryAttributes attrs);
-std::shared_ptr<irs::Directory> MmapDirectory(const TestBase*,
-                                              irs::DirectoryAttributes attrs);
-
-using dir_generator_f = std::shared_ptr<irs::Directory> (*)(
-  const TestBase*, irs::DirectoryAttributes);
-
-std::string ToString(dir_generator_f generator);
-
-template<dir_generator_f DirectoryGenerator>
-std::pair<std::shared_ptr<irs::Directory>, std::string> Directory(
-  const TestBase* ctx) {
-  auto dir = DirectoryGenerator(ctx, irs::DirectoryAttributes{});
-
-  return std::make_pair(dir, ToString(DirectoryGenerator));
-}
-
-using dir_param_f =
-  std::pair<std::shared_ptr<irs::Directory>, std::string> (*)(const TestBase*);
-
-enum Types : uint64_t {
-  kTypesDefault = 1 << 0,
+struct DirParam {
+  std::string_view name;
+  std::shared_ptr<irs::Directory> (*factory)(const TestBase*);
 };
 
-// #define IRS_TEST_ONLY_MEMORY_DIR
+inline constexpr DirParam kMemoryDirParam{"memory", &MemoryDirectory};
 
-template<uint64_t Type>
-constexpr auto GetDirectories() {
-  constexpr auto kCount = std::popcount(Type);
-#ifdef IRS_TEST_ONLY_MEMORY_DIR
-  std::array<dir_param_f, kCount * 1> data;
-#else
-  std::array<dir_param_f, kCount * 3> data;
-#endif
-  auto* p = data.data();
-  if constexpr (Type & kTypesDefault) {
-    *p++ = &tests::Directory<&tests::MemoryDirectory>;
-#ifndef IRS_TEST_ONLY_MEMORY_DIR
-    *p++ = &tests::Directory<&tests::MmapDirectory>;
-    *p++ = &tests::Directory<&tests::FsDirectory>;
-#endif
-  }
-  return data;
-}
+inline constexpr std::array<DirParam, 3> kDirParams{{
+  kMemoryDirParam,
+  {"local", &LocalDirectory},
+  {"sim", &ObjectStoreDirectory},
+}};
 
-template<typename... Args>
 class DirectoryTestCaseBase
-  : public virtual TestParamBase<std::tuple<tests::dir_param_f, Args...>> {
+  : public virtual TestParamBase<std::tuple<DirParam>> {
  public:
-  using ParamType = std::tuple<tests::dir_param_f, Args...>;
+  using ParamType = std::tuple<DirParam>;
 
   static std::string to_string(const testing::TestParamInfo<ParamType>& info) {
-    auto& p = info.param;
-    return (*std::get<0>(p))(nullptr).second;
+    return std::string{std::get<0>(info.param).name};
   }
 
   void SetUp() final {
     TestBase::SetUp();
 
-    auto& p =
-      TestParamBase<std::tuple<tests::dir_param_f, Args...>>::GetParam();
-
-    auto* factory = std::get<0>(p);
-    ASSERT_NE(nullptr, factory);
-
-    _dir = (*factory)(this).first;
+    _dir = std::get<0>(GetParam()).factory(this);
     ASSERT_NE(nullptr, _dir);
   }
 

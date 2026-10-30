@@ -39,9 +39,8 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -389,7 +388,7 @@ void RemoveDocuments(irs::IndexWriter& writer,
 
 // Compact segments after removal to reclaim space and merge segments.
 // Deleted documents are only physically removed during compaction.
-void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
+void CompactIndex(irs::IndexWriter& writer, const irs::Directory& dir) {
   std::cout << "=== Compact Index ===\n";
 
   auto before = writer.GetSnapshot();
@@ -405,7 +404,7 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
   writer.RefreshCommit();
 
   // Remove files no longer referenced by any reader.
-  irs::directory_utils::RemoveAllUnreferenced(dir);
+  dir.RemoveAllUnreferenced();
 
   auto after = writer.GetSnapshot();
   std::cout << "After compaction:  " << after.size() << " segment(s)\n";
@@ -426,7 +425,7 @@ int BasicMain() {
     auto tokenizer = irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{});
 
-    irs::MemoryDirectory dir;
+    irs::Directory dir{Db(), "memory://basic"};
     irs::IndexWriterOptions options;
     options.db = &Db();
     options.reader_options.db = &Db();

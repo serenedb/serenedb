@@ -730,7 +730,7 @@ TEST_P(TermsFilterTestCase, levenshtein_iterator_boosts) {
   EXPECT_TRUE(exact_scored_highest);
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(terms_filter_test, TermsFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

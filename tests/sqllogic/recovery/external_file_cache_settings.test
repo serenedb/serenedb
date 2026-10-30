@@ -1,0 +1,119 @@
+control substitution on
+
+# The external file cache takes its settings while the server runs: a cache
+# shrunk below what an index uses keeps working on fewer blocks, blocks of
+# in-memory files evicted from it spill to the spill file and read back the
+# same, and RESET restores the defaults.
+
+statement ok
+SET GLOBAL external_file_cache_spill_path = '${__TEST_DIR__}/cache.spill';
+
+
+statement ok
+SET GLOBAL external_file_cache_spill_size = '256MiB';
+
+
+statement ok
+SET GLOBAL external_file_cache_size = '2MiB';
+
+
+query
+SELECT current_setting('external_file_cache_size') AS size,
+       current_setting('external_file_cache_spill_size') AS spill_size,
+       current_setting('external_file_cache_spill_path') = '${__TEST_DIR__}/cache.spill' AS spill_path;
+----
+size	spill_size	spill_path
+2.0 MiB	256.0 MiB	t
+
+
+statement ok
+SET sdb_faults = 'IndexWriter::CompactOutOfMemory';
+
+
+statement ok
+CREATE TEMPORARY TABLE spilled (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO spilled
+SELECT i, concat_ws(' ', 'fox', md5(i::VARCHAR), md5((i + 1000000)::VARCHAR))
+FROM range(200000) t(i);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY spill_words AS split_text(case := 'lower');
+
+
+statement ok
+CREATE INDEX spilled_body ON spilled USING inverted(body spill_words);
+
+
+query
+SELECT count(*) AS n FROM spilled_body WHERE body @@ 'fox';
+----
+n
+200000
+
+
+query
+SELECT id FROM spilled_body WHERE body @@ '827ccb0eea8a706c4c34a16891f84e7b' ORDER BY id;
+----
+id
+12345
+
+
+query
+SELECT id FROM spilled_body WHERE body @@ 'ab9e5c0524fcb4c72446a5e9c63e9791' ORDER BY id;
+----
+id
+199999
+
+
+query
+SELECT count(*) FILTER (WHERE metric = 'block_cache_spilled_blocks' AND value > 0) AS spilled,
+       count(*) FILTER (WHERE metric = 'block_cache_spill_reads' AND value > 0) AS read_back
+FROM sdb_metrics;
+----
+spilled	read_back
+1	1
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+RESET GLOBAL external_file_cache_size;
+
+
+statement ok
+RESET GLOBAL external_file_cache_spill_size;
+
+
+statement error
+RESET GLOBAL external_file_cache_spill_path;
+----
+db error: ERROR: Cannot move the block cache spill file while it holds blocks of in-memory files
+
+
+query
+SELECT count(*) AS n FROM spilled_body WHERE body @@ 'fox';
+----
+n
+200000
+
+
+statement ok
+DROP TABLE spilled;
+
+
+statement ok retry 40 backoff 250ms
+RESET GLOBAL external_file_cache_spill_path;
+
+
+query
+SELECT current_setting('external_file_cache_spill_size') AS spill_size,
+       current_setting('external_file_cache_spill_path') AS spill_path;
+----
+spill_size	spill_path
+0 bytes	(empty)

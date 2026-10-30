@@ -55,6 +55,10 @@ The trailing `WITH (...)` clause sets index-level options.
 
 An index on a search table (`CREATE TABLE … WITH (storage = 'search')`) takes none of these options. It has no storage or background tasks of its own: the table's options run refresh and compaction for every index on it, and the table keeps the score bounds that `optimize_top_k` prunes with. So `CREATE INDEX` rejects all five on a search table, with an error that names the option, such as `row_group_size is a table option on a search-backed table`. Set them on the table instead; see [Background intervals](../../indexes/inverted/maintenance.md#background-intervals).
 
+## Tablespace
+
+`TABLESPACE name`, after the `WITH (...)` options and before `WHERE`, puts the index's files in a [tablespace](../create_tablespace/index.md): another local directory or an object store. Without it, the index goes to the tablespace `default_tablespace` names, else to its database's. An index on a search table lives with the table, so it takes no `TABLESPACE` other than its database's.
+
 ## Partial indexes
 
 A trailing `WHERE <predicate>` builds a **partial index** containing only the rows that satisfy the predicate:
@@ -74,7 +78,7 @@ An index on a search table can't be partial: there, `CREATE INDEX … WHERE …`
 
 ## Indexing tables and views
 
-An inverted index can be built over a base table or a view (including a view over `read_parquet`/`read_csv` on local disk or S3). The index derives each row's identity automatically from the view's source; there is no `pk` option, and only attached external databases accept an explicit key through `key_columns` (see [Row identity](../../indexes/inverted/views.md#row-identity)). The postings are a snapshot of the source, refreshed by `REINDEX INDEX` or the `reindex_interval` option (see [Refreshing the index](../../indexes/inverted/views.md#refreshing-the-index)). See also [Indexing a table vs. a view](../../indexes/inverted/index.md#indexing-a-table-or-a-view).
+An inverted index can be built over a base table, a [temporary table](../create_table/index.md#temporary-tables), whose index is kept in memory, or a view (including a view over `read_parquet`/`read_csv` on local disk or S3); a temporary view takes no inverted index. The index derives each row's identity automatically from the view's source; there is no `pk` option, and only attached external databases accept an explicit key through `key_columns` (see [Row identity](../../indexes/inverted/views.md#row-identity)). The postings are a snapshot of the source, refreshed by `REINDEX INDEX` or the `reindex_interval` option (see [Refreshing the index](../../indexes/inverted/views.md#refreshing-the-index)). See also [Indexing a table vs. a view](../../indexes/inverted/index.md#indexing-a-table-or-a-view).
 
 ## Several indexes on a search table column
 

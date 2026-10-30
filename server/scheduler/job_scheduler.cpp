@@ -141,7 +141,10 @@ JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
           .owner = job.permissions.owner,
           .body = std::make_shared<
             const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>>(
-            duckdb::CreateJobInfo::CopyBody(job.Body()))};
+            duckdb::CreateJobInfo::CopyBody(job.Body())),
+          .temporary = job.temporary
+                         ? job.ParentCatalog().GetAttached().shared_from_this()
+                         : nullptr};
 }
 
 size_t HistorySize() {
@@ -198,6 +201,16 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
     });
   };
   context = connection.conn->context;
+  auto& temporary_objects = context->client_data->temporary_objects;
+  auto own = job.temporary.lock();
+  if (own) {
+    std::swap(own, temporary_objects);
+  }
+  absl::Cleanup restore = [&] {
+    if (own) {
+      std::swap(own, temporary_objects);
+    }
+  };
   context->registered_state->Insert(kJobRunKey,
                                     duckdb::make_shared_ptr<JobRun>(depth));
   if (!job.schema->parent) {

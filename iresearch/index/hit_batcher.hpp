@@ -40,7 +40,7 @@ namespace irs {
 class HitBatcher {
  public:
   HitBatcher(std::span<const ColumnstoreProjection> projections,
-             irs::field_id pk_field_id, bool track_scores);
+             irs::field_id pk_field_id, bool track_scores, bool prefetch);
 
   HitBatcher(const HitBatcher&) = delete;
   HitBatcher& operator=(const HitBatcher&) = delete;
@@ -57,6 +57,9 @@ class HitBatcher {
                     duckdb::ClientContext* context,
                     ColFilterStateCache* states = nullptr,
                     std::span<const ColFilterSpec> filters = {});
+
+  void CollectBlocks(const irs::ColReader& col_reader, uint64_t first,
+                     uint64_t last, std::vector<ByteExtent>& out) const;
 
   bool Bound(uint32_t seg_idx) const noexcept {
     return _bound && _seg_idx == seg_idx;
@@ -129,6 +132,7 @@ class HitBatcher {
   }
 
   void CloseGroup();
+  void PrefetchColumns(uint64_t anchor, duckdb::idx_t span);
   void ScatterGroup(uint64_t anchor, duckdb::idx_t span);
   std::pair<uint64_t, duckdb::idx_t> BuildSel(duckdb::idx_t first,
                                               duckdb::idx_t n);
@@ -156,9 +160,11 @@ class HitBatcher {
   std::span<const ColumnstoreProjection> _projections;
   const irs::field_id _pk_field_id;
   const bool _track_scores;
+  const bool _prefetch;
 
   std::unique_ptr<irs::ReadContext> _ctx;
   std::vector<Column> _columns;
+  std::vector<ByteExtent> _extents;
   uint32_t _seg_idx = 0;
   const irs::ColumnReader* _rg_col = nullptr;
 

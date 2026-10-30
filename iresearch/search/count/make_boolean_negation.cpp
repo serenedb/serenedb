@@ -56,7 +56,7 @@ Root::ptr MakeLiveTerm(const detail::PostingClause& term,
   const bool many = meta.docs_count != 1;
   return ResolveDocsMask(
     segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> Root::ptr {
-      return detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+      return ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
         return memory::make_managed<LiveTermCount<Mask, Input>>(
           std::move(docs_mask), meta, *doc, detail::LayoutOf(field),
           many && detail::BoundsOf(field), many && detail::FreqOf(field));

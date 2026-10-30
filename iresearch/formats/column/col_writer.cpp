@@ -81,9 +81,9 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
 
 }  // namespace
 
-ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
+ColWriter::ColWriter(const Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db)
-  : _dir{&dir},
+  : _dir{dir},
     _segment_name{segment_name},
     _filename{FileName(segment_name)},
     _db{&db} {}
@@ -98,7 +98,7 @@ void ColWriter::EnsureOut() {
   if (_out) {
     return;
   }
-  _out = _dir->create(_filename);
+  _out = _dir.Create(_filename);
   _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
 }
 
@@ -301,6 +301,7 @@ bool ColWriter::Commit(uint64_t target_row,
         });
     }
   });
+  _out->Close();
   _out.reset();
   _committed = true;
   return true;
@@ -311,7 +312,8 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
   if (!_committed || _ann_writers.empty()) {
     co_return true;
   }
-  ColReader reader{*_dir, _segment_name, *_db, IOAdvice::SEQUENTIAL};
+  ColReader reader{_dir, _segment_name, true,
+                   duckdb::MappedFileAccess::SEQUENTIAL};
   for (auto& entry : _ann_writers) {
     if (!progress()) {
       co_return false;

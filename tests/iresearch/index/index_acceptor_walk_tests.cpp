@@ -1368,7 +1368,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_walk_is_the_intersection) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(acceptor_walk_index_test, AcceptorWalkIndexTestCase,
-                         ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>)),
-                         AcceptorWalkIndexTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  acceptor_walk_index_test, AcceptorWalkIndexTestCase,
+  ::testing::Combine(::testing::Values(tests::kMemoryDirParam)),
+  AcceptorWalkIndexTestCase::to_string);

@@ -747,7 +747,7 @@ void FetchLocalState::EnsureHitBatcher(const ScanGlobalState& g) {
     hit_batcher = std::make_unique<irs::HitBatcher>(
       g.cs_projections,
       g.needs_lookup ? term_dict::kPKFieldId : irs::field_limits::invalid(),
-      g.ScanScore());
+      g.ScanScore(), g.remote);
   }
 }
 

@@ -25,12 +25,15 @@
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
+#include <fast_float/fast_float.h>
 
+#include <cerrno>
 #include <cstdint>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -60,6 +63,36 @@ constexpr std::string_view kPgCopyHeader{
   "\0\0\0\0"
   "\0\0\0\0",
   19};
+
+constexpr int ErrcodeForFileAccess(int error) noexcept {
+  switch (error) {
+    case EPERM:
+    case EACCES:
+    case EROFS:
+      return ERRCODE_INSUFFICIENT_PRIVILEGE;
+    case ENOENT:
+      return ERRCODE_UNDEFINED_FILE;
+    case EEXIST:
+      return ERRCODE_DUPLICATE_FILE;
+    case ENOTDIR:
+    case EISDIR:
+    case ENOTEMPTY:
+      return ERRCODE_WRONG_OBJECT_TYPE;
+    case ENOSPC:
+      return ERRCODE_DISK_FULL;
+    case ENOMEM:
+      return ERRCODE_OUT_OF_MEMORY;
+    case ENFILE:
+    case EMFILE:
+      return ERRCODE_INSUFFICIENT_RESOURCES;
+    case EIO:
+      return ERRCODE_IO_ERROR;
+    case ENAMETOOLONG:
+      return ERRCODE_FILE_NAME_TOO_LONG;
+    default:
+      return ERRCODE_INTERNAL_ERROR;
+  }
+}
 
 int DuckExceptionToErrcode(duckdb::ExceptionType type) {
   switch (type) {
@@ -105,8 +138,9 @@ int DuckExceptionToErrcode(duckdb::ExceptionType type) {
     case duckdb::ExceptionType::PARAMETER_NOT_RESOLVED:
     case duckdb::ExceptionType::PARAMETER_NOT_ALLOWED:
       return ERRCODE_INDETERMINATE_DATATYPE;
-    case duckdb::ExceptionType::CONNECTION:
     case duckdb::ExceptionType::IO:
+      return ERRCODE_IO_ERROR;
+    case duckdb::ExceptionType::CONNECTION:
     case duckdb::ExceptionType::NETWORK:
     case duckdb::ExceptionType::HTTP:
       return ERRCODE_CONNECTION_EXCEPTION;
@@ -118,11 +152,21 @@ int DuckExceptionToErrcode(duckdb::ExceptionType type) {
 }
 
 // Refine the SQLSTATE from the structured extra_info DuckDB attaches to
-// catalog/binder errors: the bare ExceptionType collapses undefined_table /
-// undefined_column / undefined_function / undefined_schema (and the duplicate_*
-// counterparts) into one code each, which PG distinguishes.
+// catalog/binder and I/O errors: the bare ExceptionType collapses
+// undefined_table / undefined_column / undefined_function / undefined_schema
+// (and the duplicate_* counterparts) into one code each, which PG
+// distinguishes, and every file error into io_error.
 int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   const auto& extra = error.ExtraInfo();
+  if (const auto it = extra.find("errno");
+      it != extra.end() && error.Type() == duckdb::ExceptionType::IO) {
+    const auto& text = it->second;
+    int value = 0;
+    if (fast_float::from_chars(text.data(), text.data() + text.size(), value)
+          .ec == std::errc{}) {
+      return ErrcodeForFileAccess(value);
+    }
+  }
   const auto subtype_it = extra.find("error_subtype");
   const std::string_view subtype =
     subtype_it != extra.end() ? subtype_it->second : std::string_view{};

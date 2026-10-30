@@ -1,0 +1,350 @@
+control substitution on
+
+# default_tablespace places a search table or an inverted index that names no
+# tablespace; an explicit TABLESPACE wins, and an empty value means the
+# database's tablespace.
+
+statement ok
+CREATE TABLESPACE def_x_${__DATABASE__} LOCATION '${__TEST_DIR__}/def/x';
+
+statement ok
+CREATE TABLESPACE def_y_${__DATABASE__} LOCATION '${__TEST_DIR__}/def/y';
+
+statement ok
+CREATE TABLESPACE "Def Mixed ${__DATABASE__}" LOCATION '${__TEST_DIR__}/def/mixed';
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY def_words AS split_text(case := 'lower');
+
+statement ok
+CREATE TABLE plain_src (id INT, body TEXT);
+
+statement ok
+INSERT INTO plain_src VALUES (1, 'quick fox'), (2, 'lazy dog');
+
+query
+SELECT current_setting('default_tablespace') = '' AS unset;
+----
+unset
+t
+
+statement ok
+SET default_tablespace = 'def_x_${__DATABASE__}';
+
+query
+SELECT current_setting('default_tablespace') = 'def_x_${__DATABASE__}' AS set_to_x;
+----
+set_to_x
+t
+
+statement ok
+CREATE TABLE implicit_table (id INT, body TEXT) WITH (storage = 'search');
+
+statement ok
+CREATE INDEX implicit_index ON plain_src USING inverted(body def_words);
+
+statement ok
+CREATE TABLE explicit_y (id INT) WITH (storage = 'search') TABLESPACE def_y_${__DATABASE__};
+
+statement ok
+CREATE INDEX explicit_y_index ON plain_src USING inverted(body def_words) TABLESPACE def_y_${__DATABASE__};
+
+statement ok
+CREATE TABLE explicit_default (id INT) WITH (storage = 'search') TABLESPACE pg_default;
+
+statement ok
+CREATE TABLE ctas_implicit WITH (storage = 'search') AS SELECT * FROM plain_src;
+
+statement ok
+CREATE TABLE ctas_explicit WITH (storage = 'search') TABLESPACE def_y_${__DATABASE__} AS SELECT * FROM plain_src;
+
+statement ok
+CREATE TABLE plain_ignores (id INT);
+
+statement ok
+CREATE INDEX art_ignores ON plain_src (id);
+
+statement ok
+SET default_tablespace = '';
+
+statement ok
+CREATE TABLE empty_default (id INT) WITH (storage = 'search');
+
+statement ok
+SET default_tablespace = 'pg_default';
+
+statement ok
+CREATE TABLE named_default (id INT) WITH (storage = 'search');
+
+statement ok
+SET default_tablespace = 'Def Mixed ${__DATABASE__}';
+
+statement ok
+CREATE TABLE mixed_case (id INT) WITH (storage = 'search');
+
+statement ok
+RESET default_tablespace;
+
+statement ok
+CREATE TABLE after_reset (id INT) WITH (storage = 'search');
+
+query
+SELECT c.relname,
+       coalesce(replace(replace(t.spcname, '_${__DATABASE__}', ''), ' ${__DATABASE__}', ''), '(database)') AS tablespace
+FROM pg_class c LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE c.relname IN ('implicit_table', 'implicit_index', 'explicit_y', 'explicit_y_index', 'explicit_default',
+                    'ctas_implicit', 'ctas_explicit', 'plain_ignores', 'art_ignores', 'plain_src',
+                    'empty_default', 'named_default', 'mixed_case', 'after_reset')
+ORDER BY c.relname;
+----
+relname	tablespace
+after_reset	(database)
+art_ignores	(database)
+ctas_explicit	def_y
+ctas_implicit	def_x
+empty_default	(database)
+explicit_default	(database)
+explicit_y	def_y
+explicit_y_index	def_y
+implicit_index	def_x
+implicit_table	def_x
+mixed_case	Def Mixed
+named_default	(database)
+plain_ignores	(database)
+plain_src	(database)
+
+statement ok
+VACUUM (REFRESH_TABLE) ctas_implicit;
+
+statement ok
+VACUUM (REFRESH_TABLE) ctas_explicit;
+
+query
+SELECT i.id, e.body FROM ctas_implicit i JOIN ctas_explicit e USING (id) ORDER BY i.id;
+----
+id	body
+1	quick fox
+2	lazy dog
+
+statement ok
+VACUUM (REFRESH_TABLE) plain_src;
+
+query
+SELECT id FROM implicit_index WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM explicit_y_index WHERE body @@ ts_phrase('dog') ORDER BY id;
+----
+id
+2
+
+statement ok
+BEGIN;
+
+statement ok
+SET LOCAL default_tablespace = 'def_y_${__DATABASE__}';
+
+statement ok
+CREATE TABLE local_y (id INT) WITH (storage = 'search');
+
+statement ok
+COMMIT;
+
+query
+SELECT current_setting('default_tablespace') = '' AS local_ended;
+----
+local_ended
+t
+
+statement ok
+BEGIN;
+
+statement ok
+SET default_tablespace = 'def_x_${__DATABASE__}';
+
+statement ok
+ROLLBACK;
+
+query
+SELECT current_setting('default_tablespace') = '' AS rolled_back;
+----
+rolled_back
+t
+
+statement ok
+CREATE TABLE after_rollback (id INT) WITH (storage = 'search');
+
+query
+SELECT c.relname, coalesce(replace(t.spcname, '_${__DATABASE__}', ''), '(database)') AS tablespace
+FROM pg_class c LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE c.relname IN ('local_y', 'after_rollback') ORDER BY c.relname;
+----
+relname	tablespace
+after_rollback	(database)
+local_y	def_y
+
+statement ok
+SET default_tablespace = 'pg_global';
+
+statement error
+CREATE TABLE in_global (id INT) WITH (storage = 'search');
+----
+db error: ERROR: only shared relations can be placed in pg_global tablespace
+
+
+statement ok
+RESET default_tablespace;
+
+statement ok
+CREATE TABLESPACE def_gone_${__DATABASE__} LOCATION '${__TEST_DIR__}/def/gone';
+
+connection other
+statement ok
+SET default_tablespace = 'def_gone_${__DATABASE__}';
+
+statement ok
+DROP TABLESPACE def_gone_${__DATABASE__};
+
+connection other
+statement ok
+CREATE TABLE after_drop (id INT) WITH (storage = 'search');
+
+connection other
+query
+SELECT current_setting('default_tablespace') = 'def_gone_${__DATABASE__}' AS still_named;
+----
+still_named
+t
+
+query
+SELECT reltablespace FROM pg_class WHERE relname = 'after_drop';
+----
+reltablespace
+0
+
+statement ok
+CREATE ROLE def_user_${__DATABASE__};
+
+statement ok
+GRANT ALL ON SCHEMA public TO def_user_${__DATABASE__};
+
+statement ok
+SET ROLE def_user_${__DATABASE__};
+
+statement ok
+SET default_tablespace = 'def_x_${__DATABASE__}';
+
+statement error
+CREATE TABLE denied (id INT) WITH (storage = 'search');
+----
+db error: ERROR: permission denied for tablespace <slt:ignore>
+
+
+statement ok
+RESET default_tablespace;
+
+statement ok
+CREATE TABLE in_database_tablespace (id INT) WITH (storage = 'search');
+
+statement ok
+RESET ROLE;
+
+statement ok
+GRANT CREATE ON TABLESPACE def_x_${__DATABASE__} TO def_user_${__DATABASE__};
+
+statement ok
+SET ROLE def_user_${__DATABASE__};
+
+statement ok
+SET default_tablespace = 'def_x_${__DATABASE__}';
+
+statement ok
+CREATE TABLE granted (id INT) WITH (storage = 'search');
+
+statement ok
+RESET default_tablespace;
+
+statement ok
+RESET ROLE;
+
+query
+SELECT c.relname, coalesce(replace(t.spcname, '_${__DATABASE__}', ''), '(database)') AS tablespace,
+       r.rolname = 'def_user_${__DATABASE__}' AS owned_by_user
+FROM pg_class c LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace JOIN pg_roles r ON r.oid = c.relowner
+WHERE c.relname IN ('in_database_tablespace', 'granted') ORDER BY c.relname;
+----
+relname	tablespace	owned_by_user
+granted	def_x	t
+in_database_tablespace	(database)	t
+
+statement ok
+DROP TABLE granted;
+
+statement ok
+DROP TABLE in_database_tablespace;
+
+statement ok
+REVOKE CREATE ON TABLESPACE def_x_${__DATABASE__} FROM def_user_${__DATABASE__};
+
+statement ok
+REVOKE ALL ON SCHEMA public FROM def_user_${__DATABASE__};
+
+statement ok
+DROP ROLE def_user_${__DATABASE__};
+
+statement ok
+DROP TABLE after_drop;
+
+statement ok
+DROP TABLE after_rollback;
+
+statement ok
+DROP TABLE local_y;
+
+statement ok
+DROP TABLE after_reset;
+
+statement ok
+DROP TABLE mixed_case;
+
+statement ok
+DROP TABLE named_default;
+
+statement ok
+DROP TABLE empty_default;
+
+statement ok
+DROP TABLE plain_ignores;
+
+statement ok
+DROP TABLE ctas_explicit;
+
+statement ok
+DROP TABLE ctas_implicit;
+
+statement ok
+DROP TABLE explicit_default;
+
+statement ok
+DROP TABLE explicit_y;
+
+statement ok
+DROP TABLE implicit_table;
+
+statement ok
+DROP TABLE plain_src;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY def_words;
+
+statement ok
+DROP TABLESPACE def_x_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE def_y_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE "Def Mixed ${__DATABASE__}";

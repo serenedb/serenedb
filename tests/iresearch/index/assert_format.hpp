@@ -25,6 +25,7 @@
 
 #include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <unordered_set>
 

@@ -42,6 +42,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/query_result_stream.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -50,7 +51,7 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <string>
@@ -94,7 +95,9 @@ duckdb::DatabaseInstance& CsDb() {
 }
 
 struct Seg {
-  irs::MemoryDirectory dir{};
+  std::unique_ptr<duckdb::MemoryFileSystem> fs =
+    std::make_unique<duckdb::MemoryFileSystem>();
+  irs::Directory dir{CsDb(), *fs, "memory://bench"};
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
   uint64_t rows = 0;
@@ -128,7 +131,7 @@ void FillBatch(duckdb::Vector& vec, Shape shape, bool nullable, uint64_t base,
   }
 }
 
-// Build (and seal) a one-column .col segment in a fresh MemoryDirectory.
+// Build (and seal) a one-column .col segment in a fresh in-memory index.
 std::unique_ptr<Seg> BuildSeg(Shape shape, bool nullable) {
   auto seg = std::make_unique<Seg>();
   seg->rows = Rows();
@@ -149,7 +152,7 @@ std::unique_ptr<Seg> BuildSeg(Shape shape, bool nullable) {
     w.Commit(seg->rows);
   }
   seg->reader = std::make_unique<irs::ColReader>(
-    seg->dir, std::string{kSeg}, CsDb(), irs::IOAdvice::SEQUENTIAL);
+    seg->dir, kSeg, true, duckdb::MappedFileAccess::SEQUENTIAL);
   seg->col = seg->reader->Column(kField);
   if (seg->col == nullptr) {
     std::fprintf(stderr, "BuildSeg: column missing\n");
@@ -158,13 +161,14 @@ std::unique_ptr<Seg> BuildSeg(Shape shape, bool nullable) {
   return seg;
 }
 
+std::array<std::unique_ptr<Seg>, 4> gSegs;
+
 const Seg& GetSeg(Shape shape, bool nullable) {
-  static std::array<std::unique_ptr<Seg>, 4> cache;
   const int key = static_cast<int>(shape) * 2 + (nullable ? 1 : 0);
-  if (!cache[key]) {
-    cache[key] = BuildSeg(shape, nullable);
+  if (!gSegs[key]) {
+    gSegs[key] = BuildSeg(shape, nullable);
   }
-  return *cache[key];
+  return *gSegs[key];
 }
 
 // Scattered, sorted (forward-only) doc ids: run length 1 => the sparse-gather
@@ -261,7 +265,8 @@ void IrsWriteSeal(benchmark::State& state, Shape shape, bool nullable) {
   const auto type = TypeOf(shape);
   const uint64_t n = Rows();
   for (auto _ : state) {
-    irs::MemoryDirectory dir{};
+    duckdb::MemoryFileSystem fs;
+    irs::Directory dir{CsDb(), fs, "memory://bench"};
     irs::ColWriter w{dir, kSeg, CsDb()};
     auto& cw = w.OpenColumn(kField, type);
     uint64_t pos = 0;
@@ -378,6 +383,7 @@ static int Main(int argc, char** argv) {
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
+  gSegs = {};
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

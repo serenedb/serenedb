@@ -79,6 +79,8 @@ ObjectTags TagsOf(duckdb::CatalogType type, bool procedure) {
       return {"CREATE FUNCTION", "DROP FUNCTION", "ALTER FUNCTION"};
     case DATABASE_ENTRY:
       return {"CREATE DATABASE", "DROP DATABASE", "ALTER DATABASE"};
+    case TABLESPACE_ENTRY:
+      return {"CREATE TABLESPACE", "DROP TABLESPACE", "ALTER TABLESPACE"};
     case TRIGGER_ENTRY:
       return {"CREATE TRIGGER", "DROP TRIGGER", "ALTER TRIGGER"};
     case ROLE_ENTRY:
@@ -129,6 +131,8 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       return "COMMENT";
     case ALTER_DATABASE:
       return "ALTER DATABASE";
+    case ALTER_TABLESPACE:
+      return "ALTER TABLESPACE";
     case ALTER_SCHEMA:
       return "ALTER SCHEMA";
     case ALTER_INDEX:

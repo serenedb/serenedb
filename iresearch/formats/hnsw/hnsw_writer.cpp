@@ -1228,11 +1228,11 @@ HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases)
 HnswWriter::~HnswWriter() = default;
 
 std::shared_ptr<const QuantizerStats> HnswWriter::SerializeStats() {
-  BytesOutput blob_out{_stats_blob};
-  _qw->Serialize(blob_out);
+  BytesOutput blob;
+  _qw->Serialize(blob);
   return MakeQuantizerStats(
     _info.quant.kind, _d,
-    std::span<const byte_type>{_stats_blob}.subspan(sizeof(uint64_t)),
+    std::span<const byte_type>{blob.Bytes()}.subspan(sizeof(uint64_t)),
     EffectiveQuantMetric(_info.metric), /*row_major=*/true);
 }
 
@@ -1476,8 +1476,6 @@ void HnswWriter::Flush() {
   _tails.shrink_to_fit();
   _codes.clear();
   _codes.shrink_to_fit();
-  _stats_blob.clear();
-  _stats_blob.shrink_to_fit();
 }
 
 }  // namespace irs

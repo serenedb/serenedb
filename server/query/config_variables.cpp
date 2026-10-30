@@ -352,6 +352,22 @@ const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
   return entry->Cast<catalog::RoleCatalogEntry>();
 }
 
+void SetDefaultTablespace(duckdb::ClientContext& ctx, duckdb::SetScope,
+                          duckdb::Value& value) {
+  const auto name = value.ToString();
+  if (name.empty()) {
+    return;
+  }
+  if (!catalog::ClusterEntry(ctx, duckdb::CatalogType::TABLESPACE_ENTRY,
+                             name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("invalid value for parameter "
+                            "\"default_tablespace\": \"",
+                            name, "\""),
+                    ERR_DETAIL("Tablespace \"", name, "\" does not exist."));
+  }
+}
+
 void RefreshSuperuser(ConnectionContext& conn) {
   const bool superuser =
     auth::ClosureFor(&conn.GetClientContext(), conn.GetRoleId())->is_superuser;
@@ -1477,6 +1493,16 @@ constexpr std::pair<std::string_view, VariableDescription>
         [] { return duckdb::Value{"none"}; },
         SetRoleCallback,
         ResetRoleCallback,
+      },
+    },
+    {
+      "default_tablespace",
+      {
+        LogicalTypeId::VARCHAR,
+        "The tablespace search tables and search indexes are created in when "
+        "CREATE names none. Default: '' (the database's own tablespace).",
+        [] { return duckdb::Value{""}; },
+        SetDefaultTablespace,
       },
     },
     {

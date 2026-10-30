@@ -21,6 +21,7 @@
 #include "connector/duckdb_physical_create_index.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
@@ -597,22 +598,24 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   // Flush this thread's tail segment here (in parallel Combines) rather than
   // leaving it for the single-threaded Finalize refresh to write.
   auto& trx = *lstate.search_trx;
+  absl::Cleanup release = [&] noexcept { lstate.search_trx.reset(); };
   trx.RegisterFlush();
   try {
     trx.Flush();
   } catch (const irs::SqlException& e) {
-    lstate.search_trx.reset();
     THROW_SQL_ERROR(ERR_CODE(e.error().errcode),
                     ERR_MSG("failed to flush index '", gstate.index_name,
                             "': ", e.message()));
+  } catch (const duckdb::Exception& e) {
+    duckdb::ErrorData{e}.Throw(
+      absl::StrCat("failed to flush index '", gstate.index_name, "': "));
   } catch (const std::exception& e) {
-    lstate.search_trx.reset();
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("failed to flush index '", gstate.index_name,
                             "': ", duckdb::ErrorData{e}.RawMessage()));
   }
   const bool committed = trx.Commit();
-  lstate.search_trx.reset();
+  std::move(release).Invoke();
   if (!committed) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
                     ERR_MSG("failed to commit index '", gstate.index_name,

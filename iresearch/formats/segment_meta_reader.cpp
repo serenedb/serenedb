@@ -51,14 +51,14 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
 
   std::string name{segment_name};
 
-  auto in = dir.open(filename, IOAdvice::RANDOM);
+  const auto bytes = dir.ReadWhole(filename);
 
   std::vector<std::string> files;
   bool has_files = false;
   uint32_t docs_count = 0;
   uint64_t size = 0;
   const auto footer = format_utils::ReadFooter(
-    *in, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
+    bytes, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
       has_files = meta_in.ReadOptionalList(
         kFieldFiles, "files",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -68,12 +68,13 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
         meta_in.ReadProperty<uint32_t>(kFieldDocsCount, "docs_count");
       size = meta_in.ReadProperty<uint64_t>(kFieldByteSize, "byte_size");
     });
+
   const auto docs_mask_size = footer.data_len;
 
   std::shared_ptr<const DocumentMask> docs_mask;
   if (docs_mask_size != 0) {
     docs_mask = std::make_shared<const DocumentMask>(
-      DocumentMask::ReadFrozen(*in, docs_mask_size));
+      DocumentMask::ReadFrozen(bytes_view{bytes}.substr(0, docs_mask_size)));
   }
 
   if (!has_files) [[unlikely]] {

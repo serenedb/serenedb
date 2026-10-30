@@ -40,7 +40,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
-#include <iresearch/store/directory_attributes.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -108,72 +108,65 @@ struct SearchTable::ReplaySession {
   std::vector<PendingAdopt> adopts;
 };
 
-SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
-                         bool in_memory, bool read_only, duckdb::idx_t db_id,
+SearchTable::SearchTable(std::optional<catalog::StorageDirectory> parent,
+                         duckdb::AttachedDatabase& database,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
                          const duckdb::ColumnList& columns)
-  : _db_id{db_id},
+  : _db_id{database.oid},
     _table_id{table_id},
-    _directory{std::move(directory)},
-    _is_new{is_new},
-    _in_memory{in_memory},
-    _read_only{read_only},
+    _parent{std::move(parent)},
+    _read_only{database.IsReadOnly()},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
     _compression{DeclaredCompression(columns)},
     _table_columns{TableColumns(columns)},
-    _durability{db_id, absl::StrCat("search table ", table_id)} {
+    _durability{database, absl::StrCat("search table ", table_id), _parent,
+                table_id, is_new} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
   }
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
   if (is_new) {
-    Open();
+    OpenWriter(true);
   }
   ApplyOptions(options);
 }
 
-void SearchTable::Open() {
-  if (_read_only) {
-    OpenDirectory();
-  } else {
-    OpenWriter();
+bool SearchTable::Open() {
+  if (!_parent->OpenStorage(_table_id)) {
+    return false;
   }
+  if (_read_only) {
+    _reader = _durability.OpenReader(ReaderOptions()).first;
+  } else {
+    OpenWriter(false);
+  }
+  return true;
 }
 
 SearchTable::~SearchTable() {
   _replay.reset();
   _writer.reset();
   _reader = {};
-  _dir.reset();
-  if (!_dropped.load(std::memory_order_acquire)) {
+  if (!_parent || !_dropped.load(std::memory_order_acquire)) {
     return;
   }
-  catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _table_id);
+  _parent->RemoveStorage(_table_id);
 }
 
-void SearchTable::OpenWriter() {
+void SearchTable::OpenWriter(bool is_new) {
   SDB_ASSERT(!_writer);
-  irs::ResourceManagementOptions resource_manager;
-  auto opened = OpenStorageDirectory(*_directory, GetTableId(), _is_new,
-                                     _in_memory, resource_manager);
-  _dir = std::move(opened.directory);
-  _absent = opened.absent;
-
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
-  writer_options.cleanup_on_open = _is_new;
+  writer_options.cleanup_on_open = is_new;
   writer_options.lock_repository = false;
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
 
-  _writer = _durability
-              .OpenWriter(*_dir, Path(), opened.on_disk, _is_new,
-                          std::move(writer_options))
-              .first;
+  _writer = _durability.OpenWriter(is_new, std::move(writer_options)).first;
 
   auto& db_manager =
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
@@ -192,18 +185,6 @@ void SearchTable::OpenWriter() {
       }
     }
   }
-}
-
-void SearchTable::OpenDirectory() {
-  irs::ResourceManagementOptions resource_manager;
-  auto opened = OpenStorageDirectory(*_directory, GetTableId(), false, false,
-                                     resource_manager);
-  _dir = std::move(opened.directory);
-  _absent = opened.absent;
-}
-
-void SearchTable::OpenReader() {
-  _reader = IndexDurability::OpenReader(*_dir, ReaderOptions()).first;
 }
 
 irs::IndexReaderOptions SearchTable::ReaderOptions() const {
@@ -536,7 +517,7 @@ auto SearchTable::CompactUnsafeAsync(
 
 ResultWithTime SearchTable::CleanupUnsafe() {
   const auto begin = std::chrono::steady_clock::now();
-  auto result = _durability.Cleanup(*_dir);
+  auto result = _durability.Cleanup();
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)

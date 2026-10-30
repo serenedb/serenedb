@@ -1,0 +1,183 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+DROP DATABASE IF EXISTS doc_analytics;
+
+statement ok
+DROP TABLESPACE IF EXISTS doc_nvme;
+
+statement ok
+DROP TABLESPACE IF EXISTS doc_fast;
+
+statement ok
+DROP ROLE IF EXISTS doc_ts_writer;
+
+# DOCS_TEST_RAW
+#| CREATE TABLESPACE doc_fast LOCATION '/mnt/nvme/serenedb';
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLESPACE doc_fast LOCATION '${__TEST_DIR__}/nvme';
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE doc_articles (id INTEGER, body TEXT)
+WITH (storage = 'search')
+TABLESPACE doc_fast;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE doc_notes (id INTEGER, body TEXT);
+
+statement ok
+CREATE INDEX doc_notes_body ON doc_notes USING inverted (body) TABLESPACE doc_fast;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+SET default_tablespace = 'doc_fast';
+
+statement ok
+CREATE TABLE doc_events (id INTEGER, kind TEXT) WITH (storage = 'search');
+
+statement ok
+RESET default_tablespace;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT c.relname, t.spcname
+FROM pg_class AS c
+JOIN pg_tablespace AS t ON t.oid = c.reltablespace
+WHERE c.relname LIKE 'doc\_%'
+ORDER BY c.relname;
+----
+relname	spcname
+doc_articles	doc_fast
+doc_events	doc_fast
+doc_notes_body	doc_fast
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_RAW
+#| SELECT spcname, pg_tablespace_location(oid) AS location
+#| FROM pg_tablespace
+#| ORDER BY spcname;
+#| ----
+#| spcname	location
+#| doc_fast	/mnt/nvme/serenedb
+#| pg_default	(empty)
+#| pg_global	(empty)
+
+# DOCS_TEST_BODY
+
+query
+SELECT spcname, pg_tablespace_location(oid) = '${__TEST_DIR__}/nvme' AS here
+FROM pg_tablespace
+WHERE spcname IN ('doc_fast', 'pg_default', 'pg_global')
+ORDER BY spcname;
+----
+spcname	here
+doc_fast	t
+pg_default	f
+pg_global	f
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE DATABASE doc_analytics TABLESPACE doc_fast;
+
+query
+SELECT d.datname, t.spcname
+FROM pg_database AS d
+JOIN pg_tablespace AS t ON t.oid = d.dattablespace
+WHERE d.datname = 'doc_analytics';
+----
+datname	spcname
+doc_analytics	doc_fast
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_ts_writer;
+
+statement ok
+GRANT CREATE ON TABLESPACE doc_fast TO doc_ts_writer;
+
+query
+SELECT has_tablespace_privilege('doc_ts_writer', 'doc_fast', 'CREATE') AS can_create;
+----
+can_create
+t
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLESPACE doc_fast RENAME TO doc_nvme;
+
+statement ok
+ALTER TABLESPACE doc_nvme OWNER TO doc_ts_writer;
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+statement error
+DROP TABLESPACE doc_nvme;
+----
+db error: ERROR: tablespace "doc_nvme" is not empty
+
+
+statement ok
+DROP DATABASE doc_analytics;
+
+statement ok
+DROP TABLE doc_articles;
+
+statement ok
+DROP TABLE doc_events;
+
+statement ok
+DROP INDEX doc_notes_body;
+
+statement ok
+DROP TABLESPACE doc_nvme;
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET archive_store (
+#|     TYPE S3,
+#|     KEY_ID '⟨AKIA...⟩',
+#|     SECRET '⟨secret⟩',
+#|     REGION '⟨eu-central-1⟩',
+#|     SCOPE 's3://⟨bucket⟩/archive'
+#| );
+#| CREATE TABLESPACE doc_archive LOCATION 's3://⟨bucket⟩/archive';
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP TABLE doc_notes;
+
+statement ok
+DROP ROLE doc_ts_writer;

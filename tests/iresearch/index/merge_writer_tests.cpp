@@ -29,7 +29,7 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -136,7 +136,7 @@ void ValidateTerms(
 
 using namespace tests;
 
-struct MergeWriterTestCase : public tests::DirectoryTestCaseBase<> {
+struct MergeWriterTestCase : public tests::DirectoryTestCaseBase {
   void EnsureDocBlocksNotMixed();
 };
 
@@ -154,7 +154,8 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed() {
     }
   };
 
-  irs::MemoryDirectory dir;
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
 
   auto opts = irs::tests::DefaultWriterOptions();
 
@@ -237,7 +238,8 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed() {
 }
 
 TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
-  irs::MemoryDirectory data_dir;
+  irs::Directory data_dir{irs::DuckDBEngine::Instance().instance(),
+                          TestEnv::MemoryRoot()};
 
   // populate directory
   {
@@ -271,7 +273,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
   // merge 33 segments to writer (segments > 32 to trigger GCC 8.2.0 optimizer
   // bug)
   {
-    irs::MemoryDirectory dir;
+    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                       TestEnv::MemoryRoot()};
     irs::SegmentMeta index_segment;
     const irs::SegmentWriterOptions options{
       .db = &::irs::DuckDBEngine::Instance().instance()};
@@ -293,7 +296,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
 }
 
 TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
-  irs::MemoryDirectory data_dir;
+  irs::Directory data_dir{irs::DuckDBEngine::Instance().instance(),
+                          TestEnv::MemoryRoot()};
 
   // populate directory
   {
@@ -324,7 +328,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
 
   // test default progress (false)
   {
-    irs::MemoryDirectory dir;
+    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                       TestEnv::MemoryRoot()};
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress;
     const irs::SegmentWriterOptions options{
@@ -348,7 +353,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
 
   // test always-false progress
   {
-    irs::MemoryDirectory dir;
+    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                       TestEnv::MemoryRoot()};
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress = []() -> bool { return false; };
     const irs::SegmentWriterOptions options{
@@ -370,7 +376,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
 
   // test always-true progress
   {
-    irs::MemoryDirectory dir;
+    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                       TestEnv::MemoryRoot()};
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress =
       [&progress_call_count]() -> bool {
@@ -403,7 +410,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
   for (size_t i = 1; i < progress_call_count;
        ++i) {  // +1 for pre-decrement in 'progress'
     size_t call_count = i;
-    irs::MemoryDirectory dir;
+    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                       TestEnv::MemoryRoot()};
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress = [&call_count]() -> bool {
       return --call_count;
@@ -455,7 +463,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
     doc1.indexed.get_by_id<tests::StringField>(kDocStringId)
       ->GetIndexFeatures()));
 
-  irs::MemoryDirectory dir;
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
 
   // populate directory
   {
@@ -518,7 +527,8 @@ TEST_P(MergeWriterTestCase, EnsureDocBlocksNotMixed) {
 }
 
 TEST_P(MergeWriterTestCase, test_merge_writer) {
-  irs::MemoryDirectory dir;
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
 
   irs::bstring bytes1;
   irs::bstring bytes2;
@@ -1488,7 +1498,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
   constexpr irs::field_id kIntId = kDocIntId;        // doc_int
   constexpr irs::field_id kTextId = kDocTextId;      // doc_text
   constexpr irs::field_id kUnusedId = 99;            // never registered
-  irs::MemoryDirectory dir;
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
 
   constexpr std::string_view kStrings[4] = {"string1_data", "string2_data",
                                             "string3_data", "string4_data"};
@@ -1804,7 +1815,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
   constexpr irs::field_id kIntId = kDocIntId;
   constexpr irs::field_id kAnotherId = kAnotherColumnId;
   constexpr irs::field_id kUnusedId = 99;
-  irs::MemoryDirectory dir;
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
 
   constexpr std::string_view kStrings[4] = {"string1_data", "string2_data",
                                             "string3_data", "string4_data"};
@@ -2080,7 +2092,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
   // carries all 3 columns; remove doc2; expect 3 live docs post-merge
   // and all three column slots still present + iterable.
   {
-    irs::MemoryDirectory dir2;
+    irs::Directory dir2{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
     {
       auto writer = irs::IndexWriter::Make(dir2, irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
@@ -2210,7 +2223,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
   GTEST_SKIP() << "sorted-index merge path not supported";
 }
 
-INSTANTIATE_TEST_SUITE_P(merge_writer_test, MergeWriterTestCase,
-                         ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>)),
-                         &MergeWriterTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  merge_writer_test, MergeWriterTestCase,
+  ::testing::Combine(::testing::Values(tests::kMemoryDirParam)),
+  &MergeWriterTestCase::to_string);

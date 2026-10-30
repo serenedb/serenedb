@@ -59,24 +59,22 @@ void NormRegion::Corrupt(doc_id_t doc) const {
     ERR_MSG(".col reader: norm exception for doc ", doc, " is missing"));
 }
 
-const byte_type* NormColumnReader::Map(IndexInput& in, uint64_t offset,
+const byte_type* NormColumnReader::Map(const InputFile& file, uint64_t offset,
                                        uint64_t size) {
-  if (const auto* data = in.ReadStable(offset, size)) {
-    return data;
+  auto pinned = file.Pin(offset, size);
+  if (pinned.pin.IsValid()) {
+    _pins.push_back(std::move(pinned.pin));
   }
-  auto& owned =
-    _owned.emplace_back(std::make_unique_for_overwrite<byte_type[]>(size));
-  in.ReadData(offset, owned.get(), size);
-  return owned.get();
+  return pinned.bytes.data();
 }
 
 NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
-                                   IndexInput& in)
-  : _id{id}, _row_count{meta.row_count} {
+                                   const InputFile& file)
+  : _id{id}, _row_count{meta.row_count}, _paged{file.Paged()} {
   for (const auto& m : meta.regions) {
     if (m.bits != 0 && m.exceptions != 0) {
-      in.Prefetch(m.table_offset,
-                  (uint64_t{NormBuckets(m)} + m.overflow) * sizeof(uint32_t));
+      file.Prefetch(m.table_offset,
+                    (uint64_t{NormBuckets(m)} + m.overflow) * sizeof(uint32_t));
     }
   }
   _regions.reserve(meta.regions.size());
@@ -97,7 +95,7 @@ NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
     }
     const uint64_t bytes = m.bits / 8;
     const uint64_t size = NormSlotsSize(m);
-    const auto* slots = Map(in, m.file_offset, size);
+    const auto* slots = Map(file, m.file_offset, size);
     r.base = slots - uint64_t{r.first_doc} * bytes;
     r.window = _windows.size();
     const uint64_t window_bytes = (uint64_t{1} << kNormWindowShift) * bytes;
@@ -113,7 +111,7 @@ NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
       continue;
     }
     const auto buckets = NormBuckets(m);
-    const auto* table = Map(in, m.table_offset, NormTableSize(m));
+    const auto* table = Map(file, m.table_offset, NormTableSize(m));
     r.exceptions = true;
     r.first_code = NormFirstCode(m.bits);
     r.shift = m.shift;
@@ -142,7 +140,9 @@ NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
                  " are corrupt at ", k);
     }
   }
-  _residency.Reset(_pages);
+  if (_paged) {
+    _residency.Reset(_pages);
+  }
 }
 
 const NormRegion& NormColumnReader::Locate(doc_id_t doc) const noexcept {

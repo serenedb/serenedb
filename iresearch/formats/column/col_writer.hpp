@@ -50,7 +50,7 @@ struct AnnBuildEnv;
 
 class ColWriter final {
  public:
-  ColWriter(Directory& dir, std::string_view segment_name,
+  ColWriter(const Directory& dir, std::string_view segment_name,
             duckdb::DatabaseInstance& db);
   ~ColWriter();
 
@@ -106,7 +106,7 @@ class ColWriter final {
                                    duckdb::CompressionType forced,
                                    bool hyperloglog);
 
-  Directory* _dir;
+  Directory _dir;
   std::string _segment_name;
   std::string _filename;
   duckdb::DatabaseInstance* _db;

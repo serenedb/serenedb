@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
@@ -35,8 +36,6 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-class IndexInput;
 
 inline constexpr uint32_t kNormWindowShift = 16;
 
@@ -98,7 +97,8 @@ struct NormRegion {
 
 class NormColumnReader final {
  public:
-  NormColumnReader(field_id id, const NormColumnMeta& meta, IndexInput& in);
+  NormColumnReader(field_id id, const NormColumnMeta& meta,
+                   const InputFile& file);
 
   field_id Id() const noexcept { return _id; }
   uint64_t RowCount() const noexcept { return _row_count; }
@@ -107,6 +107,7 @@ class NormColumnReader final {
   size_t RegionCount() const noexcept { return _regions.size(); }
   size_t WindowCount() const noexcept { return _windows.size(); }
   size_t PageCount() const noexcept { return _pages; }
+  bool Paged() const noexcept { return _paged; }
 
   const NormRegion& Region(size_t i) const noexcept {
     SDB_ASSERT(i < _regions.size());
@@ -132,18 +133,19 @@ class NormColumnReader final {
   void Decode(doc_id_t first, size_t n, uint32_t* values) const;
 
  private:
-  const byte_type* Map(IndexInput& in, uint64_t offset, uint64_t size);
+  const byte_type* Map(const InputFile& file, uint64_t offset, uint64_t size);
 
   field_id _id;
   std::vector<NormRegion> _regions;
   std::vector<NormStats> _stats;
   std::vector<std::span<const byte_type>> _windows;
   file_utils::ResidencyMap _residency;
-  std::vector<std::unique_ptr<byte_type[]>> _owned;
+  std::vector<duckdb::BlockCachePin> _pins;
   uint64_t _row_count = 0;
   uint64_t _sum = 0;
   uint64_t _non_zero = 0;
   size_t _pages = 0;
+  bool _paged = false;
 };
 
 }  // namespace irs

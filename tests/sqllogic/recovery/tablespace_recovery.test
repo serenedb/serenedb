@@ -1,0 +1,198 @@
+control substitution on
+
+statement ok
+CREATE TABLESPACE ts LOCATION '${__TEST_DIR__}/ts';
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ts_english AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
+
+statement ok
+CREATE TABLE docs (id INT, body TEXT) WITH (storage = 'search') TABLESPACE ts;
+
+statement ok
+INSERT INTO docs VALUES (1, 'quick brown fox'), (2, 'lazy dog');
+
+statement ok
+CREATE TABLE notes (id INT, body TEXT);
+
+statement ok
+INSERT INTO notes VALUES (1, 'red fox'), (2, 'blue whale');
+
+statement ok
+CREATE INDEX notes_idx ON notes USING inverted(body ts_english) TABLESPACE ts;
+
+statement ok
+CREATE DATABASE ts_db TABLESPACE ts;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT spcname, pg_tablespace_location(oid) = '${__TEST_DIR__}/ts' AS located
+FROM pg_tablespace WHERE spcname = 'ts';
+----
+spcname	located
+ts	t
+
+connection after_restart
+query
+SELECT id, body FROM docs ORDER BY id;
+----
+id	body
+1	quick brown fox
+2	lazy dog
+
+connection after_restart
+query
+SELECT id FROM notes_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+
+connection after_restart
+query
+SELECT d.datname, t.spcname FROM pg_database d JOIN pg_tablespace t ON t.oid = d.dattablespace
+WHERE d.datname = 'ts_db';
+----
+datname	spcname
+ts_db	ts
+
+connection after_restart
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+connection after_restart
+statement ok
+CREATE TABLE rewrite_catalog_log (i INT);
+
+connection after_restart
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_restart
+statement error connection closed
+SELECT 1;
+
+
+connection after_rewrite
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT c.relname, t.spcname FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE c.relnamespace <> 'pg_catalog'::regnamespace
+ORDER BY c.relname;
+----
+relname	spcname
+docs	ts
+notes_idx	ts
+
+connection after_rewrite
+query
+SELECT id FROM notes_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+
+connection after_rewrite
+query
+SELECT count(*) AS rows FROM docs;
+----
+rows
+2
+
+connection after_rewrite
+statement ok
+DROP DATABASE ts_db;
+
+connection after_rewrite
+statement ok
+DROP INDEX notes_idx;
+
+connection after_rewrite
+statement ok
+DROP TABLE docs;
+
+connection after_rewrite
+statement ok
+DROP TABLESPACE ts;
+
+connection after_rewrite
+query ok retry 240 backoff 250ms
+SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/ts/**');
+----
+files_left
+0
+
+connection after_rewrite
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+connection after_rewrite
+statement error connection closed
+CREATE TABLESPACE half_created LOCATION '${__TEST_DIR__}/half';
+
+
+connection after_half_create
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS tablespaces FROM pg_tablespace WHERE spcname = 'half_created';
+----
+tablespaces
+0
+
+connection after_half_create
+statement error
+CREATE TABLESPACE half_created LOCATION '${__TEST_DIR__}/half';
+----
+db error: ERROR: directory "<slt:ignore>/half/engine_v1" already in use as a tablespace
+HINT: Remove it if no tablespace uses it; a dropped tablespace removes it once the transactions that began before the drop have ended.
+
+
+system ok
+rm -r $__TEST_DIR__/half/engine_v1
+
+connection after_half_create
+statement ok
+CREATE TABLESPACE half_created LOCATION '${__TEST_DIR__}/half';
+
+connection after_half_create
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+connection after_half_create
+statement error connection closed
+CREATE TABLE orphan (id INT, body TEXT) WITH (storage = 'search') TABLESPACE half_created;
+
+
+connection after_orphan
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS tables FROM pg_class WHERE relname = 'orphan';
+----
+tables
+0
+
+connection after_orphan
+query
+SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/half/engine_v1/*/*/*');
+----
+files_left
+0
+
+connection after_orphan
+statement ok
+DROP TABLESPACE half_created;
+
+connection after_orphan
+statement ok
+DROP TABLE notes;
+
+connection after_orphan
+statement ok
+DROP TABLE rewrite_catalog_log;
+
+connection after_orphan
+statement ok
+DROP TEXT SEARCH DICTIONARY ts_english;

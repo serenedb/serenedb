@@ -21,8 +21,12 @@
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
+#include <iresearch/store/file_output.hpp>
 #include <string_view>
 #include <vector>
 
@@ -104,6 +108,42 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
   rows.emplace_back("catalog_wal_size_on_disk",
                     wal ? static_cast<int64_t>(storage.GetWALSize()) : 0,
                     "current catalog wal file size in bytes");
+  const auto add = [&](std::string_view metric, uint64_t value,
+                       std::string_view description) {
+    rows.emplace_back(metric, static_cast<int64_t>(value), description);
+  };
+  auto& db = *scan.Context().db;
+  const auto cache = db.TryGetBlockCache();
+  const auto stats =
+    cache ? cache->GetStatistics()
+          : duckdb::BlockCacheStatistics{
+              .capacity = duckdb::BlockCache::ConfiguredCapacity(db)};
+  add("block_cache_capacity_bytes", stats.capacity,
+      "memory the cache of remote and in-memory index files may use, in "
+      "bytes");
+  add("block_cache_used_bytes", stats.used,
+      "memory the cache of remote and in-memory index files uses, in bytes");
+  add("block_cache_hits", stats.hits,
+      "block reads served from the cache since start");
+  add("block_cache_misses", stats.misses,
+      "block reads that went to storage since start");
+  add("block_cache_fetches", stats.fetches,
+      "storage reads that filled the cache since start");
+  add("block_cache_fetched_bytes", stats.fetched_bytes,
+      "bytes read from storage into the cache since start");
+  add("block_cache_evictions", stats.evictions,
+      "blocks evicted from memory since start");
+  add("block_cache_spilled_blocks", stats.spilled,
+      "evicted blocks kept in the spill file since start");
+  add("block_cache_spill_reads", stats.spill_reads,
+      "blocks read back from the spill file since start");
+  const auto uploads = irs::CurrentUploads();
+  add("index_uploads_pending", uploads.files,
+      "index files being written to an object store whose upload has not "
+      "completed");
+  add("index_upload_pending_bytes", uploads.bytes,
+      "bytes written to index files on an object store whose upload has not "
+      "completed");
   return rows;
 }
 

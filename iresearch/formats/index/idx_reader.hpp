@@ -31,14 +31,14 @@
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_features.hpp"
-#include "iresearch/store/data_input.hpp"  // IndexInput
+#include "iresearch/store/data_input.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bytes_utils.hpp"  // bstring
 #include "iresearch/utils/type_limits.hpp"  // field_limits
 
 namespace irs {
 
-struct Directory;
 struct AnnIndex;
 struct IResourceManager;
 
@@ -85,7 +85,7 @@ inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
 
 class IdxReader final {
  public:
-  IdxReader(const Directory& dir, std::string_view segment_name,
+  IdxReader(const Directory& dir, std::string_view segment_name, bool present,
             HnswBases* hnsw_bases);
   ~IdxReader();
 
@@ -99,7 +99,7 @@ class IdxReader final {
 
   std::span<const uint64_t> AnnEnds() const noexcept;
 
-  IndexInput::ptr ReopenIn() const;
+  const InputFile* File() const noexcept;
 
  private:
   struct Impl;

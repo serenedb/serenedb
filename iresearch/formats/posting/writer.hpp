@@ -188,7 +188,7 @@ class PostingsWriter final {
     _last_state.clear();
   }
 
-  void Encode(BufferedOutput& out, const PostingMeta& state);
+  void Encode(DataOutput& out, const PostingMeta& state);
 
   FieldStats EndField() {
     if (_features.HasVector() && _term_pay != nullptr) {
@@ -229,8 +229,7 @@ class PostingsWriter final {
   void BeginTerm(PostingMeta& meta);
   void EndTerm(PostingMeta& meta);
   void PrepareWriters(const FieldProperties& meta);
-  template<typename Output>
-  void WriteDocBlock(Output& out);
+  void WriteDocBlock(DataOutput& out);
   void UpdateBounds();
   void FlushTailPos();
   void FlushTailPay();
@@ -271,7 +270,7 @@ class PostingsWriter final {
   }
 
   BlockIndexWriter _index;
-  bstring _tail;
+  BytesOutput _tail;
   PostingMeta _last_state;    // Last final term state
   bitset _docs;               // Set of all processed documents
   IndexOutput::ptr _doc_out;  // Postings (doc + freq)
@@ -369,8 +368,7 @@ inline void PostingsWriter::Prepare(const FlushState& state) {
   _docs.reset(doc_limits::min() + state.doc_count);
 }
 
-inline void PostingsWriter::Encode(BufferedOutput& out,
-                                   const PostingMeta& meta) {
+inline void PostingsWriter::Encode(DataOutput& out, const PostingMeta& meta) {
   SDB_ASSERT(!_features.HasVector() ||
              (!_features.HasPosition() && !_features.HasOffset()));
 
@@ -461,18 +459,18 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
     meta.doc_delta = _doc.docs[0] - doc_limits::min();
   } else if (!has_index) {
     UpdateBounds();
-    _tail.clear();
-    BytesOutput out{_tail};
+    _tail.Clear();
     ApplyToWriter([&](auto& writer) {
-      out.WriteByte(writer.SizeRoot());
-      writer.WriteRoot(out);
+      _tail.WriteByte(writer.SizeRoot());
+      writer.WriteRoot(_tail);
     });
-    WriteDocBlock(out);
-    if (_tail.size() <= PostingMeta::kInlineBytes) {
-      meta.inline_data = _tail.data();
-      meta.inline_size = static_cast<uint8_t>(_tail.size());
+    WriteDocBlock(_tail);
+    const auto tail = _tail.Bytes();
+    if (tail.size() <= PostingMeta::kInlineBytes) {
+      meta.inline_data = tail.data();
+      meta.inline_size = static_cast<uint8_t>(tail.size());
     } else {
-      _doc_out->WriteData(_tail.data(), _tail.size());
+      _doc_out->WriteData(tail.data(), tail.size());
     }
   } else {
     UpdateBounds();
@@ -527,8 +525,7 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
   _pay.last = 0;
 }
 
-template<typename Output>
-void PostingsWriter::WriteDocBlock(Output& out) {
+inline void PostingsWriter::WriteDocBlock(DataOutput& out) {
   const auto size = _doc.size;
   SDB_ASSERT(size != 0);
   block_io::WriteTailDelta(size, out, _doc.docs, _doc.block_last, _enc_buf);
@@ -741,7 +738,8 @@ inline void PostingsWriter::FlushDocBlock(const PostingMeta& meta) {
 inline void PostingsWriter::End() {
   block_io::WriteSlack(*_doc_out);
   format_utils::WriteFooter(*_doc_out);
-  _doc_out.reset();  // ensure stream is closed
+  _doc_out->Close();
+  _doc_out.reset();
 
   if (_pos_out) {
     if (_pos.size != 0) {
@@ -752,7 +750,8 @@ inline void PostingsWriter::End() {
     }
     block_io::WriteSlack(*_pos_out);
     format_utils::WriteFooter(*_pos_out);
-    _pos_out.reset();  // ensure stream is closed
+    _pos_out->Close();
+    _pos_out.reset();
   } else {
     SDB_ASSERT(_pos.size == 0);
   }
@@ -768,7 +767,8 @@ inline void PostingsWriter::End() {
     }
     block_io::WriteSlack(*_pay_out);
     format_utils::WriteFooter(*_pay_out);
-    _pay_out.reset();  // ensure stream is closed
+    _pay_out->Close();
+    _pay_out.reset();
   } else {
     SDB_ASSERT(_pay.size == 0);
   }

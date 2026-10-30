@@ -55,7 +55,7 @@ class Posting : public Root {
   Posting(Posting&&) = delete;
   Posting& operator=(Posting&&) = delete;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                const SubReader& segment, const TermReader& field,
                const irs::detail::ScoreArgs& args, IndexFeatures layout,
                bool bounds) {

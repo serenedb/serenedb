@@ -33,7 +33,7 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/typed_terms.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/bytes_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
@@ -209,7 +209,7 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
   void TearDown() final { _data_writer.reset(); }
 
  protected:
-  irs::MemoryDirectory _dir;
+  irs::Directory _dir{TestDb(), "memory://sink_writer"};
   irs::IndexWriter::ptr _data_writer;
 };
 
@@ -925,13 +925,12 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
 }
 
 TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
-  irs::MemoryDirectory dir;
+  irs::Directory dir{TestDb(), "memory://sink_writer_flush"};
   irs::IndexWriterOptions options;
   options.db = &TestDb();
   options.reader_options.db = &TestDb();
   // force writer to make flushes every 2 documents
   options.segment_docs_max = 2;
-  // local block is needed as reader/writer should not outlive directory
   {
     auto limited_data_writer =
       irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));

@@ -92,6 +92,9 @@ class VariantColumnReader final : public ColumnReader {
     return end;
   }
 
+  void CollectBlocks(uint64_t first, uint64_t last,
+                     std::vector<ByteExtent>& out) const final;
+
   size_t VariantRgSpan(uint64_t row, uint64_t& begin, uint64_t& end) const {
     const auto it =
       std::upper_bound(_variant_offsets.begin(), _variant_offsets.end(), row);

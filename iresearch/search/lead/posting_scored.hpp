@@ -42,13 +42,13 @@ class PostingLeadScored : public PostingLeaf<InputType, kCursorScoredShape> {
  public:
   PostingLeadScored() = default;
 
-  PostingLeadScored(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingLeadScored(const PostingMeta& meta, const InputFile& doc_in,
                     const SubReader& segment, const TermReader& field,
                     const ScoreArgs& args) {
     Prepare(meta, doc_in, segment, field, args);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                const SubReader& segment, const TermReader& field,
                const ScoreArgs& args) {
     SDB_ASSERT(meta.docs_count != 0);

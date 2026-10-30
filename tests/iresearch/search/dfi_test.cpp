@@ -174,7 +174,7 @@ TEST_P(DFIIndexTest, scores_nonnegative_and_only_fire_above_expected) {
   ASSERT_TRUE(any_positive);
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(dfi_test, DFIIndexTest,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

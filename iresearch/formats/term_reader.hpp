@@ -39,13 +39,12 @@ namespace irs {
 
 struct FieldMeta;
 
-// The streams a posting list lives in. Handed to whatever decodes a term's
-// postings so it can reopen what it needs; `pos` and `pay` are null for a
-// field that stores neither.
+// The files a posting list lives in; `pos` and `pay` are null for a field that
+// stores neither.
 struct PostingsHandles {
-  const IndexInput* doc = nullptr;
-  const IndexInput* pos = nullptr;
-  const IndexInput* pay = nullptr;
+  const InputFile* doc = nullptr;
+  const InputFile* pos = nullptr;
+  const InputFile* pay = nullptr;
 };
 
 struct TermReader : public AttributeProvider {
@@ -70,6 +69,8 @@ struct TermReader : public AttributeProvider {
   // has nowhere to walk to afterwards.
   virtual PostingMeta Lookup(bytes_view term) const = 0;
 
+  virtual bool Prefetch(bytes_view term) const { return false; }
+
   virtual SeekTermIterator::ptr iterator(
     const RegexpAcceptor& acceptor) const = 0;
 
@@ -81,8 +82,6 @@ struct TermReader : public AttributeProvider {
 
   virtual SeekTermIterator::ptr iterator(
     const FuzzyConjunction& acceptor) const = 0;
-
-  virtual std::unique_ptr<IndexInput> ReopenPayload() const { return nullptr; }
 
   // Returns field metadata.
   virtual const FieldMeta& meta() const = 0;

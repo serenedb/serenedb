@@ -197,6 +197,7 @@ target_sources(
         queries/boolean_query.cpp
         queries/docs_mask_query.cpp
         queries/multiterm_query.cpp
+        queries/posting_heads.cpp
         queries/term_query.cpp
         scorers/bm25.cpp
         scorers/constant_score.cpp

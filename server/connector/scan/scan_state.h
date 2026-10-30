@@ -163,6 +163,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   const irs::IndexReader* reader = nullptr;
   search::InvertedIndexSnapshotPtr snapshot;
   size_t total_segments = 0;
+  bool remote = false;
   const VectorScorerOptions* vector_scorer = nullptr;
   std::optional<size_t> top_k;
   size_t top_offset = 0;
@@ -517,7 +518,11 @@ struct FetchedHits {
 void SortByAddress(std::span<irs::ScoreDoc> hits);
 std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
   std::span<const irs::ScoreDoc> hits, uint64_t rg_size);
-void PlanFetch(ScanGlobalState& g);
+void PrefetchColumns(
+  const ScanGlobalState& g, FetchLocalState& l,
+  std::span<const irs::ScoreDoc> hits,
+  std::span<const ScanGlobalState::TopKState::FetchUnit> units);
+void PlanFetch(ScanGlobalState& g, FetchLocalState& l);
 FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
                       RankedLocalState& l, uint32_t seg,
                       std::span<const irs::ScoreDoc> hits, bool rebind);

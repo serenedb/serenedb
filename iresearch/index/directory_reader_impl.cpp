@@ -28,12 +28,13 @@
 
 #include <duckdb/common/types/hyperloglog.hpp>
 #include <ranges>
+#include <vector>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
-#include "iresearch/utils/directory_utils.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -66,7 +67,7 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
   };
   irs::containers::FlatHashMap<field_id, Accumulator> col2stats;
 
-  auto& refs = dir.attributes().refs();
+  auto& refs = dir.Refs();
   for (const auto [index_segment, reader] :
        std::views::zip(segments, readers)) {
     const auto& [filename, segment] = index_segment;
@@ -128,17 +129,12 @@ namespace {
 IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
                                          MetaPayloadReader payload) {
   IndexFileRefs::ref_t ref;
-  std::string filename;
-
-  // ensure have a valid ref to a filename
   while (!ref) {
-    const bool index_exists = index_meta::LastFile(dir, filename);
-
-    if (!index_exists) {
+    const auto filename = index_meta::LastFile(dir);
+    if (!filename) {
       return nullptr;
     }
-
-    ref = directory_utils::Reference(const_cast<Directory&>(dir), filename);
+    ref = Reference(dir, *filename);
   }
 
   SDB_ASSERT(ref);
@@ -162,7 +158,7 @@ DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, const Directory& dir,
                                          ReadersType&& readers)
   : CompositeReaderImpl{std::move(readers), init.live_docs_count,
                         init.docs_count},
-    _dir{dir},
+    _dir{dir.Unobserved()},
     _file_refs{std::move(init.file_refs)},
     _meta{std::move(meta)},
     _opts{opts},
@@ -205,9 +201,10 @@ std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
   const auto& segments = index_meta.segments;
 
   ReadersType readers(segments.size());
-  auto reader = readers.begin();
+  std::vector<size_t> fresh;
 
-  for (const auto& [filename, meta] : segments) {
+  for (size_t i = 0; i != segments.size(); ++i) {
+    const auto& meta = segments[i].meta;
     const auto it = reuse_candidates.find(meta.name);
 
     if (it != reuse_candidates.end() && it->second != kInvalidCandidate &&
@@ -216,14 +213,17 @@ std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
       SDB_ASSERT(tmp != nullptr);
       SDB_ASSERT(tmp->Meta() ==
                  cached->_meta.index_meta.segments[it->second].meta);
-      *reader = std::move(tmp);
+      readers[i] = std::move(tmp);
       reuse_candidates.erase(it);
     } else {
-      *reader = SegmentReader{SegmentReaderImpl::Open(dir, meta, opts)};
+      fresh.push_back(i);
     }
-
-    ++reader;
   }
+
+  ForEach(dir, fresh.size(), [&](size_t i) {
+    readers[fresh[i]] = SegmentReader{
+      SegmentReaderImpl::Open(dir, segments[fresh[i]].meta, opts)};
+  });
 
   return std::make_shared<DirectoryReaderImpl>(
     dir, opts,

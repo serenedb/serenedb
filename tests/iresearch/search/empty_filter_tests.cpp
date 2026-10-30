@@ -43,7 +43,7 @@ TEST_P(EmptyFilterTestCase, empty) {
   CheckQuery(irs::Empty{}, Docs{}, cost, rdr);
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(empty_filter_test, EmptyFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

@@ -30,6 +30,7 @@
 #include <duckdb/common/types/cast_helpers.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/database_size.hpp>
@@ -48,8 +49,11 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/database_directory.h"
+#include "catalog/entry/database.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "catalog/entry/tablespace.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
@@ -397,58 +401,99 @@ void SchemaSizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     });
 }
 
-const SystemObject& TablespaceEntry(int64_t oid) {
-  if (const auto* tablespace =
-        FindSystemObject(kSystemTablespaces, static_cast<duckdb::idx_t>(oid))) {
-    return *tablespace;
+const catalog::TablespaceCatalogEntry& TablespaceEntry(
+  duckdb::ClientContext& context, int64_t oid) {
+  if (const auto tablespace = catalog::ClusterEntryById(
+        context, duckdb::CatalogType::TABLESPACE_ENTRY,
+        static_cast<duckdb::idx_t>(oid))) {
+    return tablespace->Cast<catalog::TablespaceCatalogEntry>();
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                   ERR_MSG("tablespace with OID ", oid, " does not exist"));
 }
 
-const SystemObject& TablespaceEntry(duckdb::string_t name) {
-  if (const auto* tablespace =
-        FindSystemObject(kSystemTablespaces, connector::AsView(name))) {
-    return *tablespace;
+const catalog::TablespaceCatalogEntry& TablespaceEntry(
+  duckdb::ClientContext& context, duckdb::string_t name) {
+  if (const auto tablespace =
+        catalog::ClusterEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY,
+                              connector::AsView(name))) {
+    return tablespace->Cast<catalog::TablespaceCatalogEntry>();
   }
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
     ERR_MSG("tablespace \"", connector::AsView(name), "\" does not exist"));
 }
 
-int64_t TablespaceBytes(duckdb::ClientContext& context,
-                        const SystemObject& tablespace) {
-  if (tablespace.oid != kPgDefaultTablespace) {
+duckdb::idx_t SessionTablespace(const Session& session) {
+  const auto database =
+    session.database
+      ? FindDatabase(*session.context,
+                     session.database->GetName().GetIdentifierName())
+      : nullptr;
+  return database ? database->Cast<catalog::DatabaseCatalogEntry>().Tablespace()
+                  : kPgDefaultTablespace;
+}
+
+int64_t TablespaceBytes(const Session& session,
+                        const catalog::TablespaceCatalogEntry& tablespace) {
+  auto& context = *session.context;
+  if (tablespace.oid != SessionTablespace(session)) {
     if (const auto closure = auth::SessionClosure(context);
-        closure && !closure->Owns(kRootUser)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("permission denied for tablespace ", tablespace.name));
-    }
-    return static_cast<int64_t>(catalog::ClusterOf(context)
-                                  .GetAttached()
-                                  .GetStorageManager()
-                                  .GetWALSize());
-  }
-  int64_t total = 0;
-  for (const auto& entry : Databases(context)) {
-    if (auto database =
-          duckdb::Catalog::GetCatalogEntry(context, entry.get().name)) {
-      total +=
-        static_cast<int64_t>(DatabaseStorageSize(context, *database, {}).bytes);
+        closure && !closure->Owns(kRootUser) &&
+        !closure->CanAny(duckdb::CatalogType::TABLESPACE_ENTRY,
+                         PrivilegePermissions(tablespace),
+                         duckdb::AclMode::Create)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied for tablespace ",
+                              tablespace.name.GetIdentifierName()));
     }
   }
-  return total;
+  duckdb::TaskScheduler::BlockingScope blocking;
+  auto& cluster = catalog::ClusterOf(context);
+  const auto root =
+    tablespace.oid == kPgGlobalTablespace
+      ? cluster.TablespaceRootOf(cluster.GetCatalogTransaction(context),
+                                 kPgDefaultTablespace)
+      : tablespace.Root();
+  const auto size = catalog::StorageBytes(root->Path());
+  switch (tablespace.oid) {
+    case kPgGlobalTablespace:
+      return static_cast<int64_t>(size.files);
+    case kPgDefaultTablespace:
+      return static_cast<int64_t>(size.nested);
+    default:
+      return static_cast<int64_t>(size.files + size.nested);
+  }
 }
 
 template<typename Key>
 void TablespaceSizeFunction(duckdb::DataChunk& args,
                             duckdb::ExpressionState& state,
                             duckdb::Vector& result) {
-  auto& context = state.GetContext();
+  const auto& session = SessionOf(state);
   duckdb::UnaryExecutor::Execute<Key, int64_t>(
+    args.data[0], result, args.size(), [&](Key key) {
+      return TablespaceBytes(session, TablespaceEntry(*session.context, key));
+    });
+}
+
+void TablespaceLocationFunction(duckdb::DataChunk& args,
+                                duckdb::ExpressionState& state,
+                                duckdb::Vector& result) {
+  const auto& session = SessionOf(state);
+  duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
     args.data[0], result, args.size(),
-    [&](Key key) { return TablespaceBytes(context, TablespaceEntry(key)); });
+    [&](int64_t oid) -> duckdb::optional<duckdb::string_t> {
+      const auto tablespace = catalog::ClusterEntryById(
+        *session.context, duckdb::CatalogType::TABLESPACE_ENTRY,
+        oid == 0 ? SessionTablespace(session)
+                 : static_cast<duckdb::idx_t>(oid));
+      if (!tablespace) {
+        return duckdb::nullopt;
+      }
+      return duckdb::StringVector::AddString(
+        result, tablespace->Cast<catalog::TablespaceCatalogEntry>().Location());
+    });
 }
 
 struct SizeUnit {
@@ -680,8 +725,12 @@ void RegisterDbsizeFunctions(duckdb::ExtensionLoader& loader) {
   duckdb::ScalarFunction tablespace_by_name{
     {text}, int8, TablespaceSizeFunction<duckdb::string_t>};
   tablespace_by_name.SetFallible();
-  RegisterScalar(loader, pg_catalog, "pg_tablespace_size", stability, nullptr,
-                 {tablespace_by_oid, tablespace_by_name});
+  RegisterScalar(loader, pg_catalog, "pg_tablespace_size", stability,
+                 InitSession, {tablespace_by_oid, tablespace_by_name});
+  RegisterScalar(
+    loader, pg_catalog, "pg_tablespace_location",
+    duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY, InitSession,
+    {duckdb::ScalarFunction{{OID()}, text, TablespaceLocationFunction}});
 }
 
 }  // namespace sdb::pg

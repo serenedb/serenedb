@@ -25,12 +25,14 @@
 #include <absl/functional/any_invocable.h>
 
 #include <duckdb/common/constants.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 
+#include "iresearch/store/directory.hpp"
+
 namespace irs {
 
-struct Directory;
 struct IndexMeta;
 
 using MetaPayloadReader = absl::AnyInvocable<void(duckdb::BinaryDeserializer&)>;
@@ -41,9 +43,9 @@ uint64_t ParseGeneration(std::string_view file) noexcept;
 
 uint64_t ParsePendingGeneration(std::string_view file) noexcept;
 
-bool LastFile(const Directory& dir, std::string& name);
+std::optional<std::string> LastFile(const Directory& dir);
 
-bool LastPendingFile(const Directory& dir, std::string& name);
+std::optional<std::string> LastPendingFile(const Directory& dir);
 
 void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
           MetaPayloadReader payload = {});

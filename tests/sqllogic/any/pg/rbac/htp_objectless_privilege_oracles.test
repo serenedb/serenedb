@@ -1,6 +1,5 @@
-# has_*_privilege oracles for object classes SereneDB does not implement
-# (foreign-data wrapper, foreign server, tablespace) match PostgreSQL 19beta1
-# exactly. PG's rule: a superuser bypasses the object lookup (-> true even for a
+# has_*_privilege oracles for foreign-data wrappers, foreign servers and
+# tablespaces match PostgreSQL 19beta1 exactly. PG's rule: a superuser bypasses the object lookup (-> true even for a
 # nonexistent oid); a non-superuser on a missing object gets NULL (is_missing);
 # tablespace pg_default (1663) grants nothing to PUBLIC so a non-superuser gets
 # false for CREATE. has_language_privilege is true (USAGE defaults to PUBLIC) and

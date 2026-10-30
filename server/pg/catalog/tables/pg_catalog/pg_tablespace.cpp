@@ -18,18 +18,44 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "catalog/entry/tablespace.h"
+#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
 namespace {
 
-constexpr auto kTablespace = Shape<kPgTablespaceSql, const SystemObject>(
-  Col<"oid">(&SystemObject::oid), Col<"spcname">(&SystemObject::name),
-  Col<"spcowner">([](const auto&) { return kRootUser; }));
+constexpr SystemIndex kTablespaceIndexes[] = {
+  {kPgTablespaceSql["spcname"], SystemLookup::Object},
+};
+
+class PgTablespace final : public SystemTableScan<kPgTablespaceSql> {
+ public:
+  using SystemTableScan::SystemTableScan;
+
+  static constexpr duckdb::idx_t kRows = 10;
+
+  static constexpr std::tuple kSources{CatalogSetSource{
+    SystemCatalog::Cluster, duckdb::CatalogType::TABLESPACE_ENTRY,
+    kTablespaceIndexes}};
+
+  static constexpr auto kTablespace =
+    Shape<kSql, const catalog::TablespaceCatalogEntry>(
+      Col<"oid">(&duckdb::CatalogEntry::oid),
+      Col<"spcname">(&duckdb::CatalogEntry::name),
+      Col<"spcowner">(
+        [](const auto& tablespace) { return tablespace.permissions.owner; }),
+      Col<"spcacl">([](const auto& tablespace) -> const auto& {
+        return tablespace.permissions.acl;
+      }));
+
+  void Row(const catalog::TablespaceCatalogEntry& tablespace) {
+    Emit<kTablespace>(tablespace);
+  }
+};
 
 }  // namespace
 
-SystemTable gPgTablespace =
-  SystemTableOf<StaticTable<kTablespace, kSystemTablespaces>>();
+SystemTable gPgTablespace = SystemTableOf<PgTablespace>();
 
 }  // namespace sdb::pg

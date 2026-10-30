@@ -68,7 +68,7 @@ Root::ptr Family::MakeBoosted(
       irs::detail::ConstantOf(segment, boost_own, boost_args)) {
     return {};
   }
-  return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+  return irs::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     auto root =
       memory::make_managed<Posting<Input, BoostTerm<Input>, utils::Empty>>(
         std::piecewise_construct, std::forward_as_tuple(ctx.fetcher),

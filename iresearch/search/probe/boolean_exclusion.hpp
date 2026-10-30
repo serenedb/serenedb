@@ -63,7 +63,7 @@ Node::ptr MakeExclusion(const BooleanQuery& query, uint64_t interrogations,
       const auto& posting = must.front();
       const auto& own = *posting.state.reader;
       const auto& doc = *detail::DocOf(own);
-      return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+      return ResolveInput(doc, [&]<typename Input> -> Node::ptr {
         return detail::BuildExcludeSideOf<Node::ptr, Input>(
           excludes, exclude_filters, nullptr, segment, reach, lead,
           [&]<typename Exclude>(auto&& excluded) -> Node::ptr {

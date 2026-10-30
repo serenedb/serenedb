@@ -35,7 +35,10 @@
 #include <absl/strings/str_cat.h>
 #include <signal.h>  // for signal(...)/raise(...)
 
+#include <atomic>
+#include <cerrno>
 #include <ctime>
+#include <duckdb/common/memory_file_system.hpp>
 #include <filesystem>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
@@ -43,9 +46,7 @@
 #include <iresearch/utils/containers/bitset.hpp>
 #include <iresearch/utils/cpu_features.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/log.hpp>
-#include <iresearch/utils/mmap_utils.hpp>
 #include <iresearch/utils/network_utils.hpp>
 #include <vector>
 
@@ -113,6 +114,12 @@ std::filesystem::path TestEnv::resource(const std::string& name) {
   return gResourceDir / name;
 }
 
+std::string TestEnv::MemoryRoot() {
+  static constinit std::atomic<uint64_t> count{0};
+  return absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "test/",
+                      count.fetch_add(1, std::memory_order_relaxed));
+}
+
 bool TestEnv::prepare() {
   if (!make_directories()) {
     return false;
@@ -138,20 +145,11 @@ bool TestEnv::prepare() {
 
 bool TestEnv::make_directories() {
   std::filesystem::path exec_path(gArgv[0]);
-  auto path_parts = irs::file_utils::PathParts(exec_path.c_str());
 
   gExecPath = exec_path;
-  gExecFile = std::filesystem::path{
-    irs::basic_string_view<std::filesystem::path::value_type>(
-      path_parts.basename)};
-  gExecDir = std::filesystem::path{
-    irs::basic_string_view<std::filesystem::path::value_type>(
-      path_parts.dirname)};
-  gTestName =
-    std::filesystem::path{
-      irs::basic_string_view<std::filesystem::path::value_type>(
-        path_parts.stem)}
-      .string();
+  gExecFile = exec_path.filename();
+  gExecDir = exec_path.parent_path();
+  gTestName = exec_path.stem().string();
 
   if (gOutDir.native().empty()) {
     gOutDir = gExecDir;
@@ -163,7 +161,7 @@ bool TestEnv::make_directories() {
   std::cout << "\t" << kIresResourceDir << ": " << gResourceDir.string()
             << std::endl;
 
-  irs::file_utils::EnsureAbsolute(gOutDir);
+  gOutDir = std::filesystem::absolute(gOutDir);
   (gResDir = gOutDir) /= gTestName;
 
   // add timestamp to res_dir_
@@ -189,6 +187,7 @@ bool TestEnv::make_directories() {
 
   auto res_dir_templ = gResDir.string();
 
+  std::filesystem::create_directories(gOutDir);
   if (!mkdtemp(res_dir_templ.data())) {
     std::cerr << "cannot create " << res_dir_templ << ": "
               << std::strerror(errno) << std::endl;

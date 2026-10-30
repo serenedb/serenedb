@@ -23,8 +23,6 @@
 #include <fstream>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/fst/fst_builder.hpp>
 #include <iresearch/utils/fst/fst_matcher.hpp>
 #include <iresearch/utils/fst/fst_string_ref_weight.hpp>
@@ -33,6 +31,7 @@
 #include <iresearch/utils/fst/vector_fst.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
+#include "memory_output.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -136,9 +135,9 @@ void AssertFstReadWrite(const std::string& resource) {
   irs::MemoryOutput out(writer_memory);
   irs::immutable_byte_fst::Write(fst, out.stream, stats);
   out.stream.Flush();
-  ASSERT_GT(writer_memory.Counter(), 0);
   SimpleMemoryAccounter immutable_fst_memory;
-  irs::MemoryIndexInput in(out.file);
+  const auto bytes = tests::Bytes(out.file);
+  irs::IndexInput in{bytes};
   uint64_t noticed = 0;
   uint64_t weights_end = 0;
   std::unique_ptr<irs::immutable_byte_fst> read_fst(

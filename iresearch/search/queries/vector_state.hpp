@@ -47,7 +47,7 @@ struct VectorState {
   const ColumnReader* vector_column = nullptr;
   const ColReader* col_reader = nullptr;
   ManagedVector<PostingMeta> cookies;
-  std::unique_ptr<IndexInput> payload;
+  const InputFile* payload = nullptr;
   uint64_t estimation = 0;
 
   VectorQuantization quant = VectorQuantization::None;

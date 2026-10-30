@@ -204,8 +204,8 @@ void SereneDBClientState::TransactionPreCommit(
   }
   std::vector<std::reference_wrapper<duckdb::AttachedDatabase>> written;
   for (auto& db : transaction.OpenedTransactions()) {
-    if (db.get().GetCatalog().GetCatalogType() !=
-        catalog::SereneDBCatalog::kStorageType) {
+    if (db.get().IsTemporary() || db.get().GetCatalog().GetCatalogType() !=
+                                    catalog::SereneDBCatalog::kStorageType) {
       continue;
     }
     auto opened = transaction.TryGetTransaction(db);
@@ -267,6 +267,9 @@ void SereneDBClientState::TransactionPreCheckpoint(
   if (db.GetCatalog().GetCatalogType() !=
       catalog::SereneDBCatalog::kStorageType) {
     return;
+  }
+  if (db.IsTemporary()) {
+    _connection_ctx->RefreshCreatedIndexes(db.oid);
   }
   _connection_ctx->StageSearch({wal_generation, wal_end_offset}, db.oid);
 }

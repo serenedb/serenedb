@@ -262,8 +262,7 @@ ViewFastPath IcebergFastPath(ViewFastPath out, bool has_limit) {
 
 std::optional<ViewFastPath> AttachedDuckDBFastPath(duckdb::Catalog& catalog,
                                                    ViewFastPath out) {
-  if (catalog.IsSystemCatalog() || catalog.IsTemporaryCatalog() ||
-      catalog.InMemory()) {
+  if (catalog.IsSystemCatalog() || catalog.InMemory()) {
     return std::nullopt;
   }
   out.function_name = "read_duckdb";
@@ -357,6 +356,9 @@ std::optional<ViewFastPath> ResolveTableSource(
   }
   auto& table = entry->Cast<duckdb::TableCatalogEntry>();
   auto& catalog = table.ParentCatalog();
+  if (catalog.IsTemporaryCatalog()) {
+    return std::nullopt;
+  }
   auto out = CatalogFastPath(catalog, table.ParentSchema(binder.context).name,
                              table.name, std::move(body.projection_columns));
   const auto cat_type = catalog.GetCatalogType();

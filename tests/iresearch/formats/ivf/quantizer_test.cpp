@@ -33,7 +33,6 @@
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <limits>
@@ -44,6 +43,7 @@
 #include <utility>
 #include <vector>
 
+#include "memory_output.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;
@@ -63,10 +63,9 @@ score_t ScoreTol(score_t want) { return kScoreTol * (1.f + std::fabs(want)); }
 // The writer emits a u64 length prefix ahead of the blob, exactly as
 // IvfWriter::Flush stores it; strip it to get what MakeQuantizerStats sees.
 bstring SerializeStats(const QuantizerWriter& writer) {
-  bstring framed;
-  BytesOutput out{framed};
+  BytesOutput out;
   writer.Serialize(out);
-  return framed.substr(sizeof(uint64_t));
+  return bstring{out.Bytes().substr(sizeof(uint64_t))};
 }
 
 constexpr size_t kFastScanBbs = 32;
@@ -116,7 +115,8 @@ uint64_t EncodeCluster(QuantizerWriter& writer, IndexOutput& out,
 
 bstring ReadPayload(MemoryFile& file, uint64_t start, uint64_t end) {
   bstring payload(end - start, 0);
-  MemoryIndexInput in{file};
+  const auto file_bytes = tests::Bytes(file);
+  IndexInput in{file_bytes};
   in.ReadData(start, payload.data(), payload.size());
   return payload;
 }
@@ -160,7 +160,8 @@ class ClusterScorer {
                 const float* centroid, uint32_t lane0 = 0)
     : _qr{MakeQuantizerReader(codebook)},
       _setting{_qr->BlockSetting()},
-      _in{std::make_unique<MemoryIndexInput>(file)},
+      _bytes{tests::Bytes(file)},
+      _in{_bytes},
       _base{pay_start},
       _lane0{lane0},
       _total{total},
@@ -207,18 +208,21 @@ class ClusterScorer {
   std::span<const byte_type> Read(size_t index, size_t count) {
     const uint64_t offset = _base + index * _setting.record_size;
     const size_t bytes = count * size_t{_setting.record_size};
-    if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
-      SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % _setting.alignment == 0);
-      return {p, bytes};
+    _in.Seek(offset);
+    if (const auto view = _in.Peek(bytes); !view.empty()) {
+      SDB_ASSERT(
+        reinterpret_cast<uintptr_t>(view.data()) % _setting.alignment == 0);
+      return {view.data(), bytes};
     }
     _buf.resize(bytes);
-    _in->ReadData(offset, _buf.data(), bytes);
+    _in.ReadData(_buf.data(), bytes);
     return _buf;
   }
 
   std::unique_ptr<QuantizerReader> _qr;
   PayloadBlockSetting _setting;
-  IndexInput::ptr _in;
+  bstring _bytes;
+  IndexInput _in;
   std::vector<byte_type> _buf;
   uint64_t _base;
   size_t _lane0;
@@ -332,7 +336,8 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
 
   bstring stored(n * d * sizeof(float), 0);
   {
-    MemoryIndexInput in{file};
+    const auto file_bytes = tests::Bytes(file);
+    IndexInput in{file_bytes};
     in.ReadData(pay_start, stored.data(), stored.size());
   }
   EXPECT_EQ(std::memcmp(stored.data(), points.data(), stored.size()), 0);

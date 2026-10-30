@@ -455,7 +455,7 @@ TEST_P(ScoreConstantTest, bm25_degrades_to_freq_one_norm_one) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(score_constant_test, ScoreConstantTest,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

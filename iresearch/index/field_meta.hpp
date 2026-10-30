@@ -27,7 +27,6 @@
 
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

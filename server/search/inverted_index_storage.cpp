@@ -27,17 +27,13 @@
 #include <chrono>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
-#include <filesystem>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/store/directory_attributes.hpp>
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/down_cast.hpp>
@@ -59,52 +55,50 @@
 namespace sdb::search {
 
 InvertedIndexStorage::InvertedIndexStorage(
-  std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
-  bool read_only, duckdb::idx_t db_id, duckdb::idx_t index_id,
+  std::optional<catalog::StorageDirectory> parent,
+  duckdb::AttachedDatabase& database, duckdb::idx_t index_id,
   const catalog::InvertedIndexSettings& options,
   const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
   : _index_id{index_id},
-    _db_id{db_id},
-    _directory{std::move(directory)},
-    _in_memory{in_memory},
-    _read_only{read_only},
-    _is_new{is_new},
-    _segment_memory_max{options.segment_memory_max},
-    _segment_docs_max{options.segment_docs_max},
+    _db_id{database.oid},
+    _parent{std::move(parent)},
+    _read_only{database.IsReadOnly()},
     _search{GetSearchEngine()},
-    _durability{db_id, absl::StrCat("inverted index ", index_id)} {
+    _durability{database, absl::StrCat("inverted index ", index_id), _parent,
+                index_id, is_new} {
   SetTasksSettings(options);
 
   SDB_ASSERT(index_id != 0);
 
+  _delete_log_open = is_new;
+
   if (const auto& scorer_options = top_k_scorer) {
     _topk_scorer = MakeScorer(*scorer_options);
   }
+
   if (is_new) {
-    Open();
+    OpenWriter(true, options);
   }
 }
 
-void InvertedIndexStorage::Open() {
-  _delete_log_open = _is_new;
-  irs::ResourceManagementOptions resource_manager;
-  resource_manager.transactions = _writers_memory;
-  resource_manager.readers = _readers_memory;
-  resource_manager.compactions = _compactions_memory;
-  resource_manager.file_descriptors = _file_descriptors_count;
-  auto opened = OpenStorageDirectory(*_directory, _index_id, _is_new,
-                                     _in_memory, resource_manager);
-  _dir = std::move(opened.directory);
-  _absent = opened.absent;
-
-  if (_read_only) {
-    return;
+bool InvertedIndexStorage::Open(const catalog::InvertedIndexSettings& options) {
+  if (!_parent->OpenStorage(_index_id)) {
+    return false;
   }
+  if (_read_only) {
+    OpenReader();
+  } else {
+    OpenWriter(false, options);
+  }
+  return true;
+}
 
+void InvertedIndexStorage::OpenWriter(
+  bool is_new, const catalog::InvertedIndexSettings& options) {
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
-  writer_options.segment_memory_max = _segment_memory_max;
-  writer_options.segment_docs_max = _segment_docs_max;
+  writer_options.segment_memory_max = options.segment_memory_max;
+  writer_options.segment_docs_max = options.segment_docs_max;
 #ifdef SDB_DEV
   // Dev safety net: a second IndexWriter opening the same index directory (a
   // lifecycle bug -- two storages/loops on one dir) fails to acquire the lock
@@ -127,8 +121,7 @@ void InvertedIndexStorage::Open() {
   }
 
   auto [writer, stamp] = _durability.OpenWriter(
-    *_dir, Path(), opened.on_disk, _is_new, std::move(writer_options),
-    [this] { return GetFileManifest(); });
+    is_new, std::move(writer_options), [this] { return GetFileManifest(); });
   _writer = std::move(writer);
 
   auto reader = _writer->GetSnapshot();
@@ -147,42 +140,22 @@ irs::IndexReaderOptions InvertedIndexStorage::ReaderOptions() const {
 }
 
 void InvertedIndexStorage::OpenReader() {
-  auto [reader, stamp] = IndexDurability::OpenReader(*_dir, ReaderOptions());
+  auto [reader, stamp] = _durability.OpenReader(ReaderOptions());
   SetFileManifest(stamp.manifest);
   StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
     std::move(reader), std::move(stamp.manifest)));
 }
 
-StorageDirectory OpenStorageDirectory(
-  const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
-  bool in_memory, const irs::ResourceManagementOptions& resources) {
-  std::optional<std::filesystem::path> path;
-  if (!in_memory) {
-    path = is_new ? database.CreateStorage(oid) : database.OpenStorage(oid);
-  }
-  if (!path) {
-    return {.directory = std::make_unique<irs::MemoryDirectory>(
-              irs::DirectoryAttributes{}, resources),
-            .absent = !in_memory};
-  }
-  return {.directory = std::make_unique<irs::MMapDirectory>(
-            *path, irs::DirectoryAttributes{}, resources),
-          .on_disk = true};
-}
-
 InvertedIndexStorage::~InvertedIndexStorage() {
   _writer.reset();
-  _dir.reset();
-  if (_dropped.load(std::memory_order_acquire)) {
-    catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _index_id);
+  if (_parent && _dropped.load(std::memory_order_acquire)) {
+    _parent->RemoveStorage(_index_id);
   }
 }
 
 void InvertedIndexStorage::ApplyOptions(
   const catalog::InvertedIndexSettings& options) {
   SetTasksSettings(options);
-  _segment_memory_max = options.segment_memory_max;
-  _segment_docs_max = options.segment_docs_max;
   if (!_writer) {
     return;
   }
@@ -237,6 +210,17 @@ absl::Status InvertedIndexStorage::Refresh(
   return RefreshUnsafe(/*wait=*/true, progress, code).res;
 }
 
+absl::Status InvertedIndexStorage::OptimizeInMemory() {
+  SDB_ASSERT(_writer);
+  if (auto status = Refresh(); !status.ok()) {
+    return status;
+  }
+  if (auto status = _durability.CompactFiles(*_writer); !status.ok()) {
+    return status;
+  }
+  return Refresh();
+}
+
 StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
   InvertedIndexSnapshotPtr inverted_index_snapshot) const {
   auto stats = StoreStats::FromReader(inverted_index_snapshot->reader);
@@ -247,7 +231,7 @@ StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
 
 ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
   auto begin = std::chrono::steady_clock::now();
-  auto result = _durability.Cleanup(*_dir);
+  auto result = _durability.Cleanup();
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();

@@ -218,6 +218,9 @@ class ColumnReader {
 
   BlockWindow Locate(uint64_t row, BlockWindow hint = {}) const noexcept;
 
+  virtual void CollectBlocks(uint64_t first, uint64_t last,
+                             std::vector<ByteExtent>& out) const;
+
   virtual uint64_t RowGroupEnd(uint64_t row) const noexcept;
 
   std::unique_ptr<duckdb::ColumnSegment> OpenSegment(size_t rg,

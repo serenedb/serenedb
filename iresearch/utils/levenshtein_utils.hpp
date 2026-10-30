@@ -27,13 +27,13 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
 class DataOutput;
-class DataInput;
 
 template<typename T, size_t SubstCost = 1>
 inline size_t EditDistance(const T* lhs, size_t lhs_size, const T* rhs,
@@ -163,7 +163,7 @@ class ParametricDescription {
   /// @brief read parametric description from a specified input stream
   /// @param in input stream
   /// @returns the read parametric description
-  static ParametricDescription Read(DataInput& in);
+  static ParametricDescription Read(IndexInput& in);
 
  private:
   std::vector<transition_t> _transitions;  // transition table

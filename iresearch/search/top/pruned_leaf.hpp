@@ -41,7 +41,6 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -73,7 +72,7 @@ class PrunedLeafBase {
   class NoBoundSource final : public ScoreBoundSource {
    public:
     Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
-    void Read(DataInput& in, size_t size) final { in.Skip(size); }
+    void Read(bytes_view) final {}
     void Set(uint32_t, uint32_t) noexcept final {}
   };
 
@@ -87,7 +86,7 @@ class PrunedLeafBase {
   PrunedLeafBase(PrunedLeafBase&&) = delete;
   PrunedLeafBase& operator=(PrunedLeafBase&&) = delete;
 
-  bool PrepareCommon(const PostingMeta& meta, const IndexInput& doc_in,
+  bool PrepareCommon(const PostingMeta& meta, const InputFile& doc_in,
                      IndexFeatures layout, const SubReader& segment,
                      const TermReader& field, const detail::ScoreArgs& args) {
     SDB_ASSERT(meta.docs_count != 0);
@@ -140,7 +139,7 @@ class PrunedLeafBase {
       return true;
     }
 
-    _in = OpenDocInput(meta, doc_in);
+    _in = OpenDocInput<InputType>(meta, doc_in);
     auto& in = In();
     *(std::end(_docs) - 1) = doc_limits::invalid();
     _left_in_list = meta.docs_count;
@@ -154,7 +153,17 @@ class PrunedLeafBase {
       _root_score = BoundScore(_cursor.Index().Root());
     } else {
       const auto size = in.ReadByte();
-      _bound_source->Read(in, size);
+      if constexpr (InputType::kContiguous) {
+        _bound_source->Read(in.Pin(size).bytes);
+      } else if (const auto view = in.Peek(size); !view.empty()) {
+        _bound_source->Read(view);
+        in.Consume(size);
+      } else {
+        byte_type bound[std::numeric_limits<byte_type>::max() +
+                        bytes_io<uint32_t>::kMaxVSize];
+        in.ReadData(bound, size);
+        _bound_source->Read({bound, size});
+      }
       _root_score = _bound_func.Score();
     }
     return false;
@@ -228,9 +237,7 @@ class PrunedLeafBase {
   static constexpr uint32_t kCachedBlocks = BlockIndex::kRun;
   static constexpr uint32_t kCachedRuns = 8;
 
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_in);
-  }
+  IRS_FORCE_INLINE InputType& In() const noexcept { return _in; }
 
   score_t BoundScore(BoundPair bound) {
     _bound_source->Set(bound.freq, bound.norm);
@@ -408,12 +415,12 @@ class PrunedLeafBase {
   detail::EncBuf _enc;
   detail::FreqBuf _freqs;
   DocsBuf _docs;
-  IndexInput::ptr _in;
+  mutable InputType _in;
   ColumnArgsFetcher* _fetcher = nullptr;
   ScoreFunction _score;
   detail::LeafProvider _provider;
   detail::LeafRecipe _recipe;
-  BlockCursor _cursor;
+  BlockCursor<InputType> _cursor;
   GrowingHint _hint;
   ScoreFunction _bound_func;
   ScoreBoundSource::ptr _bound_source;

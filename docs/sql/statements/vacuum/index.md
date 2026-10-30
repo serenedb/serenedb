@@ -35,7 +35,7 @@ Targeting a specific table, optionally with a column list, is also accepted and 
 
 ## Inverted Index Maintenance
 
-SereneDB extends `VACUUM` with options that maintain [inverted indexes](../create_index/index.md). A statement takes **at most one** of these options, and an extension option cannot be combined with standard options such as `ANALYZE`. The options fall into three families.
+SereneDB extends `VACUUM` with options that maintain [inverted indexes](../create_index/index.md). A statement takes **at most one** of these options, and an extension option cannot be combined with standard options such as `ANALYZE`. The options fall into four families.
 
 ### Refreshing — `REFRESH_*`
 
@@ -58,6 +58,19 @@ Inverted indexes and search tables also compact in the background by default (se
 `RECOMPUTE_STATS_*` recomputes the index statistics used for relevance scoring and planning:
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_009" />
+
+### Optimizing in-memory indexes — `OPTIMIZE_IN_MEMORY_TABLE`
+
+The inverted indexes of a [temporary table](../create_table/index.md#temporary-tables) are kept in memory. Each segment is laid out when it is written, by a write or a merge, so that queries read it as fast as an index on a local disk; this memory stays in RAM while the index is open. A segment written when the memory limit left no room to lay it out is kept as it was written: queries on it are slower, and under memory pressure its memory is written to the temporary directory. `VACUUM (OPTIMIZE_IN_MEMORY_TABLE) table` publishes the table's pending writes and then lays out every such segment of its indexes:
+
+<SqlLogicTest id="sql/statements/vacuum/index/example_012" />
+
+The option takes a table name and applies only to temporary tables:
+
+```text
+ERROR:  "articles" is not an in-memory table
+DETAIL:  VACUUM (OPTIMIZE_IN_MEMORY_TABLE) applies to temporary tables.
+```
 
 ### Scopes
 

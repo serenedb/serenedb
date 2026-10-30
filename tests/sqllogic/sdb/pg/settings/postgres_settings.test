@@ -181,10 +181,8 @@ SET row_security = off
 db error: ERROR: unrecognized configuration parameter "row_security"<slt:ignore>
 
 
-statement error
+statement ok
 SET default_tablespace = ''
-----
-db error: ERROR: unrecognized configuration parameter "default_tablespace"<slt:ignore>
 
 
 statement error

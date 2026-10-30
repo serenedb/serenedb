@@ -28,13 +28,12 @@
 #include <absl/time/time.h>
 
 #include <atomic>
-#include <filesystem>
+#include <duckdb/main/attached_database.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/store/directory.hpp>
 #include <iresearch/utils/async.hpp>
-#include <iresearch/utils/resource_manager.hpp>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -74,16 +73,6 @@ struct InvertedIndexSnapshot {
 };
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
-struct StorageDirectory {
-  std::unique_ptr<irs::Directory> directory;
-  bool on_disk = false;
-  bool absent = false;
-};
-
-StorageDirectory OpenStorageDirectory(
-  const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
-  bool in_memory, const irs::ResourceManagementOptions& resources);
-
 // Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
 // SearchEngine registry keyed by index_id, not in the catalog snapshot.
@@ -91,8 +80,8 @@ class InvertedIndexStorage final
   : public std::enable_shared_from_this<InvertedIndexStorage>,
     public MaintainedStore {
  public:
-  InvertedIndexStorage(std::shared_ptr<catalog::DatabaseDirectory> directory,
-                       bool in_memory, bool read_only, duckdb::idx_t db_id,
+  InvertedIndexStorage(std::optional<catalog::StorageDirectory> parent,
+                       duckdb::AttachedDatabase& database,
                        duckdb::idx_t index_id,
                        const catalog::InvertedIndexSettings& options,
                        const std::optional<irs::ScorerOptions>& top_k_scorer,
@@ -107,27 +96,22 @@ class InvertedIndexStorage final
       _dropped.store(true, std::memory_order_release);
     }
   }
-  std::filesystem::path Path() const {
-    return _directory->StoragePath(_index_id);
-  }
-  bool Absent() const noexcept { return _absent; }
+  std::string Path() const { return _parent->StoragePath(_index_id); }
 
-  // `db_id` is passed in rather than derived from the catalog: an index
+  // `database` is passed in rather than derived from the catalog: an index
   // created inside a transaction lives in that transaction's overlay, and so
   // may the schema its database has to be walked through.
   static std::shared_ptr<InvertedIndexStorage> Create(
-    std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
-    bool read_only, duckdb::idx_t db_id, duckdb::idx_t index_id,
+    std::optional<catalog::StorageDirectory> parent,
+    duckdb::AttachedDatabase& database, duckdb::idx_t index_id,
     const catalog::InvertedIndexSettings& options,
     const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new) {
     return std::make_shared<InvertedIndexStorage>(
-      std::move(directory), in_memory, read_only, db_id, index_id, options,
-      top_k_scorer, is_new);
+      std::move(parent), database, index_id, options, top_k_scorer, is_new);
   }
 
   bool ReadOnly() const noexcept { return !_writer; }
-  void Open();
-  void OpenReader();
+  [[nodiscard]] bool Open(const catalog::InvertedIndexSettings& options);
 
   auto GetTransaction(bool exclusive_segment = false) {
     SDB_ASSERT(_writer);
@@ -190,6 +174,7 @@ class InvertedIndexStorage final
 
   [[nodiscard]] absl::Status Refresh(
     const irs::ProgressReportCallback& progress = nullptr);
+  [[nodiscard]] absl::Status OptimizeInMemory();
 
   void PrepareCheckpoint(uint64_t iteration);
   void FinishCheckpoint();
@@ -201,6 +186,9 @@ class InvertedIndexStorage final
   duckdb::idx_t GetId() const noexcept { return _index_id; }
   // The database whose attachment holds this index's catalog entry.
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
+  const duckdb::weak_ptr<duckdb::AttachedDatabase>& Database() const noexcept {
+    return _durability.Database();
+  }
 
   StoreStats GetStats() const {
     return UpdateStatsUnsafe(GetInvertedIndexSnapshot());
@@ -267,16 +255,13 @@ class InvertedIndexStorage final
                          const irs::AnnBuildEnv* env)
     -> yaclib::Future<absl::Status>;
   void PublishSnapshot();
+  void OpenReader();
+  void OpenWriter(bool is_new, const catalog::InvertedIndexSettings& options);
 
   duckdb::idx_t _index_id;
   duckdb::idx_t _db_id;
-  std::shared_ptr<catalog::DatabaseDirectory> _directory;
-  bool _in_memory;
+  std::optional<catalog::StorageDirectory> _parent;
   bool _read_only;
-  bool _is_new;
-  uint64_t _segment_memory_max;
-  uint32_t _segment_docs_max;
-  bool _absent = false;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;
   IndexDurability _durability;
@@ -284,7 +269,6 @@ class InvertedIndexStorage final
   // std::atomic<std::shared_ptr>).
   InvertedIndexSnapshotPtr _snapshot;
   std::shared_ptr<const FileManifest> _file_manifest;
-  std::unique_ptr<irs::Directory> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
   absl::Mutex _reindex_mutex;
@@ -298,11 +282,6 @@ class InvertedIndexStorage final
     std::numeric_limits<int64_t>::max()};
   std::atomic<int64_t> _delete_log_rowid_begin{0};
   std::vector<std::vector<int64_t>> _delete_log;
-
-  irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
-  irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};
-  irs::IResourceManager* _compactions_memory{&irs::IResourceManager::gNoop};
-  irs::IResourceManager* _file_descriptors_count{&irs::IResourceManager::gNoop};
 };
 
 void ThrowIfRefreshFailed(const absl::Status& status,

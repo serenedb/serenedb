@@ -82,12 +82,12 @@ class ImmutableByteFst : private util::Noncopyable {
                                        sizeof(byte_type) * _weights_size);
   }
 
-  static std::unique_ptr<ImmutableByteFst> Read(DataInput& in,
+  static std::unique_ptr<ImmutableByteFst> Read(IndexInput& in,
                                                 IResourceManager& rm,
                                                 auto&& will_read);
 
   template<typename Stats>
-  static bool Write(const VectorByteFst& fst, BufferedOutput& out,
+  static bool Write(const VectorByteFst& fst, DataOutput& out,
                     const Stats& stats);
 
   StateId Start() const noexcept { return _start; }
@@ -123,7 +123,7 @@ class ImmutableByteFst : private util::Noncopyable {
   IResourceManager* _resource_manager{&IResourceManager::gNoop};
 };
 
-std::unique_ptr<ImmutableByteFst> ImmutableByteFst::Read(DataInput& in,
+std::unique_ptr<ImmutableByteFst> ImmutableByteFst::Read(IndexInput& in,
                                                          IResourceManager& rm,
                                                          auto&& will_read) {
   constexpr size_t kStatesPerNotice = 16;
@@ -188,7 +188,7 @@ std::unique_ptr<ImmutableByteFst> ImmutableByteFst::Read(DataInput& in,
 }
 
 template<typename Stats>
-bool ImmutableByteFst::Write(const VectorByteFst& fst, BufferedOutput& out,
+bool ImmutableByteFst::Write(const VectorByteFst& fst, DataOutput& out,
                              const Stats& stats) {
   static_assert(sizeof(StateId) == sizeof(uint32_t));
 

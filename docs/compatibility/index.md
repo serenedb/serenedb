@@ -14,6 +14,8 @@ That said, SereneDB is a different engine built from scratch. Some PostgreSQL fe
 
 See [PostgreSQL Compatibility](./core-sql-compatibility.md) for a detailed breakdown of supported statements and functions, together with the [behavioral differences](./core-sql-compatibility.md#behavioral-differences-from-postgresql) where SereneDB intentionally diverges from PostgreSQL, and [Data Type Compatibility](./data-type-compatibility.md) for every PostgreSQL type.
 
+A file that cannot be opened, read or written, whether by `COPY`, a file reader such as `read_csv`, `ATTACH` or a search index, fails with the SQLSTATE PostgreSQL gives the operating system's error: `58P01` (`undefined_file`) when the file or its directory does not exist, `42501` (`insufficient_privilege`) when permission is denied and `53100` (`disk_full`) when the disk is full. Any other I/O failure, including a file pattern that matches no file, fails with `58030` (`io_error`).
+
 ## SQL Dialect
 
 Beyond core compatibility, SereneDB's dialect adds a few deliberate behaviors and extensions:

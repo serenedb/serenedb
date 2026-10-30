@@ -22,140 +22,228 @@
 
 #include "data_input.hpp"
 
-#include <algorithm>
-#include <memory>
+#include <absl/algorithm/container.h>
 
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/numeric_utils.hpp"
-#include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/std.hpp"
+#include <algorithm>
+
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/math_utils.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 
-void ReadOnce(IndexInput& in, byte_type* b, size_t count) {
+std::span<ByteExtent> CoalesceExtents(std::span<ByteExtent> extents,
+                                      uint64_t gap) noexcept {
+  absl::c_sort(extents, [](const ByteExtent& l, const ByteExtent& r) {
+    return l.offset < r.offset;
+  });
+  size_t n = 0;
+  for (const auto& extent : extents) {
+    if (n != 0 &&
+        extent.offset <= extents[n - 1].offset + extents[n - 1].size + gap) {
+      auto& last = extents[n - 1];
+      last.size =
+        std::max(last.size, extent.offset + extent.size - last.offset);
+    } else {
+      extents[n++] = extent;
+    }
+  }
+  return extents.first(n);
+}
+
+void ReadOnce(IndexInput& in, byte_type* b, uint64_t count) {
+  const auto* file = in.File();
+  if (!file) {
+    in.ReadData(b, count);
+    return;
+  }
   constexpr uint64_t kChunk = uint64_t{64} << 20;
   constexpr uint64_t kAhead = 2 * kChunk;
   const auto start = in.Position();
-  in.Prefetch(start, std::min<uint64_t>(count, kAhead));
+  file->Prefetch(start, std::min(count, kAhead));
   for (uint64_t done = 0; done < count;) {
-    const auto n = std::min<uint64_t>(count - done, kChunk);
+    const auto n = std::min(count - done, kChunk);
     if (done + kAhead < count) {
-      in.Prefetch(start + done + kAhead,
-                  std::min<uint64_t>(count - done - kAhead, kChunk));
+      file->Prefetch(start + done + kAhead,
+                     std::min(count - done - kAhead, kChunk));
     }
-    in.ReadData(start + done, b + done, n);
-    in.Evict(start + done, n);
+    in.ReadData(b + done, n);
+    file->Evict(start + done, n);
     done += n;
   }
-  in.Seek(start + count);
 }
 
-InputBuf::InputBuf(IndexInput* in) : _in(in) { SDB_ASSERT(_in); }
-
-std::streamsize InputBuf::xsgetn(InputBuf::char_type* c, std::streamsize size) {
-  _in->ReadData(reinterpret_cast<byte_type*>(c), size);
-  return size;
-}
-
-InputBuf::int_type InputBuf::underflow() {
-  // FIXME add 'peek()' function to 'index_input'
-  const auto ch = uflow();
-  if (EOF != ch) {
-    _in->Seek(_in->Position() - 1);
-  }
-  return ch;
-}
-
-InputBuf::int_type InputBuf::uflow() {
-  if (_in->IsEOF()) {
-    return EOF;
-  }
-  return traits_type::to_int_type(_in->ReadByte());
-}
-
-std::streamsize InputBuf::showmanyc() {
-  return _in->Length() - _in->Position();
-}
-
-byte_type BufferedIndexInput::ReadByte() {
-  if (_begin >= _end) {
-    Refill();
-  }
-
-  return *_begin++;
-}
-
-const byte_type* BufferedIndexInput::ReadVolatile(uint64_t count) {
-  if (count <= Remain()) {
-    auto begin = _begin;
-    _begin += count;
-    return begin;
-  }
-
-  if (count <= std::min(_buf_size, Length() - Position())) {
-    SeekInternal(Position());
-    Refill();
-
-    auto begin = _begin;
-    _begin += count;
-    return begin;
-  }
-
-  return nullptr;
-}
-
-void BufferedIndexInput::ReadData(byte_type* b, uint64_t count) {
-  SDB_ASSERT(_begin <= _end);
-
-  // read remaining data from buffer
-  const auto read = std::min(count, Remain());
-  if (read) {
-    std::memcpy(b, _begin, sizeof(byte_type) * read);
-    _begin += read;
-  }
-
-  if (read == count) {
-    return;  // it's enough for us
-  }
-
-  auto size = count - read;
-  b += read;
-  if (size < _buf_size) {  // refill buffer & copy
-    size = std::min(size, Refill());
-    std::memcpy(b, _begin, sizeof(byte_type) * size);
-    _begin += size;
-  } else {  // read directly to output buffer if possible
-    size = ReadInternal(b, size);
-    _start += (Offset() + size);
-    _begin = _end = _buf;  // will trigger refill on the next read
+InputFile::InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping)
+  : _length{mapping->Size()},
+    _kind{std::in_place_type<MappedSpan>, std::move(mapping)} {
+  auto& span = *std::get_if<MappedSpan>(&_kind);
+  span.paged = span.mapping->OnDiskFile();
+  if (_length != 0) {
+    _span = {span.mapping->GetData(0, _length), _length};
+    if (span.paged) {
+      span.residency.Reset(math::DivCeil64(_length, file_utils::kPage));
+    }
   }
 }
 
-uint64_t BufferedIndexInput::Refill() {
-  const auto data_start = this->Position();
-  const auto data_end = std::min(data_start + _buf_size, Length());
+InputFile::InputFile(duckdb::BlockCache& cache,
+                     duckdb::shared_ptr<duckdb::BlockCacheFile> blocks) noexcept
+  : _length{blocks->GetSize()},
+    _kind{std::in_place_type<CacheBlocks>, &cache, std::move(blocks)} {}
 
-  const ptrdiff_t data_size = data_end - data_start;
-  if (data_size <= 0) {
-    return 0;  // read past eof
+const std::string& InputFile::Path() const noexcept {
+  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
+    return span->mapping->GetPath();
   }
-
-  SDB_ASSERT(_buf);
-  _begin = _buf;
-  _end = _begin + ReadInternal(_buf, data_size);
-  _start = data_start;
-
-  return data_size;
+  return std::get_if<CacheBlocks>(&_kind)->blocks->GetPath();
 }
 
-void BufferedIndexInput::Seek(uint64_t pos) {
-  if (pos >= _start && pos < (_start + Size())) {
-    _begin = _buf + pos - _start;
-  } else {
-    SeekInternal(pos);
-    _begin = _end = _buf;
-    _start = pos;
+bool InputFile::Paged() const noexcept {
+  const auto* span = std::get_if<MappedSpan>(&_kind);
+  return span && span->paged;
+}
+
+bytes_view InputFile::Refill(uint64_t position, CursorBlock& block,
+                             bool ahead) const {
+  SDB_ASSERT(position < _length);
+  if (Contiguous()) {
+    block.start = 0;
+    return _span;
   }
+  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
+  if (!block.pinned) {
+    block.pinned = std::make_unique<CursorPin>();
+  }
+  auto& pinned = *block.pinned;
+  const auto number = position / duckdb::BlockCache::BLOCK_SIZE;
+  pinned.pin =
+    blocks->cache->PinInOrder(blocks->blocks, number, pinned.ahead, ahead);
+  block.start = number * duckdb::BlockCache::BLOCK_SIZE;
+  return {pinned.pin.Ptr(),
+          std::min<uint64_t>(pinned.pin.Size(), _length - block.start)};
+}
+
+PinnedBytes InputFile::Pin(uint64_t offset, uint64_t size) const {
+  if (offset > _length || size > _length - offset) [[unlikely]] {
+    ThrowPastEnd(this, offset, _length);
+  }
+  if (Contiguous()) {
+    return {.bytes = {_span.data() + offset, size}};
+  }
+  if (size == 0) {
+    return {};
+  }
+  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
+  auto pin = blocks->cache->PinBytes(blocks->blocks, offset, size);
+  return {.bytes = {pin.Ptr(), size}, .pin = std::move(pin)};
+}
+
+bytes_view InputFile::SpanWindow(uint64_t offset,
+                                 uint64_t size) const noexcept {
+  const auto bytes = Span();
+  if (offset >= bytes.size()) {
+    return {};
+  }
+  return {bytes.data() + offset,
+          std::min<uint64_t>(size, bytes.size() - offset)};
+}
+
+void InputFile::Prefetch(uint64_t offset, uint64_t size) const noexcept {
+  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
+    if (span->paged) {
+      span->mapping->Prefetch(offset, size);
+    }
+    return;
+  }
+  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
+  try {
+    blocks->cache->Prefetch(blocks->blocks, offset, size);
+  } catch (...) {
+  }
+}
+
+void InputFile::Evict(uint64_t offset, uint64_t size) const noexcept {
+  if (const auto* span = std::get_if<MappedSpan>(&_kind); span && span->paged) {
+    span->mapping->Evict(offset, size);
+  }
+}
+
+void InputFile::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
+  if (std::holds_alternative<CacheBlocks>(_kind)) {
+    extents = CoalesceExtents(extents, duckdb::BlockCache::MERGE_GAP);
+  }
+  for (const auto& extent : extents) {
+    Prefetch(extent.offset, extent.size);
+  }
+}
+
+bool InputFile::Warm(const MappedSpan& span, uint64_t offset,
+                     uint64_t size) const noexcept {
+  if (size == 0 || offset >= _length) {
+    return false;
+  }
+  const auto last =
+    (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
+  return span.residency.Valid(file_utils::ResidencyEpoch()) &&
+         span.residency.Test(offset / file_utils::kPage, last);
+}
+
+void InputFile::MarkWarm(const MappedSpan& span, uint64_t offset,
+                         uint64_t size) const noexcept {
+  if (size == 0 || offset >= _length) {
+    return;
+  }
+  const auto last =
+    (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
+  const auto epoch = file_utils::ResidencyEpoch();
+  if (span.residency.Valid(epoch) || span.residency.Adopt(epoch)) {
+    span.residency.Set(offset / file_utils::kPage, last);
+  }
+}
+
+bool InputFile::Resident(uint64_t offset, uint64_t size) const noexcept {
+  if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
+    return blocks->cache->IsCached(*blocks->blocks, offset, size);
+  }
+  const auto window = SpanWindow(offset, size);
+  return !window.empty() &&
+         (!Paged() || file_utils::IsResident(window.data(), window.size()));
+}
+
+bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
+  if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
+    if (blocks->cache->IsCached(*blocks->blocks, offset, size)) {
+      return false;
+    }
+    Prefetch(offset, size);
+    return true;
+  }
+  const auto& span = *std::get_if<MappedSpan>(&_kind);
+  if (!span.paged) {
+    return false;
+  }
+  if (Warm(span, offset, size)) {
+    file_utils::PollResidency();
+    return false;
+  }
+  const bool fetch =
+    size <= file_utils::kPrefetchChunk || !Resident(offset, size);
+  if (fetch) {
+    span.mapping->Prefetch(offset, size);
+  }
+  MarkWarm(span, offset, size);
+  return fetch;
+}
+
+void ThrowPastEnd(const InputFile* file, uint64_t position, uint64_t length) {
+  if (file != nullptr) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                    ERR_MSG("read past the end of '", file->Path(),
+                            "' at offset ", position, " of ", length));
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                  ERR_MSG("read past the end of an in-memory buffer at offset ",
+                          position, " of ", length));
 }
 
 }  // namespace irs

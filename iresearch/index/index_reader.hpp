@@ -97,9 +97,6 @@ struct IndexReader {
 
   virtual ~IndexReader() = default;
 
-  // count memory
-  virtual uint64_t CountMappedMemory() const = 0;
-
   // number of live documents
   virtual uint64_t live_docs_count() const = 0;
 
@@ -166,7 +163,7 @@ struct SubReader : public IndexReader, public NormProvider {
     return nullptr;
   }
   virtual const AnnIndex* Ann(field_id /*field*/) const { return nullptr; }
-  virtual IndexInput::ptr ReopenAnn() const { return nullptr; }
+  virtual const InputFile* AnnFile() const { return nullptr; }
 };
 
 template<typename Visitor, typename FilterVisitor>

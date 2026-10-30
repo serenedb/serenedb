@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2016 by EMC Corporation, All Rights Reserved
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,150 +15,105 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is EMC Corporation
-///
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include <ctime>
-#include <functional>
+#include <absl/container/inlined_vector.h>
+#include <absl/functional/function_ref.h>
+
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/memory_mapped_file.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/storage/block_cache/block_cache.hpp>
+#include <memory>
 #include <span>
+#include <string>
+#include <string_view>
 
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/noncopyable.hpp"
+#include "iresearch/utils/ref_counter.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-class DirectoryAttributes;
-
-// An interface for abstract resource locking
-struct IndexLock : private util::Noncopyable {
-  IRS_USING_IO_PTR(IndexLock, unlock);
-
-  static constexpr size_t kLockWaitForever = std::numeric_limits<size_t>::max();
-
-  virtual ~IndexLock() = default;
-
-  // Checks whether the guarded resource is locked
-  // result - true if resource is already locked
-  // Returns call success
-  virtual bool is_locked(bool& result) const noexcept = 0;
-
-  // Locks the guarded resource
-  // Returns true on success
-  virtual bool lock() = 0;
-
-  // Tries to lock the guarded resource within the specified amount of time
-  // wait_timeout - timeout between different locking attempts
-  // Returns true on success
-  bool try_lock(size_t wait_timeout = 1000) noexcept;
-
-  // Unlocks the guarded resource
-  // Returns call success
-  virtual bool unlock() noexcept = 0;
+enum class StorageKind : uint8_t {
+  Local,
+  Memory,
+  Remote,
 };
 
-// Defines access patterns for data in a directory
-enum class IOAdvice : uint32_t {
-  // Indicates that caller expects to access data sequentially
-  SEQUENTIAL = 1,
+StorageKind StorageKindOf(std::string_view location);
 
-  // Indicates that caller expects to access data in random order
-  RANDOM = 2,
-};
+using IndexFileRefs = RefCounter<std::string>;
 
-// Represents a flat directory of write once/read many files
-struct Directory : private util::Noncopyable {
+class Directory {
  public:
-  using visitor_f = std::function<bool(std::string_view)>;
-  using ptr = std::unique_ptr<Directory>;
+  class Observer {
+   public:
+    virtual void Created(const Directory& dir, std::string_view name) = 0;
+    virtual void Written(uint64_t bytes) = 0;
+    virtual void Removed(const Directory& dir, std::string_view name) = 0;
+    virtual void Renamed(const Directory& dir, std::string_view src,
+                         std::string_view dst) = 0;
 
-  virtual ~Directory() = default;
+   protected:
+    ~Observer() = default;
+  };
 
-  // Opens output stream associated with the file
-  // name - name of the file to open
-  // Returns output stream associated with the file with the specified name
-  virtual IndexOutput::ptr create(std::string_view name) = 0;
+  using Observers = absl::InlinedVector<Observer*, 2>;
 
-  // Check whether the file specified by the given name exists
-  // result - true if file already exists
-  // name - name of the file
-  // Returns call success
-  virtual bool exists(bool& result, std::string_view name) const noexcept = 0;
+  Directory(duckdb::DatabaseInstance& db, std::string_view root);
+  Directory(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+            std::string_view root);
 
-  // Returns the length of the file specified by the given name
-  // result - length of the file specified by the name
-  // name -  name of the file
-  // Returns call success
-  virtual bool length(uint64_t& result,
-                      std::string_view name) const noexcept = 0;
+  IndexOutput::ptr Create(std::string_view name) const;
+  IndexOutput::ptr CreateWhole(std::string_view name) const;
+  std::unique_ptr<InputFile> Open(std::string_view name,
+                                  duckdb::MappedFileAccess access) const;
+  bstring ReadWhole(std::string_view name) const;
+  bool Has(std::string_view name) const;
+  bool Remove(std::string_view name) const;
+  size_t Remove(std::span<const std::string> names) const;
+  void Rename(std::string_view src, std::string_view dst) const;
+  void Sync(std::span<const std::string_view> names) const;
+  void SyncDirectory() const;
+  void Compact(std::string_view name) const;
+  void Visit(absl::FunctionRef<void(std::string_view)> visitor) const;
 
-  // Creates an index level lock with the specified name
-  // name - name of the lock
-  // Returns lock hande
-  virtual IndexLock::ptr make_lock(std::string_view name) noexcept = 0;
+  duckdb::DatabaseInstance& Db() const noexcept { return _state->db; }
+  StorageKind Kind() const noexcept { return _state->kind; }
+  const std::string& Root() const noexcept { return _state->root; }
+  std::string Path(std::string_view name) const;
+  IndexFileRefs& Refs() const noexcept { return _state->refs; }
 
-  // Returns modification time of the file specified by the given name
-  // result - file last modified time
-  // name - name of the file
-  // Returns call success
-  virtual bool mtime(std::time_t& result,
-                     std::string_view name) const noexcept = 0;
-
-  // Opens input stream associated with the existing file
-  // name - name of the file to open
-  // Returns input stream associated with the file with the specified name
-  virtual IndexInput::ptr open(std::string_view name,
-                               IOAdvice advice) const = 0;
-
-  // Removes the file specified by the given name from directory
-  // name - name of the file
-  // Rreturns true if file has been removed
-  virtual bool remove(std::string_view name) noexcept = 0;
-
-  // Renames the 'src' file to 'dst'
-  // src - initial name of the file
-  // dst - final name of the file
-  // Returns true if file has been renamed
-  virtual bool rename(std::string_view src, std::string_view dst) noexcept = 0;
-
-  // Ensures that all modification have been sucessfully persisted
-  // files - files to sync
-  // Returns call success
-  virtual bool sync(std::span<const std::string_view> files) noexcept = 0;
-
-  // Applies the specified 'visitor' to every filename in a directory
-  // visitor - visitor to be applied
-  // Returns 'false' if visitor has returned 'false', 'true' otherwise
-  virtual bool visit(const visitor_f& visitor) const = 0;
-
-  // Returns directory attributes
-  virtual DirectoryAttributes& attributes() noexcept = 0;
-
-  // Returns directory attributes
-  const DirectoryAttributes& attributes() const noexcept {
-    return const_cast<Directory*>(this)->attributes();
-  }
-
-  explicit Directory(const ResourceManagementOptions& resource_manager) noexcept
-    : _resource_manager{resource_manager} {
-    SDB_ASSERT(_resource_manager.cached_columns);
-    SDB_ASSERT(_resource_manager.compactions);
-    SDB_ASSERT(_resource_manager.file_descriptors);
-    SDB_ASSERT(_resource_manager.readers);
-    SDB_ASSERT(_resource_manager.transactions);
-  }
-
-  const ResourceManagementOptions& ResourceManager() const noexcept {
-    return _resource_manager;
-  }
+  Directory Observed(Observer& observer) const;
+  Directory Unobserved() const;
 
  private:
-  ResourceManagementOptions _resource_manager;
+  struct State {
+    ~State();
+
+    duckdb::DatabaseInstance& db;
+    duckdb::FileSystem& fs;
+    std::string root;
+    StorageKind kind;
+    IndexFileRefs refs;
+  };
+
+  IndexOutput::ptr Create(std::string_view name, bool cached) const;
+  std::unique_ptr<InputFile> OpenMapped(const std::string& path,
+                                        duckdb::MappedFileAccess access) const;
+  std::unique_ptr<InputFile> OpenBlocks(const std::string& path) const;
+  duckdb::BlockCache& Cache() const;
+
+  std::shared_ptr<State> _state;
+  Observers _observers;
 };
+
+void ForEach(const Directory& dir, size_t count,
+             absl::FunctionRef<void(size_t)> visit);
 
 }  // namespace irs

@@ -28,7 +28,8 @@
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/formats/segment_meta_writer.hpp>
 #include <iresearch/index/index_meta.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
@@ -36,8 +37,9 @@
 
 using namespace irs;
 
-TEST(index_meta_tests, memory_directory_read_write_15) {
-  irs::MemoryDirectory dir;
+TEST(index_meta_tests, read_write) {
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
   irs::IndexMetaWriter writer{
     [](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       EXPECT_EQ(42, position.offset);
@@ -48,9 +50,8 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   std::vector<std::string> files;
   auto list_files = [&files](std::string_view name) {
     files.emplace_back(name);
-    return true;
   };
-  ASSERT_TRUE(dir.visit(list_files));
+  dir.Visit(list_files);
   ASSERT_TRUE(files.empty());
 
   // create index metadata and write it into the specified directory
@@ -69,7 +70,7 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   // check that files were successfully
   // written to directory
   files.clear();
-  ASSERT_TRUE(dir.visit(list_files));
+  dir.Visit(list_files);
   EXPECT_EQ(1, files.size());
   EXPECT_EQ(files[0], std::string_view("pending_segments_1"));
 
@@ -79,13 +80,10 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   irs::IndexMeta meta_read;
   std::string payload;
   {
-    std::string segments_file;
-
-    const bool index_exists = irs::index_meta::LastFile(dir, segments_file);
-
-    ASSERT_TRUE(index_exists);
+    const auto segments_file = irs::index_meta::LastFile(dir);
+    ASSERT_TRUE(segments_file);
     irs::index_meta::Read(
-      dir, meta_read, segments_file, [&](duckdb::BinaryDeserializer& in) {
+      dir, meta_read, *segments_file, [&](duckdb::BinaryDeserializer& in) {
         payload = in.ReadProperty<std::string>(0, "payload");
       });
   }
@@ -131,26 +129,25 @@ TEST(index_meta_tests, last_generation) {
   }
 
   // populate directory
-  irs::MemoryDirectory dir;
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
   for (auto& name : names) {
-    auto out = dir.create(name);
+    auto out = dir.Create(name);
     ASSERT_FALSE(!out);
+    out->Close();
   }
 
-  std::string last_seg_file;
-
-  const bool index_exists = irs::index_meta::LastFile(dir, last_seg_file);
-  const std::string expected_seg_file = "segments_" + std::to_string(max);
-
-  ASSERT_TRUE(index_exists);
-  EXPECT_EQ(expected_seg_file, last_seg_file);
+  const auto last_seg_file = irs::index_meta::LastFile(dir);
+  ASSERT_TRUE(last_seg_file);
+  EXPECT_EQ("segments_" + std::to_string(max), *last_seg_file);
 }
 
 TEST(index_meta_tests, rejects_unknown_fields) {
-  irs::MemoryDirectory dir;
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
   const auto name = irs::index_meta::FileName(1);
   {
-    auto out = dir.create(name);
+    auto out = dir.Create(name);
     ASSERT_NE(nullptr, out);
     irs::format_utils::WriteFooter(*out, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint64_t>(
@@ -163,6 +160,7 @@ TEST(index_meta_tests, rejects_unknown_fields) {
       meta.WriteProperty<uint64_t>(irs::index_meta::kFieldPayload + 1,
                                    "from_the_future", 1);
     });
+    out->Close();
   }
 
   std::string message;
@@ -178,7 +176,8 @@ TEST(index_meta_tests, rejects_unknown_fields) {
 }
 
 TEST(index_meta_tests, payload_is_read_whole) {
-  irs::MemoryDirectory dir;
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
   irs::IndexMetaWriter writer{
     [](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       out.WriteProperty<uint64_t>(0, "tick", position.offset);

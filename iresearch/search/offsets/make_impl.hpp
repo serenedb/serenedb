@@ -63,24 +63,25 @@ Root::ptr MakeNGram(const NGramSimilarityQuery& query) {
   }
   const std::span metas{state.metas.data(), state.metas.size()};
   return detail::ResolveBounds(h.bounds, [&]<bool Bounds> -> Root::ptr {
-    return detail::ResolveInput(*h.doc, [&]<typename Input> -> Root::ptr {
-      using Leaf = detail::PostingPos<Input, Bounds, true>;
-      if constexpr (M == detail::NGramMatch::All) {
-        using Slots = detail::NGramAllSlots<Leaf, 0, false, true>;
-        using Node = Impl<NGram<Slots>>;
-        return memory::make_managed<Node>(metas, *h.doc, h.Layout(), *h.pos,
-                                          h.pay, query.TotalTerms());
-      } else {
-        using Slots = detail::NGramSlots<Leaf, false, true>;
-        using Node = Impl<NGram<Slots>>;
-        return memory::make_managed<Node>(
-          metas.size(),
-          [&](Leaf& leaf, size_t i) {
-            leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
-          },
-          static_cast<uint32_t>(query.MinMatchCount()), query.TotalTerms());
-      }
-    });
+    return ResolveInput(
+      *h.doc, *h.pos, h.pay, [&]<typename Input> -> Root::ptr {
+        using Leaf = detail::PostingPos<Input, Bounds, true>;
+        if constexpr (M == detail::NGramMatch::All) {
+          using Slots = detail::NGramAllSlots<Leaf, 0, false, true>;
+          using Node = Impl<NGram<Slots>>;
+          return memory::make_managed<Node>(metas, *h.doc, h.Layout(), *h.pos,
+                                            h.pay, query.TotalTerms());
+        } else {
+          using Slots = detail::NGramSlots<Leaf, false, true>;
+          using Node = Impl<NGram<Slots>>;
+          return memory::make_managed<Node>(
+            metas.size(),
+            [&](Leaf& leaf, size_t i) {
+              leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
+            },
+            static_cast<uint32_t>(query.MinMatchCount()), query.TotalTerms());
+        }
+      });
   });
 }
 
@@ -101,12 +102,13 @@ inline offsets::Root::ptr MakePostingOffsets(const PostingMeta& meta,
     return {};
   }
   return ResolveBounds(h.bounds, [&]<bool Bounds> -> offsets::Root::ptr {
-    return ResolveInput(*h.doc, [&]<typename Input> -> offsets::Root::ptr {
-      using Leaf = detail::PostingPos<Input, Bounds, true>;
-      using Impl = offsets::Impl<offsets::Posting<Leaf>>;
-      return memory::make_managed<Impl>(meta, *h.doc, h.Layout(), *h.pos,
-                                        h.pay);
-    });
+    return ResolveInput(*h.doc, *h.pos, h.pay,
+                        [&]<typename Input> -> offsets::Root::ptr {
+                          using Leaf = detail::PostingPos<Input, Bounds, true>;
+                          using Impl = offsets::Impl<offsets::Posting<Leaf>>;
+                          return memory::make_managed<Impl>(
+                            meta, *h.doc, h.Layout(), *h.pos, h.pay);
+                        });
   });
 }
 

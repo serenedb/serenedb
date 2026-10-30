@@ -46,7 +46,7 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/resource_manager.hpp>
@@ -85,30 +85,23 @@ void FormatTestCase::AssertNoDirectoryArtifacts(
   const std::unordered_set<std::string>& expect_additional /* ={} */) {
   std::vector<std::string> dir_files;
   auto visitor = [&dir_files](std::string_view file) {
-    // ignore lock file present in fs_directory
-    if (irs::IndexWriter::kWriteLockName != file) {
-      dir_files.emplace_back(file);
-    }
-    return true;
+    dir_files.emplace_back(file);
   };
-  ASSERT_TRUE(dir.visit(visitor));
+  dir.Visit(visitor);
 
   irs::IndexMeta index_meta;
-  std::string segment_file;
 
   std::unordered_set<std::string> index_files(expect_additional.begin(),
                                               expect_additional.end());
-  const bool exists = irs::index_meta::LastFile(dir, segment_file);
-
-  if (exists) {
-    irs::index_meta::Read(dir, index_meta, segment_file);
+  if (const auto segment_file = irs::index_meta::LastFile(dir)) {
+    irs::index_meta::Read(dir, index_meta, *segment_file);
 
     VisitFiles(index_meta, [&index_files](const std::string& file) {
       index_files.emplace(file);
       return true;
     });
 
-    index_files.insert(segment_file);
+    index_files.insert(*segment_file);
   }
 
   for (auto& file : dir_files) {
@@ -125,7 +118,7 @@ auto MakeByTerm(irs::field_id id, std::string_view value) {
   return filter;
 }
 
-TEST_P(FormatTestCase, directory_artifact_cleaner) {
+TEST_P(FormatTestCase, unreferenced_files_removed) {
   tests::JsonDocGenerator gen{resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory};
   const tests::Document* doc1 = gen.next();
@@ -141,12 +134,11 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
   std::vector<std::string> files;
   auto list_files = [&files](std::string_view name) {
     files.emplace_back(name);
-    return true;
   };
 
   auto dir = get_directory(*this);
   files.clear();
-  ASSERT_TRUE(dir->visit(list_files));
+  dir->Visit(list_files);
   ASSERT_TRUE(files.empty());
 
   // cleanup on refcount decrement (old files not in use)
@@ -161,7 +153,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -173,7 +165,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -184,7 +176,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -196,7 +188,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -208,7 +200,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -220,21 +212,21 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
   }
 
   files.clear();
-  ASSERT_TRUE(dir->visit(list_files));
+  dir->Visit(list_files);
 
   // reset directory
   for (auto& file : files) {
-    ASSERT_TRUE(dir->remove(file));
+    ASSERT_TRUE(dir->Remove(file));
   }
 
   files.clear();
-  ASSERT_TRUE(dir->visit(list_files));
+  dir->Visit(list_files);
   ASSERT_TRUE(files.empty());
 
   // cleanup on refcount decrement (old files still in use)
@@ -249,7 +241,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -262,7 +254,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -273,7 +265,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -283,18 +275,17 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     std::unordered_set<std::string> reader_files;
     {
       irs::IndexMeta index_meta;
-      std::string segments_file;
-      const bool exists = irs::index_meta::LastFile(*dir, segments_file);
-      ASSERT_TRUE(exists);
+      const auto segments_file = irs::index_meta::LastFile(*dir);
+      ASSERT_TRUE(segments_file);
 
-      irs::index_meta::Read(*dir, index_meta, segments_file);
+      irs::index_meta::Read(*dir, index_meta, *segments_file);
 
       VisitFiles(index_meta, [&reader_files](std::string_view file) {
         reader_files.emplace(file);
         return true;
       });
 
-      reader_files.emplace(segments_file);
+      reader_files.emplace(*segments_file);
     }
 
     // add second segment (creating new index_meta file, not-removing old)
@@ -304,7 +295,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
@@ -316,7 +307,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
@@ -328,7 +319,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
@@ -340,28 +331,28 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
     // close reader (remove old meta + old doc_mask + first segment)
     {
       reader = {};
-      irs::DirectoryCleaner::clean(*dir);  // clean unused files
+      irs::RemoveUnreferenced(*dir);  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
   }
 
   files.clear();
-  ASSERT_TRUE(dir->visit(list_files));
+  dir->Visit(list_files);
 
   // reset directory
   for (auto& file : files) {
-    ASSERT_TRUE(dir->remove(file));
+    ASSERT_TRUE(dir->Remove(file));
   }
 
   files.clear();
-  ASSERT_TRUE(dir->visit(list_files));
+  dir->Visit(list_files);
   ASSERT_TRUE(files.empty());
 
   // cleanup on writer startup
@@ -396,24 +387,24 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // add invalid files
     {
       irs::IndexOutput::ptr tmp;
-      tmp = dir->create("dummy.file.1");
+      tmp = dir->Create("dummy.file.1");
       ASSERT_FALSE(!tmp);
-      tmp = dir->create("dummy.file.2");
+      tmp->Close();
+      tmp = dir->Create("dummy.file.2");
       ASSERT_FALSE(!tmp);
+      tmp->Close();
     }
 
-    bool exists;
-    ASSERT_TRUE(dir->exists(exists, "dummy.file.1") && exists);
-    ASSERT_TRUE(dir->exists(exists, "dummy.file.2") && exists);
+    ASSERT_TRUE(dir->Has("dummy.file.1"));
+    ASSERT_TRUE(dir->Has("dummy.file.2"));
 
     // open writer
     auto writer = irs::IndexWriter::Make(*dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
-    // if directory has files (for fs directory) then ensure only valid
-    // meta+segments loaded
-    ASSERT_TRUE(dir->exists(exists, "dummy.file.1") && !exists);
-    ASSERT_TRUE(dir->exists(exists, "dummy.file.2") && !exists);
+    // opening the writer removes files no index meta references
+    ASSERT_FALSE(dir->Has("dummy.file.1"));
+    ASSERT_FALSE(dir->Has("dummy.file.2"));
     AssertNoDirectoryArtifacts(*dir);
   }
 }
@@ -742,7 +733,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     irs::SegmentMeta meta;
     meta.name = "segment_name";
 
-    irs::IdxReader idx{dir(), "segment_name", nullptr};
+    irs::IdxReader idx{dir(), "segment_name", true, nullptr};
     irs::burst_trie::FieldReader reader_obj{irs::IResourceManager::gNoop};
     auto* reader = &reader_obj;
     reader->prepare(
@@ -993,7 +984,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       ASSERT_EQ(meta.docs_count, read_meta.docs_count);
       ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
 
-      ASSERT_TRUE(dir().remove(filename));
+      ASSERT_TRUE(dir().Remove(filename));
       ASSERT_TRUE(read_meta.docs_mask->Contains(42));
       ASSERT_TRUE(read_meta.docs_mask->Contains(100));
       ASSERT_FALSE(read_meta.docs_mask->Contains(43));
@@ -1021,7 +1012,7 @@ TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {
   meta.files.emplace_back("file1");
 
   {
-    auto out = dir().create(sm::FileName(meta));
+    auto out = dir().Create(sm::FileName(meta));
     ASSERT_NE(nullptr, out);
 
     irs::format_utils::WriteFooter(
@@ -1038,6 +1029,7 @@ TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {
         meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize + 1,
                                          "from_the_future", 123);
       });
+    out->Close();
   }
 
   irs::SegmentMeta read_meta;
@@ -1059,7 +1051,7 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
   namespace sm = irs::segment_meta;
 
   auto create = [&](std::string_view name, uint64_t version) {
-    auto out = dir().create(irs::FileName(name, version, sm::kExt));
+    auto out = dir().Create(irs::FileName(name, version, sm::kExt));
     EXPECT_NE(nullptr, out);
     return out;
   };
@@ -1109,6 +1101,7 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
       meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count", 100);
       meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size", 42);
     });
+    out->Close();
   };
 
   // the mask is not a bitmap at all
@@ -1130,7 +1123,7 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
 TEST_P(FormatTestCase, format_utils_footer) {
   constexpr std::string_view kData = "segment data";
   const auto write = [&](std::string_view name, std::string_view data) {
-    auto stream = dir().create(name);
+    auto stream = dir().Create(name);
     ASSERT_NE(nullptr, stream);
     if (!data.empty()) {
       stream->WriteData(reinterpret_cast<const irs::byte_type*>(data.data()),
@@ -1139,14 +1132,15 @@ TEST_P(FormatTestCase, format_utils_footer) {
     irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint32_t>(0, "value", 42);
     });
+    stream->Close();
   };
   const auto read = [&](std::string_view name, std::string_view data) {
-    auto stream = dir().open(name, irs::IOAdvice::RANDOM);
-    ASSERT_NE(nullptr, stream);
+    const auto file = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
+    ASSERT_TRUE(file);
     uint32_t value = 0;
     uint64_t data_size = 0;
     const auto footer = irs::format_utils::ReadFooter(
-      *stream, name, [&](duckdb::BinaryDeserializer& meta, uint64_t size) {
+      *file, name, [&](duckdb::BinaryDeserializer& meta, uint64_t size) {
         value = meta.ReadProperty<uint32_t>(0, "value");
         data_size = size;
       });
@@ -1167,34 +1161,37 @@ TEST_P(FormatTestCase, format_utils_footer) {
 
 TEST_P(FormatTestCase, format_utils_footer_damaged) {
   {
-    auto stream = dir().create("file");
+    auto stream = dir().Create("file");
     ASSERT_NE(nullptr, stream);
     stream->WriteU64(7);
     irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint32_t>(0, "value", 42);
     });
+    stream->Close();
   }
 
   irs::bstring bytes;
   {
-    auto stream = dir().open("file", irs::IOAdvice::RANDOM);
-    ASSERT_NE(nullptr, stream);
-    bytes.resize(stream->Length());
-    stream->ReadData(0, bytes.data(), bytes.size());
+    const auto file = dir().Open("file", duckdb::MappedFileAccess::NORMAL);
+    irs::IndexInput stream{*file};
+    ASSERT_TRUE(stream);
+    bytes.resize(stream.Length());
+    stream.ReadData(0, bytes.data(), bytes.size());
   }
 
   const auto write = [&](std::string_view name, irs::bytes_view data) {
-    auto stream = dir().create(name);
+    auto stream = dir().Create(name);
     ASSERT_NE(nullptr, stream);
     if (!data.empty()) {
       stream->WriteData(data.data(), data.size());
     }
+    stream->Close();
   };
   const auto read = [&](std::string_view name) {
-    auto stream = dir().open(name, irs::IOAdvice::RANDOM);
-    ASSERT_NE(nullptr, stream);
+    const auto file = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
+    ASSERT_TRUE(file);
     irs::format_utils::ReadFooter(
-      *stream, name, [](duckdb::BinaryDeserializer& meta, uint64_t) {
+      *file, name, [](duckdb::BinaryDeserializer& meta, uint64_t) {
         meta.ReadProperty<uint32_t>(0, "value");
       });
   };
@@ -1222,13 +1219,14 @@ TEST_P(FormatTestCase, index_meta_reads_its_storage_version_range) {
   const auto read = [&](uint64_t gen, uint64_t version) -> std::string {
     const auto name = im::FileName(gen);
     {
-      auto out = dir().create(name);
+      auto out = dir().Create(name);
       EXPECT_NE(nullptr, out);
       irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta) {
         meta.WriteProperty<uint64_t>(im::kFieldStorageVersion,
                                      "storage_version", version);
         meta.WriteProperty<uint64_t>(im::kFieldSegCounter, "seg_counter", 0);
       });
+      out->Close();
     }
     try {
       irs::IndexMeta meta;
@@ -1265,14 +1263,14 @@ namespace {
 template<typename Populate, typename Verify>
 void RoundTrip(std::string_view segment_name, uint64_t row_count,
                Populate&& populate, Verify&& verify) {
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  irs::Directory dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, segment_name, db};
     populate(w);
     w.Commit(row_count);
   }
-  irs::ColReader r{dir, segment_name, db, irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, segment_name);
   verify(r);
 }
 
@@ -1389,8 +1387,8 @@ TEST_P(FormatTestCase, columns_rw) {
   //  * multi-valued payloads (length-prefixed WriteStr concatenation),
   //  * "wrong column / wrong doc / can't find" lookups,
   //  * visit + partial-visit (early-stop) checks.
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  irs::Directory dir{db, TestEnv::MemoryRoot()};
 
   // Build segment _1 -----------------------------------------------------
   // ids in this segment: 0,1,2 (empty),3,4,5; segment row count = 34.
@@ -1481,7 +1479,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
   // Read segment _1 ------------------------------------------------------
   {
-    irs::ColReader r{dir, "_1", db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "_1");
     ASSERT_EQ(r.Columns().size(), 6u);
     // Try to get an invalid column id (`field_limits::invalid()`).
     EXPECT_EQ(r.Column(irs::field_limits::invalid()), nullptr);
@@ -1646,7 +1644,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
   // Read segment _2 ------------------------------------------------------
   {
-    irs::ColReader r{dir, "_2", db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "_2");
     ASSERT_EQ(r.Columns().size(), 3u);
 
     EXPECT_EQ(r.Column(irs::field_limits::invalid()), nullptr);
@@ -1693,7 +1691,7 @@ TEST_P(FormatTestCase, columns_rw) {
   // Segment _1 -- new sub-scenarios (multi-column independence,
   // random-order point access, boundary docs, wrong-column-id sweep).
   {
-    irs::ColReader r{dir, "_1", db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "_1");
     const auto* col_f0 = r.Column(kF0);
     const auto* col_f2 = r.Column(kF2);
     ASSERT_NE(col_f0, nullptr);
@@ -1766,8 +1764,8 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   constexpr uint64_t kRowCount = 500;
   constexpr irs::field_id kIntId = 2;
   constexpr irs::field_id kStrId = 3;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  irs::Directory dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "columns_rw_typed", db};
 
@@ -1801,7 +1799,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     w.Commit(kRowCount);
   }
 
-  irs::ColReader r{dir, "columns_rw_typed", db, irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "columns_rw_typed");
   ASSERT_TRUE(r.HasColumn(kIntId));
   ASSERT_TRUE(r.HasColumn(kStrId));
   EXPECT_FALSE(r.HasColumn(0));  // wrong column id
@@ -1992,8 +1990,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     w.Commit(kRgRowCount);
   }
   {
-    irs::ColReader rr{dir, "columns_rw_typed_rg", db,
-                      irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader rr = irs::tests::OpenColReader(dir, "columns_rw_typed_rg");
     const auto* col_int = rr.Column(kRgIntId);
     const auto* col_str = rr.Column(kRgStrId);
     ASSERT_NE(col_int, nullptr);
@@ -2173,8 +2170,8 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
   // each contain a mix of live and null rows.
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigId = 200;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  irs::Directory dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "columns_rw_bit_mask_rg", db};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
@@ -2192,8 +2189,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "columns_rw_bit_mask_rg", db,
-                     irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "columns_rw_bit_mask_rg");
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
@@ -2345,8 +2341,8 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
   // kBigRows=2048 the column has 4 row groups.
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigId = 300;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  irs::Directory dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "columns_rw_dense_mask_rg", db};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
@@ -2361,8 +2357,8 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "columns_rw_dense_mask_rg", db,
-                     irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r =
+      irs::tests::OpenColReader(dir, "columns_rw_dense_mask_rg");
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
@@ -2542,8 +2538,8 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
   constexpr uint64_t kBigRows = 1500;
   constexpr size_t kSmallPayloadSize = 1024;
   constexpr irs::field_id kBigId = 400;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  irs::Directory dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "columns_rw_big_document_rg", db};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
@@ -2562,8 +2558,8 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "columns_rw_big_document_rg", db,
-                     irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r =
+      irs::tests::OpenColReader(dir, "columns_rw_big_document_rg");
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
@@ -2600,8 +2596,8 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   //  * Rollback (writer never committed) leaves the dir untouched,
   //  * a fresh writer at the rolled-back name produces a clean file,
   //  * three independent segments with id+name BLOB columns round-trip.
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  irs::Directory dir{db, TestEnv::MemoryRoot()};
 
   // Rollback path: the eagerly-created `.col` stays on disk as an orphan;
   // the directory cleaner sweeps it later.
@@ -2610,11 +2606,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     irs::tests::OpenBlobColumn(w, /*id=*/1);
     w.Rollback();
   }
-  {
-    bool exists = false;
-    ASSERT_TRUE(dir.exists(exists, "_rollback_seg.col"));
-    EXPECT_TRUE(exists);
-  }
+  EXPECT_TRUE(dir.Has("_rollback_seg.col"));
 
   // Three sequential segments.
   struct SegSpec {
@@ -2657,7 +2649,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   for (size_t s = 0; s < segs.size(); ++s) {
     const auto& seg = segs[s];
     const uint64_t prefix = s == 0 ? 0 : s == 1 ? 1000 : 2000;
-    irs::ColReader r{dir, seg.name, db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, seg.name);
     ASSERT_TRUE(r.HasColumn(kIdCol)) << "seg=" << seg.name;
     ASSERT_TRUE(r.HasColumn(kNameCol)) << "seg=" << seg.name;
     // Wrong-column-id negative lookups (sweep).
@@ -2759,7 +2751,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, kBigSeg, db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kBigSeg);
     const auto* id_col = r.Column(kIdCol);
     const auto* name_col = r.Column(kNameCol);
     ASSERT_NE(id_col, nullptr);
@@ -2924,8 +2916,8 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigIdCol = 500;
   constexpr irs::field_id kBigNameCol = 501;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  irs::Directory dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "same_col_empty_repeat_rg", db};
     auto& id_w = w.OpenColumn(kBigIdCol, duckdb::LogicalType::BLOB,
@@ -2957,8 +2949,8 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "same_col_empty_repeat_rg", db,
-                     irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r =
+      irs::tests::OpenColReader(dir, "same_col_empty_repeat_rg");
     const auto* id_col = r.Column(kBigIdCol);
     const auto* name_col = r.Column(kBigNameCol);
     ASSERT_NE(id_col, nullptr);
@@ -3122,8 +3114,8 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
   // kBigRows=2049 we span 5 row groups (4 full, 1 partial).
   constexpr uint64_t kBigRows = 2049;
   constexpr irs::field_id kBigId = 600;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  irs::Directory dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "sparse_dense_block_rg", db};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
@@ -3142,8 +3134,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "sparse_dense_block_rg", db,
-                     irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "sparse_dense_block_rg");
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
@@ -3362,8 +3353,8 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigDenseId = 700;
   constexpr irs::field_id kBigSparseId = 701;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  irs::Directory dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "border_case_rg", db};
     auto& dense = w.OpenColumn(
@@ -3394,7 +3385,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "border_case_rg", db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "border_case_rg");
     const auto* dense_col = r.Column(kBigDenseId);
     const auto* sparse_col = r.Column(kBigSparseId);
     ASSERT_NE(dense_col, nullptr);
@@ -3564,8 +3555,8 @@ TEST_P(FormatTestCase, columns_issue700) {
   // spans multiple row groups within the same scale (8 rgs for 4097 rows).
   constexpr uint64_t kBigRows = STANDARD_VECTOR_SIZE * 2 + 1;  // 4097
   constexpr irs::field_id kBigColId = 800;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  irs::Directory dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{dir, "issue700_rg", db};
     auto& cw = w.OpenColumn(kBigColId, duckdb::LogicalType::BLOB,
@@ -3582,7 +3573,7 @@ TEST_P(FormatTestCase, columns_issue700) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "issue700_rg", db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "issue700_rg");
     const auto* col = r.Column(kBigColId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);

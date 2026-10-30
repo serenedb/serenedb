@@ -243,3 +243,43 @@ def test_missing_database_directory(tmp_path: Path) -> None:
     finally:
         dropped.stop()
     assert not database.exists()
+
+
+def test_skipped_database_keeps_its_tablespace(tmp_path: Path) -> None:
+    datadir = tmp_path / "data"
+    location = tmp_path / "space"
+    server = _Server(datadir)
+    try:
+        assert server.wait_ready(), server.output()
+        with server.connect() as conn:
+            conn.execute(f"CREATE TABLESPACE lost_space LOCATION '{location}'")
+            conn.execute("CREATE DATABASE lost")
+            conn.execute(
+                "CREATE TABLE lost.public.docs(id BIGINT PRIMARY KEY, body TEXT) "
+                "WITH (storage = 'search') TABLESPACE lost_space")
+            conn.execute("INSERT INTO lost.public.docs VALUES (1, 'kept')")
+            conn.execute("VACUUM (REFRESH_TABLE) lost.public.docs")
+            oid = conn.execute(
+                "SELECT oid FROM pg_database WHERE datname = 'lost'"
+            ).fetchone()[0]
+    finally:
+        server.stop()
+    database = datadir / "engine_v1" / str(oid)
+    for path in sorted(database.rglob("*"), reverse=True):
+        path.rmdir() if path.is_dir() else path.unlink()
+    database.rmdir()
+    stored = location / "engine_v1" / str(oid)
+    files = sorted(stored.rglob("*"))
+    assert any(path.is_file() for path in files), files
+
+    skipped = _Server(datadir, "--missing_database=skip")
+    try:
+        assert skipped.wait_ready(), skipped.output()
+        assert _databases(skipped) == ["lost", "postgres"]
+        with skipped.connect() as conn:
+            with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState,
+                               match='tablespace "lost_space" is not empty'):
+                conn.execute("DROP TABLESPACE lost_space")
+    finally:
+        skipped.stop()
+    assert sorted(stored.rglob("*")) == files

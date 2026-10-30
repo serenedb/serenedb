@@ -32,7 +32,6 @@
 #include <duckdb/common/constants.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/parser/column_list.hpp>
-#include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -71,25 +70,24 @@ namespace sdb::search {
 class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                           public MaintainedStore {
  public:
+  // `is_new` opens a fresh index; otherwise Open() opens the durable one.
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
-  SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
-              bool in_memory, bool read_only, duckdb::idx_t db_id,
-              duckdb::idx_t table_id, bool is_new,
-              const catalog::SearchTableOptions& options,
+  SearchTable(std::optional<catalog::StorageDirectory> parent,
+              duckdb::AttachedDatabase& database, duckdb::idx_t table_id,
+              bool is_new, const catalog::SearchTableOptions& options,
               const duckdb::ColumnList& columns);
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
   SearchTable& operator=(const SearchTable&) = delete;
   static std::shared_ptr<SearchTable> Create(
-    std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
-    bool read_only, duckdb::idx_t db_id, duckdb::idx_t table_id, bool is_new,
+    std::optional<catalog::StorageDirectory> parent,
+    duckdb::AttachedDatabase& database, duckdb::idx_t table_id, bool is_new,
     const catalog::SearchTableOptions& options,
     const duckdb::ColumnList& columns) {
-    return std::make_shared<SearchTable>(std::move(directory), in_memory,
-                                         read_only, db_id, table_id, is_new,
-                                         options, columns);
+    return std::make_shared<SearchTable>(std::move(parent), database, table_id,
+                                         is_new, options, columns);
   }
 
   std::shared_ptr<const catalog::InvertedIndexConfig> Config() const;
@@ -109,12 +107,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
       _dropped.store(true, std::memory_order_release);
     }
   }
-  std::filesystem::path Path() const {
-    return _directory->StoragePath(GetTableId());
-  }
-  bool Absent() const noexcept { return _absent; }
-  void Open();
-  void OpenReader();
+  std::string Path() const { return _parent->StoragePath(GetTableId()); }
+  [[nodiscard]] bool Open();
 
   // `exclusive_segment` is required of a writer that will record its flushed
   // segments in the WAL -- see irs::IndexWriter::GetBatch.
@@ -302,8 +296,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   };
   struct ReplaySession;
 
-  void OpenWriter();
-  void OpenDirectory();
+  void OpenWriter(bool is_new);
   irs::IndexReaderOptions ReaderOptions() const;
   std::shared_ptr<const catalog::InvertedIndexConfig> MergeConfigs(
     std::span<const IndexConfig> configs, std::span<const IndexConfig> retired,
@@ -319,11 +312,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   duckdb::idx_t _db_id;
   duckdb::idx_t _table_id;
-  std::shared_ptr<catalog::DatabaseDirectory> _directory;
-  bool _is_new;
-  bool _in_memory;
+  std::optional<catalog::StorageDirectory> _parent;
   bool _read_only;
-  bool _absent = false;
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
   catalog::CompressionByColumn _compression;
@@ -331,7 +321,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   std::atomic<bool> _dropped{false};
   mutable absl::Mutex _layout_mutex;
   Layout _layout ABSL_GUARDED_BY(_layout_mutex);
-  std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   irs::DirectoryReader _reader;
   std::optional<irs::ScorerOptions> _topk_options;

@@ -128,3 +128,23 @@ VACUUM (COMPACT_TABLE) docs_store;
 
 statement ok
 RESET sdb_compact_target_segments;
+
+# DOCS_TEST: example_012
+statement ok
+CREATE TEMPORARY TABLE session_notes (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX session_notes_idx ON session_notes USING inverted(body en);
+
+statement ok
+INSERT INTO session_notes VALUES (1, 'the quick brown fox'), (2, 'a lazy dog');
+
+# DOCS_TEST_BODY
+statement ok
+VACUUM (OPTIMIZE_IN_MEMORY_TABLE) session_notes;
+
+query
+SELECT id FROM session_notes_idx WHERE body @@ ts_phrase('fox');
+----
+id
+1

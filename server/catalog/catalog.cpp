@@ -21,8 +21,7 @@
 #include "catalog/catalog.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/ascii.h>
-#include <absl/strings/numbers.h>
+#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
@@ -45,6 +44,7 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_sequence_info.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
@@ -97,11 +97,29 @@
 #include "scheduler/job_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
+#include "search/wal_recovery.h"
 
 namespace sdb::catalog {
 namespace {
 
 constexpr uint64_t kPkSequenceCache = uint64_t{1} << 20;
+
+std::string_view StorageKind(const duckdb::CatalogEntry& entry) {
+  return entry.type == duckdb::CatalogType::TABLE_ENTRY ? "search table"
+                                                        : "inverted index";
+}
+
+void RefuseTablespace(const std::filesystem::path& directory,
+                      const duckdb::CatalogEntry& entry,
+                      duckdb::idx_t tablespace) {
+  if (tablespace != 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("cannot attach \"", directory.string(),
+              "\" read-only: ", StorageKind(entry), " \"",
+              entry.name.GetIdentifierName(), "\" is placed in a tablespace"));
+  }
+}
 
 }  // namespace
 
@@ -140,6 +158,11 @@ bool IsSereneDB(duckdb::Catalog& catalog) {
          type == SereneDBCatalog::kReadOnlyStorageType;
 }
 
+duckdb::unique_ptr<duckdb::Catalog> MakeTemporaryCatalog(
+  duckdb::AttachedDatabase& db) {
+  return duckdb::make_uniq<SereneDBCatalog>(db, nullptr);
+}
+
 duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::BoundCreateTableInfo& info) {
@@ -171,10 +194,11 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
 }
 
 duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
-  duckdb::DuckSchemaEntry& schema, duckdb::CreateIndexInfo& info,
-  duckdb::CatalogEntry& relation) {
+  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+  duckdb::CreateIndexInfo& info, duckdb::CatalogEntry& relation) {
   if (info.index_type != kInvertedIndexTypeName) {
-    return duckdb::DuckCatalog::MakeIndexEntry(schema, info, relation);
+    return duckdb::DuckCatalog::MakeIndexEntry(transaction, schema, info,
+                                               relation);
   }
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table;
   if (relation.type == duckdb::CatalogType::TABLE_ENTRY) {
@@ -189,7 +213,7 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
     entry->AdoptStorage(search::InvertedIndexStorage::Create(
-      _directory, InMemory(), GetAttached().IsReadOnly(), GetOid(), entry->oid,
+      Directory(transaction, entry->Tablespace()), GetAttached(), entry->oid,
       ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
   }
   return std::move(entry);
@@ -422,6 +446,11 @@ SereneDBCatalog::BindCreateViewIndex(
   if (view.internal) {
     RefuseSystemCatalog(view);
   }
+  if (GetAttached().IsTemporary()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot create an index on temporary view \"",
+                            view.name.GetIdentifierName(), "\""));
+  }
   BindIndexDefinition(binder, stmt, view);
   return connector::BindCreateIndexOnView(binder, stmt, view, std::move(plan));
 }
@@ -447,8 +476,19 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo& info) {
-  const auto& options = info.Base().options;
+  const auto& base = info.Base().Cast<duckdb::CreateTableInfo>();
+  if (!base.partition_keys.empty() || !base.sort_keys.empty()) {
+    return duckdb::ErrorData{
+      duckdb::ExceptionType::NOT_IMPLEMENTED,
+      absl::StrCat(base.partition_keys.empty() ? "SORTED BY" : "PARTITIONED BY",
+                   " is not supported")};
+  }
+  const auto& options = base.options;
   const bool search = ReadStorageEngine(options) == TableEngine::Search;
+  if (search && GetAttached().IsTemporary()) {
+    return duckdb::ErrorData{duckdb::ExceptionType::NOT_IMPLEMENTED,
+                             "a temporary table cannot be a search table"};
+  }
   auto unknown = absl::c_find_if(options, [search](const auto& option) {
     return option.first != kStorageOption &&
            !(search && absl::c_contains(kSearchTableOptions, option.first));
@@ -500,7 +540,8 @@ std::string SereneDBCatalog::GetCatalogType() {
 }
 
 duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
-  if (GetAttached().IsReadOnly() || _detached.load(std::memory_order_acquire)) {
+  if (GetAttached().IsReadOnly() || GetAttached().IsTemporary() ||
+      _detached.load(std::memory_order_acquire)) {
     return nullptr;
   }
   return ClusterOf(GetDatabase()).CatalogLog();
@@ -513,15 +554,6 @@ void SereneDBCatalog::FinalizeLoad(
   }
   SDB_ASSERT(context);
   const auto& path = _directory->Path();
-  const auto name = path.filename().string();
-  duckdb::idx_t oid = 0;
-  if (!absl::c_all_of(name, absl::ascii_isdigit) ||
-      !absl::SimpleAtoi(name, &oid)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("\"", path.string(),
-                            "\" is not a SereneDB database directory: its "
-                            "name is not a database oid"));
-  }
   const auto log_path = (path.parent_path() / kCatalogLog).string();
   _catalog_log_lock =
     duckdb::FileSystem::Get(GetAttached())
@@ -535,16 +567,27 @@ void SereneDBCatalog::FinalizeLoad(
               "\" in read-only mode: catalog log does not exist"));
   }
   auto& storage = GetAttached().GetStorageManager();
-  duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path, oid);
-  for (auto& table : SearchTableStorages(*this)) {
-    table->Open();
-    table->OpenReader();
+  duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path,
+                                       _directory->Oid());
+  for (const SearchTableEntry& table : SearchTableEntries(*this)) {
+    RefuseTablespace(path, table, table.Tablespace());
   }
-  for (auto& index : InvertedIndexEntries(*this)) {
-    if (const auto& index_storage = index.get().Storage()) {
-      index_storage->Open();
-      index_storage->OpenReader();
+  for (const InvertedIndexEntry& index : InvertedIndexEntries(*this)) {
+    if (index.Storage()) {
+      RefuseTablespace(path, index, index.Tablespace());
     }
+  }
+  const duckdb::reference<SereneDBCatalog> catalogs[] = {*this};
+  if (const auto missing = search::OpenSearchStorages(catalogs);
+      !missing.empty()) {
+    const auto& entry = missing.front().entry.get();
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_FILE),
+      ERR_MSG("cannot attach \"", path.string(), "\" read-only: the files of ",
+              StorageKind(entry), " \"", entry.name.GetIdentifierName(),
+              "\" are missing"),
+      ERR_HINT("A database created in a tablespace on an object store keeps "
+               "them in the tablespace."));
   }
   auto attached = GetAttached().shared_from_this();
   duckdb::MetaTransaction::Get(*context).UseDatabase(attached);
@@ -562,6 +605,9 @@ bool SereneDBCatalog::AppendLocalIndexes(
 
 void SereneDBCatalog::Initialize(bool load_builtin) {
   duckdb::DuckCatalog::Initialize(load_builtin);
+  if (GetAttached().IsTemporary()) {
+    return;
+  }
   auto data = duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase());
   duckdb::CreateSchemaInfo info;
   info.SetQualifiedName(duckdb::QualifiedName(
@@ -574,6 +620,9 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
 }
 
 duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
+  if (GetAttached().IsTemporary()) {
+    return duckdb::DuckCatalog::DefaultSchemaOid();
+  }
   return pg::kPgMainSchema;
 }
 

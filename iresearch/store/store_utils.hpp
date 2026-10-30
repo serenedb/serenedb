@@ -24,7 +24,6 @@
 
 #include "data_input.hpp"
 #include "data_output.hpp"
-#include "directory.hpp"
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
@@ -50,17 +49,13 @@ IRS_FORCE_INLINE inline void WriteZV32(DataOutput& out, int32_t v) {
   out.WriteV32(irs::ZigZagEncode32(v));
 }
 
-inline int32_t ReadZV32(DataInput& in) {
-  return irs::ZigZagDecode32(in.ReadV32());
-}
+int32_t ReadZV32(auto& in) { return irs::ZigZagDecode32(in.ReadV32()); }
 
 IRS_FORCE_INLINE inline void WriteZV64(DataOutput& out, int64_t v) {
   out.WriteV64(irs::ZigZagEncode64(v));
 }
 
-inline int64_t ReadZV64(DataInput& in) {
-  return irs::ZigZagDecode64(in.ReadV64());
-}
+int64_t ReadZV64(auto& in) { return irs::ZigZagDecode64(in.ReadV64()); }
 
 IRS_FORCE_INLINE inline void WriteStr(DataOutput& out, const char* s,
                                       size_t len) {
@@ -82,7 +77,7 @@ IRS_FORCE_INLINE inline void WriteStr(DataOutput& out, const StringType& str) {
 }
 
 template<typename StringType>
-inline StringType ReadString(DataInput& in) {
+StringType ReadString(auto& in) {
   const size_t len = in.ReadV32();
 
   StringType str(len, 0);
@@ -140,185 +135,6 @@ IRS_FORCE_INLINE T ShiftUnpack32(uint32_t in, U& out) noexcept {
   out = static_cast<U>(in >> 1);
   return static_cast<T>(in & 1);
 }
-
-class BytesViewInput : public IndexInput {
- public:
-  static constexpr bool kVolatileAlways = true;
-
-  BytesViewInput() = default;
-  explicit BytesViewInput(bytes_view data) noexcept : _data{data} {}
-  BytesViewInput(const BytesViewInput& other) noexcept = default;
-
-  IRS_FORCE_INLINE const byte_type* Current() const noexcept { return _pos; }
-
-  IRS_FORCE_INLINE const byte_type* At(uint64_t offset) const noexcept {
-    SDB_ASSERT(offset <= _data.size());
-    return _data.data() + offset;
-  }
-
-  IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t count) noexcept final {
-    const auto* begin = _pos;
-    _pos = begin + count;
-    SDB_ASSERT(_pos <= _data.data() + _data.size());
-    return begin;
-  }
-  IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t offset,
-                                               uint64_t count) noexcept final {
-    const auto* begin = _data.data() + offset;
-    _pos = begin + count;
-    SDB_ASSERT(_pos <= _data.data() + _data.size());
-    return begin;
-  }
-
-  IRS_FORCE_INLINE const byte_type* ReadVolatile(
-    uint64_t count) noexcept final {
-    return ReadStable(count);
-  }
-  IRS_FORCE_INLINE const byte_type* ReadVolatile(
-    uint64_t offset, uint64_t count) noexcept final {
-    return ReadStable(offset, count);
-  }
-
-  IRS_FORCE_INLINE byte_type ReadByte() noexcept final {
-    SDB_ASSERT(_pos < _data.data() + _data.size());
-    return *_pos++;
-  }
-  using DataInput::ReadData;
-  void ReadData(byte_type* b, uint64_t count) final;
-  void ReadData(duckdb::QueryContext, byte_type* b, uint64_t count) final {
-    BytesViewInput::ReadData(b, count);
-  }
-  void ReadData(uint64_t offset, byte_type* b, size_t count) noexcept final;
-
-  int16_t ReadI16() noexcept final { return irs::read<uint16_t>(_pos); }
-  int32_t ReadI32() noexcept final { return irs::read<uint32_t>(_pos); }
-  int64_t ReadI64() noexcept final { return irs::read<uint64_t>(_pos); }
-  uint32_t ReadV32() noexcept final { return irs::vread<uint32_t>(_pos); }
-  uint64_t ReadV64() noexcept final { return irs::vread<uint64_t>(_pos); }
-
-  void SkipV32() noexcept final { irs::vskip<uint32_t>(_pos); }
-  void SkipV64() noexcept final { irs::vskip<uint64_t>(_pos); }
-
-  IRS_FORCE_INLINE uint64_t Position() const noexcept final {
-    return std::distance(_data.data(), _pos);
-  }
-  IRS_FORCE_INLINE uint64_t Length() const noexcept final {
-    return _data.size();
-  }
-  IRS_FORCE_INLINE bool IsEOF() const noexcept final {
-    return Position() >= Length();
-  }
-
-  IRS_FORCE_INLINE void Skip(uint64_t count) noexcept final {
-    SDB_ASSERT(_pos + count <= _data.data() + _data.size());
-    _pos += count;
-  }
-  IRS_FORCE_INLINE void Seek(uint64_t pos) noexcept final {
-    SDB_ASSERT(_data.data() + pos <= _data.data() + _data.size());
-    _pos = _data.data() + pos;
-  }
-
-  Type GetType() const noexcept final { return Type::BytesViewInput; }
-
-  ptr Dup() const override { return std::make_unique<BytesViewInput>(*this); }
-  ptr Reopen() const final { return Dup(); }
-
-  uint32_t Checksum(uint64_t offset) const final;
-
-  void Prefetch(uint64_t offset, uint64_t count) const noexcept override;
-
-  bool Resident(uint64_t offset, uint64_t count) const noexcept final;
-
-  void reset(const byte_type* data, size_t size) noexcept {
-    _data = bytes_view(data, size);
-    _pos = data;
-  }
-  void reset(bytes_view ref) noexcept { reset(ref.data(), ref.size()); }
-
- private:
-  bytes_view Window(uint64_t offset, uint64_t count) const noexcept {
-    if (offset >= _data.size()) {
-      return {};
-    }
-    return {_data.data() + offset,
-            std::min<uint64_t>(count, _data.size() - offset)};
-  }
-
-  bytes_view _data;
-  const byte_type* _pos = _data.data();
-};
-
-// same as BytesViewInput but with support of adress remapping
-// usable when original data offses needs to be persistent
-// NOTE: remapped data blocks may have gaps but should not overlap!
-class RemappedBytesViewInput final : public IndexInput {
- public:
-  using MappingValue = std::pair<uint64_t, uint64_t>;
-  using Mapping = std::vector<MappingValue>;
-
-  explicit RemappedBytesViewInput(bytes_view data, Mapping&& mapping)
-    : _input{data}, _mapping{std::move(mapping)} {
-    absl::c_sort(_mapping, [](const auto& lhs, const auto& rhs) {
-      return lhs.first < rhs.first;
-    });
-  }
-
-  const byte_type* ReadStable(uint64_t count) noexcept final {
-    return _input.ReadStable(count);
-  }
-  const byte_type* ReadStable(uint64_t offset, uint64_t count) noexcept final {
-    return _input.ReadStable(SourceToInternal(offset), count);
-  }
-
-  const byte_type* ReadVolatile(uint64_t count) noexcept final {
-    return _input.ReadVolatile(count);
-  }
-  const byte_type* ReadVolatile(uint64_t offset,
-                                uint64_t count) noexcept final {
-    return _input.ReadVolatile(SourceToInternal(offset), count);
-  }
-
-  byte_type ReadByte() noexcept final { return _input.ReadByte(); }
-  using DataInput::ReadData;
-  void ReadData(byte_type* b, uint64_t size) final { _input.ReadData(b, size); }
-  void ReadData(duckdb::QueryContext, byte_type* b, uint64_t size) final {
-    _input.ReadData(b, size);
-  }
-  void ReadData(uint64_t offset, byte_type* b, size_t size) noexcept final {
-    _input.ReadData(SourceToInternal(offset), b, size);
-  }
-
-  int16_t ReadI16() noexcept final { return _input.ReadI16(); }
-  int32_t ReadI32() noexcept final { return _input.ReadI32(); }
-  int64_t ReadI64() noexcept final { return _input.ReadI64(); }
-  uint32_t ReadV32() noexcept final { return _input.ReadV32(); }
-  uint64_t ReadV64() noexcept final { return _input.ReadV64(); }
-
-  void SkipV32() noexcept final { _input.SkipV32(); }
-  void SkipV64() noexcept final { _input.SkipV64(); }
-
-  uint64_t Position() const noexcept final;
-  uint64_t Length() const noexcept final { return _input.Length(); }
-  bool IsEOF() const noexcept final { return _input.IsEOF(); }
-
-  void Skip(uint64_t count) noexcept final { _input.Skip(count); }
-  void Seek(uint64_t pos) noexcept final { _input.Seek(SourceToInternal(pos)); }
-
-  ptr Dup() const final {
-    return std::make_unique<RemappedBytesViewInput>(*this);
-  }
-  ptr Reopen() const final { return Dup(); }
-
-  uint32_t Checksum(uint64_t offset) const final {
-    return _input.Checksum(SourceToInternal(offset));
-  }
-
- private:
-  uint64_t SourceToInternal(uint64_t offset) const noexcept;
-
-  BytesViewInput _input;
-  Mapping _mapping;
-};
 
 namespace encode::delta {
 

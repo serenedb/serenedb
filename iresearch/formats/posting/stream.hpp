@@ -32,7 +32,6 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -47,8 +46,8 @@ class PostingsStream : public TermPostings {
  public:
   PostingsStream() noexcept {}
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               const IndexInput* pos_in, const IndexInput* pay_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
+               const InputFile* pos_in, const InputFile* pay_in,
                bool has_score_bounds) {
     SDB_ASSERT(meta.docs_count != 0);
 
@@ -65,15 +64,14 @@ class PostingsStream : public TermPostings {
       _max_in_leaf = doc;
     } else {
       if (meta.inline_size != 0) {
-        _inline_in.reset(meta.Inline());
+        _inline_in = InputType{meta.Inline()};
         _doc_in = &_inline_in;
       } else {
         if (!_file_in) {
-          _file_in = doc_in.Reopen();
-          SDB_ASSERT(_file_in);
+          _file_in = InputType{doc_in};
         }
-        _file_in->Seek(meta.doc_start);
-        _doc_in = _file_in.get();
+        _file_in.Seek(meta.doc_start);
+        _doc_in = &_file_in;
       }
 
       auto& in = In();
@@ -91,7 +89,7 @@ class PostingsStream : public TermPostings {
         .term_state = &meta,
         .enc_buf = _enc_buf,
       };
-      _pos.template Prepare<InputType>(state);
+      _pos.Prepare(state);
     }
   }
 
@@ -129,11 +127,9 @@ class PostingsStream : public TermPostings {
   }
 
  private:
-  using Position = PositionImpl<IteratorTraits>;
+  using Position = PositionImpl<IteratorTraits, InputType>;
 
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_doc_in);
-  }
+  IRS_FORCE_INLINE InputType& In() const noexcept { return *_doc_in; }
 
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
@@ -169,9 +165,9 @@ class PostingsStream : public TermPostings {
     IteratorTraits::Frequency(),
     SlackBuf<uint32_t, doc_limits::kBlockSize, block_codec::kOutSlack>> _freqs;
   DocsBuf _docs;
-  IndexInput::ptr _file_in;
-  BytesViewInput _inline_in;
-  IndexInput* _doc_in = nullptr;
+  InputType _file_in;
+  InputType _inline_in;
+  InputType* _doc_in = nullptr;
   [[no_unique_address]] utils::Need<IteratorTraits::Position(), Position> _pos;
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;

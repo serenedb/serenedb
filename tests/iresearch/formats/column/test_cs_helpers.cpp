@@ -32,7 +32,7 @@
 
 namespace irs::tests {
 
-std::unique_ptr<ColWriter> MakeCsWriter(Directory& dir,
+std::unique_ptr<ColWriter> MakeCsWriter(const Directory& dir,
                                         std::string_view segment_name) {
   return std::make_unique<ColWriter>(
     dir, segment_name, ::irs::DuckDBEngine::Instance().instance());
@@ -44,17 +44,20 @@ std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
   // "absent column = empty index" probe afterwards via Has*(). Return
   // nullptr on a missing .col file so callers see "no exception, empty
   // result".
-  bool exists = false;
   std::string filename;
   filename.reserve(segment_name.size() + 4);
   filename.append(segment_name);
   filename.append(".col");
-  if (!dir.exists(exists, filename) || !exists) {
+  if (!dir.Has(filename)) {
     return nullptr;
   }
-  return std::make_unique<ColReader>(dir, segment_name,
-                                     ::irs::DuckDBEngine::Instance().instance(),
-                                     IOAdvice::SEQUENTIAL);
+  return std::make_unique<ColReader>(dir, segment_name, true,
+                                     duckdb::MappedFileAccess::SEQUENTIAL);
+}
+
+ColReader OpenColReader(const Directory& dir, std::string_view segment_name) {
+  return ColReader{dir, segment_name, dir.Has(FileName(segment_name)),
+                   duckdb::MappedFileAccess::SEQUENTIAL};
 }
 
 ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id) {

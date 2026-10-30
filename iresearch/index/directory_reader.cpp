@@ -63,10 +63,6 @@ const SubReader& DirectoryReader::operator[](size_t i) const {
   return (*_impl)[i];
 }
 
-uint64_t DirectoryReader::CountMappedMemory() const {
-  return _impl->CountMappedMemory();
-}
-
 uint64_t DirectoryReader::docs_count() const { return _impl->docs_count(); }
 
 uint64_t DirectoryReader::live_docs_count() const {

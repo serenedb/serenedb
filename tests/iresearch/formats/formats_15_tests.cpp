@@ -261,7 +261,7 @@ class Format15TestCase : public tests::FormatTestCase {
     std::unique_ptr<irs::byte_type[]> inline_bytes;
   };
 
-  ReadMeta WriteReadMeta(irs::Directory& dir, DocsView docs,
+  ReadMeta WriteReadMeta(const irs::Directory& dir, DocsView docs,
                          irs::ScorerPtr scorer, irs::IndexFeatures features);
 
   void AssertPostingsWalk(irs::PostingsReader& reader, DocsView docs,
@@ -332,7 +332,7 @@ class Format15TestCase : public tests::FormatTestCase {
 };
 
 Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
-  irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
+  const irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
   irs::IndexFeatures features) {
   EXPECT_TRUE(scorer);
   irs::PostingsWriter writer;
@@ -348,7 +348,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
       .index_features = features,
     };
 
-    auto out = dir.create("attributes");
+    auto out = dir.Create("attributes");
     EXPECT_FALSE(!out);
     irs::WriteStr(*out, std::string_view("file_header"));
 
@@ -367,6 +367,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
       out->WriteData(posting_meta.inline_data, posting_meta.inline_size);
     }
     writer.End();
+    out->Close();
   }
 
   irs::SegmentMeta meta;
@@ -374,15 +375,16 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
 
   const irs::ReaderState state{.dir = &dir, .meta = &meta};
 
-  auto in = dir.open("attributes", irs::IOAdvice::RANDOM);
+  const auto in_file = dir.Open("attributes", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput in{*in_file};
   EXPECT_FALSE(!in);
-  [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(*in);
+  [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(in);
 
   auto reader = std::make_unique<irs::PostingsReader>();
   reader->prepare(state, features);
 
-  irs::bstring in_data(in->Length() - in->Position(), 0);
-  in->ReadData(&in_data[0], in_data.size());
+  irs::bstring in_data(in.Length() - in.Position(), 0);
+  in.ReadData(&in_data[0], in_data.size());
   const auto* begin = in_data.c_str();
 
   irs::PostingMeta read_meta;
@@ -723,8 +725,7 @@ void Format15TestCase::AssertStressPostings(DocsView docs) {
   AssertPostings(docs, kOffs, kOffs);
 }
 
-static const auto kTestDirs =
-  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefault>());
+static const auto kTestDirs = ::testing::ValuesIn(tests::kDirParams);
 
 static const auto kTestValues = ::testing::Combine(kTestDirs);
 

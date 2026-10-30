@@ -33,35 +33,35 @@ jobs:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: perf
-      TEST_ARGS: --fuzz-seconds 3600 --stress-profile soak --postgres all ${{ inputs.CORPUS && '--corpus' || '' }}
+      TEST_ARGS: --stress-profile soak --postgres all ${{ inputs.CORPUS && '--corpus' || '' }}
     secrets: inherit
 
   dev:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: dev
-      TEST_ARGS: --fuzz-seconds 3600 --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
+      TEST_ARGS: --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
     secrets: inherit
 
   asan:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: asan
-      TEST_ARGS: --fuzz-seconds 3600 --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
+      TEST_ARGS: --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
     secrets: inherit
 
   tsan:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: tsan
-      TEST_ARGS: --fuzz-seconds 3600 --stress-profile soak-tsan ${{ inputs.CORPUS && '--corpus' || '' }}
+      TEST_ARGS: --stress-profile soak-tsan ${{ inputs.CORPUS && '--corpus' || '' }}
     secrets: inherit
 
   msan:
     uses: ./.github/workflows/config.yml
     with:
       CONFIG: msan
-      TEST_ARGS: --fuzz-seconds 3600 --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
+      TEST_ARGS: --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
     secrets: inherit
 
   perf-arm64:

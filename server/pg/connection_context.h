@@ -123,10 +123,12 @@ class ConnectionContext final : public query::Transaction {
   }
   void SetSessionRole(duckdb::idx_t role) {
     _session_role_id = role;
+    GetClientContext().session_role = role;
     SetEffectiveRole(role);
   }
   void ResetIdentity() {
     _session_role_id = _login_role_id;
+    GetClientContext().session_role = _login_role_id;
     SetEffectiveRole(_login_role_id);
   }
 

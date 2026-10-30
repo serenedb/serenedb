@@ -21,7 +21,6 @@
 #include "auth/enforce.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/time/time.h>
 
@@ -31,8 +30,6 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
-#include <duckdb/catalog/dependency_manager.hpp>
-#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -58,7 +55,6 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_vacuum.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
-#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
@@ -84,13 +80,6 @@ using duckdb::AclMode;
 using duckdb::CatalogType;
 using duckdb::LogicalOperatorType;
 
-[[noreturn]] void MustOwn(const duckdb::CatalogEntry& entry) {
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-    ERR_MSG("must be owner of ", duckdb::PermissionKindName(entry.type), " ",
-            entry.name.GetIdentifierName()));
-}
-
 void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
   if (const auto* system =
         pg::FindSystemObject(pg::kSystemNamespaces, schema)) {
@@ -107,18 +96,6 @@ void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                   ERR_MSG("permission denied to ", verb, " role"),
                   ERR_DETAIL(detail));
-}
-
-bool IsRelation(CatalogType type) {
-  switch (type) {
-    case CatalogType::TABLE_ENTRY:
-    case CatalogType::VIEW_ENTRY:
-    case CatalogType::SEQUENCE_ENTRY:
-    case CatalogType::INDEX_ENTRY:
-      return true;
-    default:
-      return false;
-  }
 }
 
 std::vector<std::span<const duckdb::AclItem>> AllColumnAcls(
@@ -276,12 +253,8 @@ class Enforcer {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                           ERR_MSG("renaming a database is not supported"));
         }
-        if (info.type == duckdb::AlterType::ALTER_PERMISSIONS) {
-          ResolvePermissions(info.Cast<duckdb::AlterPermissionsInfo>());
-        } else if (info.type == duckdb::AlterType::ALTER_ROLE) {
-          if (_enforce) {
-            CheckAlterRole(info.Cast<duckdb::AlterRoleInfo>());
-          }
+        if (info.type == duckdb::AlterType::ALTER_ROLE && _enforce) {
+          CheckAlterRole(info.Cast<duckdb::AlterRoleInfo>());
         }
         if (PointAtCluster(info, info.GetCatalogType())) {
           _connection.MarkClusterWritten();
@@ -396,33 +369,11 @@ class Enforcer {
     }
   }
 
-  const RoleClosure& ClosureOf(duckdb::idx_t principal) {
-    if (principal == _caller) {
-      return _caller_closure;
-    }
-    auto [it, inserted] = _closures.try_emplace(principal);
-    if (inserted) {
-      if (const auto access = _roles->Access(principal)) {
-        it->second = *access;
-      } else {
-        it->second.role = principal;
-      }
-    }
-    return it->second;
-  }
-
   const RoleMemberships& CallerMemberships() {
     if (!_caller_memberships) {
       _caller_memberships = MembershipsOf(*_roles, _caller);
     }
     return *_caller_memberships;
-  }
-
-  duckdb::optional_ptr<duckdb::CatalogEntry> FindEntry(
-    CatalogType type, const duckdb::QualifiedName& name) {
-    return duckdb::Catalog::GetEntry(_context,
-                                     duckdb::EntryLookupInfo(type, name),
-                                     duckdb::OnEntryNotFound::RETURN_NULL);
   }
 
   void CheckDropRole(const duckdb::DropInfo& info) {
@@ -435,246 +386,6 @@ class Enforcer {
           ClusterEntry(CatalogType::ROLE_ENTRY,
                        info.GetQualifiedName().Name().GetIdentifierName())) {
       RequireRoleAdmin(*role, "drop");
-    }
-  }
-
-  void ResolvePermissions(duckdb::AlterPermissionsInfo& info) {
-    if (!info.new_owner.empty()) {
-      ResolveOwner(info);
-    } else if (info.default_objtype != CatalogType::INVALID) {
-      ResolveDefaultPrivileges(info);
-    } else {
-      ResolveGrant(info);
-    }
-  }
-
-  [[noreturn]] static void NotSupported(std::string_view what) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG(what, " is not supported"));
-  }
-
-  duckdb::idx_t RoleId(std::string_view name) {
-    auto& cluster = catalog::ClusterOf(_context);
-    auto role = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-                  .GetEntry(cluster.GetCatalogTransaction(_context),
-                            duckdb::Identifier{name});
-    if (!role) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("role \"", name, "\" does not exist"));
-    }
-    return role->oid;
-  }
-
-  duckdb::idx_t GranteeId(std::string_view name) {
-    return name == "public" ? duckdb::ACL_ID_PUBLIC : RoleId(name);
-  }
-
-  duckdb::idx_t RoleSpecId(std::string_view name) {
-    if (absl::EqualsIgnoreCase(name, "CURRENT_USER") ||
-        absl::EqualsIgnoreCase(name, "CURRENT_ROLE")) {
-      return _caller;
-    }
-    if (absl::EqualsIgnoreCase(name, "SESSION_USER")) {
-      return _connection.GetSessionRoleId();
-    }
-    return RoleId(name);
-  }
-
-  void RequireGrantable(const duckdb::CatalogEntry& entry) {
-    const auto& perm = entry.permissions;
-    if (!_enforce || _caller_closure.Owns(perm.owner)) {
-      return;
-    }
-    const auto stored =
-      perm.acl.empty()
-        ? duckdb::Permissions::AclDefault(
-            duckdb::Permissions::AclClass(entry.type), perm.owner)
-        : perm.acl;
-    auto held = _caller_closure.HeldModes(stored) |
-                _caller_closure.GrantableModes(stored);
-    if (entry.type == CatalogType::TABLE_ENTRY) {
-      for (const auto& column :
-           entry.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
-        held |= _caller_closure.HeldModes(column.Acl()) |
-                _caller_closure.GrantableModes(column.Acl());
-      }
-    }
-    if (held == AclMode::NoRights) {
-      duckdb::ThrowPermissionDenied(entry);
-    }
-  }
-
-  duckdb::CatalogEntry& ResolveTarget(duckdb::AlterPermissionsInfo& info) {
-    const auto& name = info.GetQualifiedName();
-    if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
-      auto& schema =
-        duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name());
-      info.SetQualifiedName(schema.ParentCatalog().GetName(),
-                            duckdb::Identifier(), schema.name);
-      return schema;
-    }
-    auto entry = FindEntry(info.entry_catalog_type, name);
-    if (!entry && info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
-      entry = FindEntry(CatalogType::TABLE_MACRO_ENTRY, name);
-    }
-    if (!entry) {
-      const bool relation = info.entry_catalog_type == CatalogType::TABLE_ENTRY;
-      THROW_SQL_ERROR(
-        ERR_CODE(relation ? ERRCODE_UNDEFINED_TABLE : ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG(relation ? "relation"
-                         : duckdb::PermissionKindName(info.entry_catalog_type),
-                " \"", name.ToString(), "\" does not exist"));
-    }
-    info.entry_catalog_type = entry->type == CatalogType::VIEW_ENTRY
-                                ? CatalogType::TABLE_ENTRY
-                                : entry->type;
-    info.SetQualifiedName(duckdb::QualifiedName::FromCatalogSchema(
-      entry->ParentCatalog().GetName(),
-      entry->ParentSchemaPath(
-        entry->ParentCatalog().GetCatalogTransaction(_context)),
-      entry->name));
-    return *entry;
-  }
-
-  void ResolveGrant(duckdb::AlterPermissionsInfo& info) {
-    info.grantee_id = GranteeId(info.grantee);
-    if (!info.granted_by.empty()) {
-      const auto granted_by = RoleId(info.granted_by);
-      if (_enforce && !_caller_closure.MemberOf(granted_by)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-          ERR_MSG("must be member of role \"", info.granted_by, "\""));
-      }
-      info.grantors = {granted_by};
-    } else if (_enforce) {
-      info.grantors.emplace_back(_caller);
-      for (const auto role : _caller_closure.closure) {
-        if (role != _caller) {
-          info.grantors.emplace_back(role);
-        }
-      }
-    }
-    if (info.entry_catalog_type == CatalogType::DATABASE_ENTRY) {
-      const auto& name = info.GetQualifiedName().Name().GetIdentifierName();
-      const auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, name);
-      if (!database) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
-                        ERR_MSG("database \"", name, "\" does not exist"));
-      }
-      RequireGrantable(*database);
-      return;
-    }
-    if (info.entry_catalog_type == CatalogType::FOREIGN_SERVER_ENTRY) {
-      const auto& name = info.GetQualifiedName().Name().GetIdentifierName();
-      const auto server = ServerEntry(name);
-      if (!server) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                        ERR_MSG("server \"", name, "\" does not exist"));
-      }
-      info.SetQualifiedName(server->ParentCatalog().GetName(),
-                            duckdb::Identifier(), server->name);
-      RequireGrantable(*server);
-      return;
-    }
-    if (info.all_in_schema) {
-      return;
-    }
-    RequireGrantable(ResolveTarget(info));
-  }
-
-  void ResolveOwner(duckdb::AlterPermissionsInfo& info) {
-    auto& entry = ResolveTarget(info);
-    info.new_owner_id = RoleSpecId(info.new_owner);
-    const bool relation = IsRelation(entry.type);
-    if (_enforce && relation) {
-      RequireOwner(entry);
-    }
-    if (info.new_owner_id == entry.permissions.owner) {
-      return;
-    }
-    if (entry.type == CatalogType::SEQUENCE_ENTRY) {
-      RefuseOwnedSequence(entry);
-    }
-    if (!_enforce) {
-      return;
-    }
-    if (!relation) {
-      RequireOwner(entry);
-    }
-    if (info.new_owner_id != _caller &&
-        !CallerMemberships().CanSet(info.new_owner_id)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("must be able to SET ROLE \"",
-                              _roles->NameOf(info.new_owner_id), "\""));
-    }
-    if (entry.type != CatalogType::SCHEMA_ENTRY &&
-        !ClosureOf(info.new_owner_id)
-           .Can(CatalogType::SCHEMA_ENTRY,
-                entry.ParentSchema(_context).permissions, AclMode::Create)) {
-      duckdb::ThrowPermissionDenied(entry.ParentSchema(_context));
-    }
-  }
-
-  void RefuseOwnedSequence(duckdb::CatalogEntry& sequence) {
-    auto& catalog = sequence.ParentCatalog();
-    auto dependency_manager = catalog.GetDependencyManager();
-    if (!dependency_manager) {
-      return;
-    }
-    auto table = dependency_manager->OwnerOf(
-      catalog.GetCatalogTransaction(_context), sequence);
-    if (!table) {
-      return;
-    }
-    const auto& name = sequence.name.GetIdentifierName();
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("cannot change owner of sequence \"", name, "\""),
-                    ERR_DETAIL("Sequence \"", name, "\" is linked to table \"",
-                               table->name.GetIdentifierName(), "\"."));
-  }
-
-  void ResolveDefaultPrivileges(duckdb::AlterPermissionsInfo& info) {
-    info.target_role = info.for_role.empty() ? _caller : RoleId(info.for_role);
-    if (_enforce && !_caller_closure.MemberOf(info.target_role)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("permission denied to change default privileges"));
-    }
-    info.grantee_id = GranteeId(info.grantee);
-    std::string database{duckdb::DatabaseManager::GetDefaultDatabase(_context)
-                           .GetIdentifierName()};
-    if (!info.default_schema.empty()) {
-      auto& schema =
-        duckdb::Catalog::GetSchema(_context, duckdb::Identifier{},
-                                   duckdb::Identifier{info.default_schema});
-      if (_enforce && !ClosureOf(info.target_role)
-                         .Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
-                              AclMode::Create)) {
-        duckdb::ThrowPermissionDenied(schema);
-      }
-      info.default_scope = schema.oid;
-      database = schema.ParentCatalog().GetName().GetIdentifierName();
-    }
-    if (!ClusterEntry(CatalogType::DATABASE_ENTRY, database)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
-                      ERR_MSG("database \"", database, "\" does not exist"));
-    }
-    info.SetQualifiedName(duckdb::Identifier{}, duckdb::Identifier{},
-                          duckdb::Identifier{database});
-  }
-
-  void RequireOwner(const duckdb::CatalogEntry& entry) {
-    if (entry.type == CatalogType::INDEX_ENTRY) {
-      auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-      auto host =
-        index.GetRelation(index.catalog.GetCatalogTransaction(_context));
-      if (host && !_caller_closure.Owns(host->permissions.owner)) {
-        MustOwn(*host);
-      }
-      return;
-    }
-    if (!_caller_closure.Owns(entry.permissions.owner)) {
-      MustOwn(entry);
     }
   }
 
@@ -852,17 +563,6 @@ class Enforcer {
     }
   }
 
-  duckdb::optional_ptr<duckdb::CatalogEntry> ServerEntry(
-    std::string_view name) {
-    auto& catalog =
-      duckdb::Catalog::GetCatalog(
-        _context, duckdb::DatabaseManager::GetDefaultDatabase(_context))
-        .Cast<duckdb::DuckCatalog>();
-    return catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
-      .GetEntry(catalog.GetCatalogTransaction(_context),
-                duckdb::Identifier{name});
-  }
-
   duckdb::ClientContext& _context;
   ConnectionContext& _connection;
   duckdb::LogicalOperator& _root;
@@ -871,7 +571,6 @@ class Enforcer {
   RoleAccessRef _caller_closure_owner;
   const RoleClosure& _caller_closure;
   const bool _enforce;
-  irs::containers::NodeHashMap<duckdb::idx_t, RoleClosure> _closures;
   std::optional<RoleMemberships> _caller_memberships;
 };
 

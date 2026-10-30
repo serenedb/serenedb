@@ -85,6 +85,18 @@ class PrunedLeaves {
     return reads;
   }
 
+  score_t RootMax() const noexcept {
+    if constexpr (requires(const Leaf& leaf) { leaf.RootScore(); }) {
+      score_t total = 0;
+      for (const auto& leaf : _leaves) {
+        total += leaf.RootScore();
+      }
+      return total;
+    } else {
+      return std::numeric_limits<score_t>::max();
+    }
+  }
+
   doc_id_t AdvanceTo(doc_id_t min) {
     doc_id_t end = doc_limits::eof();
     for (auto& leaf : _leaves) {

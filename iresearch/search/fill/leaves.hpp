@@ -85,12 +85,8 @@ class AndLeaves {
  private:
   IRS_FORCE_INLINE static bool Probes(uint32_t card, Leaf& leaf, doc_id_t min,
                                       doc_id_t max) {
-    if constexpr (requires { leaf.FillCost(min, max); }) {
-      return card < detail::kSparseWindow &&
-             card * detail::kProbeCost < leaf.FillCost(min, max);
-    } else {
-      return card < detail::kSparseWindow;
-    }
+    return card < detail::kSparseWindow &&
+           card * detail::kProbeCost < leaf.FillCost(min, max);
   }
 
   detail::Scratch _own;

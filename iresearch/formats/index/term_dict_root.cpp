@@ -521,6 +521,7 @@ ArtRoot::ArtRoot(Separators separators) : SeparatorRoot{std::move(separators)} {
     return {lo | uint64_t{at} << 32, 0};
   };
   build(0, count, 0, 0);
+  _words.shrink_to_fit();
 }
 
 IRS_FORCE_INLINE size_t ArtRoot::Leaf(const uint64_t* child, size_t depth,

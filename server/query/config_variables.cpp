@@ -346,9 +346,9 @@ const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
 }
 
 void RefreshSuperuser(ConnectionContext& conn) {
-  const bool superuser =
-    auth::ClosureFor(&conn.GetClientContext(), conn.GetRoleId())->is_superuser;
-  conn.SetSetting("is_superuser", superuser ? "on" : "off", false);
+  const auto principal = conn.GetClientContext().principal;
+  conn.SetSetting("is_superuser",
+                  principal && principal->is_superuser ? "on" : "off", false);
 }
 
 void ResetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
@@ -370,8 +370,7 @@ void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
   const auto session_role = conn.GetSessionRoleId();
   const auto roles = auth::RolesOf(&ctx);
   const auto session = roles->Access(session_role);
-  if (role.oid != session_role && !(session && session->is_superuser) &&
-      !auth::MembershipsOf(*roles, session_role).CanSet(role.oid)) {
+  if (role.oid != session_role && !(session && session->CanSet(role.oid))) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied to set role \"", name, "\""));
   }

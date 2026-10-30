@@ -1,0 +1,112 @@
+statement ok
+DROP FUNCTION IF EXISTS pgp_inc(integer);
+
+
+statement ok
+DROP TABLE IF EXISTS pgp_other;
+
+
+statement ok
+CREATE FUNCTION pgp_inc(x integer) RETURNS integer LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+statement ok
+PREPARE pgp_q(integer) AS SELECT pgp_inc($1) AS v;
+
+
+query
+EXECUTE pgp_q(1);
+----
+v
+2
+
+
+query
+EXECUTE pgp_q(2);
+----
+v
+3
+
+
+query
+SELECT generic_plans, custom_plans FROM pg_prepared_statements WHERE name = 'pgp_q';
+----
+generic_plans	custom_plans
+2	0
+
+
+statement ok
+CREATE TABLE pgp_other (a integer);
+
+
+query
+EXECUTE pgp_q(3);
+----
+v
+4
+
+
+query
+EXECUTE pgp_q(4);
+----
+v
+5
+
+
+query
+EXECUTE pgp_q(5);
+----
+v
+6
+
+
+query
+SELECT generic_plans, custom_plans FROM pg_prepared_statements WHERE name = 'pgp_q';
+----
+generic_plans	custom_plans
+5	0
+
+
+statement ok
+CREATE OR REPLACE FUNCTION pgp_inc(x integer) RETURNS integer LANGUAGE sql AS 'SELECT $1 + 10';
+
+
+query
+EXECUTE pgp_q(1);
+----
+v
+11
+
+
+statement ok
+DEALLOCATE pgp_q;
+
+
+statement ok
+PREPARE pgp_untyped AS SELECT $1 AS v;
+
+
+query
+EXECUTE pgp_untyped(7);
+----
+v
+7
+
+
+query
+SELECT generic_plans, custom_plans FROM pg_prepared_statements WHERE name = 'pgp_untyped';
+----
+generic_plans	custom_plans
+0	1
+
+
+statement ok
+DEALLOCATE pgp_untyped;
+
+
+statement ok
+DROP TABLE pgp_other;
+
+
+statement ok
+DROP FUNCTION pgp_inc(integer);

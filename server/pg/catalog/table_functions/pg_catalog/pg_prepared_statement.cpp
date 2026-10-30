@@ -118,7 +118,11 @@ class PgPreparedStatement final
       [](const auto& row) -> const auto& { return row.parameter_types; }),
     Col<"result_types">(
       [](const auto& row) -> const auto& { return row.result_types; }),
-    Col<"from_sql">(&PreparedStatement::from_sql));
+    Col<"from_sql">(&PreparedStatement::from_sql),
+    Col<"generic_plans">(
+      [](const auto& row) { return row.data->generic_plans; }),
+    Col<"custom_plans">(
+      [](const auto& row) { return row.data->custom_plans; }));
 
   void Row(const PreparedStatement& statement) { Emit<kStatement>(statement); }
 };

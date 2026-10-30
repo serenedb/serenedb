@@ -312,11 +312,6 @@ duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeRoleEntry(
   return duckdb::make_uniq<RoleCatalogEntry>(*this, info);
 }
 
-bool ClusterCatalog::IsPinnedEntry(const duckdb::CatalogEntry& entry) const {
-  return entry.type == duckdb::CatalogType::ROLE_ENTRY &&
-         entry.oid == pg::kRootUser;
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) {
   auth::CheckCreateRole(transaction, info);

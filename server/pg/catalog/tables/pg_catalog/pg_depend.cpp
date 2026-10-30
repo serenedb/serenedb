@@ -281,8 +281,7 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
   void Reference(duckdb::idx_t classid, duckdb::idx_t objid,
                  const duckdb::CatalogEntry& object, char deptype) {
     using enum duckdb::CatalogType;
-    if (object.type == SCHEMA_ENTRY || object.type == ROLE_ENTRY ||
-        object.type == DATABASE_ENTRY) {
+    if (object.type == SCHEMA_ENTRY || object.type == DATABASE_ENTRY) {
       return;
     }
     Depend(classid, objid, 0, CatalogClassOid(object.type), object.oid, 0,

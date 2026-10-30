@@ -1,0 +1,96 @@
+statement ok
+DROP TABLE IF EXISTS drt_t;
+
+
+statement ok
+DROP ROLE IF EXISTS drt_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS drt_owner;
+
+
+statement ok
+CREATE ROLE drt_reader;
+
+
+statement ok
+CREATE ROLE drt_owner;
+
+
+statement ok
+CREATE TABLE drt_t(a INTEGER);
+
+
+statement ok
+GRANT SELECT ON drt_t TO drt_reader;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+REVOKE SELECT ON drt_t FROM drt_reader;
+
+
+statement ok
+DROP ROLE drt_reader;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT count(*) AS n FROM pg_roles WHERE rolname = 'drt_reader';
+----
+n
+0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE drt_owned(a INTEGER);
+
+
+statement ok
+ALTER TABLE drt_owned OWNER TO drt_owner;
+
+
+skipif serenedb
+statement error
+DROP ROLE drt_owner;
+----
+db error: ERROR: role "drt_owner" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE drt_owner;
+----
+db error: ERROR: Cannot drop entry "drt_owner" because there are entries that depend on it.
+table "drt_owned" depends on role "drt_owner".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+DROP ROLE drt_owner;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'drt_owned';
+----
+n
+0
+
+
+statement ok
+DROP TABLE drt_t;

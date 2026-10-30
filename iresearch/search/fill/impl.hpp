@@ -99,6 +99,14 @@ class Impl : public Node {
     return Sift<false>(in, n, out);
   }
 
+  uint64_t FillCost(doc_id_t min, doc_id_t max) final {
+    if constexpr (requires { _leaf.FillCost(min, max); }) {
+      return _leaf.FillCost(min, max);
+    } else {
+      return 0;
+    }
+  }
+
   detail::BitsetStorage* Folded() noexcept final {
     if constexpr (requires(Leaf& leaf) { leaf.Folded(); }) {
       return _leaf.Folded();
@@ -161,6 +169,10 @@ class Erased {
   IRS_FORCE_INLINE uint32_t Drop(const doc_id_t* in, uint32_t n,
                                  doc_id_t* out) {
     return _node->Drop(in, n, out);
+  }
+
+  IRS_FORCE_INLINE uint64_t FillCost(doc_id_t min, doc_id_t max) {
+    return _node->FillCost(min, max);
   }
 
   IRS_FORCE_INLINE bool Valid() const noexcept { return _node != nullptr; }

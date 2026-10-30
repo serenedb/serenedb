@@ -189,10 +189,12 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
       const auto* const chunk = &cand_docs[begin];
       Members(chunk, n,
               [&](uint32_t i, bool hit, uint32_t freq) IRS_FORCE_INLINE {
-                docs[hits] = chunk[i];
-                slots[hits] = begin + i;
-                freqs[hits] = freq;
-                hits += static_cast<uint32_t>(hit);
+                if (hit) {
+                  docs[hits] = chunk[i];
+                  slots[hits] = begin + i;
+                  freqs[hits] = freq;
+                  ++hits;
+                }
               });
       if (hits >= kScoreBlock) {
         flush(kScoreBlock);

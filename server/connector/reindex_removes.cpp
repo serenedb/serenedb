@@ -116,7 +116,10 @@ struct FileDeletes {
   const DeleteMask* mask = nullptr;
   std::span<const EqRow> eq_rows;
 
-  bool Empty() const { return !whole && !mask && eq_rows.empty(); }
+  bool Empty() const {
+    SDB_ASSERT(!whole);
+    return !mask && eq_rows.empty();
+  }
 
   bool Any(int64_t first, int64_t last) const {
     SDB_ASSERT(!whole);
@@ -164,13 +167,10 @@ struct Deletes {
 };
 
 template<typename T>
-bool Bounds(const duckdb::BaseStatistics& stats, T& min, T& max) {
-  if (!duckdb::NumericStats::HasMinMax(stats)) {
-    return false;
-  }
-  min = duckdb::NumericStats::GetMin<T>(stats);
-  max = duckdb::NumericStats::GetMax<T>(stats);
-  return true;
+std::pair<T, T> Bounds(const duckdb::BaseStatistics& stats) {
+  SDB_ASSERT(duckdb::NumericStats::HasMinMax(stats));
+  return {duckdb::NumericStats::GetMin<T>(stats),
+          duckdb::NumericStats::GetMax<T>(stats)};
 }
 
 irs::doc_id_t DocAt(uint64_t row) {
@@ -218,13 +218,14 @@ class SegmentRemoves {
 
   void Resolve(const irs::SubReader& segment) {
     const auto* columns = segment.GetColReader();
-    const auto* key =
-      columns ? columns->Column(term_dict::kPKFieldId) : nullptr;
+    SDB_ENSURE(columns, "REINDEX: segment ", segment.Meta().name,
+               " has no columnstore");
+    const auto* key = columns->Column(term_dict::kPKFieldId);
     SDB_ENSURE(key && key->StructFieldCount() == 2, "REINDEX: segment ",
                segment.Meta().name, " has no row keys");
     const auto& files = key->StructField(0);
-    if (uint64_t min = 0, max = 0; Bounds(files.MergedStatistics(), min, max) &&
-                                   !_deletes.AnyFile(min, max)) {
+    if (const auto [min, max] = Bounds<uint64_t>(files.MergedStatistics());
+        !_deletes.AnyFile(min, max)) {
       return;
     }
     irs::ReadContext ctx{*columns};
@@ -235,13 +236,11 @@ class SegmentRemoves {
     for (size_t block = 0; block != files.DataRgCount(); ++block) {
       const auto first = files.DataBlockFirstRow(block);
       const auto& meta = files.DataBlocks()[block];
-      uint64_t min = 0;
-      uint64_t max = 0;
-      const bool bounded = Bounds(meta.statistics, min, max);
-      if (bounded && !_deletes.AnyFile(min, max)) {
+      const auto [min, max] = Bounds<uint64_t>(meta.statistics);
+      if (!_deletes.AnyFile(min, max)) {
         continue;
       }
-      if (bounded && min == max) {
+      if (min == max) {
         RemoveFileRows(_deletes.Of(min), block, first, meta.tuple_count,
                        row_half);
       } else {
@@ -281,9 +280,8 @@ class SegmentRemoves {
     const auto& meta = _rows->DataBlocks()[block];
     SDB_ASSERT(_rows->DataBlockFirstRow(block) == first &&
                meta.tuple_count == count);
-    int64_t min = 0;
-    int64_t max = 0;
-    if (Bounds(meta.statistics, min, max) && !file.Any(min, max)) {
+    if (const auto [min, max] = Bounds<int64_t>(meta.statistics);
+        !file.Any(min, max)) {
       return;
     }
     row_half.Read(first, count, [&](uint64_t row, int64_t value) {

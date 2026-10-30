@@ -166,6 +166,9 @@ class JsonParser {
   std::string_view ExtractByPath(const std::vector<std::string>& path) {
     simdjson::ondemand::value value;
     auto doc = GetJsonDocument();
+    if (path.empty()) {
+      return ProcessOutput<Output>(doc);
+    }
     if (doc.get_value().get(value)) {
       return {};
     }
@@ -195,8 +198,8 @@ class JsonParser {
   }
 
  private:
-  template<JsonOutputType Output>
-  std::string_view ProcessOutput(simdjson::ondemand::value& value) {
+  template<JsonOutputType Output, typename T>
+  std::string_view ProcessOutput(T& value) {
     if constexpr (Output == JsonOutputType::TEXT) {
       if (value.type() == simdjson::ondemand::json_type::string) {
         return value.get_string().value();

@@ -1,0 +1,171 @@
+statement error
+SELECT 42 / 0;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT 42 % 0;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT 42::bigint / 0::bigint;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT 42::smallint % 0::smallint;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT mod(42, 0);
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT 42::numeric / 0;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT 42::numeric % 0;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT 1.5 / 0;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT 42::float8 / 0;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT 42::float4 / 0::float4;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT 0::float8 / 0;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT '-Infinity'::float8 / 0;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT interval '1 day' / 0;
+----
+db error: ERROR: division by zero
+
+
+query
+SELECT 'NaN'::float8 / 0 AS nan8, 'NaN'::float4 / 0::float4 AS nan4;
+----
+nan8	nan4
+NaN	NaN
+
+
+query
+SELECT x / y AS q, x % y AS r FROM (VALUES (7, 2), (8, NULL), (NULL, 0)) t(x, y) ORDER BY q;
+----
+q	r
+3	1
+NULL	NULL
+NULL	NULL
+
+
+query
+SELECT x / y AS q FROM (VALUES (1.0::float8, 2.0::float8), (3.0, NULL), (NULL, 0.0)) t(x, y) ORDER BY q;
+----
+q
+0.5
+NULL
+NULL
+
+
+query
+SELECT CASE WHEN y <> 0 THEN x / y END AS q FROM (VALUES (1.0::float8, 0.0::float8), (1.0, 4.0)) t(x, y) ORDER BY q;
+----
+q
+0.25
+NULL
+
+
+statement ok
+CREATE TABLE div_zero (x float8, y float8, n numeric(10,2), i integer);
+
+
+statement ok
+INSERT INTO div_zero SELECT g, CASE WHEN g % 2 = 0 THEN NULL ELSE g END, g, CASE WHEN g % 2 = 0 THEN NULL ELSE g END FROM generate_series(1, 5000) g;
+
+
+query
+SELECT sum(x / y) AS f, sum(n / y) AS n, sum(i / i) AS i FROM div_zero;
+----
+f	n	i
+2500	2500	2500
+
+
+statement ok
+UPDATE div_zero SET y = 0, i = 0 WHERE x = 3001;
+
+
+statement error
+SELECT sum(x / y) FROM div_zero;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT sum(n / y) FROM div_zero;
+----
+db error: ERROR: division by zero
+
+
+onlyif postgres
+statement error
+SELECT sum(x % y) FROM div_zero;
+----
+db error: ERROR: operator does not exist: double precision % double precision<slt:ignore>
+
+
+onlyif serenedb
+statement error
+SELECT sum(x % y) FROM div_zero;
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT sum(i / i) FROM div_zero;
+----
+db error: ERROR: division by zero
+
+
+query
+SELECT sum(x / y) AS f FROM div_zero WHERE y <> 0;
+----
+f
+2499
+
+
+statement ok
+DROP TABLE div_zero;

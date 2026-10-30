@@ -73,6 +73,7 @@
 #include "pg/types/mac.h"
 #include "pg/types/mapping.h"
 #include "pg/types/money.h"
+#include "pg/types/oid.h"
 #include "pg/types/pg_lsn.h"
 #include "pg/types/range.h"
 #include "pg/types/tid.h"
@@ -2410,6 +2411,15 @@ DeserializationFunction<Sink> GetDeserialization(
       if (const auto kind = RegKindOf(type)) {
         return RegTextDecoder<Sink>(*kind);
       }
+      if (IsOid(type)) {
+        return &ParseFixed<int64_t, &TryParseOid>::template Decode<Sink>;
+      }
+      if (IsXid(type)) {
+        return &ParseFixed<int64_t, &TryParseXid>::template Decode<Sink>;
+      }
+      if (IsCid(type)) {
+        return &ParseFixed<int64_t, &TryParseCid>::template Decode<Sink>;
+      }
       return &NumberText<int64_t>::template Decode<Sink>;
     case UTINYINT:
       return SelectDecoder<LoadBin<uint8_t, int16_t>, NumberText<uint8_t>,
@@ -2421,6 +2431,10 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<LoadBin<uint32_t, int64_t>, NumberText<uint32_t>,
                            Sink>(binary);
     case UBIGINT:
+      if (IsXid8(type)) {
+        return SelectDecoder<LoadBin<uint64_t>,
+                             ParseFixed<uint64_t, &TryParseXid8>, Sink>(binary);
+      }
       if (IsPgLsn(type)) {
         return SelectDecoder<LoadBin<uint64_t>, ReadFixed<&ParseLsn>, Sink>(
           binary);

@@ -26,7 +26,6 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/strip.h>
-#include <fast_float/fast_float.h>
 
 #include <algorithm>
 #include <array>
@@ -57,6 +56,7 @@
 #include "pg/catalog/utils/lookup.h"
 #include "pg/sql_utils.h"
 #include "pg/types/logical.h"
+#include "pg/types/oid.h"
 
 namespace sdb::pg {
 namespace {
@@ -1611,20 +1611,8 @@ bool IsNumericOid(std::string_view text) {
 std::optional<uint64_t> ParseOid(std::string_view text,
                                  irs::pg::SqlErrorData* soft_error) {
   int64_t oid = 0;
-  const auto* end = text.data() + text.size();
-  const auto parsed = fast_float::from_chars(
-    text.data(), end, oid, text.size() > 1 && text.front() == '0' ? 8 : 10);
-  if (parsed.ec == std::errc::result_out_of_range) {
-    return Miss(soft_error,
-                SQL_ERROR_DATA(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-                               ERR_MSG("value \"", text,
-                                       "\" is out of range for type oid")));
-  }
-  if (parsed.ptr != end) {
-    return Miss(soft_error,
-                SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                               ERR_MSG("invalid input syntax for type oid: \"",
-                                       text, "\"")));
+  if (auto error = TryParseOid(text, oid)) {
+    return Miss(soft_error, std::move(*error));
   }
   return oid;
 }

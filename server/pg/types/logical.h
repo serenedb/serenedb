@@ -64,7 +64,7 @@ DECLARE_PG_TYPE(REGCOLLATION,   Regcollation,   "regcollation",    BIGINT)
 DECLARE_PG_TYPE(TID,            Tid,            "tid",             BIGINT)
 DECLARE_PG_TYPE(CID,            Cid,            "cid",             BIGINT)
 DECLARE_PG_TYPE(XID,            Xid,            "xid",             BIGINT)
-DECLARE_PG_TYPE(XID8,           Xid8,           "xid8",            BIGINT)
+DECLARE_PG_TYPE(XID8,           Xid8,           "xid8",            UBIGINT)
 DECLARE_PG_TYPE(NAME,           Name,           "name",            VARCHAR)
 DECLARE_PG_TYPE(REFCURSOR,      Refcursor,      "refcursor",       VARCHAR)
 DECLARE_PG_TYPE(ACLITEM,        Aclitem,        "aclitem",         VARCHAR)
@@ -93,7 +93,7 @@ inline duckdb::LogicalType VOID() {
 
 // 32-bit OID-family types: backed by BIGINT in DuckDB for storage, but travel
 // as 4-byte unsigned OID on the PG wire (typsend = oidsend / typreceive =
-// oidrecv in pg_type.dat). `xid8` is NOT in this set -- it's an 8-byte xid.
+// oidrecv in pg_type.dat).
 inline const irs::containers::FlatHashSet<std::string_view> kOidLikeAliases = {
   kOidAlias,          kRegprocAlias,   kRegprocedureAlias,  kRegoperAlias,
   kRegoperatorAlias,  kRegclassAlias,  kRegtypeAlias,       kRegroleAlias,

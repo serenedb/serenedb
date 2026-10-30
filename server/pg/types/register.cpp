@@ -30,6 +30,7 @@
 #include "pg/types/geometric.h"
 #include "pg/types/mac.h"
 #include "pg/types/money.h"
+#include "pg/types/oid.h"
 #include "pg/types/pg_lsn.h"
 #include "pg/types/range.h"
 #include "pg/types/reg.h"
@@ -49,6 +50,7 @@ void RegisterTypes(duckdb::DatabaseInstance& db) {
   RegisterChar(casts);
   RegisterFloat(casts);
   RegisterVectors(casts);
+  RegisterOidTypes(casts);
   RegisterTid(casts);
   RegisterMacaddr(casts, functions);
   RegisterMoney(casts, functions);

@@ -25,7 +25,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
-#include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -38,6 +37,7 @@
 
 #include "pg/types/cast.h"
 #include "pg/types/logical.h"
+#include "pg/types/oid.h"
 
 namespace sdb::pg {
 namespace {
@@ -78,13 +78,8 @@ std::optional<irs::pg::SqlErrorData> TryParseOidAt(std::string_view text,
          !absl::ascii_isspace(static_cast<unsigned char>(text[end]))) {
     ++end;
   }
-  const auto token = text.substr(pos, end - pos);
-  if (!duckdb::TryCast::Operation<duckdb::string_t, int64_t>(
-        duckdb::string_t{token.data(), static_cast<uint32_t>(token.size())},
-        value)) {
-    return SQL_ERROR_DATA(
-      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-      ERR_MSG("invalid input syntax for type oid: \"", token, "\""));
+  if (auto error = TryParseOid(text.substr(pos, end - pos), value)) {
+    return error;
   }
   pos = end;
   return std::nullopt;

@@ -245,9 +245,6 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
         if (IsTid(type)) {
           return make(kTid);
         }
-        if (IsXid8(type)) {
-          return make(kXid8);
-        }
         if (IsRegproc(type)) {
           return make(kRegproc);
         }
@@ -285,6 +282,9 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
       return make(kInt8);
     case UBIGINT:
       if (aliased()) {
+        if (IsXid8(type)) {
+          return make(kXid8);
+        }
         if (IsPgLsn(type)) {
           return make(kPgLsn);
         }

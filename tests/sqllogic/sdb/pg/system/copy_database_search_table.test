@@ -67,7 +67,6 @@ query
 SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'cdst_seq_dst_${__DATABASE__}' ORDER BY 1;
 ----
 sequence_name
-cdst_numbered_pk_seq
 cdst_serial_id_seq
 
 statement ok

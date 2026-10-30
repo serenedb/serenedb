@@ -43,7 +43,6 @@
 #include <duckdb/parser/parsed_data/detach_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
-#include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_alter.hpp>
 #include <duckdb/planner/operator/logical_attach.hpp>
@@ -53,7 +52,6 @@
 #include <duckdb/planner/operator/logical_drop.hpp>
 #include <duckdb/planner/operator/logical_execute.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
-#include <duckdb/planner/operator/logical_vacuum.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -158,7 +156,6 @@ bool HasStatementRules(const duckdb::LogicalOperator& root) {
     case LogicalOperatorType::LOGICAL_ALTER:
     case LogicalOperatorType::LOGICAL_ATTACH:
     case LogicalOperatorType::LOGICAL_DETACH:
-    case LogicalOperatorType::LOGICAL_VACUUM:
     case LogicalOperatorType::LOGICAL_EXECUTE:
       return true;
     default:
@@ -181,13 +178,7 @@ class Enforcer {
  public:
   Enforcer(duckdb::ClientContext& context, ConnectionContext& connection,
            duckdb::LogicalOperator& root)
-    : _context{context},
-      _connection{connection},
-      _root{StatementRoot(root)},
-      _caller{connection.GetRoleId()},
-      _caller_closure_owner{ClosureFor(&context, _caller)},
-      _caller_closure{*_caller_closure_owner},
-      _enforce{!_caller_closure.is_superuser} {}
+    : _context{context}, _connection{connection}, _root{StatementRoot(root)} {}
 
   void Run() { Check(_root); }
 
@@ -257,30 +248,6 @@ class Enforcer {
         }
         break;
       }
-      case LogicalOperatorType::LOGICAL_VACUUM: {
-        auto& vacuum = op.Cast<duckdb::LogicalVacuum>();
-        if (!_enforce || !vacuum.table || duckdb::IsUnowned(*vacuum.table)) {
-          break;
-        }
-        auto& info = vacuum.GetInfo();
-        if (!_caller_closure.Can(CatalogType::TABLE_ENTRY,
-                                 vacuum.table->permissions,
-                                 AclMode::Maintain)) {
-          _connection.AddNotice(SQL_ERROR_DATA(
-            ERR_CODE(ERRCODE_WARNING),
-            ERR_MSG("permission denied to ",
-                    info.options.vacuum ? "vacuum" : "analyze", " \"",
-                    info.ref->Cast<duckdb::BaseTableRef>()
-                      .Table()
-                      .GetIdentifierName(),
-                    "\", skipping it")));
-          vacuum.table = nullptr;
-          info.has_table = false;
-          info.columns.clear();
-          vacuum.children.clear();
-        }
-        return;
-      }
       case LogicalOperatorType::LOGICAL_EXECUTE: {
         const auto& unbound =
           op.Cast<duckdb::LogicalExecute>().prepared->unbound_statement;
@@ -292,6 +259,7 @@ class Enforcer {
         break;
       }
       case LogicalOperatorType::LOGICAL_CREATE_INDEX:
+      case LogicalOperatorType::LOGICAL_VACUUM:
       case LogicalOperatorType::LOGICAL_CREATE_SCHEMA:
       case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
       case LogicalOperatorType::LOGICAL_INVALID:
@@ -440,10 +408,6 @@ class Enforcer {
   duckdb::ClientContext& _context;
   ConnectionContext& _connection;
   duckdb::LogicalOperator& _root;
-  const duckdb::idx_t _caller;
-  RoleAccessRef _caller_closure_owner;
-  const RoleClosure& _caller_closure;
-  const bool _enforce;
 };
 
 }  // namespace

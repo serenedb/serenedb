@@ -258,9 +258,6 @@ class Enforcer {
       _enforce{!_caller_closure.is_superuser} {}
 
   void Run() {
-    if (_enforce) {
-      CheckDatabaseConnect();
-    }
     Check(_root);
     if (_enforce) {
       CheckResolved();
@@ -597,27 +594,6 @@ class Enforcer {
     if (table->catalog.GetCatalogType() !=
         catalog::SereneDBCatalog::kStorageType) {
       RequireServerUsage(table->catalog.GetName());
-    }
-  }
-
-  void CheckDatabaseConnect() {
-    const auto check = [&](const duckdb::Identifier& name) {
-      if (!CanUseDatabase(_context, _connection, _caller_closure,
-                          name.GetIdentifierName())) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                        ERR_MSG("permission denied for database \"",
-                                name.GetIdentifierName(), "\""),
-                        ERR_DETAIL("User does not have CONNECT privilege."));
-      }
-    };
-    for (const auto& [name, identity] : _props.read_databases) {
-      check(name);
-    }
-    for (const auto& [name, modification] : _props.modified_databases) {
-      check(name);
-    }
-    for (const auto* entry : _props.resolved_entries) {
-      check(entry->ParentCatalog().GetName());
     }
   }
 

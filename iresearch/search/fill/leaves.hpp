@@ -123,6 +123,12 @@ class ProbedAndNot {
 
   void Remove(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     const auto words = detail::WindowWords(min, max);
+    if constexpr (kWords) {
+      for (size_t w = 0; w != words; ++w) {
+        mask[w] &= ~Excluded(min, w);
+      }
+      return;
+    }
     auto base = min;
     for (size_t w = 0; w != words; ++w, base += detail::kWindowBits) {
       auto word = mask[w];
@@ -160,6 +166,19 @@ class ProbedAndNot {
   }
 
  private:
+  static constexpr bool kWords = requires(const Leaf& probe) {
+    probe.Words();
+    probe.WordCount();
+    Leaf::kMin;
+  };
+
+  IRS_FORCE_INLINE uint64_t Excluded(doc_id_t min, size_t w) const noexcept {
+    return detail::WordAt(_probe.Words(), _probe.WordCount(),
+                          static_cast<int64_t>(min) -
+                            static_cast<int64_t>(Leaf::kMin) +
+                            static_cast<int64_t>(w * detail::kWindowBits));
+  }
+
   Leaf _probe;
 };
 

@@ -102,11 +102,12 @@ class PrunedConjunction : public Root {
 
       if (lead_max + others_max <= threshold) {
         _span = 1;
-        doc = _lead.Seek(last + 1);
+        doc = _lead.SkipTo(last + 1);
         continue;
       }
 
       if constexpr (kDocFirst) {
+        doc = _lead.Seek(doc);
         if (threshold <= others_max) {
           last = std::max(last, std::min(_lead.SpanLast(_span), max - 1));
           _span = std::min(_span * 2, kMaxSpan);

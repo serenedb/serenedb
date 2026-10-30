@@ -194,7 +194,8 @@ class PrunedTopTest : public tests::IndexTestBase {
   }
 
   std::vector<irs::ScoreDoc> Top(const irs::Filter& filter, size_t k,
-                                 doc_id_t span, bool prune, uint64_t& total) {
+                                 doc_id_t span, bool prune, bool reuse,
+                                 uint64_t& total) {
     const auto queries = Prepare(filter);
     std::vector<irs::ScoreDoc> hits(k);
     std::atomic<irs::score_t> threshold{
@@ -203,12 +204,18 @@ class PrunedTopTest : public tests::IndexTestBase {
     collector.SetSegment(0);
     if (queries[0] && !irs::QueryBuilder::IsEmpty(*queries[0])) {
       const auto end = irs::doc_limits::min() + kDocs;
+      const auto plan_top = [&](irs::ColumnArgsFetcher& fetcher) {
+        return queries[0]->PlanTop({.scorer = _scorer,
+                                    .fetcher = fetcher,
+                                    .prune = prune,
+                                    .k = static_cast<uint32_t>(k)});
+      };
+      irs::ColumnArgsFetcher shared;
+      auto reused = reuse ? plan_top(shared) : nullptr;
       for (auto from = irs::doc_limits::min(); from < end; from += span) {
         irs::ColumnArgsFetcher fetcher;
-        auto plan = queries[0]->PlanTop({.scorer = _scorer,
-                                         .fetcher = fetcher,
-                                         .prune = prune,
-                                         .k = static_cast<uint32_t>(k)});
+        auto own = reuse ? nullptr : plan_top(fetcher);
+        auto* const plan = reuse ? reused.get() : own.get();
         if (!plan) {
           break;
         }
@@ -264,13 +271,16 @@ class PrunedTopTest : public tests::IndexTestBase {
     }
     absl::c_sort(ranked, std::greater<>{});
     for (const size_t k : {size_t{1}, size_t{10}, size_t{100}, size_t{1000}}) {
-      for (const auto [span, prune] :
-           {std::pair{doc_id_t{kDocs}, true}, std::pair{doc_id_t{9973}, true},
-            std::pair{doc_id_t{kDocs}, false},
-            std::pair{doc_id_t{9973}, false}}) {
-        SCOPED_TRACE(absl::StrCat("k ", k, " span ", span, " prune ", prune));
+      for (const auto [span, prune, reuse] :
+           {std::tuple{doc_id_t{kDocs}, true, false},
+            std::tuple{doc_id_t{9973}, true, false},
+            std::tuple{doc_id_t{9973}, true, true},
+            std::tuple{doc_id_t{kDocs}, false, false},
+            std::tuple{doc_id_t{9973}, false, false}}) {
+        SCOPED_TRACE(absl::StrCat("k ", k, " span ", span, " prune ", prune,
+                                  " reuse ", reuse));
         uint64_t total = 0;
-        const auto hits = Top(filter, k, span, prune, total);
+        const auto hits = Top(filter, k, span, prune, reuse, total);
         if (!prune) {
           ASSERT_EQ(matches.size(), total);
         }

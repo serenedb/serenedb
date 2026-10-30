@@ -70,6 +70,8 @@ class DisjunctionLead {
     return _doc = next;
   }
 
+  doc_id_t SkipTo(doc_id_t target) { return Seek(target); }
+
   doc_id_t BlockLast() {
     SDB_ASSERT(!doc_limits::eof(_doc));
     auto last = _doc + (irs::detail::kWindowDocs - 1);

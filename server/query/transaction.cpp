@@ -200,7 +200,7 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
     for (auto& slot : entry.slots) {
       slot.writer.reset();
       if (slot.transaction) {
-        transactions.push_back(&*slot.transaction);
+        transactions.push_back(slot.transaction.get());
         queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
       }
     }

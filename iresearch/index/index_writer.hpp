@@ -301,7 +301,7 @@ class IndexWriter : private util::Noncopyable {
 
     void Reset() noexcept;
 
-    void RegisterFlush() noexcept;
+    void RegisterFlush() noexcept { RegisterFlush({this}); }
 
     static void RegisterFlush(
       std::span<Transaction* const> transactions) noexcept;

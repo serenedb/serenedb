@@ -844,11 +844,6 @@ void IndexWriter::Transaction::Reset() noexcept {
   }
 }
 
-void IndexWriter::Transaction::RegisterFlush() noexcept {
-  Transaction* self = this;
-  RegisterFlush({&self, 1});
-}
-
 void IndexWriter::Transaction::RegisterFlush(
   std::span<Transaction* const> transactions) noexcept {
   FlushContext* target = nullptr;

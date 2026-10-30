@@ -42,7 +42,6 @@
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
-#include <duckdb/parser/parsed_data/create_foreign_server_info.hpp>
 #include <duckdb/parser/parsed_data/create_role_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_sequence_info.hpp>
@@ -174,10 +173,6 @@ std::vector<std::span<const duckdb::AclItem>> AllColumnAcls(
   return acls;
 }
 
-bool IsRename(const duckdb::AlterInfo& info) {
-  return static_cast<bool>(info.GetNewName());
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> FindServer(
   duckdb::ClientContext& context, const duckdb::Identifier& name) {
   for (const auto& db :
@@ -298,7 +293,6 @@ class Enforcer {
                 CatalogType::SEQUENCE_ENTRY, &create.schema, _caller);
         }
         if (_enforce) {
-          RequireSchemaCreate(create.schema);
           CheckForeignKeys(info, create.schema);
         }
         break;
@@ -313,9 +307,6 @@ class Enforcer {
         RequireUserSchema(create.schema->oid, *create.info);
         Stamp(*create.info, DefaultObjType(op.type), create.schema,
               OwnerFor(*create.info));
-        if (_enforce) {
-          RequireSchemaCreate(*create.schema);
-        }
         break;
       }
       case LogicalOperatorType::LOGICAL_CREATE_ROLE: {
@@ -331,15 +322,6 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
         Stamp(*create.info, CatalogType::FOREIGN_SERVER_ENTRY, nullptr);
-        if (_enforce) {
-          const auto& fdw =
-            create.info->Cast<duckdb::CreateForeignServerInfo>().fdw_name;
-          if (fdw == "duckdb_fdw" || fdw == "serenedb_fdw") {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                            ERR_MSG("permission denied: superuser required"));
-          }
-          RequireDatabasePrivilege(AclMode::Create);
-        }
         break;
       }
       case LogicalOperatorType::LOGICAL_CREATE_TRIGGER: {
@@ -355,16 +337,13 @@ class Enforcer {
         auto& create = op.Cast<duckdb::LogicalCreate>();
         Stamp(*create.info, CatalogType::SCHEMA_ENTRY, nullptr,
               SchemaOwner(create.info->Cast<duckdb::CreateSchemaInfo>()));
-        if (_enforce) {
-          RequireDatabasePrivilege(AclMode::Create);
-        }
         break;
       }
       case LogicalOperatorType::LOGICAL_DROP: {
         auto& info = *op.Cast<duckdb::LogicalDrop>().info;
         RequireOutsideTransactionBlock(info);
-        if (_enforce) {
-          CheckDrop(info);
+        if (_enforce && info.type == CatalogType::ROLE_ENTRY) {
+          CheckDropRole(info);
         }
         RequireDroppableNow(info);
         if (PointAtCluster(info, info.type)) {
@@ -383,10 +362,6 @@ class Enforcer {
         } else if (info.type == duckdb::AlterType::ALTER_ROLE) {
           if (_enforce) {
             CheckAlterRole(info.Cast<duckdb::AlterRoleInfo>());
-          }
-        } else {
-          if (_enforce) {
-            CheckAlter(info);
           }
         }
         if (PointAtCluster(info, info.GetCatalogType())) {
@@ -629,24 +604,6 @@ class Enforcer {
     }
   }
 
-  static bool IsSchemaScoped(CatalogType type) {
-    switch (type) {
-      case CatalogType::TABLE_ENTRY:
-      case CatalogType::VIEW_ENTRY:
-      case CatalogType::SEQUENCE_ENTRY:
-      case CatalogType::TYPE_ENTRY:
-      case CatalogType::MACRO_ENTRY:
-      case CatalogType::TABLE_MACRO_ENTRY:
-      case CatalogType::INDEX_ENTRY:
-      case CatalogType::TRIGGER_ENTRY:
-      case CatalogType::TOKENIZER_ENTRY:
-      case CatalogType::JOB_ENTRY:
-        return true;
-      default:
-        return false;
-    }
-  }
-
   duckdb::optional_ptr<duckdb::CatalogEntry> FindEntry(
     CatalogType type, const duckdb::QualifiedName& name) {
     return duckdb::Catalog::GetEntry(_context,
@@ -654,55 +611,16 @@ class Enforcer {
                                      duckdb::OnEntryNotFound::RETURN_NULL);
   }
 
-  duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaOf(
-    CatalogType type, const duckdb::QualifiedName& name) {
-    if (type == CatalogType::SCHEMA_ENTRY) {
-      return duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name(),
-                                        duckdb::OnEntryNotFound::RETURN_NULL);
+  void CheckDropRole(const duckdb::DropInfo& info) {
+    if (!_caller_closure.Has(catalog::RoleOption::CreateRole)) {
+      DenyRoleAction("drop",
+                     "Only roles with the CREATEROLE attribute and the ADMIN "
+                     "option on the target roles may drop roles.");
     }
-    if (type == CatalogType::TRIGGER_ENTRY) {
-      return duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Schema(),
-                                        duckdb::OnEntryNotFound::RETURN_NULL);
-    }
-    if (!IsSchemaScoped(type)) {
-      return nullptr;
-    }
-    auto entry = FindEntry(type, name);
-    return entry ? &entry->ParentSchema(_context) : nullptr;
-  }
-
-  void CheckDrop(const duckdb::DropInfo& info) {
-    const auto& name = info.GetQualifiedName();
-    if (info.type == CatalogType::DATABASE_ENTRY) {
-      RequireDatabaseOwner(name.Name().GetIdentifierName());
-      return;
-    }
-    if (info.type == CatalogType::ROLE_ENTRY) {
-      if (!_caller_closure.Has(catalog::RoleOption::CreateRole)) {
-        DenyRoleAction("drop",
-                       "Only roles with the CREATEROLE attribute and the ADMIN "
-                       "option on the target roles may drop roles.");
-      }
-      if (auto role = ClusterEntry(CatalogType::ROLE_ENTRY,
-                                   name.Name().GetIdentifierName())) {
-        RequireRoleAdmin(*role, "drop");
-      }
-    }
-  }
-
-  void CheckAlter(const duckdb::AlterInfo& info) {
-    const auto type = info.GetCatalogType();
-    if (type == CatalogType::SCHEMA_ENTRY) {
-      if (SchemaOf(type, info.GetQualifiedName())) {
-        RequireDatabasePrivilege(AclMode::Create);
-      }
-      return;
-    }
-    if (!IsRename(info) || !IsSchemaScoped(type)) {
-      return;
-    }
-    if (auto entry = FindEntry(type, info.GetQualifiedName())) {
-      RequireSchemaCreate(entry->ParentSchema(_context));
+    if (auto role =
+          ClusterEntry(CatalogType::ROLE_ENTRY,
+                       info.GetQualifiedName().Name().GetIdentifierName())) {
+      RequireRoleAdmin(*role, "drop");
     }
   }
 
@@ -944,31 +862,6 @@ class Enforcer {
                           duckdb::Identifier{database});
   }
 
-  void RequireSchemaCreate(const duckdb::SchemaCatalogEntry& schema) {
-    if (schema.ParentCatalog().GetAttached().IsTemporary()) {
-      RequireTemporaryCreate();
-      return;
-    }
-    if (!_caller_closure.Can(CatalogType::SCHEMA_ENTRY, schema.permissions,
-                             AclMode::Create)) {
-      duckdb::ThrowPermissionDenied(schema);
-    }
-  }
-
-  void RequireTemporaryCreate() {
-    const auto current = duckdb::DatabaseManager::GetDefaultDatabase(_context);
-    const auto& name = current.GetIdentifierName();
-    auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, name);
-    if (database &&
-        !_caller_closure.Can(CatalogType::DATABASE_ENTRY, database->permissions,
-                             AclMode::CreateTemp)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("permission denied to create temporary tables in database \"",
-                name, "\""));
-    }
-  }
-
   void RequireOwner(const duckdb::CatalogEntry& entry) {
     if (entry.type == CatalogType::INDEX_ENTRY) {
       auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
@@ -989,24 +882,6 @@ class Enforcer {
     auto& cluster = catalog::ClusterOf(_context);
     return cluster.GetCatalogSet(type).GetEntry(
       cluster.GetCatalogTransaction(_context), duckdb::Identifier{name});
-  }
-
-  void RequireDatabasePrivilege(AclMode need) {
-    auto database =
-      ClusterEntry(CatalogType::DATABASE_ENTRY,
-                   duckdb::DatabaseManager::GetDefaultDatabase(_context)
-                     .GetIdentifierName());
-    if (database && !_caller_closure.Can(CatalogType::DATABASE_ENTRY,
-                                         database->permissions, need)) {
-      duckdb::ThrowPermissionDenied(*database);
-    }
-  }
-
-  void RequireDatabaseOwner(std::string_view name) {
-    auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, name);
-    if (database && !_caller_closure.Owns(database->permissions.owner)) {
-      MustOwn(*database);
-    }
   }
 
   void RequireDatabaseNotBeingCreated(const duckdb::Identifier& name) {

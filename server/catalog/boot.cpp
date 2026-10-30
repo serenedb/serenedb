@@ -310,6 +310,7 @@ void RegisterClusterStorage(duckdb::DBConfig& config,
   extension->storage_info = std::move(layout);
   duckdb::StorageExtension::Register(config, ClusterCatalog::kStorageType,
                                      std::move(extension));
+  config.cluster_catalog = duckdb::Identifier{ClusterCatalog::kDatabaseName};
 }
 
 void InitCatalog(std::string_view directory) {

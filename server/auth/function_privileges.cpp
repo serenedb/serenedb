@@ -225,6 +225,9 @@ void RegisterFunctionPrivileges(duckdb::DBConfig& config) {
   for (const auto name : kFileFreeFunctions) {
     config.file_free_functions.emplace(duckdb::Identifier{name});
   }
+  for (const auto name : {"duckdb_fdw", "serenedb_fdw"}) {
+    config.superuser_foreign_data_wrappers.emplace(duckdb::Identifier{name});
+  }
 }
 
 }  // namespace sdb::auth

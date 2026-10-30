@@ -29,6 +29,7 @@
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iterator>
 #include <memory>
@@ -79,6 +80,12 @@ inline constexpr Spec kSpecs[]{
      return i >= 100000 && i < 110000 ? Chance(6, i, 500) : Chance(6, i, 5);
    }},
 };
+
+bool HasExpansion(doc_id_t i) { return Chance(7, i, 300); }
+
+std::string ExpansionTerm(doc_id_t i) {
+  return absl::StrCat("pfx", Mix(uint64_t{i} * 31 + 7) % 200);
+}
 
 bool Has(std::string_view term, doc_id_t i) {
   for (const auto& spec : kSpecs) {
@@ -161,6 +168,14 @@ irs::TermClause Clause(std::string_view value) {
           .term = irs::bstring{irs::ViewCast<irs::byte_type>(value)}};
 }
 
+irs::Filter::ptr PrefixOf(std::string_view prefix) {
+  auto filter = std::make_unique<irs::ByPrefix>();
+  *filter->mutable_field_id() = kBodyId;
+  filter->mutable_options()->term =
+    irs::bstring{irs::ViewCast<irs::byte_type>(prefix)};
+  return filter;
+}
+
 irs::Filter::ptr PhraseOf(const Phrase& phrase) {
   auto filter = std::make_unique<irs::ByPhrase>();
   *filter->mutable_field_id() = kBodyId;
@@ -175,6 +190,7 @@ struct Shape {
   std::vector<std::string_view> must;
   std::vector<std::string_view> must_not;
   std::vector<Phrase> must_not_phrases;
+  std::vector<std::string_view> must_not_prefixes;
 };
 
 class BooleanWindowTest : public tests::IndexTestBase {
@@ -192,6 +208,9 @@ class BooleanWindowTest : public tests::IndexTestBase {
           absl::StrAppend(&text, " ", spec.term);
         }
       }
+      if (HasExpansion(i)) {
+        absl::StrAppend(&text, " ", ExpansionTerm(i));
+      }
       body->value(text);
       ASSERT_TRUE(Insert(*writer, doc));
     }
@@ -201,7 +220,8 @@ class BooleanWindowTest : public tests::IndexTestBase {
   void Check(const Shape& shape) {
     SCOPED_TRACE(absl::StrCat("+", absl::StrJoin(shape.must, " +"), " -",
                               absl::StrJoin(shape.must_not, " -"), " phrases ",
-                              shape.must_not_phrases.size()));
+                              shape.must_not_phrases.size(), " -",
+                              absl::StrJoin(shape.must_not_prefixes, "* -")));
     irs::BooleanFilter filter;
     for (const auto term : shape.must) {
       filter.Add(Clause(term), irs::Occur::Must);
@@ -212,12 +232,19 @@ class BooleanWindowTest : public tests::IndexTestBase {
     for (const auto& phrase : shape.must_not_phrases) {
       filter.Add(PhraseOf(phrase), irs::Occur::MustNot);
     }
+    for (const auto prefix : shape.must_not_prefixes) {
+      filter.Add(PrefixOf(prefix), irs::Occur::MustNot);
+    }
     std::vector<doc_id_t> expected;
     for (doc_id_t i = 0; i != kDocs; ++i) {
       const auto has = [&](const auto& clause) { return Has(clause, i); };
+      const auto expands = [&](std::string_view prefix) {
+        return HasExpansion(i) && ExpansionTerm(i).starts_with(prefix);
+      };
       if (absl::c_all_of(shape.must, has) &&
           absl::c_none_of(shape.must_not, has) &&
-          absl::c_none_of(shape.must_not_phrases, has)) {
+          absl::c_none_of(shape.must_not_phrases, has) &&
+          absl::c_none_of(shape.must_not_prefixes, expands)) {
         expected.push_back(irs::doc_limits::min() + i);
       }
     }
@@ -347,6 +374,20 @@ TEST_P(BooleanWindowTest, exclusions) {
          {{"run"}, {"holes", "rare"}},
          {{"sparse", "dense"}, {"run", "holes"}},
          {{"mid", "half"}, {"sparse"}},
+       }) {
+    Check(shape);
+  }
+}
+
+TEST_P(BooleanWindowTest, prefix_exclusions) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {.must = {"dense"}, .must_not_prefixes = {"pfx"}},
+         {.must = {"half"}, .must_not_prefixes = {"pfx"}},
+         {.must = {"dense", "half"}, .must_not_prefixes = {"pfx"}},
+         {.must = {"mid"}, .must_not_prefixes = {"pfx1"}},
+         {.must = {"run"}, .must_not = {"rare"}, .must_not_prefixes = {"pfx"}},
+         {.must = {"cluster", "half"}, .must_not_prefixes = {"pfx"}},
        }) {
     Check(shape);
   }

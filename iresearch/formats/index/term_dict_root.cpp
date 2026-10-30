@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/index/term_dict_root.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 
 #include <algorithm>
@@ -42,13 +43,6 @@ constexpr uint64_t kMaxHead = std::numeric_limits<uint64_t>::max();
 using U64x8 = uint64_t __attribute__((vector_size(64)));
 using I64x4 = int64_t __attribute__((vector_size(32)));
 using I64x2 = int64_t __attribute__((vector_size(16)));
-using U8x16 = uint8_t __attribute__((vector_size(16)));
-
-enum class ArtKind : uint8_t {
-  Node16 = 0,
-  Node48 = 1,
-  Node256 = 2,
-};
 
 constexpr size_t kArtHeader = 3;
 constexpr size_t kArtInline = sizeof(uint64_t);
@@ -57,19 +51,63 @@ constexpr uint32_t kArtLeaf = uint32_t{1} << 31;
 constexpr uint32_t kArtLongRest = kArtInline + 1;
 constexpr uint32_t kArtMissing = std::numeric_limits<uint32_t>::max();
 constexpr byte_type kArtAbsent = 0x80;
+constexpr uint32_t kArtSortedMax = 32;
+constexpr uint32_t kArtDirect = 256;
+constexpr std::array<uint32_t, 4> kArtCapacities{4, 16, 64, kArtDirect};
+
+static_assert(absl::c_is_sorted(kArtCapacities));
+static_assert(kArtCapacities.back() == kArtDirect);
+static_assert(kArtCapacities.size() <= 8);
+static_assert(absl::c_all_of(kArtCapacities, [](uint32_t capacity) {
+  return capacity == kArtDirect || capacity < kArtAbsent;
+}));
+
+constexpr uint32_t ArtLabelWords(uint32_t capacity) noexcept {
+  if (capacity == kArtDirect) {
+    return 0;
+  }
+  if (capacity <= kArtSortedMax) {
+    return (capacity + sizeof(uint64_t) - 1) / sizeof(uint64_t);
+  }
+  return 256 / sizeof(uint64_t);
+}
+
+template<size_t I = 0>
+IRS_FORCE_INLINE void VisitArtKind(uint32_t kind, auto&& visitor) noexcept {
+  if constexpr (I + 1 == kArtCapacities.size()) {
+    visitor.template operator()<kArtCapacities[I]>();
+  } else if (kind == I) {
+    visitor.template operator()<kArtCapacities[I]>();
+  } else {
+    VisitArtKind<I + 1>(kind, visitor);
+  }
+}
+
+template<uint32_t Words>
+IRS_FORCE_INLINE uint32_t ArtRank(const uint64_t* words,
+                                  byte_type label) noexcept {
+  using Lanes = uint8_t __attribute__((vector_size(Words * sizeof(uint64_t))));
+  Lanes lanes;
+  std::memcpy(&lanes, words, sizeof(lanes));
+  const auto less = std::bit_cast<std::array<uint64_t, Words>>(lanes < label);
+  uint32_t bits = 0;
+  for (const uint64_t word : less) {
+    bits += std::popcount(word);
+  }
+  return bits / 8;
+}
 
 struct ArtMeta {
   uint32_t depth;
   uint32_t fanout;
-  ArtKind kind;
+  uint32_t kind;
   bool terminal;
   uint8_t path;
 };
 
 uint64_t PackArtMeta(const ArtMeta& meta) noexcept {
-  return meta.depth | uint64_t{meta.fanout} << 32 |
-         uint64_t{static_cast<uint8_t>(meta.kind)} << 48 |
-         uint64_t{meta.terminal} << 50 | uint64_t{meta.path} << 56;
+  return meta.depth | uint64_t{meta.fanout} << 32 | uint64_t{meta.kind} << 48 |
+         uint64_t{meta.terminal} << 51 | uint64_t{meta.path} << 56;
 }
 
 constexpr uint32_t ArtDepth(uint64_t meta) noexcept {
@@ -80,12 +118,12 @@ constexpr uint32_t ArtFanout(uint64_t meta) noexcept {
   return static_cast<uint32_t>(meta >> 32) & 0xFFFF;
 }
 
-constexpr ArtKind ArtKindOf(uint64_t meta) noexcept {
-  return static_cast<ArtKind>((meta >> 48) & 3);
+constexpr uint32_t ArtKindOf(uint64_t meta) noexcept {
+  return static_cast<uint32_t>(meta >> 48) & 7;
 }
 
 constexpr uint32_t ArtTerminal(uint64_t meta) noexcept {
-  return static_cast<uint32_t>(meta >> 50) & 1;
+  return static_cast<uint32_t>(meta >> 51) & 1;
 }
 
 constexpr uint64_t ArtPath(uint64_t meta) noexcept { return meta >> 56; }
@@ -434,13 +472,11 @@ ArtRoot::ArtRoot(Separators separators) : SeparatorRoot{std::move(separators)} {
       }
     }
     starts[fanout] = static_cast<uint32_t>(hi);
-    const auto kind = fanout <= 16   ? ArtKind::Node16
-                      : fanout <= 48 ? ArtKind::Node48
-                                     : ArtKind::Node256;
-    const size_t table = kind == ArtKind::Node16   ? 16 / sizeof(uint64_t)
-                         : kind == ArtKind::Node48 ? 256 / sizeof(uint64_t)
-                                                   : 0;
-    const size_t slots = kind == ArtKind::Node256 ? 256 : fanout;
+    const auto kind = static_cast<uint32_t>(
+      absl::c_lower_bound(kArtCapacities, fanout) - kArtCapacities.begin());
+    const uint32_t capacity = kArtCapacities[kind];
+    const size_t table = ArtLabelWords(capacity);
+    const size_t slots = capacity == kArtDirect ? 256 : fanout;
     const size_t at = _words.size();
     const size_t children = at + kArtHeader + table;
     _words.resize(children + 2 * slots);
@@ -456,9 +492,10 @@ ArtRoot::ArtRoot(Separators separators) : SeparatorRoot{std::move(separators)} {
     _words[at + 2] =
       path <= kArtInline ? LoadHead(first.data() + from, path) : 0;
     auto* map = reinterpret_cast<byte_type*>(_words.data() + at + kArtHeader);
-    if (kind == ArtKind::Node16) {
+    if (capacity <= kArtSortedMax) {
+      std::memset(map, 0xFF, table * sizeof(uint64_t));
       std::memcpy(map, labels.data(), fanout);
-    } else if (kind == ArtKind::Node48) {
+    } else if (capacity != kArtDirect) {
       for (size_t label = 0, rank = 0; label != 256; ++label) {
         const bool present = rank != fanout && labels[rank] == label;
         map[label] = static_cast<byte_type>(present ? rank : rank | kArtAbsent);
@@ -467,11 +504,11 @@ ArtRoot::ArtRoot(Separators separators) : SeparatorRoot{std::move(separators)} {
     }
     for (size_t k = 0; k != fanout; ++k) {
       const auto child = self(starts[k], starts[k + 1], depth + 1, level + 1);
-      const size_t slot = kind == ArtKind::Node256 ? labels[k] : k;
+      const size_t slot = capacity == kArtDirect ? labels[k] : k;
       _words[children + 2 * slot] = child[0];
       _words[children + 2 * slot + 1] = child[1];
     }
-    if (kind == ArtKind::Node256) {
+    if (capacity == kArtDirect) {
       uint64_t next = hi;
       for (size_t label = 256, rank = fanout; label-- != 0;) {
         if (rank != 0 && labels[rank - 1] == label) {
@@ -540,37 +577,22 @@ size_t ArtRoot::Find(bytes_view key) const noexcept {
     }
     const byte_type label = key[depth];
     const auto fanout = ArtFanout(meta);
-    const auto kind = ArtKindOf(meta);
     const uint64_t* children = node + kArtHeader;
-    uint32_t slot;
-    if (kind == ArtKind::Node16) {
-      U8x16 labels;
-      std::memcpy(&labels, children, sizeof(labels));
-      const auto less = std::bit_cast<std::array<uint64_t, 2>>(labels < label);
-      const auto equal =
-        std::bit_cast<std::array<uint64_t, 2>>(labels == label);
-      const uint64_t low =
-        fanout >= 8 ? ~uint64_t{0} : (uint64_t{1} << (8 * fanout)) - 1;
-      const uint64_t high = fanout <= 8 ? 0
-                            : fanout == 16
-                              ? ~uint64_t{0}
-                              : (uint64_t{1} << (8 * (fanout - 8))) - 1;
-      slot = static_cast<uint32_t>(
-        (std::popcount(less[0] & low) + std::popcount(less[1] & high)) / 8);
-      children += 16 / sizeof(uint64_t);
-      if (((equal[0] & low) | (equal[1] & high)) == 0) {
-        return slot == fanout ? end : static_cast<uint32_t>(children[2 * slot]);
+    uint32_t slot = label;
+    bool found = true;
+    VisitArtKind(ArtKindOf(meta), [&]<uint32_t Capacity> {
+      const auto* map = reinterpret_cast<const byte_type*>(children);
+      if constexpr (Capacity <= kArtSortedMax) {
+        slot = ArtRank<ArtLabelWords(Capacity)>(children, label);
+        found = slot != fanout && map[slot] == label;
+      } else if constexpr (Capacity != kArtDirect) {
+        slot = map[label] & ~kArtAbsent;
+        found = (map[label] & kArtAbsent) == 0;
       }
-    } else if (kind == ArtKind::Node48) {
-      const byte_type mapped =
-        reinterpret_cast<const byte_type*>(children)[label];
-      slot = mapped & ~kArtAbsent;
-      children += 256 / sizeof(uint64_t);
-      if ((mapped & kArtAbsent) != 0) {
-        return slot == fanout ? end : static_cast<uint32_t>(children[2 * slot]);
-      }
-    } else {
-      slot = label;
+      children += ArtLabelWords(Capacity);
+    });
+    if (!found) {
+      return slot == fanout ? end : static_cast<uint32_t>(children[2 * slot]);
     }
     const uint64_t* child = children + 2 * slot;
     const auto ref = static_cast<uint32_t>(child[0] >> 32);

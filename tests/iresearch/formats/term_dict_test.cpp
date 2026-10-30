@@ -2982,9 +2982,12 @@ void AssertRoots() {
     random.push_back(std::move(key));
   }
   AssertRoot<Root>(random);
+  constexpr size_t kFanouts[] = {1,  2,  3,  4,  5,  6,  8,  9,  15, 16,  17,
+                                 31, 32, 33, 47, 48, 49, 63, 64, 65, 100, 128};
   std::vector<irs::bstring> wide;
+  size_t next = 0;
   for (size_t high = 2; high < 256; high += 1 + high % 3) {
-    const size_t fanout = high % 5 == 0 ? 40 : high % 7 == 0 ? 100 : 3;
+    const size_t fanout = kFanouts[next++ % std::size(kFanouts)];
     for (size_t low = 0; low != fanout; ++low) {
       wide.push_back(irs::bstring{static_cast<irs::byte_type>(high),
                                   static_cast<irs::byte_type>(2 * low + 1)});

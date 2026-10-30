@@ -33,7 +33,8 @@
 #include <limits>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/index/term_dict.hpp"
+#include "iresearch/formats/index/field_reader.hpp"
+#include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
@@ -45,14 +46,8 @@
 
 namespace irs::term_dict {
 
-inline constexpr uint32_t kSlack = block_codec::kInSlack;
 inline constexpr uint32_t kNoEntry = std::numeric_limits<uint32_t>::max();
 inline constexpr uint32_t kNoSkip = std::numeric_limits<uint32_t>::max();
-inline constexpr uint32_t kVarRestart = sizeof(uint16_t);
-
-constexpr uint32_t ColumnWidth(uint32_t max) noexcept {
-  return max <= 0xFF ? 1 : max <= 0xFFFF ? 2 : 4;
-}
 
 enum class Position : uint8_t {
   Before,

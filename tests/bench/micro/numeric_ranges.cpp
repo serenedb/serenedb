@@ -24,9 +24,10 @@
 
 #include <cstring>
 #include <filesystem>
+#include <iresearch/formats/index/field_reader.hpp>
+#include <iresearch/formats/index/field_writer.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
-#include <iresearch/formats/index/term_dict.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>

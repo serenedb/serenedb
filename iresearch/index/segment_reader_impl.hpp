@@ -27,8 +27,8 @@
 #include <memory>
 #include <vector>
 
+#include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
-#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"

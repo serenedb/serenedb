@@ -21,7 +21,7 @@
 #include <absl/algorithm/container.h>
 
 #include "iresearch/formats/flush_state.hpp"
-#include "iresearch/formats/index/term_dict.hpp"
+#include "iresearch/formats/index/field_writer.hpp"
 #include "iresearch/index/inverter/columnar_readers.hpp"
 
 namespace irs {

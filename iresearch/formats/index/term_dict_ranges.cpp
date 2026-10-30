@@ -18,13 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/formats/index/term_dict_ranges.hpp"
+
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 
 #include <algorithm>
 #include <cstring>
 
-#include "iresearch/formats/index/term_dict.hpp"
+#include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/lower_bound.hpp"

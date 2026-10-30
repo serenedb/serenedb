@@ -34,9 +34,10 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
+#include <iresearch/formats/index/field_reader.hpp>
+#include <iresearch/formats/index/field_writer.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
-#include <iresearch/formats/index/term_dict.hpp>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/formats/reader_state.hpp>

@@ -28,106 +28,22 @@
 #include <cstdint>
 #include <deque>
 #include <iterator>
-#include <limits>
 #include <memory>
 #include <span>
 #include <vector>
 
-#include "iresearch/formats/basic_term_reader.hpp"
-#include "iresearch/formats/flush_state.hpp"
-#include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/index/term_dict_root.hpp"
 #include "iresearch/formats/posting/reader.hpp"
-#include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/formats/reader_state.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 
 namespace irs::term_dict {
-
-inline constexpr uint32_t kPage = 4096;
-inline constexpr uint32_t kRestartInterval = 16;
-inline constexpr uint32_t kRecordInterval = 8;
-inline constexpr uint32_t kHeadBytes = sizeof(uint32_t);
-inline constexpr uint32_t kRecordOffset = sizeof(uint16_t);
-inline constexpr uint32_t kMaxStride = 32;
-
-enum class BlockKind : uint8_t {
-  Var = 0,
-  FixedStride = 1,
-  VarFsst = 2,
-};
-
-struct FsstEncoderDelete {
-  void operator()(duckdb_fsst_encoder_t* encoder) const noexcept;
-};
-
-using FsstEncoder = std::unique_ptr<duckdb_fsst_encoder_t, FsstEncoderDelete>;
-
-inline constexpr size_t kMaxRecordBytes = 128;
-
-struct RecordBytes {
-  std::array<byte_type, kMaxRecordBytes> bytes;
-};
-
-class RecordOutput final : private RecordBytes, public BufferedOutput {
- public:
-  RecordOutput() noexcept
-    : RecordBytes{},
-      BufferedOutput{bytes.data(), bytes.data() + bytes.size()} {}
-
-  bytes_view View() const noexcept { return {_buf, Length()}; }
-  void Clear() noexcept { _pos = _buf; }
-
- private:
-  void WriteDirect(const byte_type* b, size_t len) final;
-};
-
-constexpr uint64_t RecordGroups(uint64_t count) noexcept {
-  return (count + kRecordInterval - 1) / kRecordInterval;
-}
-
-struct VarColumns {
-  std::vector<uint32_t> lcps;
-  std::vector<uint32_t> lens;
-  bstring suffixes;
-  std::vector<uint16_t> restarts;
-  uint32_t max = 0;
-};
-
-struct BlockBuilder {
-  bstring keys;
-  std::vector<uint32_t> ends;
-  bstring records;
-  std::vector<uint16_t> record_starts;
-  VarColumns raw;
-  VarColumns coded;
-  uint64_t size = 0;
-  uint64_t coded_size = std::numeric_limits<uint64_t>::max();
-  uint32_t width = 0;
-  uint32_t prefix = 0;
-  uint32_t head_skip = 0;
-  BlockKind kind = BlockKind::Var;
-  bool all_coded = true;
-};
-
-inline constexpr size_t kMaxRangeLevels = 8;
-
-inline constexpr size_t kTermPrefix = sizeof(uint32_t);
-inline constexpr uint32_t kNoLabel = 256;
-
-constexpr uint32_t TermPrefix(bytes_view term) noexcept {
-  uint32_t value = 0;
-  for (size_t i = 0; i != kTermPrefix; ++i) {
-    value = value << 8 | (i < term.size() ? term[i] : 0);
-  }
-  return value;
-}
 
 class PrefixIndex {
  public:
@@ -256,127 +172,6 @@ class InlinePages {
   uint64_t _begin = 0;
   uint64_t _end = 0;
   uint32_t _blocks = 0;
-};
-
-class RangeWriter final {
- public:
-  bool Active() const noexcept { return _pw != nullptr; }
-  void Begin(PostingsWriter& pw);
-  void Add(bytes_view term, const PostingMeta& meta);
-  void Finish(uint64_t terms);
-  void Write(bstring& region, size_t prefix,
-             std::vector<uint64_t>& counts) const;
-  void Clear() noexcept;
-
- private:
-  struct Piece {
-    bstring key;
-    std::vector<doc_id_t> docs;
-    PostingMeta meta;
-    uint64_t docs_count = 0;
-    uint32_t first = 0;
-    bool join = false;
-  };
-
-  struct Level {
-    bstring starts;
-    std::vector<uint32_t> firsts;
-    std::vector<uint32_t> ends;
-    bstring records;
-    Piece group;
-    Piece held;
-    uint32_t count = 0;
-    uint32_t children = 0;
-    bool holding = false;
-  };
-
-  struct Child {
-    bytes_view key;
-    const PostingMeta& meta;
-    std::span<const doc_id_t> docs;
-    uint64_t docs_count;
-    uint32_t index;
-  };
-
-  void Push(size_t level, const Child& child);
-  void Close(size_t level);
-  void Release(size_t level);
-  void TeeLeaf() noexcept;
-
-  std::array<Level, kMaxRangeLevels> _levels;
-  PostingsWriter* _pw = nullptr;
-  RecordOutput _record;
-  size_t _height = 0;
-};
-
-class FieldWriter final {
- public:
-  explicit FieldWriter(bool compaction) noexcept : _compaction{compaction} {}
-
-  FieldWriter(const FieldWriter&) = delete;
-  FieldWriter& operator=(const FieldWriter&) = delete;
-
-  void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
-  void prepare(const FlushState& state);
-  void write(const BasicTermReader& reader);
-  void end();
-
- private:
-  void SampleFsst(const BasicTermReader& reader);
-  void TrainFsst();
-  bytes_view EncodeSuffix(bytes_view suffix);
-  void Add(bytes_view term, const PostingMeta& meta);
-  void Commit(bytes_view term, const PostingMeta& meta);
-  bool Append(bytes_view key, const PostingMeta& meta);
-  bool AppendFixedKey(bytes_view key, uint64_t records);
-  bool AppendVarKey(bytes_view key, uint64_t records);
-  void AppendVarColumns(uint32_t index, bytes_view key);
-  void Seal();
-  void Cut();
-  void WriteBlock(bytes_view block);
-  void EndField(FieldKey key, const FieldProperties& props,
-                uint64_t total_doc_freq, uint64_t total_term_freq,
-                uint64_t first_inline);
-  void ResetField() noexcept;
-  void Reset() noexcept;
-
-  PostingsWriter _pw;
-  RecordOutput _record;
-  BlockBuilder _block;
-  RangeWriter _ranges;
-  bstring _inline;
-  FsstEncoder _fsst;
-  bstring _fsst_table;
-  bstring _samples;
-  std::vector<size_t> _sample_lengths;
-  bstring _coded;
-  bstring _page;
-  std::vector<SpanningBlock> _spans;
-  bstring _separators;
-  bstring _separator;
-  bstring _last;
-  bstring _inline_starts;
-  bstring _range_regions;
-  std::vector<FieldHead> _heads;
-  std::vector<uint32_t> _prefixes;
-  bstring _key;
-  bstring _min;
-  PostingMeta _single;
-  IdxWriter* _idx = nullptr;
-  IndexOutput* _out = nullptr;
-  uint64_t _terms = 0;
-  uint64_t _first_page = 0;
-  uint64_t _inline_start = 0;
-  uint64_t _inline_last = 0;
-  uint32_t _blocks = 0;
-  uint32_t _width = 0;
-  uint32_t _ordinal = 0;
-  uint32_t _prefix_size = 0;
-  uint32_t _first_block = 0;
-  uint32_t _first_entry = 0;
-  uint32_t _first_record = 0;
-  bool _encode = true;
-  const bool _compaction;
 };
 
 class FieldReader;

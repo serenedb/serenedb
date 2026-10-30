@@ -26,9 +26,10 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iresearch/formats/index/field_reader.hpp>
+#include <iresearch/formats/index/field_writer.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
-#include <iresearch/formats/index/term_dict.hpp>
 #include <iresearch/formats/index/term_dict_root.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/mmap_directory.hpp>

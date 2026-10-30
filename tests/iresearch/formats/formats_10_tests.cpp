@@ -26,9 +26,10 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
+#include <iresearch/formats/index/field_reader.hpp>
+#include <iresearch/formats/index/field_writer.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
-#include <iresearch/formats/index/term_dict.hpp>
 #include <iresearch/formats/posting/reader.hpp>
 #include <iresearch/formats/posting/writer.hpp>
 #include <iresearch/formats/posting_meta.hpp>

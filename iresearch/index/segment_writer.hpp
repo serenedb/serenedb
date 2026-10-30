@@ -25,7 +25,7 @@
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
-#include "iresearch/formats/index/term_dict.hpp"
+#include "iresearch/formats/index/field_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/doc_contexts.hpp"
 #include "iresearch/index/index_reader.hpp"

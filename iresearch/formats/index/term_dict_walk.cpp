@@ -29,7 +29,7 @@
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/index/term_dict.hpp"
+#include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/string.hpp"

@@ -73,7 +73,7 @@ def uncovered_row(d):
     return f"| `{d['file']}:{d['line']}` | {what} | {_code(code or '')} |"
 
 
-def build_report(metas, rows, needs, run_url, coverage=(), subject=""):
+def build_report(metas, rows, needs, run_url, coverage=(), subject="", whole_coverage=""):
     by_config = defaultdict(lambda: defaultdict(int))
     longest = defaultdict(float)
     shards = defaultdict(int)
@@ -148,6 +148,8 @@ def build_report(metas, rows, needs, run_url, coverage=(), subject=""):
                              "`coverage.json` of the `coverage-dev-linux-amd64` artifact, or of "
                              "`results-dev-linux-amd64` when dev ran one shard")
             lines += ["", "</details>"]
+    if whole_coverage:
+        lines += ["", whole_coverage.rstrip()]
     if signatures:
         lines += ["", f"**Sanitizer reports** ({len(signatures)})", ""]
         ranked = sorted(signatures.items(), key=lambda kv: (-len(kv[1]), kv[0]))
@@ -228,6 +230,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True)
     ap.add_argument("--coverage", default="")
+    ap.add_argument("--whole-coverage", default="",
+                    help="the nightly's coverage of the whole system, as Markdown, when it exists")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     metas, rows = load(args.results)
@@ -235,9 +239,11 @@ def main():
     run_url = os.environ.get("RUN_URL", "")
     sha = os.environ.get("REPORT_SHA", "")[:9]
     options = run_options(json.loads(os.environ.get("REPORT_INPUTS", "{}") or "{}"))
+    whole = Path(args.whole_coverage) if args.whole_coverage else None
     body, summary = build_report(metas, rows, needs, run_url,
                                  load_coverage(args.coverage, args.results),
-                                 " · ".join(s for s in (sha and f"`{sha}`", options) if s))
+                                 " · ".join(s for s in (sha and f"`{sha}`", options) if s),
+                                 whole.read_text() if whole and whole.is_file() else "")
     Path(args.out).write_text(body)
     Path(args.out).with_suffix(".json").write_text(json.dumps(summary, indent=1))
     step = os.environ.get("GITHUB_STEP_SUMMARY")

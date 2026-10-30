@@ -41,7 +41,7 @@ paths:
 - Drivers: `tests/drivers/run.sh --port <port> --lang <lang>`, only for languages whose toolchain is installed; a skipped language is not a pass.
 - DuckDB suites: `test.py --suite duckdb --duckdb-suite <name>`; run `ninja unittest` first after a change. A suite's skip list holds only the SereneDB divergences that can't pass ([tests/duckdb/README.md](../../tests/duckdb/README.md)).
 - re2 fork suites, in a build with `SDB_GTEST`: `ninja re2-tests`, then `test.py --suite re2`.
-- Coverage of a change, as CI's `dev` reports it: a build with `-DSDB_COVERAGE=On` (`cmake --preset clangd -B build_cov -DSDB_COVERAGE=On`), the tests through `test.py --build-dir build_cov`, then `scripts/coverage/diff.py --build-dir build_cov --profiles out/test/profiles --out out/coverage`; `--html` also renders the changed files.
+- Coverage of a change, as CI's `dev` reports it: a build with `-DSDB_COVERAGE=On` (`cmake --preset clangd -B build_cov -DSDB_COVERAGE=On`), the tests through `test.py --build-dir build_cov`, then `scripts/coverage/diff.py --build-dir build_cov --profiles out/test/profiles --out out/coverage`; `--html` also renders the changed files. What the whole system leaves uncovered comes from the nightly ([ci.md](ci.md)): `scripts/coverage/nightly.py show <component or path>`.
 
 ```bash
 scripts/ci/test.py --build-dir build_clangd --suite sqllogic --test 'sqllogic:*:sdb/pg/simple/*'

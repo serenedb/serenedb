@@ -408,6 +408,15 @@ o
 13
 
 statement ok
+CREATE FUNCTION sfn_having_alias(x int) RETURNS bigint LANGUAGE sql AS 'SELECT count(*) AS c FROM range(3) HAVING c > x'
+
+query
+SELECT sfn_having_alias(1) AS above, sfn_having_alias(5) AS below
+----
+above	below
+3	NULL
+
+statement ok
 CREATE FUNCTION sfn_num(x numeric) RETURNS numeric LANGUAGE sql RETURN x * 2
 
 statement ok
@@ -457,6 +466,9 @@ DROP MACRO sfn_pick_num
 
 statement ok
 DROP FUNCTION sfn_num
+
+statement ok
+DROP FUNCTION sfn_having_alias
 
 statement ok
 DROP FUNCTION sfn_over_body

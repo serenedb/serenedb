@@ -950,6 +950,32 @@ i	a	b
 1	5	5
 
 query
+EXPLAIN SELECT mn_ov_caller(i + 1) FROM range(2) t(i)
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                      │
+│ invoke(lambda 0_macro_argument_0_0: ((1 + 0_macro_argument_0_0) + 0_macro_argument_0_0), (i + 1)) │
+│ ~2 rows                                                                                           │
+╰─────────────────────────────────────────────────┬─────────────────────────────────────────────────╯
+╭─ RANGE ─────────────────────────────────────────┴─────────────────────────────────────────────────╮
+│ Function: RANGE                                                                                   │
+│ ~2 rows                                                                                           │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+statement ok
+CREATE MACRO mn_scaled(x, d := 1, e := 10) AS x + d * e
+
+statement ok
+CREATE MACRO mn_scaled_by(x) AS mn_scaled(x, e := x)
+
+query
+SELECT mn_scaled_by(5) AS nested, mn_scaled(5, e := i) AS bare, mn_scaled(5, e := t.i) AS qualified, mn_scaled(5, e := s.a) AS field FROM (VALUES (2, {'a': 3})) t(i, s)
+----
+nested	bare	qualified	field
+10	7	7	8
+
+query
 SELECT i + 1 AS a, mn_ov(1, d := a) + a AS b FROM range(2) t(i) WHERE b > 0 ORDER BY a
 ----
 a	b
@@ -1125,6 +1151,12 @@ DROP MACRO mn_typed_twice
 
 statement ok
 DROP MACRO mn_typed_out
+
+statement ok
+DROP MACRO mn_scaled_by
+
+statement ok
+DROP MACRO mn_scaled
 
 statement ok
 DROP MACRO mn_ov_typed

@@ -254,6 +254,36 @@ f
 
 
 statement ok
+CREATE SEQUENCE fnp_seq;
+
+
+statement ok
+CREATE FUNCTION fnp_seqdiff(a bigint) RETURNS bigint LANGUAGE sql AS 'SELECT a - a';
+
+
+query
+SELECT fnp_seqdiff(nextval('fnp_seq')) AS d;
+----
+d
+0
+
+
+query
+SELECT currval('fnp_seq') AS c;
+----
+c
+1
+
+
+statement ok
+DROP FUNCTION fnp_seqdiff;
+
+
+statement ok
+DROP SEQUENCE fnp_seq;
+
+
+statement ok
 DROP FUNCTION fnp_vdiff;
 
 

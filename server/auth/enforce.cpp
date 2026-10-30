@@ -213,16 +213,6 @@ bool CanUseDatabase(duckdb::ClientContext& context,
                                   database->permissions, AclMode::Connect);
 }
 
-bool IsCreateDatabase(const duckdb::AttachInfo& info) {
-  if (!info.path.empty() || info.external_resource) {
-    return false;
-  }
-  const auto type = info.options.find("type");
-  return type != info.options.end() &&
-         absl::EqualsIgnoreCase(type->second.ToString(),
-                                catalog::SereneDBCatalog::kStorageType);
-}
-
 duckdb::LogicalOperator& StatementRoot(duckdb::LogicalOperator& root) {
   if ((root.type == LogicalOperatorType::LOGICAL_PREPARE ||
        root.type == LogicalOperatorType::LOGICAL_EXECUTE) &&
@@ -395,19 +385,10 @@ class Enforcer {
         }
         break;
       }
-      case LogicalOperatorType::LOGICAL_ATTACH: {
-        const auto& info = *op.Cast<duckdb::LogicalAttach>().info;
-        if (_enforce && !IsCreateDatabase(info)) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                          ERR_MSG("permission denied: superuser required"));
-        }
-        if (_enforce && !_caller_closure.Has(catalog::RoleOption::CreateDb)) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                          ERR_MSG("permission denied to create database"));
-        }
-        RequireDatabaseNotBeingCreated(info.name);
+      case LogicalOperatorType::LOGICAL_ATTACH:
+        RequireDatabaseNotBeingCreated(
+          op.Cast<duckdb::LogicalAttach>().info->name);
         break;
-      }
       case LogicalOperatorType::LOGICAL_DETACH: {
         const auto name =
           op.Cast<duckdb::LogicalDetach>().info->name.GetIdentifierName();
@@ -415,10 +396,6 @@ class Enforcer {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                           ERR_MSG("cannot detach database \"", name,
                                   "\", use DROP DATABASE"));
-        }
-        if (_enforce) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                          ERR_MSG("permission denied: superuser required"));
         }
         break;
       }
@@ -446,18 +423,6 @@ class Enforcer {
         }
         return;
       }
-      case LogicalOperatorType::LOGICAL_EXPORT:
-      case LogicalOperatorType::LOGICAL_LOAD:
-      case LogicalOperatorType::LOGICAL_UPDATE_EXTENSIONS:
-      case LogicalOperatorType::LOGICAL_CREATE_SECRET:
-      case LogicalOperatorType::LOGICAL_CONNECT:
-      case LogicalOperatorType::LOGICAL_EXTERNAL_RESOURCE:
-      case LogicalOperatorType::LOGICAL_COPY_DATABASE:
-        if (_enforce) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                          ERR_MSG("permission denied: superuser required"));
-        }
-        break;
       case LogicalOperatorType::LOGICAL_EXECUTE: {
         const auto& unbound =
           op.Cast<duckdb::LogicalExecute>().prepared->unbound_statement;
@@ -502,6 +467,13 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_MATERIALIZED_CTE:
       case LogicalOperatorType::LOGICAL_SECURE_VIEW:
       case LogicalOperatorType::LOGICAL_TRIGGER:
+      case LogicalOperatorType::LOGICAL_EXPORT:
+      case LogicalOperatorType::LOGICAL_LOAD:
+      case LogicalOperatorType::LOGICAL_UPDATE_EXTENSIONS:
+      case LogicalOperatorType::LOGICAL_CREATE_SECRET:
+      case LogicalOperatorType::LOGICAL_CONNECT:
+      case LogicalOperatorType::LOGICAL_EXTERNAL_RESOURCE:
+      case LogicalOperatorType::LOGICAL_COPY_DATABASE:
       case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
       case LogicalOperatorType::LOGICAL_PRAGMA:
       case LogicalOperatorType::LOGICAL_EXPLAIN:
@@ -751,10 +723,6 @@ class Enforcer {
 
   void CheckDrop(const duckdb::DropInfo& info) {
     const auto& name = info.GetQualifiedName();
-    if (info.type == CatalogType::SECRET_ENTRY) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("permission denied: superuser required"));
-    }
     if (info.type == CatalogType::SCHEMA_ENTRY) {
       auto schema =
         duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name(),

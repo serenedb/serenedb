@@ -1,0 +1,71 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS eaw_reader;
+
+
+statement ok
+CREATE ROLE eaw_reader LOGIN PASSWORD 'eaw_pw';
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/eaw_side.duckdb' AS eaw_side_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE eaw_side_${__DATABASE__}.main.eaw_t AS SELECT 1 AS a;
+
+
+query
+SELECT a FROM eaw_side_${__DATABASE__}.main.eaw_t;
+----
+a
+1
+
+
+connection c_eaw user=eaw_reader password=eaw_pw
+statement error
+SELECT a FROM eaw_side_${__DATABASE__}.main.eaw_t;
+----
+db error: ERROR: permission denied for database "eaw_side_<slt:ignore>"
+DETAIL: Only roles with the SUPERUSER attribute may use a database attached without a foreign server.
+
+
+connection c_eaw user=eaw_reader password=eaw_pw
+statement error
+INSERT INTO eaw_side_${__DATABASE__}.main.eaw_t VALUES (2);
+----
+db error: ERROR: permission denied for database "eaw_side_<slt:ignore>"
+DETAIL: Only roles with the SUPERUSER attribute may use a database attached without a foreign server.
+
+
+connection c_eaw user=eaw_reader password=eaw_pw
+query
+SELECT count(*) AS listed FROM duckdb_tables() WHERE table_name = 'eaw_t';
+----
+listed
+0
+
+
+statement ok
+CREATE TABLE memory.main.eaw_mem_${__DATABASE__} AS SELECT 1 AS a;
+
+
+connection c_eaw user=eaw_reader password=eaw_pw
+statement error
+SELECT a FROM memory.main.eaw_mem_${__DATABASE__};
+----
+db error: ERROR: permission denied for database "memory"
+DETAIL: Only roles with the SUPERUSER attribute may use a database attached without a foreign server.
+
+
+statement ok
+DROP TABLE memory.main.eaw_mem_${__DATABASE__};
+
+
+statement ok
+DETACH eaw_side_${__DATABASE__};
+
+
+statement ok
+DROP ROLE eaw_reader;

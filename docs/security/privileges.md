@@ -106,7 +106,7 @@ Ownership can be transferred with `ALTER ... OWNER TO`. The new owner immediatel
 Listings and error messages show a role only the objects it may use:
 
 - `duckdb_tables()`, `duckdb_columns()`, `duckdb_schemas()`, `duckdb_views()` and the other catalog listings, their `sdb_*` names, `sdb_jobs()`, `sdb_job_runs()` and `es_cat_indices()` list a table or view only to a role that owns it or holds a privilege on it or on one of its columns, a schema only to a role with `USAGE` or `CREATE` on it, a sequence only to a role with a privilege on it, a function or type only to a role that may use it, and a job and its runs only to its owner.
-- Objects of a database the role has no `CONNECT` on, and of a foreign server it has no `USAGE` on, are left out.
+- Objects of a database the role has no `CONNECT` on, of a foreign server it has no `USAGE` on, and of a database attached without a foreign server are left out.
 - A `Did you mean` suggestion after a mistyped name names only objects the role could see in those listings, and after a mistyped parameter only parameters `duckdb_settings()` lists to the role.
 - An error about a column of a table or view the role cannot see reports `permission denied` for that table or view instead, so errors never list its columns.
 - `PRAGMA table_info` and `pragma_table_info()` describe a table or view only to a role that could see it in those listings, and report `permission denied` for it to any other role.
@@ -124,7 +124,7 @@ These require a superuser, whatever privileges a role holds:
 
 A view reads files and URLs with its owner's authority, as it reads tables: a role with `SELECT` on a view owned by a superuser reads the files the view reads, a view owned by any other role reads no files, and a view created `WITH (security_invoker = true)` reads them with the authority of the role running the query. Reading the tables of a [foreign server](../sql/statements/create_server/index.md#privileges) needs only `USAGE` on the server.
 
-A table that has no owner, such as one created by `dbgen`, can be used only by a superuser.
+A table that has no owner, such as one created by `dbgen`, can be used only by a superuser, and so can a database a superuser attaches without a foreign server, such as a DuckDB file.
 
 ## Notes
 

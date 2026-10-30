@@ -108,14 +108,16 @@ connection sfp_reader user=sfp_reader password=sfp_pw
 statement error
 SELECT rolname FROM sfp_session.pg_catalog.pg_authid ORDER BY rolname;
 ----
-db error: ERROR: permission denied for table pg_authid
+db error: ERROR: permission denied for database "sfp_session"
+DETAIL: Only roles with the SUPERUSER attribute may use a database attached without a foreign server.
 
 
 connection sfp_reader user=sfp_reader password=sfp_pw
 statement error
 SELECT count(*) FROM sfp_session.pg_catalog.pg_hba_file_rules;
 ----
-db error: ERROR: permission denied for view pg_hba_file_rules
+db error: ERROR: permission denied for database "sfp_session"
+DETAIL: Only roles with the SUPERUSER attribute may use a database attached without a foreign server.
 
 
 connection default

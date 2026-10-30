@@ -94,17 +94,18 @@ bool DatabaseVisible(duckdb::ClientContext& context,
                      const ConnectionContext& connection,
                      const duckdb::RoleAccess& closure,
                      duckdb::AttachedDatabase& database) {
-  if (database.GetCatalog().GetCatalogType() ==
-      catalog::SereneDBCatalog::kStorageType) {
+  const auto type = database.GetCatalog().GetCatalogType();
+  if (type == catalog::SereneDBCatalog::kStorageType) {
     return CanUseDatabase(context, connection, closure,
                           database.GetName().GetIdentifierName());
   }
-  if (database.IsSystem() || database.IsTemporary()) {
+  if (type == catalog::ClusterCatalog::kStorageType || database.IsSystem() ||
+      database.IsTemporary()) {
     return true;
   }
   auto server = FindServer(context, database.GetName());
-  return !server || closure.Can(CatalogType::FOREIGN_SERVER_ENTRY,
-                                server->permissions, AclMode::Usage);
+  return server && closure.Can(CatalogType::FOREIGN_SERVER_ENTRY,
+                               server->permissions, AclMode::Usage);
 }
 
 bool EntryVisible(duckdb::ClientContext& context,
@@ -192,6 +193,12 @@ void CheckReference(duckdb::ClientContext& context,
     if (const auto server = FindServer(context, database.GetName())) {
       duckdb::ThrowPermissionDenied(*server);
     }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied for database \"",
+              database.GetName().GetIdentifierName(), "\""),
+      ERR_DETAIL("Only roles with the SUPERUSER attribute may use "
+                 "a database attached without a foreign server."));
   }
   if (entry.type != CatalogType::DATABASE_ENTRY &&
       !EntryVisible(context, connection, caller, entry)) {

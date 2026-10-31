@@ -71,7 +71,6 @@
 #include "auth/lookup.h"
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
-#include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
@@ -399,45 +398,27 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   auto& db_catalog = duckdb::Catalog::GetCatalog(
     context, duckdb::DatabaseManager::GetDefaultDatabase(context));
   const auto owner = GetSereneDBContext(context).GetRoleId();
-  auto& cluster = catalog::ClusterOf(context);
-  auto database =
-    cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-      .GetEntry(cluster.GetCatalogTransaction(context), db_catalog.GetName());
-  const auto* database_permissions =
-    database ? &database->permissions : nullptr;
-  if (const auto closure = auth::ClosureFor(&context, owner);
-      !closure->is_superuser) {
-    if (auto schema = EsSchema(context)) {
-      if (!closure->Can(duckdb::CatalogType::SCHEMA_ENTRY, schema->permissions,
-                        duckdb::AclMode::Create)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                        ERR_MSG("permission denied for schema ", kEsSchema));
-      }
-    } else if (database &&
-               !closure->Can(duckdb::CatalogType::DATABASE_ENTRY,
-                             database->permissions, duckdb::AclMode::Create)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("permission denied for database ",
-                              db_catalog.GetName().GetIdentifierName()));
-    }
-  }
-  {
+  auto binder = duckdb::Binder::CreateBinder(context);
+  binder->SetPrincipal(context.principal);
+  if (!EsSchema(context)) {
+    binder->RequireDatabasePrivilege(db_catalog.GetName(),
+                                     duckdb::AclMode::Create);
     duckdb::CreateSchemaInfo info;
     info.SetSchema(duckdb::Identifier{kEsSchema});
     info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-    info.permissions.AssignOwner(owner, duckdb::CatalogType::SCHEMA_ENTRY,
-                                 database_permissions, duckdb::optional_idx{});
+    binder->AssignOwner(info.permissions, db_catalog,
+                        duckdb::CatalogType::SCHEMA_ENTRY, nullptr, owner);
     db_catalog.CreateSchema(db_catalog.GetCatalogTransaction(context), info);
   }
+  auto& schema = *EsSchema(context);
+  binder->RequireSchemaCreate(schema);
 
   auto options = duckdb::make_uniq<duckdb::CreateTableInfo>();
   options->SetTableName(duckdb::Identifier{data.index});
   options->SetSchema(duckdb::Identifier{kEsSchema});
   options->on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-  const auto schema = EsSchema(context);
-  options->permissions.AssignOwner(
-    owner, duckdb::CatalogType::TABLE_ENTRY, database_permissions,
-    schema ? duckdb::optional_idx{schema->oid} : duckdb::optional_idx{});
+  binder->AssignOwner(options->permissions, db_catalog,
+                      duckdb::CatalogType::TABLE_ENTRY, &schema, owner);
   std::vector<std::string_view> text_columns;
 
   auto add_column = [&](std::string_view name, duckdb::LogicalType type) {

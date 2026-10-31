@@ -1,0 +1,459 @@
+control substitution on
+
+statement ok
+CREATE ROLE ptg_reader_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE ptg_t (id INTEGER PRIMARY KEY, x INTEGER);
+
+
+statement ok
+INSERT INTO ptg_t SELECT g, g * 10 FROM generate_series(1, 100) g;
+
+
+statement ok
+PREPARE ptg_point(integer) AS SELECT x FROM ptg_t WHERE id = $1;
+
+
+query
+EXECUTE ptg_point(5);
+----
+x
+50
+
+
+query
+EXECUTE ptg_point(7);
+----
+x
+70
+
+
+query
+EXECUTE ptg_point(1000);
+----
+x
+
+
+query
+EXECUTE ptg_point(NULL);
+----
+x
+
+
+query
+SELECT generic_plans, custom_plans FROM pg_prepared_statements WHERE name = 'ptg_point';
+----
+generic_plans	custom_plans
+4	0
+
+
+statement ok
+INSERT INTO ptg_t VALUES (1000, 1);
+
+
+query
+EXECUTE ptg_point(1000);
+----
+x
+1
+
+
+statement ok
+PREPARE ptg_big AS SELECT count(*) AS n FROM ptg_t WHERE x > 5000;
+
+
+query
+EXECUTE ptg_big;
+----
+n
+0
+
+
+statement ok
+INSERT INTO ptg_t VALUES (2000, 6000);
+
+
+query
+EXECUTE ptg_big;
+----
+n
+1
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO ptg_t VALUES (3000, 7000);
+
+
+query
+EXECUTE ptg_big;
+----
+n
+2
+
+
+query
+EXECUTE ptg_point(3000);
+----
+x
+7000
+
+
+statement ok
+ROLLBACK;
+
+
+query
+EXECUTE ptg_big;
+----
+n
+1
+
+
+query
+EXECUTE ptg_point(3000);
+----
+x
+
+
+statement ok
+UPDATE ptg_t SET x = 9000 WHERE id = 1;
+
+
+query
+EXECUTE ptg_big;
+----
+n
+2
+
+
+statement ok
+CHECKPOINT;
+
+
+query
+EXECUTE ptg_big;
+----
+n
+2
+
+
+query
+EXECUTE ptg_point(1);
+----
+x
+9000
+
+
+statement ok
+PREPARE ptg_in(integer, integer) AS SELECT id FROM ptg_t WHERE id IN ($1, $2) ORDER BY id;
+
+
+query
+EXECUTE ptg_in(3, 4);
+----
+id
+3
+4
+
+
+query
+EXECUTE ptg_in(4, 99999);
+----
+id
+4
+
+
+statement ok
+PREPARE ptg_expr(integer) AS SELECT x FROM ptg_t WHERE id = $1 + 1;
+
+
+query
+EXECUTE ptg_expr(4);
+----
+x
+50
+
+
+statement ok
+PREPARE ptg_range(integer, integer) AS SELECT count(*) AS n FROM ptg_t WHERE id >= $1 AND id < $2;
+
+
+query
+EXECUTE ptg_range(10, 20);
+----
+n
+10
+
+
+query
+EXECUTE ptg_range(95, 2000);
+----
+n
+7
+
+
+statement ok
+PREPARE ptg_wide(bigint) AS SELECT x FROM ptg_t WHERE id = $1;
+
+
+query
+EXECUTE ptg_wide(6);
+----
+x
+60
+
+
+query
+EXECUTE ptg_wide(8);
+----
+x
+80
+
+
+statement ok
+PREPARE ptg_like(varchar) AS SELECT count(*) AS n FROM ptg_t WHERE id::varchar LIKE $1;
+
+
+query
+EXECUTE ptg_like('10%');
+----
+n
+3
+
+
+statement ok
+PREPARE ptg_del(integer) AS DELETE FROM ptg_t WHERE id = $1;
+
+
+statement ok
+EXECUTE ptg_del(2);
+
+
+statement ok
+EXECUTE ptg_del(3);
+
+
+query
+EXECUTE ptg_in(2, 3);
+----
+id
+
+
+query
+SELECT name, generic_plans, custom_plans FROM pg_prepared_statements WHERE name LIKE 'ptg_%' ORDER BY name;
+----
+name	generic_plans	custom_plans
+ptg_big	6	0
+ptg_del	2	0
+ptg_expr	1	0
+ptg_in	3	0
+ptg_like	0	1
+ptg_point	8	0
+ptg_range	2	0
+ptg_wide	0	2
+
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+query
+EXPLAIN ANALYZE EXECUTE ptg_point(5);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────╮
+│ Table: ptg_t              │
+│ Type: Index Scan          │
+│ Projections: x            │
+│ Column Filter: id = $1    │
+│ Row Groups Scanned: 0 / 1 │
+│ 1 row                 0µs │
+╰───────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE EXECUTE ptg_in(4, 5);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ PROJECTION ──────────────────────╮
+│ Projections: CAST(#0 AS INTEGER)  │
+│ 2 rows                        0µs │
+╰─────────────────┒┎────────────────╯
+╭─ ORDER_BY ──────┚┖────────────────╮
+│ Order By: id ASC                  │
+│ 2 rows                        0µs │
+╰─────────────────┒┎────────────────╯
+╭─ PROJECTION ────┚┖────────────────╮
+│ Projections: CAST(#0 AS SMALLINT) │
+│ 2 rows                        0µs │
+╰─────────────────┒┎────────────────╯
+╭─ TABLE_SCAN ────┚┖────────────────╮
+│ Table: ptg_t                      │
+│ Type: Index Scan                  │
+│ Projections: id                   │
+│ Column Filter: id IN ($1, $2)     │
+│ Row Groups Scanned: 0 / 1         │
+│ 2 rows                        0µs │
+╰───────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE EXECUTE ptg_range(10, 20);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ───────────────────╮
+│ Aggregates: count_star()                │
+│ 1 row                               0µs │
+╰────────────────────┒┎───────────────────╯
+╭─ TABLE_SCAN ───────┚┖───────────────────╮
+│ Table: ptg_t                            │
+│ Type: Sequential Scan                   │
+│ Column Filter: (id >= $1) AND (id < $2) │
+│ Row Groups Scanned: 1 / 1               │
+│ 10 rows                             0µs │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN ANALYZE EXECUTE ptg_wide(6);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TABLE_SCAN ──────────────╮
+│ Table: ptg_t              │
+│ Type: Index Scan          │
+│ Projections: x            │
+│ Column Filter: id = 6     │
+│ Row Groups Scanned: 0 / 1 │
+│ 1 row                 0µs │
+╰───────────────────────────╯
+
+
+statement ok
+RESET profiling_renderer_settings;
+
+
+statement ok
+GRANT SELECT ON ptg_t TO ptg_reader_${__DATABASE__};
+
+
+statement ok
+SET ROLE ptg_reader_${__DATABASE__};
+
+
+query
+EXECUTE ptg_point(5);
+----
+x
+50
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+REVOKE SELECT ON ptg_t FROM ptg_reader_${__DATABASE__};
+
+
+statement ok
+SET ROLE ptg_reader_${__DATABASE__};
+
+
+statement error
+EXECUTE ptg_point(5);
+----
+db error: ERROR: permission denied for table ptg_t
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE TABLE ptg_count (a INTEGER);
+
+
+statement ok
+INSERT INTO ptg_count SELECT g FROM generate_series(1, 10) g;
+
+
+connection reader
+statement ok
+BEGIN;
+
+
+connection reader
+query
+SELECT count(*) AS n FROM ptg_count;
+----
+n
+10
+
+
+statement ok
+DELETE FROM ptg_count WHERE a <= 4;
+
+
+connection reader
+statement ok
+PREPARE ptg_n AS SELECT count(*) AS n FROM ptg_count;
+
+
+connection reader
+query
+EXECUTE ptg_n;
+----
+n
+10
+
+
+connection reader
+statement ok
+COMMIT;
+
+
+connection reader
+query
+EXECUTE ptg_n;
+----
+n
+6
+
+
+connection reader
+statement ok
+DEALLOCATE ptg_n;
+
+
+statement ok
+DEALLOCATE ALL;
+
+
+statement ok
+DROP TABLE ptg_count;
+
+
+statement ok
+DROP TABLE ptg_t;
+
+
+statement ok
+DROP ROLE ptg_reader_${__DATABASE__};

@@ -366,8 +366,7 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
 
 void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,
                                       duckdb::Binder& binder,
-                                      duckdb::LogicalOperator& plan,
-                                      duckdb::StatementProperties& properties) {
+                                      duckdb::LogicalOperator& plan) {
   const auto discard_all = [](const duckdb::DropInfo& info) {
     return info.type == duckdb::CatalogType::PREPARED_STATEMENT &&
            info.extra_drop_info &&

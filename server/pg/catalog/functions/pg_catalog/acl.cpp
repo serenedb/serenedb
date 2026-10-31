@@ -325,21 +325,17 @@ bool Holds(const auth::RoleClosure& closure, CatalogType type,
       closure.CanAny(type, permissions, modes.privs)) {
     return true;
   }
-  auto columns = target.columns;
-  if (target.any_column) {
-    for (const auto& column : target.any_column->Logical()) {
-      if (!column.Acl().empty()) {
-        columns.emplace_back(column.Acl());
-      }
-    }
-  }
-  if (modes.privs != AclMode::NoRights && !columns.empty()) {
-    for (auto bits = std::to_underlying(modes.privs); bits != 0;
-         bits &= bits - 1) {
-      const auto privilege = static_cast<AclMode>(bits & (~bits + 1));
-      if (closure.CanAnyColumn(permissions, privilege, columns)) {
-        return true;
-      }
+  if (modes.privs != AclMode::NoRights) {
+    const auto grants = [&](std::span<const duckdb::AclItem> acl) {
+      return (closure.HeldModes(acl) & modes.privs) != AclMode::NoRights;
+    };
+    if (absl::c_any_of(target.columns, grants) ||
+        (target.any_column &&
+         absl::c_any_of(target.any_column->Logical(),
+                        [&](const duckdb::ColumnDefinition& column) {
+                          return grants(column.Acl());
+                        }))) {
+      return true;
     }
   }
   if (modes.grant_options == AclMode::NoRights) {
@@ -349,8 +345,13 @@ bool Holds(const auth::RoleClosure& closure, CatalogType type,
     return true;
   }
   auto held = closure.GrantableModes(permissions.acl);
-  for (const auto acl : columns) {
+  for (const auto acl : target.columns) {
     held |= closure.GrantableModes(acl);
+  }
+  if (target.any_column) {
+    for (const auto& column : target.any_column->Logical()) {
+      held |= closure.GrantableModes(column.Acl());
+    }
   }
   return (held & modes.grant_options) != AclMode::NoRights;
 }
@@ -886,12 +887,14 @@ struct RolePrivileges {
     if (mask.usage && closure.MemberOf(role)) {
       return true;
     }
-    if (!mask.member && !mask.set && !mask.admin) {
+    if (mask.set && closure.CanSet(role)) {
+      return true;
+    }
+    if (!mask.member && !mask.admin) {
       return false;
     }
     const auto& memberships = MembershipsOf(scope, member);
     return (mask.member && memberships.IsMember(role)) ||
-           (mask.set && memberships.CanSet(role)) ||
            (mask.admin && memberships.IsAdminOf(role));
   }
 };

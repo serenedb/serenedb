@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 
-#include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/function_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
@@ -32,9 +31,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <span>
 #include <string_view>
-#include <vector>
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
@@ -47,15 +44,6 @@ namespace {
 
 using duckdb::AclMode;
 using duckdb::CatalogType;
-
-std::vector<std::span<const duckdb::AclItem>> AllColumnAcls(
-  const duckdb::TableCatalogEntry& table) {
-  std::vector<std::span<const duckdb::AclItem>> acls;
-  for (const auto& column : table.GetColumns().Logical()) {
-    acls.emplace_back(column.Acl());
-  }
-  return acls;
-}
 
 duckdb::optional_ptr<duckdb::CatalogEntry> FindServer(
   duckdb::ClientContext& context, const duckdb::Identifier& name) {
@@ -145,11 +133,14 @@ bool EntryVisible(duckdb::ClientContext& context,
       if (entry.type != CatalogType::TABLE_ENTRY) {
         return false;
       }
-      const auto acls = AllColumnAcls(entry.Cast<duckdb::TableCatalogEntry>());
+      constexpr auto kColumnModes = AclMode::Select | AclMode::Insert |
+                                    AclMode::Update | AclMode::References;
       return absl::c_any_of(
-        std::array{AclMode::Select, AclMode::Insert, AclMode::Update,
-                   AclMode::References},
-        [&](AclMode mode) { return closure.CanAnyColumn(perm, mode, acls); });
+        entry.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical(),
+        [&](const duckdb::ColumnDefinition& column) {
+          return (closure.HeldModes(column.Acl()) & kColumnModes) !=
+                 AclMode::NoRights;
+        });
     }
     case CatalogType::SEQUENCE_ENTRY:
       return closure.CanAny(entry.type, perm,
@@ -219,6 +210,10 @@ auto WithCaller(duckdb::ClientContext& context,
 }  // namespace
 
 bool CanSee(duckdb::ClientContext& context, duckdb::CatalogEntry& entry) {
+  if (const auto principal = context.principal;
+      principal && principal->is_superuser) {
+    return true;
+  }
   const auto* connection = connector::GetSereneDBContextPtr(context);
   if (!connection) {
     return true;
@@ -232,6 +227,10 @@ bool CanSee(duckdb::ClientContext& context, duckdb::CatalogEntry& entry) {
 
 bool CanSeeDatabase(duckdb::ClientContext& context,
                     duckdb::AttachedDatabase& database) {
+  if (const auto principal = context.principal;
+      principal && principal->is_superuser) {
+    return true;
+  }
   const auto* connection = connector::GetSereneDBContextPtr(context);
   if (!connection) {
     return true;
@@ -245,6 +244,10 @@ bool CanSeeDatabase(duckdb::ClientContext& context,
 
 void CheckEntryReference(duckdb::ClientContext& context,
                          duckdb::CatalogEntry& entry) {
+  if (const auto principal = context.principal;
+      principal && principal->is_superuser) {
+    return;
+  }
   const auto* connection = connector::GetSereneDBContextPtr(context);
   if (!connection) {
     return;

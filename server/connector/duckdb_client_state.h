@@ -127,8 +127,7 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   void QueryEnd(duckdb::ClientContext& context) final;
 
   void OnBoundPlan(duckdb::ClientContext& context, duckdb::Binder& binder,
-                   duckdb::LogicalOperator& plan,
-                   duckdb::StatementProperties& properties) final;
+                   duckdb::LogicalOperator& plan) final;
 
   // COPY classification for the NEXT query, staged by the wire session before
   // PendingQuery. QueryBegin resets the metrics of the previous statement, so

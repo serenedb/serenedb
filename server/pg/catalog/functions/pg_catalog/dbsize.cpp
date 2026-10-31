@@ -45,7 +45,6 @@
 #include <string_view>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
@@ -361,10 +360,10 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database ", KeyText(key), " does not exist"));
       }
-      if (const auto closure = auth::SessionClosure(context);
-          closure && !closure->is_superuser &&
-          !closure->Can(duckdb::CatalogType::DATABASE_ENTRY, entry->permissions,
-                        duckdb::AclMode::Connect)) {
+      if (const auto principal = context.principal;
+          principal &&
+          !principal->Can(duckdb::CatalogType::DATABASE_ENTRY,
+                          entry->permissions, duckdb::AclMode::Connect)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                         ERR_MSG("permission denied for database ",
                                 entry->name.GetIdentifierName()));
@@ -427,8 +426,8 @@ const SystemObject& TablespaceEntry(duckdb::string_t name) {
 int64_t TablespaceBytes(duckdb::ClientContext& context,
                         const SystemObject& tablespace) {
   if (tablespace.oid != kPgDefaultTablespace) {
-    if (const auto closure = auth::SessionClosure(context);
-        closure && !closure->Owns(kRootUser)) {
+    if (const auto principal = context.principal;
+        principal && !principal->Owns(kRootUser)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
         ERR_MSG("permission denied for tablespace ", tablespace.name));

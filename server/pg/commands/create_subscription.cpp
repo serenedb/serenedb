@@ -958,10 +958,7 @@ void AlterSubscription(ConnectionContext& conn_ctx, std::string_view name,
     if (*owner == subscription.permissions.owner) {
       return;
     }
-    auto closure = auth::ClosureFor(&context, conn_ctx.GetRoleId());
-    if (*owner != conn_ctx.GetRoleId() && !closure->is_superuser &&
-        !auth::MembershipsOf(*auth::RolesOf(&context), conn_ctx.GetRoleId())
-           .CanSet(*owner)) {
+    if (!auth::ClosureFor(&context, conn_ctx.GetRoleId())->CanSet(*owner)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("must be able to SET ROLE \"", argument, "\""));
     }

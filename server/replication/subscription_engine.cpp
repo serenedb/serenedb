@@ -127,7 +127,7 @@ ReplicationTarget MakeReplicationTarget(
   target.owner_id = config.permissions.owner;
   auto roles = auth::RolesOf(nullptr);
   target.owner_name = roles->NameOf(target.owner_id);
-  const auto* owner = roles->Find(target.owner_id);
+  const auto owner = roles->Access(target.owner_id);
   target.require_password =
     config.password_required && !(owner && owner->is_superuser);
   if (target.conninfo.user.empty()) {

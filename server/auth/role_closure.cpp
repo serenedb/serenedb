@@ -129,7 +129,6 @@ RoleGraphPtr BuildRoleGraph(catalog::ClusterCatalog& cluster,
       node.name = role.name.GetIdentifierName();
       node.member_of = role.MemberOf();
       node.options = role.Options();
-      node.is_superuser = role.IsSuperuser();
     });
   auto closures = InheritClosures(nodes);
   return duckdb::make_shared_ptr<const RoleGraph>(std::move(nodes),
@@ -173,7 +172,6 @@ RoleMemberships MembershipsOf(const RoleGraph& graph, duckdb::idx_t role) {
     return out;
   }
   out.members = Reachable(graph.nodes, role, nullptr);
-  out.settable = Reachable(graph.nodes, role, &duckdb::Membership::set_option);
   for (const auto member : out.members) {
     const auto* node = graph.Find(member);
     if (!node) {

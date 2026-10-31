@@ -145,7 +145,6 @@ class ConnectionContext final : public query::Transaction {
     return _side_channel.Get<T>();
   }
 
-  bool InTransactionBlock() const noexcept { return _in_transaction_block; }
   void SetInTransactionBlock(bool value) noexcept {
     _in_transaction_block = value;
   }

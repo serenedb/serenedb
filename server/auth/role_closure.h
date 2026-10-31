@@ -52,7 +52,6 @@ struct RoleNode {
   std::string name;
   std::vector<duckdb::Membership> member_of;
   catalog::RoleOption options = catalog::RoleOption::None;
-  bool is_superuser = false;
 };
 
 using RoleNodes = irs::containers::FlatHashMap<duckdb::idx_t, RoleNode>;
@@ -101,14 +100,10 @@ class RoleAccessRef {
 
 struct RoleMemberships {
   std::vector<duckdb::idx_t> members;
-  std::vector<duckdb::idx_t> settable;
   std::vector<duckdb::idx_t> admin;
 
   bool IsMember(duckdb::idx_t r) const {
     return absl::c_binary_search(members, r);
-  }
-  bool CanSet(duckdb::idx_t r) const {
-    return absl::c_binary_search(settable, r);
   }
   bool IsAdminOf(duckdb::idx_t r) const {
     return absl::c_binary_search(admin, r);

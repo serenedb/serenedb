@@ -21,13 +21,9 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
 
-namespace duckdb {
-
-class AttachedDatabase;
-class ClientContext;
-
-}  // namespace duckdb
 namespace sdb::auth {
 
 bool CanSee(duckdb::ClientContext& context, duckdb::CatalogEntry& entry);

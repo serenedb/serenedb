@@ -500,9 +500,8 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }
-  if (const auto closure = auth::SessionClosure(context);
-      closure && !closure->is_superuser &&
-      !closure->Owns(table->permissions.owner)) {
+  if (const auto principal = context.principal;
+      principal && !principal->Owns(table->permissions.owner)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("must be owner of table ", data.index));
   }
@@ -1460,7 +1459,7 @@ void EsRefreshExecute(duckdb::ClientContext& context,
 
   const auto closure = auth::SessionClosure(context);
   const auto may_maintain = [&](const duckdb::TableCatalogEntry& table) {
-    return !closure || closure->is_superuser ||
+    return !closure ||
            closure->Can(duckdb::CatalogType::TABLE_ENTRY, table.permissions,
                         duckdb::AclMode::Maintain);
   };

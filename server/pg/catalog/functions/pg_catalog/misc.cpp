@@ -532,8 +532,8 @@ void SignalBackendFunction(duckdb::DataChunk& args,
       continue;
     }
     const auto role = match.token->role.load(std::memory_order_relaxed);
-    const auto* node = roles->Find(role);
-    if (role == kInvalidOid || (node && node->is_superuser)) {
+    const auto access = roles->Access(role);
+    if (role == kInvalidOid || (access && access->is_superuser)) {
       if (!caller->is_superuser) {
         ThrowSignalDenied<kTerminate>(
           kTerminate ? "Only roles with the SUPERUSER attribute may terminate "

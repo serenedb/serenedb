@@ -53,29 +53,43 @@ Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
     });
 }
 
-template<typename Query>
-UnionMember::ptr MakeAnyPhraseMember(const Query& query, const Context& ctx) {
-  return irs::detail::ResolveMatch(
-    query, [&]<irs::detail::PhraseMatch M> -> UnionMember::ptr {
-      if constexpr (M != irs::detail::PhraseMatch::Slop) {
-        return MakePhraseMember<M>(query, ctx);
-      } else {
-        return {};
-      }
-    });
+template<typename Result, typename Make>
+Result MakePhraseOf(const QueryBuilder& query, Make&& make) {
+  if (query.Kind() != QueryKind::Phrase) {
+    return {};
+  }
+  const auto resolve = [&](const auto& phrase) {
+    return irs::detail::ResolveMatch(
+      phrase, [&]<irs::detail::PhraseMatch M> -> Result {
+        if constexpr (M != irs::detail::PhraseMatch::Slop) {
+          return make.template operator()<M>(phrase);
+        } else {
+          return {};
+        }
+      });
+  };
+  if (utils::downCast<PhraseQuery>(query).state.Fixed()) {
+    return resolve(utils::downCast<FixedPhraseQuery>(query));
+  }
+  return resolve(utils::downCast<VariadicPhraseQuery>(query));
 }
 
 }  // namespace
 
 UnionMember::ptr MakeUnionMember(const QueryBuilder& query,
                                  const Context& ctx) {
-  if (query.Kind() != QueryKind::Phrase) {
-    return {};
-  }
-  if (utils::downCast<PhraseQuery>(query).state.Fixed()) {
-    return MakeAnyPhraseMember(utils::downCast<FixedPhraseQuery>(query), ctx);
-  }
-  return MakeAnyPhraseMember(utils::downCast<VariadicPhraseQuery>(query), ctx);
+  return MakePhraseOf<UnionMember::ptr>(
+    query, [&]<irs::detail::PhraseMatch M>(const auto& phrase) {
+      return MakePhraseMember<M>(phrase, ctx);
+    });
+}
+
+PrunedClause::ptr MakeConjunctionClause(const QueryBuilder& query,
+                                        const Context& ctx) {
+  return MakePhraseOf<PrunedClause::ptr>(
+    query, [&]<irs::detail::PhraseMatch M>(const auto& phrase) {
+      return MakePhraseClause<M>(phrase, ctx);
+    });
 }
 
 Root::ptr MakeEmpty() { return memory::make_managed<Empty>(); }

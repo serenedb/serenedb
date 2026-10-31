@@ -7,7 +7,7 @@ db error: ERROR: Could not convert string "NaN" to DECIMAL(10,2)
 statement error
 SELECT ' nan '::NUMERIC;
 ----
-db error: ERROR: Could not convert string " nan " to DECIMAL(18,3)
+db error: ERROR: Could not convert string " nan " to DECIMAL(38,10)
 
 
 statement error

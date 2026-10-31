@@ -12,7 +12,7 @@ This page contains SereneDB's built-in limit values. To check the value of a set
 |---|---|---|---|
 | Array size | 100000 | - | The size `n` of a fixed-size array type `type[n]`; a list (`type[]`) has no such limit. |
 | BLOB size | 4 GB | - | |
-| Expression depth | 1000 | [`max_expression_depth`](./overview.md) | |
+| Nesting depth | What the stack of the thread running the statement holds | - | Expressions, subqueries, joins, set operations, nested types and macro expansions nest until the stack runs low; past that a statement fails with `stack depth limit exceeded` (SQLSTATE `54001`). A stack holds several thousand levels. |
 | Memory allocation for a vector | 128 GB | - | |
 | Memory use | 80% of RAM | [`memory_limit`](./pragmas.md#memory-limit) | Note: This limit only applies to the buffer manager. |
 | Message from a client | 64 MiB | `--pg_max_message_bytes` server flag | One message, such as the text of a statement or a bound parameter value. A larger message closes the connection with `incoming message exceeds maximum size`. `COPY ... FROM STDIN` streams its data and is not limited. |

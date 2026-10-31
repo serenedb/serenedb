@@ -21,9 +21,11 @@
 #include "pg/types/mapping.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
 
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/common/extension_type_info.hpp>
+#include <duckdb/parser/expression/type_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
@@ -33,6 +35,7 @@
 #include "connector/functions/ts_query_codec.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/pg_catalog/format_type.h"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/types/geometric.h"
 #include "pg/types/range.h"
@@ -102,7 +105,7 @@ constexpr PgTypeMapping kMappings[] = {
   {kPgDependencies, &PG_DEPENDENCIES, true},
   {kRegconfig, &REGCONFIG, true},
   {kRegdictionary, &REGDICTIONARY, true},
-  {kJsonb, []() -> duckdb::LogicalType { return duckdb::LogicalType::JSON(); }, false},
+  {kJsonb, []() -> duckdb::LogicalType { return duckdb::LogicalType::JSON(); }, true},
   {kInt4Range, &INT4RANGE, true},
   {kNumrange, &NUMRANGE, true},
   {kTsrange, &TSRANGE, true},
@@ -179,6 +182,55 @@ std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
   return it->second.GetValue<uint64_t>();
 }
 
+const duckdb::TypeExpression* AsTypeExpression(
+  const duckdb::ParsedExpression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::TYPE) {
+    return nullptr;
+  }
+  return &expr.Cast<duckdb::TypeExpression>();
+}
+
+bool Names(const duckdb::TypeExpression& type, std::string_view name) {
+  return type.GetCatalog().empty() && type.GetSchema().empty() &&
+         type.GetTypeName() == name;
+}
+
+int32_t DeclaredTypmod(const duckdb::TypeExpression& type, int32_t oid) {
+  absl::InlinedVector<std::string, 2> texts;
+  for (const auto& modifier : type.GetChildren()) {
+    texts.emplace_back(modifier->ToString());
+  }
+  return TypmodIn(oid, texts, type.GetTypeName().GetIdentifierName());
+}
+
+struct DeclaredType {
+  int32_t oid;
+  int32_t typmod;
+};
+
+std::optional<DeclaredType> DeclaredBuiltin(const duckdb::TypeExpression& type,
+                                            const duckdb::LogicalType& bound) {
+  if (bound.id() == TypeId::VARCHAR && !bound.HasAlias() &&
+      duckdb::StringType::GetCollation(bound).empty()) {
+    if (Names(type, "varchar")) {
+      return DeclaredType{kVarchar, DeclaredTypmod(type, kVarchar)};
+    }
+    if (Names(type, "bpchar")) {
+      return DeclaredType{kBpchar, DeclaredTypmod(type, kBpchar)};
+    }
+    return std::nullopt;
+  }
+  if (bound.IsJSONType() && Names(type, "jsonb")) {
+    return DeclaredType{kJsonb, -1};
+  }
+  if (bound.id() == TypeId::DECIMAL && !bound.HasAlias() &&
+      type.GetChildren().empty() &&
+      (Names(type, "decimal") || Names(type, "numeric"))) {
+    return DeclaredType{kNumeric, -1};
+  }
+  return std::nullopt;
+}
+
 const BuiltinType* FindAliasedType(const duckdb::LogicalType& type,
                                    auto accept) {
   if (!type.HasAlias()) {
@@ -245,9 +297,6 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
         if (IsTid(type)) {
           return make(kTid);
         }
-        if (IsXid8(type)) {
-          return make(kXid8);
-        }
         if (IsRegproc(type)) {
           return make(kRegproc);
         }
@@ -285,6 +334,9 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
       return make(kInt8);
     case UBIGINT:
       if (aliased()) {
+        if (IsXid8(type)) {
+          return make(kXid8);
+        }
         if (IsPgLsn(type)) {
           return make(kPgLsn);
         }
@@ -550,6 +602,32 @@ ColumnType DescribeColumnType(const duckdb::LogicalType& type) {
     result.len = 4;
     result.byval = true;
     result.storage = 'p';
+  }
+  return result;
+}
+
+ColumnType DescribeColumnType(const duckdb::LogicalType& type,
+                              const duckdb::LogicalType& declared) {
+  auto result = DescribeColumnType(type);
+  if (declared.id() != TypeId::UNBOUND) {
+    return result;
+  }
+  const auto* expr =
+    AsTypeExpression(*duckdb::UnboundType::GetTypeExpression(declared));
+  const auto* bound = &type;
+  bool array = false;
+  while (expr && bound->id() == TypeId::LIST && Names(*expr, "list") &&
+         expr->GetChildren().size() == 1) {
+    expr = AsTypeExpression(*expr->GetChildren()[0]);
+    bound = &duckdb::ListType::GetChildType(*bound);
+    array = true;
+  }
+  if (!expr) {
+    return result;
+  }
+  if (const auto builtin = DeclaredBuiltin(*expr, *bound)) {
+    result.oid = array ? FindBuiltinType(builtin->oid)->array : builtin->oid;
+    result.typmod = builtin->typmod;
   }
   return result;
 }

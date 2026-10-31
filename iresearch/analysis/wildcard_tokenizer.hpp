@@ -53,7 +53,7 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
     return "generate_wildcard_ngrams";
   }
 
-  static constexpr byte_type kBoundary{0x1F};
+  static constexpr byte_type kBoundary{0xFF};
 
   explicit WildcardTokenizer(Tokenizer::ptr base_analyzer, size_t ngram_size);
   ~WildcardTokenizer() override;
@@ -68,7 +68,9 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
                uint32_t count, doc_id_t doc, TokenSink& sink,
                FillCtx ctx) final;
 
-  TokenTraits Traits() const noexcept final { return {.store = true}; }
+  TokenTraits Traits() const noexcept final {
+    return {.output = duckdb::LogicalTypeId::BLOB, .store = true};
+  }
 
   BlockTraits WantedBlockTraits() const noexcept final {
     return {.ascii = true};

@@ -18,7 +18,7 @@ ORDER BY ordinal_position;
 ----
 column_name	data_type
 id	integer
-name	text
+name	character varying
 score	double precision
 
 # DOCS_TEST: example_002

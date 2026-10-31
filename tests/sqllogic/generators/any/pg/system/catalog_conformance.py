@@ -12,18 +12,18 @@ CAUSES = {
     "group_by": "GROUP BY a table alias that is also an output column name is rejected",
     "index_am": "SereneDB indexes use access methods of their own",
     "index_desc": "CREATE INDEX drops DESC",
-    "numeric": "A bare numeric is DECIMAL(18,3)",
+    "numeric": "A numeric a view or an aggregate computes is numeric(38,10), not a bare numeric",
     "owner": "The bootstrap superuser has oid 16384, not 10, and public belongs to postgres, not "
              "pg_database_owner",
-    "pgonly": "Identity columns, referential actions, PL/pgSQL, DDL ORMs emit and jsonb are not supported",
+    "pgonly": "Identity columns, referential actions, PL/pgSQL and DDL ORMs emit are not supported",
     "quoted_keywords": "quote_ident, regclass and regtype quote words only DuckDB reserves",
     "ri_triggers": "SereneDB checks foreign keys without internal triggers",
     "serial_sequence": "serial creates a bigint sequence where PostgreSQL creates an integer one",
     "server_credentials": "pg_foreign_server shows options that carry credentials, so only a superuser reads it",
-    "system_columns": "Tables lack PostgreSQL's system columns",
+    "system_columns": "pg_attribute lists no system columns",
     "text_search": "SereneDB's full-text search has no tsvector, tsquery or text search configurations",
     "toast": "SereneDB has no TOAST tables",
-    "typmod": "Type modifiers are dropped or rejected",
+    "typmod": "Type modifiers of view, composite type and expression columns are dropped or rejected",
     "updatable_views": "Views are not updatable",
 }
 
@@ -409,8 +409,8 @@ ORDER BY table_schema::text COLLATE "C", table_name::text COLLATE "C", column_na
 check(pg_class(MAIN))
 check(pg_attribute(MAIN))
 check(pg_attribute_types(MAIN, """
-  AND attname::text @NOT IN ('c_char', 'c_numeric_plain', 'c_varchar', 'city', 'code', 'email', 'sku', 'status',
-    'total')"""), "typmod", "numeric", "aggregate_type")
+  AND attname::text @NOT IN ('c_varchar', 'city', 'code', 'email', 'sku', 'total')"""), "typmod", "numeric",
+      "aggregate_type")
 check(pg_type(MAIN))
 check(f'''SELECT oid, {TYPE_COLUMNS}
 FROM pg_catalog.pg_type
@@ -507,13 +507,12 @@ ORDER BY table_schema::text COLLATE "C", table_name::text COLLATE "C"''', "updat
 check(columns(MAIN, """
   AND (table_schema, table_name, column_name) @NOT IN (('public', 'active_customers', 'id'),
     ('public', 'active_customers', 'email'), ('public', 'active_customers', 'name'),
-    ('app', 'all_types', 'c_numeric_plain'), ('app', 'order_totals', 'total'))"""),
+    ('app', 'order_totals', 'total'))"""),
       "updatable_views", "numeric", "aggregate_type")
 check(column_types(MAIN, """
-  AND (table_name, column_name) @NOT IN (('all_types', 'c_char'), ('all_types', 'c_text'), ('all_types', 'c_varchar'),
-    ('unique_tab', 'code'), ('active_customers', 'email'), ('customers', 'email'), ('customers', 'id'),
-    ('customers', 'mood'), ('order_items', 'sku'), ('orders', 'id'), ('orders', 'ordered_on'), ('orders', 'status'),
-    ('orders', 'ticket'))"""), "typmod", "deparse")
+  AND (table_name, column_name) @NOT IN (('all_types', 'c_text'), ('active_customers', 'email'), ('customers', 'id'),
+    ('customers', 'mood'), ('orders', 'id'), ('orders', 'ordered_on'), ('orders', 'status'), ('orders', 'ticket'))"""),
+      "typmod", "deparse")
 check(f'''SELECT {db("table_catalog")}, table_schema, table_name, check_option, is_trigger_updatable,
   is_trigger_deletable, is_trigger_insertable_into
 FROM information_schema.views
@@ -732,13 +731,8 @@ RELATIONS = {
 DESCENDING = {"public.orders_amount_desc_idx"}
 DIFFERING_COLUMNS = {
     "app.address": (("city",), ("typmod",)),
-    "app.all_types": (("c_char", "c_numeric_plain", "c_varchar"), ("typmod", "numeric")),
     "app.order_totals": (("total",), ("aggregate_type",)),
-    "app.unique_tab": (("code",), ("typmod",)),
     "public.active_customers": (("email",), ("typmod",)),
-    "public.customers": (("email",), ("typmod",)),
-    "public.order_items": (("sku",), ("typmod",)),
-    "public.orders": (("status",), ("typmod",)),
 }
 
 
@@ -884,9 +878,8 @@ check(r'''SELECT q.relname, q.attrelid::regclass::text AS attrelid, q.attname, q
   q.attfdwoptions, (q.attmissingval)::text AS attmissingval, q.def_value, q.description, q.objid FROM (
 SELECT c.relname,a.*,pg_catalog.pg_get_expr(ad.adbin, ad.adrelid, true) as def_value,dsc.description,dep.objid FROM pg_catalog.pg_attribute a INNER JOIN pg_catalog.pg_class c ON (a.attrelid=c.oid) LEFT OUTER JOIN pg_catalog.pg_attrdef ad ON (a.attrelid=ad.adrelid AND a.attnum = ad.adnum) LEFT OUTER JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid) LEFT OUTER JOIN pg_depend dep on dep.refobjid = a.attrelid AND dep.deptype = 'i' and dep.refobjsubid = a.attnum and dep.classid = dep.refclassid WHERE NOT a.attisdropped AND c.relkind not in ('i','I','c') AND c.relnamespace='app'::regnamespace::oid ORDER BY a.attnum
 ) q
-WHERE @NOT (q.attnum < 1 OR (q.relname, q.attname) IN (('all_types', 'c_char'), ('all_types', 'c_numeric_plain'),
-    ('all_types', 'c_text'), ('all_types', 'c_varchar'), ('order_totals', 'total'), ('unique_tab', 'code')))
-ORDER BY q.relname::text COLLATE "C", q.attname::text COLLATE "C"''', "typmod", "numeric", "aggregate_type", "deparse",
+WHERE @NOT (q.attnum < 1 OR (q.relname, q.attname) IN (('all_types', 'c_text'), ('order_totals', 'total')))
+ORDER BY q.relname::text COLLATE "C", q.attname::text COLLATE "C"''', "numeric", "aggregate_type", "deparse",
       "system_columns")
 
 DBEAVER_CONSTRAINTS = ("SELECT c.oid,c.*,t.relname as tabrelname,rt.relnamespace as refnamespace,d.description, case when "
@@ -948,13 +941,11 @@ check('''SELECT q.c1::regtype::text AS oid, q.c2::regtype::text AS oid, q.c3 AS 
 SELECT t.oid,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description FROM pg_catalog.pg_type t LEFT OUTER JOIN pg_catalog.pg_type et ON et.oid=t.typelem LEFT OUTER JOIN pg_catalog.pg_class c ON c.oid=t.typrelid LEFT OUTER JOIN pg_catalog.pg_description d ON t.oid=d.objoid WHERE t.typname IS NOT NULL AND (c.relkind IS NULL OR c.relkind = 'c') AND (et.typcategory IS NULL OR et.typcategory <> 'C') AND t.typnamespace = 'app'::regnamespace::oid
 ) q(c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29, c30, c31, c32, c33, c34, c35, c36)
 ORDER BY q.c3::text COLLATE "C"''')
-for schema, table, differing in (("app", "all_types", "('c_char', 'c_numeric_plain', 'c_varchar')"),
-                                 ("public", "orders", "('status')")):
+for schema, table in (("app", "all_types"), ("public", "orders")):
     check(f'''SELECT q.column_name, q.data_type, q.character_maximum_length, q.numeric_precision, q.numeric_scale FROM (
 select column_name, data_type, character_maximum_length, numeric_precision, numeric_scale from INFORMATION_SCHEMA.columns where table_name = '{table}' and table_schema = '{schema}' order by ordinal_position
 ) q
-WHERE q.column_name @NOT IN {differing}
-ORDER BY q.column_name::text COLLATE "C"''', "typmod")
+ORDER BY q.column_name::text COLLATE "C"''')
 check('''SELECT CASE WHEN q.database = current_database() THEN 'current_database' ELSE q.database END AS database, q."name",
   q."schema", q."type" FROM (
 select current_database() as database, tablename as name, schemaname as schema, 'table' as type from pg_tables where schemaname ilike 'app' union all select current_database() as database, viewname as name, schemaname as schema, 'view' as type from pg_views where schemaname ilike 'app' union all select current_database() as database, matviewname as name, schemaname as schema, 'materialized_view' as type from pg_matviews where schemaname ilike 'app'
@@ -1020,8 +1011,7 @@ check('''SELECT q."name", q.database_type, q.database_position, q.table_schema, 
   q.database_required, q.database_is_auto_increment FROM (
 SELECT c.column_name AS name, c.udt_name AS database_type, c.ordinal_position - 1 AS database_position, c.table_schema AS table_schema, c.table_name AS table_name, pk.column_name IS NOT NULL AS pk, col_description(cast(cast(format('%I.%I', cast(c.table_schema AS text), cast(c.table_name AS text)) AS regclass) AS oid), c.ordinal_position) AS field_comment, (column_default IS NULL AND is_nullable = 'NO' AND NOT (column_default IS NOT NULL OR is_identity = 'YES' OR is_generated = 'ALWAYS')) AS database_required, (column_default LIKE '%nextval(%' OR is_identity = 'YES') AS database_is_auto_increment FROM information_schema.columns AS c LEFT JOIN (SELECT tc.table_schema, tc.table_name, kc.column_name FROM information_schema.table_constraints AS tc INNER JOIN information_schema.key_column_usage AS kc ON (tc.constraint_name = kc.constraint_name) AND (tc.table_schema = kc.table_schema) AND (tc.table_name = kc.table_name) WHERE tc.constraint_type = 'PRIMARY KEY') AS pk ON (c.table_schema = pk.table_schema) AND (c.table_name = pk.table_name) AND (c.column_name = pk.column_name) WHERE c.table_schema = 'public' AND c.table_name = 'customers' ORDER BY table_schema ASC, table_name ASC, database_position ASC
 ) q
-WHERE q."name" @NOT IN ('email')
-ORDER BY q."name"::text COLLATE "C"''', "typmod")
+ORDER BY q."name"::text COLLATE "C"''')
 check('''SELECT q.oid::regtype::text AS oid, q.attname, q.atttypid FROM (
 SELECT typ.oid, att.attname, att.atttypid FROM pg_type AS typ JOIN pg_namespace AS ns ON (ns.oid = typ.typnamespace) JOIN pg_class AS cls ON (cls.oid = typ.typrelid) JOIN pg_attribute AS att ON (att.attrelid = typ.typrelid) WHERE (typ.typtype = 'c' AND cls.relkind='c') AND attnum > 0 AND NOT attisdropped ORDER BY typ.oid, att.attnum
 ) q
@@ -1149,7 +1139,7 @@ def pgjdbc_columns(schema, table):
 
 
 for schema, table, differing, causes in (
-        ("app", "all_types", "('c_char', 'c_numeric_plain', 'c_text', 'c_varchar')", ("typmod", "numeric", "deparse")),
+        ("app", "all_types", "('c_text')", ("deparse",)),
         ("public", "active_customers", "('email')", ("typmod",))):
     check(f'''SELECT q.nspname, q.relname, q.attname, q.atttypid::regtype::text AS atttypid, q.attnotnull, q.atttypmod, q.attlen,
   q.typtypmod, q.attnum, q.attidentity, q.attgenerated, q.adsrc, q.description, q.typbasetype, q.typtype FROM (
@@ -1255,8 +1245,7 @@ check(f'''SELECT q.attname, q.format_type, q.attnotnull, q.atttypid, q.atttypmod
   q.attgenerated FROM (
 {ORDERS_COLUMNS}
 ) q
-WHERE q.attname @NOT IN ('status')
-ORDER BY q.attname::text COLLATE "C"''', "typmod")
+ORDER BY q.attname::text COLLATE "C"''')
 check(f'''SELECT q.attname, q.pg_get_expr FROM (
 {ORDERS_COLUMNS}
 ) q
@@ -1294,8 +1283,7 @@ ORDER BY q.attname::text COLLATE "C"''')
 check('''SELECT q."name", q.data_type, q.is_array, q.column_comment FROM (
 SELECT c.column_name AS name, COALESCE( NULLIF(c.udt_name || '(' || c.character_maximum_length::varchar || ')', c.udt_name || '(NULL)'), NULLIF(c.udt_name || '(' || c.numeric_precision::varchar || ',' || c.numeric_scale::varchar || ')', c.udt_name || '(,)'), NULLIF(c.udt_name || '(' || c.numeric_precision::varchar || ')', c.udt_name || '(NULL)'), NULLIF(c.udt_name || '(' || c.datetime_precision::varchar || ')', c.udt_name || '(NULL)'), c.udt_name) AS data_type, CASE WHEN c.data_type = 'ARRAY' THEN 'YES' ELSE 'NO' END AS is_array, pg_catalog.col_description(cls.oid, c.ordinal_position) AS column_comment FROM pg_class cls JOIN pg_namespace nsp ON nsp.oid = cls.relnamespace JOIN information_schema.columns c ON c.table_schema = nsp.nspname AND c.table_name = cls.relname WHERE cls.oid = 'app.all_types'::regclass::oid ORDER BY c.ordinal_position
 ) q
-WHERE q."name" @NOT IN ('c_char', 'c_numeric_plain', 'c_varchar')
-ORDER BY q."name"::text COLLATE "C"''', "typmod", "numeric")
+ORDER BY q."name"::text COLLATE "C"''')
 check('''SELECT q.id::regclass::text AS id, q."name" FROM (
 SELECT c.oid AS id, c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p') AND has_schema_privilege(current_user, n.nspname, 'USAGE') AND has_table_privilege(current_user, c.oid, 'SELECT') AND n.oid = 'public'::regnamespace::oid
 ) q
@@ -1339,8 +1327,7 @@ SQLALCHEMY_VISIBLE = "pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AN
 check(f'''SELECT q."name", q.format_type, q.not_null, q.table_name, q.comment, q.generated, q.identity_options FROM (
 {sqlalchemy_columns(SQLALCHEMY_VISIBLE, ("orders", "customers"))}
 ) q
-WHERE (q."name", q.table_name) @NOT IN (('email', 'customers'), ('status', 'orders'))
-ORDER BY q."name"::text COLLATE "C", q.table_name::text COLLATE "C"''', "typmod", "deparse")
+ORDER BY q."name"::text COLLATE "C", q.table_name::text COLLATE "C"''')
 check(f'''SELECT q."name", q."default", q.table_name FROM (
 {sqlalchemy_columns(SQLALCHEMY_VISIBLE, ("orders", "customers"))}
 ) q
@@ -1615,21 +1602,21 @@ check(psql_relation("public.active_customers"))
 check(psql_columns("public.active_customers", PSQL_COLUMNS, """
 WHERE q.attname @NOT IN ('email')"""), "typmod")
 for relation, differing, causes in (
-        ("app.all_types", "('c_char', 'c_numeric_plain', 'c_text', 'c_varchar')", ("typmod", "numeric", "deparse")),
-        ("public.customers", "('email', 'id', 'mood')", ("typmod", "deparse")),
-        ("public.order_items", "('sku')", ("typmod",)),
-        ("public.orders", "('status')", ("typmod",))):
+        ("app.all_types", "('c_text')", ("deparse",)),
+        ("public.customers", "('id', 'mood')", ("deparse",)),
+        ("public.order_items", "", ()),
+        ("public.orders", "", ())):
     schema, name = relation.split(".")
     check(psql_lookup(name, schema))
     check(psql_relation(relation))
+    narrowing = f"\nWHERE q.attname @NOT IN {differing}" if differing else ""
     if relation == "public.orders":
-        check(psql_columns(relation, PSQL_COLUMNS.replace(" q.pg_get_expr,", ""), f"\nWHERE q.attname @NOT IN {differing}"),
-              *causes)
+        check(psql_columns(relation, PSQL_COLUMNS.replace(" q.pg_get_expr,", ""), narrowing), *causes)
         check(psql_columns(relation, "q.attname, q.pg_get_expr", "\nWHERE q.attname @NOT IN ('id', 'ordered_on', 'status', 'ticket')"),
               "deparse")
         check(psql_indexes(relation, "\nWHERE q.relname @NOT IN ('orders_amount_desc_idx')"), "index_desc")
     else:
-        check(psql_columns(relation, PSQL_COLUMNS, f"\nWHERE q.attname @NOT IN {differing}"), *causes)
+        check(psql_columns(relation, PSQL_COLUMNS, narrowing), *causes)
         check(psql_indexes(relation))
     if relation in ("public.order_items", "public.orders"):
         check(psql_checks(relation), "deparse")
@@ -1790,8 +1777,7 @@ ORDER BY q."Name"::text COLLATE "C"''')
 check(psql_lookup("customers", "public"))
 check(psql_relation("public.customers", verbose=True))
 check(psql_columns("public.customers", PSQL_COLUMNS.replace(" q.pg_get_expr,", "") + ", q.attstorage,\n  q.attcompression, "
-                   "q.attstattarget, q.col_description", "\nWHERE q.attname @NOT IN ('email')", PSQL_TABLE_EXTRAS),
-      "typmod")
+                   "q.attstattarget, q.col_description", "", PSQL_TABLE_EXTRAS))
 check(psql_columns("public.customers", "q.attname, q.pg_get_expr", "\nWHERE q.attname @NOT IN ('id', 'mood')",
                    PSQL_TABLE_EXTRAS), "deparse")
 check(psql_indexes("public.customers"))
@@ -1843,7 +1829,7 @@ check("SELECT count(*) > 700 AS populated FROM information_schema.sql_features",
 
 t.statement("CREATE SCHEMA pgonly")
 pgonly("CREATE DOMAIN pgonly.positive_int AS int4 CHECK (VALUE > 0)", 'syntax error at or near "DOMAIN"')
-pgonly("CREATE TABLE pgonly.json_tab (id int4 PRIMARY KEY, doc jsonb)", "Type with name jsonb does not exist!")
+t.statement("CREATE TABLE pgonly.json_tab (id int4 PRIMARY KEY, doc jsonb)")
 pgonly("CREATE TABLE pgonly.domain_tab (id int4 PRIMARY KEY, qty pgonly.positive_int)",
        "Type with name positive_int does not exist!")
 t.statement("CREATE TABLE pgonly.parent (id int4 PRIMARY KEY)")
@@ -1934,8 +1920,6 @@ for sql in (
         "SELECT pg_catalog.format_type('pgonly.positive_int'::regtype, NULL) AS domain_format",
         "SELECT (SELECT pg_catalog.pg_get_constraintdef(c.oid) FROM pg_catalog.pg_constraint c WHERE c.contypid = "
         "'pgonly.positive_int'::regtype) AS domain_check",
-        "SELECT (SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) FROM pg_catalog.pg_attribute a WHERE a.attrelid = "
-        "'pgonly.json_tab'::regclass AND a.attname = 'doc') AS jsonb_column",
         "SELECT (SELECT pg_catalog.pg_get_constraintdef(c.oid) FROM pg_catalog.pg_constraint c WHERE c.conrelid = "
         "'pgonly.cascade_child'::regclass AND c.contype = 'f') AS cascade_fk",
         "SELECT pg_catalog.pg_get_serial_sequence('pgonly.identity_tab', 'id') AS identity_sequence",
@@ -1946,6 +1930,8 @@ for sql in (
         "SELECT " + spaced("pg_catalog.pg_get_functiondef('pgonly.touch()'::regprocedure)", "functiondef"),
         "SELECT pg_catalog.obj_description('pgonly.touch()'::regprocedure, 'pg_proc') AS function_description"):
     check(sql, "pgonly")
+check("SELECT (SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) FROM pg_catalog.pg_attribute a WHERE a.attrelid = "
+      "'pgonly.json_tab'::regclass AND a.attname = 'doc') AS jsonb_column")
 check(f'''SELECT q."name", q.format_type, q."default", q.not_null, q.table_name, q.comment, q.generated, q.identity_options FROM (
 {sqlalchemy_columns("pg_catalog.pg_namespace.nspname = 'pgonly'", ("identity_tab",))}
 ) q

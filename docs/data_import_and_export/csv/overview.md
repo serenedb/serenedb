@@ -134,7 +134,7 @@ Multiple files can be read at once by providing a glob or a list of files. Refer
 
 ## Writing Using the `COPY` Statement
 
-The [`COPY` statement](../../sql/statements/copy/index.md#copy--to) can be used to load data from a CSV file into a table. This statement has the same syntax as the one used in PostgreSQL. To load the data using the `COPY` statement, we must first create a table with the correct schema (which matches the order of the columns in the CSV file and uses types that fit the values in the CSV file). `COPY` detects the CSV's configuration options automatically.
+The [`COPY` statement](../../sql/statements/copy/index.md#copy--to) can be used to load data from a CSV file into a table. This statement has the same syntax as the one used in PostgreSQL. To load the data using the `COPY` statement, we must first create a table with the correct schema (which matches the order of the columns in the CSV file and uses types that fit the values in the CSV file). `COPY` detects the CSV's configuration options automatically, unless the statement names the format with `FORMAT csv`: then it reads the CSV dialect of PostgreSQL, see [`COPY ... FROM`](../../sql/statements/copy/index.md#copy--from).
 
 <SqlLogicTest id="data_import_and_export/csv/overview/example_011" />
 

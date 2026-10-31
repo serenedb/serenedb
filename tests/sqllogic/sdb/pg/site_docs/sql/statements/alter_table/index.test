@@ -154,6 +154,36 @@ statement ok
 ALTER TABLE integers
 RENAME TO integers_old;
 
+# DOCS_TEST: example_038
+
+statement ok
+DROP TABLE IF EXISTS integers;
+
+statement ok
+DROP SCHEMA IF EXISTS archive CASCADE;
+
+statement ok
+CREATE SCHEMA archive;
+
+statement ok
+CREATE TABLE integers (i INTEGER, j INTEGER);
+
+statement ok
+INSERT INTO integers VALUES (1, 10), (2, 20);
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE integers
+SET SCHEMA archive;
+
+query
+SELECT i, j FROM archive.integers ORDER BY i;
+----
+i	j
+1	10
+2	20
+
 # DOCS_TEST: example_017
 
 statement ok

@@ -76,7 +76,8 @@ struct InfoColumn {
     if (info) {
       return *info;
     }
-    const auto described = DescribeColumn(type, system);
+    const auto described =
+      DescribeColumn(type, column ? &column->DeclaredType() : nullptr, system);
     const auto* builtin =
       described.oid < kMaxSystem ? FindBuiltinType(described.oid) : nullptr;
     if (!builtin) {

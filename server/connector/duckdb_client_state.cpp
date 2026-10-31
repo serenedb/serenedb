@@ -117,14 +117,11 @@ SereneDBClientState& SereneDBClientState::Register(
           }
         }
       }
-      const bool global = scope == duckdb::SetScope::GLOBAL;
-      if (new_value || global) {
-        RequireSuperuserToSet(ctx, name, global);
-      }
       // SET GLOBAL changes the DB-instance default (lives only in DBConfig, not
       // user_settings / custom session store) and is not rolled back with the
       // transaction -- only session/local changes are tracked.
-      if (global) {
+      if (scope == duckdb::SetScope::GLOBAL) {
+        RequireSuperuserToSetGlobal(ctx, name);
         return;
       }
       auto& sdb_ctx = GetSereneDBContext(ctx);

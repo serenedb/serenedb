@@ -1,0 +1,101 @@
+statement ok
+CREATE TABLE beast_crew (id int, name text);
+
+
+statement ok
+INSERT INTO beast_crew VALUES (6, 'karl'), (7, 'chandler'), (67, 'nolan');
+
+
+query
+SELECT pg_typeof(ctid)::text AS ctid, pg_typeof(xmin)::text AS xmin, pg_typeof(xmax)::text AS xmax, pg_typeof(cmin)::text AS cmin, pg_typeof(cmax)::text AS cmax
+FROM beast_crew
+LIMIT 1;
+----
+ctid	xmin	xmax	cmin	cmax
+tid	xid	xid	cid	cid
+
+
+query
+SELECT * FROM beast_crew ORDER BY id;
+----
+id	name
+6	karl
+7	chandler
+67	nolan
+
+
+query
+SELECT count(DISTINCT ctid) AS rows, min(xmax::text) AS xmax, min(cmin::text) AS cmin, max(cmax::text) AS cmax FROM beast_crew;
+----
+rows	xmax	cmin	cmax
+3	0	0	0
+
+
+onlyif serenedb
+query
+SELECT id, ctid, xmin, xmax, cmin, cmax FROM beast_crew ORDER BY id;
+----
+id	ctid	xmin	xmax	cmin	cmax
+6	(0,0)	0	0	0	0
+7	(0,1)	0	0	0	0
+67	(0,2)	0	0	0	0
+
+
+query
+SELECT id FROM beast_crew WHERE ctid = (SELECT ctid FROM beast_crew WHERE name = 'chandler');
+----
+id
+7
+
+
+query
+SELECT c.id FROM beast_crew c ORDER BY c.ctid DESC;
+----
+id
+67
+7
+6
+
+
+statement ok
+DELETE FROM beast_crew WHERE ctid = (SELECT ctid FROM beast_crew WHERE name = 'nolan');
+
+
+statement ok
+UPDATE beast_crew SET name = 'mrbeast' WHERE ctid IN (SELECT ctid FROM beast_crew WHERE id = 6);
+
+
+query
+SELECT id, name FROM beast_crew ORDER BY id;
+----
+id	name
+6	mrbeast
+7	chandler
+
+
+statement ok
+CREATE TABLE beast_dup (n int);
+
+
+statement ok
+INSERT INTO beast_dup VALUES (6), (6), (7), (7), (7);
+
+
+statement ok
+DELETE FROM beast_dup x USING beast_dup y WHERE x.n = y.n AND x.ctid > y.ctid;
+
+
+query
+SELECT n FROM beast_dup ORDER BY n;
+----
+n
+6
+7
+
+
+statement ok
+DROP TABLE beast_dup;
+
+
+statement ok
+DROP TABLE beast_crew;

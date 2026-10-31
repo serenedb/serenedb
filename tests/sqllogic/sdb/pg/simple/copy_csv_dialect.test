@@ -1,0 +1,102 @@
+control substitution on
+
+statement ok
+COPY (SELECT ('six,"mr' || chr(10) || 'beast"' || chr(13) || chr(10) || 'seven,feastables' || chr(13) || chr(10))::BLOB)
+TO '${__TEST_DIR__}/crlf_quoted_lf.csv' (FORMAT BLOB);
+
+
+statement ok
+COPY (SELECT ('"mr' || chr(10) || 'beast",six' || chr(13) || chr(10) || '"feastables",seven' || chr(13) || chr(10))::BLOB)
+TO '${__TEST_DIR__}/crlf_leading_quoted_lf.csv' (FORMAT BLOB);
+
+
+statement ok
+COPY (SELECT ('six,,"",seven' || chr(13) || chr(10))::BLOB)
+TO '${__TEST_DIR__}/crlf_empty.csv' (FORMAT BLOB);
+
+
+statement ok
+COPY (SELECT ('mr;beast' || chr(10) || '6;7' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/semicolon_header.csv' (FORMAT BLOB);
+
+
+statement ok
+CREATE TABLE beast_two (mr varchar, beast varchar);
+
+
+statement ok
+COPY beast_two FROM '${__TEST_DIR__}/crlf_quoted_lf.csv' (FORMAT csv);
+
+
+query
+SELECT mr, replace(beast, chr(10), '|') AS beast FROM beast_two ORDER BY mr;
+----
+mr	beast
+seven	feastables
+six	mr|beast
+
+
+statement ok
+DELETE FROM beast_two;
+
+
+statement ok
+COPY beast_two FROM '${__TEST_DIR__}/crlf_leading_quoted_lf.csv' (FORMAT csv);
+
+
+query
+SELECT replace(mr, chr(10), '|') AS mr, beast, length(beast) AS beast_length FROM beast_two ORDER BY mr;
+----
+mr	beast	beast_length
+feastables	seven	5
+mr|beast	six	3
+
+
+statement ok
+CREATE TABLE beast_four (a varchar, b varchar, c varchar, d varchar);
+
+
+statement ok
+COPY beast_four FROM '${__TEST_DIR__}/crlf_empty.csv' (FORMAT csv);
+
+
+query
+SELECT a, b IS NULL AS b_null, c IS NULL AS c_null, c = '' AS c_empty, d FROM beast_four;
+----
+a	b_null	c_null	c_empty	d
+six	t	f	t	seven
+
+
+statement error
+COPY beast_two FROM '${__TEST_DIR__}/semicolon_header.csv' (FORMAT csv);
+----
+db error: ERROR: CSV Error on Line: 1
+Original Line: mr;beast
+Expected Number of Columns: 2 Found: 1
+<slt:ignore>
+
+
+statement ok
+COPY beast_two FROM '${__TEST_DIR__}/semicolon_header.csv' (FORMAT csv, AUTO_DETECT true);
+
+
+query
+SELECT mr, beast FROM beast_two WHERE mr = '6';
+----
+mr	beast
+6	7
+
+
+statement ok
+DELETE FROM beast_two;
+
+
+statement ok
+COPY beast_two FROM '${__TEST_DIR__}/semicolon_header.csv';
+
+
+query
+SELECT mr, beast FROM beast_two;
+----
+mr	beast
+6	7

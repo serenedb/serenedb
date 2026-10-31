@@ -74,18 +74,18 @@ SELECT id, round(BM25(pwpv_text.tableoid)::numeric, 4) AS score
 FROM pwpv_text WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
 id	score
-1	0.118
-2	0.118
-5	0.118
+1	0.1181
+2	0.1181
+5	0.1181
 
 query
 SELECT id, round(BM25(pwpv_pos.tableoid)::numeric, 4) AS score
 FROM pwpv_pos WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
 id	score
-1	0.118
-2	0.118
-5	0.118
+1	0.1181
+2	0.1181
+5	0.1181
 
 query
 EXPLAIN SELECT id FROM pwpv_text WHERE body @@ ts_phrase('quick brown')

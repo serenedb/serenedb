@@ -13,7 +13,7 @@ A union is a list of analyzers, `[split_text_csv(' '), keyword()]`, and each ele
 
 ## Options
 
-The template has no options of its own; the members are the list elements. A member may be any template call, a chain, another list, or a bare dictionary name that runs a stored dictionary's analyzer. A list element that is not an analyzer — a string, say — fails with `a list stage must hold analyzers`, and so does the empty list `[]`.
+The template has no options of its own; the members are the list elements. A member may be any template call, a chain, another list, or a bare dictionary name that runs a stored dictionary's analyzer. A list element that is not an analyzer — a string, say — fails with `a list stage must hold analyzers`, and so does the empty list `[]`. A member that stores a per-document payload beside its terms, [`generate_wildcard_ngrams`](../../functions/search/tokenizers/generate_wildcard_ngrams.md) or `encode_geojson` with a `coding` other than `source`, fails with `union: child <i> produces a per-document store blob, which a union cannot deliver`, where `<i>` is the member's zero-based index.
 
 The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](./index.md#feature-flags); `POSITION` and `NORM` each require `FREQUENCY`. `OFFSET` is not supported: setting it fails when the dictionary is created, with `Unsupported index features are specified: offset`. [`ts_offsets()`](../../functions/search/highlighting.md#ts_offsets) and [`ts_highlight()`](../../functions/search/highlighting.md#ts_highlight) are not available for a `union` dictionary either — the tokenizer produces no offsets, so both fail rather than re-analyzing the value.
 
@@ -28,7 +28,7 @@ Every member analyzes the original input independently — nothing is chained �
 
 At each position the union emits every token member 1 has there, then member 2's, and so on. Positions are each member's own numbering, starting at `1`, and they pass through unchanged — the union does not renumber. The same position therefore repeats across members, and members of different granularity drift apart: a word-splitting member advances one position per word while an n-gram member advances one position per gram. Duplicate terms are not removed, so when two members emit the same term at the same position both are emitted.
 
-A member that produces no tokens for a value contributes nothing, and the other members run to the end of their own streams. Empty input is not special-cased: each member sees the empty string and the union emits whatever the members return for it. The union itself never transforms bytes: case folding, accent handling and Unicode normalization are each member's own business.
+A member that produces no tokens for a value contributes nothing, and the other members run to the end of their own streams. Empty input is not special-cased: each member sees the empty string and the union emits whatever the members return for it. The union itself never transforms bytes: case folding, accent handling and Unicode normalization are each member's own business. Its tokens have the type its members share, `VARCHAR` for text members; when the members' types differ, as with a [`collate_tokens`](../../functions/search/tokenizers/collate_tokens.md) member beside a text one, the tokens are `BLOB`, so `ts_lexize` returns `BLOB[]` and a following [`pipeline`](./pipeline/index.md) step that takes text rejects the union.
 
 ## Examples
 

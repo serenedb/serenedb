@@ -1997,7 +1997,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\A.*timed out.*\\z │  │ Pattern: (?s)\\Aconnection.*\\z │ │
 │ │ Syntax: perl                   │  │ Syntax: perl                  │ │
 │ │ Has Pos: false                 │  │ Has Pos: false                │ │
-│ │ Query: "timed out"             │  │ Query: "\\x1fconnection"       │ │
+│ │ Query: "timed out"             │  │ Query: "\\xffconnection"       │ │
 │ │ Verify: false                  │  │ Verify: false                 │ │
 │ ╰────────────────────────────────╯  ╰───────────────────────────────╯ │
 │ Table Filter:                                                         │
@@ -2009,7 +2009,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\A.*timed out.*\\z │  │ Pattern: (?s)\\Aconnection.*\\z │ │
 │ │ Syntax: perl                   │  │ Syntax: perl                  │ │
 │ │ Has Pos: false                 │  │ Has Pos: false                │ │
-│ │ Query: "timed out"             │  │ Query: "\\x1fconnection"       │ │
+│ │ Query: "timed out"             │  │ Query: "\\xffconnection"       │ │
 │ │ Verify: table filter           │  │ Verify: table filter          │ │
 │ ╰────────────────────────────────╯  ╰───────────────────────────────╯ │
 │ Projections: id                                                       │
@@ -2101,7 +2101,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\AGET /api/.*\\z │ │
 │ │ Syntax: perl                 │ │
 │ │ Has Pos: true                │ │
-│ │ Query: "\\x1fGET /api/"       │ │
+│ │ Query: "\\xffGET /api/"       │ │
 │ │ Verify: false                │ │
 │ ╰──────────────────────────────╯ │
 │ Projections: id                  │
@@ -2122,7 +2122,7 @@ QUERY PLAN
 │ │ Syntax: perl                             │ │
 │ │ Has Pos: true                            │ │
 │ │ Query:                                   │ │
-│ │ And("\\x1fdisk usage 9", " pct on ")      │ │
+│ │ And("\\xffdisk usage 9", " pct on ")      │ │
 │ │ Verify: false                            │ │
 │ ╰──────────────────────────────────────────╯ │
 │ Table Filter:                                │
@@ -2132,7 +2132,7 @@ QUERY PLAN
 │ │ Syntax: perl                             │ │
 │ │ Has Pos: true                            │ │
 │ │ Query:                                   │ │
-│ │ And("\\x1fdisk usage 9", " pct on ")      │ │
+│ │ And("\\xffdisk usage 9", " pct on ")      │ │
 │ │ Verify: table filter                     │ │
 │ ╰──────────────────────────────────────────╯ │
 │ Projections: id                              │

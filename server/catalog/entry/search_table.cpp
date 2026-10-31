@@ -383,13 +383,14 @@ bool SearchTableEntry::ScanColumnSegmentInfo(
 duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {
   duckdb::virtual_column_map_t result;
   const auto keys = connector::primary_key::KeyColumns(*this);
-  result.reserve(keys.size() + 2);
+  result.reserve(keys.size() + 7);
   result.insert({connector::kColumnIdentifierTableOid,
                  duckdb::TableColumn{duckdb::Identifier{"tableoid"},
                                      duckdb::LogicalType::BIGINT}});
   result.insert({connector::kColumnIdentifierDocAddress,
                  duckdb::TableColumn{duckdb::Identifier{"rowid"},
                                      duckdb::LogicalType::ROW_TYPE}});
+  AddPostgresSystemColumns(result);
   for (size_t i = 0; i != keys.size(); ++i) {
     const auto& column = GetColumns().GetColumn(keys[i]);
     result.insert({connector::kColumnIdentifierPrimaryKeyBase + i,

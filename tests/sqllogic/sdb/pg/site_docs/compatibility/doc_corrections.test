@@ -44,10 +44,6 @@ SELECT '{"a":1}'::json || '{"b":2}'::json;
 statement ok
 SELECT json_extract_path('{"a":{"b":1}}'::json, 'a', 'b');
 
-# No binary JSON (jsonb)
-statement error
-SELECT NULL::jsonb;
-
 statement ok
 SELECT to_timestamp(1577836800);
 

@@ -125,6 +125,8 @@ struct ColumnType {
 std::span<const PgTypeMapping> PgTypeMappings();
 duckdb::LogicalType BuiltinLogicalType(const BuiltinType& type);
 ColumnType DescribeColumnType(const duckdb::LogicalType& type);
+ColumnType DescribeColumnType(const duckdb::LogicalType& type,
+                              const duckdb::LogicalType& declared);
 
 bool IsAliasedListDimension(const duckdb::LogicalType& type);
 

@@ -57,9 +57,12 @@ CREATE TABLE ddl_create_t9 (a INT CONSTRAINT ddl_create_chk CHECK (a > 0));
 statement error
 CREATE TABLE ddl_create_t10 (a INT, EXCLUDE USING gist (a WITH =));
 
+statement ok
+CREATE TABLE ddl_create_t11 (a INT);
+
 # ddl_create: System Columns
-statement error
-SELECT ctid FROM ddl_create_t11;
+statement ok
+SELECT ctid, xmin, xmax, cmin, cmax FROM ddl_create_t11;
 
 # ddl_priv: CREATE ROLE
 # Roles are cluster-global and both engine passes share one server, so the
@@ -419,7 +422,7 @@ statement ok
 SELECT NULL::json;
 
 # types: jsonb
-statement error
+statement ok
 SELECT NULL::jsonb;
 
 # types: line
@@ -2107,7 +2110,7 @@ statement ok
 SELECT to_json('hello'::text);
 
 # op_json: to_jsonb
-statement error
+statement ok
 SELECT to_jsonb('hello'::text);
 
 # op_json: array_to_json

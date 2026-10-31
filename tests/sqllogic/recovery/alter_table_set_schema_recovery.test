@@ -1,0 +1,156 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA mrbeast;
+
+
+statement ok
+CREATE SCHEMA feastables;
+
+
+statement ok
+CREATE TABLE mrbeast.checkpointed (id INT PRIMARY KEY, name TEXT);
+
+
+statement ok
+INSERT INTO mrbeast.checkpointed VALUES (67, 'mrbeast');
+
+
+statement ok
+ALTER TABLE mrbeast.checkpointed SET SCHEMA feastables;
+
+
+statement ok
+FORCE CHECKPOINT;
+
+
+statement ok
+CREATE TABLE mrbeast.logged (id INT PRIMARY KEY, name TEXT);
+
+
+statement ok
+CREATE INDEX logged_name_idx ON mrbeast.logged (name);
+
+
+statement ok
+INSERT INTO mrbeast.logged VALUES (6, 'karl'), (7, 'chandler');
+
+
+statement ok
+ALTER TABLE mrbeast.logged SET SCHEMA feastables;
+
+
+statement ok
+INSERT INTO feastables.logged VALUES (67, 'nolan');
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 67;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 67;
+
+
+connection after_crash
+query
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_schema IN ('mrbeast', 'feastables')
+ORDER BY table_schema, table_name;
+----
+table_schema	table_name
+feastables	checkpointed
+feastables	logged
+
+
+connection after_crash
+query
+SELECT id, name FROM feastables.logged ORDER BY id;
+----
+id	name
+6	karl
+7	chandler
+67	nolan
+
+
+connection after_crash
+query
+SELECT schemaname, indexname FROM pg_indexes WHERE indexname = 'logged_name_idx';
+----
+schemaname	indexname
+feastables	logged_name_idx
+
+
+connection after_crash
+query
+SELECT id FROM feastables.logged WHERE name = 'chandler';
+----
+id
+7
+
+
+connection after_crash
+statement ok
+FORCE CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 67;
+
+
+connection after_checkpoint
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 67;
+
+
+connection after_checkpoint
+query
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_schema IN ('mrbeast', 'feastables')
+ORDER BY table_schema, table_name;
+----
+table_schema	table_name
+feastables	checkpointed
+feastables	logged
+
+
+connection after_checkpoint
+query
+SELECT id, name FROM feastables.checkpointed ORDER BY id;
+----
+id	name
+67	mrbeast
+
+
+connection after_checkpoint
+query
+SELECT schemaname, indexname FROM pg_indexes WHERE indexname = 'logged_name_idx';
+----
+schemaname	indexname
+feastables	logged_name_idx
+
+
+connection after_checkpoint
+statement ok
+INSERT INTO feastables.logged VALUES (676, 'jimmy');
+
+
+connection after_checkpoint
+query
+SELECT count(*) AS n FROM feastables.logged;
+----
+n
+4

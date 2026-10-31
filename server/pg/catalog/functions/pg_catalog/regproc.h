@@ -25,6 +25,7 @@
 #include <duckdb/parser/qualified_name.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -60,6 +61,9 @@ inline std::string_view AsView(const OutText& text) {
 std::string QualifiedOutName(std::string_view schema, std::string_view name);
 
 std::string_view SqlTypeName(int32_t oid);
+
+int32_t TypmodIn(uint64_t oid, std::span<const std::string> texts,
+                 std::string_view display);
 
 OutText FormatTypeOut(const Session& session, uint64_t oid,
                       std::optional<int32_t> typmod);

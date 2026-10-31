@@ -1,0 +1,184 @@
+statement ok
+CREATE SCHEMA mrbeast
+
+statement ok
+CREATE SCHEMA feastables
+
+statement ok
+CREATE TABLE mrbeast.videos (id INT PRIMARY KEY, title TEXT)
+
+statement ok
+CREATE INDEX videos_title_idx ON mrbeast.videos (title)
+
+statement ok
+INSERT INTO mrbeast.videos VALUES (6, 'last to leave'), (7, 'squid game')
+
+statement ok
+ALTER TABLE mrbeast.videos SET SCHEMA feastables
+
+query
+SELECT id, title FROM feastables.videos ORDER BY id
+----
+id	title
+6	last to leave
+7	squid game
+
+query
+SELECT to_regclass('mrbeast.videos') IS NULL AS gone, to_regclass('feastables.videos') IS NOT NULL AS moved
+----
+gone	moved
+t	t
+
+statement error does not exist
+SELECT * FROM mrbeast.videos
+
+query
+SELECT schemaname, indexname FROM pg_indexes WHERE indexname = 'videos_title_idx'
+----
+schemaname	indexname
+feastables	videos_title_idx
+
+statement ok
+INSERT INTO feastables.videos VALUES (67, 'beast games')
+
+statement error (23505)
+INSERT INTO feastables.videos VALUES (6, 'chocolate bar')
+
+query
+SELECT id FROM feastables.videos WHERE title = 'beast games'
+----
+id
+67
+
+statement ok
+ALTER TABLE feastables.videos SET SCHEMA feastables
+
+statement ok
+ALTER TABLE IF EXISTS mrbeast.missing SET SCHEMA feastables
+
+statement error does not exist
+ALTER TABLE mrbeast.missing SET SCHEMA feastables
+
+statement error beastland.*does not exist
+ALTER TABLE feastables.videos SET SCHEMA beastland
+
+statement ok
+CREATE TABLE mrbeast.videos (views INT)
+
+statement error
+ALTER TABLE mrbeast.videos SET SCHEMA feastables
+----
+db error: ERROR: relation "videos" already exists in schema "feastables"
+
+
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE feastables.videos SET SCHEMA public
+
+statement ok
+ROLLBACK
+
+query
+SELECT count(*) AS n FROM feastables.videos
+----
+n
+3
+
+statement ok
+DROP TABLE mrbeast.videos
+
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE feastables.videos SET SCHEMA mrbeast
+
+statement ok
+INSERT INTO mrbeast.videos VALUES (676, 'six seven')
+
+statement ok
+COMMIT
+
+query
+SELECT id, title FROM mrbeast.videos ORDER BY id
+----
+id	title
+6	last to leave
+7	squid game
+67	beast games
+676	six seven
+
+statement ok
+CREATE TABLE mrbeast.subscribers (id SERIAL, name TEXT)
+
+statement ok
+INSERT INTO mrbeast.subscribers (name) VALUES ('karl')
+
+statement ok
+ALTER TABLE mrbeast.subscribers SET SCHEMA feastables
+
+statement ok
+INSERT INTO feastables.subscribers (name) VALUES ('chandler')
+
+query
+SELECT id, name FROM feastables.subscribers ORDER BY id
+----
+id	name
+1	karl
+2	chandler
+
+query
+SELECT pg_get_serial_sequence('feastables.subscribers', 'id') AS seq
+----
+seq
+feastables.subscribers_id_seq
+
+statement ok
+CREATE ROLE atss_mrbeast
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA mrbeast TO atss_mrbeast
+
+statement ok
+GRANT USAGE ON SCHEMA feastables TO atss_mrbeast
+
+statement ok
+CREATE TABLE mrbeast.chocolate (bars INT)
+
+statement ok
+ALTER TABLE mrbeast.chocolate OWNER TO atss_mrbeast
+
+statement ok
+SET ROLE atss_mrbeast
+
+statement error
+ALTER TABLE mrbeast.chocolate SET SCHEMA feastables
+----
+db error: ERROR: permission denied for schema feastables
+
+
+statement ok
+RESET ROLE
+
+statement ok
+GRANT CREATE ON SCHEMA feastables TO atss_mrbeast
+
+statement ok
+SET ROLE atss_mrbeast
+
+statement ok
+ALTER TABLE mrbeast.chocolate SET SCHEMA feastables
+
+statement ok
+RESET ROLE
+
+statement ok
+DROP SCHEMA feastables CASCADE
+
+statement ok
+DROP SCHEMA mrbeast CASCADE
+
+statement ok
+DROP ROLE atss_mrbeast

@@ -138,6 +138,9 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (subtype == "FEATURE_NOT_SUPPORTED") {
     return ERRCODE_FEATURE_NOT_SUPPORTED;
   }
+  if (subtype == "STATEMENT_TOO_COMPLEX") {
+    return ERRCODE_STATEMENT_TOO_COMPLEX;
+  }
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
     if (subtype == "WRONG_OBJECT_TYPE") {
       return ERRCODE_WRONG_OBJECT_TYPE;

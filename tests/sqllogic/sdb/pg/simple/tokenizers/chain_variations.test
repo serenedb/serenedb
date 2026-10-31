@@ -268,6 +268,32 @@ SELECT ts_lexize('union_then_filter', 'a,b c');
 ts_lexize
 {a,"a,b","b c",c}
 
+statement error
+CREATE TEXT SEARCH DICTIONARY union_wildcard AS [generate_wildcard_ngrams(split_text_csv(' '), 3), split_text_csv(' ')];
+----
+db error: ERROR: union: child 0 produces a per-document store blob, which a union cannot deliver
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_collate AS [collate_tokens('en_US.UTF-8'), split_text_csv(' ')];
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_collate_only AS [collate_tokens('en_US.UTF-8'), collate_tokens('de_DE.UTF-8')];
+
+query
+SELECT typeof(ts_lexize('union_sql', 'A,B')) AS text_union,
+       typeof(ts_lexize('union_collate', 'a b')) AS mixed_union,
+       typeof(ts_lexize('union_collate_only', 'a b')) AS binary_union;
+----
+text_union	mixed_union	binary_union
+VARCHAR[]	BLOB[]	BLOB[]
+
+statement error
+CREATE TEXT SEARCH DICTIONARY union_collate_then_lower AS [collate_tokens('en_US.UTF-8'), split_text_csv(' ')] | normalize_tokens(case := 'lower');
+----
+db error: ERROR: pipeline: stage 1 expects VARCHAR input, but the preceding stage produces BLOB
+
+
 # --- stored dictionaries at every position ---
 
 statement ok

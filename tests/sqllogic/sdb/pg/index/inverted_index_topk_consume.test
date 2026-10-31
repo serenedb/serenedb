@@ -191,10 +191,10 @@ SELECT id, tag, round(bm25(tk_idx.tableoid)::NUMERIC, 4) AS s FROM tk_idx
 WHERE body @@ 'fox' ORDER BY s DESC, id;
 ----
 id	tag	s
-4	d	0.244
-3	c	0.233
-2	b	0.212
-1	a	0.168
+4	d	0.2444
+3	c	0.2327
+2	b	0.2124
+1	a	0.1683
 
 query
 SELECT id FROM tk_idx WHERE body @@ 'fox'

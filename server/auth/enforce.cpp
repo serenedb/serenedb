@@ -1162,6 +1162,13 @@ class Enforcer {
     if (IsRename(info)) {
       RequireSchemaCreate(entry->ParentSchema(_context));
     }
+    if (auto new_schema = info.GetNewSchema()) {
+      if (auto target = duckdb::Catalog::GetSchema(
+            _context, info.GetQualifiedName().Catalog(), *new_schema,
+            duckdb::OnEntryNotFound::RETURN_NULL)) {
+        RequireSchemaCreate(*target);
+      }
+    }
   }
 
   void ResolvePermissions(duckdb::AlterPermissionsInfo& info) {

@@ -116,7 +116,7 @@ ORDER BY ordinal_position
 ----
 column_name	is_nullable	ordinal_position	column_default	data_type
 grade	NO	1	NULL	int8(64,0)
-tag	YES	2	NULL	text
+tag	YES	2	NULL	varchar
 active	YES	3	NULL	bool
 created_at	YES	4	NULL	timestamp(6)
 

@@ -21,6 +21,7 @@
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
@@ -823,46 +824,6 @@ constexpr std::array kTypmodTypes{kBpchar,      kVarchar, kBit,    kVarbit,
                                   kNumeric,     kTime,    kTimetz, kTimestamp,
                                   kTimestamptz, kInterval};
 
-int32_t TypmodIn(uint64_t oid, std::span<const std::string> texts,
-                 std::string_view display) {
-  if (texts.empty()) {
-    return -1;
-  }
-  if (!absl::c_linear_search(kTypmodTypes, oid)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_SYNTAX_ERROR),
-      ERR_MSG("type modifier is not allowed for type \"", display, "\""));
-  }
-  std::vector<int32_t> typmods;
-  typmods.reserve(texts.size());
-  for (const auto& text : texts) {
-    typmods.emplace_back(TypmodValue(text));
-  }
-  if (oid == kBpchar) {
-    return LengthTypmod(typmods, "char", kMaxAttrSize, kVarHdrSz);
-  }
-  if (oid == kVarchar) {
-    return LengthTypmod(typmods, "varchar", kMaxAttrSize, kVarHdrSz);
-  }
-  if (oid == kBit) {
-    return LengthTypmod(typmods, "bit", kMaxAttrSize * 8, 0);
-  }
-  if (oid == kVarbit) {
-    return LengthTypmod(typmods, "varbit", kMaxAttrSize * 8, 0);
-  }
-  if (oid == kNumeric) {
-    return NumericTypmodIn(typmods);
-  }
-  if (oid == kTime || oid == kTimetz) {
-    return TimeTypmod(typmods, "TIME", oid == kTimetz);
-  }
-  if (oid == kTimestamp || oid == kTimestamptz) {
-    return TimeTypmod(typmods, "TIMESTAMP", oid == kTimestamptz);
-  }
-  SDB_ASSERT(oid == kInterval);
-  return IntervalTypmod(typmods);
-}
-
 uint64_t FindTypeIn(const Session& session, std::string_view schema,
                     std::string_view name) {
   if (const auto* system = FindSystemObject(kSystemNamespaces, schema)) {
@@ -968,6 +929,46 @@ std::optional<ResolvedType> ResolveType(const Session& session,
 }
 
 }  // namespace
+
+int32_t TypmodIn(uint64_t oid, std::span<const std::string> texts,
+                 std::string_view display) {
+  if (texts.empty()) {
+    return -1;
+  }
+  if (!absl::c_linear_search(kTypmodTypes, oid)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("type modifier is not allowed for type \"", display, "\""));
+  }
+  absl::InlinedVector<int32_t, 2> typmods;
+  typmods.reserve(texts.size());
+  for (const auto& text : texts) {
+    typmods.emplace_back(TypmodValue(text));
+  }
+  if (oid == kBpchar) {
+    return LengthTypmod(typmods, "char", kMaxAttrSize, kVarHdrSz);
+  }
+  if (oid == kVarchar) {
+    return LengthTypmod(typmods, "varchar", kMaxAttrSize, kVarHdrSz);
+  }
+  if (oid == kBit) {
+    return LengthTypmod(typmods, "bit", kMaxAttrSize * 8, 0);
+  }
+  if (oid == kVarbit) {
+    return LengthTypmod(typmods, "varbit", kMaxAttrSize * 8, 0);
+  }
+  if (oid == kNumeric) {
+    return NumericTypmodIn(typmods);
+  }
+  if (oid == kTime || oid == kTimetz) {
+    return TimeTypmod(typmods, "TIME", oid == kTimetz);
+  }
+  if (oid == kTimestamp || oid == kTimestamptz) {
+    return TimeTypmod(typmods, "TIMESTAMP", oid == kTimestamptz);
+  }
+  SDB_ASSERT(oid == kInterval);
+  return IntervalTypmod(typmods);
+}
 
 duckdb::optional_ptr<duckdb::CatalogEntry> AttachedRelation(
   const Session& session, std::string_view text) {

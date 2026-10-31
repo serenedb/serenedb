@@ -169,7 +169,7 @@ RESET integer_overflow;
 statement error
 SELECT 1 // 0 AS quotient;
 ----
-db error: ERROR: Division by zero in expression (1 // 0). Use TRY(...) to return NULL for this expression, or SET error_on_division_by_zero=false to return NULL for all divisions by zero.
+db error: ERROR: division by zero
 
 
 query
@@ -180,7 +180,7 @@ NULL	NULL
 
 # DOCS_TEST_END
 
-statement error Division by zero
+statement error division by zero
 SELECT 5 % 0 AS remainder;
 
 statement ok

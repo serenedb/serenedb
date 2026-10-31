@@ -1,0 +1,62 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY beast_wild AS generate_wildcard_ngrams(keyword(), 3)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY beast_collate AS collate_tokens('en_US.UTF-8')
+
+statement ok
+CREATE TABLE beast_t (id INTEGER PRIMARY KEY, w VARCHAR, c VARCHAR, k VARCHAR)
+
+statement ok
+CREATE INDEX beast_idx ON beast_t USING inverted (id, w beast_wild, c beast_collate, k)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO beast_t VALUES (6, '67', 'six', 'mrbeast'), (7, '67', 'seven', 'feastables')
+
+statement ok
+VACUUM (REFRESH_TABLE) beast_t
+
+statement error
+SELECT ts_dict_agg(w) FROM beast_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+
+
+statement error
+SELECT ts_dict_max(w) FROM beast_idx
+----
+db error: ERROR: ts_dict_max(): column has no text term dictionary
+HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+
+
+statement error
+SELECT ts_dict_agg(c) FROM beast_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+
+
+query
+SELECT list_sort(list_transform(ts_dict_raw_agg(w), x -> hex(x))) AS grams,
+       ts_dict_count(w) AS counts
+FROM beast_idx
+----
+grams	counts
+{3637FF,37FF,FF3637}	{2,2,2}
+
+query
+SELECT list_sort(ts_dict_agg(k)) AS channels FROM beast_idx
+----
+channels
+{feastables,mrbeast}
+
+statement ok
+DROP TABLE beast_t
+
+statement ok
+DROP TEXT SEARCH DICTIONARY beast_collate
+
+statement ok
+DROP TEXT SEARCH DICTIONARY beast_wild

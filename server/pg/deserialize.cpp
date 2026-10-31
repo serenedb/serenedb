@@ -2421,6 +2421,10 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<LoadBin<uint32_t, int64_t>, NumberText<uint32_t>,
                            Sink>(binary);
     case UBIGINT:
+      if (IsXid8(type)) {
+        return SelectDecoder<LoadBin<uint64_t>, NumberText<uint64_t>, Sink>(
+          binary);
+      }
       if (IsPgLsn(type)) {
         return SelectDecoder<LoadBin<uint64_t>, ReadFixed<&ParseLsn>, Sink>(
           binary);

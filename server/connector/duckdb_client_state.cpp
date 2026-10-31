@@ -424,7 +424,6 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
 void SetDefaultSearchPath(duckdb::ClientContext& context,
                           std::string_view database) {
   const duckdb::Identifier catalog{database};
-  context.client_data->default_database = catalog;
   std::vector<duckdb::CatalogSearchEntry> paths{
     duckdb::CatalogSearchEntry{catalog, duckdb::Identifier{"$user"}},
     duckdb::CatalogSearchEntry{catalog, duckdb::Identifier{"public"}},

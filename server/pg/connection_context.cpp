@@ -22,6 +22,7 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -89,6 +90,7 @@ ConnectionContext::ConnectionContext(
     _effective_role_id{role_id} {
   duckdb_ctx.session_user = user;
   duckdb_ctx.session_role = role_id;
+  duckdb_ctx.client_data->default_database = duckdb::Identifier{dbname};
   duckdb_ctx.SetPrincipalRole(role_id);
 }
 

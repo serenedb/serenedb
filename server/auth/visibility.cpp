@@ -28,16 +28,14 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string_view>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
-#include "connector/duckdb_client_state.h"
-#include "pg/connection_context.h"
 
 namespace sdb::auth {
 namespace {
@@ -65,9 +63,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindServer(
 }
 
 bool CanUseDatabase(duckdb::ClientContext& context,
-                    const ConnectionContext& connection,
                     const duckdb::RoleAccess& closure, std::string_view name) {
-  if (name == connection.GetDatabase()) {
+  if (name ==
+      duckdb::ClientData::Get(context).default_database.GetIdentifierName()) {
     return true;
   }
   auto& cluster = catalog::ClusterOf(context);
@@ -79,12 +77,11 @@ bool CanUseDatabase(duckdb::ClientContext& context,
 }
 
 bool DatabaseVisible(duckdb::ClientContext& context,
-                     const ConnectionContext& connection,
                      const duckdb::RoleAccess& closure,
                      duckdb::AttachedDatabase& database) {
   const auto type = database.GetCatalog().GetCatalogType();
   if (type == catalog::SereneDBCatalog::kStorageType) {
-    return CanUseDatabase(context, connection, closure,
+    return CanUseDatabase(context, closure,
                           database.GetName().GetIdentifierName());
   }
   if (type == catalog::ClusterCatalog::kStorageType || database.IsSystem() ||
@@ -97,16 +94,14 @@ bool DatabaseVisible(duckdb::ClientContext& context,
 }
 
 bool EntryVisible(duckdb::ClientContext& context,
-                  const ConnectionContext& connection,
                   const duckdb::RoleAccess& closure,
                   duckdb::CatalogEntry& entry) {
   if (entry.type == CatalogType::DATABASE_ENTRY) {
-    return CanUseDatabase(context, connection, closure,
-                          entry.name.GetIdentifierName());
+    return CanUseDatabase(context, closure, entry.name.GetIdentifierName());
   }
   auto& parent = entry.ParentCatalog();
   if (parent.GetCatalogType() != catalog::ClusterCatalog::kStorageType &&
-      !DatabaseVisible(context, connection, closure, parent.GetAttached())) {
+      !DatabaseVisible(context, closure, parent.GetAttached())) {
     return false;
   }
   if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY ||
@@ -156,7 +151,7 @@ bool EntryVisible(duckdb::ClientContext& context,
       auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
       auto relation =
         index.GetRelation(index.catalog.GetCatalogTransaction(context));
-      return !relation || EntryVisible(context, connection, closure, *relation);
+      return !relation || EntryVisible(context, closure, *relation);
     }
     default:
       return true;
@@ -164,7 +159,6 @@ bool EntryVisible(duckdb::ClientContext& context,
 }
 
 void CheckReference(duckdb::ClientContext& context,
-                    const ConnectionContext& connection,
                     const duckdb::RoleAccess& caller,
                     duckdb::CatalogEntry& entry) {
   if (caller.is_superuser) {
@@ -173,7 +167,7 @@ void CheckReference(duckdb::ClientContext& context,
   auto& database = entry.type == CatalogType::DATABASE_ENTRY
                      ? entry.Cast<duckdb::AttachedDatabase>()
                      : entry.ParentCatalog().GetAttached();
-  if (!DatabaseVisible(context, connection, caller, database)) {
+  if (!DatabaseVisible(context, caller, database)) {
     if (database.GetCatalog().GetCatalogType() ==
         catalog::SereneDBCatalog::kStorageType) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -192,69 +186,31 @@ void CheckReference(duckdb::ClientContext& context,
                  "a database attached without a foreign server."));
   }
   if (entry.type != CatalogType::DATABASE_ENTRY &&
-      !EntryVisible(context, connection, caller, entry)) {
+      !EntryVisible(context, caller, entry)) {
     duckdb::ThrowPermissionDenied(entry);
   }
-}
-
-template<typename Fn>
-auto WithCaller(duckdb::ClientContext& context,
-                const ConnectionContext& connection, Fn&& fn) {
-  if (const auto principal = context.principal) {
-    return fn(*principal);
-  }
-  const auto closure = ClosureFor(&context, connection.GetRoleId());
-  return fn(*closure);
 }
 
 }  // namespace
 
 bool CanSee(duckdb::ClientContext& context, duckdb::CatalogEntry& entry) {
-  if (const auto principal = context.principal;
-      principal && principal->is_superuser) {
-    return true;
-  }
-  const auto* connection = connector::GetSereneDBContextPtr(context);
-  if (!connection) {
-    return true;
-  }
-  return WithCaller(context, *connection,
-                    [&](const duckdb::RoleAccess& caller) {
-                      return caller.is_superuser ||
-                             EntryVisible(context, *connection, caller, entry);
-                    });
+  const auto caller = context.principal;
+  return !caller || caller->is_superuser ||
+         EntryVisible(context, *caller, entry);
 }
 
 bool CanSeeDatabase(duckdb::ClientContext& context,
                     duckdb::AttachedDatabase& database) {
-  if (const auto principal = context.principal;
-      principal && principal->is_superuser) {
-    return true;
-  }
-  const auto* connection = connector::GetSereneDBContextPtr(context);
-  if (!connection) {
-    return true;
-  }
-  return WithCaller(
-    context, *connection, [&](const duckdb::RoleAccess& caller) {
-      return caller.is_superuser ||
-             DatabaseVisible(context, *connection, caller, database);
-    });
+  const auto caller = context.principal;
+  return !caller || caller->is_superuser ||
+         DatabaseVisible(context, *caller, database);
 }
 
 void CheckEntryReference(duckdb::ClientContext& context,
                          duckdb::CatalogEntry& entry) {
-  if (const auto principal = context.principal;
-      principal && principal->is_superuser) {
-    return;
+  if (const auto caller = context.principal) {
+    CheckReference(context, *caller, entry);
   }
-  const auto* connection = connector::GetSereneDBContextPtr(context);
-  if (!connection) {
-    return;
-  }
-  WithCaller(context, *connection, [&](const duckdb::RoleAccess& caller) {
-    CheckReference(context, *connection, caller, entry);
-  });
 }
 
 }  // namespace sdb::auth

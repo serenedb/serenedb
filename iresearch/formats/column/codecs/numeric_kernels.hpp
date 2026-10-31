@@ -194,10 +194,56 @@ inline void Unshuffle(const uint8_t* in, size_t n, uint8_t stored,
   }
 }
 
-template<typename U>
-void AddBase(U* v, size_t n, U base) noexcept {
+template<typename U, typename S>
+void WidenAddAs(const uint8_t* in, size_t n, U base, U* out) noexcept {
   for (size_t i = 0; i < n; ++i) {
-    v[i] = static_cast<U>(v[i] + base);
+    S s;
+    std::memcpy(&s, in + i * sizeof(S), sizeof(S));
+    out[i] = static_cast<U>(static_cast<U>(s) + base);
+  }
+}
+
+template<typename U>
+void WidenAdd(const uint8_t* in, size_t n, uint8_t stored, U base,
+              U* out) noexcept {
+  switch (stored) {
+    case 1:
+      return WidenAddAs<U, uint8_t>(in, n, base, out);
+    case 2:
+      return WidenAddAs<U, uint16_t>(in, n, base, out);
+    case 4:
+      return WidenAddAs<U, uint32_t>(in, n, base, out);
+    default:
+      return WidenAddAs<U, uint64_t>(in, n, base, out);
+  }
+}
+
+template<typename U, typename S, bool kWrite>
+U WidenPrefixSumAs(const uint8_t* in, size_t n, U acc, U offset,
+                   U* out) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    S s;
+    std::memcpy(&s, in + i * sizeof(S), sizeof(S));
+    acc = static_cast<U>(acc + static_cast<U>(static_cast<U>(s) + offset));
+    if constexpr (kWrite) {
+      out[i] = acc;
+    }
+  }
+  return acc;
+}
+
+template<bool kWrite, typename U>
+U WidenPrefixSum(const uint8_t* in, size_t n, uint8_t stored, U acc, U offset,
+                 U* out) noexcept {
+  switch (stored) {
+    case 1:
+      return WidenPrefixSumAs<U, uint8_t, kWrite>(in, n, acc, offset, out);
+    case 2:
+      return WidenPrefixSumAs<U, uint16_t, kWrite>(in, n, acc, offset, out);
+    case 4:
+      return WidenPrefixSumAs<U, uint32_t, kWrite>(in, n, acc, offset, out);
+    default:
+      return WidenPrefixSumAs<U, uint64_t, kWrite>(in, n, acc, offset, out);
   }
 }
 
@@ -236,15 +282,6 @@ void MultiplyBy(U* v, size_t n, U factor) noexcept {
   using W = WideWord<U>;
   for (size_t i = 0; i < n; ++i) {
     v[i] = static_cast<U>(static_cast<W>(v[i]) * static_cast<W>(factor));
-  }
-}
-
-template<typename U>
-void PrefixSum(U* v, size_t n, U base, U offset) noexcept {
-  U acc = base;
-  for (size_t i = 0; i < n; ++i) {
-    acc = static_cast<U>(acc + v[i] + offset);
-    v[i] = acc;
   }
 }
 

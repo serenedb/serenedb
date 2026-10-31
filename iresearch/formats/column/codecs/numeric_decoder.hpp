@@ -269,13 +269,9 @@ class FrameDecoder {
 
   T Item(const uint8_t* src, uint32_t at, const NumericFrameMeta& m) {
     if (_h.transform == NumericTransform::Delta) {
-      if (_prefix.size() <= at) {
-        _prefix.resize(size_t{at} + 1);
-      }
-      numeric::Widen(src, size_t{at} + 1, _h.stored, _prefix.data());
-      numeric::PrefixSum(_prefix.data(), size_t{at} + 1, static_cast<U>(m.base),
-                         static_cast<U>(_h.base));
-      return Scaled(_prefix[at]);
+      return Scaled(numeric::WidenPrefixSum<false>(
+        src, size_t{at} + 1, _h.stored, static_cast<U>(m.base),
+        static_cast<U>(_h.base), static_cast<U*>(nullptr)));
     }
     const auto* item = src + size_t{at} * _h.stored;
     if (_h.transform == NumericTransform::Dict) {
@@ -571,13 +567,12 @@ class FrameDecoder {
     }
     switch (_h.transform) {
       case NumericTransform::For:
-        numeric::Widen(src, rows, _h.stored, out);
-        numeric::AddBase(out, rows, static_cast<U>(_h.base));
+        numeric::WidenAdd(src, rows, _h.stored, static_cast<U>(_h.base), out);
         break;
       case NumericTransform::Delta:
-        numeric::Widen(src, rows, _h.stored, out);
-        numeric::PrefixSum(out, rows, static_cast<U>(m.base),
-                           static_cast<U>(_h.base));
+        numeric::WidenPrefixSum<true>(src, rows, _h.stored,
+                                      static_cast<U>(m.base),
+                                      static_cast<U>(_h.base), out);
         break;
       case NumericTransform::Dict:
         DecodeCodes(src, rows, out);
@@ -664,8 +659,8 @@ class FrameDecoder {
     const uint32_t runs = m.frame.raw_len / item;
     _run_values.resize(runs);
     _run_ends.resize(runs);
-    numeric::Widen(src, runs, _h.stored, _run_values.data());
-    numeric::AddBase(_run_values.data(), runs, static_cast<U>(_h.base));
+    numeric::WidenAdd(src, runs, _h.stored, static_cast<U>(_h.base),
+                      _run_values.data());
     numeric::Widen(src + size_t{runs} * _h.stored, runs, _h.run_width,
                    _run_ends.data());
     EndRuns(rows);
@@ -733,7 +728,6 @@ class FrameDecoder {
   ScratchVector<uint32_t> _run_ends;
   uint32_t _hint = 0;
   ScratchVector<uint8_t> _raw;
-  ScratchVector<U> _prefix;
   ScratchVector<uint8_t> _shuffled;
   ScratchVector<uint32_t> _codes;
   std::vector<uint32_t> _words32;

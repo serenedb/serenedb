@@ -22,6 +22,7 @@
 
 #include <absl/base/call_once.h>
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -99,6 +100,7 @@ class HnswIndex final : public AnnIndex {
   field_id _field;
   HnswBases* _bases;
   mutable absl::once_flag _once;
+  mutable std::atomic_bool _loaded{false};
   mutable std::shared_ptr<const HnswData> _data;
 };
 

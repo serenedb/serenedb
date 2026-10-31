@@ -113,6 +113,7 @@ add_executable(
     search/block_scoring_test.cpp
     search/bm25_test.cpp
     search/boolean_filter_tests.cpp
+    search/boolean_window_test.cpp
     search/boost_attribute_test.cpp
     search/boost_query_test.cpp
     search/col_filter_leaf_test.cpp
@@ -142,6 +143,7 @@ add_executable(
     search/phrase_slop_matcher_fuzz.cpp
     search/phrase_slop_matcher_tests.cpp
     search/prefix_filter_test.cpp
+    search/pruned_top_test.cpp
     search/range_filter_test.cpp
     search/raw_tf_test.cpp
     search/regexp_filter_test.cpp

@@ -63,8 +63,26 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
   }
 
   doc_id_t BlockLast() {
-    Base::AdvanceBlock(_doc);
-    return *(std::end(_docs) - 1);
+    const auto last = Base::AdvanceBlock(_doc);
+    return _cursor.Armed() ? last : *(std::end(_docs) - 1);
+  }
+
+  doc_id_t SkipTo(doc_id_t target) {
+    if (!_cursor.Armed() || (_left_in_leaf != 0 && target <= _max_in_leaf)) {
+      return Seek(target);
+    }
+    Base::AdvanceBlock(target);
+    if (!_needs_reposition || _cursor.LandingDoc() + 1 != target) {
+      return Seek(target);
+    }
+    return _left_in_list != 0 ? target : doc_limits::eof();
+  }
+
+  template<typename Visitor>
+  void ForEachDocs(doc_id_t max, Visitor&& visit) {
+    Base::ForEachBlock(max, [&](doc_id_t* docs, uint32_t len) IRS_FORCE_INLINE {
+      visit(docs, _freqs.data + (docs - std::begin(_docs)), len);
+    });
   }
 
   doc_id_t SpanLast(uint32_t blocks) {

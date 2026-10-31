@@ -221,6 +221,79 @@ Result<Family> MakeWindowDisjunction(std::span<const Term> terms,
     });
 }
 
+template<typename Family>
+inline constexpr bool kScoredLeadWindow =
+  requires { requires Family::kScoredLeadWindow; };
+
+inline constexpr uint64_t kScoredScanValues = 2;
+inline constexpr uint64_t kWindowPasses = 2;
+inline constexpr uint64_t kMaskWordsPerLeadDoc = 2;
+
+template<typename Family, typename Scoring, typename Ctx>
+Result<Family> MakeScoredLeadWindow(std::span<const PostingClause> must,
+                                    std::span<const PostingClause> should,
+                                    const SubReader& segment,
+                                    const Scoring& scoring, const Ctx& ctx,
+                                    score_t absorbed) {
+  if (must.size() != 1 || should.empty()) {
+    return {};
+  }
+  const auto& lead = must.front();
+  if (!ScoresPerDocTerm(lead)) {
+    return {};
+  }
+  const uint64_t lead_docs = CookieOf(lead).docs_count;
+  if (lead_docs * kMaskWordsPerLeadDoc * kWindowBits < segment.docs_count()) {
+    return {};
+  }
+  const auto* const doc = DocOf(FieldOf(lead, nullptr));
+  const uint64_t windows = std::min<uint64_t>(
+    lead_docs, (segment.docs_count() + kWindowDocs - 1) / kWindowDocs);
+  uint64_t scanned = windows * kWindowWords * kWindowPasses;
+  uint64_t probed = 0;
+  for (const auto& term : should) {
+    if (DocOf(FieldOf(term, nullptr)) != doc || !ScoresPerDocTerm(term)) {
+      return {};
+    }
+    const uint64_t docs = CookieOf(term).docs_count;
+    scanned += docs * kScoredScanValues;
+    probed += std::min(lead_docs, docs) * kProbeCost + lead_docs;
+  }
+  if (scanned >= probed) {
+    return {};
+  }
+  return ResolveInput(*doc, [&]<typename Input> -> Result<Family> {
+    const auto make = [&]<ScoreMergeType M> -> Result<Family> {
+      using Leaf = PostingFillScored<Input, M>;
+      const auto clause =
+        ClauseOf(lead, nullptr, scoring.scorer, scoring.boost);
+      const auto args = scoring.recipe.Args(clause.stats, clause.boost);
+      return Family::template MakeWindow<
+        Leaf, utils::Empty, OrGroup<fill::SetLeaves<Leaf>>, utils::Empty>(
+        ctx, scoring.merge, ScoreOf(scoring, absorbed),
+        std::forward_as_tuple(
+          clause.state.cookie, *doc, BoundsOf(*clause.state.reader),
+          *scoring.recipe.segment, *clause.state.reader, args),
+        std::forward_as_tuple(),
+        std::forward_as_tuple(should.size(),
+                              [&](Leaf& leaf, size_t i) {
+                                PrepareScored(leaf, should[i], nullptr, *doc,
+                                              scoring);
+                              }),
+        std::forward_as_tuple());
+    };
+    if (scoring.merge == ScoreMergeType::Max) {
+      return make.template operator()<ScoreMergeType::Max>();
+    }
+    SDB_ASSERT(scoring.merge == ScoreMergeType::Sum);
+    return make.template operator()<ScoreMergeType::Sum>();
+  });
+}
+
+template<typename Family>
+inline constexpr bool kWindowBatches =
+  requires { requires Family::kWindowBatches; };
+
 template<typename Family, typename Ctx>
 Result<Family> MakeWindowConjunction(std::span<const PostingClause> terms,
                                      std::span<const QueryBuilder::ptr> filters,
@@ -239,7 +312,7 @@ Result<Family> MakeWindowConjunction(std::span<const PostingClause> terms,
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
-  if (!DenseConjunction(terms, docs_count)) {
+  if (!kWindowBatches<Family> && !DenseConjunction(terms, docs_count)) {
     return {};
   }
   return MakeWindowOfTerms<Family, utils::Empty>(terms, *doc,
@@ -356,7 +429,7 @@ Result<Family> MakeWindowExclusion(
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
-  if (!DenseConjunction(terms, docs_count)) {
+  if (!kWindowBatches<Family> && !DenseConjunction(terms, docs_count)) {
     return {};
   }
   return BuildWindowExcludes<Result<Family>>(

@@ -64,14 +64,24 @@ class PrunedReqOpt : public Root {
       const auto lead_max = _lead.MaxScore(last);
       const auto optional_max = _optional.OpenWindow(doc, last);
       if (lead_max + optional_max <= threshold) {
-        doc = _lead.Seek(last + 1);
+        doc = _lead.SkipNonCompetitive(last + 1, max,
+                                       threshold - _optional.RootMax());
+        if (doc < max) {
+          doc = _lead.SkipTo(doc);
+        }
         continue;
       }
       if (const auto drivers = _optional.Drivers(lead_max, threshold);
-          drivers != 0 &&
-          _optional.DriverCost(drivers) * kLeapfrogCost < _lead.Cost()) {
-        doc = OptionalFirst(doc, last, drivers, collector);
-        continue;
+          drivers != 0) {
+        const auto required =
+          drivers == 1 ? _optional.Required(lead_max, threshold, _lead.Cost())
+                       : 0;
+        const auto cost = required != 0 ? _optional.RequiredCost()
+                                        : _optional.DriverCost(drivers);
+        if (cost * kLeapfrogCost < _lead.Cost()) {
+          doc = OptionalFirst(doc, last, drivers, required, collector);
+          continue;
+        }
       }
       FlushBatch(collector);
       ScoreWindow(last, optional_max, collector);
@@ -83,15 +93,19 @@ class PrunedReqOpt : public Root {
 
  private:
   doc_id_t OptionalFirst(doc_id_t doc, doc_id_t last, size_t drivers,
-                         LoserScoreCollector& collector) {
-    auto target = _optional.FirstOf(drivers, doc);
+                         size_t required, LoserScoreCollector& collector) {
+    const auto next = [&](doc_id_t target) IRS_FORCE_INLINE {
+      return required != 0 ? _optional.AllOf(required, target)
+                           : _optional.FirstOf(drivers, target);
+    };
+    auto target = next(doc);
     while (target <= last) {
       const auto lead = _lead.Seek(target);
       if (lead != target) {
         if (lead > last) {
           return lead;
         }
-        target = _optional.FirstOf(drivers, lead);
+        target = next(lead);
         continue;
       }
       _batch.docs[_batch.size] = target;
@@ -100,7 +114,7 @@ class PrunedReqOpt : public Root {
       if (++_batch.size == kChunk) {
         FlushBatch(collector);
       }
-      target = _optional.FirstOf(drivers, target + 1);
+      target = next(target + 1);
     }
     return _lead.Seek(last + 1);
   }

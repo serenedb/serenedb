@@ -68,24 +68,57 @@ Root::ptr MakePrunedConjunction(
                                           .fetcher = &ctx.fetcher,
                                           .boost = posting.boost});
     };
-    const auto make = [&]<typename Others> -> Root::ptr {
+    const auto docs = static_cast<doc_id_t>(segment.docs_count());
+    std::vector<size_t> joined;
+    joined.reserve(size - 1);
+    for (size_t i = 1; i != size; ++i) {
+      if (!irs::detail::DensePosting(terms[i].state.cookie.docs_count, docs)) {
+        joined.push_back(i);
+      }
+    }
+    const auto member = [&](irs::detail::PostingFill<Input>& leaf, size_t i) {
+      const auto& posting = terms[joined[i]];
+      const auto& own = *posting.state.reader;
+      const auto& meta = posting.state.cookie;
+      leaf.Prepare(meta, *doc, irs::detail::LayoutOf(own),
+                   meta.docs_count != 1 && irs::detail::BoundsOf(own),
+                   meta.docs_count != 1 && irs::detail::FreqOf(own));
+    };
+    const auto make =
+      [&]<typename Others, typename Members>(const auto& members) -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
-        return MakeShape<PrunedConjunction, Lead, Others, utils::Empty>(
-          ctx, ctx.fetcher, size, init, std::forward_as_tuple());
+        return MakeShape<PrunedConjunction, Lead, Others, Members,
+                         utils::Empty>(ctx, ctx.fetcher, !ctx.prune, size, init,
+                                       members, std::forward_as_tuple());
       }
       const uint64_t lead = terms.front().state.cookie.docs_count;
       return irs::detail::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, lead, lead,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-          return MakeShape<PrunedConjunction, Lead, Others, Exclude>(
-            ctx, ctx.fetcher, size, init,
+          return MakeShape<PrunedConjunction, Lead, Others, Members, Exclude>(
+            ctx, ctx.fetcher, !ctx.prune, size, init, members,
             std::forward<decltype(negated)>(negated));
         });
     };
+    using Fill = irs::detail::PostingFill<Input>;
+    const bool windowed =
+      !joined.empty() && irs::detail::DenseConjunction(terms, docs);
+    const size_t others = joined.size();
+    const auto members = std::forward_as_tuple(others, member);
     if (size == 2) {
-      return make.template operator()<PrunedLeaves<Clause, 1>>();
+      if (windowed) {
+        return make.template
+        operator()<PrunedLeaves<Clause, 1>, fill::AndLeaves<Fill, 1>>(members);
+      }
+      return make.template operator()<PrunedLeaves<Clause, 1>, utils::Empty>(
+        std::tuple<>{});
     }
-    return make.template operator()<PrunedLeaves<Clause>>();
+    if (windowed) {
+      return make.template
+      operator()<PrunedLeaves<Clause>, fill::AndLeaves<Fill>>(members);
+    }
+    return make.template operator()<PrunedLeaves<Clause>, utils::Empty>(
+      std::tuple<>{});
   });
 }
 

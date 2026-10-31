@@ -120,6 +120,19 @@ class OrLeaves {
     return next;
   }
 
+  uint32_t Drop(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
+                uint32_t n)
+    requires requires(Leaf& leaf) { leaf.Drop(docs, scores, n); }
+  {
+    for (auto& leaf : _leaves) {
+      if (n == 0) {
+        break;
+      }
+      n = leaf.Drop(docs, scores, n);
+    }
+    return n;
+  }
+
   doc_id_t AdvanceBlock(doc_id_t target)
     requires kBounded
   {

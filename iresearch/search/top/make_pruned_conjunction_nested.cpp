@@ -61,6 +61,7 @@ struct NestedClause {
   std::span<const irs::detail::PostingClause> terms;
   uint64_t docs = 0;
   const QueryBuilder* constant = nullptr;
+  const QueryBuilder* phrase = nullptr;
   score_t bound = 0;
 };
 
@@ -121,6 +122,14 @@ bool ConstantTerms(const QueryBuilder& child, const SubReader& segment,
   return true;
 }
 
+bool PhraseOf(const QueryBuilder& child, NestedClause& out) noexcept {
+  if (child.Kind() != QueryKind::Phrase) {
+    return false;
+  }
+  out = {.docs = child.EstimateMax(), .phrase = &child};
+  return true;
+}
+
 }  // namespace
 
 Root::ptr MakeNestedPrunedConjunction(
@@ -148,25 +157,35 @@ Root::ptr MakeNestedPrunedConjunction(
         [&](const QueryBuilder& child) {
           auto& clause = clauses.emplace_back();
           return BoundedDisjunction(child, clause) ||
-                 ConstantTerms(child, segment, ctx, clause);
+                 ConstantTerms(child, segment, ctx, clause) ||
+                 PhraseOf(child, clause);
         })) {
     return {};
   }
   const auto lead = std::find_if(
-    clauses.begin(), clauses.end(),
-    [](const NestedClause& clause) { return clause.constant == nullptr; });
-  if (lead == clauses.end()) {
+    clauses.begin(), clauses.end(), [](const NestedClause& clause) {
+      return clause.constant == nullptr && clause.phrase == nullptr;
+    });
+  if (lead == clauses.end() ||
+      std::any_of(clauses.begin(), lead, [](const NestedClause& clause) {
+        return clause.phrase != nullptr;
+      })) {
     return {};
   }
   std::rotate(clauses.begin(), lead, lead + 1);
+  std::stable_partition(
+    clauses.begin() + 1, clauses.end(),
+    [](const NestedClause& clause) { return clause.phrase == nullptr; });
   const auto docs = static_cast<double>(segment.docs_count());
   double share = 1.0;
   uint64_t others = 0;
   bool constants = false;
+  bool phrases = false;
   for (size_t i = 1; i != clauses.size(); ++i) {
     share *= static_cast<double>(clauses[i].docs) / docs;
     others += clauses[i].docs;
     constants = constants || clauses[i].constant != nullptr;
+    phrases = phrases || clauses[i].phrase != nullptr;
   }
   if (clauses.size() != 2 &&
       others < kNestedOthersOverLead * clauses.front().docs) {
@@ -182,7 +201,15 @@ Root::ptr MakeNestedPrunedConjunction(
     return {};
   }
   std::vector<fill::Node::ptr> fills(clauses.size());
+  std::vector<PrunedClause::ptr> phrase_clauses(clauses.size());
   for (size_t i = 1; i != clauses.size(); ++i) {
+    if (clauses[i].phrase != nullptr) {
+      phrase_clauses[i] = MakeConjunctionClause(*clauses[i].phrase, ctx);
+      if (!phrase_clauses[i]) {
+        return {};
+      }
+      continue;
+    }
     if (clauses[i].constant == nullptr) {
       continue;
     }
@@ -222,6 +249,9 @@ Root::ptr MakeNestedPrunedConjunction(
     };
     const auto erased = [&](size_t i) -> PrunedClause::ptr {
       const auto& clause = clauses[i];
+      if (clause.phrase != nullptr) {
+        return std::move(phrase_clauses[i]);
+      }
       if (clause.constant != nullptr) {
         return memory::make_managed<PrunedClauseImpl<Window>>(
           std::piecewise_construct,
@@ -244,16 +274,18 @@ Root::ptr MakeNestedPrunedConjunction(
     const auto build = [&]<typename Lead, typename Others>(
                          auto&& lead, auto&& others_args) -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
-        return MakeShape<PrunedConjunction, Lead, Others, utils::Empty>(
-          ctx, ctx.fetcher, size, std::piecewise_construct,
-          std::forward<decltype(lead)>(lead), others_args,
-          std::forward_as_tuple());
+        return MakeShape<PrunedConjunction, Lead, Others, utils::Empty,
+                         utils::Empty>(ctx, ctx.fetcher, size,
+                                       std::piecewise_construct,
+                                       std::forward<decltype(lead)>(lead),
+                                       others_args, std::forward_as_tuple());
       }
       const uint64_t lead_docs = clauses.front().docs;
       return irs::detail::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, lead_docs, lead_docs,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-          return MakeShape<PrunedConjunction, Lead, Others, Exclude>(
+          return MakeShape<PrunedConjunction, Lead, Others, utils::Empty,
+                           Exclude>(
             ctx, ctx.fetcher, size, std::piecewise_construct,
             std::forward<decltype(lead)>(lead), others_args,
             std::forward<decltype(negated)>(negated));
@@ -262,6 +294,12 @@ Root::ptr MakeNestedPrunedConjunction(
     const auto make = [&]<typename Lead>(auto&& lead) -> Root::ptr {
       if (constants) {
         using Others = PrunedLeaves<ErasedClause>;
+        return build.template operator()<Lead, Others>(
+          std::forward<decltype(lead)>(lead),
+          [&](size_t i) { return std::make_tuple(erased(i + 1)); });
+      }
+      if (phrases) {
+        using Others = PrunedLeaves<ErasedProbeClause>;
         return build.template operator()<Lead, Others>(
           std::forward<decltype(lead)>(lead),
           [&](size_t i) { return std::make_tuple(erased(i + 1)); });

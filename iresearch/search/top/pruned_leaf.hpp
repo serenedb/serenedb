@@ -36,6 +36,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
+#include "iresearch/search/detail/masked_leaf.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -164,6 +165,8 @@ class PrunedLeafBase {
 
   uint32_t Cost() const noexcept { return _cost; }
 
+  score_t RootScore() const noexcept { return _root_score; }
+
   doc_id_t AdvanceBlock(doc_id_t target) {
     if (!_cursor.Armed()) [[unlikely]] {
       return doc_limits::eof();
@@ -221,6 +224,26 @@ class PrunedLeafBase {
       score = std::max(score, RunScore(k));
     }
     return score;
+  }
+
+  doc_id_t SkipNonCompetitive(doc_id_t target, doc_id_t limit,
+                              score_t threshold) {
+    if (!_cursor.Armed()) {
+      return target;
+    }
+    const auto& index = _cursor.Index();
+    const auto n = index.Size();
+    const auto b = index.Find(_cursor.Block(), target);
+    const auto first = FirstCompetitive(
+      index, b, threshold, [&](uint32_t r) { return RunScore(r); },
+      [&](uint32_t k) { return BlockScore(k); });
+    if (first == b) {
+      return target;
+    }
+    const auto next =
+      first == n ? limit : std::min(limit, index.Last(first - 1) + 1);
+    AdvanceBlock(next);
+    return next;
   }
 
  protected:
@@ -432,6 +455,179 @@ class PrunedLeafBase {
   uint32_t _cost = 0;
   bool _needs_reposition = false;
   bool _scored = false;
+};
+
+template<typename InputType>
+class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
+  using Base = PrunedLeafBase<InputType, false>;
+
+ public:
+  uint32_t TakeReads() noexcept { return std::exchange(_reads, 0); }
+
+ protected:
+  using Base::_base;
+  using Base::_cursor;
+  using Base::_doc;
+  using Base::_docs;
+  using Base::_enc;
+  using Base::_freqs;
+  using Base::_hint;
+  using Base::_left_in_list;
+  using Base::_max_in_leaf;
+  using Base::_needs_reposition;
+  using Base::In;
+
+  static constexpr uint32_t kBlock = doc_limits::kBlockSize;
+
+  template<typename Visit>
+  IRS_FORCE_INLINE void Members(const doc_id_t* docs, uint32_t n,
+                                Visit&& visit) {
+    SDB_ASSERT(n <= kScoreBlock);
+    uint32_t blocks[kScoreBlock];
+    const auto landings = Landings(docs, n, blocks);
+    uint32_t landed = 0;
+    for (uint32_t i = 0; i != n;) {
+      if (docs[i] > _max_in_leaf) {
+        if (landed != landings) {
+          LandOn(blocks[landed++]);
+        } else if (!Reach(docs[i])) {
+          _doc = doc_limits::eof();
+          return;
+        }
+      }
+      const auto last = _max_in_leaf;
+      do {
+        const auto doc = docs[i];
+        _doc = _leaf.Find(std::begin(_docs), _base, doc);
+        const bool hit = _doc == doc;
+        if constexpr (InputType::kVolatileAlways) {
+          if (hit && _lazy != nullptr) [[unlikely]] {
+            DecodeFreqs();
+          }
+        }
+        visit(i, hit, _freqs.data[_leaf.Index()]);
+      } while (++i != n && docs[i] <= last);
+    }
+  }
+
+  uint32_t Landings(const doc_id_t* in, uint32_t n, uint32_t* blocks) {
+    if (!_cursor.Armed() || n < 2 || in[n - 1] <= _max_in_leaf ||
+        (!_needs_reposition &&
+         (in[n - 1] - in[0]) / (n - 1) <= _max_in_leaf - _base)) {
+      return 0;
+    }
+    const auto& index = _cursor.Index();
+    const auto size = index.Size();
+    auto block = _cursor.NextBlock(_left_in_list);
+    auto next = _needs_reposition ? size : block;
+    doc_id_t upper = _needs_reposition ? doc_limits::invalid() : _max_in_leaf;
+    uint32_t landings = 0;
+    for (uint32_t i = 0; i != n; ++i) {
+      if (in[i] <= upper) {
+        continue;
+      }
+      if (block == size || index.Last(block) < in[i]) {
+        block = index.Find(block, in[i]);
+      }
+      if (block == size) {
+        break;
+      }
+      blocks[landings++] = block;
+      if constexpr (InputType::kVolatileAlways) {
+        if (block != next) {
+          const auto begin =
+            reinterpret_cast<uintptr_t>(In().At(_cursor.BlockStart(block)));
+          const auto end = block + 1 != size
+                             ? reinterpret_cast<uintptr_t>(
+                                 In().At(_cursor.BlockStart(block + 1)))
+                             : begin + 1;
+          for (auto line = begin & ~uintptr_t{ABSL_CACHELINE_SIZE - 1};
+               line < end; line += ABSL_CACHELINE_SIZE) {
+            __builtin_prefetch(reinterpret_cast<const void*>(line), 0, 2);
+          }
+        }
+      }
+      upper = index.Last(block);
+      next = ++block;
+    }
+    return landings;
+  }
+
+  void LandOn(uint32_t block) {
+    if (!_needs_reposition && block == _cursor.NextBlock(_left_in_list)) {
+      ReadFill(_max_in_leaf);
+      return;
+    }
+    _left_in_list = _cursor.MoveTo(block);
+    _needs_reposition = false;
+    const auto landing = _cursor.Landing();
+    In().Seek(landing.doc_ptr);
+    ReadFill(landing.doc);
+  }
+
+  bool Reach(doc_id_t target) {
+    if (!_cursor.Armed()) {
+      if (_left_in_list == 0) {
+        return false;
+      }
+      ReadFill(_max_in_leaf);
+      return target <= _max_in_leaf;
+    }
+    const auto& index = _cursor.Index();
+    auto block = _cursor.NextBlock(_left_in_list);
+    if (block < index.Size() && index.Last(block) < target) {
+      block = index.Find(block, target);
+    }
+    if (block >= index.Size()) {
+      return false;
+    }
+    LandOn(block);
+    return true;
+  }
+
+  void ReadFill(doc_id_t prev) {
+    ++_reads;
+    auto& in = In();
+    _hint.Advance(in, in.Position());
+    const auto len = std::min(_left_in_list, kBlock);
+    const auto leaf =
+      block_io::ReadTailForFill(len, in, _enc.data, nullptr, _docs, prev);
+    _left_in_list -= len;
+    const auto* bitset = leaf.bitset;
+    if constexpr (!InputType::kVolatileAlways) {
+      if (leaf.IsBitset()) {
+        std::memcpy(std::begin(_docs), leaf.bitset,
+                    size_t{leaf.words} * sizeof(uint64_t));
+        bitset = reinterpret_cast<const UnalignedWord*>(std::begin(_docs));
+      }
+    }
+    if constexpr (InputType::kVolatileAlways) {
+      _lazy = in.Current();
+      block_io::SkipTail(len, in);
+    } else {
+      block_io::ReadTail<block_io::kFreqBias>(len, in, _enc.data, _freqs.data);
+    }
+    _base = prev;
+    _max_in_leaf = leaf.max;
+    _leaf.Reset(leaf, bitset, len);
+  }
+
+  IRS_NO_INLINE void DecodeFreqs() noexcept {
+    using Codec = block_io::Codec;
+    const auto len = _leaf.Len();
+    if (len == kBlock) {
+      Codec::DecodeValuesBlock<block_io::kFreqBias>(_lazy, _freqs.data);
+    } else {
+      Codec::DecodeValuesTail<block_io::kFreqBias>(
+        _lazy, len, _freqs.data + (kBlock - len));
+    }
+    _lazy = nullptr;
+  }
+
+  ABSL_CACHELINE_ALIGNED uint32_t _gather[kScoreBlock]{};
+  const byte_type* _lazy = nullptr;
+  detail::MaskedLeaf _leaf;
+  uint32_t _reads = 0;
 };
 
 }  // namespace irs::top

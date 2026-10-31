@@ -379,6 +379,7 @@ class PostingLeaf {
     _last = *(std::end(_docs) - 1);
   }
 
+  template<bool Score = true>
   bool ReadLeafBelow(uint32_t len, doc_id_t min) {
     static_assert(Shape.scored && Shape.freqs && Shape.enc);
     auto& in = In();
@@ -389,7 +390,9 @@ class PostingLeaf {
       return false;
     }
     block_io::ReadTail<block_io::kFreqBias>(len, in, _enc.data, _freqs.data);
-    ScoreLeaf(kBlock - len, len);
+    if constexpr (Score) {
+      ScoreLeaf(kBlock - len, len);
+    }
     return true;
   }
 
@@ -455,6 +458,38 @@ class PostingLeaf {
     return begin;
   }
 
+  template<ScoreMergeType MergeType>
+  const doc_id_t* ScoreMasked(const doc_id_t* begin, const doc_id_t* end,
+                              doc_id_t min, doc_id_t max,
+                              const uint64_t* IRS_RESTRICT mask,
+                              score_t* IRS_RESTRICT window) {
+    static_assert(Shape.scored && Shape.freqs);
+    doc_id_t docs[kBlock];
+    uint32_t freqs[kBlock];
+    uint32_t offsets[kBlock];
+    uint32_t hits = 0;
+    const auto* const first = std::cbegin(_docs);
+    for (; begin != end && *begin < max; ++begin) {
+      const auto offset = static_cast<uint32_t>(*begin - min);
+      docs[hits] = *begin;
+      freqs[hits] = _freqs.data[begin - first];
+      offsets[hits] = offset;
+      hits +=
+        static_cast<uint32_t>((mask[offset / kBits] >> (offset % kBits)) & 1);
+    }
+    if (hits != 0) {
+      score_t scores[kBlock];
+      _provider.freq.value = freqs;
+      _score.fetcher->Fetch(std::span<const doc_id_t>{docs, hits});
+      _score.score.Score(scores, static_cast<scores_size_t>(hits));
+      _provider.freq.value = _freqs.data;
+      for (uint32_t i = 0; i != hits; ++i) {
+        irs::Merge<MergeType>(window[offsets[i]], scores[i]);
+      }
+    }
+    return begin;
+  }
+
   doc_id_t Scan(doc_id_t target) {
     for (auto left = _left_in_leaf; left != 0; --left) {
       const auto doc = *(std::end(_docs) - left);
@@ -471,6 +506,25 @@ class PostingLeaf {
   template<typename Read>
   IRS_NO_INLINE bool SeekToLeaf(doc_id_t target, Read&& read) {
     static_assert(Shape.cursor);
+    if (_walk.Armed() && !_walk.Pending()) {
+      if (_left_in_list == 0) [[unlikely]] {
+        return false;
+      }
+      const auto& index = _walk.Index();
+      const auto next = _walk.NextBlock(_left_in_list);
+      if (index.Last(next) >= target) {
+        read(_last);
+        return true;
+      }
+      _left_in_list = _walk.MoveTo(index.Find(next + 1, target));
+      if (_left_in_list == 0) [[unlikely]] {
+        return false;
+      }
+      const auto landing = _walk.Landing();
+      In().Seek(landing.doc_ptr);
+      read(landing.doc);
+      return true;
+    }
     const auto span = _last - _cursor.base;
     const bool avoid_seek = target - _last <= span ||
                             target <= _walk.UpperBound() ||
@@ -504,6 +558,68 @@ class PostingLeaf {
       target, [this](doc_id_t prev) IRS_FORCE_INLINE { ReadLeafDelta(prev); });
   }
 
+  template<bool Whole>
+  uint32_t Landings(const doc_id_t* in, uint32_t n, uint32_t* blocks) {
+    static_assert(Shape.cursor);
+    if (!_walk.Armed() || _walk.Pending() || n < 2 || in[n - 1] <= _last ||
+        (in[n - 1] - in[0]) / (n - 1) <= _last - _cursor.base) {
+      return 0;
+    }
+    const auto& index = _walk.Index();
+    const auto size = index.Size();
+    auto block = _walk.NextBlock(_left_in_list);
+    doc_id_t upper = _last;
+    uint32_t landings = 0;
+    for (uint32_t i = 0; i != n && landings != kBlock; ++i) {
+      if (in[i] <= upper) {
+        continue;
+      }
+      const auto next = block;
+      if (block == size || index.Last(block) < in[i]) {
+        block = index.Find(block, in[i]);
+      }
+      if (block == size) {
+        break;
+      }
+      blocks[landings++] = block;
+      if constexpr (InputType::kVolatileAlways) {
+        if (block != next) {
+          const auto* const at = In().At(_walk.BlockStart(block));
+          if constexpr (Whole) {
+            const auto end = block + 1 != size
+                               ? reinterpret_cast<uintptr_t>(
+                                   In().At(_walk.BlockStart(block + 1)))
+                               : reinterpret_cast<uintptr_t>(at) + 1;
+            for (auto line = reinterpret_cast<uintptr_t>(at) &
+                             ~uintptr_t{ABSL_CACHELINE_SIZE - 1};
+                 line < end; line += ABSL_CACHELINE_SIZE) {
+              __builtin_prefetch(reinterpret_cast<const void*>(line), 0, 2);
+            }
+          } else {
+            __builtin_prefetch(at, 0, 2);
+            __builtin_prefetch(at + ABSL_CACHELINE_SIZE, 0, 2);
+          }
+        }
+      }
+      upper = index.Last(block);
+      ++block;
+    }
+    return landings;
+  }
+
+  template<typename Read>
+  IRS_FORCE_INLINE void LandOn(uint32_t block, Read&& read) {
+    static_assert(Shape.cursor);
+    if (block == _walk.NextBlock(_left_in_list)) {
+      read(_last);
+      return;
+    }
+    _left_in_list = _walk.MoveTo(block);
+    const auto landing = _walk.Landing();
+    In().Seek(landing.doc_ptr);
+    read(landing.doc);
+  }
+
   struct FillRead {
     block_io::FillLeaf leaf;
     const UnalignedWord* bitset;
@@ -525,6 +641,9 @@ class PostingLeaf {
     return {.leaf = leaf, .bitset = bitset, .len = len};
   }
 
+  [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Grows,
+                                    GrowingHint> _hint;
+  BlockCursor _walk;
   [[no_unique_address]] utils::Need<kEnc, EncBuf> _enc;
   [[no_unique_address]] utils::Need<Shape.holes, HoleBuf> _holes;
   [[no_unique_address]] utils::Need<Shape.freqs, FreqBuf> _freqs;
@@ -541,9 +660,6 @@ class PostingLeaf {
     _provider;
   [[no_unique_address]] utils::Need<Shape.defer, LeafRecipe> _recipe;
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
-  [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Grows,
-                                    GrowingHint> _hint;
-  BlockCursor _walk;
 };
 
 }  // namespace irs::detail

@@ -25,14 +25,17 @@
 namespace irs::top {
 
 template<typename InputType>
-class PostingPrunedDisj : public PrunedLeafBase<InputType, false> {
-  using Base = PrunedLeafBase<InputType, false>;
+class PostingPrunedDisj : public PrunedProbeBase<InputType> {
+  using Base = PrunedProbeBase<InputType>;
 
+  using Base::_base;
   using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
   using Base::_fetcher;
   using Base::_freqs;
+  using Base::_lazy;
+  using Base::_leaf;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
   using Base::_len;
@@ -40,13 +43,14 @@ class PostingPrunedDisj : public PrunedLeafBase<InputType, false> {
   using Base::_needs_reposition;
   using Base::_provider;
   using Base::_score;
-  using Base::In;
+  using Base::_scored;
+  using Base::DecodeFreqs;
+  using Base::FirstNotBelow;
+  using Base::Members;
   using Base::ReadLeaf;
-  using Base::RepositionForWindow;
 
  public:
   using Base::AdvanceBlock;
-  using Base::ForEachScoredBlock;
   using Base::MaxScore;
   using Base::Value;
 
@@ -55,9 +59,11 @@ class PostingPrunedDisj : public PrunedLeafBase<InputType, false> {
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, const SubReader& segment,
                const TermReader& field, const detail::ScoreArgs& args) {
+    _masked = false;
     if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {
       _left_in_leaf = 0;
       _doc = doc_limits::min() + meta.doc_delta;
+      _max_in_leaf = _doc;
     }
   }
 
@@ -71,6 +77,7 @@ class PostingPrunedDisj : public PrunedLeafBase<InputType, false> {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
+    Unmask(target);
     AdvanceBlock(target);
     if (_left_in_leaf == 0) [[unlikely]] {
       if (_left_in_list == 0) [[unlikely]] {
@@ -89,6 +96,15 @@ class PostingPrunedDisj : public PrunedLeafBase<InputType, false> {
       }
       ReadLeaf(*(std::end(_docs) - 1));
     }
+  }
+
+  template<typename Visitor>
+  IRS_FORCE_INLINE void ForEachScoredBlock(doc_id_t max, Visitor&& visit) {
+    if (_doc >= max) [[unlikely]] {
+      return;
+    }
+    Unmask(_doc);
+    Base::ForEachScoredBlock(max, std::forward<Visitor>(visit));
   }
 
   void Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
@@ -138,183 +154,115 @@ class PostingPrunedDisj : public PrunedLeafBase<InputType, false> {
   template<typename DocsBuffer, typename ScoresBuffer>
   void ScoreCandidates(DocsBuffer& cand_docs, ScoresBuffer& cand_scores,
                        bool required) {
-    ScoreCandidatesImpl<false>(cand_docs, cand_scores, cand_scores, required);
-  }
-
-  template<typename DocsBuffer, typename ScoresBuffer, typename MatchesBuffer>
-  void ScoreCandidates(DocsBuffer& cand_docs, ScoresBuffer& cand_scores,
-                       MatchesBuffer& cand_matches, bool required) {
-    ScoreCandidatesImpl<true>(cand_docs, cand_scores, cand_matches, required);
-  }
-
-  template<bool Counted, typename DocsBuffer, typename ScoresBuffer,
-           typename MatchesBuffer>
-  void ScoreCandidatesImpl(DocsBuffer& cand_docs, ScoresBuffer& cand_scores,
-                           [[maybe_unused]] MatchesBuffer& cand_matches,
-                           bool required) {
-    SDB_ASSERT(!cand_docs.empty());
-    size_t out = 0;
-
-    const size_t cand_count = cand_docs.size();
-    const doc_id_t max = cand_docs[cand_count - 1] + 1;
-
-    if (_doc >= max) [[unlikely]] {
+    const auto count = static_cast<uint32_t>(cand_docs.size());
+    SDB_ASSERT(count != 0);
+    if (_doc > cand_docs[count - 1]) {
       if (required) {
         cand_docs.resize(0);
         cand_scores.resize(0);
-        if constexpr (Counted) {
-          cand_matches.resize(0);
-        }
       }
       return;
     }
-
-    ABSL_CACHELINE_ALIGNED doc_id_t docs[kScoreBlock];
-    ABSL_CACHELINE_ALIGNED uint32_t freqs[kScoreBlock];
-    ABSL_CACHELINE_ALIGNED uint32_t indices[kScoreBlock];
+    Mask();
+    ABSL_CACHELINE_ALIGNED doc_id_t docs[2 * kScoreBlock];
+    ABSL_CACHELINE_ALIGNED uint32_t slots[2 * kScoreBlock];
+    ABSL_CACHELINE_ALIGNED uint32_t freqs[2 * kScoreBlock];
     ABSL_CACHELINE_ALIGNED score_t scores[kScoreBlock];
-    size_t count = 0;
     _provider.freq.value = freqs;
-
-    auto score_block = [&](uint32_t len) {
-      SDB_ASSERT(len != 0);
-      _fetcher->Fetch(std::span<const doc_id_t>{docs, len});
-      auto* const p = scores;
-      if (len == kScoreBlock) {
-        _score.ScoreBlock(p);
+    uint32_t out = 0;
+    const auto flush = [&](uint32_t hits) {
+      _fetcher->Fetch(std::span<const doc_id_t>{docs, hits});
+      if (hits == kScoreBlock) {
+        _score.ScoreBlock(scores);
       } else {
-        _score.Score(p, static_cast<scores_size_t>(len));
+        _score.Score(scores, static_cast<scores_size_t>(hits));
       }
-      for (uint32_t j = 0; j != len; ++j) {
-        cand_scores[indices[j]] += p[j];
-        if constexpr (Counted) {
-          ++cand_matches[indices[j]];
+      if (required) {
+        for (uint32_t j = 0; j != hits; ++j) {
+          cand_docs[out] = docs[j];
+          cand_scores[out] = cand_scores[slots[j]] + scores[j];
+          ++out;
         }
-      }
-      count = 0;
-    };
-
-    size_t cand_idx = 0;
-
-    auto find_in_block = [&](const doc_id_t* begin, const doc_id_t* end) {
-      while (cand_idx < cand_count && begin < end) {
-        const doc_id_t cand = cand_docs[cand_idx];
-        if (cand > *(end - 1)) {
-          break;
+      } else {
+        for (uint32_t j = 0; j != hits; ++j) {
+          cand_scores[slots[j]] += scores[j];
         }
-        const doc_id_t* it = Base::FirstNotBelow(begin, cand);
-        if (it < begin) {
-          it = begin;
-        }
-        if (it != end && *it == cand) {
-          if (required) {
-            cand_docs[out] = cand_docs[cand_idx];
-            cand_scores[out] = cand_scores[cand_idx];
-            if constexpr (Counted) {
-              cand_matches[out] = cand_matches[cand_idx];
-            }
-            indices[count] = out;
-            ++out;
-          } else {
-            indices[count] = cand_idx;
-          }
-          docs[count] = cand;
-          freqs[count] =
-            _freqs.data[static_cast<size_t>(it - std::cbegin(_docs))];
-          ++count;
-          if (count == kScoreBlock) {
-            score_block(kScoreBlock);
-          }
-          ++it;
-        }
-        begin = it;
-        ++cand_idx;
       }
     };
-
-    RepositionForWindow(_doc);
-    SDB_ASSERT(_left_in_leaf < doc_limits::kBlockSize);
-
-    {
-      const auto n = _left_in_leaf + 1;
-      if (*(std::end(_docs) - 1) >= max) {
-        _left_in_leaf = n;
-        goto cand_tail;
-      }
-      find_in_block(std::end(_docs) - n, std::end(_docs));
-      if (cand_idx >= cand_count) {
-        goto cand_done;
-      }
-    }
-
-    for (;;) {
-      if (_left_in_list == 0) [[unlikely]] {
-        _left_in_leaf = 0;
-        goto cand_done;
-      }
-      {
-        const doc_id_t next_cand = cand_docs[cand_idx];
-        if (const auto next = _cursor.Block() + 1;
-            next_cand > _cursor.UpperBound() && next < _cursor.Index().Size() &&
-            next_cand <= _cursor.Index().Last(next)) {
-          _cursor.MoveTo(next);
-          ReadLeaf(*(std::end(_docs) - 1));
-        } else if (next_cand > _cursor.UpperBound()) {
-          _left_in_list = _cursor.Seek(next_cand, In());
-          _needs_reposition = false;
-          if (_left_in_list == 0) {
-            _left_in_leaf = 0;
-            goto cand_done;
-          }
-          const auto state = _cursor.Landing();
-          In().Seek(state.doc_ptr);
-          ReadLeaf(state.doc);
-        } else {
-          ReadLeaf(*(std::end(_docs) - 1));
-        }
-      }
-      if (*(std::end(_docs) - 1) >= max ||
-          _left_in_leaf != doc_limits::kBlockSize) {
-        goto cand_tail;
-      }
-      find_in_block(std::begin(_docs), std::end(_docs));
-      if (cand_idx >= cand_count) {
-        goto cand_done;
+    uint32_t hits = 0;
+    for (uint32_t begin = 0; begin < count && !doc_limits::eof(_doc);
+         begin += kScoreBlock) {
+      const auto n = std::min<uint32_t>(count - begin, kScoreBlock);
+      const auto* const chunk = &cand_docs[begin];
+      Members(chunk, n,
+              [&](uint32_t i, bool hit, uint32_t freq) IRS_FORCE_INLINE {
+                if (hit) {
+                  docs[hits] = chunk[i];
+                  slots[hits] = begin + i;
+                  freqs[hits] = freq;
+                  ++hits;
+                }
+              });
+      if (hits >= kScoreBlock) {
+        flush(kScoreBlock);
+        hits -= kScoreBlock;
+        std::copy_n(docs + kScoreBlock, hits, docs);
+        std::copy_n(slots + kScoreBlock, hits, slots);
+        std::copy_n(freqs + kScoreBlock, hits, freqs);
       }
     }
-
-  cand_tail: {
-    const auto* const begin = std::cend(_docs) - _left_in_leaf;
-    const auto* const end = Base::FirstNotBelow(begin, max);
-    if (end != begin) {
-      find_in_block(begin, end);
-    }
-    _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - end);
-  }
-
-  cand_done:
-    if (count != 0) {
-      score_block(static_cast<uint32_t>(count));
-    }
-    if (_left_in_leaf != 0) {
-      _doc = *(std::end(_docs) - _left_in_leaf);
-      --_left_in_leaf;
-    } else if (_left_in_list != 0) {
-      _doc = *(std::end(_docs) - 1);
-    } else {
-      _doc = doc_limits::eof();
+    if (hits != 0) {
+      flush(hits);
     }
     _provider.freq.value = _freqs.data;
     if (required) {
       cand_docs.resize(out);
       cand_scores.resize(out);
-      if constexpr (Counted) {
-        cand_matches.resize(out);
-      }
     }
   }
 
  private:
+  void Mask() noexcept {
+    if (_masked) {
+      return;
+    }
+    _masked = true;
+    _masked_max = _needs_reposition ? doc_limits::invalid() : _max_in_leaf;
+    _lazy = nullptr;
+    _leaf.Reset({.bitset = nullptr,
+                 .words = 0,
+                 .max = _max_in_leaf,
+                 .kind = block_io::FillLeaf::Kind::Docs},
+                nullptr, _len);
+  }
+
+  void Unmask(doc_id_t target) {
+    if (!_masked) [[likely]] {
+      return;
+    }
+    _masked = false;
+    if (_needs_reposition) {
+      return;
+    }
+    if (target > _max_in_leaf) {
+      _lazy = nullptr;
+      _left_in_leaf = 0;
+      _doc = _max_in_leaf;
+      return;
+    }
+    const auto len = _leaf.Len();
+    if (_max_in_leaf != _masked_max) {
+      _leaf.Materialize(_base, std::end(_docs) - len);
+      if (_lazy != nullptr) {
+        DecodeFreqs();
+      }
+      _len = len;
+      _scored = false;
+    }
+    const auto* const it = FirstNotBelow(std::end(_docs) - len, _doc);
+    _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - it) - 1;
+  }
+
   IRS_FORCE_INLINE doc_id_t TakeFrom(doc_id_t target) noexcept {
     if (_len == doc_limits::kBlockSize) [[likely]] {
       const auto* const it =
@@ -330,6 +278,9 @@ class PostingPrunedDisj : public PrunedLeafBase<InputType, false> {
       }
     }
   }
+
+  doc_id_t _masked_max = doc_limits::invalid();
+  bool _masked = false;
 };
 
 }  // namespace irs::top

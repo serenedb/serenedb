@@ -28,6 +28,7 @@
 
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/detail/boolean_window_base.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -43,6 +44,11 @@ class BooleanWindow : public Root {
   static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  static constexpr bool kBatches = kLead && requires(Lead& lead, doc_id_t doc) {
+    { lead.Sparse() } -> std::same_as<bool>;
+    lead.Rest(doc);
+    lead.Seek(doc);
+  };
   static_assert(kLead != kOptional);
   static_assert(kLead || !kOthers);
 
@@ -75,6 +81,18 @@ class BooleanWindow : public Root {
       if (!_table.Skip(min) || min >= end) {
         return total;
       }
+      if constexpr (kBatches) {
+        min = _lead.Seek(min);
+        if (min >= end) {
+          return total;
+        }
+        if (_lead.Sparse()) {
+          const auto rest = _lead.Rest(end);
+          total += Sift(rest.data(), static_cast<uint32_t>(rest.size()));
+          min = rest.back() + 1;
+          continue;
+        }
+      }
       SDB_ASSERT(min <= doc_limits::eof() - detail::kWindowDocs);
       const doc_id_t max = std::min<doc_id_t>(min + detail::kWindowDocs, end);
 
@@ -93,7 +111,28 @@ class BooleanWindow : public Root {
   }
 
  private:
+  uint64_t Sift(const doc_id_t* in, uint32_t n) {
+    auto* const out = _docs.data();
+    if constexpr (kOthers) {
+      n = _others.Keep(in, n, out);
+      in = out;
+    }
+    if constexpr (detail::Narrowing<Table>::kTable) {
+      n = detail::DropExcluded(_excludes, in, n, out);
+      return _table.Run(out, nullptr, n);
+    } else if constexpr (!kExcludes) {
+      return n;
+    } else if constexpr (requires { _excludes.Drop(in, n, out); }) {
+      return _excludes.Drop(in, n, out);
+    } else {
+      return n - detail::CountExcluded(_excludes, in, n);
+    }
+  }
+
   detail::Scratch _mask{};
+  [[no_unique_address]] utils::Need<
+    kBatches,
+    SlackBuf<doc_id_t, doc_limits::kBlockSize, doc_limits::kDocsSlack>> _docs;
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Others _others;
   [[no_unique_address]] Optional _optional;

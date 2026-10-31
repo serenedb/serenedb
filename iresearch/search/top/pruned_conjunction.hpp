@@ -40,24 +40,27 @@
 
 namespace irs::top {
 
-template<typename Lead, typename Others, typename Excludes, typename Table>
+template<typename Lead, typename Others, typename Members, typename Excludes,
+         typename Table>
 class PrunedConjunction : public Root {
  public:
   static constexpr uint32_t kChunk = kScoreBlock;
-  static constexpr size_t kNarrowWindowClauses = 4;
-  static constexpr uint32_t kNarrowFragment = 32;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  static constexpr bool kMembers = !std::is_same_v<Members, utils::Empty>;
 
-  template<typename Init, typename ExcludesArgs>
-  PrunedConjunction(Table table, ColumnArgsFetcher& fetcher, size_t size,
-                    Init&& init, ExcludesArgs&& excludes)
+  template<typename Init, typename MembersArgs, typename ExcludesArgs>
+  PrunedConjunction(Table table, ColumnArgsFetcher& fetcher, bool exhaustive,
+                    size_t size, Init&& init, MembersArgs&& members,
+                    ExcludesArgs&& excludes)
     : _others{fetcher, size - 1,
               [&](auto& leaf, size_t i) { init(leaf, i + 1); }},
+      _members{
+        std::make_from_tuple<Members>(std::forward<MembersArgs>(members))},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+      _exhaustive{exhaustive},
       _admit{table} {
     SDB_ASSERT(size > 1);
-    _narrow = size >= kNarrowWindowClauses;
     init(_lead, 0);
   }
 
@@ -72,23 +75,25 @@ class PrunedConjunction : public Root {
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _admit{table} {
     SDB_ASSERT(size > 1);
-    _narrow = size >= kNarrowWindowClauses;
   }
 
   PrunedConjunction(PrunedConjunction&&) = delete;
   PrunedConjunction& operator=(PrunedConjunction&&) = delete;
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
+    if constexpr (kDocFirst) {
+      if (_exhaustive) {
+        Walk(_lead.Seek(min), max - 1, std::numeric_limits<score_t>::max(),
+             collector);
+        FlushBatch(collector);
+        _admit.Flush(collector);
+        return;
+      }
+    }
     for (auto doc = _lead.Seek(min); doc < max;) {
       const auto threshold = collector.ScoreThreshold();
-      const auto others_end = _others.AdvanceTo(doc);
-      const auto lead_last = _lead.BlockLast();
-      auto last = lead_last;
-      if (_narrow && doc < others_end && others_end < lead_last &&
-          static_cast<uint64_t>(others_end - doc) * kNarrowFragment >=
-            static_cast<uint64_t>(lead_last - doc)) {
-        last = others_end;
-      }
+      _others.AdvanceTo(doc);
+      auto last = _lead.BlockLast();
       if (last >= max) [[unlikely]] {
         last = max - 1;
       }
@@ -97,15 +102,16 @@ class PrunedConjunction : public Root {
 
       if (lead_max + others_max <= threshold) {
         _span = 1;
-        doc = _lead.Seek(last + 1);
+        doc = SkipLead(last + 1, max, threshold - _others.RootMax());
         continue;
       }
 
       if constexpr (kDocFirst) {
+        doc = _lead.Seek(doc);
         if (threshold <= others_max) {
           last = std::max(last, std::min(_lead.SpanLast(_span), max - 1));
           _span = std::min(_span * 2, kMaxSpan);
-          doc = DocFirst(doc, last, others_max, collector);
+          doc = Walk(doc, last, others_max, collector);
           continue;
         }
         _span = 1;
@@ -115,8 +121,7 @@ class PrunedConjunction : public Root {
         const uint64_t range = last - doc + 1;
         _others.TakeReads();
         if (!ScoreFirstPays(bucket) && ++bucket.ticks < bucket.interval) {
-          doc =
-            DocFirst(doc, last, std::numeric_limits<score_t>::max(), collector);
+          doc = Walk(doc, last, std::numeric_limits<score_t>::max(), collector);
           bucket.doc_reads = bucket.doc_reads / 2 + _others.TakeReads();
           bucket.doc_range = bucket.doc_range / 2 + range;
           continue;
@@ -183,6 +188,18 @@ class PrunedConjunction : public Root {
                                      bucket.sf_seen * bucket.doc_range;
   }
 
+  doc_id_t SkipLead(doc_id_t target, doc_id_t max, score_t threshold) {
+    if constexpr (requires {
+                    _lead.SkipNonCompetitive(target, max, threshold);
+                  }) {
+      target = _lead.SkipNonCompetitive(target, max, threshold);
+      if (target >= max) {
+        return target;
+      }
+    }
+    return _lead.SkipTo(target);
+  }
+
   std::pair<uint32_t, uint32_t> ScoreFirst(doc_id_t last, score_t others_max,
                                            LoserScoreCollector& collector) {
     auto threshold = collector.ScoreThreshold();
@@ -190,14 +207,14 @@ class PrunedConjunction : public Root {
     uint32_t dropped = 0;
     _lead.ForEachScoredBlock(last + 1, [&](doc_id_t* docs, uint32_t len,
                                            score_t* scores) {
+      if (const auto required = threshold - others_max; required > 0) {
+        const auto kept =
+          irs::detail::FilterScores(docs, scores, len, required);
+        dropped += len - kept;
+        seen += len - kept;
+        len = kept;
+      }
       if constexpr (kExcludes) {
-        if (const auto required = threshold - others_max; required > 0) {
-          const auto kept =
-            irs::detail::FilterScores(docs, scores, len, required);
-          dropped += len - kept;
-          seen += len - kept;
-          len = kept;
-        }
         len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
       }
       seen += len;
@@ -211,6 +228,88 @@ class PrunedConjunction : public Root {
       }
     });
     return {seen, dropped};
+  }
+
+  doc_id_t Walk(doc_id_t doc, doc_id_t last, score_t stop,
+                LoserScoreCollector& collector) {
+    if constexpr (kMembers) {
+      return WindowFirst(doc, last, stop, collector);
+    } else {
+      return DocFirst(doc, last, stop, collector);
+    }
+  }
+
+  doc_id_t WindowFirst(doc_id_t doc, doc_id_t last, score_t stop,
+                       LoserScoreCollector& collector) {
+    while (doc <= last) {
+      const auto min = doc;
+      const auto max = static_cast<doc_id_t>(std::min<uint64_t>(
+        uint64_t{last} + 1, uint64_t{min} + irs::detail::kWindowDocs));
+      uint32_t n = 0;
+      _lead.ForEachDocs(max, [&](const doc_id_t* docs, const uint32_t* freqs,
+                                 uint32_t len) IRS_FORCE_INLINE {
+        std::copy_n(docs, len, _window_docs + n);
+        std::copy_n(freqs, len, _window_freqs + n);
+        n += len;
+      });
+      if (n < irs::detail::kSparseWindow) {
+        for (uint32_t i = 0; i != n; ++i) {
+          const auto member = _window_docs[i];
+          if constexpr (kExcludes) {
+            if (irs::detail::IsExcluded(_excludes, member)) {
+              continue;
+            }
+          }
+          if (_others.Probe(member) == member) {
+            Batch(member, _window_freqs[i], collector);
+          }
+        }
+        doc = _lead.Value();
+        if (collector.ScoreThreshold() > stop) {
+          return doc;
+        }
+        continue;
+      }
+      for (uint32_t i = 0; i != n; ++i) {
+        const auto offset = _window_docs[i] - min;
+        SetBit(_mask[offset / irs::detail::kWindowBits],
+               offset % irs::detail::kWindowBits);
+      }
+      _members.Restrict(min, max, _mask);
+      for (uint32_t i = 0; i != n; ++i) {
+        const auto member = _window_docs[i];
+        const auto offset = member - min;
+        if (((_mask[offset / irs::detail::kWindowBits] >>
+              (offset % irs::detail::kWindowBits)) &
+             1) == 0) {
+          continue;
+        }
+        if constexpr (kExcludes) {
+          if (irs::detail::IsExcluded(_excludes, member)) {
+            continue;
+          }
+        }
+        if (_others.Probe(member) == member) {
+          Batch(member, _window_freqs[i], collector);
+        }
+      }
+      irs::detail::Clear(_mask, irs::detail::WindowWords(min, max));
+      doc = _lead.Value();
+      if (collector.ScoreThreshold() > stop) {
+        return doc;
+      }
+    }
+    return doc;
+  }
+
+  IRS_FORCE_INLINE void Batch(doc_id_t doc, uint32_t freq,
+                              LoserScoreCollector& collector) {
+    _batch.docs[_batch.size] = doc;
+    _batch.freqs[_batch.size] = freq;
+    _others.FetchScoreArgs(_batch.size);
+    if (++_batch.size == kChunk) {
+      FlushBatch(collector);
+    }
   }
 
   doc_id_t DocFirst(doc_id_t doc, doc_id_t last, score_t stop,
@@ -248,14 +347,21 @@ class PrunedConjunction : public Root {
       _admit, collector);
   }
 
+  ABSL_CACHELINE_ALIGNED
+  utils::Need<kMembers, uint64_t[irs::detail::kWindowWords]> _mask{};
+  ABSL_CACHELINE_ALIGNED
+  utils::Need<kMembers, doc_id_t[irs::detail::kWindowDocs]> _window_docs;
+  ABSL_CACHELINE_ALIGNED
+  utils::Need<kMembers, uint32_t[irs::detail::kWindowDocs]> _window_freqs;
   Lead _lead;
   Others _others;
+  [[no_unique_address]] Members _members;
   [[no_unique_address]] Excludes _excludes;
   [[no_unique_address]] utils::Need<kDocFirst, ScoreBatch> _batch;
   [[no_unique_address]] utils::Need<kDocFirst, std::array<Bucket, kBuckets>>
     _buckets;
-  bool _narrow = false;
   uint32_t _span = 1;
+  bool _exhaustive = false;
   [[no_unique_address]] Admit<Table> _admit;
 };
 

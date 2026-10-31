@@ -38,6 +38,10 @@ namespace irs::detail {
 inline constexpr size_t kWindowWords = 64;
 inline constexpr doc_id_t kWindowBits = BitsRequired<uint64_t>();
 inline constexpr doc_id_t kWindowDocs = kWindowWords * kWindowBits;
+inline constexpr uint32_t kSparseInverse = BitsRequired<doc_id_t>();
+inline constexpr uint32_t kSparseWindow = kWindowDocs / kSparseInverse;
+inline constexpr uint64_t kProbeCost =
+  std::countr_zero(doc_limits::kBlockSize) + 2;
 
 static_assert(kWindowDocs < doc_limits::eof());
 
@@ -150,6 +154,58 @@ inline IRS_FORCE_INLINE uint32_t CountAndClear(uint64_t* IRS_RESTRICT dst,
     dst[w] = 0;
   }
   return card;
+}
+
+inline uint32_t TakeDocs(doc_id_t min, uint64_t* IRS_RESTRICT words,
+                         size_t count, doc_id_t* IRS_RESTRICT out) noexcept {
+  SDB_ASSERT(count <= kWindowWords);
+  uint64_t live = 0;
+  for (size_t w = 0; w != count; ++w) {
+    live |= static_cast<uint64_t>(words[w] != 0) << w;
+  }
+  uint32_t n = 0;
+  for (; live != 0; live = PopBit(live)) {
+    const auto w = static_cast<uint32_t>(std::countr_zero(live));
+    const auto base = min + w * kWindowBits;
+    for (auto word = words[w]; word != 0; word = PopBit(word)) {
+      out[n++] = base + static_cast<doc_id_t>(std::countr_zero(word));
+    }
+    words[w] = 0;
+  }
+  return n;
+}
+
+inline void PutDocs(doc_id_t min, const doc_id_t* IRS_RESTRICT docs, uint32_t n,
+                    uint64_t* IRS_RESTRICT words) noexcept {
+  for (uint32_t i = 0; i != n; ++i) {
+    const auto offset = docs[i] - min;
+    SetBit(words[offset / kWindowBits], offset % kWindowBits);
+  }
+}
+
+template<bool Keep, typename Leaf>
+uint32_t SiftByFill(Leaf& leaf, const doc_id_t* in, uint32_t n, doc_id_t* out) {
+  uint64_t words[kWindowWords];
+  uint32_t kept = 0;
+  const doc_id_t stop = n != 0 ? in[n - 1] + 1 : 0;
+  for (uint32_t i = 0; i != n;) {
+    const auto min = in[i];
+    const auto max = stop - min > kWindowDocs ? min + kWindowDocs : stop;
+    const auto count = WindowWords(min, max);
+    for (size_t w = 0; w != count; ++w) {
+      words[w] = 0;
+    }
+    leaf.FillOr(min, max, words);
+    do {
+      const auto doc = in[i];
+      const auto offset = doc - min;
+      out[kept] = doc;
+      kept += static_cast<uint32_t>(
+        (((words[offset / kWindowBits] >> (offset % kWindowBits)) & 1) != 0) ==
+        Keep);
+    } while (++i != n && in[i] < max);
+  }
+  return kept;
 }
 
 inline IRS_FORCE_INLINE uint32_t FoldAnd(uint64_t* IRS_RESTRICT dst,

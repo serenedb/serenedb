@@ -450,6 +450,24 @@ TEST_P(PrunedTopTest, conjunctions_with_exclusions) {
   }
 }
 
+TEST_P(PrunedTopTest,
+       single_terms_score_frequencies_that_can_beat_the_threshold) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {{"half"}, {}},
+         {{"dense"}, {}},
+         {{"mid"}, {}},
+         {{"sparse"}, {}},
+         {{"common"}, {}},
+         {{"burst"}, {}},
+         {{"cluster"}, {}},
+         {{"run"}, {}},
+         {{"holes"}, {}},
+       }) {
+    Check(shape);
+  }
+}
+
 TEST_P(PrunedTopTest, single_terms_with_exclusions) {
   Build();
   for (const auto& shape : std::vector<Shape>{

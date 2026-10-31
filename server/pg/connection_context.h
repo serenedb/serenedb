@@ -134,6 +134,7 @@ class ConnectionContext final : public query::Transaction {
     GetClientContext().session_role = _login_role_id;
     SetEffectiveRole(_login_role_id);
   }
+  void ApplyRoleSettings();
 
   auto* GetSendBuffer() const { return _send_buffer; }
 

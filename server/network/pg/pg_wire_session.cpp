@@ -529,6 +529,7 @@ bool PgWireSession<Kind>::SetupConnection() {
   _connection_ctx->SetSetting("session_authorization", std::string{UserName()},
                               false);
   _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
+  _connection_ctx->ApplyRoleSettings();
 
   const auto apply = [&](const std::string& name, const std::string& value) {
     try {

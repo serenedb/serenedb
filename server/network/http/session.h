@@ -212,6 +212,8 @@ class HttpSession final
                                         *_conn->context, _connection_ctx, true)
                                         .progress_source};
       connector::SetDefaultSearchPath(*_conn->context, dbname);
+      _connection_ctx->ApplyRoleSettings();
+      _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
       _conn_user = _user;
     }
     return *_conn;

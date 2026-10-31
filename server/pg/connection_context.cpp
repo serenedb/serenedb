@@ -22,6 +22,7 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -108,6 +109,29 @@ std::string ConnectionContext::EffectiveUserName() const {
 std::string ConnectionContext::SessionUserName() const {
   return RoleName(*auth::RolesOf(&GetClientContext()), GetSessionRoleId(),
                   _user);
+}
+
+void ConnectionContext::ApplyRoleSettings() {
+  duckdb::vector<std::string> config;
+  catalog::ReadRole(_user, [&](const catalog::RoleCatalogEntry& role) {
+    config = role.Config();
+  });
+  for (const std::string_view entry : config) {
+    const auto separator = entry.find('=');
+    if (separator == std::string_view::npos || separator + 1 == entry.size()) {
+      continue;
+    }
+    try {
+      GetClientContext().RunFunctionInTransaction([&] {
+        SetSettingChecked(entry.substr(0, separator),
+                          std::string{entry.substr(separator + 1)}, false);
+      });
+    } catch (const std::exception& exception) {
+      AddNotice(
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING),
+                       ERR_MSG(duckdb::ErrorData{exception}.RawMessage())));
+    }
+  }
 }
 
 void ConnectionContext::PreventInTransactionBlock(

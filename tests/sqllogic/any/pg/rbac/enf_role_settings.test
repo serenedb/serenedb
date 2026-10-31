@@ -1,0 +1,65 @@
+statement ok
+DROP ROLE IF EXISTS ers_vedernikoff;
+
+
+statement ok
+CREATE ROLE ers_vedernikoff LOGIN PASSWORD 'ers_pw';
+
+
+statement ok
+ALTER ROLE ers_vedernikoff SET search_path = ers_quas, public;
+
+
+connection c_ved user=ers_vedernikoff password=ers_pw
+query
+SHOW search_path;
+----
+search_path
+ers_quas, public
+
+
+skipif serenedb
+connection c_ved user=ers_vedernikoff password=ers_pw
+statement error
+ALTER ROLE ers_vedernikoff SET session_replication_role = replica;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+
+
+onlyif serenedb
+connection c_ved user=ers_vedernikoff password=ers_pw
+statement error
+ALTER ROLE ers_vedernikoff SET session_replication_role = replica;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+statement ok
+ALTER ROLE ers_vedernikoff SET session_replication_role = replica;
+
+
+skipif serenedb
+connection c_ved_again user=ers_vedernikoff password=ers_pw
+query
+SHOW session_replication_role;
+----
+session_replication_role
+replica
+
+
+onlyif serenedb
+connection c_ved_again user=ers_vedernikoff password=ers_pw
+query
+SHOW session_replication_role;
+----
+session_replication_role
+origin
+
+
+statement ok
+ALTER ROLE ers_vedernikoff RESET ALL;
+
+
+statement ok
+DROP ROLE ers_vedernikoff;

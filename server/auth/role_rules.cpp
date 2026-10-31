@@ -31,6 +31,7 @@
 #include "auth/role_closure.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
+#include "query/config.h"
 
 namespace sdb::auth {
 namespace {
@@ -162,6 +163,10 @@ void CheckAlterRole(duckdb::CatalogTransaction transaction,
   if (role->oid != caller->role || attributes) {
     RequireRoleAdmin(context, *caller, *role, "alter");
     RequireAttributeGrant(*caller, "alter", info.set_options);
+  }
+  for (const std::string_view entry : info.set_config) {
+    RequireSuperuserToSet(context, entry.substr(0, entry.find('=')),
+                          duckdb::SetScope::SESSION, true);
   }
 }
 

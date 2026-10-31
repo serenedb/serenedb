@@ -371,9 +371,6 @@ struct CountLocalState final : public ScanLocalState {
   uint64_t local_count = 0;
   uint64_t local_emitted = 0;
   ColFilterVerify col_verify;
-  irs::memory::managed_ptr<irs::memory::Managed> root;
-  uint32_t root_seg = std::numeric_limits<uint32_t>::max();
-  irs::doc_id_t root_end = 0;
 };
 
 struct ColScanLocalState final : public ScanLocalState {
@@ -403,7 +400,6 @@ struct RankedLocalState : public ScanLocalState, FetchLocalState {
   ColFilterVerify col_verify;
   irs::memory::managed_ptr<irs::memory::Managed> root;
   uint32_t root_seg = std::numeric_limits<uint32_t>::max();
-  irs::doc_id_t root_end = 0;
   bool published = false;
   bool emitter = false;
   duckdb::idx_t emitted = 0;

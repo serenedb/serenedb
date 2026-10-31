@@ -27,18 +27,6 @@
 #include "connector/scan/scan_state.h"
 
 namespace sdb::connector {
-namespace {
-
-void FinishRoot(CountLocalState& l) {
-  if (l.root) {
-    l.local_count +=
-      irs::utils::downCast<irs::count::Root>(l.root.get())->Finish();
-    l.root.reset();
-    l.root_seg = std::numeric_limits<uint32_t>::max();
-  }
-}
-
-}  // namespace
 
 void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
                   CountLocalState& l, duckdb::DataChunk& output) {
@@ -50,27 +38,19 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
       l.local_count += sub.live_docs_count();
     } else {
       const auto range = g.RangeOf(unit);
-      if (l.root_seg != unit.seg || range.begin < l.root_end) {
-        FinishRoot(l);
-        const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
-        if (g.remote) {
-          irs::PrefetchPostingHeads(seg_query, 2);
-        }
-        auto* table = BeginVerify(l.col_verify, sub, g, l);
-        auto plan = irs::count::MakeRoot(
-          seg_query,
-          {.table = table, .span = g.UnitSpan(unit), .partial = true});
-        EnsurePlanned(plan != nullptr);
-        l.root = std::move(plan);
-        l.root_seg = unit.seg;
+      const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
+      if (g.remote) {
+        irs::PrefetchPostingHeads(seg_query, 2);
       }
-      l.local_count += irs::utils::downCast<irs::count::Root>(l.root.get())
-                         ->Run(range.begin, range.end);
-      l.root_end = range.end;
+      auto* table = BeginVerify(l.col_verify, sub, g, l);
+      auto plan = irs::count::MakeRoot(
+        seg_query, {.table = table, .span = g.UnitSpan(unit), .partial = true});
+      EnsurePlanned(plan != nullptr);
+      l.local_count += plan->Run(range.begin, range.end);
+      l.local_count += plan->Finish();
     }
     FinishUnit(g, l);
   }
-  FinishRoot(l);
   if (l.local_emitted >= l.local_count) {
     output.SetChildCardinality(0);
     return;

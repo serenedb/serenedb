@@ -47,18 +47,17 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   l.stop_row = rows.end;
   l.unit_done = false;
   l.started = true;
-  if (resume) {
-    return;
+  if (!resume) {
+    if (g.needs_lookup && !SegmentPkColumn(*g.reader, seg_idx).second) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("inverted-index segment has no stored PK column but the "
+                "query needs to map hits back to source rows"));
+    }
+    SDB_ASSERT(l.hit_batcher->Empty());
+    l.hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
+                                &l.filter_states, l.seg_cls.active);
   }
-  if (g.needs_lookup && !SegmentPkColumn(*g.reader, seg_idx).second) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("inverted-index segment has no stored PK column but the query "
-              "needs to map hits back to source rows"));
-  }
-  SDB_ASSERT(l.hit_batcher->Empty());
-  l.hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
-                              &l.filter_states, l.seg_cls.active);
   const auto& seg_query = EnsureSegmentQuery(g, l, seg_idx);
   const auto span = g.UnitSpan(l.unit);
   l.scored = g.ScanScore();

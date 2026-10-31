@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/queries/posting_heads.hpp>
@@ -58,6 +59,7 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
     work.prepare.notify_all();
     return *g.queries[seg_idx];
   }
+  duckdb::TaskScheduler::BlockingScope blocking;
   while (state != SegmentWork::kReady) {
     work.prepare.wait(state, std::memory_order_acquire);
     state = work.prepare.load(std::memory_order_acquire);

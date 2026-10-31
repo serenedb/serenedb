@@ -44,28 +44,22 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
   auto& collector = *l.collector;
   collector.SetSegment(unit.seg);
   const auto range = g.RangeOf(unit);
-  if (l.root_seg != unit.seg || range.begin < l.root_end) {
-    const auto& seg = (*g.reader)[unit.seg];
-    l.score_fetcher.Clear();
-    const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
-    auto* table = BeginVerify(l.col_verify, seg, g, l);
-    SDB_ENSURE(g.scorer_obj != nullptr,
-               "a scan that ranks by score has a scorer to rank with");
-    auto plan = irs::top::MakeRoot(
-      seg_query,
-      {.scorer = *g.scorer_obj,
-       .fetcher = l.score_fetcher,
-       .table = table,
-       .prune = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
-       .k = static_cast<uint32_t>(l.hit_slice.size()),
-       .span = g.UnitSpan(unit)});
-    EnsurePlanned(plan != nullptr);
-    l.root = std::move(plan);
-    l.root_seg = unit.seg;
-  }
-  irs::utils::downCast<irs::top::Root>(l.root.get())
-    ->Run(range.begin, range.end, collector);
-  l.root_end = range.end;
+  const auto& seg = (*g.reader)[unit.seg];
+  l.score_fetcher.Clear();
+  const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
+  auto* table = BeginVerify(l.col_verify, seg, g, l);
+  SDB_ENSURE(g.scorer_obj != nullptr,
+             "a scan that ranks by score has a scorer to rank with");
+  auto plan = irs::top::MakeRoot(
+    seg_query,
+    {.scorer = *g.scorer_obj,
+     .fetcher = l.score_fetcher,
+     .table = table,
+     .prune = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
+     .k = static_cast<uint32_t>(l.hit_slice.size()),
+     .span = g.UnitSpan(unit)});
+  EnsurePlanned(plan != nullptr);
+  plan->Run(range.begin, range.end, collector);
 }
 
 void PublishHits(ScanGlobalState& g, TopKLocalState& l) {

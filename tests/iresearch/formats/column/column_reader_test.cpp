@@ -1358,6 +1358,50 @@ TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
   EXPECT_TRUE(absl::c_any_of(prefetched, covers_block));
 }
 
+TEST_F(ColumnReaderTest, TrainedDictionariesArePrefetchedBeforeTheyLoad) {
+  constexpr uint64_t kRows = 120000;
+  constexpr irs::field_id kS = 1;
+  irs::MemoryDirectory mem;
+  {
+    irs::ColWriter w{mem, "seg", Db()};
+    auto& cw = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR, false, 16384,
+                            duckdb::CompressionType::COMPRESSION_DICT_LZ4,
+                            false, {.compression_level = 3});
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector vs{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      auto* ds = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vs);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        const auto g = pos + k;
+        ds[k] = duckdb::StringVector::AddString(
+          vs,
+          absl::StrCat("https://shop", g % 997, ".example.org/catalog/",
+                       (g * 7919) % 100003, "/item?id=", g, "&ref=", g % 13));
+      }
+      duckdb::FlatVector::SetSize(vs, take);
+      cw.Append(vs, take);
+    }
+    ASSERT_TRUE(w.Commit(0));
+  }
+
+  std::vector<PrefetchRange> prefetched;
+  PrefetchRecordingDirectory dir{mem, prefetched};
+  irs::ColReader r{dir, "seg", Db()};
+  const auto& col = *r.Column(kS);
+  ASSERT_TRUE(col.HasDictionaries());
+  irs::ReadContext ctx{r, true};
+  prefetched.clear();
+  ASSERT_TRUE(col.Dictionaries(ctx));
+  const auto prefetched_whole = [&](const irs::ColumnDictionaryMeta& d) {
+    return absl::c_any_of(prefetched, [&](const PrefetchRange& p) {
+      return p.offset <= d.file_offset &&
+             d.file_offset + d.byte_size <= p.offset + p.size;
+    });
+  };
+  EXPECT_TRUE(absl::c_all_of(col.DictionaryMetas(), prefetched_whole));
+}
+
 // STRUCT{a: BIGINT, b: VARCHAR} with struct-level and field-level NULLs across
 // multiple row-groups.
 TEST_F(ColumnReaderTest, SegmentRoundTripStruct) {

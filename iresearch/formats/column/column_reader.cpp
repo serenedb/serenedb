@@ -349,6 +349,10 @@ const codecs::TrainedDictionaries* ColumnReader::Dictionaries(
     return nullptr;
   }
   absl::call_once(_dictionaries_loaded, [&] {
+    const auto& in = ctx.In();
+    for (const auto& d : _dictionary_metas) {
+      in.Prefetch(d.file_offset, d.byte_size);
+    }
     codecs::TrainedDictionaries loaded;
     loaded.reserve(_dictionary_metas.size());
     for (const auto& d : _dictionary_metas) {

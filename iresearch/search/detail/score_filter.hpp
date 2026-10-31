@@ -98,6 +98,37 @@ inline IRS_FORCE_INLINE uint32_t FilterScores(doc_id_t* IRS_RESTRICT docs,
   return out;
 }
 
+inline IRS_FORCE_INLINE uint32_t FilterFreqs(
+  const doc_id_t* IRS_RESTRICT docs, const uint32_t* IRS_RESTRICT freqs,
+  uint32_t len, uint32_t least, doc_id_t* IRS_RESTRICT kept_docs,
+  uint32_t* IRS_RESTRICT kept_freqs) noexcept {
+  uint32_t out = 0;
+  uint32_t i = 0;
+#ifdef __AVX2__
+  const auto edge = _mm256_set1_epi32(static_cast<int>(least - 1));
+  for (; i + 8 <= len; i += 8) {
+    const auto values =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(freqs + i));
+    const auto mask = static_cast<uint32_t>(_mm256_movemask_ps(
+      _mm256_castsi256_ps(_mm256_cmpgt_epi32(values, edge))));
+    const auto control = LeftPackControl(mask);
+    const auto ids =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(docs + i));
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(kept_docs + out),
+                        _mm256_permutevar8x32_epi32(ids, control));
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(kept_freqs + out),
+                        _mm256_permutevar8x32_epi32(values, control));
+    out += static_cast<uint32_t>(std::popcount(mask));
+  }
+#endif
+  for (; i != len; ++i) {
+    kept_docs[out] = docs[i];
+    kept_freqs[out] = freqs[i];
+    out += static_cast<uint32_t>(freqs[i] >= least);
+  }
+  return out;
+}
+
 inline IRS_FORCE_INLINE uint32_t FilterMatches(doc_id_t* IRS_RESTRICT docs,
                                                score_t* IRS_RESTRICT scores,
                                                uint32_t* IRS_RESTRICT matches,

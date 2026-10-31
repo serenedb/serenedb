@@ -40,10 +40,15 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
   using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
+  using Base::_fetcher;
+  using Base::_freqs;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
   using Base::_max_in_leaf;
+  using Base::_provider;
+  using Base::_score;
   using Base::_threshold;
+  using Base::BoundScore;
   using Base::Emit;
   using Base::In;
   using Base::ReadLeaf;
@@ -70,6 +75,7 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
       _left_in_leaf = 0;
       _doc = doc_limits::min() + meta.doc_delta;
     }
+    _least_score = BoundScore({.freq = 1, .norm = 1});
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
@@ -131,7 +137,7 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
       }
       _left_in_leaf = static_cast<uint32_t>(end - stop);
       if (stop != first) {
-        Emit(first, static_cast<uint32_t>(stop - first), emit);
+        EmitCompetitive(first, static_cast<uint32_t>(stop - first), emit);
       }
       if (straddles) {
         break;
@@ -142,8 +148,49 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
   }
 
  private:
+  template<typename Visitor>
+  IRS_FORCE_INLINE void EmitCompetitive(doc_id_t* docs, uint32_t len,
+                                        Visitor&& visit) {
+    const auto* const freqs = _freqs.data + (docs - std::begin(_docs));
+    const auto least = LeastFreq(freqs, len);
+    if (least == 1) {
+      Emit(docs, len, visit);
+      return;
+    }
+    const auto kept = irs::detail::FilterFreqs(docs, freqs, len, least,
+                                               _kept_docs, _kept_freqs);
+    if (kept == 0) {
+      return;
+    }
+    _fetcher->Fetch(std::span<const doc_id_t>{_kept_docs, kept});
+    _provider.freq.value = _kept_freqs;
+    _score.Score(_kept_scores, static_cast<scores_size_t>(kept));
+    _provider.freq.value = _freqs.data;
+    visit(_kept_docs, kept, _kept_scores);
+  }
+
+  uint32_t LeastFreq(const uint32_t* freqs, uint32_t len) {
+    if (_least_score > _threshold) {
+      return _least_freq;
+    }
+    const auto most = *std::max_element(freqs, freqs + len);
+    while (_least_freq <= most) {
+      ++_least_freq;
+      _least_score = BoundScore({.freq = _least_freq, .norm = _least_freq});
+      if (_least_score > _threshold) {
+        break;
+      }
+    }
+    return _least_freq;
+  }
+
+  ABSL_CACHELINE_ALIGNED doc_id_t _kept_docs[doc_limits::kBlockSize];
+  ABSL_CACHELINE_ALIGNED uint32_t _kept_freqs[doc_limits::kBlockSize];
+  ABSL_CACHELINE_ALIGNED score_t _kept_scores[doc_limits::kBlockSize];
   [[no_unique_address]] Excludes _excludes;
   [[no_unique_address]] Admit<Table> _admit;
+  score_t _least_score = std::numeric_limits<score_t>::lowest();
+  uint32_t _least_freq = 1;
 };
 
 }  // namespace irs::top

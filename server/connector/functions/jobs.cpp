@@ -41,7 +41,6 @@
 #include <utility>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/job.h"
 #include "scheduler/job_scheduler.h"
@@ -209,12 +208,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
     databases.insert(database->oid);
   }
-  const auto closure = auth::SessionClosure(context);
+  const auto principal = context.principal;
   for (auto& run : scheduler->GetHistory()) {
     if (!databases.contains(run.database_oid)) {
       continue;
     }
-    if (closure && !closure->is_superuser) {
+    if (principal && !principal->is_superuser) {
       auto job = duckdb::Catalog::GetEntry(
         context,
         duckdb::EntryLookupInfo{
@@ -272,12 +271,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
   auto entry = input.binder->EntryRetriever().GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::JOB_ENTRY, name},
     duckdb::OnEntryNotFound::THROW_EXCEPTION);
-  if (const auto caller = input.binder->principal ? context.principal : nullptr;
-      caller && !caller->Owns(entry->permissions.owner)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("must be owner of job ", entry->name.GetIdentifierName()));
-  }
+  input.binder->RequireOwner(*entry);
   return duckdb::make_uniq<ExecuteJobData>(
     entry->Cast<catalog::JobCatalogEntry>());
 }

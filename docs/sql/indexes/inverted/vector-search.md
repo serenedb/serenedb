@@ -61,7 +61,7 @@ Scan more clusters for better recall with the [`sdb_ivf_search_nprobe` session s
 
 <DocCallout type="tip">
 
-For a quantized index (`quant` other than `none`), the [`sdb_ann_oversample` session setting](./maintenance.md#session-settings) controls how many candidates are re-scored with exact distances before the top `k` is picked; `0` answers from the codes alone. See [Oversampling](#oversampling).
+For a quantized index (`quant` other than `none`), the [`sdb_ann_rescore_width` session setting](./maintenance.md#session-settings) controls how many candidates are re-scored with exact distances before the top `k` is picked; `0` answers from the codes alone. See [Re-scoring](#rescoring).
 
 </DocCallout>
 
@@ -85,11 +85,11 @@ A distance selected without `ORDER BY ... LIMIT` and without a radius, such as `
 
 ## Quantization {#quantization}
 
-An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `quant` says otherwise, `ivf` and [`hnsw`](#hnsw) alike; an `l1` index stores full-precision vectors. Quantization shrinks the index, trading some recall for size -- recoverable with [oversampling](#oversampling), which re-scores a candidate pool with exact distances before picking the final `k`:
+An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `quant` says otherwise, `ivf` and [`hnsw`](#hnsw) alike; an `l1` index stores full-precision vectors. Quantization shrinks the index, trading some recall for size -- recoverable with [re-scoring](#rescoring), which reads candidates back at full precision before picking the final `k`:
 
 | `quant` | Compression | Notes |
 |---|---|---|
-| `none` | none | Full-precision vectors; never reranks regardless of `sdb_ann_oversample`. The only choice for `l1`. With 256 to 4096 dimensions and at least eight rows per dimension, an `hnsw` index searches faster with the same answer; it stores one more float per row, and holds a `N` x `N` float matrix in memory |
+| `none` | none | Full-precision vectors; never re-scored. The only choice for `l1`. With 256 to 4096 dimensions and at least eight rows per dimension, an `hnsw` index searches faster with the same answer; it stores one more float per row, and holds a `N` x `N` float matrix in memory |
 | `sq8` (default) | 8-bit scalar quantization per dimension | Good recall/size trade-off. With `ip` or `cosine`, 256 to 4096 dimensions and at least eight rows per dimension, an `hnsw` index searches faster; it stores one more float per row for every 128 dimensions, and holds the same matrix as `none` in memory, plus an 8-bit copy of it |
 | `sq4` | 4-bit scalar quantization per dimension | Smaller than `sq8`, lower recall before reranking |
 | `usq8` / `usq4` | As `sq8` / `sq4`, but one min/max for the whole vector instead of one per dimension | Cheaper to decode |
@@ -97,20 +97,21 @@ An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `qu
 | `pq` | Product quantization -- the vector is split into `pq_m` subvectors, each quantized against its own codebook: 16 centroids (4 bits) per subvector under `ivf`, 256 centroids (one byte) under `hnsw` | Highest compression; recall is sensitive to `pq_m` (must divide `N`) |
 | `rabitq` | RaBitQ binary quantization, 1 bit per dimension plus `rabitq_bits` - 1 extra magnitude bits | Very compact; `rabitq_bits` (1 to 9) trades size for recall. Needs `l2` or `ip` |
 | `tq` | Low-bit quantization with `nb_bits` (1 to 5 or 1.5, default 3) bits per dimension | Size and recall grow with `nb_bits` |
-| `bq` | Binary quantization: 1 bit per dimension, set above a cut point fitted to that dimension's values; with `nb_bits = 2`, a second bit splits each dimension into a low, middle and high range; `1.5` shares the second bit between two neighbouring dimensions | Smallest and cheapest to compare. With `query_bits = 1` a nearest-neighbor score is a bit count, so rely on [oversampling](#oversampling); `4` or `8` estimate the real distance, as a range query always does |
+| `bq` | Binary quantization: 1 bit per dimension, set above a cut point fitted to that dimension's values; with `nb_bits = 2`, a second bit splits each dimension into a low, middle and high range; `1.5` shares the second bit between two neighbouring dimensions | Smallest and cheapest to compare. With `query_bits = 1` the search compares bit counts, which is fastest; `4` or `8` estimate the real distance throughout, as a range query always does |
 | `osq` | `nb_bits` (1, 2, 4, 7 or 8, default 1) bits per dimension relative to the centroid, on a quantization interval fitted to each vector, with a few correction terms stored beside the codes; the query is quantized to `query_bits` | Scores estimate the real distance; per-vector intervals pay off most at 1 to 4 bits. Each vector carries 16 extra bytes |
 
 Quantization applies to `l2`, `ip` and `cosine` indexes; `l1` indexes are always unquantized.
 
 Quantization makes queries faster as well as the index smaller: a quantized `ivf` index scans its clusters faster, so [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings) can probe more of them at the same latency.
 
-### Oversampling {#oversampling}
+### Re-scoring {#rescoring}
 
-A quantized score is an *estimate*, and two segments' estimates are not comparable -- each segment trains its own quantizer. [`sdb_ann_oversample`](./maintenance.md#session-settings) says how much of that to undo: the search runs on the codes, `ceil(sdb_ann_oversample * k)` of each segment's candidates are read back at full precision and re-ordered, and only then are segments compared against each other.
+A quantized score is an *estimate*. [`sdb_ann_rescore_width`](./maintenance.md#session-settings) sets how many candidates are read back at full precision before the final `k` is picked: a candidate, from whichever segment, is re-scored while its code score plus `sdb_ann_rescore_width` times the code's estimated error could still beat the `k`-th best exact score found so far. A segment holding many of the nearest neighbours has more of them re-scored, and a segment holding none has none.
 
-- `-1` (the default) re-scores every quantized index at `1`: each segment's top `k` are read back at full precision, so segments are compared on exact distances and a query the engine answers by scanning comes back exact. `fp16` and `bf16` are the exception and answer from their codes, which are close to exact already.
+- `-1` (the default) uses a width per quantizer, larger where the error estimate is looser: `2` for `sq8` and 1-bit `rabitq`, `3` for `tq` and multi-bit `rabitq`, `4` for `usq8`, `5` for `sq4`, `6` for `usq4`, and `7` for `osq` at 4 or more bits. `pq` uses `2` on an `ivf` index and `3` on an `hnsw` index, `bq` `1` and `3`, and `osq` at 1 or 2 bits `3` and `2`. `fp16` and `bf16` answer from their codes, which are close to exact already.
 - `0` answers from the codes, which is faster and caps recall at whatever the codes can tell apart.
-- A value above `1` widens the pool. For HNSW the beam is widened with it, since a beam of a hundred cannot hand four hundred candidates to the rescorer.
+- A larger value re-scores more candidates and misses fewer: a neighbour sitting exactly at the `k`-th score is missed with the probability that a normal error exceeds that many standard deviations, about 2% at `2` and 0.1% at `3`. Neighbours further above the `k`-th score are missed less often.
+- It does not widen the search: [`sdb_hnsw_ef_search`](./maintenance.md#session-settings) and [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings) decide which candidates there are to re-score.
 
 ## HNSW {#hnsw}
 
@@ -129,7 +130,7 @@ A quantized score is an *estimate*, and two segments' estimates are not comparab
 | `query_bits` | Query encoding for `quant = 'bq'` and `quant = 'osq'` -- see the `ivf` table above |
 | `compression` | Whether the stored vectors are compressed. Default `true` |
 
-A graph walk reads a great many candidate vectors, so the smaller code pays for itself, and [oversampling](#oversampling) restores the recall it costs.
+A graph walk reads a great many candidate vectors, so the smaller code pays for itself, and [re-scoring](#rescoring) restores the recall it costs.
 
 ### Filtered search {#filtered-search}
 
@@ -156,6 +157,8 @@ How a rejected row is treated is [`sdb_hnsw_filter_mode`](./maintenance.md#sessi
 Every walk is capped at what the scan would have cost and falls back to it, forced ones included: a mode is a preference, never a way to spend more than the exact answer costs.
 
 A predicate on an `INCLUDE`d column -- one the index stores but does not index -- is answered from the columnstore, in one of two ways. The predicate is either folded over the whole segment before the walk starts, a vectorised compare per row, or the walk reads the columns of each row it reaches, one positioned read per row at the cost of a few dozen rows of the fold. The walk reads while it is expected to reach few enough rows for that to be the cheaper -- a narrow beam over a large segment -- and folds otherwise. A column compressed with `zstd`, whose read decompresses its block up to the row, is priced at a few hundred rows of the fold. [`sdb_hnsw_column_filter`](./maintenance.md#session-settings) forces either for measurement.
+
+A predicate on an indexed column of a search table (`CREATE TABLE ... WITH (storage = 'search')`), which stores every column, can be answered from either side: from the index, at a cost that grows with the rows the predicate admits, or from the columnstore, reading the columns of each row the walk reaches. Each segment takes the cheaper: the columnstore when the predicate admits a large share of the segment and the beam is narrow, the index otherwise. Predicates the index alone can answer, such as a full-text `@@` match, are always taken from the index. `EXPLAIN` lists the predicates answered either way as the scan's `Index or Column Filter`, and [`sdb_hnsw_column_filter`](./maintenance.md#session-settings) forces either side for measurement.
 
 The predicate need not be a single comparison. An `IN` list or an `OR` on one `INCLUDE`d column, an expression over several of them, and `AND`s and `OR`s that mix them with predicates on indexed fields are all answered inside the walk too:
 

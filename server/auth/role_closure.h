@@ -56,10 +56,16 @@ struct RoleGraph {
   };
 
   irs::containers::FlatHashMap<duckdb::idx_t, Node> nodes;
+  irs::containers::FlatHashMap<std::string_view, duckdb::idx_t> by_name;
 
   const Node* Find(duckdb::idx_t role) const {
     auto it = nodes.find(role);
     return it == nodes.end() ? nullptr : &it->second;
+  }
+
+  const decltype(nodes)::value_type* FindByName(std::string_view name) const {
+    const auto it = by_name.find(name);
+    return it == by_name.end() ? nullptr : &*nodes.find(it->second);
   }
 
   std::string_view NameOf(duckdb::idx_t role) const {
@@ -130,6 +136,9 @@ std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context);
 
 std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
                                               duckdb::idx_t role);
+
+std::shared_ptr<const RoleClosure> SessionClosure(
+  duckdb::ClientContext& context);
 
 void PublishRoles(catalog::ClusterCatalog& cluster);
 

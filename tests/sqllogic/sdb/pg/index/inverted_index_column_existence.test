@@ -53,10 +53,6 @@ query
 EXPLAIN SELECT pk, dual FROM ce_idx WHERE dual IS NULL;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────╮
-│ Projections: pk, dual  │
-│ ~1 row                 │
-╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: ce_idx          │
 │ Lookup: table          │
@@ -65,8 +61,8 @@ QUERY PLAN
 │ │ Field: dual(null) │  │
 │ │ Value:            │  │
 │ ╰───────────────────╯  │
-│ Projections: dual (i), │
-│              pk (l)    │
+│ Projections: pk (l),   │
+│              dual (i)  │
 │ ~1 row                 │
 ╰────────────────────────╯
 
@@ -84,10 +80,6 @@ query
 EXPLAIN SELECT pk, dual FROM ce_idx WHERE dual IS NOT NULL;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────╮
-│ Projections: pk, dual  │
-│ ~1 row                 │
-╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: ce_idx          │
 │ Lookup: table          │
@@ -97,8 +89,8 @@ QUERY PLAN
 │ ╭─ Terms ─┴─────────╮  │
 │ │ Field: dual(null) │  │
 │ ╰───────────────────╯  │
-│ Projections: dual (i), │
-│              pk (l)    │
+│ Projections: pk (l),   │
+│              dual (i)  │
 │ ~1 row                 │
 ╰────────────────────────╯
 
@@ -119,11 +111,7 @@ EXPLAIN SELECT pk, dual FROM ce_idx
 WHERE body @@ ts_phrase('cat') AND dual IS NOT NULL;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────╮
-│ Projections: pk, dual                          │
-│ ~1 row                                         │
-╰────────────────────────┬───────────────────────╯
-╭─ IRESEARCH_SCAN ───────┴───────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────────────────────╮
 │ Index: ce_idx                                  │
 │ Lookup: table                                  │
 │ Index Filter:                                  │
@@ -136,7 +124,7 @@ QUERY PLAN
 │ │ Field: body(string) │  │ Field: dual(null) │ │
 │ │ Values: 'cat'       │  ╰───────────────────╯ │
 │ ╰─────────────────────╯                        │
-│ Projections: dual (i), pk (l)                  │
+│ Projections: pk (l), dual (i)                  │
 │ ~1 row                                         │
 ╰────────────────────────────────────────────────╯
 
@@ -157,11 +145,7 @@ EXPLAIN SELECT pk, dual FROM ce_idx
 WHERE body @@ ts_phrase('cat') AND dual IS NULL;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────╮
-│ Projections: pk, dual                          │
-│ ~1 row                                         │
-╰────────────────────────┬───────────────────────╯
-╭─ IRESEARCH_SCAN ───────┴───────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────────────────────╮
 │ Index: ce_idx                                  │
 │ Lookup: table                                  │
 │ Index Filter:                                  │
@@ -172,7 +156,7 @@ QUERY PLAN
 │ │ Field: body(string) │  │ Field: dual(null) │ │
 │ │ Values: 'cat'       │  ╰───────────────────╯ │
 │ ╰─────────────────────╯                        │
-│ Projections: dual (i), pk (l)                  │
+│ Projections: pk (l), dual (i)                  │
 │ ~1 row                                         │
 ╰────────────────────────────────────────────────╯
 
@@ -228,10 +212,6 @@ QUERY PLAN
 │ Order By: pk ASC      │
 │ ~1 row                │
 ╰───────────┬───────────╯
-╭─ PROJECTION ──────────╮
-│ Projections: pk, body │
-│ ~1 row                │
-╰───────────┬───────────╯
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: ce_idx         │
 │ Lookup: table         │
@@ -241,7 +221,7 @@ QUERY PLAN
 │ ╭─ Terms ─┴─────────╮ │
 │ │ Field: body(null) │ │
 │ ╰───────────────────╯ │
-│ Projections: body, pk │
+│ Projections: pk, body │
 │ ~1 row                │
 ╰───────────────────────╯
 

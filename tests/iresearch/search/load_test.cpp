@@ -37,6 +37,7 @@
 #include <fstream>
 #include <functional>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/search/count/root.hpp>
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/fill/node.hpp>
@@ -847,16 +848,24 @@ void WarmUp(bench::Executor& executor, const std::vector<ParsedQuery>& queries,
 }
 
 bool DeleteBuckets(irs::IndexWriter& writer, size_t from, size_t to) {
-  auto ctx = writer.GetBatch();
-  for (auto bucket = from; bucket != to; ++bucket) {
-    auto filter = std::make_unique<irs::ByTerm>();
-    *filter->mutable_field_id() = kBucketId;
-    const auto token = BucketToken(bucket);
-    filter->mutable_options()->term =
-      irs::ViewCast<irs::byte_type>(std::string_view{token});
-    std::shared_ptr<const irs::Filter> owned{std::move(filter)};
-    ctx.Remove(std::move(owned));
+  const auto reader = writer.GetSnapshot();
+  irs::DocRemovalBuilder removal;
+  for (uint32_t index = 0; index != reader.size(); ++index) {
+    const auto* field = reader[index].field(kBucketId);
+    if (!field) {
+      continue;
+    }
+    for (auto bucket = from; bucket != to; ++bucket) {
+      const auto token = BucketToken(bucket);
+      field->ReadDocs(irs::ViewCast<irs::byte_type>(std::string_view{token}),
+                      [&](irs::doc_id_t doc) {
+                        removal.Add(index, doc);
+                        return true;
+                      });
+    }
   }
+  auto ctx = writer.GetBatch();
+  ctx.Remove(std::move(removal).Finish(reader));
   return ctx.Commit();
 }
 

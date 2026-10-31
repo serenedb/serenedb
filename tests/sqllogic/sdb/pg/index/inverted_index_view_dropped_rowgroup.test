@@ -1,0 +1,72 @@
+control substitution on
+
+statement ok
+CREATE TABLE ivdr (id INTEGER, body VARCHAR, extra VARCHAR);
+
+statement ok
+INSERT INTO ivdr VALUES (1, 'needle', 'a'), (2, 'hay', 'b'), (3, 'needle', 'c');
+
+statement ok
+CREATE VIEW ivdr_v AS SELECT id, body, extra FROM ivdr;
+
+statement ok
+CREATE INDEX ivdr_v_idx ON ivdr_v USING inverted (id, body) INCLUDE (id);
+
+query
+SELECT id, extra FROM ivdr_v_idx WHERE body = 'needle' ORDER BY id;
+----
+id	extra
+1	a
+3	c
+
+statement ok
+DELETE FROM ivdr;
+
+query
+SELECT id, extra FROM ivdr_v_idx WHERE body = 'needle' ORDER BY id;
+----
+id	extra
+
+statement ok
+FORCE CHECKPOINT;
+
+query
+SELECT id, extra FROM ivdr_v_idx WHERE body = 'needle' ORDER BY id;
+----
+id	extra
+
+statement ok
+ATTACH '${__TEST_DIR__}/ivdr_ext.db' AS ivdr_ext_${__DATABASE__};
+
+statement ok
+CREATE TABLE ivdr_ext_${__DATABASE__}.main.docs (id INTEGER, body VARCHAR, extra VARCHAR);
+
+statement ok
+INSERT INTO ivdr_ext_${__DATABASE__}.main.docs
+VALUES (1, 'needle', 'a'), (2, 'hay', 'b'), (3, 'needle', 'c');
+
+statement ok
+CREATE VIEW ivdr_ext_v AS SELECT id, body, extra FROM ivdr_ext_${__DATABASE__}.main.docs;
+
+statement ok
+CREATE INDEX ivdr_ext_v_idx ON ivdr_ext_v USING inverted (id, body) INCLUDE (id);
+
+statement ok
+DELETE FROM ivdr_ext_${__DATABASE__}.main.docs;
+
+statement ok
+FORCE CHECKPOINT ivdr_ext_${__DATABASE__};
+
+query
+SELECT id, extra FROM ivdr_ext_v_idx WHERE body = 'needle' ORDER BY id;
+----
+id	extra
+
+statement ok
+DROP INDEX ivdr_ext_v_idx;
+
+statement ok
+DROP VIEW ivdr_ext_v;
+
+statement ok
+DETACH ivdr_ext_${__DATABASE__};

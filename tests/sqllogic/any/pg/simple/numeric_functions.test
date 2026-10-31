@@ -1,0 +1,107 @@
+query
+SELECT lcm(12.0, 0.0) AS a, lcm(0.0, 12.0) AS b, gcd(12.0, 0.0) AS c, lcm(4.5, 1.5) AS d;
+----
+a	b	c	d
+0.0	0.0	12.0	4.5
+
+query
+SELECT min_scale(1.50::numeric(4,2)) AS a, min_scale(1.50::numeric(9,2)) AS b, min_scale(1.50::numeric(18,2)) AS c, min_scale(1.50::numeric(38,2)) AS d, min_scale(0::numeric(38,5)) AS e;
+----
+a	b	c	d	e
+1	1	1	1	0
+
+query
+SELECT id, min_scale(n) AS a FROM (VALUES (1, 1.50::numeric(4,2)), (2, 2.25)) v(id, n) ORDER BY id;
+----
+id	a
+1	1
+2	2
+
+query
+SELECT trim_scale(NULL::numeric) AS a, scale(NULL::numeric) AS b, min_scale(NULL::int) AS c, trim_scale(NULLIF(1.5, 1.5)) AS d;
+----
+a	b	c	d
+NULL	NULL	NULL	NULL
+
+statement ok
+PREPARE numeric_scale_param AS SELECT scale($1) AS a;
+
+query
+EXECUTE numeric_scale_param(1.50);
+----
+a
+2
+
+statement ok
+PREPARE numeric_min_scale_param AS SELECT min_scale($1) AS a;
+
+query
+EXECUTE numeric_min_scale_param(1.50);
+----
+a
+1
+
+statement ok
+PREPARE numeric_trim_scale_param AS SELECT trim_scale($1) AS a;
+
+query
+EXECUTE numeric_trim_scale_param(1.50);
+----
+a
+1.5
+
+statement ok
+PREPARE numeric_div_param AS SELECT div($1, 2.0) AS a;
+
+query
+EXECUTE numeric_div_param(7.5);
+----
+a
+3
+
+statement ok
+PREPARE numeric_gcd_param AS SELECT gcd($1, 6.0) AS a;
+
+query
+EXECUTE numeric_gcd_param(4.0);
+----
+a
+2.0
+
+statement ok
+PREPARE numeric_lcm_param AS SELECT lcm($1, 6.0) AS a;
+
+query
+EXECUTE numeric_lcm_param(4.0);
+----
+a
+12.0
+
+onlyif postgres
+query
+SELECT lcm(12345678901234567891::numeric(38,0), 12345678901234567893::numeric(38,0)) AS a,
+       lcm(99999999999999999999999999999999999999::numeric(38,0), 99999999999999999999999999999999999998::numeric(38,0)) AS b,
+       numeric_div_trunc(99999999999999999999999999999999999999::numeric(38,0), 0.1::numeric(38,1)) AS c;
+----
+a	b	c
+152415787532388367551287915479957323663	9999999999999999999999999999999999999700000000000000000000000000000000000002	999999999999999999999999999999999999990
+
+skipif postgres
+statement error
+SELECT lcm(12345678901234567891::numeric(38,0), 12345678901234567893::numeric(38,0));
+----
+db error: ERROR: numeric field overflow
+
+
+skipif postgres
+statement error
+SELECT lcm(99999999999999999999999999999999999999::numeric(38,0), 99999999999999999999999999999999999998::numeric(38,0));
+----
+db error: ERROR: numeric field overflow
+
+
+skipif postgres
+statement error
+SELECT numeric_div_trunc(99999999999999999999999999999999999999::numeric(38,0), 0.1::numeric(38,1));
+----
+db error: ERROR: value overflows numeric format

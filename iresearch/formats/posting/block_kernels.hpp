@@ -192,15 +192,14 @@ consteval uint32_t GroupHighByte() {
 }
 
 template<uint32_t B>
-consteval int GroupByte(uint32_t j) {
+consteval uint32_t GroupByte(uint32_t j) {
   const uint32_t k = j / 4;
   const uint32_t first = k * B / 8;
   const uint32_t last = (k * B + B - 1) / 8;
   if (first + j % 4 > last) {
-    return -1;
+    return sizeof(U8x32);
   }
-  return static_cast<int>(k < 4 ? first + j % 4
-                                : 16 + first + j % 4 - GroupHighByte<B>());
+  return k < 4 ? first + j % 4 : 16 + first + j % 4 - GroupHighByte<B>();
 }
 
 template<uint32_t B>
@@ -215,7 +214,7 @@ IRS_FORCE_INLINE U32x8 UnpackGroup(const byte_type* IRS_RESTRICT in) noexcept {
     19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
   const U8x32 gathered =
     [&]<uint32_t... J>(std::integer_sequence<uint32_t, J...>) IRS_FORCE_INLINE {
-      return __builtin_shufflevector(bytes, bytes, GroupByte<B>(J)...);
+      return __builtin_shufflevector(bytes, U8x32{}, GroupByte<B>(J)...);
     }(std::make_integer_sequence<uint32_t, 32>{});
   U32x8 v;
   std::memcpy(&v, &gathered, sizeof(v));

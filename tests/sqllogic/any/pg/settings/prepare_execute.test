@@ -421,3 +421,53 @@ DEALLOCATE prep_shape_star;
 
 statement ok
 DROP TABLE prep_shape;
+
+
+statement ok
+CREATE TABLE prep_operand (i int, t text);
+
+
+statement ok
+INSERT INTO prep_operand VALUES (1, 'abc');
+
+
+statement ok
+PREPARE prep_operand_like AS SELECT t LIKE $1 AS r FROM prep_operand;
+
+
+statement ok
+PREPARE prep_operand_not_like AS SELECT t NOT LIKE $1 AS r FROM prep_operand;
+
+
+query
+SELECT name, array_to_string(parameter_types, ',') AS parameter_types FROM pg_prepared_statements WHERE name LIKE 'prep_operand%' ORDER BY name;
+----
+name	parameter_types
+prep_operand_like	text
+prep_operand_not_like	text
+
+
+query
+EXECUTE prep_operand_like('a%');
+----
+r
+t
+
+
+query
+EXECUTE prep_operand_not_like('a%');
+----
+r
+f
+
+
+statement ok
+DEALLOCATE prep_operand_like;
+
+
+statement ok
+DEALLOCATE prep_operand_not_like;
+
+
+statement ok
+DROP TABLE prep_operand;

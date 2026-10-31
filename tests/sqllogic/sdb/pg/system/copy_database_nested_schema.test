@@ -1,0 +1,94 @@
+control substitution on
+
+
+statement ok
+DROP DATABASE IF EXISTS cdns_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE IF EXISTS cdns_dst_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE cdns_src_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE cdns_dst_${__DATABASE__};
+
+
+statement ok
+USE cdns_src_${__DATABASE__};
+
+
+statement ok
+CREATE SCHEMA cdns_o;
+
+
+statement ok
+CREATE SCHEMA cdns_o.cdns_i;
+
+
+statement ok
+CREATE SCHEMA cdns_i;
+
+
+statement ok
+CREATE TABLE cdns_o.cdns_i.cdns_t (a INT);
+
+
+statement ok
+CREATE TABLE cdns_i.cdns_t (a INT);
+
+
+statement ok
+INSERT INTO cdns_o.cdns_i.cdns_t VALUES (1), (2);
+
+
+statement ok
+INSERT INTO cdns_i.cdns_t VALUES (10), (20);
+
+
+statement ok
+CREATE UNIQUE INDEX cdns_t_a ON cdns_o.cdns_i.cdns_t (a);
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+COPY FROM DATABASE cdns_src_${__DATABASE__} TO cdns_dst_${__DATABASE__};
+
+
+statement ok
+USE cdns_dst_${__DATABASE__};
+
+
+statement error
+INSERT INTO cdns_o.cdns_i.cdns_t VALUES (1);
+----
+db error: ERROR: Duplicate key "a: 1" violates unique constraint.
+
+
+statement ok
+INSERT INTO cdns_i.cdns_t VALUES (10);
+
+
+query
+SELECT (SELECT count(*) FROM cdns_o.cdns_i.cdns_t) AS nested_rows, (SELECT count(*) FROM cdns_i.cdns_t) AS top_rows;
+----
+nested_rows	top_rows
+2	3
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DROP DATABASE cdns_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE cdns_dst_${__DATABASE__};

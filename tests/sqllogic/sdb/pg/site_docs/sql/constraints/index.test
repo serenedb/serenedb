@@ -237,7 +237,7 @@ CREATE TABLE members (
 query
 SELECT constraint_type, constraint_column_names, constraint_check_mode
 FROM sdb_constraints()
-WHERE table_name = 'members' AND constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+WHERE database_name = current_database() AND table_name = 'members' AND constraint_type IN ('PRIMARY KEY', 'UNIQUE')
 ORDER BY constraint_index;
 ----
 constraint_type	constraint_column_names	constraint_check_mode

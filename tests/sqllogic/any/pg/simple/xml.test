@@ -1,0 +1,533 @@
+query
+SELECT '<a>1</a>'::xml AS a, 'abc'::xml AS b, '<a/><b/>'::xml AS c, ''::xml AS d, '<?xml version="1.0"?><a/>'::xml AS e,
+       '<?xml version="1.0" standalone="yes"?><a/>'::xml AS f;
+----
+a	b	c	d	e	f
+<a>1</a>	abc	<a/><b/>	(empty)	<a/>	<?xml version="1.0" standalone="yes"?><a/>
+
+
+query
+SELECT '<?xml version="1.1"?><a/>'::xml AS a, '<?xml version = "1.0" ?>
+<a/>'::xml AS b, '  <a/>'::xml AS c, '<?xml version="1.0"?><a/>'::xml::text AS d;
+----
+a	b	c	d
+<?xml version="1.1"?><a/>	<a/>	  <a/>	<?xml version="1.0"?><a/>
+
+
+statement error (invalid XML content)
+SELECT '<a>'::xml;
+
+
+statement error (invalid XML content)
+SELECT '<a></b>'::xml;
+
+
+statement error (invalid XML content)
+SELECT '&'::xml;
+
+
+statement error (invalid XML content)
+SELECT '<'::name::xml;
+
+
+query
+SELECT '<a/>'::name::xml AS a, '<a/>'::xml::name AS b, '<a/>'::xml::varchar AS c, '<b/>'::varchar::xml AS d;
+----
+a	b	c	d
+<a/>	<a/>	<a/>	<b/>
+
+
+skipif serenedb # xml casts to json as a string
+statement error
+SELECT '<a/>'::xml::json;
+----
+db error: ERROR: cannot cast type xml to json<slt:ignore>
+
+
+onlyif serenedb
+query
+SELECT '<a/>'::xml::json;
+----
+json
+"<a/>"
+
+
+query
+SELECT to_json('<a b="1">text</a>'::xml) AS a, to_json(NULL::xml) AS b;
+----
+a	b
+"<a b=\\"1\\">text</a>"	NULL
+
+
+statement ok
+SET xmloption = document
+
+
+statement error (invalid XML document)
+SELECT '<a/><b/>'::xml;
+
+
+statement error (invalid XML document)
+SELECT 'abc'::xml;
+
+
+query
+SELECT '<a/>'::xml AS a;
+----
+a
+<a/>
+
+
+statement ok
+RESET xmloption
+
+
+query
+SELECT xmlcomment('hello') AS a, xmltext('<a>&b') AS b, xmltext('a"b''c\') AS d, xmlcomment('') AS e;
+----
+a	b	d	e
+<!--hello-->	&lt;a&gt;&amp;b	a&quot;b'c\\	<!---->
+
+
+statement error
+SELECT xmlcomment('a--b');
+----
+db error: ERROR: invalid XML comment<slt:ignore>
+
+
+statement error
+SELECT xmlcomment('a-');
+----
+db error: ERROR: invalid XML comment<slt:ignore>
+
+
+query
+SELECT xpath('/a/b/text()', '<a><b>1</b><b>2</b></a>'::xml) AS a, xpath('//b', '<a><b>1</b></a>'::xml) AS b,
+       xpath_exists('/a/c', '<a><b/></a>'::xml) AS c, xpath('count(//b)', '<a><b/><b/></a>'::xml) AS d;
+----
+a	b	c	d
+{1,2}	{<b>1</b>}	f	{2}
+
+
+query
+SELECT xpath('/a/@x', '<a x="1&amp;2"/>'::xml) AS a, xpath('//text()', '<a>x&lt;y</a>'::xml) AS b, xpath('0.5', '<a/>'::xml) AS c,
+       xpath('string(/a)', '<a>q&amp;</a>'::xml) AS d, xpath('1 = 1', '<a/>'::xml) AS e, xpath('1 div 0', '<a/>'::xml) AS f;
+----
+a	b	c	d	e	f
+{1&amp;2}	{x&lt;y}	{0.5}	{q&amp;}	{true}	{Infinity}
+
+
+query
+SELECT xpath('/a/b', '<?xml version="1.0"?><a><b>1</b></a>'::xml) AS a, xpath_exists('/a/b', '<a><b/></a>'::xml) AS b,
+       xpath('/a/b', '<a/>'::xml) AS c, xpath('/a', '<a/>'::xml, '{}') AS d;
+----
+a	b	c	d
+{<b>1</b>}	t	{}	{<a/>}
+
+
+query
+SELECT xpath('/x:a', '<x:a xmlns:x="u"/>'::xml, ARRAY[ARRAY['x', 'u']]) AS a,
+       xpath_exists('/x:a', '<x:a xmlns:x="u"/>'::xml, ARRAY[ARRAY['x', 'u']]) AS b,
+       xpath('/my:a/text()', '<my:a xmlns:my="http://example.com">test</my:a>', ARRAY[ARRAY['my', 'http://example.com']]) AS c;
+----
+a	b	c
+{"<x:a xmlns:x=\\"u\\"/>"}	t	{test}
+
+
+statement error
+SELECT xpath('/a', '<a/>'::xml, ARRAY[ARRAY['x', 'u', 'v']]);
+----
+db error: ERROR: invalid array for XML namespace mapping<slt:ignore>
+
+
+statement error
+SELECT xpath('/a[', '<a/>'::xml);
+----
+db error: ERROR: invalid XPath expression<slt:ignore>
+
+
+statement error
+SELECT xpath('', '<a/>'::xml);
+----
+db error: ERROR: empty XPath expression<slt:ignore>
+
+
+statement error
+SELECT xpath('/a', 'abc'::xml);
+----
+db error: ERROR: could not parse XML document<slt:ignore>
+
+
+query
+SELECT xmlconcat('<a/>', '<b/>') AS a, xmlconcat('<?xml version="1.1"?><a/>', '<?xml version="1.1" standalone="no"?><b/>') AS b,
+       xmlconcat('<?xml version="1.0" standalone="yes"?><a/>') AS c, xmlconcat('<?xml version="1.0"?><a/>')::text AS d,
+       xmlconcat(NULL, '<b/>'::xml) AS e, xmlconcat(NULL::xml, NULL::xml) IS NULL AS f, xmlconcat('abc', '<b/>', 'x') AS g;
+----
+a	b	c	d	e	f	g
+<a/><b/>	<?xml version="1.1"?><a/><b/>	<?xml version="1.0" standalone="yes"?><a/>	<a/>	<b/>	t	abc<b/>x
+
+
+statement error (invalid XML content)
+SELECT xmlconcat('<a>');
+
+
+query
+SELECT '<a/>'::xml IS DOCUMENT AS a, 'abc'::xml IS DOCUMENT AS b, '<a/><b/>'::xml IS NOT DOCUMENT AS c,
+       NULL::xml IS DOCUMENT AS d, '<a/>' IS DOCUMENT AS e, NOT '<a/>'::xml IS DOCUMENT AS f,
+       '<a/>'::xml IS DOCUMENT IS TRUE AS g, '<a/>'::xml IS NOT DOCUMENT AND TRUE AS h;
+----
+a	b	c	d	e	f	g	h
+t	f	t	NULL	t	f	t	f
+
+
+query
+SELECT xmlagg(x) AS a FROM (VALUES ('<a/>'::xml), ('<b/>'::xml), (NULL)) t(x);
+----
+a
+<a/><b/>
+
+
+query
+SELECT xmlagg(x ORDER BY y DESC) AS a FROM (VALUES ('<a/>'::xml, 1), ('<b/>'::xml, 2)) t(x, y);
+----
+a
+<b/><a/>
+
+
+query
+SELECT xmlagg(x ORDER BY y) AS a
+FROM (VALUES ('<?xml version="1.0" standalone="yes"?><a/>'::xml, 1), ('<?xml version="1.0" standalone="yes"?><b/>'::xml, 2)) t(x, y);
+----
+a
+<?xml version="1.0" standalone="yes"?><a/><b/>
+
+
+query
+SELECT xmlagg(x ORDER BY y)::text AS a, xmlagg(z ORDER BY y) AS b
+FROM (VALUES ('<?xml version="1.0"?><a/>'::xml, 1, '<a/>'::xml), ('<b/>'::xml, 2, '<?xml version="1.1"?><b/>'::xml)) t(x, y, z);
+----
+a	b
+<a/><b/>	<a/><b/>
+
+
+query
+SELECT xmlagg(x) IS NULL AS a FROM (VALUES (NULL::xml)) t(x);
+----
+a
+t
+
+
+query
+SELECT xmlagg(x ORDER BY y) AS a, xmlagg(x ORDER BY y) FILTER (WHERE y = 1) AS b
+FROM (VALUES (''::xml, 1), ('<a/>'::xml, 2)) t(x, y);
+----
+a	b
+<a/>	(empty)
+
+
+query
+SELECT a FROM (
+  SELECT y, xmlagg(x) OVER (ORDER BY y ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS a
+  FROM (SELECT y, CASE WHEN y < 40 THEN ''::xml ELSE '<a/>'::xml END AS x FROM generate_series(1, 42) AS g(y)) t
+) w WHERE y = 42;
+----
+a
+<a/><a/><a/>
+
+
+query
+SELECT pg_typeof('<a/>'::xml) AS a, '<a/>'::xml::varchar AS b, ('<a/>'::xml)::text || 'x' AS c,
+       '<a/>'::text::xml AS d, CAST('<b/>' AS xml) AS e;
+----
+a	b	c	d	e
+xml	<a/>	<a/>x	<a/>	<b/>
+
+
+query
+SELECT ARRAY['<a/>'::xml, '<b x="1"/>'::xml] AS a, ROW('<a x="1, 2"/>'::xml) AS b,
+       ARRAY['<?xml version="1.0" standalone="yes"?><a/>'::xml] AS c;
+----
+a	b	c
+{<a/>,"<b x=\\"1\\"/>"}	("<a x=""1, 2""/>")	{"<?xml version=\\"1.0\\" standalone=\\"yes\\"?><a/>"}
+
+
+query
+SELECT pg_input_is_valid('<a>', 'xml') AS a, pg_input_is_valid('<a/>', 'xml') AS b, xml_is_well_formed('<a>') AS c,
+       xml_is_well_formed_document('<a/><b/>') AS d, xml_is_well_formed_content('<a/><b/>') AS e;
+----
+a	b	c	d	e
+f	t	f	f	t
+
+
+statement ok
+CREATE TABLE xml_t (id INT, x xml);
+
+
+statement ok
+INSERT INTO xml_t VALUES (1, '<a>1</a>'), (2, 'text'), (3, NULL), (4, '<?xml version="1.0" standalone="no"?><b/>');
+
+
+statement error (invalid XML content)
+INSERT INTO xml_t VALUES (5, '<c>');
+
+
+query
+SELECT id, x FROM xml_t ORDER BY id;
+----
+id	x
+1	<a>1</a>
+2	text
+3	NULL
+4	<?xml version="1.0" standalone="no"?><b/>
+
+
+query
+SELECT id, x::text AS t FROM xml_t WHERE id = 4;
+----
+id	t
+4	<?xml version="1.0" standalone="no"?><b/>
+
+
+query
+SELECT xmlagg(x ORDER BY id) AS a FROM xml_t;
+----
+a
+<a>1</a>text<b/>
+
+
+statement ok
+DROP TABLE xml_t;
+
+
+query
+SELECT oid::int AS oid, proname, pg_get_function_identity_arguments(oid) AS args
+FROM pg_proc WHERE proname IN ('xpath', 'xpath_exists', 'xmlagg', 'xmlcomment', 'xmltext') ORDER BY oid;
+----
+oid	proname	args
+2895	xmlcomment	text
+2901	xmlagg	xml
+2931	xpath	text, xml, text[]
+2932	xpath	text, xml
+3049	xpath_exists	text, xml, text[]
+3050	xpath_exists	text, xml
+3813	xmltext	text
+
+
+query
+SELECT '<?xml1?><a/>'::xml AS a, '<?xml.?><a/>'::xml AS b, '<?xml-a?><a/>'::xml AS c, '<?xml_a?><a/>'::xml AS d,
+       '<?xml:a?><a/>'::xml AS e, '<?xml〇?><a/>'::xml AS f, '<?xml·?><a/>'::xml AS g, '<?xmla?><a/>'::xml AS h,
+       ('<?xml' || chr(768) || '?><a/>')::xml::text = '<?xml' || chr(768) || '?><a/>' AS i,
+       '<?xml-stylesheet href="a"?><a/>'::xml AS j;
+----
+a	b	c	d	e	f	g	h	i	j
+<?xml1?><a/>	<?xml.?><a/>	<?xml-a?><a/>	<?xml_a?><a/>	<?xml:a?><a/>	<?xml〇?><a/>	<?xml·?><a/>	<?xmla?><a/>	t	<?xml-stylesheet href="a"?><a/>
+
+
+query
+SELECT pg_input_is_valid('<?xml', 'xml') AS a, pg_input_is_valid('<?xml version "1.0"?><a/>', 'xml') AS b,
+       pg_input_is_valid('<?xml version=1.0?><a/>', 'xml') AS c, pg_input_is_valid('<?xml version="1.0?><a/>', 'xml') AS d,
+       pg_input_is_valid('<?xml version="1.0" encoding?><a/>', 'xml') AS e,
+       pg_input_is_valid('<?xml version="1.0"encoding="UTF-8"?><a/>', 'xml') AS f,
+       pg_input_is_valid('<?xml version="ü"?><a/>', 'xml') AS g,
+       pg_input_is_valid('<?xml' || chr(1) || 'version="1.0"?><a/>', 'xml') AS h,
+       pg_input_is_valid('<?xml version="1.0" standalone="maybe"?><a/>', 'xml') AS i,
+       pg_input_is_valid('<?xml version="1.0"standalone="yes"?><a/>', 'xml') AS j;
+----
+a	b	c	d	e	f	g	h	i	j
+f	f	f	f	f	f	f	f	f	f
+
+
+query
+SELECT '<?xml version=''1.0'' encoding="UTF-8"?><a/>'::xml AS a, E'<?xml\tversion="1.0"\r\n?><a/>'::xml AS b,
+       E'<?xml version="1.0"\n?>\n<a/>'::xml AS c;
+----
+a	b	c
+<a/>	<a/>	<a/>
+
+
+query
+SELECT '<![CDATA[x]]>'::xml AS a, '<!-- c --><?pi x?><a/>'::xml AS b, '<?a:b x?><r/>'::xml AS c,
+       '<!DOCTYPE a SYSTEM "x.dtd"><a>&e;</a>'::xml AS d;
+----
+a	b	c	d
+<![CDATA[x]]>	<!-- c --><?pi x?><a/>	<?a:b x?><r/>	<!DOCTYPE a SYSTEM "x.dtd"><a>&e;</a>
+
+
+query
+SELECT pg_input_is_valid('<!-- a -- b -->', 'xml') AS a, pg_input_is_valid('<!-- x', 'xml') AS b,
+       pg_input_is_valid('<?pi', 'xml') AS c, pg_input_is_valid('<!-- a --x><b/>', 'xml') AS d;
+----
+a	b	c	d
+f	f	f	f
+
+
+statement ok
+SET xmloption = document
+
+
+query
+SELECT '<!DOCTYPE a SYSTEM "x.dtd"><a>&e;</a>'::xml AS a;
+----
+a
+<!DOCTYPE a SYSTEM "x.dtd"><a>&e;</a>
+
+
+statement ok
+RESET xmloption
+
+
+query
+SELECT replace((xpath('/', '<a/>'::xml))[1]::text, E'\n', '|') AS a, xpath('1 = 2', '<a/>'::xml) AS b,
+       xpath('string(/a)', '<a>x&gt;y&#13;z</a>'::xml) AS c;
+----
+a	b	c
+<?xml version="1.0" encoding="UTF-8"?>|<a/>|	{false}	{x&gt;y&#x0d;z}
+
+
+statement error
+SELECT xpath('/a', '<a/>'::xml, ARRAY[ARRAY['', 'u']]);
+----
+db error: ERROR: could not register XML namespace with name "" and URI "u"
+
+
+statement error (invalid XPath expression)
+SELECT xpath_exists('/a[', '<a/>'::xml);
+
+
+statement error (invalid XPath expression)
+SELECT xpath('/a[', '<a/>'::xml, ARRAY[ARRAY['x', 'u']]);
+
+
+statement error (invalid XPath expression)
+SELECT xpath_exists('/a[', '<a/>'::xml, ARRAY[ARRAY['x', 'u']]);
+
+
+statement error (could not create XPath object)
+SELECT xpath('foo()', '<a/>'::xml);
+
+
+statement error (could not create XPath object)
+SELECT xpath('$x', '<a/>'::xml);
+
+
+statement error (could not create XPath object)
+SELECT xpath('/x:a', '<a/>'::xml);
+
+
+statement error
+SELECT xpath('/a', '<a/>'::xml, ARRAY[ARRAY['x', NULL]]);
+----
+db error: ERROR: neither namespace name nor URI may be null
+
+
+statement error
+SELECT xpath('/a', '<a/>'::xml, ARRAY[ARRAY[NULL, 'u']]);
+----
+db error: ERROR: neither namespace name nor URI may be null
+
+
+statement ok
+CREATE TABLE xml_args (id int, p text, x xml, ns text[][]);
+
+
+statement ok
+INSERT INTO xml_args VALUES (1, '/a', '<a/>', ARRAY[ARRAY['x', 'u']]), (2, NULL, '<a/>', ARRAY[ARRAY['x', 'u']]),
+  (3, '/a', NULL, ARRAY[ARRAY['x', 'u']]), (4, '/a', '<a/>', NULL), (5, '/x:a', '<x:a xmlns:x="u"/>', ARRAY[ARRAY['x', 'u']]);
+
+
+query
+SELECT id, xpath(p, x, ns) AS a, xpath_exists(p, x, ns) AS b FROM xml_args ORDER BY id;
+----
+id	a	b
+1	{<a/>}	t
+2	NULL	NULL
+3	NULL	NULL
+4	NULL	NULL
+5	{"<x:a xmlns:x=\\"u\\"/>"}	t
+
+
+query
+SELECT id, xpath(p, x) AS a, xpath_exists(p, x) AS b FROM xml_args WHERE id < 5 ORDER BY id;
+----
+id	a	b
+1	{<a/>}	t
+2	NULL	NULL
+3	NULL	NULL
+4	{<a/>}	t
+
+
+query
+SELECT id, xpath(p, x, ns) AS a FROM xml_args WHERE id <> 2 ORDER BY id;
+----
+id	a
+1	{<a/>}
+3	NULL
+4	NULL
+5	{"<x:a xmlns:x=\\"u\\"/>"}
+
+
+statement ok
+DROP TABLE xml_args;
+
+
+query
+SELECT xmlconcat('<?xml version="1.0" standalone="yes"?><a/>', '<?xml version="1.0" standalone="no"?><b/>') AS a,
+       xmlconcat('<?xml version="1.0"?><a/>', '<?xml version="1.1"?><b/>') AS b,
+       xmlconcat('<?xml version="1.0" standalone="yes"?><a/>', '<?xml version="1.1" standalone="yes"?><b/>') AS c,
+       xmlconcat('<?xml version="1.0" standalone="no"?><a/>', '<?xml version="1.0" standalone="no"?><b/>') AS d;
+----
+a	b	c	d
+<?xml version="1.0" standalone="no"?><a/><b/>	<a/><b/>	<?xml version="1.0" standalone="yes"?><a/><b/>	<?xml version="1.0" standalone="no"?><a/><b/>
+
+
+query
+SELECT '<!DOCTYPE a><a xml:id="1a"/>'::xml AS a, xml_is_well_formed_document('<a xml:id="1a"/>') AS b,
+       '<!DOCTYPE a [<!ATTLIST a xml:id CDATA #IMPLIED>]><a xml:id="x"/>'::xml AS c, '<p:a/>'::xml AS d,
+       '<a xmlns:p=""/>'::xml AS e, '<a><b xml:id="x"/><c xml:id="x"/></a>'::xml AS f;
+----
+a	b	c	d	e	f
+<!DOCTYPE a><a xml:id="1a"/>	t	<!DOCTYPE a [<!ATTLIST a xml:id CDATA #IMPLIED>]><a xml:id="x"/>	<p:a/>	<a xmlns:p=""/>	<a><b xml:id="x"/><c xml:id="x"/></a>
+
+
+statement error
+SELECT xpath('/a', '<a xml:id="1a"/>');
+----
+db error: ERROR: could not parse XML document<slt:ignore>
+
+
+statement error
+SELECT xpath_exists('/a', '<!DOCTYPE a [<!ATTLIST a xml:id CDATA #IMPLIED>]><a xml:id="x"/>');
+----
+db error: ERROR: could not parse XML document<slt:ignore>
+
+
+statement error
+SELECT xpath('/a', '<p:a/>');
+----
+db error: ERROR: could not parse XML document<slt:ignore>
+
+
+statement error
+SELECT xpath('/a', '<a><b xml:id="x"/><c xml:id="x"/></a>');
+----
+db error: ERROR: could not parse XML document<slt:ignore>
+
+
+statement error
+SELECT xpath('/a', '<a xmlns:p=""/>');
+----
+db error: ERROR: could not parse XML document<slt:ignore>
+
+
+query
+SELECT xpath('/a', '<a xmlns:p="relative"/>') AS a;
+----
+a
+{"<a xmlns:p=\\"relative\\"/>"}
+
+
+query
+SELECT xmlagg('<a/>'::xml) AS a FROM generate_series(1, 3);
+----
+a
+<a/><a/><a/>

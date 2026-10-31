@@ -312,3 +312,31 @@ DROP TYPE ck_e;
 
 statement ok
 DROP SCHEMA ck_sc;
+
+
+statement ok
+CREATE TYPE main.ck_main_type AS (x INT);
+
+
+statement error
+CREATE TABLE main.ck_main_type (a INT);
+----
+db error: ERROR: Type with name "ck_main_type" already exists!
+
+
+statement ok
+CREATE TABLE main.ck_main_table (a INT);
+
+
+statement error
+CREATE TYPE main.ck_main_table AS ENUM ('x');
+----
+db error: ERROR: Table with name "ck_main_table" already exists!
+
+
+statement ok
+DROP TABLE main.ck_main_table;
+
+
+statement ok
+DROP TYPE main.ck_main_type;

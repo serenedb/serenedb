@@ -21,9 +21,11 @@
 #include "query/transaction.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
 
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -34,6 +36,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <ranges>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
@@ -177,7 +180,7 @@ Transaction::SearchSlot& Transaction::EnsureIndexSlot(
   auto& result = entry.slots[slot];
   if (!result.transaction) {
     result.transaction = std::make_unique<irs::IndexWriter::Transaction>(
-      storage->GetTransaction());
+      storage->GetTransaction(/*exclusive_segment=*/slot != 0));
     result.transaction->SetFieldOptions(std::move(config));
   }
   if (!entry.storage) {
@@ -194,12 +197,13 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
     }
     uint64_t queries = 0;
     for (auto& slot : entry.slots) {
+      SDB_ASSERT(slot.transaction);
       slot.writer.reset();
-      if (slot.transaction) {
-        slot.transaction->RegisterFlush();
-        queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
-      }
+      queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
     }
+    irs::IndexWriter::Transaction::RegisterFlush(
+      std::views::transform(entry.slots, &SearchSlot::transaction));
+    SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_registered");
     entry.tick = entry.storage->NextTick(queries);
     entry.position = position;
   }
@@ -234,20 +238,19 @@ void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
   }
 }
 
-void Transaction::Commit() {
+void Transaction::Commit(duckdb::transaction_t owner) {
+  absl::Cleanup destroy = [this, owner] { Destroy(owner); };
   for (auto& action : _on_commit) {
     action();
   }
-
-  Destroy();
 }
 
-void Transaction::Rollback() {
+void Transaction::Rollback(duckdb::transaction_t owner) {
+  absl::Cleanup destroy = [this, owner] { Destroy(owner); };
   if (_search_txn) {
     _search_txn->Abort();
   }
   RollbackVariables();
-  Destroy();
 }
 
 search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
@@ -299,7 +302,19 @@ void Transaction::RefreshCreatedIndexes(duckdb::idx_t database) {
   }
 }
 
-void Transaction::Destroy() noexcept {
+void Transaction::ClaimSearchLayout(std::shared_ptr<search::SearchTable> table,
+                                    duckdb::transaction_t owner,
+                                    std::string_view name) {
+  if (table->AcquireLayout(owner, name)) {
+    _layout_claims.emplace_back(std::move(table));
+  }
+}
+
+void Transaction::Destroy(duckdb::transaction_t owner) noexcept {
+  for (const auto& table : _layout_claims) {
+    table->ReleaseLayout(owner);
+  }
+  _layout_claims.clear();
   _search_transactions.clear();
   _search_snapshots.clear();
   _feed_columns = {};

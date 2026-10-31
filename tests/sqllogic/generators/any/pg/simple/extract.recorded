@@ -1,0 +1,65 @@
+b7dd76d9ab276716	1	-1	2	-2	3	-1001	4	2021	5	2000	6	1
+48466cd257a1ede3	1	0	2	-1	3	-100	4	202	5	200	6	0
+dc8d6d962a02271f	1	-1	2	-1	3	-11	4	21	5	20	6	1
+4515513f3bae6f7f	1	-1	2	-1	3	-2	4	3	5	2	6	1
+e5ad145e12a3b9f8	1	-2	2	-2	3	-1001	4	2021	5	2000	6	1
+9b6b92a4a81797bf	1	6	2	2	3	1	4	1	5	7	6	1
+267fd63d0ead36e7	1	6	2	2	3	1	4	1	5	0	6	1
+f1888cf3cafb927d	1	-1	2	2021
+f30fc8ba26a6ef4c	1	0	2	202
+aa802ebb8749bf59	1	-1	2	21
+73452195e709a6a3	1	-1	2	3
+6d0bcf8fafa495d9	1	-2	2	2021
+7952bd1238b57a43	1	6	2	1
+5a4687e9389610e6	doy	3	epoch	1609632000	year	2021
+b47777ce4327e6bc	epoch	36672.5	hour	10	second	12.5
+c64002490dd9ab7f	epoch	29472.5	hour	10	timezone	7200
+d5c8c8831bd4ba70	epoch	1609668672.5	millisecond	12500	year	2021
+43f96fc9259d0559	epoch	1609668672.5	timezone	0	year	2021
+8bb0c2e91176a405	epoch	37015506.5	month	2	year	1
+34d84c131a3b056b	2500.000
+869ef4e4e53e20fc	2
+523e7aa997bbdeec	2
+0b69dbdd2d23b587	2
+6bda1bffffde1133	-2
+e762030ef4d31f3c	NULL
+684238223e48f6c2	NULL
+18d7041e7fb3a9d2	NULL
+0190efb7892a2436	NULL
+a28c76b6a0235c3a	NULL
+c9484245d18394a9	NULL
+68233a16fbc7d7a4	NULL
+c41ad70a1d4a4dd4	NULL
+2d52be2ffd47cb1d	NULL
+ac3d3efb1e360352	NULL
+b74a84407c2f949c	NULL
+369a69adc4842b80	NULL
+4eb4d863fb5f7e47	NULL
+aaa89f674be134cd	12.500000
+2ab71f679a9e34c2	error	db error: ERROR: unit "microsecond" not supported for type date
+df972c2d8075c2eb	error	db error: ERROR: unit "millisecond" not supported for type date
+9e043962eb983f61	error	db error: ERROR: unit "second" not supported for type date
+f1662481fc6ac6d6	error	db error: ERROR: unit "minute" not supported for type date
+b99a4973a9f4e98c	error	db error: ERROR: unit "timezone_hour" not supported for type date
+510f43af0c42cb19	error	db error: ERROR: unit "timezone_minute" not supported for type timestamp without time zone
+c086e2b9c435fcab	error	db error: ERROR: unit "now" not recognized for type time with time zone
+2044cbc646616874	error	db error: ERROR: unit "fortnight" not recognized for type time with time zone
+2f0ce599f2db2252	error	db error: ERROR: unit "now" not supported for type timestamp without time zone
+703152bde10f32ab	error	db error: ERROR: unit "fortnight" not recognized for type timestamp without time zone
+c4983b4c4e34471d	error	db error: ERROR: unit "fortnight" not recognized for type timestamp with time zone
+d9a408b8035c23d2	error	db error: ERROR: unit "fortnight" not recognized for type timestamp with time zone
+77cc5df518e0e942	error	db error: ERROR: unit "now" not supported for type timestamp with time zone
+9483f3955b43dbcd	error	db error: ERROR: unit "now" not supported for type timestamp with time zone
+afc8fc418e8fa367	error	db error: ERROR: unit "now" not recognized for type interval
+e617c38310afad53	error	db error: ERROR: unit "julian" not supported for type interval
+20c67c943709b3cf	error	db error: ERROR: unit "isoyear" not supported for type interval
+68c5a34370989f0c	error	db error: ERROR: unit "isodow" not supported for type interval
+eb30364a33a1066f	error	db error: ERROR: unit "doy" not supported for type interval
+b9ced57ed18e7837	error	db error: ERROR: unit "timezone" not supported for type interval
+e603f9193f2bb96a	error	db error: ERROR: unit "timezone_hour" not supported for type interval
+fc65765ff7875cea	error	db error: ERROR: unit "timezone_minute" not supported for type interval
+e9735920bf529898	error	db error: ERROR: unit "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" not recognized for type date
+3ba79f5720c1479c	error	db error: ERROR: unit "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" not recognized for type date
+a3eeeb864372e672	1	19	2	20
+f41a132341dc5507	1	-17762	2	-14400
+768ed1a20ce30fa9	3600

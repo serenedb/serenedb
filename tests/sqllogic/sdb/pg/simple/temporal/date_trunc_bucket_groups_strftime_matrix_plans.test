@@ -1,0 +1,138 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE tb AS SELECT TIMESTAMP '2024-12-23 00:00:00' + INTERVAL (i * 37) MINUTE AS ts, (TIMESTAMP '2024-12-23 00:00:00' + INTERVAL (i * 37) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2024-12-23' + (i % 400)::INTEGER)::DATE AS d, i AS v FROM range(0, 1500) t(i);
+
+statement ok
+INSERT INTO tb VALUES (NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE tb_inf AS SELECT * FROM tb;
+
+statement ok
+INSERT INTO tb_inf VALUES (TIMESTAMP 'infinity', TIMESTAMPTZ 'infinity', DATE 'infinity', -2), (TIMESTAMP '-infinity', TIMESTAMPTZ '-infinity', DATE '-infinity', -3);
+
+statement ok
+CREATE TABLE tb_wide AS SELECT TIMESTAMP '1950-06-01 00:00:00' + INTERVAL (i * 29) DAY AS ts, (TIMESTAMP '1950-06-01 00:00:00' + INTERVAL (i * 29) DAY)::TIMESTAMPTZ AS tstz, (DATE '1950-06-01' + (i * 29)::INTEGER)::DATE AS d, i AS v FROM range(0, 1400) t(i);
+
+query
+EXPLAIN SELECT strftime(tstz, '%G-%V') AS w, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────╮
+│ Projections:                                                       │
+│ strftime(__internal_icu_date_trunc_unbucket('week', #0), '%G-%V'), │
+│ #1                                                                 │
+│ ~750 rows                                                          │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴─────────────────────────────────╮
+│ Groups: #0                                                         │
+│ Aggregates: count_star()                                           │
+│ ~750 rows                                                          │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴─────────────────────────────────╮
+│ Projections:                                                       │
+│ __internal_icu_date_trunc_bucket('week', tstz)                     │
+│ ~1,501 rows                                                        │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴─────────────────────────────────╮
+│ Table: tb                                                          │
+│ Type: Sequential Scan                                              │
+│ Projections: tstz                                                  │
+│ ~1,501 rows                                                        │
+╰────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(d, '%G-%V-%u') AS w, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                            │
+│ strftime(CAST(__internal_date_trunc_unbucket(#0, 86400000000, 0) AS DATE), '%G-%V-%u'), │
+│ #1                                                                                      │
+│ ~750 rows                                                                               │
+╰────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────────────────┴────────────────────────────────────────────╮
+│ Groups: #0                                                                              │
+│ Aggregates: count_star()                                                                │
+│ ~750 rows                                                                               │
+╰────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────────┴────────────────────────────────────────────╮
+│ Projections:                                                                            │
+│ __internal_date_trunc_bucket(CAST(d AS TIMESTAMP), 86400000000, 0)                      │
+│ ~1,501 rows                                                                             │
+╰────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────────┴────────────────────────────────────────────╮
+│ Table: tb                                                                               │
+│ Type: Sequential Scan                                                                   │
+│ Projections: d                                                                          │
+│ ~1,501 rows                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(tstz, '%y-%m') AS m, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ strftime(__internal_icu_date_trunc_unbucket('month', #0), '%y-%m'), │
+│ #1                                                                  │
+│ ~750 rows                                                           │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────┴──────────────────────────────────╮
+│ Groups: #0                                                          │
+│ Aggregates: count_star()                                            │
+│ ~750 rows                                                           │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ PROJECTION ─────────────────────┴──────────────────────────────────╮
+│ Projections:                                                        │
+│ __internal_icu_date_trunc_bucket('month', tstz)                     │
+│ ~1,501 rows                                                         │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴──────────────────────────────────╮
+│ Table: tb                                                           │
+│ Type: Sequential Scan                                               │
+│ Projections: tstz                                                   │
+│ ~1,501 rows                                                         │
+╰─────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(tstz, '%y-%m') AS m, count(*) AS c FROM tb_wide GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~700 rows                │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: m           │
+│ ~1,400 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: tb_wide           │
+│ Type: Sequential Scan    │
+│ Projections: tstz        │
+│ ~1,400 rows              │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(ts, '%B %V') AS m, count(*) AS c FROM tb GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~750 rows                │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: m           │
+│ ~1,501 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: tb                │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~1,501 rows              │
+╰──────────────────────────╯

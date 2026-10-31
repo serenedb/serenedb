@@ -67,10 +67,4 @@ void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
   }
 }
 
-std::string PkFilePrefix(uint64_t file_id) {
-  std::string prefix;
-  AppendUnsigned(prefix, file_id);
-  return prefix;
-}
-
 }  // namespace sdb::connector::primary_key

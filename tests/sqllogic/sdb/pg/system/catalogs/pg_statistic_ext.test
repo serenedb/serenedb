@@ -1,0 +1,75 @@
+statement ok
+DROP TABLE IF EXISTS invoker_quas;
+
+
+statement ok
+DROP ROLE IF EXISTS invoker_statistic_ext_orb;
+
+
+statement ok
+CREATE ROLE invoker_statistic_ext_orb LOGIN PASSWORD 'invoker_statistic_ext_pw';
+
+
+statement ok
+CREATE TABLE invoker_quas (wex int, exort int);
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = 'pg_statistic_ext'::regclass AND attnum > 0 AND attname <> 'stxkeys'
+ORDER BY attnum;
+----
+attname	type
+oid	oid
+stxrelid	oid
+stxname	name
+stxnamespace	oid
+stxowner	oid
+stxstattarget	smallint
+stxkind	"char"[]
+stxexprs	pg_node_tree
+
+
+query
+SELECT count(*) >= 0 AS readable FROM pg_statistic_ext;
+----
+readable
+t
+
+
+query
+SELECT oid, stxname FROM pg_statistic_ext WHERE stxrelid = 'invoker_quas'::regclass;
+----
+oid	stxname
+
+
+query
+SELECT stxname FROM pg_statistic_ext WHERE oid = 0;
+----
+stxname
+
+
+connection invoker_statistic_ext user=invoker_statistic_ext_orb password=invoker_statistic_ext_pw
+query
+SELECT count(*) >= 0 AS readable FROM pg_statistic_ext;
+----
+readable
+t
+
+
+connection invoker_statistic_ext user=invoker_statistic_ext_orb password=invoker_statistic_ext_pw
+query
+SELECT oid, stxname FROM pg_statistic_ext WHERE stxrelid = 'invoker_quas'::regclass;
+----
+oid	stxname
+
+
+connection default
+statement ok
+DROP TABLE invoker_quas;
+
+
+connection default
+statement ok
+DROP ROLE invoker_statistic_ext_orb;

@@ -43,29 +43,24 @@
 #include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
+#include "connector/functions/formatting.h"
 #include "connector/functions/hash.h"
-#include "connector/functions/inout.h"
 #include "connector/functions/jobs.h"
 #include "connector/functions/json.h"
 #include "connector/functions/markdown_render.h"
 #include "connector/functions/math.h"
 #include "connector/functions/metrics.h"
 #include "connector/functions/otel.h"
-#include "connector/functions/ruleutils.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
-#include "connector/functions/system.h"
 #include "connector/inverted_store_index.h"
 #include "connector/iresearch_replacement_scan.h"
-#include "connector/pg_logical_types.h"
 #include "connector/scan/scan_function.h"
-#include "connector/system_table_scan.h"
 #include "docs/docs_functions.h"
-#include "pg/pg_catalog/pg_prepared_statements.h"
-#include "pg/pg_catalog/pg_replication_origin.h"
-#include "pg/pg_catalog/pg_statistic.h"
-#include "pg/system_catalog.h"
-#include "pg/system_table.h"
+#include "pg/catalog/engine/registry.h"
+#include "pg/catalog/engine/scan_function.h"
+#include "pg/catalog/functions/functions.h"
+#include "pg/types/register.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "replication/functions.h"
@@ -76,140 +71,9 @@
 
 extern "C" const duckdb::DefaultType* duckdb_external_types(
   duckdb::idx_t* count) {
-  // Lazy-initialized to avoid static initialization order issues
-  // (LogicalType has shared_ptr that needs heap allocation).
-  static const duckdb::DefaultType kExternalTypes[] = {
-    // reg* types -- aliased BIGINT with input functions for catalog lookups
-    {
-      "regclass",
-      sdb::pg::REGCLASS(),
-      nullptr,
-    },
-    {
-      "regtype",
-      sdb::pg::REGTYPE(),
-      nullptr,
-    },
-    {
-      "regnamespace",
-      sdb::pg::REGNAMESPACE(),
-      nullptr,
-    },
-    {
-      "regproc",
-      sdb::pg::REGPROC(),
-      nullptr,
-    },
-    {
-      "regoper",
-      sdb::pg::REGOPER(),
-      nullptr,
-    },
-    {
-      "regoperator",
-      sdb::pg::REGOPERATOR(),
-      nullptr,
-    },
-    {
-      "regprocedure",
-      sdb::pg::REGPROCEDURE(),
-      nullptr,
-    },
-    {
-      "regrole",
-      sdb::pg::REGROLE(),
-      nullptr,
-    },
-    {
-      "regconfig",
-      sdb::pg::REGCONFIG(),
-      nullptr,
-    },
-    {
-      "regdictionary",
-      sdb::pg::REGDICTIONARY(),
-      nullptr,
-    },
-    {
-      "regcollation",
-      sdb::pg::REGCOLLATION(),
-      nullptr,
-    },
-    // oid -- overrides DuckDB builtin (plain BIGINT) with aliased BIGINT
-    {
-      "oid",
-      sdb::pg::OID(),
-      nullptr,
-    },
-    // System identifier types -- aliased BIGINT
-    {
-      "tid",
-      sdb::pg::TID(),
-      nullptr,
-    },
-    {
-      "cid",
-      sdb::pg::CID(),
-      nullptr,
-    },
-    {
-      "xid",
-      sdb::pg::XID(),
-      nullptr,
-    },
-    {
-      "xid8",
-      sdb::pg::XID8(),
-      nullptr,
-    },
-    // PG name type
-    {
-      "name",
-      sdb::pg::NAME(),
-      nullptr,
-    },
-    // PG composite type used as cast target in pg_stats_ext_exprs view.
-    {
-      "pg_statistic",
-      sdb::pg::SystemTable<sdb::pg::PgStatistic>{}.RowType().WithAlias(
-        "pg_statistic"),
-      nullptr,
-    },
-    // information_schema types, TODO(mbkkt) move this to namespace
-    {
-      "cardinal_number",
-      sdb::pg::CARDINALNUMBER(),
-      nullptr,
-    },
-    {
-      "character_data",
-      sdb::pg::CHARACTERDATA(),
-      nullptr,
-    },
-    {
-      "sql_identifier",
-      sdb::pg::SQLIDENTIFIER(),
-      nullptr,
-    },
-    {
-      "time_stamp",
-      sdb::pg::TIMESTAMP(),
-      nullptr,
-    },
-    {
-      "yes_or_no",
-      sdb::pg::YESORNO(),
-      nullptr,
-    },
-    // PG pseudo-type used in RETURNS VOID; backed by SQLNULL.
-    {
-      "void",
-      sdb::pg::VOID(),
-      nullptr,
-    },
-  };
-  *count = std::size(kExternalTypes);
-  return kExternalTypes;
+  const auto types = sdb::pg::ExternalTypes();
+  *count = types.size();
+  return types.data();
 }
 
 ABSL_FLAG(uint64_t, cpu_threads, 0,
@@ -295,17 +159,17 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgMathFunctions(db);
 
+  connector::RegisterPgFormattingFunctions(db);
+
   connector::RegisterHashFunctions(db);
 
   connector::RegisterSubscriptionPragma(db);
 
   connector::RegisterKeyEncodingFunctions(db);
 
-  connector::RegisterPgSystemFunctions(db);
+  pg::RegisterFunctions(db);
 
-  connector::RegisterRuleutilsFunctions(db);
-
-  connector::RegisterPgInOutFunctions(db);
+  pg::RegisterTypes(db);
 
   connector::RegisterPgStringFunctions(db);
 
@@ -338,14 +202,12 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgTextCopyFunction(db);
   replication::RegisterReplicationSourceFunction(db);
   replication::RegisterReplicationFunctions(db);
-  pg::RegisterReplicationOriginStatus(db);
-  pg::RegisterPreparedStatements(db);
 
   connector::RegisterSearchFunctions(db);
 
   connector::RegisterIResearchScanFunction(db);
 
-  connector::RegisterSystemTableScanFunction(db);
+  pg::RegisterSystemTableScanFunction(db);
 
   connector::RegisterAIFunctions(db);
 
@@ -366,7 +228,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   // Parse and cache system functions/views for serving from our attached
   // catalog.
   auto parser = duckdb::Parser::GetBuiltinParser();
-  pg::InitSystemFunctions(parser);
+  pg::InitSystemTables();
+  pg::InitSystemFunctions(db, parser);
   pg::InitSystemViews(parser);
 }
 

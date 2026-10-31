@@ -1,0 +1,48 @@
+statement ok
+CREATE TABLE ica_t (id INT, x INT, y TEXT, z TEXT);
+
+connection s1
+statement ok
+BEGIN;
+
+connection s1
+statement ok
+ALTER TABLE ica_t DROP COLUMN x;
+
+connection s2
+statement error
+CREATE INDEX ica_z ON ica_t (z);
+----
+db error: ERROR: Transaction conflict: cannot add an index to a table that has been altered or dropped
+
+
+connection s2
+statement error
+CREATE INDEX ica_y ON ica_t USING inverted (id, y);
+----
+db error: ERROR: Transaction conflict: cannot add an index to a table that has been altered or dropped
+
+
+connection s1
+statement ok
+COMMIT;
+
+connection s2
+statement ok
+CREATE INDEX ica_y ON ica_t USING inverted (id, y);
+
+connection s2
+statement ok
+INSERT INTO ica_t VALUES (1, 'apple', 'zebra');
+
+connection s2
+statement ok
+VACUUM (REFRESH_TABLE) ica_t;
+
+connection s2
+query
+SELECT (SELECT count(*) FROM ica_y WHERE y @@ 'apple') AS apple,
+  (SELECT count(*) FROM ica_y WHERE y @@ 'zebra') AS zebra;
+----
+apple	zebra
+1	0

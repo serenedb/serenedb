@@ -807,6 +807,20 @@ SELECT substring('Hello', 2, 2) AS result;
 result
 el
 
+# DOCS_TEST: substring_pattern
+# DOCS_TEST_BODY
+query
+SELECT substring('Hello' FROM 'l+') AS result;
+----
+result
+ll
+
+query
+SELECT substring('Hello' FROM 'H(.)l') AS result;
+----
+result
+e
+
 # DOCS_TEST: substring_grapheme
 # DOCS_TEST_BODY
 query

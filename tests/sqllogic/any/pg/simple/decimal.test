@@ -207,9 +207,14 @@ select 0.0005::numeric(4, 4);
 numeric
 0.0005
 
-skipif pg-wire-extended
 query
 select 1234567890123456::numeric(16, 0);
 ----
 numeric
 1234567890123456
+
+query
+select -792.0000000011245729844560667413;
+----
+?column?
+-792.0000000011245729844560667413

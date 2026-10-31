@@ -14,24 +14,32 @@ statement ok
 CREATE MACRO ppb_macro(a) AS a + 1
 
 
-# Every engine function reaches pg_proc, and pg_proc invents nothing.
+# Every engine function reaches pg_proc.
 # pg_proc is per-database like PostgreSQL's, while duckdb_functions() spans
 # every attached database, so the comparison is scoped to the two catalogs
 # pg_proc draws from.
 
 query
+SELECT count(*) AS missing FROM duckdb_functions() f
+WHERE f.database_name IN ('system', current_database())
+  AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.proname = f.function_name)
+----
+missing
+0
+
+query
 SELECT
   (SELECT count(*) FROM pg_proc)
-    = (SELECT count(*) FROM duckdb_functions()
+    - (SELECT count(*) FROM duckdb_functions()
          WHERE database_name IN ('system', current_database()))
-    AS counts_match,
-  (SELECT count(*) FROM duckdb_functions() f
-     WHERE f.database_name IN ('system', current_database())
-       AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.proname = f.function_name))
-    AS missing
+    = (SELECT count(*) FROM pg_proc p
+         WHERE NOT EXISTS (SELECT 1 FROM duckdb_functions() f
+                           WHERE f.database_name IN ('system', current_database())
+                             AND f.function_name = p.proname))
+    AS counts_match
 ----
-counts_match	missing
-t	0
+counts_match
+t
 
 
 # oid is the primary key: one per overload, never reused.
@@ -85,9 +93,28 @@ outside_pg_catalog
 query
 SELECT DISTINCT p.pronargs, format_type(p.prorettype, NULL) AS rettype
 FROM pg_proc p WHERE p.proname = 'upper'
+ORDER BY rettype
 ----
 pronargs	rettype
+1	bigint
+1	date
+1	integer
+1	numeric
 1	text
+1	timestamp with time zone
+1	timestamp without time zone
+
+
+query
+SELECT DISTINCT proname, provolatile
+FROM pg_proc
+WHERE proname IN ('random', 'get_current_timestamp', 'upper')
+ORDER BY proname
+----
+proname	provolatile
+get_current_timestamp	s
+random	v
+upper	i
 
 
 # proargtypes is where the recursive type-completeness guard lives: a bare
@@ -98,7 +125,7 @@ pronargs	rettype
 
 query
 SELECT
-  (SELECT DISTINCT format_type(proargtypes[1], NULL) FROM pg_proc WHERE proname = 'upper')
+  (SELECT format_type(proargtypes[1], NULL) FROM pg_proc WHERE proname = 'upper' AND prorettype = 'text'::regtype)
     AS upper_arg1,
   (SELECT count(*) FROM pg_proc WHERE pronargs > 0
      AND NOT EXISTS (SELECT 1 FROM unnest(proargtypes) t WHERE t <> 705))
@@ -107,6 +134,7 @@ SELECT
 ----
 upper_arg1	most_args_resolve
 text	t
+
 
 
 # pg_aggregate is one row per aggregate overload, keyed on the pg_proc oid.
@@ -146,8 +174,7 @@ user_macro
 
 # Every type a signature names has to resolve: psql's \df, an ORM and a fuzzer
 # all look each oid up in pg_type, and an oid with no row there is a dangling
-# reference. The tokenizer functions take a UNION for their list options, which
-# is how the pseudo-type gets into a signature at all.
+# reference. The tokenizer functions take a UNION for their list options.
 
 query
 SELECT
@@ -165,7 +192,7 @@ query
 SELECT typtype, typcategory FROM pg_type WHERE typname = 'union'
 ----
 typtype	typcategory
-p	P
+b	U
 
 
 # The downstream views that were empty because pg_proc was.

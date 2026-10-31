@@ -1,0 +1,135 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE DATABASE st_rpos;
+
+
+statement ok
+CREATE TABLE st_rpos.public.mw (id BIGINT, v TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO st_rpos.public.mw SELECT i, 'a' || i FROM generate_series(0, 999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) st_rpos.public.mw;
+
+
+statement ok
+INSERT INTO st_rpos.public.mw SELECT i, 'b' || i FROM generate_series(1000, 1999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) st_rpos.public.mw;
+
+
+statement ok
+SET sdb_faults = 'search_wal_transactions_written';
+
+
+connection deleter
+statement async ok
+DELETE FROM st_rpos.public.mw WHERE id % 7 = 3;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_wal_transactions_written:parked';
+
+
+connection default
+statement ok
+VACUUM (COMPACT_TABLE) st_rpos.public.mw;
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_wal_transactions_written:release';
+
+
+wait
+
+
+connection default
+statement ok
+CREATE TABLE st_rpos.public.gone (id BIGINT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+connection default
+statement ok
+INSERT INTO st_rpos.public.gone SELECT i FROM range(100) r(i);
+
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) st_rpos.public.gone;
+
+
+connection default
+statement ok
+DELETE FROM st_rpos.public.gone WHERE id < 10;
+
+
+connection default
+statement ok
+DROP TABLE st_rpos.public.gone;
+
+
+connection default
+statement ok
+SET debug_checkpoint_abort = 'before_wal_finish';
+
+
+connection default
+statement error
+CHECKPOINT st_rpos;
+----
+db error: ERROR: Checkpoint failed for database<slt:ignore>
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s FROM st_rpos.public.mw;
+----
+n	s
+1714	1712857
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) st_rpos.public.mw;
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id % 7 = 3) AS deleted
+FROM st_rpos.public.mw;
+----
+n	deleted
+1714	0
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM st_rpos.information_schema.tables
+WHERE table_name = 'gone';
+----
+n
+0

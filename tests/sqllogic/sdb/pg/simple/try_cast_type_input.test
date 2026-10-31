@@ -1,0 +1,69 @@
+# TRY_CAST turns invalid text input into NULL for the PostgreSQL types with their own input functions
+query
+SELECT TRY_CAST('16/B374D848' AS pg_lsn) AS valid, TRY_CAST('16/B374D84G' AS pg_lsn) AS invalid, TRY_CAST(NULL AS pg_lsn) AS null_input;
+----
+valid	invalid	null_input
+16/B374D848	NULL	NULL
+
+
+query
+SELECT TRY_CAST('10.1.0.0/16' AS cidr) AS valid, TRY_CAST('10.1.2.3/16' AS cidr) AS bits_right_of_mask, TRY_CAST('not an address' AS cidr) AS invalid;
+----
+valid	bits_right_of_mask	invalid
+10.1.0.0/16	NULL	NULL
+
+
+query
+SELECT TRY_CAST(t AS pg_lsn) AS lsn, TRY_CAST(c AS cidr) AS net FROM (VALUES ('0/0', '192.168.0.0/24'), ('x/y', '192.168.0.1/24'), ('FFFFFFFF/FFFFFFFF', '::/0')) v(t, c) ORDER BY t;
+----
+lsn	net
+0/0	192.168.0.0/24
+FFFFFFFF/FFFFFFFF	::/0
+NULL	NULL
+
+
+query
+SELECT TRY_CAST('\x0102' AS bytea) AS valid, TRY_CAST('\xzz' AS bytea) AS bad_digit, TRY_CAST('\x123' AS bytea) AS odd_digits, TRY_CAST('\' AS bytea) AS bad_escape;
+----
+valid	bad_digit	odd_digits	bad_escape
+\\x0102	NULL	NULL	NULL
+
+
+query
+SELECT TRY_CAST('pg_class' AS regclass) AS valid, TRY_CAST('try_cast_nosuch' AS regclass) AS missing_relation, TRY_CAST('try_cast_nosuch' AS regtype) AS missing_type, TRY_CAST('try_cast_nosuch' AS regrole) AS missing_role;
+----
+valid	missing_relation	missing_type	missing_role
+pg_class	NULL	NULL	NULL
+
+
+query
+SELECT TRY_CAST(t AS bytea) AS bytes, TRY_CAST(n AS regnamespace) AS schema FROM (VALUES (1, '\x00ff', 'pg_catalog'), (2, '\xgg', 'try_cast_nosuch')) v(id, t, n) ORDER BY id;
+----
+bytes	schema
+\\x00ff	pg_catalog
+NULL	NULL
+
+
+statement error
+SELECT CAST('\xzz' AS bytea);
+----
+db error: ERROR: invalid hexadecimal digit: "z"
+
+
+statement error
+SELECT CAST('try_cast_nosuch' AS regclass);
+----
+db error: ERROR: relation "try_cast_nosuch" does not exist
+
+
+statement error
+SELECT CAST('16/B374D84G' AS pg_lsn);
+----
+db error: ERROR: invalid input syntax for type pg_lsn: "16/B374D84G"
+
+
+statement error
+SELECT CAST('10.1.2.3/16' AS cidr);
+----
+db error: ERROR: invalid cidr value: "10.1.2.3/16"
+DETAIL: Value has bits set to right of mask.

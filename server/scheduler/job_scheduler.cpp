@@ -21,6 +21,7 @@
 #include "scheduler/job_scheduler.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/numeric/int128.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -28,6 +29,7 @@
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/operator/date_trunc_operators.hpp>
 #include <duckdb/common/types/date.hpp>
 #include <duckdb/common/types/hash.hpp>
@@ -40,7 +42,6 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <functional>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -71,8 +72,8 @@ bool IsNegative(const duckdb::interval_t& value) {
   return value.months < 0 || value.days < 0 || value.micros < 0;
 }
 
-int64_t ShortestLength(const duckdb::interval_t& value) {
-  return (value.months * kShortestMonthDays + value.days) *
+absl::int128 ShortestLength(const duckdb::interval_t& value) {
+  return (absl::int128{value.months} * kShortestMonthDays + value.days) *
            duckdb::Interval::MICROS_PER_DAY +
          value.micros;
 }

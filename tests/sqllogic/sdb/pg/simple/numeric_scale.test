@@ -1,0 +1,15 @@
+query
+SELECT x, scale(x) AS s, min_scale(x) AS m, trim_scale(x) AS t
+FROM (VALUES (8.4100::numeric(10, 4)), (2.0000)) v(x)
+ORDER BY x
+----
+x	s	m	t
+2.0000	4	0	2.0000
+8.4100	4	2	8.4100
+
+
+query
+SELECT trim_scale(8.4100) AS literal, trim_scale(8.4100::numeric(10, 4)) AS cast_constant
+----
+literal	cast_constant
+8.41	8.41

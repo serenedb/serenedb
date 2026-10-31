@@ -55,13 +55,13 @@ id	name	addr
 2	reabilitacia	("dom kolotushkina",spb,202020)
 
 
-skipif postgres
 query
-SELECT typname, typtype FROM pg_catalog.pg_type WHERE typtype = 'c' ORDER BY typname;
+SELECT typname, typtype FROM pg_catalog.pg_type WHERE typtype = 'c' AND typnamespace = 'public'::regnamespace ORDER BY typname;
 ----
 typname	typtype
 address	c
 coordinates	c
+vedernikoff_locations	c
 
 
 statement ok

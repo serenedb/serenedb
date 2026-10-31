@@ -96,13 +96,9 @@ EXPLAIN COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao.parquet' WITH (FORMAT
 QUERY PLAN
 ╭─ BATCH_INSERT ─────────╮
 ╰────────────┬───────────╯
-╭─ PROJECTION ───────────╮
-│ Projections: name, id  │
-│ ~3 rows                │
-╰────────────┬───────────╯
 ╭─ READ_PARQUET ─────────╮
 │ Function: READ_PARQUET │
-│ Projections: id, name  │
+│ Projections: name, id  │
 │ ~3 rows                │
 ╰────────────────────────╯
 

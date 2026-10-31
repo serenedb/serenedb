@@ -39,6 +39,8 @@ Create a type alias:
 The `CREATE TYPE` clause defines a new data type available to this SereneDB instance.
 These new types can then be inspected in the [`sdb_types` table](../../functions/metadata.md#sdb_types).
 
+Every table and view also has a row type with its own name, as in PostgreSQL, so a type cannot take the name of a table or view in the same schema, and a table or view cannot take the name of a type there; renaming into such a name fails the same way. Indexes and sequences have no row type, so their names never clash with a type's.
+
 ## Limitations
 
 -   Extending types to support custom operators (such as the PostgreSQL `&&` operator) is not possible via plain SQL.

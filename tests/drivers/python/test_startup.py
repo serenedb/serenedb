@@ -3,13 +3,15 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-import socket
 import subprocess
+import tempfile
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import psycopg
 import pytest
+from serened import listens_on, reserve_port  # type: ignore[import-untyped]
 
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
@@ -22,15 +24,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
 class _Server:
     def __init__(self, datadir: Path, listen: str | None = None) -> None:
-        self.port = _free_port()
+        self.reserved = reserve_port()
+        self.port = self.reserved.getsockname()[1]
         if listen is None:
             listen = f"postgres://127.0.0.1:{self.port}"
         self.log = datadir.parent / f"serened-{self.port}.log"
@@ -44,21 +41,31 @@ class _Server:
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
                 return False
-            try:
-                psycopg.connect(host="127.0.0.1", port=self.port,
-                                user="postgres", dbname="postgres").close()
-                return True
-            except psycopg.OperationalError:
-                time.sleep(0.2)
+            if listens_on(self.proc.pid, [self.port]):
+                try:
+                    psycopg.connect(host="127.0.0.1", port=self.port,
+                                    user="postgres", dbname="postgres").close()
+                    return True
+                except psycopg.OperationalError:
+                    pass
+            time.sleep(0.2)
         return False
 
     def stop(self) -> None:
         if self.proc.poll() is None:
             self.proc.terminate()
             self.proc.wait(timeout=60)
+        self.reserved.close()
 
     def output(self) -> str:
         return self.log.read_text()
+
+
+@pytest.fixture
+def socket_dir() -> Iterator[Path]:
+    path = Path(tempfile.mkdtemp(prefix="sdb-", dir="/tmp"))
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def _run_until_ready(datadir: Path) -> _Server:
@@ -129,6 +136,19 @@ def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
             "table(s) in " in restarted.output()), restarted.output()
 
 
+def test_terminate_while_starting(tmp_path: Path) -> None:
+    server = _Server(tmp_path / "data")
+    deadline = time.monotonic() + 60
+    while "Created database directory: " not in server.output():
+        assert server.proc.poll() is None, server.output()
+        assert time.monotonic() < deadline, server.output()
+        time.sleep(0.005)
+    server.proc.terminate()
+    assert server.proc.wait(timeout=60) == 0, server.output()
+    assert "SIGTERM received" not in server.output(), server.output()
+    assert "SereneDB is shut down" in server.output(), server.output()
+
+
 def test_second_instance_on_the_same_datadir(tmp_path: Path) -> None:
     datadir = tmp_path / "data"
     first = _Server(datadir)
@@ -145,14 +165,70 @@ def test_second_instance_on_the_same_datadir(tmp_path: Path) -> None:
         first.stop()
 
 
-def test_unknown_unix_socket_group(tmp_path: Path) -> None:
+def test_unknown_unix_socket_group(tmp_path: Path, socket_dir: Path) -> None:
     server = _Server(tmp_path / "data",
-                     f"postgres://{tmp_path / 'sdb.sock'}"
+                     f"postgres://{socket_dir / 'sdb.sock'}"
                      "?group=sdb_no_such_group")
     try:
         assert server.proc.wait(timeout=60) != 0, server.output()
         assert ("cannot find group 'sdb_no_such_group'"
                 in server.output()), server.output()
+    finally:
+        server.stop()
+
+
+def test_cleartext_password_on_a_unix_socket(tmp_path: Path,
+                                             socket_dir: Path) -> None:
+    server = _Server(tmp_path / "data", f"postgres://{socket_dir}?port=5432")
+
+    def connect(**kwargs) -> psycopg.Connection:
+        return psycopg.connect(host=str(socket_dir), port=5432,
+                               dbname="postgres", **kwargs)
+
+    try:
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                admin = connect(user="postgres", autocommit=True)
+                break
+            except psycopg.OperationalError:
+                assert (server.proc.poll() is None
+                        and time.monotonic() < deadline), server.output()
+                time.sleep(0.2)
+        with admin:
+            admin.execute("CREATE ROLE cleartext_login LOGIN PASSWORD 'secret'")
+            admin.execute("SET hba = 'local all cleartext_login password'")
+        try:
+            with connect(user="cleartext_login", password="secret") as conn:
+                assert conn.execute("SELECT current_user").fetchone() == (
+                    "cleartext_login",)
+        except psycopg.OperationalError as error:
+            pytest.fail(f"{error}\n{server.output()}")
+    finally:
+        server.stop()
+
+
+def test_startup_parameters_on_a_unix_socket(tmp_path: Path,
+                                             socket_dir: Path) -> None:
+    server = _Server(tmp_path / "data", f"postgres://{socket_dir}?port=5432")
+    try:
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                conn = psycopg.connect(
+                    host=str(socket_dir), port=5432, user="postgres",
+                    dbname="postgres", application_name="unix_startup",
+                    options="-c statement_timeout=5s")
+                break
+            except psycopg.OperationalError:
+                assert (server.proc.poll() is None
+                        and time.monotonic() < deadline), server.output()
+                time.sleep(0.2)
+        with conn:
+            assert conn.execute(
+                "SELECT current_setting('application_name'), "
+                "current_setting('statement_timeout')").fetchone() == (
+                    "unix_startup", "5s")
     finally:
         server.stop()
 

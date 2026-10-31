@@ -27,12 +27,15 @@
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/formats/hnsw/hnsw_reader.hpp>
+#include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <numeric>
 #include <random>
@@ -49,28 +52,32 @@ namespace {
 inline constexpr irs::field_id kVec = 1;
 inline constexpr uint32_t kDim = 8;
 
+void SetAnn(irs::IndexWriterOptions& opts, irs::AnnInfo ann) {
+  opts.anns[ann.column_id].push_back(ann.index_id);
+  opts.column_options = [ann = std::move(ann)](irs::field_id id) {
+    irs::ColumnOptions col;
+    if (id == ann.index_id) {
+      col.ann_info = ann;
+    }
+    return col;
+  };
+}
+
 irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
                                           irs::VectorQuantization quant,
                                           uint32_t nb_bits = 0,
                                           uint32_t d = kDim) {
   auto opts = irs::tests::DefaultWriterOptions();
-  opts.column_options = [metric, quant, nb_bits,
-                         d](irs::field_id id) -> irs::ColumnOptions {
-    irs::ColumnOptions col;
-    if (id == kVec) {
-      col.ann_info = irs::AnnInfo{
-        .kind = irs::AnnKind::Hnsw,
-        .centroids_id = kVec,
-        .postings_id = kVec,
-        .d = static_cast<int>(d),
-        .metric = metric,
-        .quant = {.kind = quant, .nb_bits = nb_bits},
-        .m = 8,
-        .ef_construction = 64,
-      };
-    }
-    return col;
-  };
+  SetAnn(opts, irs::AnnInfo{
+                 .kind = irs::AnnKind::Hnsw,
+                 .index_id = kVec,
+                 .column_id = kVec,
+                 .d = static_cast<int>(d),
+                 .metric = metric,
+                 .quant = {.kind = quant, .nb_bits = nb_bits},
+                 .m = 8,
+                 .ef_construction = 64,
+               });
   return opts;
 }
 
@@ -150,8 +157,8 @@ irs::ByVectorSimilarity MakeKnnFilter(const std::vector<float>& query,
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query = query;
-  opts.centroids_id = kVec;
-  opts.postings_id = kVec;
+  opts.column_id = kVec;
+  opts.ann_id = kVec;
   opts.metric = metric;
   opts.quant = quant;
   opts.nprobe = ef;
@@ -186,17 +193,83 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
                                   irs::ByVectorSimilarity& filter,
                                   size_t k = 128) {
   irs::VectorSimilarityScorer scorer;
+  irs::StatsArena stats_arena{duckdb::Allocator::DefaultAllocator()};
+  irs::PreparedCollector collector_tree{filter, scorer, stats_arena, 1};
+  std::vector<irs::QueryBuilder::ptr> queries;
+  queries.reserve(reader.size());
+  for (auto& segment : reader) {
+    queries.emplace_back(
+      irs::PrepareMasked(filter, segment, {.collector = collector_tree.Get()}));
+  }
+  collector_tree.Finish();
+
   std::vector<irs::ScoreDoc> hits(k);
-  const auto count =
-    irs::ExecuteTopK(reader, filter, scorer, k, false, std::span{hits});
+  std::atomic<irs::score_t> score_threshold{
+    std::numeric_limits<irs::score_t>::lowest()};
+  irs::LoserScoreCollector collector{score_threshold, std::span{hits}};
+  irs::ColumnArgsFetcher fetcher;
+  uint32_t seg_idx = 0;
+  for (auto& query : queries) {
+    fetcher.Clear();
+    collector.SetSegment(seg_idx++);
+    if (!query) {
+      continue;
+    }
+    auto ann = irs::ann::MakeRoot(*query, {
+                                            .scorer = scorer,
+                                            .fetcher = fetcher,
+                                            .k = static_cast<uint32_t>(k),
+                                          });
+    EXPECT_TRUE(ann);
+    if (!ann) {
+      continue;
+    }
+    irs::ann::SharedFloor floor{static_cast<uint32_t>(k)};
+    irs::ann::Collector candidates{floor, static_cast<uint32_t>(k)};
+    ann->Run(candidates);
+    for (const auto& hit : candidates.Flush()) {
+      collector.Add(hit.score, hit.doc);
+    }
+  }
+  collector.SortHits();
+
   std::vector<irs::doc_id_t> docs;
-  const auto n = std::min<size_t>(count, k);
+  const auto n = std::min<size_t>(collector.TotalMatches(), k);
   docs.reserve(n);
   for (size_t i = 0; i < n; ++i) {
     docs.push_back(hits[i].doc);
   }
   return docs;
 }
+
+class ZeroDupInput final : public irs::BytesViewInput {
+ public:
+  explicit ZeroDupInput(irs::bstring bytes)
+    : _bytes{std::move(bytes)}, _zeros(_bytes.size(), 0) {
+    reset(_bytes);
+  }
+
+  ptr Dup() const final {
+    return std::make_unique<irs::BytesViewInput>(_zeros);
+  }
+
+ private:
+  irs::bstring _bytes;
+  irs::bstring _zeros;
+};
+
+class ZeroDupDirectory final : public tests::DirectoryMock {
+ public:
+  using tests::DirectoryMock::DirectoryMock;
+
+  irs::IndexInput::ptr open(std::string_view name,
+                            irs::IOAdvice advice) const final {
+    auto in = tests::DirectoryMock::open(name, advice);
+    irs::bstring bytes(in->Length(), 0);
+    in->ReadData(0, bytes.data(), bytes.size());
+    return std::make_unique<ZeroDupInput>(std::move(bytes));
+  }
+};
 
 // (quant, nb_bits, recall floor). TurboQuant needs its bit width spelled out --
 // TQ accepts 1-5 -- and estimates a shorter code than the scalar quantizers
@@ -534,6 +607,29 @@ TEST_P(HnswIndexTest, QueryVectorFindsItself) {
     found += std::ranges::find(got, self) != got.end() ? 1 : 0;
   }
   EXPECT_EQ(12U, found);
+}
+
+TEST_P(HnswIndexTest, OpenReadsTheHeaderFromTheFooter) {
+  constexpr size_t kRows = 200;
+  const auto vecs = MakeVectors(kRows, 17);
+  irs::MemoryDirectory dir;
+  auto reader = BuildIndex(dir, vecs, Metric(), Quant(), NbBits());
+  ASSERT_NE(nullptr, reader);
+  const auto& segment = (*reader)[0];
+  const auto& built =
+    static_cast<const irs::HnswIndex&>(*segment.Ann(kVec)).Header();
+
+  ZeroDupDirectory zeroed{dir};
+  const irs::IdxReader idx{zeroed, segment.Meta().name, nullptr};
+  const auto& header =
+    static_cast<const irs::HnswIndex&>(*idx.Ann(kVec)).Header();
+  EXPECT_EQ(kDim, header.d);
+  EXPECT_EQ(Metric(), header.metric);
+  EXPECT_EQ(Quant(), header.quant);
+  EXPECT_EQ(64U, header.ef_construction);
+  EXPECT_EQ(kRows, header.rows);
+  EXPECT_EQ(built.record_size, header.record_size);
+  EXPECT_EQ(built.rotated, header.rotated);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -992,6 +1088,59 @@ TEST(HnswRandomLevelTest, UpperLevelShareMatchesRoundedDraw) {
   }
 }
 
+TEST(HnswVisitedTest, MembershipSurvivesGrowthAndTheSwitchToTheBitset) {
+  for (const uint32_t nodes : {1000U, 40000U, 30000000U}) {
+    for (const size_t visits : {size_t{0}, size_t{6000}, size_t{300000}}) {
+      irs::HnswVisited visited;
+      std::vector<bool> marked(nodes);
+      pcg32 rng{irs::kHnswBuildSeed};
+      visited.Reset(nodes, visits);
+      for (const size_t count :
+           {size_t{0}, size_t{10}, size_t{5000}, size_t{300000}, size_t{10}}) {
+        visited.Next();
+        std::vector<uint32_t> ids;
+        for (size_t i = 0; i < count; ++i) {
+          const auto id = absl::Uniform<uint32_t>(rng, 0, nodes);
+          ASSERT_EQ(visited.TestAndSet(id), marked[id])
+            << "nodes " << nodes << " visits " << visits << " count " << count
+            << " id " << id;
+          marked[id] = true;
+          ids.push_back(id);
+        }
+        for (const auto id : ids) {
+          ASSERT_TRUE(visited.Test(id)) << "nodes " << nodes << " id " << id;
+        }
+        for (size_t i = 0; i < 1000; ++i) {
+          const auto id = absl::Uniform<uint32_t>(rng, 0, nodes);
+          ASSERT_EQ(visited.Test(id), marked[id])
+            << "nodes " << nodes << " id " << id;
+        }
+        for (const auto id : ids) {
+          marked[id] = false;
+        }
+      }
+    }
+  }
+}
+
+TEST(HnswVisitedTest, ResetForgetsEveryMarkAcrossUniverses) {
+  irs::HnswVisited visited;
+  visited.Reset(30000000, 0);
+  for (uint32_t i = 0; i < 400000; ++i) {
+    visited.Set(i * 7);
+  }
+  visited.Reset(1000, 0);
+  for (uint32_t id = 0; id < 1000; ++id) {
+    ASSERT_FALSE(visited.Test(id)) << id;
+  }
+  visited.Set(999);
+  visited.Reset(30000000, 0);
+  ASSERT_FALSE(visited.Test(999));
+  ASSERT_FALSE(visited.Test(7000));
+  ASSERT_FALSE(visited.TestAndSet(7000));
+  ASSERT_TRUE(visited.Test(7000));
+}
+
 TEST(HnswSelectNeighborsTest, TransposedMatchesReference) {
   constexpr uint32_t kD = 6;
   constexpr size_t kNodes = 400;
@@ -1144,7 +1293,7 @@ void CheckWalkAsksPerHop() {
   writer.SetEntryPoint(entry);
   WalkDist build{.pts = &pts, .d = kD};
   irs::HnswBuildScratch scratch;
-  scratch.search.visited.Reset(kNodes);
+  scratch.search.visited.Reset(kNodes, irs::HnswWalkVisits(kEf, writer.M0()));
   for (uint32_t i = 0; i < kNodes; ++i) {
     if (i != entry) {
       build.SetQuery(i);
@@ -1244,7 +1393,7 @@ TEST(HnswWalkTest, AdaptiveCrossesOverWhereThePredicateAdmitsNothingNearby) {
   writer.SetEntryPoint(entry);
   WalkDist build{.pts = &pts, .d = kD};
   irs::HnswBuildScratch scratch;
-  scratch.search.visited.Reset(kNodes);
+  scratch.search.visited.Reset(kNodes, irs::HnswWalkVisits(kEf, writer.M0()));
   for (uint32_t i = 0; i < kNodes; ++i) {
     if (i != entry) {
       build.SetQuery(i);
@@ -1337,7 +1486,8 @@ TEST(HnswInsertTest, NodesInsertedTowardsTheGraphStayReachable) {
   writer.SetEntryPoint(entry);
   WalkDist build{.pts = &pts, .d = kD};
   irs::HnswBuildScratch scratch;
-  scratch.search.visited.Reset(kNodes);
+  scratch.search.visited.Reset(
+    kNodes, irs::HnswWalkVisits(irs::kHnswDefaultEfConstruction, writer.M0()));
   for (uint32_t i = 0; i < kNodes; ++i) {
     if (i != entry) {
       build.SetQuery(i);
@@ -1400,22 +1550,16 @@ TEST_P(HnswBuildWorkersTest, BuildTakesWorkersAsTheyFreeUp) {
     .executor = pool.Get(), .acquire = acquire, .release = release};
 
   auto opts = irs::tests::DefaultWriterOptions();
-  opts.column_options = [quant](irs::field_id id) -> irs::ColumnOptions {
-    irs::ColumnOptions col;
-    if (id == kVec) {
-      col.ann_info = irs::AnnInfo{
-        .kind = irs::AnnKind::Hnsw,
-        .centroids_id = kVec,
-        .postings_id = kVec,
-        .d = kDim,
-        .metric = irs::VectorMetric::L2Sqr,
-        .quant = quant,
-        .m = 8,
-        .ef_construction = 64,
-      };
-    }
-    return col;
-  };
+  SetAnn(opts, irs::AnnInfo{
+                 .kind = irs::AnnKind::Hnsw,
+                 .index_id = kVec,
+                 .column_id = kVec,
+                 .d = kDim,
+                 .metric = irs::VectorMetric::L2Sqr,
+                 .quant = quant,
+                 .m = 8,
+                 .ef_construction = 64,
+               });
   opts.ann_env = &env;
 
   irs::MemoryDirectory dir;
@@ -1464,22 +1608,16 @@ TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
   const auto vecs = MakeVectors(kRows, 17, kD);
   const auto link_quality = [&](irs::AnnInfo::Quantizer quant) {
     auto opts = irs::tests::DefaultWriterOptions();
-    opts.column_options = [quant](irs::field_id id) -> irs::ColumnOptions {
-      irs::ColumnOptions col;
-      if (id == kVec) {
-        col.ann_info = irs::AnnInfo{
-          .kind = irs::AnnKind::Hnsw,
-          .centroids_id = kVec,
-          .postings_id = kVec,
-          .d = static_cast<int>(kD),
-          .metric = irs::VectorMetric::L2Sqr,
-          .quant = quant,
-          .m = 8,
-          .ef_construction = 64,
-        };
-      }
-      return col;
-    };
+    SetAnn(opts, irs::AnnInfo{
+                   .kind = irs::AnnKind::Hnsw,
+                   .index_id = kVec,
+                   .column_id = kVec,
+                   .d = static_cast<int>(kD),
+                   .metric = irs::VectorMetric::L2Sqr,
+                   .quant = quant,
+                   .m = 8,
+                   .ef_construction = 64,
+                 });
     irs::MemoryDirectory dir;
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
     EXPECT_NE(nullptr, writer);

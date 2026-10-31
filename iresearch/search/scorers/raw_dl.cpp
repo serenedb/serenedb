@@ -25,6 +25,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/misc.hpp"
@@ -32,13 +33,6 @@
 
 namespace irs {
 namespace {
-
-template<typename T>
-constexpr const T* TryGetValue(const T* value) noexcept {
-  return value;
-}
-
-constexpr std::nullptr_t TryGetValue(utils::Empty) noexcept { return nullptr; }
 
 template<ScoreMergeType MergeType, bool HasScale>
 IRS_FORCE_INLINE void DocLenImpl(
@@ -58,7 +52,7 @@ IRS_FORCE_INLINE void DocLenImpl(
 }
 
 template<bool HasScale>
-struct RawDLScore : public ScoreOperator {
+struct RawDLScore : public ScoreOperatorOf<RawDLScore<HasScale>> {
   RawDLScore(score_t boost, const uint32_t* norm, const score_t* scale) noexcept
     : norm{norm}, scale{scale}, boost{boost} {
     SDB_ASSERT(this->norm);
@@ -68,36 +62,6 @@ struct RawDLScore : public ScoreOperator {
   IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
                                   scores_size_t n) const noexcept {
     DocLenImpl<MergeType, HasScale>(res, n, norm, TryGetValue(scale), boost);
-  }
-
-  score_t Score() const noexcept final {
-    score_t res{};
-    ScoreImpl(&res, 1);
-    return res;
-  }
-
-  void Score(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl(res, n);
-  }
-  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, n);
-  }
-  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, n);
-  }
-
-  void ScoreBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kScoreBlock);
-  }
-  void ScoreSumBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
-  }
-  void ScoreMaxBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
-  }
-
-  void ScorePostingBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kPostingBlock);
   }
 
   const uint32_t* norm;
@@ -112,22 +76,9 @@ ScoreFunction RawDL::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Default();
   }
 
-  const uint32_t* norm = [&] {
-    auto* attr = irs::get<Norm>(ctx.doc_attrs);
-    return attr ? &attr->value : nullptr;
-  }();
-  if (!norm) {
-    norm =
-      ctx.fetcher.AddNorms(ctx.field.norm, ctx.segment.norms(ctx.field.norm));
-  }
-  if (!norm) {
-    norm = kNorms.data();
-  }
+  const uint32_t* norm = NormsOf(ctx);
 
-  auto* scale = [&] {
-    auto* attr = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
-    return attr ? attr->value : nullptr;
-  }();
+  const auto* scale = ScaleOf(ctx);
 
   return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
     return ScoreFunction::Make<RawDLScore<HasScale>>(ctx.boost, norm, scale);

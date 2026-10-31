@@ -1,0 +1,46 @@
+statement ok
+CREATE SEQUENCE cp_seq_counter;
+
+
+statement ok
+CREATE TABLE cp_seq_plain (a int);
+
+
+query
+SELECT has_column_privilege('cp_seq_counter', 'last_value', 'SELECT') AS by_name,
+       has_column_privilege('cp_seq_counter', 3::int2, 'SELECT') AS by_number,
+       has_column_privilege('cp_seq_counter', 4::int2, 'SELECT') AS past_last,
+       has_column_privilege('cp_seq_plain', 0::int2, 'SELECT') AS number_zero;
+----
+by_name	by_number	past_last	number_zero
+t	t	NULL	NULL
+
+
+statement error
+SELECT has_column_privilege('cp_seq_counter', 'cp_seq_nosuch', 'SELECT');
+----
+db error: ERROR: column "cp_seq_nosuch" of relation "cp_seq_counter" does not exist
+
+
+skipif serenedb
+query
+SELECT has_column_privilege('cp_seq_plain', (-1)::int2, 'SELECT') AS system_column;
+----
+system_column
+t
+
+
+onlyif serenedb
+query
+SELECT has_column_privilege('cp_seq_plain', (-1)::int2, 'SELECT') AS system_column;
+----
+system_column
+NULL
+
+
+statement ok
+DROP TABLE cp_seq_plain;
+
+
+statement ok
+DROP SEQUENCE cp_seq_counter;

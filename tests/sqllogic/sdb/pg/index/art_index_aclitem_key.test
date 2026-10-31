@@ -1,0 +1,35 @@
+statement ok
+CREATE TABLE art_acl (id INT, a TEXT)
+
+
+statement ok
+CREATE INDEX art_acl_idx ON art_acl ((a::aclitem))
+
+
+statement ok
+INSERT INTO art_acl VALUES (1, 'postgres=r/postgres'), (2, '"postgres"=w/postgres')
+
+
+statement error
+INSERT INTO art_acl VALUES (3, 'nobody_art_acl=r/postgres')
+----
+db error: ERROR: Failed to commit: role "nobody_art_acl" does not exist
+
+
+statement ok
+DELETE FROM art_acl WHERE id = 2
+
+
+statement ok
+UPDATE art_acl SET a = 'postgres=w/postgres' WHERE id = 1
+
+
+query
+SELECT id, a::aclitem::text AS acl FROM art_acl ORDER BY id
+----
+id	acl
+1	postgres=w/postgres
+
+
+statement ok
+DROP TABLE art_acl

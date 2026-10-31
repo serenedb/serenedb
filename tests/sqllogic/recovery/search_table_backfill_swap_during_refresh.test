@@ -58,10 +58,22 @@ SET sdb_faults = '-pause_index_refresh_begun:parked';
 
 connection default
 statement ok
+SET sdb_faults = 'pause_index_refresh_lock_wait';
+
+
+connection default
+statement ok
 SET sdb_faults = '-pause_search_backfill_before_swap';
 
 
-sleep 1s
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_index_refresh_lock_wait:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_index_refresh_lock_wait:release';
 
 
 connection default

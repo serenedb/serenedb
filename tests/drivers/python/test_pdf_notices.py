@@ -3,7 +3,7 @@ import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[3]
-INSTALL_FILE = ROOT / "cmake/SereneDBInstall.cmake"
+INSTALL_FILE = ROOT / "cmake/PdfNotices.cmake"
 
 
 def test_pdf_notices_in_binary_install(tmp_path):
@@ -13,6 +13,7 @@ def test_pdf_notices_in_binary_install(tmp_path):
         'cmake_minimum_required(VERSION 3.28)\n'
         'project(serenedb LANGUAGES NONE)\n'
         'set(CMAKE_INSTALL_LIBDIR lib)\n'
+        'include(GNUInstallDirs)\n'
         f'set(CMAKE_SOURCE_DIR "{ROOT.as_posix()}")\n'
         f'set(PROJECT_SOURCE_DIR "{ROOT.as_posix()}")\n'
         f'list(APPEND CMAKE_MODULE_PATH "{ROOT.as_posix()}/cmake")\n'

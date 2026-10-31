@@ -71,7 +71,7 @@ To enable multiple log types, simply pass:
 
 ### Structured Logging
 
-Some log types like `HTTP` will have an associated message schema. To make SereneDB automatically parse the message, use the `sdb_logs_parsed(log_type)` macro, passing the type positionally. For example:
+Some log types like `HTTP` will have an associated message schema. To make SereneDB automatically parse the message, use the `sdb_logs_parsed(log_type)` macro. For example:
 
 <SqlLogicTest id="configuration/logging/index/example_007" />
 

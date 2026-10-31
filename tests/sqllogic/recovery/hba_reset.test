@@ -21,12 +21,12 @@ SELECT rule_number, type, database, user_name, address, auth_method
 FROM pg_hba_file_rules ORDER BY rule_number;
 ----
 rule_number	type	database	user_name	address	auth_method
-1	local	{all}	{postgres}	(empty)	trust
-2	host	{all}	{postgres}	127.0.0.1/32	trust
-3	host	{all}	{postgres}	::1/128	trust
-4	local	{all}	{all}	(empty)	scram-sha-256
-5	host	{all}	{all}	0.0.0.0/0	scram-sha-256
-6	host	{all}	{all}	::/0	scram-sha-256
+1	local	{all}	{postgres}	NULL	trust
+2	host	{all}	{postgres}	127.0.0.1	trust
+3	host	{all}	{postgres}	::1	trust
+4	local	{all}	{all}	NULL	scram-sha-256
+5	host	{all}	{all}	0.0.0.0	scram-sha-256
+6	host	{all}	{all}	::	scram-sha-256
 
 connection c_after_reset user=hbr_kuzya password=kuzya_pw
 query

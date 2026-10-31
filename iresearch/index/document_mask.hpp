@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <roaring/memory.h>
 #include <roaring/roaring.h>
 
 #include <cstddef>
@@ -69,6 +68,7 @@ class DocumentMask final {
     const DocumentMask* _mask = nullptr;
   };
 
+  DocumentMask(std::shared_ptr<const byte_type> frozen, uint64_t size);
   DocumentMask(DocumentMask&& other) noexcept;
   DocumentMask& operator=(DocumentMask&& other) noexcept;
   DocumentMask(const DocumentMask&) = delete;
@@ -82,7 +82,25 @@ class DocumentMask final {
 
   void WriteFrozen(char* buf) const noexcept { _set.writeFrozen(buf); }
 
+  const roaring::api::roaring_bitmap_t& Bitmap() const noexcept {
+    return _set.roaring;
+  }
+
   bool Contains(doc_id_t doc) const noexcept;
+
+  uint64_t CountInRange(doc_id_t first, doc_id_t last) const noexcept;
+
+  template<typename Visitor>
+  void ForEachRun(const DocumentMask* except, const Visitor& visitor) const {
+    const auto visit = [&](doc_id_t first, doc_id_t last) {
+      return visitor(first, last + 1);
+    };
+    if (except) {
+      _set.andnotIterateRuns(except->_set, visit);
+    } else {
+      _set.iterateRuns(visit);
+    }
+  }
 
   size_t Count() const noexcept { return _count; }
 
@@ -116,14 +134,9 @@ class DocumentMask final {
  private:
   friend class DocumentMaskBuilder;
 
-  struct FrozenFree {
-    void operator()(byte_type* p) const noexcept { roaring_aligned_free(p); }
-  };
-
-  DocumentMask() = default;
   DocumentMask(roaring::api::roaring_bitmap_t& set, size_t count) noexcept;
 
-  std::unique_ptr<byte_type, FrozenFree> _frozen;
+  std::shared_ptr<const byte_type> _frozen;
   roaring::Roaring _set;
   size_t _count = 0;
   MaskKind _kind = MaskKind::Runs;
@@ -160,6 +173,7 @@ class DocumentMaskBuilder final {
   void Clear() noexcept;
 
   DocumentMask Finish(uint32_t bitset_from = kBitsetFrom) && noexcept;
+  DocumentMask Take() && noexcept;
 
  private:
   DocumentMaskBuilder(const roaring::api::roaring_bitmap_t& set, size_t count);

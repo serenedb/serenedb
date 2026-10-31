@@ -25,7 +25,7 @@
 #include <iresearch/types.hpp>
 
 #include "connector/column_id.h"
-#include "connector/pg_logical_types.h"
+#include "pg/types/logical.h"
 
 namespace sdb::connector::term_dict {
 

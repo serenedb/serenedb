@@ -2,8 +2,8 @@
 # term posting: the vector value is stored once under its column id and the IVF
 # attaches to that column, so an ANN query through the index scan pushes the
 # distance + top-k INTO the scan (accelerated) rather than computing distances
-# over every row. One IVF per vector column (the store attaches one IVF per data
-# column). Commit-time-only, so rows are observed after VACUUM (REFRESH_TABLE).
+# over every row. Commit-time-only, so rows are observed after
+# VACUUM (REFRESH_TABLE).
 
 statement ok
 CREATE TABLE v (id BIGINT PRIMARY KEY, vec FLOAT[3])
@@ -122,3 +122,142 @@ ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
 id
 4
 3
+
+# --- Merging the segments of a dropped IVF index ---
+# The segments written before a DROP INDEX keep the IVF's cluster postings.
+# Only an IVF writer writes that field, so a merge without one leaves it out:
+# the vector column keeps its values and the other index keeps answering.
+
+statement ok
+CREATE TABLE dv (id BIGINT PRIMARY KEY, vec FLOAT[3], txt TEXT)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX dv_ivf ON dv USING inverted (vec ivf(metric = 'l2'));
+
+statement ok
+CREATE INDEX dv_txt ON dv USING inverted (txt);
+
+statement ok
+INSERT INTO dv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3],
+  'w' || (i % 10) FROM range(500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) dv;
+
+statement ok
+DROP INDEX dv_ivf;
+
+statement ok
+INSERT INTO dv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3],
+  'w' || (i % 10) FROM range(500, 1000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) dv;
+
+statement ok
+VACUUM (COMPACT_TABLE) dv;
+
+query
+SELECT count(*) AS n FROM dv_txt WHERE txt = 'w3';
+----
+n
+100
+
+query
+SELECT sum(vec[1])::BIGINT AS s, sum(vec[3])::BIGINT AS z FROM dv;
+----
+s	z
+499500	5994
+
+# An IVF index replaced by an HNSW one on the same column: the merge writes the
+# HNSW graph and leaves the IVF's cluster postings out.
+statement ok
+CREATE TABLE rv (id BIGINT PRIMARY KEY, vec FLOAT[3])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX rv_idx ON rv USING inverted (vec ivf(metric = 'l2'));
+
+statement ok
+INSERT INTO rv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
+  FROM range(500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rv;
+
+statement ok
+DROP INDEX rv_idx;
+
+statement ok
+CREATE INDEX rv_idx ON rv USING inverted (vec hnsw(metric = 'l2'));
+
+statement ok
+INSERT INTO rv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
+  FROM range(500, 1000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rv;
+
+statement ok
+VACUUM (COMPACT_TABLE) rv;
+
+query
+SELECT id FROM rv_idx
+ORDER BY vec <-> array_value(999::FLOAT, 5::FLOAT, 11::FLOAT) LIMIT 1;
+----
+id
+999
+
+query
+SELECT count(*) AS n FROM rv;
+----
+n
+1000
+
+# --- An IVF key and another key of its column in one index ---
+# They share the column's field: the IVF and the column filter both answer,
+# before and after a merge.
+
+statement ok
+CREATE TABLE sv (id BIGINT PRIMARY KEY, vec FLOAT[3])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX sv_a ON sv USING inverted (vec ivf(metric = 'l2'), vec);
+
+statement ok
+CREATE INDEX sv_b ON sv USING inverted (id, vec ivf(metric = 'l2')) INCLUDE (vec);
+
+statement ok
+INSERT INTO sv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
+  FROM range(300) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sv;
+
+query
+SELECT (SELECT id FROM sv_a ORDER BY vec <-> array_value(5::FLOAT, 5::FLOAT, 5.1::FLOAT) LIMIT 1) AS a,
+       (SELECT id FROM sv_b ORDER BY vec <-> array_value(5::FLOAT, 5::FLOAT, 5.1::FLOAT) LIMIT 1) AS b,
+       (SELECT id FROM sv_a WHERE vec = array_value(5::FLOAT, 5::FLOAT, 5::FLOAT)) AS eq;
+----
+a	b	eq
+5	5	5
+
+statement ok
+INSERT INTO sv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
+  FROM range(300, 600) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sv;
+
+statement ok
+VACUUM (COMPACT_TABLE) sv;
+
+query
+SELECT (SELECT id FROM sv_a ORDER BY vec <-> array_value(505::FLOAT, 1::FLOAT, 11::FLOAT) LIMIT 1) AS a,
+       (SELECT id FROM sv_b ORDER BY vec <-> array_value(505::FLOAT, 1::FLOAT, 11::FLOAT) LIMIT 1) AS b,
+       (SELECT id FROM sv_a WHERE vec = array_value(505::FLOAT, 1::FLOAT, 11::FLOAT)) AS eq;
+----
+a	b	eq
+505	505	505

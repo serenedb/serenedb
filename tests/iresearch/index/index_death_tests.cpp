@@ -22,7 +22,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/index/index_features.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <thread>
@@ -37,7 +36,7 @@ namespace {
 // Per-doc cs column id used by tests in this file. Holds the bytes of the
 // indexed StringField named "name"; readback through `segment.Column(kNameId)`
 // + `BlobPointReader` decodes back to the original string with `ReadStoredStr`.
-// Also used as the field_id of the "name" StringField for term filters that
+// Also used as the field_id of the "name" StringField for removals that
 // delete by name (`MakeByTerm(kNameId, "B")`), so it must equal
 // `FieldIdFor("name")`.
 inline constexpr irs::field_id kNameId = tests::FieldIdFor("name");
@@ -48,11 +47,8 @@ inline constexpr irs::field_id kSameId = tests::FieldIdFor("same");
 inline constexpr irs::field_id kSameAnlPayId =
   tests::FieldIdFor("same_anl_pay");
 
-auto MakeByTerm(irs::field_id field_id, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = field_id;
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
+tests::Terms MakeByTerm(irs::field_id field_id, std::string_view value) {
+  return {field_id, {std::string{value}}};
 }
 
 // Insert `doc->indexed` into `writer` and capture the indexed StringField
@@ -306,8 +302,9 @@ void OpenReader(std::function<void(FailingDirectory& dir)> failure_registerer) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
+    ASSERT_TRUE(writer->RefreshCommit());
 
-    tests::Remove(*writer, *query_doc2);
+    tests::Remove(*writer, query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
@@ -1233,8 +1230,9 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
+    ASSERT_TRUE(writer->RefreshCommit());
 
-    tests::Remove(*writer, *query_doc2);
+    tests::Remove(*writer, query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
@@ -1530,7 +1528,7 @@ TEST(index_death_test_formats_15,
         continue;
       }
       if (inserts_ok) {
-        tests::Remove(writer, *query_doc2);
+        tests::Remove(writer, query_doc2);
         ASSERT_SQL_ERROR(writer.RefreshBegin(), ERRCODE_IO_ERROR);
         ASSERT_LT(dir.NumFailures(), failures_before);
       }
@@ -2262,6 +2260,66 @@ TEST(index_death_test_formats_15,
   }
 }
 
+TEST(index_death_test_formats_15,
+     failed_implicit_flush_keeps_the_transaction_up_to_its_last_flush) {
+  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
+                              &tests::PayloadedJsonFieldFactory);
+  const auto* doc1 = gen.next();
+  const auto* doc2 = gen.next();
+  const auto* doc3 = gen.next();
+  const auto* doc4 = gen.next();
+  const auto* doc5 = gen.next();
+
+  irs::MemoryDirectory impl;
+  FailingDirectory dir(impl);
+  auto opts = irs::tests::DefaultWriterOptions();
+  opts.segment_docs_max = 1;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+  ASSERT_NE(nullptr, writer);
+
+  ASSERT_TRUE(InsertWithName(*writer, *doc1));
+  ASSERT_TRUE(writer->RefreshCommit());
+  ASSERT_TRUE(InsertWithName(*writer, *doc2));
+  ASSERT_TRUE(writer->RefreshCommit());
+  const auto seeded = writer->GetSnapshot();
+  ASSERT_EQ(2, seeded.size());
+  const auto first = seeded[0].Meta().name;
+  const auto second = seeded[1].Meta().name;
+
+  auto trx = writer->GetBatch();
+  const auto insert = [&](const tests::Document& doc) {
+    auto inserted = trx.Insert();
+    return tests::InsertFields(inserted, doc.indexed.begin(),
+                               doc.indexed.end());
+  };
+  const auto remove = [&](uint32_t index) {
+    irs::DocRemovalBuilder builder;
+    builder.Add(index, irs::doc_limits::min());
+    trx.Remove(std::move(builder).Finish(seeded));
+  };
+  remove(0);
+  ASSERT_TRUE(insert(*doc3));
+  ASSERT_TRUE(insert(*doc4));
+  remove(1);
+  dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_4.idx");
+  ASSERT_SQL_ERROR(insert(*doc5), ERRCODE_IO_ERROR);
+  ASSERT_TRUE(dir.NoFailures());
+  ASSERT_TRUE(trx.Commit());
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  const auto reader = writer->GetSnapshot();
+  EXPECT_EQ(2, reader.live_docs_count())
+    << "the first removal and doc3 were flushed before the failure; the "
+       "second removal and doc4 were not";
+  for (const auto& segment : reader) {
+    if (segment.Meta().name == first) {
+      EXPECT_EQ(0, segment.live_docs_count());
+    } else if (segment.Meta().name == second) {
+      EXPECT_EQ(1, segment.live_docs_count());
+    }
+  }
+}
+
 TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
   // Mixed failures around CREATE/SYNC/REMOVE on `.col` files driven by
   // a sequence of inserts, commits, and a compact. Each failing
@@ -2661,7 +2719,8 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    tests::Remove(*writer, *query_doc2);
+    ASSERT_TRUE(writer->RefreshCommit());
+    tests::Remove(*writer, query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(

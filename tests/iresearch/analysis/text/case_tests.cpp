@@ -130,6 +130,35 @@ TEST(case_convert_utf8_test, invalid_bytes_pass_through) {
   Check(std::string(32, 'A') + "\xC3");
 }
 
+TEST(case_convert_utf8_test, ffff_keeps_all_its_bytes) {
+  EXPECT_EQ(
+    "ab\xEF\xBF\xBF"
+    "c",
+    Convert<true>("aB\xEF\xBF\xBF"
+                  "C"));
+  EXPECT_EQ(
+    "AB\xEF\xBF\xBF"
+    "C",
+    Convert<false>("aB\xEF\xBF\xBF"
+                   "c"));
+  EXPECT_EQ("\xEF\xBF\xBE", Convert<true>("\xEF\xBF\xBE"));
+  Check(std::string(31, 'A') + "\xEF\xBF\xBF" + std::string(31, 'b'));
+}
+
+TEST(case_convert_utf8_test, past_the_code_points_keeps_all_its_bytes) {
+  EXPECT_EQ(
+    "ab\xF4\x90\x80\x80"
+    "c",
+    Convert<true>("aB\xF4\x90\x80\x80"
+                  "C"));
+  EXPECT_EQ(
+    "AB\xF4\x90\x80\x80"
+    "C",
+    Convert<false>("aB\xF4\x90\x80\x80"
+                   "c"));
+  EXPECT_EQ("\xF7\xBF\xBF\xBF", Convert<true>("\xF7\xBF\xBF\xBF"));
+}
+
 TEST(case_convert_utf8_test, every_two_byte_codepoint_at_block_offsets) {
   for (uint32_t cp = 0; cp < 0x800; ++cp) {
     irs::byte_type buf[irs::utf8_utils::kMaxCharSize];

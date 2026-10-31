@@ -80,3 +80,500 @@ DROP FUNCTION sfn_rand
 
 statement ok
 DROP FUNCTION sfn_window
+
+statement ok
+SET statement_timeout = '10s'
+
+statement ok
+CREATE FUNCTION sfn_va(a double precision[], b double precision[]) RETURNS double precision[] LANGUAGE sql RETURN ARRAY[a[1] + b[1], a[2] + b[2], a[3] + b[3]]
+
+statement ok
+CREATE FUNCTION sfn_vs(a double precision[], b double precision[]) RETURNS double precision[] LANGUAGE sql RETURN ARRAY[a[1] - b[1], a[2] - b[2], a[3] - b[3]]
+
+statement ok
+CREATE FUNCTION sfn_vm(a double precision[], s double precision) RETURNS double precision[] LANGUAGE sql RETURN ARRAY[a[1] * s, a[2] * s, a[3] * s]
+
+statement ok
+CREATE FUNCTION sfn_mix(a double precision[], b double precision[], t double precision) RETURNS double precision[] LANGUAGE sql RETURN sfn_va(a, sfn_vm(sfn_vs(b, a), t))
+
+statement ok
+CREATE FUNCTION sfn_m4(h double precision) RETURNS double precision[] LANGUAGE sql RETURN sfn_mix(sfn_mix(sfn_mix(sfn_mix(ARRAY[0.1, 0.2, 0.3]::double precision[], ARRAY[0.4, 0.5, 0.6]::double precision[], h), ARRAY[0.7, 0.8, 0.9]::double precision[], h), ARRAY[0.1, 0.1, 0.1]::double precision[], h), ARRAY[0.2, 0.2, 0.2]::double precision[], h)
+
+query
+SELECT list_transform(sfn_m4(h), lambda x: round(x, 6)) AS r FROM (SELECT range::double precision / 4 AS h FROM range(3)) ORDER BY h
+----
+r
+{0.1,0.2,0.3}
+{0.241016,0.297266,0.353516}
+{0.24375,0.26875,0.29375}
+
+query
+EXPLAIN SELECT sfn_mix(sfn_mix(ARRAY[0.1, 0.2, 0.3]::double precision[], ARRAY[0.4, 0.5, 0.6]::double precision[], range::double precision / 4), ARRAY[0.7, 0.8, 0.9]::double precision[], range::double precision / 4) FROM range(3)
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                                                                                                                                                                                                                                                                                 │
+│ invoke(lambda 0_macro_argument_0_0: invoke(lambda 0_macro_argument_0_0_1, 0_macro_argument_0_0_2, 0_macro_argument_0_0_3, 0_macro_argument_0_1: list_value((0_macro_argument_0_0_1 + ((0.7 - 0_macro_argument_0_0_1) * 0_macro_argument_0_1)), (0_macro_argument_0_0_2 + ((0.8 - 0_macro_argument_0_0_2) * 0_macro_argument_0_1)), (0_macro_argument_0_0_3 + ((0.9 - 0_macro_argument_0_0_3) *               │
+│ 0_macro_argument_0_1))), (0.1 + (0.30000000000000004 * 0_macro_argument_0_0)), (0.2 + (0.3 * 0_macro_argument_0_0)), (0.3 + (0.3 * 0_macro_argument_0_0)), 0_macro_argument_0_0), (CAST(range AS DOUBLE) // 4))                                                                                                                                                                                              │
+│ ~3 rows                                                                                                                                                                                                                                                                                                                                                                                                      │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ RANGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Function: RANGE                                                                                                                                                                                                                                                                                                                                                                                              │
+│ ~3 rows                                                                                                                                                                                                                                                                                                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+statement ok
+CREATE FUNCTION sfn_qva(a double precision[], b double precision[]) RETURNS double precision[] LANGUAGE sql AS 'SELECT ARRAY[a[1] + b[1], a[2] + b[2], a[3] + b[3]]'
+
+statement ok
+CREATE FUNCTION sfn_qvs(a double precision[], b double precision[]) RETURNS double precision[] LANGUAGE sql AS 'SELECT ARRAY[a[1] - b[1], a[2] - b[2], a[3] - b[3]]'
+
+statement ok
+CREATE FUNCTION sfn_qvm(a double precision[], s double precision) RETURNS double precision[] LANGUAGE sql AS 'SELECT ARRAY[a[1] * s, a[2] * s, a[3] * s]'
+
+statement ok
+CREATE FUNCTION sfn_qmix(a double precision[], b double precision[], t double precision) RETURNS double precision[] LANGUAGE sql AS 'SELECT sfn_qva(a, sfn_qvm(sfn_qvs(b, a), t))'
+
+statement ok
+CREATE FUNCTION sfn_qm4(h double precision) RETURNS double precision[] LANGUAGE sql AS 'SELECT sfn_qmix(sfn_qmix(sfn_qmix(sfn_qmix(ARRAY[0.1, 0.2, 0.3]::double precision[], ARRAY[0.4, 0.5, 0.6]::double precision[], h), ARRAY[0.7, 0.8, 0.9]::double precision[], h), ARRAY[0.1, 0.1, 0.1]::double precision[], h), ARRAY[0.2, 0.2, 0.2]::double precision[], h)'
+
+query
+SELECT list_transform(sfn_qm4(h), lambda x: round(x, 6)) AS r FROM (SELECT range::double precision / 4 AS h FROM range(3)) ORDER BY h
+----
+r
+{0.1,0.2,0.3}
+{0.241016,0.297266,0.353516}
+{0.24375,0.26875,0.29375}
+
+query
+EXPLAIN SELECT sfn_qmix(sfn_qmix(ARRAY[0.1, 0.2, 0.3]::double precision[], ARRAY[0.4, 0.5, 0.6]::double precision[], range::double precision / 4), ARRAY[0.7, 0.8, 0.9]::double precision[], range::double precision / 4) FROM range(3)
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                                                                                                                                                                                                                                                                                 │
+│ invoke(lambda 0_macro_argument_0_0: invoke(lambda 0_macro_argument_0_0_1, 0_macro_argument_0_0_2, 0_macro_argument_0_0_3, 0_macro_argument_0_1: list_value((0_macro_argument_0_0_1 + ((0.7 - 0_macro_argument_0_0_1) * 0_macro_argument_0_1)), (0_macro_argument_0_0_2 + ((0.8 - 0_macro_argument_0_0_2) * 0_macro_argument_0_1)), (0_macro_argument_0_0_3 + ((0.9 - 0_macro_argument_0_0_3) *               │
+│ 0_macro_argument_0_1))), (0.1 + (0.30000000000000004 * 0_macro_argument_0_0)), (0.2 + (0.3 * 0_macro_argument_0_0)), (0.3 + (0.3 * 0_macro_argument_0_0)), 0_macro_argument_0_0), (CAST(range AS DOUBLE) // 4))                                                                                                                                                                                              │
+│ ~3 rows                                                                                                                                                                                                                                                                                                                                                                                                      │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ RANGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Function: RANGE                                                                                                                                                                                                                                                                                                                                                                                              │
+│ ~3 rows                                                                                                                                                                                                                                                                                                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+statement ok
+CREATE FUNCTION sfn_f2arr(a double precision[], b double precision[]) RETURNS double precision[] LANGUAGE sql AS 'SELECT list_value(a[1] + b[1], a[2] + b[2], a[3] + b[3])'
+
+query
+SELECT (sfn_f2arr(sfn_f2arr(sfn_f2arr(sfn_f2arr(sfn_f2arr(sfn_f2arr(sfn_f2arr(sfn_f2arr(sfn_f2arr(sfn_f2arr(sfn_f2arr(sfn_f2arr(ARRAY[g::double precision, 1.0, 2.0], ARRAY[0.5, 0.25, 0.125]), ARRAY[0.5, 0.25, 0.125]), ARRAY[0.5, 0.25, 0.125]), ARRAY[0.5, 0.25, 0.125]), ARRAY[0.5, 0.25, 0.125]), ARRAY[0.5, 0.25, 0.125]), ARRAY[0.5, 0.25, 0.125]), ARRAY[0.5, 0.25, 0.125]), ARRAY[0.5, 0.25, 0.125]), ARRAY[0.5, 0.25, 0.125]), ARRAY[0.5, 0.25, 0.125]), ARRAY[0.5, 0.25, 0.125]))[1] AS r FROM generate_series(1, 3) g(g) ORDER BY 1
+----
+r
+7
+8
+9
+
+statement ok
+CREATE FUNCTION sfn_case(c boolean, x bigint) RETURNS bigint LANGUAGE sql RETURN CASE WHEN c THEN x ELSE x + 1 END
+
+query
+SELECT sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, sfn_case(i > 0, i)))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+1
+2
+18
+
+statement ok
+CREATE FUNCTION sfn_tail(c boolean, x bigint) RETURNS bigint LANGUAGE sql RETURN COALESCE(CASE WHEN c THEN NULL END, x)
+
+query
+SELECT sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, sfn_tail(i > 0, i + 1)))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+1
+2
+3
+
+statement ok
+CREATE FUNCTION sfn_two(c bigint, x bigint) RETURNS bigint LANGUAGE sql RETURN CASE WHEN c = 1 THEN x + x WHEN c = 2 THEN x - x + 2 END
+
+query
+SELECT sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, sfn_two(i, i)))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+2
+65536
+NULL
+
+query
+SELECT i, sfn_two(i, 10 / i) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	NULL
+1	20
+2	2
+
+statement ok
+CREATE FUNCTION sfn_from(x bigint) RETURNS bigint LANGUAGE sql AS 'SELECT x + x + v FROM (VALUES (0)) t(v)'
+
+query
+SELECT sfn_from(sfn_from(sfn_from(sfn_from(sfn_from(sfn_from(sfn_from(sfn_from(sfn_from(sfn_from(sfn_from(sfn_from(sfn_from(sfn_from(sfn_from(sfn_from(i)))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+65536
+131072
+
+statement ok
+CREATE FUNCTION sfn_max(x bigint) RETURNS bigint LANGUAGE sql AS 'SELECT max(v) + x + x FROM range(2) r(v)'
+
+query
+SELECT sfn_max(sfn_max(sfn_max(sfn_max(sfn_max(sfn_max(sfn_max(sfn_max(sfn_max(sfn_max(sfn_max(sfn_max(sfn_max(sfn_max(sfn_max(sfn_max(i)))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+65535
+131071
+196607
+
+query
+EXPLAIN SELECT sfn_max(i + 1) FROM range(3) t(i)
+----
+QUERY PLAN
+╭─ CTE ──────────────────────────────╮
+│ CTE Name: __duckdb_delim_40        │
+│ Table Index: 40                    │
+│ Execution Mode: PIPELINE_DEPENDENT │
+│ ~3 rows                            │
+╰──────────────────┬─────────────────╯
+                   ├───────────────────────────────────────╮
+╭─ RANGE ──────────┴─────────────────╮  ╭─ CTE ────────────┴─────────────────╮
+│ Function: RANGE                    │  │ CTE Name: __duckdb_delim_dedup_38  │
+│ ~3 rows                            │  │ Table Index: 38                    │
+╰────────────────────────────────────╯  │ Execution Mode: PIPELINE_DEPENDENT │
+                                        │ ~3 rows                            │
+                                        ╰──────────────────┬─────────────────╯
+                                                           ├────────────────────────────────────────╮
+                                        ╭─ HASH_GROUP_BY ──┴─────────────────╮  ╭─ PROJECTION ──────┴──────────────────╮
+                                        │ Groups: #0                         │  │ Projections: #1                      │
+                                        │ ~1 row                             │  │ ~3 rows                              │
+                                        ╰──────────────────┬─────────────────╯  ╰───────────────────┬──────────────────╯
+                                        ╭─ CTE_SCAN ───────┴─────────────────╮  ╭─ HASH_JOIN ───────┴──────────────────╮
+                                        │ CTE Index: 40                      │  │ Join Type: SINGLE                    │
+                                        │ ~3 rows                            │  │ Conditions: i IS NOT DISTINCT FROM i │
+                                        ╰────────────────────────────────────╯  │ ~3 rows                              │
+                                                                                ╰───────────────────┬──────────────────╯
+                                                                                                    ├───────────────────────────────────────────╮
+                                                                                ╭─ CTE_SCAN ────────┴──────────────────╮  ╭─ PROJECTION ────────┴────────────────────╮
+                                                                                │ CTE Index: 40                        │  │ Projections: ?column?, i                 │
+                                                                                │ ~3 rows                              │  │ ~0 rows                                  │
+                                                                                ╰──────────────────────────────────────╯  ╰─────────────────────┬────────────────────╯
+                                                                                                                          ╭─ HASH_JOIN ─────────┴────────────────────╮
+                                                                                                                          │ Join Type: INNER                         │
+                                                                                                                          │ Conditions: 0_x IS NOT DISTINCT FROM 0_x │
+                                                                                                                          │ ~0 rows                                  │
+                                                                                                                          ╰─────────────────────┬────────────────────╯
+                                                                                                                                                ├──────────────────────────────────────────╮
+                                                                                                                          ╭─ PROJECTION ────────┴────────────────────╮  ╭─ PROJECTION ─────┴─────────────────╮
+                                                                                                                          │ Projections: 0_x, i                      │  │ Projections: (max(v) + 0_x) + 0_x, │
+                                                                                                                          │ ~1 row                                   │  │              0_x                   │
+                                                                                                                          ╰─────────────────────┬────────────────────╯  │ ~1 row                             │
+                                                                                                                          ╭─ CTE_SCAN ──────────┴────────────────────╮  ╰──────────────────┬─────────────────╯
+                                                                                                                          │ CTE Index: 38                            │  ╭─ CROSS_PRODUCT ──┴─────────────────╮
+                                                                                                                          │ ~1 row                                   │  ╰──────────────────┬─────────────────╯
+                                                                                                                          ╰──────────────────────────────────────────╯                     ├──────────────────────────────╮
+                                                                                                                                                                        ╭─ UNGROUPED_AGGREGATE ──────────────╮  ╭─ HASH_GROUP_BY ──╮
+                                                                                                                                                                        │ Aggregates: max(#0)                │  │ Groups: #0       │
+                                                                                                                                                                        │ ~1 row                             │  │ ~0 rows          │
+                                                                                                                                                                        ╰──────────────────┬─────────────────╯  ╰─────────┬────────╯
+                                                                                                                                                                        ╭─ RANGE ──────────┴─────────────────╮  ╭─ PROJECTION ─────╮
+                                                                                                                                                                        │ Function: RANGE                    │  │ Projections: 0_x │
+                                                                                                                                                                        │ ~2 rows                            │  │ ~1 row           │
+                                                                                                                                                                        ╰────────────────────────────────────╯  ╰─────────┬────────╯
+                                                                                                                                                                                                                ╭─ CTE_SCAN ───────╮
+                                                                                                                                                                                                                │ CTE Index: 38    │
+                                                                                                                                                                                                                │ ~1 row           │
+                                                                                                                                                                                                                ╰──────────────────╯
+
+statement ok
+CREATE FUNCTION sfn_sub(x bigint) RETURNS bigint LANGUAGE sql RETURN x + (SELECT count(*) FROM range(3) r(v) WHERE v < x)
+
+query
+SELECT sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(sfn_sub(i)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+58
+61
+
+statement ok
+CREATE FUNCTION sfn_qsub(x bigint) RETURNS bigint LANGUAGE sql AS 'SELECT x + (SELECT count(*) FROM range(3) r(v) WHERE v < x)'
+
+query
+SELECT sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(sfn_qsub(i)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+58
+61
+
+statement ok
+CREATE FUNCTION sfn_ts_ns(x bigint) RETURNS timestamp LANGUAGE sql RETURN make_timestamp_ns(x)
+
+statement ok
+CREATE MACRO sfn_pick_ts(t timestamp) AS (SELECT 'us' WHERE t IS NOT NULL), (t timestamp_ns) AS (SELECT 'ns' WHERE t IS NOT NULL)
+
+query
+SELECT sfn_pick_ts(sfn_ts_ns(1)) AS nested, sfn_pick_ts(make_timestamp_ns(1)) AS direct
+----
+nested	direct
+ns	ns
+
+statement ok
+CREATE FUNCTION sfn_ts_s(x bigint) RETURNS timestamp_s LANGUAGE sql RETURN make_timestamp_ns(x)
+
+statement ok
+CREATE FUNCTION sfn_ts_ms(x bigint) RETURNS timestamp_ms LANGUAGE sql RETURN make_timestamp_ns(x)
+
+statement ok
+CREATE FUNCTION sfn_ts_us(x bigint) RETURNS timestamp_ns LANGUAGE sql RETURN make_timestamp(x)
+
+query
+SELECT sfn_pick_ts(sfn_ts_s(1)) AS s, sfn_pick_ts(sfn_ts_ms(1)) AS ms, sfn_pick_ts(sfn_ts_us(1)) AS us
+----
+s	ms	us
+ns	ns	us
+
+statement ok
+CREATE TYPE sfn_mood AS ENUM ('sad', 'ok')
+
+statement ok
+CREATE FUNCTION sfn_mood_of(x int) RETURNS sfn_mood LANGUAGE sql RETURN CASE WHEN x > 0 THEN 'ok' ELSE 'sad' END::sfn_mood
+
+statement ok
+CREATE MACRO sfn_pick_mood(t sfn_mood) AS (SELECT 'mood ' || t::VARCHAR WHERE t IS NOT NULL), (t VARCHAR) AS (SELECT 'text ' || t WHERE t IS NOT NULL)
+
+query
+SELECT sfn_pick_mood(sfn_mood_of(1)) AS nested, sfn_pick_mood('sad'::sfn_mood) AS direct
+----
+nested	direct
+mood ok	mood sad
+
+statement ok
+CREATE FUNCTION sfn_window_sum(x bigint) RETURNS bigint LANGUAGE sql RETURN sum(x)
+
+statement ok
+CREATE MACRO sfn_typed_twice(x BIGINT) AS x + x
+
+query
+SELECT i, sfn_typed_twice(sfn_window_sum(i) OVER ()) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	6
+1	6
+2	6
+
+statement ok
+CREATE MACRO sfn_count_plus(y) AS count(*) + y
+
+statement ok
+CREATE MACRO sfn_plain(y) AS y * 2
+
+statement ok
+CREATE FUNCTION sfn_macro_agg(x int) RETURNS bigint LANGUAGE sql AS 'SELECT sfn_count_plus(x) FROM range(3)'
+
+statement ok
+CREATE FUNCTION sfn_macro_plain(x int) RETURNS bigint LANGUAGE sql AS 'SELECT sfn_plain(x) + v FROM range(3) r(v) ORDER BY v DESC LIMIT 1'
+
+statement ok
+CREATE FUNCTION sfn_group_all(x int) RETURNS bigint LANGUAGE sql AS 'SELECT x + count(*) FROM range(3) GROUP BY ALL'
+
+statement ok
+CREATE FUNCTION sfn_qualify(x int) RETURNS bigint LANGUAGE sql AS 'SELECT x + v FROM range(3) r(v) QUALIFY row_number() OVER (ORDER BY v) = 2'
+
+query
+SELECT sfn_macro_agg(10) AS a, sfn_macro_plain(10) AS p, sfn_group_all(10) AS g, sfn_qualify(10) AS q
+----
+a	p	g	q
+13	22	13	11
+
+statement ok
+CREATE MACRO sfn_agg_over(y) AS count(*) + y, (y, z) AS y + z
+
+statement ok
+CREATE FUNCTION sfn_over_body(x int) RETURNS bigint LANGUAGE sql AS 'SELECT sfn_agg_over(x) FROM range(3)'
+
+query
+SELECT sfn_over_body(10) AS o
+----
+o
+13
+
+statement ok
+CREATE FUNCTION sfn_having_alias(x int) RETURNS bigint LANGUAGE sql AS 'SELECT count(*) AS c FROM range(3) HAVING c > x'
+
+query
+SELECT sfn_having_alias(1) AS above, sfn_having_alias(5) AS below
+----
+above	below
+3	NULL
+
+statement ok
+CREATE FUNCTION sfn_num(x numeric) RETURNS numeric LANGUAGE sql RETURN x * 2
+
+statement ok
+CREATE MACRO sfn_pick_num(t DECIMAL(18,3)) AS (SELECT 'numeric' WHERE t IS NOT NULL), (t VARCHAR) AS (SELECT 'text' WHERE t IS NOT NULL)
+
+statement ok
+CREATE FUNCTION sfn_ts_struct_s(x bigint) RETURNS STRUCT(t TIMESTAMP_S) LANGUAGE sql RETURN {'t': make_timestamp_ns(x)}
+
+statement ok
+CREATE FUNCTION sfn_ts_struct_ms(x bigint) RETURNS STRUCT(t TIMESTAMP_MS) LANGUAGE sql RETURN {'t': make_timestamp_ns(x)}
+
+statement ok
+CREATE FUNCTION sfn_ts_struct_ns(x bigint) RETURNS STRUCT(t TIMESTAMP_NS) LANGUAGE sql RETURN {'t': make_timestamp(x)}
+
+statement ok
+CREATE MACRO sfn_pick_struct(s STRUCT(t TIMESTAMP)) AS (SELECT 'struct' WHERE s IS NOT NULL), (s VARCHAR) AS (SELECT 'text' WHERE s IS NOT NULL)
+
+statement ok
+CREATE FUNCTION sfn_void() RETURNS void LANGUAGE sql AS 'SELECT 1'
+
+query
+SELECT sfn_pick_num(sfn_num(1.5)) AS n, sfn_pick_struct(sfn_ts_struct_s(1)) AS s, sfn_pick_struct(sfn_ts_struct_ms(1)) AS ms, sfn_pick_struct(sfn_ts_struct_ns(1)) AS ns, sfn_pick_num(sfn_void()) IS NULL AS v
+----
+n	s	ms	ns	v
+numeric	struct	struct	struct	t
+
+statement ok
+RESET statement_timeout
+
+statement ok
+DROP FUNCTION sfn_void
+
+statement ok
+DROP MACRO sfn_pick_struct
+
+statement ok
+DROP FUNCTION sfn_ts_struct_ns
+
+statement ok
+DROP FUNCTION sfn_ts_struct_ms
+
+statement ok
+DROP FUNCTION sfn_ts_struct_s
+
+statement ok
+DROP MACRO sfn_pick_num
+
+statement ok
+DROP FUNCTION sfn_num
+
+statement ok
+DROP FUNCTION sfn_having_alias
+
+statement ok
+DROP FUNCTION sfn_over_body
+
+statement ok
+DROP MACRO sfn_agg_over
+
+statement ok
+DROP FUNCTION sfn_qualify
+
+statement ok
+DROP FUNCTION sfn_group_all
+
+statement ok
+DROP FUNCTION sfn_macro_plain
+
+statement ok
+DROP FUNCTION sfn_macro_agg
+
+statement ok
+DROP MACRO sfn_plain
+
+statement ok
+DROP MACRO sfn_count_plus
+
+statement ok
+DROP MACRO sfn_typed_twice
+
+statement ok
+DROP FUNCTION sfn_window_sum
+
+statement ok
+DROP MACRO sfn_pick_mood
+
+statement ok
+DROP FUNCTION sfn_mood_of
+
+statement ok
+DROP TYPE sfn_mood
+
+statement ok
+DROP FUNCTION sfn_ts_us
+
+statement ok
+DROP FUNCTION sfn_ts_ms
+
+statement ok
+DROP FUNCTION sfn_ts_s
+
+statement ok
+DROP MACRO sfn_pick_ts
+
+statement ok
+DROP FUNCTION sfn_ts_ns
+
+statement ok
+DROP FUNCTION sfn_qsub
+
+statement ok
+DROP FUNCTION sfn_sub
+
+statement ok
+DROP FUNCTION sfn_max
+
+statement ok
+DROP FUNCTION sfn_from
+
+statement ok
+DROP FUNCTION sfn_two
+
+statement ok
+DROP FUNCTION sfn_tail
+
+statement ok
+DROP FUNCTION sfn_case
+
+statement ok
+DROP FUNCTION sfn_f2arr
+
+statement ok
+DROP FUNCTION sfn_qm4
+
+statement ok
+DROP FUNCTION sfn_qmix
+
+statement ok
+DROP FUNCTION sfn_qvm
+
+statement ok
+DROP FUNCTION sfn_qvs
+
+statement ok
+DROP FUNCTION sfn_qva
+
+statement ok
+DROP FUNCTION sfn_m4
+
+statement ok
+DROP FUNCTION sfn_mix
+
+statement ok
+DROP FUNCTION sfn_vm
+
+statement ok
+DROP FUNCTION sfn_vs
+
+statement ok
+DROP FUNCTION sfn_va

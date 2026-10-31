@@ -20,11 +20,12 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/top/all.hpp"
-#include "iresearch/search/top/make.hpp"
+#include "iresearch/search/top/family.hpp"
 
 namespace irs::top {
 
-Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score) {
+Root::ptr Family::MakeAll(const SubReader& segment, const Context& ctx,
+                          ScoreMergeType, score_t score) {
   return MakeShape<All>(ctx, ctx.fetcher,
                         static_cast<doc_id_t>(segment.docs_count()), score);
 }

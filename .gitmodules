@@ -58,6 +58,11 @@
 	path = third_party/sqllogictest-rs
 	url = https://github.com/serenedb/sqllogictest-rs.git
 	shallow = true
+[submodule "tests/sqllogic/any/pg/sqlite"]
+	path = tests/sqllogic/any/pg/sqlite
+	url = https://github.com/serenedb/sqllogictest.git
+	shallow = true
+	update = none
 [submodule "third_party/zstd"]
 	path = third_party/zstd
 	url = https://github.com/serenedb/zstd.git
@@ -198,3 +203,8 @@
 	path = third_party/freetype
 	url = https://github.com/serenedb/freetype.git
 	shallow = true
+[submodule "third_party/cmocka"]
+	path = third_party/cmocka
+	url = https://gitlab.com/cmocka/cmocka.git
+	shallow = true
+	update = none

@@ -1,0 +1,647 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE lr (i BIGINT, l BIGINT[])
+
+statement ok
+INSERT INTO lr VALUES (1, [1, 2]), (2, [3]), (3, NULL)
+
+query
+EXPLAIN SELECT list_transform(l, lambda x: x + (1 + 2)) FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────╮
+│ Projections:                         │
+│ list_transform(l, lambda x: (x + 3)) │
+│ ~3 rows                              │
+╰───────────────────┬──────────────────╯
+╭─ SEQ_SCAN ────────┴──────────────────╮
+│ Table: lr                            │
+│ Type: Sequential Scan                │
+│ Projections: l                       │
+│ ~3 rows                              │
+╰──────────────────────────────────────╯
+
+query
+SELECT list_transform(l, lambda x: x + (1 + 2)) AS r FROM lr ORDER BY i
+----
+r
+{4,5}
+{6}
+NULL
+
+query
+EXPLAIN SELECT list_filter(l, lambda x: x > 1 + 1) FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections:                      │
+│ list_filter(l, lambda x: (x > 2)) │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ SEQ_SCAN ──────┴─────────────────╮
+│ Table: lr                         │
+│ Type: Sequential Scan             │
+│ Projections: l                    │
+│ ~3 rows                           │
+╰───────────────────────────────────╯
+
+query
+SELECT list_filter(l, lambda x: x > 1 + 1) AS r FROM lr ORDER BY i
+----
+r
+{}
+{3}
+NULL
+
+query
+EXPLAIN SELECT list_reduce(l, lambda a, b: a + b * (2 * 3)) FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────╮
+│ Projections:                               │
+│ list_reduce(l, lambda a, b: (a + (b * 6))) │
+│ ~3 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ SEQ_SCAN ───────────┴─────────────────────╮
+│ Table: lr                                  │
+│ Type: Sequential Scan                      │
+│ Projections: l                             │
+│ ~3 rows                                    │
+╰────────────────────────────────────────────╯
+
+query
+SELECT list_reduce(l, lambda a, b: a + b * (2 * 3)) AS r FROM lr ORDER BY i
+----
+r
+13
+3
+NULL
+
+query
+EXPLAIN SELECT list_transform([i], lambda x: x * x + x)[1] FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────╮
+│ Projections: (i * i) + i │
+│ ~3 rows                  │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: lr                │
+│ Type: Sequential Scan    │
+│ Projections: i           │
+│ ~3 rows                  │
+╰──────────────────────────╯
+
+query
+SELECT list_transform([i], lambda x: x * x + x)[1] AS r FROM lr ORDER BY i
+----
+r
+2
+6
+12
+
+query
+EXPLAIN SELECT list_transform([i + 1], lambda x: x * 2)[1] FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────╮
+│ Projections: (i + 1) * 2 │
+│ ~3 rows                  │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: lr                │
+│ Type: Sequential Scan    │
+│ Projections: i           │
+│ ~3 rows                  │
+╰──────────────────────────╯
+
+query
+SELECT list_transform([i + 1], lambda x: x * 2)[1] AS r FROM lr ORDER BY i
+----
+r
+4
+6
+8
+
+query
+EXPLAIN SELECT list_transform([i + 1], lambda x: x * x)[1] FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────╮
+│ Projections:                       │
+│ invoke(lambda x: (x * x), (i + 1)) │
+│ ~3 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ SEQ_SCAN ───────┴─────────────────╮
+│ Table: lr                          │
+│ Type: Sequential Scan              │
+│ Projections: i                     │
+│ ~3 rows                            │
+╰────────────────────────────────────╯
+
+query
+SELECT list_transform([i + 1], lambda x: x * x)[1] AS r FROM lr ORDER BY i
+----
+r
+4
+9
+16
+
+query
+EXPLAIN SELECT list_transform([[i, i + 1]], lambda v: v[1] * v[2])[1] FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────╮
+│ Projections: i * (i + 1) │
+│ ~3 rows                  │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: lr                │
+│ Type: Sequential Scan    │
+│ Projections: i           │
+│ ~3 rows                  │
+╰──────────────────────────╯
+
+query
+SELECT list_transform([[i, i + 1]], lambda v: v[1] * v[2])[1] AS r FROM lr ORDER BY i
+----
+r
+2
+6
+12
+
+query
+EXPLAIN SELECT list_transform([[2, i + 1]], lambda v: v[1] * v[1] + v[2] * v[2])[1] FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────╮
+│ Projections:                                   │
+│ invoke(lambda v_2: (4 + (v_2 * v_2)), (i + 1)) │
+│ ~3 rows                                        │
+╰────────────────────────┬───────────────────────╯
+╭─ SEQ_SCAN ─────────────┴───────────────────────╮
+│ Table: lr                                      │
+│ Type: Sequential Scan                          │
+│ Projections: i                                 │
+│ ~3 rows                                        │
+╰────────────────────────────────────────────────╯
+
+query
+SELECT list_transform([[2, i + 1]], lambda v: v[1] * v[1] + v[2] * v[2])[1] AS r FROM lr ORDER BY i
+----
+r
+8
+13
+20
+
+query
+EXPLAIN SELECT list_transform([{'x': i, 'y': i + 1}], lambda p: p.x * p.y + p.y)[1] FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────╮
+│ Projections:                                             │
+│ invoke(lambda p_1, p_2: ((p_1 * p_2) + p_2), x, (i + 1)) │
+│ ~3 rows                                                  │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴────────────────────────────╮
+│ Table: lr                                                │
+│ Type: Sequential Scan                                    │
+│ Projections: i                                           │
+│ ~3 rows                                                  │
+╰──────────────────────────────────────────────────────────╯
+
+query
+SELECT list_transform([{'x': i, 'y': i + 1}], lambda p: p.x * p.y + p.y)[1] AS r FROM lr ORDER BY i
+----
+r
+4
+9
+16
+
+query
+EXPLAIN SELECT list_transform([[i + 1, i + 2]], lambda v: v[1] * v[1])[1] FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────╮
+│ Projections:                             │
+│ invoke(lambda v_1: (v_1 * v_1), (i + 1)) │
+│ ~3 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ──────────┴────────────────────╮
+│ Table: lr                                │
+│ Type: Sequential Scan                    │
+│ Projections: i                           │
+│ ~3 rows                                  │
+╰──────────────────────────────────────────╯
+
+query
+SELECT list_transform([[i + 1, i + 2]], lambda v: v[1] * v[1])[1] AS r FROM lr ORDER BY i
+----
+r
+4
+9
+16
+
+query
+EXPLAIN SELECT list_transform([[i + 1, random()]], lambda v: v[1] * v[1])[1] FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────╮
+│ Projections:                                                            │
+│ invoke(lambda v_1, v_2: (v_1 * v_1), CAST((i + 1) AS DOUBLE), random()) │
+│ ~3 rows                                                                 │
+╰────────────────────────────────────┬────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────┴────────────────────────────────────╮
+│ Table: lr                                                               │
+│ Type: Sequential Scan                                                   │
+│ Projections: i                                                          │
+│ ~3 rows                                                                 │
+╰─────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT list_transform([[i + 1, random()]], lambda v: v[1] * v[1])[1] AS r FROM lr ORDER BY i
+----
+r
+4
+9
+16
+
+query
+EXPLAIN SELECT list_transform([list_transform([i + 1], lambda s: [s * 3, s * 4])[1]], lambda b: [1 + b[1], 2 + b[2]])[1] FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ invoke(lambda s: list_value((1 + (s * 3)), (2 + (s * 4))), (i + 1)) │
+│ ~3 rows                                                             │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴──────────────────────────────────╮
+│ Table: lr                                                           │
+│ Type: Sequential Scan                                               │
+│ Projections: i                                                      │
+│ ~3 rows                                                             │
+╰─────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT list_transform([list_transform([i + 1], lambda s: [s * 3, s * 4])[1]], lambda b: [1 + b[1], 2 + b[2]])[1] AS r FROM lr ORDER BY i
+----
+r
+{7,10}
+{10,14}
+{13,18}
+
+query
+EXPLAIN SELECT list_transform(l, lambda x: list_transform([x + i], lambda y: y * y)[1]) FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────╮
+│ Projections:                                                       │
+│ list_transform(l, lambda x: invoke(lambda y: (y * y), (x + i)), i) │
+│ ~3 rows                                                            │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────┴─────────────────────────────────╮
+│ Table: lr                                                          │
+│ Type: Sequential Scan                                              │
+│ Projections: l, i                                                  │
+│ ~3 rows                                                            │
+╰────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT list_transform(l, lambda x: list_transform([x + i], lambda y: y * y)[1]) AS r FROM lr ORDER BY i
+----
+r
+{4,9}
+{25}
+NULL
+
+query
+EXPLAIN SELECT list_transform([i, i + 1, i + 2], lambda x: x * x)[2] FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────╮
+│ Projections:                       │
+│ invoke(lambda x: (x * x), (i + 1)) │
+│ ~3 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ SEQ_SCAN ───────┴─────────────────╮
+│ Table: lr                          │
+│ Type: Sequential Scan              │
+│ Projections: i                     │
+│ ~3 rows                            │
+╰────────────────────────────────────╯
+
+query
+SELECT list_transform([i, i + 1, i + 2], lambda x: x * x)[2] AS r FROM lr ORDER BY i
+----
+r
+4
+9
+16
+
+query
+EXPLAIN SELECT list_transform([i, i + 1], lambda x: x * x) FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────╮
+│ Projections:                                              │
+│ list_transform(list_value(i, (i + 1)), lambda x: (x * x)) │
+│ ~3 rows                                                   │
+╰─────────────────────────────┬─────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────┴─────────────────────────────╮
+│ Table: lr                                                 │
+│ Type: Sequential Scan                                     │
+│ Projections: i                                            │
+│ ~3 rows                                                   │
+╰───────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT list_transform([i], lambda x, k: x * 10 + k) FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────╮
+│ Projections: list_value(((i * 10) + 1)) │
+│ ~3 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ─────────┴────────────────────╮
+│ Table: lr                               │
+│ Type: Sequential Scan                   │
+│ Projections: i                          │
+│ ~3 rows                                 │
+╰─────────────────────────────────────────╯
+
+query
+SELECT list_transform([i], lambda x, k: x * 10 + k) AS r FROM lr ORDER BY i
+----
+r
+{11}
+{21}
+{31}
+
+query
+EXPLAIN SELECT CASE WHEN i > 1 THEN list_transform([i, i + 1], lambda x: x * x) END FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                  │
+│ CASE  WHEN ((i > 1)) THEN (list_transform(list_value(i, (i + 1)), lambda x: (x * x))) ELSE NULL::BIGINT[] END │
+│ ~3 rows                                                                                                       │
+╰───────────────────────────────────────────────────────┬───────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────────────────┴───────────────────────────────────────────────────────╮
+│ Table: lr                                                                                                     │
+│ Type: Sequential Scan                                                                                         │
+│ Projections: i                                                                                                │
+│ ~3 rows                                                                                                       │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT CASE WHEN i > 1 THEN list_transform([i, i + 1], lambda x: x * x) END AS r FROM lr ORDER BY i
+----
+r
+NULL
+{4,9}
+{9,16}
+
+query
+EXPLAIN SELECT array_extract(list_transform([i, i + 1], lambda x: x * x), 2), list_extract(list_transform([i, i + 1], lambda x: x * 3), 1), list_transform([i, i + 1], lambda x: x * 5)[i] FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                 │
+│ invoke(lambda x: (x * x), (i + 1)), i * 3,                                   │
+│ array_extract(list_transform(list_value(i, (i + 1)), lambda x: (x * 5)), i)  │
+│ ~3 rows                                                                      │
+╰───────────────────────────────────────┬──────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────┴──────────────────────────────────────╮
+│ Table: lr                                                                    │
+│ Type: Sequential Scan                                                        │
+│ Projections: i                                                               │
+│ ~3 rows                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT array_extract(list_transform([i, i + 1], lambda x: x * x), 2) AS a, list_extract(list_transform([i, i + 1], lambda x: x * 3), 1) AS b, list_transform([i, i + 1], lambda x: x * 5)[i] AS c FROM lr ORDER BY i
+----
+a	b	c
+4	3	5
+9	6	15
+16	9	NULL
+
+query
+SELECT list_transform([], lambda x: x + 1) AS r
+----
+r
+{}
+
+statement ok
+CREATE MACRO lr_pick(p) AS p[1] * p[2]
+
+statement ok
+CREATE MACRO lr_pick_n(p, n) AS list_extract(p, 1) * p[n]
+
+query
+EXPLAIN SELECT lr_pick(list_reverse(l)), lr_pick_n([i, i + 1], i % 2 + 1) FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                                  │
+│ invoke(lambda 0_macro_argument_0_0: (array_extract(0_macro_argument_0_0, 1) * array_extract(0_macro_argument_0_0, 2)), array_slice(l, [], [], -1)),           │
+│ invoke(lambda 0_macro_argument_0_0: (list_extract(0_macro_argument_0_0, 1) * array_extract(0_macro_argument_0_0, ((i % 2) + 1))), list_value(i, (i + 1)), i)  │
+│ ~3 rows                                                                                                                                                       │
+╰───────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────╮
+│ Table: lr                                                                                                                                                     │
+│ Type: Sequential Scan                                                                                                                                         │
+│ Projections: l, i                                                                                                                                             │
+│ ~3 rows                                                                                                                                                       │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT lr_pick(list_reverse(l)) AS a, lr_pick_n([i, i + 1], i % 2 + 1) AS b FROM lr ORDER BY i
+----
+a	b
+2	2
+NULL	4
+NULL	12
+
+statement ok
+CREATE MACRO lr_any_above(x, l) AS x > 0 AND len(list_filter(l, lambda e: e > x)) > 0
+
+query
+EXPLAIN SELECT i FROM lr WHERE lr_any_above(i - 1, l)
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections: #0                                                                                                                                                         │
+│ ~1 row                                                                                                                                                                  │
+╰────────────────────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────╯
+╭─ FILTER ───────────────────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────╮
+│ Expression:                                                                                                                                                             │
+│ invoke(lambda 0_macro_argument_0_0: ((0_macro_argument_0_0 > 0) AND (len(list_filter(l, lambda e: (e > 0_macro_argument_0_0), 0_macro_argument_0_0)) > 0)), (i - 1), l) │
+│ ~1 row                                                                                                                                                                  │
+╰────────────────────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────╮
+│ Table: lr                                                                                                                                                               │
+│ Type: Sequential Scan                                                                                                                                                   │
+│ Projections: i, l                                                                                                                                                       │
+│ ~3 rows                                                                                                                                                                 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT i FROM lr WHERE lr_any_above(i - 1, l) ORDER BY i
+----
+i
+2
+
+query
+EXPLAIN SELECT i FROM lr WHERE invoke(lambda x: len(list_filter(l, lambda e: e > x)) > 0, 1)
+----
+QUERY PLAN
+╭─ SEQ_SCAN ────────────────────────────────────────────────────╮
+│ Table: lr                                                     │
+│ Type: Sequential Scan                                         │
+│ Projections: i                                                │
+│ Column Filter:                                                │
+│ len(list_filter(l, lambda e: (e > CAST(x AS BIGINT)), 1)) > 0 │
+│ ~1 row                                                        │
+╰───────────────────────────────────────────────────────────────╯
+
+query
+SELECT i FROM lr WHERE invoke(lambda x: len(list_filter(l, lambda e: e > x)) > 0, 1) ORDER BY i
+----
+i
+1
+2
+
+statement ok
+CREATE MACRO lr_case(x, y, f) AS CASE WHEN f THEN x + x ELSE y END
+
+query
+EXPLAIN SELECT lr_case(i + 1, l[1], true) FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                │
+│ invoke(lambda 0_macro_argument_0_0: (0_macro_argument_0_0 + 0_macro_argument_0_0), (i + 1)) │
+│ ~3 rows                                                                                     │
+╰──────────────────────────────────────────────┬──────────────────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────────────────┴──────────────────────────────────────────────╮
+│ Table: lr                                                                                   │
+│ Type: Sequential Scan                                                                       │
+│ Projections: i                                                                              │
+│ ~3 rows                                                                                     │
+╰─────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT lr_case(i + 1, l[1], true) AS r FROM lr ORDER BY i
+----
+r
+4
+6
+8
+
+statement ok
+CREATE MACRO lr_pair(y) AS [y, y + 1]
+
+statement ok
+CREATE MACRO lr_use(p, u, v) AS p[1] + p[2] + u + u + v + v
+
+statement ok
+CREATE FUNCTION lr_use_volatile(p bigint[], u double precision) RETURNS double precision LANGUAGE sql RETURN p[1] + p[2] + u - u
+
+query
+EXPLAIN SELECT lr_use(lr_pair(i * 10), i + 5, i + 5), lr_use_volatile(lr_pair(i * 10), random()) FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                │
+│ invoke(lambda 0_macro_argument_0_0: (((((0_macro_argument_0_0 + (0_macro_argument_0_0 + 1)) + #1) + #1) + #1) + #1), (i * 10), (i + 5)),    │
+│ invoke(lambda 0_macro_argument_0_0: ((CAST((0_macro_argument_0_0 + (0_macro_argument_0_0 + 1)) AS DOUBLE) + #1) - #1), (i * 10), random())  │
+│ ~3 rows                                                                                                                                     │
+╰──────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────╮
+│ Table: lr                                                                                                                                   │
+│ Type: Sequential Scan                                                                                                                       │
+│ Projections: i                                                                                                                              │
+│ ~3 rows                                                                                                                                     │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT lr_use(lr_pair(i * 10), i + 5, i + 5) AS a, lr_use_volatile(lr_pair(i * 10), random()) AS b FROM lr ORDER BY i
+----
+a	b
+45	21
+69	41
+93	61
+
+query
+EXPLAIN SELECT lr_use(lr_pair(i * 10), i * 10, i + 5) FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                                                │
+│ invoke(lambda 0_macro_argument_0_0: (((((0_macro_argument_0_0 + (0_macro_argument_0_0 + 1)) + 0_macro_argument_0_0) + 0_macro_argument_0_0) + #1) + #1), (i * 10), (i + 5)) │
+│ ~3 rows                                                                                                                                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────╮
+│ Table: lr                                                                                                                                                                   │
+│ Type: Sequential Scan                                                                                                                                                       │
+│ Projections: i                                                                                                                                                              │
+│ ~3 rows                                                                                                                                                                     │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT lr_use(lr_pair(i * 10), i * 10, i + 5) AS r FROM lr ORDER BY i
+----
+r
+53
+95
+137
+
+query
+EXPLAIN SELECT lr_use(lr_pair(i * 10), i + 5, i + 6) FROM lr
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                                                                                     │
+│ invoke(lambda 0_macro_argument_0_0: (((((0_macro_argument_0_0 + (0_macro_argument_0_0 + 1)) + #1) + #1) + #2) + #2), (i * 10), (i + 5), (i + 6)) │
+│ ~3 rows                                                                                                                                          │
+╰─────────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────╮
+│ Table: lr                                                                                                                                        │
+│ Type: Sequential Scan                                                                                                                            │
+│ Projections: i                                                                                                                                   │
+│ ~3 rows                                                                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT lr_use(lr_pair(i * 10), i + 5, i + 6) AS r FROM lr ORDER BY i
+----
+r
+47
+71
+95
+
+statement ok
+DROP FUNCTION lr_use_volatile
+
+statement ok
+DROP MACRO lr_use
+
+statement ok
+DROP MACRO lr_pair
+
+statement ok
+DROP MACRO lr_case
+
+statement ok
+DROP MACRO lr_any_above
+
+statement ok
+DROP MACRO lr_pick_n
+
+statement ok
+DROP MACRO lr_pick
+
+statement ok
+DROP TABLE lr

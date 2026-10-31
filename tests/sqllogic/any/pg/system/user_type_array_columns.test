@@ -57,3 +57,20 @@ DROP TYPE uta_pair;
 
 statement ok
 DROP TYPE uta_mood;
+
+
+statement ok
+CREATE TABLE uta_fixed (a int[3], b int[3][2], c text[]);
+
+
+query
+SELECT attname, atttypid::regtype AS type, attndims FROM pg_attribute WHERE attrelid = 'uta_fixed'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname	type	attndims
+a	integer[]	1
+b	integer[]	2
+c	text[]	1
+
+
+statement ok
+DROP TABLE uta_fixed;

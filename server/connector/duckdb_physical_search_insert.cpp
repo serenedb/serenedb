@@ -23,24 +23,21 @@
 #include <atomic>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
-#include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <shared_mutex>
 #include <span>
 #include <string>
 #include <utility>
@@ -67,8 +64,6 @@ struct SearchInsertGlobalState final : duckdb::GlobalSinkState {
   query::Transaction* sdb_txn = nullptr;
   std::vector<ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
-  duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;
-  std::shared_lock<std::shared_mutex> table_lock;
   uint64_t write_buffer_max_bytes = 0;
 
   std::atomic<bool> has_local_state = false;
@@ -132,7 +127,6 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->search_table = table->Storage();
   state->catalog = &table->catalog;
   state->table_id = table->oid;
-  state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
   // Before any sink reads the shard's index config, so a rebuild can tell
   // that this transaction predates a config it publishes.
   conn_ctx.SearchTxn().RegisterWriter(state->search_table, *table);
@@ -143,8 +137,6 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
     state->column_ids.emplace_back(TableColumnId(column));
   }
   state->chunk_types = columns.GetColumnTypes();
-  state->generated_pk_seq = table->GeneratedPkSequence(context);
-  SDB_ASSERT(state->generated_pk_seq);
   state->write_buffer_max_bytes =
     duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size;
 
@@ -193,13 +185,9 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   auto& search_txn = gstate.sdb_txn->SearchTxn();
-  const uint64_t pk_base = gstate.generated_pk_seq->NextValues(
-    duckdb::DuckTransaction::Get(context.client,
-                                 gstate.generated_pk_seq->catalog),
-    num_rows);
 
   if (lstate->bulk) {
-    WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids, pk_base,
+    WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids,
                            gstate.table_id, context.client);
   } else {
     // Buffer only. Nothing reaches iresearch until the buffer overruns or the
@@ -209,7 +197,7 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     search_txn.AddInlineInsertChunk(
       gstate.search_table,
       duckdb::BufferManager::GetBufferManager(context.client),
-      gstate.chunk_types, gstate.column_ids, *gstate.catalog, chunk, pk_base);
+      gstate.chunk_types, gstate.column_ids, *gstate.catalog, chunk);
 
     if (search_txn.BufferedBytes(gstate.table_id) >
         gstate.write_buffer_max_bytes) {
@@ -286,9 +274,6 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
 
   if (_ctas_info) {
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
-  }
-  if (gstate.table_lock.owns_lock()) {
-    gstate.table_lock.unlock();
   }
   return duckdb::SinkFinalizeType::READY;
 }

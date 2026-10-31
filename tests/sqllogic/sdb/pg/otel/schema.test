@@ -751,6 +751,20 @@ ts	count	sum	scale	zero_count	positive_offset	positive_bucket_counts	negative_of
 1788868800000000000	9	12.5	-3	1	5	{1,2,2}	-7	{1,0,2}	0.1	4	Delta	1	{"rpc.system":"grpc"}	[{"filtered_attributes":{"peer":"10.0.0.7"},"span_id":"00f067aa0ba902b7","timestamp":"2026-09-08T12:00:00.000000001Z","trace_id":"1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6","value":3.0}]
 1788868800000000000	9	12.5	-3	1	5	{1,2,2}	-7	{1,0,2}	0.1	4	Delta	1	{"rpc.system":"grpc"}	[{"filtered_attributes":{"peer":"10.0.0.7"},"span_id":"00f067aa0ba902b7","timestamp":"2026-09-08T12:00:00.000000001Z","trace_id":"1bc2d3e4f5a6b7c8d9e0f1a2b3c4d5e6","value":3.0}]
 
+skipif pg-wire-extended
+query
+SELECT metric_name, value, attributes ->> 'queue' AS queue, flags
+FROM otel_metrics_gauge WHERE service_name = 'payments' ORDER BY 3;
+----
+metric_name	value	queue	flags
+queue.depth	-9.007199254740992e+15	a	0
+queue.depth	-9.007199254740992e+15	a	0
+queue.depth	0.5	b	0
+queue.depth	0.5	b	0
+queue.depth	0	c	1
+queue.depth	0	c	1
+
+onlyif pg-wire-extended
 query
 SELECT metric_name, value, attributes ->> 'queue' AS queue, flags
 FROM otel_metrics_gauge WHERE service_name = 'payments' ORDER BY 3;

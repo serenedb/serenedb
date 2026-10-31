@@ -13,12 +13,11 @@ control substitution on
 # reason inverted_index_hnsw_small.test pins quant = 'none'.
 # ============================================================================
 
-# TurboQuant is coarse enough that a pool of k cannot rank it deterministically,
-# and `auto` gives it a factor of one. This file is about the codes, not about
-# what the default spends, so the pool is pinned.
+# This file is about the codes, not about what the default spends, so the width
+# is pinned to re-score every candidate the search finds.
 
 statement ok
-SET sdb_ann_oversample = 4
+SET sdb_ann_rescore_width = 100
 
 statement ok
 CREATE TABLE hnsw_tq (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
@@ -159,7 +158,7 @@ statement ok
 VACUUM (REFRESH_TABLE) hnsw_tq15;
 
 statement ok
-SET sdb_ann_oversample = 32
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT pk FROM hnsw_tq15_idx
@@ -180,7 +179,7 @@ pk
 40
 
 statement ok
-SET sdb_ann_oversample = 4
+SET sdb_ann_rescore_width = 100
 
 statement ok
 CREATE TABLE hnsw_tq15_ip (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
@@ -200,7 +199,7 @@ statement ok
 VACUUM (REFRESH_TABLE) hnsw_tq15_ip;
 
 statement ok
-SET sdb_ann_oversample = 32
+SET sdb_ann_rescore_width = 100
 
 query
 SELECT pk FROM hnsw_tq15_ip_idx
@@ -212,7 +211,7 @@ pk
 42
 
 statement ok
-SET sdb_ann_oversample = 4
+SET sdb_ann_rescore_width = 100
 
 statement ok
 DROP TABLE hnsw_tq15;

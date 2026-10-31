@@ -24,6 +24,7 @@
 
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <iresearch/utils/assert.hpp>
 
 namespace sdb::pg {
 
@@ -143,6 +144,27 @@ void ProgressSource::EndQuery() {
   query_start_us.store(0, std::memory_order_relaxed);
 }
 
+namespace {
+
+void AddSessionStats(DatabaseStats& stats, const ProgressSource& source,
+                     int64_t until_us) {
+  if (!source.client_backend) {
+    return;
+  }
+  ++stats.sessions;
+  stats.session_time_us +=
+    std::max<int64_t>(until_us - source.backend_start_us, 0);
+}
+
+void TakeTransactions(DatabaseStats& stats, ProgressSource& source) {
+  stats.xact_commit +=
+    source.xact_commit.exchange(0, std::memory_order_relaxed);
+  stats.xact_rollback +=
+    source.xact_rollback.exchange(0, std::memory_order_relaxed);
+}
+
+}  // namespace
+
 void ProgressSource::Detach() {
   absl::MutexLock lock{&mu};
   ctx = nullptr;
@@ -153,9 +175,70 @@ void ProgressRegistry::Register(std::shared_ptr<ProgressSource> source) {
   _sources.emplace(source.get(), std::move(source));
 }
 
-void ProgressRegistry::Unregister(const ProgressSource* source) {
+void ProgressRegistry::Unregister(ProgressSource* source) {
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
   absl::MutexLock lock{&_mu};
+  auto& stats = _ended_stats[source->datid];
+  TakeTransactions(stats, *source);
+  AddSessionStats(stats, *source, now);
   _sources.erase(source);
+}
+
+void ProgressRegistry::CollectTransactions(ProgressSource& source) {
+  absl::MutexLock lock{&_mu};
+  SDB_ASSERT(!_sources.contains(&source));
+  if (const auto it = _ended_stats.find(source.datid);
+      it != _ended_stats.end()) {
+    TakeTransactions(it->second, source);
+  }
+}
+
+DatabaseStats ProgressRegistry::GetDatabaseStats(int64_t datid) const {
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
+  absl::MutexLock lock{&_mu};
+  DatabaseStats stats;
+  if (const auto it = _ended_stats.find(datid); it != _ended_stats.end()) {
+    stats = it->second;
+  }
+  for (const auto& [_, source] : _sources) {
+    if (source->datid == datid) {
+      stats.xact_commit += source->xact_commit.load(std::memory_order_relaxed);
+      stats.xact_rollback +=
+        source->xact_rollback.load(std::memory_order_relaxed);
+      AddSessionStats(stats, *source, now);
+    }
+  }
+  return stats;
+}
+
+void ProgressRegistry::ForgetDatabase(int64_t datid) {
+  absl::MutexLock lock{&_mu};
+  _ended_stats.erase(datid);
+}
+
+ProgressRegistration::ProgressRegistration(
+  std::shared_ptr<ProgressSource> source)
+  : _source{std::move(source)} {
+  ProgressRegistry::Instance().Register(_source);
+}
+
+ProgressRegistration& ProgressRegistration::operator=(
+  ProgressRegistration&& other) noexcept {
+  if (this != &other) {
+    Close();
+    _source = std::move(other._source);
+  }
+  return *this;
+}
+
+ProgressRegistration::~ProgressRegistration() { Close(); }
+
+void ProgressRegistration::Close() noexcept {
+  if (_source) {
+    _source->Detach();
+    ProgressRegistry::Instance().Unregister(_source.get());
+    _source.reset();
+  }
 }
 
 size_t ProgressRegistry::OtherSessions(int64_t datid, int32_t pid,

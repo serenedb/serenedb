@@ -1,0 +1,292 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE rp (id BIGINT, v TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE rp_ref (id BIGINT, v TEXT);
+
+statement ok
+INSERT INTO rp SELECT i, 'a' FROM generate_series(0, 9999) g(i);
+
+statement ok
+INSERT INTO rp_ref SELECT i, 'a' FROM generate_series(0, 9999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rp;
+
+statement ok
+INSERT INTO rp SELECT i, 'b' FROM generate_series(10000, 19999) g(i);
+
+statement ok
+INSERT INTO rp_ref SELECT i, 'b' FROM generate_series(10000, 19999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rp;
+
+statement ok
+INSERT INTO rp SELECT i, 'c' FROM generate_series(20000, 29999) g(i);
+
+statement ok
+INSERT INTO rp_ref SELECT i, 'c' FROM generate_series(20000, 29999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rp;
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM rp WHERE id BETWEEN 5000 AND 24999;
+
+statement ok
+DELETE FROM rp_ref WHERE id BETWEEN 5000 AND 24999;
+
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+statement error connection closed
+COMMIT;
+
+connection after_long_run
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM rp;
+----
+n
+10000
+
+connection after_long_run
+statement ok
+VACUUM (REFRESH_TABLE) rp;
+
+connection after_long_run
+query
+SELECT (SELECT count(*) FROM (SELECT id, v FROM rp EXCEPT ALL SELECT id, v FROM rp_ref)) + (SELECT count(*) FROM (SELECT id, v FROM rp_ref EXCEPT ALL SELECT id, v FROM rp)) AS diff;
+----
+diff
+0
+
+connection after_long_run
+statement ok
+BEGIN;
+
+connection after_long_run
+statement ok
+DELETE FROM rp WHERE id % 10 = 3;
+
+connection after_long_run
+statement ok
+DELETE FROM rp_ref WHERE id % 10 = 3;
+
+connection after_long_run
+statement ok
+COMMIT;
+
+connection after_long_run
+statement ok
+BEGIN;
+
+connection after_long_run
+statement ok
+DELETE FROM rp WHERE id % 5 = 3;
+
+connection after_long_run
+statement ok
+DELETE FROM rp_ref WHERE id % 5 = 3;
+
+connection after_long_run
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection after_long_run
+statement error connection closed
+COMMIT;
+
+connection after_overlap
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(*) FILTER (WHERE id % 5 = 3) AS left FROM rp;
+----
+n	left
+8000	0
+
+connection after_overlap
+statement ok
+VACUUM (REFRESH_TABLE) rp;
+
+connection after_overlap
+query
+SELECT (SELECT count(*) FROM (SELECT id, v FROM rp EXCEPT ALL SELECT id, v FROM rp_ref)) + (SELECT count(*) FROM (SELECT id, v FROM rp_ref EXCEPT ALL SELECT id, v FROM rp)) AS diff;
+----
+diff
+0
+
+connection after_overlap
+statement ok
+BEGIN;
+
+connection after_overlap
+statement ok
+UPDATE rp SET v = 'u' WHERE id < 1000;
+
+connection after_overlap
+statement ok
+UPDATE rp_ref SET v = 'u' WHERE id < 1000;
+
+connection after_overlap
+statement ok
+DELETE FROM rp WHERE id >= 29000;
+
+connection after_overlap
+statement ok
+DELETE FROM rp_ref WHERE id >= 29000;
+
+connection after_overlap
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection after_overlap
+statement error connection closed
+COMMIT;
+
+connection after_update
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(*) FILTER (WHERE v = 'u') AS u, count(DISTINCT id) AS ids FROM rp;
+----
+n	u	ids
+7200	800	7200
+
+connection after_update
+statement ok
+VACUUM (REFRESH_TABLE) rp;
+
+connection after_update
+query
+SELECT (SELECT count(*) FROM (SELECT id, v FROM rp EXCEPT ALL SELECT id, v FROM rp_ref)) + (SELECT count(*) FROM (SELECT id, v FROM rp_ref EXCEPT ALL SELECT id, v FROM rp)) AS diff;
+----
+diff
+0
+
+connection racer
+statement ok
+BEGIN;
+
+connection racer
+statement ok
+UPDATE rp SET v = 'r' WHERE id % 7 = 2;
+
+connection racer
+statement ok
+UPDATE rp_ref SET v = 'r' WHERE id % 7 = 2;
+
+connection compactor
+statement ok
+VACUUM (COMPACT_TABLE) rp;
+
+connection compactor
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('rp') WHERE column_name = 'id';
+----
+segments
+1
+
+connection racer
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection racer
+statement error connection closed
+COMMIT;
+
+connection after_race
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(DISTINCT id) AS ids FROM rp;
+----
+n	ids
+7200	7200
+
+connection after_race
+statement ok
+VACUUM (REFRESH_TABLE) rp;
+
+connection after_race
+query
+SELECT (SELECT count(*) FROM (SELECT id, v FROM rp EXCEPT ALL SELECT id, v FROM rp_ref)) + (SELECT count(*) FROM (SELECT id, v FROM rp_ref EXCEPT ALL SELECT id, v FROM rp)) AS diff;
+----
+diff
+0
+
+connection after_race
+statement ok
+BEGIN;
+
+connection after_race
+statement ok
+DELETE FROM rp WHERE id % 3 = 0;
+
+connection after_race
+statement ok
+DELETE FROM rp_ref WHERE id % 3 = 0;
+
+connection after_race
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection after_race
+statement error connection closed
+COMMIT;
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM rp WHERE id % 3 = 0;
+----
+n
+0
+
+connection after_second_crash
+statement ok
+BEGIN;
+
+connection after_second_crash
+statement ok
+DELETE FROM rp WHERE id % 11 = 4;
+
+connection after_second_crash
+statement ok
+DELETE FROM rp_ref WHERE id % 11 = 4;
+
+connection after_second_crash
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection after_second_crash
+statement error connection closed
+COMMIT;
+
+connection after_third_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM rp WHERE id % 3 = 0 OR id % 11 = 4;
+----
+n
+0
+
+connection after_third_crash
+statement ok
+VACUUM (REFRESH_TABLE) rp;
+
+connection after_third_crash
+query
+SELECT (SELECT count(*) FROM (SELECT id, v FROM rp EXCEPT ALL SELECT id, v FROM rp_ref)) + (SELECT count(*) FROM (SELECT id, v FROM rp_ref EXCEPT ALL SELECT id, v FROM rp)) AS diff;
+----
+diff
+0
+
+connection after_third_crash
+statement ok
+DROP TABLE rp;
+
+connection after_third_crash
+statement ok
+DROP TABLE rp_ref;

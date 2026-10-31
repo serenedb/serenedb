@@ -27,7 +27,7 @@ fork introduces, on our version branch.
 
 # Layout
 
-50 submodules, all serenedb forks except `yaclib`.
+51 submodules, all serenedb forks except `yaclib` and `cmocka`.
 
 7 wrappers: `azure-cmake`, `freetype-cmake`, `jemalloc-cmake`, `libstemmer_c-cmake`,
 `libxml2-cmake`, `openssl-cmake`, `podofo-cmake`. Three of them carry

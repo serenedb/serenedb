@@ -84,7 +84,7 @@ The `RESET` statement changes the given SereneDB configuration option to the def
 
 Configuration options can have different scopes:
 
--   `GLOBAL`: Configuration value is used (or reset) across the entire SereneDB instance.
+-   `GLOBAL`: Configuration value is used (or reset) across the entire SereneDB instance. Only a superuser can set or reset a `GLOBAL` value, also through a plain `SET` or `RESET` of an option whose default scope is `GLOBAL`.
 -   `SESSION`: Configuration value is used (or reset) only for the current session attached to a SereneDB instance.
 -   `LOCAL`: Configuration value is used only until the current transaction ends, then the session value returns. `SET LOCAL` outside a transaction block is an error.
 

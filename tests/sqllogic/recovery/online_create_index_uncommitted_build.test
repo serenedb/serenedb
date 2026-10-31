@@ -1,0 +1,80 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE ocu (id BIGINT, msg TEXT);
+
+
+statement ok
+INSERT INTO ocu SELECT i, 'm' || (i % 7) FROM range(100000) t(i);
+
+
+statement ok
+SET sdb_faults = 'pause_create_index_mid_build';
+
+
+connection builder
+statement async error
+CREATE INDEX ocu_idx ON ocu USING inverted (id, msg);
+----
+db error: ERROR: failed to commit index 'ocu_idx': the refresh did not commit the build
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM pg_stat_progress_create_index
+WHERE relid = 'ocu'::regclass AND phase = 'building index';
+----
+count
+1
+
+
+connection default
+statement ok
+SET sdb_faults = 'IndexWriter::Transaction::Commit';
+
+
+connection default
+statement ok retry 20 backoff 500ms
+INSERT INTO ocu VALUES (100000, 'fresh');
+
+
+connection default
+statement ok
+SET sdb_faults = '-IndexWriter::Transaction::Commit';
+
+
+connection default
+statement ok
+SET sdb_faults = '-pause_create_index_mid_build';
+
+
+wait
+
+
+connection default
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ocu_idx';
+----
+n
+0
+
+
+connection default
+statement ok
+CREATE INDEX ocu_idx ON ocu USING inverted (id, msg);
+
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) ocu;
+
+
+connection default
+query
+SELECT (SELECT count(*) FROM ocu_idx) AS total,
+       (SELECT count(*) FROM ocu_idx WHERE msg @@ 'fresh') AS fresh;
+----
+total	fresh
+100001	1

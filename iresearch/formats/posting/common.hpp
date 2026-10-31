@@ -93,18 +93,6 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
 
 inline constexpr uint64_t kMaxPrefetch = uint64_t{16} << 20;
 
-template<typename Input>
-void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
-  if (in.Warm(offset, size)) {
-    file_utils::PollResidency();
-    return;
-  }
-  if (size <= file_utils::kPrefetchChunk || !in.Resident(offset, size)) {
-    in.Prefetch(offset, size);
-  }
-  in.MarkWarm(offset, size);
-}
-
 inline uint64_t DocExtent(const PostingMeta& meta) noexcept {
   if (meta.inline_size != 0 || meta.docs_count <= 1) {
     return 0;
@@ -128,7 +116,7 @@ inline uint64_t PayExtent(const PostingMeta& meta) noexcept {
 template<typename Input>
 void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
   if (const auto extent = DocExtent(meta); extent > file_utils::kPage) {
-    Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch));
+    file_utils::Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch));
   }
 }
 
@@ -166,7 +154,7 @@ class GrowingHint {
       return;
     }
     const auto len = std::min(_window, _stop - from);
-    Hint(in, from, len);
+    file_utils::Hint(in, from, len);
     _end = from + len;
     _window = std::min(2 * _window, kLast);
   }
@@ -221,7 +209,7 @@ inline IRS_FORCE_INLINE void ClearBitRange(uint64_t* IRS_RESTRICT words,
 
 template<typename Merge>
 IRS_FORCE_INLINE void MergeBitsetAt(uint64_t* IRS_RESTRICT dst, uint64_t begin,
-                                    const uint64_t* IRS_RESTRICT src,
+                                    const UnalignedWord* IRS_RESTRICT src,
                                     uint32_t words, uint64_t last,
                                     Merge&& merge) noexcept {
   SDB_ASSERT(words != 0);
@@ -251,7 +239,7 @@ IRS_FORCE_INLINE void MergeBitsetAt(uint64_t* IRS_RESTRICT dst, uint64_t begin,
 
 inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
                                         uint64_t begin,
-                                        const uint64_t* IRS_RESTRICT src,
+                                        const UnalignedWord* IRS_RESTRICT src,
                                         uint32_t words,
                                         uint64_t last) noexcept {
   MergeBitsetAt(dst, begin, src, words, last,
@@ -259,11 +247,10 @@ inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
                   IRS_FORCE_INLINE { word |= bits; });
 }
 
-inline IRS_FORCE_INLINE void AndNotBitsetAt(uint64_t* IRS_RESTRICT dst,
-                                            uint64_t begin,
-                                            const uint64_t* IRS_RESTRICT src,
-                                            uint32_t words,
-                                            uint64_t last) noexcept {
+inline IRS_FORCE_INLINE void AndNotBitsetAt(
+  uint64_t* IRS_RESTRICT dst, uint64_t begin,
+  const UnalignedWord* IRS_RESTRICT src, uint32_t words,
+  uint64_t last) noexcept {
   MergeBitsetAt(dst, begin, src, words, last,
                 [](uint64_t& word, uint64_t bits)
                   IRS_FORCE_INLINE { word &= ~bits; });

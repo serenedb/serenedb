@@ -28,11 +28,11 @@
 
 #include "connector/column_id.h"
 #include "connector/functions/vector.h"
-#include "connector/pg_logical_types.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/scan/scan_function.h"
 #include "connector/search_filter_printer.hpp"
 #include "connector/term_dict.h"
+#include "pg/types/logical.h"
 #include "search/scorer_options.h"
 
 namespace sdb::connector {
@@ -217,10 +217,13 @@ std::string ProjectionDisplayName(const ScanBindData& bind,
     return "tableoid";
   }
   if (col_id == kColumnIdentifierGeneratedPk) {
-    return "generated_pk";
+    return "pk";
   }
   if (col_id == kColumnIdentifierPkRowNumber) {
     return "row_number";
+  }
+  if (col_id == kColumnIdentifierDocAddress) {
+    return bind.relation.IsSearchTable() ? "rowid" : "iresearch_pk";
   }
   return absl::StrCat("column_", col_id);
 }
@@ -242,8 +245,10 @@ bool ProjectionIsFromIndex(const ScanBindData& bind,
 bool ProjectionIsVirtual(const ScanBindData& bind,
                          const duckdb::ColumnIndex& column_index) {
   const auto col_id = column_index.GetPrimaryIndex();
-  if (col_id >= duckdb::VIRTUAL_COLUMN_START ||
-      col_id >= bind.columns.ids.size()) {
+  if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
+    return true;
+  }
+  if (col_id >= bind.columns.ids.size()) {
     return false;
   }
   const auto catalog_col_id = bind.columns.ids[col_id];
@@ -305,6 +310,45 @@ std::string FormatProjections(const std::vector<ProjectionEntry>& entries,
   return out;
 }
 
+struct Projections {
+  std::vector<ProjectionEntry> entries;
+  bool has_index = false;
+  bool has_lookup = false;
+};
+
+Projections CollectProjections(
+  const ScanBindData& bind, const duckdb::TableFunctionToStringInput& input) {
+  Projections result{.entries = BuildProjectionEntries(bind, input)};
+  for (const auto& e : result.entries) {
+    if (!e.is_virtual) {
+      (e.from_index ? result.has_index : result.has_lookup) = true;
+    }
+  }
+  return result;
+}
+
+void AppendLookup(
+  const ScanBindData& bind, const Projections& projections, bool count_only,
+  bool has_lookup_filter,
+  duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) {
+  const bool suppress_lookup =
+    bind.relation.kind == ScanEntryKind::InvertedIndex && !has_lookup_filter &&
+    (count_only || (!projections.entries.empty() && !projections.has_lookup));
+  if (!bind.lookup.label.empty() && !suppress_lookup) {
+    out.insert("Lookup", bind.lookup.label);
+  }
+}
+
+void AppendProjections(
+  const Projections& projections,
+  duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) {
+  if (!projections.entries.empty()) {
+    out.insert("Projections", FormatProjections(projections.entries,
+                                                projections.has_index &&
+                                                  projections.has_lookup));
+  }
+}
+
 duckdb::ExplainNode TableFilterNode(std::span<const DeferredCheck> checks,
                                     const irs::FieldNameResolver& name_of,
                                     const irs::FieldKindResolver& kind_of) {
@@ -343,16 +387,19 @@ void ScanBindData::AppendSummary(
     out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
                                  *search.filter, name_of, kind_of)));
   }
+  const auto rows_text = [](std::span<const RowFilter> rows) {
+    return absl::StrJoin(rows | std::views::transform([](const RowFilter& row) {
+                           return duckdb::ExpressionFilter::GetExpressionFilter(
+                                    *row.filter, "AppendSummary")
+                             .expr->ToString();
+                         }),
+                         "\n");
+  };
+  if (!search.duals.empty()) {
+    out.insert("Index or Column Filter", rows_text(search.duals));
+  }
   if (!search.row_filters.empty()) {
-    out.insert(
-      "Row Filter",
-      absl::StrJoin(
-        search.row_filters | std::views::transform([](const RowFilter& row) {
-          return duckdb::ExpressionFilter::GetExpressionFilter(*row.filter,
-                                                               "AppendSummary")
-            .expr->ToString();
-        }),
-        "\n"));
+    out.insert("Row Filter", rows_text(search.row_filters));
   }
   if (!search.deferred.empty()) {
     out.insert("Table Filter", duckdb::ExplainValue(TableFilterNode(
@@ -433,19 +480,7 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
   }
   auto& bind = input.bind_data->Cast<ScanBindData>();
   result.insert("Index", std::string{bind.RelationName()});
-  const auto entries = BuildProjectionEntries(bind, input);
-  bool has_index = false;
-  bool has_lookup = false;
-  for (const auto& e : entries) {
-    if (e.is_virtual) {
-      continue;
-    }
-    if (e.from_index) {
-      has_index = true;
-    } else {
-      has_lookup = true;
-    }
-  }
+  const auto projections = CollectProjections(bind, input);
   bool count_only = input.projected_column_ids;
   if (count_only) {
     const auto& column_ids = *input.projected_column_ids;
@@ -487,12 +522,7 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
       }
     }
   }
-  const bool suppress_lookup =
-    bind.relation.kind == ScanEntryKind::InvertedIndex && !has_lookup_filter &&
-    (count_only || (!entries.empty() && !has_lookup));
-  if (!bind.lookup.label.empty() && !suppress_lookup) {
-    result.insert("Lookup", bind.lookup.label);
-  }
+  AppendLookup(bind, projections, count_only, has_lookup_filter, result);
   bind.AppendSummary(result);
   if (bind.score.static_floor > std::numeric_limits<float>::lowest() &&
       (bind.score.HasTopK() || bind.score.text)) {
@@ -501,10 +531,18 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
   if (count_only) {
     result.insert("Output", "row-count only");
   }
-  if (!entries.empty()) {
-    const bool annotate = has_index && has_lookup;
-    result.insert("Projections", FormatProjections(entries, annotate));
-  }
+  AppendProjections(projections, result);
+  return result;
+}
+
+duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>
+IndexLookupToStringValue(duckdb::TableFunctionToStringInput& input) {
+  duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> result;
+  const auto& bind = input.bind_data->Cast<ScanBindData>();
+  result.insert("Index", std::string{bind.RelationName()});
+  const auto projections = CollectProjections(bind, input);
+  AppendLookup(bind, projections, false, false, result);
+  AppendProjections(projections, result);
   return result;
 }
 

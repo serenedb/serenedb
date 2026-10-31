@@ -142,6 +142,7 @@ std::string PhrasesText(doc_id_t i) {
       }
     }
   };
+  repeat(39, 30, "club");
   repeat(31, 2, "harbor town");
   repeat(32, 600, "town");
   repeat(33, 5, "medal of honor");
@@ -317,6 +318,34 @@ class PrunedTopTest : public tests::IndexTestBase {
       group->SetMinShouldMatch(1);
       filter.Add(std::move(group), irs::Occur::Must);
     }
+    CheckRanking(filter);
+  }
+
+  struct Mixed {
+    std::vector<std::vector<std::string_view>> phrases;
+    std::vector<std::string_view> terms;
+    std::vector<std::string_view> excluded;
+  };
+
+  void CheckMixed(const Mixed& shape, irs::Occur occur) {
+    irs::BooleanFilter filter;
+    std::vector<std::string> trace;
+    for (const auto& parts : shape.phrases) {
+      filter.Add(PhraseOf(parts), occur);
+      trace.push_back(absl::StrCat("\"", absl::StrJoin(parts, " "), "\""));
+    }
+    for (const auto term : shape.terms) {
+      filter.Add(Clause(term), occur);
+      trace.emplace_back(term);
+    }
+    for (const auto term : shape.excluded) {
+      filter.Add(Clause(term), irs::Occur::MustNot);
+      trace.push_back(absl::StrCat("-", term));
+    }
+    if (occur == irs::Occur::Should) {
+      filter.SetMinShouldMatch(1);
+    }
+    SCOPED_TRACE(absl::StrJoin(trace, " "));
     CheckRanking(filter);
   }
 
@@ -527,12 +556,7 @@ TEST_P(PrunedTopTest, phrases_bound_candidates_before_reading_dense_terms) {
 
 TEST_P(PrunedTopTest, unions_with_phrases) {
   Build(PhrasesText);
-  struct Union {
-    std::vector<std::vector<std::string_view>> phrases;
-    std::vector<std::string_view> terms;
-    std::vector<std::string_view> excluded;
-  };
-  for (const auto& shape : std::vector<Union>{
+  for (const auto& shape : std::vector<Mixed>{
          {{{"harbor", "town"}}, {"of"}, {}},
          {{{"medal", "of", "honor"}, {"harbor", "town"}}, {"town"}, {}},
          {{{"visit", "port*"}}, {"pad"}, {}},
@@ -540,23 +564,21 @@ TEST_P(PrunedTopTest, unions_with_phrases) {
          {{{"harb*", "town"}}, {"of", "medal"}, {}},
          {{{"harbor", "town"}}, {"of", "honor"}, {"medal"}},
        }) {
-    irs::BooleanFilter filter;
-    std::vector<std::string> trace;
-    for (const auto& parts : shape.phrases) {
-      filter.Add(PhraseOf(parts), irs::Occur::Should);
-      trace.push_back(absl::StrCat("\"", absl::StrJoin(parts, " "), "\""));
-    }
-    for (const auto term : shape.terms) {
-      filter.Add(Clause(term), irs::Occur::Should);
-      trace.emplace_back(term);
-    }
-    for (const auto term : shape.excluded) {
-      filter.Add(Clause(term), irs::Occur::MustNot);
-      trace.push_back(absl::StrCat("-", term));
-    }
-    filter.SetMinShouldMatch(1);
-    SCOPED_TRACE(absl::StrJoin(trace, " "));
-    CheckRanking(filter);
+    CheckMixed(shape, irs::Occur::Should);
+  }
+}
+
+TEST_P(PrunedTopTest, conjunctions_with_phrases) {
+  Build(PhrasesText);
+  for (const auto& shape : std::vector<Mixed>{
+         {{{"town", "of"}}, {"club"}, {}},
+         {{{"town", "of"}}, {"club", "pad"}, {}},
+         {{{"town", "of"}}, {"club"}, {"harbor"}},
+         {{{"town", "port*"}}, {"club"}, {}},
+         {{{"harbor", "town"}}, {"of"}, {}},
+         {{{"medal", "of", "honor"}}, {"town"}, {}},
+       }) {
+    CheckMixed(shape, irs::Occur::Must);
   }
 }
 

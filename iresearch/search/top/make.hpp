@@ -38,6 +38,7 @@
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/top/posting_pruned_disj.hpp"
+#include "iresearch/search/top/pruned_clause.hpp"
 #include "iresearch/search/top/pruned_disjunction.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/search/top/union_member.hpp"
@@ -87,6 +88,12 @@ template<irs::detail::PhraseMatch M, typename Query>
 UnionMember::ptr MakePhraseMember(const Query& query, const Context& ctx);
 
 UnionMember::ptr MakeUnionMember(const QueryBuilder& query, const Context& ctx);
+
+template<irs::detail::PhraseMatch M, typename Query>
+PrunedClause::ptr MakePhraseClause(const Query& query, const Context& ctx);
+
+PrunedClause::ptr MakeConjunctionClause(const QueryBuilder& query,
+                                        const Context& ctx);
 
 Root::ptr MakeTokenPhrasePruned(const TokenPhraseQuery& query,
                                 const Context& ctx);

@@ -650,7 +650,7 @@ The `jsonb` type is a `json` value that keeps its text as written (see [`jsonb`]
 | array_append       | Yes           |                                |
 | array_cat          | Yes           |                                |
 | array_dims         | Yes           |                                |
-| array_fill         | Yes           | Lower bounds must be 1; dimensions taken from a column fill one-dimensional arrays unless written as `ARRAY[...]`; as many dimensions as the stack holds, where more fail with `stack depth limit exceeded` |
+| array_fill         | Yes           | Lower bounds must be 1; dimensions taken from a column fill one-dimensional arrays unless written as `ARRAY[...]`; up to 1000 dimensions |
 | array_lower        | Yes           |                                |
 | array_ndims        | Yes           |                                |
 | array_position     | Yes           |                                |

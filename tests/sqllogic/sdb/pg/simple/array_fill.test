@@ -53,14 +53,7 @@ array_fill
 {{{{{{{{0}}}}}}}}
 
 
-query
-SELECT array_ndims(array_fill(0, string_to_array(repeat('1,', 1000) || '1', ',')::int[])) AS ndims;
-----
-ndims
-1001
-
-
 statement error
-SELECT array_fill(0, string_to_array(repeat('1,', 100000) || '1', ',')::int[]);
+SELECT array_fill(0, string_to_array(repeat('1,', 1000) || '1', ',')::int[]);
 ----
-db error: ERROR: stack depth limit exceeded
+db error: ERROR: number of array dimensions (1001) exceeds the maximum allowed (1000)

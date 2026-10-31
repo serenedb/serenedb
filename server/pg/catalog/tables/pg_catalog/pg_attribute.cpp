@@ -232,8 +232,9 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
     for (const int16_t key : attnums) {
       const auto& name = names[static_cast<size_t>(attnum)];
       if (key != 0) {
-        Emit<kColumn>({oid, name, ++attnum,
-                       IndexColumnAt(relation, columns.get(), key).type});
+        const auto column = IndexColumnAt(relation, columns.get(), key);
+        Emit<kColumn>(
+          {oid, name, ++attnum, column.type, nullptr, column.declared});
         continue;
       }
       const auto type = IndexExpressionType(

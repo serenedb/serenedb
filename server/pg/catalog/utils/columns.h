@@ -119,6 +119,7 @@ std::vector<int16_t> IndexAttnums(duckdb::ClientContext& context,
 struct IndexColumn {
   std::string_view name;
   const duckdb::LogicalType& type;
+  const duckdb::LogicalType* declared = nullptr;
 };
 
 std::string IndexExpressionName(const duckdb::ParsedExpression& expression);

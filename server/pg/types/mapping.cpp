@@ -22,9 +22,11 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/common/extension_type_info.hpp>
+#include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/type_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -88,7 +90,7 @@ constexpr PgTypeMapping kMappings[] = {
   {kInterval, []() -> duckdb::LogicalType { return duckdb::LogicalType::INTERVAL; }, false},
   {kTimetz, []() -> duckdb::LogicalType { return duckdb::LogicalType::TIME_TZ; }, false},
   {kBit, []() -> duckdb::LogicalType { return duckdb::LogicalType::BIT; }, false},
-  {kVarbit, []() -> duckdb::LogicalType { return duckdb::LogicalType::BIT; }, true},
+  {kVarbit, []() -> duckdb::LogicalType { return duckdb::LogicalType::BIT; }, false},
   {kNumeric, []() -> duckdb::LogicalType { return duckdb::LogicalType::DECIMAL(18, 3); }, false},
   {kRefcursor, &REFCURSOR, true},
   {kRegprocedure, &REGPROCEDURE, true},
@@ -195,40 +197,71 @@ bool Names(const duckdb::TypeExpression& type, std::string_view name) {
          type.GetTypeName() == name;
 }
 
-int32_t DeclaredTypmod(const duckdb::TypeExpression& type, int32_t oid) {
-  absl::InlinedVector<std::string, 2> texts;
-  for (const auto& modifier : type.GetChildren()) {
-    texts.emplace_back(modifier->ToString());
-  }
-  return TypmodIn(oid, texts, type.GetTypeName().GetIdentifierName());
-}
-
 struct DeclaredType {
   int32_t oid;
   int32_t typmod;
 };
 
+std::optional<DeclaredType> DeclaredWithTypmod(
+  const duckdb::TypeExpression& type, int32_t oid) {
+  absl::InlinedVector<std::string, 2> texts;
+  for (const auto& modifier : type.GetChildren()) {
+    if (!modifier->GetAlias().empty()) {
+      continue;
+    }
+    int64_t value = 0;
+    if (modifier->GetExpressionClass() != duckdb::ExpressionClass::CONSTANT ||
+        !modifier->Cast<duckdb::ConstantExpression>().GetLiteral().TryGetInt64(
+          value)) {
+      return std::nullopt;
+    }
+    texts.emplace_back(absl::StrCat(value));
+  }
+  return DeclaredType{
+    oid, TypmodIn(oid, texts, type.GetTypeName().GetIdentifierName())};
+}
+
 std::optional<DeclaredType> DeclaredBuiltin(const duckdb::TypeExpression& type,
                                             const duckdb::LogicalType& bound) {
-  if (bound.id() == TypeId::VARCHAR && !bound.HasAlias() &&
-      duckdb::StringType::GetCollation(bound).empty()) {
-    if (Names(type, "varchar")) {
-      return DeclaredType{kVarchar, DeclaredTypmod(type, kVarchar)};
-    }
-    if (Names(type, "bpchar")) {
-      return DeclaredType{kBpchar, DeclaredTypmod(type, kBpchar)};
-    }
+  if (bound.IsJSONType()) {
+    return Names(type, "jsonb") ? std::optional{DeclaredType{kJsonb, -1}}
+                                : std::nullopt;
+  }
+  if (bound.HasAlias()) {
     return std::nullopt;
   }
-  if (bound.IsJSONType() && Names(type, "jsonb")) {
-    return DeclaredType{kJsonb, -1};
+  switch (bound.id()) {
+    case TypeId::VARCHAR:
+      if (Names(type, "varchar")) {
+        return DeclaredWithTypmod(type, kVarchar);
+      }
+      if (Names(type, "bpchar")) {
+        return DeclaredWithTypmod(type, kBpchar);
+      }
+      return std::nullopt;
+    case TypeId::BIT:
+      if (Names(type, "bit")) {
+        return DeclaredWithTypmod(type, kBit);
+      }
+      if (Names(type, "varbit")) {
+        return DeclaredWithTypmod(type, kVarbit);
+      }
+      return std::nullopt;
+    case TypeId::TIMESTAMP_SEC:
+    case TypeId::TIMESTAMP_MS:
+    case TypeId::TIMESTAMP:
+    case TypeId::TIMESTAMP_NS:
+      return Names(type, "timestamp") ? DeclaredWithTypmod(type, kTimestamp)
+                                      : std::nullopt;
+    case TypeId::DECIMAL:
+      if (type.GetChildren().empty() &&
+          (Names(type, "decimal") || Names(type, "numeric"))) {
+        return DeclaredType{kNumeric, -1};
+      }
+      return std::nullopt;
+    default:
+      return std::nullopt;
   }
-  if (bound.id() == TypeId::DECIMAL && !bound.HasAlias() &&
-      type.GetChildren().empty() &&
-      (Names(type, "decimal") || Names(type, "numeric"))) {
-    return DeclaredType{kNumeric, -1};
-  }
-  return std::nullopt;
 }
 
 const BuiltinType* FindAliasedType(const duckdb::LogicalType& type,

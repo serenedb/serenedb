@@ -40,7 +40,7 @@ WHERE attrelid = 'btc_every_type'::regclass AND attnum > 0
 ORDER BY attnum
 ----
 attname	type
-c_bit	bit varying
+c_bit	bit(1)
 c_bool	boolean
 c_cardinal_number	information_schema.cardinal_number
 c_char	"char"

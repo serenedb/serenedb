@@ -176,7 +176,8 @@ IndexColumn IndexColumnAt(const duckdb::CatalogEntry& relation,
   }
   const auto& definition = relation.Cast<duckdb::TableCatalogEntry>().GetColumn(
     duckdb::LogicalIndex{column});
-  return {definition.Name().GetIdentifierName(), definition.Type()};
+  return {definition.Name().GetIdentifierName(), definition.Type(),
+          &definition.DeclaredType()};
 }
 
 std::string IndexExpressionName(const duckdb::ParsedExpression& expression) {

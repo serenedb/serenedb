@@ -1,7 +1,7 @@
 control substitution on
 
 statement ok
-CREATE TABLE beast_checkpointed (title varchar(67), code char(6), meta jsonb, views numeric, bio text);
+CREATE TABLE beast_checkpointed (title varchar(67), code char(6), meta jsonb, views numeric, bio text, handle varchar(20) COLLATE "C", flags bit(6), seen timestamp(3));
 
 
 statement ok
@@ -9,7 +9,7 @@ FORCE CHECKPOINT;
 
 
 statement ok
-CREATE TABLE beast_logged (title varchar(67), code char(6), meta jsonb, views numeric, bio text);
+CREATE TABLE beast_logged (title varchar(67), code char(6), meta jsonb, views numeric, bio text, handle varchar(20) COLLATE "C", flags bit(6), seen timestamp(3));
 
 
 statement ok
@@ -46,11 +46,17 @@ beast_checkpointed	code	character	6	NULL
 beast_checkpointed	meta	jsonb	NULL	NULL
 beast_checkpointed	views	numeric	NULL	NULL
 beast_checkpointed	bio	text	NULL	NULL
+beast_checkpointed	handle	character varying	20	NULL
+beast_checkpointed	flags	bit	6	NULL
+beast_checkpointed	seen	timestamp without time zone	NULL	NULL
 beast_logged	title	character varying	67	NULL
 beast_logged	code	character	6	NULL
 beast_logged	meta	jsonb	NULL	NULL
 beast_logged	views	numeric	NULL	NULL
 beast_logged	bio	character varying	76	NULL
+beast_logged	handle	character varying	20	NULL
+beast_logged	flags	bit	6	NULL
+beast_logged	seen	timestamp without time zone	NULL	NULL
 beast_logged	feastables	jsonb	NULL	NULL
 
 
@@ -87,4 +93,7 @@ code	character(6)
 meta	jsonb
 views	numeric
 bio	character varying(76)
+handle	character varying(20)
+flags	bit(6)
+seen	timestamp(3) without time zone
 feastables	jsonb

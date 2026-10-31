@@ -170,10 +170,9 @@ DROP TABLE beast_wide;
 
 
 statement ok
-CREATE TABLE beast_collated (title text COLLATE "C", channel varchar COLLATE "C");
+CREATE TABLE beast_collated (title text COLLATE "C", channel varchar COLLATE "C", code varchar(67) COLLATE "C", grade char(6) COLLATE "C");
 
 
-skipif serenedb
 query
 SELECT attname, format_type(atttypid, atttypmod) AS type, atttypmod
 FROM pg_attribute
@@ -183,22 +182,106 @@ ORDER BY attnum;
 attname	type	atttypmod
 title	text	-1
 channel	character varying	-1
+code	character varying(67)	71
+grade	character(6)	10
 
 
-onlyif serenedb
 query
-SELECT attname, format_type(atttypid, atttypmod) AS type, atttypmod
-FROM pg_attribute
-WHERE attrelid = 'beast_collated'::regclass AND attnum > 0
-ORDER BY attnum;
+SELECT column_name, data_type, character_maximum_length, collation_name
+FROM information_schema.columns
+WHERE table_name = 'beast_collated'
+ORDER BY ordinal_position;
 ----
-attname	type	atttypmod
-title	text	-1
-channel	text	-1
+column_name	data_type	character_maximum_length	collation_name
+title	text	NULL	C
+channel	character varying	NULL	C
+code	character varying	67	C
+grade	character	6	C
 
 
 statement ok
 DROP TABLE beast_collated;
+
+
+statement ok
+CREATE TABLE beast_bits (flags bit(6), mask bit varying(7), one bit, any_mask varbit, wide_mask varbit(67), seen timestamp(3), seen_sec timestamp(0), seen_plain timestamp);
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, atttypmod
+FROM pg_attribute
+WHERE attrelid = 'beast_bits'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	atttypmod
+flags	bit(6)	6
+mask	bit varying(7)	7
+one	bit(1)	1
+any_mask	bit varying	-1
+wide_mask	bit varying(67)	67
+seen	timestamp(3) without time zone	3
+seen_sec	timestamp(0) without time zone	0
+seen_plain	timestamp without time zone	-1
+
+
+query
+SELECT column_name, data_type, character_maximum_length, datetime_precision
+FROM information_schema.columns
+WHERE table_name = 'beast_bits'
+ORDER BY ordinal_position;
+----
+column_name	data_type	character_maximum_length	datetime_precision
+flags	bit	6	NULL
+mask	bit varying	7	NULL
+one	bit	1	NULL
+any_mask	bit varying	NULL	NULL
+wide_mask	bit varying	67	NULL
+seen	timestamp without time zone	NULL	3
+seen_sec	timestamp without time zone	NULL	0
+seen_plain	timestamp without time zone	NULL	6
+
+
+statement ok
+DROP TABLE beast_bits;
+
+
+statement error
+CREATE TABLE beast_too_many_bits (flags bit(83886081));
+----
+db error: ERROR: length for type bit cannot exceed 83886080
+
+
+statement error
+CREATE TABLE beast_too_many_bits (mask bit varying(83886081));
+----
+db error: ERROR: length for type varbit cannot exceed 83886080
+
+
+statement ok
+CREATE TABLE beast_indexed (title varchar(67), code char(6));
+
+
+statement ok
+CREATE INDEX beast_indexed_title ON beast_indexed (title);
+
+
+statement ok
+CREATE INDEX beast_indexed_code ON beast_indexed (code);
+
+
+query
+SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod) AS type, a.atttypmod
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname IN ('beast_indexed_title', 'beast_indexed_code')
+ORDER BY 1, 2;
+----
+relname	attname	type	atttypmod
+beast_indexed_code	code	character(6)	10
+beast_indexed_title	title	character varying(67)	71
+
+
+statement ok
+DROP TABLE beast_indexed;
 
 
 statement error

@@ -99,8 +99,8 @@ The coordinates of the geometric types print as `float8` values do, so `point(1e
 | tsvector                     | 🔴            |         |
 | txid_snapshot                | 🔴            |         |
 | uuid                         | 🟢            |         |
-| varbit                       | 🟡            | A length such as `varbit(3)` is not accepted. A bit string holds at least one bit, as for `bit`. |
-| varchar                      | 🟡            | A length is not enforced: `'abc'::varchar(2)` stays `abc`. A `varchar` or `char` column declared with `COLLATE` reports as `text`, without its length, in `pg_attribute` and `information_schema.columns`. |
+| varbit                       | 🟡            | A length is not enforced, as for `bit`: `'1011'::varbit(3)` stays `1011`. A bit string holds at least one bit, as for `bit`. |
+| varchar                      | 🟡            | A length is not enforced: `'abc'::varchar(2)` stays `abc`. |
 | xid                          | 🟢            |         |
 | xid8                         | 🟢            |         |
 | xml                          | 🟡            | The SQL/XML expressions `XMLPARSE`, `XMLSERIALIZE`, `XMLELEMENT`, `XMLFOREST`, `XMLPI`, `XMLROOT`, `XMLEXISTS` and `XMLTABLE` are not supported, nor are `SET XML OPTION` (use `SET xmloption`) and the functions that map tables and queries to XML, such as `table_to_xml`. Values compare, sort and group as text, and text functions such as `length()` take them, where PostgreSQL raises an error. `COPY ... (FORMAT csv)` stores a value without checking that it is well-formed. |

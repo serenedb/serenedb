@@ -409,8 +409,7 @@ ORDER BY table_schema::text COLLATE "C", table_name::text COLLATE "C", column_na
 check(pg_class(MAIN))
 check(pg_attribute(MAIN))
 check(pg_attribute_types(MAIN, """
-  AND attname::text @NOT IN ('c_varchar', 'city', 'code', 'email', 'sku', 'total')"""), "typmod", "numeric",
-      "aggregate_type")
+  AND attname::text @NOT IN ('city', 'email', 'total')"""), "typmod", "numeric", "aggregate_type")
 check(pg_type(MAIN))
 check(f'''SELECT oid, {TYPE_COLUMNS}
 FROM pg_catalog.pg_type

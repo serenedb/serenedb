@@ -2299,6 +2299,25 @@ TEST_F(ColCodecsTest, DictionaryCodesUseTheNumericCodec) {
   }
 }
 
+const Value kShortCodeRuns = [](uint64_t g) -> std::optional<std::string> {
+  return "s" + std::to_string(std::mt19937_64{g / 2}() % 16);
+};
+
+TEST_F(ColCodecsTest, CodesInShortRunsAreNotRunPacked) {
+  constexpr uint64_t kRows = 60000;
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(static_cast<int>(tier));
+    irs::MemoryDirectory dir{};
+    Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, {.tier = tier},
+          kRows, 16384, kShortCodeRuns);
+    Verify(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, kRows,
+           kShortCodeRuns);
+    for (const auto& transform : SegmentInfo(dir, "codes_transform")) {
+      EXPECT_NE(transform, "rle_ffor");
+    }
+  }
+}
+
 TEST_F(ColCodecsTest, NumericCodesFilterTheValues) {
   constexpr uint64_t kRows = 30000;
   irs::MemoryDirectory dir{};

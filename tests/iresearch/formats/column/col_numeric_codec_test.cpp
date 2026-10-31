@@ -148,6 +148,8 @@ const std::vector<Shape>& Shapes() {
      [](uint64_t g) {
        return static_cast<int64_t>(Mix(g) % 120) * 104'729 - 50'000;
      }},
+    {"short_hash_runs",
+     [](uint64_t g) { return static_cast<int64_t>(Mix(g / 3)); }},
   };
   return kShapes;
 }
@@ -456,6 +458,9 @@ TEST_F(ColNumericCodecTest, PacksRunsAndCodesBelowByteWidths) {
     {"drifting_runs", "rle_ffor/none", {irs::WriteTier::Flush}},
     {"sparse_values",
      "dict_ffor/none",
+     {irs::WriteTier::Flush, irs::WriteTier::Merge}},
+    {"short_hash_runs",
+     "rle_ffor/none",
      {irs::WriteTier::Flush, irs::WriteTier::Merge}},
   };
   for (const auto& [name, expected, tiers] : cases) {

@@ -54,7 +54,7 @@ Under `auto`, a numeric column (integers, decimals, floating point, dates and ti
 | bit-packed frame of reference | each value minus the smallest of its block of 1024, in the bits the block's largest difference needs | integers that vary less within a block than across the row group, or by a width that is not a whole number of bytes |
 | delta | each value minus the previous one, less the smallest such difference | sorted or clustered values, such as timestamps and row ids |
 | run length | each run of equal values once, with its length | long runs of repeated values |
-| bit-packed run length | each run's value and length, each bit-packed like the bit-packed frame of reference, per block of 1024 runs; offered only when runs average four rows or more, since expanding shorter runs reads slower than unpacking every value | runs of small integers, and the row codes of text dictionaries |
+| bit-packed run length | each run's value and length, each bit-packed like the bit-packed frame of reference, per block of 1024 runs; the row codes of a text dictionary take it only when their runs average four rows or more, since reading the codes of scattered rows from shorter runs is slower than unpacking every code | runs of small integers, short runs of wide values such as identifiers repeated over a few rows, and the row codes of text dictionaries |
 | dictionary | a code into the row group's sorted distinct values, which are stored once | few distinct wide values, such as repeated hashes |
 | bit-packed dictionary | the same codes, bit-packed per block of 1024 values in the bits the block's codes need | few distinct wide values without long runs |
 

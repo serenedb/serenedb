@@ -117,7 +117,7 @@ using duckdb::const_data_ptr_t;
 using duckdb::idx_t;
 
 constexpr size_t kSampleFrames = 4;
-constexpr uint32_t kPackedRunRows = 4;
+constexpr uint32_t kPackedCodeRunRows = 4;
 constexpr double kLz4Penalty = 0.05;
 constexpr double kZstdPenalty = 0.15;
 constexpr uint8_t kLeafLevel = 1;
@@ -564,7 +564,8 @@ class TypedSealer final : public NumericSealer {
         r.run_rows = _run_rows;
         _candidates.push_back(r);
       }
-      if (wanted(NumericTransform::RleFfor) && runs * kPackedRunRows <= n) {
+      if (wanted(NumericTransform::RleFfor) &&
+          (!_codes_only || runs * kPackedCodeRunRows <= n)) {
         _run_blocks.Plan(std::span<const U>{_run_values}, Less);
         _length_blocks.Plan(std::span<const uint32_t>{_run_lengths},
                             std::less<uint32_t>{});

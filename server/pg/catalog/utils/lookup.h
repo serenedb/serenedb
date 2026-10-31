@@ -83,6 +83,7 @@ inline ObjectName NameOf(duckdb::CatalogTransaction transaction,
           .name = entry.name.GetIdentifierName()};
 }
 
+void PrefetchEntries(const Session& session);
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
                                                       uint64_t oid);
 duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(

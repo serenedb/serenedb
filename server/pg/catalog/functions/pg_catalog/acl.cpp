@@ -33,6 +33,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -937,6 +938,18 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     return *this;
   }
 
+  void Prefetch(duckdb::Vector& oids) {
+    if constexpr (std::is_base_of_v<Session, typename F::Scope>) {
+      const Session& session = _scope;
+      session.prefetched_oids.clear();
+      for (const auto oid : oids.ValidValues<int64_t>()) {
+        session.prefetched_oids.push_back(
+          static_cast<duckdb::idx_t>(oid.GetValue()));
+      }
+      PrefetchEntries(session);
+    }
+  }
+
   duckdb::idx_t Role(duckdb::string_t name) {
     if (!_named || name != _named->name) {
       _named = NamedRole{.name = name, .role = F::Role(_scope, name)};
@@ -1023,6 +1036,11 @@ duckdb::ScalarFunction PrivilegeFunction() {
       auto& check = duckdb::ExecuteFunctionState::GetFunctionState(state)
                       ->Cast<PrivilegeCheck<F>>()
                       .ForChunk();
+      if constexpr (std::is_same_v<
+                      std::tuple_element_t<0, std::tuple<Object...>>,
+                      int64_t>) {
+        check.Prefetch(args.data[std::is_void_v<Role> ? 0 : 1]);
+      }
       if constexpr (std::is_void_v<Role>) {
         const auto role = GetSereneDBContext(state.GetContext()).GetRoleId();
         duckdb::VariadicExecutor::Execute<bool, Object..., duckdb::string_t>(

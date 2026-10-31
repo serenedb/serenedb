@@ -47,7 +47,10 @@ Session MakeSession(duckdb::ClientContext* context) {
     .temporary = std::nullopt,
     .reg_out = {},
     .reg_out_texts = {},
-    .reg_out_recent = {}};
+    .reg_out_recent = {},
+    .prefetched_oids = {},
+    .prefetched_entries = {},
+    .prefetched_next = 0};
   if (!context) {
     return session;
   }

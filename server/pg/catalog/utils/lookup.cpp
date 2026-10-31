@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
@@ -79,13 +80,37 @@ duckdb::idx_t CatalogClassOid(duckdb::CatalogType type) {
   }
 }
 
+void PrefetchEntries(const Session& session) {
+  session.prefetched_next = 0;
+  session.prefetched_entries.resize(session.prefetched_oids.size());
+  if (session.database) {
+    session.database->GetOidIndex().GetVisible(session.prefetched_oids,
+                                               session.transaction->view,
+                                               session.prefetched_entries);
+  }
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
                                                       uint64_t oid) {
   if (!session.database || oid == kInvalidOid) {
     return nullptr;
   }
-  auto entry =
-    session.database->GetOidIndex().GetVisible(oid, session.transaction->view);
+  constexpr size_t kPrefetchWindow = 4;
+  const auto& oids = session.prefetched_oids;
+  const auto end =
+    std::min(oids.size(), session.prefetched_next + kPrefetchWindow);
+  auto next = session.prefetched_next;
+  while (next < end && oids[next] != oid) {
+    ++next;
+  }
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry;
+  if (next < end) {
+    entry = session.prefetched_entries[next];
+    session.prefetched_next = next + 1;
+  } else {
+    entry = session.database->GetOidIndex().GetVisible(
+      oid, session.transaction->view);
+  }
   if (!entry || entry->internal) {
     return nullptr;
   }

@@ -1,0 +1,86 @@
+statement ok
+DROP ROLE IF EXISTS pfc_vedernikoff;
+
+
+statement ok
+CREATE ROLE pfc_vedernikoff LOGIN PASSWORD 'pfc_pw';
+
+
+statement ok
+CREATE TABLE pfc_granted (a integer);
+
+
+statement ok
+CREATE INDEX pfc_granted_i ON pfc_granted (a);
+
+
+statement ok
+CREATE TABLE pfc_hidden (a integer);
+
+
+statement ok
+GRANT SELECT ON pfc_granted TO pfc_vedernikoff;
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied,
+  count(*) FILTER (WHERE allowed IS NULL) AS unknown
+FROM (
+  SELECT has_table_privilege(o, 'SELECT') AS allowed
+  FROM unnest([
+    'pfc_granted'::regclass::oid,
+    NULL,
+    'pfc_hidden'::regclass::oid,
+    'pfc_granted_i'::regclass::oid,
+    'pfc_granted'::regclass::oid,
+    0::oid
+  ]) AS u(o), range(1000)
+);
+----
+allowed	denied	unknown
+2000	2000	2000
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied
+FROM (
+  SELECT has_table_privilege('pfc_vedernikoff', o, 'SELECT') AS allowed
+  FROM unnest([
+    'pfc_hidden'::regclass::oid,
+    'pfc_granted'::regclass::oid
+  ]) AS u(o), range(3000)
+);
+----
+allowed	denied
+3000	3000
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT relname, has_table_privilege(oid, 'SELECT') AS allowed
+FROM pg_class
+WHERE relname LIKE 'pfc\_%'
+ORDER BY relname;
+----
+relname	allowed
+pfc_granted	t
+pfc_granted_i	f
+pfc_hidden	f
+
+
+statement ok
+DROP TABLE pfc_granted;
+
+
+statement ok
+DROP TABLE pfc_hidden;
+
+
+statement ok
+DROP ROLE pfc_vedernikoff;

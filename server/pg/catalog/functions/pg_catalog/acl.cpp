@@ -486,6 +486,12 @@ struct AnyColumnPrivileges : RelationPrivileges<AnyColumnPrivileges> {
                         RelationRights(relation)};
     if (!target.owner_only) {
       target.any_column = TableColumns(relation);
+      if (RelationType(relation) == CatalogType::VIEW_ENTRY) {
+        for (const auto& [name, acl] :
+             relation.entry->Cast<duckdb::ViewCatalogEntry>().column_acls) {
+          target.columns.emplace_back(acl);
+        }
+      }
     }
     return target;
   }
@@ -515,12 +521,12 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
       if (absl::c_linear_search(kSequenceColumns, AsView(column))) {
         return ObjectTarget{relation.permissions};
       }
-    } else if (RelationType(relation) == CatalogType::VIEW_ENTRY &&
-               ViewAttnum(
-                 *session.context,
-                 relation.entry.get_mutable()->Cast<duckdb::ViewCatalogEntry>(),
-                 name) != 0) {
-      return ObjectTarget{relation.permissions};
+    } else if (RelationType(relation) == CatalogType::VIEW_ENTRY) {
+      auto& view =
+        relation.entry.get_mutable()->Cast<duckdb::ViewCatalogEntry>();
+      if (const auto attnum = ViewAttnum(*session.context, view, name)) {
+        return ObjectTarget{relation.permissions, {view.ColumnAcl(attnum - 1)}};
+      }
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                     ERR_MSG("column \"", AsView(column), "\" of relation \"",
@@ -553,11 +559,14 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
     if (RelationType(relation) == CatalogType::SEQUENCE_ENTRY) {
       count = kSequenceColumns.size();
     } else if (RelationType(relation) == CatalogType::VIEW_ENTRY) {
-      const auto info = ViewColumns(
-        *session.context,
-        relation.entry.get_mutable()->Cast<duckdb::ViewCatalogEntry>());
+      auto& view =
+        relation.entry.get_mutable()->Cast<duckdb::ViewCatalogEntry>();
+      const auto info = ViewColumns(*session.context, view);
       SDB_ASSERT(info);
-      count = info->types.size();
+      if (static_cast<duckdb::idx_t>(attnum) > info->types.size()) {
+        return std::nullopt;
+      }
+      return ObjectTarget{relation.permissions, {view.ColumnAcl(attnum - 1)}};
     }
     if (static_cast<duckdb::idx_t>(attnum) > count) {
       return std::nullopt;

@@ -61,6 +61,10 @@ struct TableAttribute : Attribute {
   const std::vector<bool>& not_null;
 };
 
+struct ViewAttribute : Attribute {
+  std::span<const duckdb::AclItem> acl;
+};
+
 char Generated(const duckdb::ColumnDefinition& column) {
   switch (column.Category()) {
     case duckdb::TableColumnType::STANDARD:
@@ -114,6 +118,10 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
     Col<"attacl">(
       [](const auto& row) -> const auto& { return row.column.Acl(); }));
 
+  static constexpr auto kViewColumn = Shape<kSql, const ViewAttribute>(
+    kAttribute, Col<"attname">(&Attribute::name),
+    Col<"attacl">(&ViewAttribute::acl));
+
   static constexpr auto kSequenceColumn = Shape<kSql, const Attribute>(
     kAttribute, Col<"attname">(&Attribute::name),
     Col<"attnotnull">([](const auto&) { return true; }));
@@ -121,7 +129,7 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
   static constexpr SystemTypeShape kTypeShapes[] = {
     {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kTableColumn>::kProvided},
     {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kColumn>::kProvided},
-    {duckdb::CatalogType::VIEW_ENTRY, SystemShapeOf<kColumn>::kProvided},
+    {duckdb::CatalogType::VIEW_ENTRY, SystemShapeOf<kViewColumn>::kProvided},
     {duckdb::CatalogType::INDEX_ENTRY, SystemShapeOf<kColumn>::kProvided},
     {duckdb::CatalogType::SEQUENCE_ENTRY,
      SystemShapeOf<kSequenceColumn>::kProvided},
@@ -163,8 +171,9 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
       return;
     }
     for (size_t i = 0; i < columns->types.size(); ++i) {
-      Emit<kColumn>({view.oid, columns->names[i].GetIdentifierName(),
-                     static_cast<int16_t>(i + 1), columns->types[i]});
+      Emit<kViewColumn>({{view.oid, columns->names[i].GetIdentifierName(),
+                          static_cast<int16_t>(i + 1), columns->types[i]},
+                         view.ColumnAcl(i)});
     }
   }
 

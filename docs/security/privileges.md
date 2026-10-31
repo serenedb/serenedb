@@ -51,6 +51,8 @@ Privileges are enforced on every query. Acting as the role, reading works and wr
 
 <SqlLogicTest id="security/privileges/example_004" />
 
+A view's columns can be granted `SELECT` the same way: the grantee may read those columns of the view, and a query that names no column, such as `SELECT count(*)`, needs `SELECT` on at least one of them. `CREATE OR REPLACE VIEW` keeps the column grants of the columns it keeps.
+
 ## Grant options
 
 With `WITH GRANT OPTION`, the grantee may pass the privilege on to others:

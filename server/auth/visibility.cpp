@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_entry/function_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -118,16 +119,20 @@ bool EntryVisible(duckdb::ClientContext& context,
       if (closure.CanAny(CatalogType::TABLE_ENTRY, perm, kAny)) {
         return true;
       }
-      if (entry.type != CatalogType::TABLE_ENTRY) {
-        return false;
-      }
       constexpr auto kColumnModes = AclMode::Select | AclMode::Insert |
                                     AclMode::Update | AclMode::References;
+      const auto grants = [&](std::span<const duckdb::AclItem> acl) {
+        return (closure.HeldModes(acl) & kColumnModes) != AclMode::NoRights;
+      };
+      if (entry.type == CatalogType::VIEW_ENTRY) {
+        return absl::c_any_of(
+          entry.Cast<duckdb::ViewCatalogEntry>().column_acls,
+          [&](const auto& column) { return grants(column.second); });
+      }
       return absl::c_any_of(
         entry.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical(),
         [&](const duckdb::ColumnDefinition& column) {
-          return (closure.HeldModes(column.Acl()) & kColumnModes) !=
-                 AclMode::NoRights;
+          return grants(column.Acl());
         });
     }
     case CatalogType::SEQUENCE_ENTRY:

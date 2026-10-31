@@ -1,0 +1,187 @@
+statement ok
+DROP ROLE IF EXISTS erda_child;
+
+
+statement ok
+DROP ROLE IF EXISTS erda_made;
+
+
+statement ok
+DROP ROLE IF EXISTS erda_creator;
+
+
+statement ok
+DROP ROLE IF EXISTS erda_plain;
+
+
+statement ok
+DROP ROLE IF EXISTS erda_foreign;
+
+
+statement ok
+DROP ROLE IF EXISTS erda_boss;
+
+
+statement ok
+CREATE ROLE erda_creator LOGIN CREATEROLE PASSWORD 'erda_pw';
+
+
+statement ok
+CREATE ROLE erda_plain LOGIN PASSWORD 'erda_pw';
+
+
+statement ok
+CREATE ROLE erda_foreign;
+
+
+statement ok
+CREATE ROLE erda_boss SUPERUSER;
+
+
+connection c_plain user=erda_plain password=erda_pw
+statement error permission denied
+CREATE ROLE erda_made;
+
+
+connection c_plain user=erda_plain password=erda_pw
+statement error permission denied
+ALTER ROLE erda_foreign PASSWORD 'stolen';
+
+
+connection c_plain user=erda_plain password=erda_pw
+statement error permission denied
+ALTER ROLE erda_plain CREATEDB;
+
+
+connection c_plain user=erda_plain password=erda_pw
+statement ok
+ALTER ROLE erda_plain PASSWORD 'erda_pw';
+
+
+connection c_plain user=erda_plain password=erda_pw
+statement error permission denied
+GRANT erda_foreign TO erda_plain;
+
+
+connection c_plain user=erda_plain password=erda_pw
+statement error permission denied
+DROP ROLE erda_foreign;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement ok
+CREATE ROLE erda_child;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement ok
+ALTER ROLE erda_child PASSWORD 'child_pw' VALID UNTIL '2100-01-01';
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement ok
+ALTER ROLE erda_child CONNECTION LIMIT 3;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement error permission denied
+ALTER ROLE erda_child CREATEDB;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement error permission denied
+ALTER ROLE erda_child SUPERUSER;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement error permission denied
+CREATE ROLE erda_made SUPERUSER;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement error permission denied
+CREATE ROLE erda_made IN ROLE erda_foreign;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement error permission denied
+ALTER ROLE erda_foreign PASSWORD 'stolen';
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement error permission denied
+ALTER ROLE erda_foreign RENAME TO erda_renamed;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement error permission denied
+ALTER ROLE erda_boss NOLOGIN;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement error permission denied
+DROP ROLE erda_foreign;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement error permission denied
+GRANT erda_foreign TO erda_plain;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement ok
+GRANT erda_child TO erda_plain;
+
+
+connection c_creator user=erda_creator password=erda_pw
+query
+SELECT pg_has_role('erda_plain', 'erda_child', 'MEMBER') AS member;
+----
+member
+t
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement ok
+REVOKE erda_child FROM erda_plain;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement ok
+CREATE ROLE erda_made IN ROLE erda_child;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement ok
+ALTER ROLE erda_child RENAME TO erda_child_renamed;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement ok
+ALTER ROLE erda_child_renamed RENAME TO erda_child;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement ok
+DROP ROLE erda_made;
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement ok
+DROP ROLE erda_child;
+
+
+statement ok
+DROP ROLE erda_creator;
+
+
+statement ok
+DROP ROLE erda_plain;
+
+
+statement ok
+DROP ROLE erda_foreign;
+
+
+statement ok
+DROP ROLE erda_boss;
